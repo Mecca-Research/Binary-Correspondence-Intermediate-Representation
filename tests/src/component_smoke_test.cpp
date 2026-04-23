@@ -187,6 +187,34 @@ module test {
               << std::endl;
     return EXIT_FAILURE;
   }
+  const auto lowering_table = bcir::rop_opcode_to_llvm_lowerings();
+  if (lowering_table.empty()) {
+    std::cerr << "Expected non-empty ROP->LLVM lowering table" << std::endl;
+    return EXIT_FAILURE;
+  }
+  const auto* ld_lowering = bcir::find_rop_opcode_lowering("ld");
+  const auto* barrier_lowering = bcir::find_rop_opcode_lowering("barrier");
+  const auto* atomic_lowering = bcir::find_rop_opcode_lowering("map_atomic_add");
+  if (ld_lowering == nullptr || ld_lowering->category != "memory" ||
+      barrier_lowering == nullptr || !barrier_lowering->isBarrier ||
+      atomic_lowering == nullptr || !atomic_lowering->isAtomic) {
+    std::cerr << "Expected opcode categories for memory/barrier/atomic lowering"
+              << std::endl;
+    return EXIT_FAILURE;
+  }
+  bcir::RopInstruction atomic_instruction;
+  atomic_instruction.opcode = "map_atomic_add";
+  atomic_instruction.rid = "r2";
+  const std::string neutral_dispatch = bcir::lower_rop_instruction_to_llvm_dispatch(
+      atomic_instruction, bcir::LlvmTargetBackend::Neutral);
+  const std::string gpu_dispatch = bcir::lower_rop_instruction_to_llvm_dispatch(
+      atomic_instruction, bcir::LlvmTargetBackend::GPU);
+  if (neutral_dispatch.find("emit_map_atomic_add") == std::string::npos ||
+      gpu_dispatch.find("gpu.emit_surface_atomic_add") == std::string::npos) {
+    std::cerr << "Expected target-neutral and backend extension lowering"
+              << std::endl;
+    return EXIT_FAILURE;
+  }
 
   const std::string invalid_program = R"(
 module test {
