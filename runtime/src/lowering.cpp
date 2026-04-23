@@ -6,6 +6,7 @@
 #include <regex>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace bcir {
@@ -31,6 +32,18 @@ int parse_rid_number(const std::string& rid) {
     return -1;
   }
   return std::stoi(rid.substr(1));
+}
+
+std::optional<int> parse_numeric_suffix(const std::string& text) {
+  std::size_t split = text.size();
+  while (split > 0 &&
+         std::isdigit(static_cast<unsigned char>(text[split - 1]))) {
+    --split;
+  }
+  if (split == text.size()) {
+    return std::nullopt;
+  }
+  return std::stoi(text.substr(split));
 }
 
 std::set<std::string> collect_block_symbols(const BlockNode& block) {
@@ -326,6 +339,187 @@ void lower_map_surface_ops(ModuleNode* module) {
 
     fn.body.operations = std::move(lowered);
   }
+}
+
+std::vector<RopInstruction> bcir_graph_to_rop_stream(const BlockNode& block) {
+  std::vector<RopInstruction> stream;
+  stream.reserve(block.operations.size());
+
+  std::unordered_map<std::string, std::size_t> last_writer;
+  std::optional<std::size_t> last_control_index;
+  int current_phase = 0;
+
+  auto track_source_dependency = [&](RopInstruction* instruction,
+                                     const std::string& symbol) {
+    if (symbol.empty()) {
+      return;
+    }
+    const auto writer_it = last_writer.find(symbol);
+    if (writer_it == last_writer.end()) {
+      return;
+    }
+    instruction->dependencies.push_back(RopDependency{writer_it->second, "data"});
+  };
+
+  for (const auto& operation : block.operations) {
+    RopInstruction instruction;
+
+    if (operation->kind == Operation::Kind::LdSt) {
+      const auto* op = static_cast<const LdStOperation*>(operation.get());
+      instruction.opcode = op->isLoad ? "ld" : "st";
+      instruction.rid = op->rid;
+      instruction.laneType = op->registryType;
+      instruction.lane = op->lane;
+      instruction.offset = parse_numeric_suffix(op->target);
+      instruction.target = op->target;
+      instruction.isLoad = op->isLoad;
+      track_source_dependency(&instruction, op->rid);
+    } else if (operation->kind == Operation::Kind::Binary) {
+      const auto* op = static_cast<const BinaryOpOperation*>(operation.get());
+      instruction.opcode = op->opcode;
+      instruction.rid = op->dst;
+      instruction.laneType = op->dstType;
+      instruction.lhs = op->lhs;
+      instruction.rhs = op->rhs;
+      track_source_dependency(&instruction, op->lhs);
+      track_source_dependency(&instruction, op->rhs);
+    } else if (operation->kind == Operation::Kind::Lane) {
+      const auto* op = static_cast<const LaneOpOperation*>(operation.get());
+      instruction.opcode = "lane." + op->opcode;
+      instruction.rid = op->rid;
+      instruction.lane = op->lane;
+      track_source_dependency(&instruction, op->rid);
+    } else if (operation->kind == Operation::Kind::Phase) {
+      const auto* op = static_cast<const PhaseOperation*>(operation.get());
+      instruction.opcode = "phase";
+      instruction.phase = op->phase;
+      current_phase = op->phase;
+    } else if (operation->kind == Operation::Kind::Barrier) {
+      const auto* op = static_cast<const BarrierOperation*>(operation.get());
+      instruction.opcode = "barrier";
+      instruction.barrierScope = op->scope;
+    } else if (operation->kind == Operation::Kind::MapSurface) {
+      const auto* op = static_cast<const MapSurfaceOperation*>(operation.get());
+      switch (op->surfaceKind) {
+        case MapSurfaceOperation::SurfaceKind::Load:
+          instruction.opcode = "map_load";
+          break;
+        case MapSurfaceOperation::SurfaceKind::Store:
+          instruction.opcode = "map_store";
+          break;
+        case MapSurfaceOperation::SurfaceKind::AtomicAdd:
+          instruction.opcode = "map_atomic_add";
+          break;
+        case MapSurfaceOperation::SurfaceKind::AtomicSub:
+          instruction.opcode = "map_atomic_sub";
+          break;
+        case MapSurfaceOperation::SurfaceKind::AtomicXor:
+          instruction.opcode = "map_atomic_xor";
+          break;
+      }
+      instruction.rid = op->rid;
+      instruction.lane = op->lane;
+      instruction.offset = parse_numeric_suffix(op->target);
+      instruction.target = op->target;
+      track_source_dependency(&instruction, op->rid);
+    } else {
+      const auto* op = static_cast<const MacroExpansionOperation*>(operation.get());
+      instruction.opcode = "expand." + op->macroName;
+    }
+
+    instruction.phase = current_phase;
+    if (last_control_index.has_value()) {
+      instruction.dependencies.push_back(
+          RopDependency{*last_control_index, "control"});
+    }
+
+    stream.push_back(std::move(instruction));
+    const std::size_t index = stream.size() - 1;
+    const RopInstruction& inserted = stream.back();
+
+    if (!inserted.rid.empty() &&
+        (inserted.opcode == "ld" || inserted.opcode == "map_load" ||
+         inserted.opcode == "add" || inserted.opcode == "sub" ||
+         inserted.opcode == "xor" || inserted.opcode == "mul" ||
+         inserted.opcode == "and" || inserted.opcode == "or")) {
+      last_writer[inserted.rid] = index;
+    }
+    if (inserted.opcode == "phase" || inserted.opcode == "barrier") {
+      last_control_index = index;
+    }
+  }
+
+  return stream;
+}
+
+BlockNode rop_stream_to_bcir_graph(const std::vector<RopInstruction>& stream) {
+  BlockNode block;
+  for (const RopInstruction& instruction : stream) {
+    if (instruction.opcode == "ld" || instruction.opcode == "st") {
+      auto op = std::make_unique<LdStOperation>(instruction.opcode == "ld");
+      op->rid = instruction.rid;
+      op->registryType = instruction.laneType;
+      op->lane = instruction.lane;
+      op->target = instruction.target;
+      block.operations.push_back(std::move(op));
+      continue;
+    }
+
+    if (instruction.opcode == "phase") {
+      auto op = std::make_unique<PhaseOperation>();
+      op->phase = instruction.phase.value_or(0);
+      block.operations.push_back(std::move(op));
+      continue;
+    }
+
+    if (instruction.opcode == "barrier") {
+      auto op = std::make_unique<BarrierOperation>();
+      op->scope = instruction.barrierScope;
+      block.operations.push_back(std::move(op));
+      continue;
+    }
+
+    if (instruction.opcode == "map_load" || instruction.opcode == "map_store" ||
+        instruction.opcode == "map_atomic_add" ||
+        instruction.opcode == "map_atomic_sub" ||
+        instruction.opcode == "map_atomic_xor") {
+      auto op = std::make_unique<MapSurfaceOperation>();
+      if (instruction.opcode == "map_load") {
+        op->surfaceKind = MapSurfaceOperation::SurfaceKind::Load;
+      } else if (instruction.opcode == "map_store") {
+        op->surfaceKind = MapSurfaceOperation::SurfaceKind::Store;
+      } else if (instruction.opcode == "map_atomic_add") {
+        op->surfaceKind = MapSurfaceOperation::SurfaceKind::AtomicAdd;
+      } else if (instruction.opcode == "map_atomic_sub") {
+        op->surfaceKind = MapSurfaceOperation::SurfaceKind::AtomicSub;
+      } else {
+        op->surfaceKind = MapSurfaceOperation::SurfaceKind::AtomicXor;
+      }
+      op->rid = instruction.rid;
+      op->lane = instruction.lane;
+      op->target = instruction.target;
+      block.operations.push_back(std::move(op));
+      continue;
+    }
+
+    if (instruction.opcode.rfind("lane.", 0) == 0) {
+      auto op = std::make_unique<LaneOpOperation>();
+      op->opcode = instruction.opcode.substr(5);
+      op->rid = instruction.rid;
+      op->lane = instruction.lane;
+      block.operations.push_back(std::move(op));
+    } else {
+      auto op = std::make_unique<BinaryOpOperation>();
+      op->opcode = instruction.opcode;
+      op->dst = instruction.rid;
+      op->dstType = instruction.laneType;
+      op->lhs = instruction.lhs.empty() ? instruction.rid : instruction.lhs;
+      op->rhs = instruction.rhs.empty() ? instruction.rid : instruction.rhs;
+      block.operations.push_back(std::move(op));
+    }
+  }
+
+  return block;
 }
 
 }  // namespace bcir
