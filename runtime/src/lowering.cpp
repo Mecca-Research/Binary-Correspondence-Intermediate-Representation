@@ -171,6 +171,119 @@ int find_next_register_id(const std::set<std::string>& symbols) {
   return max_id + 1;
 }
 
+std::vector<RopToLlvmLowering> build_rop_opcode_table() {
+  using Backend = LlvmTargetBackend;
+  return {
+      {"ld",
+       "memory",
+       "emit_load",
+       "%rid = load %laneType, ptr %target",
+       {{Backend::X86, "x86.emit_vector_load"},
+        {Backend::ARM, "arm.emit_neon_load"},
+        {Backend::GPU, "gpu.emit_global_load"},
+        {Backend::WASM, "wasm.emit_simd_load"}},
+       false,
+       false},
+      {"st",
+       "memory",
+       "emit_store",
+       "store %laneType %rid, ptr %target",
+       {{Backend::X86, "x86.emit_vector_store"},
+        {Backend::ARM, "arm.emit_neon_store"},
+        {Backend::GPU, "gpu.emit_global_store"},
+        {Backend::WASM, "wasm.emit_simd_store"}},
+       false,
+       false},
+      {"map_load",
+       "memory",
+       "emit_map_surface_load",
+       "%rid = load %laneType, ptr %target ; map surface",
+       {{Backend::GPU, "gpu.emit_surface_load"}},
+       false,
+       false},
+      {"map_store",
+       "memory",
+       "emit_map_surface_store",
+       "store %laneType %rid, ptr %target ; map surface",
+       {{Backend::GPU, "gpu.emit_surface_store"}},
+       false,
+       false},
+      {"add", "arithmetic", "emit_add", "%rid = add %lhs, %rhs", {}, false, false},
+      {"sub", "arithmetic", "emit_sub", "%rid = sub %lhs, %rhs", {}, false, false},
+      {"mul", "arithmetic", "emit_mul", "%rid = mul %lhs, %rhs", {}, false, false},
+      {"and", "arithmetic", "emit_and", "%rid = and %lhs, %rhs", {}, false, false},
+      {"or", "arithmetic", "emit_or", "%rid = or %lhs, %rhs", {}, false, false},
+      {"xor", "arithmetic", "emit_xor", "%rid = xor %lhs, %rhs", {}, false, false},
+      {"phase",
+       "control_flow",
+       "emit_phase_marker",
+       "; phase metadata influences scheduling/regions",
+       {{Backend::GPU, "gpu.emit_phase_region_marker"}},
+       false,
+       false},
+      {"barrier",
+       "barrier",
+       "emit_barrier",
+       "call void @llvm.fence(...) ; scope-aware barrier lowering",
+       {{Backend::X86, "x86.emit_mfence_lfence_sfence"},
+        {Backend::ARM, "arm.emit_dmb_dsb"},
+        {Backend::GPU, "gpu.emit_workgroup_barrier"},
+        {Backend::WASM, "wasm.emit_atomic_fence"}},
+       false,
+       true},
+      {"map_atomic_add",
+       "atomic",
+       "emit_map_atomic_add",
+       "%old = atomicrmw add ptr %target, %rid seq_cst",
+       {{Backend::X86, "x86.emit_lock_xadd"},
+        {Backend::ARM, "arm.emit_ldxr_stxr_loop"},
+        {Backend::GPU, "gpu.emit_surface_atomic_add"},
+        {Backend::WASM, "wasm.emit_i32_atomic_rmw_add"}},
+       true,
+       false},
+      {"map_atomic_sub",
+       "atomic",
+       "emit_map_atomic_sub",
+       "%old = atomicrmw sub ptr %target, %rid seq_cst",
+       {{Backend::X86, "x86.emit_lock_xadd_neg"},
+        {Backend::ARM, "arm.emit_ldxr_stxr_sub_loop"},
+        {Backend::GPU, "gpu.emit_surface_atomic_sub"},
+        {Backend::WASM, "wasm.emit_i32_atomic_rmw_sub"}},
+       true,
+       false},
+      {"map_atomic_xor",
+       "atomic",
+       "emit_map_atomic_xor",
+       "%old = atomicrmw xor ptr %target, %rid seq_cst",
+       {{Backend::X86, "x86.emit_lock_xor"},
+        {Backend::ARM, "arm.emit_ldxr_stxr_xor_loop"},
+        {Backend::GPU, "gpu.emit_surface_atomic_xor"},
+        {Backend::WASM, "wasm.emit_i32_atomic_rmw_xor"}},
+       true,
+       false},
+      {"lane.shuffle",
+       "arithmetic",
+       "emit_lane_shuffle",
+       "%rid = shufflevector %rid, poison, %lane",
+       {{Backend::X86, "x86.emit_pshuf"},
+        {Backend::ARM, "arm.emit_tbl_shuffle"},
+        {Backend::GPU, "gpu.emit_subgroup_shuffle"},
+        {Backend::WASM, "wasm.emit_i8x16_shuffle"}},
+       false,
+       false},
+      {"lane.rotate",
+       "arithmetic",
+       "emit_lane_rotate",
+       "%rid = call @llvm.fshl(...)",
+       {{Backend::X86, "x86.emit_rol_vector"},
+        {Backend::ARM, "arm.emit_ror_vector"},
+        {Backend::GPU, "gpu.emit_subgroup_rotate"},
+        {Backend::WASM, "wasm.emit_simd_rotate"}},
+       false,
+       false},
+  };
+}
+
 }  // namespace
 
 std::string lowering_component_banner() {
@@ -520,6 +633,45 @@ BlockNode rop_stream_to_bcir_graph(const std::vector<RopInstruction>& stream) {
   }
 
   return block;
+}
+
+std::vector<RopToLlvmLowering> rop_opcode_to_llvm_lowerings() {
+  return build_rop_opcode_table();
+}
+
+const RopToLlvmLowering* find_rop_opcode_lowering(std::string_view opcode) {
+  static const std::vector<RopToLlvmLowering> table = build_rop_opcode_table();
+  const auto it = std::find_if(
+      table.begin(), table.end(),
+      [&](const RopToLlvmLowering& lowering) { return lowering.opcode == opcode; });
+  if (it == table.end()) {
+    return nullptr;
+  }
+  return &(*it);
+}
+
+std::string lower_rop_instruction_to_llvm_dispatch(const RopInstruction& instruction,
+                                                   LlvmTargetBackend backend) {
+  const RopToLlvmLowering* lowering =
+      find_rop_opcode_lowering(instruction.opcode);
+  if (lowering == nullptr) {
+    if (instruction.opcode.rfind("lane.", 0) == 0) {
+      lowering = find_rop_opcode_lowering(instruction.opcode);
+    }
+    if (lowering == nullptr) {
+      return "emit_unhandled_opcode(\"" + instruction.opcode + "\")";
+    }
+  }
+
+  std::string routine = lowering->neutralRoutine;
+  if (backend != LlvmTargetBackend::Neutral) {
+    const auto backend_it = lowering->backendExtensionPoints.find(backend);
+    if (backend_it != lowering->backendExtensionPoints.end()) {
+      routine = backend_it->second + " /* extension */";
+    }
+  }
+
+  return routine + " -> " + lowering->irTemplate;
 }
 
 }  // namespace bcir
