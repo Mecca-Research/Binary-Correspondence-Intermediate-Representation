@@ -1,0 +1,13 @@
+module t {
+  macro twice(x, y) {
+    bin add r9, x, y;
+    bin add r10, r9, y;
+  }
+
+  fn main() {
+    ld rid=r0<U x 8 x i32> lane=lane0 from mem0;
+    ld rid=r1<U x 8 x i32> lane=lane0 from mem1;
+    expand twice(r0, r1);
+    st rid=r10<U x 8 x i32> lane=lane0 to mem2;
+  }
+}

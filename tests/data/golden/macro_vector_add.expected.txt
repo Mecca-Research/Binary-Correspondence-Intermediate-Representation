@@ -1,0 +1,5 @@
+ld rid=r0 lane=0 target=mem0
+ld rid=r1 lane=0 target=mem1
+bin add dst=r9 lhs=r0 rhs=r1
+bin add dst=r11 lhs=r9 rhs=r1
+st rid=r10 lane=0 target=mem2

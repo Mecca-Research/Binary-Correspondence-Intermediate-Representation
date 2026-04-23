@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Gate verifier correctness
+        run: ctest --test-dir build --output-on-failure -R bcir-parser-verifier-unit
+
+      - name: Gate runtime regression checks
+        run: ctest --test-dir build --output-on-failure -R bcir-runtime-regression
+
+      - name: Full test suite
+        run: ctest --test-dir build --output-on-failure

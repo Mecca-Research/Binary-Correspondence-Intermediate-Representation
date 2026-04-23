@@ -1,0 +1,4 @@
+ld rid=r2 lane=3 target=mem2
+ld rid=r3 lane=3 target=mem3
+bin add dst=r4 lhs=r2 rhs=r3
+lane shuffle rid=r4 lane=3
