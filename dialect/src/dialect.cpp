@@ -678,6 +678,10 @@ class RopVerifier {
              [this]() { verify_offset_alignment_legality_by_lane(); });
     add_pass("barrier_placement_and_hazard_contract",
              [this]() { verify_barrier_placement_and_hazard_contract(); });
+    add_pass("concurrent_registry_access_by_lane_and_atomic_constraints",
+             [this]() {
+               verify_concurrent_registry_access_by_lane_and_atomic_constraints();
+             });
     result_.ok = result_.diagnostics.empty();
     return result_;
   }
@@ -798,6 +802,78 @@ class RopVerifier {
       }
     }
   }
+
+  void verify_concurrent_registry_access_by_lane_and_atomic_constraints() {
+    constexpr const char* kPass =
+        "concurrent_registry_access_by_lane_and_atomic_constraints";
+
+    struct AccessState {
+      int lane = -1;
+      bool seen_atomic = false;
+      bool seen_non_atomic = false;
+      SourceLocation first_use;
+    };
+
+    for (const FunctionNode& function : module_.functions) {
+      std::map<std::string, AccessState> epoch_registry_access;
+
+      const auto flush_epoch = [&epoch_registry_access]() {
+        epoch_registry_access.clear();
+      };
+
+      for (const auto& operation : function.body.operations) {
+        if (operation->kind == Operation::Kind::Barrier ||
+            operation->kind == Operation::Kind::Phase) {
+          flush_epoch();
+          continue;
+        }
+
+        if (operation->kind != Operation::Kind::MapSurface) {
+          continue;
+        }
+
+        const auto* map_op = static_cast<const MapSurfaceOperation*>(operation.get());
+        if (map_op->lane < 0 || map_op->lane > 63) {
+          add_diag(map_op->location, kPass, "registry.lane.range.invalid",
+                   "registry lane must be in range 0..63 for concurrent access");
+          continue;
+        }
+
+        const bool is_atomic =
+            map_op->surfaceKind == MapSurfaceOperation::SurfaceKind::AtomicAdd ||
+            map_op->surfaceKind == MapSurfaceOperation::SurfaceKind::AtomicSub ||
+            map_op->surfaceKind == MapSurfaceOperation::SurfaceKind::AtomicXor;
+
+        auto [it, inserted] = epoch_registry_access.emplace(
+            map_op->rid, AccessState{map_op->lane, false, false, map_op->location});
+        AccessState& state = it->second;
+
+        if (!inserted && state.lane != map_op->lane &&
+            (!state.seen_atomic || !is_atomic)) {
+          add_diag(map_op->location, kPass, "registry.concurrent_lane_conflict",
+                   "RID '" + map_op->rid +
+                       "' accessed by multiple lanes in one phase/epoch without atomic-only semantics");
+        }
+
+        if (is_atomic) {
+          state.seen_atomic = true;
+          if (state.seen_non_atomic) {
+            add_diag(map_op->location, kPass, "atomic.constraints.mixed_access",
+                     "atomic and non-atomic MAP access to RID '" + map_op->rid +
+                         "' must be separated by phase/barrier");
+          }
+        } else {
+          state.seen_non_atomic = true;
+          if (state.seen_atomic) {
+            add_diag(map_op->location, kPass, "atomic.constraints.mixed_access",
+                     "non-atomic MAP access to RID '" + map_op->rid +
+                         "' cannot follow atomic access in same phase/epoch");
+          }
+        }
+      }
+    }
+  }
+
 
   void verify_rid_lane(const std::string& pass_name, const std::string& rid, int lane,
                        const SourceLocation& location,
