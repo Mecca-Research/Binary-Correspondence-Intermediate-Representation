@@ -3,6 +3,7 @@
 #include <string>
 #include <algorithm>
 #include <atomic>
+#include <stdexcept>
 
 #include "bcir/dialect.hpp"
 #include "bcir/lowering.hpp"
@@ -125,11 +126,63 @@ int main() {
 
   const bcir::GemExecuteResult execution = bcir::gem_execute(gem.get(), graph);
   if (execution.status != bcir::GemStatus::Ok || execution.executedNodes != 3 ||
-      execution_trace.load() != 111) {
+      execution_trace.load() != 111 || execution.telemetry.phaseStats.size() != 2 ||
+      execution.telemetry.registryStats.empty()) {
     std::cerr << "Expected GEM execute to process phase-scheduled graph"
               << std::endl;
     return EXIT_FAILURE;
   }
+
+  bcir::GemStatus recover_status = bcir::GemStatus::RuntimeError;
+  auto recover_runtime = bcir::gem_create({}, &recover_status, nullptr);
+  if (recover_runtime == nullptr || recover_status != bcir::GemStatus::Ok) {
+    std::cerr << "Expected recover runtime creation to succeed" << std::endl;
+    return EXIT_FAILURE;
+  }
+  recover_runtime->set_error_classifier([](const std::exception_ptr& ex) {
+    try {
+      if (ex != nullptr) {
+        std::rethrow_exception(ex);
+      }
+    } catch (const std::runtime_error&) {
+      return bcir::GemErrorClass::Recoverable;
+    } catch (...) {
+      return bcir::GemErrorClass::Internal;
+    }
+    return bcir::GemErrorClass::Internal;
+  });
+  recover_runtime->set_correction_hook(
+      [](const bcir::GemExecutionEvent&) { return true; });
+
+  std::atomic<int> retried{0};
+  bcir::GemGraph recover_graph;
+  recover_graph.nodes.push_back(
+      {0,
+       0,
+       {},
+       [&retried]() {
+         retried += 1;
+         if (retried.load() == 1) {
+           throw std::runtime_error("transient");
+         }
+       },
+       []() {},
+       1,
+       "rid.r1"});
+  recover_graph.nodes.push_back({1, 1, {0}, []() {}});
+
+  const bcir::GemExecuteResult recover_exec =
+      bcir::gem_execute(recover_runtime.get(), recover_graph);
+  if (recover_exec.status != bcir::GemStatus::Ok || recover_exec.executedNodes != 2 ||
+      recover_exec.telemetry.totalReexecuteCount != 1 ||
+      recover_exec.telemetry.events.size() != 1 ||
+      !recover_exec.telemetry.events.front().recovered) {
+    std::cerr << "Expected rollback/reexecute to recover transient node failure"
+              << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  bcir::gem_destroy(std::move(recover_runtime), nullptr);
 
   std::string destroy_message;
   if (bcir::gem_destroy(std::move(gem), &destroy_message) != bcir::GemStatus::Ok) {
