@@ -55,12 +55,14 @@ class Node {
 
 class Operation : public Node {
  public:
-  enum class Kind { LdSt, Binary, Lane, Phase, Barrier, MacroExpansion };
+  enum class Kind { LdSt, Binary, Lane, Phase, Barrier, MacroExpansion, MapSurface };
 
-  explicit Operation(Kind operation_kind) : kind(operation_kind) {}
+  explicit Operation(Kind operation_kind, SourceLocation loc = {})
+      : kind(operation_kind), location(loc) {}
   virtual ~Operation() = default;
 
   Kind kind;
+  SourceLocation location;
 };
 
 class BlockNode : public Node {
@@ -80,6 +82,7 @@ class MacroDefinitionNode : public Node {
   std::string name;
   std::vector<std::string> params;
   BlockNode body;
+  SourceLocation location;
 };
 
 class ModuleNode : public Node {
@@ -91,8 +94,8 @@ class ModuleNode : public Node {
 
 class LdStOperation final : public Operation {
  public:
-  explicit LdStOperation(bool is_load)
-      : Operation(Kind::LdSt), isLoad(is_load) {}
+  explicit LdStOperation(bool is_load, SourceLocation loc = {})
+      : Operation(Kind::LdSt, loc), isLoad(is_load) {}
 
   bool isLoad;
   std::string rid;
@@ -103,7 +106,7 @@ class LdStOperation final : public Operation {
 
 class BinaryOpOperation final : public Operation {
  public:
-  BinaryOpOperation() : Operation(Kind::Binary) {}
+  explicit BinaryOpOperation(SourceLocation loc = {}) : Operation(Kind::Binary, loc) {}
 
   std::string opcode;
   std::string dst;
@@ -116,7 +119,7 @@ class BinaryOpOperation final : public Operation {
 
 class LaneOpOperation final : public Operation {
  public:
-  LaneOpOperation() : Operation(Kind::Lane) {}
+  explicit LaneOpOperation(SourceLocation loc = {}) : Operation(Kind::Lane, loc) {}
 
   std::string opcode;
   std::string rid;
@@ -125,24 +128,38 @@ class LaneOpOperation final : public Operation {
 
 class PhaseOperation final : public Operation {
  public:
-  PhaseOperation() : Operation(Kind::Phase) {}
+  explicit PhaseOperation(SourceLocation loc = {}) : Operation(Kind::Phase, loc) {}
 
   int phase = 0;
 };
 
 class BarrierOperation final : public Operation {
  public:
-  BarrierOperation() : Operation(Kind::Barrier) {}
+  explicit BarrierOperation(SourceLocation loc = {}) : Operation(Kind::Barrier, loc) {}
 
   std::string scope;
 };
 
 class MacroExpansionOperation final : public Operation {
  public:
-  MacroExpansionOperation() : Operation(Kind::MacroExpansion) {}
+  explicit MacroExpansionOperation(SourceLocation loc = {})
+      : Operation(Kind::MacroExpansion, loc) {}
 
   std::string macroName;
   std::vector<std::string> args;
+};
+
+class MapSurfaceOperation final : public Operation {
+ public:
+  enum class SurfaceKind { Load, Store, AtomicAdd, AtomicSub, AtomicXor };
+
+  explicit MapSurfaceOperation(SourceLocation loc = {})
+      : Operation(Kind::MapSurface, loc) {}
+
+  SurfaceKind surfaceKind = SurfaceKind::Load;
+  std::string rid;
+  int lane = 0;
+  std::string target;
 };
 
 struct ParseResult {
