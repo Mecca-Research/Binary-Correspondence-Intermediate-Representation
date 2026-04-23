@@ -2,6 +2,7 @@
 #include <iostream>
 #include <string>
 #include <algorithm>
+#include <atomic>
 
 #include "bcir/dialect.hpp"
 #include "bcir/lowering.hpp"
@@ -96,6 +97,43 @@ int main() {
   const bool banners_ok = !dialect.empty() && !lowering.empty() && !runtime.empty();
   if (!banners_ok) {
     std::cerr << "BCIR component banners must not be empty" << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  bcir::GemStatus create_status = bcir::GemStatus::RuntimeError;
+  std::string create_message;
+  bcir::GemCreateOptions gem_options;
+  gem_options.workerThreads = 2;
+  auto gem = bcir::gem_create(gem_options, &create_status, &create_message);
+  if (gem == nullptr || create_status != bcir::GemStatus::Ok) {
+    std::cerr << "Expected gem runtime creation to succeed: " << create_message
+              << std::endl;
+    return EXIT_FAILURE;
+  }
+  gem->registry().allocate("rid.r0", 32);
+  if (gem->registry().bytes_for("rid.r0") != 32 ||
+      gem->registry().lookup("rid.r0") == nullptr) {
+    std::cerr << "Expected registry allocation/lookup to succeed" << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  std::atomic<int> execution_trace{0};
+  bcir::GemGraph graph;
+  graph.nodes.push_back({0, 0, {}, [&execution_trace]() { execution_trace += 1; }});
+  graph.nodes.push_back({1, 0, {}, [&execution_trace]() { execution_trace += 10; }});
+  graph.nodes.push_back({2, 1, {0, 1}, [&execution_trace]() { execution_trace += 100; }});
+
+  const bcir::GemExecuteResult execution = bcir::gem_execute(gem.get(), graph);
+  if (execution.status != bcir::GemStatus::Ok || execution.executedNodes != 3 ||
+      execution_trace.load() != 111) {
+    std::cerr << "Expected GEM execute to process phase-scheduled graph"
+              << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  std::string destroy_message;
+  if (bcir::gem_destroy(std::move(gem), &destroy_message) != bcir::GemStatus::Ok) {
+    std::cerr << "Expected GEM destroy to be thread-safe and successful" << std::endl;
     return EXIT_FAILURE;
   }
 

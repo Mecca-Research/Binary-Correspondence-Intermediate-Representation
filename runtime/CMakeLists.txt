@@ -12,11 +12,14 @@ add_library(gem-runtime
   src/runtime.cpp)
 add_library(BCIR::gem-runtime ALIAS gem-runtime)
 
+find_package(Threads REQUIRED)
+
 target_include_directories(gem-runtime
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(gem-runtime PUBLIC cxx_std_17)
+target_link_libraries(gem-runtime PUBLIC Threads::Threads)
 
 # Lowering uses runtime interfaces to schedule executable graphs.
 target_link_libraries(bcir-lowering PUBLIC gem-runtime)
