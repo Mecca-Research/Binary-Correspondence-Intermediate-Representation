@@ -83,6 +83,7 @@ class Parser {
 
   MacroDefinitionNode parse_macro() {
     MacroDefinitionNode macro;
+    macro.location = peek().location;
     macro.name = expect_identifier("expected macro name");
     macro.params = parse_params(/*for_macro=*/true);
     macro.body = parse_block();
@@ -149,6 +150,21 @@ class Parser {
         block.operations.push_back(parse_barrier());
       } else if (match_keyword("expand")) {
         block.operations.push_back(parse_macro_expansion());
+      } else if (match_keyword("map_load")) {
+        block.operations.push_back(
+            parse_map_surface(MapSurfaceOperation::SurfaceKind::Load));
+      } else if (match_keyword("map_store")) {
+        block.operations.push_back(
+            parse_map_surface(MapSurfaceOperation::SurfaceKind::Store));
+      } else if (match_keyword("map_atomic_add")) {
+        block.operations.push_back(
+            parse_map_surface(MapSurfaceOperation::SurfaceKind::AtomicAdd));
+      } else if (match_keyword("map_atomic_sub")) {
+        block.operations.push_back(
+            parse_map_surface(MapSurfaceOperation::SurfaceKind::AtomicSub));
+      } else if (match_keyword("map_atomic_xor")) {
+        block.operations.push_back(
+            parse_map_surface(MapSurfaceOperation::SurfaceKind::AtomicXor));
       } else {
         add_diag(peek().location, "unknown operation in block");
         synchronize_statement();
@@ -160,7 +176,7 @@ class Parser {
   }
 
   std::unique_ptr<Operation> parse_ld_st(bool is_load) {
-    auto operation = std::make_unique<LdStOperation>(is_load);
+    auto operation = std::make_unique<LdStOperation>(is_load, previous().location);
 
     consume_keyword("rid", "expected 'rid' in ld/st operation");
     consume(TokenKind::Equal, "expected '=' after rid");
@@ -193,7 +209,7 @@ class Parser {
   }
 
   std::unique_ptr<Operation> parse_bin() {
-    auto operation = std::make_unique<BinaryOpOperation>();
+    auto operation = std::make_unique<BinaryOpOperation>(previous().location);
     operation->opcode = expect_identifier("expected binary opcode");
 
     const auto dst_with_type = parse_register_with_optional_type();
@@ -218,7 +234,7 @@ class Parser {
   }
 
   std::unique_ptr<Operation> parse_lane_op() {
-    auto operation = std::make_unique<LaneOpOperation>();
+    auto operation = std::make_unique<LaneOpOperation>(previous().location);
     operation->opcode = expect_identifier("expected lane operation opcode");
     operation->rid = expect_identifier("expected RID operand for lane op");
 
@@ -235,7 +251,7 @@ class Parser {
   }
 
   std::unique_ptr<Operation> parse_phase() {
-    auto operation = std::make_unique<PhaseOperation>();
+    auto operation = std::make_unique<PhaseOperation>(previous().location);
     Token token = advance();
     if (token.kind != TokenKind::Number) {
       add_diag(token.location, "invalid phase directive: expected integer");
@@ -252,7 +268,7 @@ class Parser {
   }
 
   std::unique_ptr<Operation> parse_barrier() {
-    auto operation = std::make_unique<BarrierOperation>();
+    auto operation = std::make_unique<BarrierOperation>(previous().location);
     if (!check(TokenKind::Semicolon)) {
       operation->scope = expect_identifier("expected optional barrier scope");
     }
@@ -261,7 +277,7 @@ class Parser {
   }
 
   std::unique_ptr<Operation> parse_macro_expansion() {
-    auto operation = std::make_unique<MacroExpansionOperation>();
+    auto operation = std::make_unique<MacroExpansionOperation>(previous().location);
     operation->macroName = expect_identifier("expected macro name in expansion");
 
     if (!consume(TokenKind::LParen,
@@ -571,6 +587,29 @@ class Parser {
     return false;
   }
 
+  std::unique_ptr<Operation> parse_map_surface(MapSurfaceOperation::SurfaceKind kind) {
+    auto operation = std::make_unique<MapSurfaceOperation>(previous().location);
+    operation->surfaceKind = kind;
+
+    consume_keyword("rid", "expected 'rid' in MAP operation");
+    consume(TokenKind::Equal, "expected '=' after rid");
+    operation->rid = expect_identifier("expected RID in MAP operation");
+
+    consume_keyword("lane", "expected 'lane' in MAP operation");
+    consume(TokenKind::Equal, "expected '=' after lane");
+    const Token lane_token = advance();
+    operation->lane = parse_lane_token(lane_token, /*for_directive=*/true);
+
+    if (kind == MapSurfaceOperation::SurfaceKind::Store) {
+      consume_keyword("to", "expected 'to' in MAP store operation");
+    } else {
+      consume_keyword("from", "expected 'from' in MAP operation");
+    }
+    operation->target = expect_identifier("expected MAP target");
+    consume(TokenKind::Semicolon, "expected ';' after MAP operation");
+    return operation;
+  }
+
   std::string expect_identifier(std::string_view message) {
     if (check(TokenKind::Identifier)) {
       return advance().lexeme;
@@ -678,12 +717,12 @@ class RopVerifier {
         }
         const auto* phase_op = static_cast<const PhaseOperation*>(operation.get());
         if (phase_op->phase < 0 || phase_op->phase > 3) {
-          add_diag({1, 1, 0}, kPass, "phase.annotation.invalid",
+          add_diag(phase_op->location, kPass, "phase.annotation.invalid",
                    "phase annotation must be 0..3");
           continue;
         }
         if (current_phase > phase_op->phase) {
-          add_diag({1, 1, 0}, kPass, "phase.monotonicity.violation",
+          add_diag(phase_op->location, kPass, "phase.monotonicity.violation",
                    "phase directives must be monotonic within a function");
         }
         current_phase = phase_op->phase;
@@ -698,7 +737,7 @@ class RopVerifier {
       for (const auto& operation : function.body.operations) {
         if (operation->kind == Operation::Kind::LdSt) {
           const auto* ld_st = static_cast<const LdStOperation*>(operation.get());
-          verify_rid_lane(kPass, ld_st->rid, ld_st->lane, rid_lanes);
+          verify_rid_lane(kPass, ld_st->rid, ld_st->lane, ld_st->location, rid_lanes);
         }
       }
     }
@@ -713,7 +752,7 @@ class RopVerifier {
         }
         const auto* ld_st = static_cast<const LdStOperation*>(operation.get());
         if (ld_st->lane < 0 || ld_st->lane > 63) {
-          add_diag({1, 1, 0}, kPass, "lane.range.invalid",
+          add_diag(ld_st->location, kPass, "lane.range.invalid",
                    "lane for memory access must be in range 0..63");
           continue;
         }
@@ -722,7 +761,7 @@ class RopVerifier {
           continue;
         }
         if ((*offset % 2) != (ld_st->lane % 2)) {
-          add_diag({1, 1, 0}, kPass, "alignment.illegal_for_lane",
+          add_diag(ld_st->location, kPass, "alignment.illegal_for_lane",
                    "memory offset alignment is illegal for lane parity");
         }
       }
@@ -744,32 +783,35 @@ class RopVerifier {
           continue;
         }
         if (operation->kind == Operation::Kind::Phase) {
-          if (seen_phase && has_pending_memory_hazard) {
-            add_diag({1, 1, 0}, kPass, "barrier.missing_before_phase",
+                if (seen_phase && has_pending_memory_hazard) {
+            add_diag(operation->location, kPass, "barrier.missing_before_phase",
                      "phase transition requires barrier after memory hazard");
           }
           seen_phase = true;
         }
       }
       if (has_pending_memory_hazard) {
-        add_diag({1, 1, 0}, kPass, "barrier.missing_at_function_end",
+        add_diag(function.body.operations.empty() ? SourceLocation{} :
+                     function.body.operations.back()->location,
+                 kPass, "barrier.missing_at_function_end",
                  "function ends with unresolved memory hazard; insert barrier");
       }
     }
   }
 
   void verify_rid_lane(const std::string& pass_name, const std::string& rid, int lane,
+                       const SourceLocation& location,
                        std::map<std::string, RidState>& rid_lanes) {
     if (lane < 0) {
       return;
     }
     const auto it = rid_lanes.find(rid);
     if (it == rid_lanes.end()) {
-      rid_lanes.emplace(rid, RidState{lane, {1, 1, 0}});
+      rid_lanes.emplace(rid, RidState{lane, location});
       return;
     }
     if (it->second.lane != lane) {
-      add_diag({1, 1, 0}, pass_name, "lane.inconsistent_for_rid",
+      add_diag(location, pass_name, "lane.inconsistent_for_rid",
                "RID '" + rid + "' used with multiple lanes");
     }
   }
