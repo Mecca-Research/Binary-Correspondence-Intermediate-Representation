@@ -1,7 +1,12 @@
 #include "bcir/dialect.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <map>
+#include <optional>
 #include <regex>
+#include <set>
+#include <sstream>
 #include <utility>
 
 namespace bcir {
@@ -52,8 +57,17 @@ class Parser {
   }
 
  private:
+  struct RegistryType {
+    std::string laneEnum;
+    int width = 0;
+    std::optional<int> tileWidth;
+    std::string dtype;
+  };
+
   std::vector<Token> tokens;
   std::vector<Diagnostic> diagnostics;
+  std::map<std::string, RegistryType> register_types;
+  std::map<std::string, RegistryType> memory_types;
   std::size_t current = 0;
 
   MacroDefinitionNode parse_macro() {
@@ -139,13 +153,14 @@ class Parser {
 
     consume_keyword("rid", "expected 'rid' in ld/st operation");
     consume(TokenKind::Equal, "expected '=' after rid");
-    const Token rid_token = advance();
-    operation->rid = rid_token.lexeme;
+    const auto rid_with_type = parse_register_with_optional_type();
+    operation->rid = rid_with_type.first;
+    operation->registryType = rid_with_type.second;
+
     static const std::regex rid_regex(R"(^r[0-9]+$)");
-    if (rid_token.kind != TokenKind::Identifier ||
-        !std::regex_match(rid_token.lexeme, rid_regex)) {
-      add_diag(rid_token.location,
-               "malformed RID token '" + rid_token.lexeme + "'");
+    if (!std::regex_match(operation->rid, rid_regex)) {
+      add_diag(previous().location,
+               "malformed RID token '" + operation->rid + "'");
     }
 
     consume_keyword("lane", "expected 'lane' in ld/st operation");
@@ -160,6 +175,8 @@ class Parser {
     }
 
     operation->target = expect_identifier("expected load/store target");
+    validate_load_store_type_compatibility(*operation, previous().location);
+
     consume(TokenKind::Semicolon, "expected ';' after ld/st operation");
     return operation;
   }
@@ -167,11 +184,24 @@ class Parser {
   std::unique_ptr<Operation> parse_bin() {
     auto operation = std::make_unique<BinaryOpOperation>();
     operation->opcode = expect_identifier("expected binary opcode");
-    operation->dst = expect_identifier("expected binary destination");
+
+    const auto dst_with_type = parse_register_with_optional_type();
+    operation->dst = dst_with_type.first;
+    operation->dstType = dst_with_type.second;
+
     consume(TokenKind::Comma, "expected ',' after destination");
-    operation->lhs = expect_identifier("expected left-hand side operand");
+
+    const auto lhs_with_type = parse_register_with_optional_type();
+    operation->lhs = lhs_with_type.first;
+    operation->lhsType = lhs_with_type.second;
+
     consume(TokenKind::Comma, "expected ',' after left-hand side operand");
-    operation->rhs = expect_identifier("expected right-hand side operand");
+
+    const auto rhs_with_type = parse_register_with_optional_type();
+    operation->rhs = rhs_with_type.first;
+    operation->rhsType = rhs_with_type.second;
+
+    validate_binary_types(*operation, previous().location);
     consume(TokenKind::Semicolon, "expected ';' after binary operation");
     return operation;
   }
@@ -238,6 +268,231 @@ class Parser {
     consume(TokenKind::RParen, "expected ')' after macro arguments");
     consume(TokenKind::Semicolon, "expected ';' after macro expansion");
     return operation;
+  }
+
+  std::pair<std::string, std::optional<std::string>> parse_register_with_optional_type() {
+    const std::string rid = expect_identifier("expected register operand");
+    std::optional<std::string> type_text;
+    if (match(TokenKind::Less)) {
+      type_text = parse_registry_type_literal(previous().location);
+    }
+    return {rid, type_text};
+  }
+
+  std::string parse_registry_type_literal(const SourceLocation& start) {
+    std::vector<std::string> parts;
+    while (!check(TokenKind::Greater) && !is_at_end()) {
+      if (check(TokenKind::Identifier) || check(TokenKind::Number)) {
+        parts.push_back(advance().lexeme);
+      } else {
+        add_diag(peek().location, "invalid token inside registry type literal");
+        advance();
+      }
+    }
+
+    consume(TokenKind::Greater, "expected '>' to terminate registry type");
+    if (parts.empty()) {
+      add_diag(start, "empty registry type literal");
+      return {};
+    }
+
+    std::vector<std::string> compact;
+    for (const std::string& token : parts) {
+      if (token != "x") {
+        compact.push_back(token);
+      }
+    }
+
+    std::string type_text;
+    for (std::size_t i = 0; i < compact.size(); ++i) {
+      if (i > 0) {
+        type_text += ":";
+      }
+      type_text += compact[i];
+    }
+    return type_text;
+  }
+
+  std::optional<RegistryType> parse_registry_type_string(
+      const std::string& type_text, const SourceLocation& location) {
+    std::istringstream stream(type_text);
+    std::vector<std::string> parts;
+    std::string part;
+    while (std::getline(stream, part, ':')) {
+      parts.push_back(part);
+    }
+
+    if (parts.size() != 3 && parts.size() != 4) {
+      add_diag(location, "invalid registry type form '" + type_text +
+                             "': expected <lane x N x dtype> or tile variant");
+      return std::nullopt;
+    }
+
+    static const std::set<std::string> kLaneEnums = {"U", "UX", "T", "GGG", "A", "H"};
+    if (kLaneEnums.find(parts[0]) == kLaneEnums.end()) {
+      add_diag(location, "invalid lane enum '" + parts[0] +
+                             "' in registry type; expected one of U/UX/T/GGG/A/H");
+      return std::nullopt;
+    }
+
+    auto parse_width = [&](const std::string& width_text, const std::string& label)
+        -> std::optional<int> {
+      if (width_text.empty() ||
+          !std::all_of(width_text.begin(), width_text.end(), [](char ch) {
+            return std::isdigit(static_cast<unsigned char>(ch));
+          })) {
+        add_diag(location, "invalid width '" + width_text + "' for " + label +
+                               " in registry type '" + type_text + "'");
+        return std::nullopt;
+      }
+      const int width = std::stoi(width_text);
+      if (width < 1 || width > 64) {
+        add_diag(location, "invalid width constraint '" + width_text +
+                               "' in registry type '" + type_text +
+                               "': width must be in range 1..64");
+        return std::nullopt;
+      }
+      return width;
+    };
+
+    const std::optional<int> width = parse_width(parts[1], "lane");
+    if (!width.has_value()) {
+      return std::nullopt;
+    }
+
+    std::optional<int> tile_width;
+    std::string dtype = parts.back();
+    if (parts.size() == 4) {
+      tile_width = parse_width(parts[2], "tile");
+      if (!tile_width.has_value()) {
+        return std::nullopt;
+      }
+    }
+
+    static const std::set<std::string> kDtypes = {"i8",  "i16", "i32", "i64", "u8",  "u16",
+                                                  "u32", "u64", "f16", "f32", "f64", "bf16"};
+    if (kDtypes.find(dtype) == kDtypes.end()) {
+      add_diag(location, "invalid data type '" + dtype +
+                             "' in registry type; expected integer/float scalar dtype");
+      return std::nullopt;
+    }
+
+    return RegistryType{parts[0], *width, tile_width, dtype};
+  }
+
+  std::string registry_type_to_text(const RegistryType& type) const {
+    if (type.tileWidth.has_value()) {
+      return "<" + type.laneEnum + " x " + std::to_string(type.width) + " x " +
+             std::to_string(*type.tileWidth) + " x " + type.dtype + ">";
+    }
+    return "<" + type.laneEnum + " x " + std::to_string(type.width) + " x " +
+           type.dtype + ">";
+  }
+
+  std::optional<RegistryType> resolve_register_type(
+      const std::string& rid, const std::optional<std::string>& explicit_type,
+      const SourceLocation& location) {
+    static const std::regex rid_regex(R"(^r[0-9]+$)");
+    if (explicit_type.has_value()) {
+      const std::optional<RegistryType> parsed =
+          parse_registry_type_string(*explicit_type, location);
+      if (parsed.has_value() && std::regex_match(rid, rid_regex)) {
+        register_types[rid] = *parsed;
+      }
+      return parsed;
+    }
+    if (!std::regex_match(rid, rid_regex)) {
+      return std::nullopt;
+    }
+
+    const auto it = register_types.find(rid);
+    if (it == register_types.end()) {
+      add_diag(location, "missing registry type for '" + rid +
+                             "'; annotate register as <lane x N x dtype> or tile variant");
+      return std::nullopt;
+    }
+    return it->second;
+  }
+
+  void validate_binary_types(const BinaryOpOperation& operation,
+                             const SourceLocation& location) {
+    static const std::regex rid_regex(R"(^r[0-9]+$)");
+    const bool lhs_is_rid = std::regex_match(operation.lhs, rid_regex);
+    const bool rhs_is_rid = std::regex_match(operation.rhs, rid_regex);
+    const bool dst_is_rid = std::regex_match(operation.dst, rid_regex);
+    if (!lhs_is_rid || !rhs_is_rid || !dst_is_rid) {
+      return;
+    }
+
+    const std::optional<RegistryType> lhs_type =
+        resolve_register_type(operation.lhs, operation.lhsType, location);
+    const std::optional<RegistryType> rhs_type =
+        resolve_register_type(operation.rhs, operation.rhsType, location);
+
+    if (!lhs_type.has_value() || !rhs_type.has_value()) {
+      return;
+    }
+
+    if (lhs_type->laneEnum != rhs_type->laneEnum) {
+      add_diag(location, "invalid cross-lane arithmetic for opcode '" + operation.opcode +
+                             "': lhs lane enum " + lhs_type->laneEnum +
+                             " is incompatible with rhs lane enum " + rhs_type->laneEnum);
+      return;
+    }
+
+    if (lhs_type->width != rhs_type->width ||
+        lhs_type->tileWidth != rhs_type->tileWidth ||
+        lhs_type->dtype != rhs_type->dtype) {
+      add_diag(location, "binary operand type mismatch for opcode '" + operation.opcode +
+                             "': " + registry_type_to_text(*lhs_type) + " vs " +
+                             registry_type_to_text(*rhs_type));
+      return;
+    }
+
+    const std::optional<RegistryType> dst_type =
+        resolve_register_type(operation.dst, operation.dstType, location);
+    if (!dst_type.has_value()) {
+      return;
+    }
+
+    if (dst_type->laneEnum != lhs_type->laneEnum ||
+        dst_type->width != lhs_type->width ||
+        dst_type->tileWidth != lhs_type->tileWidth ||
+        dst_type->dtype != lhs_type->dtype) {
+      add_diag(location, "binary result type mismatch for opcode '" + operation.opcode +
+                             "': result " + registry_type_to_text(*dst_type) +
+                             " is incompatible with operand type " +
+                             registry_type_to_text(*lhs_type));
+      return;
+    }
+
+    register_types[operation.dst] = *lhs_type;
+  }
+
+  void validate_load_store_type_compatibility(const LdStOperation& operation,
+                                              const SourceLocation& location) {
+    const std::optional<RegistryType> rid_type =
+        resolve_register_type(operation.rid, operation.registryType, location);
+    if (!rid_type.has_value()) {
+      return;
+    }
+
+    auto memory_it = memory_types.find(operation.target);
+    if (memory_it == memory_types.end()) {
+      memory_types[operation.target] = *rid_type;
+      return;
+    }
+
+    const RegistryType& expected = memory_it->second;
+    if (expected.laneEnum != rid_type->laneEnum ||
+        expected.width != rid_type->width ||
+        expected.tileWidth != rid_type->tileWidth ||
+        expected.dtype != rid_type->dtype) {
+      const std::string op_name = operation.isLoad ? "load" : "store";
+      add_diag(location, op_name + " type mismatch on '" + operation.target + "': expected " +
+                             registry_type_to_text(expected) + " but got " +
+                             registry_type_to_text(*rid_type));
+    }
   }
 
   int parse_lane_token(const Token& token, bool for_directive) {
@@ -446,6 +701,12 @@ std::vector<Token> tokenize_dialect(std::string_view source,
         break;
       case '=':
         emit(TokenKind::Equal, "=", loc, &tokens);
+        break;
+      case '<':
+        emit(TokenKind::Less, "<", loc, &tokens);
+        break;
+      case '>':
+        emit(TokenKind::Greater, ">", loc, &tokens);
         break;
       default:
         add_diag(loc, "unexpected character '" + std::string(1, ch) + "'");
