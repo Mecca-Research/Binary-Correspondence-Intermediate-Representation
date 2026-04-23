@@ -1,0 +1,12 @@
+module t {
+  macro fuse(a, b) {
+    bin add r2, a, b;
+    lane shuffle r2 lane3;
+  }
+
+  fn main() {
+    ld rid=r2<U x 4 x i32> lane=lane3 from mem2;
+    ld rid=r3<U x 4 x i32> lane=lane3 from mem3;
+    expand fuse(r2, r3);
+  }
+}
