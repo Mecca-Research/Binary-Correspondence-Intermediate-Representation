@@ -38,8 +38,10 @@ module test {
   }
 
   fn main() {
-    ld rid=r0 lane=lane2 from mem0;
-    st rid=r1 lane=lane5 to mem1;
+    ld rid=r0<U x 8 x i32> lane=lane2 from mem0;
+    ld rid=r1<U x 8 x i32> lane=lane5 from mem1;
+    st rid=r1<U x 8 x i32> lane=lane5 to mem1;
+    bin add r2<U x 8 x i32>, r0<U x 8 x i32>, r1<U x 8 x i32>;
     lane shuffle r1 lane7;
     phase 2;
     barrier workgroup;
@@ -61,7 +63,13 @@ module test {
   }
 
   fn main() {
-    ld rid=rx lane=laneZZ from mem0;
+    ld rid=rx<Z x 8 x i32> lane=laneZZ from mem0;
+    ld rid=r0<U x 0 x i32> lane=lane1 from mem2;
+    ld rid=r1<U x 8 x nope> lane=lane2 from mem3;
+    ld rid=r2<UX x 4 x i16> lane=lane3 from mem4;
+    ld rid=r3<T x 4 x i16> lane=lane4 from mem5;
+    bin add r4<UX x 4 x i16>, r2<UX x 4 x i16>, r3<T x 4 x i16>;
+    st rid=r3<T x 4 x i16> lane=lane4 to mem4;
     lane rotate x lane77;
   }
 }
@@ -72,7 +80,12 @@ module test {
       !has_diagnostic_substring(parsed_invalid, "malformed lane token") ||
       !has_diagnostic_substring(parsed_invalid, "malformed macro params") ||
       !has_diagnostic_substring(parsed_invalid, "invalid phase directive") ||
-      !has_diagnostic_substring(parsed_invalid, "invalid lane directive")) {
+      !has_diagnostic_substring(parsed_invalid, "invalid lane directive") ||
+      !has_diagnostic_substring(parsed_invalid, "invalid lane enum") ||
+      !has_diagnostic_substring(parsed_invalid, "invalid width constraint") ||
+      !has_diagnostic_substring(parsed_invalid, "invalid data type") ||
+      !has_diagnostic_substring(parsed_invalid, "invalid cross-lane arithmetic") ||
+      !has_diagnostic_substring(parsed_invalid, "type mismatch")) {
     std::cerr << "Expected parser diagnostics were not emitted" << std::endl;
     return EXIT_FAILURE;
   }

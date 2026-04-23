@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -31,6 +32,8 @@ enum class TokenKind {
   Comma,
   Semicolon,
   Equal,
+  Less,
+  Greater,
   EndOfFile,
 };
 
@@ -91,6 +94,7 @@ class LdStOperation final : public Operation {
 
   bool isLoad;
   std::string rid;
+  std::optional<std::string> registryType;
   int lane = 0;
   std::string target;
 };
@@ -101,8 +105,11 @@ class BinaryOpOperation final : public Operation {
 
   std::string opcode;
   std::string dst;
+  std::optional<std::string> dstType;
   std::string lhs;
+  std::optional<std::string> lhsType;
   std::string rhs;
+  std::optional<std::string> rhsType;
 };
 
 class LaneOpOperation final : public Operation {
