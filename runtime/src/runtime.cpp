@@ -4,6 +4,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <stdexcept>
 #include <thread>
 
 namespace bcir {
@@ -14,6 +15,9 @@ struct LoadedNode {
   std::size_t id = 0;
   std::size_t phase = 0;
   std::function<void()> work;
+  std::function<void()> rollback;
+  std::size_t max_reexecute_attempts = 0;
+  std::string registry;
   std::vector<std::size_t> successors;
   std::size_t indegree = 0;
 };
@@ -23,9 +27,7 @@ struct LoadedGraph {
   std::vector<std::size_t> phase_order;
 };
 
-bool validate_graph(const GemGraph& graph,
-                    LoadedGraph* loaded,
-                    std::string* message) {
+bool validate_graph(const GemGraph& graph, LoadedGraph* loaded, std::string* message) {
   if (graph.nodes.empty()) {
     if (message != nullptr) {
       *message = "graph is empty";
@@ -55,6 +57,9 @@ bool validate_graph(const GemGraph& graph,
     loaded_node.id = node.id;
     loaded_node.phase = node.phase;
     loaded_node.work = node.work;
+    loaded_node.rollback = node.rollback;
+    loaded_node.max_reexecute_attempts = node.maxReexecuteAttempts;
+    loaded_node.registry = node.registry;
     loaded->nodes.push_back(std::move(loaded_node));
     seen_ids.push_back(node.phase);
   }
@@ -89,28 +94,65 @@ bool validate_graph(const GemGraph& graph,
   return true;
 }
 
+std::string classify_exception_message(const std::exception_ptr& ex) {
+  if (ex == nullptr) {
+    return "unknown execution failure";
+  }
+  try {
+    std::rethrow_exception(ex);
+  } catch (const std::exception& e) {
+    return e.what();
+  } catch (...) {
+    return "non-standard exception";
+  }
+}
+
+GemErrorClass default_classify(const std::exception_ptr& ex) {
+  if (ex == nullptr) {
+    return GemErrorClass::Internal;
+  }
+  try {
+    std::rethrow_exception(ex);
+  } catch (const std::invalid_argument&) {
+    return GemErrorClass::InvalidInput;
+  } catch (const std::runtime_error&) {
+    return GemErrorClass::Recoverable;
+  } catch (...) {
+    return GemErrorClass::Internal;
+  }
+}
+
 }  // namespace
 
-std::string runtime_component_banner() {
-  return "gem-runtime: graph execution engine";
-}
+std::string runtime_component_banner() { return "gem-runtime: graph execution engine"; }
 
 std::uint8_t* GemRegistryManager::allocate(std::string name, std::size_t bytes) {
   std::lock_guard<std::mutex> lock(mutex_);
   Allocation allocation;
   allocation.bytes.assign(bytes, 0);
   std::uint8_t* ptr = allocation.bytes.data();
-  allocations_[std::move(name)] = std::move(allocation);
+  allocations_[name] = std::move(allocation);
+  auto& stat = stats_[name];
+  stat.name = name;
+  stat.allocations += 1;
+  stat.bytes = bytes;
   return ptr;
 }
 
 bool GemRegistryManager::deallocate(const std::string& name) {
   std::lock_guard<std::mutex> lock(mutex_);
+  auto& stat = stats_[name];
+  stat.name = name;
+  stat.deallocations += 1;
+  stat.bytes = 0;
   return allocations_.erase(name) > 0;
 }
 
 std::uint8_t* GemRegistryManager::lookup(const std::string& name) {
   std::lock_guard<std::mutex> lock(mutex_);
+  auto& stat = stats_[name];
+  stat.name = name;
+  stat.lookups += 1;
   auto it = allocations_.find(name);
   if (it == allocations_.end()) {
     return nullptr;
@@ -125,6 +167,19 @@ std::size_t GemRegistryManager::bytes_for(const std::string& name) const {
     return 0;
   }
   return it->second.bytes.size();
+}
+
+std::vector<GemRegistryStats> GemRegistryManager::stats() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<GemRegistryStats> out;
+  out.reserve(stats_.size());
+  for (const auto& [_, stat] : stats_) {
+    out.push_back(stat);
+  }
+  std::sort(out.begin(), out.end(), [](const GemRegistryStats& lhs, const GemRegistryStats& rhs) {
+    return lhs.name < rhs.name;
+  });
+  return out;
 }
 
 struct GemRuntime::Impl {
@@ -150,11 +205,19 @@ struct GemRuntime::Impl {
   std::size_t active_phase = 0;
   std::size_t outstanding_phase_nodes = 0;
   std::size_t active_workers = 0;
-  std::size_t completed_phase_nodes = 0;
   std::size_t executed_in_run = 0;
+  std::size_t successful_nodes_in_run = 0;
+  bool execution_failed = false;
+  std::string failure_message;
   LoadedGraph graph;
   std::unordered_map<std::size_t, PhaseWorklist> phase_worklists;
   std::vector<std::thread> workers;
+
+  GemExecutionTelemetry telemetry;
+  std::unordered_map<std::size_t, std::size_t> phase_to_stat_index;
+  std::unordered_map<std::size_t, std::chrono::steady_clock::time_point> phase_starts;
+  GemErrorClassifier classifier = default_classify;
+  GemCorrectionHook correction_hook;
 
   void start_workers() {
     for (std::size_t i = 0; i < worker_count; ++i) {
@@ -164,14 +227,14 @@ struct GemRuntime::Impl {
 
   void worker_loop() {
     while (true) {
-      std::function<void()> work;
+      std::size_t node_index = 0;
       {
         std::unique_lock<std::mutex> lock(mutex);
         cv.wait(lock, [this]() {
           if (shutdown_requested) {
             return true;
           }
-          if (!execute_active) {
+          if (!execute_active || execution_failed) {
             return false;
           }
           if (deterministic_ordering && active_workers > 0) {
@@ -186,32 +249,85 @@ struct GemRuntime::Impl {
         }
 
         auto phase_it = phase_worklists.find(active_phase);
-        if (phase_it == phase_worklists.end() || phase_it->second.queue.empty()) {
+        if (phase_it == phase_worklists.end() || phase_it->second.queue.empty() || execution_failed) {
           continue;
         }
 
-        const std::size_t node_index = phase_it->second.queue.front();
+        node_index = phase_it->second.queue.front();
         phase_it->second.queue.pop_front();
-        work = graph.nodes[node_index].work;
         active_workers += 1;
       }
 
-      try {
-        work();
-      } catch (...) {
-        // Runtime keeps progress accounting coherent even when node work throws.
+      bool success = false;
+      std::size_t attempt = 0;
+      while (!success) {
+        {
+          std::lock_guard<std::mutex> lock(mutex);
+          executed_in_run += 1;
+          telemetry.phaseStats[phase_to_stat_index[graph.nodes[node_index].phase]].attemptedNodes += 1;
+        }
+
+        try {
+          graph.nodes[node_index].work();
+          success = true;
+        } catch (...) {
+          const std::exception_ptr ex = std::current_exception();
+          GemExecutionEvent event;
+          event.nodeId = graph.nodes[node_index].id;
+          event.phase = graph.nodes[node_index].phase;
+          event.attempt = attempt + 1;
+          event.classification = classifier ? classifier(ex) : default_classify(ex);
+          event.message = classify_exception_message(ex);
+
+          bool correction_applied = false;
+          if (correction_hook) {
+            correction_applied = correction_hook(event);
+          }
+          event.correctionApplied = correction_applied;
+
+          const bool recoverable = event.classification == GemErrorClass::Recoverable;
+          const bool can_retry = recoverable && correction_applied &&
+                                 attempt < graph.nodes[node_index].max_reexecute_attempts;
+          if (can_retry) {
+            event.rollbackAttempted = static_cast<bool>(graph.nodes[node_index].rollback);
+            if (graph.nodes[node_index].rollback) {
+              try {
+                graph.nodes[node_index].rollback();
+              } catch (...) {
+                event.message += "; rollback failure";
+              }
+            }
+            event.recovered = true;
+
+            std::lock_guard<std::mutex> lock(mutex);
+            telemetry.totalReexecuteCount += 1;
+            telemetry.phaseStats[phase_to_stat_index[event.phase]].retryCount += 1;
+            telemetry.events.push_back(event);
+            attempt += 1;
+            continue;
+          }
+
+          std::lock_guard<std::mutex> lock(mutex);
+          telemetry.events.push_back(event);
+          telemetry.phaseStats[phase_to_stat_index[event.phase]].failedNodes += 1;
+          execution_failed = true;
+          failure_message = "node " + std::to_string(event.nodeId) + " failed: " + event.message;
+          break;
+        }
       }
 
       {
         std::lock_guard<std::mutex> lock(mutex);
         active_workers -= 1;
-        executed_in_run += 1;
-        completed_phase_nodes += 1;
+        if (success) {
+          successful_nodes_in_run += 1;
+          telemetry.phaseStats[phase_to_stat_index[graph.nodes[node_index].phase]].succeededNodes += 1;
+        }
         if (outstanding_phase_nodes > 0) {
           outstanding_phase_nodes -= 1;
         }
 
-        if (outstanding_phase_nodes == 0 && active_workers == 0) {
+        if (outstanding_phase_nodes == 0 || (execution_failed && active_workers == 0)) {
           phase_done = true;
           phase_cv.notify_one();
         }
@@ -248,13 +364,9 @@ struct GemRuntime::Impl {
   }
 };
 
-GemRuntime::GemRuntime(std::size_t worker_threads)
-    : GemRuntime(GemCreateOptions{worker_threads, false, 0}) {}
+GemRuntime::GemRuntime(std::size_t worker_threads) : GemRuntime(GemCreateOptions{worker_threads, false, 0}) {}
 
-GemRuntime::GemRuntime(const GemCreateOptions& options)
-    : impl_(std::make_unique<Impl>(options)) {
-  impl_->start_workers();
-}
+GemRuntime::GemRuntime(const GemCreateOptions& options) : impl_(std::make_unique<Impl>(options)) { impl_->start_workers(); }
 
 GemRuntime::~GemRuntime() {
   if (impl_ != nullptr) {
@@ -286,6 +398,11 @@ GemExecuteResult GemRuntime::execute(const GemGraph& graph) {
   impl_->graph = std::move(loaded);
   impl_->phase_worklists.clear();
   impl_->execute_active = true;
+  impl_->execution_failed = false;
+  impl_->failure_message.clear();
+  impl_->telemetry = GemExecutionTelemetry{};
+  impl_->phase_to_stat_index.clear();
+  impl_->phase_starts.clear();
 
   std::vector<std::size_t> ready_by_phase;
   for (std::size_t idx = 0; idx < impl_->graph.nodes.size(); ++idx) {
@@ -295,6 +412,7 @@ GemExecuteResult GemRuntime::execute(const GemGraph& graph) {
   }
 
   impl_->executed_in_run = 0;
+  impl_->successful_nodes_in_run = 0;
 
   for (std::size_t phase : impl_->graph.phase_order) {
     auto& worklist = impl_->phase_worklists[phase];
@@ -305,15 +423,18 @@ GemExecuteResult GemRuntime::execute(const GemGraph& graph) {
     }
 
     if (impl_->deterministic_ordering) {
-      std::stable_sort(worklist.queue.begin(), worklist.queue.end(),
-                       [this](std::size_t lhs, std::size_t rhs) {
-                         return impl_->graph.nodes[lhs].id < impl_->graph.nodes[rhs].id;
-                       });
+      std::stable_sort(worklist.queue.begin(), worklist.queue.end(), [this](std::size_t lhs, std::size_t rhs) {
+        return impl_->graph.nodes[lhs].id < impl_->graph.nodes[rhs].id;
+      });
     }
+
+    impl_->phase_to_stat_index[phase] = impl_->telemetry.phaseStats.size();
+    impl_->telemetry.phaseStats.push_back(
+        GemPhaseStats{phase, worklist.queue.size(), 0, 0, 0, 0, 0});
+    impl_->phase_starts[phase] = std::chrono::steady_clock::now();
 
     impl_->active_phase = phase;
     impl_->outstanding_phase_nodes = worklist.queue.size();
-    impl_->completed_phase_nodes = 0;
     impl_->phase_done = impl_->outstanding_phase_nodes == 0;
 
     if (!impl_->phase_done) {
@@ -326,23 +447,34 @@ GemExecuteResult GemRuntime::execute(const GemGraph& graph) {
         impl_->phase_cv.wait(lock, wait_predicate);
         completed = true;
       } else {
-        completed = impl_->phase_cv.wait_for(
-            lock, std::chrono::milliseconds(impl_->phase_wait_timeout_ms),
-            wait_predicate);
+        completed = impl_->phase_cv.wait_for(lock, std::chrono::milliseconds(impl_->phase_wait_timeout_ms), wait_predicate);
       }
 
       if (!completed) {
         impl_->execute_active = false;
         result.status = GemStatus::RuntimeError;
         result.message = "phase execution timed out; possible deadlock/livelock";
+        result.telemetry = impl_->telemetry;
+        result.telemetry.registryStats = impl_->registry.stats();
         return result;
       }
       if (impl_->shutdown_requested) {
         result.status = GemStatus::RuntimeShutdown;
         result.message = "runtime shut down during execute";
         impl_->execute_active = false;
+        result.telemetry = impl_->telemetry;
+        result.telemetry.registryStats = impl_->registry.stats();
         return result;
       }
+    }
+
+    impl_->telemetry.phaseStats[impl_->phase_to_stat_index[phase]].elapsedMs =
+        static_cast<std::size_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - impl_->phase_starts[phase])
+                              .count());
+
+    if (impl_->execution_failed) {
+      break;
     }
 
     worklist.queue.clear();
@@ -368,8 +500,16 @@ GemExecuteResult GemRuntime::execute(const GemGraph& graph) {
 
   impl_->execute_active = false;
 
+  result.executedNodes = impl_->successful_nodes_in_run;
+  result.telemetry = impl_->telemetry;
+  result.telemetry.registryStats = impl_->registry.stats();
+  if (impl_->execution_failed) {
+    result.status = GemStatus::RuntimeError;
+    result.message = impl_->failure_message;
+    return result;
+  }
+
   result.status = GemStatus::Ok;
-  result.executedNodes = impl_->executed_in_run;
   result.message = "execution completed";
   return result;
 }
@@ -382,6 +522,23 @@ bool GemRuntime::is_shutdown() const {
 }
 
 GemRegistryManager& GemRuntime::registry() { return impl_->registry; }
+
+void GemRuntime::set_error_classifier(GemErrorClassifier classifier) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->classifier = std::move(classifier);
+}
+
+void GemRuntime::set_correction_hook(GemCorrectionHook hook) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->correction_hook = std::move(hook);
+}
+
+GemExecutionTelemetry GemRuntime::last_telemetry() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  GemExecutionTelemetry snapshot = impl_->telemetry;
+  snapshot.registryStats = impl_->registry.stats();
+  return snapshot;
+}
 
 std::unique_ptr<GemRuntime> gem_create(const GemCreateOptions& options,
                                        GemStatus* status,
