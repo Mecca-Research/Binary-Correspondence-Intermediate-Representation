@@ -19,6 +19,8 @@ struct SourceLocation {
 
 struct Diagnostic {
   SourceLocation location;
+  std::string pass;
+  std::string code;
   std::string message;
 };
 
@@ -149,5 +151,19 @@ struct ParseResult {
 };
 
 ParseResult parse_dialect(std::string_view source);
+
+struct VerifierPassResult {
+  std::string name;
+  bool passed = true;
+  std::size_t diagnosticCount = 0;
+};
+
+struct VerifyResult {
+  bool ok = true;
+  std::vector<VerifierPassResult> passes;
+  std::vector<Diagnostic> diagnostics;
+};
+
+VerifyResult verify_rop(const ModuleNode& module);
 
 }  // namespace bcir
