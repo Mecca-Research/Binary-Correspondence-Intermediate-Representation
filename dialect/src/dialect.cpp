@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <map>
 #include <optional>
 #include <regex>
@@ -11,6 +12,16 @@
 
 namespace bcir {
 namespace {
+
+Diagnostic make_diagnostic(SourceLocation location, std::string message,
+                           std::string pass = {}, std::string code = {}) {
+  Diagnostic diagnostic;
+  diagnostic.location = location;
+  diagnostic.pass = std::move(pass);
+  diagnostic.code = std::move(code);
+  diagnostic.message = std::move(message);
+  return diagnostic;
+}
 
 bool is_identifier_start(char ch) {
   return std::isalpha(static_cast<unsigned char>(ch)) || ch == '_';
@@ -611,7 +622,168 @@ class Parser {
   const Token& previous() const { return tokens[current - 1]; }
 
   void add_diag(SourceLocation location, std::string message) {
-    diagnostics.push_back(Diagnostic{location, std::move(message)});
+    diagnostics.push_back(make_diagnostic(location, std::move(message)));
+  }
+};
+
+class RopVerifier {
+ public:
+  explicit RopVerifier(const ModuleNode& module) : module_(module) {}
+
+  VerifyResult run() {
+    add_pass("phase_monotonicity_and_annotations",
+             [this]() { verify_phase_monotonicity_and_annotations(); });
+    add_pass("lane_consistency_per_rid",
+             [this]() { verify_lane_consistency_per_rid(); });
+    add_pass("offset_alignment_legality_by_lane",
+             [this]() { verify_offset_alignment_legality_by_lane(); });
+    add_pass("barrier_placement_and_hazard_contract",
+             [this]() { verify_barrier_placement_and_hazard_contract(); });
+    result_.ok = result_.diagnostics.empty();
+    return result_;
+  }
+
+ private:
+  struct RidState {
+    int lane = -1;
+    SourceLocation firstUse;
+  };
+
+  const ModuleNode& module_;
+  VerifyResult result_;
+
+  template <typename Fn>
+  void add_pass(const std::string& name, Fn&& fn) {
+    const std::size_t before = result_.diagnostics.size();
+    fn();
+    const std::size_t after = result_.diagnostics.size();
+    result_.passes.push_back(
+        VerifierPassResult{name, after == before, after - before});
+  }
+
+  void add_diag(const SourceLocation& location, std::string pass, std::string code,
+                std::string message) {
+    result_.diagnostics.push_back(
+        make_diagnostic(location, std::move(message), std::move(pass),
+                        std::move(code)));
+  }
+
+  void verify_phase_monotonicity_and_annotations() {
+    constexpr const char* kPass = "phase_monotonicity_and_annotations";
+    for (const FunctionNode& function : module_.functions) {
+      int current_phase = -1;
+      for (const auto& operation : function.body.operations) {
+        if (operation->kind != Operation::Kind::Phase) {
+          continue;
+        }
+        const auto* phase_op = static_cast<const PhaseOperation*>(operation.get());
+        if (phase_op->phase < 0 || phase_op->phase > 3) {
+          add_diag({1, 1, 0}, kPass, "phase.annotation.invalid",
+                   "phase annotation must be 0..3");
+          continue;
+        }
+        if (current_phase > phase_op->phase) {
+          add_diag({1, 1, 0}, kPass, "phase.monotonicity.violation",
+                   "phase directives must be monotonic within a function");
+        }
+        current_phase = phase_op->phase;
+      }
+    }
+  }
+
+  void verify_lane_consistency_per_rid() {
+    constexpr const char* kPass = "lane_consistency_per_rid";
+    for (const FunctionNode& function : module_.functions) {
+      std::map<std::string, RidState> rid_lanes;
+      for (const auto& operation : function.body.operations) {
+        if (operation->kind == Operation::Kind::LdSt) {
+          const auto* ld_st = static_cast<const LdStOperation*>(operation.get());
+          verify_rid_lane(kPass, ld_st->rid, ld_st->lane, rid_lanes);
+        }
+      }
+    }
+  }
+
+  void verify_offset_alignment_legality_by_lane() {
+    constexpr const char* kPass = "offset_alignment_legality_by_lane";
+    for (const FunctionNode& function : module_.functions) {
+      for (const auto& operation : function.body.operations) {
+        if (operation->kind != Operation::Kind::LdSt) {
+          continue;
+        }
+        const auto* ld_st = static_cast<const LdStOperation*>(operation.get());
+        if (ld_st->lane < 0 || ld_st->lane > 63) {
+          add_diag({1, 1, 0}, kPass, "lane.range.invalid",
+                   "lane for memory access must be in range 0..63");
+          continue;
+        }
+        const std::optional<int> offset = parse_numeric_suffix(ld_st->target);
+        if (!offset.has_value()) {
+          continue;
+        }
+        if ((*offset % 2) != (ld_st->lane % 2)) {
+          add_diag({1, 1, 0}, kPass, "alignment.illegal_for_lane",
+                   "memory offset alignment is illegal for lane parity");
+        }
+      }
+    }
+  }
+
+  void verify_barrier_placement_and_hazard_contract() {
+    constexpr const char* kPass = "barrier_placement_and_hazard_contract";
+    for (const FunctionNode& function : module_.functions) {
+      bool has_pending_memory_hazard = false;
+      bool seen_phase = false;
+      for (const auto& operation : function.body.operations) {
+        if (operation->kind == Operation::Kind::LdSt) {
+          has_pending_memory_hazard = true;
+          continue;
+        }
+        if (operation->kind == Operation::Kind::Barrier) {
+          has_pending_memory_hazard = false;
+          continue;
+        }
+        if (operation->kind == Operation::Kind::Phase) {
+          if (seen_phase && has_pending_memory_hazard) {
+            add_diag({1, 1, 0}, kPass, "barrier.missing_before_phase",
+                     "phase transition requires barrier after memory hazard");
+          }
+          seen_phase = true;
+        }
+      }
+      if (has_pending_memory_hazard) {
+        add_diag({1, 1, 0}, kPass, "barrier.missing_at_function_end",
+                 "function ends with unresolved memory hazard; insert barrier");
+      }
+    }
+  }
+
+  void verify_rid_lane(const std::string& pass_name, const std::string& rid, int lane,
+                       std::map<std::string, RidState>& rid_lanes) {
+    if (lane < 0) {
+      return;
+    }
+    const auto it = rid_lanes.find(rid);
+    if (it == rid_lanes.end()) {
+      rid_lanes.emplace(rid, RidState{lane, {1, 1, 0}});
+      return;
+    }
+    if (it->second.lane != lane) {
+      add_diag({1, 1, 0}, pass_name, "lane.inconsistent_for_rid",
+               "RID '" + rid + "' used with multiple lanes");
+    }
+  }
+
+  std::optional<int> parse_numeric_suffix(const std::string& text) const {
+    std::size_t pos = text.size();
+    while (pos > 0 &&
+           std::isdigit(static_cast<unsigned char>(text[pos - 1]))) {
+      --pos;
+    }
+    if (pos == text.size()) {
+      return std::nullopt;
+    }
+    return std::stoi(text.substr(pos));
   }
 };
 
@@ -636,7 +808,7 @@ std::vector<Token> tokenize_dialect(std::string_view source,
 
   auto add_diag = [&](SourceLocation location, const std::string& message) {
     if (diagnostics != nullptr) {
-      diagnostics->push_back(Diagnostic{location, message});
+      diagnostics->push_back(make_diagnostic(location, message));
     }
   };
 
@@ -725,6 +897,11 @@ std::vector<Token> tokenize_dialect(std::string_view source,
 ParseResult parse_dialect(std::string_view source) {
   Parser parser(source);
   return parser.parse();
+}
+
+VerifyResult verify_rop(const ModuleNode& module) {
+  RopVerifier verifier(module);
+  return verifier.run();
 }
 
 }  // namespace bcir

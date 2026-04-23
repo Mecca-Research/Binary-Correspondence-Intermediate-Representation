@@ -18,6 +18,16 @@ bool has_diagnostic_substring(const bcir::ParseResult& result,
   return false;
 }
 
+bool has_diagnostic_substring(const bcir::VerifyResult& result,
+                              const std::string& needle) {
+  for (const auto& diagnostic : result.diagnostics) {
+    if (diagnostic.message.find(needle) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 int main() {
@@ -55,6 +65,13 @@ module test {
     std::cerr << "Expected valid program to parse without diagnostics" << std::endl;
     return EXIT_FAILURE;
   }
+  const bcir::VerifyResult verified_valid = bcir::verify_rop(parsed_valid.module);
+  if (!verified_valid.ok || !verified_valid.diagnostics.empty() ||
+      verified_valid.passes.size() != 4) {
+    std::cerr << "Expected valid program to verify without diagnostics"
+              << std::endl;
+    return EXIT_FAILURE;
+  }
 
   const std::string invalid_program = R"(
 module test {
@@ -87,6 +104,35 @@ module test {
       !has_diagnostic_substring(parsed_invalid, "invalid cross-lane arithmetic") ||
       !has_diagnostic_substring(parsed_invalid, "type mismatch")) {
     std::cerr << "Expected parser diagnostics were not emitted" << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  const std::string invalid_verify_program = R"(
+module test {
+  fn main() {
+    ld rid=r0<U x 8 x i32> lane=lane3 from mem0;
+    st rid=r0<U x 8 x i32> lane=lane4 to mem0;
+    lane shuffle r0 lane5;
+    phase 1;
+    phase 0;
+  }
+}
+)";
+  const bcir::ParseResult parsed_invalid_verify =
+      bcir::parse_dialect(invalid_verify_program);
+  if (!parsed_invalid_verify.diagnostics.empty()) {
+    std::cerr << "Expected verifier-negative program to parse successfully"
+              << std::endl;
+    return EXIT_FAILURE;
+  }
+  const bcir::VerifyResult verified_invalid =
+      bcir::verify_rop(parsed_invalid_verify.module);
+  if (verified_invalid.ok ||
+      !has_diagnostic_substring(verified_invalid, "multiple lanes") ||
+      !has_diagnostic_substring(verified_invalid, "monotonic") ||
+      !has_diagnostic_substring(verified_invalid, "illegal for lane parity") ||
+      !has_diagnostic_substring(verified_invalid, "requires barrier")) {
+    std::cerr << "Expected verifier diagnostics were not emitted" << std::endl;
     return EXIT_FAILURE;
   }
 
