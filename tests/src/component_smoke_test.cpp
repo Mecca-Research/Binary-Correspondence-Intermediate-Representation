@@ -154,6 +154,7 @@ module test {
     barrier workgroup;
     expand pair(r0, r1);
     map_store rid=r2 lane=lane2 to mem8;
+    barrier workgroup;
     map_atomic_add rid=r2 lane=lane2 from mem8;
   }
 }
@@ -183,7 +184,7 @@ module test {
 
   const bcir::VerifyResult verified_valid = bcir::verify_rop(parsed_valid.module);
   if (!verified_valid.ok || !verified_valid.diagnostics.empty() ||
-      verified_valid.passes.size() != 4) {
+      verified_valid.passes.size() != 5) {
     std::cerr << "Expected valid program to verify without diagnostics"
               << std::endl;
     return EXIT_FAILURE;

@@ -1,6 +1,7 @@
 #include "bcir/runtime.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <thread>
@@ -127,14 +128,18 @@ std::size_t GemRegistryManager::bytes_for(const std::string& name) const {
 }
 
 struct GemRuntime::Impl {
-  explicit Impl(std::size_t worker_threads)
-      : worker_count(worker_threads == 0 ? 1 : worker_threads) {}
+  explicit Impl(const GemCreateOptions& create_options)
+      : worker_count(create_options.workerThreads == 0 ? 1 : create_options.workerThreads),
+        deterministic_ordering(create_options.deterministicOrdering),
+        phase_wait_timeout_ms(create_options.phaseWaitTimeoutMs) {}
 
   struct PhaseWorklist {
     std::deque<std::size_t> queue;
   };
 
   std::size_t worker_count = 1;
+  bool deterministic_ordering = false;
+  std::size_t phase_wait_timeout_ms = 0;
   GemRegistryManager registry;
   mutable std::mutex mutex;
   std::condition_variable cv;
@@ -145,6 +150,7 @@ struct GemRuntime::Impl {
   std::size_t active_phase = 0;
   std::size_t outstanding_phase_nodes = 0;
   std::size_t active_workers = 0;
+  std::size_t completed_phase_nodes = 0;
   std::size_t executed_in_run = 0;
   LoadedGraph graph;
   std::unordered_map<std::size_t, PhaseWorklist> phase_worklists;
@@ -168,6 +174,9 @@ struct GemRuntime::Impl {
           if (!execute_active) {
             return false;
           }
+          if (deterministic_ordering && active_workers > 0) {
+            return false;
+          }
           auto phase_it = phase_worklists.find(active_phase);
           return phase_it != phase_worklists.end() && !phase_it->second.queue.empty();
         });
@@ -187,12 +196,17 @@ struct GemRuntime::Impl {
         active_workers += 1;
       }
 
-      work();
+      try {
+        work();
+      } catch (...) {
+        // Runtime keeps progress accounting coherent even when node work throws.
+      }
 
       {
         std::lock_guard<std::mutex> lock(mutex);
         active_workers -= 1;
         executed_in_run += 1;
+        completed_phase_nodes += 1;
         if (outstanding_phase_nodes > 0) {
           outstanding_phase_nodes -= 1;
         }
@@ -201,6 +215,7 @@ struct GemRuntime::Impl {
           phase_done = true;
           phase_cv.notify_one();
         }
+        cv.notify_all();
       }
     }
   }
@@ -234,7 +249,10 @@ struct GemRuntime::Impl {
 };
 
 GemRuntime::GemRuntime(std::size_t worker_threads)
-    : impl_(std::make_unique<Impl>(worker_threads)) {
+    : GemRuntime(GemCreateOptions{worker_threads, false, 0}) {}
+
+GemRuntime::GemRuntime(const GemCreateOptions& options)
+    : impl_(std::make_unique<Impl>(options)) {
   impl_->start_workers();
 }
 
@@ -286,15 +304,39 @@ GemExecuteResult GemRuntime::execute(const GemGraph& graph) {
       }
     }
 
+    if (impl_->deterministic_ordering) {
+      std::stable_sort(worklist.queue.begin(), worklist.queue.end(),
+                       [this](std::size_t lhs, std::size_t rhs) {
+                         return impl_->graph.nodes[lhs].id < impl_->graph.nodes[rhs].id;
+                       });
+    }
+
     impl_->active_phase = phase;
     impl_->outstanding_phase_nodes = worklist.queue.size();
+    impl_->completed_phase_nodes = 0;
     impl_->phase_done = impl_->outstanding_phase_nodes == 0;
 
     if (!impl_->phase_done) {
       impl_->cv.notify_all();
-      impl_->phase_cv.wait(lock, [this]() {
+      const auto wait_predicate = [this]() {
         return impl_->shutdown_requested || impl_->phase_done;
-      });
+      };
+      bool completed = false;
+      if (impl_->phase_wait_timeout_ms == 0) {
+        impl_->phase_cv.wait(lock, wait_predicate);
+        completed = true;
+      } else {
+        completed = impl_->phase_cv.wait_for(
+            lock, std::chrono::milliseconds(impl_->phase_wait_timeout_ms),
+            wait_predicate);
+      }
+
+      if (!completed) {
+        impl_->execute_active = false;
+        result.status = GemStatus::RuntimeError;
+        result.message = "phase execution timed out; possible deadlock/livelock";
+        return result;
+      }
       if (impl_->shutdown_requested) {
         result.status = GemStatus::RuntimeShutdown;
         result.message = "runtime shut down during execute";
@@ -360,7 +402,7 @@ std::unique_ptr<GemRuntime> gem_create(const GemCreateOptions& options,
   if (message != nullptr) {
     *message = "runtime created";
   }
-  return std::make_unique<GemRuntime>(options.workerThreads);
+  return std::make_unique<GemRuntime>(options);
 }
 
 GemExecuteResult gem_execute(GemRuntime* runtime, const GemGraph& graph) {

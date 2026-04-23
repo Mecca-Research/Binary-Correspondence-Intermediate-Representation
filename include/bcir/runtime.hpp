@@ -35,6 +35,8 @@ struct GemGraph {
 
 struct GemCreateOptions {
   std::size_t workerThreads = 0;
+  bool deterministicOrdering = false;
+  std::size_t phaseWaitTimeoutMs = 0;
 };
 
 struct GemExecuteResult {
@@ -80,6 +82,7 @@ GemStatus gem_destroy(std::unique_ptr<GemRuntime> runtime,
 class GemRuntime {
  public:
   explicit GemRuntime(std::size_t worker_threads);
+  explicit GemRuntime(const GemCreateOptions& options);
   ~GemRuntime();
 
   GemRuntime(const GemRuntime&) = delete;
