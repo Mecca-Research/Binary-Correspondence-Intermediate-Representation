@@ -415,38 +415,15 @@ void lower_map_surface_ops(ModuleNode* module) {
         st->target = map_op->target;
         lowered.push_back(std::move(st));
       } else {
-        auto begin_barrier = std::make_unique<BarrierOperation>(map_op->location);
-        begin_barrier->scope = "map_atomic_begin";
-        lowered.push_back(std::move(begin_barrier));
-
-        auto ld = std::make_unique<LdStOperation>(true, map_op->location);
-        ld->rid = map_op->rid;
-        ld->lane = map_op->lane;
-        ld->target = map_op->target;
-        lowered.push_back(std::move(ld));
-
-        auto bin = std::make_unique<BinaryOpOperation>(map_op->location);
-        if (map_op->surfaceKind == MapSurfaceOperation::SurfaceKind::AtomicAdd) {
-          bin->opcode = "add";
-        } else if (map_op->surfaceKind == MapSurfaceOperation::SurfaceKind::AtomicSub) {
-          bin->opcode = "sub";
-        } else {
-          bin->opcode = "xor";
-        }
-        bin->dst = map_op->rid;
-        bin->lhs = map_op->rid;
-        bin->rhs = map_op->rid;
-        lowered.push_back(std::move(bin));
-
-        auto st = std::make_unique<LdStOperation>(false, map_op->location);
-        st->rid = map_op->rid;
-        st->lane = map_op->lane;
-        st->target = map_op->target;
-        lowered.push_back(std::move(st));
-
-        auto end_barrier = std::make_unique<BarrierOperation>(map_op->location);
-        end_barrier->scope = "map_atomic_end";
-        lowered.push_back(std::move(end_barrier));
+        // Preserve MAP atomic ops as atomic surface operations so downstream
+        // lowering can emit real LLVM atomicrmw/cmpxchg semantics instead of a
+        // non-atomic barrier+load+binop+store expansion.
+        auto atomic = std::make_unique<MapSurfaceOperation>(map_op->location);
+        atomic->surfaceKind = map_op->surfaceKind;
+        atomic->rid = map_op->rid;
+        atomic->lane = map_op->lane;
+        atomic->target = map_op->target;
+        lowered.push_back(std::move(atomic));
       }
     }
 

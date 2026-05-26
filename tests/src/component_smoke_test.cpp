@@ -227,10 +227,9 @@ module test {
   bcir::lower_map_surface_ops(&parsed_valid.module);
   const auto& lowered_ops = parsed_valid.module.functions.front().body.operations;
   if (std::any_of(lowered_ops.begin(), lowered_ops.end(), [](const auto& op) {
-        return op->kind == bcir::Operation::Kind::MapSurface ||
-               op->kind == bcir::Operation::Kind::MacroExpansion;
+        return op->kind == bcir::Operation::Kind::MacroExpansion;
       })) {
-    std::cerr << "Expected MAP and macro surface operations to be lowered away"
+    std::cerr << "Expected macro expansions to be fully lowered away"
               << std::endl;
     return EXIT_FAILURE;
   }
