@@ -34,3 +34,12 @@ Implement next milestone in **pure textual LLVM IR backend mode**:
 - LLVM tool validation tests (optional, tool-detected)
 
 Defer full MLIR dialect and BDI-K autotuning until semantics stabilize.
+
+## 2026-05-26 update (PR recreation validation)
+- Revalidated the core-IR/graph-builder/scheduler/textual-LLVM update on a clean configure+build+ctest run.
+- Confirmed `include/bcir/bcir_ir.hpp` contains a single `BcirOpcode` definition and keeps `BcirClaimV1` at 64 bytes.
+- Confirmed core builder and LLVM emitter compile against the current `BcirNode` shape (`rid` field) and no stale `registry` optional field usage remains.
+- Confirmed local CI-equivalent command sequence succeeds:
+  - `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release`
+  - `cmake --build build --config Release --parallel`
+  - `ctest --test-dir build --output-on-failure`
