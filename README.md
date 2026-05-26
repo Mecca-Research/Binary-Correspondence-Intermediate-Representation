@@ -60,19 +60,3 @@ The master implementation work-order is documented in:
 
 This blueprint makes **BCIR** the canonical source IR and defines the staged build tasks
 for the full path: `bcir.surface -> bcir.core -> bcir.rop -> mlir.llvm -> llvm ir`.
-
-
-## LLVM IR master reference module
-
-- `runtime/llvm/bcir_master_reference.ll` — pure LLVM IR dialect master module covering
-  BCIR phase/epoch hooks, barriers, provenance notes, lane-oriented examples, and legal
-  atomic lowering (`atomicrmw`, `cmpxchg`).
-
-
-## Full LLVM build blueprint
-
-- `docs/BCIR_Full_LLVM_Build_Blueprint.md` — prioritized implementation plan for
-  expanding BCIR core, schedule construction, legal LLVM IR emission, LLVM tool validation,
-  runtime ABI definitions, and scheduler/performance hardening.
-- `docs/REPO_CURRENT_STATE_AUDIT.md` — current-state audit of strengths, limitations,
-  and near-term implementation boundaries.

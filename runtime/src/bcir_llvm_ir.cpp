@@ -4,19 +4,14 @@ namespace bcir {
 
 std::vector<std::string> bcir_mlir_build_tasks() {
   return {
-      "P0: Freeze baseline and record REPO_CURRENT_STATE_AUDIT",
-      "P1: Expand bcir.core model (opcode/type/registry/theta/graph)",
-      "P2: Build AST->Core graph builder",
-      "P3: Implement epoch-phase legality verifier",
-      "P4: Implement registry descriptor/bounds/alignment verification",
-      "P5: Implement precise RAW/WAR/WAW hazard verification",
-      "P6: Build deterministic schedule view (executionOrder/phaseBegin/phaseEnd)",
-      "P7: Implement textual LLVM IR emitter (legal IR only)",
-      "P8: Emit BCIR metadata/provenance hooks",
-      "P9: Enable llvm-as/opt validation tests",
-      "P10: Add runtime ABI definitions for phase/barrier/load/store/atomic",
-      "P11: Fix GEM scheduler ready-node handling",
-      "P12: Add SoA/performance hardening",
+      "Stage 0: Build BCIR LLVM ABI substrate module before expanding core model",
+      "Stage 1: Define MLIR BCIR dialect ops/types/attrs for surface->core",
+      "Stage 2: Implement BCIR core verifier passes (lane/epoch/phase/hazard)",
+      "Stage 3: Lower BCIR core to BCIR ROP schedule stream",
+      "Stage 4: Convert BCIR ROP to MLIR LLVM dialect",
+      "Stage 5: Emit legal LLVM IR only (load/store/atomicrmw/cmpxchg/fence/call)",
+      "Stage 6: Add GEM schedule integration and deterministic execution order",
+      "Stage 7: Add roundtrip and ABI-conformance tests",
   };
 }
 
