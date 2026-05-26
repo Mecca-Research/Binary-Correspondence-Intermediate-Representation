@@ -34,3 +34,5 @@ Implement next milestone in **pure textual LLVM IR backend mode**:
 - LLVM tool validation tests (optional, tool-detected)
 
 Defer full MLIR dialect and BDI-K autotuning until semantics stabilize.
+
+- 2026-05-26: Added pure textual LLVM backend milestone scaffolding (core graph builder, registry/epoch/hazard verifiers, deterministic schedule, textual LLVM emitter, and pipeline test).

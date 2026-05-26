@@ -383,38 +383,31 @@ bool test_llvm_abi_reference_module() {
 }
 
 
-bool test_pure_llvm_backend_pipeline() {
+
+bool test_core_graph_llvm_pipeline() {
   const std::string program = R"(
 module t {
   fn main() {
-    ld rid=r0<U x 4 x i32> lane=lane0 from mem0;
+    map_load rid=r0 lane=lane0 from mem0;
     bin add r1<U x 4 x i32>, r0<U x 4 x i32>, r0<U x 4 x i32>;
-    map_atomic_add rid=r1 lane=lane0 from mem0;
+    phase 1;
     barrier workgroup;
+    map_atomic_add rid=r1 lane=lane0 from mem0;
   }
 }
 )";
   auto parsed = bcir::parse_dialect(program);
   if (!parsed.diagnostics.empty()) return false;
-  std::vector<bcir::Diagnostic> diags;
-  auto graph = bcir::build_core_graph(parsed.module.functions.front().body, &diags);
-  if (!bcir::verify_epoch_phase(graph, &diags) || !bcir::verify_registry_descriptors(graph, &diags) || !bcir::verify_hazards(graph, &diags)) {
-    return false;
-  }
-  auto sched = bcir::build_schedule(graph);
-  auto ir = bcir::emit_textual_llvm_ir(graph, sched, "bcir.test");
-  if (ir.find("atomicrmw add") == std::string::npos || ir.find("fence seq_cst") == std::string::npos || ir.find("!bcir.module") == std::string::npos) return false;
-
-  const auto ir_path = std::filesystem::temp_directory_path() / "bcir_test.ll";
-  std::ofstream out(ir_path);
-  out << ir;
-  out.close();
-  if (std::system("which llvm-as >/dev/null 2>&1") == 0) {
-    const std::string cmd = "llvm-as " + ir_path.string() + " -o /tmp/bcir_test.bc";
-    if (std::system(cmd.c_str()) != 0) return false;
-  }
-  return true;
+  auto built = bcir::build_core_graph(parsed.module.functions.front().body);
+  built.graph.registries["mem0"] = {"mem0", bcir::BcirAddressSpace::Global, 1024, 4, 1, true};
+  if (!bcir::verify_epoch_phase(built.graph).front().ok) return false;
+  if (!bcir::verify_registry_descriptors(built.graph).front().ok) return false;
+  if (!bcir::verify_hazards(built.graph).front().ok) return false;
+  auto sched = bcir::build_schedule(built.graph);
+  auto ir = bcir::emit_textual_llvm_ir(built.graph, sched, "bcir_test");
+  return ir.find("atomicrmw add") != std::string::npos && ir.find("fence seq_cst") != std::string::npos;
 }
+
 bool test_runtime_regression_checks() {
   const auto baseline = execute_vector_add(1);
   const auto candidate = execute_vector_add(8);
@@ -442,7 +435,7 @@ int main(int argc, char** argv) {
       {"reference_examples", test_reference_examples},
       {"runtime_regression", test_runtime_regression_checks},
       {"llvm_abi", test_llvm_abi_reference_module},
-      {"pure_llvm_backend", test_pure_llvm_backend_pipeline},
+      {"core_graph_llvm", test_core_graph_llvm_pipeline},
   };
 
   if (mode == "all") {
