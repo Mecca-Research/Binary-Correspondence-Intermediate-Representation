@@ -1,6 +1,8 @@
 add_library(bcir-lowering
   src/lowering.cpp
-  src/bcir_llvm_ir.cpp)
+  src/bcir_llvm_ir.cpp
+  src/core_builder.cpp
+  src/llvm_emit.cpp)
 add_library(BCIR::bcir-lowering ALIAS bcir-lowering)
 
 target_include_directories(bcir-lowering
@@ -35,4 +37,7 @@ install(FILES
   ${PROJECT_SOURCE_DIR}/include/bcir/lowering.hpp
   ${PROJECT_SOURCE_DIR}/include/bcir/runtime.hpp
   ${PROJECT_SOURCE_DIR}/include/bcir/bcir_llvm_ir.hpp
+  ${PROJECT_SOURCE_DIR}/include/bcir/bcir_ir.hpp
+  ${PROJECT_SOURCE_DIR}/include/bcir/core_builder.hpp
+  ${PROJECT_SOURCE_DIR}/include/bcir/llvm_emit.hpp
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bcir)
