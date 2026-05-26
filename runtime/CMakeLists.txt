@@ -1,5 +1,6 @@
 add_library(bcir-lowering
-  src/lowering.cpp)
+  src/lowering.cpp
+  src/bcir_llvm_ir.cpp)
 add_library(BCIR::bcir-lowering ALIAS bcir-lowering)
 
 target_include_directories(bcir-lowering
@@ -33,4 +34,5 @@ install(TARGETS bcir-lowering gem-runtime
 install(FILES
   ${PROJECT_SOURCE_DIR}/include/bcir/lowering.hpp
   ${PROJECT_SOURCE_DIR}/include/bcir/runtime.hpp
+  ${PROJECT_SOURCE_DIR}/include/bcir/bcir_llvm_ir.hpp
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bcir)
