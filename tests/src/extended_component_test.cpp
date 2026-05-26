@@ -16,6 +16,7 @@
 #include "bcir/dialect.hpp"
 #include "bcir/lowering.hpp"
 #include "bcir/runtime.hpp"
+#include "bcir/bcir_llvm_ir.hpp"
 
 namespace {
 
@@ -351,6 +352,34 @@ bool test_reference_examples() {
   return true;
 }
 
+bool test_llvm_abi_reference_module() {
+  const std::string module = bcir::bcir_reference_llvm_abi_module();
+  if (module.find("atomicrmw add") == std::string::npos) {
+    std::cerr << "llvm abi: missing atomicrmw add" << std::endl;
+    return false;
+  }
+  if (module.find("cmpxchg") == std::string::npos) {
+    std::cerr << "llvm abi: missing cmpxchg" << std::endl;
+    return false;
+  }
+  if (module.find("@bcir.rt.phase.enter") == std::string::npos ||
+      module.find("@bcir.rt.barrier") == std::string::npos) {
+    std::cerr << "llvm abi: missing required runtime hooks" << std::endl;
+    return false;
+  }
+
+  const auto tasks = bcir::bcir_mlir_build_tasks();
+  if (tasks.empty()) {
+    std::cerr << "llvm abi: MLIR build tasks list empty" << std::endl;
+    return false;
+  }
+  if (tasks.front().find("Build BCIR LLVM ABI substrate") == std::string::npos) {
+    std::cerr << "llvm abi: stage order must build LLVM ABI before core model" << std::endl;
+    return false;
+  }
+  return true;
+}
+
 bool test_runtime_regression_checks() {
   const auto baseline = execute_vector_add(1);
   const auto candidate = execute_vector_add(8);
@@ -377,6 +406,7 @@ int main(int argc, char** argv) {
       {"gem_exec", test_gem_execution_single_and_multi_thread},
       {"reference_examples", test_reference_examples},
       {"runtime_regression", test_runtime_regression_checks},
+      {"llvm_abi", test_llvm_abi_reference_module},
   };
 
   if (mode == "all") {
