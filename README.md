@@ -44,3 +44,26 @@ Dialect verification includes explicit concurrent registry/atomic checks via the
 - Atomic and non-atomic MAP accesses to the same RID must be separated by a
   phase transition or barrier.
 - MAP lane directives are constrained to `lane0..lane63`.
+
+## BCIR v1 formalization artifacts
+
+- `docs_BCIR_LLVM_IR.md` — formal BCIR graph spec, resolved lane/hazard/phase semantics,
+  LLVM textual dialect mapping, K_BDI integration points, and migration plan.
+- `include/bcir/bcir_ir.hpp` — C++ data model for BCIR nodes/edges/cost tuples and a
+  fixed 64-byte `BcirClaimV1` binary schema compatible with cache-line scheduling.
+
+## BCIR Codex blueprint
+
+The master implementation work-order is documented in:
+
+- `docs/BCIR_Codex_Blueprint.md`
+
+This blueprint makes **BCIR** the canonical source IR and defines the staged build tasks
+for the full path: `bcir.surface -> bcir.core -> bcir.rop -> mlir.llvm -> llvm ir`.
+
+
+## LLVM IR master reference module
+
+- `runtime/llvm/bcir_master_reference.ll` — pure LLVM IR dialect master module covering
+  BCIR phase/epoch hooks, barriers, provenance notes, lane-oriented examples, and legal
+  atomic lowering (`atomicrmw`, `cmpxchg`).
