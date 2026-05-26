@@ -13,5 +13,11 @@ bool verify_epoch_phase(const BcirGraph& graph, std::vector<Diagnostic>* diagnos
 bool verify_registry_descriptors(const BcirGraph& graph, std::vector<Diagnostic>* diagnostics);
 bool verify_hazards(const BcirGraph& graph, std::vector<Diagnostic>* diagnostics);
 BcirSchedule build_schedule(const BcirGraph& graph);
+struct BcirCoreBuildResult {
+  BcirGraph graph;
+  std::vector<Diagnostic> diagnostics;
+};
+
+BcirCoreBuildResult build_core_graph(const BlockNode& block);
 
 }  // namespace bcir

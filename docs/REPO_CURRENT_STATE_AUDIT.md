@@ -43,3 +43,4 @@ Defer full MLIR dialect and BDI-K autotuning until semantics stabilize.
   - `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release`
   - `cmake --build build --config Release --parallel`
   - `ctest --test-dir build --output-on-failure`
+- 2026-05-26: Added pure textual LLVM backend milestone scaffolding (core graph builder, registry/epoch/hazard verifiers, deterministic schedule, textual LLVM emitter, and pipeline test).
