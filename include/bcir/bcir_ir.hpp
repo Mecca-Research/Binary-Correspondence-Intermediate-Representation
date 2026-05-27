@@ -75,4 +75,12 @@ struct BcirClaimV1 {
 
 static_assert(sizeof(BcirClaimV1) == 64, "BcirClaimV1 must remain cache-line sized");
 
+constexpr std::uint8_t claim_opcode(const BcirClaimV1& claim) { return static_cast<std::uint8_t>(claim.control & 0xffu); }
+constexpr std::uint8_t claim_lane(const BcirClaimV1& claim) { return static_cast<std::uint8_t>((claim.control >> 8u) & 0xffu); }
+constexpr std::uint16_t claim_phase(const BcirClaimV1& claim) { return static_cast<std::uint16_t>((claim.control >> 16u) & 0x0fffu); }
+constexpr std::uint16_t claim_epoch(const BcirClaimV1& claim) { return static_cast<std::uint16_t>((claim.control >> 28u) & 0x0fffu); }
+constexpr std::uint8_t claim_flags(const BcirClaimV1& claim) { return static_cast<std::uint8_t>((claim.control >> 40u) & 0xffu); }
+constexpr std::uint16_t claim_stride_code(const BcirClaimV1& claim) { return static_cast<std::uint16_t>((claim.control >> 48u) & 0xffffu); }
+
+
 }  // namespace bcir

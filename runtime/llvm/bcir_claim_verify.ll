@@ -100,7 +100,8 @@ entry:
   %not_atomic = xor i1 %is_atomic, true
   %atomic_rid_ok = or i1 %not_atomic, %wr_ok
 
-  %needs_bounds = or i1 %is_load, (or i1 %is_store, %is_atomic)
+  %load_or_store = or i1 %is_load, %is_store
+  %needs_bounds = or i1 %load_or_store, %is_atomic
   %bounds_eval = call i1 @bcir.verify.bounds(ptr %claim, ptr %res_table, i64 %res_count)
   %not_needs_bounds = xor i1 %needs_bounds, true
   %bounds_ok = or i1 %not_needs_bounds, %bounds_eval

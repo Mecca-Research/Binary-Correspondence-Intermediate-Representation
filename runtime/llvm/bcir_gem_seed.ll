@@ -104,7 +104,6 @@ done:
   ret void
 }
 
-declare void @bcir.gem.execute_worklist(ptr, ptr, i64, ptr)
 
 define void @bcir.gem.verify_and_execute_worklist(ptr %ctx, ptr %claims, i64 %count, ptr %res_table, i64 %res_count, ptr %registry_table, i32 %max_phase) {
 entry:
