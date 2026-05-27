@@ -56,6 +56,16 @@ body:
   %claim = getelementptr inbounds %bcir.claim, ptr %claims, i64 %idx
   call void @bcir.gem.execute_claim(ptr %ctx, ptr %claim, ptr %registry_table)
   %next = add i64 %i, 1
+  %is_last = icmp uge i64 %next, %count
+  br i1 %is_last, label %cont, label %do_prefetch
+
+do_prefetch:
+  %next_abs = add i64 %first, %next
+  %next_claim = getelementptr inbounds %bcir.claim, ptr %claims, i64 %next_abs
+  call void @llvm.prefetch(ptr %next_claim, i32 0, i32 3, i32 1)
+  br label %cont
+
+cont:
   br label %loop
 
 exit:

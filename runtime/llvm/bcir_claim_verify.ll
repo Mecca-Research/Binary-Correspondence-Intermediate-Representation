@@ -66,7 +66,9 @@ entry:
   %is_a_lane = icmp eq i32 %lane, 4
   %lane_or_hazard = or i1 %is_a_lane, %atomic_mode
   %not_atomic = xor i1 %is_atomic, true
-  %ok = or i1 %not_atomic, %lane_or_hazard
+  %is_a_lane_non_atomic = and i1 %not_atomic, %is_a_lane
+  %atomic_lane_ok = or i1 %not_atomic, %lane_or_hazard
+  %ok = and i1 %atomic_lane_ok, (xor i1 %is_a_lane_non_atomic, true)
   ret i1 %ok
 }
 

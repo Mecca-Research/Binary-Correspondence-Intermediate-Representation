@@ -64,3 +64,6 @@ target datalayout = ""
   !"sort_order", !"epoch,phase,lane,opcode,type,hazard_domain",
   !"execution", !"phase_ranges -> batches -> tight kernels"
 }
+
+!bcir.batch.layout = !{!301}
+!301 = !{!"BCIR_BatchV1", !"size_bytes", i32 48, !"epoch", i32 0, i32 4, !"phase", i32 4, i32 4, !"lane_class", i32 8, i32 4, !"opcode", i32 12, i32 4, !"flags", i32 16, i32 4, !"first_claim_index", i32 24, i32 8, !"claim_count", i32 32, i32 8, !"prefetch_profile_index", i32 40, i32 8}
