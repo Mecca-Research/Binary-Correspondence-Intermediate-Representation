@@ -104,25 +104,7 @@ done:
   ret void
 }
 
-define void @bcir.gem.execute_worklist(ptr %ctx, ptr %claims, i64 %count, ptr %registry_table) {
-entry:
-  br label %loop
-
-loop:
-  %i = phi i64 [0, %entry], [%next, %body]
-  %is_done = icmp uge i64 %i, %count
-  br i1 %is_done, label %exit, label %body
-
-body:
-  %claim = getelementptr inbounds %bcir.claim, ptr %claims, i64 %i
-  call void @bcir.gem.execute_claim(ptr %ctx, ptr %claim, ptr %registry_table)
-  %next = add i64 %i, 1
-  br label %loop
-
-exit:
-  ret void
-}
-
+declare void @bcir.gem.execute_worklist(ptr, ptr, i64, ptr)
 
 define void @bcir.gem.verify_and_execute_worklist(ptr %ctx, ptr %claims, i64 %count, ptr %res_table, i64 %res_count, ptr %registry_table, i32 %max_phase) {
 entry:
