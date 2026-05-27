@@ -4,14 +4,13 @@ target datalayout = ""
 
 %bcir.claim = type { i64, [4 x i32], [4 x i32], i64, [2 x i64] }
 %bcir.res = type { i32, i32, ptr, i64, i64, i64, i64 }
-%bcir.exe = type { i32, i32, i64, i64, i64, i64 }
-%bcir.wl = type { i32, i32, i32, ptr, i64, i64, i64, i64 }
 
 declare i8 @bcir.claim.opcode(ptr)
 declare i8 @bcir.claim.lane(ptr)
 declare i32 @bcir.claim.rd(ptr, i32)
 declare i32 @bcir.claim.wr(ptr, i32)
 declare i64 @bcir.claim.imm(ptr, i32)
+declare i64 @bcir.claim.hazard_domain(ptr)
 declare void @llvm.trap() cold noreturn
 
 define i1 @bcir.verify.rid(ptr %res_table, i64 %res_count, i32 %rid) {
@@ -22,42 +21,40 @@ entry:
   ret i1 %ok
 }
 
-define i1 @bcir.verify.bounds(ptr %claim, ptr %res) {
+define i1 @bcir.verify.bounds(ptr %claim, ptr %res_table, i64 %res_count) {
 entry:
+  %rid = call i32 @bcir.claim.rd(ptr %claim, i32 0)
+  %rid_ok = call i1 @bcir.verify.rid(ptr %res_table, i64 %res_count, i32 %rid)
+  br i1 %rid_ok, label %check, label %fail
+check:
+  %idx = and i32 %rid, 268435455
+  %res = getelementptr inbounds %bcir.res, ptr %res_table, i32 %idx
   %off = call i64 @bcir.claim.imm(ptr %claim, i32 0)
   %size_p = getelementptr inbounds %bcir.res, ptr %res, i32 0, i32 3
   %size = load i64, ptr %size_p, align 8
   %width = add i64 %off, 4
   %ok = icmp ule i64 %width, %size
   ret i1 %ok
+fail:
+  ret i1 false
 }
 
-define i1 @bcir.verify.atomic_contract(ptr %claim, ptr %res) {
+define i1 @bcir.verify.atomic_contract(ptr %claim, ptr %res_table, i64 %res_count) {
 entry:
   %op8 = call i8 @bcir.claim.opcode(ptr %claim)
   %op = zext i8 %op8 to i32
   %lane8 = call i8 @bcir.claim.lane(ptr %claim)
   %lane = zext i8 %lane8 to i32
-  %is_atomic = icmp uge i32 %op, 32
+  %h = call i64 @bcir.claim.hazard_domain(ptr %claim)
+  %mode = and i64 %h, 15
+  %atomic_mode = icmp ne i64 %mode, 0
+  %is_atomic_lo = icmp uge i32 %op, 32
+  %is_atomic_hi = icmp ule i32 %op, 35
+  %is_atomic = and i1 %is_atomic_lo, %is_atomic_hi
   %is_a_lane = icmp eq i32 %lane, 4
+  %lane_or_hazard = or i1 %is_a_lane, %atomic_mode
   %not_atomic = xor i1 %is_atomic, true
-  %ok = or i1 %not_atomic, %is_a_lane
-  ret i1 %ok
-}
-
-define i1 @bcir.verify.generation(ptr %exe, ptr %wl) {
-entry:
-  %exe_map_p = getelementptr inbounds %bcir.exe, ptr %exe, i32 0, i32 4
-  %exe_data_p = getelementptr inbounds %bcir.exe, ptr %exe, i32 0, i32 5
-  %wl_map_p = getelementptr inbounds %bcir.wl, ptr %wl, i32 0, i32 6
-  %wl_data_p = getelementptr inbounds %bcir.wl, ptr %wl, i32 0, i32 7
-  %exe_map = load i64, ptr %exe_map_p, align 8
-  %exe_data = load i64, ptr %exe_data_p, align 8
-  %wl_map = load i64, ptr %wl_map_p, align 8
-  %wl_data = load i64, ptr %wl_data_p, align 8
-  %map_ok = icmp eq i64 %exe_map, %wl_map
-  %data_ok = icmp eq i64 %exe_data, %wl_data
-  %ok = and i1 %map_ok, %data_ok
+  %ok = or i1 %not_atomic, %lane_or_hazard
   ret i1 %ok
 }
 
@@ -69,22 +66,32 @@ entry:
   %lane = zext i8 %lane8 to i32
   %op_ok = icmp ule i32 %op, 96
   %lane_ok = icmp ule i32 %lane, 5
-  %rid = call i32 @bcir.claim.rd(ptr %claim, i32 0)
-  %rid_ok = call i1 @bcir.verify.rid(ptr %res_table, i64 %res_count, i32 %rid)
-  %idx = and i32 %rid, 268435455
-  %res_p = getelementptr %bcir.res, ptr %res_table, i32 %idx
-  %bounds_ok = call i1 @bcir.verify.bounds(ptr %claim, ptr %res_p)
-  %atomic_ok = call i1 @bcir.verify.atomic_contract(ptr %claim, ptr %res_p)
+
+  %rd = call i32 @bcir.claim.rd(ptr %claim, i32 0)
+  %wr = call i32 @bcir.claim.wr(ptr %claim, i32 0)
+  %rd_ok = call i1 @bcir.verify.rid(ptr %res_table, i64 %res_count, i32 %rd)
+  %wr_ok = call i1 @bcir.verify.rid(ptr %res_table, i64 %res_count, i32 %wr)
+
+  %is_load = icmp eq i32 %op, 1
+  %is_store = icmp eq i32 %op, 2
+  %is_atomic_lo = icmp uge i32 %op, 32
+  %is_atomic_hi = icmp ule i32 %op, 35
+  %is_atomic = and i1 %is_atomic_lo, %is_atomic_hi
+
+  %load_ok = or i1 (xor i1 %is_load, true), %rd_ok
+  %store_ok = or i1 (xor i1 %is_store, true), %wr_ok
+  %atomic_rid_ok = or i1 (xor i1 %is_atomic, true), %wr_ok
+
+  %bounds_ok = call i1 @bcir.verify.bounds(ptr %claim, ptr %res_table, i64 %res_count)
+  %atomic_ok = call i1 @bcir.verify.atomic_contract(ptr %claim, ptr %res_table, i64 %res_count)
+
   %ok0 = and i1 %op_ok, %lane_ok
-  %ok1 = and i1 %ok0, %rid_ok
-  %ok2 = and i1 %ok1, %bounds_ok
-  %ok = and i1 %ok2, %atomic_ok
-  br i1 %ok, label %pass, label %fail
-fail:
-  call void @llvm.trap()
-  ret i1 false
-pass:
-  ret i1 true
+  %ok1 = and i1 %ok0, %load_ok
+  %ok2 = and i1 %ok1, %store_ok
+  %ok3 = and i1 %ok2, %atomic_rid_ok
+  %ok4 = and i1 %ok3, %bounds_ok
+  %ok = and i1 %ok4, %atomic_ok
+  ret i1 %ok
 }
 
 define i1 @bcir.verify.worklist(ptr %claims, i64 %count, ptr %res_table, i64 %res_count) {

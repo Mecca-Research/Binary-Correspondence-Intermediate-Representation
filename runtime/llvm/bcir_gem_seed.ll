@@ -19,6 +19,8 @@ declare i32 @bcir.op.load.i32(ptr, i64)
 declare void @bcir.op.store.i32(ptr, i64, i32)
 declare i32 @bcir.op.atomic.add.i32(ptr, i64, i32)
 declare { i32, i1 } @bcir.op.cmpxchg.i32(ptr, i64, i32, i32)
+declare i1 @bcir.verify.worklist(ptr, i64, ptr, i64)
+declare void @bcir.gem.execute_worklist_phased(ptr, ptr, i64, ptr, i32)
 declare void @llvm.trap() cold noreturn
 
 define ptr @bcir.registry.lookup(ptr %registry_table, i32 %rid) alwaysinline {
@@ -117,4 +119,17 @@ body:
 
 exit:
   ret void
+}
+
+
+define void @bcir.gem.verify_and_execute_worklist(ptr %ctx, ptr %claims, i64 %count, ptr %res_table, i64 %res_count, ptr %registry_table, i32 %max_phase) {
+entry:
+  %ok = call i1 @bcir.verify.worklist(ptr %claims, i64 %count, ptr %res_table, i64 %res_count)
+  br i1 %ok, label %exec, label %bad
+exec:
+  call void @bcir.gem.execute_worklist_phased(ptr %ctx, ptr %claims, i64 %count, ptr %registry_table, i32 %max_phase)
+  ret void
+bad:
+  call void @llvm.trap()
+  unreachable
 }

@@ -6,9 +6,13 @@ target datalayout = ""
 
 declare i32 @bcir.claim.phase(ptr)
 declare void @bcir.gem.execute_claim(ptr, ptr, ptr)
+declare void @bcir.op.phase.enter(ptr, i32, i32)
+declare void @bcir.op.phase.leave(ptr, i32, i32)
+declare void @bcir.op.barrier(ptr, i32)
 
 define void @bcir.gem.execute_worklist_phase(ptr %ctx, ptr %claims, i64 %count, ptr %registry_table, i32 %phase) {
 entry:
+  call void @bcir.op.phase.enter(ptr %ctx, i32 0, i32 %phase)
   br label %loop
 loop:
   %i = phi i64 [0, %entry], [%next, %cont]
@@ -26,6 +30,8 @@ cont:
   %next = add i64 %i, 1
   br label %loop
 exit:
+  call void @bcir.op.barrier(ptr %ctx, i32 2)
+  call void @bcir.op.phase.leave(ptr %ctx, i32 0, i32 %phase)
   ret void
 }
 

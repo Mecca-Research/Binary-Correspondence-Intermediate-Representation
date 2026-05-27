@@ -4,23 +4,29 @@ target datalayout = ""
 
 %bcir.claim = type { i64, [4 x i32], [4 x i32], i64, [2 x i64] }
 
-define i64 @bcir.claim.opstride(ptr %c) alwaysinline {
+define i64 @bcir.claim.control(ptr %c) alwaysinline {
 entry:
   %p = getelementptr inbounds %bcir.claim, ptr %c, i32 0, i32 0
   %v = load i64, ptr %p, align 8
   ret i64 %v
 }
 
+define i64 @bcir.claim.opstride(ptr %c) alwaysinline {
+entry:
+  %v = call i64 @bcir.claim.control(ptr %c)
+  ret i64 %v
+}
+
 define i8 @bcir.claim.opcode(ptr %c) alwaysinline {
 entry:
-  %h = call i64 @bcir.claim.opstride(ptr %c)
+  %h = call i64 @bcir.claim.control(ptr %c)
   %x = trunc i64 %h to i8
   ret i8 %x
 }
 
 define i8 @bcir.claim.lane(ptr %c) alwaysinline {
 entry:
-  %h = call i64 @bcir.claim.opstride(ptr %c)
+  %h = call i64 @bcir.claim.control(ptr %c)
   %s = lshr i64 %h, 8
   %x = trunc i64 %s to i8
   ret i8 %x
@@ -28,7 +34,7 @@ entry:
 
 define i32 @bcir.claim.phase(ptr %c) alwaysinline {
 entry:
-  %h = call i64 @bcir.claim.opstride(ptr %c)
+  %h = call i64 @bcir.claim.control(ptr %c)
   %s = lshr i64 %h, 16
   %m = and i64 %s, 4095
   %x = trunc i64 %m to i32
@@ -37,7 +43,7 @@ entry:
 
 define i32 @bcir.claim.epoch(ptr %c) alwaysinline {
 entry:
-  %h = call i64 @bcir.claim.opstride(ptr %c)
+  %h = call i64 @bcir.claim.control(ptr %c)
   %s = lshr i64 %h, 28
   %m = and i64 %s, 4095
   %x = trunc i64 %m to i32
@@ -46,7 +52,7 @@ entry:
 
 define i32 @bcir.claim.flags(ptr %c) alwaysinline {
 entry:
-  %h = call i64 @bcir.claim.opstride(ptr %c)
+  %h = call i64 @bcir.claim.control(ptr %c)
   %s = lshr i64 %h, 40
   %m = and i64 %s, 255
   %x = trunc i64 %m to i32
@@ -55,7 +61,7 @@ entry:
 
 define i32 @bcir.claim.stride_code(ptr %c) alwaysinline {
 entry:
-  %h = call i64 @bcir.claim.opstride(ptr %c)
+  %h = call i64 @bcir.claim.control(ptr %c)
   %s = lshr i64 %h, 48
   %x = trunc i64 %s to i32
   ret i32 %x
