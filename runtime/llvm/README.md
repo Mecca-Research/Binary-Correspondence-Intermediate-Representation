@@ -27,6 +27,14 @@ Full stride encoding goes in `imm[0]` when `stride_code` is insufficient.
 - `bcir_worklist.ll`
 - `bcir_phase_worklist.ll`
 - `bcir_kbcost.ll`
+- `bcir_schedule_schema.ll`
+- `bcir_schedule_accessors.ll`
+- `bcir_prefetch_profiles.ll`
+- `bcir_lane_classifier.ll`
+- `bcir_batch_executor.ll`
+- `bcir_batch_verify.ll`
+- `bcir_stream_pack.ll`
+- `bcir_examples_phase3.ll`
 - `bcir_examples.ll`
 - `bcir_examples_worklist.ll`
 
@@ -39,6 +47,7 @@ Run:
 ```bash
 runtime/llvm/validate_llvm_seed.sh
 runtime/llvm/validate_phase2.sh
+runtime/llvm/validate_phase3.sh
 ```
 
 If LLVM tools are unavailable, validation is pending (do not claim success).
