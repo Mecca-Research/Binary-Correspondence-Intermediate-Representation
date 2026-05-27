@@ -720,9 +720,9 @@ class RopVerifier {
           continue;
         }
         const auto* phase_op = static_cast<const PhaseOperation*>(operation.get());
-        if (phase_op->phase < 0 || phase_op->phase > 3) {
+        if (phase_op->phase < 0 || phase_op->phase > 4095) {
           add_diag(phase_op->location, kPass, "phase.annotation.invalid",
-                   "phase annotation must be 0..3");
+                   "phase annotation must be 0..4095");
           continue;
         }
         if (current_phase > phase_op->phase) {

@@ -81,16 +81,23 @@ Update `include/bcir/bcir_ir.hpp` with:
 - Extend internals to run additional checks and emit structured diagnostics.
 
 ### Task 3.2: Implement pass sequence
-Implement/extend passes in order:
-1. `verify_registry_descriptors`
-2. `verify_type_and_lane_compatibility`
-3. `verify_epoch_phase_legality`
-4. `verify_hazard_contracts`
-5. `verify_registry_bounds_and_alignment`
-6. `verify_atomic_legality`
-7. `verify_macro_hygiene`
-8. `verify_rop_roundtrip`
-9. `verify_llvm_lowering_contract`
+Current implemented verifier passes (as of this repo state):
+1. `phase_monotonicity_and_annotations`
+2. `lane_consistency_per_rid`
+3. `offset_alignment_legality_by_lane`
+4. `barrier_placement_and_hazard_contract`
+5. `concurrent_registry_access_by_lane_and_atomic_constraints`
+
+Target pass roadmap (planned):
+- `verify_registry_descriptors`
+- `verify_type_and_lane_compatibility`
+- `verify_epoch_phase_legality`
+- `verify_hazard_contracts`
+- `verify_registry_bounds_and_alignment`
+- `verify_atomic_legality`
+- `verify_macro_hygiene`
+- `verify_rop_roundtrip`
+- `verify_llvm_lowering_contract`
 
 ### Task 3.3: Structured diagnostics
 Ensure each failure maps to:
