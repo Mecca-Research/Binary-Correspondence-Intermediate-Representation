@@ -32,3 +32,17 @@ exit:
 
 !bcir.kbdi = !{!200}
 !200 = !{!"K_BDI(G|H,Theta)", !"score", !"sum_i weight_i(theta,phase,policy) * normalized_cost_i", !"costs", !"compute,memory,fabric,sync,compile,thermal,power,reliability,security,accuracy,contention"}
+
+
+define i64 @bcir.kbdi.score.batch.q16(ptr %batch_cost, ptr %weight) {
+entry:
+  %score = call i64 @bcir.kbdi.score.q16(ptr %batch_cost, ptr %weight)
+  ret i64 %score
+}
+
+!bcir.kbdi.phase3 = !{!310}
+!310 = !{
+  !"batch_score",
+  !"compute + memory + fabric + sync + thermal + contention",
+  !"selection", !"min cost legal batch plan"
+}

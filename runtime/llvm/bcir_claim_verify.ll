@@ -23,17 +23,29 @@ entry:
 
 define i1 @bcir.verify.bounds(ptr %claim, ptr %res_table, i64 %res_count) {
 entry:
-  %rid = call i32 @bcir.claim.rd(ptr %claim, i32 0)
+  %op8 = call i8 @bcir.claim.opcode(ptr %claim)
+  %op = zext i8 %op8 to i32
+  %rd = call i32 @bcir.claim.rd(ptr %claim, i32 0)
+  %wr = call i32 @bcir.claim.wr(ptr %claim, i32 0)
+  %is_store = icmp eq i32 %op, 2
+  %is_atomic_lo = icmp uge i32 %op, 32
+  %is_atomic_hi = icmp ule i32 %op, 35
+  %is_atomic = and i1 %is_atomic_lo, %is_atomic_hi
+  %write_like = or i1 %is_store, %is_atomic
+  %rid = select i1 %write_like, i32 %wr, i32 %rd
+
   %rid_ok = call i1 @bcir.verify.rid(ptr %res_table, i64 %res_count, i32 %rid)
   br i1 %rid_ok, label %check, label %fail
 check:
   %idx = and i32 %rid, 268435455
   %res = getelementptr inbounds %bcir.res, ptr %res_table, i32 %idx
   %off = call i64 @bcir.claim.imm(ptr %claim, i32 0)
+  %off_nonneg = icmp sge i64 %off, 0
   %size_p = getelementptr inbounds %bcir.res, ptr %res, i32 0, i32 3
   %size = load i64, ptr %size_p, align 8
   %width = add i64 %off, 4
-  %ok = icmp ule i64 %width, %size
+  %ok_w = icmp ule i64 %width, %size
+  %ok = and i1 %off_nonneg, %ok_w
   ret i1 %ok
 fail:
   ret i1 false
@@ -54,7 +66,9 @@ entry:
   %is_a_lane = icmp eq i32 %lane, 4
   %lane_or_hazard = or i1 %is_a_lane, %atomic_mode
   %not_atomic = xor i1 %is_atomic, true
-  %ok = or i1 %not_atomic, %lane_or_hazard
+  %is_a_lane_non_atomic = and i1 %not_atomic, %is_a_lane
+  %atomic_lane_ok = or i1 %not_atomic, %lane_or_hazard
+  %ok = and i1 %atomic_lane_ok, (xor i1 %is_a_lane_non_atomic, true)
   ret i1 %ok
 }
 
@@ -85,12 +99,37 @@ entry:
   %bounds_ok = call i1 @bcir.verify.bounds(ptr %claim, ptr %res_table, i64 %res_count)
   %atomic_ok = call i1 @bcir.verify.atomic_contract(ptr %claim, ptr %res_table, i64 %res_count)
 
+  ; MMIO domain must be volatile or barriered (bit 0 or bit 1 in hazard domain)
+  %h = call i64 @bcir.claim.hazard_domain(ptr %claim)
+  %rid_sel = select i1 %is_load, i32 %rd, i32 %wr
+  %rid_idx = and i32 %rid_sel, 268435455
+  %rid_idx64 = zext i32 %rid_idx to i64
+  %rid_in_range = icmp ult i64 %rid_idx64, %res_count
+  br i1 %rid_in_range, label %mmio_check, label %mmio_skip
+
+mmio_check:
+  %res = getelementptr inbounds %bcir.res, ptr %res_table, i32 %rid_idx
+  %domain_p = getelementptr inbounds %bcir.res, ptr %res, i32 0, i32 1
+  %domain = load i32, ptr %domain_p, align 4
+  %is_mmio = icmp eq i32 %domain, 2
+  %vol_or_bar = and i64 %h, 3
+  %has_vol_or_bar = icmp ne i64 %vol_or_bar, 0
+  %mmio_ok = or i1 (xor i1 %is_mmio, true), %has_vol_or_bar
+  br label %mmio_merge
+
+mmio_skip:
+  br label %mmio_merge
+
+mmio_merge:
+  %mmio_gate = phi i1 [ %mmio_ok, %mmio_check ], [ true, %mmio_skip ]
+
   %ok0 = and i1 %op_ok, %lane_ok
   %ok1 = and i1 %ok0, %load_ok
   %ok2 = and i1 %ok1, %store_ok
   %ok3 = and i1 %ok2, %atomic_rid_ok
   %ok4 = and i1 %ok3, %bounds_ok
-  %ok = and i1 %ok4, %atomic_ok
+  %ok5 = and i1 %ok4, %atomic_ok
+  %ok = and i1 %ok5, %mmio_gate
   ret i1 %ok
 }
 
