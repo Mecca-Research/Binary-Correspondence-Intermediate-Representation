@@ -68,7 +68,8 @@ entry:
   %not_atomic = xor i1 %is_atomic, true
   %is_a_lane_non_atomic = and i1 %not_atomic, %is_a_lane
   %atomic_lane_ok = or i1 %not_atomic, %lane_or_hazard
-  %ok = and i1 %atomic_lane_ok, (xor i1 %is_a_lane_non_atomic, true)
+  %not_a_lane_non_atomic = xor i1 %is_a_lane_non_atomic, true
+  %ok = and i1 %atomic_lane_ok, %not_a_lane_non_atomic
   ret i1 %ok
 }
 
@@ -92,15 +93,20 @@ entry:
   %is_atomic_hi = icmp ule i32 %op, 35
   %is_atomic = and i1 %is_atomic_lo, %is_atomic_hi
 
-  %load_ok = or i1 (xor i1 %is_load, true), %rd_ok
-  %store_ok = or i1 (xor i1 %is_store, true), %wr_ok
-  %atomic_rid_ok = or i1 (xor i1 %is_atomic, true), %wr_ok
+  %not_load = xor i1 %is_load, true
+  %load_ok = or i1 %not_load, %rd_ok
+  %not_store = xor i1 %is_store, true
+  %store_ok = or i1 %not_store, %wr_ok
+  %not_atomic = xor i1 %is_atomic, true
+  %atomic_rid_ok = or i1 %not_atomic, %wr_ok
 
-  %needs_bounds = or i1 %is_load, (or i1 %is_store, %is_atomic)
+  %load_or_store = or i1 %is_load, %is_store
+  %needs_bounds = or i1 %load_or_store, %is_atomic
   %bounds_eval = call i1 @bcir.verify.bounds(ptr %claim, ptr %res_table, i64 %res_count)
-  %bounds_ok = or i1 (xor i1 %needs_bounds, true), %bounds_eval
+  %not_needs_bounds = xor i1 %needs_bounds, true
+  %bounds_ok = or i1 %not_needs_bounds, %bounds_eval
   %atomic_eval = call i1 @bcir.verify.atomic_contract(ptr %claim, ptr %res_table, i64 %res_count)
-  %atomic_ok = or i1 (xor i1 %is_atomic, true), %atomic_eval
+  %atomic_ok = or i1 %not_atomic, %atomic_eval
 
   ; MMIO domain must be volatile or barriered (bit 0 or bit 1 in hazard domain)
   %h = call i64 @bcir.claim.hazard_domain(ptr %claim)
@@ -117,31 +123,8 @@ mmio_check:
   %is_mmio = icmp eq i32 %domain, 2
   %vol_or_bar = and i64 %h, 3
   %has_vol_or_bar = icmp ne i64 %vol_or_bar, 0
-  %mmio_ok = or i1 (xor i1 %is_mmio, true), %has_vol_or_bar
-  br label %mmio_merge
-
-mmio_skip:
-  br label %mmio_merge
-
-mmio_merge:
-  %mmio_gate = phi i1 [ %mmio_ok, %mmio_check ], [ true, %mmio_skip ]
-
-  ; MMIO domain must be volatile or barriered (bit 0 or bit 1 in hazard domain)
-  %h = call i64 @bcir.claim.hazard_domain(ptr %claim)
-  %rid_sel = select i1 %is_load, i32 %rd, i32 %wr
-  %rid_idx = and i32 %rid_sel, 268435455
-  %rid_idx64 = zext i32 %rid_idx to i64
-  %rid_in_range = icmp ult i64 %rid_idx64, %res_count
-  br i1 %rid_in_range, label %mmio_check, label %mmio_skip
-
-mmio_check:
-  %res = getelementptr inbounds %bcir.res, ptr %res_table, i32 %rid_idx
-  %domain_p = getelementptr inbounds %bcir.res, ptr %res, i32 0, i32 1
-  %domain = load i32, ptr %domain_p, align 4
-  %is_mmio = icmp eq i32 %domain, 2
-  %vol_or_bar = and i64 %h, 3
-  %has_vol_or_bar = icmp ne i64 %vol_or_bar, 0
-  %mmio_ok = or i1 (xor i1 %is_mmio, true), %has_vol_or_bar
+  %not_mmio = xor i1 %is_mmio, true
+  %mmio_ok = or i1 %not_mmio, %has_vol_or_bar
   br label %mmio_merge
 
 mmio_skip:

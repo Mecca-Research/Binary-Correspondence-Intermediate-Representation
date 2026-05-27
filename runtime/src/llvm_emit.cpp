@@ -12,8 +12,11 @@ std::vector<BcirVerifierMessage> verify_epoch_phase(const BcirGraph& graph) {
     const auto& cur = graph.nodes[i];
     if (cur.epoch < prev.epoch || (cur.epoch == prev.epoch && cur.phase < prev.phase)) {
       out.push_back({false, "(epoch,phase) monotonicity violation"});
+      continue;
     }
-    if (cur.phase < prev.phase && cur.epoch == prev.epoch) out.push_back({false, "phase reset requires epoch increment"});
+    if (cur.epoch > prev.epoch && cur.phase != 0) {
+      out.push_back({false, "epoch increment requires phase reset to 0"});
+    }
   }
   if (out.empty()) out.push_back({true, "ok"});
   return out;

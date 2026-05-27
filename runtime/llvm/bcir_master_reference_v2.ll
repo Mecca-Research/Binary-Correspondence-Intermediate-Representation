@@ -52,4 +52,4 @@ declare void @bcir.gem.execute_worklist(ptr, ptr, i64, ptr)
 !300 = !{!"sort_order", !"epoch,phase,lane,opcode,type,hazard_domain", !"batch_key_bits", i32 64}
 
 !bcir.master.phase3 = !{!400}
-!400 = !{"phase3_seed", "stream-pack and batch execution path enabled"}
+!400 = !{!"phase3_seed", !"stream-pack and batch execution path enabled"}

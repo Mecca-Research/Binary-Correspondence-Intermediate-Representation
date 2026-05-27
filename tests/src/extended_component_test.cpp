@@ -364,8 +364,12 @@ bool test_llvm_abi_reference_module() {
     std::cerr << "llvm abi: missing cmpxchg" << std::endl;
     return false;
   }
-  if (module.find("@bcir.rt.phase.enter") == std::string::npos ||
-      module.find("@bcir.rt.barrier") == std::string::npos) {
+  if (module.find("%bcir.execctx = type { ptr, i32, i32, i32, i64, ptr }") == std::string::npos) {
+    std::cerr << "llvm abi: execctx layout drifted from runtime/llvm contract" << std::endl;
+    return false;
+  }
+  if (module.find("@bcir.op.phase.enter") == std::string::npos ||
+      module.find("@bcir.op.barrier") == std::string::npos) {
     std::cerr << "llvm abi: missing required runtime hooks" << std::endl;
     return false;
   }

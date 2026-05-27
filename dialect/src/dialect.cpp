@@ -258,8 +258,8 @@ class Parser {
       operation->phase = -1;
     } else {
       operation->phase = std::stoi(token.lexeme);
-      if (operation->phase < 0 || operation->phase > 3) {
-        add_diag(token.location, "invalid phase directive: phase must be 0..3");
+      if (operation->phase < 0 || operation->phase > 4095) {
+        add_diag(token.location, "invalid phase directive: phase must be 0..4095");
       }
     }
 

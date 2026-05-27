@@ -310,7 +310,7 @@ module test {
   const std::string invalid_program = R"(
 module test {
   macro broken(a, a) {
-    phase 9;
+    phase 5000;
   }
 
   fn main() {
