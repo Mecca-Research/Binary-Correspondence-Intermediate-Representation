@@ -1,0 +1,35 @@
+MODULE vector_add {
+  HEADER {
+    module_id = 1001;
+    target = "generic-llvm";
+    cacheline = 64;
+  }
+
+  REGISTRY RES {
+    RECORD a : RES { rid = 1; domain = ram; size = 4096; flags = 0; }
+    RECORD b : RES { rid = 2; domain = ram; size = 4096; flags = 0; }
+    RECORD c : RES { rid = 3; domain = ram; size = 4096; flags = 0; }
+  }
+
+  PHASE 0 {
+    CLAIM 1000 : LOAD_UX(src=1, off=0, count=8) :: {
+      rd = [1];
+      wr = [];
+      hazard = unique;
+      domain = ram;
+      verify = bounds;
+      cost = bandwidth;
+    }
+  }
+
+  PHASE 1 {
+    CLAIM 1001 : ADD_UX(a=1,b=2,dst=3,count=8) :: {
+      rd = [1,2];
+      wr = [3];
+      hazard = unique;
+      domain = ram;
+      verify = exact;
+      cost = compute;
+    }
+  }
+}
