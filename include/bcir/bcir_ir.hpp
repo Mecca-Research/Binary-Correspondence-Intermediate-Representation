@@ -65,18 +65,11 @@ struct BcirSchedule {
 
 #pragma pack(push, 1)
 struct BcirClaimV1 {
-  std::uint8_t opcode = 0;
-  std::uint8_t lane = 0;
-  std::uint16_t phase = 0;
-  std::uint16_t epoch = 0;
-  std::uint16_t flags = 0;
-  std::uint32_t strideBytes = 0;
-  std::uint32_t rdRids[2] = {0, 0};
-  std::uint32_t wrRids[2] = {0, 0};
+  std::uint64_t control = 0;
+  std::uint32_t rdRids[4] = {0, 0, 0, 0};
+  std::uint32_t wrRids[4] = {0, 0, 0, 0};
   std::uint64_t hazardDomain = 0;
   std::uint64_t immediates[2] = {0, 0};
-  std::uint64_t costHint = 0;
-  std::uint32_t reserved = 0;
 };
 #pragma pack(pop)
 
