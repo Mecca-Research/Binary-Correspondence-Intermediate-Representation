@@ -46,14 +46,16 @@ target datalayout = ""
   i64,
   i64,
   i64,
+  i64,
   i64
 }
 
 %bcir.blob.view = type {
   ptr,
-  i64,
   ptr,
-  i64,
+  ptr,
+  ptr,
+  ptr,
   ptr,
   i64,
   ptr,
