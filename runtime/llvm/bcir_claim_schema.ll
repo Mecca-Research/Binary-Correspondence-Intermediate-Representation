@@ -47,4 +47,4 @@ target datalayout = ""
 !102 = !{!"RAM", i32 0, !"VRAM", i32 1, !"NVM", i32 2, !"MMIO", i32 3, !"CXL", i32 4, !"HBM", i32 5}
 
 !bcir.claim.layout = !{!103}
-!103 = !{!"BCIR_ClaimV2", !"size_bytes", i32 64, !"control", i32 0, i32 8, !"rd_rids", i32 8, i32 16, !"wr_rids", i32 24, i32 16, !"hazard_domain", i32 40, i32 8, !"immediates", i32 48, i32 16}
+!103 = !{!"BCIR_ClaimV2", !"size_bytes", i32 64, !"opstride", i32 0, i32 8, !"rd_rids", i32 8, i32 16, !"wr_rids", i32 24, i32 16, !"hazard_domain", i32 40, i32 8, !"immediates", i32 48, i32 16}
