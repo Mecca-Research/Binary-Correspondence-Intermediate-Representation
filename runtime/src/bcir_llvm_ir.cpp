@@ -21,25 +21,25 @@ source_filename = "bcir_backend_abi.ll"
 
 declare void @llvm.trap() cold noreturn
 
-%bcir.execctx = type { ptr, i32, i32, i64, i64, ptr }
+%bcir.execctx = type { ptr, i32, i32, i32, i64, ptr }
 
-declare void @bcir.rt.phase.enter(ptr, i32)
-declare void @bcir.rt.phase.leave(ptr, i32)
-declare void @bcir.rt.barrier(ptr, i32)
-declare void @bcir.rt.prov.note(ptr, i64, i64, i64, i32, i32, i32, i32)
+declare void @bcir.op.phase.enter(ptr, i32, i32)
+declare void @bcir.op.phase.leave(ptr, i32, i32)
+declare void @bcir.op.barrier(ptr, i32)
+declare void @bcir.op.prov.note(ptr, i64, i64, i64, i32, i32, i32, i32)
 
-declare i32 @bcir.rt.load.i32(ptr, i64)
-declare void @bcir.rt.store.i32(ptr, i64, i32)
+declare i32 @bcir.op.load.i32(ptr, i64)
+declare void @bcir.op.store.i32(ptr, i64, i32)
 
-declare i32 @bcir.rt.atomic.add.i32(ptr, i64, i32)
-declare i32 @bcir.rt.atomic.sub.i32(ptr, i64, i32)
-declare i32 @bcir.rt.atomic.xor.i32(ptr, i64, i32)
+declare i32 @bcir.op.atomic.add.i32(ptr, i64, i32)
+declare i32 @bcir.op.atomic.sub.i32(ptr, i64, i32)
+declare i32 @bcir.op.atomic.xor.i32(ptr, i64, i32)
 
 define i32 @bcir.example.atomic_add(ptr %ctx, ptr %base, i32 %delta) {
 entry:
-  call void @bcir.rt.phase.enter(ptr %ctx, i32 1)
+  call void @bcir.op.phase.enter(ptr %ctx, i32 0, i32 1)
   %old = atomicrmw add ptr %base, i32 %delta seq_cst, align 4
-  call void @bcir.rt.barrier(ptr %ctx, i32 4)
+  call void @bcir.op.barrier(ptr %ctx, i32 4)
   ret i32 %old
 }
 
