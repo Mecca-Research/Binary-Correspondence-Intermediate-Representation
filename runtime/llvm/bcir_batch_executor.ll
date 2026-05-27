@@ -9,10 +9,31 @@ target datalayout = ""
 
 declare void @bcir.gem.execute_claim(ptr, ptr, ptr)
 declare void @bcir.op.prefetch.linear(ptr, i64, i32, i32)
-declare void @llvm.prefetch(ptr, i32, i32, i32)
 
 define void @bcir.gem.execute_batch(ptr %ctx, ptr %claims, ptr %batch, ptr %registry_table) {
 entry:
+  %opcode_p = getelementptr inbounds %bcir.batch, ptr %batch, i32 0, i32 3
+  %opcode = load i32, ptr %opcode_p, align 4
+  switch i32 %opcode, label %generic [
+    i32 1, label %load_batch
+    i32 2, label %store_batch
+    i32 3, label %add_batch
+    i32 32, label %atomic_add_batch
+  ]
+
+load_batch:
+  call void @bcir.gem.execute_batch.generic(ptr %ctx, ptr %claims, ptr %batch, ptr %registry_table)
+  ret void
+store_batch:
+  call void @bcir.gem.execute_batch.generic(ptr %ctx, ptr %claims, ptr %batch, ptr %registry_table)
+  ret void
+add_batch:
+  call void @bcir.gem.execute_batch.generic(ptr %ctx, ptr %claims, ptr %batch, ptr %registry_table)
+  ret void
+atomic_add_batch:
+  call void @bcir.gem.execute_batch.generic(ptr %ctx, ptr %claims, ptr %batch, ptr %registry_table)
+  ret void
+generic:
   call void @bcir.gem.execute_batch.generic(ptr %ctx, ptr %claims, ptr %batch, ptr %registry_table)
   ret void
 }

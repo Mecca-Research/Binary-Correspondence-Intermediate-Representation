@@ -9,13 +9,6 @@ target datalayout = ""
   i64
 }
 
-%bcir.batch.range = type {
-  i32,
-  i32,
-  i64,
-  i64
-}
-
 %bcir.batch = type {
   i32,
   i32,
