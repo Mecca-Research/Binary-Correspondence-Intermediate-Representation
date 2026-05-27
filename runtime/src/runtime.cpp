@@ -35,8 +35,8 @@ bool validate_graph(const GemGraph& graph, LoadedGraph* loaded, std::string* mes
     return false;
   }
 
-  std::vector<std::size_t> seen_ids;
-  seen_ids.reserve(graph.nodes.size());
+  std::vector<std::size_t> seen_phases;
+  seen_phases.reserve(graph.nodes.size());
   std::unordered_map<std::size_t, std::size_t> id_to_index;
   for (std::size_t i = 0; i < graph.nodes.size(); ++i) {
     const GemNode& node = graph.nodes[i];
@@ -61,12 +61,12 @@ bool validate_graph(const GemGraph& graph, LoadedGraph* loaded, std::string* mes
     loaded_node.max_reexecute_attempts = node.maxReexecuteAttempts;
     loaded_node.registry = node.registry;
     loaded->nodes.push_back(std::move(loaded_node));
-    seen_ids.push_back(node.phase);
+    seen_phases.push_back(node.phase);
   }
 
-  std::sort(seen_ids.begin(), seen_ids.end());
-  seen_ids.erase(std::unique(seen_ids.begin(), seen_ids.end()), seen_ids.end());
-  loaded->phase_order = std::move(seen_ids);
+  std::sort(seen_phases.begin(), seen_phases.end());
+  seen_phases.erase(std::unique(seen_phases.begin(), seen_phases.end()), seen_phases.end());
+  loaded->phase_order = std::move(seen_phases);
 
   for (std::size_t i = 0; i < graph.nodes.size(); ++i) {
     const GemNode& node = graph.nodes[i];
@@ -89,6 +89,28 @@ bool validate_graph(const GemGraph& graph, LoadedGraph* loaded, std::string* mes
       loaded->nodes[i].indegree += 1;
       loaded->nodes[it->second].successors.push_back(i);
     }
+  }
+
+  std::vector<std::size_t> indegrees(loaded->nodes.size(), 0);
+  std::deque<std::size_t> ready;
+  for (std::size_t idx = 0; idx < loaded->nodes.size(); ++idx) {
+    indegrees[idx] = loaded->nodes[idx].indegree;
+    if (indegrees[idx] == 0) ready.push_back(idx);
+  }
+  std::size_t visited = 0;
+  while (!ready.empty()) {
+    const std::size_t n = ready.front();
+    ready.pop_front();
+    ++visited;
+    for (std::size_t succ : loaded->nodes[n].successors) {
+      if (--indegrees[succ] == 0) ready.push_back(succ);
+    }
+  }
+  if (visited != loaded->nodes.size()) {
+    if (message != nullptr) {
+      *message = "graph contains a dependency cycle";
+    }
+    return false;
   }
 
   return true;

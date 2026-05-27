@@ -258,8 +258,8 @@ class Parser {
       operation->phase = -1;
     } else {
       operation->phase = std::stoi(token.lexeme);
-      if (operation->phase < 0 || operation->phase > 3) {
-        add_diag(token.location, "invalid phase directive: phase must be 0..3");
+      if (operation->phase < 0 || operation->phase > 4095) {
+        add_diag(token.location, "invalid phase directive: phase must be 0..4095");
       }
     }
 
@@ -720,9 +720,9 @@ class RopVerifier {
           continue;
         }
         const auto* phase_op = static_cast<const PhaseOperation*>(operation.get());
-        if (phase_op->phase < 0 || phase_op->phase > 3) {
+        if (phase_op->phase < 0 || phase_op->phase > 4095) {
           add_diag(phase_op->location, kPass, "phase.annotation.invalid",
-                   "phase annotation must be 0..3");
+                   "phase annotation must be 0..4095");
           continue;
         }
         if (current_phase > phase_op->phase) {

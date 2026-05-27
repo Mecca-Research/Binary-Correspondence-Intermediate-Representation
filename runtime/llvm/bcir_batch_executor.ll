@@ -26,7 +26,7 @@ entry:
   br label %loop
 
 loop:
-  %i = phi i64 [0, %entry], [%next, %body]
+  %i = phi i64 [0, %entry], [%next, %cont]
   %done = icmp uge i64 %i, %count
   br i1 %done, label %exit, label %body
 

@@ -52,11 +52,13 @@ body:
   %is_atomic_lo = icmp uge i32 %cop, 32
   %is_atomic_hi = icmp ule i32 %cop, 35
   %is_atomic = and i1 %is_atomic_lo, %is_atomic_hi
-  %a_ok = or i1 (xor i1 %is_a_lane, true), %is_atomic
+  %not_a_lane = xor i1 %is_a_lane, true
+  %a_ok = or i1 %not_a_lane, %is_atomic
   %is_hazard_lo = icmp uge i32 %cop, 48
   %is_hazard_hi = icmp ule i32 %cop, 51
   %is_hazard_like = and i1 %is_hazard_lo, %is_hazard_hi
-  %h_ok = or i1 (xor i1 %is_h_lane, true), %is_hazard_like
+  %not_h_lane = xor i1 %is_h_lane, true
+  %h_ok = or i1 %not_h_lane, %is_hazard_like
 
   %ok0 = and i1 %phase_ok, %opcode_ok
   %ok1 = and i1 %ok0, %lane_ok
