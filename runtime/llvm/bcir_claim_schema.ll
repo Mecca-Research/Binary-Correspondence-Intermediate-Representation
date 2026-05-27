@@ -48,3 +48,7 @@ target datalayout = ""
 
 !bcir.claim.layout = !{!103}
 !103 = !{!"BCIR_ClaimV2", !"size_bytes", i32 64, !"control", i32 0, i32 8, !"rd_rids", i32 8, i32 16, !"wr_rids", i32 24, i32 16, !"hazard_domain", i32 40, i32 8, !"immediates", i32 48, i32 16}
+
+
+!bcir.phase3 = !{!104}
+!104 = !{!"BCIR_Phase3", !"hot_stream", !"claims -> phase ranges -> lane/opcode/type batches"}
