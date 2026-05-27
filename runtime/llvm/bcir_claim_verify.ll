@@ -126,6 +126,30 @@ mmio_skip:
 mmio_merge:
   %mmio_gate = phi i1 [ %mmio_ok, %mmio_check ], [ true, %mmio_skip ]
 
+  ; MMIO domain must be volatile or barriered (bit 0 or bit 1 in hazard domain)
+  %h = call i64 @bcir.claim.hazard_domain(ptr %claim)
+  %rid_sel = select i1 %is_load, i32 %rd, i32 %wr
+  %rid_idx = and i32 %rid_sel, 268435455
+  %rid_idx64 = zext i32 %rid_idx to i64
+  %rid_in_range = icmp ult i64 %rid_idx64, %res_count
+  br i1 %rid_in_range, label %mmio_check, label %mmio_skip
+
+mmio_check:
+  %res = getelementptr inbounds %bcir.res, ptr %res_table, i32 %rid_idx
+  %domain_p = getelementptr inbounds %bcir.res, ptr %res, i32 0, i32 1
+  %domain = load i32, ptr %domain_p, align 4
+  %is_mmio = icmp eq i32 %domain, 2
+  %vol_or_bar = and i64 %h, 3
+  %has_vol_or_bar = icmp ne i64 %vol_or_bar, 0
+  %mmio_ok = or i1 (xor i1 %is_mmio, true), %has_vol_or_bar
+  br label %mmio_merge
+
+mmio_skip:
+  br label %mmio_merge
+
+mmio_merge:
+  %mmio_gate = phi i1 [ %mmio_ok, %mmio_check ], [ true, %mmio_skip ]
+
   %ok0 = and i1 %op_ok, %lane_ok
   %ok1 = and i1 %ok0, %load_ok
   %ok2 = and i1 %ok1, %store_ok
