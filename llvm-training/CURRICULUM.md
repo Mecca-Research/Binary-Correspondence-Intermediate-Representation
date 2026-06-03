@@ -24,13 +24,17 @@ Practice next: [`exercises/001-add.prompt.md`](exercises/001-add.prompt.md) and
 After Path 1, add:
 
 6. [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md)
-7. [`02-types/02-composite-types.md`](02-types/02-composite-types.md)
+7. [`02-types/02-composite-types.md`](02-types/02-composite-types.md) — include the GEP basics in
+   `Accessing struct fields` / aggregate access examples
 8. [`02-types/03-opaque-and-pointer-types.md`](02-types/03-opaque-and-pointer-types.md)
 9. [`04-memory/01-alloca.md`](04-memory/01-alloca.md)
-10. [`04-memory/02-load-store.md`](04-memory/02-load-store.md)
+10. [`04-memory/02-load-store.md`](04-memory/02-load-store.md) — typed memory operations,
+    especially explicit access types with opaque pointers
 11. [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md)
 12. [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md)
-13. All six files in `08-pitfalls/` — each is ≤ 5 minutes
+13. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
+    terminators, comparison, memory, conversion, and other/call instructions
+14. All six files in `08-pitfalls/` — each is ≤ 5 minutes
 
 Now you can read and write straightforward IR. Verifier failures should
 make sense.
@@ -86,6 +90,8 @@ If your task touches these, you'll need external references:
 - **JIT (`lli`, ORC, MCJIT)**
 - **C/C++ frontend internals** — Clang, AST, lowering rules
 - **TableGen** — used to define targets and instruction sets
+- **Calls / returns / comparisons** — a small dedicated chapter may be worth adding if
+  this training set keeps expanding beyond the quick reference
 
 These are roadmap items; PRs welcome.
 
