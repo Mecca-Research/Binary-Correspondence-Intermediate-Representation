@@ -20,8 +20,9 @@ testable.
 3. **Treat `08-pitfalls/` as a checklist** before writing or reviewing
    LLVM IR. Every pitfall is tied to a real bug that shipped — most of
    them caught in the sibling BCIR project.
-4. **`10-grammar/llvm-ir.tm`** is the formal grammar. Use it for
-   syntax-edge questions. It is the source of truth when prose disagrees.
+4. **`10-grammar/llvm-ir.tm`** is the formal grammar. Use it as a
+   formal syntax aid; verify against the target LLVM version's `llvm-as`
+   and LangRef.
 
 ## Layout
 
