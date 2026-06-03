@@ -98,7 +98,7 @@ TLS models (mostly relevant for shared libraries):
 ```
 
 The numeric mapping is target-defined. See
-`04-address-spaces.md`.
+[`04-address-spaces.md`](04-address-spaces.md).
 
 ## `global` vs `constant`
 
@@ -199,8 +199,8 @@ data.
 
 ## See also
 
-- `03-constants/04-global-vs-local.md` — global constants in detail
-- `04-address-spaces.md` — `addrspace()`
-- `02-load-store.md` — using `load`/`store` with globals
-- `01-syntax/01-modules-functions-blocks.md` — globals at module
+- [`../03-constants/04-global-vs-local.md`](../03-constants/04-global-vs-local.md) — global constants in detail
+- [`04-address-spaces.md`](04-address-spaces.md) — `addrspace()`
+- [`02-load-store.md`](02-load-store.md) — using `load`/`store` with globals
+- [`../01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) — globals at module
   scope

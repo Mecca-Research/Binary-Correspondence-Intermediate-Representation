@@ -112,7 +112,7 @@ dead code anyway).
 
 ## See also
 
-- `00-foundations/02-ssa.md` — SSA = single definition
-- `01-syntax/01-modules-functions-blocks.md` — labels and identifiers
-- `08-pitfalls/02-phi-predecessor-mismatch.md` — phi nodes referencing
+- [`../00-foundations/02-ssa.md`](../00-foundations/02-ssa.md) — SSA = single definition
+- [`../01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) — labels and identifiers
+- [`02-phi-predecessor-mismatch.md`](02-phi-predecessor-mismatch.md) — phi nodes referencing
   predecessor labels

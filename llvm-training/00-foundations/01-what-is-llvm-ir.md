@@ -21,7 +21,7 @@ semantics; pick the form that suits the tool.
 
 1. **Static Single Assignment (SSA).** Each value is defined exactly
    once. Branches that merge values use `phi` nodes. See
-   `02-ssa.md`.
+   [`02-ssa.md`](02-ssa.md).
 2. **Strongly typed.** Every value carries a type. There's no
    untyped "register" — `i32 %x` and `i64 %x` are different things.
 3. **Three-address-ish form.** Most instructions:
@@ -44,7 +44,7 @@ Module
 └── Metadata (!N)
 ```
 
-See `01-syntax/01-modules-functions-blocks.md` for details on each layer.
+See [`../01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) for details on each layer.
 
 ## A minimal example
 
@@ -100,8 +100,8 @@ For an LLM agent specifically, LLVM IR is useful because:
 
 ## See also
 
-- `02-ssa.md` — SSA, the most important property
-- `03-ir-vs-asm-vs-other-irs.md` — how IR differs from assembly,
+- [`02-ssa.md`](02-ssa.md) — SSA, the most important property
+- [`03-ir-vs-asm-vs-other-irs.md`](03-ir-vs-asm-vs-other-irs.md) — how IR differs from assembly,
   Java bytecode, CIL, SPIR-V, GIMPLE
-- `01-syntax/01-modules-functions-blocks.md` — the structural hierarchy
+- [`../01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) — the structural hierarchy
 - `examples/simple-add.ll` — the example above

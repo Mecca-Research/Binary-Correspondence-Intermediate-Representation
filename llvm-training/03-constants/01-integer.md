@@ -39,7 +39,7 @@ The `u0x`/`s0x` forms only matter for integer types wider than 64 bits
 | `i64` | -2⁶³..2⁶³-1 | 0..2⁶⁴-1 |
 
 LLVM doesn't tag a value as signed or unsigned — the operation does
-(see `02-types/01-primitive-types.md`).
+(see [`../02-types/01-primitive-types.md`](../02-types/01-primitive-types.md)).
 
 ## Where integer constants appear
 
@@ -115,7 +115,7 @@ and DSL backends. Most code only uses the common widths above.
 
 ## See also
 
-- `02-types/01-primitive-types.md` — integer types in general
-- `04-global-vs-local.md` — using integer constants as initializers
-- `reference/instruction-quickref.md` — operations that take integer
+- [`../02-types/01-primitive-types.md`](../02-types/01-primitive-types.md) — integer types in general
+- [`04-global-vs-local.md`](04-global-vs-local.md) — using integer constants as initializers
+- [`../reference/instruction-quickref.md`](../reference/instruction-quickref.md) — operations that take integer
   operands

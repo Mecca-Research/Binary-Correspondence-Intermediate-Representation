@@ -110,7 +110,7 @@ To convert between address spaces:
 %g = addrspacecast ptr %p to ptr addrspace(1)
 ```
 
-See `04-memory/04-address-spaces.md`.
+See [`../04-memory/04-address-spaces.md`](../04-memory/04-address-spaces.md).
 
 ## Combining opaque types and opaque pointers
 
@@ -163,9 +163,9 @@ appears only where the structure is dereferenced.
 
 ## See also
 
-- `01-primitive-types.md` — `ptr` and `void` listed as primitives
-- `02-composite-types.md` — structs, arrays, vectors
-- `04-memory/02-load-store.md` — load/store through `ptr` with
+- [`01-primitive-types.md`](01-primitive-types.md) — `ptr` and `void` listed as primitives
+- [`02-composite-types.md`](02-composite-types.md) — structs, arrays, vectors
+- [`../04-memory/02-load-store.md`](../04-memory/02-load-store.md) — load/store through `ptr` with
   explicit access type
-- `04-memory/04-address-spaces.md` — `addrspace(N)` and
+- [`../04-memory/04-address-spaces.md`](../04-memory/04-address-spaces.md) — `addrspace(N)` and
   `addrspacecast`

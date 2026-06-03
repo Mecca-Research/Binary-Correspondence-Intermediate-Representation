@@ -180,7 +180,7 @@ module. Common attachments:
 - `!nontemporal`, `!nonnull`, `!range`, `!align` — value/access hints
 - `!llvm.loop` — attached to loop latch terminators
 
-See `01-syntax/03-comments-metadata.md`.
+See [`03-comments-metadata.md`](03-comments-metadata.md).
 
 ## Pitfalls
 
@@ -194,7 +194,7 @@ See `01-syntax/03-comments-metadata.md`.
   %not_y = xor i1 %y, true
   %x     = or i1 %not_y, %z          ; correct
   ```
-  See `08-pitfalls/01-nested-instruction-expressions.md`.
+  See [`../08-pitfalls/01-nested-instruction-expressions.md`](../08-pitfalls/01-nested-instruction-expressions.md).
 
   *(Constant expressions can be parenthesized in operand position;
   SSA value instructions cannot. The look-alike confuses many
@@ -216,9 +216,9 @@ See `01-syntax/03-comments-metadata.md`.
 
 ## See also
 
-- `00-foundations/02-ssa.md` — result names are SSA
-- `03-comments-metadata.md` — `;` and `!N` syntax
-- `reference/instruction-quickref.md` — full table
-- `08-pitfalls/01-nested-instruction-expressions.md` — the most common
+- [`../00-foundations/02-ssa.md`](../00-foundations/02-ssa.md) — result names are SSA
+- [`03-comments-metadata.md`](03-comments-metadata.md) — `;` and `!N` syntax
+- [`../reference/instruction-quickref.md`](../reference/instruction-quickref.md) — full table
+- [`../08-pitfalls/01-nested-instruction-expressions.md`](../08-pitfalls/01-nested-instruction-expressions.md) — the most common
   generator mistake
 - `10-grammar/llvm-ir.tm` — exact grammar productions

@@ -143,6 +143,6 @@ shared types into every output.
 
 ## See also
 
-- `02-types/02-composite-types.md` — struct layout
-- `02-types/03-opaque-and-pointer-types.md` — opaque types
-- `08-pitfalls/04-duplicate-symbols.md` — the symbol-level analogue
+- [`../02-types/02-composite-types.md`](../02-types/02-composite-types.md) — struct layout
+- [`../02-types/03-opaque-and-pointer-types.md`](../02-types/03-opaque-and-pointer-types.md) — opaque types
+- [`04-duplicate-symbols.md`](04-duplicate-symbols.md) — the symbol-level analogue

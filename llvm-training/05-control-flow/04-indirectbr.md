@@ -118,8 +118,8 @@ allows the compiler to assume the branch only goes where listed.
 
 ## See also
 
-- `02-conditional-br.md`, `03-switch.md` — direct alternatives
-- `reference/instruction-quickref.md` — `blockaddress` constant
+- [`02-conditional-br.md`](02-conditional-br.md), [`03-switch.md`](03-switch.md) — direct alternatives
+- [`../reference/instruction-quickref.md`](../reference/instruction-quickref.md) — `blockaddress` constant
   expression
-- `01-syntax/01-modules-functions-blocks.md` — block labels are
+- [`../01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) — block labels are
   function-scoped

@@ -7,12 +7,12 @@ context) have.
 
 Read these in order. Skip examples; just the prose.
 
-1. `00-foundations/01-what-is-llvm-ir.md` — what is IR, what isn't it
-2. `00-foundations/02-ssa.md` — SSA + phi nodes (the single most
+1. [`00-foundations/01-what-is-llvm-ir.md`](00-foundations/01-what-is-llvm-ir.md) — what is IR, what isn't it
+2. [`00-foundations/02-ssa.md`](00-foundations/02-ssa.md) — SSA + phi nodes (the single most
    important concept)
-3. `01-syntax/01-modules-functions-blocks.md` — the hierarchy
-4. `01-syntax/02-instruction-format.md` — `%result = op type, operands`
-5. `08-pitfalls/README.md` — the index of what breaks
+3. [`01-syntax/01-modules-functions-blocks.md`](01-syntax/01-modules-functions-blocks.md) — the hierarchy
+4. [`01-syntax/02-instruction-format.md`](01-syntax/02-instruction-format.md) — `%result = op type, operands`
+5. [`08-pitfalls/README.md`](08-pitfalls/README.md) — the index of what breaks
 
 You now know enough to read existing IR. You can't write it safely yet.
 
@@ -20,13 +20,13 @@ You now know enough to read existing IR. You can't write it safely yet.
 
 After Path 1, add:
 
-6. `02-types/01-primitive-types.md`
-7. `02-types/02-composite-types.md`
-8. `02-types/03-opaque-and-pointer-types.md`
-9. `04-memory/01-alloca.md`
-10. `04-memory/02-load-store.md`
-11. `05-control-flow/01-unconditional-br.md`
-12. `05-control-flow/02-conditional-br.md`
+6. [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md)
+7. [`02-types/02-composite-types.md`](02-types/02-composite-types.md)
+8. [`02-types/03-opaque-and-pointer-types.md`](02-types/03-opaque-and-pointer-types.md)
+9. [`04-memory/01-alloca.md`](04-memory/01-alloca.md)
+10. [`04-memory/02-load-store.md`](04-memory/02-load-store.md)
+11. [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md)
+12. [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md)
 13. All six files in `08-pitfalls/` — each is ≤ 5 minutes
 
 Now you can read and write straightforward IR. Verifier failures should
@@ -101,4 +101,4 @@ LLVM source):
 - What's the difference between `dso_local` and `dso_preemptable`?
 - What's the layout convention for `%bcir.claim`-style aggregate types,
   and what breaks when consumers disagree on the field count?
-  (See `08-pitfalls/05-type-schema-drift.md`.)
+  (See [`08-pitfalls/05-type-schema-drift.md`](08-pitfalls/05-type-schema-drift.md).)

@@ -127,7 +127,7 @@ For exported strings (rare):
 
 ## See also
 
-- `02-types/02-composite-types.md` — arrays
-- `04-memory/03-global-variables.md` — `global` vs `constant`,
+- [`../02-types/02-composite-types.md`](../02-types/02-composite-types.md) — arrays
+- [`../04-memory/03-global-variables.md`](../04-memory/03-global-variables.md) — `global` vs `constant`,
   `private`, `unnamed_addr`
-- `04-global-vs-local.md` — constants at different scopes
+- [`04-global-vs-local.md`](04-global-vs-local.md) — constants at different scopes
