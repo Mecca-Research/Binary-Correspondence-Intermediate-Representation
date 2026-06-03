@@ -94,7 +94,7 @@ not at runtime.
 %y = or i1 (xor i1 %x, true), %z
 ```
 
-See `08-pitfalls/01-nested-instruction-expressions.md` for the
+See [`../08-pitfalls/01-nested-instruction-expressions.md`](../08-pitfalls/01-nested-instruction-expressions.md) for the
 real-world version of this mistake.
 
 ## Differences at a glance
@@ -161,9 +161,9 @@ define i32 @main() {
 
 ## See also
 
-- `01-syntax/01-modules-functions-blocks.md` — how globals fit into
+- [`../01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) — how globals fit into
   the module
-- `04-memory/03-global-variables.md` — `global` vs `constant`, linkage,
+- [`../04-memory/03-global-variables.md`](../04-memory/03-global-variables.md) — `global` vs `constant`, linkage,
   visibility
-- `08-pitfalls/01-nested-instruction-expressions.md` — limit of
+- [`../08-pitfalls/01-nested-instruction-expressions.md`](../08-pitfalls/01-nested-instruction-expressions.md) — limit of
   constant expressions

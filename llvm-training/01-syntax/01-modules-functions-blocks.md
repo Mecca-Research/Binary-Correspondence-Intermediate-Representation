@@ -198,9 +198,9 @@ See `examples/module-anatomy.ll`.
 
 ## See also
 
-- `00-foundations/02-ssa.md` — why each `%name` is defined once
-- `02-instruction-format.md` — the shape of individual instructions
-- `03-comments-metadata.md` — `;` and `!N`
-- `04-memory/03-global-variables.md` — global linkage, visibility,
+- [`../00-foundations/02-ssa.md`](../00-foundations/02-ssa.md) — why each `%name` is defined once
+- [`02-instruction-format.md`](02-instruction-format.md) — the shape of individual instructions
+- [`03-comments-metadata.md`](03-comments-metadata.md) — `;` and `!N`
+- [`../04-memory/03-global-variables.md`](../04-memory/03-global-variables.md) — global linkage, visibility,
   TLS, address spaces
-- `reference/glossary.md` — every identifier prefix in one table
+- [`../reference/glossary.md`](../reference/glossary.md) — every identifier prefix in one table

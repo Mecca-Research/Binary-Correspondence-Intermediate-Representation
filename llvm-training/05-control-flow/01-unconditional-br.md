@@ -92,6 +92,6 @@ phi node well-defined (two predecessors: `entry` and `negate`).
 
 ## See also
 
-- `02-conditional-br.md` — conditional version
-- `00-foundations/02-ssa.md` — `phi` requires predecessor labels
-- `01-syntax/01-modules-functions-blocks.md` — block structure
+- [`02-conditional-br.md`](02-conditional-br.md) — conditional version
+- [`../00-foundations/02-ssa.md`](../00-foundations/02-ssa.md) — `phi` requires predecessor labels
+- [`../01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) — block structure

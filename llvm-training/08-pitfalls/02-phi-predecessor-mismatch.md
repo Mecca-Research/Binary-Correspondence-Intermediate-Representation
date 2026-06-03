@@ -101,6 +101,6 @@ Whenever you:
 
 ## See also
 
-- `00-foundations/02-ssa.md` — what phi is for
-- `05-control-flow/02-conditional-br.md` — branches that feed phis
-- `05-control-flow/01-unconditional-br.md`
+- [`../00-foundations/02-ssa.md`](../00-foundations/02-ssa.md) — what phi is for
+- [`../05-control-flow/02-conditional-br.md`](../05-control-flow/02-conditional-br.md) — branches that feed phis
+- [`../05-control-flow/01-unconditional-br.md`](../05-control-flow/01-unconditional-br.md)

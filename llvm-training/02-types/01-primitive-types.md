@@ -62,7 +62,7 @@ half   1.0
 
 Operations use `f`-prefixed instructions (`fadd`, `fsub`, ...) and
 the `fcmp` comparison. They accept fast-math flags (see
-`reference/instruction-quickref.md`).
+[`../reference/instruction-quickref.md`](../reference/instruction-quickref.md)).
 
 ## `void`
 
@@ -94,7 +94,7 @@ store i32 %v, ptr %p, align 4          ; store an i32 to %p
 Before LLVM 15, every pointer carried its pointee: `i32*`, `[8 x
 float]*`, etc. The opaque-pointer transition unified these. New IR
 should use `ptr`; old `i32*`-style still parses but is deprecated.
-See `02-types/03-opaque-and-pointer-types.md`.
+See [`03-opaque-and-pointer-types.md`](03-opaque-and-pointer-types.md).
 
 ## `label`
 
@@ -172,8 +172,8 @@ entry:
 
 ## See also
 
-- `02-composite-types.md` — structs, arrays, vectors
-- `03-opaque-and-pointer-types.md` — `ptr` in detail
-- `03-constants/01-integer.md` — integer literals
-- `03-constants/02-floating-point.md` — float literals (decimal and hex)
-- `reference/instruction-quickref.md` — operations on each type
+- [`02-composite-types.md`](02-composite-types.md) — structs, arrays, vectors
+- [`03-opaque-and-pointer-types.md`](03-opaque-and-pointer-types.md) — `ptr` in detail
+- [`../03-constants/01-integer.md`](../03-constants/01-integer.md) — integer literals
+- [`../03-constants/02-floating-point.md`](../03-constants/02-floating-point.md) — float literals (decimal and hex)
+- [`../reference/instruction-quickref.md`](../reference/instruction-quickref.md) — operations on each type

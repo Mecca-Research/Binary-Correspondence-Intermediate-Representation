@@ -197,7 +197,7 @@ pointer is to a `float`, which is what we load.
 - **Mismatched struct field count between modules.** If module A
   declares `%S = type { i32, i32 }` and module B declares
   `%S = type { i32, i32, i32 }`, `llvm-link` cannot unify them.
-  See `08-pitfalls/05-type-schema-drift.md` for a real instance from
+  See [`../08-pitfalls/05-type-schema-drift.md`](../08-pitfalls/05-type-schema-drift.md) for a real instance from
   BCIR.
 
 - **Storing into a packed struct as if it were unpacked.** Packed
@@ -214,9 +214,9 @@ pointer is to a `float`, which is what we load.
 
 ## See also
 
-- `01-primitive-types.md` — the building blocks
-- `03-opaque-and-pointer-types.md` — pointers to composite types
-- `04-memory/01-alloca.md` — allocating composite types on the stack
-- `04-memory/02-load-store.md` — loading/storing fields
-- `08-pitfalls/05-type-schema-drift.md` — what breaks when struct
+- [`01-primitive-types.md`](01-primitive-types.md) — the building blocks
+- [`03-opaque-and-pointer-types.md`](03-opaque-and-pointer-types.md) — pointers to composite types
+- [`../04-memory/01-alloca.md`](../04-memory/01-alloca.md) — allocating composite types on the stack
+- [`../04-memory/02-load-store.md`](../04-memory/02-load-store.md) — loading/storing fields
+- [`../08-pitfalls/05-type-schema-drift.md`](../08-pitfalls/05-type-schema-drift.md) — what breaks when struct
   layouts disagree

@@ -11,9 +11,9 @@ modern `llvm-as` (LLVM >= 15, opaque pointers).
 
 ## How an agent should consume this repo
 
-1. **Always start with `INDEX.md`.** It's the topic -> file lookup. Don't grep
+1. **Always start with [`INDEX.md`](INDEX.md).** It's the topic -> file lookup. Don't grep
    the tree blind.
-2. **Follow the path in `CURRICULUM.md`** if learning end-to-end. Skip
+2. **Follow the path in [`CURRICULUM.md`](CURRICULUM.md)** if learning end-to-end. Skip
    to a leaf chapter if doing a targeted task.
 3. **Treat `08-pitfalls/` as a checklist** before writing or reviewing
    LLVM IR. Every pitfall is tied to a real bug that shipped — most of
@@ -74,4 +74,4 @@ real instances were fixed.
 
 ## License & attribution
 
-Apache-2.0 (matches the BCIR repo). See `NOTICE.md` for source attribution.
+Apache-2.0 (matches the BCIR repo). See [`NOTICE.md`](NOTICE.md) for source attribution.

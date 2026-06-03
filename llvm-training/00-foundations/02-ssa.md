@@ -89,7 +89,7 @@ A `phi` node:
 
 If you forget a predecessor, or list one that doesn't actually branch
 to this block, `llvm-as` rejects with *"PHI node entries do not match
-predecessors"*. See `08-pitfalls/02-phi-predecessor-mismatch.md`.
+predecessors"*. See [`../08-pitfalls/02-phi-predecessor-mismatch.md`](../08-pitfalls/02-phi-predecessor-mismatch.md).
 
 ## Loops in SSA
 
@@ -173,8 +173,8 @@ canonical way to lower mutable locals into SSA form.
 
 ## See also
 
-- `01-what-is-llvm-ir.md` — broader context
-- `05-control-flow/02-conditional-br.md` — branches that feed phis
-- `08-pitfalls/02-phi-predecessor-mismatch.md` — the real-world error
+- [`01-what-is-llvm-ir.md`](01-what-is-llvm-ir.md) — broader context
+- [`../05-control-flow/02-conditional-br.md`](../05-control-flow/02-conditional-br.md) — branches that feed phis
+- [`../08-pitfalls/02-phi-predecessor-mismatch.md`](../08-pitfalls/02-phi-predecessor-mismatch.md) — the real-world error
   message and fix
 - `examples/ssa-phi.ll` — the if/else example, runnable

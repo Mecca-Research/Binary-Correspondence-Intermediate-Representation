@@ -123,6 +123,6 @@ parameter that requires a constant.
 
 ## See also
 
-- `01-syntax/02-instruction-format.md` — operand kinds
-- `reference/intrinsics.md` — common intrinsics
-- `reference/instruction-quickref.md` — `call` instruction
+- [`../01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md) — operand kinds
+- [`../reference/intrinsics.md`](../reference/intrinsics.md) — common intrinsics
+- [`../reference/instruction-quickref.md`](../reference/instruction-quickref.md) — `call` instruction

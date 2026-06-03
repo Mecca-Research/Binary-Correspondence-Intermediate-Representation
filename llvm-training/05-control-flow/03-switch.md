@@ -144,7 +144,7 @@ The first weight is the default; subsequent weights match case order.
 
 ## See also
 
-- `02-conditional-br.md` — for 2-way
-- `04-indirectbr.md` — for runtime-computed targets
-- `reference/instruction-quickref.md` — `select` as a value-level
+- [`02-conditional-br.md`](02-conditional-br.md) — for 2-way
+- [`04-indirectbr.md`](04-indirectbr.md) — for runtime-computed targets
+- [`../reference/instruction-quickref.md`](../reference/instruction-quickref.md) — `select` as a value-level
   alternative

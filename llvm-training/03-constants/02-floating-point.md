@@ -111,5 +111,5 @@ Special prefixes:
 
 ## See also
 
-- `02-types/01-primitive-types.md` — float types in general
-- `reference/instruction-quickref.md` — fast-math flags table
+- [`../02-types/01-primitive-types.md`](../02-types/01-primitive-types.md) — float types in general
+- [`../reference/instruction-quickref.md`](../reference/instruction-quickref.md) — fast-math flags table

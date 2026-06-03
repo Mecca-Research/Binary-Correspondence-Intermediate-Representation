@@ -124,5 +124,5 @@ encounter:
 
 ## See also
 
-- `01-what-is-llvm-ir.md`
-- `01-syntax/01-modules-functions-blocks.md` — practical IR structure
+- [`01-what-is-llvm-ir.md`](01-what-is-llvm-ir.md)
+- [`../01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) — practical IR structure

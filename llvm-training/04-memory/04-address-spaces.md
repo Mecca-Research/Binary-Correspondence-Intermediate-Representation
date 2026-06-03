@@ -161,8 +161,8 @@ entry:
 
 ## See also
 
-- `02-types/03-opaque-and-pointer-types.md` — opaque `ptr` carrying
+- [`../02-types/03-opaque-and-pointer-types.md`](../02-types/03-opaque-and-pointer-types.md) — opaque `ptr` carrying
   an address space
-- `03-global-variables.md` — `addrspace()` on globals
-- `01-alloca.md` — `alloca i32, addrspace(N)`
-- `01-syntax/01-modules-functions-blocks.md` — datalayout
+- [`03-global-variables.md`](03-global-variables.md) — `addrspace()` on globals
+- [`01-alloca.md`](01-alloca.md) — `alloca i32, addrspace(N)`
+- [`../01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) — datalayout

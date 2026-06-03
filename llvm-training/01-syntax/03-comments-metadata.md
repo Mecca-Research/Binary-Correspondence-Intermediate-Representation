@@ -212,7 +212,7 @@ recurse:
   bare form is a regular string constant; metadata requires the `!`
   prefix. `llvm-as` error: *"expected metadata operand"*. This was a
   real bug in BCIR's `bcir_master_reference_v2.ll` — see
-  `08-pitfalls/01-nested-instruction-expressions.md` and the fix in
+  [`../08-pitfalls/01-nested-instruction-expressions.md`](../08-pitfalls/01-nested-instruction-expressions.md) and the fix in
   commit `1f62e86`.
 
 - **No block comments.** `/* ... */` does not parse.
@@ -229,6 +229,6 @@ recurse:
 
 ## See also
 
-- `01-modules-functions-blocks.md` — where named metadata lists live
-- `reference/glossary.md` — metadata terminology
+- [`01-modules-functions-blocks.md`](01-modules-functions-blocks.md) — where named metadata lists live
+- [`../reference/glossary.md`](../reference/glossary.md) — metadata terminology
 - `10-grammar/llvm-ir.tm` — every specialized DI node's field list

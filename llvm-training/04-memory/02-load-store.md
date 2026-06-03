@@ -151,7 +151,7 @@ The most common ones:
 | `!range !N` | (load only) Result is in `[lo, hi)` |
 | `!align !N` | (load only) Loaded pointer is N-aligned |
 
-See `01-syntax/03-comments-metadata.md`.
+See [`../01-syntax/03-comments-metadata.md`](../01-syntax/03-comments-metadata.md).
 
 ## Pitfalls
 
@@ -177,10 +177,10 @@ See `01-syntax/03-comments-metadata.md`.
 
 ## See also
 
-- `01-alloca.md` — where `alloca` returns a pointer suitable for
+- [`01-alloca.md`](01-alloca.md) — where `alloca` returns a pointer suitable for
   load/store
-- `03-global-variables.md` — loading/storing globals
-- `02-types/03-opaque-and-pointer-types.md` — why the access type
+- [`03-global-variables.md`](03-global-variables.md) — loading/storing globals
+- [`../02-types/03-opaque-and-pointer-types.md`](../02-types/03-opaque-and-pointer-types.md) — why the access type
   lives on the load/store
-- `reference/instruction-quickref.md` — `atomicrmw`, `cmpxchg`,
+- [`../reference/instruction-quickref.md`](../reference/instruction-quickref.md) — `atomicrmw`, `cmpxchg`,
   `fence`

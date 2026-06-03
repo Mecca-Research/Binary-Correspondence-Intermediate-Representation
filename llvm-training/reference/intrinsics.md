@@ -86,7 +86,7 @@ Each returns a `{T, i1}` struct: `{result, overflow_flag}`.
 
 **Caveat:** all `immarg` parameters (sizes for `memcpy.inline` and
 `lifetime.*`, all args of `prefetch`) must be compile-time constants.
-See `08-pitfalls/06-immarg-violation.md`.
+See [`../08-pitfalls/06-immarg-violation.md`](../08-pitfalls/06-immarg-violation.md).
 
 ### Atomic primitives
 
@@ -151,7 +151,7 @@ Each declaration tells you:
 
 ## Pitfalls
 
-- **`immarg` violation.** See `08-pitfalls/06-immarg-violation.md`.
+- **`immarg` violation.** See [`../08-pitfalls/06-immarg-violation.md`](../08-pitfalls/06-immarg-violation.md).
 
 - **Wrong name mangling.** `llvm.sqrt.f64(float %x)` won't link — the
   name says `f64`, the argument is `f32`. Use `llvm.sqrt.f32` (or
@@ -165,6 +165,6 @@ Each declaration tells you:
 
 ## See also
 
-- `01-syntax/02-instruction-format.md` — `call` instruction
-- `08-pitfalls/06-immarg-violation.md` — `immarg` constraint
+- [`../01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md) — `call` instruction
+- [`../08-pitfalls/06-immarg-violation.md`](../08-pitfalls/06-immarg-violation.md) — `immarg` constraint
 - LLVM LangRef: https://llvm.org/docs/LangRef.html#intrinsic-functions

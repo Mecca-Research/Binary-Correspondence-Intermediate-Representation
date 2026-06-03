@@ -1,7 +1,7 @@
 # Instruction Quick Reference
 
 Compact table of every LLVM IR instruction, grouped by category. For
-syntax details, see `01-syntax/02-instruction-format.md` and the
+syntax details, see [`../01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md) and the
 relevant chapter file.
 
 ## Terminators (must be last in basic block)
@@ -173,10 +173,10 @@ Operations available as constant expressions: `add`, `sub`, `mul`,
 
 **Constant expressions require all operands to be constants**
 (literals, globals, or other constant expressions). They cannot
-take SSA values. See `08-pitfalls/01-nested-instruction-expressions.md`.
+take SSA values. See [`../08-pitfalls/01-nested-instruction-expressions.md`](../08-pitfalls/01-nested-instruction-expressions.md).
 
 ## See also
 
-- `01-syntax/02-instruction-format.md` — general shape
+- [`../01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md) — general shape
 - `08-pitfalls/` — common mistakes
 - `10-grammar/llvm-ir.tm` — exact syntax productions

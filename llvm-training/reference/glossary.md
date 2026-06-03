@@ -67,6 +67,6 @@
 
 ## See also
 
-- `INDEX.md` — top-level topic map
+- [`../INDEX.md`](../INDEX.md) — top-level topic map
 - `10-grammar/llvm-ir.tm` — formal grammar
 - LangRef — https://llvm.org/docs/LangRef.html

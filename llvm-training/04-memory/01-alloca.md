@@ -145,7 +145,7 @@ Skip these unless you're working on those specific platforms.
 
 ## See also
 
-- `02-load-store.md` — accessing the allocated memory
-- `00-foundations/02-ssa.md` — why mem2reg removes most allocas
-- `02-types/03-opaque-and-pointer-types.md` — the result type
-- `04-address-spaces.md` — `addrspace(N)` on alloca
+- [`02-load-store.md`](02-load-store.md) — accessing the allocated memory
+- [`../00-foundations/02-ssa.md`](../00-foundations/02-ssa.md) — why mem2reg removes most allocas
+- [`../02-types/03-opaque-and-pointer-types.md`](../02-types/03-opaque-and-pointer-types.md) — the result type
+- [`04-address-spaces.md`](04-address-spaces.md) — `addrspace(N)` on alloca

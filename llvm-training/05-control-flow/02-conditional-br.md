@@ -133,7 +133,7 @@ This avoids a branch entirely.
 - **Forgetting phi node update after adding a branch.** If you add a
   new edge into a block that has a phi, you must add a new
   `[ value, predecessor ]` entry. The verifier catches this — see
-  `08-pitfalls/02-phi-predecessor-mismatch.md`.
+  [`../08-pitfalls/02-phi-predecessor-mismatch.md`](../08-pitfalls/02-phi-predecessor-mismatch.md).
 
 - **Putting code after `br`.** Unreachable; verifier rejects.
 
@@ -142,7 +142,7 @@ This avoids a branch entirely.
 
 ## See also
 
-- `01-unconditional-br.md`
-- `00-foundations/02-ssa.md` — phi and predecessor lists
-- `03-switch.md` — for multi-way branching
-- `reference/instruction-quickref.md` — `icmp`/`fcmp` predicates
+- [`01-unconditional-br.md`](01-unconditional-br.md)
+- [`../00-foundations/02-ssa.md`](../00-foundations/02-ssa.md) — phi and predecessor lists
+- [`03-switch.md`](03-switch.md) — for multi-way branching
+- [`../reference/instruction-quickref.md`](../reference/instruction-quickref.md) — `icmp`/`fcmp` predicates

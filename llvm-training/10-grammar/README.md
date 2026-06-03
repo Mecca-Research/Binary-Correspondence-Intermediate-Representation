@@ -85,6 +85,6 @@ grammar usually needs a small update — track upstream
 
 ## See also
 
-- `INDEX.md` (top level) — topic → prose-file map
+- [`../INDEX.md`](../INDEX.md) (top level) — topic → prose-file map
 - Each chapter file's "See also" section references back here when
   there's an ambiguous syntactic question

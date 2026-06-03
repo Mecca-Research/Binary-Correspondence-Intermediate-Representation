@@ -113,7 +113,7 @@ globals?** If yes, it's a constant expression. If it involves any
 
 ## See also
 
-- `01-syntax/02-instruction-format.md` — instruction shape
-- `03-constants/04-global-vs-local.md` — constant expressions
+- [`../01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md) — instruction shape
+- [`../03-constants/04-global-vs-local.md`](../03-constants/04-global-vs-local.md) — constant expressions
 - `10-grammar/llvm-ir.tm` — grammar productions for `ConstantExpr` vs
   `ValueInstruction`

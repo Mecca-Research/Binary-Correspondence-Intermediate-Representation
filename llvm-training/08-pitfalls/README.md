@@ -11,12 +11,12 @@ buy.
 
 | # | File | One-liner |
 |---|---|---|
-| 01 | `01-nested-instruction-expressions.md` | `or i1 (xor i1 %x, true), %y` — invalid; can't nest instructions as expressions |
-| 02 | `02-phi-predecessor-mismatch.md` | "PHI node entries do not match predecessors" |
-| 03 | `03-duplicate-block-labels.md` | Two basic blocks with the same label name in one function |
-| 04 | `04-duplicate-symbols.md` | Two modules `define` the same `@symbol` |
-| 05 | `05-type-schema-drift.md` | `%T = type { i32, i32 }` in module A; `{ i32, i32, i32 }` in module B |
-| 06 | `06-immarg-violation.md` | `call void @llvm.foo(i32 %dynamic)` where `i32` arg is declared `immarg` |
+| 01 | [`01-nested-instruction-expressions.md`](01-nested-instruction-expressions.md) | `or i1 (xor i1 %x, true), %y` — invalid; can't nest instructions as expressions |
+| 02 | [`02-phi-predecessor-mismatch.md`](02-phi-predecessor-mismatch.md) | "PHI node entries do not match predecessors" |
+| 03 | [`03-duplicate-block-labels.md`](03-duplicate-block-labels.md) | Two basic blocks with the same label name in one function |
+| 04 | [`04-duplicate-symbols.md`](04-duplicate-symbols.md) | Two modules `define` the same `@symbol` |
+| 05 | [`05-type-schema-drift.md`](05-type-schema-drift.md) | `%T = type { i32, i32 }` in module A; `{ i32, i32, i32 }` in module B |
+| 06 | [`06-immarg-violation.md`](06-immarg-violation.md) | `call void @llvm.foo(i32 %dynamic)` where `i32` arg is declared `immarg` |
 
 ## How to use this list
 

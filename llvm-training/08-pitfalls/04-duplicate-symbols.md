@@ -131,5 +131,5 @@ CI alongside `llvm-link --only-needed`.
 
 ## See also
 
-- `04-memory/03-global-variables.md` — linkage types table
-- `05-type-schema-drift.md` — the type-level analogue
+- [`../04-memory/03-global-variables.md`](../04-memory/03-global-variables.md) — linkage types table
+- [`05-type-schema-drift.md`](05-type-schema-drift.md) — the type-level analogue
