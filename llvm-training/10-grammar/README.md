@@ -1,9 +1,17 @@
 # Formal Grammar
 
 This directory holds the **Textmapper grammar** for LLVM IR
-(`llvm-ir.tm`). When prose disagrees with the grammar, treat the
-grammar as authoritative for **syntax only**. Semantics (what a
-construct means) come from the LangRef:
+(`llvm-ir.tm`). Use it as a local syntax reference, not as the final
+authority for every LLVM version. The LLVM LangRef is the canonical
+documentation for LLVM IR, and the target installed `llvm-as` is the
+practical parser authority for what your toolchain accepts.
+
+## Version expectations
+
+LLVM IR syntax and accepted constructs vary by LLVM release. The local
+`llvm-ir.tm` grammar is a useful reference for syntax questions, but it
+may lag upstream LLVM. Verify grammar-sensitive examples against both
+the target LLVM version's `llvm-as` and the corresponding LangRef:
 https://llvm.org/docs/LangRef.html
 
 ## What is Textmapper?
@@ -65,9 +73,11 @@ Textmapper (https://textmapper.org/) is a parser generator. The
 
 ## When prose vs grammar disagree
 
-Take the grammar's word. The prose docs in this repo are written
-from the LangRef and may lag the grammar (which tends to be more
-literal about what `llvm-as` accepts).
+Use `llvm-ir.tm` as a syntax-focused local reference when prose in this
+repo is ambiguous, but do not treat it as canonical for all LLVM
+versions. The LangRef remains the canonical documentation, the target
+installed `llvm-as` is the practical parser authority, and this local
+grammar may lag upstream LLVM.
 
 ## Source attribution
 
