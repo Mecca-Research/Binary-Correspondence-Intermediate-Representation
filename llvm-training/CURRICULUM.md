@@ -16,6 +16,9 @@ Read these in order. Skip examples; just the prose.
 
 You now know enough to read existing IR. You can't write it safely yet.
 
+Practice next: [`exercises/001-add.prompt.md`](exercises/001-add.prompt.md) and
+[`exercises/002-if-else-phi.prompt.md`](exercises/002-if-else-phi.prompt.md).
+
 ## Path 2: 2-hour working knowledge
 
 After Path 1, add:
@@ -36,17 +39,9 @@ After Path 1, add:
 Now you can read and write straightforward IR. Verifier failures should
 make sense.
 
-### Before emitting IR
-
-Use this checklist before a coding agent writes or rewrites standalone IR:
-
-- Every basic block ends in a terminator instruction.
-- Every SSA value is defined exactly once before it is used.
-- Every `phi` node's incoming labels exactly match the block's real predecessors.
-- Every `load` and `store` spells out the accessed value type explicitly under opaque
-  pointers.
-- For standalone modules, run both `llvm-as` and `opt -passes=verify` before trusting
-  the generated IR.
+Practice next: [`exercises/003-loop-counter.prompt.md`](exercises/003-loop-counter.prompt.md),
+[`exercises/004-global-load-store.prompt.md`](exercises/004-global-load-store.prompt.md), and
+[`exercises/005-struct-gep.prompt.md`](exercises/005-struct-gep.prompt.md).
 
 ## Path 3: Deep dive (one sitting; pick up the rest as needed)
 
@@ -62,6 +57,9 @@ Read everything in numerical order:
 
 Cross-references inside each chapter (`See also:`) let you jump
 forward when curiosity strikes; come back via the index.
+
+Practice next: complete all exercises in [`exercises/README.md`](exercises/README.md)
+and compare against the standalone `.ll` solutions.
 
 ## Chapter dependency graph
 
