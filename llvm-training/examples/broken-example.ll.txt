@@ -1,0 +1,8 @@
+; Intentionally invalid LLVM IR sentinel for llvm-training/tools/verify-examples.sh.
+; This file must keep the .ll.txt suffix so the standalone example verifier
+; proves invalid examples stay out of the known-good manifest.
+define i32 @broken_sentinel() {
+entry:
+  %sum = add i32 1
+  ret i32 %sum
+}

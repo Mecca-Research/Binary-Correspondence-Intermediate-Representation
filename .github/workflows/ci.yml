@@ -27,7 +27,7 @@ jobs:
       - name: Full test suite
         run: ctest --test-dir build --output-on-failure
 
-      - name: LLVM training standalone examples verify
+      - name: LLVM training examples and invalid-example tripwire
         run: |
           if command -v llvm-as >/dev/null && command -v opt >/dev/null; then
             bash llvm-training/tools/verify-examples.sh

@@ -7,6 +7,7 @@ REPO_ROOT=$(cd -- "$TRAINING_ROOT/.." && pwd)
 
 status=0
 count=0
+KNOWN_INVALID_SENTINEL="$TRAINING_ROOT/examples/broken-example.ll.txt"
 
 require_tool() {
   local tool=$1
@@ -46,11 +47,33 @@ run_step() {
 require_tool llvm-as
 require_tool opt
 
-while IFS= read -r -d '' file; do
+mapfile -d '' examples < <(find "$TRAINING_ROOT" -path '*/examples/*.ll' -type f ! -iname '*.ll.txt' ! -iname '*invalid*' -print0 | sort -z)
+
+if [ ! -f "$KNOWN_INVALID_SENTINEL" ]; then
+  printf 'error: missing invalid-example sentinel: %s\n' "$(relpath "$KNOWN_INVALID_SENTINEL")" >&2
+  exit 1
+fi
+
+for file in "${examples[@]}"; do
+  if [ "$file" = "$KNOWN_INVALID_SENTINEL" ]; then
+    printf 'error: invalid-example sentinel entered the known-good manifest: %s\n' "$(relpath "$file")" >&2
+    exit 1
+  fi
+done
+
+printf '[tripwire] %s stays out of the known-good manifest ... ' "$(relpath "$KNOWN_INVALID_SENTINEL")"
+if llvm-as "$KNOWN_INVALID_SENTINEL" -o /dev/null >/dev/null 2>&1; then
+  printf 'FAILED\n'
+  printf 'error: invalid-example sentinel assembled successfully; refresh it so it remains a broken .ll.txt fixture.\n' >&2
+  exit 1
+fi
+printf 'ok\n'
+
+for file in "${examples[@]}"; do
   count=$((count + 1))
   run_step llvm-as "$file" llvm-as "$file" -o /dev/null || status=1
   run_step verify "$file" opt -passes=verify "$file" -o /dev/null || status=1
-done < <(find "$TRAINING_ROOT" -path '*/examples/*.ll' -type f ! -iname '*.ll.txt' ! -iname '*invalid*' -print0 | sort -z)
+done
 
 if [ "$count" -eq 0 ]; then
   printf 'No standalone examples found under %s\n' "$(relpath "$TRAINING_ROOT")"
