@@ -2,9 +2,9 @@
 
 | Name | Means | See |
 |---|---|---|
-| `llvm.memcpy.*` | Non-overlapping memory copy intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics.md`](../reference/intrinsics.md) |
-| `llvm.memmove.*` | Overlap-safe memory copy intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics.md`](../reference/intrinsics.md) |
-| `llvm.memset.*` | Byte-fill memory intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics.md`](../reference/intrinsics.md) |
+| `llvm.memcpy.*` | Non-overlapping memory copy intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md) |
+| `llvm.memmove.*` | Overlap-safe memory copy intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md) |
+| `llvm.memset.*` | Byte-fill memory intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md) |
 | `llvm.uadd.with.overflow.*` | Unsigned checked addition; returns `{T, i1}` | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`13-advanced-ir/examples/overflow-intrinsic.ll`](../13-advanced-ir/examples/overflow-intrinsic.ll) |
 | `llvm.sadd.with.overflow.*` | Signed checked addition; returns `{T, i1}` | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`13-advanced-ir/examples/overflow-intrinsic.ll`](../13-advanced-ir/examples/overflow-intrinsic.ll) |
 | `llvm.lifetime.start.*`, `llvm.lifetime.end.*` | Lifetime markers for optimizer-visible object liveness | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`13-advanced-ir/examples/memcpy.ll`](../13-advanced-ir/examples/memcpy.ll) |

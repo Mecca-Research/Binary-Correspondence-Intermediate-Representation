@@ -27,18 +27,19 @@ After Path 1, add:
 7. [`02-types/02-composite-types.md`](02-types/02-composite-types.md) — include the GEP basics in
    `Accessing struct fields` / aggregate access examples
 8. [`02-types/03-opaque-and-pointer-types.md`](02-types/03-opaque-and-pointer-types.md)
-9. [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) — moving from typed pointers to `ptr`
-10. [`04-memory/01-alloca.md`](04-memory/01-alloca.md)
-11. [`04-memory/02-load-store.md`](04-memory/02-load-store.md) — typed memory operations,
+9. [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) — migration dispatcher
+10. [`02-types/05-opaque-pointer-migration-patterns.md`](02-types/05-opaque-pointer-migration-patterns.md) — where typed-pointer facts moved (`load`, `store`, `getelementptr`, calls)
+11. [`04-memory/01-alloca.md`](04-memory/01-alloca.md)
+12. [`04-memory/02-load-store.md`](04-memory/02-load-store.md) — typed memory operations,
     especially explicit access types with opaque pointers
-12. [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md)
-13. [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md)
-14. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata syntax and common attachments
-15. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — source locations and debug-info nodes
-16. [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) — branch weights and loop hints
-17. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
+13. [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md)
+14. [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md)
+15. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata syntax and common attachments
+16. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — source locations and debug-info nodes
+17. [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) — branch weights and loop hints
+18. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
     terminators, comparison, memory, conversion, and other/call instructions
-18. All six files in `08-pitfalls/` — each is ≤ 5 minutes
+19. All six files in `08-pitfalls/` — each is ≤ 5 minutes
 
 Now you can read and write straightforward IR. Verifier failures should
 make sense.
@@ -73,9 +74,10 @@ reason about optimization strength, pass pipelines, and vectorized IR:
 1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass pipelines and `opt -passes=...` spelling
 2. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — optimization levels: `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
 3. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
-4. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization overview
+4. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization dispatcher
 5. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
-6. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
+6. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md) and [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md) — blockers, commands, and observations
+7. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
 
 Practice next: run the commands in
 [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c),
@@ -137,7 +139,7 @@ security or performance verdict.
 After Path 2, add this path when unusual IR syntax, target hooks, or special
 case constructs appear in generated modules:
 
-1. [`reference/intrinsics.md`](reference/intrinsics.md) — common intrinsics, overloaded names, `immarg`, memory/lifetime/debug intrinsics, and target-specific intrinsic families
+1. [`reference/intrinsics.md`](reference/intrinsics.md) and [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) — declaration rules plus a focused category quick reference for common, memory/lifetime/debug, and target-specific intrinsic families
 2. [`13-advanced-ir/01-common-intrinsics.md`](13-advanced-ir/01-common-intrinsics.md) and [`13-advanced-ir/02-target-specific-intrinsics.md`](13-advanced-ir/02-target-specific-intrinsics.md) — common and target-specific intrinsic spelling in standalone modules
 3. [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md) — special scalar, token, metadata, target-extension, and scalable-vector types
 4. [`13-advanced-ir/04-attributes.md`](13-advanced-ir/04-attributes.md) — function, parameter, memory-effect, pointer, and ABI attributes
@@ -195,15 +197,16 @@ focused path when you need to understand LLVM's vectorized IR and diagnostics:
    for loop transformation hints and the limits of metadata.
 2. Read [`09-vectorization/README.md`](09-vectorization/README.md) for the
    difference between the Loop Vectorizer and SLP Vectorizer.
-3. Run the commands in [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c)
+3. Read [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md) for the legality facts that block or allow vectorization.
+4. Run the commands from [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md) with [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c)
    to compare successful and missed loop-vectorization remarks.
-4. Run `opt -S -passes=loop-vectorize` on
+5. Run `opt -S -passes=loop-vectorize` on
    [`09-vectorization/examples/sum-loop.ll`](09-vectorization/examples/sum-loop.ll)
    and inspect vector loop structure, vector loads/stores, and reductions.
-5. Run `opt -S -passes=slp-vectorizer` on
+6. Run `opt -S -passes=slp-vectorizer` on
    [`09-vectorization/examples/slp-scalars.ll`](09-vectorization/examples/slp-scalars.ll)
    and inspect vector packing, `shufflevector`, and straight-line vector IR.
-6. Repeat with `-force-vector-width` and `-force-vector-interleave` to separate
+7. Repeat with `-force-vector-width` and `-force-vector-interleave` to separate
    legality questions from profitability choices.
 
 This path is intentionally about reading and experimenting with transformed IR,
@@ -241,76 +244,7 @@ foundations ────────┐
    reference (intrinsics, special types, MLIR terms, and quick lookups)
 ```
 
-## What's intentionally NOT here yet
+## Roadmap and self-test
 
-The curriculum now includes introductory coverage for topics that used to need
-out-of-tree notes: microarchitectural review in
-[`15-binary-analysis/01-microarchitecture-side-channels.md`](15-binary-analysis/01-microarchitecture-side-channels.md),
-dynamic trace schemas and runtime counters in
-[`15-binary-analysis/02-dynamic-traces-and-counters.md`](15-binary-analysis/02-dynamic-traces-and-counters.md),
-PGO/LTO/BOLT concepts in
-[`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md),
-and interpretable BCSA triage in
-[`15-binary-analysis/03-interpretable-bcsa-features.md`](15-binary-analysis/03-interpretable-bcsa-features.md).
-
-If your task touches these remaining gaps, you'll need external references:
-
-- **Custom optimization pass design** — pass-manager internals beyond the introductory `opt` vectorization commands
-- **C/C++ frontend internals** — Clang, AST, lowering rules
-- **Statistically complete benchmarking methodology** — the dynamic-analysis chapters define schemas and review loops, not a complete benchmark design, sampling plan, or statistical analysis workflow
-- **Production-grade hardware-counter harness** — the counter examples show schema shape and review use, not a deployable cross-platform collection harness
-- **Guaranteed BOLT availability in CI** — the PGO/LTO/BOLT chapter explains concepts and expected artifacts, but CI environments may not ship `llvm-bolt` or a compatible binary-rewriting setup
-- **Exhaustive FullLTO-vs-ThinLTO empirical matrix** — the LTO material explains the concepts and comparison prompts, not a target-by-target empirical matrix across workloads and toolchain versions
-- **Calls / returns / comparisons** — a small dedicated chapter may be worth adding if
-  this training set keeps expanding beyond the quick reference
-
-These are roadmap items; PRs welcome.
-
-## Self-test prompts
-
-After each path, the agent should be able to answer (without grepping
-LLVM source):
-
-**After Path 1**
-- What does SSA stand for and why does it require phi nodes?
-- What's the difference between `@foo` and `%foo`?
-- Why must a basic block end with a terminator?
-
-**After Path 2**
-- What's the type of the pointer returned by `alloca i32`?
-- In opaque-pointer IR, where do `load`, `store`, and `getelementptr` spell the memory access or element type?
-- Why is `add i32 (load ...), 1` invalid as a single expression?
-- When does a `br i1` need two labels, and what's the type of the
-  condition?
-
-**After Path 3**
-- How do you follow an instruction `!dbg` attachment back to a source
-  file, line, and column?
-- Why does the grammar treat `Linkage` and `ExternLinkage` as separate
-  productions?
-- How do `opt -passes=mem2reg`, `opt -passes=instcombine`, and
-  `opt -passes='default<O2>'` differ in scope and intent?
-- Why might `-O3` be a bad default for a size-sensitive workload?
-- What's the difference between `dso_local` and `dso_preemptable`?
-- What's the layout convention for `%bcir.claim`-style aggregate types,
-  and what breaks when consumers disagree on the field count?
-  (See [`08-pitfalls/05-type-schema-drift.md`](08-pitfalls/05-type-schema-drift.md).)
-
-**After Path 4**
-- When should you expect the Loop Vectorizer rather than the SLP Vectorizer to act?
-- What source or IR facts help LLVM prove a loop has predictable memory access and no unsafe dependencies?
-- Which commands show successful vs missed loop-vectorization remarks?
-- What IR clues suggest vectorization occurred (`<N x T>`, vector loads/stores, `shufflevector`, reductions)?
-- Why can PGO+LTO or BOLT change binary shape without changing source semantics?
-
-**After the backend / JIT path**
-- Where do SelectionDAG and GlobalISel fit relative to `MachineInstr`?
-- Why does register allocation happen after machine-code SSA optimizations?
-- Which backend facts are commonly generated from TableGen `.td` files?
-- What ownership objects should you identify before adding modules to an ORC `LLJIT`?
-
-**After the binary-analysis path**
-- Why is a secret-dependent branch in IR not the only side-channel signal to review?
-- Which hardware counters would you pair with branch/path traces for constant-time review?
-- What PGO/LTO/BOLT artifacts should be saved before comparing optimized binaries?
-- Which interpretable BCSA features are cheap enough for first-pass triage?
+- [`ROADMAP.md`](ROADMAP.md) tracks topics intentionally left out or only covered at an introductory level.
+- [`EVAL.md`](EVAL.md) contains the corpus self-test and path-specific self-test prompts.
