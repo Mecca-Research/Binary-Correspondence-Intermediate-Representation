@@ -17,6 +17,15 @@ buy.
 | 04 | [`04-duplicate-symbols.md`](04-duplicate-symbols.md) | Two modules `define` the same `@symbol` |
 | 05 | [`05-type-schema-drift.md`](05-type-schema-drift.md) | `%T = type { i32, i32 }` in module A; `{ i32, i32, i32 }` in module B |
 | 06 | [`06-immarg-violation.md`](06-immarg-violation.md) | `call void @llvm.foo(i32 %dynamic)` where `i32` arg is declared `immarg` |
+| 07 | [`07-debug-metadata-bloat.md`](07-debug-metadata-bloat.md) | Valid IR, but millions of duplicate `!DILocation` nodes make debug info huge |
+| 08 | [`08-stale-debug-locations.md`](08-stale-debug-locations.md) | Rewritten instructions keep misleading old `!dbg` locations |
+| 09 | [`09-atomic-ordering-mismatch.md`](09-atomic-ordering-mismatch.md) | Invalid `cmpxchg` failure ordering, or valid atomics with the wrong synchronization contract |
+| 10 | [`10-volatile-is-not-atomic.md`](10-volatile-is-not-atomic.md) | `volatile` flag used for thread synchronization instead of atomic acquire/release |
+| 11 | [`11-address-space-confusion.md`](11-address-space-confusion.md) | `ptr addrspace(N)` accidentally used as plain `ptr`, or cross-space `bitcast` |
+| 12 | [`12-vectorization-blocked-by-aliasing.md`](12-vectorization-blocked-by-aliasing.md) | `loop not vectorized: cannot prove it is safe to reorder memory operations` |
+| 13 | [`13-pass-pipeline-ordering-surprise.md`](13-pass-pipeline-ordering-surprise.md) | A pass works alone but fails or disappears inside a different pipeline order |
+| 14 | [`14-orc-jit-symbol-resolution.md`](14-orc-jit-symbol-resolution.md) | ORC/LLJIT reports `Symbols not found: [ foo ]` or resolves the wrong symbol |
+| 15 | [`15-tablegen-generated-file-confusion.md`](15-tablegen-generated-file-confusion.md) | Generated `*Gen*.inc` file appears missing because it lives in the build tree |
 
 ## How to use this list
 
