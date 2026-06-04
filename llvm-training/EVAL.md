@@ -39,10 +39,19 @@ or fill gaps.
     binary? See [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md).
 16. Which cheap BCSA features should be extracted before dense embeddings? See
     [`15-binary-analysis/03-interpretable-bcsa-features.md`](15-binary-analysis/03-interpretable-bcsa-features.md).
+17. Which exercise families now go beyond standalone IR writing, and how should
+    intentionally broken repair inputs be named? See
+    [`exercises/README.md`](exercises/README.md) and [`EXAMPLES.md`](EXAMPLES.md).
+18. What should a learner predict before running `mem2reg`, `simplifycfg`, or
+    Loop Vectorizer exercises? See exercises 020, 021, and 022 in
+    [`exercises/`](exercises/).
+19. Why should language-agnostic review prompts come before optional C++ pass
+    skeleton exercises, and why should those skeletons remain outside normal IR
+    verification? See [`exercises/README.md`](exercises/README.md).
 
 ## Suggested scoring
 
-- **14-16**: ready to edit examples and review BCIR lowering patches.
-- **9-13**: read the linked chapters for missed questions and rerun the self-test.
-- **0-8**: start from [`START_HERE.md`](START_HERE.md), then use
+- **17-19**: ready to edit examples, repair broken IR, and review BCIR lowering patches.
+- **12-16**: read the linked chapters or exercise-family docs for missed questions and rerun the self-test.
+- **0-11**: start from [`START_HERE.md`](START_HERE.md), then use
   [`RECIPES.md`](RECIPES.md) for task-specific paths.

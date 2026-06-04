@@ -1,0 +1,11 @@
+; Intentionally invalid: llvm.prefetch arguments 2-4 are immarg operands, but
+; @prefetch_with_variable_rw passes a runtime SSA value for the rw operand.
+source_filename = "018-fix-immarg-intrinsic.invalid.ll.txt"
+
+declare void @llvm.prefetch(ptr, i32 immarg, i32 immarg, i32 immarg)
+
+define void @prefetch_with_variable_rw(ptr %p, i32 %rw) {
+entry:
+  call void @llvm.prefetch(ptr %p, i32 %rw, i32 3, i32 1)
+  ret void
+}
