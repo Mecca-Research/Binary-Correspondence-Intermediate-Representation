@@ -54,6 +54,24 @@ function(add_llvm_training_tool_target target_name script_path skip_message)
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       COMMENT "Running ${target_name}"
       VERBATIM)
+    if(tool_check STREQUAL "")
+      add_custom_target(${target_name}
+        COMMAND "${script}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Running ${target_name}"
+        VERBATIM)
+    else()
+      add_custom_target(${target_name}
+        COMMAND
+          ${BASH_EXECUTABLE} -c
+            "if ${tool_check}; then exec \"$1\"; else printf '%s\\n' \"$2\"; fi"
+            --
+            "${script}"
+            "${skip_message}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Running ${target_name}"
+        VERBATIM)
+    endif()
   else()
     add_custom_target(${target_name}
       COMMAND ${CMAKE_COMMAND} -E echo "bash not found; skipping ${target_name}"
@@ -86,6 +104,27 @@ add_llvm_training_tool_target(
   llvm-training/tools/verify-exercises.sh
   "llvm-as and opt not both present; skipping llvm-training exercise solution validation"
   REQUIRED_TOOLS llvm-as opt)
+
+add_llvm_training_tool_target(
+  llvm-training-verify-invalid-fixtures
+  llvm-training/tools/verify-invalid-fixtures.sh
+  "llvm-as and opt not both present; skipping llvm-training invalid fixture validation"
+  REQUIRED_TOOLS llvm-as opt)
+
+add_llvm_training_tool_target(
+  llvm-training-verify-manifest
+  llvm-training/tools/verify-manifest.sh
+  "skipping llvm-training example manifest validation")
+
+add_llvm_training_tool_target(
+  llvm-training-verify-mlir-examples
+  llvm-training/tools/verify-mlir-examples.sh
+  "skipping llvm-training MLIR example validation")
+
+add_llvm_training_tool_target(
+  llvm-training-verify-bcir-mapping
+  llvm-training/tools/verify-bcir-mapping.sh
+  "skipping llvm-training BCIR mapping validation")
 
 # Export all public BCIR targets.
 install(

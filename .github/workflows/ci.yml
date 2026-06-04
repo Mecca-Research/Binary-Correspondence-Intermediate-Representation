@@ -62,6 +62,22 @@ jobs:
             echo "llvm-as and opt not both present; skipping llvm-training standalone example validation"
           fi
 
+      - name: LLVM training example manifest drift
+        run: bash llvm-training/tools/verify-manifest.sh
+
+      - name: LLVM training invalid fixtures
+        run: |
+          if command -v llvm-as >/dev/null && command -v opt >/dev/null; then
+            bash llvm-training/tools/verify-invalid-fixtures.sh
+          else
+            echo "llvm-as and opt not both present; skipping llvm-training invalid fixture validation"
+          fi
+
+      - name: LLVM training MLIR examples
+        run: bash llvm-training/tools/verify-mlir-examples.sh
+
+      - name: LLVM training BCIR mapping fixtures
+        run: bash llvm-training/tools/verify-bcir-mapping.sh
 
       - name: LLVM training llc smoke
         run: |

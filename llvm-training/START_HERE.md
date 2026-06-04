@@ -1,8 +1,9 @@
 # START HERE: Agent Consumption Protocol
 
-This folder is a compact context/reference pack for coding agents. It is not a fine-tuning corpus and should not be treated as training data for model updates.
+This folder is a compact context/reference pack for coding agents. It is not a
+fine-tuning corpus and should not be treated as training data for model updates.
 
-## Required reading order
+## Preferred path for the expanded corpus
 
 1. Read [`INDEX.md`](INDEX.md) first.
 2. Use [`RECIPES.md`](RECIPES.md) as the task-oriented lookup.

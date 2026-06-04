@@ -1,0 +1,7 @@
+# Source-like claim resource lookup.
+resource %r0 : i32* domain(0)
+resource %r1 : i32* domain(0)
+claim %copy { read = [%r0], write = [%r1], op = copy32 }
+
+lower %copy by loading read/write resource IDs from the claim,
+then loading base pointers from the registry entries.
