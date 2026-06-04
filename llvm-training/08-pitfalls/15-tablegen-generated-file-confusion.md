@@ -4,7 +4,7 @@
 
 | Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
 |---|---|---|---|---|
-| Training-only exemplar; no affected BCIR `.ll` file recorded | Unknown | `llvm-tblgen -I <llvm-include> -I <target-dir> -gen-instr-info <target>.td -o <build>/*GenInstrInfo.inc` | Regenerate TableGen `.inc` files from `.td` inputs in the build tree instead of editing or searching only source-tree outputs. | [`12-backend-jit/02-tablegen.md`](../12-backend-jit/02-tablegen.md); [`12-backend-jit/01-codegen-pipeline.md`](../12-backend-jit/01-codegen-pipeline.md); [`10-grammar/README.md`](../10-grammar/README.md) |
+| Training-only exemplar; no affected BCIR `.ll` file recorded | Training-only / preventive | `llvm-tblgen -I <llvm-include> -I <target-dir> -gen-instr-info <target>.td -o <build>/*GenInstrInfo.inc` | Regenerate TableGen `.inc` files from `.td` inputs in the build tree instead of editing or searching only source-tree outputs. | [`12-backend-jit/02-tablegen.md`](../12-backend-jit/02-tablegen.md); [`12-backend-jit/01-codegen-pipeline.md`](../12-backend-jit/01-codegen-pipeline.md); [`10-grammar/README.md`](../10-grammar/README.md) |
 
 ## The error
 

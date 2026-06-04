@@ -1,5 +1,5 @@
 source_filename = "bcir_batch_verify.ll"
-target triple = "unknown-unknown-unknown"
+target triple = "x86_64-unknown-linux-gnu"
 target datalayout = ""
 
 %bcir.claim = type { i64, [4 x i32], [4 x i32], i64, [2 x i64] }
