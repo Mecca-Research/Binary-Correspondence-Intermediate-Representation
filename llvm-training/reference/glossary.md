@@ -26,8 +26,18 @@
 | **GEP** | `getelementptr` — pointer arithmetic that respects type layout |
 | **`inbounds`** | GEP modifier asserting the result stays within the allocated object (out-of-bounds is UB) |
 | **`align N`** | Alignment guarantee (or requirement) of N bytes |
-| **`volatile`** | Modifier on load/store/atomic: don't optimize or reorder; for MMIO |
-| **Atomic ordering** | `unordered` < `monotonic` < `acquire`/`release` < `acq_rel` < `seq_cst` |
+| **`volatile`** | Modifier on load/store/atomic that preserves observable access behavior; useful for MMIO, but not a thread-safety mechanism by itself |
+| **Atomic operation** | Memory operation with atomicity and an explicit ordering, such as `load atomic`, `store atomic`, `cmpxchg`, `atomicrmw`, or `fence` |
+| **Atomic ordering** | Constraint on atomic synchronization: not atomic < `unordered` < `monotonic` < `acquire`/`release` < `acq_rel` < `seq_cst` |
+| **`unordered`** | Weak atomic load/store ordering with atomic access but no synchronization edge |
+| **`monotonic`** | Relaxed atomic ordering: coherent for the addressed atomic location, but no ordering for other memory |
+| **`acquire`** | Atomic ordering that lets a thread consume data published by a matching release operation |
+| **`release`** | Atomic ordering that publishes prior memory operations before the release operation |
+| **`acq_rel`** | Acquire plus release ordering, valid for read-modify-write operations and fences |
+| **`seq_cst`** | Sequentially consistent ordering; strongest common ordering, participating in one global SC order |
+| **`cmpxchg`** | Atomic compare-and-exchange; returns `{ old_value, success_bit }` and has separate success and failure orderings |
+| **`atomicrmw`** | Atomic read-modify-write operation such as `add`, `xchg`, or `or`; returns the old value |
+| **`fence`** | Atomic ordering operation that does not name a memory address |
 | **`syncscope("X")`** | Restricts atomic ordering to scope `X` (e.g., `singlethread`) |
 | **Linkage** | Controls cross-module visibility/merging: `private`, `internal`, `weak`, `linkonce`, `external`, etc. |
 | **Visibility** | `default`, `hidden`, `protected` — controls dynamic linker visibility |
@@ -83,5 +93,8 @@
 
 - [`../INDEX.md`](../INDEX.md) — top-level topic map
 - `10-grammar/llvm-ir.tm` — formal grammar
+- LLVM Atomic Instructions and Concurrency Guide — https://llvm.org/docs/Atomics.html
+- LangRef atomic ordering — https://llvm.org/docs/LangRef.html#atomic-memory-ordering-constraints
+- LangRef atomic instructions — https://llvm.org/docs/LangRef.html#memory-access-and-addressing-operations
 - LangRef metadata — https://llvm.org/docs/LangRef.html#metadata
 - Source Level Debugging with LLVM — https://llvm.org/docs/SourceLevelDebugging.html

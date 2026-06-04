@@ -39,14 +39,16 @@ llvm-training/
 ├── 04-memory/            alloca, load/store, globals, address spaces
 ├── 05-control-flow/      br, conditional br, switch, indirectbr
 ├── 06-metadata/          metadata syntax, debug info, profiling, loop hints
+├── 07-optimization/      opt pass model, analyses, transforms, opt levels
 ├── 08-pitfalls/          real-world bugs (mostly from BCIR review)
 ├── 10-grammar/           Textmapper grammar (formal syntax)
+├── 11-concurrency/       atomic orderings, atomic instructions, volatile
 ├── **/examples/*.ll      standalone examples that must assemble
 └── reference/            instruction quickref, intrinsics, glossary
 ```
 
-Numbered directories follow the reading order. Gaps (no `07-`, `09-`)
-are reserved for future chapters: instruction encyclopedia and toolchain.
+Numbered directories follow the reading order. Gaps such as `09-` are
+reserved for future chapters: instruction encyclopedia and toolchain.
 
 ## Example and snippet conventions
 
