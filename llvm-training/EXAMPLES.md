@@ -103,14 +103,27 @@ and must follow the LLVM >= 15 opaque-pointer convention.
 
 ## Top-level known-good verification
 
-From the repository root, validate known-good standalone `.ll` examples with:
+From the repository root, validate known-good standalone `.ll` examples and
+checked-in exercise solutions with the maintained tool scripts:
 
 ```bash
-find llvm-training -path '*/examples/*.ll' ! -iname '*invalid*.ll' -print0 | sort -z | while IFS= read -r -d '' f; do
-  llvm-as "$f" -o /dev/null || exit 1
-done
+./llvm-training/tools/verify-examples.sh
+./llvm-training/tools/verify-exercises.sh
 ```
 
-This command intentionally skips `.ll.txt` files and any `.ll` file with
-`invalid` in its name. Use targeted commands from the relevant chapter when you
-want to demonstrate or test an expected failure.
+After configuring the repository, the same batch checks are available through
+CMake targets that skip cleanly when the relevant optional LLVM tools are not on
+`PATH`:
+
+```bash
+cmake --build build --target llvm-training-verify-examples
+cmake --build build --target llvm-training-verify-exercises
+cmake --build build --target llvm-training-smoke-llc
+cmake --build build --target llvm-training-smoke-lli
+```
+
+`verify-examples.sh` intentionally skips `.ll.txt` files and any `.ll` file with
+`invalid` in its name, while `verify-exercises.sh` checks every
+`llvm-training/exercises/*.solution.ll` reference answer. Use targeted commands
+from the relevant chapter when you want to demonstrate or test an expected
+failure.

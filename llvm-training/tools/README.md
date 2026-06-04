@@ -11,7 +11,28 @@ the same checks without a build-system dependency.
 | `verify-examples.sh` | Builds the known-good standalone `.ll` manifest from chapter-local `examples/` directories, assembles each file with `llvm-as`, and runs `opt -passes=verify`. It also checks the broken `.ll.txt` sentinel so intentionally invalid examples do not drift into the manifest. | `llvm-as`, `opt` |
 | `smoke-lli.sh` | Runs only curated examples that have a safe no-argument entry point under `lli`. Most training snippets are library-style IR and should stay out of this list. | `lli` |
 | `smoke-llc.sh` | Lowers curated examples with `llc` to catch target-codegen regressions without treating every IR snippet as a runnable program. | `llc` |
+| `verify-exercises.sh` | Assembles every checked-in `llvm-training/exercises/*.solution.ll` file and runs `opt -passes=verify` so reference answers stay valid standalone LLVM IR. | `llvm-as`, `opt` |
 | `smoke-bolt.sh` | Builds the BOLT layout demo fixture, records baseline symbol/disassembly text, and exits with a clean skip when `llvm-bolt` is not installed. A full profile-driven rewrite still requires host support for `perf2bolt`/`perf`; see the walkthrough. | Optional `llvm-bolt`; `clang` and `llvm-objdump` when BOLT is present |
+
+## CMake batch targets
+
+The repository root `CMakeLists.txt` exposes first-class custom targets for the
+training corpus. Configure the project once, then run the targets from the build
+directory with `cmake --build`:
+
+```bash
+cmake -S . -B build
+cmake --build build --target llvm-training-verify-examples
+cmake --build build --target llvm-training-smoke-llc
+cmake --build build --target llvm-training-smoke-lli
+cmake --build build --target llvm-training-verify-exercises
+```
+
+Each CMake target checks for the LLVM tools needed by its underlying script
+before running it. If the host image does not provide those tools, the target
+prints the same kind of clean skip message used by CI and exits successfully.
+Running the shell scripts directly remains fail-closed: missing required tools
+produce an error so local maintainers notice incomplete toolchains.
 
 ## Skip-list rationale
 
