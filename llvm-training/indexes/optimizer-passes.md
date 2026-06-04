@@ -21,5 +21,5 @@
 
 | `-fprofile-generate`, `-fprofile-use` | PGO profile collection/use | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
 | `llvm-profdata merge` | Profile data preparation | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
-| `-flto=thin`, Full LTO | Cross-module optimization configuration | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
+| `-flto=full`, `-flto=thin`, FullLTO, ThinLTO | Cross-module optimization configuration | [`07-optimization/06-pgo-lto-bolt.md#fulllto-vs-thinlto-review-points`](../07-optimization/06-pgo-lto-bolt.md#fulllto-vs-thinlto-review-points) |
 | `llvm-bolt` | Post-link binary layout optimization | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |

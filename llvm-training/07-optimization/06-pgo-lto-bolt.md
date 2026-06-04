@@ -72,11 +72,55 @@ ThinLTO leaves useful artifacts for an agent to reason about:
 When reverse-engineering an optimized binary, expect function boundaries and
 callsite counts to differ from the original translation units.
 
+## FullLTO vs ThinLTO review points
+
+Use this comparison when reviewing an optimized binary or build log where the
+only obvious clue is `-flto`. FullLTO and ThinLTO both enable cross-translation
+unit optimization, but they leave different build artifacts and create different
+function-boundary risks for binary correspondence work.
+
+| Review point | FullLTO | ThinLTO | Binary-analysis note |
+| --- | --- | --- | --- |
+| Whole-program visibility | Merges LTO bitcode into one link-time optimization unit, so the optimizer can reason over the linked program before code generation. | Builds per-module with a global summary, so each backend sees local IR plus selected imports rather than one monolithic module. | FullLTO more often erases original translation-unit boundaries; ThinLTO often preserves more per-object provenance. |
+| Summary/index artifacts | Usually centers review on merged bitcode, linker plugin diagnostics, optimization remarks, and the final symbol map. | Produces module summaries and a combined index that record import/export decisions and cache keys. | ThinLTO summaries can explain why one callee appeared in a module while a peer remained as a call. |
+| Cross-module import behavior | No import step is needed after merging because eligible definitions are already co-resident in the link-time module. | Imports selected hot, profitable, or otherwise eligible definitions into each backend module. | A cloned callee body inside one object is expected in ThinLTO; wholesale disappearance of many callees suggests FullLTO or very aggressive internalization. |
+| Incremental/cache behavior | Generally expensive to incrementally reuse because the main optimization happens in a large link-time unit. | Designed for distributed and incremental builds; cached backend results can be reused when summaries and inputs match. | ThinLTO cache directories are useful evidence when reproducing whether a boundary change came from fresh optimization or reused artifacts. |
+| Link-time cost | Higher peak memory and serial link-time optimization cost, especially for large programs. | Lower peak memory and more parallel backend work, with index generation plus per-module backends. | If a build log shows a long monolithic LTO link, expect more global simplification before binary emission. |
+| Inlining aggressiveness | Can be more aggressive because complete definitions and call chains are visible in one optimizer instance. | Selective imports make cross-module inlining possible but bounded by import budgets, hotness, and summary decisions. | FullLTO-created call graph collapse can make source-level functions vanish into mega-functions; ThinLTO usually leaves a more explainable import trail. |
+| Binary-analysis impact | Stronger risk of function-boundary collapse, broad internalization, identical-code folding interactions, and final symbol sparsity. | Stronger risk of localized clone/import artifacts and cache-dependent differences between otherwise similar builds. | Label BCSA features with the exact LTO mode so a model does not mistake optimizer topology for semantic similarity or difference. |
+
+Schematic build commands to recognize:
+
+```bash
+# FullLTO: all eligible bitcode participates in one link-time optimization view.
+clang -O2 -flto=full -fuse-ld=lld a.c b.c -o app-full-lto
+
+# ThinLTO: summaries drive selective import and parallel per-module backends.
+clang -O2 -flto=thin -fuse-ld=lld a.c b.c -o app-thin-lto
+```
+
+Reviewer checklist:
+
+- Suspect FullLTO-created function-boundary collapse when many neighboring
+  functions from different translation units disappear together, symbol tables
+  become unusually sparse, and optimization remarks point to broad internalizing,
+  dead-stripping, or cross-module inlining without a ThinLTO import trail.
+- Suspect ThinLTO selective import when only specific hot callees appear cloned
+  into a caller's module, the original callee may still exist elsewhere, and
+  module-summary, combined-index, import-list, or ThinLTO cache artifacts explain
+  why those edges were imported.
+- In either case, compare the final symbol map, optimization remarks, profile
+  hotness, and build flags before treating a changed function boundary as a
+  semantic change in the source program.
+
 ## BOLT and post-link layout
 
 BOLT consumes a linked binary plus profile data. It can reorder functions, split
 hot and cold basic blocks, align hot loops, and rewrite branches. These changes
 happen after LLVM IR is gone, so IR-only analysis cannot see the final layout.
+For a concrete fixture and inspection flow, see
+[`07-bolt-layout-walkthrough.md`](07-bolt-layout-walkthrough.md) and
+[`examples/bolt-layout-demo.c`](examples/bolt-layout-demo.c).
 
 Questions to ask:
 
@@ -97,6 +141,24 @@ Questions to ask:
    one pipeline better.
 5. For BCSA, label feature vectors with the optimization pipeline so models do
    not confuse compiler configuration with semantic difference.
+
+## CI optimization smoke matrix
+
+The repository CI has a dedicated `llvm-training-optimization-smoke` job that
+keeps this chapter's optimization guidance executable without turning every pull
+request into a full performance lab. It uses the small `bcir-tools` executable as
+the smoke target and caches compiler outputs with `ccache` before CMake
+configuration.
+
+| Matrix entry | Scope | Training/rebuild behavior |
+| --- | --- | --- |
+| `thinlto` | Configures Clang with `-flto=thin`, links with LLD, builds only `bcir-tools`, and runs `bcir-tools --runtime-diag`. | Verifies that the project still accepts a ThinLTO path and that a tiny optimized executable starts successfully. |
+| `pgo` | Builds an instrumented `bcir-tools`, runs `bcir-tools --runtime-diag` as the training command, merges `*.profraw` with `llvm-profdata`, rebuilds with `-fprofile-use`, and runs the rebuilt executable. | Exercises the minimum PGO lifecycle: generate profile data, merge it, consume it, and keep the smoke workload intentionally small. |
+
+The main `build-and-test` job also enables CMake compiler launchers when
+`ccache` is available. The optimization matrix is intentionally separate from the
+full test suite so PGO and ThinLTO regressions are visible while CI latency stays
+bounded.
 
 ## Commands to recognize
 

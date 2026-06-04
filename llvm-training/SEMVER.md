@@ -22,6 +22,18 @@ Many systems install versioned binaries such as `llvm-as-18`, `opt-18`, or
 `llc-18`. The commands in this corpus use unversioned names for readability. If
 your environment only has versioned names, substitute the matching binary.
 
+## Optional advanced tools
+
+Core standalone `.ll` verification requires only `llvm-as` and `opt`. Advanced
+walkthroughs for PGO, LTO, or BOLT may additionally reference tools such as
+`clang`, `llvm-profdata`, `llc`, `llvm-objdump`, `llvm-bolt`, or `perf2bolt`.
+
+When an advanced-tool command is not part of the CI guarantee, the chapter must
+mark it as schematic or optional so readers can distinguish required
+verification steps from environment-dependent demonstrations. CI jobs and local
+scripts should also skip cleanly when these optional tools are unavailable
+instead of failing the core standalone `.ll` verification path.
+
 ## CI expectation
 
 CI runs `llvm-training/tools/verify-examples.sh` when `llvm-as` and `opt` are on
