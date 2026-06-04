@@ -94,16 +94,19 @@ Fast-math flags (combinable, in any order):
 | `load atomic` | `load atomic <ty>, ptr %p <ord> [, align N]` | Atomic read |
 | `store` | `store <ty> %v, ptr %p [, align N]` | Write |
 | `store atomic` | `store atomic <ty> %v, ptr %p <ord> [, align N]` | Atomic write |
-| `fence` | `fence <ordering>` | Memory fence |
-| `cmpxchg` | `cmpxchg ptr %p, <ty> %cmp, <ty> %new <succ-ord> <fail-ord>` | Compare-and-swap |
-| `atomicrmw` | `atomicrmw <op> ptr %p, <ty> %v <ord>` | Atomic RMW |
+| `fence` | `fence [syncscope("...")] <ordering>` | Memory fence; see [`../11-concurrency/02-atomic-instructions.md`](../11-concurrency/02-atomic-instructions.md) |
+| `cmpxchg` | `cmpxchg ptr %p, <ty> %cmp, <ty> %new <succ-ord> <fail-ord> [, align N]` | Compare-and-swap; returns `{ <ty>, i1 }`; see [`../11-concurrency/02-atomic-instructions.md`](../11-concurrency/02-atomic-instructions.md) |
+| `atomicrmw` | `atomicrmw <op> ptr %p, <ty> %v <ord> [, align N]` | Atomic RMW; returns old value; see [`../11-concurrency/02-atomic-instructions.md`](../11-concurrency/02-atomic-instructions.md) |
 | `getelementptr` | `getelementptr [inbounds] <ty>, ptr %p, <ty> %idx, ...` | Address compute |
 
 `atomicrmw` operations: `xchg`, `add`, `sub`, `and`, `nand`, `or`,
 `xor`, `max`, `min`, `umax`, `umin`, `fadd`, `fsub`, `fmax`, `fmin`.
 
-Atomic orderings (weakest → strongest): `unordered`, `monotonic`,
-`acquire`, `release`, `acq_rel`, `seq_cst`.
+Atomic orderings (weakest → strongest): not atomic, `unordered`,
+`monotonic`, `acquire`, `release`, `acq_rel`, `seq_cst`. For choosing
+orderings and avoiding volatile/atomic confusion, see
+[`../11-concurrency/01-atomic-orderings.md`](../11-concurrency/01-atomic-orderings.md)
+and [`../11-concurrency/03-volatile-vs-atomic.md`](../11-concurrency/03-volatile-vs-atomic.md).
 
 ## Comparison
 
