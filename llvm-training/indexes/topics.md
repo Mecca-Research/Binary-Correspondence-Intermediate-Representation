@@ -77,12 +77,16 @@
 | `MachineInstr` machine-code representation | [`12-backend-jit/01-codegen-pipeline.md`](../12-backend-jit/01-codegen-pipeline.md) |
 | Register allocation | [`12-backend-jit/01-codegen-pipeline.md`](../12-backend-jit/01-codegen-pipeline.md) |
 | MC layer / code emission | [`12-backend-jit/01-codegen-pipeline.md`](../12-backend-jit/01-codegen-pipeline.md), [`12-backend-jit/04-mc-and-relocations.md`](../12-backend-jit/04-mc-and-relocations.md) |
-| Relocations and JIT symbol dependencies | [`12-backend-jit/04-mc-and-relocations.md`](../12-backend-jit/04-mc-and-relocations.md) |
+| Relocations and JIT symbol dependencies | [`12-backend-jit/04-mc-and-relocations.md`](../12-backend-jit/04-mc-and-relocations.md), [`12-backend-jit/05-orc-layers.md`](../12-backend-jit/05-orc-layers.md) |
 | TableGen | [`12-backend-jit/02-tablegen.md`](../12-backend-jit/02-tablegen.md) |
 | TableGen `.td` target descriptions | [`12-backend-jit/02-tablegen.md`](../12-backend-jit/02-tablegen.md) |
 | `llvm-tblgen` generated include files | [`12-backend-jit/02-tablegen.md`](../12-backend-jit/02-tablegen.md) |
-| ORC/LLJIT | [`12-backend-jit/03-orc-jit.md`](../12-backend-jit/03-orc-jit.md) |
-| ORC JIT | [`12-backend-jit/03-orc-jit.md`](../12-backend-jit/03-orc-jit.md) |
+| ORC/LLJIT | [`12-backend-jit/03-orc-jit.md`](../12-backend-jit/03-orc-jit.md), [`12-backend-jit/05-orc-layers.md`](../12-backend-jit/05-orc-layers.md) |
+| ORC JIT | [`12-backend-jit/03-orc-jit.md`](../12-backend-jit/03-orc-jit.md), [`12-backend-jit/05-orc-layers.md`](../12-backend-jit/05-orc-layers.md) |
+| ORC layers (`ExecutionSession`, `JITDylib`, compile/object/transform layers) | [`12-backend-jit/05-orc-layers.md`](../12-backend-jit/05-orc-layers.md) |
+| ORC materialization responsibility | [`12-backend-jit/05-orc-layers.md`](../12-backend-jit/05-orc-layers.md) |
+| ORC symbol interning and resolution | [`12-backend-jit/05-orc-layers.md`](../12-backend-jit/05-orc-layers.md), [`08-pitfalls/14-orc-jit-symbol-resolution.md`](../08-pitfalls/14-orc-jit-symbol-resolution.md) |
+| JITLink and ORC object linking | [`12-backend-jit/05-orc-layers.md`](../12-backend-jit/05-orc-layers.md), [`12-backend-jit/04-mc-and-relocations.md`](../12-backend-jit/04-mc-and-relocations.md) |
 | `LLJIT` | [`12-backend-jit/03-orc-jit.md`](../12-backend-jit/03-orc-jit.md) |
 | Glossary | [`reference/glossary.md`](../reference/glossary.md) |
 
