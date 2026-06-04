@@ -95,6 +95,18 @@ Use the checked-in tool scripts from the repository root:
 ./llvm-training/tools/verify-examples.sh
 ./llvm-training/tools/smoke-llc.sh
 ./llvm-training/tools/smoke-lli.sh
+./llvm-training/tools/verify-exercises.sh
+```
+
+The same checks are also available as CMake custom targets after configuring the
+repository. These targets are suitable for minimal CI or local images because
+they skip cleanly when their optional LLVM tools are unavailable:
+
+```bash
+cmake --build build --target llvm-training-verify-examples
+cmake --build build --target llvm-training-smoke-llc
+cmake --build build --target llvm-training-smoke-lli
+cmake --build build --target llvm-training-verify-exercises
 ```
 
 `verify-examples.sh` checks every known-good standalone `*/examples/*.ll` file
@@ -103,6 +115,9 @@ with both `llvm-as` and `opt -passes=verify`, skipping `.ll.txt` files and any
 fixture `llvm-training/examples/broken-example.ll.txt` proves the skip rule is
 working and should never be renamed to a known-good `.ll` example. Anything else
 in those known-good files that doesn't assemble and verify shouldn't ship.
+
+`verify-exercises.sh` applies the same assembler-and-verifier contract to every
+checked-in `llvm-training/exercises/*.solution.ll` reference answer.
 
 The smoke scripts are intentionally narrower: `smoke-llc.sh` emits assembly for
 a curated portable subset, while `smoke-lli.sh` runs only modules with a safe
