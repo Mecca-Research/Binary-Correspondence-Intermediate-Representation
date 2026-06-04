@@ -61,6 +61,14 @@ jobs:
             echo "llvm-as and opt not both present; skipping llvm-training standalone example validation"
           fi
 
+      - name: LLVM training llc smoke
+        run: |
+          if command -v llc >/dev/null; then
+            bash llvm-training/tools/smoke-llc.sh
+          else
+            echo "llc not present; skipping llvm-training llc smoke validation"
+          fi
+
       - name: Optional BOLT smoke fixture
         run: bash llvm-training/tools/smoke-bolt.sh
 
