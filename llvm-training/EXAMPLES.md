@@ -99,7 +99,34 @@ Each exercise should include the following pieces of information:
   `001-add.solution.ll` when the exercise benefits from a reference answer.
 
 Solutions that are checked in as `.ll` files are known-good standalone examples
-and must follow the LLVM >= 15 opaque-pointer convention.
+and must follow the LLVM >= 15 opaque-pointer convention. Intentionally broken
+exercise inputs must use `.ll.txt` or include `invalid` in the filename, even if
+the prompt asks the learner to run LLVM and observe the diagnostic.
+
+## Exercise families
+
+Exercises are broader than standalone IR-writing drills. Use the filename and
+verification conventions below so learners and verification scripts know what is
+expected.
+
+- **Standalone IR writing** exercises use `NNN-topic.prompt.md` and, when a
+  reference answer is useful, `NNN-topic.solution.ll`. Checked-in `.solution.ll`
+  files should assemble as complete modules.
+- **Repair** exercises pair a prompt with an intentionally broken input named
+  `NNN-topic.invalid.ll.txt` or another filename containing `invalid`. The
+  broken input should be rejected by LLVM, while any checked-in fixed solution
+  should use `.solution.ll` and assemble normally.
+- **Optimization pass reasoning** exercises may include `NNN-topic.input.ll` and
+  optional `NNN-topic.after-<pass>.ll` snapshots. Inputs should assemble before
+  the pass is run. After-pass files are teaching snapshots for structural
+  comparison; exact value names, attributes, and cleanup can differ by LLVM
+  version.
+- **Language-agnostic review** exercises use prompts without requiring a checked
+  in `.ll` solution when the answer is a review checklist or written diagnosis.
+  Add these before asking learners to implement real passes.
+- **Pass implementation skeletons**, if added later, should live in a clearly
+  named non-verified exercise family with local build instructions. Do not mix
+  C++ skeletons into known-good LLVM IR verification loops.
 
 ## Top-level known-good verification
 
