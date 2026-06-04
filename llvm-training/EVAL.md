@@ -54,12 +54,20 @@ or fill gaps.
 21. Why should language-agnostic review prompts come before optional C++ pass
     skeleton exercises, and why should those skeletons remain outside normal IR
     verification? See [`exercises/README.md`](exercises/README.md).
+22. Which BCIR mapping pages cover claim lowering, GAADMSF graph operations,
+    Dragon Egg runtime-owned operations, runtime call boundaries, and diagnostic
+    metadata preservation? See [`bcir-mapping/README.md`](bcir-mapping/README.md).
+23. Which checked examples show graph fragments becoming struct arrays, claim
+    resource lookup becoming registry loads, HAM hints becoming `llvm.prefetch`,
+    BCIR operations becoming runtime wrappers, mixed strides becoming byte
+    offsets, and diagnostic tags becoming custom metadata? See
+    [`bcir-mapping/examples/`](bcir-mapping/examples/).
 
 ## Suggested scoring
 
-- **19-21**: ready to edit examples, repair broken IR, and review BCIR lowering patches.
-- **14-18**: read the linked chapters or exercise-family docs for missed questions and rerun the self-test.
-- **0-13**: start from [`START_HERE.md`](START_HERE.md), then use
+- **21-23**: ready to edit examples, repair broken IR, and review BCIR lowering patches.
+- **16-20**: read the linked chapters or exercise-family docs for missed questions and rerun the self-test.
+- **0-15**: start from [`START_HERE.md`](START_HERE.md), then use
   [`RECIPES.md`](RECIPES.md) for task-specific paths.
 
 ## Path-specific self-test prompts
@@ -112,3 +120,9 @@ LLVM source):
 - Which hardware counters would you pair with branch/path traces for constant-time review?
 - What PGO/LTO/BOLT artifacts should be saved before comparing optimized binaries?
 - Which interpretable BCSA features are cheap enough for first-pass triage?
+
+**After the BCIR mapping path**
+- Which claim-lowering stages happen before operation dispatch?
+- When should a BCIR operation become plain LLVM IR versus a runtime-call wrapper?
+- Why do HAM prefetch operands need immediate constants?
+- Why should diagnostic metadata never carry semantics required for execution?

@@ -166,6 +166,22 @@ structured information before producing LLVM IR:
 Use this path before the Backend/JIT path when the task starts above LLVM IR,
 especially for custom frontend lowering or BCIR-specific graph representations.
 
+## BCIR mapping path
+
+After Path 2, add this path when the task is to lower BCIR-like claims, graph
+fragments, runtime operations, or diagnostic hints directly to LLVM IR:
+
+1. [`bcir-mapping/README.md`](bcir-mapping/README.md) — dispatcher for the BCIR-to-LLVM mapping guide and standalone examples.
+2. [`bcir-mapping/01-vertex-edge-attribute.md`](bcir-mapping/01-vertex-edge-attribute.md) and [`bcir-mapping/07-gaadmsf-operations.md`](bcir-mapping/07-gaadmsf-operations.md) — graph fragments, struct arrays, GEPs, and graph-aware data movement.
+3. [`bcir-mapping/02-register-binding.md`](bcir-mapping/02-register-binding.md) and [`bcir-mapping/06-claim-lowering-pipeline.md`](bcir-mapping/06-claim-lowering-pipeline.md) — claim normalization, resource lookup, and registry loads.
+4. [`bcir-mapping/03-mixed-stride-graphs.md`](bcir-mapping/03-mixed-stride-graphs.md) — row/column stride arithmetic and byte-offset lowering.
+5. [`bcir-mapping/04-ham-hints.md`](bcir-mapping/04-ham-hints.md) and [`bcir-mapping/10-metadata-and-diagnostics.md`](bcir-mapping/10-metadata-and-diagnostics.md) — HAM hints, prefetch intrinsics, custom metadata, and diagnostic preservation.
+6. [`bcir-mapping/05-runtime-abi.md`](bcir-mapping/05-runtime-abi.md), [`bcir-mapping/08-dragon-egg-operations.md`](bcir-mapping/08-dragon-egg-operations.md), and [`bcir-mapping/09-runtime-call-boundaries.md`](bcir-mapping/09-runtime-call-boundaries.md) — ABI structs, Dragon Egg runtime-owned operations, and wrapper calls.
+7. Run `./llvm-training/tools/verify-examples.sh` after editing any checked `.ll` output under [`bcir-mapping/examples/`](bcir-mapping/examples/).
+
+Use this path together with the MLIR bridge path when the source representation
+starts as a dialect operation rather than a source-like `.bcir.txt` prompt.
+
 ## Path 3: Deep dive (one sitting; pick up the rest as needed)
 
 Read everything in numerical order:
