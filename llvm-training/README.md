@@ -62,6 +62,35 @@ llvm-training/
 Numbered directories follow the reading order. Future chapters may add a
 dedicated instruction encyclopedia or additional toolchain material.
 
+## New examples and advanced examples summary
+
+The expanded corpus now has both beginner examples and advanced artifacts:
+
+- **Beginner runnable IR**: compact `*.ll` modules in foundations, syntax, types,
+  memory, control flow, metadata, concurrency, vectorization, and advanced-IR
+  chapters. These are the first files to read when learning LLVM IR syntax.
+- **Before/after optimization examples**: paired files such as
+  `*-before.ll`, `*-after-mem2reg.ll`, `*-after-simplifycfg.ll`, and
+  `*-after-o2.ll` explain how `opt` rewrites IR and what is stable versus
+  LLVM-version-dependent.
+- **BCIR lowering examples**: checked LLVM IR under `bcir-mapping/examples/`
+  demonstrates graph fragments, claim/resource lookup, HAM hints, runtime-call
+  wrappers, mixed-stride addressing, and diagnostic metadata preservation.
+- **MLIR bridge examples**: `14-mlir-bridge/examples/*.mlir` illustrates dialect
+  and LLVM-dialect shapes; these are MLIR artifacts, not standalone `.ll` files.
+- **Backend/JIT diagnostics examples**: TableGen and LLJIT outline artifacts in
+  `12-backend-jit/examples/` are review aids for target descriptions, ORC layer
+  ownership, MC emission, relocations, and missing-symbol failures.
+- **Binary-analysis evidence artifacts**: CSV trace/counter/BCSA samples in
+  `15-binary-analysis/examples/` document evidence schemas and must be reviewed
+  with chapter prose rather than sent to `llvm-as`.
+- **Repair and prediction exercises**: `exercises/016`-`026` include invalid
+  fixtures, pass-output prediction tasks, metadata preservation checks, and
+  UB/poison repair prompts.
+
+Use [`EXAMPLES.md`](EXAMPLES.md) for naming and verification rules before adding
+new artifacts to any of these families.
+
 ## Example, exercise, and snippet conventions
 
 Use the conventions in [`EXAMPLES.md`](EXAMPLES.md) consistently so readers

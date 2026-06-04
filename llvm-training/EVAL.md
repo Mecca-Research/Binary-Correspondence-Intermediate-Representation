@@ -62,12 +62,37 @@ or fill gaps.
     BCIR operations becoming runtime wrappers, mixed strides becoming byte
     offsets, and diagnostic tags becoming custom metadata? See
     [`bcir-mapping/examples/`](bcir-mapping/examples/).
+24. For BCIR lowering exercises 028-031, which facts must remain in executable
+    IR or ABI data rather than only diagnostic metadata? See
+    [`bcir-mapping/10-metadata-and-diagnostics.md`](bcir-mapping/10-metadata-and-diagnostics.md).
+25. For MLIR exercises 032-034, how do you distinguish a custom dialect op, an
+    LLVM dialect op, and final textual `.ll`? See
+    [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md).
+26. For backend/JIT exercises 035-037, which artifacts would you inspect first:
+    ORC `JITDylib` definitions, JITLink edges, object symbols, relocations, or
+    TableGen-generated records? See [`12-backend-jit/`](12-backend-jit/).
+27. For binary-analysis chapters, why are dynamic traces, hardware counters,
+    PGO/LTO/BOLT artifacts, and BCSA CSV features evidence rather than LLVM IR
+    examples? See [`15-binary-analysis/README.md`](15-binary-analysis/README.md)
+    and [`EXAMPLES.md`](EXAMPLES.md).
+28. For repair exercises, why should broken inputs be named `.invalid.ll.txt`,
+    and which script checks that expected failures stay out of the known-good
+    manifest? See [`EXAMPLES.md`](EXAMPLES.md) and
+    [`tools/verify-invalid-fixtures.sh`](tools/verify-invalid-fixtures.sh).
+29. When reviewing before/after optimization examples, what observations are
+    stable enough to teach even if value names or cleanup differ by LLVM
+    version? See [`EXAMPLES.md`](EXAMPLES.md) and exercises 020-022.
+30. Which top-level recipe row should an agent select before touching BCIR
+    lowering, MLIR integration, backend/JIT diagnostics, binary-analysis
+    evidence, or repair fixtures? See [`RECIPES.md`](RECIPES.md).
 
 ## Suggested scoring
 
-- **21-23**: ready to edit examples, repair broken IR, and review BCIR lowering patches.
-- **16-20**: read the linked chapters or exercise-family docs for missed questions and rerun the self-test.
-- **0-15**: start from [`START_HERE.md`](START_HERE.md), then use
+- **27-30**: ready to edit examples, repair broken IR, and review BCIR lowering,
+  MLIR, backend/JIT, and binary-analysis patches.
+- **21-26**: read the linked advanced chapters or exercise-family docs for
+  missed questions and rerun the self-test.
+- **0-20**: start from [`START_HERE.md`](START_HERE.md), then use
   [`RECIPES.md`](RECIPES.md) for task-specific paths.
 
 ## Path-specific self-test prompts
@@ -120,6 +145,26 @@ LLVM source):
 - Which hardware counters would you pair with branch/path traces for constant-time review?
 - What PGO/LTO/BOLT artifacts should be saved before comparing optimized binaries?
 - Which interpretable BCSA features are cheap enough for first-pass triage?
+
+**After the BCIR lowering path**
+- Which BCIR claims must be normalized before operation dispatch?
+- Which lowering choices produce plain LLVM IR, runtime ABI structs, or wrapper calls?
+- Which checked examples prove graph, register, HAM, mixed-stride, runtime, and diagnostic mappings?
+
+**After the MLIR integration path**
+- Which BCIR concepts belong in a custom dialect rather than directly in `.ll`?
+- How does LLVM dialect differ from final textual LLVM IR?
+- Which MLIR examples are review artifacts instead of `llvm-as` inputs?
+
+**After the backend/JIT diagnostics path**
+- Which missing-symbol evidence comes from ORC ownership versus object symbols or relocations?
+- Why should TableGen source files be edited instead of generated include files?
+- Which exercises practice JIT relocation, ORC-layer, and TableGen-to-`MCInst` diagnosis?
+
+**After the repair exercises path**
+- Why are invalid fixtures intentionally excluded from known-good manifests?
+- Which verifier or parser diagnostic should the learner preserve before applying a fix?
+- Which scripts separately verify invalid fixtures and fixed `.solution.ll` files?
 
 **After the BCIR mapping path**
 - Which claim-lowering stages happen before operation dispatch?

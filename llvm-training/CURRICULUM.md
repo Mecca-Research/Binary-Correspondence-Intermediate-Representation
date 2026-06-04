@@ -182,6 +182,58 @@ fragments, runtime operations, or diagnostic hints directly to LLVM IR:
 Use this path together with the MLIR bridge path when the source representation
 starts as a dialect operation rather than a source-like `.bcir.txt` prompt.
 
+## BCIR lowering path
+
+After Path 2, use this path when the task is specifically to turn BCIR-domain
+constructs into executable LLVM IR or runtime-call boundaries:
+
+1. [`bcir-mapping/06-claim-lowering-pipeline.md`](bcir-mapping/06-claim-lowering-pipeline.md) — normalize claims before dispatch.
+2. [`bcir-mapping/01-vertex-edge-attribute.md`](bcir-mapping/01-vertex-edge-attribute.md), [`bcir-mapping/07-gaadmsf-operations.md`](bcir-mapping/07-gaadmsf-operations.md), and [`bcir-mapping/03-mixed-stride-graphs.md`](bcir-mapping/03-mixed-stride-graphs.md) — lower graph fragments, GAADMSF operations, and mixed strides into structs, GEPs, and byte offsets.
+3. [`bcir-mapping/02-register-binding.md`](bcir-mapping/02-register-binding.md) and [`bcir-mapping/05-runtime-abi.md`](bcir-mapping/05-runtime-abi.md) — keep registry/resource ABI layouts synchronized.
+4. [`bcir-mapping/04-ham-hints.md`](bcir-mapping/04-ham-hints.md) and [`bcir-mapping/10-metadata-and-diagnostics.md`](bcir-mapping/10-metadata-and-diagnostics.md) — lower hints and preserve diagnostics without making metadata semantically required.
+5. Exercises [`028`](exercises/028-lower-vertex-edge-fragment.prompt.md)-[`031`](exercises/031-lower-runtime-call-boundary.prompt.md) — apply the BCIR lowering patterns directly.
+
+## MLIR integration path
+
+Use this path when BCIR or another domain IR should remain structured as MLIR
+before lowering to LLVM dialect or textual LLVM IR:
+
+1. [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) and [`14-mlir-bridge/02-dialects-and-operations.md`](14-mlir-bridge/02-dialects-and-operations.md) — identify modules, operations, regions, blocks, dialects, attributes, and types.
+2. [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) — decide which BCIR concepts belong in a custom dialect.
+3. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — review type conversion and LLVM-dialect boundaries.
+4. Exercises [`032`](exercises/032-identify-mlir-dialect-boundaries.prompt.md)-[`034`](exercises/034-review-mlir-to-llvm-type-conversion.prompt.md) — practice dialect-boundary and lowering reviews.
+
+## Backend/JIT diagnostics path
+
+Use this path after Path 2 when a problem appears below IR optimization: target
+lowering, object emission, ORC ownership, symbol lookup, or relocation handling.
+
+1. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — place SelectionDAG/GlobalISel, `MachineInstr`, register allocation, MC, and object emission in order.
+2. [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) — identify generated target facts and avoid editing generated files.
+3. [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md), [`12-backend-jit/05-orc-layers.md`](12-backend-jit/05-orc-layers.md), and [`12-backend-jit/04-mc-and-relocations.md`](12-backend-jit/04-mc-and-relocations.md) — trace missing symbols from `LLJIT` ownership through layers, JITLink, object symbols, and relocations.
+4. Exercises [`035`](exercises/035-diagnose-missing-symbol-relocation.prompt.md)-[`037`](exercises/037-tablegen-to-mcinst-review.prompt.md) — practice backend/JIT failure triage.
+
+## Binary-analysis evidence path
+
+Use this path when static LLVM IR is not enough to explain security,
+performance, BCSA, or optimized-binary behavior:
+
+1. [`15-binary-analysis/README.md`](15-binary-analysis/README.md) — choose static, dynamic, and post-codegen evidence.
+2. [`15-binary-analysis/01-microarchitecture-side-channels.md`](15-binary-analysis/01-microarchitecture-side-channels.md) — review timing, cache, and branch-predictor leakage.
+3. [`15-binary-analysis/02-dynamic-traces-and-counters.md`](15-binary-analysis/02-dynamic-traces-and-counters.md) — interpret trace and hardware-counter schemas.
+4. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) and [`07-optimization/07-bolt-layout-walkthrough.md`](07-optimization/07-bolt-layout-walkthrough.md) — preserve profile, LTO, and BOLT evidence.
+5. [`15-binary-analysis/03-interpretable-bcsa-features.md`](15-binary-analysis/03-interpretable-bcsa-features.md) — extract cheap interpretable BCSA features before dense embeddings.
+
+## Repair exercises path
+
+Use this path when the learner or agent must fix broken IR rather than write a
+module from scratch:
+
+1. [`08-pitfalls/README.md`](08-pitfalls/README.md) — identify the likely failure family.
+2. [`EXAMPLES.md`](EXAMPLES.md) — confirm invalid fixture naming before adding a broken input.
+3. Exercises [`016`](exercises/016-fix-phi-predecessor.prompt.md)-[`019`](exercises/019-fix-atomic-ordering.prompt.md) and [`026`](exercises/026-poison-freeze-repair.prompt.md) — repair CFG, symbol, intrinsic, atomic-ordering, and poison/freeze hazards.
+4. Run `./llvm-training/tools/verify-invalid-fixtures.sh` for broken inputs and `./llvm-training/tools/verify-exercises.sh` for fixed `.solution.ll` outputs.
+
 ## Path 3: Deep dive (one sitting; pick up the rest as needed)
 
 Read everything in numerical order:
@@ -195,7 +247,9 @@ Read everything in numerical order:
         ↓
 07-optimization/  →  09-vectorization/
         ↓                    ↓
-08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  12-backend-jit/  →  15-binary-analysis/  →  reference/
+08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  14-mlir-bridge/  →  bcir-mapping/
+        ↓                                                                    ↓
+   12-backend-jit/  →  15-binary-analysis/  →  reference/
 ```
 
 Cross-references inside each chapter (`See also:`) let you jump

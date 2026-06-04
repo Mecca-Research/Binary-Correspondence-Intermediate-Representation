@@ -12,6 +12,12 @@ every lookup.
 | Symbols such as metadata names, intrinsics, and files | [`indexes/symbols.md`](indexes/symbols.md) |
 | Intrinsics and special types | [`indexes/intrinsics-special-types.md`](indexes/intrinsics-special-types.md) |
 | Common intrinsic family quick reference | [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
+| BCIR lowering guide | [`bcir-mapping/README.md`](bcir-mapping/README.md) |
+| MLIR bridge and integration | [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) |
+| Backend/JIT diagnostics | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
+| Binary-analysis evidence schemas | [`15-binary-analysis/README.md`](15-binary-analysis/README.md) |
+| Repair and prediction exercises | [`exercises/README.md`](exercises/README.md) |
+| Expanded learning paths | [`CURRICULUM.md`](CURRICULUM.md) |
 | Keywords where they are introduced | [`indexes/keywords.md`](indexes/keywords.md) |
 | BCIR runtime/source cross-references | [`indexes/bcir-crossrefs.md`](indexes/bcir-crossrefs.md) |
 | First-use protocol | [`START_HERE.md`](START_HERE.md) |
