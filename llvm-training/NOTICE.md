@@ -17,6 +17,15 @@ offered under 0BSD and Unlicense terms; it is included here so agents can answer
 syntax-shape questions without leaving the repository. LLVM LangRef and the
 target `llvm-as` remain the final authorities for current-version semantics.
 
+## Corpus-specific original material
+
+The BCIR mapping guide, repair exercise prompts, MLIR bridge summaries,
+backend/JIT diagnostic notes, binary-analysis evidence schemas, and generated
+example-governance rules are original documentation for this repository unless a
+file states otherwise. They are intended as context-pack material for agents and
+reviewers, not as canonical replacements for LLVM, MLIR, ORC, BOLT, or platform
+vendor documentation.
+
 ## LLVM upstream
 
 The canonical truth for LLVM IR syntax and semantics is the LLVM
