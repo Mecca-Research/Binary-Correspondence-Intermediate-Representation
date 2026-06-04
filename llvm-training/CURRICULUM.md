@@ -72,9 +72,10 @@ reason about optimization strength, pass pipelines, and vectorized IR:
 
 1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass pipelines and `opt -passes=...` spelling
 2. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — optimization levels: `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
-3. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization overview
-4. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
-4. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
+3. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
+4. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization overview
+5. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
+6. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
 
 Practice next: run the commands in
 [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c),
@@ -114,6 +115,21 @@ This path is intentionally advanced: it assumes you can already read LLVM IR and
 optimizer output, then follows the handoff into backend data structures, target
 descriptions, and runtime code generation.
 
+
+## Binary analysis and dynamic execution path
+
+After the Backend/JIT path, add this path for security-sensitive code, BCSA, or
+performance investigations where final binary behavior matters:
+
+1. [`15-binary-analysis/README.md`](15-binary-analysis/README.md) — overview of static IR plus runtime evidence.
+2. [`15-binary-analysis/01-microarchitecture-side-channels.md`](15-binary-analysis/01-microarchitecture-side-channels.md) — cache, branch-prediction, and timing side-channel review.
+3. [`15-binary-analysis/02-dynamic-traces-and-counters.md`](15-binary-analysis/02-dynamic-traces-and-counters.md) — trace/counter schemas and pairing runtime evidence with IR.
+4. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — how profiles, LTO, ThinLTO, and BOLT can reshape the final binary.
+5. [`15-binary-analysis/03-interpretable-bcsa-features.md`](15-binary-analysis/03-interpretable-bcsa-features.md) — cheap, explainable BCSA triage before dense embeddings.
+6. Inspect [`15-binary-analysis/examples/`](15-binary-analysis/examples/) for the constant-time review IR and tiny trace/counter/feature schemas.
+
+This path explicitly prevents an agent from treating static IR equivalence as a
+security or performance verdict.
 
 ## Advanced IR constructs path
 
@@ -156,7 +172,7 @@ Read everything in numerical order:
         ↓
 07-optimization/  →  09-vectorization/
         ↓                    ↓
-08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  12-backend-jit/  →  reference/
+08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  12-backend-jit/  →  15-binary-analysis/  →  reference/
 ```
 
 Cross-references inside each chapter (`See also:`) let you jump
@@ -215,6 +231,8 @@ foundations ────────┐
         ↓
    backend/JIT (when target lowering or runtime compilation appears)
         ↓
+   binary analysis (when dynamic execution, side channels, or BCSA matter)
+        ↓
    reference (intrinsics, special types, MLIR terms, and quick lookups)
 ```
 
@@ -224,6 +242,7 @@ If your task touches these, you'll need external references:
 
 - **Custom optimization pass design** — pass-manager internals beyond the introductory `opt` vectorization commands
 - **C/C++ frontend internals** — Clang, AST, lowering rules
+- **Full benchmarking methodology** — the dynamic-analysis chapters define schemas and review loops, not statistically complete benchmark harnesses
 - **Calls / returns / comparisons** — a small dedicated chapter may be worth adding if
   this training set keeps expanding beyond the quick reference
 
@@ -264,9 +283,16 @@ LLVM source):
 - What source or IR facts help LLVM prove a loop has predictable memory access and no unsafe dependencies?
 - Which commands show successful vs missed loop-vectorization remarks?
 - What IR clues suggest vectorization occurred (`<N x T>`, vector loads/stores, `shufflevector`, reductions)?
+- Why can PGO+LTO or BOLT change binary shape without changing source semantics?
 
 **After the backend / JIT path**
 - Where do SelectionDAG and GlobalISel fit relative to `MachineInstr`?
 - Why does register allocation happen after machine-code SSA optimizations?
 - Which backend facts are commonly generated from TableGen `.td` files?
 - What ownership objects should you identify before adding modules to an ORC `LLJIT`?
+
+**After the binary-analysis path**
+- Why is a secret-dependent branch in IR not the only side-channel signal to review?
+- Which hardware counters would you pair with branch/path traces for constant-time review?
+- What PGO/LTO/BOLT artifacts should be saved before comparing optimized binaries?
+- Which interpretable BCSA features are cheap enough for first-pass triage?

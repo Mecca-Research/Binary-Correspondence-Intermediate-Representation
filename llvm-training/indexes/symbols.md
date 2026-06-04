@@ -16,3 +16,5 @@
 | `ptr` | Generic pointer (opaque) | [`02-types/03-opaque-and-pointer-types.md`](../02-types/03-opaque-and-pointer-types.md), [`02-types/04-opaque-pointer-migration.md`](../02-types/04-opaque-pointer-migration.md) |
 | `;` | Comment to end of line | [`01-syntax/03-comments-metadata.md`](../01-syntax/03-comments-metadata.md) |
 | `c"..."` | C-style char array constant | [`03-constants/03-strings.md`](../03-constants/03-strings.md) |
+| `binary_id`, `input_class`, `trace_id` | Dynamic trace schema fields | [`15-binary-analysis/02-dynamic-traces-and-counters.md`](../15-binary-analysis/02-dynamic-traces-and-counters.md) |
+| `opcode_hash`, `cyclomatic_complexity` | Interpretable BCSA feature fields | [`15-binary-analysis/03-interpretable-bcsa-features.md`](../15-binary-analysis/03-interpretable-bcsa-features.md) |

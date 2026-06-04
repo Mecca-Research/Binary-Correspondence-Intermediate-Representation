@@ -43,6 +43,7 @@
 | Optimization passes | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md) |
 | `opt` pipelines | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](../07-optimization/04-optimization-levels.md) |
 | Debugging pass pipelines, IR diffs, pass-manager traces | [`07-optimization/05-debugging-passes.md`](../07-optimization/05-debugging-passes.md) |
+| PGO, LTO, ThinLTO, and BOLT profile-driven pipelines | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
 | Vectorizers | [`09-vectorization/README.md`](../09-vectorization/README.md) |
 | Loop Vectorizer auto-vectorization | [`09-vectorization/01-loop-vectorizer.md`](../09-vectorization/01-loop-vectorizer.md) |
 | SLP Vectorizer / superword-level parallelism | [`09-vectorization/02-slp-vectorizer.md`](../09-vectorization/02-slp-vectorizer.md) |
@@ -84,3 +85,7 @@
 | ORC JIT | [`12-backend-jit/03-orc-jit.md`](../12-backend-jit/03-orc-jit.md) |
 | `LLJIT` | [`12-backend-jit/03-orc-jit.md`](../12-backend-jit/03-orc-jit.md) |
 | Glossary | [`reference/glossary.md`](../reference/glossary.md) |
+
+| Microarchitecture side-channel review | [`15-binary-analysis/01-microarchitecture-side-channels.md`](../15-binary-analysis/01-microarchitecture-side-channels.md) |
+| Dynamic traces and hardware counters | [`15-binary-analysis/02-dynamic-traces-and-counters.md`](../15-binary-analysis/02-dynamic-traces-and-counters.md) |
+| Interpretable BCSA feature triage | [`15-binary-analysis/03-interpretable-bcsa-features.md`](../15-binary-analysis/03-interpretable-bcsa-features.md) |

@@ -1,0 +1,5 @@
+binary_id,function,input_class,trace_id,basic_blocks
+sha256:demo,branch_on_secret,secret_bit_0,run-001,"entry,else"
+sha256:demo,branch_on_secret,secret_bit_1,run-002,"entry,then"
+sha256:demo,select_on_secret,secret_bit_0,run-003,"entry"
+sha256:demo,select_on_secret,secret_bit_1,run-004,"entry"

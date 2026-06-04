@@ -14,6 +14,7 @@ every lookup.
 | Keywords where they are introduced | [`indexes/keywords.md`](indexes/keywords.md) |
 | BCIR runtime/source cross-references | [`indexes/bcir-crossrefs.md`](indexes/bcir-crossrefs.md) |
 | Task-oriented lookup | [`RECIPES.md`](RECIPES.md) |
+| Binary-analysis side-channel/profile/BCSA topics | [`15-binary-analysis/README.md`](15-binary-analysis/README.md) |
 | Corpus self-test | [`EVAL.md`](EVAL.md) |
 
 If you do not know where to start, open [`RECIPES.md`](RECIPES.md), pick the row

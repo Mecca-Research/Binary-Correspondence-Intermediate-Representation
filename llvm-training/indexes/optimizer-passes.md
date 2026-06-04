@@ -18,3 +18,8 @@
 | loop analysis | Analysis | [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
 | scalar evolution / SCEV | Analysis | [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
 | `default<O1>`, `default<O2>`, `default<O3>`, `default<Os>`, `default<Oz>` | Predefined new-PM pipelines | [`07-optimization/04-optimization-levels.md`](../07-optimization/04-optimization-levels.md) |
+
+| `-fprofile-generate`, `-fprofile-use` | PGO profile collection/use | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
+| `llvm-profdata merge` | Profile data preparation | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
+| `-flto=thin`, Full LTO | Cross-module optimization configuration | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
+| `llvm-bolt` | Post-link binary layout optimization | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |

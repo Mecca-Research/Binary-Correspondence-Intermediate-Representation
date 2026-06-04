@@ -25,10 +25,16 @@ or fill gaps.
    inspect? See [`12-backend-jit/04-mc-and-relocations.md`](12-backend-jit/04-mc-and-relocations.md).
 10. Which ABI attributes must stay synchronized between declarations and
     definitions? See [`13-advanced-ir/04-attributes.md`](13-advanced-ir/04-attributes.md).
+11. Why can a crypto function that looks safe in static IR still leak on a CPU?
+    See [`15-binary-analysis/01-microarchitecture-side-channels.md`](15-binary-analysis/01-microarchitecture-side-channels.md).
+12. What build artifacts must you preserve to explain a PGO/LTO/BOLT optimized
+    binary? See [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md).
+13. Which cheap BCSA features should be extracted before dense embeddings? See
+    [`15-binary-analysis/03-interpretable-bcsa-features.md`](15-binary-analysis/03-interpretable-bcsa-features.md).
 
 ## Suggested scoring
 
-- **8-10**: ready to edit examples and review BCIR lowering patches.
-- **5-7**: read the linked chapters for missed questions and rerun the self-test.
-- **0-4**: start from [`START_HERE.md`](START_HERE.md), then use
+- **11-13**: ready to edit examples and review BCIR lowering patches.
+- **7-10**: read the linked chapters for missed questions and rerun the self-test.
+- **0-6**: start from [`START_HERE.md`](START_HERE.md), then use
   [`RECIPES.md`](RECIPES.md) for task-specific paths.
