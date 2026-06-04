@@ -1,0 +1,146 @@
+# Advanced IR 03 — Special Types and Tokens
+
+## TL;DR
+
+Most LLVM IR values are integers, pointers, floating-point values,
+structs, arrays, or vectors. Advanced IR also contains restricted types
+that exist to model compiler internals or target-specific hardware:
+
+| Type | Usual role |
+|---|---|
+| `token` | Opaque control dependency for EH, coroutine, and statepoint-like intrinsics |
+| `metadata` | Operand type for debug and analysis intrinsics |
+| `half` | IEEE 754 binary16 value |
+| `bfloat` | bfloat16 value with 8 exponent bits and 7 fraction bits |
+| `x86_amx` | Target extension type for Intel AMX tile values |
+| `<vscale x N x T>` | Scalable vector with runtime-dependent lane count |
+
+Do not treat these as ordinary storage-friendly scalar types. They have
+extra verifier and backend constraints.
+
+## `token`
+
+`token` is an opaque value that preserves a relationship between
+operations without exposing a normal data representation. It appears in
+exception handling, coroutines, convergence, garbage-collector
+statepoints, and other advanced intrinsics.
+
+Important restrictions:
+
+- You cannot inspect the bits of a token.
+- You generally cannot put tokens through `phi` or `select`.
+- You cannot load, store, or allocate ordinary memory of type `token`.
+- Token-producing operations usually have strict placement rules.
+
+A simplified statepoint-style outline:
+
+```llvm
+declare token @llvm.experimental.gc.statepoint.p0(i64 immarg, i32 immarg,
+                                                  ptr, i32 immarg, i32 immarg,
+                                                  ...)
+
+%tok = call token (i64, i32, ptr, i32, i32, ...)
+       @llvm.experimental.gc.statepoint.p0(i64 0, i32 0, ptr elementtype(void ()) @callee,
+                                           i32 0, i32 0, i32 0, i32 0)
+```
+
+The token is not the program result. It is a handle consumed by related
+intrinsics or passes.
+
+## `metadata` as an intrinsic parameter type
+
+`metadata` is the IR type used by some intrinsics to accept either a
+metadata node or a value wrapped as metadata. Debug intrinsics are the
+most common example:
+
+```llvm
+declare void @llvm.dbg.value(metadata, metadata, metadata)
+
+call void @llvm.dbg.value(metadata i32 %x,
+                          metadata !12,
+                          metadata !DIExpression())
+```
+
+This does not create a normal SSA value of type `metadata`. It is a
+special operand channel for compiler information. See the metadata
+chapter for node syntax and debug-info details.
+
+## `half` and `bfloat`
+
+Both `half` and `bfloat` are 16-bit floating-point types, but they are
+not interchangeable:
+
+| Type | Meaning | Common use |
+|---|---|---|
+| `half` | IEEE 754 binary16 | GPUs, vector units, storage, ML kernels |
+| `bfloat` | bfloat16 | ML workloads that prefer float32-like exponent range |
+
+Pitfalls:
+
+- The same 16 raw bits mean different numbers in each type.
+- Some targets support storage but not native arithmetic.
+- Legalization may promote arithmetic to `float` or use library calls.
+- Overloaded intrinsics encode the type: `llvm.sqrt.f16` and a bfloat
+  form, when available for an intrinsic, are different overloads.
+
+## `x86_amx`
+
+`x86_amx` is a target extension type used to represent Intel AMX tile
+register values inside x86-specific intrinsics. Treat it as a backend
+interface type, not a portable data structure.
+
+Guidelines:
+
+- Only use it in x86-specific code paths.
+- Require the appropriate AMX target features.
+- Prefer compiler-generated IR unless you are writing backend-facing
+  tests or a carefully gated target module.
+- Do not put AMX-specific IR in generic BCIR runtime modules without a
+  portable fallback.
+
+## Scalable vectors
+
+A scalable vector has syntax:
+
+```llvm
+<vscale x 4 x i32>
+```
+
+The vector has a runtime-dependent number of lanes equal to `vscale * 4`.
+This is used by architectures such as AArch64 SVE and RISC-V V where the
+hardware vector length is not fixed at compile time.
+
+Implications:
+
+- The exact byte size is not a normal compile-time integer.
+- Some operations that require fixed sizes are restricted.
+- Intrinsic overload names may encode scalable vector element/count
+  information.
+- Code that assumes `<4 x i32>` and `<vscale x 4 x i32>` have the same
+  ABI behavior is wrong.
+
+## BCIR guidance
+
+For portable BCIR material, keep special types at the boundary:
+
+- Use `metadata` for debug and optimization annotations only.
+- Avoid manually authoring token-heavy EH/coroutine/statepoint IR unless
+  the chapter or test is specifically about that subsystem.
+- Use `half`/`bfloat` only when the data format is part of the schema or
+  target contract.
+- Put `x86_amx` and target extension types in target-gated modules.
+- Document scalable-vector assumptions when vector length affects memory
+  layout or ABI.
+
+## Pitfalls
+
+- **Treating `token` as a normal first-class value.** Tokens have
+  first-class-like syntax in some places but are deliberately opaque and
+  restricted.
+- **Passing normal values where `metadata` operands are required.** Use
+  `metadata i32 %x` or metadata nodes as the intrinsic syntax requires.
+- **Confusing `half` and `bfloat`.** Same storage width, different
+  numerical format.
+- **Using `x86_amx` without AMX features.** This is target-specific IR.
+- **Assuming scalable vectors have fixed byte sizes.** The lane count is
+  runtime-dependent.

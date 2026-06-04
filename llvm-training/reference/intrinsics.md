@@ -165,6 +165,9 @@ Each declaration tells you:
 
 ## See also
 
+- [`../13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md) — advanced common intrinsic signatures, overloaded names, and examples
+- [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md) — target-specific intrinsic namespaces, feature requirements, and portability
+- [`../13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md) — `token`, `metadata`, `half`, `bfloat`, `x86_amx`, and scalable vectors
 - [`../01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md) — `call` instruction
 - [`../08-pitfalls/06-immarg-violation.md`](../08-pitfalls/06-immarg-violation.md) — `immarg` constraint
 - LLVM LangRef: https://llvm.org/docs/LangRef.html#intrinsic-functions
