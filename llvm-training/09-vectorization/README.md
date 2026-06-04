@@ -37,6 +37,16 @@ Official references:
 - [`examples/not-vectorizable-dependency.ll`](examples/not-vectorizable-dependency.ll) — loop-carried memory dependency example that should remain scalar.
 - [`examples/not-vectorizable-call.ll`](examples/not-vectorizable-call.ll) — unknown-call example that should produce a missed-vectorization explanation.
 
+
+## Chapter files
+
+This README is the overview. Use the focused chapters when you already know the
+axis of the question:
+
+- [`01-loop-vectorizer.md`](01-loop-vectorizer.md) — loop-carried legality, trip counts, reductions, and runtime checks.
+- [`02-slp-vectorizer.md`](02-slp-vectorizer.md) — straight-line scalar packing and lane-tree profitability.
+- [`03-vector-predication.md`](03-vector-predication.md) — masks, tails, predicated operations, and scalable-vector cautions.
+
 ## Loop Vectorizer vs SLP Vectorizer
 
 | Vectorizer | Looks for | Typical shape | Result |

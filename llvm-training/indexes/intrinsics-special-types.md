@@ -2,9 +2,9 @@
 
 | Name | Means | See |
 |---|---|---|
-| `llvm.memcpy.*` | Non-overlapping memory copy intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md) |
-| `llvm.memmove.*` | Overlap-safe memory copy intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md) |
-| `llvm.memset.*` | Byte-fill memory intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md) |
+| `llvm.memcpy.*` | Non-overlapping memory copy intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics.md`](../reference/intrinsics.md) |
+| `llvm.memmove.*` | Overlap-safe memory copy intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics.md`](../reference/intrinsics.md) |
+| `llvm.memset.*` | Byte-fill memory intrinsic | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`reference/intrinsics.md`](../reference/intrinsics.md) |
 | `llvm.uadd.with.overflow.*` | Unsigned checked addition; returns `{T, i1}` | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`13-advanced-ir/examples/overflow-intrinsic.ll`](../13-advanced-ir/examples/overflow-intrinsic.ll) |
 | `llvm.sadd.with.overflow.*` | Signed checked addition; returns `{T, i1}` | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`13-advanced-ir/examples/overflow-intrinsic.ll`](../13-advanced-ir/examples/overflow-intrinsic.ll) |
 | `llvm.lifetime.start.*`, `llvm.lifetime.end.*` | Lifetime markers for optimizer-visible object liveness | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`13-advanced-ir/examples/memcpy.ll`](../13-advanced-ir/examples/memcpy.ll) |
@@ -14,5 +14,3 @@
 | `token` | Opaque control value used by advanced intrinsic families | [`13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md), [`13-advanced-ir/examples/token-outline.ll`](../13-advanced-ir/examples/token-outline.ll) |
 | `metadata` | Special operand type for debug/analysis intrinsics | [`13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md), [`06-metadata/01-metadata-basics.md`](../06-metadata/01-metadata-basics.md) |
 | `half`, `bfloat`, `x86_amx`, `<vscale x N x T>` | Special scalar/target/vector types with portability constraints | [`13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md) |
-| `undef`, `poison`, `freeze` | Special value semantics and stabilizing instruction for undefined/poison values | [`13-advanced-ir/05-poison-undef-freeze.md`](../13-advanced-ir/05-poison-undef-freeze.md), [`13-advanced-ir/examples/poison-undef-freeze.ll`](../13-advanced-ir/examples/poison-undef-freeze.ll) |
-| `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn`, `reassoc`, `fast` | Fast-math flags for relaxed floating-point optimization | [`13-advanced-ir/06-fast-math-flags.md`](../13-advanced-ir/06-fast-math-flags.md), [`13-advanced-ir/examples/fast-math-flags.ll`](../13-advanced-ir/examples/fast-math-flags.ll) |

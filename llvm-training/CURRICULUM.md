@@ -74,10 +74,9 @@ reason about optimization strength, pass pipelines, and vectorized IR:
 1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass pipelines and `opt -passes=...` spelling
 2. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — optimization levels: `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
 3. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
-4. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization dispatcher
+4. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization overview
 5. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
-6. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md) and [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md) — blockers, commands, and observations
-7. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
+6. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
 
 Practice next: run the commands in
 [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c),
@@ -110,9 +109,8 @@ target machine code or when embedding LLVM as a JIT compiler:
 2. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — codegen pipeline: SelectionDAG, GlobalISel, `MachineInstr`, register allocation, and MC emission
 3. [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) — TableGen syntax, generated backend include files, registers, instructions, patterns, and scheduling data
 4. [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) — ORC JIT and `LLJIT`: adding modules, symbol lookup, function pointers, and resource ownership
-5. [`12-backend-jit/05-orc-layers.md`](12-backend-jit/05-orc-layers.md) — ORC internals: `ExecutionSession`, `JITDylib`, layers, materialization, symbol interning, and JITLink handoff
-6. [`12-backend-jit/04-mc-and-relocations.md`](12-backend-jit/04-mc-and-relocations.md) — MC layer concepts, relocations, and JIT missing-symbol debugging
-7. Skim [`12-backend-jit/examples/minimal-instruction.td`](12-backend-jit/examples/minimal-instruction.td) and [`12-backend-jit/examples/lljit-outline.cpp.md`](12-backend-jit/examples/lljit-outline.cpp.md) as compact reference outlines.
+5. [`12-backend-jit/04-mc-and-relocations.md`](12-backend-jit/04-mc-and-relocations.md) — MC layer concepts, relocations, and JIT missing-symbol debugging
+6. Skim [`12-backend-jit/examples/minimal-instruction.td`](12-backend-jit/examples/minimal-instruction.td) and [`12-backend-jit/examples/lljit-outline.cpp.md`](12-backend-jit/examples/lljit-outline.cpp.md) as compact reference outlines.
 
 This path is intentionally advanced: it assumes you can already read LLVM IR and
 optimizer output, then follows the handoff into backend data structures, target
@@ -244,7 +242,63 @@ foundations ────────┐
    reference (intrinsics, special types, MLIR terms, and quick lookups)
 ```
 
-## Roadmap and self-test
+## What's intentionally NOT here yet
 
-- [`ROADMAP.md`](ROADMAP.md) tracks topics intentionally left out or only covered at an introductory level.
-- [`EVAL.md`](EVAL.md) contains the corpus self-test and path-specific self-test prompts.
+If your task touches these, you'll need external references:
+
+- **Custom optimization pass design** — pass-manager internals beyond the introductory `opt` vectorization commands
+- **C/C++ frontend internals** — Clang, AST, lowering rules
+- **Full benchmarking methodology** — the dynamic-analysis chapters define schemas and review loops, not statistically complete benchmark harnesses
+- **Calls / returns / comparisons** — a small dedicated chapter may be worth adding if
+  this training set keeps expanding beyond the quick reference
+
+These are roadmap items; PRs welcome.
+
+## Self-test prompts
+
+After each path, the agent should be able to answer (without grepping
+LLVM source):
+
+**After Path 1**
+- What does SSA stand for and why does it require phi nodes?
+- What's the difference between `@foo` and `%foo`?
+- Why must a basic block end with a terminator?
+
+**After Path 2**
+- What's the type of the pointer returned by `alloca i32`?
+- In opaque-pointer IR, where do `load`, `store`, and `getelementptr` spell the memory access or element type?
+- Why is `add i32 (load ...), 1` invalid as a single expression?
+- When does a `br i1` need two labels, and what's the type of the
+  condition?
+
+**After Path 3**
+- How do you follow an instruction `!dbg` attachment back to a source
+  file, line, and column?
+- Why does the grammar treat `Linkage` and `ExternLinkage` as separate
+  productions?
+- How do `opt -passes=mem2reg`, `opt -passes=instcombine`, and
+  `opt -passes='default<O2>'` differ in scope and intent?
+- Why might `-O3` be a bad default for a size-sensitive workload?
+- What's the difference between `dso_local` and `dso_preemptable`?
+- What's the layout convention for `%bcir.claim`-style aggregate types,
+  and what breaks when consumers disagree on the field count?
+  (See [`08-pitfalls/05-type-schema-drift.md`](08-pitfalls/05-type-schema-drift.md).)
+
+**After Path 4**
+- When should you expect the Loop Vectorizer rather than the SLP Vectorizer to act?
+- What source or IR facts help LLVM prove a loop has predictable memory access and no unsafe dependencies?
+- Which commands show successful vs missed loop-vectorization remarks?
+- What IR clues suggest vectorization occurred (`<N x T>`, vector loads/stores, `shufflevector`, reductions)?
+- Why can PGO+LTO or BOLT change binary shape without changing source semantics?
+
+**After the backend / JIT path**
+- Where do SelectionDAG and GlobalISel fit relative to `MachineInstr`?
+- Why does register allocation happen after machine-code SSA optimizations?
+- Which backend facts are commonly generated from TableGen `.td` files?
+- What ownership objects should you identify before adding modules to an ORC `LLJIT`?
+
+**After the binary-analysis path**
+- Why is a secret-dependent branch in IR not the only side-channel signal to review?
+- Which hardware counters would you pair with branch/path traces for constant-time review?
+- What PGO/LTO/BOLT artifacts should be saved before comparing optimized binaries?
+- Which interpretable BCSA features are cheap enough for first-pass triage?

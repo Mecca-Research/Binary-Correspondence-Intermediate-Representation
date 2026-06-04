@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-command -v llvm-as >/dev/null || { echo "missing llvm-as"; exit 127; }
-command -v llvm-link >/dev/null || { echo "missing llvm-link"; exit 127; }
-command -v opt >/dev/null || { echo "missing opt"; exit 127; }
-command -v llvm-dis >/dev/null || { echo "missing llvm-dis"; exit 127; }
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=runtime/llvm/validate_common.sh
+source "$SCRIPT_DIR/validate_common.sh"
 
-mkdir -p build
+require_tools llvm-as llvm-link opt llvm-dis
+init_build_dir
+log_toolchain llvm-as llvm-link opt llvm-dis
 
-llvm-as runtime/llvm/bcir_master_reference_v2.ll -o build/bcir_master_reference_v2.bc
-opt -passes=verify build/bcir_master_reference_v2.bc -o /dev/null
+require_file runtime/llvm/bcir_master_reference_v2.ll
+run_step "assemble master reference" llvm-as runtime/llvm/bcir_master_reference_v2.ll -o build/bcir_master_reference_v2.bc
+run_step "verify master reference" opt -passes=verify build/bcir_master_reference_v2.bc -o /dev/null
 
-llvm-link \
+run_step "link phase2 runtime modules" llvm-link \
   runtime/llvm/bcir_claim_schema.ll \
   runtime/llvm/bcir_claim_accessors.ll \
   runtime/llvm/bcir_registry_schema.ll \
@@ -23,6 +25,8 @@ llvm-link \
   runtime/llvm/bcir_kbcost.ll \
   -S -o build/bcir_phase2_all.ll
 
-llvm-as build/bcir_phase2_all.ll -o build/bcir_phase2_all.bc
-opt -passes=verify build/bcir_phase2_all.bc -o /dev/null
-llvm-dis build/bcir_phase2_all.bc -o build/bcir_phase2_all.dis.ll
+run_step "assemble phase2 linked module" llvm-as build/bcir_phase2_all.ll -o build/bcir_phase2_all.bc
+run_step "verify phase2 linked module" opt -passes=verify build/bcir_phase2_all.bc -o /dev/null
+run_step "disassemble phase2 linked module" llvm-dis build/bcir_phase2_all.bc -o build/bcir_phase2_all.dis.ll
+
+log "validate_phase2.sh completed successfully"

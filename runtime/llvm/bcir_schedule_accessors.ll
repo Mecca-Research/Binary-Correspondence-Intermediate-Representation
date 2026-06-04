@@ -1,5 +1,5 @@
 source_filename = "bcir_schedule_accessors.ll"
-target triple = "unknown-unknown-unknown"
+target triple = "x86_64-unknown-linux-gnu"
 target datalayout = ""
 
 ; Phase 3 schedule accessors for global-indexed batch windows.
