@@ -79,14 +79,22 @@ and must follow the LLVM >= 15 opaque-pointer convention.
 
 ## Top-level known-good verification
 
-From the repository root, validate known-good standalone `.ll` examples with:
+From the repository root, validate known-good standalone `.ll` examples with
+the canonical verifier:
 
 ```bash
-find llvm-training -path '*/examples/*.ll' ! -iname '*invalid*.ll' -print0 | sort -z | while IFS= read -r -d '' f; do
-  llvm-as "$f" -o /dev/null || exit 1
-done
+./llvm-training/tools/verify-examples.sh
 ```
 
-This command intentionally skips `.ll.txt` files and any `.ll` file with
-`invalid` in its name. Use targeted commands from the relevant chapter when you
-want to demonstrate or test an expected failure.
+That script assembles each known-good example and then runs `opt -passes=verify`.
+Do not copy weaker ad-hoc `find ... llvm-as` loops into CI or docs as a
+substitute; they miss verifier-only failures. Check the human-readable example
+manifest for drift after adding or removing `*/examples/*.ll` files:
+
+```bash
+./llvm-training/tools/verify-manifest.sh
+```
+
+Both scripts intentionally exclude `.ll.txt` fixtures and filenames containing
+`invalid`. Use targeted commands from the relevant chapter when you want to
+demonstrate or test an expected failure.

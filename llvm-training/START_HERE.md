@@ -14,3 +14,7 @@ This folder is a compact context/reference pack for coding agents. It is not a f
 - Load only the files relevant to the current task after reading the index.
 - Prefer targeted pitfall checks before generating or editing LLVM IR.
 - Treat examples here as guidance and context; verify semantic claims against LLVM LangRef when correctness matters.
+
+## MLIR lowering tasks
+
+When a task starts above LLVM IR or involves BCIR dialect lowering, read [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) before editing examples.

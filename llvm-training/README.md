@@ -126,7 +126,7 @@ Use this repo as a BCIR LLVM IR task index, with BCIR-specific lowering notes in
 | Adding intrinsics | [common intrinsics](13-advanced-ir/01-common-intrinsics.md), [target-specific intrinsics](13-advanced-ir/02-target-specific-intrinsics.md), [immarg pitfall](08-pitfalls/06-immarg-violation.md) |
 | Adding atomic/concurrent behavior | [atomic orderings](11-concurrency/01-atomic-orderings.md), [atomic instructions](11-concurrency/02-atomic-instructions.md), [volatile vs atomic](11-concurrency/03-volatile-vs-atomic.md) |
 | Optimizing generated IR | [pass model](07-optimization/01-pass-model.md), [transform passes](07-optimization/03-common-transform-passes.md), [vectorization](09-vectorization/README.md) |
-| Planning MLIR lowering | [MLIR overview](14-mlir-bridge/01-what-is-mlir.md), [lowering to LLVM dialect](14-mlir-bridge/03-lowering-to-llvm-dialect.md), [BCIR dialect sketch](14-mlir-bridge/04-bcir-as-custom-dialect.md) |
+| Planning MLIR lowering | [MLIR bridge overview](14-mlir-bridge/README.md), [type conversion](14-mlir-bridge/05-type-conversion-and-materialization.md), [conversion patterns](14-mlir-bridge/06-conversion-patterns.md), [end-to-end lowering](14-mlir-bridge/08-end-to-end-bcir-lowering.md) |
 | Backend/JIT experiments | [codegen pipeline](12-backend-jit/01-codegen-pipeline.md), [ORC JIT](12-backend-jit/03-orc-jit.md) |
 
 ## Relationship to the BCIR project

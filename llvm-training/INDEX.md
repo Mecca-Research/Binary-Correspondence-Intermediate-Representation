@@ -64,6 +64,9 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | MLIR dialect design and operation anatomy | [`14-mlir-bridge/02-dialects-and-operations.md`](14-mlir-bridge/02-dialects-and-operations.md) |
 | MLIR lowering to LLVM dialect / LLVM IR | [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md), [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/lowered-llvm-dialect.mlir) |
 | BCIR as an MLIR custom dialect | [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md), [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-sketch.mlir) |
+| MLIR bridge type conversion and materialization | [`14-mlir-bridge/05-type-conversion-and-materialization.md`](14-mlir-bridge/05-type-conversion-and-materialization.md), [`14-mlir-bridge/examples/bcir-type-conversion.mlir`](14-mlir-bridge/examples/bcir-type-conversion.mlir) |
+| MLIR conversion patterns and legality stages | [`14-mlir-bridge/06-conversion-patterns.md`](14-mlir-bridge/06-conversion-patterns.md), [`14-mlir-bridge/examples/bcir-conversion-pipeline.mlir`](14-mlir-bridge/examples/bcir-conversion-pipeline.mlir) |
+| MLIR pass pipeline diagnostics and final LLVM IR | [`14-mlir-bridge/07-pass-pipeline-and-diagnostics.md`](14-mlir-bridge/07-pass-pipeline-and-diagnostics.md), [`14-mlir-bridge/08-end-to-end-bcir-lowering.md`](14-mlir-bridge/08-end-to-end-bcir-lowering.md), [`14-mlir-bridge/examples/bcir-final.ll`](14-mlir-bridge/examples/bcir-final.ll) |
 | Formal Textmapper grammar | `10-grammar/llvm-ir.tm` |
 | Grammar notes / how to use it | [`10-grammar/README.md`](10-grammar/README.md) |
 | Instruction quick reference | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
@@ -192,6 +195,7 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `module`, `builtin.module`, `func.func`, `arith.*`, `scf.*`, `cf.*`, `memref.*` | [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md), [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) |
 | `llvm.func`, `llvm.load`, `llvm.call`, `llvm.br`, `llvm.return` | [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md), [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/lowered-llvm-dialect.mlir) |
 | `bcir.vertex`, `bcir.edge`, `bcir.attribute`, `bcir.ham_hint`, `bcir.bind_register`, `bcir.mixed_stride.graph` | [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md), [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-sketch.mlir) |
+| `bcir.lower.vertex_handle`, `builtin.unrealized_conversion_cast`, `convert-scf-to-cf`, `convert-func-to-llvm`, `reconcile-unrealized-casts` | [`14-mlir-bridge/05-type-conversion-and-materialization.md`](14-mlir-bridge/05-type-conversion-and-materialization.md), [`14-mlir-bridge/07-pass-pipeline-and-diagnostics.md`](14-mlir-bridge/07-pass-pipeline-and-diagnostics.md) |
 
 
 ## Cross-references to the BCIR project
@@ -210,3 +214,6 @@ Real-world examples of LLVM IR concepts (and bugs) live next door:
 | `llvm.prefetch` immarg | `runtime/llvm/bcir_prefetch_profiles.ll` | [`08-pitfalls/06-immarg-violation.md`](08-pitfalls/06-immarg-violation.md) |
 | Vertex-Edge-Attribute custom dialect sketch | `llvm-training/14-mlir-bridge/examples/bcir-dialect-sketch.mlir` | [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) |
 | Lowered BCIR-style LLVM dialect sketch | `llvm-training/14-mlir-bridge/examples/lowered-llvm-dialect.mlir` | [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) |
+| BCIR MLIR type-conversion sketch | `llvm-training/14-mlir-bridge/examples/bcir-type-conversion.mlir` | [`14-mlir-bridge/05-type-conversion-and-materialization.md`](14-mlir-bridge/05-type-conversion-and-materialization.md) |
+| BCIR MLIR conversion pipeline sketch | `llvm-training/14-mlir-bridge/examples/bcir-conversion-pipeline.mlir` | [`14-mlir-bridge/06-conversion-patterns.md`](14-mlir-bridge/06-conversion-patterns.md) |
+| Final LLVM IR snapshot for BCIR MLIR lowering | `llvm-training/14-mlir-bridge/examples/bcir-final.ll` | [`14-mlir-bridge/08-end-to-end-bcir-lowering.md`](14-mlir-bridge/08-end-to-end-bcir-lowering.md) |

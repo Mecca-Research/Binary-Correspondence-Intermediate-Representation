@@ -23,6 +23,22 @@ if(BCIR_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
+find_program(BASH_EXECUTABLE bash)
+find_program(PYTHON3_EXECUTABLE python3)
+
+if(BASH_EXECUTABLE AND PYTHON3_EXECUTABLE)
+  add_custom_target(llvm-training-verify-manifest
+    COMMAND ${BASH_EXECUTABLE} llvm-training/tools/verify-manifest.sh
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Checking llvm-training example manifest drift"
+    VERBATIM)
+else()
+  add_custom_target(llvm-training-verify-manifest
+    COMMAND ${CMAKE_COMMAND} -E echo "bash or python3 not found; skipping llvm-training example manifest drift check"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    VERBATIM)
+endif()
+
 # Export all public BCIR targets.
 install(
   EXPORT BCIRTargets

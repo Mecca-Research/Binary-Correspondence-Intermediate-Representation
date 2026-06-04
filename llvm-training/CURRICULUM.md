@@ -131,11 +131,16 @@ heavy code, or backend-adjacent transformations.
 After Path 2, add this path when a frontend or domain IR should preserve
 structured information before producing LLVM IR:
 
-1. [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) — MLIR modules, operations, regions, blocks, attributes, and types
-2. [`14-mlir-bridge/02-dialects-and-operations.md`](14-mlir-bridge/02-dialects-and-operations.md) — dialect design basics and operation anatomy
-3. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — conversion/lowering pipelines, LLVM dialect, and `.ll` differences
-4. [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) — where BCIR Vertex-Edge-Attribute, HAM hints, register binding, and Mixed Stride graphs can live
-5. Skim [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-sketch.mlir) and [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/lowered-llvm-dialect.mlir) as illustrative before/after shapes.
+1. [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) — staged MLIR bridge reading path and examples
+2. [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) — MLIR modules, operations, regions, blocks, attributes, and types
+3. [`14-mlir-bridge/02-dialects-and-operations.md`](14-mlir-bridge/02-dialects-and-operations.md) — dialect design basics and operation anatomy
+4. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — conversion/lowering pipelines, LLVM dialect, and `.ll` differences
+5. [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) — where BCIR Vertex-Edge-Attribute, HAM hints, register binding, and Mixed Stride graphs can live
+6. [`14-mlir-bridge/05-type-conversion-and-materialization.md`](14-mlir-bridge/05-type-conversion-and-materialization.md) — BCIR type conversion, materialization markers, and review checks
+7. [`14-mlir-bridge/06-conversion-patterns.md`](14-mlir-bridge/06-conversion-patterns.md) — rewrite pattern inventory, legality stages, and diagnostics
+8. [`14-mlir-bridge/07-pass-pipeline-and-diagnostics.md`](14-mlir-bridge/07-pass-pipeline-and-diagnostics.md) — pass ordering, inspection checkpoints, and failure triage
+9. [`14-mlir-bridge/08-end-to-end-bcir-lowering.md`](14-mlir-bridge/08-end-to-end-bcir-lowering.md) — BCIR edge-weight lowering through final [`bcir-final.ll`](14-mlir-bridge/examples/bcir-final.ll)
+10. Skim the `.mlir` examples in `14-mlir-bridge/examples/` as illustrative before/intermediate shapes.
 
 Use this path before the Backend/JIT path when the task starts above LLVM IR,
 especially for custom frontend lowering or BCIR-specific graph representations.
