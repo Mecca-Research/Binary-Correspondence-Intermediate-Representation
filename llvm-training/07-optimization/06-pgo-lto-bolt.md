@@ -98,6 +98,24 @@ Questions to ask:
 5. For BCSA, label feature vectors with the optimization pipeline so models do
    not confuse compiler configuration with semantic difference.
 
+## CI optimization smoke matrix
+
+The repository CI has a dedicated `llvm-training-optimization-smoke` job that
+keeps this chapter's optimization guidance executable without turning every pull
+request into a full performance lab. It uses the small `bcir-tools` executable as
+the smoke target and caches compiler outputs with `ccache` before CMake
+configuration.
+
+| Matrix entry | Scope | Training/rebuild behavior |
+| --- | --- | --- |
+| `thinlto` | Configures Clang with `-flto=thin`, links with LLD, builds only `bcir-tools`, and runs `bcir-tools --runtime-diag`. | Verifies that the project still accepts a ThinLTO path and that a tiny optimized executable starts successfully. |
+| `pgo` | Builds an instrumented `bcir-tools`, runs `bcir-tools --runtime-diag` as the training command, merges `*.profraw` with `llvm-profdata`, rebuilds with `-fprofile-use`, and runs the rebuilt executable. | Exercises the minimum PGO lifecycle: generate profile data, merge it, consume it, and keep the smoke workload intentionally small. |
+
+The main `build-and-test` job also enables CMake compiler launchers when
+`ccache` is available. The optimization matrix is intentionally separate from the
+full test suite so PGO and ThinLTO regressions are visible while CI latency stays
+bounded.
+
 ## Commands to recognize
 
 ```bash
