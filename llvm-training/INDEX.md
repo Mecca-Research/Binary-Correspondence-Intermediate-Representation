@@ -34,6 +34,10 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | Debug-info nodes (`DIFile`, `DICompileUnit`, `DISubprogram`, `DILocation`, `DILocalVariable`) | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
 | Reading `!dbg` locations back to source files and lines | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
 | Profile metadata, branch weights, loop metadata | [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) |
+| Loop Vectorizer auto-vectorization | [`09-vectorization/README.md`](09-vectorization/README.md) |
+| SLP Vectorizer / superword-level parallelism | [`09-vectorization/README.md`](09-vectorization/README.md) |
+| Vectorization diagnostics (`-Rpass`, `-Rpass-missed`, optimization remarks) | [`09-vectorization/README.md`](09-vectorization/README.md) |
+| Vector IR patterns (`<N x T>`, vector loads/stores, `shufflevector`, reductions) | [`09-vectorization/README.md`](09-vectorization/README.md) |
 | Pitfalls overview | [`08-pitfalls/README.md`](08-pitfalls/README.md) |
 | Nested instruction-as-expression syntax errors | [`08-pitfalls/01-nested-instruction-expressions.md`](08-pitfalls/01-nested-instruction-expressions.md) |
 | PHI node predecessor mismatch | [`08-pitfalls/02-phi-predecessor-mismatch.md`](08-pitfalls/02-phi-predecessor-mismatch.md) |
@@ -63,7 +67,7 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `select` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `call`, `invoke`, `callbr` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `atomicrmw`, `cmpxchg`, `fence` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
-| `extractvalue`, `insertvalue`, `extractelement`, `insertelement`, `shufflevector` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
+| `extractvalue`, `insertvalue`, `extractelement`, `insertelement`, `shufflevector` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md), [`09-vectorization/README.md`](09-vectorization/README.md) |
 | `trunc`, `zext`, `sext`, `fptrunc`, `fpext`, `fptoui`, `fptosi`, `uitofp`, `sitofp` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `bitcast`, `addrspacecast`, `inttoptr`, `ptrtoint` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `landingpad`, `catchpad`, `cleanuppad`, `catchswitch` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
@@ -104,6 +108,8 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `distinct` | [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) |
 | `DIFile`, `DICompileUnit`, `DISubprogram`, `DILocation`, `DILocalVariable` | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
 | `branch_weights`, `llvm.loop.unroll.*`, `llvm.loop.vectorize.*` | [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) |
+| `-Rpass`, `-Rpass-missed`, `-force-vector-width`, `-force-vector-interleave` | [`09-vectorization/README.md`](09-vectorization/README.md) |
+| `loop-vectorize`, `slp-vectorizer`, `default<O3>` pass names | [`09-vectorization/README.md`](09-vectorization/README.md) |
 
 ## Cross-references to the BCIR project
 
