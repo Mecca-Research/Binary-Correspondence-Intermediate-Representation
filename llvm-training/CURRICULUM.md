@@ -126,6 +126,20 @@ Use this path as a lookup-oriented supplement rather than a linear beginner
 chapter. It is most useful when reviewing frontend output, GPU IR, intrinsic
 heavy code, or backend-adjacent transformations.
 
+## MLIR bridge path
+
+After Path 2, add this path when a frontend or domain IR should preserve
+structured information before producing LLVM IR:
+
+1. [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) — MLIR modules, operations, regions, blocks, attributes, and types
+2. [`14-mlir-bridge/02-dialects-and-operations.md`](14-mlir-bridge/02-dialects-and-operations.md) — dialect design basics and operation anatomy
+3. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — conversion/lowering pipelines, LLVM dialect, and `.ll` differences
+4. [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) — where BCIR Vertex-Edge-Attribute, HAM hints, register binding, and Mixed Stride graphs can live
+5. Skim [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-sketch.mlir) and [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/lowered-llvm-dialect.mlir) as illustrative before/after shapes.
+
+Use this path before the Backend/JIT path when the task starts above LLVM IR,
+especially for custom frontend lowering or BCIR-specific graph representations.
+
 ## Path 3: Deep dive (one sitting; pick up the rest as needed)
 
 Read everything in numerical order:
@@ -194,9 +208,11 @@ foundations ────────┐
         ↓
    concurrency (when shared memory appears)
         ↓
+   MLIR bridge (when source/domain structure must lower into LLVM IR)
+        ↓
    backend/JIT (when target lowering or runtime compilation appears)
         ↓
-   reference (intrinsics, special types, and quick lookups)
+   reference (intrinsics, special types, MLIR terms, and quick lookups)
 ```
 
 ## What's intentionally NOT here yet
@@ -204,7 +220,6 @@ foundations ────────┐
 If your task touches these, you'll need external references:
 
 - **Custom optimization pass design** — pass-manager internals beyond the introductory `opt` vectorization commands
-- **MLIR** — the dialect framework above LLVM IR
 - **C/C++ frontend internals** — Clang, AST, lowering rules
 - **Calls / returns / comparisons** — a small dedicated chapter may be worth adding if
   this training set keeps expanding beyond the quick reference

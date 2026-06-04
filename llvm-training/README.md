@@ -51,7 +51,7 @@ llvm-training/
 ```
 
 Numbered directories follow the reading order. Future chapters may add a
-dedicated instruction encyclopedia, MLIR overview, or toolchain material.
+dedicated instruction encyclopedia or additional toolchain material.
 
 ## Example, exercise, and snippet conventions
 
