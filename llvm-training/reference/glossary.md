@@ -51,6 +51,20 @@
 | **`undef`** | An any-value; the optimizer may pick freely |
 | **`freeze`** | Convert poison/undef to a fixed but arbitrary concrete value |
 | **Intrinsic** | Built-in function with name `llvm.<...>`; lowered specially by the backend |
+| **Overloaded intrinsic** | Intrinsic whose selected type is encoded in the symbol name, such as `llvm.memcpy.p0.p0.i64` or `llvm.uadd.with.overflow.i64` |
+| **Target-specific intrinsic** | Intrinsic in a backend namespace such as `llvm.x86.*`; often requires a target triple and CPU feature |
+| **`llvm.memcpy`** | Generic intrinsic for non-overlapping byte copies; use `llvm.memmove` when ranges may overlap |
+| **`llvm.memmove`** | Generic intrinsic for overlap-safe byte copies |
+| **`llvm.memset`** | Generic intrinsic for filling a memory range with one byte value |
+| **Overflow intrinsic** | Intrinsic such as `llvm.uadd.with.overflow.*` or `llvm.sadd.with.overflow.*` returning `{result, overflow_flag}` |
+| **Lifetime intrinsic** | `llvm.lifetime.start.*` / `llvm.lifetime.end.*`; optimizer hint for object liveness, not allocation or deallocation |
+| **`llvm.prefetch`** | Target-dependent cache prefetch hint; its integer policy operands are `immarg` |
+| **`token`** | Opaque control value used by EH, coroutine, convergence, and statepoint-like IR; not a normal load/store-friendly value |
+| **`metadata` type** | Special parameter type used by intrinsics such as `llvm.dbg.value` to carry metadata or value-as-metadata operands |
+| **`half`** | IEEE 754 binary16 floating-point type |
+| **`bfloat`** | 16-bit bfloat floating-point type with float32-like exponent range |
+| **`x86_amx`** | X86 target extension type representing AMX tile values for target-specific intrinsics |
+| **Scalable vector** | Vector written `<vscale x N x T>` whose lane count is a runtime-dependent multiple of `N` |
 | **`immarg`** | Parameter attribute requiring a compile-time constant argument |
 | **`opt`** | The LLVM optimization driver — runs passes on IR |
 | **`llc`** | The LLVM static compiler — IR to assembly/object |
@@ -92,6 +106,9 @@
 ## See also
 
 - [`../INDEX.md`](../INDEX.md) — top-level topic map
+- [`../13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md) — common intrinsic signatures and pitfalls
+- [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md) — target intrinsic namespaces and feature requirements
+- [`../13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md) — special types and tokens
 - `10-grammar/llvm-ir.tm` — formal grammar
 - LLVM Atomic Instructions and Concurrency Guide — https://llvm.org/docs/Atomics.html
 - LangRef atomic ordering — https://llvm.org/docs/LangRef.html#atomic-memory-ordering-constraints
