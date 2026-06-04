@@ -1,7 +1,7 @@
 # Curriculum — Reading Order
 
-Three suggested paths depending on how much time you (or your agent
-context) have.
+Multiple suggested paths depending on how much time you (or your agent
+context) have and which advanced LLVM IR topic you need.
 
 ## Path 1: 30-minute fast pass (just enough to not be dangerous)
 
@@ -48,29 +48,16 @@ Practice next: [`exercises/003-loop-counter.prompt.md`](exercises/003-loop-count
 [`exercises/005-struct-gep.prompt.md`](exercises/005-struct-gep.prompt.md).
 
 
-## After basics: concurrency path
+## After basics: metadata and optimization
 
-After Path 2, add this chapter when reading or writing shared-memory IR:
+After Path 2, add this path when you need to understand how IR carries
+non-semantic annotations and how `opt` uses or rewrites them:
 
-1. [`11-concurrency/01-atomic-orderings.md`](11-concurrency/01-atomic-orderings.md) — not atomic vs `unordered`, `monotonic`, acquire/release, `acq_rel`, and `seq_cst`
-2. [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md) — `load atomic`, `store atomic`, `cmpxchg`, `atomicrmw`, and `fence` syntax
-3. [`11-concurrency/03-volatile-vs-atomic.md`](11-concurrency/03-volatile-vs-atomic.md) — why volatile access behavior and atomic synchronization are orthogonal
-
-Practice next: inspect and assemble the examples in
-[`11-concurrency/examples/atomic-counter.ll`](11-concurrency/examples/atomic-counter.ll),
-[`11-concurrency/examples/cmpxchg-loop.ll`](11-concurrency/examples/cmpxchg-loop.ll), and
-[`11-concurrency/examples/fence.ll`](11-concurrency/examples/fence.ll).
-
-
-## After basics: optimization path
-
-After Path 2, add this chapter when you need to inspect or explain optimizer
-behavior with `opt`:
-
-1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — analysis vs transform vs utility passes, new pass manager syntax, and common pitfalls
-2. [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) — alias analysis, CFG printing/viewing, loop analysis, and scalar evolution
-3. [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) — `mem2reg`, `instcombine`, `simplifycfg`, `adce`, `gvn`, and `loop-unroll`
-4. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — conceptual map for `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
+1. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata basics: `!N`, metadata tuples, named metadata, `distinct`, and instruction attachments
+2. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — debug info: source locations, `!dbg`, and common `DI*` nodes
+3. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass model: analysis vs transform vs utility passes and new pass manager syntax
+4. [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) — common transform passes such as `mem2reg`, `instcombine`, `simplifycfg`, `adce`, `gvn`, and `loop-unroll`
+5. [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) — common analysis passes for aliasing, CFGs, loops, and scalar evolution
 
 Practice next: run the commands embedded in
 [`07-optimization/examples/mem2reg-before.ll`](07-optimization/examples/mem2reg-before.ll),
@@ -78,19 +65,66 @@ Practice next: run the commands embedded in
 [`07-optimization/examples/loop-before.ll`](07-optimization/examples/loop-before.ll).
 
 
-## Advanced path: backend / JIT
+## Performance path
+
+After the metadata and optimization path, add this sequence when you need to
+reason about optimization strength, pass pipelines, and vectorized IR:
+
+1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass pipelines and `opt -passes=...` spelling
+2. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — optimization levels: `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
+3. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization with the Loop Vectorizer and SLP Vectorizer
+4. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
+
+Practice next: run the commands in
+[`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c),
+[`09-vectorization/examples/sum-loop.ll`](09-vectorization/examples/sum-loop.ll), and
+[`09-vectorization/examples/slp-scalars.ll`](09-vectorization/examples/slp-scalars.ll).
+
+
+## Concurrent IR path
+
+After Path 2, add this chapter when reading or writing shared-memory IR:
+
+1. Re-read [`04-memory/02-load-store.md`](04-memory/02-load-store.md) — load/store review, especially explicit access types, `align`, and volatile syntax
+2. [`11-concurrency/01-atomic-orderings.md`](11-concurrency/01-atomic-orderings.md) — atomic orderings: not atomic vs `unordered`, `monotonic`, acquire/release, `acq_rel`, and `seq_cst`
+3. [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md) — atomic instructions: `load atomic`, `store atomic`, `cmpxchg`, `atomicrmw`, and `fence` syntax
+4. [`11-concurrency/03-volatile-vs-atomic.md`](11-concurrency/03-volatile-vs-atomic.md) — why volatile access behavior and atomic synchronization are orthogonal
+
+Practice next: inspect and assemble the examples in
+[`11-concurrency/examples/atomic-counter.ll`](11-concurrency/examples/atomic-counter.ll),
+[`11-concurrency/examples/cmpxchg-loop.ll`](11-concurrency/examples/cmpxchg-loop.ll), and
+[`11-concurrency/examples/fence.ll`](11-concurrency/examples/fence.ll).
+
+
+## Backend/JIT path
 
 After Path 2, add this path when you need to understand how LLVM IR becomes
 target machine code or when embedding LLVM as a JIT compiler:
 
-1. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — IR to target-specific machine code, SelectionDAG, GlobalISel, `MachineInstr`, register allocation, and MC emission
-2. [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) — TableGen syntax, generated backend include files, registers, instructions, patterns, and scheduling data
-3. [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) — ORC concepts, `LLJIT`, adding modules, symbol lookup, function pointers, and resource ownership
-4. Skim [`12-backend-jit/examples/minimal-instruction.td`](12-backend-jit/examples/minimal-instruction.td) and [`12-backend-jit/examples/lljit-outline.cpp.md`](12-backend-jit/examples/lljit-outline.cpp.md) as compact reference outlines.
+1. [`00-foundations/03-ir-vs-asm-vs-other-irs.md`](00-foundations/03-ir-vs-asm-vs-other-irs.md) — IR vs assembly and what remains target-independent
+2. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — codegen pipeline: SelectionDAG, GlobalISel, `MachineInstr`, register allocation, and MC emission
+3. [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) — TableGen syntax, generated backend include files, registers, instructions, patterns, and scheduling data
+4. [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) — ORC JIT and `LLJIT`: adding modules, symbol lookup, function pointers, and resource ownership
+5. Skim [`12-backend-jit/examples/minimal-instruction.td`](12-backend-jit/examples/minimal-instruction.td) and [`12-backend-jit/examples/lljit-outline.cpp.md`](12-backend-jit/examples/lljit-outline.cpp.md) as compact reference outlines.
 
 This path is intentionally advanced: it assumes you can already read LLVM IR and
 optimizer output, then follows the handoff into backend data structures, target
 descriptions, and runtime code generation.
+
+
+## Advanced IR constructs path
+
+After Path 2, add this path when unusual IR syntax, target hooks, or special
+case constructs appear in generated modules:
+
+1. [`reference/intrinsics.md`](reference/intrinsics.md) — common intrinsics, overloaded names, `immarg`, memory/lifetime/debug intrinsics, and target-specific intrinsic families
+2. [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md) — special types such as `token`, `metadata`, `x86_mmx`, `x86_fp80`, and `ppc_fp128`
+3. [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) — target-specific address spaces and `addrspacecast`
+4. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — target-specific operations as they leave IR and become machine-level lowering decisions
+
+Use this path as a lookup-oriented supplement rather than a linear beginner
+chapter. It is most useful when reviewing frontend output, GPU IR, intrinsic
+heavy code, or backend-adjacent transformations.
 
 ## Path 3: Deep dive (one sitting; pick up the rest as needed)
 
@@ -103,9 +137,9 @@ Read everything in numerical order:
         ↓
 06-metadata/
         ↓
-09-vectorization/
-        ↓
-08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  reference/
+07-optimization/  →  09-vectorization/
+        ↓                    ↓
+08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  12-backend-jit/  →  reference/
 ```
 
 Cross-references inside each chapter (`See also:`) let you jump
@@ -152,6 +186,8 @@ foundations ────────┐
         ↓
    metadata
         ↓
+ optimization ───→ vectorization (when performance/vector IR appears)
+        ↓
    pitfalls (read alongside everything above)
         ↓
    grammar (open as reference)
@@ -159,6 +195,8 @@ foundations ────────┐
    concurrency (when shared memory appears)
         ↓
    backend/JIT (when target lowering or runtime compilation appears)
+        ↓
+   reference (intrinsics, special types, and quick lookups)
 ```
 
 ## What's intentionally NOT here yet

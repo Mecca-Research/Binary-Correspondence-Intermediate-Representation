@@ -41,6 +41,7 @@ llvm-training/
 ├── 06-metadata/          metadata syntax, debug info, profiling, loop hints
 ├── 07-optimization/      opt pass model, analyses, transforms, opt levels
 ├── 08-pitfalls/          real-world bugs (mostly from BCIR review)
+├── 09-vectorization/     Loop/SLP vectorizers, diagnostics, vector IR patterns
 ├── 10-grammar/           Textmapper grammar (formal syntax)
 ├── 11-concurrency/       atomic orderings, atomic instructions, volatile
 ├── 12-backend-jit/       backend pipeline, TableGen, ORC/LLJIT
@@ -48,8 +49,8 @@ llvm-training/
 └── reference/            instruction quickref, intrinsics, glossary
 ```
 
-Numbered directories follow the reading order. Gaps are reserved for future
-chapters such as instruction encyclopedia and toolchain material.
+Numbered directories follow the reading order. Future chapters may add a
+dedicated instruction encyclopedia, MLIR overview, or toolchain material.
 
 ## Example and snippet conventions
 
