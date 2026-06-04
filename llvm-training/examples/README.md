@@ -61,7 +61,13 @@ than complete executable programs.
 | `llvm-training/07-optimization/examples/mem2reg-before.ll` | `llvm-as llvm-training/07-optimization/examples/mem2reg-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/simplifycfg-after.ll` | `llvm-as llvm-training/07-optimization/examples/simplifycfg-after.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/simplifycfg-before.ll` | `llvm-as llvm-training/07-optimization/examples/simplifycfg-before.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/not-vectorizable-call.ll` | `llvm-as llvm-training/09-vectorization/examples/not-vectorizable-call.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/not-vectorizable-dependency.ll` | `llvm-as llvm-training/09-vectorization/examples/not-vectorizable-dependency.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/slp-scalars-after-slp.ll` | `llvm-as llvm-training/09-vectorization/examples/slp-scalars-after-slp.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/slp-scalars-before.ll` | `llvm-as llvm-training/09-vectorization/examples/slp-scalars-before.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/slp-scalars.ll` | `llvm-as llvm-training/09-vectorization/examples/slp-scalars.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/sum-loop-after-loop-vectorize.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop-after-loop-vectorize.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/sum-loop-before.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop-before.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/sum-loop.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop.ll -o /dev/null` |
 | `llvm-training/11-concurrency/examples/atomic-counter.ll` | `llvm-as llvm-training/11-concurrency/examples/atomic-counter.ll -o /dev/null` |
 | `llvm-training/11-concurrency/examples/cmpxchg-loop.ll` | `llvm-as llvm-training/11-concurrency/examples/cmpxchg-loop.ll -o /dev/null` |
@@ -70,3 +76,12 @@ than complete executable programs.
 | `llvm-training/13-advanced-ir/examples/memcpy.ll` | `llvm-as llvm-training/13-advanced-ir/examples/memcpy.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/overflow-intrinsic.ll` | `llvm-as llvm-training/13-advanced-ir/examples/overflow-intrinsic.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/token-outline.ll` | `llvm-as llvm-training/13-advanced-ir/examples/token-outline.ll -o /dev/null` |
+| `llvm-training/15-binary-analysis/examples/constant-time-review.ll` | `llvm-as llvm-training/15-binary-analysis/examples/constant-time-review.ll -o /dev/null` |
+| `llvm-training/bcir-mapping/examples/mixed-stride.ll` | `llvm-as llvm-training/bcir-mapping/examples/mixed-stride.ll -o /dev/null` |
+| `llvm-training/bcir-mapping/examples/register-binding.ll` | `llvm-as llvm-training/bcir-mapping/examples/register-binding.ll -o /dev/null` |
+| `llvm-training/bcir-mapping/examples/vertex-edge-attribute.ll` | `llvm-as llvm-training/bcir-mapping/examples/vertex-edge-attribute.ll -o /dev/null` |
+
+Notes:
+
+- `llvm-training/15-binary-analysis/examples/*.csv` trace, counter, and feature schema samples are data artifacts, not `.ll` assembly targets.
+- `llvm-training/examples/broken-example.ll.txt` is intentionally invalid and remains excluded from the known-good manifest as a tripwire for invalid-example handling.
