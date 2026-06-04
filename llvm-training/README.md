@@ -115,11 +115,19 @@ indexability matter more than raw volume for an agent-context repo.
 
 ## How BCIR Uses This
 
-BCIR-specific lowering notes live in [`bcir-mapping/README.md`](bcir-mapping/README.md).
-That guide maps BCIR vertices, edges, attributes, register/resource binding,
-mixed-stride graph layouts, HAM hints, and runtime ABI records onto the LLVM IR
-patterns used by `runtime/llvm/*.ll`. Use it alongside `08-pitfalls/` when
-writing or reviewing BCIR-facing IR.
+Use this repo as a BCIR LLVM IR task index, with BCIR-specific lowering notes in
+[`bcir-mapping/README.md`](bcir-mapping/README.md).
+
+| BCIR task | Read first |
+|---|---|
+| Writing or reviewing runtime `.ll` files | Syntax ([modules](01-syntax/01-modules-functions-blocks.md), [instructions](01-syntax/02-instruction-format.md)), [types](02-types/02-composite-types.md), [memory](04-memory/02-load-store.md), [control flow](05-control-flow/02-conditional-br.md), [pitfalls](08-pitfalls/README.md) |
+| Debugging verifier errors | [`08-pitfalls/README.md`](08-pitfalls/README.md) |
+| Changing BCIR runtime ABI structs | [type schema drift](08-pitfalls/05-type-schema-drift.md), [BCIR runtime ABI mapping](bcir-mapping/05-runtime-abi.md) |
+| Adding intrinsics | [common intrinsics](13-advanced-ir/01-common-intrinsics.md), [target-specific intrinsics](13-advanced-ir/02-target-specific-intrinsics.md), [immarg pitfall](08-pitfalls/06-immarg-violation.md) |
+| Adding atomic/concurrent behavior | [atomic orderings](11-concurrency/01-atomic-orderings.md), [atomic instructions](11-concurrency/02-atomic-instructions.md), [volatile vs atomic](11-concurrency/03-volatile-vs-atomic.md) |
+| Optimizing generated IR | [pass model](07-optimization/01-pass-model.md), [transform passes](07-optimization/03-common-transform-passes.md), [vectorization](09-vectorization/README.md) |
+| Planning MLIR lowering | [MLIR overview](14-mlir-bridge/01-what-is-mlir.md), [lowering to LLVM dialect](14-mlir-bridge/03-lowering-to-llvm-dialect.md), [BCIR dialect sketch](14-mlir-bridge/04-bcir-as-custom-dialect.md) |
+| Backend/JIT experiments | [codegen pipeline](12-backend-jit/01-codegen-pipeline.md), [ORC JIT](12-backend-jit/03-orc-jit.md) |
 
 ## Relationship to the BCIR project
 
