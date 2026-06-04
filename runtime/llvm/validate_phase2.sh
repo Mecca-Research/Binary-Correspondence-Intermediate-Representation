@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-command -v llvm-as >/dev/null || { echo "missing llvm-as"; exit 127; }
-command -v llvm-link >/dev/null || { echo "missing llvm-link"; exit 127; }
-command -v opt >/dev/null || { echo "missing opt"; exit 127; }
-command -v llvm-dis >/dev/null || { echo "missing llvm-dis"; exit 127; }
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${repo_root}"
+source runtime/llvm/validate_common.sh
+require_llvm_tool llvm-as
+require_llvm_tool llvm-link
+require_llvm_tool opt
+require_llvm_tool llvm-dis
+
 
 mkdir -p build
 

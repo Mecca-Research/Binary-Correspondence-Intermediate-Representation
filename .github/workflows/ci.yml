@@ -72,16 +72,20 @@ jobs:
       - name: Optional BOLT smoke fixture
         run: bash llvm-training/tools/smoke-bolt.sh
 
+      - name: Install LLVM runtime validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm
+          for tool in llvm-as llvm-link opt llvm-dis; do
+            "$tool" --version | head -1
+          done
+
       - name: LLVM seed validate
         run: |
-          if command -v llvm-as >/dev/null && command -v llvm-link >/dev/null && command -v opt >/dev/null && command -v llvm-dis >/dev/null; then
-            bash runtime/llvm/validate_llvm_seed.sh
-            bash runtime/llvm/validate_phase2.sh
-            bash runtime/llvm/validate_phase3.sh
-            bash runtime/llvm/validate_phase4.sh
-          else
-            echo "LLVM toolchain not present; skipping runtime/llvm validation scripts"
-          fi
+          bash runtime/llvm/validate_llvm_seed.sh
+          bash runtime/llvm/validate_phase2.sh
+          bash runtime/llvm/validate_phase3.sh
+          bash runtime/llvm/validate_phase4.sh
 
   llvm-training-optimization-smoke:
     name: LLVM training optimization smoke (${{ matrix.optimization }})

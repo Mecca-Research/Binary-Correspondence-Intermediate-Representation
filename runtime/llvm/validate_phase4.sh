@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-command -v llvm-as >/dev/null || { echo "missing llvm-as"; exit 127; }
-command -v llvm-link >/dev/null || { echo "missing llvm-link"; exit 127; }
-command -v opt >/dev/null || { echo "missing opt"; exit 127; }
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${repo_root}"
+source runtime/llvm/validate_common.sh
+require_llvm_tool llvm-as
+require_llvm_tool llvm-link
+require_llvm_tool opt
+require_cmd python3
+require_file examples/vector_add.bcir "Phase 4 validation generates build/vector_add.generated.ll from this BCIR source."
+require_bcir_as
+
 
 mkdir -p build
 
@@ -39,4 +46,4 @@ opt -passes=verify build/bcir_phase4_vector_add.bc -o /dev/null
 grep -q "@bcir.generated.claims" build/bcir_phase4_vector_add.ll
 grep -q "%bcir.blob.header" build/bcir_phase4_vector_add.ll
 grep -q "@bcir.rehydrate.decide" build/bcir_phase4_vector_add.ll
-grep -q "%bcir.telemetry" build/bcir_phase4_vector_add.ll
+grep -q "@bcir.telemetry.zero" build/bcir_phase4_vector_add.ll
