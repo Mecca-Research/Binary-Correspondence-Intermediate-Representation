@@ -12,6 +12,10 @@ the same checks without a build-system dependency.
 | `smoke-lli.sh` | Runs only curated examples that have a safe no-argument entry point under `lli`. Most training snippets are library-style IR and should stay out of this list. | `lli` |
 | `smoke-llc.sh` | Lowers curated examples with `llc` to catch target-codegen regressions without treating every IR snippet as a runnable program. It prints intentional exclusions from `smoke-llc-skip.txt` before running the curated allowlist. | `llc` |
 | `verify-exercises.sh` | Assembles every checked-in `llvm-training/exercises/*.solution.ll` file and runs `opt -passes=verify` so reference answers stay valid standalone LLVM IR. | `llvm-as`, `opt` |
+| `verify-invalid-fixtures.sh` | Discovers known invalid `.invalid.ll.txt` fixtures plus the broken-example sentinel and asserts each remains rejected by either `llvm-as` or `opt -passes=verify`. | `llvm-as`, `opt` |
+| `verify-manifest.sh` | Compares discovered standalone `*/examples/*.ll` files against the table in `llvm-training/examples/README.md` so new or removed examples do not silently drift from the manifest. | POSIX shell utilities |
+| `verify-mlir-examples.sh` | Validates `*/examples/*.mlir` syntax with `mlir-opt --allow-unregistered-dialect` when `mlir-opt` is installed, and reports a clean skip otherwise. | Optional `mlir-opt` |
+| `verify-bcir-mapping.sh` | Looks for future `.bcir` source fixtures under `bcir-mapping/examples/`, compares `bcir-as` output to sibling `.generated.ll` files, verifies generated IR, and supports `UPDATE_BCIR_MAPPING=1` regeneration. | `tools/bcir-as/bcir-as`, `llvm-as`, `opt` when `.bcir` fixtures exist |
 | `smoke-bolt.sh` | Builds the BOLT layout demo fixture, records baseline symbol/disassembly text, and exits with a clean skip when `llvm-bolt` is not installed. A full profile-driven rewrite still requires host support for `perf2bolt`/`perf`; see the walkthrough. | Optional `llvm-bolt`; `clang` and `llvm-objdump` when BOLT is present |
 | `demo-mem2reg.sh` | Demonstrates `mem2reg` on the checked-in diamond example, first verifying the fixture and then printing the promoted SSA form to stdout. | `opt` |
 | `demo-o2.sh` | Runs `default<O2>` on the O2 pipeline inspection fixture, writes the optimized IR to a temporary file, prints it, and optionally smoke-checks the result with `llc` when available. | `opt`; optional `llc` |
@@ -30,13 +34,20 @@ cmake --build build --target llvm-training-verify-examples
 cmake --build build --target llvm-training-smoke-llc
 cmake --build build --target llvm-training-smoke-lli
 cmake --build build --target llvm-training-verify-exercises
+cmake --build build --target llvm-training-verify-invalid-fixtures
+cmake --build build --target llvm-training-verify-manifest
+cmake --build build --target llvm-training-verify-mlir-examples
+cmake --build build --target llvm-training-verify-bcir-mapping
 ```
 
-Each CMake target checks for the LLVM tools needed by its underlying script
-before running it. If the host image does not provide those tools, the target
+CMake targets that declare hard external dependencies check for those tools
+before running. If the host image does not provide the required tools, the target
 prints the same kind of clean skip message used by CI and exits successfully.
-Running the shell scripts directly remains fail-closed: missing required tools
-produce an error so local maintainers notice incomplete toolchains.
+Targets whose scripts contain their own fixture-aware skips, such as MLIR and
+BCIR mapping validation, always invoke the script so it can decide whether the
+current repository state requires the optional toolchain. Running most shell
+scripts directly remains fail-closed: missing required tools produce an error so
+local maintainers notice incomplete toolchains.
 
 ## Skip-list rationale
 
@@ -80,10 +91,31 @@ phrases because the smoke script prints them directly as:
 BOLT fixture only when the host has `llvm-bolt`, and otherwise reports an
 intentional skip so minimal CI images are not forced to install BOLT packages.
 
-The sentinel `../examples/broken-example.ll.txt` is deliberately malformed. The
-verifier script asserts that LLVM rejects it while the script as a whole still
-succeeds, which catches future changes that accidentally include invalid fixtures
-in the known-good example manifest.
+The sentinel `../examples/broken-example.ll.txt` is deliberately malformed.
+`verify-examples.sh` still checks that the sentinel stays out of the known-good
+manifest. `verify-invalid-fixtures.sh` performs the broader expected-failure
+sweep: every `.invalid.ll.txt` fixture, plus the sentinel, must remain rejected
+by `llvm-as` or by the verifier pass if assembly succeeds.
+
+`verify-manifest.sh` is intentionally separate from IR verification. It compares
+the checked-in Markdown table in `../examples/README.md` to the discovered set of
+standalone `*/examples/*.ll` files using the same inclusion policy as
+`verify-examples.sh`.
+
+`verify-mlir-examples.sh` is optional-toolchain-friendly. It exits successfully
+with an explicit skip when `mlir-opt` is unavailable, but when MLIR is installed
+it parses all chapter-local `.mlir` examples with unregistered dialects allowed
+so dialect sketches still receive syntax coverage.
+
+`verify-bcir-mapping.sh` is future-facing. The current mapping chapter keeps
+human-readable `.bcir.txt` fragments, which are not assembler fixtures. If a
+review adds real `.bcir` sources under `bcir-mapping/examples/`, each source
+must have a sibling `<name>.generated.ll` expected output unless the maintainer
+is intentionally refreshing outputs with:
+
+```bash
+UPDATE_BCIR_MAPPING=1 ./llvm-training/tools/verify-bcir-mapping.sh
+```
 
 ## Adding a script
 
