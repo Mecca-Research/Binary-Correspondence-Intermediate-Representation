@@ -45,12 +45,14 @@ llvm-training/
 ├── 10-grammar/           Textmapper grammar (formal syntax)
 ├── 11-concurrency/       atomic orderings, atomic instructions, volatile
 ├── 12-backend-jit/       backend pipeline, TableGen, ORC/LLJIT
+├── 13-advanced-ir/       advanced intrinsics, target intrinsics, special types
+├── 14-mlir-bridge/       MLIR concepts, dialects, lowering to LLVM dialect
 ├── **/examples/*.ll      standalone examples that must assemble
 └── reference/            instruction quickref, intrinsics, glossary
 ```
 
 Numbered directories follow the reading order. Future chapters may add a
-dedicated instruction encyclopedia, MLIR overview, or toolchain material.
+dedicated instruction encyclopedia or additional toolchain material.
 
 ## Example, exercise, and snippet conventions
 
