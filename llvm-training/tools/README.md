@@ -49,6 +49,11 @@ produce an error so local maintainers notice incomplete toolchains.
 - only files below an `examples/` directory are considered standalone training
   modules.
 
+CI runs `smoke-llc.sh` immediately after the standalone example verifier when
+`llc` is available, guaranteeing that curated runnable-through-codegen training
+IR continues to lower successfully. Minimal images without `llc` report an
+explicit skip instead of failing the whole workflow.
+
 `smoke-bolt.sh` is also a positive, guarded check: it validates the documented
 BOLT fixture only when the host has `llvm-bolt`, and otherwise reports an
 intentional skip so minimal CI images are not forced to install BOLT packages.
