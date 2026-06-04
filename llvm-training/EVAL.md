@@ -61,3 +61,54 @@ or fill gaps.
 - **14-18**: read the linked chapters or exercise-family docs for missed questions and rerun the self-test.
 - **0-13**: start from [`START_HERE.md`](START_HERE.md), then use
   [`RECIPES.md`](RECIPES.md) for task-specific paths.
+
+## Path-specific self-test prompts
+
+These prompts mirror the curriculum paths; use them after the numbered corpus self-test above.
+
+After each path, the agent should be able to answer (without grepping
+LLVM source):
+
+**After Path 1**
+- What does SSA stand for and why does it require phi nodes?
+- What's the difference between `@foo` and `%foo`?
+- Why must a basic block end with a terminator?
+
+**After Path 2**
+- What's the type of the pointer returned by `alloca i32`?
+- In opaque-pointer IR, where do `load`, `store`, and `getelementptr` spell the memory access or element type?
+- Why is `add i32 (load ...), 1` invalid as a single expression?
+- When does a `br i1` need two labels, and what's the type of the
+  condition?
+
+**After Path 3**
+- How do you follow an instruction `!dbg` attachment back to a source
+  file, line, and column?
+- Why does the grammar treat `Linkage` and `ExternLinkage` as separate
+  productions?
+- How do `opt -passes=mem2reg`, `opt -passes=instcombine`, and
+  `opt -passes='default<O2>'` differ in scope and intent?
+- Why might `-O3` be a bad default for a size-sensitive workload?
+- What's the difference between `dso_local` and `dso_preemptable`?
+- What's the layout convention for `%bcir.claim`-style aggregate types,
+  and what breaks when consumers disagree on the field count?
+  (See [`08-pitfalls/05-type-schema-drift.md`](08-pitfalls/05-type-schema-drift.md).)
+
+**After Path 4**
+- When should you expect the Loop Vectorizer rather than the SLP Vectorizer to act?
+- What source or IR facts help LLVM prove a loop has predictable memory access and no unsafe dependencies?
+- Which commands show successful vs missed loop-vectorization remarks?
+- What IR clues suggest vectorization occurred (`<N x T>`, vector loads/stores, `shufflevector`, reductions)?
+- Why can PGO+LTO or BOLT change binary shape without changing source semantics?
+
+**After the backend / JIT path**
+- Where do SelectionDAG and GlobalISel fit relative to `MachineInstr`?
+- Why does register allocation happen after machine-code SSA optimizations?
+- Which backend facts are commonly generated from TableGen `.td` files?
+- What ownership objects should you identify before adding modules to an ORC `LLJIT`?
+
+**After the binary-analysis path**
+- Why is a secret-dependent branch in IR not the only side-channel signal to review?
+- Which hardware counters would you pair with branch/path traces for constant-time review?
+- What PGO/LTO/BOLT artifacts should be saved before comparing optimized binaries?
+- Which interpretable BCSA features are cheap enough for first-pass triage?

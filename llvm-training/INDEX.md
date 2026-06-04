@@ -22,6 +22,7 @@ every lookup.
 | Task-oriented lookup | [`RECIPES.md`](RECIPES.md) |
 | Binary-analysis side-channel/profile/BCSA topics | [`15-binary-analysis/README.md`](15-binary-analysis/README.md) |
 | Corpus self-test | [`EVAL.md`](EVAL.md) |
+| Known gaps and future roadmap | [`ROADMAP.md`](ROADMAP.md) |
 
 If you do not know where to start, open [`RECIPES.md`](RECIPES.md), pick the row
 closest to your task, then jump to the linked chapter and examples. Detailed

@@ -2,6 +2,8 @@
 
 | Topic | File |
 |---|---|
+| Curriculum roadmap and intentionally out-of-scope topics | [`ROADMAP.md`](../ROADMAP.md) |
+| Corpus self-test and path prompts | [`EVAL.md`](../EVAL.md) |
 | What LLVM IR is, big picture | [`00-foundations/01-what-is-llvm-ir.md`](../00-foundations/01-what-is-llvm-ir.md) |
 | SSA form, phi nodes | [`00-foundations/02-ssa.md`](../00-foundations/02-ssa.md) |
 | LLVM IR vs assembly, vs GIMPLE/CIL/SPIR-V | [`00-foundations/03-ir-vs-asm-vs-other-irs.md`](../00-foundations/03-ir-vs-asm-vs-other-irs.md) |
@@ -16,8 +18,10 @@
 | Special types (`token`, `metadata`, `x86_mmx`, `x86_fp80`, `ppc_fp128`) | [`02-types/01-primitive-types.md`](../02-types/01-primitive-types.md) |
 | Struct, array, vector | [`02-types/02-composite-types.md`](../02-types/02-composite-types.md) |
 | Opaque types, opaque pointers | [`02-types/03-opaque-and-pointer-types.md`](../02-types/03-opaque-and-pointer-types.md) |
-| Opaque-pointer migration | [`02-types/04-opaque-pointer-migration.md`](../02-types/04-opaque-pointer-migration.md) |
-| Opaque pointer migration from typed pointers | [`02-types/04-opaque-pointer-migration.md`](../02-types/04-opaque-pointer-migration.md) |
+| Opaque-pointer migration dispatcher | [`02-types/04-opaque-pointer-migration.md`](../02-types/04-opaque-pointer-migration.md) |
+| Opaque pointer migration patterns (`load`, `store`, `getelementptr`, calls) | [`02-types/05-opaque-pointer-migration-patterns.md`](../02-types/05-opaque-pointer-migration-patterns.md) |
+| Opaque pointer migration diagnostics and pitfalls | [`02-types/06-opaque-pointer-migration-diagnostics.md`](../02-types/06-opaque-pointer-migration-diagnostics.md) |
+| Opaque pointer migration before/after examples | [`02-types/07-opaque-pointer-migration-examples.md`](../02-types/07-opaque-pointer-migration-examples.md) |
 | Integer constants (`i32 42`) | [`03-constants/01-integer.md`](../03-constants/01-integer.md) |
 | Floating-point constants (`float 3.14`, hex floats) | [`03-constants/02-floating-point.md`](../03-constants/02-floating-point.md) |
 | String constants (`c"...\00"`) | [`03-constants/03-strings.md`](../03-constants/03-strings.md) |
@@ -44,12 +48,13 @@
 | `opt` pipelines | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](../07-optimization/04-optimization-levels.md) |
 | Debugging pass pipelines, IR diffs, pass-manager traces | [`07-optimization/05-debugging-passes.md`](../07-optimization/05-debugging-passes.md) |
 | PGO, LTO, ThinLTO, and BOLT profile-driven pipelines | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
-| Vectorizers | [`09-vectorization/README.md`](../09-vectorization/README.md) |
+| Vectorizers dispatcher | [`09-vectorization/README.md`](../09-vectorization/README.md) |
+| Vectorization legality and blockers | [`09-vectorization/04-vectorization-legality.md`](../09-vectorization/04-vectorization-legality.md) |
 | Loop Vectorizer auto-vectorization | [`09-vectorization/01-loop-vectorizer.md`](../09-vectorization/01-loop-vectorizer.md) |
 | SLP Vectorizer / superword-level parallelism | [`09-vectorization/02-slp-vectorizer.md`](../09-vectorization/02-slp-vectorizer.md) |
 | Vector predication, masks, scalable-vector tail handling | [`09-vectorization/03-vector-predication.md`](../09-vectorization/03-vector-predication.md) |
-| Vectorization diagnostics (`-Rpass`, `-Rpass-missed`, optimization remarks) | [`09-vectorization/README.md`](../09-vectorization/README.md) |
-| Vector IR patterns (`<N x T>`, vector loads/stores, `shufflevector`, reductions) | [`09-vectorization/README.md`](../09-vectorization/README.md) |
+| Vectorization diagnostics (`-Rpass`, `-Rpass-missed`, optimization remarks) | [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md) |
+| Vector IR patterns (`<N x T>`, vector loads/stores, `shufflevector`, reductions) | [`09-vectorization/06-recognizing-vector-ir.md`](../09-vectorization/06-recognizing-vector-ir.md) |
 | Pitfalls overview | [`08-pitfalls/README.md`](../08-pitfalls/README.md) |
 | Nested instruction-as-expression syntax errors | [`08-pitfalls/01-nested-instruction-expressions.md`](../08-pitfalls/01-nested-instruction-expressions.md) |
 | PHI node predecessor mismatch | [`08-pitfalls/02-phi-predecessor-mismatch.md`](../08-pitfalls/02-phi-predecessor-mismatch.md) |
@@ -70,8 +75,8 @@
 | Formal Textmapper grammar | `10-grammar/llvm-ir.tm` |
 | Grammar notes / how to use it | [`10-grammar/README.md`](../10-grammar/README.md) |
 | Instruction quick reference | [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
-| Common intrinsics | [`reference/intrinsics.md`](../reference/intrinsics.md) |
-| Intrinsics list | [`reference/intrinsics.md`](../reference/intrinsics.md) |
+| Common intrinsics declaration rules | [`reference/intrinsics.md`](../reference/intrinsics.md) |
+| Intrinsics quick reference | [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md) |
 | Backend/codegen terms | [`12-backend-jit/01-codegen-pipeline.md`](../12-backend-jit/01-codegen-pipeline.md), [`reference/glossary.md`](../reference/glossary.md) |
 | Backend code generation pipeline | [`12-backend-jit/01-codegen-pipeline.md`](../12-backend-jit/01-codegen-pipeline.md) |
 | SelectionDAG instruction selection | [`12-backend-jit/01-codegen-pipeline.md`](../12-backend-jit/01-codegen-pipeline.md) |
