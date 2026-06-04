@@ -1,5 +1,11 @@
 # Pitfall 08 — Stale Debug Locations After Rewrites
 
+## BCIR instance
+
+| Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
+|---|---|---|---|---|
+| Training-only exemplar; no affected BCIR `.ll` file recorded | Unknown | `opt -passes=verify <rewritten-bcir-output>.ll -o /dev/null` (usually passes; inspect `!dbg`) | Drop or recompute debug locations when cloned or moved instructions no longer match the original address/source span. | [`06-metadata/02-debug-info.md`](../06-metadata/02-debug-info.md); [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md); [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md) |
+
 ## The symptom
 
 ```text

@@ -1,5 +1,11 @@
 # Pitfall 02 — PHI Node Predecessor Mismatch
 
+## BCIR instance
+
+| Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
+|---|---|---|---|---|
+| `runtime/llvm/bcir_batch_executor.ll` | `5754354` | `llvm-as runtime/llvm/bcir_batch_executor.ll -o /dev/null` | Make phi incoming labels match the block's actual CFG predecessors. | [`00-foundations/02-ssa.md`](../00-foundations/02-ssa.md); [`05-control-flow/02-conditional-br.md`](../05-control-flow/02-conditional-br.md); [`05-control-flow/01-unconditional-br.md`](../05-control-flow/01-unconditional-br.md) |
+
 ## The error
 
 ```

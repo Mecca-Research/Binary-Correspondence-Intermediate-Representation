@@ -1,5 +1,11 @@
 # Pitfall 10 — `volatile` Is Not Atomic
 
+## BCIR instance
+
+| Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
+|---|---|---|---|---|
+| `runtime/llvm/bcir_claim_verify.ll`; `runtime/llvm/bcir_ops.ll` | Unknown | `opt -passes=verify <bcir-volatile-or-atomic>.ll -o /dev/null` (semantic review still required) | Use `volatile` only for observable accesses/MMIO and model inter-thread synchronization with atomic operations and orderings. | [`11-concurrency/03-volatile-vs-atomic.md`](../11-concurrency/03-volatile-vs-atomic.md); [`11-concurrency/01-atomic-orderings.md`](../11-concurrency/01-atomic-orderings.md); [`04-memory/02-load-store.md`](../04-memory/02-load-store.md) |
+
 ## The symptom
 
 ```text

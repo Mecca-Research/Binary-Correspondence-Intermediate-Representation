@@ -1,5 +1,11 @@
 # Pitfall 06 — `immarg` Parameter Violation on Intrinsics
 
+## BCIR instance
+
+| Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
+|---|---|---|---|---|
+| `runtime/llvm/bcir_prefetch_profiles.ll` | `1f62e86` | `opt -passes=verify runtime/llvm/bcir_prefetch_profiles.ll -o /dev/null` | Replace SSA operands to `immarg` intrinsic parameters with literal constants. | [`01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md); [`reference/intrinsics.md`](../reference/intrinsics.md); [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
+
 ## The error
 
 ```

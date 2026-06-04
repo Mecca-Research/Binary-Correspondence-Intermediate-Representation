@@ -1,5 +1,11 @@
 # Pitfall 01 — Nested Instruction-as-Expression
 
+## BCIR instance
+
+| Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
+|---|---|---|---|---|
+| `runtime/llvm/bcir_claim_verify.ll` | `1f62e86` | `llvm-as runtime/llvm/bcir_claim_verify.ll -o /dev/null` | Split nested boolean expressions into named SSA temporaries. | [`01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md); [`03-constants/04-global-vs-local.md`](../03-constants/04-global-vs-local.md); [`10-grammar/llvm-ir.tm`](../10-grammar/llvm-ir.tm) |
+
 ## The error
 
 ```
