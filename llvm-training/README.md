@@ -43,12 +43,13 @@ llvm-training/
 ├── 08-pitfalls/          real-world bugs (mostly from BCIR review)
 ├── 10-grammar/           Textmapper grammar (formal syntax)
 ├── 11-concurrency/       atomic orderings, atomic instructions, volatile
+├── 12-backend-jit/       backend pipeline, TableGen, ORC/LLJIT
 ├── **/examples/*.ll      standalone examples that must assemble
 └── reference/            instruction quickref, intrinsics, glossary
 ```
 
-Numbered directories follow the reading order. Gaps such as `09-` are
-reserved for future chapters: instruction encyclopedia and toolchain.
+Numbered directories follow the reading order. Gaps are reserved for future
+chapters such as instruction encyclopedia and toolchain material.
 
 ## Example and snippet conventions
 
