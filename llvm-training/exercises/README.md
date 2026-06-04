@@ -100,6 +100,8 @@ If your LLVM tools are installed with a version suffix, replace `llvm-as` and
 32. [`032-identify-mlir-dialect-boundaries.prompt.md`](032-identify-mlir-dialect-boundaries.prompt.md) — identify BCIR, generic, control-flow, and LLVM-lowering boundaries.
 33. [`033-lower-mlir-graph-op-to-llvm-dialect.prompt.md`](033-lower-mlir-graph-op-to-llvm-dialect.prompt.md) — outline lowering of a graph op to LLVM-dialect loads.
 34. [`034-review-mlir-to-llvm-type-conversion.prompt.md`](034-review-mlir-to-llvm-type-conversion.prompt.md) — review index, memref, graph, and vector type conversion hazards.
+38. [`038-review-mlir-diagnostic-plan.prompt.md`](038-review-mlir-diagnostic-plan.prompt.md) — review diagnostics for hints, required bindings, and ABI drift.
+39. [`039-lower-bcir-mlir-end-to-end.prompt.md`](039-lower-bcir-mlir-end-to-end.prompt.md) — trace BCIR source, canonical BCIR, LLVM dialect, and textual LLVM IR carriers.
 
 ### Backend/JIT review
 

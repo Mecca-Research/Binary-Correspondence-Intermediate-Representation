@@ -148,5 +148,7 @@ Before lowering a BCIR dialect operation, ask:
 
 - [`examples/bcir-dialect-sketch.mlir`](examples/bcir-dialect-sketch.mlir) — source-level dialect sketch.
 - [`03-lowering-to-llvm-dialect.md`](03-lowering-to-llvm-dialect.md) — lowering mechanics and common pitfalls.
+- [`05-type-conversion.md`](05-type-conversion.md) — BCIR type carriers and survival tables.
+- [`09-bcir-mlir-end-to-end.md`](09-bcir-mlir-end-to-end.md) — staged BCIR-to-LLVM walkthrough.
 - [`../08-pitfalls/05-type-schema-drift.md`](../08-pitfalls/05-type-schema-drift.md) — low-level schema drift after lowering.
 - [`../08-pitfalls/06-immarg-violation.md`](../08-pitfalls/06-immarg-violation.md) — prefetch-hint lowering hazards.

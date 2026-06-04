@@ -161,7 +161,12 @@ structured information before producing LLVM IR:
 2. [`14-mlir-bridge/02-dialects-and-operations.md`](14-mlir-bridge/02-dialects-and-operations.md) — dialect design basics and operation anatomy
 3. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — conversion/lowering pipelines, LLVM dialect, and `.ll` differences
 4. [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) — where BCIR Vertex-Edge-Attribute, HAM hints, register binding, and Mixed Stride graphs can live
-5. Skim [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-sketch.mlir) and [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/lowered-llvm-dialect.mlir) as illustrative before/after shapes.
+5. [`14-mlir-bridge/05-type-conversion.md`](14-mlir-bridge/05-type-conversion.md) — type carriers, descriptor-vs-handle decisions, and survival tables for vertex identity and attributes
+6. [`14-mlir-bridge/06-conversion-patterns.md`](14-mlir-bridge/06-conversion-patterns.md) — rewrite-pattern contracts and survival tables for edge topology and HAM hints
+7. [`14-mlir-bridge/07-pass-pipeline.md`](14-mlir-bridge/07-pass-pipeline.md) — staged pass pipeline and register/resource-binding survival rules
+8. [`14-mlir-bridge/08-diagnostics-and-verification.md`](14-mlir-bridge/08-diagnostics-and-verification.md) — verifier layers, conversion diagnostics, and runtime ABI call survival rules
+9. [`14-mlir-bridge/09-bcir-mlir-end-to-end.md`](14-mlir-bridge/09-bcir-mlir-end-to-end.md) — source, canonical, LLVM-dialect, and textual LLVM IR walkthrough
+10. Skim [`14-mlir-bridge/examples/bcir-dialect-source-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-source-sketch.mlir), [`14-mlir-bridge/examples/bcir-canonicalized.mlir`](14-mlir-bridge/examples/bcir-canonicalized.mlir), [`14-mlir-bridge/examples/bcir-lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/bcir-lowered-llvm-dialect.mlir), and [`14-mlir-bridge/examples/bcir-final.ll`](14-mlir-bridge/examples/bcir-final.ll) as a staged before/after trace.
 
 Use this path before the Backend/JIT path when the task starts above LLVM IR,
 especially for custom frontend lowering or BCIR-specific graph representations.

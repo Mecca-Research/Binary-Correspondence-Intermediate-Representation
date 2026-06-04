@@ -21,6 +21,7 @@ every lookup.
 | Exercises and solution verification | [`exercises/README.md`](exercises/README.md) |
 | Task-oriented lookup | [`RECIPES.md`](RECIPES.md) |
 | Binary-analysis side-channel/profile/BCSA topics | [`15-binary-analysis/README.md`](15-binary-analysis/README.md) |
+| BCIR MLIR bridge deep-dive | [`14-mlir-bridge/09-bcir-mlir-end-to-end.md`](14-mlir-bridge/09-bcir-mlir-end-to-end.md) |
 | Corpus self-test | [`EVAL.md`](EVAL.md) |
 | Known gaps and future roadmap | [`ROADMAP.md`](ROADMAP.md) |
 

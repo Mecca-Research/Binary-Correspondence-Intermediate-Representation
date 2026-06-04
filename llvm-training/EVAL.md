@@ -62,12 +62,18 @@ or fill gaps.
     BCIR operations becoming runtime wrappers, mixed strides becoming byte
     offsets, and diagnostic tags becoming custom metadata? See
     [`bcir-mapping/examples/`](bcir-mapping/examples/).
+24. Which BCIR MLIR lowering facts survive as vertex IDs, edge keys, attribute
+    keys, HAM prefetch calls, optional register-binding remarks, and runtime ABI
+    calls? See [`14-mlir-bridge/05-type-conversion.md`](14-mlir-bridge/05-type-conversion.md)
+    through [`14-mlir-bridge/09-bcir-mlir-end-to-end.md`](14-mlir-bridge/09-bcir-mlir-end-to-end.md).
+25. Which staged examples show BCIR source dialect, canonical BCIR, LLVM dialect,
+    and final textual LLVM IR? See [`14-mlir-bridge/examples/`](14-mlir-bridge/examples/).
 
 ## Suggested scoring
 
-- **21-23**: ready to edit examples, repair broken IR, and review BCIR lowering patches.
-- **16-20**: read the linked chapters or exercise-family docs for missed questions and rerun the self-test.
-- **0-15**: start from [`START_HERE.md`](START_HERE.md), then use
+- **23-25**: ready to edit examples, repair broken IR, and review BCIR/MLIR lowering patches.
+- **17-22**: read the linked chapters or exercise-family docs for missed questions and rerun the self-test.
+- **0-16**: start from [`START_HERE.md`](START_HERE.md), then use
   [`RECIPES.md`](RECIPES.md) for task-specific paths.
 
 ## Path-specific self-test prompts
@@ -126,3 +132,10 @@ LLVM source):
 - When should a BCIR operation become plain LLVM IR versus a runtime-call wrapper?
 - Why do HAM prefetch operands need immediate constants?
 - Why should diagnostic metadata never carry semantics required for execution?
+
+**After the MLIR bridge path**
+- Why should BCIR type conversion distinguish fixed-width vertex IDs from target-sized `index` values?
+- When should a graph lower to descriptor fields rather than runtime ABI calls?
+- Which BCIR facts survive as edge keys, attribute keys, HAM prefetch calls, and runtime call operands in final LLVM IR?
+- Why is dropping an optional register preference different from dropping a required binding?
+- Which verifier layer should catch schema drift before conversion reaches LLVM dialect?
