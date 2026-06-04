@@ -72,6 +72,12 @@
 | MLIR dialect design and operation anatomy | [`14-mlir-bridge/02-dialects-and-operations.md`](../14-mlir-bridge/02-dialects-and-operations.md) |
 | MLIR lowering to LLVM dialect / LLVM IR | [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](../14-mlir-bridge/03-lowering-to-llvm-dialect.md), [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](../14-mlir-bridge/examples/lowered-llvm-dialect.mlir) |
 | BCIR as an MLIR custom dialect | [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](../14-mlir-bridge/04-bcir-as-custom-dialect.md), [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](../14-mlir-bridge/examples/bcir-dialect-sketch.mlir) |
+| BCIR mapping guide dispatcher | [`bcir-mapping/README.md`](../bcir-mapping/README.md) |
+| BCIR claim lowering pipeline | [`bcir-mapping/06-claim-lowering-pipeline.md`](../bcir-mapping/06-claim-lowering-pipeline.md), [`bcir-mapping/examples/claim-resource-lookup.ll`](../bcir-mapping/examples/claim-resource-lookup.ll) |
+| GAADMSF graph/data movement lowering | [`bcir-mapping/07-gaadmsf-operations.md`](../bcir-mapping/07-gaadmsf-operations.md), [`bcir-mapping/examples/graph-fragment-struct-gep.ll`](../bcir-mapping/examples/graph-fragment-struct-gep.ll) |
+| Dragon Egg runtime-owned operation wrappers | [`bcir-mapping/08-dragon-egg-operations.md`](../bcir-mapping/08-dragon-egg-operations.md), [`bcir-mapping/examples/bcir-op-runtime-wrapper.ll`](../bcir-mapping/examples/bcir-op-runtime-wrapper.ll) |
+| BCIR runtime call boundaries | [`bcir-mapping/09-runtime-call-boundaries.md`](../bcir-mapping/09-runtime-call-boundaries.md) |
+| BCIR metadata, HAM hints, and diagnostics | [`bcir-mapping/10-metadata-and-diagnostics.md`](../bcir-mapping/10-metadata-and-diagnostics.md), [`bcir-mapping/examples/ham-hint-prefetch.ll`](../bcir-mapping/examples/ham-hint-prefetch.ll), [`bcir-mapping/examples/diagnostic-metadata-preservation.ll`](../bcir-mapping/examples/diagnostic-metadata-preservation.ll) |
 | Formal Textmapper grammar | `10-grammar/llvm-ir.tm` |
 | Grammar notes / how to use it | [`10-grammar/README.md`](../10-grammar/README.md) |
 | Instruction quick reference | [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
