@@ -7,7 +7,8 @@ REPO_ROOT=$(cd -- "$TRAINING_ROOT/.." && pwd)
 EXERCISES_DIR="$TRAINING_ROOT/exercises"
 
 status=0
-count=0
+ir_count=0
+md_count=0
 
 require_tool() {
   local tool=$1
@@ -42,26 +43,86 @@ run_step() {
   return 1
 }
 
-require_tool llvm-as
-require_tool opt
+check_markdown_solution() {
+  local file=$1
+
+  printf '[markdown] %s ... ' "$(relpath "$file")"
+
+  if [ ! -s "$file" ]; then
+    printf 'FAILED\n'
+    printf '    markdown solution is missing or empty\n'
+    return 1
+  fi
+
+  if ! sed -n '1p' "$file" | grep -Eq '^# '; then
+    printf 'FAILED\n'
+    printf '    markdown solution should start with a top-level heading\n'
+    return 1
+  fi
+
+  printf 'ok\n'
+  return 0
+}
+
+find_tool() {
+  local base=$1
+  local tool
+
+  if [ -n "${LLVM_SUFFIX:-}" ] && command -v "${base}${LLVM_SUFFIX}" >/dev/null 2>&1; then
+    printf '%s' "${base}${LLVM_SUFFIX}"
+    return 0
+  fi
+
+  if command -v "$base" >/dev/null 2>&1; then
+    printf '%s' "$base"
+    return 0
+  fi
+
+  while IFS= read -r tool; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '%s' "$tool"
+      return 0
+    fi
+  done < <(compgen -c | grep -E "^${base}-[0-9]+$" | sort -V)
+
+  return 1
+}
+
+LLVM_AS=$(find_tool llvm-as) || {
+  printf 'error: required tool not found on PATH: llvm-as (or llvm-as-N)\n' >&2
+  exit 127
+}
+
+OPT=$(find_tool opt) || {
+  printf 'error: required tool not found on PATH: opt (or opt-N)\n' >&2
+  exit 127
+}
+
 
 mapfile -d '' solutions < <(find "$EXERCISES_DIR" -maxdepth 1 -type f -name '*.solution.ll' -print0 | sort -z)
 
 for file in "${solutions[@]}"; do
-  count=$((count + 1))
-  run_step llvm-as "$file" llvm-as "$file" -o /dev/null || status=1
-  run_step verify "$file" opt -passes=verify "$file" -o /dev/null || status=1
+  ir_count=$((ir_count + 1))
+  run_step llvm-as "$file" "$LLVM_AS" "$file" -o /dev/null || status=1
+  run_step verify "$file" "$OPT" -passes=verify "$file" -o /dev/null || status=1
 done
 
-if [ "$count" -eq 0 ]; then
-  printf 'No checked-in LLVM IR exercise solutions found under %s\n' "$(relpath "$EXERCISES_DIR")"
+mapfile -d '' markdown_solutions < <(find "$EXERCISES_DIR" -maxdepth 1 -type f -name '*.solution.md' -print0 | sort -z)
+
+for file in "${markdown_solutions[@]}"; do
+  md_count=$((md_count + 1))
+  check_markdown_solution "$file" || status=1
+done
+
+if [ "$ir_count" -eq 0 ] && [ "$md_count" -eq 0 ]; then
+  printf 'No checked-in exercise solutions found under %s\n' "$(relpath "$EXERCISES_DIR")"
   exit 1
 fi
 
 if [ "$status" -eq 0 ]; then
-  printf 'Verified %d checked-in LLVM IR exercise solution(s).\n' "$count"
+  printf 'Verified %d LLVM IR solution(s) and %d markdown solution(s).\n' "$ir_count" "$md_count"
 else
-  printf 'One or more checked-in LLVM IR exercise solutions failed verification.\n' >&2
+  printf 'One or more checked-in exercise solutions failed verification.\n' >&2
 fi
 
 exit "$status"
