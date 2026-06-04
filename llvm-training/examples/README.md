@@ -23,6 +23,9 @@ done
 | `llvm-training/01-syntax/examples/module-anatomy.ll` | `llvm-as llvm-training/01-syntax/examples/module-anatomy.ll -o /dev/null` |
 | `llvm-training/02-types/examples/opaque-pointer-after.ll` | `llvm-as llvm-training/02-types/examples/opaque-pointer-after.ll -o /dev/null` |
 | `llvm-training/02-types/examples/types-cookbook.ll` | `llvm-as llvm-training/02-types/examples/types-cookbook.ll -o /dev/null` |
+| `llvm-training/03-constants/examples/constants-cookbook.ll` | `llvm-as llvm-training/03-constants/examples/constants-cookbook.ll -o /dev/null` |
+| `llvm-training/04-memory/examples/memory-cookbook.ll` | `llvm-as llvm-training/04-memory/examples/memory-cookbook.ll -o /dev/null` |
+| `llvm-training/05-control-flow/examples/control-flow-cookbook.ll` | `llvm-as llvm-training/05-control-flow/examples/control-flow-cookbook.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/debug-location.ll` | `llvm-as llvm-training/06-metadata/examples/debug-location.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/loop-metadata.ll` | `llvm-as llvm-training/06-metadata/examples/loop-metadata.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/dead-code-before.ll` | `llvm-as llvm-training/07-optimization/examples/dead-code-before.ll -o /dev/null` |
@@ -33,6 +36,7 @@ done
 | `llvm-training/11-concurrency/examples/atomic-counter.ll` | `llvm-as llvm-training/11-concurrency/examples/atomic-counter.ll -o /dev/null` |
 | `llvm-training/11-concurrency/examples/cmpxchg-loop.ll` | `llvm-as llvm-training/11-concurrency/examples/cmpxchg-loop.ll -o /dev/null` |
 | `llvm-training/11-concurrency/examples/fence.ll` | `llvm-as llvm-training/11-concurrency/examples/fence.ll -o /dev/null` |
+| `llvm-training/12-backend-jit/examples/codegen-input.ll` | `llvm-as llvm-training/12-backend-jit/examples/codegen-input.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/memcpy.ll` | `llvm-as llvm-training/13-advanced-ir/examples/memcpy.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/overflow-intrinsic.ll` | `llvm-as llvm-training/13-advanced-ir/examples/overflow-intrinsic.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/token-outline.ll` | `llvm-as llvm-training/13-advanced-ir/examples/token-outline.ll -o /dev/null` |
