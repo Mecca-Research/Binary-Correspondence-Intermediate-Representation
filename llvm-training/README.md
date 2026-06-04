@@ -113,6 +113,14 @@ and per-file commands.
 The curated target plateaus around 100-200 MB because quality and
 indexability matter more than raw volume for an agent-context repo.
 
+## How BCIR Uses This
+
+BCIR-specific lowering notes live in [`bcir-mapping/README.md`](bcir-mapping/README.md).
+That guide maps BCIR vertices, edges, attributes, register/resource binding,
+mixed-stride graph layouts, HAM hints, and runtime ABI records onto the LLVM IR
+patterns used by `runtime/llvm/*.ll`. Use it alongside `08-pitfalls/` when
+writing or reviewing BCIR-facing IR.
+
 ## Relationship to the BCIR project
 
 This repo lives inside the BCIR project tree on purpose. BCIR is a
