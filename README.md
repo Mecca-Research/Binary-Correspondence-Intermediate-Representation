@@ -4,11 +4,30 @@ C++ project skeleton for BCIR with a CMake-based build and install/export rules.
 
 ## Top-level layout
 
-- `dialect/` — `bcir-dialect` target (ROP/MAP IR + parser/printer + verifier)
-- `runtime/` — `bcir-lowering` and `gem-runtime` targets
-- `tools/` — `bcir-tools` CLI target
-- `include/` — public headers installed for consumers
-- `tests/` — `bcir-tests` plus CTest integration
+```
+.
+├── dialect/             bcir-dialect target (ROP/MAP IR + parser/printer + verifier)
+├── runtime/             bcir-lowering, gem-runtime, and LLVM runtime artifacts
+├── tools/               bcir-tools and helper CLIs
+├── include/             public headers installed for consumers
+├── tests/               bcir-tests plus CTest integration
+├── docs/                implementation blueprints and design notes
+└── llvm-training/       agent-readable LLVM IR curriculum and reference
+    ├── 00-foundations/  IR basics, SSA, IR vs assembly/other IRs
+    ├── 01-syntax/       modules, functions, basic blocks, instruction format
+    ├── 02-types/        primitive, composite, opaque, and pointer types
+    ├── 03-constants/    integer, floating-point, string, global/local constants
+    ├── 04-memory/       alloca, load/store, globals, address spaces
+    ├── 05-control-flow/ branches, switch, indirectbr
+    ├── 06-metadata/     metadata tags, debug info, profile/loop metadata
+    ├── 07-optimization/ pass model, analyses, transforms, optimization levels
+    ├── 08-pitfalls/     verifier and real-world IR failure modes
+    ├── 09-vectorization/ auto-vectorization and vector IR quick references
+    ├── 10-grammar/      Textmapper grammar and syntax notes
+    ├── 11-concurrency/  atomics, orderings, fences, volatile vs atomic
+    ├── 12-backend-jit/  codegen pipeline, TableGen, ORC/LLJIT
+    └── reference/       instruction quickref, intrinsics, glossary
+```
 
 ## Build
 

@@ -12,11 +12,15 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | Modules, functions, basic blocks | [`01-syntax/01-modules-functions-blocks.md`](01-syntax/01-modules-functions-blocks.md) |
 | Instruction format, operands | [`01-syntax/02-instruction-format.md`](01-syntax/02-instruction-format.md) |
 | Comments (`;`), metadata (`!N`, `!{...}`) | [`01-syntax/03-comments-metadata.md`](01-syntax/03-comments-metadata.md) |
+| Metadata tags (`!dbg`, `!tbaa`, `!prof`, `!range`, `!nonnull`, `!llvm.loop`) | [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md), [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) |
+| Debug-info nodes (`DI*`) | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
 | Integer types `iN` | [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md) |
 | `float`, `double`, `half`, `bfloat`, `fp128` | [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md) |
 | `void`, `ptr`, `label`, `token`, `metadata` | [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md) |
+| Special types (`token`, `metadata`, `x86_mmx`, `x86_fp80`, `ppc_fp128`) | [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md) |
 | Struct, array, vector | [`02-types/02-composite-types.md`](02-types/02-composite-types.md) |
 | Opaque types, opaque pointers | [`02-types/03-opaque-and-pointer-types.md`](02-types/03-opaque-and-pointer-types.md) |
+| Opaque-pointer migration | [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) |
 | Opaque pointer migration from typed pointers | [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) |
 | Integer constants (`i32 42`) | [`03-constants/01-integer.md`](03-constants/01-integer.md) |
 | Floating-point constants (`float 3.14`, hex floats) | [`03-constants/02-floating-point.md`](03-constants/02-floating-point.md) |
@@ -26,6 +30,7 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `load`, `store`, atomic load/store | [`04-memory/02-load-store.md`](04-memory/02-load-store.md), [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md) |
 | Global variables, linkage types, TLS | [`04-memory/03-global-variables.md`](04-memory/03-global-variables.md) |
 | `addrspace(N)`, `addrspacecast` | [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) |
+| Atomics and orderings | [`11-concurrency/01-atomic-orderings.md`](11-concurrency/01-atomic-orderings.md), [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md) |
 | Atomic orderings (`unordered`, `monotonic`, `acquire`, `release`, `acq_rel`, `seq_cst`) | [`11-concurrency/01-atomic-orderings.md`](11-concurrency/01-atomic-orderings.md) |
 | Atomic instruction syntax (`load atomic`, `store atomic`, `cmpxchg`, `atomicrmw`, `fence`) | [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md) |
 | Volatile vs atomic | [`11-concurrency/03-volatile-vs-atomic.md`](11-concurrency/03-volatile-vs-atomic.md) |
@@ -38,6 +43,9 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | Debug-info nodes (`DIFile`, `DICompileUnit`, `DISubprogram`, `DILocation`, `DILocalVariable`) | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
 | Reading `!dbg` locations back to source files and lines | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
 | Profile metadata, branch weights, loop metadata | [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) |
+| Optimization passes | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| `opt` pipelines | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) |
+| Vectorizers | [`09-vectorization/README.md`](09-vectorization/README.md) |
 | Loop Vectorizer auto-vectorization | [`09-vectorization/README.md`](09-vectorization/README.md) |
 | SLP Vectorizer / superword-level parallelism | [`09-vectorization/README.md`](09-vectorization/README.md) |
 | Vectorization diagnostics (`-Rpass`, `-Rpass-missed`, optimization remarks) | [`09-vectorization/README.md`](09-vectorization/README.md) |
@@ -55,15 +63,19 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | Formal Textmapper grammar | `10-grammar/llvm-ir.tm` |
 | Grammar notes / how to use it | [`10-grammar/README.md`](10-grammar/README.md) |
 | Instruction quick reference | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
+| Common intrinsics | [`reference/intrinsics.md`](reference/intrinsics.md) |
 | Intrinsics list | [`reference/intrinsics.md`](reference/intrinsics.md) |
+| Backend/codegen terms | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md), [`reference/glossary.md`](reference/glossary.md) |
 | Backend code generation pipeline | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
 | SelectionDAG instruction selection | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
 | GlobalISel instruction selection | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
 | `MachineInstr` machine-code representation | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
 | Register allocation | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
 | MC layer / code emission | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
+| TableGen | [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) |
 | TableGen `.td` target descriptions | [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) |
 | `llvm-tblgen` generated include files | [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) |
+| ORC/LLJIT | [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) |
 | ORC JIT | [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) |
 | `LLJIT` | [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) |
 | Glossary | [`reference/glossary.md`](reference/glossary.md) |
