@@ -1,10 +1,12 @@
 # Exercises
 
-This directory contains beginner LLVM IR writing exercises. Each exercise has:
+This directory contains beginner LLVM IR writing exercises. Follow the
+conventions in [`../EXAMPLES.md`](../EXAMPLES.md). Each exercise should include:
 
-- a `*.prompt.md` file describing the task;
-- a standalone `*.solution.ll` file containing one expected answer;
-- an exact verification command that assembles the solution.
+- a prompt describing the task;
+- the expected command to check the learner's answer or the checked-in solution;
+- the expected observation, such as successful assembly or a specific diagnostic;
+- an optional standalone `*.solution.ll` file containing one expected answer.
 
 Solutions must assemble with LLVM >= 15, where opaque pointers are the default.
 Use `ptr` for pointer-typed values instead of typed pointers such as `i32*`.
