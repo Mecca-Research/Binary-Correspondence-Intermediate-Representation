@@ -21,7 +21,10 @@ without extracting surrounding prose or adding missing declarations.
 ## Intentionally invalid examples
 
 Examples that intentionally demonstrate parser, verifier, or migration failures
-must not be confused with known-good standalone examples.
+must not be confused with known-good standalone examples. The repository keeps
+`llvm-training/examples/broken-example.ll.txt` as a deliberately malformed
+trip-wire fixture; `llvm-training/tools/verify-examples.sh` checks that LLVM
+rejects it while still excluding it from the known-good manifest.
 
 Use one of these conventions for intentionally invalid examples:
 
