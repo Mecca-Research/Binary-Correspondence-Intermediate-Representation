@@ -21,6 +21,10 @@ commands with the matching binary, for example `llvm-as-15` or `llvm-as-18`.
 3. [`003-loop-counter.prompt.md`](003-loop-counter.prompt.md) — write a loop counter.
 4. [`004-global-load-store.prompt.md`](004-global-load-store.prompt.md) — load and store a global.
 5. [`005-struct-gep.prompt.md`](005-struct-gep.prompt.md) — index a struct field with `getelementptr`.
+6. [`006-array-of-structs-gep.prompt.md`](006-array-of-structs-gep.prompt.md) — index a field inside an array of structs.
+7. [`007-vector-reduction.prompt.md`](007-vector-reduction.prompt.md) — call a vector reduction intrinsic.
+8. [`008-cmpxchg-loop.prompt.md`](008-cmpxchg-loop.prompt.md) — write an atomic compare-exchange retry loop.
+9. [`009-intrinsic-metadata.prompt.md`](009-intrinsic-metadata.prompt.md) — attach metadata to an intrinsic call.
 10. [`010-vertex-edge-attribute-lowering.prompt.md`](010-vertex-edge-attribute-lowering.prompt.md) — lower graph-style vertex and edge attributes.
 11. [`011-register-binding-pattern.prompt.md`](011-register-binding-pattern.prompt.md) — resolve logical register IDs through a binding table.
 12. [`012-custom-intrinsic-wrapper.prompt.md`](012-custom-intrinsic-wrapper.prompt.md) — wrap an LLVM intrinsic behind a BCIR-style operation.

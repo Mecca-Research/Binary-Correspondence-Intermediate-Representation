@@ -72,7 +72,8 @@ reason about optimization strength, pass pipelines, and vectorized IR:
 
 1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass pipelines and `opt -passes=...` spelling
 2. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — optimization levels: `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
-3. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization with the Loop Vectorizer and SLP Vectorizer
+3. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization overview
+4. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
 4. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
 
 Practice next: run the commands in
@@ -89,6 +90,7 @@ After Path 2, add this chapter when reading or writing shared-memory IR:
 2. [`11-concurrency/01-atomic-orderings.md`](11-concurrency/01-atomic-orderings.md) — atomic orderings: not atomic vs `unordered`, `monotonic`, acquire/release, `acq_rel`, and `seq_cst`
 3. [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md) — atomic instructions: `load atomic`, `store atomic`, `cmpxchg`, `atomicrmw`, and `fence` syntax
 4. [`11-concurrency/03-volatile-vs-atomic.md`](11-concurrency/03-volatile-vs-atomic.md) — why volatile access behavior and atomic synchronization are orthogonal
+5. [`11-concurrency/04-memory-model-mapping.md`](11-concurrency/04-memory-model-mapping.md) — mapping C++ and Rust orderings to LLVM atomics
 
 Practice next: inspect and assemble the examples in
 [`11-concurrency/examples/atomic-counter.ll`](11-concurrency/examples/atomic-counter.ll),
@@ -105,7 +107,8 @@ target machine code or when embedding LLVM as a JIT compiler:
 2. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — codegen pipeline: SelectionDAG, GlobalISel, `MachineInstr`, register allocation, and MC emission
 3. [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) — TableGen syntax, generated backend include files, registers, instructions, patterns, and scheduling data
 4. [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) — ORC JIT and `LLJIT`: adding modules, symbol lookup, function pointers, and resource ownership
-5. Skim [`12-backend-jit/examples/minimal-instruction.td`](12-backend-jit/examples/minimal-instruction.td) and [`12-backend-jit/examples/lljit-outline.cpp.md`](12-backend-jit/examples/lljit-outline.cpp.md) as compact reference outlines.
+5. [`12-backend-jit/04-mc-and-relocations.md`](12-backend-jit/04-mc-and-relocations.md) — MC layer concepts, relocations, and JIT missing-symbol debugging
+6. Skim [`12-backend-jit/examples/minimal-instruction.td`](12-backend-jit/examples/minimal-instruction.td) and [`12-backend-jit/examples/lljit-outline.cpp.md`](12-backend-jit/examples/lljit-outline.cpp.md) as compact reference outlines.
 
 This path is intentionally advanced: it assumes you can already read LLVM IR and
 optimizer output, then follows the handoff into backend data structures, target

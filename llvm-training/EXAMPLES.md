@@ -3,7 +3,8 @@
 This document defines the naming, validity, and verification conventions for
 LLVM IR examples and exercises in `llvm-training/`. The goal is to make it clear
 which files are runnable, which files intentionally demonstrate failures, and
-which commands maintainers and agents should run before shipping changes.
+which commands maintainers and agents should run before shipping changes. See
+[`SEMVER.md`](SEMVER.md) for the LLVM-version compatibility policy.
 
 ## Standalone `.ll` examples
 
