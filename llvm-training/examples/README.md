@@ -2,8 +2,10 @@
 
 Every standalone LLVM IR example in this training pack lives under a chapter
 `examples/` directory and must assemble with a modern `llvm-as` (LLVM >= 15,
-opaque pointers). Embedded fenced `llvm` snippets in chapter prose are not part
-of this manifest unless they are moved into one of these files.
+opaque pointers). This includes checked-in pass-output examples: both
+`*-before.ll` inputs and `*-after*.ll` outputs are assembly-checked. Embedded
+fenced `llvm` snippets in chapter prose are not part of this manifest unless
+they are moved into one of these files.
 
 See [`../EXAMPLES.md`](../EXAMPLES.md) for naming rules for invalid examples,
 pass-output examples, chapter-local command documentation, and exercises.
@@ -25,9 +27,21 @@ done
 | `llvm-training/02-types/examples/types-cookbook.ll` | `llvm-as llvm-training/02-types/examples/types-cookbook.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/debug-location.ll` | `llvm-as llvm-training/06-metadata/examples/debug-location.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/loop-metadata.ll` | `llvm-as llvm-training/06-metadata/examples/loop-metadata.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/dead-code-after-adce.ll` | `llvm-as llvm-training/07-optimization/examples/dead-code-after-adce.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/dead-code-before.ll` | `llvm-as llvm-training/07-optimization/examples/dead-code-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/gvn-after.ll` | `llvm-as llvm-training/07-optimization/examples/gvn-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/gvn-before.ll` | `llvm-as llvm-training/07-optimization/examples/gvn-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/instcombine-after.ll` | `llvm-as llvm-training/07-optimization/examples/instcombine-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/instcombine-before.ll` | `llvm-as llvm-training/07-optimization/examples/instcombine-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/loop-before.ll` | `llvm-as llvm-training/07-optimization/examples/loop-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/loop-rotate-after.ll` | `llvm-as llvm-training/07-optimization/examples/loop-rotate-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/loop-rotate-before.ll` | `llvm-as llvm-training/07-optimization/examples/loop-rotate-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/loop-unroll-after.ll` | `llvm-as llvm-training/07-optimization/examples/loop-unroll-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/loop-unroll-before.ll` | `llvm-as llvm-training/07-optimization/examples/loop-unroll-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/mem2reg-after.ll` | `llvm-as llvm-training/07-optimization/examples/mem2reg-after.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/mem2reg-before.ll` | `llvm-as llvm-training/07-optimization/examples/mem2reg-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/simplifycfg-after.ll` | `llvm-as llvm-training/07-optimization/examples/simplifycfg-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/simplifycfg-before.ll` | `llvm-as llvm-training/07-optimization/examples/simplifycfg-before.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/slp-scalars.ll` | `llvm-as llvm-training/09-vectorization/examples/slp-scalars.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/sum-loop.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop.ll -o /dev/null` |
 | `llvm-training/11-concurrency/examples/atomic-counter.ll` | `llvm-as llvm-training/11-concurrency/examples/atomic-counter.ll -o /dev/null` |

@@ -15,9 +15,13 @@ Official references:
 Use `-S` to inspect changed textual IR:
 
 ```bash
-opt -S -passes=mem2reg examples/mem2reg-before.ll -o /tmp/mem2reg-after.ll
-opt -S -passes=instcombine examples/dead-code-before.ll -o /tmp/instcombine-after.ll
-opt -S -passes='default<O2>' examples/loop-before.ll -o /tmp/loop-o2.ll
+opt -S -passes=mem2reg examples/mem2reg-before.ll -o examples/mem2reg-after.ll
+opt -S -passes=instcombine examples/instcombine-before.ll -o examples/instcombine-after.ll
+opt -S -passes=simplifycfg examples/simplifycfg-before.ll -o examples/simplifycfg-after.ll
+opt -S -passes=adce examples/dead-code-before.ll -o examples/dead-code-after-adce.ll
+opt -S -passes=loop-rotate examples/loop-rotate-before.ll -o examples/loop-rotate-after.ll
+opt -S -passes=loop-unroll examples/loop-unroll-before.ll -o examples/loop-unroll-after.ll
+opt -S -passes=gvn examples/gvn-before.ll -o examples/gvn-after.ll
 ```
 
 For a pure validity check:
@@ -39,6 +43,12 @@ Try:
 opt -S -passes=mem2reg examples/mem2reg-before.ll -o -
 ```
 
+Regenerate the checked-in paired output with:
+
+```bash
+opt -S -passes=mem2reg examples/mem2reg-before.ll -o examples/mem2reg-after.ll
+```
+
 Look for removed `alloca`, `store`, and `load` instructions.
 
 ## `instcombine`
@@ -50,7 +60,13 @@ instruction forms.
 Try:
 
 ```bash
-opt -S -passes=instcombine examples/dead-code-before.ll -o -
+opt -S -passes=instcombine examples/instcombine-before.ll -o -
+```
+
+Regenerate the checked-in paired output with:
+
+```bash
+opt -S -passes=instcombine examples/instcombine-before.ll -o examples/instcombine-after.ll
 ```
 
 It is not just a peephole optimizer; its main value is often making later
@@ -65,7 +81,13 @@ control-flow patterns into simpler expressions when legal.
 Try:
 
 ```bash
-opt -S -passes=simplifycfg examples/dead-code-before.ll -o -
+opt -S -passes=simplifycfg examples/simplifycfg-before.ll -o -
+```
+
+Regenerate the checked-in paired output with:
+
+```bash
+opt -S -passes=simplifycfg examples/simplifycfg-before.ll -o examples/simplifycfg-after.ll
 ```
 
 ## `adce`
@@ -80,16 +102,52 @@ Try:
 opt -S -passes=adce examples/dead-code-before.ll -o -
 ```
 
+Regenerate the checked-in paired output with:
+
+```bash
+opt -S -passes=adce examples/dead-code-before.ll -o examples/dead-code-after-adce.ll
+```
+
 ## `gvn`
 
 `gvn` stands for global value numbering. It removes redundant computations and
 some redundant memory operations when analysis proves they compute or read the
 same value.
 
+Try a focused redundant-computation example:
+
+```bash
+opt -S -passes=gvn examples/gvn-before.ll -o -
+```
+
+Regenerate the checked-in paired output with:
+
+```bash
+opt -S -passes=gvn examples/gvn-before.ll -o examples/gvn-after.ll
+```
+
 Try combining it with canonicalization:
 
 ```bash
 opt -S -passes='mem2reg,instcombine,gvn' examples/mem2reg-before.ll -o -
+```
+
+## `loop-rotate`
+
+`loop-rotate` turns many while-shaped loops into a rotated form with the loop
+condition on the latch. This can make the loop body the main repeated path and
+can expose a cleaner shape to later loop optimizations.
+
+Try:
+
+```bash
+opt -S -passes=loop-rotate examples/loop-rotate-before.ll -o -
+```
+
+Regenerate the checked-in paired output with:
+
+```bash
+opt -S -passes=loop-rotate examples/loop-rotate-before.ll -o examples/loop-rotate-after.ll
 ```
 
 ## `loop-unroll`
@@ -101,7 +159,13 @@ increase code size.
 Try:
 
 ```bash
-opt -S -passes=loop-unroll examples/loop-before.ll -o -
+opt -S -passes=loop-unroll examples/loop-unroll-before.ll -o -
+```
+
+Regenerate the checked-in paired output with:
+
+```bash
+opt -S -passes=loop-unroll examples/loop-unroll-before.ll -o examples/loop-unroll-after.ll
 ```
 
 If nothing obvious changes, the pass may have decided not to unroll without
