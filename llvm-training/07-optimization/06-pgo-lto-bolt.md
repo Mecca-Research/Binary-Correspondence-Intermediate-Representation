@@ -118,6 +118,9 @@ Reviewer checklist:
 BOLT consumes a linked binary plus profile data. It can reorder functions, split
 hot and cold basic blocks, align hot loops, and rewrite branches. These changes
 happen after LLVM IR is gone, so IR-only analysis cannot see the final layout.
+For a concrete fixture and inspection flow, see
+[`07-bolt-layout-walkthrough.md`](07-bolt-layout-walkthrough.md) and
+[`examples/bolt-layout-demo.c`](examples/bolt-layout-demo.c).
 
 Questions to ask:
 
