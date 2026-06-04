@@ -27,18 +27,19 @@ After Path 1, add:
 7. [`02-types/02-composite-types.md`](02-types/02-composite-types.md) — include the GEP basics in
    `Accessing struct fields` / aggregate access examples
 8. [`02-types/03-opaque-and-pointer-types.md`](02-types/03-opaque-and-pointer-types.md)
-9. [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) — moving from typed pointers to `ptr`
-10. [`04-memory/01-alloca.md`](04-memory/01-alloca.md)
-11. [`04-memory/02-load-store.md`](04-memory/02-load-store.md) — typed memory operations,
+9. [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) — migration dispatcher
+10. [`02-types/05-opaque-pointer-migration-patterns.md`](02-types/05-opaque-pointer-migration-patterns.md) — where typed-pointer facts moved (`load`, `store`, `getelementptr`, calls)
+11. [`04-memory/01-alloca.md`](04-memory/01-alloca.md)
+12. [`04-memory/02-load-store.md`](04-memory/02-load-store.md) — typed memory operations,
     especially explicit access types with opaque pointers
-12. [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md)
-13. [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md)
-14. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata syntax and common attachments
-15. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — source locations and debug-info nodes
-16. [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) — branch weights and loop hints
-17. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
+13. [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md)
+14. [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md)
+15. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata syntax and common attachments
+16. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — source locations and debug-info nodes
+17. [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) — branch weights and loop hints
+18. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
     terminators, comparison, memory, conversion, and other/call instructions
-18. All six files in `08-pitfalls/` — each is ≤ 5 minutes
+19. All six files in `08-pitfalls/` — each is ≤ 5 minutes
 
 Now you can read and write straightforward IR. Verifier failures should
 make sense.
@@ -136,10 +137,14 @@ security or performance verdict.
 After Path 2, add this path when unusual IR syntax, target hooks, or special
 case constructs appear in generated modules:
 
-1. [`reference/intrinsics.md`](reference/intrinsics.md) — common intrinsics, overloaded names, `immarg`, memory/lifetime/debug intrinsics, and target-specific intrinsic families
-2. [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md) — special types such as `token`, `metadata`, `x86_mmx`, `x86_fp80`, and `ppc_fp128`
-3. [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) — target-specific address spaces and `addrspacecast`
-4. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — target-specific operations as they leave IR and become machine-level lowering decisions
+1. [`reference/intrinsics.md`](reference/intrinsics.md) and [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) — declaration rules plus a focused category quick reference for common, memory/lifetime/debug, and target-specific intrinsic families
+2. [`13-advanced-ir/01-common-intrinsics.md`](13-advanced-ir/01-common-intrinsics.md) and [`13-advanced-ir/02-target-specific-intrinsics.md`](13-advanced-ir/02-target-specific-intrinsics.md) — common and target-specific intrinsic spelling in standalone modules
+3. [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md) — special scalar, token, metadata, target-extension, and scalable-vector types
+4. [`13-advanced-ir/04-attributes.md`](13-advanced-ir/04-attributes.md) — function, parameter, memory-effect, pointer, and ABI attributes
+5. [`13-advanced-ir/05-poison-undef-freeze.md`](13-advanced-ir/05-poison-undef-freeze.md) — `undef`, poison propagation, `freeze`, vector lanes, `noundef`, and verifier-valid unsafe patterns
+6. [`13-advanced-ir/06-fast-math-flags.md`](13-advanced-ir/06-fast-math-flags.md) — `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn`, `reassoc`, `fast`, FP comparisons, reductions, and vectorization consequences
+7. [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) — target-specific address spaces and `addrspacecast`
+8. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — target-specific operations as they leave IR and become machine-level lowering decisions
 
 Use this path as a lookup-oriented supplement rather than a linear beginner
 chapter. It is most useful when reviewing frontend output, GPU IR, intrinsic
@@ -190,15 +195,16 @@ focused path when you need to understand LLVM's vectorized IR and diagnostics:
    for loop transformation hints and the limits of metadata.
 2. Read [`09-vectorization/README.md`](09-vectorization/README.md) for the
    difference between the Loop Vectorizer and SLP Vectorizer.
-3. Run the commands in [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c)
+3. Read [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md) for the legality facts that block or allow vectorization.
+4. Run the commands from [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md) with [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c)
    to compare successful and missed loop-vectorization remarks.
-4. Run `opt -S -passes=loop-vectorize` on
+5. Run `opt -S -passes=loop-vectorize` on
    [`09-vectorization/examples/sum-loop.ll`](09-vectorization/examples/sum-loop.ll)
    and inspect vector loop structure, vector loads/stores, and reductions.
-5. Run `opt -S -passes=slp-vectorizer` on
+6. Run `opt -S -passes=slp-vectorizer` on
    [`09-vectorization/examples/slp-scalars.ll`](09-vectorization/examples/slp-scalars.ll)
    and inspect vector packing, `shufflevector`, and straight-line vector IR.
-6. Repeat with `-force-vector-width` and `-force-vector-interleave` to separate
+7. Repeat with `-force-vector-width` and `-force-vector-interleave` to separate
    legality questions from profitability choices.
 
 This path is intentionally about reading and experimenting with transformed IR,

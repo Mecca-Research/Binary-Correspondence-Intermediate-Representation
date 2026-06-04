@@ -1,0 +1,10 @@
+# smoke-llc skip policy
+#
+# Format: <path-or-glob-under-llvm-training><TAB><reason>
+# Keep this file for examples that are intentionally outside the portable llc
+# smoke-test subset. The smoke script prints these entries as informational
+# [skip] lines before lowering the curated allowlist.
+02-types/examples/opaque-pointer-after.ll	includes non-default address-space operations
+04-memory/examples/memory-cookbook.ll	demonstrates target-defined address spaces
+09-vectorization/examples/*.ll	vectorizer teaching inputs/outputs are better checked with opt
+13-advanced-ir/examples/token-outline.ll	uses GC/statepoint token intrinsics

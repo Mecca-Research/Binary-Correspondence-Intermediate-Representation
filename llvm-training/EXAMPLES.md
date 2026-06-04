@@ -19,6 +19,26 @@ without extracting surrounding prose or adding missing declarations.
 - Prefer examples that are small enough to diagnose quickly with `llvm-as` and
   `opt -passes=verify`.
 
+## Data artifacts and schemas
+
+Some chapter `examples/` directories include data artifacts that document input
+or output schemas rather than standalone LLVM IR. For example, the following
+files in `llvm-training/15-binary-analysis/examples/` are schema examples, not
+LLVM IR examples:
+
+- `dynamic-trace-sample.csv`
+- `perf-counter-sample.csv`
+- `bcsa-feature-sample.csv`
+
+These CSV files should not be included in `llvm-as` verification loops. Keep
+assembler verification scoped to known-good standalone `.ll` files, and use
+chapter-specific checks or prose review for data artifacts.
+
+Nearby chapter prose must describe each data artifact's fields, intended
+interpretation, and limitations, especially for hardware-specific or
+profile-specific data such as performance counters, dynamic traces, or features
+derived from a particular binary-analysis workflow.
+
 ## Intentionally invalid examples
 
 Examples that intentionally demonstrate parser, verifier, or migration failures
@@ -79,18 +99,82 @@ Each exercise should include the following pieces of information:
   `001-add.solution.ll` when the exercise benefits from a reference answer.
 
 Solutions that are checked in as `.ll` files are known-good standalone examples
-and must follow the LLVM >= 15 opaque-pointer convention.
+and must follow the LLVM >= 15 opaque-pointer convention. Intentionally broken
+exercise inputs must use `.ll.txt` or include `invalid` in the filename, even if
+the prompt asks the learner to run LLVM and observe the diagnostic.
+
+## Exercise families
+
+Exercises are broader than standalone IR-writing drills. Use the filename and
+verification conventions below so learners and verification scripts know what is
+expected.
+
+- **Standalone IR writing** exercises use `NNN-topic.prompt.md` and, when a
+  reference answer is useful, `NNN-topic.solution.ll`. Checked-in `.solution.ll`
+  files should assemble as complete modules.
+- **Repair** exercises pair a prompt with an intentionally broken input named
+  `NNN-topic.invalid.ll.txt` or another filename containing `invalid`. The
+  broken input should be rejected by LLVM, while any checked-in fixed solution
+  should use `.solution.ll` and assemble normally.
+- **Optimization pass reasoning** exercises may include `NNN-topic.input.ll` and
+  optional `NNN-topic.after-<pass>.ll` snapshots. Inputs should assemble before
+  the pass is run. After-pass files are teaching snapshots for structural
+  comparison; exact value names, attributes, and cleanup can differ by LLVM
+  version.
+- **Language-agnostic review** exercises use prompts without requiring a checked
+  in `.ll` solution when the answer is a review checklist or written diagnosis.
+  Add these before asking learners to implement real passes.
+- **Pass implementation skeletons**, if added later, should live in a clearly
+  named non-verified exercise family with local build instructions. Do not mix
+  C++ skeletons into known-good LLVM IR verification loops.
 
 ## Top-level known-good verification
 
-From the repository root, validate known-good standalone `.ll` examples with:
+From the repository root, validate known-good standalone `.ll` examples with
+the canonical example verification script:
 
 ```bash
-find llvm-training -path '*/examples/*.ll' ! -iname '*invalid*.ll' -print0 | sort -z | while IFS= read -r -d '' f; do
-  llvm-as "$f" -o /dev/null || exit 1
-done
+./llvm-training/tools/verify-examples.sh
 ```
 
-This command intentionally skips `.ll.txt` files and any `.ll` file with
-`invalid` in its name. Use targeted commands from the relevant chapter when you
-want to demonstrate or test an expected failure.
+Maintainers should prefer this script over ad-hoc `find ... llvm-as` loops. It
+assembles every known-good standalone example with `llvm-as` and then runs
+`opt -passes=verify` on the same file, so it catches both parser/assembler
+errors and verifier failures. It also validates
+`llvm-training/examples/broken-example.ll.txt` as the invalid-example tripwire:
+the fixture must remain outside the known-good manifest and must continue to be
+rejected by LLVM.
+
+A manual loop can still be useful as an illustrative fallback when inspecting a
+minimal environment, but it is weaker than `verify-examples.sh` because it does
+not run `opt -passes=verify` and does not check the invalid-example tripwire:
+
+```bash
+find llvm-training -path '*/examples/*.ll' -type f \
+  ! -iname '*.ll.txt' ! -iname '*invalid*' -print0 |
+  sort -z |
+  xargs -0 -n1 llvm-as -o /dev/null
+```
+
+Validate checked-in exercise solutions separately with their maintained script:
+
+```bash
+./llvm-training/tools/verify-exercises.sh
+```
+
+After configuring the repository, the same batch checks are available through
+CMake targets that skip cleanly when the relevant optional LLVM tools are not on
+`PATH`:
+
+```bash
+cmake --build build --target llvm-training-verify-examples
+cmake --build build --target llvm-training-verify-exercises
+cmake --build build --target llvm-training-smoke-llc
+cmake --build build --target llvm-training-smoke-lli
+```
+
+`verify-examples.sh` intentionally skips `.ll.txt` files and any `.ll` file with
+`invalid` in its name, while `verify-exercises.sh` checks every
+`llvm-training/exercises/*.solution.ll` reference answer. Use targeted commands
+from the relevant chapter when you want to demonstrate or test an expected
+failure.
