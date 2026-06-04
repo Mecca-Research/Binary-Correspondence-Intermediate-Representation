@@ -46,6 +46,22 @@ Practice next: [`exercises/003-loop-counter.prompt.md`](exercises/003-loop-count
 [`exercises/004-global-load-store.prompt.md`](exercises/004-global-load-store.prompt.md), and
 [`exercises/005-struct-gep.prompt.md`](exercises/005-struct-gep.prompt.md).
 
+
+## After basics: optimization path
+
+After Path 2, add this chapter when you need to inspect or explain optimizer
+behavior with `opt`:
+
+1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — analysis vs transform vs utility passes, new pass manager syntax, and common pitfalls
+2. [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) — alias analysis, CFG printing/viewing, loop analysis, and scalar evolution
+3. [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) — `mem2reg`, `instcombine`, `simplifycfg`, `adce`, `gvn`, and `loop-unroll`
+4. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — conceptual map for `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
+
+Practice next: run the commands embedded in
+[`07-optimization/examples/mem2reg-before.ll`](07-optimization/examples/mem2reg-before.ll),
+[`07-optimization/examples/dead-code-before.ll`](07-optimization/examples/dead-code-before.ll), and
+[`07-optimization/examples/loop-before.ll`](07-optimization/examples/loop-before.ll).
+
 ## Path 3: Deep dive (one sitting; pick up the rest as needed)
 
 Read everything in numerical order:
@@ -147,6 +163,9 @@ LLVM source):
   file, line, and column?
 - Why does the grammar treat `Linkage` and `ExternLinkage` as separate
   productions?
+- How do `opt -passes=mem2reg`, `opt -passes=instcombine`, and
+  `opt -passes='default<O2>'` differ in scope and intent?
+- Why might `-O3` be a bad default for a size-sensitive workload?
 - What's the difference between `dso_local` and `dso_preemptable`?
 - What's the layout convention for `%bcir.claim`-style aggregate types,
   and what breaks when consumers disagree on the field count?

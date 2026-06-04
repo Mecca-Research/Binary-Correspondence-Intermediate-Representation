@@ -72,6 +72,25 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `bitcast`, `addrspacecast`, `inttoptr`, `ptrtoint` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `landingpad`, `catchpad`, `cleanuppad`, `catchswitch` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 
+## By optimizer pass / `opt` flag
+
+| Name or flag | Kind | Read |
+|---|---|---|
+| `opt -passes=verify` | Utility/checking pipeline | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| `opt -S` | Textual IR output flag | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) |
+| `-disable-output` | Suppress output for check/print workflows | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| `mem2reg` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| `instcombine` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| `simplifycfg` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| `adce` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| `gvn` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| `loop-unroll` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| alias analysis | Analysis family | [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| CFG printing/viewing | Utility/analysis inspection | [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| loop analysis | Analysis | [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| scalar evolution / SCEV | Analysis | [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| `default<O1>`, `default<O2>`, `default<O3>`, `default<Os>`, `default<Oz>` | Predefined new-PM pipelines | [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) |
+
 ## By symbol
 
 | Symbol | Means | See |
