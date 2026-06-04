@@ -49,6 +49,17 @@ than complete executable programs.
 | `llvm-training/07-optimization/examples/dead-code-after-adce.ll` | `llvm-as llvm-training/07-optimization/examples/dead-code-after-adce.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/dead-code-before.ll` | `llvm-as llvm-training/07-optimization/examples/dead-code-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/gvn-after.ll` | `llvm-as llvm-training/07-optimization/examples/gvn-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/gvn-load-after.ll` | `llvm-as llvm-training/07-optimization/examples/gvn-load-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/gvn-load-before.ll` | `llvm-as llvm-training/07-optimization/examples/gvn-load-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/instcombine-canonical-after.ll` | `llvm-as llvm-training/07-optimization/examples/instcombine-canonical-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/instcombine-canonical-before.ll` | `llvm-as llvm-training/07-optimization/examples/instcombine-canonical-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/loop-rotate-while-after.ll` | `llvm-as llvm-training/07-optimization/examples/loop-rotate-while-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/loop-rotate-while-before.ll` | `llvm-as llvm-training/07-optimization/examples/loop-rotate-while-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/loop-unroll-count2-after.ll` | `llvm-as llvm-training/07-optimization/examples/loop-unroll-count2-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/loop-unroll-count2-before.ll` | `llvm-as llvm-training/07-optimization/examples/loop-unroll-count2-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/mem2reg-diamond-after.ll` | `llvm-as llvm-training/07-optimization/examples/mem2reg-diamond-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/mem2reg-diamond-before.ll` | `llvm-as llvm-training/07-optimization/examples/mem2reg-diamond-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/o2-pipeline-inspection.ll` | `llvm-as llvm-training/07-optimization/examples/o2-pipeline-inspection.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/gvn-before.ll` | `llvm-as llvm-training/07-optimization/examples/gvn-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/instcombine-after.ll` | `llvm-as llvm-training/07-optimization/examples/instcombine-after.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/instcombine-before.ll` | `llvm-as llvm-training/07-optimization/examples/instcombine-before.ll -o /dev/null` |
@@ -60,8 +71,16 @@ than complete executable programs.
 | `llvm-training/07-optimization/examples/mem2reg-after.ll` | `llvm-as llvm-training/07-optimization/examples/mem2reg-after.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/mem2reg-before.ll` | `llvm-as llvm-training/07-optimization/examples/mem2reg-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/simplifycfg-after.ll` | `llvm-as llvm-training/07-optimization/examples/simplifycfg-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/simplifycfg-select-after.ll` | `llvm-as llvm-training/07-optimization/examples/simplifycfg-select-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/simplifycfg-select-before.ll` | `llvm-as llvm-training/07-optimization/examples/simplifycfg-select-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/simplifycfg-before.ll` | `llvm-as llvm-training/07-optimization/examples/simplifycfg-before.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/not-vectorizable-call.ll` | `llvm-as llvm-training/09-vectorization/examples/not-vectorizable-call.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/not-vectorizable-dependency.ll` | `llvm-as llvm-training/09-vectorization/examples/not-vectorizable-dependency.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/slp-scalars-after-slp.ll` | `llvm-as llvm-training/09-vectorization/examples/slp-scalars-after-slp.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/slp-scalars-before.ll` | `llvm-as llvm-training/09-vectorization/examples/slp-scalars-before.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/slp-scalars.ll` | `llvm-as llvm-training/09-vectorization/examples/slp-scalars.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/sum-loop-after-loop-vectorize.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop-after-loop-vectorize.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/sum-loop-before.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop-before.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/sum-loop.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop.ll -o /dev/null` |
 | `llvm-training/11-concurrency/examples/atomic-counter.ll` | `llvm-as llvm-training/11-concurrency/examples/atomic-counter.ll -o /dev/null` |
 | `llvm-training/11-concurrency/examples/cmpxchg-loop.ll` | `llvm-as llvm-training/11-concurrency/examples/cmpxchg-loop.ll -o /dev/null` |
@@ -70,3 +89,12 @@ than complete executable programs.
 | `llvm-training/13-advanced-ir/examples/memcpy.ll` | `llvm-as llvm-training/13-advanced-ir/examples/memcpy.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/overflow-intrinsic.ll` | `llvm-as llvm-training/13-advanced-ir/examples/overflow-intrinsic.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/token-outline.ll` | `llvm-as llvm-training/13-advanced-ir/examples/token-outline.ll -o /dev/null` |
+| `llvm-training/15-binary-analysis/examples/constant-time-review.ll` | `llvm-as llvm-training/15-binary-analysis/examples/constant-time-review.ll -o /dev/null` |
+| `llvm-training/bcir-mapping/examples/mixed-stride.ll` | `llvm-as llvm-training/bcir-mapping/examples/mixed-stride.ll -o /dev/null` |
+| `llvm-training/bcir-mapping/examples/register-binding.ll` | `llvm-as llvm-training/bcir-mapping/examples/register-binding.ll -o /dev/null` |
+| `llvm-training/bcir-mapping/examples/vertex-edge-attribute.ll` | `llvm-as llvm-training/bcir-mapping/examples/vertex-edge-attribute.ll -o /dev/null` |
+
+Notes:
+
+- `llvm-training/15-binary-analysis/examples/*.csv` trace, counter, and feature schema samples are data artifacts, not `.ll` assembly targets.
+- `llvm-training/examples/broken-example.ll.txt` is intentionally invalid and remains excluded from the known-good manifest as a tripwire for invalid-example handling.

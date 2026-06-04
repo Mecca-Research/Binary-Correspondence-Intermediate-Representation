@@ -1,5 +1,5 @@
 source_filename = "bcir_rehydrate.ll"
-target triple = "unknown-unknown-unknown"
+target triple = "x86_64-unknown-linux-gnu"
 target datalayout = ""
 
 define i32 @bcir.rehydrate.decide(i64 %old_topo,

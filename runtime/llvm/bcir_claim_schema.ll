@@ -3,7 +3,7 @@
 ;===----------------------------------------------------------------------===;
 
 source_filename = "bcir_claim_schema.ll"
-target triple = "unknown-unknown-unknown"
+target triple = "x86_64-unknown-linux-gnu"
 target datalayout = ""
 
 %bcir.claim = type {

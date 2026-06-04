@@ -29,8 +29,12 @@ testable.
 ```
 llvm-training/
 ├── README.md             you are here
+├── START_HERE.md         fastest orientation path for agents and humans
 ├── CURRICULUM.md         reading order (30-min / 2-hr / deep paths)
+├── RECIPES.md            task-oriented lookup paths for common LLVM work
 ├── INDEX.md              topic / symbol -> file map
+├── SEMVER.md             compatibility and versioning policy for this pack
+├── EVAL.md               evaluation checklist for agent-usefulness
 ├── NOTICE.md             attribution
 ├── 00-foundations/       what IR is, SSA, IR vs asm/other IRs
 ├── 01-syntax/            modules, functions, basic blocks, instr format
@@ -39,12 +43,17 @@ llvm-training/
 ├── 04-memory/            alloca, load/store, globals, address spaces
 ├── 05-control-flow/      br, conditional br, switch, indirectbr
 ├── 06-metadata/          metadata syntax, debug info, profiling, loop hints
-├── 07-optimization/      opt pass model, analyses, transforms, opt levels
+├── 07-optimization/      opt pass model, analyses, transforms, debug, PGO/LTO/BOLT
 ├── 08-pitfalls/          real-world bugs (mostly from BCIR review)
 ├── 09-vectorization/     Loop/SLP vectorizers, diagnostics, vector IR patterns
 ├── 10-grammar/           Textmapper grammar (formal syntax)
-├── 11-concurrency/       atomic orderings, atomic instructions, volatile
-├── 12-backend-jit/       backend pipeline, TableGen, ORC/LLJIT
+├── 11-concurrency/       atomics, volatile, C++/Rust memory-model mapping
+├── 12-backend-jit/       backend pipeline, TableGen, ORC/LLJIT, MC, relocations
+├── 13-advanced-ir/       intrinsics, attributes, UB/poison, ABI details
+├── 14-mlir-bridge/       MLIR concepts and LLVM dialect lowering paths
+├── 15-binary-analysis/   post-codegen analysis, side channels, traces/counters
+├── exercises/            runnable prompts, expected observations, solutions
+├── indexes/              generated or focused lookup indexes
 ├── tools/                example verification and smoke-test scripts
 ├── **/examples/*.ll      standalone examples that must assemble
 └── reference/            instruction quickref, intrinsics, glossary
@@ -86,12 +95,29 @@ Use the checked-in tool scripts from the repository root:
 ./llvm-training/tools/verify-examples.sh
 ./llvm-training/tools/smoke-llc.sh
 ./llvm-training/tools/smoke-lli.sh
+./llvm-training/tools/verify-exercises.sh
+```
+
+The same checks are also available as CMake custom targets after configuring the
+repository. These targets are suitable for minimal CI or local images because
+they skip cleanly when their optional LLVM tools are unavailable:
+
+```bash
+cmake --build build --target llvm-training-verify-examples
+cmake --build build --target llvm-training-smoke-llc
+cmake --build build --target llvm-training-smoke-lli
+cmake --build build --target llvm-training-verify-exercises
 ```
 
 `verify-examples.sh` checks every known-good standalone `*/examples/*.ll` file
 with both `llvm-as` and `opt -passes=verify`, skipping `.ll.txt` files and any
-`.ll` file with `invalid` in its name. Anything else in those known-good files
-that doesn't assemble and verify shouldn't ship.
+`.ll` file with `invalid` in its name. The intentionally invalid tripwire
+fixture `llvm-training/examples/broken-example.ll.txt` proves the skip rule is
+working and should never be renamed to a known-good `.ll` example. Anything else
+in those known-good files that doesn't assemble and verify shouldn't ship.
+
+`verify-exercises.sh` applies the same assembler-and-verifier contract to every
+checked-in `llvm-training/exercises/*.solution.ll` reference answer.
 
 The smoke scripts are intentionally narrower: `smoke-llc.sh` emits assembly for
 a curated portable subset, while `smoke-lli.sh` runs only modules with a safe
@@ -113,6 +139,13 @@ and per-file commands.
 The curated target plateaus around 100-200 MB because quality and
 indexability matter more than raw volume for an agent-context repo.
 
+Recent advanced paths: agents doing non-foundational LLVM work should start
+with [`RECIPES.md`](RECIPES.md) for task-based routes, then jump directly to
+[`15-binary-analysis/README.md`](15-binary-analysis/README.md) for binary
+analysis/security/performance workflows or
+[`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) for
+modern profile-guided, link-time, and post-link optimization context.
+
 ## How BCIR Uses This
 
 Use this repo as a BCIR LLVM IR task index, with BCIR-specific lowering notes in
@@ -123,11 +156,14 @@ Use this repo as a BCIR LLVM IR task index, with BCIR-specific lowering notes in
 | Writing or reviewing runtime `.ll` files | Syntax ([modules](01-syntax/01-modules-functions-blocks.md), [instructions](01-syntax/02-instruction-format.md)), [types](02-types/02-composite-types.md), [memory](04-memory/02-load-store.md), [control flow](05-control-flow/02-conditional-br.md), [pitfalls](08-pitfalls/README.md) |
 | Debugging verifier errors | [`08-pitfalls/README.md`](08-pitfalls/README.md) |
 | Changing BCIR runtime ABI structs | [type schema drift](08-pitfalls/05-type-schema-drift.md), [BCIR runtime ABI mapping](bcir-mapping/05-runtime-abi.md) |
-| Adding intrinsics | [common intrinsics](13-advanced-ir/01-common-intrinsics.md), [target-specific intrinsics](13-advanced-ir/02-target-specific-intrinsics.md), [immarg pitfall](08-pitfalls/06-immarg-violation.md) |
-| Adding atomic/concurrent behavior | [atomic orderings](11-concurrency/01-atomic-orderings.md), [atomic instructions](11-concurrency/02-atomic-instructions.md), [volatile vs atomic](11-concurrency/03-volatile-vs-atomic.md) |
-| Optimizing generated IR | [pass model](07-optimization/01-pass-model.md), [transform passes](07-optimization/03-common-transform-passes.md), [vectorization](09-vectorization/README.md) |
+| Adding intrinsics or attributes | [common intrinsics](13-advanced-ir/01-common-intrinsics.md), [attributes](13-advanced-ir/04-attributes.md), [target-specific intrinsics](13-advanced-ir/02-target-specific-intrinsics.md), [immarg pitfall](08-pitfalls/06-immarg-violation.md) |
+| Reviewing undefined-value or poison hazards | [poison, undef, and freeze](13-advanced-ir/05-poison-undef-freeze.md), [attributes](13-advanced-ir/04-attributes.md) |
+| Deciding whether relaxed floating-point math is safe | [fast-math flags](13-advanced-ir/06-fast-math-flags.md), [vectorization](09-vectorization/README.md) |
+| Adding atomic/concurrent behavior | [atomic orderings](11-concurrency/01-atomic-orderings.md), [atomic instructions](11-concurrency/02-atomic-instructions.md), [volatile vs atomic](11-concurrency/03-volatile-vs-atomic.md), [C++/Rust mapping](11-concurrency/04-memory-model-mapping.md) |
+| Optimizing generated IR | [pass model](07-optimization/01-pass-model.md), [transform passes](07-optimization/03-common-transform-passes.md), [debugging passes](07-optimization/05-debugging-passes.md), [PGO/LTO/BOLT](07-optimization/06-pgo-lto-bolt.md), [vectorization](09-vectorization/README.md) |
 | Planning MLIR lowering | [MLIR overview](14-mlir-bridge/01-what-is-mlir.md), [lowering to LLVM dialect](14-mlir-bridge/03-lowering-to-llvm-dialect.md), [BCIR dialect sketch](14-mlir-bridge/04-bcir-as-custom-dialect.md) |
-| Backend/JIT experiments | [codegen pipeline](12-backend-jit/01-codegen-pipeline.md), [ORC JIT](12-backend-jit/03-orc-jit.md) |
+| Backend/JIT experiments | [codegen pipeline](12-backend-jit/01-codegen-pipeline.md), [ORC JIT](12-backend-jit/03-orc-jit.md), [MC and relocations](12-backend-jit/04-mc-and-relocations.md) |
+| Security/performance binary analysis | [microarchitecture side channels](15-binary-analysis/01-microarchitecture-side-channels.md), [dynamic traces/counters](15-binary-analysis/02-dynamic-traces-and-counters.md), [interpretable BCSA features](15-binary-analysis/03-interpretable-bcsa-features.md) |
 
 ## Relationship to the BCIR project
 

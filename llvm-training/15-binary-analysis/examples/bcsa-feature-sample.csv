@@ -1,0 +1,4 @@
+function,basic_blocks,edges,cyclomatic_complexity,loads,stores,calls,atomics,vector_ops,opcode_hash
+branch_on_secret,3,2,1,0,0,0,0,0,bbh:branch-demo
+select_on_secret,1,0,1,0,0,0,0,0,bbh:select-demo
+atomic_increment,3,3,2,1,0,0,1,0,bbh:atomic-loop-demo

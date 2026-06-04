@@ -27,18 +27,19 @@ After Path 1, add:
 7. [`02-types/02-composite-types.md`](02-types/02-composite-types.md) — include the GEP basics in
    `Accessing struct fields` / aggregate access examples
 8. [`02-types/03-opaque-and-pointer-types.md`](02-types/03-opaque-and-pointer-types.md)
-9. [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) — moving from typed pointers to `ptr`
-10. [`04-memory/01-alloca.md`](04-memory/01-alloca.md)
-11. [`04-memory/02-load-store.md`](04-memory/02-load-store.md) — typed memory operations,
+9. [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) — migration dispatcher
+10. [`02-types/05-opaque-pointer-migration-patterns.md`](02-types/05-opaque-pointer-migration-patterns.md) — where typed-pointer facts moved (`load`, `store`, `getelementptr`, calls)
+11. [`04-memory/01-alloca.md`](04-memory/01-alloca.md)
+12. [`04-memory/02-load-store.md`](04-memory/02-load-store.md) — typed memory operations,
     especially explicit access types with opaque pointers
-12. [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md)
-13. [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md)
-14. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata syntax and common attachments
-15. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — source locations and debug-info nodes
-16. [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) — branch weights and loop hints
-17. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
+13. [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md)
+14. [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md)
+15. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata syntax and common attachments
+16. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — source locations and debug-info nodes
+17. [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) — branch weights and loop hints
+18. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
     terminators, comparison, memory, conversion, and other/call instructions
-18. All six files in `08-pitfalls/` — each is ≤ 5 minutes
+19. All six files in `08-pitfalls/` — each is ≤ 5 minutes
 
 Now you can read and write straightforward IR. Verifier failures should
 make sense.
@@ -72,8 +73,11 @@ reason about optimization strength, pass pipelines, and vectorized IR:
 
 1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass pipelines and `opt -passes=...` spelling
 2. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — optimization levels: `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
-3. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization with the Loop Vectorizer and SLP Vectorizer
-4. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
+3. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
+4. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization dispatcher
+5. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
+6. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md) and [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md) — blockers, commands, and observations
+7. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
 
 Practice next: run the commands in
 [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c),
@@ -89,6 +93,7 @@ After Path 2, add this chapter when reading or writing shared-memory IR:
 2. [`11-concurrency/01-atomic-orderings.md`](11-concurrency/01-atomic-orderings.md) — atomic orderings: not atomic vs `unordered`, `monotonic`, acquire/release, `acq_rel`, and `seq_cst`
 3. [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md) — atomic instructions: `load atomic`, `store atomic`, `cmpxchg`, `atomicrmw`, and `fence` syntax
 4. [`11-concurrency/03-volatile-vs-atomic.md`](11-concurrency/03-volatile-vs-atomic.md) — why volatile access behavior and atomic synchronization are orthogonal
+5. [`11-concurrency/04-memory-model-mapping.md`](11-concurrency/04-memory-model-mapping.md) — mapping C++ and Rust orderings to LLVM atomics
 
 Practice next: inspect and assemble the examples in
 [`11-concurrency/examples/atomic-counter.ll`](11-concurrency/examples/atomic-counter.ll),
@@ -105,22 +110,43 @@ target machine code or when embedding LLVM as a JIT compiler:
 2. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — codegen pipeline: SelectionDAG, GlobalISel, `MachineInstr`, register allocation, and MC emission
 3. [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) — TableGen syntax, generated backend include files, registers, instructions, patterns, and scheduling data
 4. [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) — ORC JIT and `LLJIT`: adding modules, symbol lookup, function pointers, and resource ownership
-5. Skim [`12-backend-jit/examples/minimal-instruction.td`](12-backend-jit/examples/minimal-instruction.td) and [`12-backend-jit/examples/lljit-outline.cpp.md`](12-backend-jit/examples/lljit-outline.cpp.md) as compact reference outlines.
+5. [`12-backend-jit/05-orc-layers.md`](12-backend-jit/05-orc-layers.md) — ORC internals: `ExecutionSession`, `JITDylib`, layers, materialization, symbol interning, and JITLink handoff
+6. [`12-backend-jit/04-mc-and-relocations.md`](12-backend-jit/04-mc-and-relocations.md) — MC layer concepts, relocations, and JIT missing-symbol debugging
+7. Skim [`12-backend-jit/examples/minimal-instruction.td`](12-backend-jit/examples/minimal-instruction.td) and [`12-backend-jit/examples/lljit-outline.cpp.md`](12-backend-jit/examples/lljit-outline.cpp.md) as compact reference outlines.
 
 This path is intentionally advanced: it assumes you can already read LLVM IR and
 optimizer output, then follows the handoff into backend data structures, target
 descriptions, and runtime code generation.
 
 
+## Binary analysis and dynamic execution path
+
+After the Backend/JIT path, add this path for security-sensitive code, BCSA, or
+performance investigations where final binary behavior matters:
+
+1. [`15-binary-analysis/README.md`](15-binary-analysis/README.md) — overview of static IR plus runtime evidence.
+2. [`15-binary-analysis/01-microarchitecture-side-channels.md`](15-binary-analysis/01-microarchitecture-side-channels.md) — cache, branch-prediction, and timing side-channel review.
+3. [`15-binary-analysis/02-dynamic-traces-and-counters.md`](15-binary-analysis/02-dynamic-traces-and-counters.md) — trace/counter schemas and pairing runtime evidence with IR.
+4. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — how profiles, LTO, ThinLTO, and BOLT can reshape the final binary.
+5. [`15-binary-analysis/03-interpretable-bcsa-features.md`](15-binary-analysis/03-interpretable-bcsa-features.md) — cheap, explainable BCSA triage before dense embeddings.
+6. Inspect [`15-binary-analysis/examples/`](15-binary-analysis/examples/) for the constant-time review IR and tiny trace/counter/feature schemas.
+
+This path explicitly prevents an agent from treating static IR equivalence as a
+security or performance verdict.
+
 ## Advanced IR constructs path
 
 After Path 2, add this path when unusual IR syntax, target hooks, or special
 case constructs appear in generated modules:
 
-1. [`reference/intrinsics.md`](reference/intrinsics.md) — common intrinsics, overloaded names, `immarg`, memory/lifetime/debug intrinsics, and target-specific intrinsic families
-2. [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md) — special types such as `token`, `metadata`, `x86_mmx`, `x86_fp80`, and `ppc_fp128`
-3. [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) — target-specific address spaces and `addrspacecast`
-4. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — target-specific operations as they leave IR and become machine-level lowering decisions
+1. [`reference/intrinsics.md`](reference/intrinsics.md) and [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) — declaration rules plus a focused category quick reference for common, memory/lifetime/debug, and target-specific intrinsic families
+2. [`13-advanced-ir/01-common-intrinsics.md`](13-advanced-ir/01-common-intrinsics.md) and [`13-advanced-ir/02-target-specific-intrinsics.md`](13-advanced-ir/02-target-specific-intrinsics.md) — common and target-specific intrinsic spelling in standalone modules
+3. [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md) — special scalar, token, metadata, target-extension, and scalable-vector types
+4. [`13-advanced-ir/04-attributes.md`](13-advanced-ir/04-attributes.md) — function, parameter, memory-effect, pointer, and ABI attributes
+5. [`13-advanced-ir/05-poison-undef-freeze.md`](13-advanced-ir/05-poison-undef-freeze.md) — `undef`, poison propagation, `freeze`, vector lanes, `noundef`, and verifier-valid unsafe patterns
+6. [`13-advanced-ir/06-fast-math-flags.md`](13-advanced-ir/06-fast-math-flags.md) — `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn`, `reassoc`, `fast`, FP comparisons, reductions, and vectorization consequences
+7. [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) — target-specific address spaces and `addrspacecast`
+8. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — target-specific operations as they leave IR and become machine-level lowering decisions
 
 Use this path as a lookup-oriented supplement rather than a linear beginner
 chapter. It is most useful when reviewing frontend output, GPU IR, intrinsic
@@ -153,7 +179,7 @@ Read everything in numerical order:
         ↓
 07-optimization/  →  09-vectorization/
         ↓                    ↓
-08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  12-backend-jit/  →  reference/
+08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  12-backend-jit/  →  15-binary-analysis/  →  reference/
 ```
 
 Cross-references inside each chapter (`See also:`) let you jump
@@ -171,15 +197,16 @@ focused path when you need to understand LLVM's vectorized IR and diagnostics:
    for loop transformation hints and the limits of metadata.
 2. Read [`09-vectorization/README.md`](09-vectorization/README.md) for the
    difference between the Loop Vectorizer and SLP Vectorizer.
-3. Run the commands in [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c)
+3. Read [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md) for the legality facts that block or allow vectorization.
+4. Run the commands from [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md) with [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c)
    to compare successful and missed loop-vectorization remarks.
-4. Run `opt -S -passes=loop-vectorize` on
+5. Run `opt -S -passes=loop-vectorize` on
    [`09-vectorization/examples/sum-loop.ll`](09-vectorization/examples/sum-loop.ll)
    and inspect vector loop structure, vector loads/stores, and reductions.
-5. Run `opt -S -passes=slp-vectorizer` on
+6. Run `opt -S -passes=slp-vectorizer` on
    [`09-vectorization/examples/slp-scalars.ll`](09-vectorization/examples/slp-scalars.ll)
    and inspect vector packing, `shufflevector`, and straight-line vector IR.
-6. Repeat with `-force-vector-width` and `-force-vector-interleave` to separate
+7. Repeat with `-force-vector-width` and `-force-vector-interleave` to separate
    legality questions from profitability choices.
 
 This path is intentionally about reading and experimenting with transformed IR,
@@ -212,58 +239,12 @@ foundations ────────┐
         ↓
    backend/JIT (when target lowering or runtime compilation appears)
         ↓
+   binary analysis (when dynamic execution, side channels, or BCSA matter)
+        ↓
    reference (intrinsics, special types, MLIR terms, and quick lookups)
 ```
 
-## What's intentionally NOT here yet
+## Roadmap and self-test
 
-If your task touches these, you'll need external references:
-
-- **Custom optimization pass design** — pass-manager internals beyond the introductory `opt` vectorization commands
-- **C/C++ frontend internals** — Clang, AST, lowering rules
-- **Calls / returns / comparisons** — a small dedicated chapter may be worth adding if
-  this training set keeps expanding beyond the quick reference
-
-These are roadmap items; PRs welcome.
-
-## Self-test prompts
-
-After each path, the agent should be able to answer (without grepping
-LLVM source):
-
-**After Path 1**
-- What does SSA stand for and why does it require phi nodes?
-- What's the difference between `@foo` and `%foo`?
-- Why must a basic block end with a terminator?
-
-**After Path 2**
-- What's the type of the pointer returned by `alloca i32`?
-- In opaque-pointer IR, where do `load`, `store`, and `getelementptr` spell the memory access or element type?
-- Why is `add i32 (load ...), 1` invalid as a single expression?
-- When does a `br i1` need two labels, and what's the type of the
-  condition?
-
-**After Path 3**
-- How do you follow an instruction `!dbg` attachment back to a source
-  file, line, and column?
-- Why does the grammar treat `Linkage` and `ExternLinkage` as separate
-  productions?
-- How do `opt -passes=mem2reg`, `opt -passes=instcombine`, and
-  `opt -passes='default<O2>'` differ in scope and intent?
-- Why might `-O3` be a bad default for a size-sensitive workload?
-- What's the difference between `dso_local` and `dso_preemptable`?
-- What's the layout convention for `%bcir.claim`-style aggregate types,
-  and what breaks when consumers disagree on the field count?
-  (See [`08-pitfalls/05-type-schema-drift.md`](08-pitfalls/05-type-schema-drift.md).)
-
-**After Path 4**
-- When should you expect the Loop Vectorizer rather than the SLP Vectorizer to act?
-- What source or IR facts help LLVM prove a loop has predictable memory access and no unsafe dependencies?
-- Which commands show successful vs missed loop-vectorization remarks?
-- What IR clues suggest vectorization occurred (`<N x T>`, vector loads/stores, `shufflevector`, reductions)?
-
-**After the backend / JIT path**
-- Where do SelectionDAG and GlobalISel fit relative to `MachineInstr`?
-- Why does register allocation happen after machine-code SSA optimizations?
-- Which backend facts are commonly generated from TableGen `.td` files?
-- What ownership objects should you identify before adding modules to an ORC `LLJIT`?
+- [`ROADMAP.md`](ROADMAP.md) tracks topics intentionally left out or only covered at an introductory level.
+- [`EVAL.md`](EVAL.md) contains the corpus self-test and path-specific self-test prompts.
