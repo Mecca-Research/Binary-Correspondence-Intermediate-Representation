@@ -14,6 +14,11 @@ runtime ABI ideas into standalone LLVM IR that still assembles and verifies.
 | Mixed-stride graph indexing | [`03-mixed-stride-graphs.md`](03-mixed-stride-graphs.md) | [`examples/mixed-stride.ll`](examples/mixed-stride.ll) |
 | HAM hints and memory guidance | [`04-ham-hints.md`](04-ham-hints.md) | Use the prefetch/profile runtime examples linked from the page |
 | Runtime ABI surface | [`05-runtime-abi.md`](05-runtime-abi.md) | Use the schema and executor runtime examples linked from the page |
+| Claim lowering pipeline | [`06-claim-lowering-pipeline.md`](06-claim-lowering-pipeline.md) | [`examples/claim-resource-lookup.ll`](examples/claim-resource-lookup.ll), [`examples/bcir-op-runtime-wrapper.ll`](examples/bcir-op-runtime-wrapper.ll) |
+| GAADMSF graph/data-movement operations | [`07-gaadmsf-operations.md`](07-gaadmsf-operations.md) | [`examples/graph-fragment-struct-gep.ll`](examples/graph-fragment-struct-gep.ll), [`examples/mixed-stride-byte-offset.ll`](examples/mixed-stride-byte-offset.ll) |
+| Dragon Egg runtime-owned operations | [`08-dragon-egg-operations.md`](08-dragon-egg-operations.md) | [`examples/bcir-op-runtime-wrapper.ll`](examples/bcir-op-runtime-wrapper.ll) |
+| Runtime call boundaries | [`09-runtime-call-boundaries.md`](09-runtime-call-boundaries.md) | [`examples/bcir-op-runtime-wrapper.ll`](examples/bcir-op-runtime-wrapper.ll), [`examples/claim-resource-lookup.ll`](examples/claim-resource-lookup.ll) |
+| Metadata and diagnostics | [`10-metadata-and-diagnostics.md`](10-metadata-and-diagnostics.md) | [`examples/ham-hint-prefetch.ll`](examples/ham-hint-prefetch.ll), [`examples/diagnostic-metadata-preservation.ll`](examples/diagnostic-metadata-preservation.ll) |
 
 ## Shared lowering model
 
@@ -75,9 +80,21 @@ From the repository root:
 llvm-as llvm-training/bcir-mapping/examples/vertex-edge-attribute.ll -o /dev/null
 llvm-as llvm-training/bcir-mapping/examples/register-binding.ll -o /dev/null
 llvm-as llvm-training/bcir-mapping/examples/mixed-stride.ll -o /dev/null
+llvm-as llvm-training/bcir-mapping/examples/graph-fragment-struct-gep.ll -o /dev/null
+llvm-as llvm-training/bcir-mapping/examples/claim-resource-lookup.ll -o /dev/null
+llvm-as llvm-training/bcir-mapping/examples/ham-hint-prefetch.ll -o /dev/null
+llvm-as llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.ll -o /dev/null
+llvm-as llvm-training/bcir-mapping/examples/mixed-stride-byte-offset.ll -o /dev/null
+llvm-as llvm-training/bcir-mapping/examples/diagnostic-metadata-preservation.ll -o /dev/null
 opt -passes=verify llvm-training/bcir-mapping/examples/vertex-edge-attribute.ll -o /dev/null
 opt -passes=verify llvm-training/bcir-mapping/examples/register-binding.ll -o /dev/null
 opt -passes=verify llvm-training/bcir-mapping/examples/mixed-stride.ll -o /dev/null
+opt -passes=verify llvm-training/bcir-mapping/examples/graph-fragment-struct-gep.ll -o /dev/null
+opt -passes=verify llvm-training/bcir-mapping/examples/claim-resource-lookup.ll -o /dev/null
+opt -passes=verify llvm-training/bcir-mapping/examples/ham-hint-prefetch.ll -o /dev/null
+opt -passes=verify llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.ll -o /dev/null
+opt -passes=verify llvm-training/bcir-mapping/examples/mixed-stride-byte-offset.ll -o /dev/null
+opt -passes=verify llvm-training/bcir-mapping/examples/diagnostic-metadata-preservation.ll -o /dev/null
 ```
 
 The repository-wide helper also covers these files:

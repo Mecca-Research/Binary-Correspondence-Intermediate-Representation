@@ -1,0 +1,9 @@
+# Source-like mixed-stride graph.
+layout %edges {
+  row_stride_bytes = %row_stride
+  column_stride_bytes = %column_stride
+  edge_payload_bias_bytes = %payload_bias
+}
+
+query payload_address(%base, %row, %column)
+query payload_i32(%base, %row, %column)

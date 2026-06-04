@@ -1,0 +1,3 @@
+case,secret,branches,loads,cycles
+masked_even,0,0,2,38
+masked_odd,1,0,2,39
