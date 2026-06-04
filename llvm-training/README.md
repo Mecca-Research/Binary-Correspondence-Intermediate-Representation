@@ -51,35 +51,43 @@ llvm-training/
 Numbered directories follow the reading order. Gaps are reserved for future
 chapters such as instruction encyclopedia and toolchain material.
 
-## Example and snippet conventions
+## Example, exercise, and snippet conventions
 
-Use these labels consistently in chapters so readers and CI know what is
-runnable versus illustrative:
+Use the conventions in [`EXAMPLES.md`](EXAMPLES.md) consistently so readers
+and CI know what is runnable versus illustrative. In short:
 
 - **Standalone examples** live in `*/examples/*.ll` (for example,
-  `00-foundations/examples/simple-add.ll`) and must assemble with `llvm-as`.
+  `00-foundations/examples/simple-add.ll`) and must assemble with LLVM >= 15
+  opaque pointers.
+- **Intentionally invalid examples** should use `.ll.txt` or include `invalid`
+  in the filename so broad verification commands can skip them.
+- **Pass-output examples** should use clear before/after names such as
+  `foo-before.ll`, `foo-after-mem2reg.ll`, or `foo-after-o2.ll`.
+- **Chapter examples** should have a local `examples/README.md` or a short
+  section listing the commands for that chapter's examples.
+- **Exercises** should document the prompt, expected command, expected
+  observation, and optional solution file.
 - **Fenced `llvm` snippets** in chapter prose may be fragments: single
   instructions, declarations, partial functions, or before/after excerpts. Do
   not assume a fenced snippet is independently runnable unless the chapter says
   so or links to a standalone example.
-- **Intentionally invalid snippets** should be labeled **invalid** or
-  **verifier failure example** near the fence or section heading, and should
-  explain the expected parser/verifier failure.
-- If an embedded snippet is intended to be part of the assembly guarantee, move
-  it into `examples/*.ll` or add a dedicated extraction/test path before
-  documenting it as runnable.
+
+If an embedded snippet is intended to be part of the assembly guarantee, move it
+into `examples/*.ll` or add a dedicated extraction/test path before documenting
+it as runnable.
 
 ## Verifying standalone examples
 
 ```bash
-find llvm-training -path '*/examples/*.ll' -print0 | sort -z | while IFS= read -r -d '' f; do
+find llvm-training -path '*/examples/*.ll' ! -iname '*invalid*.ll' -print0 | sort -z | while IFS= read -r -d '' f; do
   llvm-as "$f" -o /dev/null || exit 1
 done
 ```
 
-CI runs this check only against standalone `*/examples/*.ll` files when
-`llvm-as` is available. Anything in those files that doesn't assemble
-shouldn't ship. See `llvm-training/examples/README.md` for the current
+CI runs this check only against known-good standalone `*/examples/*.ll` files
+when `llvm-as` is available, skipping `.ll.txt` files and any `.ll` file with
+`invalid` in its name. Anything else in those known-good files that doesn't
+assemble shouldn't ship. See `llvm-training/examples/README.md` for the current
 standalone example manifest and per-file commands.
 
 ## How big is this repo, and how big should it get?
