@@ -1,0 +1,13 @@
+; Intentionally invalid: %merge has predecessors %left and %right, but the phi
+; mentions %entry instead of %right.
+define i32 @bad_phi(i1 %c) {
+entry:
+  br i1 %c, label %left, label %right
+left:
+  br label %merge
+right:
+  br label %merge
+merge:
+  %x = phi i32 [ 1, %left ], [ 2, %entry ]
+  ret i32 %x
+}
