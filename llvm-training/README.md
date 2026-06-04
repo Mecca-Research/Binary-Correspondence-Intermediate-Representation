@@ -45,8 +45,7 @@ llvm-training/
 ├── 10-grammar/           Textmapper grammar (formal syntax)
 ├── 11-concurrency/       atomic orderings, atomic instructions, volatile
 ├── 12-backend-jit/       backend pipeline, TableGen, ORC/LLJIT
-├── 13-advanced-ir/       advanced intrinsics, target intrinsics, special types
-├── 14-mlir-bridge/       MLIR concepts, dialects, lowering to LLVM dialect
+├── tools/                example verification and smoke-test scripts
 ├── **/examples/*.ll      standalone examples that must assemble
 └── reference/            instruction quickref, intrinsics, glossary
 ```
@@ -79,19 +78,29 @@ If an embedded snippet is intended to be part of the assembly guarantee, move it
 into `examples/*.ll` or add a dedicated extraction/test path before documenting
 it as runnable.
 
-## Verifying standalone examples
+## Verifying and smoke-testing standalone examples
+
+Use the checked-in tool scripts from the repository root:
 
 ```bash
-find llvm-training -path '*/examples/*.ll' ! -iname '*invalid*.ll' -print0 | sort -z | while IFS= read -r -d '' f; do
-  llvm-as "$f" -o /dev/null || exit 1
-done
+./llvm-training/tools/verify-examples.sh
+./llvm-training/tools/smoke-llc.sh
+./llvm-training/tools/smoke-lli.sh
 ```
 
-CI runs this check only against known-good standalone `*/examples/*.ll` files
-when `llvm-as` is available, skipping `.ll.txt` files and any `.ll` file with
-`invalid` in its name. Anything else in those known-good files that doesn't
-assemble shouldn't ship. See `llvm-training/examples/README.md` for the current
-standalone example manifest and per-file commands.
+`verify-examples.sh` checks every known-good standalone `*/examples/*.ll` file
+with both `llvm-as` and `opt -passes=verify`, skipping `.ll.txt` files and any
+`.ll` file with `invalid` in its name. Anything else in those known-good files
+that doesn't assemble and verify shouldn't ship.
+
+The smoke scripts are intentionally narrower: `smoke-llc.sh` emits assembly for
+a curated portable subset, while `smoke-lli.sh` runs only modules with a safe
+`main` or explicitly documented runnable entrypoint. Most examples are
+assembly-only because they are library-style snippets, optimization
+before/after artifacts, target-lowering examples, or intrinsic/metadata
+demonstrations rather than complete programs. See
+`llvm-training/examples/README.md` for the current standalone example manifest
+and per-file commands.
 
 ## How big is this repo, and how big should it get?
 
