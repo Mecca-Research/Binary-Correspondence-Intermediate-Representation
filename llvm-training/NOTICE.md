@@ -10,10 +10,12 @@ from real bugs in the sibling BCIR project.
 
 ## Grammar
 
-`10-grammar/llvm-ir.tm` is a Textmapper grammar covering LLVM IR
-(~LLVM 7+, with updates through opaque pointers and modern attributes).
-The grammar declares its own package as `github.com/llir/ll`. Used here
-as a reference; consult upstream for the canonical version.
+`10-grammar/llvm-ir.tm` is a full local snapshot of the Textmapper grammar from
+`llir/grammar` commit `5a3820b516f7903e27ad16ebe4add1ec634f1c05`, consumed by
+the `github.com/llir/ll` parser generator project. Upstream `llir/grammar` is
+offered under 0BSD and Unlicense terms; it is included here so agents can answer
+syntax-shape questions without leaving the repository. LLVM LangRef and the
+target `llvm-as` remain the final authorities for current-version semantics.
 
 ## LLVM upstream
 

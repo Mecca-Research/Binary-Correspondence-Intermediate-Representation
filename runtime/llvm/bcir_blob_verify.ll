@@ -1,5 +1,5 @@
 source_filename = "bcir_blob_verify.ll"
-target triple = "unknown-unknown-unknown"
+target triple = "x86_64-unknown-linux-gnu"
 target datalayout = ""
 
 %bcir.blob.header = type { i32, i16, i16, i64, i64, i64, i64, i64 }

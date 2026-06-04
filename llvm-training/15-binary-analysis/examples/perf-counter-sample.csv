@@ -1,0 +1,5 @@
+binary_id,function,input_class,cycles,instructions,branches,branch_misses,l1d_misses,llc_misses,notes
+sha256:demo,branch_on_secret,secret_bit_0,1000,300,12,1,4,0,pinned-core-warm-cache
+sha256:demo,branch_on_secret,secret_bit_1,1180,305,12,5,4,0,pinned-core-warm-cache
+sha256:demo,select_on_secret,secret_bit_0,980,290,8,0,3,0,pinned-core-warm-cache
+sha256:demo,select_on_secret,secret_bit_1,982,290,8,0,3,0,pinned-core-warm-cache

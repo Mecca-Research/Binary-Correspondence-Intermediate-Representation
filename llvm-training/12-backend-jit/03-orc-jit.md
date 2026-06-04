@@ -14,6 +14,11 @@ This chapter gives the mental model. For a full tutorial project, follow the
 Kaleidoscope ORC JIT tutorial rather than embedding a large buildable example
 here.
 
+For lower-level ORC internals, including `ExecutionSession`, `JITDylib`,
+compile/object/transform layers, materialization responsibility, symbol
+interning, and the JITLink relocation boundary, continue with
+[`05-orc-layers.md`](05-orc-layers.md).
+
 ## What ORC provides
 
 ORC is a framework for runtime compilation and linking. It can:

@@ -4,7 +4,7 @@
 
 | Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
 |---|---|---|---|---|
-| Training-only exemplar; no affected BCIR `.ll` file recorded | Unknown | `opt -passes=verify <bcir-address-space-output>.ll -o /dev/null` | Preserve pointer address spaces through loads, stores, GEPs, casts, and helper signatures. | [`04-memory/04-address-spaces.md`](../04-memory/04-address-spaces.md); [`02-types/03-opaque-and-pointer-types.md`](../02-types/03-opaque-and-pointer-types.md); [`04-memory/03-global-variables.md`](../04-memory/03-global-variables.md) |
+| Training-only exemplar; no affected BCIR `.ll` file recorded | Training-only / preventive | `opt -passes=verify <bcir-address-space-output>.ll -o /dev/null` | Preserve pointer address spaces through loads, stores, GEPs, casts, and helper signatures. | [`04-memory/04-address-spaces.md`](../04-memory/04-address-spaces.md); [`02-types/03-opaque-and-pointer-types.md`](../02-types/03-opaque-and-pointer-types.md); [`04-memory/03-global-variables.md`](../04-memory/03-global-variables.md) |
 
 ## The error
 
