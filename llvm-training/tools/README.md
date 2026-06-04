@@ -13,6 +13,10 @@ the same checks without a build-system dependency.
 | `smoke-llc.sh` | Lowers curated examples with `llc` to catch target-codegen regressions without treating every IR snippet as a runnable program. | `llc` |
 | `verify-exercises.sh` | Assembles every checked-in `llvm-training/exercises/*.solution.ll` file and runs `opt -passes=verify` so reference answers stay valid standalone LLVM IR. | `llvm-as`, `opt` |
 | `smoke-bolt.sh` | Builds the BOLT layout demo fixture, records baseline symbol/disassembly text, and exits with a clean skip when `llvm-bolt` is not installed. A full profile-driven rewrite still requires host support for `perf2bolt`/`perf`; see the walkthrough. | Optional `llvm-bolt`; `clang` and `llvm-objdump` when BOLT is present |
+| `demo-mem2reg.sh` | Demonstrates `mem2reg` on the checked-in diamond example, first verifying the fixture and then printing the promoted SSA form to stdout. | `opt` |
+| `demo-o2.sh` | Runs `default<O2>` on the O2 pipeline inspection fixture, writes the optimized IR to a temporary file, prints it, and optionally smoke-checks the result with `llc` when available. | `opt`; optional `llc` |
+| `demo-vectorize.sh` | Shows loop-vectorization remarks from `clang` on the C fixture, then forces a visible loop-vectorizer experiment over the checked-in IR and prints the transformed IR. | `opt`, `clang` |
+| `demo-debug-pipeline.sh` | Captures `-debug-pass-manager` output for `default<O2>` into a temporary log, then prints the pass schedule for inspection. | `opt` |
 
 ## CMake batch targets
 
@@ -60,5 +64,7 @@ When adding a new script:
 
 1. keep it executable and runnable from the repository root;
 2. document required external tools and any intentional skips in this README;
-3. make it fail closed when a required fixture disappears;
-4. wire it into `.github/workflows/ci.yml` when it guards repository health.
+3. print the command being demonstrated before executing it;
+4. write demo output either to stdout or to a clearly named file under `${TMPDIR:-/tmp}`;
+5. make it fail closed when a required fixture disappears;
+6. wire it into `.github/workflows/ci.yml` when it guards repository health.

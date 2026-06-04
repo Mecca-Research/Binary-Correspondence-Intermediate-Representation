@@ -10,6 +10,13 @@ before/after modules.
 opt -disable-output -debug-pass-manager -passes='default<O2>' input.ll
 ```
 
+For a checked-in pipeline-inspection fixture, use the demo script. It records the
+pass-manager diagnostics in a temporary log and then prints the log:
+
+```bash
+llvm-training/tools/demo-debug-pipeline.sh
+```
+
 `-debug-pass-manager` prints pass-manager scheduling: module passes, CGSCC
 passes, function passes, loop passes, analyses, invalidations, and adaptors. Use
 it when a pass did not run or ran at a different nesting level than expected.
@@ -18,6 +25,13 @@ For a single pass:
 
 ```bash
 opt -S -passes='mem2reg' input.ll -o output.ll
+```
+
+From the repository root, run the checked-in wrapper when you want a ready-made
+`mem2reg` demonstration that verifies the fixture and prints the transformed IR:
+
+```bash
+llvm-training/tools/demo-mem2reg.sh
 ```
 
 Always include `-S` when you want textual IR; otherwise `opt` may write bitcode.
@@ -47,6 +61,16 @@ For large default pipelines, reduce the question:
 Some LLVM builds also support pass bisection controls for stopping after a pass
 count. If available, use them to find the first pass that changes or breaks the
 IR, then switch back to an explicit minimal pipeline for the checked-in repro.
+
+To inspect the full O2 transformation itself rather than only the pass schedule,
+run:
+
+```bash
+llvm-training/tools/demo-o2.sh
+```
+
+The script writes the optimized IR to `${TMPDIR:-/tmp}` before printing it, so
+it can be diffed or reused by follow-up `llc` experiments.
 
 ## IR diff workflow
 
