@@ -20,7 +20,9 @@ define double @demo() {
 Many intrinsics are **overloaded**: the type is encoded in the
 mangled name. `llvm.sqrt.f64` takes a `double`; `llvm.sqrt.f32`
 takes a `float`. You must declare the exact mangled name you call.
-For target-specific namespaces and token/special types, see
+For a compact table of common families, signatures, attributes, and `immarg`
+constraints, start with [`intrinsics-quickref.md`](intrinsics-quickref.md). For
+target-specific namespaces and token/special types, see
 [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md)
 and [`../13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md).
 
@@ -280,6 +282,7 @@ Each declaration tells you:
 
 ## See also
 
+- [`intrinsics-quickref.md`](intrinsics-quickref.md) — compact family/signature/constraint table for common intrinsics
 - [`instruction-quickref.md`](instruction-quickref.md) — instructions that pair with intrinsic results, including aggregate extraction, vector operations, atomics, EH pads, and `freeze`
 - [`../09-vectorization/README.md`](../09-vectorization/README.md) — vectorizer overview and examples
 - [`../11-concurrency/`](../11-concurrency/) — atomic orderings and volatile-vs-atomic
