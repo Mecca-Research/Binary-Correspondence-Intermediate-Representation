@@ -29,6 +29,11 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | Conditional `br i1 %c, label %t, label %f` | [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md) |
 | `switch` | [`05-control-flow/03-switch.md`](05-control-flow/03-switch.md) |
 | `indirectbr`, `blockaddress` | [`05-control-flow/04-indirectbr.md`](05-control-flow/04-indirectbr.md) |
+| Metadata syntax (`!0`, `!{...}`, `distinct`, named metadata) | [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) |
+| Instruction metadata attachments (`!dbg`, `!tbaa`, `!prof`, `!range`, `!nonnull`, `!llvm.loop`) | [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) |
+| Debug-info nodes (`DIFile`, `DICompileUnit`, `DISubprogram`, `DILocation`, `DILocalVariable`) | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
+| Reading `!dbg` locations back to source files and lines | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
+| Profile metadata, branch weights, loop metadata | [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) |
 | Pitfalls overview | [`08-pitfalls/README.md`](08-pitfalls/README.md) |
 | Nested instruction-as-expression syntax errors | [`08-pitfalls/01-nested-instruction-expressions.md`](08-pitfalls/01-nested-instruction-expressions.md) |
 | PHI node predecessor mismatch | [`08-pitfalls/02-phi-predecessor-mismatch.md`](08-pitfalls/02-phi-predecessor-mismatch.md) |
@@ -69,7 +74,7 @@ Agent: this is your entry point. Find your topic, jump to the file.
 |---|---|---|
 | `%foo`, `%42` | Local (function-scope) identifier | [`01-syntax/01-modules-functions-blocks.md`](01-syntax/01-modules-functions-blocks.md) |
 | `@foo`, `@42` | Global identifier | [`01-syntax/01-modules-functions-blocks.md`](01-syntax/01-modules-functions-blocks.md) |
-| `!N`, `!"str"`, `!{...}` | Metadata | [`01-syntax/03-comments-metadata.md`](01-syntax/03-comments-metadata.md) |
+| `!N`, `!"str"`, `!{...}` | Metadata | [`01-syntax/03-comments-metadata.md`](01-syntax/03-comments-metadata.md), [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) |
 | `#N` | Attribute group ID | [`reference/glossary.md`](reference/glossary.md) |
 | `$foo` | Comdat name | [`reference/glossary.md`](reference/glossary.md) |
 | `i1`, `i8`, `i32`, `i64`, `iN` | Integer of N bits | [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md) |
@@ -96,6 +101,9 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `align`, `alignstack` | [`04-memory/02-load-store.md`](04-memory/02-load-store.md) |
 | `volatile`, `atomic`, `syncscope`, `seq_cst`, `acquire`, `release`, `monotonic`, `unordered`, `acq_rel` | [`04-memory/02-load-store.md`](04-memory/02-load-store.md) |
 | `blockaddress`, `indirectbr` | [`05-control-flow/04-indirectbr.md`](05-control-flow/04-indirectbr.md) |
+| `distinct` | [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) |
+| `DIFile`, `DICompileUnit`, `DISubprogram`, `DILocation`, `DILocalVariable` | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
+| `branch_weights`, `llvm.loop.unroll.*`, `llvm.loop.vectorize.*` | [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) |
 
 ## Cross-references to the BCIR project
 

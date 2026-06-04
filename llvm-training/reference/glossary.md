@@ -51,6 +51,20 @@
 | **DSO** | Dynamic Shared Object (shared library) |
 | **ODR** | One Definition Rule (C++ term; relevant to `linkonce_odr` etc.) |
 | **TBAA** | Type-Based Alias Analysis; conveyed via `!tbaa` metadata |
+| **Metadata attachment** | Side information appended to an instruction or function, written like `, !dbg !12` or `, !prof !3` |
+| **Named metadata** | Module-scope metadata list such as `!llvm.dbg.cu = !{!0}` |
+| **`distinct` metadata** | Metadata node whose identity must be preserved instead of being uniqued with identical nodes |
+| **`!dbg`** | Debug-location attachment pointing to source-level debug-info metadata |
+| **`DIFile`** | Debug-info node naming a source file and directory |
+| **`DICompileUnit`** | Debug-info root for one source compilation; listed in `!llvm.dbg.cu` |
+| **`DISubprogram`** | Debug-info node describing a source-level function and scope |
+| **`DILocation`** | Debug-info node mapping IR to source line, column, and scope |
+| **`DILocalVariable`** | Debug-info node describing a source variable |
+| **`!prof`** | Profiling metadata attachment, commonly used for branch weights |
+| **Branch weights** | `!prof` metadata tuple such as `!{!"branch_weights", i32 90, i32 10}` that guides hot/cold optimization decisions |
+| **`!llvm.loop`** | Loop metadata attachment, usually on the latch terminator, carrying loop transformation hints |
+| **`!range`** | Metadata describing allowed value intervals, commonly `[lo, hi)` for integer facts |
+| **`!nonnull`** | Metadata asserting a loaded pointer is not null |
 | **LangRef** | The LLVM Language Reference Manual: https://llvm.org/docs/LangRef.html — the canonical truth for IR syntax and semantics |
 | **Target triple** | `<arch>-<vendor>-<sys>-<env>` string identifying the target platform |
 | **Datalayout** | String describing target endianness, type alignments, and pointer sizes per address space |
@@ -61,7 +75,7 @@
 |---|---|---|
 | `@` | Global identifier (function, global variable, alias) | Module |
 | `%` | Local identifier (SSA value or basic-block label) | Function |
-| `!` | Metadata (string, tuple, node, or named list) | Module |
+| `!` | Metadata (string, tuple, node, named list, or attachment kind) | Module / instruction |
 | `#` | Attribute group ID | Module |
 | `$` | Comdat name | Module |
 
@@ -69,4 +83,5 @@
 
 - [`../INDEX.md`](../INDEX.md) — top-level topic map
 - `10-grammar/llvm-ir.tm` — formal grammar
-- LangRef — https://llvm.org/docs/LangRef.html
+- LangRef metadata — https://llvm.org/docs/LangRef.html#metadata
+- Source Level Debugging with LLVM — https://llvm.org/docs/SourceLevelDebugging.html

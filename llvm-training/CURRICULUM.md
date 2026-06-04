@@ -32,9 +32,12 @@ After Path 1, add:
     especially explicit access types with opaque pointers
 11. [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md)
 12. [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md)
-13. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
+13. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata syntax and common attachments
+14. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — source locations and debug-info nodes
+15. [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) — branch weights and loop hints
+16. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
     terminators, comparison, memory, conversion, and other/call instructions
-14. All six files in `08-pitfalls/` — each is ≤ 5 minutes
+17. All six files in `08-pitfalls/` — each is ≤ 5 minutes
 
 Now you can read and write straightforward IR. Verifier failures should
 make sense.
@@ -51,6 +54,8 @@ Read everything in numerical order:
 00-foundations/   →  01-syntax/   →  02-types/  →  03-constants/
                                                     ↓
 05-control-flow/  ←  04-memory/  ←─────────────────┘
+        ↓
+06-metadata/
         ↓
 08-pitfalls/      →  10-grammar/  →  reference/
 ```
@@ -74,6 +79,8 @@ foundations ────────┐
         ↓
    control-flow
         ↓
+   metadata
+        ↓
    pitfalls (read alongside everything above)
         ↓
    grammar (open as reference)
@@ -83,10 +90,9 @@ foundations ────────┐
 
 If your task touches these, you'll need external references:
 
-- **Optimization passes** — `opt` flags, pass pipeline design
+- **Optimization passes** — `opt` flags, pass pipeline design beyond metadata hints
 - **MLIR** — the dialect framework above LLVM IR
 - **Backend / codegen** — `llc`, target lowering, register allocation
-- **Debug info (DWARF)** — beyond `!dbg !N` attachment syntax
 - **JIT (`lli`, ORC, MCJIT)**
 - **C/C++ frontend internals** — Clang, AST, lowering rules
 - **TableGen** — used to define targets and instruction sets
@@ -112,6 +118,8 @@ LLVM source):
   condition?
 
 **After Path 3**
+- How do you follow an instruction `!dbg` attachment back to a source
+  file, line, and column?
 - Why does the grammar treat `Linkage` and `ExternLinkage` as separate
   productions?
 - What's the difference between `dso_local` and `dso_preemptable`?
