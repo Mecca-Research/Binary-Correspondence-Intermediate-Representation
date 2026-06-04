@@ -27,17 +27,18 @@ After Path 1, add:
 7. [`02-types/02-composite-types.md`](02-types/02-composite-types.md) — include the GEP basics in
    `Accessing struct fields` / aggregate access examples
 8. [`02-types/03-opaque-and-pointer-types.md`](02-types/03-opaque-and-pointer-types.md)
-9. [`04-memory/01-alloca.md`](04-memory/01-alloca.md)
-10. [`04-memory/02-load-store.md`](04-memory/02-load-store.md) — typed memory operations,
+9. [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) — moving from typed pointers to `ptr`
+10. [`04-memory/01-alloca.md`](04-memory/01-alloca.md)
+11. [`04-memory/02-load-store.md`](04-memory/02-load-store.md) — typed memory operations,
     especially explicit access types with opaque pointers
-11. [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md)
-12. [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md)
-13. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata syntax and common attachments
-14. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — source locations and debug-info nodes
-15. [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) — branch weights and loop hints
-16. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
+12. [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md)
+13. [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md)
+14. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata syntax and common attachments
+15. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — source locations and debug-info nodes
+16. [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) — branch weights and loop hints
+17. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
     terminators, comparison, memory, conversion, and other/call instructions
-17. All six files in `08-pitfalls/` — each is ≤ 5 minutes
+18. All six files in `08-pitfalls/` — each is ≤ 5 minutes
 
 Now you can read and write straightforward IR. Verifier failures should
 make sense.
@@ -154,6 +155,7 @@ LLVM source):
 
 **After Path 2**
 - What's the type of the pointer returned by `alloca i32`?
+- In opaque-pointer IR, where do `load`, `store`, and `getelementptr` spell the memory access or element type?
 - Why is `add i32 (load ...), 1` invalid as a single expression?
 - When does a `br i1` need two labels, and what's the type of the
   condition?

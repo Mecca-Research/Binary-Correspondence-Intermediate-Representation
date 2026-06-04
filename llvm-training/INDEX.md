@@ -17,6 +17,7 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `void`, `ptr`, `label`, `token`, `metadata` | [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md) |
 | Struct, array, vector | [`02-types/02-composite-types.md`](02-types/02-composite-types.md) |
 | Opaque types, opaque pointers | [`02-types/03-opaque-and-pointer-types.md`](02-types/03-opaque-and-pointer-types.md) |
+| Opaque pointer migration from typed pointers | [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) |
 | Integer constants (`i32 42`) | [`03-constants/01-integer.md`](03-constants/01-integer.md) |
 | Floating-point constants (`float 3.14`, hex floats) | [`03-constants/02-floating-point.md`](03-constants/02-floating-point.md) |
 | String constants (`c"...\00"`) | [`03-constants/03-strings.md`](03-constants/03-strings.md) |
@@ -59,8 +60,8 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `fadd`, `fsub`, `fmul`, `fdiv`, `frem`, `fneg` | [`01-syntax/02-instruction-format.md`](01-syntax/02-instruction-format.md), [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `and`, `or`, `xor`, `shl`, `lshr`, `ashr` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `alloca` | [`04-memory/01-alloca.md`](04-memory/01-alloca.md) |
-| `load`, `store` | [`04-memory/02-load-store.md`](04-memory/02-load-store.md) |
-| `getelementptr` (GEP) | [`02-types/02-composite-types.md`](02-types/02-composite-types.md), [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
+| `load`, `store` | [`04-memory/02-load-store.md`](04-memory/02-load-store.md), [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) |
+| `getelementptr` (GEP) | [`02-types/02-composite-types.md`](02-types/02-composite-types.md), [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md), [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `br`, `switch`, `indirectbr`, `ret`, `unreachable` | `05-control-flow/` (all four files) |
 | `phi` | [`00-foundations/02-ssa.md`](00-foundations/02-ssa.md) |
 | `icmp`, `fcmp` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
@@ -69,7 +70,7 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `atomicrmw`, `cmpxchg`, `fence` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `extractvalue`, `insertvalue`, `extractelement`, `insertelement`, `shufflevector` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md), [`09-vectorization/README.md`](09-vectorization/README.md) |
 | `trunc`, `zext`, `sext`, `fptrunc`, `fpext`, `fptoui`, `fptosi`, `uitofp`, `sitofp` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
-| `bitcast`, `addrspacecast`, `inttoptr`, `ptrtoint` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
+| `bitcast`, `addrspacecast`, `inttoptr`, `ptrtoint` | [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md), [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `landingpad`, `catchpad`, `cleanuppad`, `catchswitch` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 
 ## By optimizer pass / `opt` flag
@@ -101,7 +102,7 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `#N` | Attribute group ID | [`reference/glossary.md`](reference/glossary.md) |
 | `$foo` | Comdat name | [`reference/glossary.md`](reference/glossary.md) |
 | `i1`, `i8`, `i32`, `i64`, `iN` | Integer of N bits | [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md) |
-| `ptr` | Generic pointer (opaque) | [`02-types/03-opaque-and-pointer-types.md`](02-types/03-opaque-and-pointer-types.md) |
+| `ptr` | Generic pointer (opaque) | [`02-types/03-opaque-and-pointer-types.md`](02-types/03-opaque-and-pointer-types.md), [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) |
 | `;` | Comment to end of line | [`01-syntax/03-comments-metadata.md`](01-syntax/03-comments-metadata.md) |
 | `c"..."` | C-style char array constant | [`03-constants/03-strings.md`](03-constants/03-strings.md) |
 

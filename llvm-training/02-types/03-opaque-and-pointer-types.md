@@ -165,6 +165,7 @@ appears only where the structure is dereferenced.
 
 - [`01-primitive-types.md`](01-primitive-types.md) — `ptr` and `void` listed as primitives
 - [`02-composite-types.md`](02-composite-types.md) — structs, arrays, vectors
+- [`04-opaque-pointer-migration.md`](04-opaque-pointer-migration.md) — migrating legacy typed-pointer IR to modern `ptr` IR
 - [`../04-memory/02-load-store.md`](../04-memory/02-load-store.md) — load/store through `ptr` with
   explicit access type
 - [`../04-memory/04-address-spaces.md`](../04-memory/04-address-spaces.md) — `addrspace(N)` and
