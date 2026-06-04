@@ -10,13 +10,29 @@ they are moved into one of these files.
 See [`../EXAMPLES.md`](../EXAMPLES.md) for naming rules for invalid examples,
 pass-output examples, chapter-local command documentation, and exercises.
 
-Run the full manifest with:
+Run the full manifest from the repository root with:
 
 ```bash
-find llvm-training -path '*/examples/*.ll' ! -iname '*invalid*.ll' -print0 | sort -z | while IFS= read -r -d '' f; do
-  llvm-as "$f" -o /dev/null || exit 1
-done
+./llvm-training/tools/verify-examples.sh
 ```
+
+That script prints per-file `llvm-as` and `opt -passes=verify` status, and it
+skips `.ll.txt` files plus filenames containing `invalid`. For quick backend and
+interpreter checks, use:
+
+```bash
+./llvm-training/tools/smoke-llc.sh
+./llvm-training/tools/smoke-lli.sh
+```
+
+`smoke-llc.sh` uses a curated portable subset and avoids examples that require
+unavailable targets, non-default address-space lowering, target-specific
+intrinsics, GC/statepoint tokens, or analysis-only vectorizer artifacts.
+`smoke-lli.sh` is narrower still: it runs only examples with a safe `main` or an
+explicitly documented runnable entrypoint. Most files in this manifest are
+assembly-only because they expose functions that need caller-provided arguments,
+show optimization before/after IR, or demonstrate intrinsics/metadata rather
+than complete executable programs.
 
 | File | Expected command |
 |---|---|
