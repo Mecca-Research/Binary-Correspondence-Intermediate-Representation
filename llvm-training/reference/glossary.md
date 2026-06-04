@@ -92,6 +92,15 @@
 | **LangRef** | The LLVM Language Reference Manual: https://llvm.org/docs/LangRef.html — the canonical truth for IR syntax and semantics |
 | **Target triple** | `<arch>-<vendor>-<sys>-<env>` string identifying the target platform |
 | **Datalayout** | String describing target endianness, type alignments, and pointer sizes per address space |
+| **MLIR** | Multi-Level Intermediate Representation: LLVM's extensible framework for multiple interoperable dialect IRs above and beside LLVM IR. |
+| **MLIR dialect** | A namespace of MLIR operations, types, attributes, verifiers, interfaces, and lowering rules. |
+| **MLIR operation** | The universal MLIR IR unit; it may model an instruction, function, module, branch, graph node, loop, or domain-specific construct. |
+| **MLIR region** | A nested body owned by an operation; regions contain blocks and preserve structured control/data scopes. |
+| **MLIR block argument** | SSA value passed into a block; often lowers to PHI-like values when converted to LLVM IR. |
+| **LLVM dialect** | MLIR dialect that models LLVM IR operations and types inside MLIR; it is not the same textual syntax as `.ll` LLVM IR. |
+| **Dialect conversion** | MLIR lowering mechanism using legality targets, type converters, and rewrite patterns to replace operations from one dialect with another. |
+| **BCIR dialect** | Proposed/custom MLIR dialect namespace for BCIR graph concepts such as vertices, edges, attributes, HAM hints, register binding, and Mixed Stride graphs. |
+
 
 ## Identifier prefix table
 
@@ -109,6 +118,8 @@
 - [`../13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md) — common intrinsic signatures and pitfalls
 - [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md) — target intrinsic namespaces and feature requirements
 - [`../13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md) — special types and tokens
+- [`../14-mlir-bridge/01-what-is-mlir.md`](../14-mlir-bridge/01-what-is-mlir.md) — MLIR modules, operations, regions, blocks, attributes, and types
+- [`../14-mlir-bridge/03-lowering-to-llvm-dialect.md`](../14-mlir-bridge/03-lowering-to-llvm-dialect.md) — LLVM dialect and lowering pipeline
 - `10-grammar/llvm-ir.tm` — formal grammar
 - LLVM Atomic Instructions and Concurrency Guide — https://llvm.org/docs/Atomics.html
 - LangRef atomic ordering — https://llvm.org/docs/LangRef.html#atomic-memory-ordering-constraints

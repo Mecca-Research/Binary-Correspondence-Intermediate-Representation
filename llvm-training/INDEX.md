@@ -60,6 +60,10 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | Advanced IR: common intrinsics (`llvm.memcpy`, overflow, lifetime, prefetch) | [`13-advanced-ir/01-common-intrinsics.md`](13-advanced-ir/01-common-intrinsics.md) |
 | Advanced IR: target-specific intrinsics (`llvm.x86.*`, features, portability) | [`13-advanced-ir/02-target-specific-intrinsics.md`](13-advanced-ir/02-target-specific-intrinsics.md) |
 | Advanced IR: special types (`token`, `metadata`, `half`, `bfloat`, `x86_amx`, scalable vectors) | [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md) |
+| MLIR overview: modules, operations, regions, blocks, attributes, types | [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) |
+| MLIR dialect design and operation anatomy | [`14-mlir-bridge/02-dialects-and-operations.md`](14-mlir-bridge/02-dialects-and-operations.md) |
+| MLIR lowering to LLVM dialect / LLVM IR | [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md), [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/lowered-llvm-dialect.mlir) |
+| BCIR as an MLIR custom dialect | [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md), [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-sketch.mlir) |
 | Formal Textmapper grammar | `10-grammar/llvm-ir.tm` |
 | Grammar notes / how to use it | [`10-grammar/README.md`](10-grammar/README.md) |
 | Instruction quick reference | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
@@ -185,6 +189,9 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `loop-vectorize`, `slp-vectorizer`, `default<O3>` pass names | [`09-vectorization/README.md`](09-vectorization/README.md) |
 | `class`, `def`, `let`, `multiclass`, `defm` | [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) |
 | `llvm-tblgen`, `-gen-register-info`, `-gen-instr-info`, `-gen-dag-isel` | [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) |
+| `module`, `builtin.module`, `func.func`, `arith.*`, `scf.*`, `cf.*`, `memref.*` | [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md), [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) |
+| `llvm.func`, `llvm.load`, `llvm.call`, `llvm.br`, `llvm.return` | [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md), [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/lowered-llvm-dialect.mlir) |
+| `bcir.vertex`, `bcir.edge`, `bcir.attribute`, `bcir.ham_hint`, `bcir.bind_register`, `bcir.mixed_stride.graph` | [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md), [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-sketch.mlir) |
 
 
 ## Cross-references to the BCIR project
@@ -201,3 +208,5 @@ Real-world examples of LLVM IR concepts (and bugs) live next door:
 | Cross-module function definition collision | `runtime/llvm/bcir_gem_seed.ll` vs `bcir_worklist.ll` | [`08-pitfalls/04-duplicate-symbols.md`](08-pitfalls/04-duplicate-symbols.md) |
 | Type schema drift | `%bcir.blob.header` in three files | [`08-pitfalls/05-type-schema-drift.md`](08-pitfalls/05-type-schema-drift.md) |
 | `llvm.prefetch` immarg | `runtime/llvm/bcir_prefetch_profiles.ll` | [`08-pitfalls/06-immarg-violation.md`](08-pitfalls/06-immarg-violation.md) |
+| Vertex-Edge-Attribute custom dialect sketch | `llvm-training/14-mlir-bridge/examples/bcir-dialect-sketch.mlir` | [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) |
+| Lowered BCIR-style LLVM dialect sketch | `llvm-training/14-mlir-bridge/examples/lowered-llvm-dialect.mlir` | [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) |
