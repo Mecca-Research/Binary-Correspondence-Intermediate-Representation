@@ -1,0 +1,7 @@
+# Source-like BCIR graph fragment.
+vertex %v0 { kind = 1, attr = 10 }
+vertex %v1 { kind = 2, attr = 20 }
+edge %e0 from %v0 to %v1 { weight = 7 }
+
+query edge_weight(%e0)
+query source_vertex_attr(%e0)

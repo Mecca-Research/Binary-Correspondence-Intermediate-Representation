@@ -7,8 +7,10 @@ review, and optimization-pass reasoning. Follow the conventions in
 
 - a prompt describing the task;
 - the expected command to check the learner's answer or the checked-in solution;
-- the expected observation, such as successful assembly or a specific diagnostic;
-- an optional standalone `*.solution.ll` file containing one expected answer.
+- the expected observation, such as successful assembly, a specific diagnostic,
+  or a review checklist;
+- a standalone `*.solution.ll` file for executable LLVM IR answers, or a
+  `*.solution.md` file for markdown-only review answers.
 
 Repair exercises keep broken starting points as `*.invalid.ll.txt` so they remain
 visibly intentional failures and do not enter any known-good `.ll` verification
@@ -19,8 +21,33 @@ not a byte-for-byte contract for every LLVM release.
 Solutions must assemble with LLVM >= 15, where opaque pointers are the default.
 Use `ptr` for pointer-typed values instead of typed pointers such as `i32*`.
 
-If your LLVM tools are installed with a version suffix, replace `llvm-as` in the
-commands with the matching binary, for example `llvm-as-15` or `llvm-as-18`.
+Solutions that are executable LLVM IR must assemble with LLVM >= 15, where opaque
+pointers are the default. Use `ptr` for pointer-typed values instead of typed
+pointers such as `i32*`. Markdown solutions are review references and should be
+read with `cat`, not assembled.
+
+If your LLVM tools are installed with a version suffix, replace `llvm-as` and
+`opt` in the commands with the matching binaries, for example `llvm-as-15`,
+`llvm-as-18`, `opt-15`, or `opt-18`.
+
+## Exercise families
+
+- **Standalone IR writing**: write small, complete LLVM IR modules and verify
+  them with `llvm-as`.
+- **Review and repair**: inspect broken or risky IR, explain the issue, and, when
+  applicable, compare against a fixed `*.solution.ll`.
+- **Optimization pass reasoning**: assemble input snapshots and run a named pass,
+  then compare the structural output against the prompt's expected observation.
+- **Beginner/intermediate metadata and semantic review**: practice preserving
+  debug/profile metadata, auditing attributes, and recognizing poison or
+  floating-point-contract hazards.
+- **BCIR lowering**: lower Binary Correspondence Intermediate Representation
+  concepts to ordinary LLVM IR constructs such as GEPs, explicit byte offsets,
+  runtime calls, prefetch intrinsics, and metadata catalogs.
+- **MLIR bridge review**: reason about dialect boundaries, operation lowering,
+  and type conversion before or during conversion to the LLVM dialect.
+- **Backend/JIT review**: diagnose symbol resolution, ORC layer failures, and the
+  path from target descriptions to `MCInst` emission.
 
 ## Exercise list
 

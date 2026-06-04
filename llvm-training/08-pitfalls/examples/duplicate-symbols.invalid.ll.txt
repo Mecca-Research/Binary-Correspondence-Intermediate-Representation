@@ -1,0 +1,3 @@
+; Intentionally invalid: the global name @same is defined twice.
+@same = global i32 1
+@same = global i32 2

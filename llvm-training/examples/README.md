@@ -34,18 +34,41 @@ assembly-only because they expose functions that need caller-provided arguments,
 show optimization before/after IR, or demonstrate intrinsics/metadata rather
 than complete executable programs.
 
+## Standalone `.ll` examples
+
 | File | Expected command |
 |---|---|
+| `llvm-training/00-foundations/examples/dominance-diamond.ll` | `llvm-as llvm-training/00-foundations/examples/dominance-diamond.ll -o /dev/null` |
+| `llvm-training/00-foundations/examples/phi-shape-loop.ll` | `llvm-as llvm-training/00-foundations/examples/phi-shape-loop.ll -o /dev/null` |
 | `llvm-training/00-foundations/examples/simple-add.ll` | `llvm-as llvm-training/00-foundations/examples/simple-add.ll -o /dev/null` |
 | `llvm-training/00-foundations/examples/ssa-phi.ll` | `llvm-as llvm-training/00-foundations/examples/ssa-phi.ll -o /dev/null` |
+| `llvm-training/00-foundations/examples/ssa-renaming-before.ll` | `llvm-as llvm-training/00-foundations/examples/ssa-renaming-before.ll -o /dev/null` |
+| `llvm-training/01-syntax/examples/declarations-vs-definitions.ll` | `llvm-as llvm-training/01-syntax/examples/declarations-vs-definitions.ll -o /dev/null` |
 | `llvm-training/01-syntax/examples/module-anatomy.ll` | `llvm-as llvm-training/01-syntax/examples/module-anatomy.ll -o /dev/null` |
+| `llvm-training/01-syntax/examples/module-flags.ll` | `llvm-as llvm-training/01-syntax/examples/module-flags.ll -o /dev/null` |
+| `llvm-training/01-syntax/examples/target-triple-datalayout.ll` | `llvm-as llvm-training/01-syntax/examples/target-triple-datalayout.ll -o /dev/null` |
+| `llvm-training/02-types/examples/named-structs.ll` | `llvm-as llvm-training/02-types/examples/named-structs.ll -o /dev/null` |
 | `llvm-training/02-types/examples/opaque-pointer-after.ll` | `llvm-as llvm-training/02-types/examples/opaque-pointer-after.ll -o /dev/null` |
+| `llvm-training/02-types/examples/packed-structs.ll` | `llvm-as llvm-training/02-types/examples/packed-structs.ll -o /dev/null` |
 | `llvm-training/02-types/examples/types-cookbook.ll` | `llvm-as llvm-training/02-types/examples/types-cookbook.ll -o /dev/null` |
+| `llvm-training/02-types/examples/vector-types.ll` | `llvm-as llvm-training/02-types/examples/vector-types.ll -o /dev/null` |
+| `llvm-training/03-constants/examples/aggregate-constants.ll` | `llvm-as llvm-training/03-constants/examples/aggregate-constants.ll -o /dev/null` |
+| `llvm-training/03-constants/examples/constant-expressions.ll` | `llvm-as llvm-training/03-constants/examples/constant-expressions.ll -o /dev/null` |
 | `llvm-training/03-constants/examples/constants-cookbook.ll` | `llvm-as llvm-training/03-constants/examples/constants-cookbook.ll -o /dev/null` |
+| `llvm-training/03-constants/examples/null-undef-poison-freeze.ll` | `llvm-as llvm-training/03-constants/examples/null-undef-poison-freeze.ll -o /dev/null` |
+| `llvm-training/04-memory/examples/aliasing-noalias.ll` | `llvm-as llvm-training/04-memory/examples/aliasing-noalias.ll -o /dev/null` |
+| `llvm-training/04-memory/examples/alignment-load-store.ll` | `llvm-as llvm-training/04-memory/examples/alignment-load-store.ll -o /dev/null` |
+| `llvm-training/04-memory/examples/gep-store-before-after.ll` | `llvm-as llvm-training/04-memory/examples/gep-store-before-after.ll -o /dev/null` |
 | `llvm-training/04-memory/examples/memory-cookbook.ll` | `llvm-as llvm-training/04-memory/examples/memory-cookbook.ll -o /dev/null` |
 | `llvm-training/05-control-flow/examples/control-flow-cookbook.ll` | `llvm-as llvm-training/05-control-flow/examples/control-flow-cookbook.ll -o /dev/null` |
+| `llvm-training/05-control-flow/examples/indirectbr-table.ll` | `llvm-as llvm-training/05-control-flow/examples/indirectbr-table.ll -o /dev/null` |
+| `llvm-training/05-control-flow/examples/switch-lowering.ll` | `llvm-as llvm-training/05-control-flow/examples/switch-lowering.ll -o /dev/null` |
+| `llvm-training/05-control-flow/examples/unreachable-error-block.ll` | `llvm-as llvm-training/05-control-flow/examples/unreachable-error-block.ll -o /dev/null` |
+| `llvm-training/06-metadata/examples/debug-location-preserved.ll` | `llvm-as llvm-training/06-metadata/examples/debug-location-preserved.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/debug-location.ll` | `llvm-as llvm-training/06-metadata/examples/debug-location.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/loop-metadata.ll` | `llvm-as llvm-training/06-metadata/examples/loop-metadata.ll -o /dev/null` |
+| `llvm-training/06-metadata/examples/profile-branch-weights.ll` | `llvm-as llvm-training/06-metadata/examples/profile-branch-weights.ll -o /dev/null` |
+| `llvm-training/06-metadata/examples/tbaa-load-store.ll` | `llvm-as llvm-training/06-metadata/examples/tbaa-load-store.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/dead-code-after-adce.ll` | `llvm-as llvm-training/07-optimization/examples/dead-code-after-adce.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/dead-code-before.ll` | `llvm-as llvm-training/07-optimization/examples/dead-code-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/gvn-after.ll` | `llvm-as llvm-training/07-optimization/examples/gvn-after.ll -o /dev/null` |
@@ -82,9 +105,15 @@ than complete executable programs.
 | `llvm-training/09-vectorization/examples/sum-loop-after-loop-vectorize.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop-after-loop-vectorize.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/sum-loop-before.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop-before.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/sum-loop.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop.ll -o /dev/null` |
+| `llvm-training/10-grammar/examples/instruction-forms.ll` | `llvm-as llvm-training/10-grammar/examples/instruction-forms.ll -o /dev/null` |
+| `llvm-training/10-grammar/examples/metadata-attachments.ll` | `llvm-as llvm-training/10-grammar/examples/metadata-attachments.ll -o /dev/null` |
+| `llvm-training/10-grammar/examples/top-level-entities.ll` | `llvm-as llvm-training/10-grammar/examples/top-level-entities.ll -o /dev/null` |
 | `llvm-training/11-concurrency/examples/atomic-counter.ll` | `llvm-as llvm-training/11-concurrency/examples/atomic-counter.ll -o /dev/null` |
+| `llvm-training/11-concurrency/examples/atomic-ordering-pairs.ll` | `llvm-as llvm-training/11-concurrency/examples/atomic-ordering-pairs.ll -o /dev/null` |
 | `llvm-training/11-concurrency/examples/cmpxchg-loop.ll` | `llvm-as llvm-training/11-concurrency/examples/cmpxchg-loop.ll -o /dev/null` |
+| `llvm-training/11-concurrency/examples/fence-patterns.ll` | `llvm-as llvm-training/11-concurrency/examples/fence-patterns.ll -o /dev/null` |
 | `llvm-training/11-concurrency/examples/fence.ll` | `llvm-as llvm-training/11-concurrency/examples/fence.ll -o /dev/null` |
+| `llvm-training/11-concurrency/examples/volatile-vs-atomic.ll` | `llvm-as llvm-training/11-concurrency/examples/volatile-vs-atomic.ll -o /dev/null` |
 | `llvm-training/12-backend-jit/examples/codegen-input.ll` | `llvm-as llvm-training/12-backend-jit/examples/codegen-input.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/fast-math-flags.ll` | `llvm-as llvm-training/13-advanced-ir/examples/fast-math-flags.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/memcpy.ll` | `llvm-as llvm-training/13-advanced-ir/examples/memcpy.ll -o /dev/null` |
