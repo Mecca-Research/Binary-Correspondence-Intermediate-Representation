@@ -19,10 +19,23 @@ Start with the examples:
 
 - [`examples/sum-loop.c`](examples/sum-loop.c) — small C loop for `clang`
   vectorization diagnostics.
-- [`examples/sum-loop.ll`](examples/sum-loop.ll) — scalar LLVM IR loop that
-  `opt` can feed to the Loop Vectorizer.
-- [`examples/slp-scalars.ll`](examples/slp-scalars.ll) — straight-line scalar
-  operations that the SLP Vectorizer can pack together.
+- [`examples/sum-loop.ll`](examples/sum-loop.ll) — original scalar LLVM IR loop
+  kept as a compact `opt` input.
+- [`examples/sum-loop-before.ll`](examples/sum-loop-before.ll) — scalar loop
+  input before Loop Vectorization.
+- [`examples/sum-loop-after-loop-vectorize.ll`](examples/sum-loop-after-loop-vectorize.ll) —
+  cleaned-up example of Loop Vectorizer output with vector loop bodies and a
+  reduction.
+- [`examples/slp-scalars.ll`](examples/slp-scalars.ll) — original straight-line
+  scalar operations kept as a compact SLP input.
+- [`examples/slp-scalars-before.ll`](examples/slp-scalars-before.ll) — scalar
+  straight-line operations before SLP Vectorization.
+- [`examples/slp-scalars-after-slp.ll`](examples/slp-scalars-after-slp.ll) —
+  cleaned-up example of SLP output with vector operations and a lane shuffle.
+- [`examples/not-vectorizable-dependency.ll`](examples/not-vectorizable-dependency.ll) —
+  loop-carried memory dependency example that should remain scalar.
+- [`examples/not-vectorizable-call.ll`](examples/not-vectorizable-call.ll) —
+  unknown-call example that should produce a missed-vectorization explanation.
 
 ## Loop Vectorizer vs SLP Vectorizer
 
@@ -152,19 +165,39 @@ From the repository root:
 
 ```sh
 # Show successful loop-vectorization remarks from clang.
-clang -O3 -Rpass=loop-vectorize llvm-training/09-vectorization/examples/sum-loop.c -c -o /tmp/sum-loop.o
+clang -O3 -Rpass=loop-vectorize \
+  llvm-training/09-vectorization/examples/sum-loop.c -c -o /tmp/sum-loop.o
 
 # Show missed loop-vectorization remarks from clang.
-clang -O3 -Rpass-missed=loop-vectorize llvm-training/09-vectorization/examples/sum-loop.c -c -o /tmp/sum-loop.o
+clang -O3 -Rpass-missed=loop-vectorize \
+  llvm-training/09-vectorization/examples/sum-loop.c -c -o /tmp/sum-loop.o
 
 # Run only the Loop Vectorizer over scalar IR.
-opt -S -passes=loop-vectorize llvm-training/09-vectorization/examples/sum-loop.ll -o -
+opt -S -passes=loop-vectorize \
+  llvm-training/09-vectorization/examples/sum-loop-before.ll -o -
+
+# Compare against the cleaned-up expected Loop Vectorizer shape.
+cat llvm-training/09-vectorization/examples/sum-loop-after-loop-vectorize.ll
 
 # Run only the SLP Vectorizer over scalar IR.
-opt -S -passes=slp-vectorizer llvm-training/09-vectorization/examples/slp-scalars.ll -o -
+opt -S -passes=slp-vectorizer \
+  llvm-training/09-vectorization/examples/slp-scalars-before.ll -o -
+
+# Compare against the cleaned-up expected SLP shape.
+cat llvm-training/09-vectorization/examples/slp-scalars-after-slp.ll
+
+# Ask for loop-vectorization missed remarks while running opt.
+opt -S -passes=loop-vectorize \
+  -pass-remarks-missed=loop-vectorize \
+  llvm-training/09-vectorization/examples/not-vectorizable-dependency.ll -o -
+
+opt -S -passes=loop-vectorize \
+  -pass-remarks-missed=loop-vectorize \
+  llvm-training/09-vectorization/examples/not-vectorizable-call.ll -o -
 
 # Run the normal O3 optimization pipeline and print IR.
-opt -S -passes='default<O3>' llvm-training/09-vectorization/examples/sum-loop.ll -o -
+opt -S -passes='default<O3>' \
+  llvm-training/09-vectorization/examples/sum-loop-before.ll -o -
 ```
 
 Notes:
@@ -176,6 +209,21 @@ Notes:
 - Optimization remarks come in passed, missed, and analysis forms. The exact pass
   names in remarks are part of your experiment: try `loop-vectorize`, `slp-vectorizer`,
   or a broader regex such as `.`.
+- The checked-in `*-after-*` files are intentionally cleaned-up teaching
+  snapshots. LLVM's exact output depends on version, target, target features,
+  cost model, vector width, and interleave count.
+
+## Expected observations by example
+
+| Example | Command | What to look for |
+|---|---|---|
+| `sum-loop-before.ll` | `opt -S -passes=loop-vectorize llvm-training/09-vectorization/examples/sum-loop-before.ll -o -` | A vector body may appear for `add_arrays`, and `sum_loop` may show a reduction pattern. Search for `<4 x i32>` or another `<N x i32>` lane count. |
+| `sum-loop-after-loop-vectorize.ll` | `cat llvm-training/09-vectorization/examples/sum-loop-after-loop-vectorize.ll` | Teaching snapshot with vector loads, vector stores, and `@llvm.vector.reduce.add.v4i32` combining lanes into a scalar result. |
+| `slp-scalars-before.ll` | `opt -S -passes=slp-vectorizer llvm-training/09-vectorization/examples/slp-scalars-before.ll -o -` | Packed straight-line operations may become `<4 x i32>` loads, adds, and stores. |
+| `slp-scalars-after-slp.ll` | `cat llvm-training/09-vectorization/examples/slp-scalars-after-slp.ll` | Teaching snapshot with vector arithmetic and a `shufflevector` that changes lane order before storing. |
+| `not-vectorizable-dependency.ll` | `opt -S -passes=loop-vectorize -pass-remarks-missed=loop-vectorize llvm-training/09-vectorization/examples/not-vectorizable-dependency.ll -o -` | Missed-vectorization diagnostics should point at a loop-carried dependency, and the loop should remain scalar. |
+| `not-vectorizable-call.ll` | `opt -S -passes=loop-vectorize -pass-remarks-missed=loop-vectorize llvm-training/09-vectorization/examples/not-vectorizable-call.ll -o -` | Missed-vectorization diagnostics should explain that the unknown call cannot be vectorized safely or profitably. |
+
 
 ## Forcing experiments
 
@@ -191,7 +239,7 @@ clang -O3 -Rpass=loop-vectorize \
 opt -S -passes=loop-vectorize \
   -force-vector-width=4 \
   -force-vector-interleave=2 \
-  llvm-training/09-vectorization/examples/sum-loop.ll -o -
+  llvm-training/09-vectorization/examples/sum-loop-before.ll -o -
 ```
 
 Use forced settings as experiments, not as proof that a setting is fastest. A
@@ -248,10 +296,11 @@ and adds instead. Both represent "combine the vector lanes into one scalar".
    remark.
 2. Compile it again with `-Rpass-missed=loop-vectorize` after changing the loop
    into a dependency-heavy form.
-3. Run `opt -S -passes=loop-vectorize` on `sum-loop.ll` and search for
-   `<N x T>` types.
-4. Run `opt -S -passes=slp-vectorizer` on `slp-scalars.ll` and look for vector
-   arithmetic, vector stores, and `shufflevector`.
+3. Run `opt -S -passes=loop-vectorize` on `sum-loop-before.ll` and search for
+   `<N x T>` types. Compare with `sum-loop-after-loop-vectorize.ll`.
+4. Run `opt -S -passes=slp-vectorizer` on `slp-scalars-before.ll` and look for
+   vector arithmetic, vector stores, and `shufflevector`. Compare with
+   `slp-scalars-after-slp.ll`.
 5. Repeat with `-force-vector-width` and `-force-vector-interleave` to see how
    the generated IR changes.
 
