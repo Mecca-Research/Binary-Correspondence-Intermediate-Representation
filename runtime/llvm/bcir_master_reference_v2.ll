@@ -1,5 +1,5 @@
 source_filename = "bcir_master_reference_v2.ll"
-target triple = "unknown-unknown-unknown"
+target triple = "x86_64-unknown-linux-gnu"
 target datalayout = ""
 
 ; Interface-only master reference for standalone validation.

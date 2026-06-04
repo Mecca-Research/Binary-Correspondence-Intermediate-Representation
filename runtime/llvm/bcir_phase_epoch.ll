@@ -1,5 +1,5 @@
 source_filename = "bcir_phase_epoch.ll"
-target triple = "unknown-unknown-unknown"
+target triple = "x86_64-unknown-linux-gnu"
 target datalayout = ""
 
 declare void @llvm.trap() cold noreturn

@@ -145,6 +145,35 @@ then includes those generated fragments with macros such as
 `GET_INSTRINFO_ENUM`, `GET_REGINFO_TARGET_DESC`, or target-specific include
 patterns.
 
+
+## Minimal `llc` pipeline walkthrough
+
+The checked-in `.td` file is illustrative, but the mental model for a real target
+is this path from TableGen records to emitted machine code:
+
+```text
+ToyInstrInfo.td / ToyRegisterInfo.td
+  --llvm-tblgen--> ToyGenInstrInfo.inc, ToyGenRegisterInfo.inc, ToyGenAsmWriter.inc
+  --included by--> TargetInstrInfo, TargetRegisterInfo, AsmPrinter, MCCodeEmitter
+  --used by llc--> IR operation -> MachineInstr -> MCInst -> encoded bytes / assembly
+```
+
+A tiny instruction's data flow looks like:
+
+1. A `.td` `def ADDrr` records operands, assembly text, encoding bits, and flags.
+2. `llvm-tblgen -gen-instr-info` assigns an opcode enum and descriptor table row.
+3. Instruction selection creates a target `MachineInstr` with that opcode.
+4. Late machine passes allocate physical registers and remove pseudos.
+5. The target lowering code converts `MachineInstr` operands into an `MCInst`.
+6. `MCCodeEmitter` uses generated encoding tables plus target C++ to write bytes.
+7. `MCStreamer` emits either textual assembly or object records with fixups.
+8. If an operand references a symbol whose value is not known locally, the object
+   writer emits a relocation for the linker or JIT linker.
+
+When debugging `llc`, ask which boundary lost the fact: TableGen record,
+generated descriptor, instruction selection, machine pass, MC lowering, encoder,
+or relocation emission.
+
 ## Generated-file mental model
 
 Think of TableGen as producing C++ include fragments, not standalone libraries.

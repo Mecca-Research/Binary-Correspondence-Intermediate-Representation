@@ -1,5 +1,5 @@
 source_filename = "bcir_ops.ll"
-target triple = "unknown-unknown-unknown"
+target triple = "x86_64-unknown-linux-gnu"
 target datalayout = ""
 
 %bcir.execctx = type { ptr, i32, i32, i32, i64, ptr }

@@ -1,0 +1,38 @@
+# LLVM Training Tools
+
+This directory contains repository-maintenance scripts for the `llvm-training/`
+corpus. They are intentionally small shell scripts so CI and local agents can run
+the same checks without a build-system dependency.
+
+## Scripts
+
+| Script | Purpose | Required tools |
+| --- | --- | --- |
+| `verify-examples.sh` | Builds the known-good standalone `.ll` manifest from chapter-local `examples/` directories, assembles each file with `llvm-as`, and runs `opt -passes=verify`. It also checks the broken `.ll.txt` sentinel so intentionally invalid examples do not drift into the manifest. | `llvm-as`, `opt` |
+| `smoke-lli.sh` | Runs only curated examples that have a safe no-argument entry point under `lli`. Most training snippets are library-style IR and should stay out of this list. | `lli` |
+| `smoke-llc.sh` | Lowers curated examples with `llc` to catch target-codegen regressions without treating every IR snippet as a runnable program. | `llc` |
+
+## Skip-list rationale
+
+`verify-examples.sh` is a positive manifest rather than a global `*.ll*` sweep:
+
+- files ending in `.ll.txt` are reserved for intentionally invalid parser,
+  verifier, or migration examples;
+- files with `invalid` in the filename are also reserved for expected-failure
+  examples;
+- only files below an `examples/` directory are considered standalone training
+  modules.
+
+The sentinel `../examples/broken-example.ll.txt` is deliberately malformed. The
+verifier script asserts that LLVM rejects it while the script as a whole still
+succeeds, which catches future changes that accidentally include invalid fixtures
+in the known-good example manifest.
+
+## Adding a script
+
+When adding a new script:
+
+1. keep it executable and runnable from the repository root;
+2. document required external tools and any intentional skips in this README;
+3. make it fail closed when a required fixture disappears;
+4. wire it into `.github/workflows/ci.yml` when it guards repository health.

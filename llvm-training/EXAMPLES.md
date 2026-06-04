@@ -3,7 +3,8 @@
 This document defines the naming, validity, and verification conventions for
 LLVM IR examples and exercises in `llvm-training/`. The goal is to make it clear
 which files are runnable, which files intentionally demonstrate failures, and
-which commands maintainers and agents should run before shipping changes.
+which commands maintainers and agents should run before shipping changes. See
+[`SEMVER.md`](SEMVER.md) for the LLVM-version compatibility policy.
 
 ## Standalone `.ll` examples
 
@@ -21,7 +22,10 @@ without extracting surrounding prose or adding missing declarations.
 ## Intentionally invalid examples
 
 Examples that intentionally demonstrate parser, verifier, or migration failures
-must not be confused with known-good standalone examples.
+must not be confused with known-good standalone examples. The repository keeps
+`llvm-training/examples/broken-example.ll.txt` as a deliberately malformed
+trip-wire fixture; `llvm-training/tools/verify-examples.sh` checks that LLVM
+rejects it while still excluding it from the known-good manifest.
 
 Use one of these conventions for intentionally invalid examples:
 
