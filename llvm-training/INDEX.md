@@ -52,6 +52,16 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | Grammar notes / how to use it | [`10-grammar/README.md`](10-grammar/README.md) |
 | Instruction quick reference | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | Intrinsics list | [`reference/intrinsics.md`](reference/intrinsics.md) |
+| Backend code generation pipeline | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
+| SelectionDAG instruction selection | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
+| GlobalISel instruction selection | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
+| `MachineInstr` machine-code representation | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
+| Register allocation | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
+| MC layer / code emission | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
+| TableGen `.td` target descriptions | [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) |
+| `llvm-tblgen` generated include files | [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) |
+| ORC JIT | [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) |
+| `LLJIT` | [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) |
 | Glossary | [`reference/glossary.md`](reference/glossary.md) |
 
 ## By instruction (most common)
@@ -136,6 +146,9 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `branch_weights`, `llvm.loop.unroll.*`, `llvm.loop.vectorize.*` | [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) |
 | `-Rpass`, `-Rpass-missed`, `-force-vector-width`, `-force-vector-interleave` | [`09-vectorization/README.md`](09-vectorization/README.md) |
 | `loop-vectorize`, `slp-vectorizer`, `default<O3>` pass names | [`09-vectorization/README.md`](09-vectorization/README.md) |
+| `class`, `def`, `let`, `multiclass`, `defm` | [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) |
+| `llvm-tblgen`, `-gen-register-info`, `-gen-instr-info`, `-gen-dag-isel` | [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) |
+
 
 ## Cross-references to the BCIR project
 

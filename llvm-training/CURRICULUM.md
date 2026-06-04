@@ -76,6 +76,21 @@ Practice next: run the commands embedded in
 [`07-optimization/examples/dead-code-before.ll`](07-optimization/examples/dead-code-before.ll), and
 [`07-optimization/examples/loop-before.ll`](07-optimization/examples/loop-before.ll).
 
+
+## Advanced path: backend / JIT
+
+After Path 2, add this path when you need to understand how LLVM IR becomes
+target machine code or when embedding LLVM as a JIT compiler:
+
+1. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — IR to target-specific machine code, SelectionDAG, GlobalISel, `MachineInstr`, register allocation, and MC emission
+2. [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) — TableGen syntax, generated backend include files, registers, instructions, patterns, and scheduling data
+3. [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) — ORC concepts, `LLJIT`, adding modules, symbol lookup, function pointers, and resource ownership
+4. Skim [`12-backend-jit/examples/minimal-instruction.td`](12-backend-jit/examples/minimal-instruction.td) and [`12-backend-jit/examples/lljit-outline.cpp.md`](12-backend-jit/examples/lljit-outline.cpp.md) as compact reference outlines.
+
+This path is intentionally advanced: it assumes you can already read LLVM IR and
+optimizer output, then follows the handoff into backend data structures, target
+descriptions, and runtime code generation.
+
 ## Path 3: Deep dive (one sitting; pick up the rest as needed)
 
 Read everything in numerical order:
@@ -141,6 +156,8 @@ foundations ────────┐
    grammar (open as reference)
         ↓
    concurrency (when shared memory appears)
+        ↓
+   backend/JIT (when target lowering or runtime compilation appears)
 ```
 
 ## What's intentionally NOT here yet
@@ -149,10 +166,7 @@ If your task touches these, you'll need external references:
 
 - **Custom optimization pass design** — pass-manager internals beyond the introductory `opt` vectorization commands
 - **MLIR** — the dialect framework above LLVM IR
-- **Backend / codegen** — `llc`, target lowering, register allocation
-- **JIT (`lli`, ORC, MCJIT)**
 - **C/C++ frontend internals** — Clang, AST, lowering rules
-- **TableGen** — used to define targets and instruction sets
 - **Calls / returns / comparisons** — a small dedicated chapter may be worth adding if
   this training set keeps expanding beyond the quick reference
 
@@ -192,3 +206,9 @@ LLVM source):
 - What source or IR facts help LLVM prove a loop has predictable memory access and no unsafe dependencies?
 - Which commands show successful vs missed loop-vectorization remarks?
 - What IR clues suggest vectorization occurred (`<N x T>`, vector loads/stores, `shufflevector`, reductions)?
+
+**After the backend / JIT path**
+- Where do SelectionDAG and GlobalISel fit relative to `MachineInstr`?
+- Why does register allocation happen after machine-code SSA optimizations?
+- Which backend facts are commonly generated from TableGen `.td` files?
+- What ownership objects should you identify before adding modules to an ORC `LLJIT`?
