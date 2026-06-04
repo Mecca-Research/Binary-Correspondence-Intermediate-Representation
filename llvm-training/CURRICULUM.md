@@ -137,9 +137,13 @@ After Path 2, add this path when unusual IR syntax, target hooks, or special
 case constructs appear in generated modules:
 
 1. [`reference/intrinsics.md`](reference/intrinsics.md) — common intrinsics, overloaded names, `immarg`, memory/lifetime/debug intrinsics, and target-specific intrinsic families
-2. [`02-types/01-primitive-types.md`](02-types/01-primitive-types.md) — special types such as `token`, `metadata`, `x86_mmx`, `x86_fp80`, and `ppc_fp128`
-3. [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) — target-specific address spaces and `addrspacecast`
-4. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — target-specific operations as they leave IR and become machine-level lowering decisions
+2. [`13-advanced-ir/01-common-intrinsics.md`](13-advanced-ir/01-common-intrinsics.md) and [`13-advanced-ir/02-target-specific-intrinsics.md`](13-advanced-ir/02-target-specific-intrinsics.md) — common and target-specific intrinsic spelling in standalone modules
+3. [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md) — special scalar, token, metadata, target-extension, and scalable-vector types
+4. [`13-advanced-ir/04-attributes.md`](13-advanced-ir/04-attributes.md) — function, parameter, memory-effect, pointer, and ABI attributes
+5. [`13-advanced-ir/05-poison-undef-freeze.md`](13-advanced-ir/05-poison-undef-freeze.md) — `undef`, poison propagation, `freeze`, vector lanes, `noundef`, and verifier-valid unsafe patterns
+6. [`13-advanced-ir/06-fast-math-flags.md`](13-advanced-ir/06-fast-math-flags.md) — `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn`, `reassoc`, `fast`, FP comparisons, reductions, and vectorization consequences
+7. [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) — target-specific address spaces and `addrspacecast`
+8. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — target-specific operations as they leave IR and become machine-level lowering decisions
 
 Use this path as a lookup-oriented supplement rather than a linear beginner
 chapter. It is most useful when reviewing frontend output, GPU IR, intrinsic

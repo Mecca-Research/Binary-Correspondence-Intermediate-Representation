@@ -13,6 +13,8 @@ shortest path through the corpus for an agent or reviewer.
 | Add control flow with branches, switches, or indirect branches | [`05-control-flow/`](05-control-flow/) | Exercises 002 and 003 |
 | Attach debug, TBAA, profile, or loop metadata | [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) | Exercise 009 |
 | Pick attributes for functions, parameters, or ABI lowering | [`13-advanced-ir/04-attributes.md`](13-advanced-ir/04-attributes.md) | [`04-memory/02-load-store.md`](04-memory/02-load-store.md) for access alignment |
+| Diagnose `undef`, poison, `freeze`, or `noundef` hazards | [`13-advanced-ir/05-poison-undef-freeze.md`](13-advanced-ir/05-poison-undef-freeze.md) | [`13-advanced-ir/examples/poison-undef-freeze.ll`](13-advanced-ir/examples/poison-undef-freeze.ll) |
+| Decide whether to emit fast-math flags | [`13-advanced-ir/06-fast-math-flags.md`](13-advanced-ir/06-fast-math-flags.md) | [`09-vectorization/README.md`](09-vectorization/README.md) for vectorization context |
 | Run and debug optimization passes | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) | [`07-optimization/05-debugging-passes.md`](07-optimization/05-debugging-passes.md) |
 | Understand why vectorization did or did not happen | [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) | [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md), [`09-vectorization/03-vector-predication.md`](09-vectorization/03-vector-predication.md) |
 | Lower C++/Rust atomics to LLVM atomics | [`11-concurrency/04-memory-model-mapping.md`](11-concurrency/04-memory-model-mapping.md) | [`11-concurrency/01-atomic-orderings.md`](11-concurrency/01-atomic-orderings.md), exercise 008 |
