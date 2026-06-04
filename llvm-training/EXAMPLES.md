@@ -130,11 +130,35 @@ expected.
 
 ## Top-level known-good verification
 
-From the repository root, validate known-good standalone `.ll` examples and
-checked-in exercise solutions with the maintained tool scripts:
+From the repository root, validate known-good standalone `.ll` examples with
+the canonical example verification script:
 
 ```bash
 ./llvm-training/tools/verify-examples.sh
+```
+
+Maintainers should prefer this script over ad-hoc `find ... llvm-as` loops. It
+assembles every known-good standalone example with `llvm-as` and then runs
+`opt -passes=verify` on the same file, so it catches both parser/assembler
+errors and verifier failures. It also validates
+`llvm-training/examples/broken-example.ll.txt` as the invalid-example tripwire:
+the fixture must remain outside the known-good manifest and must continue to be
+rejected by LLVM.
+
+A manual loop can still be useful as an illustrative fallback when inspecting a
+minimal environment, but it is weaker than `verify-examples.sh` because it does
+not run `opt -passes=verify` and does not check the invalid-example tripwire:
+
+```bash
+find llvm-training -path '*/examples/*.ll' -type f \
+  ! -iname '*.ll.txt' ! -iname '*invalid*' -print0 |
+  sort -z |
+  xargs -0 -n1 llvm-as -o /dev/null
+```
+
+Validate checked-in exercise solutions separately with their maintained script:
+
+```bash
 ./llvm-training/tools/verify-exercises.sh
 ```
 
