@@ -1,0 +1,45 @@
+; typed-pointer-before.ll.txt — legacy typed-pointer IR reference
+;
+; This file is intentionally named .txt because typed-pointer syntax is
+; historical and may not assemble with modern LLVM tools. Compare with
+; opaque-pointer-after.ll for verifier-clean modern IR.
+
+source_filename = "typed-pointer-before.ll"
+
+%Pair = type { i32, i32 }
+
+declare void @take_i8_ptr(i8*)
+declare void @take_pair_ptr(%Pair*)
+
+; Legacy load/store: the pointer operand repeats the pointee type.
+define i32 @load_store_i32(i32* %src, i32* %dst) {
+entry:
+  %v = load i32, i32* %src, align 4
+  store i32 %v, i32* %dst, align 4
+  ret i32 %v
+}
+
+; Legacy GEP: the base pointer is spelled as %Pair*.
+define i32 @load_second_field(%Pair* %p) {
+entry:
+  %field = getelementptr inbounds %Pair, %Pair* %p, i32 0, i32 1
+  %v = load i32, i32* %field, align 4
+  ret i32 %v
+}
+
+; Legacy bitcast chain: apparent pointee type changes from %Pair* to i8* to i32*.
+define i32 @bitcast_chain(%Pair* %p) {
+entry:
+  %bytes = bitcast %Pair* %p to i8*
+  call void @take_i8_ptr(i8* %bytes)
+  %as_i32 = bitcast i8* %bytes to i32*
+  %v = load i32, i32* %as_i32, align 4
+  ret i32 %v
+}
+
+; Legacy address-space spelling: address space must survive migration.
+define i32 @addrspace_load(i32 addrspace(1)* %p) {
+entry:
+  %v = load i32, i32 addrspace(1)* %p, align 4
+  ret i32 %v
+}
