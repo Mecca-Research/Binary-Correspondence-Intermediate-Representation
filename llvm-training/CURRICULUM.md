@@ -48,6 +48,20 @@ Practice next: [`exercises/003-loop-counter.prompt.md`](exercises/003-loop-count
 [`exercises/005-struct-gep.prompt.md`](exercises/005-struct-gep.prompt.md).
 
 
+## After basics: concurrency path
+
+After Path 2, add this chapter when reading or writing shared-memory IR:
+
+1. [`11-concurrency/01-atomic-orderings.md`](11-concurrency/01-atomic-orderings.md) — not atomic vs `unordered`, `monotonic`, acquire/release, `acq_rel`, and `seq_cst`
+2. [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md) — `load atomic`, `store atomic`, `cmpxchg`, `atomicrmw`, and `fence` syntax
+3. [`11-concurrency/03-volatile-vs-atomic.md`](11-concurrency/03-volatile-vs-atomic.md) — why volatile access behavior and atomic synchronization are orthogonal
+
+Practice next: inspect and assemble the examples in
+[`11-concurrency/examples/atomic-counter.ll`](11-concurrency/examples/atomic-counter.ll),
+[`11-concurrency/examples/cmpxchg-loop.ll`](11-concurrency/examples/cmpxchg-loop.ll), and
+[`11-concurrency/examples/fence.ll`](11-concurrency/examples/fence.ll).
+
+
 ## After basics: optimization path
 
 After Path 2, add this chapter when you need to inspect or explain optimizer
@@ -76,7 +90,7 @@ Read everything in numerical order:
         ↓
 09-vectorization/
         ↓
-08-pitfalls/      →  10-grammar/  →  reference/
+08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  reference/
 ```
 
 Cross-references inside each chapter (`See also:`) let you jump
@@ -126,6 +140,8 @@ foundations ────────┐
    pitfalls (read alongside everything above)
         ↓
    grammar (open as reference)
+        ↓
+   concurrency (when shared memory appears)
 ```
 
 ## What's intentionally NOT here yet

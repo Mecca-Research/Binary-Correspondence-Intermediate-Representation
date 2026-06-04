@@ -23,9 +23,12 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | String constants (`c"...\00"`) | [`03-constants/03-strings.md`](03-constants/03-strings.md) |
 | Global vs local constants, linkage, visibility | [`03-constants/04-global-vs-local.md`](03-constants/04-global-vs-local.md) |
 | `alloca` | [`04-memory/01-alloca.md`](04-memory/01-alloca.md) |
-| `load`, `store`, atomic load/store | [`04-memory/02-load-store.md`](04-memory/02-load-store.md) |
+| `load`, `store`, atomic load/store | [`04-memory/02-load-store.md`](04-memory/02-load-store.md), [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md) |
 | Global variables, linkage types, TLS | [`04-memory/03-global-variables.md`](04-memory/03-global-variables.md) |
 | `addrspace(N)`, `addrspacecast` | [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) |
+| Atomic orderings (`unordered`, `monotonic`, `acquire`, `release`, `acq_rel`, `seq_cst`) | [`11-concurrency/01-atomic-orderings.md`](11-concurrency/01-atomic-orderings.md) |
+| Atomic instruction syntax (`load atomic`, `store atomic`, `cmpxchg`, `atomicrmw`, `fence`) | [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md) |
+| Volatile vs atomic | [`11-concurrency/03-volatile-vs-atomic.md`](11-concurrency/03-volatile-vs-atomic.md) |
 | Unconditional `br label %X` | [`05-control-flow/01-unconditional-br.md`](05-control-flow/01-unconditional-br.md) |
 | Conditional `br i1 %c, label %t, label %f` | [`05-control-flow/02-conditional-br.md`](05-control-flow/02-conditional-br.md) |
 | `switch` | [`05-control-flow/03-switch.md`](05-control-flow/03-switch.md) |
@@ -67,8 +70,8 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `icmp`, `fcmp` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `select` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `call`, `invoke`, `callbr` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
-| `atomicrmw`, `cmpxchg`, `fence` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
-| `extractvalue`, `insertvalue`, `extractelement`, `insertelement`, `shufflevector` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md), [`09-vectorization/README.md`](09-vectorization/README.md) |
+| `atomicrmw`, `cmpxchg`, `fence` | [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md), [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
+| `extractvalue`, `insertvalue`, `extractelement`, `insertelement`, `shufflevector` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `trunc`, `zext`, `sext`, `fptrunc`, `fpext`, `fptoui`, `fptosi`, `uitofp`, `sitofp` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `bitcast`, `addrspacecast`, `inttoptr`, `ptrtoint` | [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md), [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `landingpad`, `catchpad`, `cleanuppad`, `catchswitch` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
@@ -123,7 +126,10 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `inbounds` | [`02-types/02-composite-types.md`](02-types/02-composite-types.md) |
 | `nsw`, `nuw`, `exact`, `fast`, `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn`, `reassoc` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `align`, `alignstack` | [`04-memory/02-load-store.md`](04-memory/02-load-store.md) |
-| `volatile`, `atomic`, `syncscope`, `seq_cst`, `acquire`, `release`, `monotonic`, `unordered`, `acq_rel` | [`04-memory/02-load-store.md`](04-memory/02-load-store.md) |
+| `volatile` | [`11-concurrency/03-volatile-vs-atomic.md`](11-concurrency/03-volatile-vs-atomic.md), [`04-memory/02-load-store.md`](04-memory/02-load-store.md) |
+| `atomic`, `syncscope` | [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md), [`04-memory/02-load-store.md`](04-memory/02-load-store.md) |
+| `unordered`, `monotonic`, `acquire`, `release`, `acq_rel`, `seq_cst` | [`11-concurrency/01-atomic-orderings.md`](11-concurrency/01-atomic-orderings.md) |
+| `cmpxchg`, `atomicrmw`, `fence` | [`11-concurrency/02-atomic-instructions.md`](11-concurrency/02-atomic-instructions.md), [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `blockaddress`, `indirectbr` | [`05-control-flow/04-indirectbr.md`](05-control-flow/04-indirectbr.md) |
 | `distinct` | [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) |
 | `DIFile`, `DICompileUnit`, `DISubprogram`, `DILocation`, `DILocalVariable` | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
