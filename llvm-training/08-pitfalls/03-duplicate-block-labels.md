@@ -1,5 +1,11 @@
 # Pitfall 03 — Duplicate Block Labels or SSA Names
 
+## BCIR instance
+
+| Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
+|---|---|---|---|---|
+| `runtime/llvm/bcir_claim_verify.ll` | `1f62e86` | `llvm-as runtime/llvm/bcir_claim_verify.ll -o /dev/null` | Delete the duplicate MMIO block trio, or otherwise give copied blocks and SSA values unique names. | [`00-foundations/02-ssa.md`](../00-foundations/02-ssa.md); [`01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md); [`02-phi-predecessor-mismatch.md`](02-phi-predecessor-mismatch.md) |
+
 ## The error
 
 ```

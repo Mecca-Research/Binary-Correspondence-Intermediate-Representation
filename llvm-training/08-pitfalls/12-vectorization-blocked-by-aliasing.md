@@ -1,5 +1,11 @@
 # Pitfall 12 — Vectorization Blocked by Aliasing
 
+## BCIR instance
+
+| Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
+|---|---|---|---|---|
+| Training-only exemplar; no affected BCIR `.ll` file recorded | Unknown | `opt -passes=loop-vectorize -pass-remarks-missed=loop-vectorize <bcir-loop>.ll -o /dev/null` | Preserve alias, alignment, and loop-shape facts so the vectorizer can prove memory reordering is safe. | [`09-vectorization/README.md`](../09-vectorization/README.md); [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md); [`04-memory/02-load-store.md`](../04-memory/02-load-store.md) |
+
 ## The diagnostic
 
 From `clang -Rpass-missed=loop-vectorize` or `opt` missed remarks, the symptom is

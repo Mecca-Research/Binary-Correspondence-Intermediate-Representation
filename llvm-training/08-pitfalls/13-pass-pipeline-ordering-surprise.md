@@ -1,5 +1,11 @@
 # Pitfall 13 — Pass Pipeline Ordering Surprise
 
+## BCIR instance
+
+| Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
+|---|---|---|---|---|
+| BCIR validation pipeline scripts: `runtime/llvm/validate_phase3.sh`; `runtime/llvm/validate_phase4.sh` | Unknown | `opt -passes=<bcir-analysis-pipeline> <bcir-module>.ll -o /dev/null` | Run BCIR analyses before destructive cleanup passes, and preserve required analyses between dependent passes. | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md); [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md); [`07-optimization/04-optimization-levels.md`](../07-optimization/04-optimization-levels.md) |
+
 ## The symptom
 
 ```text

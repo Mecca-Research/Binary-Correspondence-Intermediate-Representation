@@ -1,5 +1,11 @@
 # Pitfall 04 — Duplicate Symbol Definitions Across Modules
 
+## BCIR instance
+
+| Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
+|---|---|---|---|---|
+| `runtime/llvm/bcir_gem_seed.ll`; `runtime/llvm/bcir_worklist.ll` | `1f62e86` | `llvm-link runtime/llvm/bcir_gem_seed.ll runtime/llvm/bcir_worklist.ll -S -o /dev/null` | Keep one definition of `@execute_worklist` and make the other module declare it. | [`04-memory/03-global-variables.md`](../04-memory/03-global-variables.md); [`05-type-schema-drift.md`](05-type-schema-drift.md) |
+
 ## The error
 
 ```

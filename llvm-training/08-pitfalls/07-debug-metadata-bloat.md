@@ -1,5 +1,11 @@
 # Pitfall 07 — Debug Metadata Bloat
 
+## BCIR instance
+
+| Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
+|---|---|---|---|---|
+| Training-only exemplar; no affected BCIR `.ll` file recorded | Unknown | `opt -passes=verify <bcir-output-with-debug-metadata>.ll -o /dev/null` plus debug-info size checks | Uniquify common debug metadata and avoid emitting duplicate `DILocation` nodes for equivalent locations. | [`06-metadata/01-metadata-basics.md`](../06-metadata/01-metadata-basics.md); [`06-metadata/02-debug-info.md`](../06-metadata/02-debug-info.md); [`01-syntax/03-comments-metadata.md`](../01-syntax/03-comments-metadata.md) |
+
 ## The symptom
 
 ```text

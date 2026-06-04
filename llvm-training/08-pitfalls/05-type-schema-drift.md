@@ -1,5 +1,11 @@
 # Pitfall 05 — Type Schema Drift Across Modules
 
+## BCIR instance
+
+| Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
+|---|---|---|---|---|
+| `runtime/llvm/bcir_registry_schema.ll`; `runtime/llvm/bcir_blob_schema.ll`; `runtime/llvm/bcir_blob_verify.ll` | `1f62e86` | `llvm-link runtime/llvm/bcir_registry_schema.ll runtime/llvm/bcir_blob_schema.ll runtime/llvm/bcir_blob_verify.ll -S -o /dev/null` | Align all named struct definitions to the canonical BCIR schema. | [`02-types/02-composite-types.md`](../02-types/02-composite-types.md); [`02-types/03-opaque-and-pointer-types.md`](../02-types/03-opaque-and-pointer-types.md); [`04-duplicate-symbols.md`](04-duplicate-symbols.md) |
+
 ## The error
 
 ```
