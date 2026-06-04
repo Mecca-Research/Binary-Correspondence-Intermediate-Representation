@@ -87,7 +87,7 @@ Read everything in numerical order:
         ↓
 06-metadata/
         ↓
-07-optimization/
+09-vectorization/
         ↓
 08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  reference/
 ```
@@ -97,6 +97,29 @@ forward when curiosity strikes; come back via the index.
 
 Practice next: complete all exercises in [`exercises/README.md`](exercises/README.md)
 and compare against the standalone `.ll` solutions.
+
+## Path 4: Post-optimization vectorization path
+
+After Path 2, or after reading the optimization metadata chapter, add this
+focused path when you need to understand LLVM's vectorized IR and diagnostics:
+
+1. Re-read [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md)
+   for loop transformation hints and the limits of metadata.
+2. Read [`09-vectorization/README.md`](09-vectorization/README.md) for the
+   difference between the Loop Vectorizer and SLP Vectorizer.
+3. Run the commands in [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c)
+   to compare successful and missed loop-vectorization remarks.
+4. Run `opt -S -passes=loop-vectorize` on
+   [`09-vectorization/examples/sum-loop.ll`](09-vectorization/examples/sum-loop.ll)
+   and inspect vector loop structure, vector loads/stores, and reductions.
+5. Run `opt -S -passes=slp-vectorizer` on
+   [`09-vectorization/examples/slp-scalars.ll`](09-vectorization/examples/slp-scalars.ll)
+   and inspect vector packing, `shufflevector`, and straight-line vector IR.
+6. Repeat with `-force-vector-width` and `-force-vector-interleave` to separate
+   legality questions from profitability choices.
+
+This path is intentionally about reading and experimenting with transformed IR,
+not about writing a custom LLVM pass pipeline.
 
 ## Chapter dependency graph
 
@@ -124,6 +147,7 @@ foundations ────────┐
 
 If your task touches these, you'll need external references:
 
+- **Custom optimization pass design** — pass-manager internals beyond the introductory `opt` vectorization commands
 - **MLIR** — the dialect framework above LLVM IR
 - **Backend / codegen** — `llc`, target lowering, register allocation
 - **JIT (`lli`, ORC, MCJIT)**
@@ -162,3 +186,9 @@ LLVM source):
 - What's the layout convention for `%bcir.claim`-style aggregate types,
   and what breaks when consumers disagree on the field count?
   (See [`08-pitfalls/05-type-schema-drift.md`](08-pitfalls/05-type-schema-drift.md).)
+
+**After Path 4**
+- When should you expect the Loop Vectorizer rather than the SLP Vectorizer to act?
+- What source or IR facts help LLVM prove a loop has predictable memory access and no unsafe dependencies?
+- Which commands show successful vs missed loop-vectorization remarks?
+- What IR clues suggest vectorization occurred (`<N x T>`, vector loads/stores, `shufflevector`, reductions)?
