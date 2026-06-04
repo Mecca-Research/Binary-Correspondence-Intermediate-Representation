@@ -19,6 +19,26 @@ without extracting surrounding prose or adding missing declarations.
 - Prefer examples that are small enough to diagnose quickly with `llvm-as` and
   `opt -passes=verify`.
 
+## Data artifacts and schemas
+
+Some chapter `examples/` directories include data artifacts that document input
+or output schemas rather than standalone LLVM IR. For example, the following
+files in `llvm-training/15-binary-analysis/examples/` are schema examples, not
+LLVM IR examples:
+
+- `dynamic-trace-sample.csv`
+- `perf-counter-sample.csv`
+- `bcsa-feature-sample.csv`
+
+These CSV files should not be included in `llvm-as` verification loops. Keep
+assembler verification scoped to known-good standalone `.ll` files, and use
+chapter-specific checks or prose review for data artifacts.
+
+Nearby chapter prose must describe each data artifact's fields, intended
+interpretation, and limitations, especially for hardware-specific or
+profile-specific data such as performance counters, dynamic traces, or features
+derived from a particular binary-analysis workflow.
+
 ## Intentionally invalid examples
 
 Examples that intentionally demonstrate parser, verifier, or migration failures
