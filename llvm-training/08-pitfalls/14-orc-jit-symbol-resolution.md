@@ -4,7 +4,7 @@
 
 | Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
 |---|---|---|---|---|
-| Training-only exemplar; no affected BCIR `.ll` file recorded | Unknown | `lli -jit-kind=orc-lazy <bcir-jit-module>.ll` or the project ORC harness lookup | Mangle symbols through ORC, install process/runtime symbol generators, and keep JITDylib search order explicit. | [`12-backend-jit/03-orc-jit.md`](../12-backend-jit/03-orc-jit.md); [`12-backend-jit/01-codegen-pipeline.md`](../12-backend-jit/01-codegen-pipeline.md); [`01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) |
+| Training-only exemplar; no affected BCIR `.ll` file recorded | Training-only / preventive | `lli -jit-kind=orc-lazy <bcir-jit-module>.ll` or the project ORC harness lookup | Mangle symbols through ORC, install process/runtime symbol generators, and keep JITDylib search order explicit. | [`12-backend-jit/03-orc-jit.md`](../12-backend-jit/03-orc-jit.md); [`12-backend-jit/01-codegen-pipeline.md`](../12-backend-jit/01-codegen-pipeline.md); [`01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) |
 
 ## The error
 
