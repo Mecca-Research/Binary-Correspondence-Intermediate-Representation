@@ -34,6 +34,12 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | Debug-info nodes (`DIFile`, `DICompileUnit`, `DISubprogram`, `DILocation`, `DILocalVariable`) | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
 | Reading `!dbg` locations back to source files and lines | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
 | Profile metadata, branch weights, loop metadata | [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) |
+| Optimizer pass model; analysis vs transform vs utility passes | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) |
+| New pass manager syntax (`opt -passes=...`) | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) |
+| Analysis passes: alias analysis, CFG printing/viewing, loop analysis, scalar evolution | [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| Transform passes: `mem2reg`, `instcombine`, `simplifycfg`, `adce`, `gvn`, `loop-unroll` | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| Optimization levels: `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, `-Oz` | [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) |
+| Inspecting changed IR with `opt -S` | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) |
 | Pitfalls overview | [`08-pitfalls/README.md`](08-pitfalls/README.md) |
 | Nested instruction-as-expression syntax errors | [`08-pitfalls/01-nested-instruction-expressions.md`](08-pitfalls/01-nested-instruction-expressions.md) |
 | PHI node predecessor mismatch | [`08-pitfalls/02-phi-predecessor-mismatch.md`](08-pitfalls/02-phi-predecessor-mismatch.md) |
@@ -67,6 +73,25 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `trunc`, `zext`, `sext`, `fptrunc`, `fpext`, `fptoui`, `fptosi`, `uitofp`, `sitofp` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `bitcast`, `addrspacecast`, `inttoptr`, `ptrtoint` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
 | `landingpad`, `catchpad`, `cleanuppad`, `catchswitch` | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) |
+
+## By optimizer pass / `opt` flag
+
+| Name or flag | Kind | Read |
+|---|---|---|
+| `opt -passes=verify` | Utility/checking pipeline | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| `opt -S` | Textual IR output flag | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) |
+| `-disable-output` | Suppress output for check/print workflows | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| `mem2reg` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| `instcombine` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| `simplifycfg` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| `adce` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| `gvn` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| `loop-unroll` | Transform | [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) |
+| alias analysis | Analysis family | [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| CFG printing/viewing | Utility/analysis inspection | [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| loop analysis | Analysis | [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| scalar evolution / SCEV | Analysis | [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) |
+| `default<O1>`, `default<O2>`, `default<O3>`, `default<Os>`, `default<Oz>` | Predefined new-PM pipelines | [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) |
 
 ## By symbol
 
@@ -104,6 +129,7 @@ Agent: this is your entry point. Find your topic, jump to the file.
 | `distinct` | [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) |
 | `DIFile`, `DICompileUnit`, `DISubprogram`, `DILocation`, `DILocalVariable` | [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) |
 | `branch_weights`, `llvm.loop.unroll.*`, `llvm.loop.vectorize.*` | [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) |
+| `-passes=...`, `default<O2>`, `default<O3>`, `default<Os>`, `default<Oz>` | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) |
 
 ## Cross-references to the BCIR project
 
