@@ -171,7 +171,15 @@ or calls that may access external state often block vectorization.
 
 ## Useful commands
 
-From the repository root:
+From the repository root, start with the checked-in wrapper when you want one
+short demo that prints commands, requests `clang` vectorization remarks, and
+prints forced loop-vectorizer IR output:
+
+```sh
+llvm-training/tools/demo-vectorize.sh
+```
+
+Then vary the underlying commands directly:
 
 ```sh
 # Show successful loop-vectorization remarks from clang.
