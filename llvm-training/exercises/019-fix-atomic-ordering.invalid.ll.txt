@@ -1,0 +1,8 @@
+; Intentionally invalid: an atomic store cannot use acquire ordering.
+source_filename = "019-fix-atomic-ordering.invalid.ll.txt"
+
+define void @publish(ptr %p, i32 %v) {
+entry:
+  store atomic i32 %v, ptr %p acquire, align 4
+  ret void
+}

@@ -1,13 +1,26 @@
 # START HERE: Agent Consumption Protocol
 
-This folder is a compact context/reference pack for coding agents. It is not a fine-tuning corpus and should not be treated as training data for model updates.
+This folder is a compact context/reference pack for coding agents. It is not a
+fine-tuning corpus and should not be treated as training data for model updates.
 
-## Required reading order
+## Preferred path for the expanded corpus
 
-1. Read [`INDEX.md`](INDEX.md) first.
-2. Use [`CURRICULUM.md`](CURRICULUM.md) for learning paths.
-3. Before writing LLVM IR, review [`08-pitfalls/README.md`](08-pitfalls/README.md) and any relevant pitfall pages.
-4. Use `10-grammar/llvm-ir.tm` only for syntax questions; use LLVM LangRef for canonical semantics.
+1. Read [`INDEX.md`](INDEX.md) first to choose the correct lookup axis.
+2. Open [`RECIPES.md`](RECIPES.md) and select the row closest to the current
+   task; prefer the advanced rows for BCIR lowering, MLIR integration,
+   backend/JIT diagnostics, binary-analysis evidence, or repair fixtures.
+3. Read the recipe's **Read first** file before opening examples.
+4. Use [`CURRICULUM.md`](CURRICULUM.md) only when the task needs a fuller
+   learning path rather than a focused recipe.
+5. Before writing or verifying artifacts, review [`EXAMPLES.md`](EXAMPLES.md)
+   and [`SEMVER.md`](SEMVER.md) so `.ll`, `.invalid.ll.txt`, `.mlir`, CSV/data,
+   and generated BCIR mapping outputs are handled by the correct script.
+6. Before writing LLVM IR, review [`08-pitfalls/README.md`](08-pitfalls/README.md)
+   and any relevant pitfall pages.
+7. Use `10-grammar/llvm-ir.tm` only for syntax-shape questions; use LLVM
+   LangRef for canonical semantics.
+8. After reading a selected path, use [`EVAL.md`](EVAL.md) as the final
+   self-check.
 
 ## Practical protocol
 

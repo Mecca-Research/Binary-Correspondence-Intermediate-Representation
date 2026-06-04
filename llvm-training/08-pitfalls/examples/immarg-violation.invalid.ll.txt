@@ -1,0 +1,9 @@
+; Intentionally invalid for LLVM intrinsic verification: the second argument to
+; llvm.fshl.* must be an immediate in applicable intrinsic schemas.
+declare i32 @llvm.ctlz.i32(i32, i1 immarg)
+
+define i32 @bad_immarg(i32 %x, i1 %runtime_flag) {
+entry:
+  %v = call i32 @llvm.ctlz.i32(i32 %x, i1 %runtime_flag)
+  ret i32 %v
+}

@@ -4,7 +4,7 @@
 
 | Affected BCIR file(s) | Commit | Failing tool command | Fix summary | Related training chapters |
 |---|---|---|---|---|
-| `runtime/llvm/bcir_ops.ll`; `runtime/llvm/bcir_claim_verify.ll` | Unknown | `opt -passes=verify <bcir-atomics>.ll -o /dev/null` | Use legal `cmpxchg` failure orderings and preserve acquire/release semantics instead of defaulting to `monotonic`. | [`11-concurrency/01-atomic-orderings.md`](../11-concurrency/01-atomic-orderings.md); [`11-concurrency/02-atomic-instructions.md`](../11-concurrency/02-atomic-instructions.md); [`11-concurrency/03-volatile-vs-atomic.md`](../11-concurrency/03-volatile-vs-atomic.md) |
+| `runtime/llvm/bcir_ops.ll`; `runtime/llvm/bcir_claim_verify.ll` | `f78ba96`; `08a0011` | `opt -passes=verify <bcir-atomics>.ll -o /dev/null` | Use legal `cmpxchg` failure orderings and preserve acquire/release semantics instead of defaulting to `monotonic`. | [`11-concurrency/01-atomic-orderings.md`](../11-concurrency/01-atomic-orderings.md); [`11-concurrency/02-atomic-instructions.md`](../11-concurrency/02-atomic-instructions.md); [`11-concurrency/03-volatile-vs-atomic.md`](../11-concurrency/03-volatile-vs-atomic.md) |
 
 ## The error
 

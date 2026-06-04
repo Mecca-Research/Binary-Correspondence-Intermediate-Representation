@@ -29,8 +29,12 @@ testable.
 ```
 llvm-training/
 ├── README.md             you are here
+├── START_HERE.md         fastest orientation path for agents and humans
 ├── CURRICULUM.md         reading order (30-min / 2-hr / deep paths)
+├── RECIPES.md            task-oriented lookup paths for common LLVM work
 ├── INDEX.md              topic / symbol -> file map
+├── SEMVER.md             compatibility and versioning policy for this pack
+├── EVAL.md               evaluation checklist for agent-usefulness
 ├── NOTICE.md             attribution
 ├── 00-foundations/       what IR is, SSA, IR vs asm/other IRs
 ├── 01-syntax/            modules, functions, basic blocks, instr format
@@ -39,12 +43,17 @@ llvm-training/
 ├── 04-memory/            alloca, load/store, globals, address spaces
 ├── 05-control-flow/      br, conditional br, switch, indirectbr
 ├── 06-metadata/          metadata syntax, debug info, profiling, loop hints
-├── 07-optimization/      opt pass model, analyses, transforms, opt levels
+├── 07-optimization/      opt pass model, analyses, transforms, debug, PGO/LTO/BOLT
 ├── 08-pitfalls/          real-world bugs (mostly from BCIR review)
 ├── 09-vectorization/     Loop/SLP vectorizers, diagnostics, vector IR patterns
 ├── 10-grammar/           Textmapper grammar (formal syntax)
-├── 11-concurrency/       atomic orderings, atomic instructions, volatile
-├── 12-backend-jit/       backend pipeline, TableGen, ORC/LLJIT
+├── 11-concurrency/       atomics, volatile, C++/Rust memory-model mapping
+├── 12-backend-jit/       backend pipeline, TableGen, ORC/LLJIT, MC, relocations
+├── 13-advanced-ir/       intrinsics, attributes, UB/poison, ABI details
+├── 14-mlir-bridge/       MLIR concepts and LLVM dialect lowering paths
+├── 15-binary-analysis/   post-codegen analysis, side channels, traces/counters
+├── exercises/            runnable prompts, expected observations, solutions
+├── indexes/              generated or focused lookup indexes
 ├── tools/                example verification and smoke-test scripts
 ├── **/examples/*.ll      standalone examples that must assemble
 └── reference/            instruction quickref, intrinsics, glossary
@@ -52,6 +61,35 @@ llvm-training/
 
 Numbered directories follow the reading order. Future chapters may add a
 dedicated instruction encyclopedia or additional toolchain material.
+
+## New examples and advanced examples summary
+
+The expanded corpus now has both beginner examples and advanced artifacts:
+
+- **Beginner runnable IR**: compact `*.ll` modules in foundations, syntax, types,
+  memory, control flow, metadata, concurrency, vectorization, and advanced-IR
+  chapters. These are the first files to read when learning LLVM IR syntax.
+- **Before/after optimization examples**: paired files such as
+  `*-before.ll`, `*-after-mem2reg.ll`, `*-after-simplifycfg.ll`, and
+  `*-after-o2.ll` explain how `opt` rewrites IR and what is stable versus
+  LLVM-version-dependent.
+- **BCIR lowering examples**: checked LLVM IR under `bcir-mapping/examples/`
+  demonstrates graph fragments, claim/resource lookup, HAM hints, runtime-call
+  wrappers, mixed-stride addressing, and diagnostic metadata preservation.
+- **MLIR bridge examples**: `14-mlir-bridge/examples/*.mlir` illustrates dialect
+  and LLVM-dialect shapes; these are MLIR artifacts, not standalone `.ll` files.
+- **Backend/JIT diagnostics examples**: TableGen and LLJIT outline artifacts in
+  `12-backend-jit/examples/` are review aids for target descriptions, ORC layer
+  ownership, MC emission, relocations, and missing-symbol failures.
+- **Binary-analysis evidence artifacts**: CSV trace/counter/BCSA samples in
+  `15-binary-analysis/examples/` document evidence schemas and must be reviewed
+  with chapter prose rather than sent to `llvm-as`.
+- **Repair and prediction exercises**: `exercises/016`-`026` include invalid
+  fixtures, pass-output prediction tasks, metadata preservation checks, and
+  UB/poison repair prompts.
+
+Use [`EXAMPLES.md`](EXAMPLES.md) for naming and verification rules before adding
+new artifacts to any of these families.
 
 ## Example, exercise, and snippet conventions
 
@@ -86,12 +124,29 @@ Use the checked-in tool scripts from the repository root:
 ./llvm-training/tools/verify-examples.sh
 ./llvm-training/tools/smoke-llc.sh
 ./llvm-training/tools/smoke-lli.sh
+./llvm-training/tools/verify-exercises.sh
+```
+
+The same checks are also available as CMake custom targets after configuring the
+repository. These targets are suitable for minimal CI or local images because
+they skip cleanly when their optional LLVM tools are unavailable:
+
+```bash
+cmake --build build --target llvm-training-verify-examples
+cmake --build build --target llvm-training-smoke-llc
+cmake --build build --target llvm-training-smoke-lli
+cmake --build build --target llvm-training-verify-exercises
 ```
 
 `verify-examples.sh` checks every known-good standalone `*/examples/*.ll` file
 with both `llvm-as` and `opt -passes=verify`, skipping `.ll.txt` files and any
-`.ll` file with `invalid` in its name. Anything else in those known-good files
-that doesn't assemble and verify shouldn't ship.
+`.ll` file with `invalid` in its name. The intentionally invalid tripwire
+fixture `llvm-training/examples/broken-example.ll.txt` proves the skip rule is
+working and should never be renamed to a known-good `.ll` example. Anything else
+in those known-good files that doesn't assemble and verify shouldn't ship.
+
+`verify-exercises.sh` applies the same assembler-and-verifier contract to every
+checked-in `llvm-training/exercises/*.solution.ll` reference answer.
 
 The smoke scripts are intentionally narrower: `smoke-llc.sh` emits assembly for
 a curated portable subset, while `smoke-lli.sh` runs only modules with a safe
@@ -112,6 +167,13 @@ and per-file commands.
 
 The curated target plateaus around 100-200 MB because quality and
 indexability matter more than raw volume for an agent-context repo.
+
+Recent advanced paths: agents doing non-foundational LLVM work should start
+with [`RECIPES.md`](RECIPES.md) for task-based routes, then jump directly to
+[`15-binary-analysis/README.md`](15-binary-analysis/README.md) for binary
+analysis/security/performance workflows or
+[`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) for
+modern profile-guided, link-time, and post-link optimization context.
 
 ## How BCIR Uses This
 

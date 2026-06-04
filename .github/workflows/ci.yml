@@ -12,8 +12,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install ccache
+        run: |
+          if ! command -v ccache >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y ccache
+          fi
+          mkdir -p ~/.cache/ccache
+          ccache --set-config=cache_dir=${HOME}/.cache/ccache
+          ccache --zero-stats
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-ccache-default-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-default-
+
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cmake_args=(-S . -B build -DCMAKE_BUILD_TYPE=Release)
+          if command -v ccache >/dev/null; then
+            cmake_args+=(
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+            )
+          fi
+          cmake "${cmake_args[@]}"
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -27,7 +53,7 @@ jobs:
       - name: Full test suite
         run: ctest --test-dir build --output-on-failure
 
-      - name: LLVM training standalone examples verify
+      - name: LLVM training examples and invalid-example tripwire
         run: |
           if command -v llvm-as >/dev/null && command -v opt >/dev/null; then
             bash llvm-training/tools/verify-examples.sh
@@ -48,3 +74,73 @@ jobs:
           else
             echo "LLVM toolchain not present; skipping runtime/llvm validation scripts"
           fi
+
+  llvm-training-optimization-smoke:
+    name: LLVM training optimization smoke (${{ matrix.optimization }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        optimization: [thinlto, pgo]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install LLVM optimization smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm ccache ninja-build
+          mkdir -p ~/.cache/ccache
+          ccache --set-config=cache_dir=${HOME}/.cache/ccache
+          ccache --zero-stats
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-ccache-llvm-training-${{ matrix.optimization }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-llvm-training-${{ matrix.optimization }}-
+            ${{ runner.os }}-ccache-llvm-training-
+
+      - name: Configure and build ThinLTO smoke target
+        if: matrix.optimization == 'thinlto'
+        run: |
+          cmake -S . -B build-thinlto -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_FLAGS_RELEASE="-O2 -flto=thin" \
+            -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-flto=thin -fuse-ld=lld" \
+            -DCMAKE_SHARED_LINKER_FLAGS_RELEASE="-flto=thin -fuse-ld=lld"
+          cmake --build build-thinlto --target bcir-tools --parallel
+          ./build-thinlto/tools/bcir-tools --runtime-diag
+
+      - name: Build, train, merge, and rebuild PGO smoke target
+        if: matrix.optimization == 'pgo'
+        run: |
+          cmake -S . -B build-pgo-generate -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_FLAGS_RELEASE="-O2 -fprofile-generate=${PWD}/pgo-profraw" \
+            -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-fprofile-generate=${PWD}/pgo-profraw" \
+            -DCMAKE_SHARED_LINKER_FLAGS_RELEASE="-fprofile-generate=${PWD}/pgo-profraw"
+          cmake --build build-pgo-generate --target bcir-tools --parallel
+          mkdir -p pgo-profraw
+          LLVM_PROFILE_FILE="${PWD}/pgo-profraw/bcir-tools-%p.profraw" \
+            ./build-pgo-generate/tools/bcir-tools --runtime-diag
+          llvm-profdata merge -sparse pgo-profraw/*.profraw -o bcir-tools.profdata
+          cmake -S . -B build-pgo-use -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_FLAGS_RELEASE="-O2 -fprofile-use=${PWD}/bcir-tools.profdata -Wno-profile-instr-unprofiled" \
+            -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-fprofile-use=${PWD}/bcir-tools.profdata" \
+            -DCMAKE_SHARED_LINKER_FLAGS_RELEASE="-fprofile-use=${PWD}/bcir-tools.profdata"
+          cmake --build build-pgo-use --target bcir-tools --parallel
+          ./build-pgo-use/tools/bcir-tools --runtime-diag
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache --show-stats

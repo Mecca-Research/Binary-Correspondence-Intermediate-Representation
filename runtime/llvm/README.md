@@ -42,12 +42,27 @@ Legacy runtime-hook seed moved to:
 - `legacy/bcir_master_reference_rt_hooks.ll`
 
 ## Validation
+
+The runtime validation scripts are fail-fast and print the tool paths, first
+version line, repository root, build directory, and concrete validation triple
+before running LLVM commands. The concrete triple is intentionally
+`x86_64-unknown-linux-gnu`: newer LLVM `opt` builds can reject interface-only
+modules that use `unknown-unknown-unknown` with an empty data layout because the
+verifier cannot infer target layout facts.
+
 Run:
 
 ```bash
 runtime/llvm/validate_llvm_seed.sh
 runtime/llvm/validate_phase2.sh
 runtime/llvm/validate_phase3.sh
+runtime/llvm/validate_phase4.sh
 ```
 
-If LLVM tools are unavailable, validation is pending (do not claim success).
+`validate_phase4.sh` additionally requires the checked-in `tools/bcir-as/bcir-as`
+executable because it generates `build/vector_add.generated.ll` before linking
+the phase-4 runtime module.
+
+If LLVM tools are unavailable, validation is pending (do not claim success). If a
+script fails, copy the `[validate]` command line immediately before the error; it
+is the reproducible local command CI attempted to run.
