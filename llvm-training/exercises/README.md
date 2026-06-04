@@ -1,6 +1,6 @@
 # Exercises
 
-This directory contains beginner LLVM IR writing exercises. Follow the
+This directory contains beginner and advanced LLVM IR writing exercises. Follow the
 conventions in [`../EXAMPLES.md`](../EXAMPLES.md). Each exercise should include:
 
 - a prompt describing the task;
@@ -21,6 +21,12 @@ commands with the matching binary, for example `llvm-as-15` or `llvm-as-18`.
 3. [`003-loop-counter.prompt.md`](003-loop-counter.prompt.md) — write a loop counter.
 4. [`004-global-load-store.prompt.md`](004-global-load-store.prompt.md) — load and store a global.
 5. [`005-struct-gep.prompt.md`](005-struct-gep.prompt.md) — index a struct field with `getelementptr`.
+10. [`010-vertex-edge-attribute-lowering.prompt.md`](010-vertex-edge-attribute-lowering.prompt.md) — lower graph-style vertex and edge attributes.
+11. [`011-register-binding-pattern.prompt.md`](011-register-binding-pattern.prompt.md) — resolve logical register IDs through a binding table.
+12. [`012-custom-intrinsic-wrapper.prompt.md`](012-custom-intrinsic-wrapper.prompt.md) — wrap an LLVM intrinsic behind a BCIR-style operation.
+13. [`013-mixed-stride-indexing.prompt.md`](013-mixed-stride-indexing.prompt.md) — lower mixed row and element strides to byte-offset addressing.
+14. [`014-ham-hint-metadata.prompt.md`](014-ham-hint-metadata.prompt.md) — preserve HAM hints as LLVM metadata.
+15. [`015-mlir-to-llvm-lowering-review.prompt.md`](015-mlir-to-llvm-lowering-review.prompt.md) — review an MLIR-to-LLVM lowering for BCIR patterns.
 
 ## Verification
 
