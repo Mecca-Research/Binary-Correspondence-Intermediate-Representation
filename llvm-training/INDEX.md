@@ -11,6 +11,7 @@ every lookup.
 | `opt` flags and pass names | [`indexes/optimizer-passes.md`](indexes/optimizer-passes.md) |
 | Symbols such as metadata names, intrinsics, and files | [`indexes/symbols.md`](indexes/symbols.md) |
 | Intrinsics and special types | [`indexes/intrinsics-special-types.md`](indexes/intrinsics-special-types.md) |
+| Common intrinsic family quick reference | [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
 | Keywords where they are introduced | [`indexes/keywords.md`](indexes/keywords.md) |
 | BCIR runtime/source cross-references | [`indexes/bcir-crossrefs.md`](indexes/bcir-crossrefs.md) |
 | First-use protocol | [`START_HERE.md`](START_HERE.md) |
