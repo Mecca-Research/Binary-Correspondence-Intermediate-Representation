@@ -1,0 +1,16 @@
+; Intentionally invalid: %merge has predecessors %entry and %positive, but the
+; phi lists %negative instead of %entry.
+source_filename = "016-fix-phi-predecessor.invalid.ll.txt"
+
+define i32 @clamp_positive(i32 %x) {
+entry:
+  %ispos = icmp sgt i32 %x, 0
+  br i1 %ispos, label %positive, label %merge
+
+positive:
+  br label %merge
+
+merge:
+  %result = phi i32 [ %x, %positive ], [ 0, %negative ]
+  ret i32 %result
+}

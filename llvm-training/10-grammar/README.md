@@ -1,18 +1,19 @@
 # Formal Grammar
 
-This directory holds the **Textmapper grammar** for LLVM IR
-(`llvm-ir.tm`). Use it as a local syntax reference, not as the final
-authority for every LLVM version. The LLVM LangRef is the canonical
-documentation for LLVM IR, and the target installed `llvm-as` is the
+This directory holds a full local snapshot of the **Textmapper grammar** for
+LLVM IR (`llvm-ir.tm`) from `llir/grammar`. Use it as a local syntax reference
+so agents can answer grammar-shape questions without leaving the repository. It
+is still not the final authority for every LLVM version: the LLVM LangRef is the
+canonical documentation for LLVM IR, and the target installed `llvm-as` is the
 practical parser authority for what your toolchain accepts.
 
 ## Version expectations
 
 LLVM IR syntax and accepted constructs vary by LLVM release. The local
-`llvm-ir.tm` grammar is a useful reference for syntax questions, but it
-may lag upstream LLVM. Verify grammar-sensitive examples against both
-the target LLVM version's `llvm-as` and the corresponding LangRef:
-https://llvm.org/docs/LangRef.html
+`llvm-ir.tm` grammar is a full upstream snapshot rather than a hand-trimmed
+excerpt, but it may still lag newer LLVM releases. Verify grammar-sensitive
+examples against both the target LLVM version's `llvm-as` and the corresponding
+LangRef: https://llvm.org/docs/LangRef.html
 
 ## What is Textmapper?
 
@@ -82,16 +83,21 @@ grammar may lag upstream LLVM.
 ## Source attribution
 
 `llvm-ir.tm` declares its own package as
-`package = "github.com/llir/ll"`. It's the Textmapper grammar from
-the `llir/llvm` Go project, used here as a reference. Consult that
-project for the upstream definition of record.
+`package = "github.com/llir/ll"`. It is a full local snapshot of the
+Textmapper grammar from `llir/grammar` at commit
+`5a3820b516f7903e27ad16ebe4add1ec634f1c05`, consumed by the `llir/ll` Go
+parser project. The upstream grammar is offered under 0BSD and Unlicense terms;
+see [`../NOTICE.md`](../NOTICE.md) for repository attribution. Keep the local
+snapshot so agents do not have to fetch upstream while reading the training
+corpus.
 
 ## Updating
 
-Grammar changes when LLVM adds new constructs (new attributes,
-intrinsics, metadata nodes). When the LLVM version moves forward, the
-grammar usually needs a small update — track upstream
-`github.com/llir/ll`.
+Grammar changes when LLVM adds new constructs (new attributes, intrinsics,
+metadata nodes, or instruction spellings). When the LLVM version moves forward,
+refresh this full snapshot from upstream `llir/grammar`, record the source commit
+in the header of `llvm-ir.tm`, and update the attribution note above if the
+license or source location changes.
 
 ## See also
 
