@@ -1,5 +1,5 @@
 source_filename = "bcir_stream_pack.ll"
-target triple = "unknown-unknown-unknown"
+target triple = "x86_64-unknown-linux-gnu"
 target datalayout = ""
 
 %bcir.stream.pack = type { ptr, i64, ptr, i64, ptr, i64, ptr, i64 }

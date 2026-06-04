@@ -33,11 +33,10 @@ def parse(src:str):
             args={k:v for k,v in re.findall(r'(\w+)\s*=\s*([\w\d]+)',cm.group(3))}
             block=[]; i+=1
             while i<len(lines) and '}' not in lines[i]: block.append(lines[i]); i+=1
-            c='
-'.join(block)
+            c='\n'.join(block)
             req=["rd","wr","hazard","domain","verify","cost"]
             for k in req:
-                if not re.search(rf'{k}\s*=',c): raise ValueError(f"missing contract field {k} for claim {cid}")
+                if not re.search(rf'\b{k}\s*=',c): raise ValueError(f"missing contract field {k} for claim {cid}")
             rd=[int(x) for x in re.search(r'rd\s*=\s*\[([^\]]*)\]',c).group(1).replace(' ','').split(',') if x]
             wr=[int(x) for x in re.search(r'wr\s*=\s*\[([^\]]*)\]',c).group(1).replace(' ','').split(',') if x]
             hazard=re.search(r'hazard\s*=\s*(\w+)',c).group(1)
@@ -63,7 +62,7 @@ def encode_hazard(c):
     return mode | (dom<<4) | (verify<<8) | (cost<<16)
 
 def emit(module,rids,claims):
-    out=['source_filename = "bcir_examples_phase4_generated.ll"','target triple = "unknown-unknown-unknown"','target datalayout = ""','',
+    out=['source_filename = "bcir_examples_phase4_generated.ll"','target triple = "x86_64-unknown-linux-gnu"','target datalayout = ""','',
     '%bcir.claim = type { i64, [4 x i32], [4 x i32], i64, [2 x i64] }','%bcir.res = type { i32, i32, ptr, i64, i64, i64, i64 }','%bcir.batch = type { i32, i32, i32, i32, i32, i32, i64, i64, i64 }','%bcir.phase.range = type { i32, i32, i64, i64 }','']
     crows=[]
     for c in claims:
@@ -72,11 +71,9 @@ def emit(module,rids,claims):
         rd4=(c['rd']+[0,0,0,0])[:4]; wr4=(c['wr']+[0,0,0,0])[:4]
         ctrl=control(opcode,lane,c['phase']); hz=encode_hazard(c)
         crows.append(f'  %bcir.claim {{ i64 {ctrl}, [4 x i32] [i32 {rd4[0]}, i32 {rd4[1]}, i32 {rd4[2]}, i32 {rd4[3]}], [4 x i32] [i32 {wr4[0]}, i32 {wr4[1]}, i32 {wr4[2]}, i32 {wr4[3]}], i64 {hz}, [2 x i64] [i64 {imm0}, i64 {imm1}] }}')
-    out += [f'@bcir.generated.claims = global [{len(crows)} x %bcir.claim] [', ',
-'.join(crows), '], align 64','']
+    out += [f'@bcir.generated.claims = global [{len(crows)} x %bcir.claim] [', ',\n'.join(crows), '], align 64','']
     rrows=[f'  %bcir.res {{ i32 {rid}, i32 {DOMAIN_BITS.get("ram",0)}, ptr null, i64 4096, i64 0, i64 0, i64 0 }}' for _,rid in sorted(rids.items(), key=lambda kv:kv[1])]
-    out += [f'@bcir.generated.resources = global [{len(rrows)} x %bcir.res] [', ',
-'.join(rrows), '], align 64','']
+    out += [f'@bcir.generated.resources = global [{len(rrows)} x %bcir.res] [', ',\n'.join(rrows), '], align 64','']
     batch_rows=[]; phase_ranges=[]; i=0
     while i<len(claims):
         j=i+1
@@ -94,14 +91,10 @@ def emit(module,rids,claims):
             while pend<len(bs) and bs[pend]==bs[pstart]: pend+=1
             phase_ranges.append(f'  %bcir.phase.range {{ i32 0, i32 {bs[pstart]}, i64 {pstart}, i64 {pend} }}')
             pstart=pend
-    out += [f'@bcir.generated.batches = global [{len(batch_rows)} x %bcir.batch] [', ',
-'.join(batch_rows), '], align 64','']
-    out += [f'@bcir.generated.phase_ranges = global [{len(phase_ranges)} x %bcir.phase.range] [', ',
-'.join(phase_ranges), '], align 64','']
+    out += [f'@bcir.generated.batches = global [{len(batch_rows)} x %bcir.batch] [', ',\n'.join(batch_rows), '], align 64','']
+    out += [f'@bcir.generated.phase_ranges = global [{len(phase_ranges)} x %bcir.phase.range] [', ',\n'.join(phase_ranges), '], align 64','']
     out += ['!bcir.generated.module = !{!900}','!900 = !{!"module", !"'+module+'", !"claim_layout", !"BCIR_ClaimV2", !"schedule", !"global_indexed"}']
-    return '
-'.join(out)+'
-'
+    return '\n'.join(out)+'\n'
 
 def main():
     ap=argparse.ArgumentParser(description="Assemble BCIR textual input into phase4 LLVM claim blob module")
