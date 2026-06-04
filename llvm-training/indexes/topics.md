@@ -61,6 +61,8 @@
 | Advanced IR: target-specific intrinsics (`llvm.x86.*`, features, portability) | [`13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md) |
 | Advanced IR: special types (`token`, `metadata`, `half`, `bfloat`, `x86_amx`, scalable vectors) | [`13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md) |
 | Function, parameter, memory-effect, pointer, and ABI attributes | [`13-advanced-ir/04-attributes.md`](../13-advanced-ir/04-attributes.md) |
+| Poison, `undef`, `freeze`, `noundef`, and verifier-valid unsafe patterns | [`13-advanced-ir/05-poison-undef-freeze.md`](../13-advanced-ir/05-poison-undef-freeze.md) |
+| Fast-math flags, floating-point comparisons, reductions, reassociation, and vectorization | [`13-advanced-ir/06-fast-math-flags.md`](../13-advanced-ir/06-fast-math-flags.md) |
 | MLIR overview: modules, operations, regions, blocks, attributes, types | [`14-mlir-bridge/01-what-is-mlir.md`](../14-mlir-bridge/01-what-is-mlir.md) |
 | MLIR dialect design and operation anatomy | [`14-mlir-bridge/02-dialects-and-operations.md`](../14-mlir-bridge/02-dialects-and-operations.md) |
 | MLIR lowering to LLVM dialect / LLVM IR | [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](../14-mlir-bridge/03-lowering-to-llvm-dialect.md), [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](../14-mlir-bridge/examples/lowered-llvm-dialect.mlir) |

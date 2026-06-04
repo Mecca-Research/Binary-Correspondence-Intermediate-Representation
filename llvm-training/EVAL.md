@@ -33,25 +33,31 @@ or fill gaps.
    inspect? See [`12-backend-jit/04-mc-and-relocations.md`](12-backend-jit/04-mc-and-relocations.md).
 13. Which ABI attributes must stay synchronized between declarations and
     definitions? See [`13-advanced-ir/04-attributes.md`](13-advanced-ir/04-attributes.md).
-14. Why can a crypto function that looks safe in static IR still leak on a CPU?
+14. Why is a branch fed by `add nsw` and `icmp` verifier-valid but unsafe for
+    overflowing inputs, and where would `freeze` help? See
+    [`13-advanced-ir/05-poison-undef-freeze.md`](13-advanced-ir/05-poison-undef-freeze.md).
+15. Which fast-math flags allow NaN/infinity assumptions, signed-zero changes,
+    reciprocal transforms, contraction, approximations, and reassociation? See
+    [`13-advanced-ir/06-fast-math-flags.md`](13-advanced-ir/06-fast-math-flags.md).
+16. Why can a crypto function that looks safe in static IR still leak on a CPU?
     See [`15-binary-analysis/01-microarchitecture-side-channels.md`](15-binary-analysis/01-microarchitecture-side-channels.md).
-15. What build artifacts must you preserve to explain a PGO/LTO/BOLT optimized
+17. What build artifacts must you preserve to explain a PGO/LTO/BOLT optimized
     binary? See [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md).
-16. Which cheap BCSA features should be extracted before dense embeddings? See
+18. Which cheap BCSA features should be extracted before dense embeddings? See
     [`15-binary-analysis/03-interpretable-bcsa-features.md`](15-binary-analysis/03-interpretable-bcsa-features.md).
-17. Which exercise families now go beyond standalone IR writing, and how should
+19. Which exercise families now go beyond standalone IR writing, and how should
     intentionally broken repair inputs be named? See
     [`exercises/README.md`](exercises/README.md) and [`EXAMPLES.md`](EXAMPLES.md).
-18. What should a learner predict before running `mem2reg`, `simplifycfg`, or
+20. What should a learner predict before running `mem2reg`, `simplifycfg`, or
     Loop Vectorizer exercises? See exercises 020, 021, and 022 in
     [`exercises/`](exercises/).
-19. Why should language-agnostic review prompts come before optional C++ pass
+21. Why should language-agnostic review prompts come before optional C++ pass
     skeleton exercises, and why should those skeletons remain outside normal IR
     verification? See [`exercises/README.md`](exercises/README.md).
 
 ## Suggested scoring
 
-- **17-19**: ready to edit examples, repair broken IR, and review BCIR lowering patches.
-- **12-16**: read the linked chapters or exercise-family docs for missed questions and rerun the self-test.
-- **0-11**: start from [`START_HERE.md`](START_HERE.md), then use
+- **19-21**: ready to edit examples, repair broken IR, and review BCIR lowering patches.
+- **14-18**: read the linked chapters or exercise-family docs for missed questions and rerun the self-test.
+- **0-13**: start from [`START_HERE.md`](START_HERE.md), then use
   [`RECIPES.md`](RECIPES.md) for task-specific paths.
