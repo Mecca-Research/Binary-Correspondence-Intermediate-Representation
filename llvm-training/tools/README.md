@@ -11,6 +11,7 @@ the same checks without a build-system dependency.
 | `verify-examples.sh` | Builds the known-good standalone `.ll` manifest from chapter-local `examples/` directories, assembles each file with `llvm-as`, and runs `opt -passes=verify`. It also checks the broken `.ll.txt` sentinel so intentionally invalid examples do not drift into the manifest. | `llvm-as`, `opt` |
 | `smoke-lli.sh` | Runs only curated examples that have a safe no-argument entry point under `lli`. Most training snippets are library-style IR and should stay out of this list. | `lli` |
 | `smoke-llc.sh` | Lowers curated examples with `llc` to catch target-codegen regressions without treating every IR snippet as a runnable program. | `llc` |
+| `smoke-bolt.sh` | Builds the BOLT layout demo fixture, records baseline symbol/disassembly text, and exits with a clean skip when `llvm-bolt` is not installed. A full profile-driven rewrite still requires host support for `perf2bolt`/`perf`; see the walkthrough. | Optional `llvm-bolt`; `clang` and `llvm-objdump` when BOLT is present |
 
 ## Skip-list rationale
 
@@ -22,6 +23,10 @@ the same checks without a build-system dependency.
   examples;
 - only files below an `examples/` directory are considered standalone training
   modules.
+
+`smoke-bolt.sh` is also a positive, guarded check: it validates the documented
+BOLT fixture only when the host has `llvm-bolt`, and otherwise reports an
+intentional skip so minimal CI images are not forced to install BOLT packages.
 
 The sentinel `../examples/broken-example.ll.txt` is deliberately malformed. The
 verifier script asserts that LLVM rejects it while the script as a whole still

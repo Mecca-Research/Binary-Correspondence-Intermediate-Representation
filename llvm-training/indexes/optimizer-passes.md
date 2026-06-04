@@ -22,4 +22,6 @@
 | `-fprofile-generate`, `-fprofile-use` | PGO profile collection/use | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
 | `llvm-profdata merge` | Profile data preparation | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
 | `-flto=thin`, Full LTO | Cross-module optimization configuration | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
-| `llvm-bolt` | Post-link binary layout optimization | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
+| `llvm-bolt` | Post-link binary layout optimization | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md), [`07-optimization/07-bolt-layout-walkthrough.md`](../07-optimization/07-bolt-layout-walkthrough.md), [`tools/smoke-bolt.sh`](../tools/smoke-bolt.sh) |
+| `perf2bolt` | Convert sampled profiles into BOLT `.fdata` | [`07-optimization/07-bolt-layout-walkthrough.md`](../07-optimization/07-bolt-layout-walkthrough.md) |
+| `llvm-objdump` | Inspect baseline and BOLT-reordered symbol/block layout | [`07-optimization/07-bolt-layout-walkthrough.md`](../07-optimization/07-bolt-layout-walkthrough.md) |

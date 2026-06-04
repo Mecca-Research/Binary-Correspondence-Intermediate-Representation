@@ -35,6 +35,9 @@ jobs:
             echo "llvm-as and opt not both present; skipping llvm-training standalone example validation"
           fi
 
+      - name: Optional BOLT smoke fixture
+        run: bash llvm-training/tools/smoke-bolt.sh
+
       - name: LLVM seed validate
         run: |
           if command -v llvm-as >/dev/null && command -v llvm-link >/dev/null && command -v opt >/dev/null && command -v llvm-dis >/dev/null; then
