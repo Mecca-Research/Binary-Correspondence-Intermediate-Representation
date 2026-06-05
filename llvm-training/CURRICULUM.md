@@ -188,7 +188,8 @@ structured information before producing LLVM IR:
 3. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — conversion/lowering pipelines, LLVM dialect, and `.ll` differences
 4. [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) — where BCIR Vertex-Edge-Attribute, HAM hints, register binding, and Mixed Stride graphs can live
 5. [`14-mlir-bridge/05-vertex-graph-lowering.md`](14-mlir-bridge/05-vertex-graph-lowering.md) — track vertex IDs, edge lists, register bindings, and metadata hints through BCIR dialect, LLVM dialect, and LLVM IR
-6. Skim [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-sketch.mlir), [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/lowered-llvm-dialect.mlir), and [`14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll`](14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll) as illustrative before/after shapes.
+6. [`18-mlir-lowering-to-llvm/README.md`](18-mlir-lowering-to-llvm/README.md) — dedicated conversion infrastructure, `TypeConverter`, BCIR-to-LLVM lowering, affine/vector staging, and metadata-preservation chapter
+7. Skim [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-sketch.mlir), [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/lowered-llvm-dialect.mlir), and [`14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll`](14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll) as illustrative before/after shapes.
 
 Use this path before the Backend/JIT path when the task starts above LLVM IR,
 especially for custom frontend lowering or BCIR-specific graph representations.
@@ -206,7 +207,7 @@ fragments, runtime operations, or diagnostic hints directly to LLVM IR:
 6. [`bcir-mapping/05-runtime-abi.md`](bcir-mapping/05-runtime-abi.md), [`bcir-mapping/08-dragon-egg-operations.md`](bcir-mapping/08-dragon-egg-operations.md), and [`bcir-mapping/09-runtime-call-boundaries.md`](bcir-mapping/09-runtime-call-boundaries.md) — ABI structs, Dragon Egg runtime-owned operations, and wrapper calls.
 7. Run `./llvm-training/tools/verify-bcir-mapping.sh` and `./llvm-training/tools/verify-examples.sh` after editing any checked source-like `.bcir.txt` or lowered `.ll` output under [`bcir-mapping/examples/`](bcir-mapping/examples/).
 
-Use this path together with the MLIR bridge path when the source representation
+Use this path together with the MLIR bridge path and [`18-mlir-lowering-to-llvm/`](18-mlir-lowering-to-llvm/) when the source representation
 starts as a dialect operation rather than a source-like `.bcir.txt` prompt.
 
 ## BCIR lowering path
@@ -229,7 +230,8 @@ before lowering to LLVM dialect or textual LLVM IR:
 2. [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) — decide which BCIR concepts belong in a custom dialect.
 3. [`14-mlir-bridge/05-vertex-graph-lowering.md`](14-mlir-bridge/05-vertex-graph-lowering.md) — follow a complete graph lowering across source MLIR, LLVM-dialect MLIR, and textual LLVM IR.
 4. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — review type conversion and LLVM-dialect boundaries.
-5. Exercises [`032`](exercises/032-identify-mlir-dialect-boundaries.prompt.md)-[`034`](exercises/034-review-mlir-to-llvm-type-conversion.prompt.md) — practice dialect-boundary, graph-op lowering, and type-conversion reviews.
+5. [`18-mlir-lowering-to-llvm/README.md`](18-mlir-lowering-to-llvm/README.md) — implement the dedicated lowering boundary with conversion targets, type converters, conversion patterns, affine/vector staging, transform dialect strategy, and LLVM IR survival tables.
+6. Exercises [`032`](exercises/032-identify-mlir-dialect-boundaries.prompt.md)-[`034`](exercises/034-review-mlir-to-llvm-type-conversion.prompt.md) — practice dialect-boundary, graph-op lowering, and type-conversion reviews.
 
 ## Backend/JIT diagnostics path
 
@@ -337,6 +339,7 @@ foundations ────────┐
    concurrency (when shared memory appears)
         ↓
    MLIR bridge (when source/domain structure must lower into LLVM IR)
+   → MLIR lowering to LLVM (when conversion legality, TypeConverter, and BCIR-specific LLVM lowering are the task)
         ↓
    backend/JIT (when target lowering or runtime compilation appears)
         ↓
