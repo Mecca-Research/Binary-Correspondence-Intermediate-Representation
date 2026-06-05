@@ -4,6 +4,13 @@ This chapter explains how a structured frontend or domain IR can remain in MLIR
 long enough to validate domain facts, then lower deliberately to LLVM dialect and
 finally textual LLVM IR.
 
+## Key takeaways
+
+- MLIR lowers through dialects; the LLVM dialect is close to LLVM IR but still has MLIR operation syntax and type spelling.
+- Preserve BCIR graph/resource semantics as dialect operations or attributes until the lowering boundary has enough ABI and layout detail.
+- Lowering to LLVM IR requires explicit pointer, memref-descriptor, struct, and call-boundary decisions.
+- Use the examples as shape references; `.mlir` files are not standalone LLVM `.ll` modules.
+
 ## Lessons
 
 1. [`01-what-is-mlir.md`](01-what-is-mlir.md) — modules, operations, regions,

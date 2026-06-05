@@ -7,6 +7,13 @@ is still not the final authority for every LLVM version: the LLVM LangRef is the
 canonical documentation for LLVM IR, and the target installed `llvm-as` is the
 practical parser authority for what your toolchain accepts.
 
+## Key takeaways
+
+- Use the grammar as a syntax aid, then validate real IR with the target LLVM version's assembler and verifier.
+- LLVM textual IR separates top-level entities, instruction forms, metadata attachments, and attributes; do not treat snippets as free-form text.
+- Opaque-pointer-era IR still carries explicit source and access types on instructions even though pointer values print as `ptr`.
+- Grammar checks catch parse shape, while semantic verifier checks catch dominance, type, PHI, and ordering rules.
+
 ## Version expectations
 
 LLVM IR syntax and accepted constructs vary by LLVM release. The local

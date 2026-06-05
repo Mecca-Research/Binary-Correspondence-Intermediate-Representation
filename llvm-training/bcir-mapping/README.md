@@ -8,6 +8,13 @@ For a pattern-oriented dispatcher across BCIR mapping pages, pitfalls, advanced
 IR semantics, MLIR bridge notes, backend/JIT notes, and exercises, see the
 [`BCIR pattern index`](../indexes/bcir-patterns.md).
 
+## Key takeaways
+
+- Lower BCIR concepts in layers: semantic records, accessor/executor helpers, then plain LLVM operations.
+- Runtime ABI structs in `runtime/llvm/` are the source of truth for claim, schedule, registry, blob, and executor shapes.
+- Metadata should preserve diagnostics and lowering provenance without becoming required for core IR correctness.
+- Every BCIR-facing example should still assemble and verify as ordinary opaque-pointer LLVM IR.
+
 ## Concepts
 
 | Concept | Page | Standalone example |

@@ -19,10 +19,12 @@ testable.
    [`BCIR pattern index`](indexes/bcir-patterns.md).
 2. **Follow the path in [`CURRICULUM.md`](CURRICULUM.md)** if learning end-to-end. Skip
    to a leaf chapter if doing a targeted task.
-3. **Treat `08-pitfalls/` as a checklist** before writing or reviewing
+3. **Use [`quickref/`](quickref/) for one-page cheat sheets** on opaque
+   pointers, BCIR lowering, vectorization, metadata, and the new pass manager.
+4. **Treat `08-pitfalls/` as a checklist** before writing or reviewing
    LLVM IR. Every pitfall is tied to a real bug that shipped — most of
    them caught in the sibling BCIR project.
-4. **`10-grammar/llvm-ir.tm`** is the formal grammar. Use it as a
+5. **`10-grammar/llvm-ir.tm`** is the formal grammar. Use it as a
    formal syntax aid; verify against the target LLVM version's `llvm-as`
    and LangRef.
 
@@ -35,6 +37,7 @@ llvm-training/
 ├── CURRICULUM.md         reading order (30-min / 2-hr / deep paths)
 ├── RECIPES.md            task-oriented lookup paths for common LLVM work
 ├── INDEX.md              topic / symbol -> file map
+├── quickref/             one-page cheat sheets for common agent tasks
 ├── SEMVER.md             compatibility and versioning policy for this pack
 ├── EVAL.md               evaluation checklist for agent-usefulness
 ├── NOTICE.md             attribution

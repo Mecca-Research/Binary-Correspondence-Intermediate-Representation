@@ -6,6 +6,13 @@ link-time decisions, object layout, code generation, dynamic inputs, and physica
 CPU behavior. This section teaches an agent to reconcile the clean IR graph with
 runtime evidence.
 
+## Key takeaways
+
+- Post-codegen evidence includes side-channel review, dynamic traces, performance counters, and interpretable BCSA feature schemas.
+- Tiny CSV examples document schema and reasoning flow; they are not hardware-portable benchmark claims.
+- Constant-time review starts from control-flow and memory-access shape before adding trace/counter evidence.
+- Keep binary-analysis features interpretable enough to explain why two binaries appear corresponding or divergent.
+
 Read these chapters after the backend/JIT path:
 
 1. [`01-microarchitecture-side-channels.md`](01-microarchitecture-side-channels.md)
