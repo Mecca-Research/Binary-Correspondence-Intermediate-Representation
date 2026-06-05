@@ -116,6 +116,7 @@ than complete executable programs.
 | `llvm-training/07-optimization/examples/sroa-struct-before.ll` | `llvm-as llvm-training/07-optimization/examples/sroa-struct-before.ll -o /dev/null` |
 | `llvm-training/08-pitfalls/examples/immarg-fixed.ll` | `llvm-as llvm-training/08-pitfalls/examples/immarg-fixed.ll -o /dev/null` |
 | `llvm-training/08-pitfalls/examples/phi-predecessor-fixed.ll` | `llvm-as llvm-training/08-pitfalls/examples/phi-predecessor-fixed.ll -o /dev/null` |
+| `llvm-training/08-pitfalls/examples/sanitizer-instrumentation.ll` | `llvm-as llvm-training/08-pitfalls/examples/sanitizer-instrumentation.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/interleaved-access-after-vectorize.ll` | `llvm-as llvm-training/09-vectorization/examples/interleaved-access-after-vectorize.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/interleaved-access-before.ll` | `llvm-as llvm-training/09-vectorization/examples/interleaved-access-before.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/masked-load-store-after-vectorize.ll` | `llvm-as llvm-training/09-vectorization/examples/masked-load-store-after-vectorize.ll -o /dev/null` |

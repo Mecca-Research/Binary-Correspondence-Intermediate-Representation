@@ -24,6 +24,7 @@
 | `DIFile`, `DICompileUnit`, `DISubprogram`, `DILocation`, `DILocalVariable` | [`06-metadata/02-debug-info.md`](../06-metadata/02-debug-info.md) |
 | `branch_weights`, `llvm.loop.unroll.*`, `llvm.loop.vectorize.*` | [`06-metadata/03-profile-and-optimization-metadata.md`](../06-metadata/03-profile-and-optimization-metadata.md) |
 | `!type`, `llvm.type.test`, `llvm.type.checked.load`, type identifier | [`06-metadata/04-type-metadata-cfi.md`](../06-metadata/04-type-metadata-cfi.md) |
+| `!nosanitize`, `__asan_report_load*`, `__asan_report_store*`, shadow memory, redzone | [`08-pitfalls/16-sanitizer-instrumentation.md`](../08-pitfalls/16-sanitizer-instrumentation.md), [`08-pitfalls/examples/sanitizer-instrumentation.ll`](../08-pitfalls/examples/sanitizer-instrumentation.ll) |
 | `-Rpass`, `-Rpass-missed`, `-force-vector-width`, `-force-vector-interleave` | [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md) |
 | `loop-vectorize`, `slp-vectorizer`, `default<O3>` pass names | [`09-vectorization/01-loop-vectorizer.md`](../09-vectorization/01-loop-vectorizer.md), [`09-vectorization/02-slp-vectorizer.md`](../09-vectorization/02-slp-vectorizer.md), [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md) |
 | `llvm.masked.store`, masked load/store, interleaved access, deinterleave | [`09-vectorization/07-masked-and-interleaved-access.md`](../09-vectorization/07-masked-and-interleaved-access.md) |
