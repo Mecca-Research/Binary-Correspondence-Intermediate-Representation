@@ -97,8 +97,8 @@ ordinary calls.
 | Intrinsic / concept | Role |
 |---|---|
 | `llvm.experimental.gc.statepoint` | Produces a `token` for one safepoint-like call or poll. The token ties later GC intrinsics to that exact program point; it is not the callee's normal return value. |
-| `llvm.experimental.gc.relocate` | Consumes the statepoint token plus indices into the live pointer set and returns the post-statepoint address for one base/derived pointer pair. |
-| Live pointer set | The managed pointers that the GC must know about across the statepoint, usually carried in the statepoint's `"gc-live"` operand bundle. |
+| `llvm.experimental.gc.relocate` | Consumes the statepoint token plus indices into the live pointer set and returns the post-statepoint address for one base/derived pointer pair. The relocated value must have a GC pointer type, such as the non-default address-space pointer used by the example. |
+| Live pointer set | The managed pointers that the GC must know about across the statepoint, usually carried in the statepoint's `"gc-live"` operand bundle. These operands must match the pointer types later relocated. |
 
 A moving collector may update object addresses while the statepoint executes.
 After such a safepoint, the old SSA pointer is only the pre-statepoint address.
@@ -110,10 +110,10 @@ letting optimizations reason about the wrong value across the safepoint.
 
 A small relocation outline is provided in
 [`examples/gc-statepoint-relocate.ll`](examples/gc-statepoint-relocate.ll). It
-shows a statepoint with two live pointers: a base object and a derived field
-pointer. The `gc.relocate` calls use indices into that live set, and the
-post-statepoint load uses the relocated derived pointer rather than the original
-GEP result.
+shows a statepoint with two live GC pointers in address space 1: a base object
+and a derived field pointer. The `gc.relocate` calls use indices into that live
+set, and the post-statepoint load uses the relocated derived pointer rather than
+the original GEP result.
 
 BCIR agent guidance: treat statepoint tokens and relocated pointers as a single
 contract. If you move, clone, or delete statepoint-adjacent code, keep the

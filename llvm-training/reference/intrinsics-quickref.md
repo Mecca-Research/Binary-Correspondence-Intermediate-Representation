@@ -198,9 +198,10 @@ for a minimal JIT-oriented example and verification caveats.
 `llvm.experimental.gc.statepoint` marks a runtime safepoint and produces the
 `token` consumed by related GC intrinsics. `llvm.experimental.gc.relocate` uses
 that token and indices into the statepoint live pointer set, commonly the
-`"gc-live"` operand bundle, to produce post-safepoint managed pointers. Do not
-reuse pre-statepoint managed pointer SSA values after relocation; use the
-relocated values. See
+`"gc-live"` operand bundle, to produce post-safepoint managed pointers. Those
+live operands and relocated results must be verifier-recognized GC pointers,
+such as non-default address-space pointers. Do not reuse pre-statepoint managed
+pointer SSA values after relocation; use the relocated values. See
 [`../13-advanced-ir/03-special-types-and-tokens.md#gc-statepoints-and-relocation-semantics`](../13-advanced-ir/03-special-types-and-tokens.md#gc-statepoints-and-relocation-semantics)
 and
 [`../13-advanced-ir/examples/gc-statepoint-relocate.ll`](../13-advanced-ir/examples/gc-statepoint-relocate.ll).
