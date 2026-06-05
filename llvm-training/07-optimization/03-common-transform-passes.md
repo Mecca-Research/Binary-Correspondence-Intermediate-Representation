@@ -22,6 +22,7 @@ opt -S -passes=adce examples/dead-code-before.ll -o examples/dead-code-after-adc
 opt -S -passes=loop-rotate examples/loop-rotate-before.ll -o examples/loop-rotate-after.ll
 opt -S -passes=loop-unroll examples/loop-unroll-before.ll -o examples/loop-unroll-after.ll
 opt -S -passes=gvn examples/gvn-before.ll -o examples/gvn-after.ll
+opt -S -passes='sccp,simplifycfg' examples/sccp-before.ll -o examples/sccp-after.ll
 ```
 
 For a pure validity check:
@@ -132,6 +133,29 @@ Try combining it with canonicalization:
 opt -S -passes='mem2reg,instcombine,gvn' examples/mem2reg-before.ll -o -
 ```
 
+## `sccp`
+
+`sccp` is sparse conditional constant propagation. It propagates constants over
+SSA values while also marking which control-flow edges are reachable. A later
+`simplifycfg` pass often makes the visible deletion clearer.
+
+Try:
+
+```bash
+opt -S -passes='sccp,simplifycfg' examples/sccp-before.ll -o -
+```
+
+Regenerate the checked-in paired output with:
+
+```bash
+opt -S -passes='sccp,simplifycfg' examples/sccp-before.ll -o examples/sccp-after.ll
+```
+
+BCIR hazard: a constant branch can erase the dead side's diagnostic metadata,
+and a fold can replace several BCIR-origin instructions with one constant. Do
+not use SCCP results to justify speculating poison-producing operations unless
+the transform's legality proof handles poison or inserts `freeze` where needed.
+
 ## `loop-rotate`
 
 `loop-rotate` turns many while-shaped loops into a rotated form with the loop
@@ -149,6 +173,20 @@ Regenerate the checked-in paired output with:
 ```bash
 opt -S -passes=loop-rotate examples/loop-rotate-before.ll -o examples/loop-rotate-after.ll
 ```
+
+For a BCIR-shaped example that emphasizes source-to-IR mapping metadata and
+header/latch changes, compare:
+
+```bash
+opt -S -passes=loop-rotate examples/loop-rotate-bcir-before.ll -o -
+diff -u examples/loop-rotate-bcir-before.ll examples/loop-rotate-bcir-after.ll
+```
+
+BCIR hazard: loop rotation may add a preheader check, rename the repeated body
+block into the loop header, create LCSSA exit PHIs, and move metadata-bearing
+conditions from the original header to the latch. Run lowering phases that
+require source-shaped headers before rotation, or update those phases to accept
+canonical rotated loops.
 
 ## `loop-unroll`
 
@@ -188,3 +226,4 @@ avoiding a non-profitable rewrite.
 - [`01-pass-model.md`](01-pass-model.md)
 - [`02-common-analysis-passes.md`](02-common-analysis-passes.md)
 - [`04-optimization-levels.md`](04-optimization-levels.md)
+- [`08-deep-optimization-lessons.md`](08-deep-optimization-lessons.md)

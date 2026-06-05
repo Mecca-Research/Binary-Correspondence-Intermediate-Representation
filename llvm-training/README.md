@@ -48,7 +48,7 @@ llvm-training/
 ├── 04-memory/            alloca, load/store, globals, address spaces
 ├── 05-control-flow/      br, conditional br, switch, indirectbr
 ├── 06-metadata/          metadata syntax, debug info, profiling, loop hints
-├── 07-optimization/      opt pass model, analyses, transforms, debug, PGO/LTO/BOLT
+├── 07-optimization/      opt pass model, analyses, transforms, deep BCIR risks, PGO/LTO/BOLT
 ├── 08-pitfalls/          real-world bugs (mostly from BCIR review)
 ├── 09-vectorization/     Loop/SLP vectorizers, diagnostics, vector IR patterns
 ├── 10-grammar/           Textmapper grammar (formal syntax)
@@ -177,6 +177,8 @@ Recent advanced paths: agents doing non-foundational LLVM work should start
 with [`RECIPES.md`](RECIPES.md) for task-based routes, then jump directly to
 [`15-binary-analysis/README.md`](15-binary-analysis/README.md) for binary
 analysis/security/performance workflows or
+[`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) for
+BCIR-specific optimizer legality risks, or
 [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) for
 modern profile-guided, link-time, and post-link optimization context.
 
@@ -194,7 +196,7 @@ Use this repo as a BCIR LLVM IR task index, with BCIR-specific lowering notes in
 | Reviewing undefined-value or poison hazards | [poison, undef, and freeze](13-advanced-ir/05-poison-undef-freeze.md), [attributes](13-advanced-ir/04-attributes.md) |
 | Deciding whether relaxed floating-point math is safe | [fast-math flags](13-advanced-ir/06-fast-math-flags.md), [vectorization](09-vectorization/README.md) |
 | Adding atomic/concurrent behavior | [atomic orderings](11-concurrency/01-atomic-orderings.md), [atomic instructions](11-concurrency/02-atomic-instructions.md), [volatile vs atomic](11-concurrency/03-volatile-vs-atomic.md), [C++/Rust mapping](11-concurrency/04-memory-model-mapping.md) |
-| Optimizing generated IR | [pass model](07-optimization/01-pass-model.md), [transform passes](07-optimization/03-common-transform-passes.md), [debugging passes](07-optimization/05-debugging-passes.md), [PGO/LTO/BOLT](07-optimization/06-pgo-lto-bolt.md), [vectorization](09-vectorization/README.md) |
+| Optimizing generated IR | [pass model](07-optimization/01-pass-model.md), [analysis passes](07-optimization/02-common-analysis-passes.md), [transform passes](07-optimization/03-common-transform-passes.md), [deep BCIR optimizer lessons](07-optimization/08-deep-optimization-lessons.md), [debugging passes](07-optimization/05-debugging-passes.md), [PGO/LTO/BOLT](07-optimization/06-pgo-lto-bolt.md), [vectorization](09-vectorization/README.md) |
 | Planning MLIR lowering | [MLIR overview](14-mlir-bridge/01-what-is-mlir.md), [lowering to LLVM dialect](14-mlir-bridge/03-lowering-to-llvm-dialect.md), [BCIR dialect sketch](14-mlir-bridge/04-bcir-as-custom-dialect.md) |
 | Backend/JIT experiments | [codegen pipeline](12-backend-jit/01-codegen-pipeline.md), [ORC JIT](12-backend-jit/03-orc-jit.md), [MC and relocations](12-backend-jit/04-mc-and-relocations.md) |
 | Security/performance binary analysis | [microarchitecture side channels](15-binary-analysis/01-microarchitecture-side-channels.md), [dynamic traces/counters](15-binary-analysis/02-dynamic-traces-and-counters.md), [interpretable BCSA features](15-binary-analysis/03-interpretable-bcsa-features.md) |
