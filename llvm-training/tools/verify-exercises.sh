@@ -99,7 +99,8 @@ OPT=$(find_tool opt) || {
 }
 
 
-mapfile -d '' solutions < <(find "$EXERCISES_DIR" -maxdepth 1 -type f -name '*.solution.ll' -print0 | sort -z)
+mapfile -d '' solutions < <(find "$EXERCISES_DIR" -maxdepth 1 -type f \
+  \( -name '*.solution.ll' -o -name '*.good.ll' \) -print0 | sort -z)
 
 for file in "${solutions[@]}"; do
   ir_count=$((ir_count + 1))
@@ -120,9 +121,9 @@ if [ "$ir_count" -eq 0 ] && [ "$md_count" -eq 0 ]; then
 fi
 
 if [ "$status" -eq 0 ]; then
-  printf 'Verified %d LLVM IR solution(s) and %d markdown solution(s).\n' "$ir_count" "$md_count"
+  printf 'Verified %d LLVM IR solution/review artifact(s) and %d markdown solution(s).\n' "$ir_count" "$md_count"
 else
-  printf 'One or more checked-in exercise solutions failed verification.\n' >&2
+  printf 'One or more checked-in exercise solutions or review artifacts failed verification.\n' >&2
 fi
 
 exit "$status"
