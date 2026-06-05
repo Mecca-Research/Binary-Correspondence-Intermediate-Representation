@@ -117,7 +117,8 @@ target machine code or when embedding LLVM as a JIT compiler:
 4. [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md) — ORC JIT and `LLJIT`: adding modules, symbol lookup, function pointers, and resource ownership
 5. [`12-backend-jit/05-orc-layers.md`](12-backend-jit/05-orc-layers.md) — ORC internals: `ExecutionSession`, `JITDylib`, layers, materialization, symbol interning, and JITLink handoff
 6. [`12-backend-jit/04-mc-and-relocations.md`](12-backend-jit/04-mc-and-relocations.md) — MC layer concepts, relocations, and JIT missing-symbol debugging
-7. Skim [`12-backend-jit/examples/minimal-instruction.td`](12-backend-jit/examples/minimal-instruction.td) and [`12-backend-jit/examples/lljit-outline.cpp.md`](12-backend-jit/examples/lljit-outline.cpp.md) as compact reference outlines.
+7. [`12-backend-jit/06-custom-bcir-intrinsics.md`](12-backend-jit/06-custom-bcir-intrinsics.md) — custom backend intrinsics plus `llvm.experimental.stackmap`/`llvm.experimental.patchpoint` contracts for deoptimization and runtime patching
+8. Skim [`12-backend-jit/examples/minimal-instruction.td`](12-backend-jit/examples/minimal-instruction.td) and [`12-backend-jit/examples/lljit-outline.cpp.md`](12-backend-jit/examples/lljit-outline.cpp.md) as compact reference outlines.
 
 This path is intentionally advanced: it assumes you can already read LLVM IR and
 optimizer output, then follows the handoff into backend data structures, target
@@ -144,7 +145,7 @@ security or performance verdict.
 After Path 2, add this path when unusual IR syntax, target hooks, or special
 case constructs appear in generated modules:
 
-1. [`quickref/advanced-ir.md`](quickref/advanced-ir.md), [`reference/intrinsics.md`](reference/intrinsics.md), and [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) — fast checklist plus declaration rules and a focused category quick reference for common, memory/lifetime/debug, custom, and target-specific intrinsic families
+1. [`quickref/advanced-ir.md`](quickref/advanced-ir.md), [`reference/intrinsics.md`](reference/intrinsics.md), and [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) — fast checklist plus declaration rules and a focused category quick reference for common, memory/lifetime/debug, stackmap/patchpoint, custom, and target-specific intrinsic families
 2. [`13-advanced-ir/01-common-intrinsics.md`](13-advanced-ir/01-common-intrinsics.md) and [`13-advanced-ir/02-target-specific-intrinsics.md`](13-advanced-ir/02-target-specific-intrinsics.md) — common and target-specific intrinsic spelling in standalone modules
 3. [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md) — special scalar, token, metadata, target-extension, and scalable-vector types
 4. [`13-advanced-ir/04-attributes.md`](13-advanced-ir/04-attributes.md) — function, parameter, memory-effect, pointer, and ABI attributes

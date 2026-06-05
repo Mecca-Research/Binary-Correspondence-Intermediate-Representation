@@ -16,7 +16,7 @@
 | ORC/LLJIT concepts and missing-symbol diagnostics | [`03-orc-jit.md`](03-orc-jit.md) |
 | MC emission, symbols, and relocations | [`04-mc-and-relocations.md`](04-mc-and-relocations.md) |
 | ORC layers, object ownership, and diagnostic flow | [`05-orc-layers.md`](05-orc-layers.md) |
-| Custom BCIR intrinsic lowering, runtime fallback, and JIT policy | [`06-custom-bcir-intrinsics.md`](06-custom-bcir-intrinsics.md) |
+| Custom BCIR intrinsic lowering, stackmaps/patchpoints, runtime fallback, and JIT policy | [`06-custom-bcir-intrinsics.md`](06-custom-bcir-intrinsics.md) |
 
 ## Examples
 

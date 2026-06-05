@@ -112,8 +112,76 @@ An ORC-based JIT has three common options:
 Do not wait until the object linker to discover an unresolved backend-only hook.
 Resolve the policy before `IRCompileLayer` hands the module to target codegen.
 
+
+## Stackmaps and patchpoints for JIT/runtime cooperation
+
+`llvm.experimental.stackmap` and `llvm.experimental.patchpoint` are
+JIT/deoptimization/runtime-patching intrinsics. They are not ordinary portable
+library calls. Instead, they ask target code generation to leave enough evidence
+in the emitted object for an out-of-band runtime consumer to find a machine-code
+site and recover the machine locations of selected live IR values.
+
+The minimal declaration shapes are:
+
+```llvm
+declare void @llvm.experimental.stackmap(i64, i32, ...)
+declare i64 @llvm.experimental.patchpoint.i64(i64, i32, ptr, i32, ...)
+declare void @llvm.experimental.patchpoint.void(i64, i32, ptr, i32, ...)
+```
+
+A **stackmap** records a point in generated code plus the locations of live
+values. A runtime can use that side table for deoptimization, relocating managed
+objects, tiered JIT transitions, or mapping machine state back to a higher-level
+interpreter frame. A **patchpoint** also records a stackmap entry, but reserves a
+call-shaped or placeholder machine-code region that a runtime may later patch or
+redirect.
+
+Key operands and conventions:
+
+- **Stackmap ID:** the first `i64` is a runtime-owned identifier. LLVM preserves
+  it in the generated stackmap side table so the runtime can associate a machine
+  code location with its own deoptimization, safepoint, inline-cache, or patching
+  metadata.
+- **Shadow bytes:** the second `i32` requests a number of bytes after the lowered
+  site that should remain available as a patching/shadow region. This is a
+  backend code-layout promise, not an IR-level buffer that ordinary LLVM passes
+  read or write.
+- **Live values:** variadic operands after the fixed fields are values whose
+  machine locations should be recorded. At the IR level they look like call
+  operands; after code generation they become register, stack-slot, constant, or
+  other target-specific location records in the side table.
+- **Patchpoint target and argument count:** patchpoints include a target pointer
+  and an integer count for the call arguments passed to that target. Additional
+  trailing values are stackmap-only live values for the runtime consumer.
+
+Backends and runtimes interpret the side table because the useful semantics are
+outside normal IR execution. LLVM can verify and lower the intrinsic syntax, but
+it does not know what stackmap ID `1001` means, how a deoptimizer reconstructs an
+interpreter frame, or how a JIT wants to rewrite bytes in a patch region. That
+contract belongs to the target backend, object format, stackmap parser, and
+runtime policy.
+
+### Minimal stackmap/patchpoint example
+
+[`examples/stackmap-patchpoint.ll`](examples/stackmap-patchpoint.ll) shows one
+stackmap, one returning patchpoint, and one void placeholder patchpoint. The
+example keeps IDs, shadow-byte counts, target pointer, target argument count, and
+live values visible at each call site.
+
+### Verification expectations
+
+The example IR should be able to assemble when the LLVM version supports opaque
+pointers and the experimental stackmap/patchpoint declarations. Assembly only
+checks IR spelling and intrinsic type consistency. Semantic usefulness still
+depends on target/runtime support: the selected backend must emit the stackmap
+section/records expected by the runtime, and the runtime must parse those records
+and apply a policy for deoptimization or code patching.
+
 ## Example
 
+- [`examples/stackmap-patchpoint.ll`](examples/stackmap-patchpoint.ll)
+  shows stackmap IDs, shadow-byte reservations, patchpoint target arguments,
+  and live values recorded for a runtime side table.
 - [`examples/custom-bcir-intrinsic-jit.ll`](examples/custom-bcir-intrinsic-jit.ll)
   shows the custom intrinsic declaration, runtime fallback declaration,
   register-oriented vector operands, and hierarchical memory hint metadata.
