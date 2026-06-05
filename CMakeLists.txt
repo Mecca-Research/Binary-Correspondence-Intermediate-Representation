@@ -106,6 +106,11 @@ add_llvm_training_tool_target(
   "skipping llvm-training example manifest validation")
 
 add_llvm_training_tool_target(
+  llvm-training-verify-csv-schema
+  llvm-training/tools/verify-csv-schema.sh
+  "skipping llvm-training binary-analysis CSV schema validation")
+
+add_llvm_training_tool_target(
   llvm-training-verify-mlir-examples
   llvm-training/tools/verify-mlir-examples.sh
   "skipping llvm-training MLIR example validation")

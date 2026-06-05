@@ -64,6 +64,9 @@ jobs:
       - name: LLVM training example manifest drift
         run: bash llvm-training/tools/verify-manifest.sh
 
+      - name: LLVM training binary-analysis CSV schemas
+        run: llvm-training/tools/verify-csv-schema.sh
+
       - name: LLVM training invalid fixtures
         run: |
           if command -v llvm-as >/dev/null && command -v opt >/dev/null; then
