@@ -69,6 +69,7 @@ than complete executable programs.
 | `llvm-training/06-metadata/examples/loop-metadata.ll` | `llvm-as llvm-training/06-metadata/examples/loop-metadata.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/profile-branch-weights.ll` | `llvm-as llvm-training/06-metadata/examples/profile-branch-weights.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/tbaa-load-store.ll` | `llvm-as llvm-training/06-metadata/examples/tbaa-load-store.ll -o /dev/null` |
+| `llvm-training/06-metadata/examples/type-metadata-cfi.ll` | `llvm-as llvm-training/06-metadata/examples/type-metadata-cfi.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/dead-code-after-adce.ll` | `llvm-as llvm-training/07-optimization/examples/dead-code-after-adce.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/dead-code-before.ll` | `llvm-as llvm-training/07-optimization/examples/dead-code-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/gvn-after.ll` | `llvm-as llvm-training/07-optimization/examples/gvn-after.ll -o /dev/null` |

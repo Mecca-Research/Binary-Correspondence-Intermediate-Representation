@@ -37,9 +37,10 @@ After Path 1, add:
 15. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata syntax and common attachments
 16. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — source locations and debug-info nodes
 17. [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) — branch weights and loop hints
-18. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
+18. [`06-metadata/04-type-metadata-cfi.md`](06-metadata/04-type-metadata-cfi.md) — `!type` metadata, `llvm.type.test`, and CFI-style checked dispatch
+19. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — read the sections for
     terminators, comparison, memory, conversion, and other/call instructions
-19. All six files in `08-pitfalls/` — each is ≤ 5 minutes
+20. All six files in `08-pitfalls/` — each is ≤ 5 minutes
 
 Now you can read and write straightforward IR. Verifier failures should
 make sense.
@@ -56,10 +57,12 @@ non-semantic annotations and how `opt` uses or rewrites them:
 
 1. [`06-metadata/01-metadata-basics.md`](06-metadata/01-metadata-basics.md) — metadata basics: `!N`, metadata tuples, named metadata, `distinct`, and instruction attachments
 2. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — debug info: source locations, `!dbg`, and common `DI*` nodes
-3. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass model: analysis vs transform vs utility passes and new pass manager syntax
-4. [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) — common transform passes such as `mem2reg`, `instcombine`, `simplifycfg`, `adce`, `gvn`, and `loop-unroll`
-5. [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) — common analysis passes for aliasing, MemorySSA, CFGs, loops, and scalar evolution
-6. [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) — BCIR-focused PassBuilder plugins, MemorySSA, SCCP, LoopRotate, metadata preservation, mapping, loop shape, and poison risks
+3. [`06-metadata/03-profile-and-optimization-metadata.md`](06-metadata/03-profile-and-optimization-metadata.md) — optimization metadata: branch weights, loop hints, TBAA, ranges, and nonnull facts
+4. [`06-metadata/04-type-metadata-cfi.md`](06-metadata/04-type-metadata-cfi.md) — type metadata: `!type`, type identifiers, `llvm.type.test`, checked loads, and CFI-style hardening
+5. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass model: analysis vs transform vs utility passes and new pass manager syntax
+6. [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) — common transform passes such as `mem2reg`, `instcombine`, `simplifycfg`, `adce`, `gvn`, and `loop-unroll`
+7. [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) — common analysis passes for aliasing, MemorySSA, CFGs, loops, and scalar evolution
+8. [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) — BCIR-focused PassBuilder plugins, MemorySSA, SCCP, LoopRotate, metadata preservation, mapping, loop shape, and poison risks
 
 Practice next: run the commands embedded in
 [`07-optimization/examples/mem2reg-before.ll`](07-optimization/examples/mem2reg-before.ll),
@@ -132,10 +135,11 @@ performance investigations where final binary behavior matters:
 
 1. [`15-binary-analysis/README.md`](15-binary-analysis/README.md) — overview of static IR plus runtime evidence.
 2. [`15-binary-analysis/01-microarchitecture-side-channels.md`](15-binary-analysis/01-microarchitecture-side-channels.md) — cache, branch-prediction, and timing side-channel review.
-3. [`15-binary-analysis/02-dynamic-traces-and-counters.md`](15-binary-analysis/02-dynamic-traces-and-counters.md) — trace/counter schemas and pairing runtime evidence with IR.
-4. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — how profiles, LTO, ThinLTO, and BOLT can reshape the final binary.
-5. [`15-binary-analysis/03-interpretable-bcsa-features.md`](15-binary-analysis/03-interpretable-bcsa-features.md) — cheap, explainable BCSA triage before dense embeddings.
-6. Inspect [`15-binary-analysis/examples/`](15-binary-analysis/examples/) for the constant-time review IR and tiny trace/counter/feature schemas.
+3. [`06-metadata/04-type-metadata-cfi.md`](06-metadata/04-type-metadata-cfi.md) — connect IR-level CFI guards to post-codegen hardening evidence.
+4. [`15-binary-analysis/02-dynamic-traces-and-counters.md`](15-binary-analysis/02-dynamic-traces-and-counters.md) — trace/counter schemas and pairing runtime evidence with IR.
+5. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — how profiles, LTO, ThinLTO, and BOLT can reshape the final binary.
+6. [`15-binary-analysis/03-interpretable-bcsa-features.md`](15-binary-analysis/03-interpretable-bcsa-features.md) — cheap, explainable BCSA triage before dense embeddings.
+7. Inspect [`15-binary-analysis/examples/`](15-binary-analysis/examples/) for the constant-time review IR and tiny trace/counter/feature schemas.
 
 This path explicitly prevents an agent from treating static IR equivalence as a
 security or performance verdict.
