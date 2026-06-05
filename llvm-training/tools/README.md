@@ -14,6 +14,7 @@ the same checks without a build-system dependency.
 | `verify-exercises.sh` | Assembles every checked-in `llvm-training/exercises/*.solution.ll` file and runs `opt -passes=verify` so reference answers stay valid standalone LLVM IR. | `llvm-as`, `opt` |
 | `verify-invalid-fixtures.sh` | Discovers known invalid `.invalid.ll.txt` fixtures plus the broken-example sentinel and asserts each remains rejected by either `llvm-as` or `opt -passes=verify`. | `llvm-as`, `opt` |
 | `verify-manifest.sh` | Compares discovered standalone `*/examples/*.ll` files against the table in `llvm-training/examples/README.md` so new or removed examples do not silently drift from the manifest. | POSIX shell utilities |
+| `verify-csv-schema.sh` | Validates checked-in `15-binary-analysis/examples/*.csv` fixtures for registered schema-family column counts, non-empty headers, consistent non-empty data rows, and at least one data row. The parser handles single-line CSV records with quoted commas. | POSIX shell utilities, `awk` |
 | `verify-mlir-examples.sh` | Validates `*/examples/*.mlir` syntax with `mlir-opt --allow-unregistered-dialect` when `mlir-opt` is installed, and reports a clean skip otherwise. | Optional `mlir-opt` |
 | `verify-bcir-mapping.sh` | Looks for future `.bcir` source fixtures under `bcir-mapping/examples/`, compares `bcir-as` output to sibling `.generated.ll` files, verifies generated IR, and supports `UPDATE_BCIR_MAPPING=1` regeneration. | `tools/bcir-as/bcir-as`, `llvm-as`, `opt` when `.bcir` fixtures exist |
 | `smoke-bolt.sh` | Builds the BOLT layout demo fixture, records baseline symbol/disassembly text, and exits with a clean skip when `llvm-bolt` is not installed. A full profile-driven rewrite still requires host support for `perf2bolt`/`perf`; see the walkthrough. | Optional `llvm-bolt`; `clang` and `llvm-objdump` when BOLT is present |
@@ -36,6 +37,7 @@ cmake --build build --target llvm-training-smoke-lli
 cmake --build build --target llvm-training-verify-exercises
 cmake --build build --target llvm-training-verify-invalid-fixtures
 cmake --build build --target llvm-training-verify-manifest
+cmake --build build --target llvm-training-verify-csv-schema
 cmake --build build --target llvm-training-verify-mlir-examples
 cmake --build build --target llvm-training-verify-bcir-mapping
 ```
@@ -101,6 +103,11 @@ by `llvm-as` or by the verifier pass if assembly succeeds.
 the checked-in Markdown table in `../examples/README.md` to the discovered set of
 standalone `*/examples/*.ll` files using the same inclusion policy as
 `verify-examples.sh`.
+
+`verify-csv-schema.sh` is intentionally lightweight and fixture-scoped. It uses
+checked-in CSV files under `../15-binary-analysis/examples/`, maps each known
+schema family by filename to its expected column count, supports quoted commas in
+single-line CSV records, and fails if headers or data rows disappear.
 
 `verify-mlir-examples.sh` is optional-toolchain-friendly. It exits successfully
 with an explicit skip when `mlir-opt` is unavailable, but when MLIR is installed
