@@ -24,6 +24,7 @@ Official references:
 | What makes vectorization legal or blocked | [`04-vectorization-legality.md`](04-vectorization-legality.md) |
 | Commands, expected observations, and forced-width experiments | [`05-example-walkthroughs.md`](05-example-walkthroughs.md) |
 | IR clues: `<N x T>`, vector loads/stores, `shufflevector`, reductions | [`06-recognizing-vector-ir.md`](06-recognizing-vector-ir.md) |
+| Advanced masked and interleaved memory access patterns | [`07-masked-and-interleaved-access.md`](07-masked-and-interleaved-access.md) |
 
 ## Example files
 
@@ -36,6 +37,10 @@ Official references:
 - [`examples/slp-scalars-after-slp.ll`](examples/slp-scalars-after-slp.ll) — cleaned-up SLP output with vector operations and a lane shuffle.
 - [`examples/not-vectorizable-dependency.ll`](examples/not-vectorizable-dependency.ll) — loop-carried memory dependency example that should remain scalar.
 - [`examples/not-vectorizable-call.ll`](examples/not-vectorizable-call.ll) — unknown-call example that should produce a missed-vectorization explanation.
+- [`examples/masked-load-store-before.ll`](examples/masked-load-store-before.ll) — scalar conditional-store loop for masked vectorization experiments.
+- [`examples/masked-load-store-after-vectorize.ll`](examples/masked-load-store-after-vectorize.ll) — cleaned-up masked-store vector IR snapshot.
+- [`examples/interleaved-access-before.ll`](examples/interleaved-access-before.ll) — scalar AoS-to-SoA deinterleave loop with stride-2 input fields.
+- [`examples/interleaved-access-after-vectorize.ll`](examples/interleaved-access-after-vectorize.ll) — cleaned-up interleaved-access vector IR snapshot with `shufflevector` deinterleaving.
 
 ## Loop Vectorizer vs SLP Vectorizer
 

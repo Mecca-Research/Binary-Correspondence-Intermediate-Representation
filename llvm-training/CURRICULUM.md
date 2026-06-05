@@ -76,7 +76,7 @@ reason about optimization strength, pass pipelines, and vectorized IR:
 3. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
 4. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization dispatcher
 5. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
-6. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md) and [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md) — blockers, commands, and observations
+6. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md), [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md), and [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md) — blockers, commands, predication, and interleaved-memory observations
 7. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
 
 Practice next: run the commands in
@@ -276,7 +276,10 @@ focused path when you need to understand LLVM's vectorized IR and diagnostics:
 6. Run `opt -S -passes=slp-vectorizer` on
    [`09-vectorization/examples/slp-scalars.ll`](09-vectorization/examples/slp-scalars.ll)
    and inspect vector packing, `shufflevector`, and straight-line vector IR.
-7. Repeat with `-force-vector-width` and `-force-vector-interleave` to separate
+7. Read [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md), then run `opt -S -passes=loop-vectorize` on
+   [`09-vectorization/examples/masked-load-store-before.ll`](09-vectorization/examples/masked-load-store-before.ll) and
+   [`09-vectorization/examples/interleaved-access-before.ll`](09-vectorization/examples/interleaved-access-before.ll) with remark flags to inspect masked stores, stride recognition, and target-cost decisions.
+8. Repeat with `-force-vector-width` and `-force-vector-interleave` to separate
    legality questions from profitability choices.
 
 This path is intentionally about reading and experimenting with transformed IR,

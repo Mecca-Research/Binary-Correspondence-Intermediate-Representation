@@ -13,6 +13,8 @@
 | `adce` | Transform | [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md) |
 | `gvn` | Transform | [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md) |
 | `loop-unroll` | Transform | [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md) |
+| `loop-vectorize`, `-force-vector-width`, `-force-vector-interleave` | Transform and vectorizer experiment flags | [`09-vectorization/01-loop-vectorizer.md`](../09-vectorization/01-loop-vectorizer.md), [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md), [`09-vectorization/07-masked-and-interleaved-access.md`](../09-vectorization/07-masked-and-interleaved-access.md) |
+| `-pass-remarks=loop-vectorize`, `-pass-remarks-analysis=loop-vectorize`, `-pass-remarks-missed=loop-vectorize` | Optimization remark filters | [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md), [`09-vectorization/07-masked-and-interleaved-access.md`](../09-vectorization/07-masked-and-interleaved-access.md) |
 | alias analysis | Analysis family | [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
 | CFG printing/viewing | Utility/analysis inspection | [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
 | loop analysis | Analysis | [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
