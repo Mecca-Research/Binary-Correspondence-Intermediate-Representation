@@ -35,6 +35,7 @@ and [`../13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-sp
 | Runnable common intrinsic examples | [`../13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md) |
 | Target-specific namespace and feature requirements | [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md) |
 | `immarg` pitfall | [`../08-pitfalls/06-immarg-violation.md`](../08-pitfalls/06-immarg-violation.md) |
+| Custom BCIR intrinsic backend/JIT policy | [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md) |
 
 ## Category summary
 
@@ -46,6 +47,21 @@ and [`../13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-sp
 | Memory and lifetime | `llvm.memcpy.*`, `llvm.memmove.*`, `llvm.memset.*`, `llvm.lifetime.start.*` | [`intrinsics-quickref.md#memory-intrinsics`](intrinsics-quickref.md#memory-intrinsics), [`intrinsics-quickref.md#lifetime-intrinsics`](intrinsics-quickref.md#lifetime-intrinsics) |
 | Atomics, reductions, prefetch | `llvm.*atomic*`, `llvm.vector.reduce.*`, `llvm.prefetch` | [`intrinsics-quickref.md#atomic-primitives-and-optimizer-hints`](intrinsics-quickref.md#atomic-primitives-and-optimizer-hints), [`intrinsics-quickref.md#vector-reduction-intrinsics`](intrinsics-quickref.md#vector-reduction-intrinsics), [`intrinsics-quickref.md#prefetch-and-cache-related-intrinsics`](intrinsics-quickref.md#prefetch-and-cache-related-intrinsics) |
 | Target-specific, coroutine, EH, debug | `llvm.x86.*`, `llvm.coro.*`, `llvm.eh.*`, `llvm.dbg.*` | [`intrinsics-quickref.md#target-specific-intrinsic-naming-patterns`](intrinsics-quickref.md#target-specific-intrinsic-naming-patterns), [`intrinsics-quickref.md#coroutine-intrinsics`](intrinsics-quickref.md#coroutine-intrinsics), [`intrinsics-quickref.md#exception-handling`](intrinsics-quickref.md#exception-handling), [`intrinsics-quickref.md#debug-info`](intrinsics-quickref.md#debug-info) |
+| Custom backend intrinsics | `llvm.bcir.*` in a BCIR-aware tree | [`intrinsics-quickref.md#custom-backend-intrinsics`](intrinsics-quickref.md#custom-backend-intrinsics), [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md) |
+
+## Custom backend intrinsics
+
+Names under `llvm.` are reserved for intrinsics that LLVM or an out-of-tree
+backend knows how to lower. If BCIR needs a custom intrinsic such as
+`@llvm.bcir.gem.mixed.stride.v4f32`, define and document it in the backend's
+intrinsic table, keep its declaration synchronized with the generated intrinsic
+ID, and provide a runtime-call fallback for generic targets or ORC JIT policy.
+Do not treat a new `llvm.bcir.*` spelling as portable IR by itself.
+
+For the BCIR hardware-aware GEM example, see
+[`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md),
+[`../12-backend-jit/examples/custom-bcir-intrinsic-jit.ll`](../12-backend-jit/examples/custom-bcir-intrinsic-jit.ll),
+and [`../bcir-mapping/examples/hardware-aware-gem-lowering.ll`](../bcir-mapping/examples/hardware-aware-gem-lowering.ll).
 
 ## How to find the canonical declaration
 
@@ -79,6 +95,11 @@ Each declaration tells you:
 - **Forgetting that intrinsics are `declare`, not `define`.** You
   don't write the body.
 
+- **Inventing a custom `llvm.*` name without backend support.** The IR spelling
+  is only one part of the contract; TableGen/intrinsic IDs, instruction
+  selection, and JIT fallback policy must agree. See
+  [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md).
+
 ## See also
 
 - [`intrinsics-quickref.md`](intrinsics-quickref.md) — category quick reference for common intrinsic families
@@ -87,6 +108,7 @@ Each declaration tells you:
 - [`../11-concurrency/`](../11-concurrency/) — atomic orderings and volatile-vs-atomic
 - [`../13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md) — advanced common intrinsic signatures, overloaded names, and examples
 - [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md) — target-specific intrinsic namespaces, feature requirements, and portability
+- [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md) — custom BCIR intrinsic declarations, JIT rewrite policy, and fallback ABI
 - [`../13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md) — `token`, `metadata`, `half`, `bfloat`, `x86_amx`, and scalable vectors
 - [`../01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md) — `call` instruction
 - [`../08-pitfalls/06-immarg-violation.md`](../08-pitfalls/06-immarg-violation.md) — `immarg` constraint

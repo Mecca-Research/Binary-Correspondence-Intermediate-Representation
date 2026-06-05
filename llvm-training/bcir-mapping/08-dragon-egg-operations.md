@@ -19,14 +19,40 @@ or value out, and no hidden dependence on compiler-local state.
   fields are part of the public ABI.
 - Use a declared function for the runtime operation and a small defined wrapper
   for the BCIR-facing name.
+- If a backend owns the operation directly, use a declared custom intrinsic
+  shape only after documenting its TableGen signature, operand immediates, and
+  fallback ABI.
 - Pass all values, pointers, flags, and sizes explicitly.
 - Return a status code or value instead of relying on implicit exception-like
   control flow.
+
+## Custom intrinsic versus runtime call
+
+Dragon Egg operations often start as runtime calls because calls are portable,
+linkable, and easy for ORC JIT layers to interpose. A custom LLVM intrinsic is a
+better fit only when the backend must see a first-class operation during
+instruction selection, register-bank selection, or machine scheduling.
+
+Use this decision rule:
+
+- **Runtime call:** the operation can be implemented by a library, accelerator
+  queue, or late JIT symbol without changing target instruction selection.
+- **Custom intrinsic:** the operation needs target legalization, register-class
+  constraints, immediate operands, or pseudo-instruction selection before normal
+  call lowering would erase the operation shape.
+
+When adding a custom intrinsic, keep a fallback lowering path. The same BCIR GEM
+operation can lower to `@llvm.bcir.gem.mixed.stride.v4f32` for a BCIR-aware
+backend and to `@bcir.runtime.gem.v4f32` for a generic ORC/JIT environment. The
+examples in [`../12-backend-jit/examples/custom-bcir-intrinsic-jit.ll`](../12-backend-jit/examples/custom-bcir-intrinsic-jit.ll)
+and [`examples/hardware-aware-gem-lowering.ll`](examples/hardware-aware-gem-lowering.ll)
+show both boundary shapes.
 
 ## Example source and lowered IR
 
 - Source prompt: [`examples/bcir-operation.prompt.md`](examples/bcir-operation.prompt.md)
 - Checked wrapper output: [`examples/bcir-op-runtime-wrapper.ll`](examples/bcir-op-runtime-wrapper.ll)
+- Hardware-aware GEM intrinsic sketch: [`examples/hardware-aware-gem-lowering.ll`](examples/hardware-aware-gem-lowering.ll)
 
 ## Verifier commands
 
