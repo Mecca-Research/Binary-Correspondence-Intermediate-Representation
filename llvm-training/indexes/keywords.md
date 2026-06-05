@@ -29,6 +29,7 @@
 | `nounwind`, `noalias`, `readonly`, `memory(read)`, `dereferenceable`, `sret`, `byval` | [`13-advanced-ir/04-attributes.md`](../13-advanced-ir/04-attributes.md) |
 | `undef`, `poison`, `freeze`, `noundef`, `nsw`, `nuw`, `exact`, `inbounds` | [`13-advanced-ir/05-poison-undef-freeze.md`](../13-advanced-ir/05-poison-undef-freeze.md), [`13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze`](../13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze) |
 | `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn`, `reassoc`, `fast` | [`13-advanced-ir/06-fast-math-flags.md`](../13-advanced-ir/06-fast-math-flags.md) |
+| `deopt`, `funclet`, `gc-live`, `clang.arc.attachedcall` | [`13-advanced-ir/07-operand-bundles.md`](../13-advanced-ir/07-operand-bundles.md) |
 | `class`, `def`, `let`, `multiclass`, `defm` | [`12-backend-jit/02-tablegen.md`](../12-backend-jit/02-tablegen.md) |
 | `llvm-tblgen`, `-gen-register-info`, `-gen-instr-info`, `-gen-dag-isel` | [`12-backend-jit/02-tablegen.md`](../12-backend-jit/02-tablegen.md) |
 | `module`, `builtin.module`, `func.func`, `arith.*`, `scf.*`, `cf.*`, `memref.*` | [`14-mlir-bridge/01-what-is-mlir.md`](../14-mlir-bridge/01-what-is-mlir.md), [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](../14-mlir-bridge/03-lowering-to-llvm-dialect.md) |
