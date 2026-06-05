@@ -9,18 +9,21 @@ every lookup.
 | Concept or task area | [`indexes/topics.md`](indexes/topics.md) |
 | Common LLVM IR instruction syntax | [`indexes/instructions.md`](indexes/instructions.md) |
 | One-page quick references | [`quickref/`](quickref/) |
+| Advanced IR quick reference | [`quickref/advanced-ir.md`](quickref/advanced-ir.md) |
+| MLIR bridge quick reference | [`quickref/mlir-bridge.md`](quickref/mlir-bridge.md) |
 | `opt` flags and pass names | [`indexes/optimizer-passes.md`](indexes/optimizer-passes.md) |
 | Auto-vectorization lessons and advanced masked/interleaved examples | [`09-vectorization/README.md`](09-vectorization/README.md) |
 | Symbols such as metadata names, intrinsics, and files | [`indexes/symbols.md`](indexes/symbols.md) |
 | Intrinsics and special types | [`indexes/intrinsics-special-types.md`](indexes/intrinsics-special-types.md) |
+| Advanced IR lessons | [`13-advanced-ir/README.md`](13-advanced-ir/README.md) |
 | Common intrinsic family quick reference | [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
 | LLVM types and opaque-pointer migration | [`02-types/README.md`](02-types/README.md) |
 | BCIR lowering guide | [`bcir-mapping/README.md`](bcir-mapping/README.md) |
 | BCIR lowering patterns | [`indexes/bcir-patterns.md`](indexes/bcir-patterns.md) |
-| MLIR bridge and integration | [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) |
+| MLIR bridge and integration | [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) |
 | Backend/JIT diagnostics | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
 | Binary-analysis evidence schemas | [`15-binary-analysis/README.md`](15-binary-analysis/README.md) |
-| Repair and prediction exercises | [`exercises/README.md`](exercises/README.md) |
+| Repair, prediction, BCIR, MLIR, backend/JIT, and advanced-debugging exercises | [`exercises/README.md`](exercises/README.md) |
 | Expanded learning paths | [`CURRICULUM.md`](CURRICULUM.md) |
 | Keywords where they are introduced | [`indexes/keywords.md`](indexes/keywords.md) |
 | BCIR runtime/source cross-references | [`indexes/bcir-crossrefs.md`](indexes/bcir-crossrefs.md) |

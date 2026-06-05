@@ -12,5 +12,7 @@ low-context lookup before editing LLVM IR or BCIR-facing lowering code.
 | [`vectorization.md`](vectorization.md) | Reviewing loop/SLP vectorization legality, metadata, and diagnostics. |
 | [`metadata.md`](metadata.md) | Preserving debug, profile, loop, TBAA, and BCIR diagnostic metadata. |
 | [`new-pass-manager.md`](new-pass-manager.md) | Building and debugging `opt -passes=...` pipelines. |
+| [`advanced-ir.md`](advanced-ir.md) | Reviewing intrinsics, attributes, poison/freeze, special types, and fast-math contracts. |
+| [`mlir-bridge.md`](mlir-bridge.md) | Navigating MLIR dialect, LLVM-dialect, and BCIR graph-lowering review paths. |
 
 Each sheet links back to chapter material for deeper context.
