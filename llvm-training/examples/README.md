@@ -176,6 +176,7 @@ intrinsics/metadata rather than complete executable programs.
 | `llvm-training/16-exception-handling/examples/invoke-landingpad.ll` | `llvm-as llvm-training/16-exception-handling/examples/invoke-landingpad.ll -o /dev/null` |
 | `llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-after.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-after.ll -o /dev/null` |
 | `llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-before.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-before.ll -o /dev/null` |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints-lowered.ll` | `llvm-as llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints-lowered.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.ll` | `llvm-as llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/claim-resource-lookup.ll` | `llvm-as llvm-training/bcir-mapping/examples/claim-resource-lookup.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/diagnostic-metadata-preservation.ll` | `llvm-as llvm-training/bcir-mapping/examples/diagnostic-metadata-preservation.ll -o /dev/null` |
