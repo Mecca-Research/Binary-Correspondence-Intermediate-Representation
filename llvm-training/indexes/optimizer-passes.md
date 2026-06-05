@@ -4,6 +4,7 @@
 |---|---|---|
 | `opt -passes=verify` | Utility/checking pipeline | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
 | `-debug-pass-manager` | Pass-manager scheduling trace | [`07-optimization/05-debugging-passes.md`](../07-optimization/05-debugging-passes.md) |
+| `-load-pass-plugin`, PassBuilder plugin callbacks | New pass manager plugin loading | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/08-deep-optimization-lessons.md`](../07-optimization/08-deep-optimization-lessons.md) |
 | `print<module>` | IR printing inside a pipeline | [`07-optimization/05-debugging-passes.md`](../07-optimization/05-debugging-passes.md) |
 | `opt -S` | Textual IR output flag | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](../07-optimization/04-optimization-levels.md) |
 | `-disable-output` | Suppress output for check/print workflows | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
@@ -13,14 +14,16 @@
 | `adce` | Transform | [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md) |
 | `gvn` | Transform | [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md) |
 | `loop-unroll` | Transform | [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md) |
+| `sccp` | Transform / sparse conditional constant propagation | [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md), [`07-optimization/08-deep-optimization-lessons.md`](../07-optimization/08-deep-optimization-lessons.md) |
+| `loop-rotate` | Loop canonicalization transform | [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md), [`07-optimization/08-deep-optimization-lessons.md`](../07-optimization/08-deep-optimization-lessons.md) |
 | `loop-vectorize`, `-force-vector-width`, `-force-vector-interleave` | Transform and vectorizer experiment flags | [`09-vectorization/01-loop-vectorizer.md`](../09-vectorization/01-loop-vectorizer.md), [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md), [`09-vectorization/07-masked-and-interleaved-access.md`](../09-vectorization/07-masked-and-interleaved-access.md) |
 | `-pass-remarks=loop-vectorize`, `-pass-remarks-analysis=loop-vectorize`, `-pass-remarks-missed=loop-vectorize` | Optimization remark filters | [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md), [`09-vectorization/07-masked-and-interleaved-access.md`](../09-vectorization/07-masked-and-interleaved-access.md) |
 | alias analysis | Analysis family | [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
+| `print<memoryssa>`, MemorySSA | Memory-dependence analysis inspection | [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md), [`07-optimization/08-deep-optimization-lessons.md`](../07-optimization/08-deep-optimization-lessons.md) |
 | CFG printing/viewing | Utility/analysis inspection | [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
 | loop analysis | Analysis | [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
 | scalar evolution / SCEV | Analysis | [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
-| `default<O1>`, `default<O2>`, `default<O3>`, `default<Os>`, `default<Oz>` | Predefined new-PM pipelines | [`07-optimization/04-optimization-levels.md`](../07-optimization/04-optimization-levels.md) |
-
+| `default<O1>`, `default<O2>`, `default<O3>`, `default<Os>`, `default<Oz>` | Predefined new-PM pipelines | [`07-optimization/04-optimization-levels.md`](../07-optimization/04-optimization-levels.md), [`07-optimization/08-deep-optimization-lessons.md`](../07-optimization/08-deep-optimization-lessons.md) |
 | `-fprofile-generate`, `-fprofile-use` | PGO profile collection/use | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
 | `llvm-profdata merge` | Profile data preparation | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
 | `-flto=full`, `-flto=thin`, FullLTO, ThinLTO | Cross-module optimization configuration | [`07-optimization/06-pgo-lto-bolt.md#fulllto-vs-thinlto-review-points`](../07-optimization/06-pgo-lto-bolt.md#fulllto-vs-thinlto-review-points) |

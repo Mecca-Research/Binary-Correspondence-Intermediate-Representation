@@ -43,6 +43,31 @@ Important details:
   passes. The new pass manager can infer common nesting in simple pipelines,
   but complex pipelines may need explicit adaptors or nested syntax.
 
+## PassBuilder and plugin pipelines
+
+The new pass manager's textual pipelines are parsed by `PassBuilder`. That
+matters when you move from built-in teaching passes to BCIR-specific plugin
+passes: the command line is not just a list of legacy flags, it is a nested
+pipeline grammar. A simple function-pass sequence may be inferred, while mixed
+module/function/loop pipelines may need explicit nesting.
+
+Common shapes:
+
+```bash
+opt -S -passes='function(mem2reg,instcombine),module(function(sccp))' input.ll -o out.ll
+opt -load-pass-plugin=./libBCIROptPasses.so -passes='bcir-preserve-map,verify' input.ll -S -o out.ll
+opt --print-passes | rg 'sccp|memoryssa|loop-rotate'
+```
+
+A custom plugin should document its textual pass name, the IR unit it runs on,
+and which analyses it preserves. For BCIR, pair plugin pipelines with mapping
+and metadata checks so a pass cannot silently erase provenance, collapse a
+1:1 mapping into a many-to-one fold, or rotate loop headers before a lowering
+phase that still expects the source-shaped CFG.
+
+For a deeper BCIR-focused pass-manager lesson, see
+[`08-deep-optimization-lessons.md`](08-deep-optimization-lessons.md).
+
 ## Inspecting changed IR
 
 A small workflow:
@@ -100,3 +125,4 @@ version.
 - [`02-common-analysis-passes.md`](02-common-analysis-passes.md)
 - [`03-common-transform-passes.md`](03-common-transform-passes.md)
 - [`04-optimization-levels.md`](04-optimization-levels.md)
+- [`08-deep-optimization-lessons.md`](08-deep-optimization-lessons.md)
