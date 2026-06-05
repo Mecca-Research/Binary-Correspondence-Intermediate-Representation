@@ -75,6 +75,27 @@ jobs:
             echo "llvm-as and opt not both present; skipping llvm-training invalid fixture validation"
           fi
 
+      - name: LLVM training opt-diff golden fixtures
+        run: |
+          if command -v opt >/dev/null; then
+            bash llvm-training/tools/verify-opt-diff.sh
+          else
+            echo "opt not present; skipping llvm-training opt-diff golden validation"
+          fi
+
+      - name: LLVM training opaque pointer syntax
+        run: bash llvm-training/tools/verify-opaque-pointers.sh
+
+      - name: LLVM training lit tests
+        run: |
+          if command -v llvm-lit >/dev/null; then
+            llvm-lit -sv llvm-training/tests
+          elif command -v lit >/dev/null; then
+            lit -sv llvm-training/tests
+          else
+            echo "llvm-lit/lit not present; skipping llvm-training lit tests"
+          fi
+
       - name: LLVM training MLIR examples
         run: bash llvm-training/tools/verify-mlir-examples.sh
 

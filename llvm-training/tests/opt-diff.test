@@ -1,0 +1,2 @@
+# REQUIRES: opt
+# RUN: bash %training_root/tools/verify-opt-diff.sh

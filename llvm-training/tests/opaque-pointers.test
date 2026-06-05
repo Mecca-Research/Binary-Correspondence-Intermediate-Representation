@@ -1,0 +1,1 @@
+# RUN: bash %training_root/tools/verify-opaque-pointers.sh

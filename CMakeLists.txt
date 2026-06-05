@@ -101,6 +101,17 @@ add_llvm_training_tool_target(
   REQUIRED_TOOLS llvm-as opt)
 
 add_llvm_training_tool_target(
+  llvm-training-verify-opt-diff
+  llvm-training/tools/verify-opt-diff.sh
+  "opt not present; skipping llvm-training opt-diff golden validation"
+  REQUIRED_TOOLS opt)
+
+add_llvm_training_tool_target(
+  llvm-training-verify-opaque-pointers
+  llvm-training/tools/verify-opaque-pointers.sh
+  "skipping llvm-training opaque pointer syntax validation")
+
+add_llvm_training_tool_target(
   llvm-training-verify-manifest
   llvm-training/tools/verify-manifest.sh
   "skipping llvm-training example manifest validation")
@@ -119,6 +130,27 @@ add_llvm_training_tool_target(
   llvm-training-verify-bcir-mapping
   llvm-training/tools/verify-bcir-mapping.sh
   "skipping llvm-training BCIR mapping validation")
+
+if(BASH_EXECUTABLE)
+  find_program(LLVM_LIT_EXECUTABLE NAMES llvm-lit lit)
+  if(LLVM_LIT_EXECUTABLE)
+    add_custom_target(llvm-training-lit
+      COMMAND ${LLVM_LIT_EXECUTABLE} -sv llvm-training/tests
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      COMMENT "Running llvm-training lit tests"
+      VERBATIM)
+  else()
+    add_custom_target(llvm-training-lit
+      COMMAND ${CMAKE_COMMAND} -E echo "llvm-lit/lit not found; skipping llvm-training lit tests"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      VERBATIM)
+  endif()
+else()
+  add_custom_target(llvm-training-lit
+    COMMAND ${CMAKE_COMMAND} -E echo "bash not found; skipping llvm-training lit tests"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    VERBATIM)
+endif()
 
 # Export all public BCIR targets.
 install(
