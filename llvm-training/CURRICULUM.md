@@ -149,13 +149,13 @@ security or performance verdict.
 After Path 2, add this path when unusual IR syntax, target hooks, or special
 case constructs appear in generated modules:
 
-1. [`quickref/advanced-ir.md`](quickref/advanced-ir.md), [`reference/intrinsics.md`](reference/intrinsics.md), and [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) — fast checklist plus declaration rules and a focused category quick reference for common, memory/lifetime/debug, stackmap/patchpoint, custom, and target-specific intrinsic families
+1. [`quickref/advanced-ir.md`](quickref/advanced-ir.md), [`reference/intrinsics.md`](reference/intrinsics.md), and [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) — fast checklist plus declaration rules and a focused category quick reference for common, memory/lifetime/debug, stackmap/patchpoint, matrix, coroutine, GC statepoint, convergence, custom, and target-specific intrinsic families
 2. [`13-advanced-ir/01-common-intrinsics.md`](13-advanced-ir/01-common-intrinsics.md) and [`13-advanced-ir/02-target-specific-intrinsics.md`](13-advanced-ir/02-target-specific-intrinsics.md) — common and target-specific intrinsic spelling in standalone modules
 3. [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md) — special scalar, token, metadata, target-extension, and scalable-vector types
 4. [`13-advanced-ir/04-attributes.md`](13-advanced-ir/04-attributes.md) — function, parameter, memory-effect, pointer, and ABI attributes
 5. [`13-advanced-ir/05-poison-undef-freeze.md`](13-advanced-ir/05-poison-undef-freeze.md) — `undef`, poison propagation, `freeze`, vector lanes, `noundef`, and verifier-valid unsafe patterns
 6. [`13-advanced-ir/06-fast-math-flags.md`](13-advanced-ir/06-fast-math-flags.md) — `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn`, `reassoc`, `fast`, FP comparisons, reductions, and vectorization consequences
-7. [`13-advanced-ir/07-operand-bundles.md`](13-advanced-ir/07-operand-bundles.md) — call-site operand bundles for deoptimization, funclets, GC liveness, and ARC attached calls
+7. [`13-advanced-ir/07-operand-bundles.md`](13-advanced-ir/07-operand-bundles.md) — call-site operand bundles for deoptimization, funclets, GC liveness, ARC attached calls, and convergence-control bundles
 8. [`16-exception-handling/README.md`](16-exception-handling/README.md) — exceptional CFG edges, Itanium landing pads, WinEH funclets, cleanup/resume paths, and `"funclet"` bundle interactions
 9. [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) — target-specific address spaces and `addrspacecast`
 10. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — target-specific operations as they leave IR and become machine-level lowering decisions

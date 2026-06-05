@@ -29,10 +29,14 @@ interpreter checks, use:
 unavailable targets, non-default address-space lowering, target-specific
 intrinsics, GC/statepoint tokens, or analysis-only vectorizer artifacts.
 `smoke-lli.sh` is narrower still: it runs only examples with a safe `main` or an
-explicitly documented runnable entrypoint. Most files in this manifest are
-assembly-only because they expose functions that need caller-provided arguments,
-show optimization before/after IR, or demonstrate intrinsics/metadata rather
-than complete executable programs.
+explicitly documented runnable entrypoint. The advanced checked-in examples for
+stackmaps/patchpoints, operand bundles, EH funclets, coroutines, GC
+statepoints, matrix intrinsics, and token/convergence-style IR are manifest
+entries because they assemble and verify, but they are intentionally documented
+as assembly-only unless a chapter names a target/runtime-specific smoke path.
+Most files in this manifest are assembly-only because they expose functions that
+need caller-provided arguments, show optimization before/after IR, or demonstrate
+intrinsics/metadata rather than complete executable programs.
 
 ## Standalone `.ll` examples
 

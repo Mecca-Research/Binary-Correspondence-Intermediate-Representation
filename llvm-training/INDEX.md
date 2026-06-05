@@ -16,6 +16,7 @@ every lookup.
 | Symbols such as metadata names, intrinsics, and files | [`indexes/symbols.md`](indexes/symbols.md) |
 | Intrinsics and special types | [`indexes/intrinsics-special-types.md`](indexes/intrinsics-special-types.md) |
 | Advanced IR lessons | [`13-advanced-ir/README.md`](13-advanced-ir/README.md) |
+| Operand bundles, GC statepoints, coroutines, matrix/convergence intrinsics, and token IR | [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md), [`13-advanced-ir/07-operand-bundles.md`](13-advanced-ir/07-operand-bundles.md) |
 | Common intrinsic family quick reference | [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
 | LLVM types and opaque-pointer migration | [`02-types/README.md`](02-types/README.md) |
 | BCIR lowering guide | [`bcir-mapping/README.md`](bcir-mapping/README.md) |

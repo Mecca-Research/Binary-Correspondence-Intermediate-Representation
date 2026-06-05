@@ -193,6 +193,21 @@ See [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-cust
 and [`../12-backend-jit/examples/stackmap-patchpoint.ll`](../12-backend-jit/examples/stackmap-patchpoint.ll)
 for a minimal JIT-oriented example and verification caveats.
 
+### Matrix intrinsics
+
+`llvm.matrix.*` intrinsics model matrix-shaped operations before target/legalizer
+lowering. They carry row/column dimensions as immediate operands and are most
+useful when a frontend or domain lowering needs to keep two-dimensional intent
+visible longer than ordinary vector arithmetic would.
+
+| Intrinsic family | Signature sketch | Purpose | Caveat |
+|---|---|---|---|
+| `llvm.matrix.multiply.*` | `<M*N x T> (<M*K x T>, <K*N x T>, i32 immarg M, i32 immarg N, i32 immarg K)` | Matrix multiply over flattened vectors. | Dimension operands must be constants; later lowering expands to vector/scalar target code. |
+| `llvm.matrix.transpose.*` | `<R*C x T> (<R*C x T>, i32 immarg R, i32 immarg C)` | Matrix transpose over flattened storage. | Does not by itself define a memory layout; callers must agree on flattening. |
+
+See [`../13-advanced-ir/examples/matrix-intrinsics-sketch.ll`](../13-advanced-ir/examples/matrix-intrinsics-sketch.ll)
+for a verifier-oriented sketch.
+
 ### GC statepoint intrinsics
 
 `llvm.experimental.gc.statepoint` marks a runtime safepoint and produces the
@@ -248,8 +263,31 @@ for declaration, metadata, and JIT policy guidance.
 ### Coroutine intrinsics
 
 `llvm.coro.id`, `llvm.coro.begin`, `llvm.coro.suspend`,
-`llvm.coro.resume`, etc. — used by `clang -fcoroutines-ts` and
-similar frontends. Rarely written by hand.
+`llvm.coro.resume`, etc. — used by C++ coroutine frontends and similar
+frontends. They form a presplit coroutine that LLVM coroutine passes later
+outline, split, and clean up. Preserve the token/threading relationship between
+`coro.id`, frame allocation/begin, suspend points, and destroy/resume paths; do
+not treat them as ordinary calls during generic cleanup. See
+[`../13-advanced-ir/03-special-types-and-tokens.md#coroutine-tokens-and-lowering-phases`](../13-advanced-ir/03-special-types-and-tokens.md#coroutine-tokens-and-lowering-phases)
+and [`../13-advanced-ir/examples/coroutine-outline.ll`](../13-advanced-ir/examples/coroutine-outline.ll).
+
+### Convergence intrinsics
+
+`llvm.experimental.convergence.*` intrinsics and the `"convergencectrl"` operand
+bundle keep convergence-sensitive calls tied to a specific dynamic group of
+lanes/threads. They matter for GPU/subgroup-style operations where hoisting,
+sinking, duplicating, or merging identical-looking convergent operations can
+change which lanes participate together.
+
+| Intrinsic / bundle | Purpose | Caveat |
+|---|---|---|
+| `llvm.experimental.convergence.entry` | Create a token for the function-entry convergence group. | Valid only in a `convergent` function. |
+| `llvm.experimental.convergence.loop` | Refine a convergence token for loop iteration structure. | Keep associated control-flow shape intact when transforming loops. |
+| `llvm.experimental.convergence.anchor` | Start a local convergence region. | Useful when several convergent calls must remain tied together. |
+| `"convergencectrl"(token %tok)` | Operand bundle governing a convergent call/invoke/callbr. | Bundle contains exactly one `token`; preserve it with the operation. |
+
+See [`../13-advanced-ir/03-special-types-and-tokens.md#convergence-control`](../13-advanced-ir/03-special-types-and-tokens.md#convergence-control)
+for transformation guidance.
 
 ### Exception handling
 
