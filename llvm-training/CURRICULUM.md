@@ -63,6 +63,7 @@ non-semantic annotations and how `opt` uses or rewrites them:
 6. [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) — common transform passes such as `mem2reg`, `instcombine`, `simplifycfg`, `adce`, `gvn`, and `loop-unroll`
 7. [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) — common analysis passes for aliasing, MemorySSA, CFGs, loops, and scalar evolution
 8. [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) — BCIR-focused PassBuilder plugins, MemorySSA, SCCP, LoopRotate, metadata preservation, mapping, loop shape, and poison risks
+9. [`17-new-pass-manager/README.md`](17-new-pass-manager/README.md) — modern PassBuilder infrastructure, custom analyses, pass plugins, callbacks, adaptive BCIR pipelines, and MLGO/profile-guided policy
 
 Practice next: run the commands embedded in
 [`07-optimization/examples/mem2reg-before.ll`](07-optimization/examples/mem2reg-before.ll),
@@ -81,11 +82,12 @@ reason about optimization strength, pass pipelines, and vectorized IR:
 1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass pipelines and `opt -passes=...` spelling
 2. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — optimization levels: `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
 3. [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) — deeper optimizer legality and BCIR invariants around plugins, MemorySSA, SCCP, loop rotation, metadata, and poison
-4. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
-5. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization dispatcher
-6. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
-7. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md), [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md), and [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md) — blockers, commands, predication, and interleaved-memory observations
-8. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
+4. [`17-new-pass-manager/README.md`](17-new-pass-manager/README.md) — new pass-manager plugin infrastructure, callbacks, adaptive BCIR pass ordering, and MLGO/profile-guided pipeline policy
+5. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
+6. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization dispatcher
+7. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
+8. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md), [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md), and [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md) — blockers, commands, predication, and interleaved-memory observations
+9. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
 
 Practice next: run the commands in
 [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c),
@@ -271,7 +273,7 @@ Read everything in numerical order:
         ↓
 06-metadata/
         ↓
-07-optimization/  →  09-vectorization/
+07-optimization/  →  17-new-pass-manager/  →  09-vectorization/
         ↓                    ↓
 08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  14-mlir-bridge/  →  bcir-mapping/
         ↓                                                                    ↓
