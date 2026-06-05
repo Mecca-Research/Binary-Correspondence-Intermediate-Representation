@@ -1,4 +1,5 @@
 source_filename = "026-poison-freeze-repair.invalid.ll.txt"
+; llvm-training-invalid-kind: semantic-only
 
 define i32 @select_after_overflow(i32 %x) {
 entry:

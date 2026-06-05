@@ -28,6 +28,26 @@ rejects_with_llvm_as_or_opt() {
   bitcode=$(mktemp "${TMPDIR:-/tmp}/llvm-training-invalid.XXXXXX.bc")
 
   printf '[invalid] %s ... ' "$rel"
+  if grep -q '^; llvm-training-invalid-kind: semantic-only$' "$file"; then
+    if ! output=$(llvm-as "$file" -o "$bitcode" 2>&1); then
+      printf 'FAILED\n'
+      printf '    semantic-only invalid fixture should assemble, but llvm-as rejected it\n'
+      printf '%s\n' "$output" | sed 's/^/    /'
+      rm -f "$bitcode"
+      return 1
+    fi
+    if ! output=$(opt -passes=verify "$bitcode" -o /dev/null 2>&1); then
+      printf 'FAILED\n'
+      printf '    semantic-only invalid fixture should verify syntactically, but opt rejected it\n'
+      printf '%s\n' "$output" | sed 's/^/    /'
+      rm -f "$bitcode"
+      return 1
+    fi
+    printf 'accepted by verifier as semantic-only risk\n'
+    rm -f "$bitcode"
+    return 0
+  fi
+
   if output=$(llvm-as "$file" -o "$bitcode" 2>&1); then
     if output=$(opt -passes=verify "$bitcode" -o /dev/null 2>&1); then
       printf 'FAILED\n'
@@ -67,7 +87,7 @@ if [ "$count" -eq 0 ]; then
 fi
 
 if [ "$status" -eq 0 ]; then
-  printf 'Verified %d known invalid LLVM IR fixture(s) remain rejected.\n' "$count"
+  printf 'Validated %d known invalid LLVM IR fixture(s).\n' "$count"
 else
   printf 'One or more known invalid LLVM IR fixtures were accepted unexpectedly.\n' >&2
 fi

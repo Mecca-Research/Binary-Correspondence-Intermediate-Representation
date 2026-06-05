@@ -17,7 +17,9 @@ llvm-training/exercises/026-poison-freeze-repair.invalid.ll.txt
 ## Required repair
 
 Make the smallest change that ensures the branch condition is not poison. Keep
-function behavior otherwise equivalent for non-poison inputs.
+function behavior otherwise equivalent for non-poison inputs. Use the
+[BCIR safe-speculation rule][bcir-freeze-rule]: freeze at the control-flow
+boundary rather than hiding the poison source.
 
 ## Expected diagnostic command
 
@@ -36,3 +38,5 @@ condition in control flow.
 ```sh
 llvm-as -disable-output llvm-training/exercises/026-poison-freeze-repair.solution.ll
 ```
+
+[bcir-freeze-rule]: ../13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze

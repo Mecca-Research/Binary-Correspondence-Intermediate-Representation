@@ -25,7 +25,10 @@ Before running `opt`, answer:
 3. Which attributes help the vectorizer reason that `%src` and `%dst` do not
    alias?
 4. What vector operations would you expect in a vectorized body?
-5. What scalar remainder or early-exit path might still be needed?
+5. If a vectorizer or BCIR lowering creates lane masks from poison-capable
+   arithmetic, where would the [BCIR `freeze` safe-speculation rule][bcir-freeze-rule]
+   require stabilization before those masks control selects or predicated lanes?
+6. What scalar remainder or early-exit path might still be needed?
 
 ## Pass command
 
@@ -52,3 +55,5 @@ For a stable teaching snapshot of vectorized IR, compare the chapter example:
 ```sh
 llvm-as -disable-output llvm-training/09-vectorization/examples/sum-loop-after-loop-vectorize.ll
 ```
+
+[bcir-freeze-rule]: ../13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze

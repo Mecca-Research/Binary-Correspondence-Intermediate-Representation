@@ -25,7 +25,10 @@ and diagnostics should not be hidden inside one opaque helper.
    base-pointer loads.
 4. **Dispatch** each operation either to plain LLVM instructions or to an
    explicit runtime-call wrapper.
-5. **Attach** advisory metadata, prefetches, debug/provenance tags, and verifier
+5. **Stabilize** poison-capable speculative predicates with `freeze` before they
+   control branches, selects, vector masks, or metadata-preserving if-conversion;
+   see the [BCIR `freeze` safe-speculation rule][bcir-freeze-rule].
+6. **Attach** advisory metadata, prefetches, debug/provenance tags, and verifier
    assertions only after the core dataflow is explicit.
 
 ## Example source and lowered IR
@@ -34,6 +37,8 @@ and diagnostics should not be hidden inside one opaque helper.
 - Checked output: [`examples/claim-resource-lookup.ll`](examples/claim-resource-lookup.ll)
 - Runtime-wrapper source: [`examples/bcir-operation.prompt.md`](examples/bcir-operation.prompt.md)
 - Checked wrapper output: [`examples/bcir-op-runtime-wrapper.ll`](examples/bcir-op-runtime-wrapper.ll)
+- Safe-speculation example:
+  [`../13-advanced-ir/examples/bcir-freeze-safe-speculation.ll`](../13-advanced-ir/examples/bcir-freeze-safe-speculation.ll)
 
 ## Verifier commands
 
@@ -56,6 +61,9 @@ opt -passes=verify llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.l
   attributes, and argument order.
 - Runtime-call declarations should be declarations in example modules unless the
   example owns the implementation.
+- If the pipeline speculates a poison-capable predicate into `br`, `switch`,
+  `select`, or a vector mask without `freeze`, the IR may verify but still have
+  undefined behavior for some BCIR inputs.
 
 ## Optimization risks
 
@@ -64,3 +72,5 @@ opt -passes=verify llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.l
 - DCE can remove advisory-only calls if they are modeled as side-effect-free.
 - CSE can merge equivalent address calculations and make diagnostics harder to
   associate unless metadata or naming conventions are preserved.
+
+[bcir-freeze-rule]: ../13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze

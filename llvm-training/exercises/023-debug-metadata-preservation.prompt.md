@@ -20,10 +20,14 @@ Write a standalone module containing:
 ## Expected observation
 
 The module should assemble, and `llvm-dis` should show that the `!dbg`
-attachments remain on the surviving arithmetic and return instructions.
+attachments remain on the surviving arithmetic and return instructions. When a
+metadata-preserving transform also speculates poison-capable values, review the
+separate [BCIR `freeze` safe-speculation rule][bcir-freeze-rule].
 
 ## Verification command
 
 ```sh
 llvm-as -disable-output llvm-training/exercises/023-debug-metadata-preservation.solution.ll
 ```
+
+[bcir-freeze-rule]: ../13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze
