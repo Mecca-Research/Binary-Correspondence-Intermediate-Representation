@@ -14,6 +14,7 @@
 | Module anatomy, declarations, definitions, functions, and basic blocks | [`01-modules-functions-blocks.md`](01-modules-functions-blocks.md) |
 | Instruction spelling, operands, result names, and terminator format | [`02-instruction-format.md`](02-instruction-format.md) |
 | Comments, metadata attachments, module flags, and target metadata | [`03-comments-metadata.md`](03-comments-metadata.md) |
+| Inline asm expressions, constraints, clobbers, and `callbr` labels | [`04-inline-asm.md`](04-inline-asm.md) |
 
 ## Examples
 
