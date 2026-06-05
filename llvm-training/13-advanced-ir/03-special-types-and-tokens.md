@@ -47,6 +47,91 @@ declare token @llvm.experimental.gc.statepoint.p0(i64 immarg, i32 immarg,
 The token is not the program result. It is a handle consumed by related
 intrinsics or passes.
 
+## Convergence control
+
+Some parallel targets execute program instances in lockstep groups: a GPU warp,
+wavefront, subgroup, or a target-defined SIMD-like cohort. A **convergent**
+operation is one whose result or synchronization behavior depends on which lanes
+reach the operation together. This is not ordinary memory communication; the
+participating set is implicit in control flow.
+
+LLVM exposes this contract with the `convergent` attribute. A function marked
+`convergent` contains, or may be treated as containing, convergence-sensitive
+operations. A call, `invoke`, or `callbr` can also be treated as convergent when
+it directly calls a convergent function, has the `convergent` call-site
+attribute, or carries a convergence-control operand bundle. The attribute is
+especially important for indirect calls and target-specific intrinsics whose
+semantics are only meaningful when a particular set of lanes executes the call
+as one group.
+
+Why this restricts transformations:
+
+- **Sinking** a convergent call into a branch can shrink the participating set
+  from all currently converged lanes to only lanes taking that branch.
+- **Hoisting** or merging identical-looking convergent calls can enlarge or mix
+  the participating set by removing a control dependency.
+- **Duplicating, unswitching, jump-threading, or vectorizing** code around a
+  convergent call may change which dynamic instances execute together unless
+  the pass can prove the relevant branch conditions are uniform for the affected
+  group.
+
+The `llvm.experimental.convergence.*` intrinsics make this relationship explicit
+with `token` values. Conceptually:
+
+| Intrinsic / mechanism | Conceptual role |
+|---|---|
+| `llvm.experimental.convergence.entry` | Creates a convergence token for the function-entry group. It is only valid in a `convergent` function. |
+| `llvm.experimental.convergence.loop` | Creates/refines a token for loop iterations, so operations reached through loop exits are tied to the intended iteration-level convergence. |
+| `llvm.experimental.convergence.anchor` | Starts a local convergence region when the exact incoming group is less important than keeping several convergent operations consistent with each other. |
+| `"convergencectrl"(token %tok)` | Operand bundle attached to a convergent operation to say which token governs its convergence. The bundle contains exactly one `token` value. |
+
+A small target-neutral SIMT-flavored sketch:
+
+```llvm
+; Target-specific declarations would normally be provided by a GPU backend or
+; language runtime. The generic lesson is the convergence contract, not these
+; placeholder names.
+declare i32 @subgroup_reduce_add(i32) convergent
+
+define void @maybe_accumulate(ptr %out, i32 %value, i1 %active) convergent {
+entry:
+  %group = call token @llvm.experimental.convergence.entry()
+  br i1 %active, label %then, label %done
+
+then:
+  ; Only lanes taking %active participate in this dynamic call instance, but the
+  ; operation is still tied to the function-entry convergence group. Hoisting it
+  ; above the branch would make inactive lanes participate too.
+  %sum = call i32 @subgroup_reduce_add(i32 %value)
+         [ "convergencectrl"(token %group) ]
+  store i32 %sum, ptr %out
+  br label %done
+
+done:
+  ret void
+}
+```
+
+This example deliberately avoids naming `llvm.amdgcn.*` or `llvm.nvvm.*`
+intrinsics. Real subgroup, barrier, ballot, shuffle, texture, or wave operations
+are usually target-specific and may require target features, address spaces, ABI
+rules, and backend-specific intrinsic signatures. See
+[`02-target-specific-intrinsics.md`](02-target-specific-intrinsics.md) before
+introducing such calls, and re-check vectorization legality in
+[`../09-vectorization/04-vectorization-legality.md`](../09-vectorization/04-vectorization-legality.md)
+when a loop or region contains convergence-sensitive operations. For LLVM's
+formal model, see the upstream
+[Convergent Operation Semantics](https://llvm.org/docs/ConvergentOperations.html)
+and the LangRef entries for
+[`convergent`](https://llvm.org/docs/LangRef.html#function-attributes) and
+[convergence-control operand bundles](https://llvm.org/docs/LangRef.html#convergence-control-operand-bundles).
+
+BCIR agent guidance: do not remove `convergent` or convergence-control bundles
+just because a call looks side-effect-free. Treat the token as a control contract
+for optimizers and target lowering. If you clone or move a convergent operation,
+check whether the clone still has the same control dependencies and whether a
+uniformity or target-specific analysis is required to justify the transform.
+
 ## Coroutine tokens and lowering phases
 
 Coroutine IR is another place where `token` values are intentionally
