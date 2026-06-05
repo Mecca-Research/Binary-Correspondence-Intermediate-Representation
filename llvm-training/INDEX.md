@@ -12,6 +12,7 @@ every lookup.
 | Symbols such as metadata names, intrinsics, and files | [`indexes/symbols.md`](indexes/symbols.md) |
 | Intrinsics and special types | [`indexes/intrinsics-special-types.md`](indexes/intrinsics-special-types.md) |
 | Common intrinsic family quick reference | [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
+| LLVM types and opaque-pointer migration | [`02-types/README.md`](02-types/README.md) |
 | BCIR lowering guide | [`bcir-mapping/README.md`](bcir-mapping/README.md) |
 | MLIR bridge and integration | [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) |
 | Backend/JIT diagnostics | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
