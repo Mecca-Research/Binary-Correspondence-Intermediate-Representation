@@ -44,6 +44,7 @@ than complete executable programs.
 | `llvm-training/00-foundations/examples/ssa-phi.ll` | `llvm-as llvm-training/00-foundations/examples/ssa-phi.ll -o /dev/null` |
 | `llvm-training/00-foundations/examples/ssa-renaming-before.ll` | `llvm-as llvm-training/00-foundations/examples/ssa-renaming-before.ll -o /dev/null` |
 | `llvm-training/01-syntax/examples/declarations-vs-definitions.ll` | `llvm-as llvm-training/01-syntax/examples/declarations-vs-definitions.ll -o /dev/null` |
+| `llvm-training/01-syntax/examples/inline-asm.ll` | `llvm-as llvm-training/01-syntax/examples/inline-asm.ll -o /dev/null` |
 | `llvm-training/01-syntax/examples/module-anatomy.ll` | `llvm-as llvm-training/01-syntax/examples/module-anatomy.ll -o /dev/null` |
 | `llvm-training/01-syntax/examples/module-flags.ll` | `llvm-as llvm-training/01-syntax/examples/module-flags.ll -o /dev/null` |
 | `llvm-training/01-syntax/examples/target-triple-datalayout.ll` | `llvm-as llvm-training/01-syntax/examples/target-triple-datalayout.ll -o /dev/null` |
