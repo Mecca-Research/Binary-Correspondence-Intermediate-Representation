@@ -154,6 +154,29 @@ contains target-independent abstractions for assembly and object emission:
 In short: `MachineInstr` is for backend analysis and transformation;
 `MCInst`/MC objects are for final assembly/object encoding.
 
+## BCIR hardware-aware hooks
+
+BCIR hardware-aware operations should enter the backend in a form that preserves
+what instruction selection and register allocation need to know. For example, a
+mixed-stride GEM tile can compute ordinary LLVM byte offsets for A, B, and C,
+load register-oriented vector fragments, and then call a custom intrinsic-shaped
+hook such as `@llvm.bcir.gem.mixed.stride.v4f32`. A BCIR-aware backend can select
+that hook to a target pseudo-instruction; a generic JIT can rewrite it to a
+runtime ABI call before codegen.
+
+Keep these checkpoints distinct:
+
+- IR optimization may simplify stride math and address calculations.
+- Instruction selection owns the custom intrinsic or pseudo-instruction mapping.
+- Register allocation owns physical placement of vector/tile fragments.
+- ORC owns the policy decision to keep the intrinsic, rewrite it to a runtime
+  symbol, or reject the module with a diagnostic.
+
+See [`06-custom-bcir-intrinsics.md`](06-custom-bcir-intrinsics.md),
+[`examples/custom-bcir-intrinsic-jit.ll`](examples/custom-bcir-intrinsic-jit.ll),
+and [`../bcir-mapping/examples/hardware-aware-gem-lowering.ll`](../bcir-mapping/examples/hardware-aware-gem-lowering.ll)
+for the full hardware-aware example.
+
 ## Where the names fit
 
 | Term | Fits here | Mental model |
@@ -169,3 +192,4 @@ In short: `MachineInstr` is for backend analysis and transformation;
 - [Writing an LLVM Backend](https://llvm.org/docs/WritingAnLLVMBackend.html)
 - [`02-tablegen.md`](02-tablegen.md) for the generated target data that feeds many backend stages
 - [`03-orc-jit.md`](03-orc-jit.md) for using code generation from a JIT entry point
+- [`06-custom-bcir-intrinsics.md`](06-custom-bcir-intrinsics.md) for hardware-aware BCIR custom intrinsic and fallback policies
