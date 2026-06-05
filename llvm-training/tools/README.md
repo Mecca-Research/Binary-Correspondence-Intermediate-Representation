@@ -12,7 +12,9 @@ the same checks without a build-system dependency.
 | `smoke-lli.sh` | Runs only curated examples that have a safe no-argument entry point under `lli`. Most training snippets are library-style IR and should stay out of this list. | `lli` |
 | `smoke-llc.sh` | Lowers curated examples with `llc` to catch target-codegen regressions without treating every IR snippet as a runnable program. It prints intentional exclusions from `smoke-llc-skip.txt` before running the curated allowlist. | `llc` |
 | `verify-exercises.sh` | Assembles every checked-in `llvm-training/exercises/*.solution.ll` file and runs `opt -passes=verify` so reference answers stay valid standalone LLVM IR. | `llvm-as`, `opt` |
-| `verify-invalid-fixtures.sh` | Discovers known invalid `.invalid.ll.txt` fixtures plus the broken-example sentinel and asserts each remains rejected by either `llvm-as` or `opt -passes=verify`, unless the fixture is explicitly marked semantic-only. | `llvm-as`, `opt` |
+| `verify-invalid-fixtures.sh` | Discovers known invalid `.invalid.ll.txt` fixtures plus the broken-example sentinel and asserts each remains rejected by either `llvm-as` or `opt -passes=verify`. | `llvm-as`, `opt` |
+| `verify-opt-diff.sh` | Runs curated `opt -S -passes=...` pipelines over chapter examples and diffs normalized output against checked-in golden `.after-<pass>.ll` fixtures. Set `UPDATE_OPT_DIFF=1` to refresh intentional pass-output changes. | `opt`, `diff` |
+| `verify-opaque-pointers.sh` | Scans modern `*/examples/*.ll` fixtures for legacy typed-pointer syntax and allows migration-only or intentionally invalid `.ll.txt` fixtures to keep typed-pointer demonstrations explicit. | POSIX shell utilities, `awk` |
 | `verify-manifest.sh` | Compares discovered standalone `*/examples/*.ll` files against the table in `llvm-training/examples/README.md` so new or removed examples do not silently drift from the manifest. | POSIX shell utilities |
 | `verify-csv-schema.sh` | Validates checked-in `15-binary-analysis/examples/*.csv` fixtures for registered schema-family column counts, non-empty headers, consistent non-empty data rows, and at least one data row. The parser handles single-line CSV records with quoted commas. | POSIX shell utilities, `awk` |
 | `verify-mlir-examples.sh` | Validates `*/examples/*.mlir` syntax with `mlir-opt --allow-unregistered-dialect` when `mlir-opt` is installed, and reports a clean skip otherwise. | Optional `mlir-opt` |
@@ -36,11 +38,19 @@ cmake --build build --target llvm-training-smoke-llc
 cmake --build build --target llvm-training-smoke-lli
 cmake --build build --target llvm-training-verify-exercises
 cmake --build build --target llvm-training-verify-invalid-fixtures
+cmake --build build --target llvm-training-verify-opt-diff
+cmake --build build --target llvm-training-verify-opaque-pointers
+cmake --build build --target llvm-training-lit
 cmake --build build --target llvm-training-verify-manifest
 cmake --build build --target llvm-training-verify-csv-schema
 cmake --build build --target llvm-training-verify-mlir-examples
 cmake --build build --target llvm-training-verify-bcir-mapping
 ```
+
+The initial lit suite lives in `llvm-training/tests/` and delegates to the same
+shell scripts for smoke coverage. Lit marks the opt-diff test with
+`REQUIRES: opt`, so hosts without LLVM's optimizer report an unsupported test
+instead of a failure.
 
 CMake targets that declare hard external dependencies check for those tools
 before running. If the host image does not provide the required tools, the target
@@ -50,6 +60,24 @@ BCIR mapping validation, always invoke the script so it can decide whether the
 current repository state requires the optional toolchain. Running most shell
 scripts directly remains fail-closed: missing required tools produce an error so
 local maintainers notice incomplete toolchains.
+
+## Golden opt-diff and opaque-pointer checks
+
+`verify-opt-diff.sh` currently protects selected Chapter 7 optimization
+examples. Each registered input has a sibling golden file with a pass suffix,
+for example `opt-diff-instcombine.after-instcombine.ll` or
+`opt-diff-loop-rotate.after-loop-rotate.ll`. The comparison normalizes volatile
+`ModuleID` banners and synthesized datalayout lines, then uses `diff -u` for
+human-readable drift reports. Refresh expected changes with:
+
+```bash
+UPDATE_OPT_DIFF=1 ./llvm-training/tools/verify-opt-diff.sh
+```
+
+`verify-opaque-pointers.sh` treats checked-in `.ll` files as modern opaque
+pointer examples. Typed-pointer migration material should remain in explicit
+`.ll.txt` fixtures such as `02-types/examples/typed-pointer-before.ll.txt`,
+which makes legacy syntax discoverable without letting it back into runnable IR.
 
 ## Skip-list rationale
 
