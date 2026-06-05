@@ -200,6 +200,21 @@ or when implementing a target-specific builtin. Calling an x86 intrinsic on a
 non-x86 target, or without the required feature, fails later in the pipeline; see
 [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md).
 
+### Custom backend intrinsics
+
+Custom intrinsic names such as `llvm.bcir.*` are backend contracts, not portable
+LLVM guarantees. They should be declared exactly as the backend registered them
+and paired with a runtime fallback when a generic JIT or non-BCIR target may see
+the module. For BCIR hardware-aware lowering, the typical shape is a
+register-oriented vector/tile payload plus an immediate mode operand:
+
+| Pattern | Signature sketch | Purpose | Caveat |
+|---|---|---|---|
+| `llvm.bcir.gem.mixed.stride.v4f32` | `<4 x float> (<4 x float> a, <4 x float> b, <4 x float> acc, i32 immarg mode)` | Preserve a mixed-stride GEM tile as one selection-visible operation. | Requires BCIR-aware backend support or an ORC rewrite to a runtime function such as `@bcir.runtime.gem.v4f32`. |
+
+See [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md)
+for declaration, metadata, and JIT policy guidance.
+
 ### Coroutine intrinsics
 
 `llvm.coro.id`, `llvm.coro.begin`, `llvm.coro.suspend`,
@@ -232,3 +247,4 @@ and [`../08-pitfalls/08-stale-debug-locations.md`](../08-pitfalls/08-stale-debug
 - [`instruction-quickref.md`](instruction-quickref.md) — instruction syntax that pairs with intrinsic results.
 - [`../13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md) — runnable common intrinsic examples.
 - [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md) — target-specific intrinsic namespaces and feature requirements.
+- [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md) — custom BCIR intrinsic declarations and JIT fallback policy.
