@@ -161,7 +161,8 @@ structured information before producing LLVM IR:
 2. [`14-mlir-bridge/02-dialects-and-operations.md`](14-mlir-bridge/02-dialects-and-operations.md) — dialect design basics and operation anatomy
 3. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — conversion/lowering pipelines, LLVM dialect, and `.ll` differences
 4. [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) — where BCIR Vertex-Edge-Attribute, HAM hints, register binding, and Mixed Stride graphs can live
-5. Skim [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-sketch.mlir) and [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/lowered-llvm-dialect.mlir) as illustrative before/after shapes.
+5. [`14-mlir-bridge/05-vertex-graph-lowering.md`](14-mlir-bridge/05-vertex-graph-lowering.md) — track vertex IDs, edge lists, register bindings, and metadata hints through BCIR dialect, LLVM dialect, and LLVM IR
+6. Skim [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](14-mlir-bridge/examples/bcir-dialect-sketch.mlir), [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](14-mlir-bridge/examples/lowered-llvm-dialect.mlir), and [`14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll`](14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll) as illustrative before/after shapes.
 
 Use this path before the Backend/JIT path when the task starts above LLVM IR,
 especially for custom frontend lowering or BCIR-specific graph representations.
@@ -200,8 +201,9 @@ before lowering to LLVM dialect or textual LLVM IR:
 
 1. [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) and [`14-mlir-bridge/02-dialects-and-operations.md`](14-mlir-bridge/02-dialects-and-operations.md) — identify modules, operations, regions, blocks, dialects, attributes, and types.
 2. [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) — decide which BCIR concepts belong in a custom dialect.
-3. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — review type conversion and LLVM-dialect boundaries.
-4. Exercises [`032`](exercises/032-identify-mlir-dialect-boundaries.prompt.md)-[`034`](exercises/034-review-mlir-to-llvm-type-conversion.prompt.md) — practice dialect-boundary and lowering reviews.
+3. [`14-mlir-bridge/05-vertex-graph-lowering.md`](14-mlir-bridge/05-vertex-graph-lowering.md) — follow a complete graph lowering across source MLIR, LLVM-dialect MLIR, and textual LLVM IR.
+4. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — review type conversion and LLVM-dialect boundaries.
+5. Exercises [`032`](exercises/032-identify-mlir-dialect-boundaries.prompt.md)-[`034`](exercises/034-review-mlir-to-llvm-type-conversion.prompt.md) — practice dialect-boundary and lowering reviews.
 
 ## Backend/JIT diagnostics path
 

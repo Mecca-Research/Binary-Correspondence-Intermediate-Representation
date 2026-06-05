@@ -147,6 +147,7 @@ Before lowering a BCIR dialect operation, ask:
 ## See also
 
 - [`examples/bcir-dialect-sketch.mlir`](examples/bcir-dialect-sketch.mlir) — source-level dialect sketch.
+- [`05-vertex-graph-lowering.md`](05-vertex-graph-lowering.md) — end-to-end vertex/edge graph lowering with register-binding and metadata survival notes.
 - [`03-lowering-to-llvm-dialect.md`](03-lowering-to-llvm-dialect.md) — lowering mechanics and common pitfalls.
 - [`../08-pitfalls/05-type-schema-drift.md`](../08-pitfalls/05-type-schema-drift.md) — low-level schema drift after lowering.
 - [`../08-pitfalls/06-immarg-violation.md`](../08-pitfalls/06-immarg-violation.md) — prefetch-hint lowering hazards.
