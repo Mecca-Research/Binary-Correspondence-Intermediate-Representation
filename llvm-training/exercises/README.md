@@ -3,7 +3,7 @@
 This directory contains beginner, intermediate, and advanced LLVM IR exercises.
 The first exercise family focuses on standalone IR writing; later families cover
 repair, review, optimization-pass reasoning, BCIR lowering, MLIR bridge reviews,
-and backend/JIT diagnosis. Follow the conventions in
+backend/JIT diagnosis, and advanced BCIR verification/debugging. Follow the conventions in
 [`../EXAMPLES.md`](../EXAMPLES.md). Each exercise should include:
 
 - a prompt describing the task;
@@ -46,6 +46,9 @@ If your LLVM tools are installed with a version suffix, replace `llvm-as` and
   and type conversion before or during conversion to the LLVM dialect.
 - **Backend/JIT review**: diagnose symbol resolution, ORC layer failures, and the
   path from target descriptions to `MCInst` emission.
+- **Advanced BCIR verification and debugging**: design custom verifier passes,
+  encode graph schemas as LLVM metadata, and repair GAADMSF-style lowering
+  failures.
 
 ## Exercise list
 
@@ -107,6 +110,12 @@ If your LLVM tools are installed with a version suffix, replace `llvm-as` and
 36. [`036-identify-orc-layer-failure.prompt.md`](036-identify-orc-layer-failure.prompt.md) — classify an ORC JIT failure by layer.
 37. [`037-tablegen-to-mcinst-review.prompt.md`](037-tablegen-to-mcinst-review.prompt.md) — trace a pseudo instruction from TableGen to `MCInst` emission.
 
+### Advanced BCIR verification and debugging
+
+38. [`038-custom-pass-bcir-invariants.prompt.md`](038-custom-pass-bcir-invariants.prompt.md) — design a verifier-style pass for BCIR lowering invariants.
+39. [`039-graph-description-to-llvm-metadata.prompt.md`](039-graph-description-to-llvm-metadata.prompt.md) — encode a graph description as LLVM metadata attached to scalar IR.
+40. [`040-debug-gaadmsf-lowering.prompt.md`](040-debug-gaadmsf-lowering.prompt.md) — debug a GAADMSF lowering with an invalid `phi` predecessor.
+
 ## Verification
 
 Run a solution through the assembler and discard the bitcode output:
@@ -125,12 +134,15 @@ Each prompt gives the exact command for its matching solution, broken input,
 markdown answer, or optimization-pass input. Use these expectations by family:
 
 - Standalone IR-writing solutions, fixed repair solutions, metadata exercises,
-  and BCIR lowering solutions should assemble with `llvm-as -disable-output`.
+  BCIR lowering solutions, and advanced graph/debugging solutions should
+  assemble with `llvm-as -disable-output`.
 - The verifier also runs `opt -passes=verify` on every checked-in
   `*.solution.ll` file.
 - Broken repair inputs are intentionally named `*.invalid.ll.txt`; they may be
   rejected by `llvm-as`, or they may assemble while still being semantically
-  unsafe. They should not be renamed to plain `.ll`.
+  unsafe. Semantic-only fixtures should carry the
+  `; verify-invalid-fixtures: semantic-only` marker. They should not be renamed
+  to plain `.ll`.
 - Optimization reasoning inputs should assemble before running `opt`; pass output
   can differ across LLVM versions, so prompts describe structural observations
   such as new `phi`, `select`, vector-body, or remainder-loop patterns.
