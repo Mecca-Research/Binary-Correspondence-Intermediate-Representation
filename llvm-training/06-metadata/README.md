@@ -4,7 +4,7 @@
 
 - Metadata annotates IR without changing core value types, but consumers may use it for debug info, optimization, and diagnostics.
 - Debug locations should be preserved only when they still identify the transformed instruction honestly.
-- Profile weights, loop metadata, and TBAA are contracts with optimizers; stale or fabricated metadata can mislead transforms.
+- Profile weights, loop metadata, TBAA, and type metadata are contracts with optimizers and hardening passes; stale or fabricated metadata can mislead transforms.
 - When lowering BCIR-like facts, keep semantic metadata small, named, and easy to verify through pass pipelines.
 
 ## Chapter dispatcher
@@ -14,6 +14,7 @@
 | Metadata nodes, attachments, named metadata, and syntax basics | [`01-metadata-basics.md`](01-metadata-basics.md) |
 | Debug info structure, locations, and preservation rules | [`02-debug-info.md`](02-debug-info.md) |
 | Branch weights, loop hints, TBAA, and optimization metadata | [`03-profile-and-optimization-metadata.md`](03-profile-and-optimization-metadata.md) |
+| `!type` global attachments, type identifiers, and CFI-style checked dispatch | [`04-type-metadata-cfi.md`](04-type-metadata-cfi.md) |
 
 ## Examples
 

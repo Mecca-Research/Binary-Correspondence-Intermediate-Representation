@@ -23,6 +23,7 @@
 | `distinct` | [`06-metadata/01-metadata-basics.md`](../06-metadata/01-metadata-basics.md) |
 | `DIFile`, `DICompileUnit`, `DISubprogram`, `DILocation`, `DILocalVariable` | [`06-metadata/02-debug-info.md`](../06-metadata/02-debug-info.md) |
 | `branch_weights`, `llvm.loop.unroll.*`, `llvm.loop.vectorize.*` | [`06-metadata/03-profile-and-optimization-metadata.md`](../06-metadata/03-profile-and-optimization-metadata.md) |
+| `!type`, `llvm.type.test`, `llvm.type.checked.load`, type identifier | [`06-metadata/04-type-metadata-cfi.md`](../06-metadata/04-type-metadata-cfi.md) |
 | `-Rpass`, `-Rpass-missed`, `-force-vector-width`, `-force-vector-interleave` | [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md) |
 | `loop-vectorize`, `slp-vectorizer`, `default<O3>` pass names | [`09-vectorization/01-loop-vectorizer.md`](../09-vectorization/01-loop-vectorizer.md), [`09-vectorization/02-slp-vectorizer.md`](../09-vectorization/02-slp-vectorizer.md), [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md) |
 | `llvm.masked.store`, masked load/store, interleaved access, deinterleave | [`09-vectorization/07-masked-and-interleaved-access.md`](../09-vectorization/07-masked-and-interleaved-access.md) |
@@ -43,4 +44,5 @@
 | `branch_weights`, `function_entry_count`, PGO profile metadata | [`06-metadata/03-profile-and-optimization-metadata.md`](../06-metadata/03-profile-and-optimization-metadata.md), [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
 | `-fprofile-generate`, `-fprofile-use`, `-flto=thin`, `llvm-bolt` | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
 | `cycles`, `branch_misses`, `l1d_misses`, `llc_misses` | [`15-binary-analysis/02-dynamic-traces-and-counters.md`](../15-binary-analysis/02-dynamic-traces-and-counters.md) |
+| CFI, vtable hardening, trap edge, checked indirect call | [`06-metadata/04-type-metadata-cfi.md`](../06-metadata/04-type-metadata-cfi.md), [`15-binary-analysis/README.md`](../15-binary-analysis/README.md) |
 | cyclomatic complexity, opcode histogram, structural hash | [`15-binary-analysis/03-interpretable-bcsa-features.md`](../15-binary-analysis/03-interpretable-bcsa-features.md) |
