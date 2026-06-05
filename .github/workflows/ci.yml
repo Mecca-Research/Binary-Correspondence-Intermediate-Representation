@@ -89,6 +89,9 @@ jobs:
       - name: Optional BOLT smoke fixture
         run: bash llvm-training/tools/smoke-bolt.sh
 
+      - name: Runtime LLVM validation environment diagnostics
+        run: bash runtime/llvm/diagnose_validate_env.sh || true
+
       - name: LLVM seed validate
         run: |
           if command -v llvm-as >/dev/null && command -v llvm-link >/dev/null && command -v opt >/dev/null && command -v llvm-dis >/dev/null; then
