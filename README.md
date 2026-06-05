@@ -1,6 +1,6 @@
 # Binary-Correspondence-Intermediate-Representation
 
-C++ project skeleton for BCIR with a CMake-based build and install/export rules.
+LLVM and MLIR project skeleton for BCIR with a CMake-based build, install/export rules, and C++ implementation.
 
 ## Top-level layout
 
