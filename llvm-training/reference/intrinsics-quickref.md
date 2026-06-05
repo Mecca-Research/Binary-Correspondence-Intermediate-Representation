@@ -176,6 +176,23 @@ Use constrained forms consistently within strict regions; mixing strict and
 unconstrained operations can accidentally grant optimizers freedom that the
 source language did not grant.
 
+
+### Stackmap and patchpoint intrinsics
+
+`llvm.experimental.stackmap` and `llvm.experimental.patchpoint.*` are
+JIT/deoptimization/runtime-patching hooks. They assemble as intrinsic calls, but
+their useful meaning comes from target-emitted stackmap records and a runtime
+that can consume those records.
+
+| Intrinsic | Signature sketch | Purpose | Important operands |
+|---|---|---|---|
+| `llvm.experimental.stackmap` | `void (i64 id, i32 shadow_bytes, ...)` | Record a generated-code location and the machine locations of live values. | `id` is runtime-owned. `shadow_bytes` reserves a patching/shadow region. Variadic operands are live values for the side table. |
+| `llvm.experimental.patchpoint.<ret>` | `<ret> (i64 id, i32 num_bytes, ptr target, i32 num_args, ...)` | Emit a patchable call-shaped or placeholder site and a stackmap record. | `target`/`num_args` describe the optional call target and call arguments; trailing operands are stackmap-only live values. |
+
+See [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md)
+and [`../12-backend-jit/examples/stackmap-patchpoint.ll`](../12-backend-jit/examples/stackmap-patchpoint.ll)
+for a minimal JIT-oriented example and verification caveats.
+
 ### Target-specific intrinsic naming patterns
 
 Target-specific intrinsics live under target namespaces and are declared only
