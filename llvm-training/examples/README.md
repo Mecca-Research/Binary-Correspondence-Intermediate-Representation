@@ -93,6 +93,10 @@ than complete executable programs.
 | `llvm-training/07-optimization/examples/mem2reg-diamond-after.ll` | `llvm-as llvm-training/07-optimization/examples/mem2reg-diamond-after.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/mem2reg-diamond-before.ll` | `llvm-as llvm-training/07-optimization/examples/mem2reg-diamond-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/o2-pipeline-inspection.ll` | `llvm-as llvm-training/07-optimization/examples/o2-pipeline-inspection.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/opt-diff-instcombine-before.ll` | `llvm-as llvm-training/07-optimization/examples/opt-diff-instcombine-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/opt-diff-instcombine.after-instcombine.ll` | `llvm-as llvm-training/07-optimization/examples/opt-diff-instcombine.after-instcombine.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/opt-diff-loop-rotate-before.ll` | `llvm-as llvm-training/07-optimization/examples/opt-diff-loop-rotate-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/opt-diff-loop-rotate.after-loop-rotate.ll` | `llvm-as llvm-training/07-optimization/examples/opt-diff-loop-rotate.after-loop-rotate.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/simplifycfg-after.ll` | `llvm-as llvm-training/07-optimization/examples/simplifycfg-after.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/simplifycfg-before.ll` | `llvm-as llvm-training/07-optimization/examples/simplifycfg-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/simplifycfg-select-after.ll` | `llvm-as llvm-training/07-optimization/examples/simplifycfg-select-after.ll -o /dev/null` |
@@ -101,6 +105,10 @@ than complete executable programs.
 | `llvm-training/07-optimization/examples/sroa-struct-before.ll` | `llvm-as llvm-training/07-optimization/examples/sroa-struct-before.ll -o /dev/null` |
 | `llvm-training/08-pitfalls/examples/immarg-fixed.ll` | `llvm-as llvm-training/08-pitfalls/examples/immarg-fixed.ll -o /dev/null` |
 | `llvm-training/08-pitfalls/examples/phi-predecessor-fixed.ll` | `llvm-as llvm-training/08-pitfalls/examples/phi-predecessor-fixed.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/interleaved-access-after-vectorize.ll` | `llvm-as llvm-training/09-vectorization/examples/interleaved-access-after-vectorize.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/interleaved-access-before.ll` | `llvm-as llvm-training/09-vectorization/examples/interleaved-access-before.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/masked-load-store-after-vectorize.ll` | `llvm-as llvm-training/09-vectorization/examples/masked-load-store-after-vectorize.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/masked-load-store-before.ll` | `llvm-as llvm-training/09-vectorization/examples/masked-load-store-before.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/not-vectorizable-call.ll` | `llvm-as llvm-training/09-vectorization/examples/not-vectorizable-call.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/not-vectorizable-dependency.ll` | `llvm-as llvm-training/09-vectorization/examples/not-vectorizable-dependency.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/predicated-load-after-vectorize.ll` | `llvm-as llvm-training/09-vectorization/examples/predicated-load-after-vectorize.ll -o /dev/null` |
@@ -134,6 +142,7 @@ than complete executable programs.
 | `llvm-training/13-advanced-ir/examples/poison-undef-freeze.ll` | `llvm-as llvm-training/13-advanced-ir/examples/poison-undef-freeze.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/token-outline.ll` | `llvm-as llvm-training/13-advanced-ir/examples/token-outline.ll -o /dev/null` |
 | `llvm-training/14-mlir-bridge/examples/arith-to-llvm-lowered.ll` | `llvm-as llvm-training/14-mlir-bridge/examples/arith-to-llvm-lowered.ll -o /dev/null` |
+| `llvm-training/14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll` | `llvm-as llvm-training/14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll -o /dev/null` |
 | `llvm-training/14-mlir-bridge/examples/memref-descriptor-lowered.ll` | `llvm-as llvm-training/14-mlir-bridge/examples/memref-descriptor-lowered.ll -o /dev/null` |
 | `llvm-training/15-binary-analysis/examples/binary-layout-sketch.ll` | `llvm-as llvm-training/15-binary-analysis/examples/binary-layout-sketch.ll -o /dev/null` |
 | `llvm-training/15-binary-analysis/examples/constant-time-review.ll` | `llvm-as llvm-training/15-binary-analysis/examples/constant-time-review.ll -o /dev/null` |
@@ -166,6 +175,8 @@ targets for `verify-examples.sh`:
 | `llvm-training/12-backend-jit/examples/minimal-instruction.td` | TableGen sketch | TableGen sketch for backend instruction descriptions. |
 | `llvm-training/14-mlir-bridge/examples/arith-to-llvm.mlir` | MLIR fragment | MLIR dialect sketch; use MLIR tooling rather than `llvm-as`. |
 | `llvm-training/14-mlir-bridge/examples/bcir-dialect-sketch.mlir` | MLIR fragment | MLIR dialect sketch; use MLIR tooling rather than `llvm-as`. |
+| `llvm-training/14-mlir-bridge/examples/bcir-vertex-graph.mlir` | MLIR fragment | BCIR vertex graph source sketch; use MLIR tooling rather than `llvm-as`. |
+| `llvm-training/14-mlir-bridge/examples/bcir-vertex-graph-lowered-llvm-dialect.mlir` | MLIR fragment | Lowered LLVM-dialect vertex graph sketch; use MLIR tooling rather than `llvm-as`. |
 | `llvm-training/14-mlir-bridge/examples/llvm-dialect-call.mlir` | MLIR fragment | MLIR dialect sketch; use MLIR tooling rather than `llvm-as`. |
 | `llvm-training/14-mlir-bridge/examples/lowered-llvm-dialect.mlir` | MLIR fragment | MLIR dialect sketch; use MLIR tooling rather than `llvm-as`. |
 | `llvm-training/15-binary-analysis/examples/bcsa-feature-sample.csv` | CSV data | Data/sample artifact; not assembled by `llvm-as`. |

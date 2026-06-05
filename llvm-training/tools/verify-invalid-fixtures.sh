@@ -67,8 +67,39 @@ rejects_with_llvm_as_or_opt() {
   return 0
 }
 
-require_tool llvm-as
-require_tool opt
+find_tool() {
+  local base=$1
+  local tool
+
+  if [ -n "${LLVM_SUFFIX:-}" ] && command -v "${base}${LLVM_SUFFIX}" >/dev/null 2>&1; then
+    printf '%s' "${base}${LLVM_SUFFIX}"
+    return 0
+  fi
+
+  if command -v "$base" >/dev/null 2>&1; then
+    printf '%s' "$base"
+    return 0
+  fi
+
+  while IFS= read -r tool; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '%s' "$tool"
+      return 0
+    fi
+  done < <(compgen -c | grep -E "^${base}-[0-9]+$" | sort -V)
+
+  return 1
+}
+
+LLVM_AS=$(find_tool llvm-as) || {
+  printf 'error: required tool not found on PATH: llvm-as (or llvm-as-N)\n' >&2
+  exit 127
+}
+
+OPT=$(find_tool opt) || {
+  printf 'error: required tool not found on PATH: opt (or opt-N)\n' >&2
+  exit 127
+}
 
 mapfile -d '' invalid_fixtures < <(
   find "$TRAINING_ROOT" \

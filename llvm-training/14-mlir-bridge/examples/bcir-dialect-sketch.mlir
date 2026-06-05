@@ -48,6 +48,6 @@ module attributes {bcir.schema = "claim-v1"} {
     } : (!bcir.vertex<space = "blob", id_bits = 64>) -> !bcir.graph<rank = 3>
 
     "bcir.consume"(%graph, %bound, %hint) : (!bcir.graph<rank = 3>, f32, !bcir.hint) -> ()
-    "bcir.yield" : () -> ()
+    "bcir.yield"() : () -> ()
   }) : () -> ()
 }

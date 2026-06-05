@@ -16,6 +16,11 @@ This is an **MLIR bridge review** exercise. Describe how a hypothetical
 
 Provide a lowering outline that covers descriptor access, index conversion,
 field offset computation, LLVM-dialect load formation, and metadata preservation.
+Also classify whether vertex IDs, edge lists, register-binding facts, and
+metadata hints survive as executable values, survive only as diagnostics, or
+intentionally lower away. Use
+[`../14-mlir-bridge/05-vertex-graph-lowering.md`](../14-mlir-bridge/05-vertex-graph-lowering.md)
+and its vertex-graph examples as reference material.
 
 ## Verification command
 

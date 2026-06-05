@@ -78,6 +78,8 @@ for pointer address-space mistakes.
 | `llvm.memset.p<dst-as>.<len-ty>` | `void (ptr dst, i8 value, <len-ty> len, i1 isvolatile)` | Fill `len` bytes at `dst` with one byte value. | Fill value is an `i8`; larger typed fills are represented as bytes. |
 | `llvm.memcpy.inline.p<dst-as>.p<src-as>.<len-ty>` | `void (ptr dst, ptr src, <len-ty> imm-len, i1 isvolatile)` | Inline-only fixed-size copy. | Length is an `immarg`, so it must be a compile-time constant. |
 | `llvm.memcpy.element.unordered.atomic.*` / related forms | Targeted memory-copy families with element atomicity | Copies elements without imposing synchronization order. | Use only when the element-atomic semantics are required; for inter-thread synchronization, use atomic instructions in [`../11-concurrency/`](../11-concurrency/). |
+| `llvm.masked.load.<vec>.p<as>` | `<vec> (ptr p, i32 imm-align, <N x i1> mask, <vec> passthru)` | Loads only active lanes and uses `passthru` for inactive lanes. | Masked-off lanes must not perform memory reads; profitability depends heavily on target masked-load support. |
+| `llvm.masked.store.<vec>.p<as>` | `void (<vec> value, ptr p, i32 imm-align, <N x i1> mask)` | Stores only active lanes. | Masked-off lanes must not write memory; see advanced vectorization examples for predicated store IR. |
 
 **Volatile caveat:** the `isvolatile` flag makes the memory operation observable,
 but it does not make it atomic or synchronizing. See
