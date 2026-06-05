@@ -11,9 +11,12 @@ practical parser authority for what your toolchain accepts.
 
 LLVM IR syntax and accepted constructs vary by LLVM release. The local
 `llvm-ir.tm` grammar is a full upstream snapshot rather than a hand-trimmed
-excerpt, but it may still lag newer LLVM releases. Verify grammar-sensitive
-examples against both the target LLVM version's `llvm-as` and the corresponding
-LangRef: https://llvm.org/docs/LangRef.html
+excerpt, but it may still lag newer LLVM releases. The verification stamp near
+the top of `llvm-ir.tm` is an anchor for the toolchain/version last used during
+local review; it is not a guarantee that this grammar is canonical for all LLVM
+versions. Verify grammar-sensitive examples against both the target LLVM
+version's `llvm-as` and the corresponding LangRef:
+https://llvm.org/docs/LangRef.html
 
 ## What is Textmapper?
 

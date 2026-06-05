@@ -1,5 +1,6 @@
 # Full LLVM IR Textmapper grammar snapshot from llir/grammar.
 # Source: https://github.com/llir/grammar, commit 5a3820b516f7903e27ad16ebe4add1ec634f1c05.
+# Last verified against LLVM 18.x on 2026-06-05; llvm-as-18 --version: Ubuntu LLVM version 18.1.3.
 # License: upstream llir/grammar is offered under 0BSD and Unlicense terms; see ../NOTICE.md.
 # This file is intentionally complete enough for local agent lookup and no longer ends with an excerpt note.
 
