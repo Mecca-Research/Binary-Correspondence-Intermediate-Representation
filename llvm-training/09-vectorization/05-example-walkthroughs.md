@@ -44,6 +44,19 @@ opt -S -passes=loop-vectorize \
   -pass-remarks-missed=loop-vectorize \
   llvm-training/09-vectorization/examples/not-vectorizable-call.ll -o -
 
+# Inspect advanced predicated and interleaved Loop Vectorizer cases.
+opt -S -passes=loop-vectorize \
+  -pass-remarks=loop-vectorize \
+  -pass-remarks-analysis=loop-vectorize \
+  -pass-remarks-missed=loop-vectorize \
+  llvm-training/09-vectorization/examples/masked-load-store-before.ll -o -
+
+opt -S -passes=loop-vectorize \
+  -pass-remarks=loop-vectorize \
+  -pass-remarks-analysis=loop-vectorize \
+  -pass-remarks-missed=loop-vectorize \
+  llvm-training/09-vectorization/examples/interleaved-access-before.ll -o -
+
 # Run the normal O3 optimization pipeline and print IR.
 opt -S -passes='default<O3>' \
   llvm-training/09-vectorization/examples/sum-loop-before.ll -o -
@@ -72,6 +85,8 @@ Notes:
 | `slp-scalars-after-slp.ll` | `cat llvm-training/09-vectorization/examples/slp-scalars-after-slp.ll` | Teaching snapshot with vector arithmetic and a `shufflevector` that changes lane order before storing. |
 | `not-vectorizable-dependency.ll` | `opt -S -passes=loop-vectorize -pass-remarks-missed=loop-vectorize llvm-training/09-vectorization/examples/not-vectorizable-dependency.ll -o -` | Missed-vectorization diagnostics should point at a loop-carried dependency, and the loop should remain scalar. |
 | `not-vectorizable-call.ll` | `opt -S -passes=loop-vectorize -pass-remarks-missed=loop-vectorize llvm-training/09-vectorization/examples/not-vectorizable-call.ll -o -` | Missed-vectorization diagnostics should explain that the unknown call cannot be vectorized safely or profitably. |
+| `masked-load-store-before.ll` | `opt -S -passes=loop-vectorize -pass-remarks=loop-vectorize -pass-remarks-analysis=loop-vectorize -pass-remarks-missed=loop-vectorize llvm-training/09-vectorization/examples/masked-load-store-before.ll -o -` | Look for a lane mask derived from the compare and whether the target chooses a masked store, scalarization, or a missed/profitability remark. |
+| `interleaved-access-before.ll` | `opt -S -passes=loop-vectorize -pass-remarks=loop-vectorize -pass-remarks-analysis=loop-vectorize -pass-remarks-missed=loop-vectorize llvm-training/09-vectorization/examples/interleaved-access-before.ll -o -` | Look for stride-2 recognition, wide loads, `shufflevector` deinterleaving, or analysis remarks about shuffle/interleave cost. |
 
 
 ## Forcing experiments
@@ -93,7 +108,9 @@ opt -S -passes=loop-vectorize \
 
 Use forced settings as experiments, not as proof that a setting is fastest. A
 forced vector width can make LLVM generate vector IR even when the cost model
-would normally reject it.
+would normally reject it. For the advanced fixtures, compare forced output with
+[`07-masked-and-interleaved-access.md`](07-masked-and-interleaved-access.md) and
+the checked-in `*-after-vectorize.ll` teaching snapshots.
 
 ## See also
 

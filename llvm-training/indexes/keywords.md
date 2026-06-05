@@ -25,6 +25,7 @@
 | `branch_weights`, `llvm.loop.unroll.*`, `llvm.loop.vectorize.*` | [`06-metadata/03-profile-and-optimization-metadata.md`](../06-metadata/03-profile-and-optimization-metadata.md) |
 | `-Rpass`, `-Rpass-missed`, `-force-vector-width`, `-force-vector-interleave` | [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md) |
 | `loop-vectorize`, `slp-vectorizer`, `default<O3>` pass names | [`09-vectorization/01-loop-vectorizer.md`](../09-vectorization/01-loop-vectorizer.md), [`09-vectorization/02-slp-vectorizer.md`](../09-vectorization/02-slp-vectorizer.md), [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md) |
+| `llvm.masked.store`, masked load/store, interleaved access, deinterleave | [`09-vectorization/07-masked-and-interleaved-access.md`](../09-vectorization/07-masked-and-interleaved-access.md) |
 | `nounwind`, `noalias`, `readonly`, `memory(read)`, `dereferenceable`, `sret`, `byval` | [`13-advanced-ir/04-attributes.md`](../13-advanced-ir/04-attributes.md) |
 | `undef`, `poison`, `freeze`, `noundef`, `nsw`, `nuw`, `exact`, `inbounds` | [`13-advanced-ir/05-poison-undef-freeze.md`](../13-advanced-ir/05-poison-undef-freeze.md) |
 | `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn`, `reassoc`, `fast` | [`13-advanced-ir/06-fast-math-flags.md`](../13-advanced-ir/06-fast-math-flags.md) |
