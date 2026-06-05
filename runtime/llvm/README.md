@@ -59,6 +59,18 @@ runtime/llvm/validate_phase3.sh
 runtime/llvm/validate_phase4.sh
 ```
 
+For environment skew triage without creating build outputs, run:
+
+```bash
+runtime/llvm/diagnose_validate_env.sh
+```
+
+The diagnostic script reuses `validate_common.sh`, prints the repository root,
+build directory, `BCIR_VALIDATE_TRIPLE`, `PATH`, OS/kernel summary, LLVM tool
+locations and first `--version` lines, the checked-in `tools/bcir-as/bcir-as`
+location/version banner, and read-only prerequisite checks for the seed and
+phase-4 validation inputs.
+
 `validate_phase4.sh` additionally requires the checked-in `tools/bcir-as/bcir-as`
 executable because it generates `build/vector_add.generated.ll` before linking
 the phase-4 runtime module.
