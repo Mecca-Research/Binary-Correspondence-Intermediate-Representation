@@ -21,7 +21,9 @@ Many intrinsics are **overloaded**: the type is encoded in the
 mangled name. `llvm.sqrt.f64` takes a `double`; `llvm.sqrt.f32`
 takes a `float`. You must declare the exact mangled name you call.
 For a compact table of common families, signatures, attributes, and `immarg`
-constraints, start with [`intrinsics-quickref.md`](intrinsics-quickref.md). For
+constraints, start with [`intrinsics-quickref.md`](intrinsics-quickref.md); for
+a pre-edit checklist across intrinsics, attributes, poison, and fast math, use
+[`../quickref/advanced-ir.md`](../quickref/advanced-ir.md). For
 target-specific namespaces and token/special types, see
 [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md)
 and [`../13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md).

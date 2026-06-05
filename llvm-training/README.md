@@ -20,7 +20,8 @@ testable.
 2. **Follow the path in [`CURRICULUM.md`](CURRICULUM.md)** if learning end-to-end. Skip
    to a leaf chapter if doing a targeted task.
 3. **Use [`quickref/`](quickref/) for one-page cheat sheets** on opaque
-   pointers, BCIR lowering, vectorization, metadata, and the new pass manager.
+   pointers, BCIR lowering, vectorization, metadata, the new pass manager,
+   advanced IR contracts, and MLIR bridge reviews.
 4. **Treat `08-pitfalls/` as a checklist** before writing or reviewing
    LLVM IR. Every pitfall is tied to a real bug that shipped — most of
    them caught in the sibling BCIR project.
@@ -89,9 +90,27 @@ The expanded corpus now has both beginner examples and advanced artifacts:
 - **Binary-analysis evidence artifacts**: CSV trace/counter/BCSA samples in
   `15-binary-analysis/examples/` document evidence schemas and must be reviewed
   with chapter prose rather than sent to `llvm-as`.
-- **Repair and prediction exercises**: `exercises/016`-`026` include invalid
-  fixtures, pass-output prediction tasks, metadata preservation checks, and
-  UB/poison repair prompts.
+- **Repair, prediction, and advanced review exercises**: `exercises/016`-`027`
+  include invalid fixtures, pass-output prediction tasks, metadata preservation
+  checks, and UB/poison/fast-math review prompts; `exercises/028`-`040` cover
+  BCIR lowering, MLIR bridge review, backend/JIT diagnostics, custom-pass
+  invariants, graph metadata, and GAADMSF debugging.
+
+
+## Quick reference paths
+
+Use these one-page sheets when you already know the lesson family and need a
+fast pre-edit checklist:
+
+| Task | Quickref | Deep context |
+| --- | --- | --- |
+| Opaque pointer migration | [`quickref/opaque-pointers.md`](quickref/opaque-pointers.md) | [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) |
+| BCIR lowering | [`quickref/bcir-lowering.md`](quickref/bcir-lowering.md) | [`bcir-mapping/README.md`](bcir-mapping/README.md) |
+| Vectorization | [`quickref/vectorization.md`](quickref/vectorization.md) | [`09-vectorization/README.md`](09-vectorization/README.md) |
+| Metadata preservation | [`quickref/metadata.md`](quickref/metadata.md) | [`06-metadata/README.md`](06-metadata/README.md), [`bcir-mapping/10-metadata-and-diagnostics.md`](bcir-mapping/10-metadata-and-diagnostics.md) |
+| New pass manager pipelines | [`quickref/new-pass-manager.md`](quickref/new-pass-manager.md) | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) |
+| Advanced intrinsics/attributes/poison/fast math | [`quickref/advanced-ir.md`](quickref/advanced-ir.md) | [`13-advanced-ir/README.md`](13-advanced-ir/README.md) |
+| MLIR-to-LLVM bridge review | [`quickref/mlir-bridge.md`](quickref/mlir-bridge.md) | [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) |
 
 Use [`EXAMPLES.md`](EXAMPLES.md) for naming and verification rules before adding
 new artifacts to any of these families.
@@ -132,6 +151,13 @@ Use the checked-in tool scripts from the repository root:
 ./llvm-training/tools/smoke-llc.sh
 ./llvm-training/tools/smoke-lli.sh
 ./llvm-training/tools/verify-exercises.sh
+./llvm-training/tools/verify-invalid-fixtures.sh
+./llvm-training/tools/verify-opt-diff.sh
+./llvm-training/tools/verify-opaque-pointers.sh
+./llvm-training/tools/verify-manifest.sh
+./llvm-training/tools/verify-csv-schema.sh
+./llvm-training/tools/verify-mlir-examples.sh
+./llvm-training/tools/verify-bcir-mapping.sh
 ```
 
 The same checks are also available as CMake custom targets after configuring the
@@ -143,6 +169,13 @@ cmake --build build --target llvm-training-verify-examples
 cmake --build build --target llvm-training-smoke-llc
 cmake --build build --target llvm-training-smoke-lli
 cmake --build build --target llvm-training-verify-exercises
+cmake --build build --target llvm-training-verify-invalid-fixtures
+cmake --build build --target llvm-training-verify-opt-diff
+cmake --build build --target llvm-training-verify-opaque-pointers
+cmake --build build --target llvm-training-verify-manifest
+cmake --build build --target llvm-training-verify-csv-schema
+cmake --build build --target llvm-training-verify-mlir-examples
+cmake --build build --target llvm-training-verify-bcir-mapping
 ```
 
 `verify-examples.sh` checks every known-good standalone `*/examples/*.ll` file
@@ -153,7 +186,12 @@ working and should never be renamed to a known-good `.ll` example. Anything else
 in those known-good files that doesn't assemble and verify shouldn't ship.
 
 `verify-exercises.sh` applies the same assembler-and-verifier contract to every
-checked-in `llvm-training/exercises/*.solution.ll` reference answer.
+checked-in `llvm-training/exercises/*.solution.ll` reference answer. Use
+`verify-invalid-fixtures.sh` for intentionally broken `.invalid.ll.txt` repair
+fixtures, `verify-opt-diff.sh` for golden optimizer-output pairs,
+`verify-mlir-examples.sh` for MLIR syntax coverage, `verify-bcir-mapping.sh` for
+BCIR source-like fragments and lowered companions, and `verify-csv-schema.sh` for
+binary-analysis evidence tables.
 
 The smoke scripts are intentionally narrower: `smoke-llc.sh` emits assembly for
 a curated portable subset, while `smoke-lli.sh` runs only modules with a safe

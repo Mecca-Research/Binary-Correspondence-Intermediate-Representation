@@ -3,9 +3,10 @@
 | Name or flag | Kind | Read |
 |---|---|---|
 | `opt -passes=verify` | Utility/checking pipeline | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
-| `-debug-pass-manager` | Pass-manager scheduling trace | [`07-optimization/05-debugging-passes.md`](../07-optimization/05-debugging-passes.md) |
+| `-debug-pass-manager` | Pass-manager scheduling trace | [`07-optimization/05-debugging-passes.md`](../07-optimization/05-debugging-passes.md), [`quickref/new-pass-manager.md`](../quickref/new-pass-manager.md) |
 | `-load-pass-plugin`, PassBuilder plugin callbacks | New pass manager plugin loading | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/08-deep-optimization-lessons.md`](../07-optimization/08-deep-optimization-lessons.md) |
 | `print<module>` | IR printing inside a pipeline | [`07-optimization/05-debugging-passes.md`](../07-optimization/05-debugging-passes.md) |
+| `verify-opt-diff.sh` golden pass checks | Repository verification script for pass-output examples | [`tools/README.md`](../tools/README.md), [`07-optimization/08-deep-optimization-lessons.md`](../07-optimization/08-deep-optimization-lessons.md) |
 | `opt -S` | Textual IR output flag | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](../07-optimization/04-optimization-levels.md) |
 | `-disable-output` | Suppress output for check/print workflows | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/02-common-analysis-passes.md`](../07-optimization/02-common-analysis-passes.md) |
 | `mem2reg` | Transform | [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md) |
@@ -27,4 +28,5 @@
 | `-fprofile-generate`, `-fprofile-use` | PGO profile collection/use | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
 | `llvm-profdata merge` | Profile data preparation | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
 | `-flto=full`, `-flto=thin`, FullLTO, ThinLTO | Cross-module optimization configuration | [`07-optimization/06-pgo-lto-bolt.md#fulllto-vs-thinlto-review-points`](../07-optimization/06-pgo-lto-bolt.md#fulllto-vs-thinlto-review-points) |
-| `llvm-bolt` | Post-link binary layout optimization | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
+| `llvm-bolt` | Post-link binary layout optimization | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md), [`07-optimization/07-bolt-layout-walkthrough.md`](../07-optimization/07-bolt-layout-walkthrough.md) |
+| BCIR lowering verifier pass design | Custom analysis/verification pass pattern | [`07-optimization/08-deep-optimization-lessons.md`](../07-optimization/08-deep-optimization-lessons.md), [`exercises/038-custom-pass-bcir-invariants.prompt.md`](../exercises/038-custom-pass-bcir-invariants.prompt.md) |

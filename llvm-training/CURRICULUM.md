@@ -144,7 +144,7 @@ security or performance verdict.
 After Path 2, add this path when unusual IR syntax, target hooks, or special
 case constructs appear in generated modules:
 
-1. [`reference/intrinsics.md`](reference/intrinsics.md) and [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) — declaration rules plus a focused category quick reference for common, memory/lifetime/debug, and target-specific intrinsic families
+1. [`quickref/advanced-ir.md`](quickref/advanced-ir.md), [`reference/intrinsics.md`](reference/intrinsics.md), and [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) — fast checklist plus declaration rules and a focused category quick reference for common, memory/lifetime/debug, custom, and target-specific intrinsic families
 2. [`13-advanced-ir/01-common-intrinsics.md`](13-advanced-ir/01-common-intrinsics.md) and [`13-advanced-ir/02-target-specific-intrinsics.md`](13-advanced-ir/02-target-specific-intrinsics.md) — common and target-specific intrinsic spelling in standalone modules
 3. [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md) — special scalar, token, metadata, target-extension, and scalable-vector types
 4. [`13-advanced-ir/04-attributes.md`](13-advanced-ir/04-attributes.md) — function, parameter, memory-effect, pointer, and ABI attributes
@@ -162,7 +162,7 @@ heavy code, or backend-adjacent transformations.
 After Path 2, add this path when a frontend or domain IR should preserve
 structured information before producing LLVM IR:
 
-1. [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) — MLIR modules, operations, regions, blocks, attributes, and types
+1. [`quickref/mlir-bridge.md`](quickref/mlir-bridge.md) and [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) — bridge checklist plus MLIR modules, operations, regions, blocks, attributes, and types
 2. [`14-mlir-bridge/02-dialects-and-operations.md`](14-mlir-bridge/02-dialects-and-operations.md) — dialect design basics and operation anatomy
 3. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — conversion/lowering pipelines, LLVM dialect, and `.ll` differences
 4. [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) — where BCIR Vertex-Edge-Attribute, HAM hints, register binding, and Mixed Stride graphs can live
@@ -183,7 +183,7 @@ fragments, runtime operations, or diagnostic hints directly to LLVM IR:
 4. [`bcir-mapping/03-mixed-stride-graphs.md`](bcir-mapping/03-mixed-stride-graphs.md) — row/column stride arithmetic and byte-offset lowering.
 5. [`bcir-mapping/04-ham-hints.md`](bcir-mapping/04-ham-hints.md) and [`bcir-mapping/10-metadata-and-diagnostics.md`](bcir-mapping/10-metadata-and-diagnostics.md) — HAM hints, prefetch intrinsics, custom metadata, and diagnostic preservation.
 6. [`bcir-mapping/05-runtime-abi.md`](bcir-mapping/05-runtime-abi.md), [`bcir-mapping/08-dragon-egg-operations.md`](bcir-mapping/08-dragon-egg-operations.md), and [`bcir-mapping/09-runtime-call-boundaries.md`](bcir-mapping/09-runtime-call-boundaries.md) — ABI structs, Dragon Egg runtime-owned operations, and wrapper calls.
-7. Run `./llvm-training/tools/verify-examples.sh` after editing any checked `.ll` output under [`bcir-mapping/examples/`](bcir-mapping/examples/).
+7. Run `./llvm-training/tools/verify-bcir-mapping.sh` and `./llvm-training/tools/verify-examples.sh` after editing any checked source-like `.bcir.txt` or lowered `.ll` output under [`bcir-mapping/examples/`](bcir-mapping/examples/).
 
 Use this path together with the MLIR bridge path when the source representation
 starts as a dialect operation rather than a source-like `.bcir.txt` prompt.
@@ -197,7 +197,7 @@ constructs into executable LLVM IR or runtime-call boundaries:
 2. [`bcir-mapping/01-vertex-edge-attribute.md`](bcir-mapping/01-vertex-edge-attribute.md), [`bcir-mapping/07-gaadmsf-operations.md`](bcir-mapping/07-gaadmsf-operations.md), and [`bcir-mapping/03-mixed-stride-graphs.md`](bcir-mapping/03-mixed-stride-graphs.md) — lower graph fragments, GAADMSF operations, and mixed strides into structs, GEPs, and byte offsets.
 3. [`bcir-mapping/02-register-binding.md`](bcir-mapping/02-register-binding.md) and [`bcir-mapping/05-runtime-abi.md`](bcir-mapping/05-runtime-abi.md) — keep registry/resource ABI layouts synchronized.
 4. [`bcir-mapping/04-ham-hints.md`](bcir-mapping/04-ham-hints.md) and [`bcir-mapping/10-metadata-and-diagnostics.md`](bcir-mapping/10-metadata-and-diagnostics.md) — lower hints and preserve diagnostics without making metadata semantically required.
-5. Exercises [`028`](exercises/028-lower-vertex-edge-fragment.prompt.md)-[`031`](exercises/031-lower-runtime-call-boundary.prompt.md) — apply the BCIR lowering patterns directly.
+5. Exercises [`028`](exercises/028-lower-vertex-edge-fragment.prompt.md)-[`031`](exercises/031-lower-runtime-call-boundary.prompt.md) apply the core BCIR lowering patterns; exercises [`038`](exercises/038-custom-pass-bcir-invariants.prompt.md)-[`040`](exercises/040-debug-gaadmsf-lowering.prompt.md) add verifier-style invariant design, graph metadata encoding, and GAADMSF debugging.
 
 ## MLIR integration path
 
@@ -208,7 +208,7 @@ before lowering to LLVM dialect or textual LLVM IR:
 2. [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](14-mlir-bridge/04-bcir-as-custom-dialect.md) — decide which BCIR concepts belong in a custom dialect.
 3. [`14-mlir-bridge/05-vertex-graph-lowering.md`](14-mlir-bridge/05-vertex-graph-lowering.md) — follow a complete graph lowering across source MLIR, LLVM-dialect MLIR, and textual LLVM IR.
 4. [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md) — review type conversion and LLVM-dialect boundaries.
-5. Exercises [`032`](exercises/032-identify-mlir-dialect-boundaries.prompt.md)-[`034`](exercises/034-review-mlir-to-llvm-type-conversion.prompt.md) — practice dialect-boundary and lowering reviews.
+5. Exercises [`032`](exercises/032-identify-mlir-dialect-boundaries.prompt.md)-[`034`](exercises/034-review-mlir-to-llvm-type-conversion.prompt.md) — practice dialect-boundary, graph-op lowering, and type-conversion reviews.
 
 ## Backend/JIT diagnostics path
 
@@ -238,8 +238,8 @@ module from scratch:
 
 1. [`08-pitfalls/README.md`](08-pitfalls/README.md) — identify the likely failure family.
 2. [`EXAMPLES.md`](EXAMPLES.md) — confirm invalid fixture naming before adding a broken input.
-3. Exercises [`016`](exercises/016-fix-phi-predecessor.prompt.md)-[`019`](exercises/019-fix-atomic-ordering.prompt.md) and [`026`](exercises/026-poison-freeze-repair.prompt.md) — repair CFG, symbol, intrinsic, atomic-ordering, and poison/freeze hazards.
-4. Run `./llvm-training/tools/verify-invalid-fixtures.sh` for broken inputs and `./llvm-training/tools/verify-exercises.sh` for fixed `.solution.ll` outputs.
+3. Exercises [`016`](exercises/016-fix-phi-predecessor.prompt.md)-[`019`](exercises/019-fix-atomic-ordering.prompt.md), [`026`](exercises/026-poison-freeze-repair.prompt.md), and [`040`](exercises/040-debug-gaadmsf-lowering.prompt.md) — repair CFG, symbol, intrinsic, atomic-ordering, poison/freeze, and BCIR lowering hazards.
+4. Run `./llvm-training/tools/verify-invalid-fixtures.sh` for broken inputs, `./llvm-training/tools/verify-exercises.sh` for fixed `.solution.ll` outputs, and `./llvm-training/tools/verify-bcir-mapping.sh` when a repair touches BCIR mapping fixtures.
 
 ## Path 3: Deep dive (one sitting; pick up the rest as needed)
 

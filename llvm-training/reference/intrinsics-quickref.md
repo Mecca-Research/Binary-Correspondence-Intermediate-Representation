@@ -246,5 +246,6 @@ and [`../08-pitfalls/08-stale-debug-locations.md`](../08-pitfalls/08-stale-debug
 - [`intrinsics.md`](intrinsics.md) — broad reference, declaration rules, and pitfalls.
 - [`instruction-quickref.md`](instruction-quickref.md) — instruction syntax that pairs with intrinsic results.
 - [`../13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md) — runnable common intrinsic examples.
+- [`../quickref/advanced-ir.md`](../quickref/advanced-ir.md) — short pre-edit checklist for intrinsic-heavy or contract-heavy IR.
 - [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md) — target-specific intrinsic namespaces and feature requirements.
 - [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md) — custom BCIR intrinsic declarations and JIT fallback policy.

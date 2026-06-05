@@ -25,6 +25,19 @@ the same checks without a build-system dependency.
 | `demo-vectorize.sh` | Shows loop-vectorization remarks from `clang` on the C fixture, then forces a visible loop-vectorizer experiment over the checked-in IR and prints the transformed IR. | `opt`, `clang` |
 | `demo-debug-pipeline.sh` | Captures `-debug-pass-manager` output for `default<O2>` into a temporary log, then prints the pass schedule for inspection. | `opt` |
 
+
+## Advanced-content verification map
+
+Use these script groups when advanced examples or reference paths change:
+
+| Content family | Scripts to run |
+| --- | --- |
+| Advanced IR, intrinsics, attributes, poison/freeze, fast math | `verify-examples.sh`, `verify-exercises.sh`, `verify-invalid-fixtures.sh`, `verify-opaque-pointers.sh` |
+| Optimization before/after examples and pass-pipeline lessons | `verify-opt-diff.sh`, `verify-examples.sh` |
+| MLIR bridge examples | `verify-mlir-examples.sh`, then `verify-examples.sh` for lowered `.ll` companions |
+| BCIR mapping/source-like fragments | `verify-bcir-mapping.sh`, `verify-examples.sh`, `verify-manifest.sh` |
+| Binary-analysis CSV evidence | `verify-csv-schema.sh` |
+
 ## CMake batch targets
 
 The repository root `CMakeLists.txt` exposes first-class custom targets for the

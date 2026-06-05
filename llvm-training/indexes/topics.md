@@ -73,6 +73,7 @@
 | MLIR dialect design and operation anatomy | [`14-mlir-bridge/02-dialects-and-operations.md`](../14-mlir-bridge/02-dialects-and-operations.md) |
 | MLIR lowering to LLVM dialect / LLVM IR | [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](../14-mlir-bridge/03-lowering-to-llvm-dialect.md), [`14-mlir-bridge/examples/lowered-llvm-dialect.mlir`](../14-mlir-bridge/examples/lowered-llvm-dialect.mlir) |
 | BCIR as an MLIR custom dialect | [`14-mlir-bridge/04-bcir-as-custom-dialect.md`](../14-mlir-bridge/04-bcir-as-custom-dialect.md), [`14-mlir-bridge/examples/bcir-dialect-sketch.mlir`](../14-mlir-bridge/examples/bcir-dialect-sketch.mlir) |
+| MLIR vertex/edge graph lowering walkthrough | [`14-mlir-bridge/05-vertex-graph-lowering.md`](../14-mlir-bridge/05-vertex-graph-lowering.md), [`14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll`](../14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll) |
 | BCIR mapping guide dispatcher | [`bcir-mapping/README.md`](../bcir-mapping/README.md) |
 | BCIR claim lowering pipeline | [`bcir-mapping/06-claim-lowering-pipeline.md`](../bcir-mapping/06-claim-lowering-pipeline.md), [`bcir-mapping/examples/claim-resource-lookup.ll`](../bcir-mapping/examples/claim-resource-lookup.ll) |
 | GAADMSF graph/data movement lowering | [`bcir-mapping/07-gaadmsf-operations.md`](../bcir-mapping/07-gaadmsf-operations.md), [`bcir-mapping/examples/graph-fragment-struct-gep.ll`](../bcir-mapping/examples/graph-fragment-struct-gep.ll) |
@@ -81,6 +82,9 @@
 | BCIR metadata, HAM hints, and diagnostics | [`bcir-mapping/10-metadata-and-diagnostics.md`](../bcir-mapping/10-metadata-and-diagnostics.md), [`bcir-mapping/examples/ham-hint-prefetch.ll`](../bcir-mapping/examples/ham-hint-prefetch.ll), [`bcir-mapping/examples/diagnostic-metadata-preservation.ll`](../bcir-mapping/examples/diagnostic-metadata-preservation.ll) |
 | Formal Textmapper grammar | `10-grammar/llvm-ir.tm` |
 | Grammar notes / how to use it | [`10-grammar/README.md`](../10-grammar/README.md) |
+| Quick reference dispatcher | [`quickref/README.md`](../quickref/README.md) |
+| Advanced IR quick reference | [`quickref/advanced-ir.md`](../quickref/advanced-ir.md) |
+| MLIR bridge quick reference | [`quickref/mlir-bridge.md`](../quickref/mlir-bridge.md) |
 | Instruction quick reference | [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
 | Common intrinsics declaration rules | [`reference/intrinsics.md`](../reference/intrinsics.md) |
 | Intrinsics quick reference | [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md) |
@@ -103,7 +107,7 @@
 | JITLink and ORC object linking | [`12-backend-jit/05-orc-layers.md`](../12-backend-jit/05-orc-layers.md), [`12-backend-jit/04-mc-and-relocations.md`](../12-backend-jit/04-mc-and-relocations.md) |
 | `LLJIT` | [`12-backend-jit/03-orc-jit.md`](../12-backend-jit/03-orc-jit.md) |
 | Glossary | [`reference/glossary.md`](../reference/glossary.md) |
-
 | Microarchitecture side-channel review | [`15-binary-analysis/01-microarchitecture-side-channels.md`](../15-binary-analysis/01-microarchitecture-side-channels.md) |
 | Dynamic traces and hardware counters | [`15-binary-analysis/02-dynamic-traces-and-counters.md`](../15-binary-analysis/02-dynamic-traces-and-counters.md) |
 | Interpretable BCSA feature triage | [`15-binary-analysis/03-interpretable-bcsa-features.md`](../15-binary-analysis/03-interpretable-bcsa-features.md) |
+| Advanced exercise set: BCIR lowering, MLIR review, backend/JIT, custom pass invariants, graph metadata, GAADMSF debugging | [`exercises/README.md`](../exercises/README.md) |
