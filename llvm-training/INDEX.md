@@ -8,6 +8,7 @@ every lookup.
 | --- | --- |
 | Concept or task area | [`indexes/topics.md`](indexes/topics.md) |
 | Common LLVM IR instruction syntax | [`indexes/instructions.md`](indexes/instructions.md) |
+| One-page quick references | [`quickref/`](quickref/) |
 | `opt` flags and pass names | [`indexes/optimizer-passes.md`](indexes/optimizer-passes.md) |
 | Auto-vectorization lessons and advanced masked/interleaved examples | [`09-vectorization/README.md`](09-vectorization/README.md) |
 | Symbols such as metadata names, intrinsics, and files | [`indexes/symbols.md`](indexes/symbols.md) |

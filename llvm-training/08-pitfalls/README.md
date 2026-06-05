@@ -7,6 +7,13 @@ caught by `llvm-as` or `llvm-link` and fixed with a referenced commit.
 Read these *before* writing IR. They're the cheapest insurance you'll
 buy.
 
+## Key takeaways
+
+- Run this checklist before writing or reviewing generated LLVM IR; most issues are cheaper to catch before `llvm-as` or `llvm-link` fails.
+- Verifier failures often come from structural mismatches: PHI predecessors, duplicate labels/symbols, invalid immarg operands, or address-space drift.
+- Valid IR can still be wrong when debug metadata, volatile operations, atomics, or pass-pipeline assumptions encode stale semantics.
+- Use the linked pages as repair patterns, not just bug descriptions.
+
 ## Index
 
 | # | File | One-liner |

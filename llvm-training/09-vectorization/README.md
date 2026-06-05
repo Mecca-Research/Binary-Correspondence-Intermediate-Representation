@@ -1,5 +1,12 @@
 # Auto-Vectorization: Loop Vectorizer and SLP Vectorizer
 
+## Key takeaways
+
+- Loop vectorization needs legality first: memory dependences, aliasing, trip-count facts, and side effects decide whether widening is safe.
+- SLP vectorization packs independent scalar operations inside a basic block; loop vectorization widens repeated work across iterations.
+- Masked, predicated, interleaved, gather, and scatter patterns are normal vector IR shapes, not necessarily bugs.
+- When a loop does not vectorize, collect optimization remarks and check alias metadata, control flow, and pass-pipeline order before rewriting IR.
+
 ## TL;DR
 
 LLVM has two main auto-vectorizers:

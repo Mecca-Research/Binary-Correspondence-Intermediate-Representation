@@ -5,6 +5,13 @@ This chapter maps common Binary Correspondence Intermediate Representation
 training examples. Use it when lowering BCIR-like graph, resource, schedule, or
 runtime ABI ideas into standalone LLVM IR that still assembles and verifies.
 
+## Key takeaways
+
+- Lower BCIR concepts in layers: semantic records, accessor/executor helpers, then plain LLVM operations.
+- Runtime ABI structs in `runtime/llvm/` are the source of truth for claim, schedule, registry, blob, and executor shapes.
+- Metadata should preserve diagnostics and lowering provenance without becoming required for core IR correctness.
+- Every BCIR-facing example should still assemble and verify as ordinary opaque-pointer LLVM IR.
+
 ## Concepts
 
 | Concept | Page | Standalone example |

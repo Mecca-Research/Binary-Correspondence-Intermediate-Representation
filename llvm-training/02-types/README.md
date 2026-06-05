@@ -6,6 +6,13 @@ opaque-pointer model and the migration work needed when older typed-pointer IR
 or APIs are updated for LLVM versions where `ptr` no longer carries a pointee
 type.
 
+## Key takeaways
+
+- LLVM types describe values, while modern opaque pointers require pointee facts to live on operations such as load, store, GEP, and call.
+- Composite types include arrays, structs, packed structs, fixed vectors, and scalable vectors; indexing rules depend on the source element type.
+- Typed-pointer migration is mostly about replacing pointer-element-type queries with explicit access, source, or function types.
+- Address spaces survive opaque-pointer migration and must not be collapsed to plain `ptr`.
+
 ## Chapter dispatcher
 
 | Need | Read |
