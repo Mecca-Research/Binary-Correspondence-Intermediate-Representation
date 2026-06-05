@@ -17,15 +17,16 @@ for calls (most often inline asm) that may branch to labels.
 | `br` | `br i1 %c, label %T, label %F` | Two successors | Conditional branch on an `i1`; see [`../05-control-flow/02-conditional-br.md`](../05-control-flow/02-conditional-br.md). |
 | `switch` | `switch <ty> %v, label %D [ <ty> <c>, label %L ... ]` | Default plus case successors | Multi-way branch with constant case values; see [`../05-control-flow/03-switch.md`](../05-control-flow/03-switch.md). |
 | `indirectbr` | `indirectbr ptr %addr, [ label %A, label %B ]` | Any listed destination | Runtime target must be a valid `blockaddress`; see [`../05-control-flow/04-indirectbr.md`](../05-control-flow/04-indirectbr.md). |
-| `invoke` | `%r = invoke <ty> @f(...) [ "deopt"(...) ] to label %N unwind label %U` | Normal and unwind successors; result available on normal edge | Call that transfers exceptions to an EH pad. Operand bundles, when present, appear before `to`; see [`../13-advanced-ir/07-operand-bundles.md`](../13-advanced-ir/07-operand-bundles.md). |
+| `invoke` | `%r = invoke <ty> @f(...) [ "deopt"(...) ] to label %N unwind label %U` | Normal and unwind successors; result available on normal edge | Call that transfers exceptions to an EH pad. Operand bundles, when present, appear before `to`; see [`../16-exception-handling/02-itanium-landingpad.md`](../16-exception-handling/02-itanium-landingpad.md) and [`../13-advanced-ir/07-operand-bundles.md`](../13-advanced-ir/07-operand-bundles.md). |
 | `callbr` | `%r = callbr <ty> @f(...) to label %N [ label %L ... ]` | Normal successor plus indirect labels; optional result | Call with label destinations, primarily for inline assembly `asm goto`-style control flow. Labels in the bracket list are possible indirect destinations. |
-| `resume` | `resume <ty> %v` | Function unwind exit | Continue propagation of an exception value produced by `landingpad`. |
-| `catchswitch` | `%cs = catchswitch within <parent> [ label %H, ... ] unwind label %U` / `unwind to caller` | Handler successors plus unwind edge | EH terminator and pad. It must be the only non-`phi` instruction in its block and yields a `token` for `catchpad`. |
-| `catchret` | `catchret from <token> %cp to label %T` | One normal successor | Exits a `catchpad` funclet. |
-| `cleanupret` | `cleanupret from <token> %cp unwind label %U` / `unwind to caller` | Optional unwind successor | Exits a `cleanuppad` funclet. |
+| `resume` | `resume <ty> %v` | Function unwind exit | Continue propagation of an exception value produced by `landingpad`; see [`../16-exception-handling/04-cleanups-and-resume.md`](../16-exception-handling/04-cleanups-and-resume.md). |
+| `catchswitch` | `%cs = catchswitch within <parent> [ label %H, ... ] unwind label %U` / `unwind to caller` | Handler successors plus unwind edge | WinEH terminator and pad. It must be the only non-`phi` instruction in its block and yields a `token` for `catchpad`; see [`../16-exception-handling/03-wineh-funclets.md`](../16-exception-handling/03-wineh-funclets.md). |
+| `catchret` | `catchret from <token> %cp to label %T` | One normal successor | Exits a `catchpad` funclet; calls inside the funclet usually carry a `"funclet"` operand bundle. |
+| `cleanupret` | `cleanupret from <token> %cp unwind label %U` / `unwind to caller` | Optional unwind successor | Exits a `cleanuppad` funclet and continues WinEH unwinding. |
 | `unreachable` | `unreachable` | No successors | Asserts the block cannot be reached; executing it is undefined behavior. |
 
 EH pads and unwind edges are covered in more detail in
+[`../16-exception-handling/README.md`](../16-exception-handling/README.md) and
 [`../13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md).
 When editing CFGs, keep `phi` predecessor lists consistent with terminator
 successors; see [`../08-pitfalls/02-phi-predecessor-mismatch.md`](../08-pitfalls/02-phi-predecessor-mismatch.md).
@@ -214,15 +215,16 @@ sensitive; see [`../08-pitfalls/11-address-space-confusion.md`](../08-pitfalls/1
 | `phi` | `phi <ty> [ %v1, %P1 ], [ %v2, %P2 ], ...` | SSA merge at a block start; incoming blocks must match predecessors. See [`../08-pitfalls/02-phi-predecessor-mismatch.md`](../08-pitfalls/02-phi-predecessor-mismatch.md). |
 | `select` | `select i1 %c, <ty> %t, <ty> %f` | Ternary expression. With vector conditions, selects lane-wise. |
 | `freeze` | `%x = freeze <ty> %v` | Converts `undef`/poison into one arbitrary but fixed value for this execution, preventing later UB from propagating through uses. Useful before control-flow decisions derived from possibly poison values. |
-| `call` | `%r = call <ty> @f(<args>) [ "deopt"(...) ]` | Function or intrinsic call. Normal calls do not have unwind successors; use `invoke` if unwinding is represented. Operand bundles are call-site semantic payloads and must be preserved when rewriting calls; see [`../13-advanced-ir/07-operand-bundles.md`](../13-advanced-ir/07-operand-bundles.md). |
+| `call` | `%r = call <ty> @f(<args>) [ "deopt"(...) ]` | Function or intrinsic call. Normal calls do not have unwind successors; use `invoke` if unwinding is represented. Operand bundles are call-site semantic payloads and must be preserved when rewriting calls; see [`../13-advanced-ir/07-operand-bundles.md`](../13-advanced-ir/07-operand-bundles.md) and [`../16-exception-handling/03-wineh-funclets.md#operand-bundle-interaction-funclet`](../16-exception-handling/03-wineh-funclets.md#operand-bundle-interaction-funclet). |
 | `va_arg` | `%v = va_arg ptr %ap, <ty>` | Variadic argument fetch. |
-| `landingpad` | `%lp = landingpad <result-ty> cleanup catch <ty> <val> filter <array-ty> <val>` | It must be the first non-`phi` instruction in an `invoke` unwind destination, and there is at most one per landing pad block. Clauses describe catches/filters/cleanup. |
+| `landingpad` | `%lp = landingpad <result-ty> cleanup catch <ty> <val> filter <array-ty> <val>` | Itanium-style pad. It must be the first non-`phi` instruction in an `invoke` unwind destination, and there is at most one per landing pad block. Clauses describe catches/filters/cleanup; see [`../16-exception-handling/02-itanium-landingpad.md`](../16-exception-handling/02-itanium-landingpad.md). |
 | `catchpad` | `%cp = catchpad within <token> %cs [<args>]` | Begins a catch funclet and returns a `token`; normally the first non-`phi` instruction in a handler block targeted by `catchswitch`. |
-| `cleanuppad` | `%cp = cleanuppad within <parent> [<args>]` | Begins a cleanup funclet and returns a `token`; exited by `cleanupret`. |
+| `cleanuppad` | `%cp = cleanuppad within <parent> [<args>]` | Begins a cleanup funclet and returns a `token`; exited by `cleanupret`; see [`../16-exception-handling/04-cleanups-and-resume.md`](../16-exception-handling/04-cleanups-and-resume.md). |
 
 For token-typed EH pads, funclets, and special types, see
+[`../16-exception-handling/README.md`](../16-exception-handling/README.md) and
 [`../13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md). Operand bundles on `call` and
-`invoke` are covered in
+`invoke`, including `"funclet"`, are covered in
 [`../13-advanced-ir/07-operand-bundles.md`](../13-advanced-ir/07-operand-bundles.md).
 
 ## Constant expressions
