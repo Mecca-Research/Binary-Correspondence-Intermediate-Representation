@@ -1,0 +1,12 @@
+; llvm-training-invalid-kind: semantic-only
+; Adversarial BCIR fixture: the verifier accepts the load, but `align 16` is
+; stronger than the ABI/source contract if callers only guarantee 4-byte i32
+; alignment. The overclaim can let optimizers assume impossible low pointer bits.
+
+define i32 @alignment_too_strong(ptr %p) {
+entry:
+  %v = load i32, ptr %p, align 16, !bcir.reg !0
+  ret i32 %v
+}
+
+!0 = !{!"bcir.reg", !"r.aligned.load", !"claimed-align-16-source-align-4"}

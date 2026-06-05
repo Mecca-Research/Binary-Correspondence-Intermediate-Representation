@@ -1,0 +1,18 @@
+; llvm-training-invalid-kind: semantic-only
+; Adversarial BCIR fixture: opaque pointers remove the pointee type from `ptr`,
+; but GEP still carries a source element type. This verifies while silently
+; assuming that %base has the layout of %OldNode rather than the newer BCIR graph
+; node layout.
+
+%OldNode = type { i32, i64 }
+%NewNode = type { i64, i32 }
+
+define i64 @opaque_pointer_gep_source_type_assumption(ptr %base, i64 %idx) {
+entry:
+  %field = getelementptr %OldNode, ptr %base, i64 %idx, i32 1, !bcir.reg !0
+  %v = load i64, ptr %field, align 8, !bcir.reg !1
+  ret i64 %v
+}
+
+!0 = !{!"bcir.reg", !"r.field.ptr", !"assumes-old-node-layout"}
+!1 = !{!"bcir.reg", !"r.field.value", !"load-from-layout-dependent-gep"}

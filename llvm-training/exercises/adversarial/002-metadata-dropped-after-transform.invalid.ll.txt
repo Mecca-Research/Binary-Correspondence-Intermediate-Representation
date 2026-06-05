@@ -1,0 +1,19 @@
+; llvm-training-invalid-kind: semantic-only
+; Adversarial BCIR fixture: this represents an after-transform snapshot where the
+; executable IR still verifies, but the load that used to carry the only
+; !bcir.reg mapping was folded away and no named metadata side table replaced it.
+
+@bcir_slot = internal global i32 7, align 4
+
+!bcir.module = !{!0}
+!0 = !{!"graph", !"pagerank", !"missing post-transform register attachment for r.load"}
+
+define i32 @metadata_dropped_after_transform() {
+entry:
+  ; Before the transform, a load of @bcir_slot carried !bcir.reg !1.
+  ; After constant folding, only the constant remains, so BCIR reconstruction can
+  ; no longer identify the original register-producing memory operation.
+  ret i32 7
+}
+
+!1 = !{!"bcir.reg", !"r.load", !"@bcir_slot"}

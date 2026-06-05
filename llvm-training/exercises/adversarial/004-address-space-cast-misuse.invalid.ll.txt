@@ -1,0 +1,14 @@
+; llvm-training-invalid-kind: semantic-only
+; Adversarial BCIR fixture: this generic addrspacecast can assemble and verify,
+; but it may be semantically wrong for a target where address space 1 is not
+; round-trippable or not dereferenceable through the generic address space.
+
+define i32 @address_space_cast_misuse(ptr addrspace(1) %device_p) {
+entry:
+  %generic = addrspacecast ptr addrspace(1) %device_p to ptr, !bcir.reg !0
+  %v = load i32, ptr %generic, align 4, !bcir.reg !1
+  ret i32 %v
+}
+
+!0 = !{!"bcir.reg", !"r.generic.ptr", !"addrspacecast-from-device"}
+!1 = !{!"bcir.reg", !"r.device.load", !"loaded-through-generic-space"}

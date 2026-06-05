@@ -1,0 +1,16 @@
+; llvm-training-invalid-kind: semantic-only
+; Adversarial BCIR fixture: this assembles and verifies, but branching on poison
+; is immediate undefined behavior. A BCIR-preserving lowering should materialize
+; or freeze a poison-capable predicate before using it as control flow.
+
+define i32 @poison_feeds_branch(i32 %x) {
+entry:
+  %cmp = icmp sgt i32 %x, poison
+  br i1 %cmp, label %taken, label %fallthrough
+
+taken:
+  ret i32 1
+
+fallthrough:
+  ret i32 0
+}
