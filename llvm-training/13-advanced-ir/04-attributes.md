@@ -150,6 +150,88 @@ inaccessible to IR, a combined form like `memory(argmem: readwrite,
 inaccessiblemem: readwrite)` is accurate and still gives the optimizer useful
 alias information.
 
+
+## Calling conventions
+
+A calling convention is ABI-significant: it controls how arguments and return
+values are assigned to registers or stack slots, which registers must be
+preserved, and whether special tail-call rules apply. The convention is written
+after linkage/visibility and before the return type on a `define` or `declare`,
+and the same convention must be written at each direct call site unless the
+default C convention is intended. The basic function shape is introduced in
+[Modules, Functions, and Basic Blocks](../01-syntax/01-modules-functions-blocks.md).
+
+```llvm
+declare fastcc i32 @add_fast(i32, i32)
+
+define i32 @caller(i32 %a, i32 %b) {
+entry:
+  %sum = call fastcc i32 @add_fast(i32 %a, i32 %b)
+  ret i32 %sum
+}
+```
+
+| Convention | Typical purpose | Notes for handwritten or lowered IR |
+| --- | --- | --- |
+| `ccc` | The default C calling convention. | Use for C ABI interoperability, variadic C functions, and runtime entry points that are exported to ordinary object code. It may be omitted because it is the default, but spelling it can make ABI intent explicit. |
+| `fastcc` | A target-chosen fast convention for internal calls. | Optimizes register assignment and call overhead, but is not a stable external ABI. Use only when every declaration, definition, and call site is controlled together. |
+| `coldcc` | Calls to cold paths such as error or bailout helpers. | Optimized for preserving caller-side state and reducing hot-path overhead rather than callee speed. Good for rare runtime exits, not for frequently executed helpers. |
+| `tailcc` | Functions designed for guaranteed tail-call style lowering where supported. | Useful for functional-language runtimes or dispatch loops that require bounded stack growth. Pair with structurally valid tail-position calls. |
+| `ghccc` | The Glasgow Haskell Compiler calling convention. | Specialized for GHC's runtime model and register use. Do not use it for generic BCIR helpers unless the whole runtime ABI is intentionally GHC-compatible. |
+| `swiftcc` | Swift language ABI calls. | Carries Swift-specific ABI expectations, including interactions with Swift parameter attributes. Do not copy it just because a helper was originally emitted by Swift. |
+| `swifttailcc` | Swift tail-call ABI calls. | A Swift-specific convention for tail-call-heavy paths. It is not a generic replacement for `tailcc`. |
+| `cc <n>` | A numbered target-specific or frontend-specific convention. | The meaning of `<n>` is not self-describing in textual IR. Use only when the producer and consumer agree on the exact convention number and target support. |
+
+Calling conventions are part of the call boundary contract. A BCIR runtime
+wrapper that declares `ccc` but calls or defines the implementation as `fastcc`,
+`swiftcc`, or a numbered `cc <n>` can pass the same LLVM verifier type checks in
+some textual contexts yet still lower to incompatible machine-code call
+sequences. Keep the wrapper declaration, definition, and every generated call in
+lockstep with the runtime boundary policy described in
+[Runtime Call Boundaries](../bcir-mapping/09-runtime-call-boundaries.md).
+
+## Tail-call markers
+
+LLVM calls can carry a tail-call marker before `call`. The marker describes what
+the IR producer requires or forbids; it is separate from the function's calling
+convention, although some conventions make tail calls more practical.
+
+| Marker | Meaning | Use only when... |
+| --- | --- | --- |
+| `tail` | A request or hint that the call may be lowered as a tail call. | The call is in tail position and preserving stack growth is beneficial, but correctness does not depend on the transformation. |
+| `musttail` | A requirement that the call be lowered as a tail call. | The next instruction is the matching `ret`, the caller/callee signatures and ABI-impacting attributes satisfy LLVM's strict `musttail` rules, and unbounded stack growth would be a correctness bug. |
+| `notail` | A prohibition on tail-call optimization for this call. | The frame, return address, stack trace shape, sanitizer behavior, or runtime instrumentation must remain visible across the call. |
+
+```llvm
+declare i32 @step(i32)
+declare void @record_and_return(i32)
+
+define i32 @tail_hint(i32 %x) {
+entry:
+  %next = tail call i32 @step(i32 %x)
+  ret i32 %next
+}
+
+define i32 @tail_required(i32 %x) {
+entry:
+  %next = musttail call i32 @step(i32 %x)
+  ret i32 %next
+}
+
+define void @keep_frame(i32 %x) {
+entry:
+  notail call void @record_and_return(i32 %x)
+  ret void
+}
+```
+
+For BCIR runtime wrappers, `musttail` is risky unless the wrapper is deliberately
+designed as a transparent trampoline. ABI-impacting attributes such as `sret`,
+`byval`, `inreg`, `inalloca`, and `preallocated` must line up with the call and
+return rules. A copied `musttail` marker on a wrapper that adds a status code,
+reorders hidden arguments, or changes a structure-return pointer turns a small
+IR annotation mistake into a hard verifier failure or an ABI-invalid tail jump.
+
 ## Pointer and aliasing attributes
 
 | Attribute | Scope | Optimizer promise |
@@ -180,7 +262,9 @@ would otherwise be observable.
 ## ABI attributes
 
 ABI attributes describe how frontend source types cross the target ABI. They are
-part of the call signature contract, not optimization hints.
+part of the call signature contract, not optimization hints. The same source-level
+function type may lower differently on different targets, so these attributes
+belong in the target-aware type-lowering layer rather than in a late cleanup pass.
 
 | Attribute | Use |
 | --- | --- |
@@ -191,9 +275,145 @@ part of the call signature contract, not optimization hints.
 | `inalloca(<ty>)`, `preallocated(<ty>)` | Specialized argument-allocation protocols used by selected ABIs. |
 | `swiftself`, `swifterror` | Language ABI hooks; do not invent them outside the matching frontend ABI. |
 
+### ABI attribute examples
+
+`sret(<ty>)` marks a hidden pointer where the callee stores an aggregate return.
+The IR-level return type is usually `void`, but the source-level result lives in
+the caller-provided storage:
+
+```llvm
+%Pair = type { i64, i64 }
+
+declare void @make_pair(ptr noalias sret(%Pair) align 8, i64, i64)
+
+define void @use_sret(ptr %out) {
+entry:
+  call void @make_pair(ptr sret(%Pair) align 8 %out, i64 1, i64 2)
+  ret void
+}
+```
+
+`byval(<ty>)` says the pointer argument is passed as a by-value aggregate copy
+under the target ABI. The callee receives a pointer-shaped IR value, but ABI
+lowering must protect the caller's original object from callee writes through the
+formal parameter:
+
+```llvm
+%Pair = type { i64, i64 }
+
+declare i64 @sum_pair(ptr byval(%Pair) align 8)
+
+define i64 @use_byval(ptr %pair) {
+entry:
+  %sum = call i64 @sum_pair(ptr byval(%Pair) align 8 %pair)
+  ret i64 %sum
+}
+```
+
+`inalloca(<ty>)` is an argument-allocation protocol: the caller builds an
+argument frame object and passes it to a callee that consumes that allocation. It
+is target- and ABI-specific, and it cannot be casually combined with other
+argument-storage attributes such as `sret` or `byval` on the same argument:
+
+```llvm
+%Args = type { ptr, i32 }
+
+declare void @consume_frame(ptr inalloca(%Args))
+
+define void @use_inalloca(ptr %p, i32 %n) {
+entry:
+  %frame = alloca inalloca %Args, align 8
+  %slot0 = getelementptr %Args, ptr %frame, i32 0, i32 0
+  store ptr %p, ptr %slot0, align 8
+  %slot1 = getelementptr %Args, ptr %frame, i32 0, i32 1
+  store i32 %n, ptr %slot1, align 4
+  call void @consume_frame(ptr inalloca(%Args) %frame)
+  ret void
+}
+```
+
+`preallocated(<ty>)` is another explicit call-argument allocation protocol.
+Non-`musttail` calls that use it carry a `preallocated` operand bundle tying the
+call to setup/argument/teardown intrinsics; this makes it unsuitable for ad-hoc
+manual copying between wrappers:
+
+```llvm
+%Pair = type { i64, i64 }
+
+declare token @llvm.call.preallocated.setup(i32)
+declare ptr @llvm.call.preallocated.arg(token, i32)
+declare void @takes_preallocated(ptr preallocated(%Pair))
+
+define void @use_preallocated(i64 %a, i64 %b) {
+entry:
+  %tok = call token @llvm.call.preallocated.setup(i32 1)
+  %arg = call ptr @llvm.call.preallocated.arg(token %tok, i32 0) preallocated(%Pair)
+  %field0 = getelementptr %Pair, ptr %arg, i32 0, i32 0
+  store i64 %a, ptr %field0, align 8
+  %field1 = getelementptr %Pair, ptr %arg, i32 0, i32 1
+  store i64 %b, ptr %field1, align 8
+  call void @takes_preallocated(ptr preallocated(%Pair) %arg) [ "preallocated"(token %tok) ]
+  ret void
+}
+```
+
+`inreg` requests target-specific register treatment for an argument or return. It
+only has meaning where the target ABI defines one, and every declaration and call
+must agree on the same placement contract:
+
+```llvm
+declare inreg i32 @small_result(ptr inreg)
+
+define inreg i32 @forward_inreg(ptr inreg %ctx) {
+entry:
+  %r = call inreg i32 @small_result(ptr inreg %ctx)
+  ret i32 %r
+}
+```
+
 Mismatched ABI attributes between declarations and definitions are a link-time
 or runtime bug waiting to happen. Keep declarations emitted by different modules
-byte-for-byte compatible for ABI-relevant attributes.
+byte-for-byte compatible for ABI-relevant attributes. For BCIR runtime wrappers,
+copying a callee prototype without its hidden `sret` result, dropping `byval`
+alignment, moving an `inalloca` frame argument, omitting a `preallocated` operand
+bundle, or adding `inreg` to only one side of a call can make the wrapper and the
+runtime disagree about where bits live. That disagreement can corrupt caller
+stack slots, pass stale pointers instead of aggregate copies, leak temporary
+argument storage across a boundary, or return status values in registers the
+caller never reads. Treat ABI attributes as part of the stable boundary contract
+covered by [Runtime Call Boundaries](../bcir-mapping/09-runtime-call-boundaries.md),
+not as decoration that can be inferred after the wrapper is generated.
+
+## BCIR runtime-wrapper signature drift
+
+Runtime wrappers often look like mechanical copies of lower-level runtime
+prototypes, but the wrapper's LLVM function type and ABI attributes are the
+actual contract seen by the optimizer, code generator, linker, and JIT. Copying
+only the visible scalar types is not enough. The return type, pointer address
+spaces, variadic marker, calling convention, tail-call marker, parameter order,
+hidden result pointer, extension attributes, and ABI storage attributes must all
+match the runtime implementation and every generated call site.
+
+Common failure modes include:
+
+- A wrapper drops an `sret` parameter and returns a pointer or status scalar
+  instead, so the caller and callee disagree about where the aggregate result is
+  written.
+- A generated call copies the argument list but not `byval(<ty>)` or its
+  alignment, so the callee may write through storage the caller expected to be a
+  private aggregate copy.
+- A trampoline preserves a `musttail` marker while adding diagnostics, status
+  translation, or reordered hidden ABI arguments, invalidating the exact tail-call
+  signature relationship.
+- A JIT declaration uses `ccc` and a runtime object file was built for `fastcc`,
+  `swiftcc`, or a target-specific `cc <n>`, so registers and stack slots are
+  interpreted under different conventions.
+
+When the BCIR lowering layer cannot prove the exact signature and ABI attributes,
+prefer a conservative wrapper with a simple C ABI and explicit loads/stores over
+a clever declaration copied from an unrelated frontend. Then document the stable
+boundary in the same place as the runtime declaration; see
+[Runtime Call Boundaries](../bcir-mapping/09-runtime-call-boundaries.md).
 
 ## Call-site refinement pattern
 
@@ -217,8 +437,9 @@ This tells optimizers about this call without lying about all possible callers o
 
 When lowering BCIR-style operations to LLVM IR:
 
-1. Put ABI attributes (`sret`, `byval`, `zeroext`, `signext`) in the type-lowering
-   layer, where target ABI knowledge belongs.
+1. Put ABI attributes (`sret`, `byval`, `inalloca`, `preallocated`, `inreg`,
+   `zeroext`, `signext`) in the type-lowering layer, where target ABI knowledge
+   belongs.
 2. Put semantic attributes (`noalias`, `readonly`, `memory(read)`) only after the
    verifier or proof layer can justify them for all dynamic executions.
 3. Prefer load/store `align` for a known access alignment and parameter `align`
