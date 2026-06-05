@@ -22,6 +22,7 @@ every lookup.
 | BCIR lowering guide | [`bcir-mapping/README.md`](bcir-mapping/README.md) |
 | BCIR lowering patterns | [`indexes/bcir-patterns.md`](indexes/bcir-patterns.md) |
 | MLIR bridge and integration | [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) |
+| Dedicated MLIR lowering to LLVM for BCIR | [`18-mlir-lowering-to-llvm/README.md`](18-mlir-lowering-to-llvm/README.md) |
 | Backend/JIT diagnostics | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
 | Binary-analysis evidence schemas | [`15-binary-analysis/README.md`](15-binary-analysis/README.md) |
 | Exception-handling IR (`invoke`, landing pads, WinEH funclets) | [`16-exception-handling/README.md`](16-exception-handling/README.md) |

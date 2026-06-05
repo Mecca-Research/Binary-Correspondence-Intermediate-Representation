@@ -98,6 +98,10 @@
 | Quick reference dispatcher | [`quickref/README.md`](../quickref/README.md) |
 | Advanced IR quick reference | [`quickref/advanced-ir.md`](../quickref/advanced-ir.md) |
 | MLIR bridge quick reference | [`quickref/mlir-bridge.md`](../quickref/mlir-bridge.md) |
+| MLIR conversion infrastructure (`ConversionTarget`, partial/full conversion, `RewritePatternSet`) | [`18-mlir-lowering-to-llvm/01-conversion-infrastructure.md`](../18-mlir-lowering-to-llvm/01-conversion-infrastructure.md), [`18-mlir-lowering-to-llvm/03-rewritepattern-and-conversiontarget.md`](../18-mlir-lowering-to-llvm/03-rewritepattern-and-conversiontarget.md) |
+| MLIR `TypeConverter` and materialization | [`18-mlir-lowering-to-llvm/02-typeconverter-and-materialization.md`](../18-mlir-lowering-to-llvm/02-typeconverter-and-materialization.md) |
+| BCIR dialect lowering to LLVM dialect/LLVM IR | [`18-mlir-lowering-to-llvm/README.md`](../18-mlir-lowering-to-llvm/README.md), [`18-mlir-lowering-to-llvm/04-bcir-dialect-to-llvm.md`](../18-mlir-lowering-to-llvm/04-bcir-dialect-to-llvm.md), [`18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints-lowered.ll`](../18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints-lowered.ll) |
+| MLIR affine/vector/transform lowering for BCIR | [`18-mlir-lowering-to-llvm/05-affine-vector-llvm-lowering-pipeline.md`](../18-mlir-lowering-to-llvm/05-affine-vector-llvm-lowering-pipeline.md), [`18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md`](../18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md) |
 | Instruction quick reference | [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
 | Common intrinsics declaration rules | [`reference/intrinsics.md`](../reference/intrinsics.md) |
 | Intrinsics quick reference | [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md) |
