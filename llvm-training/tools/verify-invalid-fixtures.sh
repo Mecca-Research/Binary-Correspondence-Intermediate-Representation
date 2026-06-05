@@ -29,14 +29,14 @@ rejects_with_llvm_as_or_opt() {
 
   printf '[invalid] %s ... ' "$rel"
   if grep -q '^; llvm-training-invalid-kind: semantic-only$' "$file"; then
-    if ! output=$(llvm-as "$file" -o "$bitcode" 2>&1); then
+    if ! output=$("$LLVM_AS" "$file" -o "$bitcode" 2>&1); then
       printf 'FAILED\n'
       printf '    semantic-only invalid fixture should assemble, but llvm-as rejected it\n'
       printf '%s\n' "$output" | sed 's/^/    /'
       rm -f "$bitcode"
       return 1
     fi
-    if ! output=$(opt -passes=verify "$bitcode" -o /dev/null 2>&1); then
+    if ! output=$("$OPT" -passes=verify "$bitcode" -o /dev/null 2>&1); then
       printf 'FAILED\n'
       printf '    semantic-only invalid fixture should verify syntactically, but opt rejected it\n'
       printf '%s\n' "$output" | sed 's/^/    /'
@@ -48,8 +48,8 @@ rejects_with_llvm_as_or_opt() {
     return 0
   fi
 
-  if output=$(llvm-as "$file" -o "$bitcode" 2>&1); then
-    if output=$(opt -passes=verify "$bitcode" -o /dev/null 2>&1); then
+  if output=$("$LLVM_AS" "$file" -o "$bitcode" 2>&1); then
+    if output=$("$OPT" -passes=verify "$bitcode" -o /dev/null 2>&1); then
       printf 'FAILED\n'
       printf '    expected llvm-as or opt -passes=verify to reject this fixture, but both accepted it\n'
       rm -f "$bitcode"

@@ -116,6 +116,29 @@ If your LLVM tools are installed with a version suffix, replace `llvm-as` and
 39. [`039-graph-description-to-llvm-metadata.prompt.md`](039-graph-description-to-llvm-metadata.prompt.md) — encode a graph description as LLVM metadata attached to scalar IR.
 40. [`040-debug-gaadmsf-lowering.prompt.md`](040-debug-gaadmsf-lowering.prompt.md) — debug a GAADMSF lowering with an invalid `phi` predecessor.
 
+## Agent-training templates
+
+Reusable prompt templates live under [`templates/`](templates/). They are not
+numbered exercises and are intended to seed new agent-training tasks or reviews:
+
+- [`templates/lower-bcir-graph-fragment-1to1-registers.prompt.md`](templates/lower-bcir-graph-fragment-1to1-registers.prompt.md) — lower a BCIR graph fragment while preserving one-to-one logical-register correspondence.
+- [`templates/add-metadata-preserve-verifier-validity.prompt.md`](templates/add-metadata-preserve-verifier-validity.prompt.md) — add BCIR metadata without breaking LLVM verifier validity.
+- [`templates/review-mixed-stride-lowering.prompt.md`](templates/review-mixed-stride-lowering.prompt.md) — review mixed byte, element, row, and graph-edge stride lowering.
+- [`templates/diagnose-optimizer-bcir-mapping-drift.prompt.md`](templates/diagnose-optimizer-bcir-mapping-drift.prompt.md) — diagnose optimizer-induced BCIR mapping drift between IR snapshots.
+
+## Adversarial semantic fixtures
+
+Adversarial fixtures live under [`adversarial/`](adversarial/). They intentionally
+use the `*.invalid.ll.txt` suffix plus the `; llvm-training-invalid-kind:
+semantic-only` marker when the IR should pass `llvm-as` and `opt -passes=verify`
+but still represents a BCIR semantic hazard. Current cases cover:
+
+- [`adversarial/001-poison-feeds-branch.invalid.ll.txt`](adversarial/001-poison-feeds-branch.invalid.ll.txt) — poison flowing into a branch condition.
+- [`adversarial/002-metadata-dropped-after-transform.invalid.ll.txt`](adversarial/002-metadata-dropped-after-transform.invalid.ll.txt) — metadata needed for BCIR mapping dropped after a transform.
+- [`adversarial/003-alignment-too-strong.invalid.ll.txt`](adversarial/003-alignment-too-strong.invalid.ll.txt) — alignment stronger than the source contract.
+- [`adversarial/004-address-space-cast-misuse.invalid.ll.txt`](adversarial/004-address-space-cast-misuse.invalid.ll.txt) — unsafe address-space cast assumptions.
+- [`adversarial/005-opaque-pointer-gep-source-type-assumption.invalid.ll.txt`](adversarial/005-opaque-pointer-gep-source-type-assumption.invalid.ll.txt) — opaque-pointer layout assumptions hidden in GEP source element types.
+
 ## Verification
 
 Run a solution through the assembler and discard the bitcode output:

@@ -9,6 +9,7 @@ EXERCISES_DIR="$TRAINING_ROOT/exercises"
 status=0
 ir_count=0
 md_count=0
+template_count=0
 
 require_tool() {
   local tool=$1
@@ -57,6 +58,33 @@ check_markdown_solution() {
   if ! sed -n '1p' "$file" | grep -Eq '^# '; then
     printf 'FAILED\n'
     printf '    markdown solution should start with a top-level heading\n'
+    return 1
+  fi
+
+  printf 'ok\n'
+  return 0
+}
+
+check_prompt_template() {
+  local file=$1
+
+  printf '[template] %s ... ' "$(relpath "$file")"
+
+  if [ ! -s "$file" ]; then
+    printf 'FAILED\n'
+    printf '    prompt template is missing or empty\n'
+    return 1
+  fi
+
+  if ! sed -n '1p' "$file" | grep -Eq '^# Agent template:'; then
+    printf 'FAILED\n'
+    printf '    prompt template should start with "# Agent template:"\n'
+    return 1
+  fi
+
+  if ! grep -q '^## Verification checklist$' "$file"; then
+    printf 'FAILED\n'
+    printf '    prompt template should include a Verification checklist section\n'
     return 1
   fi
 
@@ -115,15 +143,22 @@ for file in "${markdown_solutions[@]}"; do
   check_markdown_solution "$file" || status=1
 done
 
-if [ "$ir_count" -eq 0 ] && [ "$md_count" -eq 0 ]; then
-  printf 'No checked-in exercise solutions found under %s\n' "$(relpath "$EXERCISES_DIR")"
+mapfile -d '' prompt_templates < <(find "$EXERCISES_DIR/templates" -maxdepth 1 -type f -name '*.prompt.md' -print0 2>/dev/null | sort -z)
+
+for file in "${prompt_templates[@]}"; do
+  template_count=$((template_count + 1))
+  check_prompt_template "$file" || status=1
+done
+
+if [ "$ir_count" -eq 0 ] && [ "$md_count" -eq 0 ] && [ "$template_count" -eq 0 ]; then
+  printf 'No checked-in exercise solutions or templates found under %s\n' "$(relpath "$EXERCISES_DIR")"
   exit 1
 fi
 
 if [ "$status" -eq 0 ]; then
-  printf 'Verified %d LLVM IR solution/review artifact(s) and %d markdown solution(s).\n' "$ir_count" "$md_count"
+  printf 'Verified %d LLVM IR solution/review artifact(s), %d markdown solution(s), and %d prompt template(s).\n' "$ir_count" "$md_count" "$template_count"
 else
-  printf 'One or more checked-in exercise solutions or review artifacts failed verification.\n' >&2
+  printf 'One or more checked-in exercise solutions, review artifacts, or prompt templates failed verification.\n' >&2
 fi
 
 exit "$status"
