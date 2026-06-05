@@ -85,6 +85,60 @@ attributes #0 = { "target-features"="+pclmul" }
 
 The immediate control byte is `immarg`, so it must be a literal.
 
+## Matrix intrinsics and GEM/tile lowering
+
+LLVM also has target-independent matrix intrinsics. They are not
+`llvm.<target>.*` intrinsics, and they are not BCIR-specific operations, but
+they are useful reference points when deciding how much matrix or tile intent to
+preserve before a target-specific backend, BCIR custom intrinsic, or JIT rewrite
+sees the code.
+
+Common `llvm.matrix.*` families include:
+
+- `llvm.matrix.multiply.*` — represents a matrix product over flattened vector
+  operands plus immediate matrix dimensions such as `m`, `n`, and `k`.
+- `llvm.matrix.transpose.*` — represents a transpose over a flattened vector
+  operand plus immediate row/column dimensions.
+- `llvm.matrix.column.major.load.*` and
+  `llvm.matrix.column.major.store.*` — describe column-major matrix movement
+  between memory and flattened vector values using a runtime stride and
+  immediate shape flags.
+
+Conceptually, these intrinsics sit between scalar/vector IR and
+hardware-specific tile instructions:
+
+```text
+mixed-stride graph layout
+  -> explicit address/stride arithmetic
+  -> register-oriented vector or matrix fragments
+  -> llvm.matrix.* or BCIR backend hook
+  -> target tile/vector instruction, runtime call, or JIT-selected fallback
+```
+
+For BCIR, this distinction matters:
+
+- `llvm.matrix.*` is an LLVM-level way to keep matrix shape visible without
+  inventing a BCIR intrinsic name.
+- A BCIR mixed-stride GEM lowering may still need explicit row, column, byte
+  bias, gather, or panel-stride arithmetic before any matrix/tile operation can
+  be formed.
+- A BCIR-aware backend may prefer a custom hook such as
+  `llvm.bcir.gem.mixed.stride.*` when instruction selection needs BCIR mode
+  bits, hierarchical memory hints, lane grouping, or fallback policy that the
+  generic matrix intrinsics do not encode.
+- An ORC JIT can use the same boundary to choose a hardware-aware backend,
+  rewrite the operation to a runtime GEM helper, or reject unsupported tile
+  modes with diagnostics.
+
+See the verifier-safe sketch in
+[`examples/matrix-intrinsics-sketch.ll`](examples/matrix-intrinsics-sketch.ll)
+for a tiny 2x2 column-major load, multiply, and store sequence. For BCIR-specific
+material, compare it with
+[`../bcir-mapping/03-mixed-stride-graphs.md`](../bcir-mapping/03-mixed-stride-graphs.md),
+[`../bcir-mapping/examples/hardware-aware-gem-lowering.ll`](../bcir-mapping/examples/hardware-aware-gem-lowering.ll),
+and the backend/JIT policy in
+[`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md).
+
 ## Portability caveats for BCIR
 
 BCIR IR may be assembled, verified, linked, optimized, and lowered in
