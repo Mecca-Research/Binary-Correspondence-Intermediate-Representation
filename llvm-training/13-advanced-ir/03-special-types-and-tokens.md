@@ -47,6 +47,45 @@ declare token @llvm.experimental.gc.statepoint.p0(i64 immarg, i32 immarg,
 The token is not the program result. It is a handle consumed by related
 intrinsics or passes.
 
+## Coroutine tokens and lowering phases
+
+Coroutine IR is another place where `token` values are intentionally
+opaque. Frontends such as Clang usually emit a **presplit** coroutine as
+one ordinary function containing coroutine intrinsics. LLVM coroutine
+lowering then rewrites that function into a ramp function plus outlined
+resume, destroy, and cleanup paths. In other words, the token does not
+model application data; it lets the coroutine passes keep the pieces of
+one coroutine tied together while optimization and outlining happen.
+
+Key switched-resume coroutine intrinsics:
+
+| Intrinsic | Token/pointer role | Phase notes |
+|---|---|---|
+| `llvm.coro.id` | Produces the identity `token` for one coroutine. | Presplit IR should have one identity call for the coroutine. Later passes can fill in fields such as the coroutine function address and outlined function table. |
+| `llvm.coro.begin` | Consumes the identity token and returns the coroutine frame/handle pointer. | Marks frame setup. The handle is the value used by resume/destroy operations and by later frame accesses. |
+| `llvm.coro.suspend` | Consumes a `token` from `llvm.coro.save`, or `token none`, and returns a small state code. | Marks a suspension point. The following branch or `switch` usually distinguishes suspended, resumed, and destroyed paths. |
+| `llvm.coro.end` | Consumes the coroutine handle and a result token, usually `token none`. | Marks the point where access to the frame ends and control may return to the caller/resumer. |
+
+**Presplit** IR is the frontend-facing form: one coroutine-shaped function
+still contains normal control flow plus `llvm.coro.*` markers and usually
+has the `presplitcoroutine` function attribute. **Split** IR is the
+lowered form after coroutine passes have built the frame and outlined the
+continuations. At that point, the original body may be represented as a
+ramp function and separate resume/destroy functions rather than one
+source-like function.
+
+A minimal switched-resume outline is provided in
+[`examples/coroutine-outline.ll`](examples/coroutine-outline.ll). For a
+quick list of coroutine-related intrinsics, see
+[`intrinsics-quickref.md#coroutine-intrinsics`](../reference/intrinsics-quickref.md#coroutine-intrinsics).
+
+BCIR agent guidance: review coroutine IR for verifier-sensitive token
+flow, preserve existing `llvm.coro.*` structure when transforming nearby
+code, and check that coroutine lowering has run before backend codegen.
+Do not hand-author full coroutine lowering unless you are deliberately
+writing a focused LLVM coroutine test; the details are frontend-, ABI-,
+and pass-pipeline-sensitive.
+
 ## `metadata` as an intrinsic parameter type
 
 `metadata` is the IR type used by some intrinsics to accept either a
