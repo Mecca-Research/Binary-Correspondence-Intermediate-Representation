@@ -25,6 +25,7 @@ every lookup.
 | Backend/JIT diagnostics | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
 | Binary-analysis evidence schemas | [`15-binary-analysis/README.md`](15-binary-analysis/README.md) |
 | Exception-handling IR (`invoke`, landing pads, WinEH funclets) | [`16-exception-handling/README.md`](16-exception-handling/README.md) |
+| Modern pass-manager infrastructure, PassBuilder plugins, and adaptive BCIR pipelines | [`17-new-pass-manager/README.md`](17-new-pass-manager/README.md) |
 | Type metadata and CFI-style checked dispatch | [`06-metadata/04-type-metadata-cfi.md`](06-metadata/04-type-metadata-cfi.md) |
 | Repair, prediction, BCIR, MLIR, backend/JIT, and advanced-debugging exercises | [`exercises/README.md`](exercises/README.md) |
 | Expanded learning paths | [`CURRICULUM.md`](CURRICULUM.md) |

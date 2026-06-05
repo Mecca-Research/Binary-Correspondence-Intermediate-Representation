@@ -45,10 +45,14 @@
 | Reading `!dbg` locations back to source files and lines | [`06-metadata/02-debug-info.md`](../06-metadata/02-debug-info.md) |
 | Profile metadata, branch weights, loop metadata | [`06-metadata/03-profile-and-optimization-metadata.md`](../06-metadata/03-profile-and-optimization-metadata.md) |
 | Type metadata, CFI-style checks, and vtable address-point testing | [`06-metadata/04-type-metadata-cfi.md`](../06-metadata/04-type-metadata-cfi.md), [`15-binary-analysis/README.md`](../15-binary-analysis/README.md) |
-| Optimization passes | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md) |
-| `opt` pipelines | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](../07-optimization/04-optimization-levels.md) |
+| Optimization passes | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md), [`17-new-pass-manager/README.md`](../17-new-pass-manager/README.md) |
+| `opt` pipelines | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](../07-optimization/04-optimization-levels.md), [`17-new-pass-manager/01-passbuilder-and-pipelines.md`](../17-new-pass-manager/01-passbuilder-and-pipelines.md) |
 | Debugging pass pipelines, IR diffs, pass-manager traces | [`07-optimization/05-debugging-passes.md`](../07-optimization/05-debugging-passes.md) |
-| PGO, LTO, ThinLTO, and BOLT profile-driven pipelines | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md) |
+| Modern PassBuilder setup, analysis managers, and `crossRegisterProxies` | [`17-new-pass-manager/01-passbuilder-and-pipelines.md`](../17-new-pass-manager/01-passbuilder-and-pipelines.md) |
+| Custom new-pass-manager transforms, analyses, and `PreservedAnalyses` | [`17-new-pass-manager/02-custom-passes-and-analyses.md`](../17-new-pass-manager/02-custom-passes-and-analyses.md) |
+| Pass plugins, `llvmGetPassPluginInfo`, parsing callbacks, and extension points | [`17-new-pass-manager/03-passbuilder-callbacks-and-plugins.md`](../17-new-pass-manager/03-passbuilder-callbacks-and-plugins.md) |
+| Adaptive BCIR/GAADMSF pipelines | [`17-new-pass-manager/04-adaptive-bcir-pipelines.md`](../17-new-pass-manager/04-adaptive-bcir-pipelines.md) |
+| PGO, LTO, ThinLTO, and BOLT profile-driven pipelines | [`07-optimization/06-pgo-lto-bolt.md`](../07-optimization/06-pgo-lto-bolt.md), [`17-new-pass-manager/05-mlgo-and-profile-guided-pipelines.md`](../17-new-pass-manager/05-mlgo-and-profile-guided-pipelines.md) |
 | Vectorizers dispatcher | [`09-vectorization/README.md`](../09-vectorization/README.md) |
 | Vectorization legality and blockers | [`09-vectorization/04-vectorization-legality.md`](../09-vectorization/04-vectorization-legality.md) |
 | Loop Vectorizer auto-vectorization | [`09-vectorization/01-loop-vectorizer.md`](../09-vectorization/01-loop-vectorizer.md) |
@@ -85,7 +89,7 @@
 | MLIR vertex/edge graph lowering walkthrough | [`14-mlir-bridge/05-vertex-graph-lowering.md`](../14-mlir-bridge/05-vertex-graph-lowering.md), [`14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll`](../14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll) |
 | BCIR mapping guide dispatcher | [`bcir-mapping/README.md`](../bcir-mapping/README.md) |
 | BCIR claim lowering pipeline | [`bcir-mapping/06-claim-lowering-pipeline.md`](../bcir-mapping/06-claim-lowering-pipeline.md), [`bcir-mapping/examples/claim-resource-lookup.ll`](../bcir-mapping/examples/claim-resource-lookup.ll) |
-| GAADMSF graph/data movement lowering | [`bcir-mapping/07-gaadmsf-operations.md`](../bcir-mapping/07-gaadmsf-operations.md), [`bcir-mapping/examples/graph-fragment-struct-gep.ll`](../bcir-mapping/examples/graph-fragment-struct-gep.ll) |
+| GAADMSF graph/data movement lowering | [`bcir-mapping/07-gaadmsf-operations.md`](../bcir-mapping/07-gaadmsf-operations.md), [`bcir-mapping/examples/graph-fragment-struct-gep.ll`](../bcir-mapping/examples/graph-fragment-struct-gep.ll), [`17-new-pass-manager/04-adaptive-bcir-pipelines.md`](../17-new-pass-manager/04-adaptive-bcir-pipelines.md) |
 | Dragon Egg runtime-owned operation wrappers | [`bcir-mapping/08-dragon-egg-operations.md`](../bcir-mapping/08-dragon-egg-operations.md), [`bcir-mapping/examples/bcir-op-runtime-wrapper.ll`](../bcir-mapping/examples/bcir-op-runtime-wrapper.ll) |
 | BCIR runtime call boundaries | [`bcir-mapping/09-runtime-call-boundaries.md`](../bcir-mapping/09-runtime-call-boundaries.md) |
 | BCIR metadata, HAM hints, and diagnostics | [`bcir-mapping/10-metadata-and-diagnostics.md`](../bcir-mapping/10-metadata-and-diagnostics.md), [`bcir-mapping/examples/ham-hint-prefetch.ll`](../bcir-mapping/examples/ham-hint-prefetch.ll), [`bcir-mapping/examples/diagnostic-metadata-preservation.ll`](../bcir-mapping/examples/diagnostic-metadata-preservation.ll) |

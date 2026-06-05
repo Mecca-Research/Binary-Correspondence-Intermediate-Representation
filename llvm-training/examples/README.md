@@ -174,6 +174,8 @@ intrinsics/metadata rather than complete executable programs.
 | `llvm-training/16-exception-handling/examples/catchswitch-funclet.ll` | `llvm-as llvm-training/16-exception-handling/examples/catchswitch-funclet.ll -o /dev/null` |
 | `llvm-training/16-exception-handling/examples/cleanup-resume.ll` | `llvm-as llvm-training/16-exception-handling/examples/cleanup-resume.ll -o /dev/null` |
 | `llvm-training/16-exception-handling/examples/invoke-landingpad.ll` | `llvm-as llvm-training/16-exception-handling/examples/invoke-landingpad.ll -o /dev/null` |
+| `llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-after.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-after.ll -o /dev/null` |
+| `llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-before.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-before.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.ll` | `llvm-as llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/claim-resource-lookup.ll` | `llvm-as llvm-training/bcir-mapping/examples/claim-resource-lookup.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/diagnostic-metadata-preservation.ll` | `llvm-as llvm-training/bcir-mapping/examples/diagnostic-metadata-preservation.ll -o /dev/null` |
@@ -212,6 +214,8 @@ targets for `verify-examples.sh`:
 | `llvm-training/15-binary-analysis/examples/perf-counter-sample.csv` | CSV data | Data/sample artifact; not assembled by `llvm-as`. |
 | `llvm-training/15-binary-analysis/examples/side-channel-trace-branchy.csv` | CSV data | Data/sample artifact; not assembled by `llvm-as`. |
 | `llvm-training/15-binary-analysis/examples/side-channel-trace-masked.csv` | CSV data | Data/sample artifact; not assembled by `llvm-as`. |
+| `llvm-training/17-new-pass-manager/examples/adaptive-pipeline-sketch.cpp.md` | Markdown sketch | Documentation-only modern-pass-manager driver outline. |
+| `llvm-training/17-new-pass-manager/examples/bcir-pass-plugin-skeleton.cpp.md` | Markdown sketch | Documentation-only pass plugin skeleton. |
 | `llvm-training/examples/README.md` | Markdown sketch | Documentation-only code outline. |
 | `llvm-training/examples/broken-example.ll.txt` | Intentionally excluded LLVM IR text fixture | Invalid or legacy IR text fixture; excluded from the known-good manifest. |
 
