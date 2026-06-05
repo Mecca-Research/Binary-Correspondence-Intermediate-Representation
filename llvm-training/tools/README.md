@@ -125,7 +125,10 @@ The sentinel `../examples/broken-example.ll.txt` is deliberately malformed.
 `verify-examples.sh` still checks that the sentinel stays out of the known-good
 manifest. `verify-invalid-fixtures.sh` performs the broader expected-failure
 sweep: every `.invalid.ll.txt` fixture, plus the sentinel, must remain rejected
-by `llvm-as` or by the verifier pass if assembly succeeds.
+by `llvm-as` or by the verifier pass if assembly succeeds. A fixture that is
+intentionally semantic-only, such as poison-prone IR accepted by LLVM
+verification, must include `; verify-invalid-fixtures: semantic-only` so the
+script can distinguish it from an accidentally valid parser/verifier fixture.
 
 `verify-manifest.sh` is intentionally separate from IR verification. It compares
 the checked-in Markdown table in `../examples/README.md` to the discovered set of
