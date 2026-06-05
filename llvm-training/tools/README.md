@@ -12,7 +12,7 @@ the same checks without a build-system dependency.
 | `smoke-lli.sh` | Runs only curated examples that have a safe no-argument entry point under `lli`. Most training snippets are library-style IR and should stay out of this list. | `lli` |
 | `smoke-llc.sh` | Lowers curated examples with `llc` to catch target-codegen regressions without treating every IR snippet as a runnable program. It prints intentional exclusions from `smoke-llc-skip.txt` before running the curated allowlist. | `llc` |
 | `verify-exercises.sh` | Assembles every checked-in `llvm-training/exercises/*.solution.ll` file and runs `opt -passes=verify` so reference answers stay valid standalone LLVM IR. | `llvm-as`, `opt` |
-| `verify-invalid-fixtures.sh` | Discovers known invalid `.invalid.ll.txt` fixtures plus the broken-example sentinel and asserts each remains rejected by either `llvm-as` or `opt -passes=verify`. | `llvm-as`, `opt` |
+| `verify-invalid-fixtures.sh` | Discovers known invalid `.invalid.ll.txt` fixtures plus the broken-example sentinel and asserts each remains rejected by either `llvm-as` or `opt -passes=verify`, unless the fixture is explicitly marked semantic-only. | `llvm-as`, `opt` |
 | `verify-manifest.sh` | Compares discovered standalone `*/examples/*.ll` files against the table in `llvm-training/examples/README.md` so new or removed examples do not silently drift from the manifest. | POSIX shell utilities |
 | `verify-csv-schema.sh` | Validates checked-in `15-binary-analysis/examples/*.csv` fixtures for registered schema-family column counts, non-empty headers, consistent non-empty data rows, and at least one data row. The parser handles single-line CSV records with quoted commas. | POSIX shell utilities, `awk` |
 | `verify-mlir-examples.sh` | Validates `*/examples/*.mlir` syntax with `mlir-opt --allow-unregistered-dialect` when `mlir-opt` is installed, and reports a clean skip otherwise. | Optional `mlir-opt` |
@@ -97,7 +97,10 @@ The sentinel `../examples/broken-example.ll.txt` is deliberately malformed.
 `verify-examples.sh` still checks that the sentinel stays out of the known-good
 manifest. `verify-invalid-fixtures.sh` performs the broader expected-failure
 sweep: every `.invalid.ll.txt` fixture, plus the sentinel, must remain rejected
-by `llvm-as` or by the verifier pass if assembly succeeds.
+by `llvm-as` or by the verifier pass if assembly succeeds. A fixture that is
+intentionally semantic-only, such as poison-prone IR accepted by LLVM
+verification, must include `; verify-invalid-fixtures: semantic-only` so the
+script can distinguish it from an accidentally valid parser/verifier fixture.
 
 `verify-manifest.sh` is intentionally separate from IR verification. It compares
 the checked-in Markdown table in `../examples/README.md` to the discovered set of

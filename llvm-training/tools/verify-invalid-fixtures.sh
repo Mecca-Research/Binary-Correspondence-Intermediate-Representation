@@ -28,8 +28,13 @@ rejects_with_llvm_as_or_opt() {
   bitcode=$(mktemp "${TMPDIR:-/tmp}/llvm-training-invalid.XXXXXX.bc")
 
   printf '[invalid] %s ... ' "$rel"
-  if output=$(llvm-as "$file" -o "$bitcode" 2>&1); then
-    if output=$(opt -passes=verify "$bitcode" -o /dev/null 2>&1); then
+  if output=$("$LLVM_AS" "$file" -o "$bitcode" 2>&1); then
+    if output=$("$OPT" -passes=verify "$bitcode" -o /dev/null 2>&1); then
+      if grep -Eq '^;[[:space:]]*verify-invalid-fixtures:[[:space:]]*semantic-only' "$file"; then
+        printf 'accepted by tools (semantic-only invalid fixture)\n'
+        rm -f "$bitcode"
+        return 0
+      fi
       printf 'FAILED\n'
       printf '    expected llvm-as or opt -passes=verify to reject this fixture, but both accepted it\n'
       rm -f "$bitcode"
@@ -47,8 +52,39 @@ rejects_with_llvm_as_or_opt() {
   return 0
 }
 
-require_tool llvm-as
-require_tool opt
+find_tool() {
+  local base=$1
+  local tool
+
+  if [ -n "${LLVM_SUFFIX:-}" ] && command -v "${base}${LLVM_SUFFIX}" >/dev/null 2>&1; then
+    printf '%s' "${base}${LLVM_SUFFIX}"
+    return 0
+  fi
+
+  if command -v "$base" >/dev/null 2>&1; then
+    printf '%s' "$base"
+    return 0
+  fi
+
+  while IFS= read -r tool; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '%s' "$tool"
+      return 0
+    fi
+  done < <(compgen -c | grep -E "^${base}-[0-9]+$" | sort -V)
+
+  return 1
+}
+
+LLVM_AS=$(find_tool llvm-as) || {
+  printf 'error: required tool not found on PATH: llvm-as (or llvm-as-N)\n' >&2
+  exit 127
+}
+
+OPT=$(find_tool opt) || {
+  printf 'error: required tool not found on PATH: opt (or opt-N)\n' >&2
+  exit 127
+}
 
 mapfile -d '' invalid_fixtures < <(
   find "$TRAINING_ROOT" \
@@ -67,7 +103,7 @@ if [ "$count" -eq 0 ]; then
 fi
 
 if [ "$status" -eq 0 ]; then
-  printf 'Verified %d known invalid LLVM IR fixture(s) remain rejected.\n' "$count"
+  printf 'Verified %d known invalid LLVM IR fixture(s) are rejected or marked semantic-only.\n' "$count"
 else
   printf 'One or more known invalid LLVM IR fixtures were accepted unexpectedly.\n' >&2
 fi
