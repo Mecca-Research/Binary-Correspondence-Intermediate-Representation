@@ -9,3 +9,4 @@
 09-vectorization/examples/*.ll	vectorizer teaching inputs/outputs are better checked with opt
 13-advanced-ir/examples/token-outline.ll	uses GC/statepoint token intrinsics
 01-syntax/examples/inline-asm.ll	x86-64 inline asm and callbr constraints are target-specific
+13-advanced-ir/examples/gc-statepoint-relocate.ll	uses GC statepoint relocation intrinsics; verify with llvm-as, not portable llc smoke

@@ -193,6 +193,18 @@ See [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-cust
 and [`../12-backend-jit/examples/stackmap-patchpoint.ll`](../12-backend-jit/examples/stackmap-patchpoint.ll)
 for a minimal JIT-oriented example and verification caveats.
 
+### GC statepoint intrinsics
+
+`llvm.experimental.gc.statepoint` marks a runtime safepoint and produces the
+`token` consumed by related GC intrinsics. `llvm.experimental.gc.relocate` uses
+that token and indices into the statepoint live pointer set, commonly the
+`"gc-live"` operand bundle, to produce post-safepoint managed pointers. Do not
+reuse pre-statepoint managed pointer SSA values after relocation; use the
+relocated values. See
+[`../13-advanced-ir/03-special-types-and-tokens.md#gc-statepoints-and-relocation-semantics`](../13-advanced-ir/03-special-types-and-tokens.md#gc-statepoints-and-relocation-semantics)
+and
+[`../13-advanced-ir/examples/gc-statepoint-relocate.ll`](../13-advanced-ir/examples/gc-statepoint-relocate.ll).
+
 ### Target-specific intrinsic naming patterns
 
 Target-specific intrinsics live under target namespaces and are declared only

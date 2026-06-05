@@ -86,6 +86,40 @@ Do not hand-author full coroutine lowering unless you are deliberately
 writing a focused LLVM coroutine test; the details are frontend-, ABI-,
 and pass-pipeline-sensitive.
 
+## GC statepoints and relocation semantics
+
+Garbage-collected runtimes sometimes need the optimizer and backend to make a
+safepoint explicit: the generated code must record which managed pointers are
+live, call or poll the runtime, and then continue with pointer values that may
+have moved. LLVM models this with the GC statepoint intrinsic family instead of
+ordinary calls.
+
+| Intrinsic / concept | Role |
+|---|---|
+| `llvm.experimental.gc.statepoint` | Produces a `token` for one safepoint-like call or poll. The token ties later GC intrinsics to that exact program point; it is not the callee's normal return value. |
+| `llvm.experimental.gc.relocate` | Consumes the statepoint token plus indices into the live pointer set and returns the post-statepoint address for one base/derived pointer pair. |
+| Live pointer set | The managed pointers that the GC must know about across the statepoint, usually carried in the statepoint's `"gc-live"` operand bundle. |
+
+A moving collector may update object addresses while the statepoint executes.
+After such a safepoint, the old SSA pointer is only the pre-statepoint address.
+Use `llvm.experimental.gc.relocate` for each live managed pointer that remains
+needed, and use the relocated result for loads, stores, comparisons, and calls
+after the statepoint. Reusing the original pointer after relocation can mean
+reading a stale address, hiding a live root from the GC lowering pipeline, or
+letting optimizations reason about the wrong value across the safepoint.
+
+A small relocation outline is provided in
+[`examples/gc-statepoint-relocate.ll`](examples/gc-statepoint-relocate.ll). It
+shows a statepoint with two live pointers: a base object and a derived field
+pointer. The `gc.relocate` calls use indices into that live set, and the
+post-statepoint load uses the relocated derived pointer rather than the original
+GEP result.
+
+BCIR agent guidance: treat statepoint tokens and relocated pointers as a single
+contract. If you move, clone, or delete statepoint-adjacent code, keep the
+`"gc-live"` set and every `gc.relocate` index synchronized, and audit downstream
+uses so that post-statepoint managed-pointer uses refer to relocated SSA values.
+
 ## `metadata` as an intrinsic parameter type
 
 `metadata` is the IR type used by some intrinsics to accept either a
