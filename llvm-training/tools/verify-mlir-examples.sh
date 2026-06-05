@@ -10,10 +10,34 @@ relpath() {
   printf '%s' "${path#"$REPO_ROOT/"}"
 }
 
-if ! command -v mlir-opt >/dev/null 2>&1; then
+find_tool() {
+  local base=$1
+  local tool
+
+  if [ -n "${LLVM_SUFFIX:-}" ] && command -v "${base}${LLVM_SUFFIX}" >/dev/null 2>&1; then
+    printf '%s' "${base}${LLVM_SUFFIX}"
+    return 0
+  fi
+
+  if command -v "$base" >/dev/null 2>&1; then
+    printf '%s' "$base"
+    return 0
+  fi
+
+  while IFS= read -r tool; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '%s' "$tool"
+      return 0
+    fi
+  done < <(compgen -c | grep -E "^${base}-[0-9]+$" | sort -V)
+
+  return 1
+}
+
+MLIR_OPT=$(find_tool mlir-opt) || {
   printf 'mlir-opt not present; skipping llvm-training MLIR syntax validation\n'
   exit 0
-fi
+}
 
 status=0
 count=0
@@ -22,7 +46,7 @@ mapfile -d '' mlir_examples < <(find "$TRAINING_ROOT" -path '*/examples/*.mlir' 
 for file in "${mlir_examples[@]}"; do
   count=$((count + 1))
   printf '[mlir-opt] %s ... ' "$(relpath "$file")"
-  if output=$(mlir-opt --allow-unregistered-dialect "$file" -o /dev/null 2>&1); then
+  if output=$("$MLIR_OPT" --allow-unregistered-dialect "$file" -o /dev/null 2>&1); then
     printf 'ok\n'
   else
     printf 'FAILED\n'
