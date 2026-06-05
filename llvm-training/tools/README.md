@@ -16,7 +16,7 @@ the same checks without a build-system dependency.
 | `verify-manifest.sh` | Compares discovered standalone `*/examples/*.ll` files against the table in `llvm-training/examples/README.md` so new or removed examples do not silently drift from the manifest. | POSIX shell utilities |
 | `verify-csv-schema.sh` | Validates checked-in `15-binary-analysis/examples/*.csv` fixtures for registered schema-family column counts, non-empty headers, consistent non-empty data rows, and at least one data row. The parser handles single-line CSV records with quoted commas. | POSIX shell utilities, `awk` |
 | `verify-mlir-examples.sh` | Validates `*/examples/*.mlir` syntax with `mlir-opt --allow-unregistered-dialect` when `mlir-opt` is installed, and reports a clean skip otherwise. | Optional `mlir-opt` |
-| `verify-bcir-mapping.sh` | Looks for future `.bcir` source fixtures under `bcir-mapping/examples/`, compares `bcir-as` output to sibling `.generated.ll` files, verifies generated IR, and supports `UPDATE_BCIR_MAPPING=1` regeneration. | `tools/bcir-as/bcir-as`, `llvm-as`, `opt` when `.bcir` fixtures exist |
+| `verify-bcir-mapping.sh` | Validates BCIR mapping fixtures under `bcir-mapping/examples/`: current source-like `.bcir.txt` claim fragments are checked for required markers and lowered `.ll` companions, and real `.bcir` sources are assembled with `bcir-as`, compared to sibling `.generated.ll` files, verified, and refreshed with `UPDATE_BCIR_MAPPING=1`. | POSIX shell utilities; optional `llvm-as`, `opt` for `.bcir.txt` lowered companions; `tools/bcir-as/bcir-as`, `llvm-as`, `opt` when `.bcir` fixtures exist |
 | `smoke-bolt.sh` | Builds the BOLT layout demo fixture, records baseline symbol/disassembly text, and exits with a clean skip when `llvm-bolt` is not installed. A full profile-driven rewrite still requires host support for `perf2bolt`/`perf`; see the walkthrough. | Optional `llvm-bolt`; `clang` and `llvm-objdump` when BOLT is present |
 | `demo-mem2reg.sh` | Demonstrates `mem2reg` on the checked-in diamond example, first verifying the fixture and then printing the promoted SSA form to stdout. | `opt` |
 | `demo-o2.sh` | Runs `default<O2>` on the O2 pipeline inspection fixture, writes the optimized IR to a temporary file, prints it, and optionally smoke-checks the result with `llc` when available. | `opt`; optional `llc` |
@@ -114,11 +114,18 @@ with an explicit skip when `mlir-opt` is unavailable, but when MLIR is installed
 it parses all chapter-local `.mlir` examples with unregistered dialects allowed
 so dialect sketches still receive syntax coverage.
 
-`verify-bcir-mapping.sh` is future-facing. The current mapping chapter keeps
-human-readable `.bcir.txt` fragments, which are not assembler fixtures. If a
-review adds real `.bcir` sources under `bcir-mapping/examples/`, each source
-must have a sibling `<name>.generated.ll` expected output unless the maintainer
-is intentionally refreshing outputs with:
+`verify-bcir-mapping.sh` validates both source-like `.bcir.txt` claim fragments
+and real `.bcir` assembler fixtures under `bcir-mapping/examples/`. The
+`.bcir.txt` fragments are not assembler inputs, so the checker applies
+fixture-format checks instead: files must stay non-empty, retain their required
+BCIR markers or operation keywords, and keep their expected lowered `.ll`
+companions. When `llvm-as` and `opt` are available, those lowered companions are
+also assembled and verified so the checked text fragments cannot drift away from
+valid LLVM IR examples.
+
+If a review adds real `.bcir` sources under `bcir-mapping/examples/`, each
+source must have a sibling `<name>.generated.ll` expected output unless the
+maintainer is intentionally refreshing outputs with:
 
 ```bash
 UPDATE_BCIR_MAPPING=1 ./llvm-training/tools/verify-bcir-mapping.sh
