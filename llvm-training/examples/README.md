@@ -137,6 +137,7 @@ than complete executable programs.
 | `llvm-training/13-advanced-ir/examples/poison-undef-freeze.ll` | `llvm-as llvm-training/13-advanced-ir/examples/poison-undef-freeze.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/token-outline.ll` | `llvm-as llvm-training/13-advanced-ir/examples/token-outline.ll -o /dev/null` |
 | `llvm-training/14-mlir-bridge/examples/arith-to-llvm-lowered.ll` | `llvm-as llvm-training/14-mlir-bridge/examples/arith-to-llvm-lowered.ll -o /dev/null` |
+| `llvm-training/14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll` | `llvm-as llvm-training/14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll -o /dev/null` |
 | `llvm-training/14-mlir-bridge/examples/memref-descriptor-lowered.ll` | `llvm-as llvm-training/14-mlir-bridge/examples/memref-descriptor-lowered.ll -o /dev/null` |
 | `llvm-training/15-binary-analysis/examples/binary-layout-sketch.ll` | `llvm-as llvm-training/15-binary-analysis/examples/binary-layout-sketch.ll -o /dev/null` |
 | `llvm-training/15-binary-analysis/examples/constant-time-review.ll` | `llvm-as llvm-training/15-binary-analysis/examples/constant-time-review.ll -o /dev/null` |
@@ -169,6 +170,8 @@ targets for `verify-examples.sh`:
 | `llvm-training/12-backend-jit/examples/minimal-instruction.td` | TableGen sketch | TableGen sketch for backend instruction descriptions. |
 | `llvm-training/14-mlir-bridge/examples/arith-to-llvm.mlir` | MLIR fragment | MLIR dialect sketch; use MLIR tooling rather than `llvm-as`. |
 | `llvm-training/14-mlir-bridge/examples/bcir-dialect-sketch.mlir` | MLIR fragment | MLIR dialect sketch; use MLIR tooling rather than `llvm-as`. |
+| `llvm-training/14-mlir-bridge/examples/bcir-vertex-graph.mlir` | MLIR fragment | BCIR vertex graph source sketch; use MLIR tooling rather than `llvm-as`. |
+| `llvm-training/14-mlir-bridge/examples/bcir-vertex-graph-lowered-llvm-dialect.mlir` | MLIR fragment | Lowered LLVM-dialect vertex graph sketch; use MLIR tooling rather than `llvm-as`. |
 | `llvm-training/14-mlir-bridge/examples/llvm-dialect-call.mlir` | MLIR fragment | MLIR dialect sketch; use MLIR tooling rather than `llvm-as`. |
 | `llvm-training/14-mlir-bridge/examples/lowered-llvm-dialect.mlir` | MLIR fragment | MLIR dialect sketch; use MLIR tooling rather than `llvm-as`. |
 | `llvm-training/15-binary-analysis/examples/bcsa-feature-sample.csv` | CSV data | Data/sample artifact; not assembled by `llvm-as`. |

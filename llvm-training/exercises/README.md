@@ -98,7 +98,7 @@ If your LLVM tools are installed with a version suffix, replace `llvm-as` and
 ### MLIR bridge review
 
 32. [`032-identify-mlir-dialect-boundaries.prompt.md`](032-identify-mlir-dialect-boundaries.prompt.md) — identify BCIR, generic, control-flow, and LLVM-lowering boundaries.
-33. [`033-lower-mlir-graph-op-to-llvm-dialect.prompt.md`](033-lower-mlir-graph-op-to-llvm-dialect.prompt.md) — outline lowering of a graph op to LLVM-dialect loads.
+33. [`033-lower-mlir-graph-op-to-llvm-dialect.prompt.md`](033-lower-mlir-graph-op-to-llvm-dialect.prompt.md) — outline lowering of a graph op to LLVM-dialect loads; pair with [`../14-mlir-bridge/05-vertex-graph-lowering.md`](../14-mlir-bridge/05-vertex-graph-lowering.md).
 34. [`034-review-mlir-to-llvm-type-conversion.prompt.md`](034-review-mlir-to-llvm-type-conversion.prompt.md) — review index, memref, graph, and vector type conversion hazards.
 
 ### Backend/JIT review
