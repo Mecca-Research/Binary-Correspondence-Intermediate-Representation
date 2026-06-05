@@ -4,6 +4,9 @@ This chapter maps common Binary Correspondence Intermediate Representation
 (BCIR) concepts to the LLVM IR patterns used in `runtime/llvm/` and in the
 training examples. Use it when lowering BCIR-like graph, resource, schedule, or
 runtime ABI ideas into standalone LLVM IR that still assembles and verifies.
+For a pattern-oriented dispatcher across BCIR mapping pages, pitfalls, advanced
+IR semantics, MLIR bridge notes, backend/JIT notes, and exercises, see the
+[`BCIR pattern index`](../indexes/bcir-patterns.md).
 
 ## Concepts
 

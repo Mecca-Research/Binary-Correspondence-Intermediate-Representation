@@ -15,6 +15,8 @@ testable.
 
 1. **Always start with [`INDEX.md`](INDEX.md).** It's the topic -> file lookup. Don't grep
    the tree blind.
+   For BCIR-specific lowering idioms, jump from there to the dedicated
+   [`BCIR pattern index`](indexes/bcir-patterns.md).
 2. **Follow the path in [`CURRICULUM.md`](CURRICULUM.md)** if learning end-to-end. Skip
    to a leaf chapter if doing a targeted task.
 3. **Treat `08-pitfalls/` as a checklist** before writing or reviewing
