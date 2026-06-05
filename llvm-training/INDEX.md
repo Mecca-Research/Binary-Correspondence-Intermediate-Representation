@@ -15,6 +15,7 @@ every lookup.
 | Common intrinsic family quick reference | [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
 | LLVM types and opaque-pointer migration | [`02-types/README.md`](02-types/README.md) |
 | BCIR lowering guide | [`bcir-mapping/README.md`](bcir-mapping/README.md) |
+| BCIR lowering patterns | [`indexes/bcir-patterns.md`](indexes/bcir-patterns.md) |
 | MLIR bridge and integration | [`14-mlir-bridge/01-what-is-mlir.md`](14-mlir-bridge/01-what-is-mlir.md) |
 | Backend/JIT diagnostics | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
 | Binary-analysis evidence schemas | [`15-binary-analysis/README.md`](15-binary-analysis/README.md) |
