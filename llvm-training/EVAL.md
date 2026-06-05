@@ -95,6 +95,44 @@ or fill gaps.
 - **0-20**: start from [`START_HERE.md`](START_HERE.md), then use
   [`RECIPES.md`](RECIPES.md) for task-specific paths.
 
+## Agent scoring rubric
+
+Use this rubric when reviewing generated LLVM IR, BCIR lowering artifacts, or
+agent-produced exercise answers. The self-test score above measures corpus
+coverage; this rubric checks whether a concrete answer is safe to land. When a
+submission contains runnable `.ll`, cross-check it with the verification tools
+documented in [`tools/README.md`](tools/README.md), especially
+[`tools/verify-examples.sh`](tools/verify-examples.sh),
+[`tools/verify-opaque-pointers.sh`](tools/verify-opaque-pointers.sh),
+[`tools/verify-invalid-fixtures.sh`](tools/verify-invalid-fixtures.sh), and
+[`tools/verify-bcir-mapping.sh`](tools/verify-bcir-mapping.sh).
+
+Required review checks:
+
+- Generated LLVM IR assembles with `llvm-as` and passes
+  `opt -passes=verify` unless the file is intentionally named and documented as
+  an invalid fixture.
+- Examples use opaque pointers by default; typed-pointer syntax appears only in
+  explicit migration material or deliberately invalid `.ll.txt` teaching
+  fixtures.
+- BCIR lowering preserves 1:1 register correspondence, or the answer explicitly
+  justifies each merge, split, synthetic temporary, or runtime-owned value.
+- Metadata required for debug, diagnostics, provenance, or BCIR traceability is
+  preserved, rewritten with an explanation, or intentionally dropped only when
+  the semantics do not depend on it.
+- Poison and `undef` hazards are identified, and values that can feed control
+  flow, memory addresses, or externally visible behavior are guarded with
+  `freeze` where appropriate.
+- Lowering artifacts include a before/after explanation that names the source
+  BCIR or LLVM construct, the emitted IR shape, and any runtime ABI or metadata
+  contract involved.
+
+| Result | Criteria | Reviewer action |
+| --- | --- | --- |
+| Pass | IR assembles and verifies; opaque-pointer policy is followed; BCIR register, metadata, poison/`undef`, and before/after lowering checks are satisfied or clearly justified. | Accept or continue with normal content review. |
+| Warn | IR verification is not applicable or was skipped for an explained toolchain reason; documentation is mostly complete but one non-semantic rationale, metadata note, or lowering explanation needs tightening. | Request a follow-up note or track the gap before merging. |
+| Fail | Runnable IR fails `llvm-as` or `opt -passes=verify`; typed pointers leak into modern examples; BCIR register correspondence or required metadata is lost without justification; poison/`undef` can escape unsafely; or no before/after lowering explanation is provided. | Block the change until the artifact or explanation is repaired. |
+
 ## Path-specific self-test prompts
 
 These prompts mirror the curriculum paths; use them after the numbered corpus self-test above.
