@@ -58,12 +58,16 @@ non-semantic annotations and how `opt` uses or rewrites them:
 2. [`06-metadata/02-debug-info.md`](06-metadata/02-debug-info.md) — debug info: source locations, `!dbg`, and common `DI*` nodes
 3. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass model: analysis vs transform vs utility passes and new pass manager syntax
 4. [`07-optimization/03-common-transform-passes.md`](07-optimization/03-common-transform-passes.md) — common transform passes such as `mem2reg`, `instcombine`, `simplifycfg`, `adce`, `gvn`, and `loop-unroll`
-5. [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) — common analysis passes for aliasing, CFGs, loops, and scalar evolution
+5. [`07-optimization/02-common-analysis-passes.md`](07-optimization/02-common-analysis-passes.md) — common analysis passes for aliasing, MemorySSA, CFGs, loops, and scalar evolution
+6. [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) — BCIR-focused PassBuilder plugins, MemorySSA, SCCP, LoopRotate, metadata preservation, mapping, loop shape, and poison risks
 
 Practice next: run the commands embedded in
 [`07-optimization/examples/mem2reg-before.ll`](07-optimization/examples/mem2reg-before.ll),
 [`07-optimization/examples/dead-code-before.ll`](07-optimization/examples/dead-code-before.ll), and
-[`07-optimization/examples/loop-before.ll`](07-optimization/examples/loop-before.ll).
+[`07-optimization/examples/loop-before.ll`](07-optimization/examples/loop-before.ll),
+[`07-optimization/examples/memoryssa-alias-shape.ll`](07-optimization/examples/memoryssa-alias-shape.ll),
+[`07-optimization/examples/sccp-before.ll`](07-optimization/examples/sccp-before.ll), and
+[`07-optimization/examples/loop-rotate-bcir-before.ll`](07-optimization/examples/loop-rotate-bcir-before.ll).
 
 
 ## Performance path
@@ -73,11 +77,12 @@ reason about optimization strength, pass pipelines, and vectorized IR:
 
 1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass pipelines and `opt -passes=...` spelling
 2. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — optimization levels: `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
-3. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
-4. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization dispatcher
-5. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
-6. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md), [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md), and [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md) — blockers, commands, predication, and interleaved-memory observations
-7. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
+3. [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) — deeper optimizer legality and BCIR invariants around plugins, MemorySSA, SCCP, loop rotation, metadata, and poison
+4. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
+5. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization dispatcher
+6. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
+7. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md), [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md), and [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md) — blockers, commands, predication, and interleaved-memory observations
+8. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
 
 Practice next: run the commands in
 [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c),

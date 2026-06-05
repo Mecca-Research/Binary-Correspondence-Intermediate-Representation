@@ -42,6 +42,26 @@ Useful habits:
 - Remember that opaque pointers still require typed `load`, `store`, and GEP
   source element types.
 
+## MemorySSA and memory dependence
+
+**MemorySSA** represents memory operations in an SSA-like def/use graph. Loads
+are memory uses, stores and memory-writing calls are memory definitions, and
+control-flow joins can introduce memory PHI nodes. Optimizers use this structure
+to ask which write a load could observe without repeatedly scanning large parts
+of a function.
+
+Try a focused alias-shape fixture:
+
+```bash
+opt -passes='print<memoryssa>' examples/memoryssa-alias-shape.ll -disable-output
+```
+
+MemorySSA depends on alias analysis for overlap answers. If BCIR lowers distinct
+graph slots to indistinguishable `ptr` values, MemorySSA will remain
+conservative; if BCIR adds false alias metadata or attributes, transformations
+can become unsound. Treat MemorySSA updates/invalidation as part of the review
+for any pass that deletes, hoists, sinks, or clones memory operations.
+
 ## CFG viewing and printing
 
 The **control-flow graph** (CFG) is the graph of basic blocks and branch edges.
@@ -105,3 +125,5 @@ which cached answers are still valid.
 - [`01-pass-model.md`](01-pass-model.md)
 - [`03-common-transform-passes.md`](03-common-transform-passes.md)
 - [`examples/loop-before.ll`](examples/loop-before.ll)
+- [`08-deep-optimization-lessons.md`](08-deep-optimization-lessons.md)
+- [`examples/memoryssa-alias-shape.ll`](examples/memoryssa-alias-shape.ll)
