@@ -10,7 +10,7 @@
 | Modules, functions, basic blocks | [`01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md) |
 | Instruction format, operands | [`01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md) |
 | Comments (`;`), metadata (`!N`, `!{...}`) | [`01-syntax/03-comments-metadata.md`](../01-syntax/03-comments-metadata.md) |
-| Metadata tags (`!dbg`, `!tbaa`, `!prof`, `!range`, `!nonnull`, `!llvm.loop`) | [`06-metadata/01-metadata-basics.md`](../06-metadata/01-metadata-basics.md), [`06-metadata/03-profile-and-optimization-metadata.md`](../06-metadata/03-profile-and-optimization-metadata.md) |
+| Metadata tags (`!dbg`, `!tbaa`, `!prof`, `!range`, `!nonnull`, `!llvm.loop`, `!type`) | [`06-metadata/01-metadata-basics.md`](../06-metadata/01-metadata-basics.md), [`06-metadata/03-profile-and-optimization-metadata.md`](../06-metadata/03-profile-and-optimization-metadata.md), [`06-metadata/04-type-metadata-cfi.md`](../06-metadata/04-type-metadata-cfi.md) |
 | Debug-info nodes (`DI*`) | [`06-metadata/02-debug-info.md`](../06-metadata/02-debug-info.md) |
 | Integer types `iN` | [`02-types/01-primitive-types.md`](../02-types/01-primitive-types.md) |
 | `float`, `double`, `half`, `bfloat`, `fp128` | [`02-types/01-primitive-types.md`](../02-types/01-primitive-types.md) |
@@ -44,6 +44,7 @@
 | Debug-info nodes (`DIFile`, `DICompileUnit`, `DISubprogram`, `DILocation`, `DILocalVariable`) | [`06-metadata/02-debug-info.md`](../06-metadata/02-debug-info.md) |
 | Reading `!dbg` locations back to source files and lines | [`06-metadata/02-debug-info.md`](../06-metadata/02-debug-info.md) |
 | Profile metadata, branch weights, loop metadata | [`06-metadata/03-profile-and-optimization-metadata.md`](../06-metadata/03-profile-and-optimization-metadata.md) |
+| Type metadata, CFI-style checks, and vtable address-point testing | [`06-metadata/04-type-metadata-cfi.md`](../06-metadata/04-type-metadata-cfi.md), [`15-binary-analysis/README.md`](../15-binary-analysis/README.md) |
 | Optimization passes | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/03-common-transform-passes.md`](../07-optimization/03-common-transform-passes.md) |
 | `opt` pipelines | [`07-optimization/01-pass-model.md`](../07-optimization/01-pass-model.md), [`07-optimization/04-optimization-levels.md`](../07-optimization/04-optimization-levels.md) |
 | Debugging pass pipelines, IR diffs, pass-manager traces | [`07-optimization/05-debugging-passes.md`](../07-optimization/05-debugging-passes.md) |
@@ -110,5 +111,6 @@
 | Glossary | [`reference/glossary.md`](../reference/glossary.md) |
 | Microarchitecture side-channel review | [`15-binary-analysis/01-microarchitecture-side-channels.md`](../15-binary-analysis/01-microarchitecture-side-channels.md) |
 | Dynamic traces and hardware counters | [`15-binary-analysis/02-dynamic-traces-and-counters.md`](../15-binary-analysis/02-dynamic-traces-and-counters.md) |
+| Binary evidence for IR-level CFI hardening | [`06-metadata/04-type-metadata-cfi.md`](../06-metadata/04-type-metadata-cfi.md), [`15-binary-analysis/02-dynamic-traces-and-counters.md`](../15-binary-analysis/02-dynamic-traces-and-counters.md) |
 | Interpretable BCSA feature triage | [`15-binary-analysis/03-interpretable-bcsa-features.md`](../15-binary-analysis/03-interpretable-bcsa-features.md) |
 | Advanced exercise set: BCIR lowering, MLIR review, backend/JIT, custom pass invariants, graph metadata, GAADMSF debugging | [`exercises/README.md`](../exercises/README.md) |

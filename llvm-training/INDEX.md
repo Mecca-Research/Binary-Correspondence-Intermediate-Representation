@@ -23,6 +23,7 @@ every lookup.
 | MLIR bridge and integration | [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) |
 | Backend/JIT diagnostics | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
 | Binary-analysis evidence schemas | [`15-binary-analysis/README.md`](15-binary-analysis/README.md) |
+| Type metadata and CFI-style checked dispatch | [`06-metadata/04-type-metadata-cfi.md`](06-metadata/04-type-metadata-cfi.md) |
 | Repair, prediction, BCIR, MLIR, backend/JIT, and advanced-debugging exercises | [`exercises/README.md`](exercises/README.md) |
 | Expanded learning paths | [`CURRICULUM.md`](CURRICULUM.md) |
 | Keywords where they are introduced | [`indexes/keywords.md`](indexes/keywords.md) |
