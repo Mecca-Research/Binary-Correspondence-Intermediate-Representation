@@ -141,6 +141,59 @@ original program was safe, and it does not preserve every source-language notion
 of uninitialized behavior. It simply prevents poison/undef from escaping past the
 freeze point.
 
+## BCIR safe speculation with `freeze`
+
+BCIR lowering often starts with conservative, explicit dataflow and then lets
+LLVM clean up or if-convert the result. Insert `freeze` at the point where the
+lowering intentionally changes from "this value may be poison/undef if a BCIR
+precondition failed" to "the following speculative IR needs one stable bit
+pattern." The freeze should be close to the speculation boundary so it documents
+which use is being protected.
+
+Freeze before these BCIR speculation patterns when the value or mask is derived
+from poison-capable arithmetic, recovered binary state, optional lanes, or
+partially initialized fields, and when choosing an arbitrary stable value is
+permitted by the BCIR operation semantics:
+
+- **Speculative branches and switches.** If a branch condition is computed from
+  `nsw`/`nuw` arithmetic, `exact` divisions, `inbounds` pointer tests,
+  out-of-range-prone conversions, or other promises that may produce poison,
+  freeze the `i1` condition before `br` or `switch` consumes it. Freezing the
+  condition is usually narrower than freezing all source operands.
+- **Speculative `select` formation.** If lowering or SimplifyCFG-style cleanup
+  turns BCIR control flow into a `select`, ensure the select condition is
+  non-poison. Also freeze a chosen value before the select only if that value may
+  later cross a poison-consuming boundary such as a `noundef` call/return,
+  address calculation, or control-flow decision.
+- **Vector masks and predicated lanes.** Lane masks used by vector `select`,
+  masked memory intrinsics, gathers/scatters, reductions, or scalarized exits
+  must not contain poison lanes. Freeze the `<N x i1>` mask, or freeze the scalar
+  predicate used to build it, before it controls lane activity. Continue to track
+  lane validity separately; `freeze` stabilizes a mask but does not prove inactive
+  addresses or values are semantically valid.
+- **Metadata-preserving transformations.** Moving a debug-, profile-, or
+  provenance-tagged instruction above a guard, merging tagged branches, or
+  preserving metadata while if-converting a branch can make a previously guarded
+  value speculative. Preserve the metadata on surviving instructions, but insert
+  `freeze` before the new control/data speculation point if the tagged value is
+  poison-capable.
+
+Do **not** use `freeze` as a blanket repair for missing BCIR proofs. Prefer plain
+arithmetic without poison-generating flags, avoid `inbounds` on recovered or
+speculative pointers, and keep runtime validity checks when BCIR semantics require
+an error, trap, or unchanged value instead of an arbitrary choice. A good review
+question is: "Would every stable value of this type be acceptable here if the
+original BCIR proof failed?" If the answer is no, add a guard or remove the
+poison-producing promise instead of freezing.
+
+See [`examples/bcir-freeze-safe-speculation.ll`](examples/bcir-freeze-safe-speculation.ll)
+for a before/after module that freezes scalar branch conditions, vector masks,
+and metadata-preserving if-conversion inputs. The repair exercise
+[`../exercises/026-poison-freeze-repair.prompt.md`](../exercises/026-poison-freeze-repair.prompt.md)
+uses the same branch-safety rule, and the debug metadata exercise
+[`../exercises/023-debug-metadata-preservation.prompt.md`](../exercises/023-debug-metadata-preservation.prompt.md)
+is a good place to review metadata preservation separately from poison safety.
+
 ## Why `noundef` matters at ABI boundaries
 
 `noundef` says the value crossing the boundary is neither `undef` nor poison. It

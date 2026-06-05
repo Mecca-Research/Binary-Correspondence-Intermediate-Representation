@@ -26,7 +26,7 @@
 | `-Rpass`, `-Rpass-missed`, `-force-vector-width`, `-force-vector-interleave` | [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md) |
 | `loop-vectorize`, `slp-vectorizer`, `default<O3>` pass names | [`09-vectorization/01-loop-vectorizer.md`](../09-vectorization/01-loop-vectorizer.md), [`09-vectorization/02-slp-vectorizer.md`](../09-vectorization/02-slp-vectorizer.md), [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md) |
 | `nounwind`, `noalias`, `readonly`, `memory(read)`, `dereferenceable`, `sret`, `byval` | [`13-advanced-ir/04-attributes.md`](../13-advanced-ir/04-attributes.md) |
-| `undef`, `poison`, `freeze`, `noundef`, `nsw`, `nuw`, `exact`, `inbounds` | [`13-advanced-ir/05-poison-undef-freeze.md`](../13-advanced-ir/05-poison-undef-freeze.md) |
+| `undef`, `poison`, `freeze`, `noundef`, `nsw`, `nuw`, `exact`, `inbounds` | [`13-advanced-ir/05-poison-undef-freeze.md`](../13-advanced-ir/05-poison-undef-freeze.md), [`13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze`](../13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze) |
 | `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn`, `reassoc`, `fast` | [`13-advanced-ir/06-fast-math-flags.md`](../13-advanced-ir/06-fast-math-flags.md) |
 | `class`, `def`, `let`, `multiclass`, `defm` | [`12-backend-jit/02-tablegen.md`](../12-backend-jit/02-tablegen.md) |
 | `llvm-tblgen`, `-gen-register-info`, `-gen-instr-info`, `-gen-dag-isel` | [`12-backend-jit/02-tablegen.md`](../12-backend-jit/02-tablegen.md) |

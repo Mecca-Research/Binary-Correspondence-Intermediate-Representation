@@ -11,7 +11,8 @@
 | `br`, `switch`, `indirectbr`, `ret`, `unreachable` | `05-control-flow/` (all four files) |
 | `phi` | [`00-foundations/02-ssa.md`](../00-foundations/02-ssa.md) |
 | `icmp`, `fcmp` | [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
-| `select` | [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
+| `select` | [`reference/instruction-quickref.md`](../reference/instruction-quickref.md), [`13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze`](../13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze) |
+| `freeze` | [`13-advanced-ir/05-poison-undef-freeze.md`](../13-advanced-ir/05-poison-undef-freeze.md), [`13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze`](../13-advanced-ir/05-poison-undef-freeze.md#bcir-safe-speculation-with-freeze), [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
 | `call`, `invoke`, `callbr` | [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
 | `atomicrmw`, `cmpxchg`, `fence` | [`11-concurrency/02-atomic-instructions.md`](../11-concurrency/02-atomic-instructions.md), [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
 | `extractvalue`, `insertvalue`, `extractelement`, `insertelement`, `shufflevector` | [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
