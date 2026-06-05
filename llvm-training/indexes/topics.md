@@ -64,6 +64,7 @@
 | Duplicate symbol definitions across modules | [`08-pitfalls/04-duplicate-symbols.md`](../08-pitfalls/04-duplicate-symbols.md) |
 | Type schema drift across modules | [`08-pitfalls/05-type-schema-drift.md`](../08-pitfalls/05-type-schema-drift.md) |
 | `immarg` parameter violations on intrinsics | [`08-pitfalls/06-immarg-violation.md`](../08-pitfalls/06-immarg-violation.md) |
+| Sanitizer instrumentation, shadow memory, redzone checks, and `!nosanitize` metadata | [`08-pitfalls/16-sanitizer-instrumentation.md`](../08-pitfalls/16-sanitizer-instrumentation.md), [`08-pitfalls/examples/sanitizer-instrumentation.ll`](../08-pitfalls/examples/sanitizer-instrumentation.ll) |
 | Advanced IR: common intrinsics (`llvm.memcpy`, overflow, lifetime, prefetch) | [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md) |
 | Advanced IR: target-specific intrinsics (`llvm.x86.*`, features, portability) | [`13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md) |
 | Advanced IR: special types (`token`, `metadata`, `half`, `bfloat`, `x86_amx`, scalable vectors) | [`13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md) |
