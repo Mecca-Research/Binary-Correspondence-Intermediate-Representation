@@ -156,12 +156,25 @@ case constructs appear in generated modules:
 5. [`13-advanced-ir/05-poison-undef-freeze.md`](13-advanced-ir/05-poison-undef-freeze.md) — `undef`, poison propagation, `freeze`, vector lanes, `noundef`, and verifier-valid unsafe patterns
 6. [`13-advanced-ir/06-fast-math-flags.md`](13-advanced-ir/06-fast-math-flags.md) — `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn`, `reassoc`, `fast`, FP comparisons, reductions, and vectorization consequences
 7. [`13-advanced-ir/07-operand-bundles.md`](13-advanced-ir/07-operand-bundles.md) — call-site operand bundles for deoptimization, funclets, GC liveness, and ARC attached calls
-8. [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) — target-specific address spaces and `addrspacecast`
-9. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — target-specific operations as they leave IR and become machine-level lowering decisions
+8. [`16-exception-handling/README.md`](16-exception-handling/README.md) — exceptional CFG edges, Itanium landing pads, WinEH funclets, cleanup/resume paths, and `"funclet"` bundle interactions
+9. [`04-memory/04-address-spaces.md`](04-memory/04-address-spaces.md) — target-specific address spaces and `addrspacecast`
+10. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — target-specific operations as they leave IR and become machine-level lowering decisions
 
 Use this path as a lookup-oriented supplement rather than a linear beginner
 chapter. It is most useful when reviewing frontend output, GPU IR, intrinsic
 heavy code, or backend-adjacent transformations.
+
+## Exception-handling IR path
+
+Use this path after the control-flow basics when reviewing C++/Rust/Swift-like
+frontend output, destructor cleanup, rethrow paths, or Windows funclet IR:
+
+1. [`05-control-flow/README.md`](05-control-flow/README.md) — review basic block and terminator invariants before adding unwind edges.
+2. [`16-exception-handling/01-eh-overview.md`](16-exception-handling/01-eh-overview.md) — learn personalities, EH pads, and the split between Itanium-style and WinEH lowering.
+3. [`16-exception-handling/02-itanium-landingpad.md`](16-exception-handling/02-itanium-landingpad.md) — read `invoke`, `landingpad`, cleanup/catch clauses, and `resume`.
+4. [`16-exception-handling/03-wineh-funclets.md`](16-exception-handling/03-wineh-funclets.md) — read `catchswitch`, `catchpad`, `cleanuppad`, `catchret`, `cleanupret`, and funclet tokens.
+5. [`16-exception-handling/04-cleanups-and-resume.md`](16-exception-handling/04-cleanups-and-resume.md) — compare Itanium cleanup-plus-`resume` with WinEH cleanup-plus-`cleanupret`.
+6. [`13-advanced-ir/07-operand-bundles.md`](13-advanced-ir/07-operand-bundles.md) — preserve `"funclet"` bundles when rewriting calls inside WinEH pads.
 
 ## MLIR bridge path
 
@@ -262,7 +275,7 @@ Read everything in numerical order:
         ↓                    ↓
 08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  14-mlir-bridge/  →  bcir-mapping/
         ↓                                                                    ↓
-   12-backend-jit/  →  15-binary-analysis/  →  reference/
+   12-backend-jit/  →  15-binary-analysis/  →  16-exception-handling/  →  reference/
 ```
 
 Cross-references inside each chapter (`See also:`) let you jump
