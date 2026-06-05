@@ -95,6 +95,8 @@ The expanded corpus now has both beginner examples and advanced artifacts:
 
 Use [`EXAMPLES.md`](EXAMPLES.md) for naming and verification rules before adding
 new artifacts to any of these families.
+For repository-wide contributor guidance, including BCIR mapping and
+metadata-preservation expectations, see [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Example, exercise, and snippet conventions
 

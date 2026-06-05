@@ -29,6 +29,11 @@ C++ project skeleton for BCIR with a CMake-based build and install/export rules.
     └── reference/       instruction quickref, intrinsics, glossary
 ```
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contributor conventions, training
+example naming rules, and verification scripts to run before opening a change.
+
 ## Build
 
 ```bash
