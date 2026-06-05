@@ -7,6 +7,11 @@
 02-types/examples/opaque-pointer-after.ll	includes non-default address-space operations
 04-memory/examples/memory-cookbook.ll	demonstrates target-defined address spaces
 09-vectorization/examples/*.ll	vectorizer teaching inputs/outputs are better checked with opt
+12-backend-jit/examples/stackmap-patchpoint.ll	stackmap/patchpoint records are runtime- and target-emission contracts, not portable llc smoke output
 13-advanced-ir/examples/token-outline.ll	uses GC/statepoint token intrinsics
-01-syntax/examples/inline-asm.ll	x86-64 inline asm and callbr constraints are target-specific
+13-advanced-ir/examples/coroutine-outline.ll	coroutine intrinsic outline requires coroutine lowering passes/runtime policy before backend smoke
 13-advanced-ir/examples/gc-statepoint-relocate.ll	uses GC statepoint relocation intrinsics; verify with llvm-as, not portable llc smoke
+13-advanced-ir/examples/matrix-intrinsics-sketch.ll	matrix intrinsic sketch is verifier-oriented and depends on matrix lowering before portable backend smoke
+13-advanced-ir/examples/operand-bundles-*.ll	operand-bundle examples document call-site semantic payloads and EH/GC/runtime contracts
+01-syntax/examples/inline-asm.ll	x86-64 inline asm and callbr constraints are target-specific
+16-exception-handling/examples/*.ll	EH examples depend on personality/runtime lowering and are assembly-verifier examples, not portable llc smoke inputs

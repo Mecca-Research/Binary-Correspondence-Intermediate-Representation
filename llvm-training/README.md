@@ -109,7 +109,8 @@ fast pre-edit checklist:
 | Vectorization | [`quickref/vectorization.md`](quickref/vectorization.md) | [`09-vectorization/README.md`](09-vectorization/README.md) |
 | Metadata preservation | [`quickref/metadata.md`](quickref/metadata.md) | [`06-metadata/README.md`](06-metadata/README.md), [`bcir-mapping/10-metadata-and-diagnostics.md`](bcir-mapping/10-metadata-and-diagnostics.md) |
 | New pass manager pipelines | [`quickref/new-pass-manager.md`](quickref/new-pass-manager.md) | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) |
-| Advanced intrinsics/attributes/poison/fast math | [`quickref/advanced-ir.md`](quickref/advanced-ir.md) | [`13-advanced-ir/README.md`](13-advanced-ir/README.md) |
+| Advanced intrinsics/attributes/poison/fast math | [`quickref/advanced-ir.md`](quickref/advanced-ir.md) | [`13-advanced-ir/README.md`](13-advanced-ir/README.md), [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
+| Operand bundles, GC/coroutine/convergence tokens, and matrix intrinsics | [`quickref/advanced-ir.md`](quickref/advanced-ir.md) | [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md), [`13-advanced-ir/07-operand-bundles.md`](13-advanced-ir/07-operand-bundles.md), [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
 | MLIR-to-LLVM bridge review | [`quickref/mlir-bridge.md`](quickref/mlir-bridge.md) | [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) |
 
 Use [`EXAMPLES.md`](EXAMPLES.md) for naming and verification rules before adding
