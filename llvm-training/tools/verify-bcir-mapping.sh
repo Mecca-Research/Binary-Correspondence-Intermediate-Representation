@@ -9,7 +9,8 @@ BCIR_AS="$REPO_ROOT/tools/bcir-as/bcir-as"
 UPDATE=${UPDATE_BCIR_MAPPING:-0}
 
 status=0
-count=0
+bcir_count=0
+claim_count=0
 
 relpath() {
   local path=$1
@@ -22,6 +23,10 @@ require_tool() {
     printf 'error: required tool not found on PATH: %s\n' "$tool" >&2
     exit 127
   fi
+}
+
+have_tool() {
+  command -v "$1" >/dev/null 2>&1
 }
 
 run_verify() {
@@ -45,22 +50,142 @@ run_verify() {
   fi
 }
 
-mapfile -d '' bcir_sources < <(find "$MAPPING_EXAMPLES" -type f -name '*.bcir' -print0 | sort -z)
+expected_lowered_outputs() {
+  local fixture=$1
+  local stem=${fixture%.bcir.txt}
+  case "$(basename -- "$fixture")" in
+    claim-resource-lookup.bcir.txt)
+      printf '%s\0' "$MAPPING_EXAMPLES/claim-resource-lookup.ll"
+      ;;
+    graph-fragment.bcir.txt)
+      printf '%s\0' "$MAPPING_EXAMPLES/graph-fragment-struct-gep.ll"
+      ;;
+    mixed-stride-graph.bcir.txt)
+      printf '%s\0' "$MAPPING_EXAMPLES/mixed-stride-byte-offset.ll"
+      ;;
+    *)
+      if [ -f "$stem.ll" ] || grep -Eq '(^|[[:space:]])lower([[:space:]]|$|[({])' "$fixture"; then
+        printf '%s\0' "$stem.ll"
+      fi
+      ;;
+  esac
+}
 
-if [ "${#bcir_sources[@]}" -eq 0 ]; then
-  printf 'No .bcir source fixtures found under %s; skipping BCIR mapping output check.\n' "$(relpath "$MAPPING_EXAMPLES")"
+require_claim_keywords() {
+  local fixture=$1
+  local description=$2
+  shift 2
+
+  local keyword
+  for keyword in "$@"; do
+    printf '[bcir.txt:%s] %s contains %s ... ' "$description" "$(relpath "$fixture")" "$keyword"
+    if grep -Eq "(^|[[:space:]])${keyword}([[:space:]]|$|[({])" "$fixture"; then
+      printf 'ok\n'
+    else
+      printf 'FAILED\n'
+      printf 'error: %s is missing required BCIR marker or operation keyword: %s\n' "$(relpath "$fixture")" "$keyword" >&2
+      return 1
+    fi
+  done
+}
+
+require_any_claim_keyword() {
+  local fixture=$1
+  shift
+
+  local pattern keyword
+  pattern=$(printf '%s|' "$@")
+  pattern=${pattern%|}
+  printf '[bcir.txt:generic] %s contains a BCIR marker or operation keyword ... ' "$(relpath "$fixture")"
+  if grep -Eq "(^|[[:space:]])(${pattern})([[:space:]]|$|[({])" "$fixture"; then
+    printf 'ok\n'
+  else
+    printf 'FAILED\n'
+    printf 'error: %s is missing all recognized BCIR markers or operation keywords:' "$(relpath "$fixture")" >&2
+    for keyword in "$@"; do
+      printf ' %s' "$keyword" >&2
+    done
+    printf '\n' >&2
+    return 1
+  fi
+}
+
+verify_claim_fixture() {
+  local fixture=$1
+  local fixture_status=0
+  local lowered=()
+  local lowered_file
+
+  printf '[bcir.txt:non-empty] %s ... ' "$(relpath "$fixture")"
+  if [ -s "$fixture" ]; then
+    printf 'ok\n'
+  else
+    printf 'FAILED\n'
+    printf 'error: BCIR claim fixture is empty: %s\n' "$(relpath "$fixture")" >&2
+    return 1
+  fi
+
+  case "$(basename -- "$fixture")" in
+    claim-resource-lookup.bcir.txt)
+      require_claim_keywords "$fixture" claim resource claim lower || fixture_status=1
+      ;;
+    graph-fragment.bcir.txt)
+      require_claim_keywords "$fixture" graph vertex edge query || fixture_status=1
+      ;;
+    mixed-stride-graph.bcir.txt)
+      require_claim_keywords "$fixture" mixed-stride layout row_stride_bytes column_stride_bytes query || fixture_status=1
+      ;;
+    *)
+      require_any_claim_keyword "$fixture" resource claim lower vertex edge layout query || fixture_status=1
+      ;;
+  esac
+
+  mapfile -d '' lowered < <(expected_lowered_outputs "$fixture")
+  for lowered_file in "${lowered[@]}"; do
+    printf '[bcir.txt:lowered] %s -> %s ... ' "$(relpath "$fixture")" "$(relpath "$lowered_file")"
+    if [ -f "$lowered_file" ]; then
+      printf 'ok\n'
+    else
+      printf 'FAILED\n'
+      printf 'error: missing lowered LLVM IR companion for %s: %s\n' "$(relpath "$fixture")" "$(relpath "$lowered_file")" >&2
+      fixture_status=1
+      continue
+    fi
+
+    if have_tool llvm-as && have_tool opt; then
+      run_verify "$lowered_file" || fixture_status=1
+    else
+      printf '[bcir.txt:verify] %s ... skipped (llvm-as and opt are not both available)\n' "$(relpath "$lowered_file")"
+    fi
+  done
+
+  return "$fixture_status"
+}
+
+mapfile -d '' bcir_sources < <(find "$MAPPING_EXAMPLES" -type f -name '*.bcir' -print0 | sort -z)
+mapfile -d '' claim_fixtures < <(find "$MAPPING_EXAMPLES" -type f -name '*.bcir.txt' -print0 | sort -z)
+
+if [ "${#bcir_sources[@]}" -eq 0 ] && [ "${#claim_fixtures[@]}" -eq 0 ]; then
+  printf 'No BCIR mapping fixtures found under %s; skipping BCIR mapping check.\n' "$(relpath "$MAPPING_EXAMPLES")"
   exit 0
 fi
 
-if [ ! -x "$BCIR_AS" ]; then
-  printf 'error: required assembler is not executable: %s\n' "$(relpath "$BCIR_AS")" >&2
-  exit 127
+for fixture in "${claim_fixtures[@]}"; do
+  claim_count=$((claim_count + 1))
+  verify_claim_fixture "$fixture" || status=1
+done
+
+if [ "${#bcir_sources[@]}" -gt 0 ]; then
+  if [ ! -x "$BCIR_AS" ]; then
+    printf 'error: required assembler is not executable: %s\n' "$(relpath "$BCIR_AS")" >&2
+    exit 127
+  fi
+  require_tool llvm-as
+  require_tool opt
 fi
-require_tool llvm-as
-require_tool opt
 
 for source in "${bcir_sources[@]}"; do
-  count=$((count + 1))
+  bcir_count=$((bcir_count + 1))
   expected="${source%.bcir}.generated.ll"
 
   if [ "$UPDATE" = 1 ]; then
@@ -108,9 +233,9 @@ for source in "${bcir_sources[@]}"; do
 done
 
 if [ "$status" -eq 0 ]; then
-  printf 'Checked %d BCIR mapping source fixture(s).\n' "$count"
+  printf 'Checked %d BCIR mapping claim fixture(s) and %d BCIR mapping source fixture(s).\n' "$claim_count" "$bcir_count"
 else
-  printf 'One or more BCIR mapping source fixtures failed. Run UPDATE_BCIR_MAPPING=1 %s to refresh expected outputs when intentional.\n' "$(relpath "$SCRIPT_DIR/verify-bcir-mapping.sh")" >&2
+  printf 'One or more BCIR mapping fixtures failed. Run UPDATE_BCIR_MAPPING=1 %s to refresh expected outputs for .bcir sources when intentional.\n' "$(relpath "$SCRIPT_DIR/verify-bcir-mapping.sh")" >&2
 fi
 
 exit "$status"
