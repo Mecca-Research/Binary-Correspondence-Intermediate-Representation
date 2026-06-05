@@ -133,6 +133,7 @@ than complete executable programs.
 | `llvm-training/12-backend-jit/examples/orc-layer-diagnostic.ll` | `llvm-as llvm-training/12-backend-jit/examples/orc-layer-diagnostic.ll -o /dev/null` |
 | `llvm-training/12-backend-jit/examples/relocation-symbols.ll` | `llvm-as llvm-training/12-backend-jit/examples/relocation-symbols.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/attributes-callsite.ll` | `llvm-as llvm-training/13-advanced-ir/examples/attributes-callsite.ll -o /dev/null` |
+| `llvm-training/13-advanced-ir/examples/bcir-freeze-safe-speculation.ll` | `llvm-as llvm-training/13-advanced-ir/examples/bcir-freeze-safe-speculation.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/fast-math-flags.ll` | `llvm-as llvm-training/13-advanced-ir/examples/fast-math-flags.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/intrinsic-constraints.ll` | `llvm-as llvm-training/13-advanced-ir/examples/intrinsic-constraints.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/memcpy.ll` | `llvm-as llvm-training/13-advanced-ir/examples/memcpy.ll -o /dev/null` |
