@@ -154,6 +154,45 @@ contains target-independent abstractions for assembly and object emission:
 In short: `MachineInstr` is for backend analysis and transformation;
 `MCInst`/MC objects are for final assembly/object encoding.
 
+## Varargs and ABI variance
+
+C-style variadic functions look target-independent in the function type, but
+accessing their unnamed arguments is not target-independent. The `va_arg`
+instruction is lowered according to the target ABI: the backend must know how
+that ABI represents `va_list`, where register-save areas live, how stack and
+register arguments are classified, and how each extracted type advances the
+cursor. That means two targets can accept similar-looking IR while requiring
+different machine-code sequences and different frontend setup around the
+`va_list` object.
+
+A minimal verifier-safe shape is:
+
+```llvm
+declare void @llvm.va_start(ptr)
+declare void @llvm.va_end(ptr)
+
+define i32 @take_one_i32(i32 %tag, ...) {
+entry:
+  %ap = alloca ptr, align 8
+  call void @llvm.va_start(ptr %ap)
+  %value = va_arg ptr %ap, i32
+  call void @llvm.va_end(ptr %ap)
+  ret i32 %value
+}
+```
+
+Treat examples like this as syntax and verifier guidance, not as permission to
+synthesize portable varargs lowering by hand. Agents should preserve
+frontend-produced varargs IR unless they intentionally model the selected
+target ABI. In particular, avoid rewriting `llvm.va_start`, `llvm.va_end`,
+`va_arg`, or target-shaped `va_list` storage during generic IR cleanup unless
+you know the caller/callee ABI contract that code generation will apply.
+
+For related IR syntax, see the `va_arg` entry in
+[`../reference/instruction-quickref.md`](../reference/instruction-quickref.md)
+and the variadic function notes in
+[`../01-syntax/01-modules-functions-blocks.md`](../01-syntax/01-modules-functions-blocks.md).
+
 ## BCIR hardware-aware hooks
 
 BCIR hardware-aware operations should enter the backend in a form that preserves
