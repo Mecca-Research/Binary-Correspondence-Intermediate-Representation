@@ -36,7 +36,10 @@ entries because they assemble and verify, but they are intentionally documented
 as assembly-only unless a chapter names a target/runtime-specific smoke path.
 Most files in this manifest are assembly-only because they expose functions that
 need caller-provided arguments, show optimization before/after IR, or demonstrate
-intrinsics/metadata rather than complete executable programs.
+intrinsics/metadata rather than complete executable programs. Target-specific
+`.ll` sketches, such as RISC-V scalable-vector and AVX-512 mask boundary
+examples, stay in the manifest when they assemble and verify as IR; backend smoke
+scripts may still skip them if the local target support is unavailable.
 
 ## Standalone `.ll` examples
 
@@ -79,6 +82,9 @@ intrinsics/metadata rather than complete executable programs.
 | `llvm-training/06-metadata/examples/profile-value-indirect-call.ll` | `llvm-as llvm-training/06-metadata/examples/profile-value-indirect-call.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/tbaa-load-store.ll` | `llvm-as llvm-training/06-metadata/examples/tbaa-load-store.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/type-metadata-cfi.ll` | `llvm-as llvm-training/06-metadata/examples/type-metadata-cfi.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/bcir-memoryssa-pipeline.ll` | `llvm-as llvm-training/07-optimization/examples/bcir-memoryssa-pipeline.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/bcir-sccp-freeze-after.ll` | `llvm-as llvm-training/07-optimization/examples/bcir-sccp-freeze-after.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/bcir-sccp-freeze-before.ll` | `llvm-as llvm-training/07-optimization/examples/bcir-sccp-freeze-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/dead-code-after-adce.ll` | `llvm-as llvm-training/07-optimization/examples/dead-code-after-adce.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/dead-code-before.ll` | `llvm-as llvm-training/07-optimization/examples/dead-code-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/gvn-after.ll` | `llvm-as llvm-training/07-optimization/examples/gvn-after.ll -o /dev/null` |
@@ -121,6 +127,8 @@ intrinsics/metadata rather than complete executable programs.
 | `llvm-training/08-pitfalls/examples/immarg-fixed.ll` | `llvm-as llvm-training/08-pitfalls/examples/immarg-fixed.ll -o /dev/null` |
 | `llvm-training/08-pitfalls/examples/phi-predecessor-fixed.ll` | `llvm-as llvm-training/08-pitfalls/examples/phi-predecessor-fixed.ll -o /dev/null` |
 | `llvm-training/08-pitfalls/examples/sanitizer-instrumentation.ll` | `llvm-as llvm-training/08-pitfalls/examples/sanitizer-instrumentation.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/bcir-avx512-mask-sketch.ll` | `llvm-as llvm-training/09-vectorization/examples/bcir-avx512-mask-sketch.ll -o /dev/null` |
+| `llvm-training/09-vectorization/examples/bcir-interleaved-riscv-sketch.ll` | `llvm-as llvm-training/09-vectorization/examples/bcir-interleaved-riscv-sketch.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/interleaved-access-after-vectorize.ll` | `llvm-as llvm-training/09-vectorization/examples/interleaved-access-after-vectorize.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/interleaved-access-before.ll` | `llvm-as llvm-training/09-vectorization/examples/interleaved-access-before.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/masked-load-store-after-vectorize.ll` | `llvm-as llvm-training/09-vectorization/examples/masked-load-store-after-vectorize.ll -o /dev/null` |

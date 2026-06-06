@@ -38,6 +38,10 @@ intrinsics belong behind a portability boundary.
 - BCIR lanes have enable bits or validity masks that naturally map to vector
   predicates.
 
+## Pipeline placement
+
+For BCIR, predication should cross the optimization boundary as explicit masks until the pass that can legally lower them. The advanced optimization chapter places masked vector lowering after semantic BCIR lowering, SCCP poison repair, and loop canonicalization; see [`../07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline`](../07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline). The New Pass Manager chapter explains how to spell these stages as `opt -passes=...` pipelines; see [`../17-new-pass-manager/01-passbuilder-and-pipelines.md`](../17-new-pass-manager/01-passbuilder-and-pipelines.md).
+
 ## Pitfalls
 
 - A mask is not a bounds proof for inactive lanes unless the operation is truly

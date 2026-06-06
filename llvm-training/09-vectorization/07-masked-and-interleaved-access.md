@@ -22,6 +22,8 @@ target?
 | [`examples/masked-load-store-after-vectorize.ll`](examples/masked-load-store-after-vectorize.ll) | Cleaned-up vector-body snapshot that uses a vector compare and `@llvm.masked.store`. |
 | [`examples/interleaved-access-before.ll`](examples/interleaved-access-before.ll) | Scalar AoS-to-SoA deinterleave loop: input stride 2, output stride 1. |
 | [`examples/interleaved-access-after-vectorize.ll`](examples/interleaved-access-after-vectorize.ll) | Cleaned-up vector-body snapshot with a wide load and two `shufflevector` deinterleaves. |
+| [`examples/bcir-interleaved-riscv-sketch.ll`](examples/bcir-interleaved-riscv-sketch.ll) | Target-specific scalable-vector sketch for BCIR interleaved lowering boundaries on RISC-V/RVV. |
+| [`examples/bcir-avx512-mask-sketch.ll`](examples/bcir-avx512-mask-sketch.ll) | Target-specific AVX-512 masked-load/store sketch for BCIR lane masks. |
 
 The `*-after-vectorize.ll` files are teaching snapshots. They are verifier-valid
 IR fixtures, but they intentionally omit version-specific runtime checks,
@@ -143,10 +145,19 @@ When a vectorization remark is surprising, check these signals first:
 | Predication | Conditional memory effects require a lane mask. The mask is a legality device because inactive lanes must not perform stores, and it is a profitability question because masked operations can be expensive. |
 | Target cost model | The same legal loop may be vectorized, scalarized, or left alone depending on vector width, masked-memory support, shuffle costs, and interleave count for the selected target. |
 
+## BCIR pipeline placement
+
+Teach masked and interleaved access as a late BCIR pipeline component: semantic lowering first, poison-sensitive SCCP repair with `freeze` where needed, `loop-rotate` after BCIR loop lowering, then vectorization and target-specific mask/scalable-vector lowering. The optimization chapter shows the complete review checklist and commands such as `opt -passes='sccp,loop-rotate,loop-vectorize,verify'` in [`../07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline`](../07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline). The New Pass Manager chapters explain why custom passes that rewrite memory or loops must preserve or invalidate analyses explicitly; start with [`../17-new-pass-manager/01-passbuilder-and-pipelines.md`](../17-new-pass-manager/01-passbuilder-and-pipelines.md).
+
+### Target caveats
+
+- **RISC-V/RVV scalable vectors:** `<vscale x N x T>` values do not have a compile-time lane count. The sketch in [`examples/bcir-interleaved-riscv-sketch.ll`](examples/bcir-interleaved-riscv-sketch.ll) keeps BCIR lane vectors and masks explicit so target lowering can choose RVV instructions without hard-coding physical lanes.
+- **AVX/AVX-512 masks:** AVX-512 masked memory operations can suppress inactive lanes, but AVX/AVX2-style lowering may use blends or scalar fallback. The sketch in [`examples/bcir-avx512-mask-sketch.ll`](examples/bcir-avx512-mask-sketch.ll) is a boundary example, not a profitability guarantee.
+
 ## Fixture policy
 
-The four `.ll` files in this lesson are intentionally included in the normal
-standalone LLVM IR manifest. They should assemble and pass `opt -passes=verify`
+The main before/after `.ll` files in this lesson are intentionally included in the normal
+standalone LLVM IR manifest. Target-specific `bcir-*-sketch.ll` files are documented in the global examples README as target-specific teaching sketches. They should assemble and pass `opt -passes=verify`
 like other non-`invalid` examples. If an example is later changed into a
 version-specific or intentionally broken diagnostic fixture, rename it according
 to the invalid-example convention instead of leaving it as a normal `.ll` file.
@@ -157,3 +168,5 @@ to the invalid-example convention instead of leaving it as a normal `.ll` file.
 - [`04-vectorization-legality.md`](04-vectorization-legality.md) — legality blockers and runtime checks.
 - [`05-example-walkthroughs.md`](05-example-walkthroughs.md) — command patterns and remark flags.
 - [`06-recognizing-vector-ir.md`](06-recognizing-vector-ir.md) — IR clues such as vector types, `shufflevector`, and reductions.
+- [`../07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline`](../07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline) — BCIR advanced-pass pipeline placement.
+- [`../17-new-pass-manager/05-mlgo-and-profile-guided-pipelines.md`](../17-new-pass-manager/05-mlgo-and-profile-guided-pipelines.md) — profile and MLGO policy inputs.
