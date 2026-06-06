@@ -152,6 +152,69 @@ For BCIR training data, keep both pre-canonical and post-canonical fixtures.
 The before file documents what the lowering emitted; the after file documents
 what optimizer consumers are likely to see.
 
+## Putting advanced passes into a BCIR pipeline
+
+Treat advanced LLVM passes as named pipeline components with explicit BCIR
+inputs and outputs, not as a single opaque `-O2` blob. A useful teaching pipeline
+is:
+
+```bash
+opt -S -passes='sccp,loop-rotate,loop-vectorize,verify' \
+  examples/bcir-sccp-freeze-after.ll -o -
+```
+
+For a custom memory pass, spell the analysis requirement at the point where the
+function pipeline consumes it:
+
+```bash
+opt -S -passes='require<memoryssa>,function(bcir-memory-audit,verify)' \
+  examples/bcir-memoryssa-pipeline.ll -o checked.ll
+```
+
+`require<memoryssa>` makes the module pipeline materialize the MemorySSA analysis
+for functions before the nested function pipeline. It does not make later
+transforms preserve MemorySSA automatically: a pass that changes memory accesses,
+CFG, dominance, or loop structure must either update the analysis through the
+right updater API or report that it invalidated the analysis so the new pass
+manager recomputes it.
+
+### Inputs and boundaries for each component
+
+| Component | BCIR pipeline role | Review focus |
+|---|---|---|
+| MemorySSA | Memory-dependence structure for custom passes that need def/use reasoning over loads, stores, calls, and memory PHIs. | MemorySSA organizes memory accesses, but alias analysis still decides whether two locations overlap. Unknown calls, pointer escapes, volatile/atomic operations, address-space rules, and imprecise TBAA or alias scopes can force conservative answers; inaccurate `noalias` metadata can make a transform unsound. |
+| SCCP | Value/reachability simplifier that can delete dead BCIR diagnostic paths before heavier loop work. | SCCP must not turn poison or `undef` into a stable branch/control decision. If lowering creates a poison-capable condition, insert `freeze` before the condition becomes a branch or a value that SCCP may use for reachability. Compare [`examples/bcir-sccp-freeze-before.ll`](examples/bcir-sccp-freeze-before.ll) with [`examples/bcir-sccp-freeze-after.ll`](examples/bcir-sccp-freeze-after.ll). |
+| LoopRotate | Canonicalization step after BCIR loop lowering and before vectorization. | Run it after lowering has emitted all source-shape diagnostics, then before `loop-vectorize` so vectorization sees a canonical preheader/header/latch/exiting-block shape. Keep the lowering boundary explicit because rotation may clone tests and move metadata-bearing instructions. |
+| Profile metadata and PGO | Pipeline input that biases inlining, layout, unrolling, and vectorization cost decisions. | `!prof` branch weights and instrumentation/sample profiles are evidence, not proof of legality. Preserve or deliberately drop profile metadata when cloning or deleting BCIR regions, and avoid stale profile counts after major CFG edits. |
+| MLGO | Optimization-policy input, such as inlining or register-allocation advice, selected by a model. | MLGO is not a verifier. It can choose among legal optimization actions, but BCIR verifiers still have to check mapping metadata, lowering boundaries, and semantic invariants. |
+| Masked vector lowering | Lowering bridge from predicated BCIR lanes to `llvm.masked.*` intrinsics, selects, VP intrinsics, or target masks. | Masks are legality devices only when inactive lanes truly do not access memory. Ordinary vector loads execute all lanes; masked loads/stores or gathers/scatters are needed when inactive lanes might be out of bounds or semantically disabled. |
+| Interleaved access vectorization | Profitability-dependent widening for AoS/SoA patterns after BCIR has made stride groups visible. | The legality proof depends on aliasing, alignment, and dependence facts; the profitability decision depends on shuffle/interleave costs. Keep legality separate from profitability in remarks and code review. |
+| RISC-V scalable vectors | Target-specific lowering for `<vscale x N x T>` and RVV predication. | Do not assume a fixed lane count, fixed tail length, or cheap gather/scatter. BCIR vector metadata should describe element semantics and masks, not a hard-coded number of physical lanes. See [`../09-vectorization/examples/bcir-interleaved-riscv-sketch.ll`](../09-vectorization/examples/bcir-interleaved-riscv-sketch.ll). |
+| AVX/AVX-512 masks | Target-specific fixed-vector lowering that may use k-register masks, masked moves, blends, or scalar fallbacks. | AVX2 often lowers masks through blends and full-width memory operations; AVX-512 can suppress inactive memory lanes for masked loads/stores, but mask materialization, all-ones masks, fault-suppression details, and downclock/cost effects are target-subtarget questions. See [`../09-vectorization/examples/bcir-avx512-mask-sketch.ll`](../09-vectorization/examples/bcir-avx512-mask-sketch.ll). |
+
+A BCIR-oriented order is therefore: finish semantic lowering, preserve truthful
+alias/profile/mask metadata, run local value cleanup such as SCCP only after
+poison-sensitive values are frozen, canonicalize loops with `loop-rotate`, then
+let vectorization and target lowering make legal/profitable choices.
+
+### Advanced-pass review checklist
+
+- Did the pipeline preserve BCIR metadata that is still semantically required,
+  or deliberately convert it into a provenance set when instructions were
+  cloned, merged, or erased?
+- Did every pass that edited memory, dominance, CFG, or loops update analyses or
+  invalidate stale analyses instead of relying on old MemorySSA, alias, dominator,
+  or loop information?
+- Did the transform avoid speculating poison and insert `freeze` before using a
+  poison-capable value for branch reachability, masking, or profile-guided
+  control decisions?
+- Did the pipeline keep lowering boundaries explicit, especially the boundary
+  between BCIR semantic lowering, loop canonicalization, vectorization, and
+  target-specific mask/scalable-vector lowering?
+- Did review notes separate legality from profitability: alias/dependence/mask
+  correctness first, cost model, PGO, MLGO, and target heuristics second?
+
+
 ## Review recipe for optimizer changes
 
 1. Run `opt -passes=verify` before the experiment.
@@ -166,5 +229,10 @@ what optimizer consumers are likely to see.
 - [`02-common-analysis-passes.md`](02-common-analysis-passes.md)
 - [`03-common-transform-passes.md`](03-common-transform-passes.md)
 - [`examples/memoryssa-alias-shape.ll`](examples/memoryssa-alias-shape.ll)
+- [`examples/bcir-memoryssa-pipeline.ll`](examples/bcir-memoryssa-pipeline.ll)
 - [`examples/sccp-before.ll`](examples/sccp-before.ll)
+- [`examples/bcir-sccp-freeze-before.ll`](examples/bcir-sccp-freeze-before.ll)
+- [`examples/bcir-sccp-freeze-after.ll`](examples/bcir-sccp-freeze-after.ll)
 - [`examples/loop-rotate-bcir-before.ll`](examples/loop-rotate-bcir-before.ll)
+- [`../09-vectorization/07-masked-and-interleaved-access.md`](../09-vectorization/07-masked-and-interleaved-access.md)
+- [`../17-new-pass-manager/05-mlgo-and-profile-guided-pipelines.md`](../17-new-pass-manager/05-mlgo-and-profile-guided-pipelines.md)

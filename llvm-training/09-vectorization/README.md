@@ -20,6 +20,7 @@ Official references:
 
 - [LLVM Auto-Vectorization documentation](https://llvm.org/docs/Vectorizers.html)
 - [LLVM Optimization Remarks documentation](https://llvm.org/docs/Remarks.html)
+- [LLVM New Pass Manager documentation](https://llvm.org/docs/NewPassManager.html)
 
 ## Chapter dispatcher
 
@@ -32,6 +33,7 @@ Official references:
 | Commands, expected observations, and forced-width experiments | [`05-example-walkthroughs.md`](05-example-walkthroughs.md) |
 | IR clues: `<N x T>`, vector loads/stores, `shufflevector`, reductions | [`06-recognizing-vector-ir.md`](06-recognizing-vector-ir.md) |
 | Advanced masked and interleaved memory access patterns | [`07-masked-and-interleaved-access.md`](07-masked-and-interleaved-access.md) |
+| BCIR pass-pipeline placement for LoopRotate, SCCP, MemorySSA, PGO, and MLGO | [`../07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline`](../07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline), [`../17-new-pass-manager/05-mlgo-and-profile-guided-pipelines.md`](../17-new-pass-manager/05-mlgo-and-profile-guided-pipelines.md) |
 
 ## Example files
 
@@ -48,6 +50,8 @@ Official references:
 - [`examples/masked-load-store-after-vectorize.ll`](examples/masked-load-store-after-vectorize.ll) — cleaned-up masked-store vector IR snapshot.
 - [`examples/interleaved-access-before.ll`](examples/interleaved-access-before.ll) — scalar AoS-to-SoA deinterleave loop with stride-2 input fields.
 - [`examples/interleaved-access-after-vectorize.ll`](examples/interleaved-access-after-vectorize.ll) — cleaned-up interleaved-access vector IR snapshot with `shufflevector` deinterleaving.
+- [`examples/bcir-interleaved-riscv-sketch.ll`](examples/bcir-interleaved-riscv-sketch.ll) — target-specific scalable-vector sketch for BCIR interleaved lowering boundaries on RISC-V/RVV.
+- [`examples/bcir-avx512-mask-sketch.ll`](examples/bcir-avx512-mask-sketch.ll) — target-specific masked-load/store sketch for AVX-512-style BCIR lane masks.
 
 ## Loop Vectorizer vs SLP Vectorizer
 
@@ -60,6 +64,8 @@ The Loop Vectorizer asks: “Can iteration `i`, `i+1`, `i+2`, ... execute as one
 
 ## See also
 
+- [`../07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline`](../07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline) — where LoopRotate, SCCP, MemorySSA, PGO, MLGO, masks, and target lowering fit in a BCIR optimization pipeline.
+- [`../17-new-pass-manager/01-passbuilder-and-pipelines.md`](../17-new-pass-manager/01-passbuilder-and-pipelines.md) — textual pipeline structure used by vectorization examples.
 - [`../06-metadata/03-profile-and-optimization-metadata.md`](../06-metadata/03-profile-and-optimization-metadata.md) — loop metadata and optimization hints.
 - [`../02-types/02-composite-types.md`](../02-types/02-composite-types.md) — vector types as LLVM composite types.
 - [`../04-memory/02-load-store.md`](../04-memory/02-load-store.md) — load/store syntax used by vector memory operations.

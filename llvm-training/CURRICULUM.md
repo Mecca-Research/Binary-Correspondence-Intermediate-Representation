@@ -81,18 +81,20 @@ reason about optimization strength, pass pipelines, and vectorized IR:
 
 1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass pipelines and `opt -passes=...` spelling
 2. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — optimization levels: `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
-3. [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) — deeper optimizer legality and BCIR invariants around plugins, MemorySSA, SCCP, loop rotation, metadata, and poison
+3. [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) — deeper optimizer legality and BCIR pipeline components: MemorySSA, alias limits, SCCP/freeze, LoopRotate-before-vectorization, PGO metadata, MLGO policy, masks, interleaved access, and target caveats
 4. [`17-new-pass-manager/README.md`](17-new-pass-manager/README.md) — new pass-manager plugin infrastructure, callbacks, adaptive BCIR pass ordering, and MLGO/profile-guided pipeline policy
 5. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
 6. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization dispatcher
 7. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
-8. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md), [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md), and [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md) — blockers, commands, predication, and interleaved-memory observations
+8. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md), [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md), and [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md) — blockers, commands, predication, interleaved-memory observations, and BCIR target-lowering sketches
 9. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
 
 Practice next: run the commands in
 [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c),
-[`09-vectorization/examples/sum-loop.ll`](09-vectorization/examples/sum-loop.ll), and
-[`09-vectorization/examples/slp-scalars.ll`](09-vectorization/examples/slp-scalars.ll).
+[`09-vectorization/examples/sum-loop.ll`](09-vectorization/examples/sum-loop.ll),
+[`09-vectorization/examples/slp-scalars.ll`](09-vectorization/examples/slp-scalars.ll),
+[`07-optimization/examples/bcir-memoryssa-pipeline.ll`](07-optimization/examples/bcir-memoryssa-pipeline.ll),
+and [`07-optimization/examples/bcir-sccp-freeze-after.ll`](07-optimization/examples/bcir-sccp-freeze-after.ll).
 
 
 ## Concurrent IR path
@@ -306,11 +308,11 @@ focused path when you need to understand LLVM's vectorized IR and diagnostics:
 6. Run `opt -S -passes=slp-vectorizer` on
    [`09-vectorization/examples/slp-scalars.ll`](09-vectorization/examples/slp-scalars.ll)
    and inspect vector packing, `shufflevector`, and straight-line vector IR.
-7. Read [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md), then run `opt -S -passes=loop-vectorize` on
+7. Read [`07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline`](07-optimization/08-deep-optimization-lessons.md#putting-advanced-passes-into-a-bcir-pipeline) to place SCCP, `loop-rotate`, `loop-vectorize`, MemorySSA requirements, PGO metadata, and MLGO policy in one BCIR review checklist.
+8. Read [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md), then run `opt -S -passes=loop-vectorize` on
    [`09-vectorization/examples/masked-load-store-before.ll`](09-vectorization/examples/masked-load-store-before.ll) and
    [`09-vectorization/examples/interleaved-access-before.ll`](09-vectorization/examples/interleaved-access-before.ll) with remark flags to inspect masked stores, stride recognition, and target-cost decisions.
-8. Repeat with `-force-vector-width` and `-force-vector-interleave` to separate
-   legality questions from profitability choices.
+9. Inspect [`09-vectorization/examples/bcir-interleaved-riscv-sketch.ll`](09-vectorization/examples/bcir-interleaved-riscv-sketch.ll) and [`09-vectorization/examples/bcir-avx512-mask-sketch.ll`](09-vectorization/examples/bcir-avx512-mask-sketch.ll) as target-specific boundary sketches; repeat with `-force-vector-width` and `-force-vector-interleave` to separate legality questions from profitability choices.
 
 This path is intentionally about reading and experimenting with transformed IR,
 not about writing a custom LLVM pass pipeline.
