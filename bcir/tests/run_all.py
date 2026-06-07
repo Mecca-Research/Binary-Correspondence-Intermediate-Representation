@@ -19,7 +19,11 @@ _MODULES = [
     "bcir.tests.test_verify",
     "bcir.tests.test_etl",
     "bcir.tests.test_gem",
+    "bcir.tests.test_concurrency",
+    "bcir.tests.test_frontends",
+    "bcir.tests.test_telemetry",
     "bcir.tests.test_lowering",
+    "bcir.tests.test_jit",
 ]
 
 

@@ -40,7 +40,11 @@ accuracy, contention, verification`.
 | StreamPack | `gem.streampack.StreamPack` | `bcir.gem.stream_pack` |
 | lane segment | `gem.streampack.LaneSegment` | `bcir.gem.lane_segment` |
 | verifier R1–R12 | `verify.verify` | `bcir.verify.*` |
-| lowering | `lower.llvm` (clang) | `bcir.target.lower_contract` |
+| lowering (AOT) | `lower.llvm` (clang) | `bcir.target.lower_contract` |
+| concurrency/affinity (CT2) | `gem.schedule_concurrent` | `bcir.gem.lane_segment` `affinity`/`unroll` |
+| ROP/MAP front-ends (CT3) | `frontends.{rop,map}` | `bcir.parse.*` / `bcir.binary.*` |
+| data-DNA telemetry (CT4) | `telemetry.DataDNA` + `kbcir.calibrate` | `bcir.trace.data_dna` |
+| JIT (CT5) | `lower.jit` (lli) | per-target `bcir.target.lower_contract` |
 
 ## Worked-example parity
 

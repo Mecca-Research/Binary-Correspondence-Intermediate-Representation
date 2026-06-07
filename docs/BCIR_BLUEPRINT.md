@@ -10,11 +10,11 @@ that picks realizations is AI-guidable (CT4).
 
 | Track | Capability | Status |
 |---|---|---|
-| **CT1** | Target-open container + memory hierarchy (HBM / HAM / CXL) | oracle done; law authored |
-| **CT2** | Mixed-stride concurrent graph exec + cache unroll + thread→cache affinity | planned |
-| **CT3** | ROP & MAP performance paradigms (front-ends → claims) | planned |
-| **CT4** | ML-guided "data DNA" telemetry loop (thermal/voltage → exec mgmt) | interface/schema only |
-| **CT5** | AOT + JIT backends per target (WASM-like agnosticism) | AOT (clang) done; JIT planned |
+| **CT1** | Target-open container + memory hierarchy (HBM / HAM / CXL) | oracle done; law authored + validated |
+| **CT2** | Mixed-stride concurrent graph exec + cache unroll + thread→cache affinity | oracle done (`bcir/gem/concurrency.py`); law: lane-segment `affinity`/`unroll` |
+| **CT3** | ROP & MAP performance paradigms (front-ends → claims) | oracle done (`bcir/frontends/{rop,map}.py`) |
+| **CT4** | ML-guided "data DNA" telemetry loop (thermal/voltage → exec mgmt) | oracle done (`bcir/telemetry.py`, `bcir/kbcir/calibrate.py`); law: `bcir.trace.data_dna` |
+| **CT5** | AOT + JIT backends per target (WASM-like agnosticism) | oracle done — AOT (clang) + JIT (`bcir/lower/jit.py`, lli) |
 
 ## CT1 — done (oracle) / authored (law)
 
@@ -48,22 +48,32 @@ artifacts can be shipped as data and loaded by a standard prebuilt engine. It is
 structural only (no `irdl.c_pred`, which would require compiled C++ and block
 runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
 
-## Forward tracks (CT2–CT5) and the M5+ transduction layer
+## CT2–CT5 — built in the oracle
 
-- **CT2** async dependency tokens (co-schedule U/UX/T with the GGG tail
-  decoupled), cache-unroll rewrites, thread→cache affinity (cache-thrash in the
-  `contention` dim).
-- **CT3** ROP & MAP front-ends → claims, reusing `bcir/verify` + GEM.
-- **CT4** "data DNA" telemetry schema (cycles/bytes/misses/thermal/**voltage**/
-  utilization + provenance), a pluggable ML cost-calibrator, adaptive policy;
-  Kafka is the transport (interface only now). Θ already carries a `voltage` axis.
-- **CT5** in-process JIT over the same StreamPack; per-target
-  `bcir.target.lower_contract`; ARM/RISC-V via clang cross-targets; GPU via a
-  PTX/`gpu`-dialect path once the MLIR C++ dialect library lands.
-- **M5 Event Transduction Layer** (next organ): `bcir.event.*`, `bcir.fsm.*`,
+- **CT2** `bcir/gem/concurrency.py`: the phase DAG becomes concurrent waves —
+  independent claims co-execute, conflicting claims serialize, the GGG/random tail
+  is decoupled so it never stalls the U/UX/T stream, and each wave's claims pin
+  round-robin to the target's affinity domains (oversubscription -> `contention`).
+- **CT3** `bcir/frontends/{rop,map}.py`: a registry-first declarative ROP front-end
+  and a terse MAP macro-assembly front-end, both parsing text -> verified BCIR
+  claims that feed K_BCIR/GEM (reusing `bcir/verify`).
+- **CT4** `bcir/telemetry.py` + `bcir/kbcir/calibrate.py`: the "data DNA" schema
+  (cycles/bytes/misses/thermal/**voltage**/utilization + provenance) over a
+  `TelemetrySink` (null/list/file; Kafka is the intended broker backend), an EWMA
+  cost-calibrator that folds telemetry back into Θ, an adaptive policy selector,
+  and a `rehydrate_decide` (keep/patch/repack/replan). Θ carries a `voltage` axis.
+- **CT5** `bcir/lower/jit.py`: in-process JIT over the *same* StreamPack lowering —
+  emit kernel + harness, compile to IR, `llvm-link`, run with `lli`. One portable
+  artifact, two backends (AOT clang + JIT lli).
+- **M5 Event Transduction Layer** (shipped earlier): `bcir.event.*`, `bcir.fsm.*`,
   `bcir.parse.*`, `bcir.binary.*` make text/binary/packet/telemetry ingestion all
-  instances of the same correspondence machinery — *parser generator = grammar →
-  event machine; GEM-E = event machine → streams → target*.
+  instances of the same correspondence machinery.
+
+### Still forward
+Per-target `bcir.target.lower_contract` codegen (ARM/RISC-V via clang
+cross-targets; GPU via a PTX/`gpu`-dialect path) once the compiled `bcir-opt` /
+MLIR C++ dialect library lands; a real ML calibrator behind the `EwmaCalibrator`
+interface; a Kafka `TelemetrySink` backend.
 
 ## Non-regression rules
 

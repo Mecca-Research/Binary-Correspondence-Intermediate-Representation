@@ -98,6 +98,7 @@ irdl.dialect @bcir {
   irdl.operation @"gem.block"
   irdl.operation @"gem.lane_segment"
   irdl.operation @"trace.note"
+  irdl.operation @"trace.data_dna"
 
   // ---- M5: Event Transduction Layer (structural; loose by design) ----
   irdl.operation @"event.stream"

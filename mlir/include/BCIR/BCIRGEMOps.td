@@ -38,7 +38,10 @@ def BCIR_GEMLaneSegmentOp : BCIR_Op<"gem.lane_segment", [Symbol]> {
     BCIR_LaneAttr:$lane, DefaultValuedAttr<I32Attr, "1">:$stride_k, I32Attr:$width,
     StrAttr:$opcode, FlatSymbolRefArrayAttr:$reads, FlatSymbolRefArrayAttr:$writes,
     OptionalAttr<FlatSymbolRefAttr>:$prefetch,
-    FlatSymbolRefArrayAttr:$fence_before, FlatSymbolRefArrayAttr:$fence_after);
+    FlatSymbolRefArrayAttr:$fence_before, FlatSymbolRefArrayAttr:$fence_after,
+    // CT2: thread->cache affinity domain (-1 = unpinned) and cache-unroll factor.
+    DefaultValuedAttr<I32Attr, "-1">:$affinity,
+    DefaultValuedAttr<I32Attr, "1">:$unroll);
   let assemblyFormat = "$sym_name attr-dict";
 }
 
