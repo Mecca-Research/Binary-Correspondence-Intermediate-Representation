@@ -1,5 +1,6 @@
-"""GEM: hydrate a selected K_BCIR plan into a verified StreamPack (BCIR-4)."""
+"""GEM (BCIR-4): hydrate a selected K_BCIR plan into a StreamPack, then execute it."""
 
+from .execute import ExecResult, PhaseStat, execute
 from .streampack import (
     Block,
     LaneSegment,
@@ -9,4 +10,7 @@ from .streampack import (
     hydrate,
 )
 
-__all__ = ["Block", "LaneSegment", "Prefetch", "StreamPack", "TraceNote", "hydrate"]
+__all__ = [
+    "Block", "LaneSegment", "Prefetch", "StreamPack", "TraceNote", "hydrate",
+    "ExecResult", "PhaseStat", "execute",
+]

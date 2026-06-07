@@ -6,11 +6,17 @@ TableGen/ODS per [`../docs/BCIR_LANGREF.md`](../docs/BCIR_LANGREF.md), plus a pu
 executable conformance oracle that must agree with these definitions
 ([`../docs/PARITY.md`](../docs/PARITY.md)).
 
-> **Not built in this milestone.** This host has `clang` only — no `mlir-tblgen`,
-> MLIR/LLVM dev libs, or a configured `MLIR_DIR`/`LLVM_DIR`. The `.td` and `.mlir`
-> files are authored v0.x specs and have **not** been tblgen/`mlir-opt`-validated
-> here. Validate them with `tools/wsl/tblgen_check.sh` (ODS → C++) and the IRDL
-> probe in `tools/irdl/`.
+> **Validated on LLVM 18** (`mlir-opt`/`mlir-tblgen` 18.1.3), and gated in CI
+> (job `mlir-rail-validate`):
+> - **ODS rail** — every TableGen generator (decls **and** defs) passes for the
+>   whole `.td` family: `tools/wsl/tblgen_check.sh`.
+> - **IRDL rail** — the projection loads into stock `mlir-opt` and the
+>   generic-syntax corpus in `test/irdl/` round-trips (28 `// CHECK:` assertions):
+>   `tools/irdl/check_corpus.sh`.
+>
+> Still pending: the compiled `bcir-opt` tool + `lib/*.cpp` (LangRef Milestone 3),
+> which is what would parse the *pretty* ODS examples in `examples/` (those use
+> custom assembly syntax `#bcir.lane<u>` etc. that only the built dialect accepts).
 
 ## Dual rail
 
@@ -38,6 +44,10 @@ Track B (IRDL):  irdl/bcir.irdl.mlir -> stock mlir-opt --irdl-file=...
 | `include/BCIR/BCIRVerifyOps.td` | M1 | `verify.*` (R1–R12 as IR) |
 | `include/BCIR/BCIROptOps.td` | M2 | `opt.*` (rewrite/layout/mem laws as IR) |
 | `include/BCIR/BCIRLoweringContractOps.td` | M3 | `isa.*` / `packet.*` / `target.lower_contract` |
+| `include/BCIR/BCIREventOps.td` | M5 | `event.stream/kind/emit/consume` |
+| `include/BCIR/BCIRTransducerOps.td` | M5 | `fsm.machine/state/transition/stack/capture/reduce` |
+| `include/BCIR/BCIRParseOps.td` | M5 | `parse.grammar/token/rule/lower_to_fsm` |
+| `include/BCIR/BCIRBinaryFormatOps.td` | M5 | `binary.format/field/record/decode` |
 | `include/BCIR/BCIROps.td` | — | umbrella (op-gen entry point) |
 | `passes/GEMPasses.td` | — | `-bcir-classify-lanes`, `-bcir-select-realization`, `-bcir-batch`, `-bcir-schedule`, `-bcir-lower-to-llvm` |
 
