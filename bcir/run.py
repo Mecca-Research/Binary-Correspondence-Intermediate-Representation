@@ -1,0 +1,76 @@
+"""BCIR oracle CLI.
+
+    python -m bcir.run vector_add --target nvidia_ptx --theta cool
+    python -m bcir.run vector_add --target x86_avx512 --run      # compile+run via clang
+    python -m bcir.run vector_add --emit-llvm
+
+Prints the K_BCIR plan (per-claim selected realization + score) for a program on
+a given target under a given runtime state Theta.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
+from .examples import PROGRAMS
+from .gem import hydrate
+from .kbcir import TARGETS, optimize
+from .kbcir.cost import Theta
+from .kbcir.weights import POLICIES, PERF
+from .verify import verify
+
+_THETAS = {"cool": Theta.cool(), "hot": Theta.hot(), "mem_bound": Theta.mem_bound()}
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(prog="bcir.run", description="BCIR K_BCIR oracle")
+    p.add_argument("program", nargs="?", default="vector_add", choices=sorted(PROGRAMS))
+    p.add_argument("--target", default="x86_avx512", choices=sorted(TARGETS))
+    p.add_argument("--theta", default="cool", choices=sorted(_THETAS))
+    p.add_argument("--policy", default="latency", choices=sorted(POLICIES))
+    p.add_argument("--emit-llvm", action="store_true", help="print the lowered LLVM IR")
+    p.add_argument("--run", action="store_true", help="compile+run the lowering via clang")
+    args = p.parse_args(argv)
+
+    module = PROGRAMS[args.program]()
+    h = TARGETS[args.target]
+    theta = _THETAS[args.theta]
+    policy = POLICIES.get(args.policy, PERF)
+
+    diags = verify(module)
+    if diags:
+        print(f"[verify] {len(diags)} diagnostic(s):")
+        for d in diags:
+            print(f"  {d.law}: {d.message}")
+
+    result = optimize(module, h, theta, policy)
+    print(f"program={args.program} target={h.name} theta={args.theta} policy={policy.name}")
+    print(f"K_BCIR score = {result.score}")
+    for step in result.steps:
+        c = step.candidate
+        print(f"  claim {step.claim_id} phase {step.phase_id}: "
+              f"lane={c.lane.name} width={c.width} realization={c.name} cost={step.cost}")
+
+    pack = hydrate(module, result)
+    print(f"StreamPack: {len(pack.segments)} segment(s), "
+          f"map_gen={pack.map_gen} data_gen={pack.data_gen} provenance_ok={pack.provenance_ok()}")
+
+    if args.emit_llvm or args.run:
+        from .lower import compile_and_run, emit_kernel_ll
+        try:
+            if args.emit_llvm:
+                print("\n; ---- lowered LLVM IR ----")
+                print(emit_kernel_ll(module, result, fn_name="bcir_kernel"))
+            if args.run:
+                ok, out = compile_and_run(module, result, fn_name="bcir_kernel")
+                print(f"[run] clang build+run {'OK' if ok else 'FAILED'}: {out.strip()}")
+                if not ok:
+                    return 1
+        except NotImplementedError as exc:
+            print(f"[lower] {exc}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
