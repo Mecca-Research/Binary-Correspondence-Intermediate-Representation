@@ -6,11 +6,17 @@ TableGen/ODS per [`../docs/BCIR_LANGREF.md`](../docs/BCIR_LANGREF.md), plus a pu
 executable conformance oracle that must agree with these definitions
 ([`../docs/PARITY.md`](../docs/PARITY.md)).
 
-> **Not built in this milestone.** This host has `clang` only — no `mlir-tblgen`,
-> MLIR/LLVM dev libs, or a configured `MLIR_DIR`/`LLVM_DIR`. The `.td` and `.mlir`
-> files are authored v0.x specs and have **not** been tblgen/`mlir-opt`-validated
-> here. Validate them with `tools/wsl/tblgen_check.sh` (ODS → C++) and the IRDL
-> probe in `tools/irdl/`.
+> **Validated on LLVM 18** (`mlir-opt`/`mlir-tblgen` 18.1.3), and gated in CI
+> (job `mlir-rail-validate`):
+> - **ODS rail** — every TableGen generator (decls **and** defs) passes for the
+>   whole `.td` family: `tools/wsl/tblgen_check.sh`.
+> - **IRDL rail** — the projection loads into stock `mlir-opt` and the
+>   generic-syntax corpus in `test/irdl/` round-trips (28 `// CHECK:` assertions):
+>   `tools/irdl/check_corpus.sh`.
+>
+> Still pending: the compiled `bcir-opt` tool + `lib/*.cpp` (LangRef Milestone 3),
+> which is what would parse the *pretty* ODS examples in `examples/` (those use
+> custom assembly syntax `#bcir.lane<u>` etc. that only the built dialect accepts).
 
 ## Dual rail
 

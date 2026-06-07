@@ -26,14 +26,14 @@ def BCIR_Dialect : Dialect {
 class BCIR_Op<string mnemonic, list<Trait> traits = []>
     : Op<BCIR_Dialect, mnemonic, traits>;
 
-class BCIR_Type<string name, string mnemonic, list<Trait> traits = []>
+class BCIR_Type<string name, string typeMnemonic, list<Trait> traits = []>
     : TypeDef<BCIR_Dialect, name, traits> {
-  let mnemonic = mnemonic;
+  let mnemonic = typeMnemonic;
 }
 
-class BCIR_Attr<string name, string mnemonic, list<Trait> traits = []>
+class BCIR_Attr<string name, string attrMnemonic, list<Trait> traits = []>
     : AttrDef<BCIR_Dialect, name, traits> {
-  let mnemonic = mnemonic;
+  let mnemonic = attrMnemonic;
 }
 
 #endif // BCIR_DIALECT

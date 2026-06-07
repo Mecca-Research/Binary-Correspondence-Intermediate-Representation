@@ -128,9 +128,10 @@ The repo now holds two parallel realizations of BCIR:
 **Fold plan (non-destructive, staged):**
 1. *Now (this PR):* declare the canonical stack; mark `ir/` legacy; do not delete
    it (it is CMake-wired and a hard delete is irreversible here).
-2. *Next:* port any still-unique `ir/` semantics (e.g. the GEM threaded executor
-   in `ir/runtime/`) into the `bcir/` oracle or a C++ engine bound to it, with
-   parity tests.
+2. *In progress:* port any still-unique `ir/` semantics into the `bcir/` oracle.
+   The deterministic phase-sliced GEM executor from `ir/runtime/` is ported to
+   `bcir/gem/execute.py` (topological phase order, ascending-id dispatch within a
+   phase, per-phase telemetry) with parity tests.
 3. *Then:* retire `ir/surface` + `ir/llvm` (their roles are subsumed by
    `bcir/etl` + `bcir/lower` and the `mlir/` law), updating `tools/` and `tests/`.
 4. *Finally:* collapse to a single tree once parity is proven.

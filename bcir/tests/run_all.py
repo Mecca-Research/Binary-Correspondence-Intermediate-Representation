@@ -18,6 +18,7 @@ _MODULES = [
     "bcir.tests.test_targets",
     "bcir.tests.test_verify",
     "bcir.tests.test_etl",
+    "bcir.tests.test_gem",
     "bcir.tests.test_lowering",
 ]
 
