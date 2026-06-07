@@ -5,6 +5,20 @@ runtime code, design notes, and agent-readable examples side by side, so new
 contributions should make it obvious which files are runnable, which files are
 expected failures, and which files are documentation-only.
 
+## Repository layout
+
+This repo holds two separate things; keep contributions on the right side of
+the line (see [`AGENTS.md`](AGENTS.md) and
+[`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md)):
+
+- **`ir/`** — the BCIR IR itself, by pipeline section: `surface/` (parser +
+  verifier), `core/` (typed model), `irdl/` (pure-IR dialect projection, no
+  compilation), `mlir/` (compiled dialect + conversion, opt-in), `llvm/` (LLVM
+  emission), `runtime/` (GEM engine). `tools/` and `tests/` consume these.
+- **`llvm-training/`** — a separate LLVM/MLIR training corpus for agents. It is
+  not part of the IR and the IR does not depend on it. The naming conventions
+  below are about this corpus.
+
 ## Documentation and example naming conventions
 
 Use filenames as part of the contract with readers and verification scripts.

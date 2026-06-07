@@ -11,14 +11,16 @@ target_compile_definitions(bcir-extended-tests PRIVATE BCIR_SOURCE_DIR="${CMAKE_
 
 target_link_libraries(bcir-tests
   PRIVATE
-    bcir-dialect
-    bcir-lowering
+    bcir-surface
+    bcir-core
+    bcir-llvm
     gem-runtime)
 
 target_link_libraries(bcir-extended-tests
   PRIVATE
-    bcir-dialect
-    bcir-lowering
+    bcir-surface
+    bcir-core
+    bcir-llvm
     gem-runtime)
 
 add_test(NAME bcir-component-smoke COMMAND bcir-tests)

@@ -2,7 +2,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "bcir/dialect.hpp"
+#include "bcir/surface.hpp"
 #include "bcir/lowering.hpp"
 #include "bcir/runtime.hpp"
 

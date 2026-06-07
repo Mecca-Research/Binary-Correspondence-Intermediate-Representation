@@ -29,8 +29,8 @@ North-star rule:
 - Update `README.md` to describe BCIR as canonical IR and summarize the 5-layer lowering path.
 - Link to:
   - `docs/BCIR_Codex_Blueprint.md`
-  - `docs_BCIR_LLVM_IR.md`
-  - `include/bcir/bcir_ir.hpp`
+  - `docs/BCIR_LLVM_IR.md`
+  - `ir/core/include/bcir/bcir_ir.hpp`
 
 ### Task 1.3: Publish semantic invariants
 - Document lane semantics (`U, UX, T, GGG, A, H`).
@@ -44,7 +44,7 @@ North-star rule:
 ## Stage 2 — Core C++ Model (`bcir.core`)
 
 ### Task 2.1: Expand core IR header
-Update `include/bcir/bcir_ir.hpp` with:
+Update `ir/core/include/bcir/bcir_ir.hpp` with:
 - `BcirLane`
 - `BcirEdgeKind`
 - `BcirHazardKind`

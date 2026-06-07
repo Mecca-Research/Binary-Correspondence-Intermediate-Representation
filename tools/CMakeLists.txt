@@ -5,8 +5,8 @@ add_executable(BCIR::bcir-tools ALIAS bcir-tools)
 target_compile_features(bcir-tools PRIVATE cxx_std_17)
 target_link_libraries(bcir-tools
   PRIVATE
-    bcir-dialect
-    bcir-lowering
+    bcir-surface
+    bcir-llvm
     gem-runtime)
 
 install(TARGETS bcir-tools

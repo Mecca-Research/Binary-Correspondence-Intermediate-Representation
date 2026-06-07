@@ -13,7 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "bcir/dialect.hpp"
+#include "bcir/surface.hpp"
 #include "bcir/lowering.hpp"
 #include "bcir/runtime.hpp"
 #include "bcir/bcir_llvm_ir.hpp"
@@ -365,7 +365,7 @@ bool test_llvm_abi_reference_module() {
     return false;
   }
   if (module.find("%bcir.execctx = type { ptr, i32, i32, i32, i64, ptr }") == std::string::npos) {
-    std::cerr << "llvm abi: execctx layout drifted from runtime/llvm contract" << std::endl;
+    std::cerr << "llvm abi: execctx layout drifted from ir/llvm ABI substrate contract" << std::endl;
     return false;
   }
   if (module.find("@bcir.op.phase.enter") == std::string::npos ||
