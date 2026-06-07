@@ -28,4 +28,10 @@ include "BCIR/BCIRVerifyOps.td"
 include "BCIR/BCIROptOps.td"
 include "BCIR/BCIRLoweringContractOps.td"
 
+// M5 Event Transduction Layer (GEM-E): the mouth of BCIR.
+include "BCIR/BCIREventOps.td"
+include "BCIR/BCIRTransducerOps.td"
+include "BCIR/BCIRParseOps.td"
+include "BCIR/BCIRBinaryFormatOps.td"
+
 #endif // BCIR_OPS

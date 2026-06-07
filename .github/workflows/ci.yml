@@ -53,6 +53,9 @@ jobs:
       - name: Full test suite
         run: ctest --test-dir build --output-on-failure
 
+      - name: BCIR oracle (Python conformance tests)
+        run: python3 -m bcir.tests.run_all
+
       - name: LLVM training examples and invalid-example tripwire
         run: |
           if command -v llvm-as >/dev/null && command -v opt >/dev/null; then

@@ -108,4 +108,36 @@ irdl.dialect @bcir {
   irdl.operation @"gem.block"
   irdl.operation @"gem.lane_segment"
   irdl.operation @"trace.note"
+
+  // ---- M5: Event Transduction Layer (structural; loose by design) ----
+  irdl.operation @"event.stream"
+  irdl.operation @"event.kind"
+  irdl.operation @"event.emit"
+  irdl.operation @"event.consume"
+
+  irdl.operation @"fsm.machine" {
+    %body = irdl.region
+    irdl.regions(body: %body)
+  }
+  irdl.operation @"fsm.state"
+  irdl.operation @"fsm.transition"
+  irdl.operation @"fsm.stack"
+  irdl.operation @"fsm.capture"
+  irdl.operation @"fsm.reduce"
+
+  irdl.operation @"parse.grammar" {
+    %body = irdl.region
+    irdl.regions(body: %body)
+  }
+  irdl.operation @"parse.token"
+  irdl.operation @"parse.rule"
+  irdl.operation @"parse.lower_to_fsm"
+
+  irdl.operation @"binary.format" {
+    %body = irdl.region
+    irdl.regions(body: %body)
+  }
+  irdl.operation @"binary.field"
+  irdl.operation @"binary.record"
+  irdl.operation @"binary.decode"
 }

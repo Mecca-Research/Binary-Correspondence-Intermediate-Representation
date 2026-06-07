@@ -105,4 +105,36 @@ ctest --test-dir build --output-on-failure
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBCIR_ENABLE_MLIR=ON
 
 # IRDL round-trip test runs automatically when mlir-opt is on PATH.
+
+# BCIR oracle (Python; no third-party deps, also a CI gate):
+python3 -m bcir.tests.run_all
 ```
+
+## Two BCIR realizations — canonical vs legacy (decision)
+
+The repo now holds two parallel realizations of BCIR:
+
+- **`bcir/` (oracle) + `mlir/` (law) — the canonical "BCIR Stack v0.2."** This is
+  the IR-first system from the engineering notes: a runnable Python conformance
+  oracle that realizes the full `K_BCIR(G|H,Θ)` optimizer, GEM hydration, LLVM
+  lowering (clang-verified), the R1–R12 verifier subset, and the M5 event
+  transduction layer — paired with the MLIR dialect family as the authored law
+  and an IRDL portability projection. It is the source of truth going forward
+  (`docs/BCIR_LANGREF.md`, `docs/PARITY.md`).
+- **`ir/` — the legacy C++ skeleton.** The earlier surface-parser/verifier +
+  textual-emitter milestone. Retained for reference and because it still owns the
+  installable CMake targets; **superseded** by the stack above for new work.
+
+**Fold plan (non-destructive, staged):**
+1. *Now (this PR):* declare the canonical stack; mark `ir/` legacy; do not delete
+   it (it is CMake-wired and a hard delete is irreversible here).
+2. *Next:* port any still-unique `ir/` semantics (e.g. the GEM threaded executor
+   in `ir/runtime/`) into the `bcir/` oracle or a C++ engine bound to it, with
+   parity tests.
+3. *Then:* retire `ir/surface` + `ir/llvm` (their roles are subsumed by
+   `bcir/etl` + `bcir/lower` and the `mlir/` law), updating `tools/` and `tests/`.
+4. *Finally:* collapse to a single tree once parity is proven.
+
+Until step 4, **do not** wire `bcir/`/`mlir/` into the C++ CMake build or vice
+versa; they stay independently buildable (the oracle needs only `python3`, the
+law needs an MLIR toolchain).
