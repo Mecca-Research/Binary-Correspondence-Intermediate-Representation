@@ -30,7 +30,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--theta", default="cool", choices=sorted(_THETAS))
     p.add_argument("--policy", default="latency", choices=sorted(POLICIES))
     p.add_argument("--emit-llvm", action="store_true", help="print the lowered LLVM IR")
-    p.add_argument("--run", action="store_true", help="compile+run the lowering via clang")
+    p.add_argument("--run", action="store_true", help="compile+run the lowering via clang (AOT)")
+    p.add_argument("--jit", action="store_true", help="JIT-run the lowering via lli (in-process)")
+    p.add_argument("--schedule", action="store_true", help="print the CT2 concurrent wave schedule")
     args = p.parse_args(argv)
 
     module = PROGRAMS[args.program]()
@@ -56,8 +58,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"StreamPack: {len(pack.segments)} segment(s), "
           f"map_gen={pack.map_gen} data_gen={pack.data_gen} provenance_ok={pack.provenance_ok()}")
 
-    if args.emit_llvm or args.run:
-        from .lower import compile_and_run, emit_kernel_ll
+    if args.schedule:
+        from .gem import schedule_concurrent
+        sc = schedule_concurrent(module, h)
+        print(f"[ct2] concurrent: {len(sc.waves)} wave(s) max_parallelism={sc.max_parallelism()} "
+              f"ggg_tail={sc.ggg_tail} contention={sc.contention} affinity={sc.affinity}")
+
+    if args.emit_llvm or args.run or args.jit:
+        from .lower import compile_and_run, emit_kernel_ll, jit_run
         try:
             if args.emit_llvm:
                 print("\n; ---- lowered LLVM IR ----")
@@ -65,6 +73,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.run:
                 ok, out = compile_and_run(module, result, fn_name="bcir_kernel")
                 print(f"[run] clang build+run {'OK' if ok else 'FAILED'}: {out.strip()}")
+                if not ok:
+                    return 1
+            if args.jit:
+                ok, out = jit_run(module, result, fn_name="bcir_kernel")
+                print(f"[jit] lli run {'OK' if ok else 'FAILED'}: {out.strip()}")
                 if not ok:
                     return 1
         except NotImplementedError as exc:
