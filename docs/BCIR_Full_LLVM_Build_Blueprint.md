@@ -25,11 +25,11 @@ P12 Optional BDI-K autotuning
 - Maintain `docs/REPO_CURRENT_STATE_AUDIT.md`.
 
 ### Stage 1 — Expand `bcir.core`
-- Expand `include/bcir/bcir_ir.hpp` with typed opcode/lifetime/address-space/type/registry/theta/graph models.
+- Expand `ir/core/include/bcir/bcir_ir.hpp` with typed opcode/lifetime/address-space/type/registry/theta/graph models.
 - Keep `BcirClaimV1` 64-byte invariant.
 
 ### Stage 2 — Surface AST -> Core graph builder
-- Add `include/bcir/core_builder.hpp` and `runtime/src/core_builder.cpp`.
+- Add `ir/core/include/bcir/core_builder.hpp` and `ir/core/src/core_builder.cpp`.
 - Convert parsed AST into typed `BcirGraph`.
 - Emit DataFlow/ControlFlow/HazardOrder/PhaseOrder edges.
 
@@ -48,7 +48,7 @@ P12 Optional BDI-K autotuning
 - Deterministic sort key: epoch, phase, lane, opcode, hazardDomain, nodeId.
 
 ### Stage 7 — Textual LLVM emitter
-- Add `include/bcir/llvm_emit.hpp` and `runtime/src/llvm_emit.cpp`.
+- Add `ir/llvm/include/bcir/llvm_emit.hpp` and `ir/llvm/src/llvm_emit.cpp`.
 - Emit legal LLVM IR only (`load/store/add/...`, `atomicrmw`, `cmpxchg`, `fence`, runtime calls).
 
 ### Stage 8 — Metadata schema

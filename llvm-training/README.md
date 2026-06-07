@@ -1,5 +1,11 @@
 # llvm-training — Agent Context Repo for LLVM IR
 
+> **Scope:** this directory is a **training corpus**, not part of the BCIR IR.
+> The IR itself lives under [`../ir/`](../ir/). Nothing here is built into the
+> BCIR libraries, and the IR has no dependency on this corpus. See
+> [`../AGENTS.md`](../AGENTS.md) and
+> [`../docs/BCIR_Repo_Structure.md`](../docs/BCIR_Repo_Structure.md).
+
 A curated, agent-readable reference for LLVM IR. Designed to be cloned
 and read by an LLM coding agent (Claude, Codex, etc.) **before** taking on
 LLVM-related tasks, so the agent walks into the work with verified

@@ -1,31 +1,31 @@
 # Binary-Correspondence-Intermediate-Representation
 
-LLVM and MLIR project skeleton for BCIR with a CMake-based build, install/export rules, and C++ implementation.
+LLVM and MLIR project for BCIR with a CMake-based build, install/export rules,
+and C++ implementation.
+
+> **Two separate things live in this repo.** `ir/` **is** the BCIR intermediate
+> representation. `llvm-training/` is an LLVM/MLIR training corpus for agents and
+> is **not** part of the IR. See [`AGENTS.md`](AGENTS.md) and
+> [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Top-level layout
 
 ```
 .
-├── dialect/             bcir-dialect target (ROP/MAP IR + parser/printer + verifier)
-├── runtime/             bcir-lowering, gem-runtime, and LLVM runtime artifacts
-├── tools/               bcir-tools and helper CLIs
-├── include/             public headers installed for consumers
-├── tests/               bcir-tests plus CTest integration
-├── docs/                implementation blueprints and design notes
-└── llvm-training/       agent-readable LLVM IR curriculum and reference
-    ├── 00-foundations/  IR basics, SSA, IR vs assembly/other IRs
-    ├── 01-syntax/       modules, functions, basic blocks, instruction format
-    ├── 02-types/        primitive, composite, opaque, and pointer types
-    ├── 03-constants/    integer, floating-point, string, global/local constants
-    ├── 04-memory/       alloca, load/store, globals, address spaces
-    ├── 05-control-flow/ branches, switch, indirectbr
-    ├── 06-metadata/     metadata tags, debug info, profile/loop metadata
-    ├── 07-optimization/ pass model, analyses, transforms, optimization levels
-    ├── 08-pitfalls/     verifier and real-world IR failure modes
-    ├── 09-vectorization/ auto-vectorization and vector IR quick references
-    ├── 10-grammar/      Textmapper grammar and syntax notes
-    ├── 11-concurrency/  atomics, orderings, fences, volatile vs atomic
-    ├── 12-backend-jit/  codegen pipeline, TableGen, ORC/LLJIT
+├── ir/                  the BCIR IR itself
+│   ├── surface/         bcir-surface: tokenizer + parser + ROP/MAP verifier
+│   ├── core/            bcir-core: canonical typed graph model + surface→core builder
+│   ├── irdl/            pure-IR dialect projection (no compilation; mlir-opt round-trip)
+│   ├── mlir/            compiled MLIR dialect + conversion (opt-in: -DBCIR_ENABLE_MLIR=ON)
+│   ├── llvm/            bcir-llvm: legal LLVM IR emission + ABI substrate
+│   └── runtime/         gem-runtime: GEM execution engine
+├── tools/               bcir-tools CLI and helper assemblers (consume the IR)
+├── tests/               cross-cutting CTest integration tests
+├── docs/                blueprints, design notes, and the repo-structure decision
+└── llvm-training/       SEPARATE agent-readable LLVM/MLIR curriculum (not the IR)
+    ├── 00-foundations/ … 18-mlir-lowering-to-llvm/   chaptered lessons + examples
+    ├── bcir-mapping/    BCIR-concept → lowered LLVM IR examples
+    ├── exercises/       numbered prompt/solution exercises
     └── reference/       instruction quickref, intrinsics, glossary
 ```
 
@@ -71,9 +71,9 @@ Dialect verification includes explicit concurrent registry/atomic checks via the
 
 ## BCIR v1 formalization artifacts
 
-- `docs_BCIR_LLVM_IR.md` — formal BCIR graph spec, resolved lane/hazard/phase semantics,
+- `docs/BCIR_LLVM_IR.md` — formal BCIR graph spec, resolved lane/hazard/phase semantics,
   LLVM textual dialect mapping, K_BDI integration points, and migration plan.
-- `include/bcir/bcir_ir.hpp` — C++ data model for BCIR nodes/edges/cost tuples and a
+- `ir/core/include/bcir/bcir_ir.hpp` — C++ data model for BCIR nodes/edges/cost tuples and a
   fixed 64-byte `BcirClaimV1` binary schema compatible with cache-line scheduling.
 
 ## BCIR Codex blueprint

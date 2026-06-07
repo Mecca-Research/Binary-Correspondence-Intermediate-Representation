@@ -13,7 +13,9 @@
 2. MAP atomic operations are preserved across MAP lowering (not rewritten into pseudo-atomic load-op-store sequences).
 3. 64-byte claim schema (`BcirClaimV1`) exists with compile-time size assertion.
 4. Runtime includes phase/dependency execution and deterministic scheduling mode.
-5. LLVM reference substrate exists in `runtime/llvm/bcir_master_reference.ll`.
+5. LLVM emission lives in the `ir/llvm/` section (textual emitter + ABI
+   substrate). The earlier hand-written `runtime/llvm/*.ll` seed was removed in
+   the 2026-06-07 reorg (see note below).
 
 ## Confirmed limitations
 1. `bcir_ir.hpp` remains a minimal model and is not yet full canonical core graph model.
@@ -36,3 +38,11 @@ Implement next milestone in **pure textual LLVM IR backend mode**:
 Defer full MLIR dialect and BDI-K autotuning until semantics stabilize.
 
 - 2026-05-26: Added pure textual LLVM backend milestone scaffolding (core graph builder, registry/epoch/hazard verifiers, deterministic schedule, textual LLVM emitter, and pipeline test).
+- 2026-06-07: Reorganized the IR into `ir/{surface,core,irdl,mlir,llvm,runtime}`
+  and fenced off `llvm-training/` as a separate corpus. Renamed the C++
+  `dialect/` (a surface parser, not an MLIR dialect) to `ir/surface/`. Added
+  scaffolds for the IRDL projection (pure IR, no compilation) and the compiled
+  MLIR dialect (opt-in). Removed the basic hand-written `runtime/llvm/*.ll` seed,
+  its `validate_*.sh` scripts, and the Phase-4 assembler doc (they duplicated the
+  canonical `ir/core` model and carried `BcirClaimV1`/`BcirClaimV2` schema drift).
+  See `docs/BCIR_Repo_Structure.md`.

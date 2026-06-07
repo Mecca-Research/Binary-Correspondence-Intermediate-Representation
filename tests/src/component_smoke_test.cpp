@@ -5,7 +5,7 @@
 #include <atomic>
 #include <stdexcept>
 
-#include "bcir/dialect.hpp"
+#include "bcir/surface.hpp"
 #include "bcir/lowering.hpp"
 #include "bcir/runtime.hpp"
 

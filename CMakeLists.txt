@@ -14,12 +14,19 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(BCIR_BUILD_TESTS "Build BCIR test targets" ON)
 
-add_subdirectory(dialect)
-add_subdirectory(runtime)
+# Enable testing before subdirectories so sections (e.g. ir/irdl) can register
+# their own CTest cases.
+if(BCIR_BUILD_TESTS)
+  enable_testing()
+endif()
+
+# The BCIR IR itself (surface/core/irdl/mlir/llvm/runtime).
+add_subdirectory(ir)
+
+# CLIs that consume the IR libraries.
 add_subdirectory(tools)
 
 if(BCIR_BUILD_TESTS)
-  enable_testing()
   add_subdirectory(tests)
 endif()
 
