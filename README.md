@@ -12,22 +12,38 @@ and C++ implementation.
 
 ```
 .
-├── ir/                  the BCIR IR itself
+├── bcir/                BCIR + K_BCIR + GEM executable oracle (Python, runnable today)
+│   ├── model/           BCIR-0..2 semantic model (lanes, opcodes, resources, claims, phases)
+│   ├── kbcir/           K_BCIR (BCIR-3): cost algebra, target profiles, min-plus optimizer
+│   ├── gem/             GEM (BCIR-4): StreamPack hydration with provenance + generation tags
+│   ├── lower/           BCIR-5: legal LLVM IR emission that clang compiles + self-checks
+│   └── verify/          runnable subset of verifier laws R1–R12
+├── mlir/                BCIR dialect family (the IR law): TableGen/ODS + IRDL projection
+│   ├── include/BCIR/    *.td enums/types/attrs/ops (build pending an MLIR toolchain)
+│   ├── irdl/            pure-data IRDL projection for stock mlir-opt (portability rail)
+│   └── examples/, test/ canonical pretty IR + generic IRDL smoke
+├── ir/                  the earlier C++ IR skeleton
 │   ├── surface/         bcir-surface: tokenizer + parser + ROP/MAP verifier
 │   ├── core/            bcir-core: canonical typed graph model + surface→core builder
-│   ├── irdl/            pure-IR dialect projection (no compilation; mlir-opt round-trip)
-│   ├── mlir/            compiled MLIR dialect + conversion (opt-in: -DBCIR_ENABLE_MLIR=ON)
+│   ├── irdl/            pure-IR dialect projection scaffold (mlir-opt round-trip)
+│   ├── mlir/            compiled MLIR dialect scaffold (opt-in: -DBCIR_ENABLE_MLIR=ON)
 │   ├── llvm/            bcir-llvm: legal LLVM IR emission + ABI substrate
 │   └── runtime/         gem-runtime: GEM execution engine
-├── tools/               bcir-tools CLI and helper assemblers (consume the IR)
-├── tests/               cross-cutting CTest integration tests
-├── docs/                blueprints, design notes, and the repo-structure decision
+├── tools/               bcir-tools CLI, IRDL/tblgen probe scripts (consume the IR)
+├── tests/               cross-cutting CTest integration tests (C++)
+├── docs/                LangRef, Blueprint, PARITY, and the repo-structure decision
 └── llvm-training/       SEPARATE agent-readable LLVM/MLIR curriculum (not the IR)
     ├── 00-foundations/ … 18-mlir-lowering-to-llvm/   chaptered lessons + examples
     ├── bcir-mapping/    BCIR-concept → lowered LLVM IR examples
     ├── exercises/       numbered prompt/solution exercises
     └── reference/       instruction quickref, intrinsics, glossary
 ```
+
+> The `bcir/` oracle + `mlir/` law are the IR-first "BCIR Stack v0.2"
+> ([`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md)); the `bcir/` package is the
+> runnable conformance oracle for the `mlir/` dialect law
+> ([`docs/PARITY.md`](docs/PARITY.md)). The `ir/` tree is the earlier C++
+> skeleton; reconciling the two is tracked in `docs/BCIR_Repo_Structure.md`.
 
 ## Contributing
 
