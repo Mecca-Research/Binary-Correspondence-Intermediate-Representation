@@ -1,7 +1,6 @@
 # Binary-Correspondence-Intermediate-Representation
 
-LLVM and MLIR project for BCIR with a CMake-based build, install/export rules,
-and C++ implementation.
+LLVM and MLIR compiler project running a CMake-based build, install/export rules, with C++ Python implementations.
 
 > **Two separate things live in this repo.** `ir/` **is** the BCIR intermediate
 > representation. `llvm-training/` is an LLVM/MLIR training corpus for agents and
