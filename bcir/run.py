@@ -32,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--emit-llvm", action="store_true", help="print the lowered LLVM IR")
     p.add_argument("--run", action="store_true", help="compile+run the lowering via clang (AOT)")
     p.add_argument("--jit", action="store_true", help="JIT-run the lowering via lli (in-process)")
+    p.add_argument("--wasm", action="store_true", help="compile to WASM and run via node (self-checking)")
     p.add_argument("--schedule", action="store_true", help="print the CT2 concurrent wave schedule")
     args = p.parse_args(argv)
 
@@ -64,8 +65,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[ct2] concurrent: {len(sc.waves)} wave(s) max_parallelism={sc.max_parallelism()} "
               f"ggg_tail={sc.ggg_tail} contention={sc.contention} affinity={sc.affinity}")
 
-    if args.emit_llvm or args.run or args.jit:
-        from .lower import compile_and_run, emit_kernel_ll, jit_run
+    if args.emit_llvm or args.run or args.jit or args.wasm:
+        from .lower import compile_and_run, emit_kernel_ll, jit_run, run_wasm_node
         try:
             if args.emit_llvm:
                 print("\n; ---- lowered LLVM IR ----")
@@ -78,6 +79,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.jit:
                 ok, out = jit_run(module, result, fn_name="bcir_kernel")
                 print(f"[jit] lli run {'OK' if ok else 'FAILED'}: {out.strip()}")
+                if not ok:
+                    return 1
+            if args.wasm:
+                ok, out = run_wasm_node(module, result, fn_name="bcir_kernel")
+                print(f"[wasm] node run {'OK' if ok else 'FAILED'}: {out.strip()}")
                 if not ok:
                     return 1
         except NotImplementedError as exc:

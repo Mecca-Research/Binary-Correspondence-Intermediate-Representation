@@ -13,6 +13,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install lowering toolchain (clang/lld/llvm for AOT/JIT/WASM tests; node for WASM)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm nodejs
+
       - name: BCIR oracle (Python conformance tests)
         run: python3 -m bcir.tests.run_all
 
