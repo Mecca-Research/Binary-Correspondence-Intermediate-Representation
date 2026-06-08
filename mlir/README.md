@@ -16,6 +16,11 @@ executable conformance oracle that must agree with these definitions
 >   build the real dialect (`tools/wsl/build_mlir.sh`); the *pretty* ODS corpus in
 >   `examples/` parses/verifies + FileCheck-round-trips through it
 >   (`tools/wsl/check_ods_examples.sh`).
+> - **Phase-6 passes** — `lib/BCIRPasses.cpp` makes `bcir-opt` a real compiler, not
+>   just a parser: `-bcir-verify` (laws R1/R2/R4/R6), `-bcir-promote-lanes` (the
+>   GGG→UX opt-law), and `-convert-bcir-to-llvm` (TypeConverter + ConversionPatterns
+>   lowering compute/barrier to the LLVM dialect). Tests in `test/passes/`, gated
+>   by `tools/wsl/check_passes.sh`.
 
 ## Dual rail
 

@@ -68,6 +68,7 @@ add_custom_target(bcir_tablegen DEPENDS
 # --- dialect C++ library + bcir-opt (LangRef Milestone 3) ---
 add_mlir_dialect_library(MLIRBCIR
   lib/BCIRDialect.cpp
+  lib/BCIRPasses.cpp
   DEPENDS
     BCIRAttrsIncGen
     BCIRTypesIncGen
@@ -75,6 +76,11 @@ add_mlir_dialect_library(MLIRBCIR
   LINK_LIBS PUBLIC
     MLIRIR
     MLIRSupport
+    MLIRPass
+    MLIRTransformUtils
+    MLIRFuncDialect
+    MLIRLLVMDialect
+    MLIRLLVMCommonConversion
 )
 
 add_mlir_tool(bcir-opt tools/bcir-opt.cpp)
