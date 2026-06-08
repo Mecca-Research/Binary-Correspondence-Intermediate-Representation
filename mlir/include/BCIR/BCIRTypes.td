@@ -16,4 +16,8 @@ def BCIR_StreamType : BCIR_Type<"Stream", "stream"> {
   let summary = "GEM StreamPack handle";
 }
 
+def BCIR_TokenType : BCIR_Type<"Token", "token"> {
+  let summary = "An async dependency/completion token (CT2 concurrency)";
+}
+
 #endif // BCIR_TYPES
