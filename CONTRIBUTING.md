@@ -11,10 +11,10 @@ This repo holds two separate things; keep contributions on the right side of
 the line (see [`AGENTS.md`](AGENTS.md) and
 [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md)):
 
-- **`ir/`** — the BCIR IR itself, by pipeline section: `surface/` (parser +
-  verifier), `core/` (typed model), `irdl/` (pure-IR dialect projection, no
-  compilation), `mlir/` (compiled dialect + conversion, opt-in), `llvm/` (LLVM
-  emission), `runtime/` (GEM engine). `tools/` and `tests/` consume these.
+- **`bcir/`** — the executable conformance oracle (Python): the K_BCIR optimizer,
+  GEM, M5 transduction, ROP/MAP front-ends, lowering (AOT/JIT), telemetry, verifier.
+- **`mlir/`** — the IR law: the TableGen/ODS dialect family, the compiled
+  `bcir-opt`, and the IRDL projection. `tools/` holds the validation scripts.
 - **`llvm-training/`** — a separate LLVM/MLIR training corpus for agents. It is
   not part of the IR and the IR does not depend on it. The naming conventions
   below are about this corpus.
@@ -184,13 +184,17 @@ scripts over ad-hoc command loops. Execute scripts from the repository root.
 | Interpreter smoke coverage | `./llvm-training/tools/smoke-lli.sh` |
 | BOLT fixture changes | `./llvm-training/tools/smoke-bolt.sh` |
 
-For repository code changes outside the training corpus, also run the normal
-CMake build and tests when the required toolchain is available:
+For IR changes outside the training corpus, run the relevant gate:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-ctest --test-dir build --output-on-failure
+# bcir/ (the oracle) -- no third-party deps:
+python -m bcir.tests.run_all
+
+# mlir/ (the dialect law) -- needs libmlir-NN-dev + llvm-NN-dev:
+bash tools/wsl/tblgen_check.sh        # ODS generators
+bash tools/wsl/build_mlir.sh          # build bcir-opt
+bash tools/wsl/check_ods_examples.sh  # pretty ODS corpus via bcir-opt
+bash tools/irdl/check_corpus.sh       # IRDL projection on stock mlir-opt
 ```
 
 Some training scripts intentionally skip when optional tools such as `llvm-as`,

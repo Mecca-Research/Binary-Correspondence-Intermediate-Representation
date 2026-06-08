@@ -94,48 +94,53 @@ bcir.surface(text) ─► bcir.core(typed graph) ─┬─► ir/irdl  (pure-IR 
   corresponding CI steps. Rationale: basic, duplicated the canonical model, and
   carried schema drift. The forward LLVM path is `ir/llvm/` + `ir/mlir/`.
 
-## Build matrix
+## Build matrix (current — post-fold)
+
+> Note: the section-ownership table and migration notes **above** describe the
+> earlier PR #153 restructure (the `ir/` C++ tree, `cmake`/`ctest`,
+> `BCIR_ENABLE_MLIR`). That tree has since been retired — see "One tree" below.
+> The current build/validate entry points are:
 
 ```bash
-# Default: surface + core + llvm + runtime, plus tests. No MLIR toolchain needed.
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
-ctest --test-dir build --output-on-failure
-
-# With the compiled MLIR dialect (requires MLIR/LLVM dev libraries):
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBCIR_ENABLE_MLIR=ON
-
-# IRDL round-trip test runs automatically when mlir-opt is on PATH.
-
-# BCIR oracle (Python; no third-party deps, also a CI gate):
+# bcir/ -- the oracle (no third-party deps; CI job oracle-and-training):
 python3 -m bcir.tests.run_all
+
+# mlir/ -- the dialect law (needs libmlir-NN-dev + llvm-NN-dev; CI job mlir-rail-validate):
+bash tools/wsl/tblgen_check.sh        # ODS generators
+bash tools/wsl/build_mlir.sh          # build bcir-opt (LangRef M3)
+bash tools/wsl/check_ods_examples.sh  # pretty ODS corpus via bcir-opt
+bash tools/irdl/check_corpus.sh       # IRDL projection on stock mlir-opt
 ```
 
-## Two BCIR realizations — canonical vs legacy (decision)
+## One tree (the `ir/` fold is complete)
 
-The repo now holds two parallel realizations of BCIR:
+The repo is now a **single BCIR realization**:
 
-- **`bcir/` (oracle) + `mlir/` (law) — the canonical "BCIR Stack v0.2."** This is
-  the IR-first system from the engineering notes: a runnable Python conformance
-  oracle that realizes the full `K_BCIR(G|H,Θ)` optimizer, GEM hydration, LLVM
-  lowering (clang-verified), the R1–R12 verifier subset, and the M5 event
-  transduction layer — paired with the MLIR dialect family as the authored law
-  and an IRDL portability projection. It is the source of truth going forward
-  (`docs/BCIR_LANGREF.md`, `docs/PARITY.md`).
-- **`ir/` — the legacy C++ skeleton.** The earlier surface-parser/verifier +
-  textual-emitter milestone. Retained for reference and because it still owns the
-  installable CMake targets; **superseded** by the stack above for new work.
+- **`bcir/` (oracle) + `mlir/` (law).** A runnable Python conformance oracle that
+  realizes the full `K_BCIR(G|H,Θ)` optimizer, GEM hydration + execution, LLVM
+  lowering (clang AOT + lli JIT), the R1–R12 verifier subset, the M5 event
+  transduction layer, the ROP/MAP front-ends, and the CT1–CT5 tracks — paired with
+  the MLIR dialect family as the law: the TableGen/ODS ops, the **compiled
+  `bcir-opt`** that parses/verifies the pretty corpus, and the IRDL portability
+  projection (`docs/BCIR_LANGREF.md`, `docs/PARITY.md`).
 
-**Fold plan (non-destructive, staged):**
-1. *Now (this PR):* declare the canonical stack; mark `ir/` legacy; do not delete
-   it (it is CMake-wired and a hard delete is irreversible here).
-2. *In progress:* port any still-unique `ir/` semantics into the `bcir/` oracle.
-   The deterministic phase-sliced GEM executor from `ir/runtime/` is ported to
-   `bcir/gem/execute.py` (topological phase order, ascending-id dispatch within a
-   phase, per-phase telemetry) with parity tests.
-3. *Then:* retire `ir/surface` + `ir/llvm` (their roles are subsumed by
-   `bcir/etl` + `bcir/lower` and the `mlir/` law), updating `tools/` and `tests/`.
-4. *Finally:* collapse to a single tree once parity is proven.
+**The legacy C++ skeleton (`ir/`) has been retired.** The earlier
+surface-parser/verifier + textual-emitter + threaded-runtime milestone is gone:
+its semantics are subsumed by `bcir/` (parsing → `bcir/etl` + `bcir/frontends`;
+the typed model → `bcir/model` + `bcir/kbcir`; lowering → `bcir/lower`; the
+deterministic GEM executor → `bcir/gem/execute.py`) and the real C++ dialect is
+now `mlir/` (`bcir-opt`). Removed in the fold: `ir/`, the C++ CLI
+(`tools/bcir-tools`) + `tools/bcir-as`, the C++ `tests/` (ctest), the
+`cmake/BCIRConfig` package export, and the top-level `CMakeLists.txt`.
 
-Until step 4, **do not** wire `bcir/`/`mlir/` into the C++ CMake build or vice
-versa; they stay independently buildable (the oracle needs only `python3`, the
-law needs an MLIR toolchain).
+**Fold history (done):**
+1. Declared the canonical stack; marked `ir/` legacy.
+2. Ported the deterministic phase-sliced GEM executor into `bcir/gem/execute.py`
+   with parity tests.
+3. Built the compiled `bcir-opt` (LangRef M3) so the pretty ODS corpus validates,
+   then retired `ir/surface` + `ir/llvm` (and the rest of `ir/`).
+4. Collapsed to a single tree; rewired CI to `oracle-and-training` +
+   `mlir-rail-validate`.
+
+The two trees stay independently buildable: the oracle needs only `python3`; the
+law needs `libmlir-NN-dev` + `llvm-NN-dev` (`tools/wsl/build_mlir.sh`).
