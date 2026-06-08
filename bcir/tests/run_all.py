@@ -22,8 +22,11 @@ _MODULES = [
     "bcir.tests.test_concurrency",
     "bcir.tests.test_frontends",
     "bcir.tests.test_telemetry",
+    "bcir.tests.test_abi",
+    "bcir.tests.test_stackify",
     "bcir.tests.test_lowering",
     "bcir.tests.test_jit",
+    "bcir.tests.test_wasm",
 ]
 
 

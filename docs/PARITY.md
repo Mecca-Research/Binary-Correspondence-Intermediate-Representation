@@ -45,6 +45,9 @@ accuracy, contention, verification`.
 | ROP/MAP front-ends (CT3) | `frontends.{rop,map}` | `bcir.parse.*` / `bcir.binary.*` |
 | data-DNA telemetry (CT4) | `telemetry.DataDNA` + `kbcir.calibrate` | `bcir.trace.data_dna` |
 | JIT (CT5) | `lower.jit` (lli) | per-target `bcir.target.lower_contract` |
+| StreamPack ABI (Phase 7) | `abi.streampack_abi` (v1) | `runtime/c/bcir_streampack.h` |
+| WASM (Phase 7) | `lower.wasm` (clang→wasm + node) | per-target `bcir.target.lower_contract` |
+| stackify (Phase 7) | `lower.stackify` (→ wasm/jvm/cil) | foundation for `bcir.target.lower_contract` encoders |
 
 ## Worked-example parity
 

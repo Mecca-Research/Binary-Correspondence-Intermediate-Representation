@@ -14,7 +14,7 @@ that picks realizations is AI-guidable (CT4).
 | **CT2** | Mixed-stride concurrent graph exec + cache unroll + thread→cache affinity | oracle done (`bcir/gem/concurrency.py`); law: lane-segment `affinity`/`unroll` |
 | **CT3** | ROP & MAP performance paradigms (front-ends → claims) | oracle done (`bcir/frontends/{rop,map}.py`) |
 | **CT4** | ML-guided "data DNA" telemetry loop (thermal/voltage → exec mgmt) | oracle done (`bcir/telemetry.py`, `bcir/kbcir/calibrate.py`); law: `bcir.trace.data_dna` |
-| **CT5** | AOT + JIT backends per target (WASM-like agnosticism) | oracle done — AOT (clang) + JIT (`bcir/lower/jit.py`, lli) |
+| **CT5** | AOT + JIT + WASM backends per target (WASM-like agnosticism) | oracle done — AOT (clang) + JIT (lli) + **WASM** (`bcir/lower/wasm.py`, runs via node) |
 
 ## CT1 — done (oracle) / authored (law)
 
@@ -68,6 +68,17 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
 - **M5 Event Transduction Layer** (shipped earlier): `bcir.event.*`, `bcir.fsm.*`,
   `bcir.parse.*`, `bcir.binary.*` make text/binary/packet/telemetry ingestion all
   instances of the same correspondence machinery.
+
+### Phase 7 (done): portable artifact + WASM + stackify
+- **Frozen StreamPack binary ABI v1** (`bcir/abi/streampack_abi.py`,
+  `runtime/c/bcir_streampack.h`, `docs/BCIR_STREAMPACK_ABI.md`) — the portable
+  artifact, with a CRC trailer and a lossless round-trip.
+- **WASM** deployment via the LLVM path (`bcir/lower/wasm.py`): the K_BCIR-selected
+  kernel compiles to `.wasm` (`clang --target=wasm32` + wasm-ld) and **runs via
+  node**, self-checking — one artifact, a second portable backend.
+- **Generic stackify** (`bcir/lower/stackify.py`): register-form `Expr` →
+  postfix stack-op sequence → thin `to_wasm/to_jvm/to_cil` encoders — the shared
+  foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
 - **Compiled `bcir-opt`** (`mlir/lib/BCIRDialect.cpp` + `mlir/tools/bcir-opt.cpp`):
