@@ -96,12 +96,12 @@ Encoded via `bcir.isa.*` / `bcir.target.lower_contract`.
 ## 15. Milestone map
 
 1. LangRef v0.1 — this document. ✔
-2. Declarative dialect definitions — `mlir/include/BCIR/*.td`, `mlir/passes/*.td`. ◑ (authored; build pending toolchain)
-3. Verifier-first compiler (`bcir-verify-*`). ○
-4. Rewrite laws. ◑ (law-as-IR authored)
+2. Declarative dialect definitions — `mlir/include/BCIR/*.td`. ✔ (tblgen-validated; compiled `bcir-opt` parses + verifies the pretty corpus on LLVM 18)
+3. Verifier-first compiler. ◑ (MLIR-native `-bcir-verify`: R1/R2/R4/R6; remaining laws pending; full set in the `bcir/` oracle)
+4. Rewrite laws. ◑ (MLIR-native `-bcir-promote-lanes` (GGG→UX); the rest authored as `bcir.opt.*` IR + run in the oracle)
 5. K_BCIR planner — candidate-path/costvec/selected-path IR. ◑ (runnable in `bcir/`)
 6. GEM hydration — GraphPlan/LanePlan/StreamPack IR. ◑ (runnable in `bcir/`)
-7. LLVM as first backend. ◑ (oracle AOT path runs via clang)
+7. LLVM as first backend. ◑ (MLIR-native `-convert-bcir-to-llvm` lowers compute/barrier to the LLVM dialect; oracle AOT (clang) + JIT (lli))
 
 Until the MLIR toolchain exists on this host, the oracle (`bcir/`, runnable via
 `python -m bcir.run`) demonstrates Milestones 5–7 in miniature and is the

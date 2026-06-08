@@ -100,3 +100,6 @@ jobs:
 
       - name: Validate pretty ODS examples (bcir-opt + FileCheck)
         run: bash tools/wsl/check_ods_examples.sh
+
+      - name: Validate Phase-6 passes (verify / promote / lower)
+        run: bash tools/wsl/check_passes.sh
