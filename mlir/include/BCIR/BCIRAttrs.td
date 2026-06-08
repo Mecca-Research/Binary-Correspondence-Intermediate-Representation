@@ -90,6 +90,14 @@ def BCIR_Access : BCIR_Enum<"Access", "Resource addressing model", [
   I32EnumAttrCase<"Flat", 0, "flat">, I32EnumAttrCase<"HAM", 1, "ham">]>;
 def BCIR_AccessAttr : BCIR_EnumAttr<BCIR_Access, "access">;
 
+// --- Memory ordering (Phase 8): the BCIR -> LLVM atomic-ordering memory model ---
+// Values/mnemonics mirror LLVM's AtomicOrdering and bcir/lower/memory_model.py.
+def BCIR_MemOrdering : BCIR_Enum<"MemOrdering", "Memory ordering (maps to LLVM AtomicOrdering)", [
+  I32EnumAttrCase<"Unordered", 0, "unordered">, I32EnumAttrCase<"Monotonic", 1, "monotonic">,
+  I32EnumAttrCase<"Acquire", 2, "acquire">, I32EnumAttrCase<"Release", 3, "release">,
+  I32EnumAttrCase<"AcqRel", 4, "acq_rel">, I32EnumAttrCase<"SeqCst", 5, "seq_cst">]>;
+def BCIR_MemOrderingAttr : BCIR_EnumAttr<BCIR_MemOrdering, "mem_ordering">;
+
 // --- Precision contract ---
 def BCIR_PrecisionAttr : BCIR_Attr<"Precision", "precision"> {
   let summary = "Numerical precision and tolerance contract";

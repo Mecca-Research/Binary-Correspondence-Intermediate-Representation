@@ -52,6 +52,7 @@ Track B (IRDL):  irdl/bcir.irdl.mlir -> stock mlir-opt --irdl-file=...
 | `include/BCIR/BCIRTransducerOps.td` | M5 | `fsm.machine/state/transition/stack/capture/reduce` |
 | `include/BCIR/BCIRParseOps.td` | M5 | `parse.grammar/token/rule/lower_to_fsm` |
 | `include/BCIR/BCIRBinaryFormatOps.td` | M5 | `binary.format/field/record/decode` |
+| `include/BCIR/BCIRAsyncOps.td` | Phase 8 | `async.fork`/`async.await` (`!bcir.token`) |
 | `include/BCIR/BCIROps.td` | — | umbrella (op-gen entry point) |
 | `passes/GEMPasses.td` | — | `-bcir-classify-lanes`, `-bcir-select-realization`, `-bcir-batch`, `-bcir-schedule`, `-bcir-lower-to-llvm` |
 

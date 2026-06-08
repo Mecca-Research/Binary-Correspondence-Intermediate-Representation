@@ -160,4 +160,15 @@ irdl.dialect @bcir {
   irdl.operation @"isa.opcode"
   irdl.operation @"packet.format"
   irdl.operation @"target.lower_contract"
+
+  // ---- Phase 8: async dependency tokens ----
+  irdl.type @token
+  irdl.operation @"async.fork" {
+    %t = irdl.any
+    irdl.results(%t)
+  }
+  irdl.operation @"async.await" {
+    %t = irdl.any
+    irdl.operands(variadic %t)
+  }
 }

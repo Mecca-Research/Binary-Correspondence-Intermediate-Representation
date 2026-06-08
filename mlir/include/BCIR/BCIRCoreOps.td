@@ -116,7 +116,8 @@ def BCIR_ComputeOp : BCIR_Op<"compute", [Pure]> {
 
 def BCIR_BarrierOp : BCIR_Op<"barrier"> {
   let summary = "Memory or execution fence at a given scope (H lane)";
-  let arguments = (ins I32Attr:$scope);
+  // `ordering` (Phase 8 memory model) maps to the LLVM fence ordering; default seq_cst.
+  let arguments = (ins I32Attr:$scope, OptionalAttr<BCIR_MemOrderingAttr>:$ordering);
   let assemblyFormat = "$scope attr-dict";
 }
 

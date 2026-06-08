@@ -21,6 +21,9 @@ jobs:
       - name: BCIR oracle (Python conformance tests)
         run: python3 -m bcir.tests.run_all
 
+      - name: Freestanding C StreamPack runtime (no-libc + Python->C ABI parity)
+        run: bash tools/c/check_runtime.sh
+
       - name: LLVM training examples and invalid-example tripwire
         run: |
           if command -v llvm-as >/dev/null && command -v opt >/dev/null; then

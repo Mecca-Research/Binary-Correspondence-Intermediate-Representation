@@ -38,5 +38,15 @@ run_fc -bcir-promote-lanes "${T}/promote_lanes.mlir"
 echo "[passes] -convert-bcir-to-llvm"
 run_fc -convert-bcir-to-llvm "${T}/convert_to_llvm.mlir"
 
-[ "${fail}" -eq 0 ] && echo "[passes] all Phase-6 passes validate" || echo "[passes] FAILURES"
+echo "[passes] async tokens (parse/roundtrip)"
+if [ -n "${FC}" ]; then
+  "${BO}" "${T}/async_tokens.mlir" 2>/tmp/pe | "${FC}" "${T}/async_tokens.mlir" \
+    && echo "  PASS async_tokens.mlir" || { echo "  FAIL async_tokens.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" "${T}/async_tokens.mlir" >/dev/null 2>/tmp/pe && echo "  RUN-ONLY async_tokens.mlir" || { echo "  FAIL"; cat /tmp/pe; fail=1; }
+fi
+echo "[passes] memory ordering (barrier -> llvm.fence)"
+run_fc -convert-bcir-to-llvm "${T}/memory_ordering.mlir"
+
+[ "${fail}" -eq 0 ] && echo "[passes] all passes validate" || echo "[passes] FAILURES"
 exit "${fail}"

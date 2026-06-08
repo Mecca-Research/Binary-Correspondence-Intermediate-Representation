@@ -69,6 +69,20 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   `bcir.parse.*`, `bcir.binary.*` make text/binary/packet/telemetry ingestion all
   instances of the same correspondence machinery.
 
+### Phase 8 (done): runtime + concurrency + memory model
+- **Freestanding C StreamPack runtime** (`runtime/c/bcir_runtime.{h,c}`): loads the
+  frozen ABI with **no libc** (only `<stddef.h>`/`<stdint.h>`), bitwise CRC-32,
+  zero-copy segment walk. A cross-language parity test (Python encodes → C decodes)
+  gates the ABI (`tools/c/check_runtime.sh`).
+- **`!bcir.token` async model**: `bcir.async.fork` (launch a claim, yield a token)
+  + `bcir.async.await` (join) in the dialect + IRDL; `bcir/gem/async_tokens.py`
+  computes the explicit fork/await dependency plan (each claim awaits its earlier
+  conflicts; independent claims await nothing).
+- **Memory model (atomics → LLVM ordering)**: `BCIR_MemOrdering` enum + a barrier
+  `ordering` attr; `-convert-bcir-to-llvm` lowers `bcir.barrier {ordering}` to the
+  matching `llvm.fence`; `bcir/lower/memory_model.py` is the normative
+  hazard→ordering / ordering→LLVM map (clamped to the fence-legal set).
+
 ### Phase 7 (done): portable artifact + WASM + stackify
 - **Frozen StreamPack binary ABI v1** (`bcir/abi/streampack_abi.py`,
   `runtime/c/bcir_streampack.h`, `docs/BCIR_STREAMPACK_ABI.md`) — the portable

@@ -220,8 +220,19 @@ struct BarrierOpLowering : public OpConversionPattern<BarrierOp> {
   LogicalResult
   matchAndRewrite(BarrierOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    rewriter.replaceOpWithNewOp<LLVM::FenceOp>(op, LLVM::AtomicOrdering::seq_cst,
-                                               StringRef());
+    // Phase-8 memory model: the BCIR barrier ordering maps to the LLVM fence
+    // ordering (default seq_cst). Fences require >= acquire, so unordered/
+    // monotonic fall back to seq_cst.
+    LLVM::AtomicOrdering ord = LLVM::AtomicOrdering::seq_cst;
+    if (auto o = op.getOrdering()) {
+      switch (*o) {
+      case MemOrdering::Acquire: ord = LLVM::AtomicOrdering::acquire; break;
+      case MemOrdering::Release: ord = LLVM::AtomicOrdering::release; break;
+      case MemOrdering::AcqRel:  ord = LLVM::AtomicOrdering::acq_rel; break;
+      default:                   ord = LLVM::AtomicOrdering::seq_cst; break;
+      }
+    }
+    rewriter.replaceOpWithNewOp<LLVM::FenceOp>(op, ord, StringRef());
     return success();
   }
 };
