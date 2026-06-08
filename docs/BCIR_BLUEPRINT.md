@@ -69,6 +69,16 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   `bcir.parse.*`, `bcir.binary.*` make text/binary/packet/telemetry ingestion all
   instances of the same correspondence machinery.
 
+### Phase 9 (done): real per-target codegen
+- `bcir/codegen/`: BCIR → LLVM IR → real artifacts via `llc`. Seeded
+  `bcir.target.lower_contract` targets, each validated: **aarch64** (ARM) and
+  **riscv64** (cross-targets, ELF objects), **nvptx64** (GPU PTX asm), **bpf**
+  (eBPF — an integer-only scalar kernel, since eBPF has no FP), **x86_64**, and a
+  portable **C-source fallback** (compiles anywhere). SPIR-V is a registered
+  descriptor that reports cleanly when no SPIR-V backend is built into `llc`.
+- The float kernel emitter gained an `elem`/`width_override` so FP-less targets
+  (eBPF) get an integer scalar kernel. CLI: `python -m bcir.run vector_add --codegen all`.
+
 ### Phase 8 (done): runtime + concurrency + memory model
 - **Freestanding C StreamPack runtime** (`runtime/c/bcir_runtime.{h,c}`): loads the
   frozen ABI with **no libc** (only `<stddef.h>`/`<stdint.h>`), bitwise CRC-32,

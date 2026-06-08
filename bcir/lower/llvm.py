@@ -17,6 +17,7 @@ from ..model import Module, Opcode
 from ..kbcir.realize import Candidate, RealizationResult
 
 _FOP = {Opcode.ADD: ("fadd", "+"), Opcode.SUB: ("fsub", "-"), Opcode.MUL: ("fmul", "*")}
+_IOP = {Opcode.ADD: "add", Opcode.SUB: "sub", Opcode.MUL: "mul"}  # integer (e.g. eBPF)
 
 
 def _find_elementwise(module: Module, result: RealizationResult) -> tuple:
@@ -34,15 +35,24 @@ def _find_elementwise(module: Module, result: RealizationResult) -> tuple:
     )
 
 
-def emit_kernel_ll(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel") -> str:
+def emit_kernel_ll(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
+                   elem: str = "f32", width_override: int | None = None) -> str:
+    """Emit a legal LLVM IR kernel. `elem` is "f32" (float) or "i32" (integer, e.g.
+    for FP-less targets like eBPF); `width_override` forces a vector/scalar width."""
     claim, cand = _find_elementwise(module, result)
     n = max(1, claim.count)
-    w = cand.width if (cand.width >= 1 and n % cand.width == 0) else 1
-    op_ll, _ = _FOP[claim.opcode]
+    base_w = width_override if width_override else cand.width
+    w = base_w if (base_w >= 1 and n % base_w == 0) else 1
+    if elem == "i32":
+        ety = "i32"
+        op_ll = _IOP[claim.opcode]
+    else:
+        ety = "float"
+        op_ll = _FOP[claim.opcode][0]
 
     head = (
         f"; BCIR -> LLVM IR (legal-IR-only). op={claim.op or op_ll} "
-        f"lane={cand.lane.name} width={w} (K_BCIR-selected; candidate={cand.name})\n"
+        f"lane={cand.lane.name} width={w} elem={ety} (K_BCIR-selected; candidate={cand.name})\n"
         f"source_filename = \"bcir.{module.name}.ll\"\n\n"
     )
 
@@ -53,13 +63,13 @@ entry:
   br i1 %empty, label %exit, label %loop
 loop:
   %i = phi i64 [ 0, %entry ], [ %inext, %loop ]
-  %pa = getelementptr inbounds float, ptr %A, i64 %i
-  %pb = getelementptr inbounds float, ptr %B, i64 %i
-  %pc = getelementptr inbounds float, ptr %C, i64 %i
-  %a = load float, ptr %pa, align 4
-  %b = load float, ptr %pb, align 4
-  %c = {op_ll} float %a, %b
-  store float %c, ptr %pc, align 4
+  %pa = getelementptr inbounds {ety}, ptr %A, i64 %i
+  %pb = getelementptr inbounds {ety}, ptr %B, i64 %i
+  %pc = getelementptr inbounds {ety}, ptr %C, i64 %i
+  %a = load {ety}, ptr %pa, align 4
+  %b = load {ety}, ptr %pb, align 4
+  %c = {op_ll} {ety} %a, %b
+  store {ety} %c, ptr %pc, align 4
   %inext = add nuw nsw i64 %i, 1
   %done = icmp sge i64 %inext, %n
   br i1 %done, label %exit, label %loop
@@ -68,16 +78,16 @@ exit:
 }}
 """
     else:
-        vty = f"<{w} x float>"
+        vty = f"<{w} x {ety}>"
         body = f"""define void @{fn_name}(ptr noalias %A, ptr noalias %B, ptr noalias %C, i64 %n) {{
 entry:
   %empty = icmp sle i64 %n, 0
   br i1 %empty, label %exit, label %loop
 loop:
   %i = phi i64 [ 0, %entry ], [ %inext, %loop ]
-  %pa = getelementptr inbounds float, ptr %A, i64 %i
-  %pb = getelementptr inbounds float, ptr %B, i64 %i
-  %pc = getelementptr inbounds float, ptr %C, i64 %i
+  %pa = getelementptr inbounds {ety}, ptr %A, i64 %i
+  %pb = getelementptr inbounds {ety}, ptr %B, i64 %i
+  %pc = getelementptr inbounds {ety}, ptr %C, i64 %i
   %va = load {vty}, ptr %pa, align 4
   %vb = load {vty}, ptr %pb, align 4
   %vc = {op_ll} {vty} %va, %vb

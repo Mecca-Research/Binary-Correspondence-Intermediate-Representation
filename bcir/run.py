@@ -34,6 +34,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--jit", action="store_true", help="JIT-run the lowering via lli (in-process)")
     p.add_argument("--wasm", action="store_true", help="compile to WASM and run via node (self-checking)")
     p.add_argument("--schedule", action="store_true", help="print the CT2 concurrent wave schedule")
+    p.add_argument("--codegen", metavar="TARGET",
+                   help="per-target codegen via llc (aarch64|riscv64|nvptx64|bpf|x86_64|c|all)")
     args = p.parse_args(argv)
 
     module = PROGRAMS[args.program]()
@@ -88,6 +90,21 @@ def main(argv: list[str] | None = None) -> int:
                     return 1
         except NotImplementedError as exc:
             print(f"[lower] {exc}")
+
+    if args.codegen:
+        from .codegen import codegen, codegen_all, codegen_c
+        try:
+            if args.codegen == "all":
+                items = codegen_all(module, result).items()
+            elif args.codegen == "c":
+                items = [("c", codegen_c(module, result))]
+            else:
+                items = [(args.codegen, codegen(module, result, args.codegen))]
+            for name, r in items:
+                size = len(r.artifact) if isinstance(r.artifact, (bytes, str)) and r.artifact else 0
+                print(f"[codegen] {name}: {'OK' if r.ok else 'FAILED'} ({r.message[:60]}{' %dB' % size if size else ''})")
+        except NotImplementedError as exc:
+            print(f"[codegen] {exc}")
     return 0
 
 
