@@ -117,22 +117,29 @@ jobs:
         run: bash llvm-training/tools/smoke-bolt.sh
 
   mlir-rail-validate:
-    name: BCIR MLIR rail (tblgen + IRDL)
+    name: BCIR MLIR rail (tblgen + IRDL + bcir-opt)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install MLIR 18 toolchain
+      - name: Install MLIR 18 toolchain + dev libs
         run: |
           sudo apt-get update
-          sudo apt-get install -y mlir-18-tools libmlir-18-dev
+          sudo apt-get install -y mlir-18-tools libmlir-18-dev llvm-18-dev \
+            llvm-18-tools cmake ninja-build
 
       - name: Validate ODS dialect family (mlir-tblgen)
         run: bash tools/wsl/tblgen_check.sh
 
       - name: Validate IRDL projection round-trip (stock mlir-opt)
         run: bash tools/irdl/check_corpus.sh
+
+      - name: Build the compiled bcir-opt (LangRef M3)
+        run: bash tools/wsl/build_mlir.sh
+
+      - name: Validate pretty ODS examples (bcir-opt + FileCheck)
+        run: bash tools/wsl/check_ods_examples.sh
 
   llvm-training-optimization-smoke:
     name: LLVM training optimization smoke (${{ matrix.optimization }})
