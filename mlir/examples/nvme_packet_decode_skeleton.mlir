@@ -12,7 +12,7 @@ bcir.module @nvme_packet_decode_skeleton attributes {
 } {
   bcir.event.stream @nvme_bytes { kind = "binary", encoding = "le", element_bits = 8 : i64, max_window = 64 : i64 }
 
-  bcir.binary.format @nvme_cmd { endianness = "little", alignment_bits = 32 : i64 } {
+  bcir.binary.format @nvme_cmd attributes { endianness = "little", alignment_bits = 32 : i64 } {
     bcir.binary.field @opcode { name = "opcode", offset_bits = 0 : i64, width_bits = 8 : i64, kind = "u", semantic = "command_opcode" }
     bcir.binary.field @cid    { name = "command_id", offset_bits = 16 : i64, width_bits = 16 : i64, kind = "u", semantic = "queue_command_id" }
     bcir.binary.field @nsid   { name = "namespace_id", offset_bits = 32 : i64, width_bits = 32 : i64, kind = "u", semantic = "resource_namespace" }

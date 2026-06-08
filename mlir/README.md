@@ -6,17 +6,16 @@ TableGen/ODS per [`../docs/BCIR_LANGREF.md`](../docs/BCIR_LANGREF.md), plus a pu
 executable conformance oracle that must agree with these definitions
 ([`../docs/PARITY.md`](../docs/PARITY.md)).
 
-> **Validated on LLVM 18** (`mlir-opt`/`mlir-tblgen` 18.1.3), and gated in CI
-> (job `mlir-rail-validate`):
+> **Validated on LLVM 18** (`mlir-opt`/`mlir-tblgen`/`bcir-opt` 18.1.3), gated in
+> CI (job `mlir-rail-validate`):
 > - **ODS rail** — every TableGen generator (decls **and** defs) passes for the
 >   whole `.td` family: `tools/wsl/tblgen_check.sh`.
 > - **IRDL rail** — the projection loads into stock `mlir-opt` and the
->   generic-syntax corpus in `test/irdl/` round-trips (28 `// CHECK:` assertions):
->   `tools/irdl/check_corpus.sh`.
->
-> Still pending: the compiled `bcir-opt` tool + `lib/*.cpp` (LangRef Milestone 3),
-> which is what would parse the *pretty* ODS examples in `examples/` (those use
-> custom assembly syntax `#bcir.lane<u>` etc. that only the built dialect accepts).
+>   generic-syntax corpus in `test/irdl/` round-trips: `tools/irdl/check_corpus.sh`.
+> - **Compiled `bcir-opt` (LangRef M3)** — `lib/BCIRDialect.cpp` + `tools/bcir-opt.cpp`
+>   build the real dialect (`tools/wsl/build_mlir.sh`); the *pretty* ODS corpus in
+>   `examples/` parses/verifies + FileCheck-round-trips through it
+>   (`tools/wsl/check_ods_examples.sh`).
 
 ## Dual rail
 

@@ -51,6 +51,58 @@ class EwmaCalibrator:
         )
 
 
+class LinearCalibrator:
+    """An online linear model (SGD) that *learns* to predict thermal pressure from
+    telemetry features (utilization, voltage, misses) -- a real learning algorithm
+    behind the same calibrator interface as `EwmaCalibrator`, dependency-free.
+
+    Unlike the fixed EWMA, this fits weights from observed data: each `update`
+    `partial_fit`s the model on the batch, then projects Θ from the learned model.
+    A trained model generalizes (predicts thermal for unseen feature vectors).
+    """
+
+    NFEAT = 4  # utilization, voltage, misses, bias
+
+    def __init__(self, lr: float = 0.2):
+        self.lr = lr
+        self.w = [0.0] * self.NFEAT
+        self.steps = 0
+
+    @staticmethod
+    def _features(e: DataDNA) -> list[float]:
+        return [e.utilization / 100.0, e.voltage / 100.0, e.misses / 100.0, 1.0]
+
+    def predict(self, e: DataDNA) -> float:
+        """Predicted thermal pressure (0..100) for an event's features."""
+        return sum(wi * xi for wi, xi in zip(self.w, self._features(e))) * 100.0
+
+    def partial_fit(self, events: list[DataDNA]) -> None:
+        """One SGD pass over the batch, minimizing squared thermal-prediction error."""
+        for e in events:
+            x = self._features(e)
+            err = (self.predict(e) - e.thermal) / 100.0  # scaled residual
+            for i in range(self.NFEAT):
+                self.w[i] -= self.lr * err * x[i]
+            self.steps += 1
+
+    def update(self, theta: Theta, events: list[DataDNA]) -> Theta:
+        if not events:
+            return theta
+        self.partial_fit(events)
+        clamp = lambda v: max(0, min(100, int(round(v))))
+        pred = sum(self.predict(e) for e in events) / len(events)
+        return Theta(
+            thermal=clamp(pred),
+            power=theta.power,
+            mem_pressure=clamp(_avg(events, "misses")),
+            contention=theta.contention,
+            noise=theta.noise,
+            wear=theta.wear,
+            utilization=clamp(_avg(events, "utilization")),
+            voltage=clamp(_avg(events, "voltage")),
+        )
+
+
 def adaptive_policy(theta: Theta) -> Policy:
     """Pick a scalarization policy from the live runtime state."""
     if theta.thermal >= 60 or theta.power >= 60 or theta.voltage >= 60:

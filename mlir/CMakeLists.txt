@@ -61,16 +61,30 @@ set(LLVM_TARGET_DEFINITIONS passes/GEMPasses.td)
 mlir_tablegen(GEMPasses.h.inc -gen-pass-decls -name GEM)
 add_public_tablegen_target(GEMPassIncGen)
 
-# ODS -> C++ generation in one shot (this milestone's build gate).
+# ODS -> C++ generation in one shot.
 add_custom_target(bcir_tablegen DEPENDS
   BCIRAttrsIncGen BCIRTypesIncGen BCIRInterfacesIncGen BCIROpsIncGen GEMPassIncGen)
 
-# The dialect C++ library + bcir-opt tool are added once lib/*.cpp lands
-# (LangRef Milestone 3+). Kept commented so this file documents the target shape
-# without requiring source files that do not exist yet.
-#
-# add_mlir_dialect_library(MLIRBCIR lib/BCIRDialect.cpp
-#   DEPENDS BCIRAttrsIncGen BCIRTypesIncGen BCIRInterfacesIncGen BCIROpsIncGen
-#   LINK_LIBS PUBLIC MLIRIR MLIRSupport)
-# add_mlir_tool(bcir-opt tools/bcir-opt.cpp)
-# target_link_libraries(bcir-opt PRIVATE MLIRBCIR MLIROptLib MLIRParser MLIRFuncDialect)
+# --- dialect C++ library + bcir-opt (LangRef Milestone 3) ---
+add_mlir_dialect_library(MLIRBCIR
+  lib/BCIRDialect.cpp
+  DEPENDS
+    BCIRAttrsIncGen
+    BCIRTypesIncGen
+    BCIROpsIncGen
+  LINK_LIBS PUBLIC
+    MLIRIR
+    MLIRSupport
+)
+
+add_mlir_tool(bcir-opt tools/bcir-opt.cpp)
+llvm_update_compile_flags(bcir-opt)
+target_link_libraries(bcir-opt
+  PRIVATE
+    MLIRBCIR
+    MLIROptLib
+    MLIRParser
+    MLIRIR
+    MLIRSupport
+)
+mlir_check_all_link_libraries(bcir-opt)

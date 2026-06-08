@@ -10,14 +10,14 @@ bcir.module @rop_claim_parser_skeleton attributes {
 } {
   bcir.event.stream @source_text { kind = "text", encoding = "utf8", element_bits = 8 : i64, max_window = 8192 : i64 }
 
-  bcir.parse.grammar @rop_claim_grammar { syntax = "ebnf", start_symbol = "claim" } {
+  bcir.parse.grammar @rop_claim_grammar attributes { syntax = "ebnf", start_symbol = "claim" } {
     bcir.parse.token @IDENT { pattern = "[A-Za-z_][A-Za-z0-9_]*", skip = false, precedence = 0 : i32 }
     bcir.parse.token @INT   { pattern = "[0-9]+", skip = false, precedence = 0 : i32 }
     bcir.parse.token @WS    { pattern = "[ \\t\\r\\n]+", skip = true, precedence = 0 : i32 }
     bcir.parse.rule @claim_rule { lhs = "claim", rhs = ["claim", "IDENT", "{", "body", "}"], action = "emit_bcir_claim" }
   }
 
-  bcir.fsm.machine @rop_claim_machine { kind = "transducer", input_stream = @source_text, start_state = @s0 } {
+  bcir.fsm.machine @rop_claim_machine attributes { kind = "transducer", input_stream = @source_text, start_state = @s0 } {
     bcir.fsm.state @s0 { accepting = false, error = false }
     bcir.fsm.state @s_accept { accepting = true, error = false }
     bcir.fsm.transition @t_claim { from = @s0, to = @s_accept, on = "token.claim", guard = "next_token_is_IDENT", action = "capture_claim_name" }

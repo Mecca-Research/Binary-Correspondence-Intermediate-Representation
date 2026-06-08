@@ -37,7 +37,7 @@ bcir.module @full_vec_add_ct1 attributes {
 
   // ---- BCIR-0: phase DAG + semantic claim ----
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @add {
+  bcir.claim @add attributes {
     claim_id = 1000 : i32, phase = @p0, op = "vector.add",
     reads = [@A, @B], writes = [@C], offset = 0 : i64, count = 1024 : i64,
     lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
@@ -74,7 +74,7 @@ bcir.module @full_vec_add_ct1 attributes {
   }
 
   // ---- BCIR-4: GEM StreamPack (hydrated, prefetch + provenance) ----
-  %sp = bcir.gem.stream_pack @sp0 {
+  %sp = bcir.gem.stream_pack @sp0 attributes {
     source_plan = @plan0, topo_gen = 1 : i64, map_gen = 1 : i64, data_gen = 4 : i64
   } {
     bcir.gem.prefetch @pf0 { distance = 4 : i32, targets = [@A, @B], hint = "T0", pattern = "linear" }

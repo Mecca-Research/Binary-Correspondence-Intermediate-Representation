@@ -68,3 +68,35 @@ class FileSink(TelemetrySink):
     def emit(self, event: DataDNA) -> None:
         with open(self.path, "a") as f:
             f.write(json.dumps(event.to_dict()) + "\n")
+
+
+class KafkaSink(TelemetrySink):
+    """Kafka transport for the data-DNA loop (the production backend).
+
+    Inject any producer that is duck-typed `.send(topic, value=bytes)` (+ optional
+    `.flush()`), or use `KafkaSink.connect(...)` to build a kafka-python producer
+    lazily. Events are serialized as JSON bytes onto `topic`.
+    """
+
+    def __init__(self, producer, topic: str = "bcir.data_dna"):
+        self.producer = producer
+        self.topic = topic
+
+    def emit(self, event: DataDNA) -> None:
+        self.producer.send(self.topic, value=json.dumps(event.to_dict()).encode("utf-8"))
+
+    def flush(self) -> None:
+        flush = getattr(self.producer, "flush", None)
+        if callable(flush):
+            flush()
+
+    @classmethod
+    def connect(cls, bootstrap_servers, topic: str = "bcir.data_dna") -> "KafkaSink":
+        """Build a KafkaSink backed by a real kafka-python producer (lazy import)."""
+        try:
+            from kafka import KafkaProducer  # type: ignore
+        except ImportError as exc:  # pragma: no cover - exercised only with a broker
+            raise ImportError(
+                "KafkaSink.connect requires kafka-python (pip install kafka-python)"
+            ) from exc
+        return cls(KafkaProducer(bootstrap_servers=bootstrap_servers), topic)

@@ -69,11 +69,20 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   `bcir.parse.*`, `bcir.binary.*` make text/binary/packet/telemetry ingestion all
   instances of the same correspondence machinery.
 
+### Done since (LangRef M3 + CT4 depth)
+- **Compiled `bcir-opt`** (`mlir/lib/BCIRDialect.cpp` + `mlir/tools/bcir-opt.cpp`):
+  the dialect builds and the *pretty* ODS corpus parses/verifies/FileCheck-round-trips
+  through it on LLVM 18 (CI `mlir-rail-validate`).
+- **Real ML calibrator** — `kbcir.calibrate.LinearCalibrator`, an online linear-model
+  SGD that learns to predict thermal pressure from telemetry features (behind the
+  same interface as `EwmaCalibrator`).
+- **Kafka `TelemetrySink`** — `telemetry.KafkaSink` (injectable producer +
+  `connect()` lazy kafka-python backend).
+
 ### Still forward
 Per-target `bcir.target.lower_contract` codegen (ARM/RISC-V via clang
-cross-targets; GPU via a PTX/`gpu`-dialect path) once the compiled `bcir-opt` /
-MLIR C++ dialect library lands; a real ML calibrator behind the `EwmaCalibrator`
-interface; a Kafka `TelemetrySink` backend.
+cross-targets; GPU via a PTX/`gpu`-dialect path) using the compiled dialect; a
+trained ML model behind `LinearCalibrator`; a live Kafka broker deployment.
 
 ## Non-regression rules
 
