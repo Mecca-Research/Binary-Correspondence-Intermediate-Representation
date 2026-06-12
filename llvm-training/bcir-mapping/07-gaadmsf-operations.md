@@ -56,3 +56,7 @@ opt -passes=verify llvm-training/bcir-mapping/examples/mixed-stride-byte-offset.
   meaning from diagnostics.
 - Incorrect alignment on lowered payload loads can become a target-specific crash
   or silent performance bug.
+
+## Hardware-aware continuation
+
+For programming pulses, flow execution, calibration state, and the choice between metadata, intrinsics, and MIR, continue with [`../19-hardware-aware/README.md`](../19-hardware-aware/README.md).

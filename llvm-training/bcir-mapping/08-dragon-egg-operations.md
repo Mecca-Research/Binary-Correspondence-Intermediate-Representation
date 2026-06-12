@@ -78,3 +78,7 @@ opt -passes=verify llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.l
   boundary.
 - Wrapper names should remain stable enough for profile, trace, and diagnostic
   correlation.
+
+## Hardware-aware continuation
+
+For the Dragon Egg operation taxonomy, target-extension lowering, and the runtime/intrinsic/MIR decision boundary, continue with [`../19-hardware-aware/README.md`](../19-hardware-aware/README.md).

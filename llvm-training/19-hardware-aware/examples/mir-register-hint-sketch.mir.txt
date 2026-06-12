@@ -1,0 +1,20 @@
+# Documentation-only MIR-shaped sketch. It is NOT LLVM IR and is not promised
+# to parse with any LLVM release. Real tests must use target-defined opcodes,
+# register classes, YAML fields, and pass preconditions from that exact build.
+---
+name:            gaa_flow
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    # %0 and %1 are virtual registers, not LLVM IR SSA names or physical regs.
+    %0:gaa_acc = COPY $x10
+    %1:gaa_vec = COPY $x11
+
+    # Hypothetical target pseudo preserving a programming-pulse/flow boundary.
+    # A target pass could use affinity group 7 to prefer compatible banks and
+    # raise spill cost across this operation, while retaining a legal fallback.
+    %2:gaa_acc = GAA_FLOW_PSEUDO %0, %1, 7, implicit-def $gaa_status
+
+    $x10 = COPY %2
+    PseudoRET implicit $x10
+...

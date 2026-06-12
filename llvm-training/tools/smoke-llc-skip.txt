@@ -15,3 +15,4 @@
 13-advanced-ir/examples/operand-bundles-*.ll	operand-bundle examples document call-site semantic payloads and EH/GC/runtime contracts
 01-syntax/examples/inline-asm.ll	x86-64 inline asm and callbr constraints are target-specific
 16-exception-handling/examples/*.ll	EH examples depend on personality/runtime lowering and are assembly-verifier examples, not portable llc smoke inputs
+19-hardware-aware/examples/*.ll	custom BCIR and RISC-V extension boundaries require target lowering or runtime rewriting before backend smoke
