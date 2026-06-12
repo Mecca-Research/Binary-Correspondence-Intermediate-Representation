@@ -44,6 +44,7 @@ python -m bcir.run vector_add --target x86_avx512 --theta cool      # vec16, sco
 python -m bcir.run vector_add --target nvidia_ptx                    # GPU warp -> vec32
 python -m bcir.run vector_add --target x86_avx512 --schedule --jit   # CT2 schedule + CT5 JIT (lli)
 python -m bcir.run vector_add --target x86_avx512 --wasm             # compile to WASM + run via node
+python -m bcir.run vector_add --budget thermal=700 --overlap         # RCSP rail: vec8 @ 9472 + M(pi,Theta)
 python -m bcir.tests.run_all                                         # the conformance test suite
 
 # The compiled MLIR dialect (needs libmlir-NN-dev + llvm-NN-dev):

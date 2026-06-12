@@ -36,18 +36,45 @@ source→binary pipeline.
 
 ## 2. Central equation
 
+The normative form is **constrained series-parallel**:
+
+```
+K_BCIR(G | H, Θ) = min_{π ∈ Legal(G,H)}  M(π, Θ)    subject to    R(π, Θ) ⪯ B(H, Θ)
+```
+
+- `G` — the goal graph (a BCIR program); `π` — a realization plan (lane/stride
+  class, batching, schedule, prefetch).
+- `M(π, Θ)` — the **schedule-aware price**: series composition (claims chained
+  on one affinity domain, the decoupled GGG tail, successive waves and phases)
+  accumulates with (min,+) ⊗; parallel composition (claims co-executing in a
+  CT2 wave on distinct domains) combines with **max**. A transition's coupling
+  `f_i` applies against its *actual* schedule predecessor — a fusion discount
+  belongs only to claims that really run back-to-back. M is (max,+) over the
+  wave/token DAG (`gem.overlap.price_scheduled`).
+- `R(π, Θ)` — the additive resource ledger, `Σ_i T_i ⊗ f_i(π)` per dimension
+  (`T_i` a 12-d cost vector; `⊗` element-wise Q8 coupling, **not** scalar
+  multiply).
+- `B(H, Θ)` — live budgets (thermal cap, power cap, …), Θ-dependent: a hot
+  machine makes wide SIMD *infeasible*, not merely expensive.
+- Solved exactly by label dominance over the layered DAG of **legal**
+  candidates (RCSP, `kbcir.rcsp.optimize_constrained`); Pareto-optimal plans
+  that no weight vector can reach are recovered by `kbcir.rcsp.pareto_plans`.
+  All arithmetic is integer/Q8 and deterministic.
+
+**Degenerate case (the scalarized default rail).** With no budgets (B = ∞) and
+serial composition (one domain, textual chaining), M reduces to the weighted
+sum and selection to the tropical (min,+) shortest path:
+
 ```
 K_BCIR(G | H, Θ) = min_π  Σ_i  T_i ⊗ f_i(π)  =  min_π  C_H(π, Θ)
 ```
 
-- `G` — the goal graph (a BCIR program).
-- `π` — a realization plan (lane/stride class, batching, schedule, prefetch).
-- `T_i` — base cost of a primitive (a 12-d cost vector).
-- `f_i(π)` — path-context coupling (placement, fusion, precision, thermal).
-- `⊗` — element-wise coupling over cost dimensions (a resource tensor), **not**
-  scalar multiply.
-- selection — `score = w(H,Θ,phase,policy) · (T_i ⊗ f_i(π))`, minimized by a
-  tropical (min,+) shortest path over a realization DAG of **legal** candidates.
+with `score = w(H,Θ,phase,policy) · (T_i ⊗ f_i(π))`. This degenerate form is
+the default rail (`kbcir.realize.optimize`) and the worked-example constants
+(vec16, score 7808) are pinned to it; the constrained rail reproduces it
+exactly under an unbounded budget. Budget feasibility and scheduled-price
+consistency (makespan + overlap_gain = serial) are verifier obligations under
+law R9 (`bcir.kbcir.budget`, `bcir.kbcir.scheduled_price`, `-bcir-verify`).
 
 ## 3–9. Laws (summary)
 
@@ -103,7 +130,7 @@ Encoded via `bcir.isa.*` / `bcir.target.lower_contract`.
 2. Declarative dialect definitions — `mlir/include/BCIR/*.td`. ✔ (tblgen-validated; compiled `bcir-opt` parses + verifies the pretty corpus on LLVM 18)
 3. Verifier-first compiler. ✔ (laws R1–R12: the oracle runs the full chain — module R1–R7, plan R8–R9, stream R10–R11, lowering R12 — and the MLIR-native `-bcir-verify` enforces all twelve structurally, negative-tested per law)
 4. Rewrite laws. ◑ (MLIR-native `-bcir-promote-lanes` (GGG→UX); the rest authored as `bcir.opt.*` IR + run in the oracle)
-5. K_BCIR planner — candidate-path/costvec/selected-path IR. ◑ (runnable in `bcir/`)
+5. K_BCIR planner — candidate-path/costvec/selected-path IR. ◑ (runnable in `bcir/`: the scalarized rail, the constrained RCSP/Pareto rail (`kbcir.rcsp`), and the (max,+) overlap price (`gem.overlap`))
 6. GEM hydration — GraphPlan/LanePlan/StreamPack IR. ◑ (runnable in `bcir/`)
 7. LLVM as first backend. ◑ (MLIR-native `-convert-bcir-to-llvm` lowers compute/barrier to the LLVM dialect; oracle AOT (clang) + JIT (lli))
 

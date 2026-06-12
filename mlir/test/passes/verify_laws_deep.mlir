@@ -90,6 +90,56 @@ bcir.module @r11 {
 
 // -----
 
+// R8: a constrained selection whose budget never resolves.
+bcir.module @r8_budget {
+  bcir.kbcir.plan @plan0 {
+    %pa = bcir.kbcir.path @pA {
+      claim = @c, realization = "cpu.vector.u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
+      cost = #bcir.costvec<compute = 1, memory = 0, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
+    } : !bcir.path
+    // expected-error @+1 {{R8: budget @nope does not resolve}}
+    %s = bcir.kbcir.select @c from [@pA] {
+      policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
+      budget = @nope, selected = @pA, score = 1 : i64
+    } : !bcir.path
+  }
+}
+
+// -----
+
+// R9: the constrained rail rejects a selection whose path exceeds its caps --
+// under a 700 thermal budget the vec16 path (thermal 1088) is infeasible.
+bcir.module @r9_budget {
+  bcir.kbcir.budget @cap { dims = ["thermal"], caps = array<i64: 700> }
+  bcir.kbcir.plan @plan0 {
+    %p16 = bcir.kbcir.path @pHot {
+      claim = @c, realization = "cpu.vector.u16", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
+      cost = #bcir.costvec<compute = 64, memory = 3840, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
+    } : !bcir.path
+    // expected-error @+1 {{R9: selected path @pHot violates budget @cap (thermal 1088 > 700)}}
+    %s = bcir.kbcir.select @c from [@pHot] {
+      policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
+      budget = @cap, selected = @pHot, score = 7808 : i64
+    } : !bcir.path
+  }
+}
+
+// -----
+
+// R9: a scheduled price whose (max,+) makespan books do not balance.
+bcir.module @r9_price {
+  bcir.kbcir.plan @plan0 {
+    %pa = bcir.kbcir.path @pA {
+      claim = @c, realization = "cpu.vector.u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
+      cost = #bcir.costvec<compute = 1, memory = 0, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
+    } : !bcir.path
+  }
+  // expected-error @+1 {{R9: inconsistent scheduled price (makespan 5 + overlap_gain 2 != serial 10)}}
+  bcir.kbcir.scheduled_price @bad { plan = @plan0, makespan = 5 : i64, serial = 10 : i64, overlap_gain = 2 : i64 }
+}
+
+// -----
+
 // R12: a lowering contract that neither preserves the BCIR semantic
 // (bounds/hazard/precision) nor carries an explicit discharge.
 bcir.module @r12 {

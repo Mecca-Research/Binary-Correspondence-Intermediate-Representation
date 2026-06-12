@@ -109,6 +109,16 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
+- **The constrained series-parallel equation** (Phase 11): the LangRef central
+  equation is now `min M(π,Θ) s.t. R(π,Θ) ⪯ B(H,Θ)` with the scalarized
+  tropical form as its documented degenerate case. Runnable on both rails:
+  `kbcir.rcsp` (budgets, label dominance, Pareto fronts — a 700 thermal cap
+  makes vec16 infeasible and selects vec8 at the pinned score 9472) and
+  `gem.overlap` (M(π,Θ): wave-parallel max, in-bin series chaining with true
+  schedule-predecessor coupling, decoupled-tail overlap, plus the one-sweep
+  select→schedule→re-price iteration). The law carries `bcir.kbcir.budget` /
+  `bcir.kbcir.scheduled_price`, and `-bcir-verify` enforces budget feasibility
+  and price consistency under R9.
 - **Compiled `bcir-opt`** (`mlir/lib/BCIRDialect.cpp` + `mlir/tools/bcir-opt.cpp`):
   the dialect builds and the *pretty* ODS corpus parses/verifies/FileCheck-round-trips
   through it on LLVM 18 (CI `mlir-rail-validate`).

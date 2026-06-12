@@ -34,6 +34,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--jit", action="store_true", help="JIT-run the lowering via lli (in-process)")
     p.add_argument("--wasm", action="store_true", help="compile to WASM and run via node (self-checking)")
     p.add_argument("--schedule", action="store_true", help="print the CT2 concurrent wave schedule")
+    p.add_argument("--budget", metavar="DIM=CAP[,DIM=CAP...]",
+                   help="constrained (RCSP) selection, e.g. thermal=700,power=700")
+    p.add_argument("--overlap", action="store_true",
+                   help="price the plan under wave overlap: M(pi,Theta) makespan vs serial")
     p.add_argument("--codegen", metavar="TARGET",
                    help="per-target codegen via llc (aarch64|riscv64|nvptx64|bpf|x86_64|c|all)")
     args = p.parse_args(argv)
@@ -49,8 +53,18 @@ def main(argv: list[str] | None = None) -> int:
         for d in diags:
             print(f"  {d.law}: {d.message}")
 
-    result = optimize(module, h, theta, policy)
     print(f"program={args.program} target={h.name} theta={args.theta} policy={policy.name}")
+    if args.budget:
+        from .kbcir import Budget, Infeasible, optimize_constrained
+        caps = {k: int(v) for k, v in (kv.split("=", 1) for kv in args.budget.split(","))}
+        try:
+            result = optimize_constrained(module, h, theta, policy, Budget.of(**caps))
+        except Infeasible as exc:
+            print(f"[rcsp] infeasible: {exc}")
+            return 1
+        print(f"[rcsp] budget {args.budget}")
+    else:
+        result = optimize(module, h, theta, policy)
     print(f"K_BCIR score = {result.score}")
     for step in result.steps:
         c = step.candidate
@@ -66,6 +80,12 @@ def main(argv: list[str] | None = None) -> int:
         sc = schedule_concurrent(module, h)
         print(f"[ct2] concurrent: {len(sc.waves)} wave(s) max_parallelism={sc.max_parallelism()} "
               f"ggg_tail={sc.ggg_tail} contention={sc.contention} affinity={sc.affinity}")
+
+    if args.overlap:
+        from .gem import price_scheduled
+        sp = price_scheduled(module, result, h, theta, policy)
+        print(f"[overlap] M(pi,Theta): makespan={sp.makespan} serial={sp.serial} "
+              f"gain={sp.overlap_gain}")
 
     if args.emit_llvm or args.run or args.jit or args.wasm:
         from .lower import compile_and_run, emit_kernel_ll, jit_run, run_wasm_node

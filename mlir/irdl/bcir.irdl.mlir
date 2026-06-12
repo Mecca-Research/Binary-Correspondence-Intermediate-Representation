@@ -86,6 +86,9 @@ irdl.dialect @bcir {
     %h = irdl.any
     irdl.results(%h)
   }
+  // Constrained (RCSP) rail: B(H,Theta) caps + the (max,+) overlap price.
+  irdl.operation @"kbcir.budget"
+  irdl.operation @"kbcir.scheduled_price"
 
   // ---- BCIR-4: GEM StreamPack ----
   irdl.operation @"gem.stream_pack" {
