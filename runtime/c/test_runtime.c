@@ -44,6 +44,7 @@ int main(int argc, char **argv) {
   if (st != BCIR_OK) { printf("WALK_FAIL status=%d\n", st); free(buf); return 1; }
 
   printf("version=%u\n", hdr.version);
+  printf("pipeline_depth=%u\n", hdr.pipeline_depth);
   printf("topo_gen=%u\n", hdr.topo_gen);
   printf("map_gen=%u\n", hdr.map_gen);
   printf("data_gen=%u\n", hdr.data_gen);

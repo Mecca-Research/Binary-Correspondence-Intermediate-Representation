@@ -43,6 +43,37 @@ def test_rich_pack_round_trips():
     assert decode(encode(pack)) == pack
 
 
+def test_v2_features_round_trip_append_only():
+    # A pack carrying pipeline/double-buffer contracts encodes as v2 and
+    # round-trips losslessly; the v1 layout is untouched (append-only).
+    m = vector_add(1024)
+    from bcir.gem import hydrate_pipelined
+    pack = hydrate_pipelined(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()),
+                             depth=2)
+    blob = encode(pack)
+    assert blob[4] == 2                       # v2 on the wire
+    assert decode(blob) == pack
+    assert decode(blob).pipeline_depth == 2
+
+
+def test_packs_without_v2_features_stay_byte_frozen_v1():
+    # The frozen-v1 promise: a pack with no v2 contracts is byte-identical v1.
+    pack = _pack()
+    assert pack.pipeline_depth == 1 and all(pf.buffers == 1 for pf in pack.prefetches)
+    blob = encode(pack)
+    assert blob[4] == ABI_VERSION == 1
+    assert decode(blob).pipeline_depth == 1
+
+
+def test_double_buffer_prefetch_round_trips():
+    pack = StreamPack(source_plan="plan0", pipeline_depth=2)
+    pack.prefetches.append(Prefetch("dbpf0_1", 4, (10, 11), "T1", "double_buffer",
+                                    buffers=2))
+    out = decode(encode(pack))
+    assert out.prefetches[0].buffers == 2
+    assert out.pipeline_depth == 2
+
+
 def test_decode_rejects_bad_magic_version_and_crc():
     blob = bytearray(encode(_pack()))
     bad_magic = bytes(b"XXXX" + blob[4:])

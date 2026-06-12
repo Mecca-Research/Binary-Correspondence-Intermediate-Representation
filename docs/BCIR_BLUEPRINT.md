@@ -109,6 +109,19 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
+- **Duration-aware GEM scheduling + StreamPack v2** (Phase 12): the five GEM
+  upgrades — `gem.schedule.schedule_eft` (HEFT-lite: LPT priority + earliest
+  finish time, hazard producers serialize by claim id), `execute_tokens` (the
+  `!bcir.token` DAG replaces phase barriers, so independent later-phase claims
+  overlap — pipelined phases fall out of the awaits), locality-aware affinity
+  (earliest-finish ties prefer the domain holding the claim's operands),
+  the bandwidth-knee clamp (`bandwidth_knee(H)` from `TargetProfile.mem_channels`;
+  bandwidth-class claims queue past the roofline knee), and **StreamPack ABI v2**
+  (append-only: header `pipeline_depth`, prefetch `buffers`; double-buffer
+  contracts emitted by `hydrate_pipelined`; the freestanding C runtime decodes
+  both versions and packs without v2 features stay byte-identical frozen v1).
+  Law: `bcir.gem.schedule` + v2 attrs on `stream_pack`/`prefetch`/`lane_segment`,
+  verified under R9/R10.
 - **The constrained series-parallel equation** (Phase 11): the LangRef central
   equation is now `min M(π,Θ) s.t. R(π,Θ) ⪯ B(H,Θ)` with the scalarized
   tropical form as its documented degenerate case. Runnable on both rails:

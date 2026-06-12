@@ -96,7 +96,10 @@ law R9 (`bcir.kbcir.budget`, `bcir.kbcir.scheduled_price`, `-bcir-verify`).
   Pareto pruning precedes scalar selection; the selected path hydrates GEM.
 - **GEM Stream IR (§9).** The StreamPack is the hot artifact; the BCIR graph is
   the dormant semantic artifact. A pack retains provenance and generation tags
-  and is rehydrated (patch/repack/replan) on mismatch.
+  and is rehydrated (patch/repack/replan) on mismatch. Scheduling is
+  duration-aware (`bcir.gem.schedule`): EFT waves with locality affinity and the
+  bandwidth knee, or the `!bcir.token` DAG (pipelined phases, ABI v2
+  double-buffer contracts).
 
 ## 10. Verifier laws (R1–R12)
 
@@ -131,7 +134,7 @@ Encoded via `bcir.isa.*` / `bcir.target.lower_contract`.
 3. Verifier-first compiler. ✔ (laws R1–R12: the oracle runs the full chain — module R1–R7, plan R8–R9, stream R10–R11, lowering R12 — and the MLIR-native `-bcir-verify` enforces all twelve structurally, negative-tested per law)
 4. Rewrite laws. ◑ (MLIR-native `-bcir-promote-lanes` (GGG→UX); the rest authored as `bcir.opt.*` IR + run in the oracle)
 5. K_BCIR planner — candidate-path/costvec/selected-path IR. ◑ (runnable in `bcir/`: the scalarized rail, the constrained RCSP/Pareto rail (`kbcir.rcsp`), and the (max,+) overlap price (`gem.overlap`))
-6. GEM hydration — GraphPlan/LanePlan/StreamPack IR. ◑ (runnable in `bcir/`)
+6. GEM hydration — GraphPlan/LanePlan/StreamPack IR. ◑ (runnable in `bcir/`: hydration, duration-aware EFT/token scheduling (`gem.schedule`), and pipelined v2 packs (`hydrate_pipelined`))
 7. LLVM as first backend. ◑ (MLIR-native `-convert-bcir-to-llvm` lowers compute/barrier to the LLVM dialect; oracle AOT (clang) + JIT (lli))
 
 Until the MLIR toolchain exists on this host, the oracle (`bcir/`, runnable via

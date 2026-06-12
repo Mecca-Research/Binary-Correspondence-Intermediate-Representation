@@ -1,0 +1,183 @@
+"""Duration-aware GEM scheduling: EFT waves, the token DAG, locality, the knee.
+
+Four upgrades over the unit-time wave scheduler (`concurrency.schedule_concurrent`),
+all deterministic and integer-only:
+
+  1. **Duration-aware waves (HEFT-lite).** Claims carry durations (the K_BCIR
+     step costs); within a phase an event-driven list scheduler dispatches the
+     ready claim with the longest duration first (LPT priority -- the degenerate
+     upward rank of HEFT inside one phase) onto the domain with the earliest
+     finish time. Hazard conflicts (lower claim id = producer) serialize.
+  2. **Token-DAG execution.** `execute_tokens` consumes the `!bcir.token`
+     fork/await plan instead of phase barriers: a claim starts when the claims it
+     awaits finish, so independent claims of a *later phase* overlap an earlier
+     phase -- software pipelining falls out of the dependency structure.
+  3. **Locality-aware affinity.** Among earliest-finish ties, a claim prefers the
+     domain already holding the most of its operand RIDs (cache reuse), replacing
+     blind round-robin.
+  4. **Bandwidth-knee clamp.** Bandwidth-class claims contend for at most
+     `bandwidth_knee(H)` concurrent slots (the roofline knee from the target's
+     `mem_channels`); compute-class claims use the full domain set. Parallelism
+     past the knee only thrashes the memory system, so the scheduler queues it.
+
+The unit-time wave scheduler remains the law for CT2 wave *formation*; this
+module is the duration-aware refinement that prices and places real work.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from ..model import Claim, Module
+from .async_tokens import async_plan
+from .concurrency import _conflict, _is_sparse, _topo_phase_ids
+
+TAIL_STREAM = -1  # the decoupled GGG tail executes on its own stream
+
+
+@dataclass(frozen=True)
+class Slot:
+    claim_id: int
+    domain: int       # affinity domain, or TAIL_STREAM for the decoupled tail
+    start: int
+    finish: int
+
+
+@dataclass
+class GemSchedule:
+    """A placed, timed schedule (mode: "eft" phase-barriered, "tokens" pipelined)."""
+
+    mode: str
+    slots: list[Slot] = field(default_factory=list)
+    makespan: int = 0
+    knee: int = 1
+    affinity: dict[int, int] = field(default_factory=dict)
+
+    def slot_of(self, claim_id: int) -> Slot:
+        for s in self.slots:
+            if s.claim_id == claim_id:
+                return s
+        raise KeyError(claim_id)
+
+
+def bandwidth_knee(h) -> int:
+    """The roofline knee: concurrent bandwidth-bound streams the target sustains."""
+    domains = max(1, getattr(h, "affinity_domains", 1))
+    channels = max(1, getattr(h, "mem_channels", 4))
+    return max(1, min(domains, channels))
+
+
+def durations_from(result) -> dict[int, int]:
+    """Claim durations from a K_BCIR realization (the scalarized step costs)."""
+    return {s.claim_id: max(1, s.cost) for s in result.steps}
+
+
+def _rids(c: Claim) -> set[int]:
+    return set(c.rd) | set(c.wr)
+
+
+def _pick_domain(c: Claim, ready_t: int, dur: int, domain_free: list[int],
+                 resident: list[set[int]], eligible: range, locality: bool) -> tuple[int, int]:
+    """Earliest finish first; ties prefer the domain holding the claim's operands."""
+    best_d, best_key = eligible[0], None
+    rids = _rids(c)
+    for d in eligible:
+        start = max(domain_free[d], ready_t)
+        score = len(rids & resident[d]) if locality else 0
+        key = (start + dur, -score, d)
+        if best_key is None or key < best_key:
+            best_d, best_key = d, key
+    return best_d, max(domain_free[best_d], ready_t)
+
+
+def _dispatch(claims: list[Claim], preds: dict[int, list[int]], durations: dict[int, int],
+              t0: int, domain_free: list[int], resident: list[set[int]],
+              domains: int, knee: int, locality: bool,
+              finish_of: dict[int, int], sched: GemSchedule) -> None:
+    """Event-driven LPT list scheduling of `claims` honoring `preds` edges."""
+    pending = list(claims)
+    while pending:
+        ready = [c for c in pending
+                 if all(p in finish_of for p in preds.get(c.id, ()))]
+        c = sorted(ready, key=lambda c: (-durations.get(c.id, 1), c.id))[0]
+        pending.remove(c)
+        dur = max(1, durations.get(c.id, 1))
+        ready_t = max([finish_of[p] for p in preds.get(c.id, ())], default=t0)
+        # Bandwidth-bound claims contend for the knee; compute-bound for all domains.
+        width = knee if c.cost_class == "bandwidth" else domains
+        d, start = _pick_domain(c, ready_t, dur, domain_free, resident,
+                                range(width), locality)
+        finish = start + dur
+        domain_free[d] = finish
+        resident[d] |= _rids(c)
+        finish_of[c.id] = finish
+        sched.slots.append(Slot(c.id, d, start, finish))
+        sched.affinity[c.id] = d
+
+
+def schedule_eft(module: Module, durations: dict[int, int], target=None,
+                 locality: bool = True) -> GemSchedule:
+    """Duration-aware wave scheduling (HEFT-lite) with phase barriers.
+
+    Within each phase: LPT priority + earliest-finish-time placement + locality
+    tie-breaks + the bandwidth-knee clamp; the GGG tail runs decoupled on its
+    own stream (phase span = max(main, tail)). Phases compose serially.
+    """
+    domains = max(1, getattr(target, "affinity_domains", 1)) if target is not None else 1
+    knee = bandwidth_knee(target) if target is not None else 1
+    sched = GemSchedule(mode="eft", knee=knee)
+    resident: list[set[int]] = [set() for _ in range(domains)]
+    pmap = module.phase_map()
+    t0 = 0
+
+    for pid in _topo_phase_ids(module):
+        claims = sorted(pmap[pid].claims, key=lambda c: c.id)
+        main = [c for c in claims if not _is_sparse(c)]
+        tail = [c for c in claims if _is_sparse(c)]
+
+        # Intra-phase hazard DAG: the lower claim id is the producer.
+        preds = {c.id: [p.id for p in main[:i] if _conflict(p, c)]
+                 for i, c in enumerate(main)}
+        domain_free = [t0] * domains
+        finish_of: dict[int, int] = {}
+        _dispatch(main, preds, durations, t0, domain_free, resident,
+                  domains, knee, locality, finish_of, sched)
+
+        tt = t0
+        for c in tail:  # the decoupled tail: a serial chain overlapping the waves
+            dur = max(1, durations.get(c.id, 1))
+            sched.slots.append(Slot(c.id, TAIL_STREAM, tt, tt + dur))
+            sched.affinity[c.id] = TAIL_STREAM
+            tt += dur
+        t0 = max([t0, tt] + list(finish_of.values()))
+    sched.makespan = t0
+    return sched
+
+
+def execute_tokens(module: Module, durations: dict[int, int], target=None,
+                   locality: bool = True) -> GemSchedule:
+    """Token-DAG execution: phase barriers replaced by `!bcir.token` awaits.
+
+    A claim becomes ready when every claim it awaits has finished -- nothing
+    else holds it back, so independent claims of later phases overlap earlier
+    phases (pipelined phases fall out of the dependency structure). Placement
+    uses the same EFT + locality + knee machinery as `schedule_eft`; the
+    schedule is its degenerate case when every cross-phase claim conflicts.
+    """
+    domains = max(1, getattr(target, "affinity_domains", 1)) if target is not None else 1
+    knee = bandwidth_knee(target) if target is not None else 1
+    sched = GemSchedule(mode="tokens", knee=knee)
+    resident: list[set[int]] = [set() for _ in range(domains)]
+
+    plan = async_plan(module)
+    pmap = module.phase_map()
+    order = {cid: i for i, cid in enumerate(plan.forks)}
+    claims = sorted((c for pid in _topo_phase_ids(module) for c in pmap[pid].claims),
+                    key=lambda c: order[c.id])
+
+    domain_free = [0] * domains
+    finish_of: dict[int, int] = {}
+    _dispatch(claims, plan.awaits, durations, 0, domain_free, resident,
+              domains, knee, locality, finish_of, sched)
+    sched.makespan = max(finish_of.values(), default=0)
+    return sched

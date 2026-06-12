@@ -21,6 +21,7 @@ class Prefetch:
     targets: tuple[int, ...]   # operand RIDs (we prefetch operand data, not descriptors)
     hint: str = "T0"
     pattern: str = "linear"
+    buffers: int = 1           # v2 (append-only): 2 = double-buffer contract
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class StreamPack:
     topo_gen: int = 1
     map_gen: int = 0
     data_gen: int = 0
+    pipeline_depth: int = 1    # v2 (append-only): phases in flight (2 = double-buffered)
     segments: list[LaneSegment] = field(default_factory=list)
     prefetches: list[Prefetch] = field(default_factory=list)
     blocks: list[Block] = field(default_factory=list)
@@ -94,3 +96,50 @@ def hydrate(module: Module, result: RealizationResult, plan: str = "plan0") -> S
         ))
         pack.trace_notes.append(TraceNote(claim_id=claim.id))
     return pack
+
+
+def hydrate_pipelined(module: Module, result: RealizationResult, plan: str = "plan0",
+                      depth: int = 2) -> StreamPack:
+    """Hydrate with software-pipelined phases (StreamPack v2, append-only).
+
+    On top of `hydrate`, each phase transition gains a **double-buffer prefetch
+    contract**: the read operands of the *next* phase are prefetched (buffers=2,
+    pattern="double_buffer") while the current phase computes, and the pack's
+    `pipeline_depth` tells the runtime how many phases are in flight. Token-DAG
+    execution (`schedule.execute_tokens`) provides the matching overlap.
+    """
+    pack = hydrate(module, result, plan)
+    pack.pipeline_depth = max(1, depth)
+    if pack.pipeline_depth == 1:
+        return pack
+
+    pmap = module.phase_map()
+    order = _topo_order(module)
+    for prev_pid, next_pid in zip(order, order[1:]):
+        rids: list[int] = []
+        for c in pmap[next_pid].claims:
+            rids.extend(r for r in c.rd if r not in rids)
+        if rids:
+            pack.prefetches.append(Prefetch(
+                name=f"dbpf{prev_pid}_{next_pid}", distance=4, targets=tuple(rids),
+                hint="T1", pattern="double_buffer", buffers=2))
+    return pack
+
+
+def _topo_order(module: Module) -> list[int]:
+    pmap = module.phase_map()
+    color: dict[int, int] = {}
+    order: list[int] = []
+
+    def visit(pid: int) -> None:
+        color[pid] = 1
+        for d in pmap[pid].deps:
+            if d in pmap and color.get(d, 0) == 0:
+                visit(d)
+        color[pid] = 2
+        order.append(pid)
+
+    for p in module.phases:
+        if color.get(p.phase_id, 0) == 0:
+            visit(p.phase_id)
+    return order

@@ -196,6 +196,7 @@ class TargetProfile:
     fma: bool = True
     isa_features: frozenset[str] = frozenset()
     affinity_domains: int = 1               # cores / SMs available for pinning (CT2)
+    mem_channels: int = 4                   # concurrent bandwidth-bound streams sustained
     mem: MemoryHierarchy = MemoryHierarchy.default()
 
     @property
@@ -234,7 +235,8 @@ class TargetProfile:
         return TargetProfile(name="nvptx64-warp", triple="nvptx64-warp", cacheline=128,
                              lane_widths=(1, 32), warp=32, gather_penalty=16,
                              thermal_density=32, power_density=48,
-                             isa_features=frozenset({"ptx", "warp"}), affinity_domains=128)
+                             isa_features=frozenset({"ptx", "warp"}), affinity_domains=128,
+                             mem_channels=32)  # HBM: many concurrent streams
 
     @staticmethod
     def riscv_rvv() -> "TargetProfile":

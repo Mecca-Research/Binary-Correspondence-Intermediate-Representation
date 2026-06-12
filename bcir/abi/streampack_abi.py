@@ -1,4 +1,4 @@
-"""BCIR StreamPack binary ABI v1 (frozen) -- reference encoder/decoder.
+"""BCIR StreamPack binary ABI v1 (frozen) + v2 (append-only) -- reference codec.
 
 Layout (little-endian; see docs/BCIR_STREAMPACK_ABI.md and
 runtime/c/bcir_streampack.h for the normative spec):
@@ -7,16 +7,20 @@ runtime/c/bcir_streampack.h for the normative spec):
       magic[4]="BSPK"  version:u16  flags:u16
       topo_gen:u32  map_gen:u32  data_gen:u32
       n_segments:u32  n_prefetches:u32  n_blocks:u32  n_trace:u32
+      [v2] pipeline_depth:u16        (carved from the v1 reserved pad; v1 == 1)
       reserved -> 64 bytes
     Body (sequential, length-prefixed records):
       source_plan:str
       segments[n_segments], prefetches[n_prefetches], blocks[n_blocks], trace[n_trace]
+      [v2] prefetch records append buffers:u8 (2 = double-buffer contract)
     Trailer:
       crc32:u32  (CRC-32 of every preceding byte)
 
-Strings are u16 length + UTF-8. Integer arrays are u16 count + elements. The format
-is frozen at v1: fields are append-only across versions; v1 readers reject newer
-major versions.
+Strings are u16 length + UTF-8. Integer arrays are u16 count + elements. The
+format is frozen at v1 and evolves append-only: v2 only *appends* fields (header
+pad + record tails), the encoder emits the lowest version that carries the pack
+(a pack with no pipeline/double-buffer contracts is byte-identical v1), and this
+reader accepts both. v1 readers reject newer versions, by contract.
 """
 
 from __future__ import annotations
@@ -29,9 +33,11 @@ from ..model import Lane
 
 ABI_MAGIC = b"BSPK"
 ABI_VERSION = 1
+ABI_VERSION_MAX = 2     # v2: pipeline_depth + prefetch double-buffer (append-only)
 
 _HEADER = struct.Struct("<4sHHIIIIIII")  # magic, ver, flags, 3 gens, 4 counts
 _HEADER_SIZE = 64
+_PIPELINE_OFF = _HEADER.size            # v2: u16 appended right after the v1 fields
 
 
 class AbiError(Exception):
@@ -113,12 +119,20 @@ class _Reader:
 
 
 def encode(pack: StreamPack) -> bytes:
-    """Serialize a StreamPack to the frozen v1 wire format (with CRC trailer)."""
+    """Serialize a StreamPack (CRC trailer); emits the lowest carrying version.
+
+    Packs without v2 features (pipeline_depth == 1, no double-buffer prefetch)
+    encode byte-identically to the frozen v1 format.
+    """
+    needs_v2 = pack.pipeline_depth > 1 or any(pf.buffers != 1 for pf in pack.prefetches)
+    version = 2 if needs_v2 else ABI_VERSION
     header = _HEADER.pack(
-        ABI_MAGIC, ABI_VERSION, 0,
+        ABI_MAGIC, version, 0,
         pack.topo_gen, pack.map_gen, pack.data_gen,
         len(pack.segments), len(pack.prefetches), len(pack.blocks), len(pack.trace_notes),
     )
+    if version >= 2:
+        header += struct.pack("<H", max(1, pack.pipeline_depth))
     header = header + b"\x00" * (_HEADER_SIZE - len(header))
 
     w = _Writer()
@@ -142,6 +156,8 @@ def encode(pack: StreamPack) -> bytes:
         w.u32_array(pf.targets)
         w.s(pf.hint)
         w.s(pf.pattern)
+        if version >= 2:
+            w.u8(max(1, pf.buffers))  # v2 append-only record tail
     for blk in pack.blocks:
         w.u64(blk.base)
         w.u64(blk.count)
@@ -156,21 +172,24 @@ def encode(pack: StreamPack) -> bytes:
 
 
 def decode(data: bytes) -> StreamPack:
-    """Parse the frozen v1 wire format back into a StreamPack (verifying magic/version/CRC)."""
+    """Parse the wire format (v1 or v2) back into a StreamPack (magic/version/CRC)."""
     if len(data) < _HEADER_SIZE + 4:
         raise AbiError("buffer too small for a StreamPack")
     magic, version, _flags, topo, mapg, datag, nseg, npf, nblk, ntr = _HEADER.unpack(
         data[:_HEADER.size])
     if magic != ABI_MAGIC:
         raise AbiError(f"bad magic {magic!r} (expected {ABI_MAGIC!r})")
-    if version != ABI_VERSION:
-        raise AbiError(f"unsupported ABI version {version} (this reader is v{ABI_VERSION})")
+    if not (ABI_VERSION <= version <= ABI_VERSION_MAX):
+        raise AbiError(
+            f"unsupported ABI version {version} (this reader handles v{ABI_VERSION}..v{ABI_VERSION_MAX})")
     body, crc = data[:-4], struct.unpack("<I", data[-4:])[0]
     if (zlib.crc32(body) & 0xFFFFFFFF) != crc:
         raise AbiError("CRC mismatch (corrupt StreamPack)")
+    depth = struct.unpack_from("<H", data, _PIPELINE_OFF)[0] if version >= 2 else 1
 
     r = _Reader(data, _HEADER_SIZE)
-    pack = StreamPack(source_plan=r.s(), topo_gen=topo, map_gen=mapg, data_gen=datag)
+    pack = StreamPack(source_plan=r.s(), topo_gen=topo, map_gen=mapg, data_gen=datag,
+                      pipeline_depth=max(1, depth))
     for _ in range(nseg):
         name = r.s(); claim_id = r.u64(); phase_id = r.u32(); lane = Lane(r.u8())
         width = r.u32(); _stride_k = r.u32(); opcode = r.s()
@@ -183,7 +202,8 @@ def decode(data: bytes) -> StreamPack:
             fence_before=fb, fence_after=fa))
     for _ in range(npf):
         pack.prefetches.append(Prefetch(
-            name=r.s(), distance=r.u32(), targets=r.u32_array(), hint=r.s(), pattern=r.s()))
+            name=r.s(), distance=r.u32(), targets=r.u32_array(), hint=r.s(), pattern=r.s(),
+            buffers=(r.u8() if version >= 2 else 1)))
     for _ in range(nblk):
         pack.blocks.append(Block(base=r.u64(), count=r.u64(), strides=r.u64_array()))
     for _ in range(ntr):

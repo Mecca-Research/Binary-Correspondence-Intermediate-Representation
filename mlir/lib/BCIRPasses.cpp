@@ -464,10 +464,37 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R9: a duration-aware schedule certificate is well-formed -- known mode,
+    // non-negative makespan, knee/pipeline >= 1, and a declared plan.
+    root->walk([&](GEMScheduleOp sc) {
+      StringRef mode = sc.getMode();
+      if (mode != "waves" && mode != "eft" && mode != "tokens") {
+        sc.emitError("R9: unknown schedule mode '") << mode << "'";
+        ok = false;
+      }
+      if (!planByName.count(sc.getPlan())) {
+        sc.emitError("R9: schedule references unknown plan @") << sc.getPlan();
+        ok = false;
+      }
+      if (static_cast<int64_t>(sc.getMakespan()) < 0 || sc.getKnee() < 1 ||
+          sc.getPipelineDepth() < 1) {
+        sc.emitError("R9: schedule makespan/knee/pipeline_depth out of range");
+        ok = false;
+      }
+    });
+
     // R10: stream provenance -- segments map back to live claims/phases/
-    // prefetches/resources; packs hydrate from a declared plan.
+    // prefetches/resources; packs hydrate from a declared plan -- and the v2
+    // pipeline/double-buffer contracts are well-formed.
     llvm::DenseMap<StringRef, GEMPrefetchOp> prefetchByName;
-    root->walk([&](GEMPrefetchOp p) { prefetchByName[p.getSymName()] = p; });
+    root->walk([&](GEMPrefetchOp p) {
+      prefetchByName[p.getSymName()] = p;
+      if (p.getBuffers() != 1 && p.getBuffers() != 2) {
+        p.emitError("R10: prefetch ")
+            << p.getSymName() << " invalid buffer count (1 or 2)";
+        ok = false;
+      }
+    });
     root->walk([&](GEMLaneSegmentOp seg) {
       if (!claimByName.count(seg.getClaim())) {
         seg.emitError("R10: segment ")
@@ -514,6 +541,10 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (!planByName.count(sp.getSourcePlan())) {
         sp.emitError("R10: stream pack source plan @")
             << sp.getSourcePlan() << " does not resolve";
+        ok = false;
+      }
+      if (sp.getPipelineDepth() < 1) {
+        sp.emitError("R10: invalid pipeline_depth (must be >= 1)");
         ok = false;
       }
       if (sp.getTopoGen() < 1) {

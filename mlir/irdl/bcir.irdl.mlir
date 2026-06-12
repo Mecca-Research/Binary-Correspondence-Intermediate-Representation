@@ -100,6 +100,8 @@ irdl.dialect @bcir {
   irdl.operation @"gem.prefetch"
   irdl.operation @"gem.block"
   irdl.operation @"gem.lane_segment"
+  // Duration-aware schedule certificate (EFT waves / token DAG, knee, pipeline).
+  irdl.operation @"gem.schedule"
   irdl.operation @"trace.note"
   irdl.operation @"trace.data_dna"
 

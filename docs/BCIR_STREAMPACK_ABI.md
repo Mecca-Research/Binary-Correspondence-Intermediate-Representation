@@ -1,4 +1,4 @@
-# BCIR StreamPack binary ABI — v1 (frozen, normative)
+# BCIR StreamPack binary ABI — v1 (frozen, normative) + v2 (append-only)
 
 The StreamPack is BCIR's **portable artifact** (its WASM analog): a self-contained,
 hot, executable representation of a selected K_BCIR plan. This document freezes the
@@ -29,7 +29,8 @@ agree (a parity test pins the round-trip).
 | 24 | `n_prefetches` | `u32` | |
 | 28 | `n_blocks` | `u32` | |
 | 32 | `n_trace` | `u32` | |
-| 36 | `reserved` | `u8[28]` | pad to 64 |
+| 36 | `pipeline_depth` | `u16` | **v2** (append-only); reads as 1 on v1 buffers |
+| 38 | `reserved` | `u8[26]` | pad to 64 |
 
 ## Body (sequential, length-prefixed)
 
@@ -48,13 +49,31 @@ agree (a parity test pins the round-trip).
 - `crc32 : u32` — CRC-32 (zlib) of **every preceding byte** (header + body). Decoders
   reject a mismatch.
 
+## v2 (append-only): pipelined phases + double-buffer prefetch
+
+v2 demonstrates the append-only evolution mechanism. It changes **no** v1 field
+offsets:
+
+- **Header** gains `pipeline_depth : u16` at offset **36** (carved from the v1
+  reserved pad; reserved shrinks to `u8[22]`). Phases in flight; `2` =
+  double-buffered software pipelining. Decoders treat v1 buffers as depth 1.
+- **Prefetch records** append `buffers : u8` after `pattern` (`2` = a
+  double-buffer contract feeding the next pipelined phase, typically
+  `pattern="double_buffer"`). Segment/block/trace records are **unchanged**, so
+  v1 segment walkers remain correct on a v2 pack.
+- **Encoders emit the lowest carrying version**: a pack with no v2 features
+  (depth 1, all `buffers == 1`) is byte-identical frozen v1.
+- Emitted by `gem.streampack.hydrate_pipelined`; scheduled by
+  `gem.schedule.execute_tokens` (the token DAG provides the matching overlap);
+  decoded by the freestanding C runtime (`bcir_streampack_header.pipeline_depth`).
+
 ## Versioning (the freeze)
 
 - v1 is **frozen**: the field layout above does not change.
-- New fields are **append-only** in future (minor) versions; a v1 reader of a v1
-  buffer is exact and lossless.
-- A reader **rejects** a buffer whose `version` differs from the major it supports
-  (v1 today). `lane` values match `bcir/model/lanes.py` / `BCIRAttrs.td`
+- New fields are **append-only** across versions (v2 above is the worked
+  instance); a v1 reader of a v1 buffer is exact and lossless.
+- A reader **rejects** a buffer whose `version` exceeds the maximum it supports
+  (v2 today). `lane` values match `bcir/model/lanes.py` / `BCIRAttrs.td`
   (`U=0,UX=1,T=2,GGG=3,A=4,H=5`).
 
 ## Why a frozen ABI now
