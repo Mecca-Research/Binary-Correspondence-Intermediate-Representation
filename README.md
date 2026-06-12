@@ -1,6 +1,6 @@
 # Binary-Correspondence-Intermediate-Representation
 
-An IR-first realization of **Kolmogorov_BCIR + GEM**: a registry-first, phase-ordered,
+An IR-first realization of **Kolmogorov Binary Correspondence Intermediate Representation optimization (K_BCIR) + Graph Execution Model (GEM)**: a registry-first, phase-ordered,
 lane-typed, **cost-governed** correspondence IR that selects legal physical
 realization paths via the tropical (min,+) optimizer
 
