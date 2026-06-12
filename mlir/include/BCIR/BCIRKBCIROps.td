@@ -87,6 +87,18 @@ def BCIR_KBCIRReplayCertificateOp : BCIR_Op<"kbcir.replay_certificate", [Symbol]
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_KBCIRRegretLedgerOp : BCIR_Op<"kbcir.regret_ledger", [Symbol]> {
+  let summary = "L3 regret ledger: a deployed rule's measured gap to hindsight";
+  // The boundary dashboard (LangRef Sec. 13): per-rule accumulated regret
+  // against the hindsight-best alternative under one neutral yardstick.
+  // An instrument, never an actuator: verdicts recommend, the replay gate
+  // decides, R13 witnesses. Mirrors bcir/kbcir/regret.py (verified, R13).
+  let arguments = (ins SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$rule,
+                       I64Attr:$episodes, I64Attr:$total_regret,
+                       I64Attr:$worst_regret, I64Attr:$gen);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
 def BCIR_KBCIRScheduledPriceOp : BCIR_Op<"kbcir.scheduled_price", [Symbol]> {
   let summary = "M(pi,Theta): the (max,+) wave-overlap price of a plan";
   // makespan composes series with (+) and CT2 wave parallelism with max; the

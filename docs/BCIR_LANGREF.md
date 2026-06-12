@@ -101,17 +101,22 @@ law R9 (`bcir.kbcir.budget`, `bcir.kbcir.scheduled_price`, `-bcir-verify`).
   bandwidth knee, or the `!bcir.token` DAG (pipelined phases, ABI v2
   double-buffer contracts).
 
-## 10. Verifier laws (R1–R12)
+## 10. Verifier laws (R1–R13)
 
 R1 registry uniqueness · R2 registry resolution · R3 domain legality ·
 R4 phase-DAG legality · R5 hazard legality · R6 lane legality · R7 bounds
 legality · R8 cost completeness · R9 plan legality · R10 stream provenance ·
-R11 generation validity · R12 lowering legality. Encoded as IR via the
-`bcir.verify.*` op family. The runnable full set lives in `bcir/verify`, one
-entry point per correspondence artifact — `verify(module)` R1–R8(static),
-`verify_plan` R8–R9, `verify_pack` R10–R11, `verify_lowering` R12 — and the
-MLIR-native `-bcir-verify` pass enforces the structurally checkable form of all
-twelve on the dialect.
+R11 generation validity · R12 lowering legality · **R13 policy provenance** —
+every decision rule in force (gain schedule, cost table) carries a generation
+tag and an admitting certificate: a promoted portfolio entry requires its
+replay certificate, a calibrated profile must present its frozen table with
+matching generation and constants, a regret ledger's books must balance. Rule
+swaps are never silent. Encoded as IR via the `bcir.verify.*` op family. The
+runnable full set lives in `bcir/verify`, one entry point per correspondence
+artifact — `verify(module)` R1–R8(static), `verify_plan` R8–R9, `verify_pack`
+R10–R11, `verify_lowering` R12, `verify_provenance` R13 — and the MLIR-native
+`-bcir-verify` pass enforces the structurally checkable form of all thirteen
+on the dialect.
 
 ## 11. Rewrite laws
 
@@ -164,10 +169,15 @@ E[improvement per decision]  >>  decision rate x inference cost
   regressions over ≥ 1 episodes (verified under R9). Shadow → canary →
   promote; never silent.
 - **L3 (the meta-policy — measured, human-actuated).** Where the
-  heuristic/learned boundary itself sits is a measured question (the regret
-  ledger) but an actuated decision stays human until policy provenance is a
-  verifier law (the planned R13). The framework reserves the slot; it does not
-  yet automate the flip.
+  heuristic/learned boundary itself sits is a measured question: the **regret
+  ledger** (`kbcir.regret`, `bcir.kbcir.regret_ledger`) continuously books each
+  deployed rule's gap to the hindsight-best alternative under one neutral
+  yardstick, and `boundary_report` renders the verdict (keep / retune). The
+  verdict is a recommendation, never an actuation: a flagged rule is a
+  *candidate* for retuning, the swap still goes through the L2 replay gate,
+  and **R13 (policy provenance)** witnesses the whole chain. Actuation stays
+  human by policy; any future automation of the flip must run behind both the
+  gate and R13.
 
 The legality laws (R1–R12), lane semantics, and hazard contracts are **never
 learnable**: they are laws, not preferences.
@@ -176,12 +186,13 @@ learnable**: they are laws, not preferences.
 
 1. LangRef v0.1 — this document. ✔
 2. Declarative dialect definitions — `mlir/include/BCIR/*.td`. ✔ (tblgen-validated; compiled `bcir-opt` parses + verifies the pretty corpus on LLVM 18)
-3. Verifier-first compiler. ✔ (laws R1–R12: the oracle runs the full chain — module R1–R7, plan R8–R9, stream R10–R11, lowering R12 — and the MLIR-native `-bcir-verify` enforces all twelve structurally, negative-tested per law)
+3. Verifier-first compiler. ✔ (laws R1–R13: the oracle runs the full chain — module R1–R7, plan R8–R9, stream R10–R11, lowering R12, provenance R13 — and the MLIR-native `-bcir-verify` enforces all thirteen structurally, negative-tested per law)
 4. Rewrite laws. ◑ (MLIR-native `-bcir-promote-lanes` (GGG→UX); the rest authored as `bcir.opt.*` IR + run in the oracle)
 5. K_BCIR planner — candidate-path/costvec/selected-path IR. ◑ (runnable in `bcir/`: the scalarized rail, the constrained RCSP/Pareto rail (`kbcir.rcsp`), and the (max,+) overlap price (`gem.overlap`))
 6. GEM hydration — GraphPlan/LanePlan/StreamPack IR. ◑ (runnable in `bcir/`: hydration, duration-aware EFT/token scheduling (`gem.schedule`), and pipelined v2 packs (`hydrate_pipelined`))
 7. LLVM as first backend. ◑ (MLIR-native `-convert-bcir-to-llvm` lowers compute/barrier to the LLVM dialect; oracle AOT (clang) + JIT (lli))
 8. Physics-anchored calibration + learning placement (§13). ✔ (microbench harness → frozen Q8 tables (`kbcir.microbench`); policy portfolio + replay gate (`kbcir.portfolio`); the L0 prohibition is normative; certificates verified under R8/R9)
+9. R13 policy provenance + the regret ledger. ✔ (`verify_provenance` / `-bcir-verify` R13; `kbcir.regret` — the boundary dashboard; the third-order loop is measured and certified, actuation human by policy)
 
 Until the MLIR toolchain exists on this host, the oracle (`bcir/`, runnable via
 `python -m bcir.run`) demonstrates Milestones 5–7 in miniature and is the

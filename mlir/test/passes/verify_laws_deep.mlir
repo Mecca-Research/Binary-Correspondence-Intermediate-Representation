@@ -199,6 +199,40 @@ bcir.module @r9_portfolio {
 
 // -----
 
+// R13: a promoted gain schedule (gen 2) with no admitting replay certificate
+// -- rule swaps are never silent.
+bcir.module @r13_promotion {
+  bcir.kbcir.policy @latency { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  // expected-error @+1 {{R13: promoted policy @latency (gen 2) has no admitting replay certificate}}
+  bcir.kbcir.portfolio @gains { policies = [@latency], gens = array<i64: 2>, certified = array<i64: 1> }
+}
+
+// -----
+
+// R13: a capability claiming calibration without its matching frozen table.
+bcir.module @r13_table {
+  // expected-error @+1 {{R13: capability @cpu claims cal_gen 2 without a matching calibration certificate}}
+  bcir.target.capability @cpu {
+    triple = "x86_64-avx512", isa_features = ["avx512f"], lane_widths = array<i64: 1, 8, 16>,
+    cal_gen = 2 : i64
+  }
+  bcir.kbcir.calibration @cal_cpu {
+    target = @cpu, cal_gen = 1 : i64, samples = 0 : i64, provenance = "stale",
+    stream_q8 = 256 : i64, strided_q8 = 256 : i64, random_q8 = 8192 : i64, compute_q8 = 256 : i64
+  }
+}
+
+// -----
+
+// R13: a regret ledger whose books do not balance (worst exceeds total).
+bcir.module @r13_ledger {
+  bcir.kbcir.policy @latency { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  // expected-error @+1 {{R13: regret ledger books do not balance}}
+  bcir.kbcir.regret_ledger @bad { rule = @latency, episodes = 3 : i64, total_regret = 5 : i64, worst_regret = 9 : i64, gen = 1 : i64 }
+}
+
+// -----
+
 // R12: a lowering contract that neither preserves the BCIR semantic
 // (bounds/hazard/precision) nor carries an explicit discharge.
 bcir.module @r12 {

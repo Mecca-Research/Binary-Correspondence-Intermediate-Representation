@@ -1,12 +1,13 @@
-"""BCIR verifier: the runnable LangRef laws R1-R12.
+"""BCIR verifier: the runnable LangRef laws R1-R13.
 
 LLVM verifies IR structure; BCIR verifies execution truth. The laws attach to the
-four artifacts of the correspondence chain, one entry point per artifact:
+artifacts of the correspondence chain, one entry point per artifact:
 
     verify(module)                       R1-R8  module / claim laws
     verify_plan(module, result)          R8-R9  K_BCIR plan laws
     verify_pack(module, pack)            R10-R11 GEM stream laws
     verify_lowering(module, result, ll)  R12    lowering-contract law
+    verify_provenance(portfolio, ...)    R13    policy/table provenance law
     verify_all(...)                      the whole chain
 
 Mirrored by the MLIR `-bcir-verify` pass (docs/PARITY.md): the structurally
@@ -419,9 +420,68 @@ def verify_lowering(module: Module, result, ll_text: str, elem: str = "f32",
     return diags
 
 
+def verify_provenance(portfolio, certificates=(), h=None, table=None) -> list[Diagnostic]:
+    """Policy/table provenance law R13: every decision rule in force carries a
+    generation tag and an admitting certificate -- rule swaps and table
+    applications are never silent.
+
+    `portfolio` is a `kbcir.portfolio.PolicyPortfolio`, `certificates` an
+    iterable of `ReplayCertificate`s, `h` a `TargetProfile`, `table` a
+    `kbcir.microbench.CalibratedProfile` (all duck-typed).
+    """
+    diags: list[Diagnostic] = []
+
+    # R13: gain-schedule provenance -- a promoted (gen > 1) certified entry must
+    # be backed by an admitting replay certificate covering exactly that swap.
+    if portfolio is not None:
+        for slot, entry in sorted(portfolio.entries.items()):
+            if not entry.certified:
+                continue
+            if entry.gen < 1:
+                diags.append(Diagnostic(
+                    "R13", f"certified policy {slot!r} has no generation tag"))
+            if entry.gen > 1:
+                covering = [c for c in certificates
+                            if c.admitted and c.candidate == entry.policy.name
+                            and c.incumbent == slot]
+                if not covering:
+                    diags.append(Diagnostic(
+                        "R13",
+                        f"promoted policy {slot!r} (gen {entry.gen}) has no "
+                        f"admitting replay certificate",
+                    ))
+
+    # R13: cost-table provenance -- a profile claiming calibration must present
+    # the certified table it was calibrated under, with matching generation and
+    # constants (no silent drift between the table and the rule in force).
+    if h is not None and getattr(h, "cal_gen", 0) >= 1:
+        if table is None:
+            diags.append(Diagnostic(
+                "R13",
+                f"profile {h.name!r} claims cal_gen {h.cal_gen} but presents "
+                f"no certified table",
+            ))
+        elif table.cal_gen != h.cal_gen:
+            diags.append(Diagnostic(
+                "R13",
+                f"stale calibration: profile cal_gen {h.cal_gen} != table "
+                f"cal_gen {table.cal_gen} (recalibrate or rehydrate)",
+            ))
+        elif (h.gather_penalty, h.base_overhead, h.mem_unit) != (
+                table.gather_penalty, table.base_overhead, table.mem_unit):
+            diags.append(Diagnostic(
+                "R13",
+                f"profile constants drifted from the certified table "
+                f"(cal_gen {h.cal_gen})",
+            ))
+
+    return diags
+
+
 def verify_all(module: Module, result=None, pack=None, ll_text: str | None = None,
                elem: str = "f32", width_override: int | None = None) -> list[Diagnostic]:
-    """Run the full R1-R12 chain over every artifact provided."""
+    """Run the R1-R12 chain over every artifact provided (R13 attaches to the
+    decision rules, not the module: see `verify_provenance`)."""
     diags = verify(module)
     if result is not None:
         diags += verify_plan(module, result)

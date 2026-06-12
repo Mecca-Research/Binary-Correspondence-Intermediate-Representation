@@ -109,6 +109,17 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
+- **R13 policy provenance + the regret ledger** (Phase 14, LangRef §10/§13):
+  the law that makes rule swaps witnessable — a promoted portfolio entry
+  requires its admitting replay certificate, a calibrated profile must present
+  its frozen table with matching generation and constants (no silent drift),
+  and regret-ledger books must balance (`verify.verify_provenance`,
+  `-bcir-verify` R13, `bcir.verify.policy_provenance`). The **regret ledger**
+  (`kbcir.regret`) is the L3 instrument: per-rule hindsight regret under one
+  neutral yardstick, with `boundary_report` rendering keep/retune verdicts —
+  the dashboard that says where the heuristic/learned boundary belongs. An
+  instrument, never an actuator: flagged rules go through the L2 gate, R13
+  witnesses the chain, actuation stays human. CLI: `bcir.run --regret`.
 - **Physics-anchored calibration + learning placement** (Phase 13, LangRef §13):
   the L1 microbenchmark harness (`kbcir.microbench`) measures streaming/strided/
   random/compute regimes with deterministic access orders, quantizes to Q8
@@ -168,8 +179,9 @@ linking behind the `bcir.target.lower_contract` seam (GPU via a
 PTX/`gpu`-dialect path); a native (C-runtime) microbench backend filling the
 same frozen-table schema with bare-metal numbers; L2 portfolio entries learned
 offline (e.g. Bayesian optimization) on real telemetry, deployed through the
-replay gate; a live Kafka broker deployment; R13 policy provenance + the
-regret ledger (the L3 meta-loop, LangRef §13).
+replay gate; a live Kafka broker deployment; automating the L3 boundary flip
+behind the replay gate + R13 (deliberately deferred: measured, certified,
+human-actuated — LangRef §13).
 
 ## Non-regression rules
 

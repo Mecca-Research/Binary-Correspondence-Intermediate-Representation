@@ -110,8 +110,9 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
 
   StringRef getArgument() const final { return "bcir-verify"; }
   StringRef getDescription() const final {
-    return "Verify the BCIR semantic laws R1-R12: registry, domain, phase DAG, "
-           "hazard, lane, bounds, cost, plan, provenance, generation, lowering.";
+    return "Verify the BCIR semantic laws R1-R13: registry, domain, phase DAG, "
+           "hazard, lane, bounds, cost, plan, provenance, generation, lowering, "
+           "policy provenance.";
   }
 
   void runOnOperation() override {
@@ -538,6 +539,61 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (rc.getAdmitted() && regressions != 0) {
         rc.emitError("R9: admitted replay certificate carries ")
             << regressions << " regression(s)";
+        ok = false;
+      }
+    });
+
+    // R13: policy provenance -- every decision rule in force is generation-
+    // tagged and witnessed. A promoted portfolio entry (gen > 1) requires an
+    // admitting replay certificate for that policy; a calibrated capability
+    // (cal_gen >= 1) requires its matching frozen-table certificate; a regret
+    // ledger's books must balance. Rule swaps are never silent.
+    llvm::DenseSet<StringRef> admittedCandidates;
+    root->walk([&](KBCIRReplayCertificateOp rc) {
+      if (rc.getAdmitted())
+        admittedCandidates.insert(rc.getCandidate());
+    });
+    root->walk([&](KBCIRPortfolioOp pf) {
+      ArrayAttr policies = pf.getPolicies();
+      ArrayRef<int64_t> gens = pf.getGens();
+      for (size_t i = 0; i < policies.size() && i < gens.size(); ++i) {
+        auto ref = dyn_cast<FlatSymbolRefAttr>(policies[i]);
+        if (ref && gens[i] > 1 && !admittedCandidates.count(ref.getValue())) {
+          pf.emitError("R13: promoted policy @")
+              << ref.getValue() << " (gen " << gens[i]
+              << ") has no admitting replay certificate";
+          ok = false;
+        }
+      }
+    });
+    llvm::DenseMap<StringRef, KBCIRCalibrationOp> calibrationByTarget;
+    root->walk([&](KBCIRCalibrationOp cal) {
+      calibrationByTarget[cal.getTarget()] = cal;
+    });
+    root->walk([&](TargetCapabilityOp t) {
+      int64_t gen = static_cast<int64_t>(t.getCalGen());
+      if (gen < 1)
+        return; // seeded constants: nothing to certify
+      auto cal = calibrationByTarget.lookup(t.getSymName());
+      if (!cal || static_cast<int64_t>(cal.getCalGen()) != gen) {
+        t.emitError("R13: capability @")
+            << t.getSymName() << " claims cal_gen " << gen
+            << " without a matching calibration certificate";
+        ok = false;
+      }
+    });
+    root->walk([&](KBCIRRegretLedgerOp rl) {
+      if (!policyByName.count(rl.getRule())) {
+        rl.emitError("R13: regret ledger references unknown rule @")
+            << rl.getRule();
+        ok = false;
+      }
+      int64_t episodes = static_cast<int64_t>(rl.getEpisodes());
+      int64_t total = static_cast<int64_t>(rl.getTotalRegret());
+      int64_t worst = static_cast<int64_t>(rl.getWorstRegret());
+      if (episodes < 0 || worst < 0 || total < worst ||
+          static_cast<int64_t>(rl.getGen()) < 1) {
+        rl.emitError("R13: regret ledger books do not balance");
         ok = false;
       }
     });

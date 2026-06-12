@@ -44,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="token-DAG execution schedule (pipelined phases, no barriers)")
     p.add_argument("--tables", metavar="FILE",
                    help="apply a frozen calibration table (JSON; see bcir.kbcir.microbench)")
+    p.add_argument("--regret", action="store_true",
+                   help="print the L3 regret ledger over the standard Theta episodes")
     p.add_argument("--codegen", metavar="TARGET",
                    help="per-target codegen via llc (aarch64|riscv64|nvptx64|bpf|x86_64|c|all)")
     args = p.parse_args(argv)
@@ -99,6 +101,15 @@ def main(argv: list[str] | None = None) -> int:
         sp = price_scheduled(module, result, h, theta, policy)
         print(f"[overlap] M(pi,Theta): makespan={sp.makespan} serial={sp.serial} "
               f"gain={sp.overlap_gain}")
+
+    if args.regret:
+        from .kbcir import PolicyPortfolio, boundary_report, ledger_from_episodes
+        ledger = ledger_from_episodes(module, h, list(_THETAS.values()),
+                                      PolicyPortfolio.default())
+        print(ledger.dashboard())
+        for v in boundary_report(ledger):
+            print(f"[boundary] {v.rule}: {v.verdict} "
+                  f"(rate={v.regret_rate}, episodes={v.episodes})")
 
     if args.eft or args.tokens:
         from .gem import durations_from, execute_tokens, schedule_eft

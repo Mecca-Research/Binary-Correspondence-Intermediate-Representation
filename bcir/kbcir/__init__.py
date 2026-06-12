@@ -23,6 +23,14 @@ from .portfolio import (
     replay_gate,
 )
 from .realize import Candidate, ChosenStep, RealizationResult, candidates_for, optimize
+from .regret import (
+    BoundaryVerdict,
+    RegretLedger,
+    RegretMeasurement,
+    boundary_report,
+    ledger_from_episodes,
+    measure_regret,
+)
 from .rcsp import Budget, Infeasible, optimize_constrained, pareto_plans
 from .semiring import dag_shortest_path
 from .weights import PERF, POLICIES, Policy, weights
@@ -51,6 +59,12 @@ __all__ = [
     "classify",
     "episodes_from",
     "replay_gate",
+    "BoundaryVerdict",
+    "RegretLedger",
+    "RegretMeasurement",
+    "boundary_report",
+    "ledger_from_episodes",
+    "measure_regret",
     "dag_shortest_path",
     "PERF",
     "POLICIES",
