@@ -71,7 +71,19 @@ bcir.module @full_vec_add_ct1 attributes {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @add_cpu_u16, score = 7808 : i64
     } : !bcir.path
+    // Constrained (RCSP) rail: a 700 thermal/power cap makes vec16 (1088)
+    // infeasible -- the budgeted optimum is vec8 at score 9472 (the oracle:
+    // optimize_constrained(..., Budget.of(thermal=700)); a point no PERF
+    // weight vector can select, since PERF's thermal weight is 0).
+    %selc = bcir.kbcir.select @add from [@add_cpu_u8, @add_cpu_u16] {
+      policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
+      budget = @thermal_cap, selected = @add_cpu_u8, score = 9472 : i64
+    } : !bcir.path
   }
+  bcir.kbcir.budget @thermal_cap { dims = ["thermal", "power"], caps = array<i64: 700, 700> }
+  // M(pi,Theta): the (max,+) wave-overlap price. One claim => the degenerate
+  // case: makespan == serial Sigma score, overlap gain 0 (gem.overlap oracle).
+  bcir.kbcir.scheduled_price @overlap_price { plan = @plan0, makespan = 7808 : i64, serial = 7808 : i64, overlap_gain = 0 : i64 }
 
   // ---- BCIR-4: GEM StreamPack (hydrated, prefetch + provenance) ----
   %sp = bcir.gem.stream_pack @sp0 attributes {
@@ -98,5 +110,7 @@ bcir.module @full_vec_add_ct1 attributes {
 // CHECK: bcir.mem.tier @hbm
 // CHECK: bcir.claim @add
 // CHECK: bcir.kbcir.select @add
+// CHECK: bcir.kbcir.budget @thermal_cap
+// CHECK: bcir.kbcir.scheduled_price @overlap_price
 // CHECK: bcir.gem.stream_pack @sp0
 // CHECK: bcir.verify.plan_selection @vr_plan

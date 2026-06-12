@@ -37,6 +37,9 @@ accuracy, contention, verification`.
 | policy / weights | `kbcir.weights.Policy` | `bcir.kbcir.policy` |
 | candidate path | `kbcir.realize.Candidate` | `bcir.kbcir.path` |
 | min-plus select | `kbcir.realize.optimize` + `semiring` | `bcir.kbcir.select` (`#bcir.semiring<min_plus>`) |
+| budget B(H,Θ) (RCSP) | `kbcir.rcsp.Budget` / `optimize_constrained` | `bcir.kbcir.budget` + `bcir.kbcir.select` `budget` (feasibility: `-bcir-verify` R9) |
+| Pareto front | `kbcir.rcsp.pareto_plans` (label dominance) | RCSP labels over the same candidate DAG |
+| scheduled price M(π,Θ) | `gem.overlap.price_scheduled` / `optimize_scheduled` | `bcir.kbcir.scheduled_price` (consistency: `-bcir-verify` R9) |
 | StreamPack | `gem.streampack.StreamPack` | `bcir.gem.stream_pack` |
 | lane segment | `gem.streampack.LaneSegment` | `bcir.gem.lane_segment` |
 | verifier R1–R12 | `verify.{verify,verify_plan,verify_pack,verify_lowering}` | `bcir.verify.*` ops + the `-bcir-verify` pass (R1–R12) |
@@ -65,6 +68,18 @@ realization with K_BCIR **score = 7808** in both:
 
 A hot Θ replans both to `vec8` (AVX-512 downclock). Per-target π* differs by
 lane width: x86_avx512→16, x86_avx2→8, arm64_neon→4, nvidia_ptx→32.
+
+The **constrained rail** pins a second worked example: under a 700 thermal/power
+budget, vec16 (thermal 1088) is infeasible and the budgeted optimum is `vec8`
+with K_BCIR **score = 9472** in both:
+
+- Oracle: `optimize_constrained(..., Budget.of(thermal=700))`
+  (`bcir/tests/test_rcsp.py`); CLI `python -m bcir.run vector_add --budget thermal=700`.
+- Law: `mlir/examples/full_vec_add_ct1.mlir` `bcir.kbcir.select ... budget = @thermal_cap, score = 9472`.
+
+The **scheduled price** pins the degenerate overlap example: a single-claim plan
+prices at `makespan == serial == 7808`, `overlap_gain = 0`
+(`bcir.kbcir.scheduled_price @overlap_price` ↔ `gem.overlap.price_scheduled`).
 
 ## How parity is enforced today
 

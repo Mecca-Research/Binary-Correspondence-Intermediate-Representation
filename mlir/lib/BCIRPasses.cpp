@@ -21,8 +21,10 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
+#include <optional>
 
 using namespace mlir;
 
@@ -69,6 +71,24 @@ static llvm::DenseSet<StringRef> symbolSet(ArrayAttr refs) {
     if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
       out.insert(ref.getValue());
   return out;
+}
+
+// Look up a named dimension of a 12-d K_BCIR cost vector (R8/R9 budget law).
+static std::optional<int64_t> costDim(CostVectorAttr cv, StringRef name) {
+  return llvm::StringSwitch<std::optional<int64_t>>(name)
+      .Case("compute", cv.getCompute())
+      .Case("memory", cv.getMemory())
+      .Case("fabric", cv.getFabric())
+      .Case("sync", cv.getSync())
+      .Case("compile", cv.getCompile())
+      .Case("thermal", cv.getThermal())
+      .Case("power", cv.getPower())
+      .Case("reliability", cv.getReliability())
+      .Case("security", cv.getSecurity())
+      .Case("accuracy", cv.getAccuracy())
+      .Case("contention", cv.getContention())
+      .Case("verification", cv.getVerification())
+      .Default(std::nullopt);
 }
 
 // A read/write hazard between two claims (RAW / WAR / WAW).
@@ -339,8 +359,29 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // claim it plans (R9).
     llvm::DenseMap<StringRef, KBCIRPathOp> pathByName;
     llvm::DenseMap<StringRef, KBCIRPlanOp> planByName;
+    llvm::DenseMap<StringRef, KBCIRBudgetOp> budgetByName;
     root->walk([&](KBCIRPathOp p) { pathByName[p.getSymName()] = p; });
     root->walk([&](KBCIRPlanOp p) { planByName[p.getSymName()] = p; });
+    static const llvm::DenseSet<StringRef> kCostDims = {
+        "compute", "memory", "fabric", "sync", "compile", "thermal",
+        "power", "reliability", "security", "accuracy", "contention",
+        "verification"};
+    root->walk([&](KBCIRBudgetOp b) {
+      budgetByName[b.getSymName()] = b;
+      if (b.getDims().size() != static_cast<size_t>(b.getCaps().size())) {
+        b.emitError("R8: budget ")
+            << b.getSymName() << " dims/caps arity mismatch";
+        ok = false;
+      }
+      for (Attribute a : b.getDims()) {
+        auto name = dyn_cast<StringAttr>(a);
+        if (!name || !kCostDims.count(name.getValue())) {
+          b.emitError("R8: budget ")
+              << b.getSymName() << " names an unknown cost dimension";
+          ok = false;
+        }
+      }
+    });
     root->walk([&](KBCIRSelectOp s) {
       if (s.getFrom().empty()) {
         s.emitError("R8: empty candidate set for claim @") << s.getClaim();
@@ -374,6 +415,51 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
       if (static_cast<int64_t>(s.getScore()) < 0) {
         s.emitError("R9: negative plan score");
+        ok = false;
+      }
+      // Constrained rail (RCSP): a selection under a budget must pick a path
+      // whose cost satisfies every cap -- R(pi) <= B (LangRef Sec. 2).
+      if (auto bref = s.getBudgetAttr()) {
+        auto b = budgetByName.lookup(bref.getValue());
+        if (!b) {
+          s.emitError("R8: budget @")
+              << bref.getValue() << " does not resolve";
+          ok = false;
+        } else if (auto p = pathByName.lookup(s.getSelected())) {
+          ArrayAttr dims = b.getDims();
+          ArrayRef<int64_t> caps = b.getCaps();
+          for (size_t i = 0; i < dims.size() && i < caps.size(); ++i) {
+            auto name = dyn_cast<StringAttr>(dims[i]);
+            if (!name)
+              continue;
+            auto v = costDim(p.getCost(), name.getValue());
+            if (v && *v > caps[i]) {
+              s.emitError("R9: selected path @")
+                  << s.getSelected() << " violates budget @" << bref.getValue()
+                  << " (" << name.getValue() << " " << *v << " > " << caps[i]
+                  << ")";
+              ok = false;
+            }
+          }
+        }
+      }
+    });
+
+    // R9: the (max,+) scheduled price is consistent with its serial bound --
+    // makespan + overlap_gain == serial -- and references a declared plan.
+    root->walk([&](KBCIRScheduledPriceOp sp) {
+      if (!planByName.count(sp.getPlan())) {
+        sp.emitError("R9: scheduled price references unknown plan @")
+            << sp.getPlan();
+        ok = false;
+      }
+      int64_t makespan = static_cast<int64_t>(sp.getMakespan());
+      int64_t serial = static_cast<int64_t>(sp.getSerial());
+      int64_t gain = static_cast<int64_t>(sp.getOverlapGain());
+      if (makespan < 0 || makespan + gain != serial) {
+        sp.emitError("R9: inconsistent scheduled price (makespan ")
+            << makespan << " + overlap_gain " << gain << " != serial " << serial
+            << ")";
         ok = false;
       }
     });

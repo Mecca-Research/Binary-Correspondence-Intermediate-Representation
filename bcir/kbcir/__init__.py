@@ -11,6 +11,7 @@ from .cost import (
     Tier,
 )
 from .realize import Candidate, ChosenStep, RealizationResult, candidates_for, optimize
+from .rcsp import Budget, Infeasible, optimize_constrained, pareto_plans
 from .semiring import dag_shortest_path
 from .weights import PERF, POLICIES, Policy, weights
 
@@ -28,6 +29,10 @@ __all__ = [
     "RealizationResult",
     "candidates_for",
     "optimize",
+    "Budget",
+    "Infeasible",
+    "optimize_constrained",
+    "pareto_plans",
     "dag_shortest_path",
     "PERF",
     "POLICIES",

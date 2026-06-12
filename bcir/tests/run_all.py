@@ -15,6 +15,8 @@ import traceback
 
 _MODULES = [
     "bcir.tests.test_kbcir",
+    "bcir.tests.test_rcsp",
+    "bcir.tests.test_overlap",
     "bcir.tests.test_targets",
     "bcir.tests.test_verify",
     "bcir.tests.test_etl",
