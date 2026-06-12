@@ -1,8 +1,8 @@
 # BCIR Mapping Guide for LLVM IR
 
 This chapter maps common Binary Correspondence Intermediate Representation
-(BCIR) concepts to the LLVM IR patterns used in `runtime/llvm/` and in the
-training examples. Use it when lowering BCIR-like graph, resource, schedule, or
+(BCIR) concepts to LLVM IR patterns in the training examples and to the
+current executable oracle (`../../bcir/`) plus MLIR law (`../../mlir/`). Use it when lowering BCIR-like graph, resource, schedule, or
 runtime ABI ideas into standalone LLVM IR that still assembles and verifies.
 For a pattern-oriented dispatcher across BCIR mapping pages, pitfalls, advanced
 IR semantics, MLIR bridge notes, backend/JIT notes, and exercises, see the
@@ -11,7 +11,7 @@ IR semantics, MLIR bridge notes, backend/JIT notes, and exercises, see the
 ## Key takeaways
 
 - Lower BCIR concepts in layers: semantic records, accessor/executor helpers, then plain LLVM operations.
-- Runtime ABI structs in `runtime/llvm/` are the source of truth for claim, schedule, registry, blob, and executor shapes.
+- The BCIR Python model/oracle and MLIR dialect law are the current sources of truth; training-only LLVM structs illustrate lowering patterns rather than defining the project ABI.
 - Metadata should preserve diagnostics and lowering provenance without becoming required for core IR correctness.
 - Every BCIR-facing example should still assemble and verify as ordinary opaque-pointer LLVM IR.
 - Treat BCIR normal forms as stage contracts and use verifier fenceposts to catch mapping drift that generic LLVM verification cannot see.
@@ -50,24 +50,27 @@ immediates; `%bcir.execctx` carries execution state; schedule structs group
 claims into phase and batch ranges; registry/blob structs describe resources and
 serialized views.
 
-## Runtime files worth opening first
+## Current BCIR implementation files worth opening first
 
-- [`runtime/llvm/README.md`](../../runtime/llvm/README.md) — high-level runtime
-  seed and validation commands.
-- [`runtime/llvm/bcir_claim_schema.ll`](../../runtime/llvm/bcir_claim_schema.ll)
-  — claim, execution context, opcode/lane/domain metadata, and layout metadata.
-- [`runtime/llvm/bcir_claim_accessors.ll`](../../runtime/llvm/bcir_claim_accessors.ll)
-  — packed-field accessors for claim control, resource IDs, and immediates.
-- [`runtime/llvm/bcir_registry_schema.ll`](../../runtime/llvm/bcir_registry_schema.ll)
-  — resource, executable, worklist, blob header, and blob view records.
-- [`runtime/llvm/bcir_schedule_schema.ll`](../../runtime/llvm/bcir_schedule_schema.ll)
-  — phase, batch, layout, prefetch, tile, and stream-pack records.
-- [`runtime/llvm/bcir_ops.ll`](../../runtime/llvm/bcir_ops.ll) — runtime op
-  wrappers for loads, stores, vector operations, atomics, gather/scatter, and
-  tensor-like kernels.
-- [`runtime/llvm/bcir_gem_seed.ll`](../../runtime/llvm/bcir_gem_seed.ll) and
-  [`runtime/llvm/bcir_batch_executor.ll`](../../runtime/llvm/bcir_batch_executor.ll)
-  — claim, worklist, batch, and stream-pack execution patterns.
+- [`../../bcir/model/graph.py`](../../bcir/model/graph.py) — resource, claim,
+  phase, and module semantics in the executable oracle.
+- [`../../bcir/frontends/rop.py`](../../bcir/frontends/rop.py) and
+  [`../../bcir/frontends/map.py`](../../bcir/frontends/map.py) — source-level
+  claim/resource front ends.
+- [`../../bcir/kbcir/realize.py`](../../bcir/kbcir/realize.py) and
+  [`../../bcir/kbcir/calibrate.py`](../../bcir/kbcir/calibrate.py) — realization
+  and calibration policy.
+- [`../../bcir/gem/streampack.py`](../../bcir/gem/streampack.py) and
+  [`../../bcir/gem/execute.py`](../../bcir/gem/execute.py) — StreamPack
+  provenance and execution.
+- [`../../bcir/lower/llvm.py`](../../bcir/lower/llvm.py) and
+  [`../../bcir/lower/jit.py`](../../bcir/lower/jit.py) — current LLVM AOT/JIT
+  lowering boundary.
+- [`../../mlir/include/BCIR/`](../../mlir/include/BCIR/) and
+  [`../../mlir/lib/BCIRPasses.cpp`](../../mlir/lib/BCIRPasses.cpp) — compiled
+  dialect law and lowering/verification passes.
+- [`../../docs/PARITY.md`](../../docs/PARITY.md) — agreement required between
+  the executable oracle and MLIR law.
 
 ## Pitfalls checklist
 
@@ -114,3 +117,18 @@ The repository-wide helper also covers these files:
 ```bash
 ./llvm-training/tools/verify-examples.sh
 ```
+
+## Advanced chapter cross-navigation
+
+| Mapping decision | Continue with |
+|---|---|
+| Enforce a stage contract or diagnose mapping drift | [`11-normal-forms-and-verification.md`](11-normal-forms-and-verification.md), then [`../17-new-pass-manager/04-adaptive-bcir-pipelines.md`](../17-new-pass-manager/04-adaptive-bcir-pipelines.md) |
+| Implement dialect conversion legality and type/materialization rules | [`../18-mlir-lowering-to-llvm/README.md`](../18-mlir-lowering-to-llvm/README.md) |
+| Sequence lowering with Transform dialect | [`../18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md`](../18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md) |
+| Choose runtime call versus registered intrinsic versus target pseudo | [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md), [`../19-hardware-aware/01-dragon-egg-gaadmsf-intrinsics.md`](../19-hardware-aware/01-dragon-egg-gaadmsf-intrinsics.md) |
+| Carry calibration, pulse/flow, memory, or register policy | [`../19-hardware-aware/README.md`](../19-hardware-aware/README.md) |
+| Deploy, replace, and retire generated kernels | [`../12-backend-jit/07-advanced-orc-runtime-integration.md`](../12-backend-jit/07-advanced-orc-runtime-integration.md) |
+
+Run [`../tools/verify-bcir-mapping.sh`](../tools/verify-bcir-mapping.sh) for source-like
+mapping fixtures and lowered companions. The repository-wide artifact inventory
+is enforced by [`../tools/verify-manifest.sh`](../tools/verify-manifest.sh).

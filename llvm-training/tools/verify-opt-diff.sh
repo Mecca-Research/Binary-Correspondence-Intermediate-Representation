@@ -6,12 +6,24 @@ TRAINING_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 REPO_ROOT=$(cd -- "$TRAINING_ROOT/.." && pwd)
 UPDATE_OPT_DIFF=${UPDATE_OPT_DIFF:-0}
 
-require_tool() {
-  local tool=$1
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    printf 'error: required tool not found on PATH: %s\n' "$tool" >&2
-    exit 127
+find_tool() {
+  local base=$1
+  local tool
+  if [ -n "${LLVM_SUFFIX:-}" ] && command -v "${base}${LLVM_SUFFIX}" >/dev/null 2>&1; then
+    printf '%s' "${base}${LLVM_SUFFIX}"
+    return 0
   fi
+  if command -v "$base" >/dev/null 2>&1; then
+    printf '%s' "$base"
+    return 0
+  fi
+  while IFS= read -r tool; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '%s' "$tool"
+      return 0
+    fi
+  done < <(compgen -c | sed -n -E "s/^(${base}-[0-9]+)$/\\1/p" | sort -Vu)
+  return 1
 }
 
 relpath() {
@@ -41,7 +53,7 @@ run_case() {
   expected=$(mktemp "${TMPDIR:-/tmp}/llvm-training-opt-diff.expected.XXXXXX.ll")
 
   printf '[opt-diff] opt -S -passes=%s %s ... ' "$passes" "$(relpath "$input")"
-  if ! output=$(opt -S -passes="$passes" "$input" -o "$temp" 2>&1); then
+  if ! output=$("$OPT" -S -passes="$passes" "$input" -o "$temp" 2>&1); then
     printf 'FAILED\n'
     if [ -n "$output" ]; then
       printf '%s\n' "$output" | sed 's/^/    /'
@@ -72,8 +84,14 @@ run_case() {
   return 1
 }
 
-require_tool opt
-require_tool diff
+OPT=$(find_tool opt) || {
+  printf 'error: required tool not found on PATH: opt (or opt-N)\n' >&2
+  exit 127
+}
+if ! command -v diff >/dev/null 2>&1; then
+  printf 'error: required tool not found on PATH: diff\n' >&2
+  exit 127
+fi
 
 status=0
 count=0

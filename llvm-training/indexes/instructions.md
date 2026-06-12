@@ -22,3 +22,14 @@
 | `landingpad`, `resume` | [`16-exception-handling/02-itanium-landingpad.md`](../16-exception-handling/02-itanium-landingpad.md), [`16-exception-handling/04-cleanups-and-resume.md`](../16-exception-handling/04-cleanups-and-resume.md), [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
 | `catchswitch`, `catchpad`, `cleanuppad`, `catchret`, `cleanupret` | [`16-exception-handling/03-wineh-funclets.md`](../16-exception-handling/03-wineh-funclets.md), [`16-exception-handling/04-cleanups-and-resume.md`](../16-exception-handling/04-cleanups-and-resume.md), [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
 | intrinsic calls (`llvm.prefetch`, `llvm.memcpy.*`, `llvm.bcir.*`, `llvm.matrix.*`, `llvm.coro.*`, `llvm.experimental.gc.*`, `llvm.experimental.convergence.*`) | [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md), [`13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md), [`13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md), [`12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md) |
+
+## Advanced call-site and control-flow forms
+
+| Form | Key concern | See |
+|---|---|---|
+| `call` / `invoke` with attributes | ABI and optimizer contracts can differ at the call site from the callee declaration | [`13-advanced-ir/04-attributes.md`](../13-advanced-ir/04-attributes.md), [`reference/instruction-quickref.md`](../reference/instruction-quickref.md) |
+| `call` / `invoke` with operand bundles | Preserve deopt, funclet, GC, and convergence payloads when cloning/rewriting | [`13-advanced-ir/07-operand-bundles.md`](../13-advanced-ir/07-operand-bundles.md) |
+| `invoke`, `landingpad`, `resume` | Itanium-style exceptional CFG and propagation | [`16-exception-handling/02-itanium-landingpad.md`](../16-exception-handling/02-itanium-landingpad.md) |
+| `catchswitch`, `catchpad`, `cleanuppad`, `catchret`, `cleanupret` | WinEH funclet ownership and token discipline | [`16-exception-handling/03-wineh-funclets.md`](../16-exception-handling/03-wineh-funclets.md) |
+| `callbr` / inline assembly | Target-specific indirect labels and constraints | [`01-syntax/04-inline-asm.md`](../01-syntax/04-inline-asm.md) |
+| intrinsic call sites with `immarg` | Immediate operands and overload suffixes are part of the intrinsic contract | [`reference/intrinsics.md`](../reference/intrinsics.md) |

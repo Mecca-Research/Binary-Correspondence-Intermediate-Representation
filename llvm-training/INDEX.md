@@ -49,3 +49,14 @@ every lookup.
 If you do not know where to start, open [`RECIPES.md`](RECIPES.md), pick the row
 closest to your task, then jump to the linked chapter and examples. Detailed
 topic and symbol lookup remains in [`llvm-training/indexes/`](indexes/).
+
+## Advanced chapter integration map
+
+| Need | Primary chapter | Companion index or gate |
+|---|---|---|
+| New PM registration, analysis invalidation, plugins, adaptive pipelines, PGO/MLGO | [`17-new-pass-manager/README.md`](17-new-pass-manager/README.md) | [`indexes/optimizer-passes.md`](indexes/optimizer-passes.md) |
+| MLIR legality, type conversion, materialization, Transform dialect, metadata translation | [`18-mlir-lowering-to-llvm/README.md`](18-mlir-lowering-to-llvm/README.md) | [`indexes/topics.md`](indexes/topics.md), [`tools/verify-mlir-examples.sh`](tools/verify-mlir-examples.sh) |
+| ORC materialization units, transform layers, resource trackers, remote JITLink | [`12-backend-jit/07-advanced-orc-runtime-integration.md`](12-backend-jit/07-advanced-orc-runtime-integration.md) | [`reference/glossary.md`](reference/glossary.md) |
+| GAADMSF/Dragon Egg dispatch, pulses, calibration, target extensions, MIR | [`19-hardware-aware/README.md`](19-hardware-aware/README.md) | [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md), [`tools/smoke-llc-skip.txt`](tools/smoke-llc-skip.txt) |
+| BCIR normal forms and mapping drift | [`bcir-mapping/11-normal-forms-and-verification.md`](bcir-mapping/11-normal-forms-and-verification.md) | [`indexes/bcir-patterns.md`](indexes/bcir-patterns.md), [`tools/verify-bcir-mapping.sh`](tools/verify-bcir-mapping.sh) |
+| Artifact type and portability classification | [`examples/README.md`](examples/README.md) | [`tools/verify-manifest.sh`](tools/verify-manifest.sh) |

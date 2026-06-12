@@ -117,3 +117,20 @@ Each declaration tells you:
 - [`../08-pitfalls/06-immarg-violation.md`](../08-pitfalls/06-immarg-violation.md) — `immarg` constraint
 - [`../08-pitfalls/12-vectorization-blocked-by-aliasing.md`](../08-pitfalls/12-vectorization-blocked-by-aliasing.md) — missed vectorization due to memory dependence uncertainty
 - LLVM LangRef: https://llvm.org/docs/LangRef.html#intrinsic-functions
+
+## Dispatching generic, target, project, and runtime operations
+
+| Need | Representation | Required evidence |
+|---|---|---|
+| Stable LLVM semantic operation | Registered generic intrinsic | Canonical LangRef declaration, overload types, attributes, and `immarg` constraints |
+| Backend-visible target operation | Registered target intrinsic or target pseudo | Feature predicate, legalization/selection, scheduling/encoding support, and fallback |
+| BCIR/GAADMSF operation the optimizer/backend must recognize | Registered project intrinsic or MLIR op lowered to one | TableGen registration, precise memory effects, verifier/lowering tests, runtime fallback policy |
+| Opaque device/runtime action | Ordinary runtime call | ABI declaration, symbol resolution, side-effect attributes, and JIT/AOT availability |
+| Optional policy only | Metadata | Correctness must be unchanged if the metadata is dropped |
+
+Start with [`../19-hardware-aware/01-dragon-egg-gaadmsf-intrinsics.md`](../19-hardware-aware/01-dragon-egg-gaadmsf-intrinsics.md)
+for hardware-aware selection and
+[`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md)
+for backend/JIT registration and fallback. A name beginning with `llvm.` is
+reserved: a project spelling is not production-valid merely because a training
+fixture declares it.

@@ -32,8 +32,14 @@ jobs:
             echo "llvm-as and opt not both present; skipping llvm-training standalone example validation"
           fi
 
-      - name: LLVM training example manifest drift
+      - name: LLVM training example and artifact manifest drift
         run: bash llvm-training/tools/verify-manifest.sh
+
+      - name: LLVM training exercise solutions and prompt templates
+        run: llvm-training/tools/run-if-tools.sh "LLVM exercise verifier" llvm-as opt -- bash llvm-training/tools/verify-exercises.sh
+
+      - name: LLVM training adversarial fixtures
+        run: llvm-training/tools/run-if-tools.sh "LLVM adversarial verifier" llvm-as opt -- bash llvm-training/tools/verify-adversarial-fixtures.sh
 
       - name: LLVM training binary-analysis CSV schemas
         run: llvm-training/tools/verify-csv-schema.sh
@@ -56,6 +62,9 @@ jobs:
 
       - name: LLVM training opaque pointer syntax
         run: bash llvm-training/tools/verify-opaque-pointers.sh
+
+      - name: Configure training-only CMake quality targets
+        run: cmake -S llvm-training -B build/llvm-training -G Ninja
 
       - name: LLVM training lit tests
         run: |

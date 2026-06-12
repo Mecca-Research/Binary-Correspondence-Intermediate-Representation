@@ -317,3 +317,19 @@ and [`../08-pitfalls/08-stale-debug-locations.md`](../08-pitfalls/08-stale-debug
 - [`../quickref/advanced-ir.md`](../quickref/advanced-ir.md) — short pre-edit checklist for intrinsic-heavy or contract-heavy IR.
 - [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md) — target-specific intrinsic namespaces and feature requirements.
 - [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md) — custom BCIR intrinsic declarations and JIT fallback policy.
+
+## BCIR, GAADMSF, and hardware-aware dispatch summary
+
+| Family / mechanism | Use | Portability gate |
+|---|---|---|
+| GAADMSF / `llvm.bcir.*` sketch intrinsics | Preserve a BCIR hardware operation to target lowering or JIT transformation | Must be registered and lowered; otherwise rewrite to a documented runtime call |
+| `llvm.experimental.stackmap`, `llvm.experimental.patchpoint.*` | Emit runtime side-table locations and patchable/deopt sites | Runtime ID/live-value protocol plus target emission support; assembly-only in portable corpus smoke |
+| `llvm.matrix.*` | Represent flattened matrix operations before matrix lowering | Run matrix lowering and validate shape/layout; not a portable default-`llc` promise |
+| `llvm.experimental.gc.statepoint`, `llvm.experimental.gc.relocate` | Model GC safepoints and post-safepoint relocated references | GC strategy/runtime and relocation index discipline required |
+| `llvm.coro.*` | Model coroutine frame/suspend/resume before coroutine splitting/lowering | Requires coroutine pass pipeline and runtime ABI policy |
+| `llvm.experimental.convergence.*` + `"convergencectrl"` | Preserve convergence regions and convergent-call control dependence | Producer/consumer token nesting and target semantics must remain valid |
+| `llvm.riscv.*` and other target namespaces | Expose target-specific operations to lowering | Correct triple, feature string, legal types/immediates, and portable/runtime fallback |
+
+See the detailed category sections above, the
+[`intrinsic/special-type index`](../indexes/intrinsics-special-types.md), and the
+[`hardware-aware chapter`](../19-hardware-aware/README.md).

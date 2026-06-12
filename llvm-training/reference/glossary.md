@@ -126,3 +126,27 @@
 - LangRef atomic instructions — https://llvm.org/docs/LangRef.html#memory-access-and-addressing-operations
 - LangRef metadata — https://llvm.org/docs/LangRef.html#metadata
 - Source Level Debugging with LLVM — https://llvm.org/docs/SourceLevelDebugging.html
+
+## Advanced compiler and BCIR terms
+
+| Term | Meaning |
+|---|---|
+| **New Pass Manager (New PM)** | LLVM pass infrastructure built around `PassBuilder`, separate analysis managers, explicit analysis invalidation, textual pipelines, extension points, and loadable pass plugins. |
+| **`PreservedAnalyses`** | A transform pass result describing which cached analyses remain valid after the pass. Returning an overly broad set can silently reuse stale facts. |
+| **MLIR dialect conversion** | Legality-driven rewriting that combines a `ConversionTarget`, type conversion, conversion patterns, and materializations to eliminate illegal operations/types. |
+| **`TypeConverter` materialization** | A source, target, or argument bridge operation inserted when converted and unconverted type worlds meet during MLIR conversion. |
+| **Transform dialect** | MLIR orchestration IR whose handles identify payload operations; transform IR is control/configuration, not the payload being lowered. |
+| **BCIR normal form** | A named stage contract over representation, provenance, claims, strides, address spaces, metadata, and runtime boundaries; stronger than generic LLVM verifier acceptance. |
+| **Mapping drift** | A transform-induced change that leaves IR syntactically valid but breaks a BCIR normal-form invariant or source-to-lowered correspondence. |
+| **ORC materialization unit** | A lazily materialized group of symbol definitions in ORC, responsible for resolving or failing its symbols as one unit. |
+| **`IRTransformLayer`** | ORC layer that applies an IR transform/optimization callback before compilation. |
+| **`ResourceTracker`** | ORC lifetime handle used to remove or retire symbols and linked resources as a generation is replaced. |
+| **JITLink / remote JITLink** | LLVM's in-process linker for JIT objects, or an arrangement that links/executes in a different process or target environment. |
+| **Hot re-JIT** | Compile and publish a replacement kernel generation while preserving symbol/lifetime safety for active users of the old generation. |
+| **GAADMSF** | BCIR training term for hardware-aware graph/data-flow operations whose dispatch may require a registered intrinsic, runtime call, profile gate, or target pseudo. |
+| **Dragon Egg operation** | BCIR training term for a flow/device operation lowered through an explicit runtime or target-aware boundary rather than hidden metadata semantics. |
+| **Programming pulse / flow execution** | Explicit hardware-control or execution action; required state and side effects must be represented by operands/control flow/intrinsics/runtime ABI. |
+| **Calibration governor** | Runtime or compilation policy state selecting calibrated hardware behavior; required values are semantic inputs, while optional preferences may be metadata. |
+| **MachineIR / MIR** | LLVM's target-specific machine-level representation and its textual serialization, containing machine opcodes, register classes/banks, virtual/physical registers, and frame information. |
+| **Target pseudo** | Backend-only machine operation expanded or selected into real instructions at a target-defined stage. |
+| **Hardware profile** | Target/runtime capability and cost evidence used to gate profitable hardware-specific lowering; it cannot override semantic or verifier requirements. |

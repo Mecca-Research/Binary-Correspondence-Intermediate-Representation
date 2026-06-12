@@ -1,0 +1,8 @@
+# RUN: bash %training_root/tools/verify-manifest.sh
+# RUN: bash %training_root/tools/verify-bcir-mapping.sh
+# RUN: bash %training_root/tools/verify-mlir-examples.sh
+# RUN: grep -F '17-new-pass-manager/README.md' %training_root/INDEX.md
+# RUN: grep -F '18-mlir-lowering-to-llvm/README.md' %training_root/INDEX.md
+# RUN: grep -F '19-hardware-aware/README.md' %training_root/INDEX.md
+# RUN: grep -F '12-backend-jit/07-advanced-orc-runtime-integration.md' %training_root/INDEX.md
+# RUN: grep -F 'bcir-mapping/11-normal-forms-and-verification.md' %training_root/INDEX.md

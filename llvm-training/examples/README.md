@@ -234,6 +234,26 @@ targets for `verify-examples.sh`:
 | `llvm-training/19-hardware-aware/examples/mir-register-hint-sketch.mir.txt` | MIR-shaped text sketch | Documentation-only backend sketch; not LLVM IR and intentionally excluded from `llvm-as` verification. |
 | `llvm-training/examples/README.md` | Markdown sketch | Documentation-only code outline. |
 | `llvm-training/examples/broken-example.ll.txt` | Intentionally excluded LLVM IR text fixture | Invalid or legacy IR text fixture; excluded from the known-good manifest. |
+| `llvm-training/07-optimization/examples/bcir-benchmark-pipeline-notes.md` | Analysis-only Markdown notes | Benchmark/pass-pipeline review artifact; not an LLVM IR input. |
+| `llvm-training/12-backend-jit/examples/dynamic-kernel-deployment-sketch.md` | JIT-only deployment sketch | ORC deployment/lifetime design artifact; not assembled or executed by portable checks. |
+| `llvm-training/12-backend-jit/examples/orc-irtransformlayer-bcir.cpp.md` | JIT-only C++ sketch | Documentation-only ORC `IRTransformLayer` outline. |
+| `llvm-training/12-backend-jit/examples/orc-materialization-unit-gaadmsf.cpp.md` | JIT-only C++ sketch | Documentation-only custom `MaterializationUnit` outline. |
+| `llvm-training/12-backend-jit/examples/remote-jitlink-heterogeneous-sketch.md` | Remote-target JIT sketch | Host/transport/target-specific deployment artifact; not a portable execution fixture. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-conversion-pass-skeleton.cpp.md` | MLIR C++ sketch | Documentation-only dialect-conversion pass outline. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-graph-to-affine.mlir` | MLIR data/sketch artifact | Parsed by the optional MLIR verifier, never by `llvm-as` or portable `llc` smoke. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-graph-to-llvm-dialect.mlir` | MLIR data/sketch artifact | Parsed by the optional MLIR verifier, never by `llvm-as` or portable `llc` smoke. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-graph-to-vector.mlir` | MLIR data/sketch artifact | Parsed by the optional MLIR verifier, never by `llvm-as` or portable `llc` smoke. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints.mlir` | MLIR data/sketch artifact | Parsed by the optional MLIR verifier, never by `llvm-as` or portable `llc` smoke. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-transform-sequence.mlir` | Transform dialect sketch | Optional-MLIR syntax fixture; transform execution depends on registered payload dialects/passes. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-transform-vectorize-then-lower.mlir` | Transform dialect sketch | Optional-MLIR syntax fixture; transform execution depends on registered payload dialects/passes. |
+| `llvm-training/bcir-mapping/examples/bcir-operation.prompt.md` | Mapping prompt | Review-only learner prompt paired with BCIR runtime-boundary examples. |
+| `llvm-training/bcir-mapping/examples/claim-resource-lookup.bcir.txt` | BCIR source-like data fixture | Checked structurally by `verify-bcir-mapping.sh`; not accepted by `llvm-as`. |
+| `llvm-training/bcir-mapping/examples/diagnostic-metadata.prompt.md` | Mapping prompt | Review-only learner prompt for metadata preservation. |
+| `llvm-training/bcir-mapping/examples/graph-fragment.bcir.txt` | BCIR source-like data fixture | Checked structurally by `verify-bcir-mapping.sh`; not accepted by `llvm-as`. |
+| `llvm-training/bcir-mapping/examples/ham-hint.prompt.md` | Mapping prompt | Review-only learner prompt for advisory hardware/memory hints. |
+| `llvm-training/bcir-mapping/examples/mixed-stride-graph.bcir.txt` | BCIR source-like data fixture | Checked structurally by `verify-bcir-mapping.sh`; not accepted by `llvm-as`. |
+| `llvm-training/bcir-mapping/examples/normal-form-drift.invalid.ll.txt` | Semantic-only invalid LLVM IR text fixture | Assembles/verifies generically but intentionally violates BCIR normal-form correspondence. |
+| `llvm-training/bcir-mapping/examples/normal-form-metadata-loss.invalid.ll.txt` | Semantic-only invalid LLVM IR text fixture | Assembles/verifies generically but intentionally demonstrates required BCIR metadata loss. |
 
 Notes:
 

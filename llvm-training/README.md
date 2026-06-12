@@ -1,8 +1,9 @@
 # llvm-training — Agent Context Repo for LLVM IR
 
 > **Scope:** this directory is a **training corpus**, not part of the BCIR IR.
-> The IR itself lives under [`../ir/`](../ir/). Nothing here is built into the
-> BCIR libraries, and the IR has no dependency on this corpus. See
+> The IR itself is realized by the executable oracle in [`../bcir/`](../bcir/)
+> and the MLIR law in [`../mlir/`](../mlir/). Nothing here is built into those
+> components, and the IR has no dependency on this corpus. See
 > [`../AGENTS.md`](../AGENTS.md) and
 > [`../docs/BCIR_Repo_Structure.md`](../docs/BCIR_Repo_Structure.md).
 
@@ -174,22 +175,24 @@ Use the checked-in tool scripts from the repository root:
 ./llvm-training/tools/verify-bcir-mapping.sh
 ```
 
-The same checks are also available as CMake custom targets after configuring the
-repository. These targets are suitable for minimal CI or local images because
+The same checks are also available as CMake custom targets after configuring the training project. These targets are suitable for minimal CI or local images because
 they skip cleanly when their optional LLVM tools are unavailable:
 
 ```bash
-cmake --build build --target llvm-training-verify-examples
-cmake --build build --target llvm-training-smoke-llc
-cmake --build build --target llvm-training-smoke-lli
-cmake --build build --target llvm-training-verify-exercises
-cmake --build build --target llvm-training-verify-invalid-fixtures
-cmake --build build --target llvm-training-verify-opt-diff
-cmake --build build --target llvm-training-verify-opaque-pointers
-cmake --build build --target llvm-training-verify-manifest
-cmake --build build --target llvm-training-verify-csv-schema
-cmake --build build --target llvm-training-verify-mlir-examples
-cmake --build build --target llvm-training-verify-bcir-mapping
+cmake -S llvm-training -B build/llvm-training
+cmake --build build/llvm-training --target llvm-training-verify-examples
+cmake --build build/llvm-training --target llvm-training-smoke-llc
+cmake --build build/llvm-training --target llvm-training-smoke-lli
+cmake --build build/llvm-training --target llvm-training-verify-exercises
+cmake --build build/llvm-training --target llvm-training-verify-invalid-fixtures
+cmake --build build/llvm-training --target llvm-training-verify-adversarial-fixtures
+cmake --build build/llvm-training --target llvm-training-verify-opt-diff
+cmake --build build/llvm-training --target llvm-training-verify-opaque-pointers
+cmake --build build/llvm-training --target llvm-training-verify-manifest
+cmake --build build/llvm-training --target llvm-training-verify-csv-schema
+cmake --build build/llvm-training --target llvm-training-verify-mlir-examples
+cmake --build build/llvm-training --target llvm-training-verify-bcir-mapping
+cmake --build build/llvm-training --target llvm-training-check
 ```
 
 `verify-examples.sh` checks every known-good standalone `*/examples/*.ll` file
@@ -265,3 +268,23 @@ real instances were fixed.
 ## License & attribution
 
 Apache-2.0 (matches the BCIR repo). See [`NOTICE.md`](NOTICE.md) for source attribution.
+
+## Advanced chapter navigation
+
+Use this path after the core syntax, type, memory, CFG, metadata, and optimization
+chapters. Each row names the artifact boundary so target- or runtime-dependent
+material is not mistaken for a portable LLVM IR guarantee.
+
+| Area | Start here | Verification boundary |
+|---|---|---|
+| Backend, ORC, JITLink, lazy materialization, hot re-JIT, and remote deployment | [`12-backend-jit/README.md`](12-backend-jit/README.md) | `.ll` modules assemble; C++/deployment `.md` files are review sketches; execution is JIT/runtime-specific |
+| Intrinsics, call-site attributes, operand bundles, GC, coroutines, matrix, and convergence | [`13-advanced-ir/README.md`](13-advanced-ir/README.md) | Advanced `.ll` files assemble and verify; backend/runtime smoke is explicitly gated |
+| Exception handling | [`16-exception-handling/README.md`](16-exception-handling/README.md) | EH examples are verifier fixtures, not portable `llc` smoke inputs |
+| New Pass Manager, plugins, adaptive pipelines, PGO, and MLGO | [`17-new-pass-manager/README.md`](17-new-pass-manager/README.md) | `.ll` snapshots verify; C++ plugin/driver files are documentation sketches |
+| MLIR conversion, Transform dialect, and BCIR-to-LLVM lowering | [`18-mlir-lowering-to-llvm/README.md`](18-mlir-lowering-to-llvm/README.md) | `.mlir` examples use the optional `mlir-opt` gate; lowered `.ll` files use LLVM verification |
+| Hardware-aware GAADMSF/Dragon Egg lowering, calibration, RISC-V, MachineIR, and MIR | [`19-hardware-aware/README.md`](19-hardware-aware/README.md) | Custom/target-specific `.ll` and MIR-shaped text remain outside portable backend smoke |
+| BCIR stage contracts and normal-form verification | [`bcir-mapping/11-normal-forms-and-verification.md`](bcir-mapping/11-normal-forms-and-verification.md) | Mapping fixtures, semantic-only invalid fixtures, and metadata-preservation checks have separate gates |
+
+The checked artifact inventory is [`examples/README.md`](examples/README.md), and
+the complete gate dispatcher is [`tools/README.md`](tools/README.md). Configure
+training-only CMake targets with `cmake -S llvm-training -B build/llvm-training`.

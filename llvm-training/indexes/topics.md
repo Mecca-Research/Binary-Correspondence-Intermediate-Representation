@@ -134,3 +134,16 @@
 | Binary evidence for IR-level CFI hardening | [`06-metadata/04-type-metadata-cfi.md`](../06-metadata/04-type-metadata-cfi.md), [`15-binary-analysis/02-dynamic-traces-and-counters.md`](../15-binary-analysis/02-dynamic-traces-and-counters.md) |
 | Interpretable BCSA feature triage | [`15-binary-analysis/03-interpretable-bcsa-features.md`](../15-binary-analysis/03-interpretable-bcsa-features.md) |
 | Advanced exercise set: BCIR lowering, MLIR review, backend/JIT, custom pass invariants, graph metadata, GAADMSF debugging | [`exercises/README.md`](../exercises/README.md) |
+
+## Advanced integration topics
+
+| Topic | Start here | Related material |
+|---|---|---|
+| New Pass Manager architecture | [`17-new-pass-manager/01-passbuilder-and-pipelines.md`](../17-new-pass-manager/01-passbuilder-and-pipelines.md) | Analysis preservation, plugins, extension points, adaptive BCIR pipelines, PGO/MLGO |
+| MLIR conversion infrastructure | [`18-mlir-lowering-to-llvm/01-conversion-infrastructure.md`](../18-mlir-lowering-to-llvm/01-conversion-infrastructure.md) | `TypeConverter`, materialization, `ConversionTarget`, patterns, partial/full conversion |
+| Transform dialect orchestration | [`18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md`](../18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md) | Transform handles, payload IR, vectorize-then-lower sequence examples |
+| BCIR normal forms | [`bcir-mapping/11-normal-forms-and-verification.md`](../bcir-mapping/11-normal-forms-and-verification.md) | Stage invariants, mapping drift, verifier placement, adversarial fixtures |
+| ORC runtime integration | [`12-backend-jit/07-advanced-orc-runtime-integration.md`](../12-backend-jit/07-advanced-orc-runtime-integration.md) | Materialization units, transform layers, resource trackers, hot replacement, remote JITLink |
+| Hardware-aware lowering | [`19-hardware-aware/README.md`](../19-hardware-aware/README.md) | GAADMSF, Dragon Egg, pulses, calibration, RISC-V, MachineIR/MIR, regalloc and memory hints |
+| Advanced intrinsic/call-site semantics | [`13-advanced-ir/README.md`](../13-advanced-ir/README.md) | Stackmap/patchpoint, matrix, GC, coroutine, convergence, operand bundles, attributes |
+| Artifact portability and quality gates | [`examples/README.md`](../examples/README.md) | LLVM, MLIR, MIR, Markdown sketch, target-only, JIT-only, analysis-only classifications |
