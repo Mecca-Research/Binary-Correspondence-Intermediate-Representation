@@ -96,6 +96,10 @@ metadata-related examples.
   standalone LLVM IR with explicit resource lookup, prefetch, and metadata.
 - [`examples/bcir-conversion-pass-skeleton.cpp.md`](examples/bcir-conversion-pass-skeleton.cpp.md) —
   implementation skeleton for a BCIR conversion pass.
+- [`examples/bcir-transform-sequence.mlir`](examples/bcir-transform-sequence.mlir) —
+  Transform dialect strategy for BCIR normalization, pre-locking, HAM hints, and staged lowering.
+- [`examples/bcir-transform-vectorize-then-lower.mlir`](examples/bcir-transform-vectorize-then-lower.mlir) —
+  selective BCIR vectorization followed by conversion to the LLVM dialect boundary.
 
 ## Cross-links
 
