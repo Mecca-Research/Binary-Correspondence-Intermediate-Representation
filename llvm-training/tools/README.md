@@ -8,6 +8,7 @@ the same checks without a build-system dependency.
 
 | Script | Purpose | Required tools |
 | --- | --- | --- |
+| `generate-exercise-variants.py` | Produces a small fixed-seed set of typed prompt/reference pairs, grades every reference through the attempt-grader engine, rejects unsafe/trivial/duplicate IR, and records split lineage plus artifact hashes. | `llvm-as`, `opt`, `lli` |
 | `verify-examples.sh` | Builds the known-good standalone `.ll` manifest from chapter-local `examples/` directories, assembles each file with `llvm-as`, and runs `opt -passes=verify`. It also checks the broken `.ll.txt` sentinel so intentionally invalid examples do not drift into the manifest. | `llvm-as`, `opt` |
 | `smoke-lli.sh` | Runs only curated examples that have a safe no-argument entry point under `lli`. Most training snippets are library-style IR and should stay out of this list. | `lli` |
 | `smoke-llc.sh` | Lowers curated examples with `llc` to catch target-codegen regressions without treating every IR snippet as a runnable program. It prints intentional exclusions from `smoke-llc-skip.txt` before running the curated allowlist. | `llc` |
@@ -189,6 +190,22 @@ tools are not required to run it.
 ```bash
 python3 llvm-training/tools/verify-exercise-manifests.py
 ```
+
+## Controlled exercise variants
+
+`generate-exercise-variants.py` requires `--seed` and follows
+`../dataset/VARIANT_POLICY.md`. The default and maximum reviewed budget is five
+accepted records. Output JSON Lines and the optional rejection report are
+deterministic; missing oracle tools fail closed. Repeat `--existing` to deduplicate
+against previously generated review files. For example:
+
+```bash
+python3 llvm-training/tools/generate-exercise-variants.py \
+  --seed 20260612 --budget 5 \
+  --output /tmp/variants.jsonl --report /tmp/variants-report.json
+```
+
+The generator deliberately does not create Markdown review solutions.
 
 ## Adding a script
 
