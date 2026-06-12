@@ -79,3 +79,13 @@ metadata, call operands, or descriptor fields. Choose based on consumer needs:
 
 A useful rule: if removing metadata would change program behavior, the fact is
 not merely metadata and must also be represented in executable IR.
+
+## Normal-form handoff
+
+A successful conversion must establish the first LLVM-side BCIR normal form, not
+only satisfy the LLVM dialect conversion target. Preserve operation locations and
+stable claim/register IDs on replacement operations or in verifier-visible side
+tables, then run the LLVM-side verifier at the translation boundary. See
+[BCIR Normal Forms and Verification](../bcir-mapping/11-normal-forms-and-verification.md)
+for the handoff invariants and the correlation rules between MLIR conversion
+diagnostics and LLVM mapping-drift diagnostics.

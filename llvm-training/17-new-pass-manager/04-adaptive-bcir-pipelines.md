@@ -88,3 +88,11 @@ opt -load-pass-plugin=./libBcirPasses.so -S \
 The second command illustrates placement, not a checked-in binary dependency.
 The plugin provides the BCIR names; LLVM provides `verify`, `require<domtree>`,
 `sccp`, and `loop-rotate`.
+
+## Normal-form verifier contract
+
+The complete invariant set, stage-consumption tables, semantic-negative fixtures,
+and diagnostic schema are defined in [BCIR Normal Forms and Verification](../bcir-mapping/11-normal-forms-and-verification.md). Use that contract to decide which
+`bcir-verify` granularity belongs at each fencepost; generic `verify` alone cannot
+detect legal LLVM IR that lost claim identity, byte strides, wrapper boundaries,
+address spaces, or diagnostic provenance.

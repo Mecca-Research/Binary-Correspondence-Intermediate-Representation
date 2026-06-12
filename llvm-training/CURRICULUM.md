@@ -218,7 +218,8 @@ fragments, runtime operations, or diagnostic hints directly to LLVM IR:
 4. [`bcir-mapping/03-mixed-stride-graphs.md`](bcir-mapping/03-mixed-stride-graphs.md) — row/column stride arithmetic and byte-offset lowering.
 5. [`bcir-mapping/04-ham-hints.md`](bcir-mapping/04-ham-hints.md) and [`bcir-mapping/10-metadata-and-diagnostics.md`](bcir-mapping/10-metadata-and-diagnostics.md) — HAM hints, prefetch intrinsics, custom metadata, and diagnostic preservation.
 6. [`bcir-mapping/05-runtime-abi.md`](bcir-mapping/05-runtime-abi.md), [`bcir-mapping/08-dragon-egg-operations.md`](bcir-mapping/08-dragon-egg-operations.md), and [`bcir-mapping/09-runtime-call-boundaries.md`](bcir-mapping/09-runtime-call-boundaries.md) — ABI structs, Dragon Egg runtime-owned operations, and wrapper calls.
-7. Run `./llvm-training/tools/verify-bcir-mapping.sh` and `./llvm-training/tools/verify-examples.sh` after editing any checked source-like `.bcir.txt` or lowered `.ll` output under [`bcir-mapping/examples/`](bcir-mapping/examples/).
+7. [`bcir-mapping/11-normal-forms-and-verification.md`](bcir-mapping/11-normal-forms-and-verification.md) — formal stage invariants, preservation/consumption tables, verifier placement, mapping-drift diagnostics, and semantic-negative fixtures.
+8. Run `./llvm-training/tools/verify-bcir-mapping.sh` and `./llvm-training/tools/verify-examples.sh` after editing any checked source-like `.bcir.txt` or lowered `.ll` output under [`bcir-mapping/examples/`](bcir-mapping/examples/).
 
 Use this path together with the MLIR bridge path and [`18-mlir-lowering-to-llvm/`](18-mlir-lowering-to-llvm/) when the source representation
 starts as a dialect operation rather than a source-like `.bcir.txt` prompt.

@@ -14,6 +14,7 @@ IR semantics, MLIR bridge notes, backend/JIT notes, and exercises, see the
 - Runtime ABI structs in `runtime/llvm/` are the source of truth for claim, schedule, registry, blob, and executor shapes.
 - Metadata should preserve diagnostics and lowering provenance without becoming required for core IR correctness.
 - Every BCIR-facing example should still assemble and verify as ordinary opaque-pointer LLVM IR.
+- Treat BCIR normal forms as stage contracts and use verifier fenceposts to catch mapping drift that generic LLVM verification cannot see.
 
 ## Concepts
 
@@ -29,6 +30,7 @@ IR semantics, MLIR bridge notes, backend/JIT notes, and exercises, see the
 | Dragon Egg runtime-owned operations | [`08-dragon-egg-operations.md`](08-dragon-egg-operations.md) | [`examples/bcir-op-runtime-wrapper.ll`](examples/bcir-op-runtime-wrapper.ll) |
 | Runtime call boundaries | [`09-runtime-call-boundaries.md`](09-runtime-call-boundaries.md) | [`examples/bcir-op-runtime-wrapper.ll`](examples/bcir-op-runtime-wrapper.ll), [`examples/claim-resource-lookup.ll`](examples/claim-resource-lookup.ll) |
 | Metadata and diagnostics | [`10-metadata-and-diagnostics.md`](10-metadata-and-diagnostics.md) | [`examples/ham-hint-prefetch.ll`](examples/ham-hint-prefetch.ll), [`examples/diagnostic-metadata-preservation.ll`](examples/diagnostic-metadata-preservation.ll) |
+| Normal forms and verification | [`11-normal-forms-and-verification.md`](11-normal-forms-and-verification.md) | [`examples/normal-form-valid.ll`](examples/normal-form-valid.ll), [`examples/normal-form-drift.invalid.ll.txt`](examples/normal-form-drift.invalid.ll.txt), [`examples/normal-form-metadata-loss.invalid.ll.txt`](examples/normal-form-metadata-loss.invalid.ll.txt) |
 
 ## Shared lowering model
 
