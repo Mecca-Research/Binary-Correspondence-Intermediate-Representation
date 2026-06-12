@@ -2,7 +2,8 @@
 
 from bcir.examples import histogram_gather, vector_add, vector_add_hbm
 from bcir.kbcir import TARGETS, optimize
-from bcir.kbcir.cost import HProfile, TargetProfile, Theta
+from bcir.kbcir.cost import HProfile, MemoryHierarchy, MemTier, TargetProfile, Theta
+from bcir.model import Domain
 
 
 def test_every_target_builds_and_has_widths():
@@ -36,3 +37,15 @@ def test_ham_access_beats_flat_gather():
     flat = optimize(histogram_gather(1024, ham=False), h, Theta.cool()).score
     ham = optimize(histogram_gather(1024, ham=True), h, Theta.cool()).score
     assert ham < flat, f"HAM O(log n) {ham} should beat flat gather {flat}"
+
+
+def test_memtier_enum_matches_the_mlir_law():
+    # PARITY.md: MemTier values are normative and identical to BCIRAttrs.td.
+    assert [(t.name, int(t)) for t in MemTier] == [
+        ("L1", 0), ("L2", 1), ("L3", 2), ("DRAM", 3), ("HBM", 4), ("CXL", 5), ("SSD", 6)]
+    hierarchy = MemoryHierarchy.default()
+    for t in MemTier:
+        assert hierarchy.by_name(t.name).mem_tier is t
+    assert hierarchy.tier_for(Domain.RAM).mem_tier is MemTier.DRAM
+    assert hierarchy.tier_for(Domain.HBM).mem_tier is MemTier.HBM
+    assert hierarchy.tier_for(Domain.NVM).mem_tier is MemTier.SSD

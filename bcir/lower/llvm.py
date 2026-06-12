@@ -20,8 +20,12 @@ _FOP = {Opcode.ADD: ("fadd", "+"), Opcode.SUB: ("fsub", "-"), Opcode.MUL: ("fmul
 _IOP = {Opcode.ADD: "add", Opcode.SUB: "sub", Opcode.MUL: "mul"}  # integer (e.g. eBPF)
 
 
-def _find_elementwise(module: Module, result: RealizationResult) -> tuple:
-    """Return (claim, candidate) for the single 2-read/1-write elementwise claim."""
+def find_elementwise(module: Module, result: RealizationResult) -> tuple:
+    """Return (claim, candidate) for the single 2-read/1-write elementwise claim.
+
+    Public: `bcir.verify.verify_lowering` (law R12) uses the same selection
+    contract to check the emitted kernel against the K_BCIR-chosen realization.
+    """
     by_claim = result.by_claim()
     for ph in module.phases:
         for claim in ph.claims:
@@ -33,6 +37,10 @@ def _find_elementwise(module: Module, result: RealizationResult) -> tuple:
         "LLVM lowering currently supports a single 2-read elementwise binary claim "
         "(e.g. vector_add); this module has none selected."
     )
+
+
+# Back-compat alias (pre-R12 internal name).
+_find_elementwise = find_elementwise
 
 
 def emit_kernel_ll(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",

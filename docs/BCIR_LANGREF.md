@@ -77,7 +77,11 @@ R1 registry uniqueness · R2 registry resolution · R3 domain legality ·
 R4 phase-DAG legality · R5 hazard legality · R6 lane legality · R7 bounds
 legality · R8 cost completeness · R9 plan legality · R10 stream provenance ·
 R11 generation validity · R12 lowering legality. Encoded as IR via the
-`bcir.verify.*` op family; the runnable subset lives in `bcir/verify`.
+`bcir.verify.*` op family. The runnable full set lives in `bcir/verify`, one
+entry point per correspondence artifact — `verify(module)` R1–R8(static),
+`verify_plan` R8–R9, `verify_pack` R10–R11, `verify_lowering` R12 — and the
+MLIR-native `-bcir-verify` pass enforces the structurally checkable form of all
+twelve on the dialect.
 
 ## 11. Rewrite laws
 
@@ -97,7 +101,7 @@ Encoded via `bcir.isa.*` / `bcir.target.lower_contract`.
 
 1. LangRef v0.1 — this document. ✔
 2. Declarative dialect definitions — `mlir/include/BCIR/*.td`. ✔ (tblgen-validated; compiled `bcir-opt` parses + verifies the pretty corpus on LLVM 18)
-3. Verifier-first compiler. ◑ (MLIR-native `-bcir-verify`: R1/R2/R4/R6; remaining laws pending; full set in the `bcir/` oracle)
+3. Verifier-first compiler. ✔ (laws R1–R12: the oracle runs the full chain — module R1–R7, plan R8–R9, stream R10–R11, lowering R12 — and the MLIR-native `-bcir-verify` enforces all twelve structurally, negative-tested per law)
 4. Rewrite laws. ◑ (MLIR-native `-bcir-promote-lanes` (GGG→UX); the rest authored as `bcir.opt.*` IR + run in the oracle)
 5. K_BCIR planner — candidate-path/costvec/selected-path IR. ◑ (runnable in `bcir/`)
 6. GEM hydration — GraphPlan/LanePlan/StreamPack IR. ◑ (runnable in `bcir/`)

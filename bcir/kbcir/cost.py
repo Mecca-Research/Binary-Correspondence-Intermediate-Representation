@@ -13,6 +13,7 @@ it runs (placement, fusion, thermal), not just on the raw opcode.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import IntEnum
 
 from ..model.lanes import Domain
 
@@ -102,6 +103,19 @@ class Theta:
 # resource's domain selects its tier, and the memory cost scales by that tier's
 # factors. DRAM is the baseline, so RAM resources cost exactly as before.
 
+class MemTier(IntEnum):
+    """Memory hierarchy tier (CT1). Integer values are normative and MUST match
+    ``BCIR_MemTier`` in ``mlir/include/BCIR/BCIRAttrs.td`` exactly (docs/PARITY.md)."""
+
+    L1 = 0
+    L2 = 1
+    L3 = 2
+    DRAM = 3
+    HBM = 4
+    CXL = 5
+    SSD = 6
+
+
 @dataclass(frozen=True)
 class Tier:
     name: str
@@ -110,15 +124,20 @@ class Tier:
     lat_factor: int  # Q8 vs DRAM
     capacity: int = 0
 
+    @property
+    def mem_tier(self) -> MemTier:
+        """The normative tier id (tier names mirror the MemTier enum)."""
+        return MemTier[self.name]
 
-# Domain -> tier name. Domains already exist in the model; we map, not add.
+
+# Domain -> memory tier. Domains already exist in the model; we map, not add.
 _DOMAIN_TIER = {
-    Domain.RAM: "DRAM",
-    Domain.VRAM: "HBM",
-    Domain.NVM: "SSD",
-    Domain.MMIO: "DRAM",
-    Domain.CXL: "CXL",
-    Domain.HBM: "HBM",
+    Domain.RAM: MemTier.DRAM,
+    Domain.VRAM: MemTier.HBM,
+    Domain.NVM: MemTier.SSD,
+    Domain.MMIO: MemTier.DRAM,
+    Domain.CXL: MemTier.CXL,
+    Domain.HBM: MemTier.HBM,
 }
 
 _DRAM = Tier("DRAM", latency_cyc=200, bw_factor=256, lat_factor=256)
@@ -135,7 +154,7 @@ class MemoryHierarchy:
         return _DRAM
 
     def tier_for(self, domain: Domain) -> Tier:
-        return self.by_name(_DOMAIN_TIER.get(domain, "DRAM"))
+        return self.by_name(_DOMAIN_TIER.get(domain, MemTier.DRAM).name)
 
     @staticmethod
     def default() -> "MemoryHierarchy":
