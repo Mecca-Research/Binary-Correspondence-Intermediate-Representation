@@ -452,6 +452,10 @@ def llvm_manifest(p: VariantParameters, structural: list[dict[str, Any]], semant
             absent_assertion("safety.opaque-pointers", [r"(?:\bi\d+|%[-A-Za-z$._0-9]+|\[[^\]\n]+\]|\{[^}\n]+\})\s*\*"])
         ],
         "comparison_strategy": {"type": "structural-and-execution", "normalize_with": "opt -S", "raw_reference_diff": False},
+        # Generated variants are trusted, oracle-authored modules whose execution
+        # vectors are deterministic and contain no external calls. Keep this
+        # explicit because the baseline grader denies lli by default.
+        "safe_deterministic_lli": True,
         "semantic_tests": semantic,
         "variant_parameters": p.as_dict(),
     }

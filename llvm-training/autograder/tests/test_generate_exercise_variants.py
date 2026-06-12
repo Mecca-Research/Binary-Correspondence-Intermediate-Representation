@@ -55,6 +55,7 @@ class GenerateExerciseVariantsTests(unittest.TestCase):
                     {seed},
                 )
                 self.assertTrue(all(record["oracle_result"]["score_percent"] == 100.0 for record in records))
+                self.assertTrue(all(record["grading_manifest"]["safe_deterministic_lli"] is True for record in records))
                 self.assertTrue(all(record["review"]["markdown_solution_generated"] is False for record in records))
                 self.assertEqual(len({record["artifacts"]["reference_solution_sha256"] for record in records}), 5)
                 self.assertEqual(len({record["artifacts"]["normalized_ir_structure_sha256"] for record in records}), 5)

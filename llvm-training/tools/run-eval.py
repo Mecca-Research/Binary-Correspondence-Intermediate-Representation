@@ -13,12 +13,14 @@ import re
 import shlex
 import shutil
 import statistics
-import subprocess
 import sys
 from typing import Any
 
+from safe_process import run_bounded
+
 RUNNER_SCHEMA_VERSION = "1.0"
 GENERATOR_CONTRACT_VERSION = "1.0"
+MAX_JSON_BYTES = 1024 * 1024
 ANSWER_EXTENSIONS = {
     "llvm-ir": ".ll",
     "mlir": ".mlir",
@@ -27,6 +29,8 @@ ANSWER_EXTENSIONS = {
     "diagnostic": ".md",
 }
 FIXTURE_NAMES = ("reference", "empty", "partial")
+FORBIDDEN_GENERATED_SUFFIXES = {".sh", ".bash", ".so", ".dylib", ".dll", ".o", ".obj", ".a", ".exe"}
+FORBIDDEN_GENERATED_NAMES = {"Makefile", "CMakeLists.txt", "build.ninja", "meson.build"}
 
 
 def utc_now() -> str:
@@ -34,6 +38,8 @@ def utc_now() -> str:
 
 
 def read_json(path: Path) -> Any:
+    if path.stat().st_size > MAX_JSON_BYTES:
+        raise ValueError(f"JSON input exceeds {MAX_JSON_BYTES} bytes: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -51,9 +57,7 @@ def sha256(path: Path) -> str:
 
 
 def git_value(repo_root: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", *args], cwd=repo_root, text=True, capture_output=True, check=False
-    )
+    result = run_bounded(["git", "-C", str(repo_root), *args], timeout=10)
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
@@ -65,9 +69,7 @@ def find_tool(name: str) -> str | None:
 
 
 def tool_version(path: str) -> str:
-    result = subprocess.run(
-        [path, "--version"], text=True, capture_output=True, check=False, timeout=5
-    )
+    result = run_bounded([path, "--version"], timeout=5)
     lines = (result.stdout or result.stderr).splitlines()
     return lines[0].strip() if lines else "version unavailable"
 
@@ -280,6 +282,8 @@ def validate_artifact_path(path_value: str, attempt_directory: Path) -> Path:
         raise ValueError(f"generated artifact escapes attempt directory: {path_value}") from exc
     if not path.is_file():
         raise ValueError(f"generated artifact does not exist: {path}")
+    if path.name in FORBIDDEN_GENERATED_NAMES or path.suffix.lower() in FORBIDDEN_GENERATED_SUFFIXES:
+        raise ValueError(f"unsupported generated executable or build artifact: {path}")
     return path
 
 
@@ -371,14 +375,7 @@ def generate(args: argparse.Namespace, repo_root: Path, entries: list[dict[str, 
                     "{output}" in token for token in shlex.split(args.generator_command)
                 ):
                     raise ValueError("--generator-command must contain {input} and {output} placeholders")
-                result = subprocess.run(
-                    command,
-                    cwd=repo_root,
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                    timeout=args.generator_timeout,
-                )
+                result = run_bounded(command, timeout=args.generator_timeout)
                 command_record = command
                 stderr = result.stderr
                 returncode = result.returncode
@@ -397,7 +394,7 @@ def generate(args: argparse.Namespace, repo_root: Path, entries: list[dict[str, 
             print(f"[generated] {exercise_id}: {output['status']}")
             if output["status"] != "completed":
                 failures += 1
-        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
             failures += 1
             write_json(
                 output_path,
@@ -426,10 +423,14 @@ def grade_one(grader: Path, repo_root: Path, registry: Path, entry: dict[str, An
         entry["id"],
         "--answer",
         str(attempt),
+        "--attempt-root",
+        str(attempt.parent.parent),
         "--format",
         "json",
     ]
-    result = subprocess.run(command, cwd=repo_root, text=True, capture_output=True, check=False)
+    result = run_bounded(command, timeout=float(entry.get("timeout_seconds", 10)) + 15)
+    if result.timed_out:
+        return None, "grader timeout"
     try:
         report = json.loads(result.stdout)
     except json.JSONDecodeError:

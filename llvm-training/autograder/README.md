@@ -6,6 +6,9 @@ solutions, and it does not replace `../tools/verify-exercises.sh`. That existing
 script remains the trusted reference-artifact verifier; the autograder handles
 untrusted copies in isolated temporary working directories.
 
+Read the explicit [security model](SECURITY.md) before accepting generated submissions.
+All attempt files and generator output are untrusted data.
+
 The harness evaluates the artifact produced by a learner or model. It does **not**
 invoke, benchmark, authenticate, or score the external model-generation call.
 Model invocation belongs in an adapter outside the deterministic core. An adapter
