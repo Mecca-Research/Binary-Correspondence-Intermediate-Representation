@@ -172,6 +172,8 @@ Use the checked-in tool scripts from the repository root:
 ./llvm-training/tools/verify-opaque-pointers.sh
 ./llvm-training/tools/verify-manifest.sh
 ./llvm-training/tools/verify-csv-schema.sh
+python3 llvm-training/tools/verify-binary-analysis-evidence.py
+python3 llvm-training/tools/generate-binary-analysis-fixtures.py --check
 ./llvm-training/tools/verify-mlir-examples.sh
 ./llvm-training/tools/verify-bcir-mapping.sh
 ```
@@ -191,6 +193,8 @@ cmake --build build/llvm-training --target llvm-training-verify-opt-diff
 cmake --build build/llvm-training --target llvm-training-verify-opaque-pointers
 cmake --build build/llvm-training --target llvm-training-verify-manifest
 cmake --build build/llvm-training --target llvm-training-verify-csv-schema
+cmake --build build/llvm-training --target llvm-training-verify-binary-analysis-evidence
+cmake --build build/llvm-training --target llvm-training-check-binary-analysis-fixtures
 cmake --build build/llvm-training --target llvm-training-verify-mlir-examples
 cmake --build build/llvm-training --target llvm-training-verify-bcir-mapping
 cmake --build build/llvm-training --target llvm-training-check
@@ -211,8 +215,10 @@ does not replace or overload the reference verifier. Use
 `verify-invalid-fixtures.sh` for intentionally broken `.invalid.ll.txt` repair
 fixtures, `verify-opt-diff.sh` for golden optimizer-output pairs,
 `verify-mlir-examples.sh` for MLIR syntax coverage, `verify-bcir-mapping.sh` for
-BCIR source-like fragments and lowered companions, and `verify-csv-schema.sh` for
-binary-analysis evidence tables.
+BCIR source-like fragments and lowered companions, and `verify-csv-schema.sh` plus `verify-binary-analysis-evidence.py` for
+binary-analysis evidence tables and provenance. Deterministic fixture drift is
+checked by `generate-binary-analysis-fixtures.py --check`; timing and hardware
+counters remain optional host-sensitive evidence.
 
 The smoke scripts are intentionally narrower: `smoke-llc.sh` emits assembly for
 a curated portable subset, while `smoke-lli.sh` runs only modules with a safe
@@ -260,7 +266,7 @@ Use this repo as a BCIR LLVM IR task index, with BCIR-specific lowering notes in
 | Optimizing generated IR | [pass model](07-optimization/01-pass-model.md), [analysis passes](07-optimization/02-common-analysis-passes.md), [transform passes](07-optimization/03-common-transform-passes.md), [deep BCIR optimizer lessons](07-optimization/08-deep-optimization-lessons.md), [modern pass infrastructure](17-new-pass-manager/README.md), [debugging passes](07-optimization/05-debugging-passes.md), [PGO/LTO/BOLT](07-optimization/06-pgo-lto-bolt.md), [vectorization](09-vectorization/README.md), [masked/interleaved vector lowering](09-vectorization/07-masked-and-interleaved-access.md) |
 | Planning MLIR lowering | [MLIR overview](14-mlir-bridge/01-what-is-mlir.md), [lowering to LLVM dialect](14-mlir-bridge/03-lowering-to-llvm-dialect.md), [BCIR dialect sketch](14-mlir-bridge/04-bcir-as-custom-dialect.md) |
 | Backend/JIT experiments | [codegen pipeline](12-backend-jit/01-codegen-pipeline.md), [ORC JIT](12-backend-jit/03-orc-jit.md), [MC and relocations](12-backend-jit/04-mc-and-relocations.md) |
-| Security/performance binary analysis | [microarchitecture side channels](15-binary-analysis/01-microarchitecture-side-channels.md), [dynamic traces/counters](15-binary-analysis/02-dynamic-traces-and-counters.md), [interpretable BCSA features](15-binary-analysis/03-interpretable-bcsa-features.md) |
+| Security/performance binary analysis | [microarchitecture side channels](15-binary-analysis/01-microarchitecture-side-channels.md), [dynamic traces/counters](15-binary-analysis/02-dynamic-traces-and-counters.md), [interpretable BCSA features](15-binary-analysis/03-interpretable-bcsa-features.md), [reproducible evidence pipelines](15-binary-analysis/04-reproducible-evidence-pipelines.md) |
 
 ## Relationship to the BCIR project
 

@@ -1,0 +1,22 @@
+{
+  "id": "041",
+  "title": "Interpret static binary evidence",
+  "prompt": "llvm-training/exercises/041-interpret-static-binary-evidence.prompt.md",
+  "solution": "llvm-training/exercises/041-interpret-static-binary-evidence.solution.md",
+  "answer_kind": "adversarial_analysis",
+  "required_tools": [],
+  "minimum_tool_versions": {},
+  "tool_absence_policy": "reduced_confidence_score",
+  "checks": [
+    {"id": "prompt.exists", "type": "file_exists", "path": "llvm-training/exercises/041-interpret-static-binary-evidence.prompt.md", "points": 5},
+    {"id": "reference.exists", "type": "file_exists", "path": "llvm-training/exercises/041-interpret-static-binary-evidence.solution.md", "points": 5},
+    {"id": "reference.non-empty", "type": "non_empty", "path": "llvm-training/exercises/041-interpret-static-binary-evidence.solution.md", "points": 10},
+    {"id": "review.static-evidence", "type": "rubric_terms", "path": "llvm-training/exercises/041-interpret-static-binary-evidence.solution.md", "terms": ["instruction-class", "basic block", "call edge", "semantic equivalence", "deterministic"], "mode": "all", "points": 80}
+  ],
+  "score": 100,
+  "tags": ["adversarial-analysis", "binary-analysis", "llvm-training"],
+  "difficulty": "intermediate",
+  "license": "Apache-2.0",
+  "determinism": "review_rubric",
+  "timeout_seconds": 10
+}

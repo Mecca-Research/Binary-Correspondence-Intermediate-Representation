@@ -1,0 +1,7 @@
+fixture,evidence_kind,scope,name,value,unit,classification
+linear-arithmetic-x86_64,basic-block-count,sum_pair,basic_blocks,1,blocks,deterministic
+linear-arithmetic-x86_64,instruction-class-count,artifact,data-transfer,1,instructions,deterministic
+linear-arithmetic-x86_64,instruction-class-count,artifact,integer-arithmetic,1,instructions,deterministic
+linear-arithmetic-x86_64,instruction-class-count,artifact,return,1,instructions,deterministic
+linear-arithmetic-x86_64,object-section,artifact,.text|PROGBITS|AX,5,bytes,deterministic
+linear-arithmetic-x86_64,symbol,artifact,sum_pair,1,present,deterministic

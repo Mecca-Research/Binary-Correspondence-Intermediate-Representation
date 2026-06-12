@@ -50,6 +50,12 @@ jobs:
       - name: LLVM training binary-analysis CSV schemas
         run: llvm-training/tools/verify-csv-schema.sh
 
+      - name: LLVM training binary-analysis evidence manifest
+        run: python3 llvm-training/tools/verify-binary-analysis-evidence.py
+
+      - name: LLVM training deterministic binary-analysis evidence drift
+        run: python3 llvm-training/tools/generate-binary-analysis-fixtures.py --check --require-tools
+
       - name: LLVM training invalid fixtures
         run: |
           if command -v llvm-as >/dev/null && command -v opt >/dev/null; then

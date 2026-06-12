@@ -18,6 +18,8 @@ the same checks without a build-system dependency.
 | `verify-opaque-pointers.sh` | Scans modern `*/examples/*.ll` fixtures for legacy typed-pointer syntax and allows migration-only or intentionally invalid `.ll.txt` fixtures to keep typed-pointer demonstrations explicit. | POSIX shell utilities, `awk` |
 | `verify-manifest.sh` | Compares discovered standalone `*/examples/*.ll` files against the table in `llvm-training/examples/README.md` so new or removed examples do not silently drift from the manifest. | POSIX shell utilities |
 | `verify-csv-schema.sh` | Validates checked-in `15-binary-analysis/examples/*.csv` fixtures for registered schema-family column counts, non-empty headers, consistent non-empty data rows, and at least one data row. The parser handles single-line CSV records with quoted commas. | POSIX shell utilities, `awk` |
+| `generate-binary-analysis-fixtures.py` | Builds manifest-declared x86-64 assembly fixtures, normalizes ELF symbols, instruction classes, basic blocks, direct call edges, and section summaries, writes provenance, or fails on deterministic drift with `--check`. Missing Clang skips unless `--require-tools` is set. | Python 3, Clang for generation |
+| `verify-binary-analysis-evidence.py` | Checks that every Chapter 15 CSV has exactly one manifest classification and validates deterministic fixture, CSV, target, toolchain-provenance, and static-evidence-family contracts. | Python 3 |
 | `verify-mlir-examples.sh` | Grades the MLIR registry through Tiers 0–4: explicit unregistered syntax sketches, registered verification, declared pipelines, LLVM translation, assembly, and verifier checks. | Optional `mlir-opt`, `mlir-translate`, `llvm-as`, `opt` (required with `--require-tools`) |
 | `verify-bcir-mapping.sh` | Validates BCIR mapping fixtures under `bcir-mapping/examples/`: current source-like `.bcir.txt` claim fragments are checked for required markers and lowered `.ll` companions, and real `.bcir` sources are assembled with `bcir-as`, compared to sibling `.generated.ll` files, verified, and refreshed with `UPDATE_BCIR_MAPPING=1`. | POSIX shell utilities; optional `llvm-as`, `opt` for `.bcir.txt` lowered companions; `tools/bcir-as/bcir-as`, `llvm-as`, `opt` when `.bcir` fixtures exist |
 | `smoke-bolt.sh` | Builds the BOLT layout demo fixture, records baseline symbol/disassembly text, and exits with a clean skip when `llvm-bolt` is not installed. A full profile-driven rewrite still requires host support for `perf2bolt`/`perf`; see the walkthrough. | Optional `llvm-bolt`; `clang` and `llvm-objdump` when BOLT is present |
@@ -37,7 +39,7 @@ Use these script groups when advanced examples or reference paths change:
 | Optimization before/after examples and pass-pipeline lessons | `verify-opt-diff.sh`, `verify-examples.sh` |
 | MLIR bridge examples | `verify-mlir-examples.sh`, then `verify-examples.sh` for lowered `.ll` companions |
 | BCIR mapping/source-like fragments | `verify-bcir-mapping.sh`, `verify-examples.sh`, `verify-manifest.sh` |
-| Binary-analysis CSV evidence | `verify-csv-schema.sh` |
+| Binary-analysis CSV evidence | `verify-csv-schema.sh`, `verify-binary-analysis-evidence.py`, `generate-binary-analysis-fixtures.py --check` |
 
 ## CMake batch targets
 
@@ -58,6 +60,8 @@ cmake --build build/llvm-training --target llvm-training-verify-opaque-pointers
 cmake --build build/llvm-training --target llvm-training-lit
 cmake --build build/llvm-training --target llvm-training-verify-manifest
 cmake --build build/llvm-training --target llvm-training-verify-csv-schema
+cmake --build build/llvm-training --target llvm-training-verify-binary-analysis-evidence
+cmake --build build/llvm-training --target llvm-training-check-binary-analysis-fixtures
 cmake --build build/llvm-training --target llvm-training-verify-mlir-examples
 cmake --build build/llvm-training --target llvm-training-verify-bcir-mapping
 cmake --build build/llvm-training --target llvm-training-check
@@ -155,6 +159,19 @@ standalone `*/examples/*.ll` files using the same inclusion policy as
 checked-in CSV files under `../15-binary-analysis/examples/`, maps each known
 schema family by filename to its expected column count, supports quoted commas in
 single-line CSV records, and fails if headers or data rows disappear.
+
+`verify-binary-analysis-evidence.py` applies the provenance layer above those
+shape checks. It requires every Chapter 15 CSV, including schematic examples and
+generated fixture evidence, to have exactly one entry in
+`../15-binary-analysis/evidence-manifest.json`. Deterministic entries must name a
+source, target, build, collection command, checked CSV, and provenance JSON;
+provenance records target metadata and toolchain versions.
+
+`generate-binary-analysis-fixtures.py --write` refreshes normalized static
+evidence. `--check` rebuilds in a temporary directory and fails on deterministic
+CSV or stable-provenance drift. Wall-clock values and hardware counters stay
+`host-sensitive` and outside this golden diff. Add `--require-tools` in CI so a
+missing Clang is a failure rather than a reduced-coverage local skip.
 
 `verify-mlir-examples.sh` is registry-driven and optional-toolchain-friendly.
 Without a complete MLIR/LLVM toolchain it exits successfully but reports reduced
