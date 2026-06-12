@@ -1,0 +1,129 @@
+{
+  "schema_version": "1.0",
+  "exercises": [
+    {
+      "id": "001",
+      "prompt_path": "llvm-training/exercises/001-add.prompt.md",
+      "reference_solution_path": "llvm-training/exercises/001-add.solution.ll",
+      "answer_kind": "llvm-ir",
+      "required_tools": ["llvm-as", "opt", "lli"],
+      "timeout_seconds": 5,
+      "expected_points": 100,
+      "reference_expected_percent": 100,
+      "scoring_dimensions": [
+        {"id": "artifact", "points": 10},
+        {"id": "validity", "points": 25},
+        {"id": "normalization", "points": 5},
+        {"id": "structure", "points": 40},
+        {"id": "semantics", "points": 20}
+      ],
+      "structural_assertions": [
+        {"id": "structure.add.function", "dimension": "structure", "type": "function", "pattern": "define\\s+i32\\s+@add\\s*\\(\\s*i32\\s+%[-A-Za-z$._0-9]+\\s*,\\s*i32"},
+        {"id": "structure.add.instruction", "dimension": "structure", "type": "instruction", "pattern": "\\badd\\s+i32\\b"},
+        {"id": "structure.add.return", "dimension": "structure", "type": "contains", "pattern": "\\bret\\s+i32\\b"},
+        {"id": "safety.no-typed-pointers", "dimension": "structure", "type": "absent", "patterns": ["\\bi(?:8|16|32|64)\\*", "\\bgetelementptr\\s+inbounds\\s*\\("]}
+      ],
+      "comparison_strategy": {"type": "structural-and-execution", "normalize_with": "opt -S", "raw_reference_diff": false},
+      "semantic_tests": [
+        {"function": "add", "return_type": "i32", "args": [{"type": "i32", "value": "2"}, {"type": "i32", "value": "3"}], "expected": "5"},
+        {"function": "add", "return_type": "i32", "args": [{"type": "i32", "value": "-1"}, {"type": "i32", "value": "1"}], "expected": "0"}
+      ]
+    },
+    {
+      "id": "013",
+      "prompt_path": "llvm-training/exercises/013-mixed-stride-indexing.prompt.md",
+      "reference_solution_path": "llvm-training/exercises/013-mixed-stride-indexing.solution.ll",
+      "answer_kind": "llvm-ir",
+      "required_tools": ["llvm-as", "opt"],
+      "timeout_seconds": 8,
+      "expected_points": 100,
+      "reference_expected_percent": 100,
+      "scoring_dimensions": [
+        {"id": "artifact", "points": 10},
+        {"id": "validity", "points": 30},
+        {"id": "normalization", "points": 10},
+        {"id": "structure", "points": 50}
+      ],
+      "structural_assertions": [
+        {"id": "structure.function", "dimension": "structure", "type": "function", "pattern": "define\\s+i32\\s+@bcir\\.exercise\\.load_mixed_stride\\s*\\("},
+        {"id": "structure.stride-multiplication", "dimension": "structure", "type": "count", "pattern": "\\bmul\\s+i64\\b", "min": 2},
+        {"id": "structure.byte-offset-addition", "dimension": "structure", "type": "count", "pattern": "\\badd\\s+i64\\b", "min": 2},
+        {"id": "structure.byte-gep", "dimension": "structure", "type": "instruction", "pattern": "getelementptr(?:\\s+inbounds)?\\s+i8\\s*,\\s*ptr"},
+        {"id": "structure.load", "dimension": "structure", "type": "instruction", "pattern": "load\\s+i32\\s*,\\s*ptr"},
+        {"id": "safety.no-element-gep", "dimension": "structure", "type": "absent", "patterns": ["getelementptr(?:\\s+inbounds)?\\s+i32\\s*,", "\\bptrtoint\\b", "\\binttoptr\\b"]}
+      ],
+      "comparison_strategy": {"type": "normalized-structural", "normalize_with": "opt -S", "raw_reference_diff": false}
+    },
+    {
+      "id": "025",
+      "prompt_path": "llvm-training/exercises/025-attribute-contract-review.prompt.md",
+      "reference_solution_path": "llvm-training/exercises/025-attribute-contract-review.solution.md",
+      "answer_kind": "markdown-review",
+      "required_tools": [],
+      "timeout_seconds": 5,
+      "expected_points": 100,
+      "reference_expected_percent": 100,
+      "scoring_dimensions": [
+        {"id": "artifact", "points": 10},
+        {"id": "rubric", "points": 90}
+      ],
+      "structural_assertions": [],
+      "rubric_checks": [
+        {"id": "rubric.required-concepts", "dimension": "rubric", "mode": "all", "terms": ["nonnull", "dereferenceable", "readonly", "nocapture", "noalias"]},
+        {"id": "rubric.required-diagnostics", "dimension": "rubric", "mode": "any", "terms": ["promise", "contract", "prove", "valid"]},
+        {"id": "rubric.prohibited-claims", "dimension": "rubric", "mode": "absent", "terms": ["all pointers are nonnull", "noalias is always safe", "attributes cannot cause undefined behavior"]},
+        {"id": "rubric.referenced-artifacts", "dimension": "rubric", "mode": "any", "terms": ["caller", "callee", "lowering", "abi"]},
+        {"id": "rubric.explanation-completeness", "dimension": "rubric", "mode": "min-words", "minimum": 100}
+      ],
+      "comparison_strategy": {"type": "deterministic-rubric-coverage", "semantic_proof": false}
+    },
+    {
+      "id": "032",
+      "prompt_path": "llvm-training/exercises/032-identify-mlir-dialect-boundaries.prompt.md",
+      "reference_solution_path": "llvm-training/exercises/032-identify-mlir-dialect-boundaries.solution.md",
+      "answer_kind": "markdown-review",
+      "required_tools": [],
+      "timeout_seconds": 5,
+      "expected_points": 100,
+      "reference_expected_percent": 100,
+      "scoring_dimensions": [
+        {"id": "artifact", "points": 10},
+        {"id": "rubric", "points": 90}
+      ],
+      "structural_assertions": [],
+      "rubric_checks": [
+        {"id": "rubric.required-concepts", "dimension": "rubric", "mode": "all", "terms": ["bcir.vertex_attr", "bcir.runtime.call", "arith", "cf.cond_br", "func.func", "llvm dialect"]},
+        {"id": "rubric.required-diagnostics", "dimension": "rubric", "mode": "all", "terms": ["converted", "lowered"]},
+        {"id": "rubric.prohibited-claims", "dimension": "rubric", "mode": "absent", "terms": ["all operations are already llvm", "dialect boundaries do not matter"]},
+        {"id": "rubric.referenced-artifacts", "dimension": "rubric", "mode": "any", "terms": ["!bcir.graph", "runtime graph descriptor", "stable symbol"]},
+        {"id": "rubric.explanation-completeness", "dimension": "rubric", "mode": "min-words", "minimum": 80}
+      ],
+      "comparison_strategy": {"type": "deterministic-rubric-coverage", "semantic_proof": false}
+    },
+    {
+      "id": "039",
+      "prompt_path": "llvm-training/exercises/039-graph-description-to-llvm-metadata.prompt.md",
+      "reference_solution_path": "llvm-training/exercises/039-graph-description-to-llvm-metadata.solution.ll",
+      "answer_kind": "llvm-ir",
+      "required_tools": ["llvm-as", "opt"],
+      "timeout_seconds": 8,
+      "expected_points": 100,
+      "reference_expected_percent": 100,
+      "scoring_dimensions": [
+        {"id": "artifact", "points": 10},
+        {"id": "validity", "points": 25},
+        {"id": "normalization", "points": 5},
+        {"id": "structure", "points": 60}
+      ],
+      "structural_assertions": [
+        {"id": "structure.function", "dimension": "structure", "type": "function", "pattern": "define\\s+void\\s+@apply_graph_edge\\s*\\("},
+        {"id": "structure.graph-metadata", "dimension": "structure", "type": "metadata", "patterns": ["!bcir\\.graphs\\s*=", "!bcir\\.graph\\.attrs\\s*=", "!bcir\\.graph\\.updates\\s*="]},
+        {"id": "structure.schema-facts", "dimension": "structure", "type": "metadata", "patterns": ["pagerank_step", "vertices", "i64\\s+1024", "edges", "i64\\s+4096"]},
+        {"id": "structure.attribute-facts", "dimension": "structure", "type": "metadata", "patterns": ["vertex", "rank", "edge", "src", "dst", "weight"]},
+        {"id": "structure.compute", "dimension": "structure", "type": "contains", "patterns": ["\\bfmul\\s+float\\b", "\\bfadd\\s+float\\b", "store\\s+float"]},
+        {"id": "safety.no-legacy-metadata", "dimension": "structure", "type": "absent", "patterns": ["metadata\\s*!", "\\bi32\\*"]}
+      ],
+      "comparison_strategy": {"type": "normalized-structural", "normalize_with": "opt -S", "raw_reference_diff": false}
+    }
+  ]
+}
