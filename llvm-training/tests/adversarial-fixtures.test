@@ -1,0 +1,11 @@
+# RUN: bash %training_root/tools/verify-adversarial-fixtures.sh --list > %t
+# RUN: grep -F '[assemble-valid-semantically-risky] llvm-training/exercises/adversarial/poison-branch-valid-risk.ll' %t
+# RUN: grep -F '[metadata-preservation] llvm-training/exercises/adversarial/metadata-drop-risk.ll' %t
+# RUN: grep -F '[assemble-valid-semantically-risky] llvm-training/exercises/adversarial/address-space-collapse-risk.ll' %t
+# RUN: grep -F '[assemble-valid-semantically-risky] llvm-training/exercises/adversarial/operand-bundle-loss-risk.ll' %t
+# RUN: grep -F '[assemble-valid-semantically-risky] llvm-training/exercises/adversarial/bcir-mapping-drift-risk.ll' %t
+# RUN: grep -F '[intentionally-invalid] llvm-training/exercises/adversarial/abi-attribute-mismatch.invalid.ll.txt' %t
+# RUN: grep -F '[target-specific] llvm-training/exercises/adversarial/target-specific-intrinsic-misuse-risk.ll' %t
+# RUN: test "$(wc -l < %t)" -eq 12
+# RUN: bash %training_root/tools/verify-adversarial-fixtures.sh
+# REQUIRES: llvm-as, opt

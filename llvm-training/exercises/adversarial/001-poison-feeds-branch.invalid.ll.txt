@@ -1,3 +1,4 @@
+; adversarial-class: assemble-valid-semantically-risky
 ; llvm-training-invalid-kind: semantic-only
 ; Adversarial BCIR fixture: this assembles and verifies, but branching on poison
 ; is immediate undefined behavior. A BCIR-preserving lowering should materialize

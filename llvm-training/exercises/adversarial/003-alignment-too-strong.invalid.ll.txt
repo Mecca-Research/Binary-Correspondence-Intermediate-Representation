@@ -1,3 +1,4 @@
+; adversarial-class: assemble-valid-semantically-risky
 ; llvm-training-invalid-kind: semantic-only
 ; Adversarial BCIR fixture: the verifier accepts the load, but `align 16` is
 ; stronger than the ABI/source contract if callers only guarantee 4-byte i32

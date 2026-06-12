@@ -1,3 +1,4 @@
+; adversarial-class: assemble-valid-semantically-risky
 ; llvm-training-invalid-kind: semantic-only
 ; Adversarial BCIR fixture: this generic addrspacecast can assemble and verify,
 ; but it may be semantically wrong for a target where address space 1 is not

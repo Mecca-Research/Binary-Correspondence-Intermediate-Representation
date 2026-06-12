@@ -49,6 +49,9 @@ If your LLVM tools are installed with a version suffix, replace `llvm-as` and
 - **Advanced BCIR verification and debugging**: design custom verifier passes,
   encode graph schemas as LLVM metadata, and repair GAADMSF-style lowering
   failures.
+- **Adversarial IR and fuzzing**: classify verifier-valid semantic hazards,
+  expected-invalid inputs, target-specific cases, and metadata-preservation
+  seeds, then build reproducible BCIR-aware fuzz oracles around them.
 
 ## Exercise list
 
@@ -125,19 +128,30 @@ numbered exercises and are intended to seed new agent-training tasks or reviews:
 - [`templates/add-metadata-preserve-verifier-validity.prompt.md`](templates/add-metadata-preserve-verifier-validity.prompt.md) — add BCIR metadata without breaking LLVM verifier validity.
 - [`templates/review-mixed-stride-lowering.prompt.md`](templates/review-mixed-stride-lowering.prompt.md) — review mixed byte, element, row, and graph-edge stride lowering.
 - [`templates/diagnose-optimizer-bcir-mapping-drift.prompt.md`](templates/diagnose-optimizer-bcir-mapping-drift.prompt.md) — diagnose optimizer-induced BCIR mapping drift between IR snapshots.
+- [`templates/review-adversarial-ir.prompt.md`](templates/review-adversarial-ir.prompt.md) — review IR that can pass one validation layer while violating another semantic contract.
+- [`templates/fuzz-bcir-lowering.prompt.md`](templates/fuzz-bcir-lowering.prompt.md) — design a reproducible BCIR lowering fuzzer with structural and semantic oracles.
+- [`templates/preserve-metadata-through-pass.prompt.md`](templates/preserve-metadata-through-pass.prompt.md) — define and test metadata transfer policy for instruction-rewriting passes.
 
-## Adversarial semantic fixtures
+## Adversarial IR and fuzzing track
 
-Adversarial fixtures live under [`adversarial/`](adversarial/). They intentionally
-use the `*.invalid.ll.txt` suffix plus the `; llvm-training-invalid-kind:
-semantic-only` marker when the IR should pass `llvm-as` and `opt -passes=verify`
-but still represents a BCIR semantic hazard. Current cases cover:
+The adversarial track lives under [`adversarial/`](adversarial/). Its
+[README](adversarial/README.md) defines four explicit fixture classes:
+assemble-valid but semantically risky, intentionally invalid, target-specific,
+and metadata-preservation. It also supplies a threat model for poison, metadata,
+address spaces, operand bundles, stale debug info, BCIR 1:1 mapping, target
+intrinsics, ABI attributes, `memory(...)`, and varargs.
 
-- [`adversarial/001-poison-feeds-branch.invalid.ll.txt`](adversarial/001-poison-feeds-branch.invalid.ll.txt) — poison flowing into a branch condition.
-- [`adversarial/002-metadata-dropped-after-transform.invalid.ll.txt`](adversarial/002-metadata-dropped-after-transform.invalid.ll.txt) — metadata needed for BCIR mapping dropped after a transform.
-- [`adversarial/003-alignment-too-strong.invalid.ll.txt`](adversarial/003-alignment-too-strong.invalid.ll.txt) — alignment stronger than the source contract.
-- [`adversarial/004-address-space-cast-misuse.invalid.ll.txt`](adversarial/004-address-space-cast-misuse.invalid.ll.txt) — unsafe address-space cast assumptions.
-- [`adversarial/005-opaque-pointer-gep-source-type-assumption.invalid.ll.txt`](adversarial/005-opaque-pointer-gep-source-type-assumption.invalid.ll.txt) — opaque-pointer layout assumptions hidden in GEP source element types.
+Do not infer expected behavior from `.ll` versus `.ll.txt` alone. Read the
+fixture's `; adversarial-class:` marker and run:
+
+```sh
+llvm-training/tools/verify-adversarial-fixtures.sh
+```
+
+The track includes focused fixtures for poison-sensitive branches, metadata
+loss, address-space collapse, operand-bundle loss, and BCIR mapping drift. Use
+the three adversarial prompt templates above to turn a seed into a review task,
+a reproducible fuzz campaign, or a pass-specific metadata regression.
 
 ## Verification
 
@@ -164,8 +178,9 @@ markdown answer, or optimization-pass input. Use these expectations by family:
 - Broken repair inputs are intentionally named `*.invalid.ll.txt`; they may be
   rejected by `llvm-as`, or they may assemble while still being semantically
   unsafe. Semantic-only fixtures should carry the
-  `; verify-invalid-fixtures: semantic-only` marker. They should not be renamed
-  to plain `.ll`.
+  `; llvm-training-invalid-kind: semantic-only` marker. Adversarial fixtures also use the
+  classification contract documented in `adversarial/README.md`; some are plain
+  `.ll` because successful assembly is part of the lesson.
 - Optimization reasoning inputs should assemble before running `opt`; pass output
   can differ across LLVM versions, so prompts describe structural observations
   such as new `phi`, `select`, vector-body, or remainder-loop patterns.

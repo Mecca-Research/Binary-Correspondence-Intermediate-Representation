@@ -275,3 +275,10 @@ The current fixtures permit deterministic generic LLVM and semantic-negative
 checks, so no fixture-specific logic is required in `verify-bcir-mapping.sh`.
 A future executable `bcir-verify` should add explicit expected-diagnostic checks
 for the two semantic-negative fixtures rather than guessing from comments.
+
+## Adversarial normal-form tests
+
+The [adversarial exercise track](../exercises/adversarial/) exercises the gap
+between generic LLVM validity and BCIR normal-form validity. Its classified
+fixtures are suitable for pre/post-pass correspondence checks, metadata side-table
+checks, poison-sensitive control-flow review, and reproducible lowering fuzzing.

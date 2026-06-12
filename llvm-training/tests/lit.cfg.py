@@ -18,6 +18,6 @@ config.substitutions.append(("%repo_root", repo_root))
 
 config.environment["PATH"] = os.environ.get("PATH", "")
 
-for tool in ["bash", "diff", "opt"]:
+for tool in ["bash", "diff", "llvm-as", "opt"]:
     if shutil.which(tool):
         config.available_features.add(tool)
