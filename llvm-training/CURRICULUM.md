@@ -243,7 +243,8 @@ lowering, object emission, ORC ownership, symbol lookup, or relocation handling.
 1. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — place SelectionDAG/GlobalISel, `MachineInstr`, register allocation, MC, and object emission in order.
 2. [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) — identify generated target facts and avoid editing generated files.
 3. [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md), [`12-backend-jit/05-orc-layers.md`](12-backend-jit/05-orc-layers.md), and [`12-backend-jit/04-mc-and-relocations.md`](12-backend-jit/04-mc-and-relocations.md) — trace missing symbols from `LLJIT` ownership through layers, JITLink, object symbols, and relocations.
-4. Exercises [`035`](exercises/035-diagnose-missing-symbol-relocation.prompt.md)-[`037`](exercises/037-tablegen-to-mcinst-review.prompt.md) — practice backend/JIT failure triage.
+4. [`12-backend-jit/07-advanced-orc-runtime-integration.md`](12-backend-jit/07-advanced-orc-runtime-integration.md) — design BCIR-aware transform/compile layers, lazy and speculative materialization, hot re-JIT, resource retirement, remote execution, and native/Wasm/FPGA/RISC-V deployment. Cross-reference [`17-new-pass-manager/`](17-new-pass-manager/), [`18-mlir-lowering-to-llvm/`](18-mlir-lowering-to-llvm/), [`bcir-mapping/09-runtime-call-boundaries.md`](bcir-mapping/09-runtime-call-boundaries.md), and [`15-binary-analysis/`](15-binary-analysis/).
+5. Exercises [`035`](exercises/035-diagnose-missing-symbol-relocation.prompt.md)-[`037`](exercises/037-tablegen-to-mcinst-review.prompt.md) — practice backend/JIT failure triage.
 
 ## Binary-analysis evidence path
 

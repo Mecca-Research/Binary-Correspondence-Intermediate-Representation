@@ -24,6 +24,7 @@ every lookup.
 | MLIR bridge and integration | [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) |
 | Dedicated MLIR lowering to LLVM for BCIR | [`18-mlir-lowering-to-llvm/README.md`](18-mlir-lowering-to-llvm/README.md) |
 | Backend/JIT diagnostics | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
+| Advanced ORC runtime integration, hot kernel re-JIT, and heterogeneous deployment | [`12-backend-jit/07-advanced-orc-runtime-integration.md`](12-backend-jit/07-advanced-orc-runtime-integration.md) |
 | Binary-analysis evidence schemas | [`15-binary-analysis/README.md`](15-binary-analysis/README.md) |
 | Exception-handling IR (`invoke`, landing pads, WinEH funclets) | [`16-exception-handling/README.md`](16-exception-handling/README.md) |
 | Modern pass-manager infrastructure, PassBuilder plugins, and adaptive BCIR pipelines | [`17-new-pass-manager/README.md`](17-new-pass-manager/README.md) |

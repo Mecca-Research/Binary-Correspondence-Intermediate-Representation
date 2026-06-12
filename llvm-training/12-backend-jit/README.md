@@ -6,6 +6,7 @@
 - TableGen source describes target facts; generated `*Gen*.inc` files normally live in the build tree, not the source tree.
 - ORC/LLJIT layers separate symbol definition, lookup, materialization, and object linking responsibilities.
 - Relocation and MC issues are usually symbol/layout problems, so preserve target triple, data layout, and object ownership evidence.
+- Advanced BCIR runtimes need explicit lazy/speculative materialization, generation-safe symbol replacement, resource retirement, and target-aware local or remote deployment.
 
 ## Chapter dispatcher
 
@@ -17,6 +18,7 @@
 | MC emission, symbols, and relocations | [`04-mc-and-relocations.md`](04-mc-and-relocations.md) |
 | ORC layers, object ownership, and diagnostic flow | [`05-orc-layers.md`](05-orc-layers.md) |
 | Custom BCIR intrinsic lowering, stackmaps/patchpoints, runtime fallback, and JIT policy | [`06-custom-bcir-intrinsics.md`](06-custom-bcir-intrinsics.md) |
+| Advanced ORC runtime integration, hot re-JIT, custom materialization, remote JITLink, and heterogeneous BCIR deployment | [`07-advanced-orc-runtime-integration.md`](07-advanced-orc-runtime-integration.md) |
 
 ## Examples
 
