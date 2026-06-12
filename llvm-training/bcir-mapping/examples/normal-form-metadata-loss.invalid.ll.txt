@@ -1,0 +1,12 @@
+; llvm-training-invalid-kind: semantic-only
+; BCIR semantic failure: the source operation had claim and diagnostic identity,
+; but its replacement carries neither metadata nor a reified diagnostic call.
+; LLVM accepts this module; the consuming BCIR stage no longer can diagnose it.
+
+declare void @bcir_runtime_store_i32(ptr, i32, i64)
+
+define void @normal_form_metadata_loss(ptr %element, i32 %value) {
+entry:
+  call void @bcir_runtime_store_i32(ptr %element, i32 %value, i64 42017)
+  ret void
+}

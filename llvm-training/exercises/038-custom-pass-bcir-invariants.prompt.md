@@ -5,7 +5,7 @@
 This is an **advanced custom-pass review** exercise. Design the checks for an
 LLVM pass that validates BCIR lowering invariants after graph, register-binding,
 and hierarchical-memory operations have been translated to ordinary LLVM IR plus
-metadata.
+metadata. Use the formal [BCIR normal-form contract](../bcir-mapping/11-normal-forms-and-verification.md) as the specification under review.
 
 ## Scenario
 
@@ -23,8 +23,11 @@ Write a review answer that covers:
 - graph lowering invariants for vertex, edge, and attribute accesses;
 - register-binding invariants for logical-to-physical register tables;
 - HAM hint invariants for prefetch lowering and non-semantic metadata;
-- diagnostics that identify the offending function, instruction, and metadata
-  node without making the IR harder to optimize.
+- explicit byte-stride, opaque-pointer, address-space, runtime-wrapper, and safe
+  poison/undef/freeze invariants;
+- diagnostics that identify the offending function, instruction, stable claim and
+  register IDs, and metadata node without making the IR harder to optimize;
+- interaction with MLIR conversion diagnostics and deterministic New PM fenceposts.
 
 ## Expected observation
 

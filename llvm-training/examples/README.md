@@ -197,6 +197,7 @@ scripts may still skip them if the local target support is unavailable.
 | `llvm-training/bcir-mapping/examples/hardware-aware-gem-lowering.ll` | `llvm-as llvm-training/bcir-mapping/examples/hardware-aware-gem-lowering.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/mixed-stride-byte-offset.ll` | `llvm-as llvm-training/bcir-mapping/examples/mixed-stride-byte-offset.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/mixed-stride.ll` | `llvm-as llvm-training/bcir-mapping/examples/mixed-stride.ll -o /dev/null` |
+| `llvm-training/bcir-mapping/examples/normal-form-valid.ll` | `llvm-as llvm-training/bcir-mapping/examples/normal-form-valid.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/register-binding.ll` | `llvm-as llvm-training/bcir-mapping/examples/register-binding.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/vertex-edge-attribute.ll` | `llvm-as llvm-training/bcir-mapping/examples/vertex-edge-attribute.ll -o /dev/null` |
 

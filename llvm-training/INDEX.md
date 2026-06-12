@@ -21,6 +21,7 @@ every lookup.
 | LLVM types and opaque-pointer migration | [`02-types/README.md`](02-types/README.md) |
 | BCIR lowering guide | [`bcir-mapping/README.md`](bcir-mapping/README.md) |
 | BCIR lowering patterns | [`indexes/bcir-patterns.md`](indexes/bcir-patterns.md) |
+| BCIR normal forms and verifier design | [`bcir-mapping/11-normal-forms-and-verification.md`](bcir-mapping/11-normal-forms-and-verification.md) |
 | MLIR bridge and integration | [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) |
 | Dedicated MLIR lowering to LLVM for BCIR | [`18-mlir-lowering-to-llvm/README.md`](18-mlir-lowering-to-llvm/README.md) |
 | Hardware-aware lowering, GAADMSF pulses, Dragon Egg flows, RISC-V, and MIR | [`19-hardware-aware/README.md`](19-hardware-aware/README.md) |
