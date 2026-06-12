@@ -1,0 +1,5 @@
+# RUN: python3 %training_root/tools/export-exercise-dataset.py --split all --without-solutions --output %t.a.jsonl
+# RUN: python3 %training_root/tools/export-exercise-dataset.py --split all --without-solutions --output %t.b.jsonl
+# RUN: diff -u %t.a.jsonl %t.b.jsonl
+# RUN: python3 -c 'import json; rows=[json.loads(x) for x in open("%t.a.jsonl")]; assert len(rows) == 42; assert all(r["reference_solution"]["content"] is None and not r["reference_solution"]["included"] and ".solution." not in r["prompt"] for r in rows)'
+# RUN: python3 %training_root/tools/verify-dataset-export.py | grep "Verified 42 deterministic dataset records"

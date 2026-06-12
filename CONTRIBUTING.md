@@ -249,3 +249,39 @@ dataset tool, run:
 python3 llvm-training/tools/verify-exercise-manifests.py
 python3 llvm-training/tools/verify-dataset-export.py
 ```
+
+## Grader and dataset contribution requirements
+
+Changes to numbered training exercises or evaluation tooling must preserve the
+closed-loop contract:
+
+- **Exercise manifests:** every numbered prompt has exactly one schema-valid
+  manifest. Prompt, solution, artifact, tool, minimum-version, timeout,
+  determinism, difficulty, license, and tool-absence fields must be accurate.
+- **Scoring rubrics:** every check has a stable ID, dimension, deterministic
+  pass/fail condition, and explicit points. Points sum exactly to the manifest
+  score. Skipped optional checks earn no points and reduce score confidence.
+- **Dataset provenance:** exports retain repository-relative source and manifest
+  paths, SPDX license, source lineage/leakage group, split assignment, exporter
+  identity, and SHA-256 checksums. Never mix unrelated or externally sourced
+  material without documenting its license and lineage.
+- **Stable IDs:** exercise IDs, exported IDs, leakage-group IDs, and published
+  check IDs are append-only API identifiers. Do not renumber or reuse them;
+  retire obsolete entries explicitly and review schema/version implications.
+- **Grader self-tests:** reference answers must earn full raw scores with the
+  required toolchain, partial fixtures must demonstrate nontrivial partial
+  credit, malformed attempts must fail safely, and deterministic export tests
+  must remain byte-identical.
+- **Held-out isolation:** model-visible evaluation bundles use solution-free
+  export/preparation paths. Reference content and `*.solution.*` siblings may be
+  used by trusted oracle/self-test code only, never supplied to the evaluated
+  model.
+
+Required integration checks for such a change are:
+
+```bash
+python3 llvm-training/tools/verify-exercise-manifests.py
+python3 -m unittest discover -s llvm-training/autograder/tests -p 'test_*.py'
+python3 llvm-training/tools/grade-exercises.py --self-test --format json
+python3 llvm-training/tools/verify-dataset-export.py
+```

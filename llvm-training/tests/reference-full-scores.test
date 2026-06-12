@@ -1,0 +1,3 @@
+# REQUIRES: llvm-as, opt, lli
+# RUN: python3 %training_root/tools/grade-exercises.py --self-test --format json --output %t.json
+# RUN: python3 -c 'import json; r=json.load(open("%t.json")); assert r["aggregate"]["score_percent"] == 100.0; assert r["aggregate"]["skipped_checks"] == 0; assert r["aggregate"]["score_confidence"] == "full"; assert all(x["score_percent"] == 100.0 for x in r["results"])'

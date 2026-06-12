@@ -87,6 +87,15 @@ def repository_path(repo_root: Path, value: str) -> Path:
     return path
 
 
+def model_visible_prompt(text: str) -> str:
+    """Remove reference-solution paths while retaining answer-check instructions."""
+    return re.sub(
+        r"(?:llvm-training/exercises/)?[^\s`\"']*\.solution\.(ll|mlir|md)",
+        lambda match: f"answer.{match.group(1)}",
+        text,
+    )
+
+
 def discover_context_paths(repo_root: Path, metadata: dict[str, Any]) -> list[str]:
     prompt = repository_path(repo_root, metadata["prompt"])
     solution = metadata.get("solution")
@@ -234,7 +243,8 @@ def prepare(args: argparse.Namespace, repo_root: Path, entries: list[dict[str, A
         directory.mkdir(parents=True, exist_ok=True)
         prompt_source = repository_path(repo_root, entry["prompt_path"])
         prompt_copy = directory / "prompt.md"
-        shutil.copyfile(prompt_source, prompt_copy)
+        prompt_text = model_visible_prompt(prompt_source.read_text(encoding="utf-8"))
+        prompt_copy.write_text(prompt_text, encoding="utf-8")
         bundled_context: list[str] = []
         for relative in entry["context_paths"]:
             source = repository_path(repo_root, relative)
@@ -246,7 +256,7 @@ def prepare(args: argparse.Namespace, repo_root: Path, entries: list[dict[str, A
         generator_input = {
             "contract_version": GENERATOR_CONTRACT_VERSION,
             "exercise_id": exercise_id,
-            "prompt_text": prompt_source.read_text(encoding="utf-8"),
+            "prompt_text": prompt_text,
             "context_paths": bundled_context,
             "output_contract": {
                 "attempt_directory": str(attempt.parent.resolve()),

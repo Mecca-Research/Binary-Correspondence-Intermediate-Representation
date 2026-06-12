@@ -1,0 +1,2 @@
+# RUN: python3 %training_root/tools/verify-exercise-manifests.py | grep "validated 42 exercise manifests"
+# RUN: python3 %training_root/tools/verify-exercise-manifests.py | grep "covered 42 numbered graded exercise prompts"

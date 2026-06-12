@@ -9,6 +9,11 @@ the same checks without a build-system dependency.
 | Script | Purpose | Required tools |
 | --- | --- | --- |
 | `generate-exercise-variants.py` | Produces a small fixed-seed set of typed prompt/reference pairs, grades every reference through the attempt-grader engine, rejects unsafe/trivial/duplicate IR, and records split lineage plus artifact hashes. | `llvm-as`, `opt`, `lli` |
+| `grade-exercises.py` | Grades stable-ID attempt directories or a single answer with deterministic partial credit; `--self-test` grades registered references. JSON output records every pass/fail/skip, toolchain version, raw score, executed-check score, and confidence. | Python 3; optional LLVM/MLIR tools declared per exercise |
+| `grade-exercises.sh` | Repository-root shell entry point for `grade-exercises.py`, preserving arguments and exit status. | Bash, Python 3 |
+| `export-exercise-dataset.py` | Exports deterministic JSON Lines for `train`, `validation`, `test`, or `all`; solution content is omitted by default and must remain omitted for model-visible held-out evaluation. | Python 3 |
+| `verify-dataset-export.py` | Validates split/leakage assignments and schema, regenerates solution-free and trusted solution-bearing exports, checks hashes and paths, and proves byte-for-byte determinism. | Python 3 |
+| `run-eval.py` | Prepares solution-free prompt/context bundles, invokes a provider-neutral local or fixture adapter, grades attempts, and emits aggregate/reproducibility reports. | Python 3; exercise-declared grading tools |
 | `verify-examples.sh` | Builds the known-good standalone `.ll` manifest from chapter-local `examples/` directories, assembles each file with `llvm-as`, and runs `opt -passes=verify`. It also checks the broken `.ll.txt` sentinel so intentionally invalid examples do not drift into the manifest. | `llvm-as`, `opt` |
 | `smoke-lli.sh` | Runs only curated examples that have a safe no-argument entry point under `lli`. Most training snippets are library-style IR and should stay out of this list. | `lli` |
 | `smoke-llc.sh` | Lowers curated examples with `llc` to catch target-codegen regressions without treating every IR snippet as a runnable program. It prints intentional exclusions from `smoke-llc-skip.txt` before running the curated allowlist. | `llc` |
@@ -50,6 +55,8 @@ directory with `cmake --build`:
 ```bash
 cmake -S llvm-training -B build/llvm-training
 cmake --build build/llvm-training --target llvm-training-verify-examples
+cmake --build build/llvm-training --target llvm-training-autograder-self-test
+cmake --build build/llvm-training --target llvm-training-verify-dataset-export
 cmake --build build/llvm-training --target llvm-training-smoke-llc
 cmake --build build/llvm-training --target llvm-training-smoke-lli
 cmake --build build/llvm-training --target llvm-training-verify-exercises

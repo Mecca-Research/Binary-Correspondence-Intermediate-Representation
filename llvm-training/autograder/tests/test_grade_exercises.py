@@ -13,13 +13,14 @@ FIXTURES = TRAINING_ROOT / "autograder" / "fixtures" / "incomplete" / "attempts"
 
 
 class GradeExercisesTests(unittest.TestCase):
-    def run_grader(self, *args: str) -> subprocess.CompletedProcess[str]:
+    def run_grader(self, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(GRADER), *args],
             cwd=REPO_ROOT,
             text=True,
             capture_output=True,
             check=False,
+            env=env,
         )
 
     def test_checked_in_references_meet_expected_executed_score(self) -> None:
@@ -39,6 +40,20 @@ class GradeExercisesTests(unittest.TestCase):
             self.assertGreater(exercise["points_earned"], 0, exercise["exercise_id"])
             self.assertLess(exercise["points_earned"], exercise["points_available"], exercise["exercise_id"])
             self.assertTrue(any(check["status"] == "fail" for check in exercise["checks"]))
+
+    def test_missing_optional_tools_reduce_confidence_without_inflating_score(self) -> None:
+        answer = REPO_ROOT / "llvm-training" / "exercises" / "001-add.solution.ll"
+        result = self.run_grader(
+            "--exercise", "001", "--answer", str(answer), "--format", "json",
+            env={"PATH": ""},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        exercise = report["results"][0]
+        self.assertGreater(exercise["skipped_checks"], 0)
+        self.assertEqual(exercise["score_confidence"], "reduced")
+        self.assertLess(exercise["score_percent"], exercise["executed_score_percent"])
+        self.assertEqual(report["aggregate"]["score_confidence"], "reduced")
 
     def test_single_answer_and_output_file(self) -> None:
         answer = REPO_ROOT / "llvm-training" / "exercises" / "013-mixed-stride-indexing.solution.ll"

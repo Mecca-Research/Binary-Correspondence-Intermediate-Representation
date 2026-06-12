@@ -1,0 +1,2 @@
+# RUN: ! python3 %training_root/tools/grade-exercises.py --attempts %training_root/autograder/fixtures/incomplete/attempts --format json --output %t.json
+# RUN: python3 -c 'import json; r=json.load(open("%t.json")); assert r["results"]; assert all(0 < x["points_earned"] < x["points_available"] for x in r["results"]); assert all(any(c["status"] == "fail" for c in x["checks"]) for x in r["results"])'

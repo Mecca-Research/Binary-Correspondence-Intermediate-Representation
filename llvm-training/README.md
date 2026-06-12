@@ -298,3 +298,42 @@ material is not mistaken for a portable LLVM IR guarantee.
 The checked artifact inventory is [`examples/README.md`](examples/README.md), and
 the complete gate dispatcher is [`tools/README.md`](tools/README.md). Configure
 training-only CMake targets with `cmake -S llvm-training -B build/llvm-training`.
+
+## Closed-loop grading and dataset export
+
+The executable attempt grader starts at:
+
+```bash
+python3 llvm-training/tools/grade-exercises.py \
+  --attempts /path/to/attempts --format json --output /tmp/grades.json
+```
+
+Attempt directories use stable three-digit IDs (`001/answer.ll`,
+`041/answer.md`, and so on). Use `--self-test` to grade the registered checked-in
+references. This is distinct from `tools/verify-exercises.sh`: the reference
+verifier proves that all checked-in `*.solution.ll` artifacts still assemble
+and verify, while the attempt grader applies per-exercise rubrics, awards partial
+credit, handles malformed/missing submissions, and emits machine-readable score
+records.
+
+The deterministic dataset exporter starts at:
+
+```bash
+python3 llvm-training/tools/export-exercise-dataset.py \
+  --split all --without-solutions --output /tmp/llvm-training.jsonl
+python3 llvm-training/tools/verify-dataset-export.py
+```
+
+Version 1 currently exports **42 curated exercise records**. It is intended for
+held-out evaluation, regression testing, and small-scale analysis of LLVM/MLIR
+agent behavior; it is not sized or licensed as a general-purpose pretraining or
+fine-tuning corpus. `--without-solutions` is the default and is mandatory for
+model-visible held-out bundles. `--include-solutions` is only for trusted oracle
+or reviewer workflows and must not be passed to a model under evaluation.
+
+Every skipped optional check appears as a `status: "skip"` record. Its points
+remain in `points_available` and contribute zero to `points_earned`, so missing
+tools cannot inflate the raw score. Reports mark the exercise and aggregate
+`score_confidence` as `reduced`; compare scores across runs only after checking
+the skip count and recorded toolchain. The MLIR CI rail uses required-tool mode
+to obtain stronger confidence than reduced-coverage developer runs.

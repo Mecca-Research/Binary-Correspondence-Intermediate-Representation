@@ -38,6 +38,9 @@ class RunEvalTests(unittest.TestCase):
             self.assertIsInstance(generator_input["context_paths"], list)
             self.assertEqual(generator_input["generation_parameters"], {"seed": 7})
             self.assertEqual(generator_input["output_contract"]["answer_kind"], "llvm-ir")
+            serialized_input = json.dumps(generator_input)
+            self.assertNotIn(".solution.", serialized_input)
+            self.assertNotIn("reference_solution", serialized_input)
 
             lines = (output / "results.jsonl").read_text().splitlines()
             self.assertEqual(len(lines), 1)

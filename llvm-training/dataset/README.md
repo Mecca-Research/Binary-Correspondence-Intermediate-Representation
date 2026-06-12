@@ -81,3 +81,12 @@ It exports the dataset repeatedly in a temporary directory and checks:
 - parity between solution-including and solution-free modes;
 - byte-for-byte deterministic regeneration; and
 - existence of every source, artifact, and provenance reference.
+
+## Current scale and intended use
+
+Dataset schema v1 exports 42 stable-ID records. This deliberately small,
+curated set supports held-out agent evaluation, grader regression tests, and
+curriculum analysis. It is not a statistically representative benchmark and is
+not a production-scale pretraining or fine-tuning dataset. Model-visible exports
+must use the default `--without-solutions`; solution-bearing exports are limited
+to trusted oracle/reviewer workflows.

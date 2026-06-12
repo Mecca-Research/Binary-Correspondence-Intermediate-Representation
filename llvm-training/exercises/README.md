@@ -228,3 +228,34 @@ markdown answer, or optimization-pass input. Use these expectations by family:
 - Language-agnostic review prompts come before any future pass-implementation
   exercises. If C++ pass skeleton tasks are added later, keep them in a separate
   non-verified family and document build requirements locally.
+
+## Submission and attempt-directory convention
+
+Submit attempts beneath one configured root, with one directory per permanent
+three-digit exercise ID:
+
+```text
+attempts/
+  001/answer.ll
+  032/answer.md
+  033/answer.mlir
+```
+
+The answer extension is determined by the manifest/registry answer kind:
+`.ll` for LLVM IR and pass-output answers, `.mlir` for MLIR answers, and `.md`
+for review or diagnostic answers. Do not include build scripts, object files,
+shared libraries, executables, or symlinks that escape the attempt root. The
+grader treats absent, empty, oversized, malformed, and verifier-rejected answers
+as submission outcomes rather than trusting generated code.
+
+The declarative manifest is the scoring authority. Its stable ID must match the
+prompt filename and attempt directory; check IDs are also stable once reports or
+datasets consume them. Rubric points must sum exactly to the declared score,
+tool-backed checks must state minimum versions and absence policy, and optional
+tool skips must remain explicit and unearned. Run both integration gates after
+adding or changing an exercise:
+
+```bash
+python3 llvm-training/tools/verify-exercise-manifests.py
+python3 llvm-training/tools/grade-exercises.py --self-test --format json
+```
