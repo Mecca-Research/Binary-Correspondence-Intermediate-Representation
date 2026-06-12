@@ -82,19 +82,21 @@ reason about optimization strength, pass pipelines, and vectorized IR:
 1. [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md) — pass pipelines and `opt -passes=...` spelling
 2. [`07-optimization/04-optimization-levels.md`](07-optimization/04-optimization-levels.md) — optimization levels: `-O0`, `-O1`, `-O2`, `-O3`, `-Os`, and `-Oz`
 3. [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) — deeper optimizer legality and BCIR pipeline components: MemorySSA, alias limits, SCCP/freeze, LoopRotate-before-vectorization, PGO metadata, MLGO policy, masks, interleaved access, and target caveats
-4. [`17-new-pass-manager/README.md`](17-new-pass-manager/README.md) — new pass-manager plugin infrastructure, callbacks, adaptive BCIR pass ordering, and MLGO/profile-guided pipeline policy
-5. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
-6. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization dispatcher
-7. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
-8. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md), [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md), and [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md) — blockers, commands, predication, interleaved-memory observations, and BCIR target-lowering sketches
-9. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
+4. [`07-optimization/09-performance-analysis-benchmarking.md`](07-optimization/09-performance-analysis-benchmarking.md) — controlled baseline/candidate measurement, pass timing and remarks, IR versus machine-code evidence, PGO/MLGO/BOLT inputs, JIT telemetry, and BCIR workload metrics
+5. [`17-new-pass-manager/README.md`](17-new-pass-manager/README.md) — new pass-manager plugin infrastructure, callbacks, adaptive BCIR pass ordering, and MLGO/profile-guided pipeline policy
+6. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT profile-driven pipeline effects
+7. [`09-vectorization/README.md`](09-vectorization/README.md) — auto-vectorization dispatcher
+8. [`09-vectorization/01-loop-vectorizer.md`](09-vectorization/01-loop-vectorizer.md) and [`09-vectorization/02-slp-vectorizer.md`](09-vectorization/02-slp-vectorizer.md) — focused Loop Vectorizer and SLP Vectorizer paths
+9. [`09-vectorization/04-vectorization-legality.md`](09-vectorization/04-vectorization-legality.md), [`09-vectorization/05-example-walkthroughs.md`](09-vectorization/05-example-walkthroughs.md), and [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md) — blockers, commands, predication, interleaved-memory observations, and BCIR target-lowering sketches
+10. [`reference/instruction-quickref.md`](reference/instruction-quickref.md) — vector IR quick reference: vector types, vector loads/stores, `extractelement`, `insertelement`, and `shufflevector`
 
 Practice next: run the commands in
 [`09-vectorization/examples/sum-loop.c`](09-vectorization/examples/sum-loop.c),
 [`09-vectorization/examples/sum-loop.ll`](09-vectorization/examples/sum-loop.ll),
 [`09-vectorization/examples/slp-scalars.ll`](09-vectorization/examples/slp-scalars.ll),
 [`07-optimization/examples/bcir-memoryssa-pipeline.ll`](07-optimization/examples/bcir-memoryssa-pipeline.ll),
-and [`07-optimization/examples/bcir-sccp-freeze-after.ll`](07-optimization/examples/bcir-sccp-freeze-after.ll).
+[`07-optimization/examples/bcir-sccp-freeze-after.ll`](07-optimization/examples/bcir-sccp-freeze-after.ll),
+and [`07-optimization/examples/bcir-benchmark-kernel.ll`](07-optimization/examples/bcir-benchmark-kernel.ll) with [`07-optimization/examples/bcir-benchmark-pipeline-notes.md`](07-optimization/examples/bcir-benchmark-pipeline-notes.md).
 
 
 ## Concurrent IR path

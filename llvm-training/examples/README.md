@@ -82,6 +82,7 @@ scripts may still skip them if the local target support is unavailable.
 | `llvm-training/06-metadata/examples/profile-value-indirect-call.ll` | `llvm-as llvm-training/06-metadata/examples/profile-value-indirect-call.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/tbaa-load-store.ll` | `llvm-as llvm-training/06-metadata/examples/tbaa-load-store.ll -o /dev/null` |
 | `llvm-training/06-metadata/examples/type-metadata-cfi.ll` | `llvm-as llvm-training/06-metadata/examples/type-metadata-cfi.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/bcir-benchmark-kernel.ll` | `llvm-as llvm-training/07-optimization/examples/bcir-benchmark-kernel.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/bcir-memoryssa-pipeline.ll` | `llvm-as llvm-training/07-optimization/examples/bcir-memoryssa-pipeline.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/bcir-sccp-freeze-after.ll` | `llvm-as llvm-training/07-optimization/examples/bcir-sccp-freeze-after.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/bcir-sccp-freeze-before.ll` | `llvm-as llvm-training/07-optimization/examples/bcir-sccp-freeze-before.ll -o /dev/null` |
