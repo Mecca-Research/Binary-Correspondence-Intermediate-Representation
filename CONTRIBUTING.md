@@ -211,3 +211,41 @@ prefer adding explicit repository-root tools such as
 executable, documented in `llvm-training/tools/README.md`, fail closed when
 required fixtures disappear, and be wired into CI when they protect repository
 health.
+
+## LLVM training dataset stability
+
+The files under `llvm-training/dataset/` describe a small curated evaluation
+set exported from tracked exercises and grading manifests. Do not describe or
+expand it as a scaled fine-tuning corpus. Generated JSON Lines files are build
+artifacts and stay out of version control unless maintainers intentionally
+publish a versioned release snapshot.
+
+Treat the dataset contract as an API:
+
+- **IDs are permanent.** Once an exercise ID is exported, do not rename, reuse,
+  or renumber it. Retire an exercise explicitly rather than assigning its ID to
+  different content.
+- **Semantic changes require an export-version decision.** Changes to the task,
+  accepted answer kind, required artifacts, verification behavior, rubric, or
+  split meaning must be reviewed for a schema/export version bump. Editorial
+  fixes that do not alter meaning still change content checksums and should be
+  called out in review.
+- **Solutions cannot silently change scoring behavior.** A reference-solution
+  update must be accompanied by review of the declarative checks and points.
+  If the accepted behavior changes, update the rubric intentionally and make
+  the compatibility impact explicit.
+- **Provenance and licensing are mandatory.** Every exported record must retain
+  repository-relative source and manifest paths, source-lineage/leakage data,
+  and an SPDX license identifier backed by the repository license.
+- **Splits are curated, not random.** Assign new exercises in
+  `llvm-training/dataset/splits-v1.json` by concept family and source lineage.
+  Prompt templates, generated variants, and exercises derived from one seed
+  belong to one indivisible leakage group and cannot cross evaluation splits.
+
+After changing any numbered exercise, autograder manifest, split assignment, or
+dataset tool, run:
+
+```sh
+python3 llvm-training/tools/verify-exercise-manifests.py
+python3 llvm-training/tools/verify-dataset-export.py
+```
