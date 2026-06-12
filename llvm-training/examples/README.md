@@ -185,6 +185,10 @@ scripts may still skip them if the local target support is unavailable.
 | `llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-after.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-after.ll -o /dev/null` |
 | `llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-before.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-before.ll -o /dev/null` |
 | `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints-lowered.ll` | `llvm-as llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints-lowered.ll -o /dev/null` |
+| `llvm-training/19-hardware-aware/examples/calibration-governor-metadata.ll` | `llvm-as llvm-training/19-hardware-aware/examples/calibration-governor-metadata.ll -o /dev/null` |
+| `llvm-training/19-hardware-aware/examples/dragon-egg-flow-execution.ll` | `llvm-as llvm-training/19-hardware-aware/examples/dragon-egg-flow-execution.ll -o /dev/null` |
+| `llvm-training/19-hardware-aware/examples/gaadmsf-programming-pulse.ll` | `llvm-as llvm-training/19-hardware-aware/examples/gaadmsf-programming-pulse.ll -o /dev/null` |
+| `llvm-training/19-hardware-aware/examples/riscv-extension-lowering-sketch.ll` | `llvm-as llvm-training/19-hardware-aware/examples/riscv-extension-lowering-sketch.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.ll` | `llvm-as llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/claim-resource-lookup.ll` | `llvm-as llvm-training/bcir-mapping/examples/claim-resource-lookup.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/diagnostic-metadata-preservation.ll` | `llvm-as llvm-training/bcir-mapping/examples/diagnostic-metadata-preservation.ll -o /dev/null` |
@@ -225,6 +229,7 @@ targets for `verify-examples.sh`:
 | `llvm-training/15-binary-analysis/examples/side-channel-trace-masked.csv` | CSV data | Data/sample artifact; not assembled by `llvm-as`. |
 | `llvm-training/17-new-pass-manager/examples/adaptive-pipeline-sketch.cpp.md` | Markdown sketch | Documentation-only modern-pass-manager driver outline. |
 | `llvm-training/17-new-pass-manager/examples/bcir-pass-plugin-skeleton.cpp.md` | Markdown sketch | Documentation-only pass plugin skeleton. |
+| `llvm-training/19-hardware-aware/examples/mir-register-hint-sketch.mir.txt` | MIR-shaped text sketch | Documentation-only backend sketch; not LLVM IR and intentionally excluded from `llvm-as` verification. |
 | `llvm-training/examples/README.md` | Markdown sketch | Documentation-only code outline. |
 | `llvm-training/examples/broken-example.ll.txt` | Intentionally excluded LLVM IR text fixture | Invalid or legacy IR text fixture; excluded from the known-good manifest. |
 

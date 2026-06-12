@@ -66,6 +66,8 @@ llvm-training/
 ├── 15-binary-analysis/   post-codegen analysis, side channels, traces/counters
 ├── 16-exception-handling/ exception-handling IR and funclets
 ├── 17-new-pass-manager/  modern PassBuilder plugins, callbacks, BCIR pipelines
+├── 18-mlir-lowering-to-llvm/ dedicated MLIR conversion and BCIR lowering
+├── 19-hardware-aware/    intrinsics, pulses, governors, RISC-V, MIR, register/memory hints
 ├── exercises/            runnable prompts, expected observations, solutions
 ├── indexes/              generated or focused lookup indexes
 ├── tools/                example verification and smoke-test scripts

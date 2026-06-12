@@ -23,6 +23,7 @@ every lookup.
 | BCIR lowering patterns | [`indexes/bcir-patterns.md`](indexes/bcir-patterns.md) |
 | MLIR bridge and integration | [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) |
 | Dedicated MLIR lowering to LLVM for BCIR | [`18-mlir-lowering-to-llvm/README.md`](18-mlir-lowering-to-llvm/README.md) |
+| Hardware-aware lowering, GAADMSF pulses, Dragon Egg flows, RISC-V, and MIR | [`19-hardware-aware/README.md`](19-hardware-aware/README.md) |
 | Backend/JIT diagnostics | [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) |
 | Advanced ORC runtime integration, hot kernel re-JIT, and heterogeneous deployment | [`12-backend-jit/07-advanced-orc-runtime-integration.md`](12-backend-jit/07-advanced-orc-runtime-integration.md) |
 | Binary-analysis evidence schemas | [`15-binary-analysis/README.md`](15-binary-analysis/README.md) |

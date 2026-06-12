@@ -106,3 +106,7 @@ shows all four steps plus a custom intrinsic-shaped backend hook.
 - [`11-address-space-confusion.md`](../08-pitfalls/11-address-space-confusion.md)
 - [`12-vectorization-blocked-by-aliasing.md`](../08-pitfalls/12-vectorization-blocked-by-aliasing.md)
 - [`13-pass-pipeline-ordering-surprise.md`](../08-pitfalls/13-pass-pipeline-ordering-surprise.md)
+
+## Hardware-aware continuation
+
+For GAA-aware register-allocation advice and hierarchical memory hints layered on correct mixed-stride addressing, continue with [`../19-hardware-aware/06-register-allocation-and-memory-hints.md`](../19-hardware-aware/06-register-allocation-and-memory-hints.md).

@@ -196,6 +196,17 @@ structured information before producing LLVM IR:
 Use this path before the Backend/JIT path when the task starts above LLVM IR,
 especially for custom frontend lowering or BCIR-specific graph representations.
 
+## Hardware-aware lowering path
+
+Use this path after the backend/JIT and BCIR mapping introductions when an
+operation must retain hardware intent through code generation:
+
+1. [`19-hardware-aware/README.md`](19-hardware-aware/README.md) — choose the correct abstraction layer and representation.
+2. [`19-hardware-aware/01-dragon-egg-gaadmsf-intrinsics.md`](19-hardware-aware/01-dragon-egg-gaadmsf-intrinsics.md) — classify Dragon Egg and GAADMSF operations.
+3. [`19-hardware-aware/02-programming-pulses-and-flow-execution.md`](19-hardware-aware/02-programming-pulses-and-flow-execution.md) and [`19-hardware-aware/03-calibration-governor.md`](19-hardware-aware/03-calibration-governor.md) — make required state and side effects explicit.
+4. [`19-hardware-aware/04-riscv-and-target-specific-codegen.md`](19-hardware-aware/04-riscv-and-target-specific-codegen.md) — carry a target-gated extension operation through selection and fallback.
+5. [`19-hardware-aware/05-machineir-and-mir-customization.md`](19-hardware-aware/05-machineir-and-mir-customization.md) and [`19-hardware-aware/06-register-allocation-and-memory-hints.md`](19-hardware-aware/06-register-allocation-and-memory-hints.md) — place register, scheduling, and memory hierarchy decisions in the backend.
+
 ## BCIR mapping path
 
 After Path 2, add this path when the task is to lower BCIR-like claims, graph
