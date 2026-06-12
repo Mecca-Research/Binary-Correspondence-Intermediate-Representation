@@ -1,0 +1,5 @@
+# REQUIRES: llvm-as, opt
+# RUN: bash %training_root/tools/verify-examples.sh
+# RUN: bash %training_root/tools/verify-exercises.sh
+# RUN: bash %training_root/tools/verify-invalid-fixtures.sh
+# RUN: bash %training_root/tools/verify-adversarial-fixtures.sh

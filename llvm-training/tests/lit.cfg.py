@@ -18,6 +18,23 @@ config.substitutions.append(("%repo_root", repo_root))
 
 config.environment["PATH"] = os.environ.get("PATH", "")
 
-for tool in ["bash", "diff", "llvm-as", "opt"]:
-    if shutil.which(tool):
+def find_versioned_tool(base):
+    direct = shutil.which(base)
+    if direct:
+        return direct
+    path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+    candidates = []
+    for directory in path_dirs:
+        if not directory or not os.path.isdir(directory):
+            continue
+        for name in os.listdir(directory):
+            if name.startswith(base + "-") and name[len(base) + 1 :].isdigit():
+                candidates.append((int(name[len(base) + 1 :]), os.path.join(directory, name)))
+    return max(candidates, default=(None, None))[1]
+
+
+for tool in ["bash", "diff", "llvm-as", "opt", "mlir-opt"]:
+    resolved = find_versioned_tool(tool)
+    if resolved:
         config.available_features.add(tool)
+        config.environment[tool.upper().replace("-", "_") + "_BINARY"] = resolved

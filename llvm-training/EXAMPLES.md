@@ -236,15 +236,15 @@ Validate checked-in exercise solutions separately with their maintained script:
 ./llvm-training/tools/verify-exercises.sh
 ```
 
-After configuring the repository, the same batch checks are available through
+After configuring the training-only CMake project with `cmake -S llvm-training -B build/llvm-training`, the same batch checks are available through
 CMake targets that skip cleanly when the relevant optional LLVM tools are not on
 `PATH`:
 
 ```bash
-cmake --build build --target llvm-training-verify-examples
-cmake --build build --target llvm-training-verify-exercises
-cmake --build build --target llvm-training-smoke-llc
-cmake --build build --target llvm-training-smoke-lli
+cmake --build build/llvm-training --target llvm-training-verify-examples
+cmake --build build/llvm-training --target llvm-training-verify-exercises
+cmake --build build/llvm-training --target llvm-training-smoke-llc
+cmake --build build/llvm-training --target llvm-training-smoke-lli
 ```
 
 `verify-examples.sh` intentionally skips `.ll.txt` files and any `.ll` file with

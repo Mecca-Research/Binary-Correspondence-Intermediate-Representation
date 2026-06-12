@@ -9,12 +9,25 @@ status=0
 count=0
 KNOWN_INVALID_SENTINEL="$TRAINING_ROOT/examples/broken-example.ll.txt"
 
-require_tool() {
-  local tool=$1
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    printf 'error: required tool not found on PATH: %s\n' "$tool" >&2
-    exit 127
+find_tool() {
+  local base=$1
+  local tool
+
+  if [ -n "${LLVM_SUFFIX:-}" ] && command -v "${base}${LLVM_SUFFIX}" >/dev/null 2>&1; then
+    printf '%s' "${base}${LLVM_SUFFIX}"
+    return 0
   fi
+  if command -v "$base" >/dev/null 2>&1; then
+    printf '%s' "$base"
+    return 0
+  fi
+  while IFS= read -r tool; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '%s' "$tool"
+      return 0
+    fi
+  done < <(compgen -c | sed -n -E "s/^(${base}-[0-9]+)$/\\1/p" | sort -Vu)
+  return 1
 }
 
 relpath() {
@@ -44,8 +57,14 @@ run_step() {
   return 1
 }
 
-require_tool llvm-as
-require_tool opt
+LLVM_AS=$(find_tool llvm-as) || {
+  printf 'error: required tool not found on PATH: llvm-as (or llvm-as-N)\n' >&2
+  exit 127
+}
+OPT=$(find_tool opt) || {
+  printf 'error: required tool not found on PATH: opt (or opt-N)\n' >&2
+  exit 127
+}
 
 mapfile -d '' examples < <(find "$TRAINING_ROOT" -path '*/examples/*.ll' -type f ! -iname '*.ll.txt' ! -iname '*invalid*' -print0 | sort -z)
 
@@ -62,7 +81,7 @@ for file in "${examples[@]}"; do
 done
 
 printf '[tripwire] %s stays out of the known-good manifest ... ' "$(relpath "$KNOWN_INVALID_SENTINEL")"
-if llvm-as "$KNOWN_INVALID_SENTINEL" -o /dev/null >/dev/null 2>&1; then
+if "$LLVM_AS" "$KNOWN_INVALID_SENTINEL" -o /dev/null >/dev/null 2>&1; then
   printf 'FAILED\n'
   printf 'error: invalid-example sentinel assembled successfully; refresh it so it remains a broken .ll.txt fixture.\n' >&2
   exit 1
@@ -71,8 +90,8 @@ printf 'ok\n'
 
 for file in "${examples[@]}"; do
   count=$((count + 1))
-  run_step llvm-as "$file" llvm-as "$file" -o /dev/null || status=1
-  run_step verify "$file" opt -passes=verify "$file" -o /dev/null || status=1
+  run_step llvm-as "$file" "$LLVM_AS" "$file" -o /dev/null || status=1
+  run_step verify "$file" "$OPT" -passes=verify "$file" -o /dev/null || status=1
 done
 
 if [ "$count" -eq 0 ]; then

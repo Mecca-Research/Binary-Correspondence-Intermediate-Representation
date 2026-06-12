@@ -16,3 +16,14 @@
 01-syntax/examples/inline-asm.ll	x86-64 inline asm and callbr constraints are target-specific
 16-exception-handling/examples/*.ll	EH examples depend on personality/runtime lowering and are assembly-verifier examples, not portable llc smoke inputs
 19-hardware-aware/examples/*.ll	custom BCIR and RISC-V extension boundaries require target lowering or runtime rewriting before backend smoke
+12-backend-jit/examples/custom-bcir-intrinsic-jit.ll	custom intrinsic/runtime fallback contract is JIT-specific
+12-backend-jit/examples/jit-absolute-symbol.ll	absolute symbol resolution requires an ORC/JIT symbol table
+12-backend-jit/examples/orc-layer-diagnostic.ll	ORC diagnostic fixture is JIT-layer-specific
+12-backend-jit/examples/*-sketch.md	ORC deployment and remote-JITLink sketches are documentation-only artifacts
+12-backend-jit/examples/*.cpp.md	ORC C++ layer/materialization examples are documentation-only JIT sketches
+13-advanced-ir/examples/gc-*.ll	GC examples require a collector strategy and runtime-specific lowering
+17-new-pass-manager/examples/*.ll	pass-pipeline before/after snapshots are analysis fixtures checked with opt
+18-mlir-lowering-to-llvm/examples/*.mlir	MLIR/Transform dialect artifacts are parsed by mlir-opt, not llc
+18-mlir-lowering-to-llvm/examples/*.cpp.md	MLIR conversion implementation sketches are documentation-only
+19-hardware-aware/examples/*.mir.txt	MIR-shaped target-specific review artifact is not LLVM IR
+exercises/adversarial/target-specific-*.ll	target-specific adversarial fixture remains verifier-only

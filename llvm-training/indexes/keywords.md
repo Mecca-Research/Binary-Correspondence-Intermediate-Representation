@@ -50,3 +50,17 @@
 | `cycles`, `branch_misses`, `l1d_misses`, `llc_misses` | [`15-binary-analysis/02-dynamic-traces-and-counters.md`](../15-binary-analysis/02-dynamic-traces-and-counters.md) |
 | CFI, vtable hardening, trap edge, checked indirect call | [`06-metadata/04-type-metadata-cfi.md`](../06-metadata/04-type-metadata-cfi.md), [`15-binary-analysis/README.md`](../15-binary-analysis/README.md) |
 | cyclomatic complexity, opcode histogram, structural hash | [`15-binary-analysis/03-interpretable-bcsa-features.md`](../15-binary-analysis/03-interpretable-bcsa-features.md) |
+
+## Advanced chapter keywords
+
+| Keyword | Introduced / used in |
+|---|---|
+| `PassBuilder`, `PassPluginLibraryInfo`, `PreservedAnalyses`, `crossRegisterProxies` | [`17-new-pass-manager/README.md`](../17-new-pass-manager/README.md) |
+| `ConversionTarget`, `TypeConverter`, `ConversionPattern`, materialization | [`18-mlir-lowering-to-llvm/README.md`](../18-mlir-lowering-to-llvm/README.md) |
+| Transform dialect, payload IR, transform handle | [`18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md`](../18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md) |
+| BCIR normal form, mapping drift, stable claim ID | [`bcir-mapping/11-normal-forms-and-verification.md`](../bcir-mapping/11-normal-forms-and-verification.md) |
+| `MaterializationUnit`, `IRTransformLayer`, `ResourceTracker`, JITLink | [`12-backend-jit/07-advanced-orc-runtime-integration.md`](../12-backend-jit/07-advanced-orc-runtime-integration.md) |
+| GAADMSF, Dragon Egg, programming pulse, flow execution | [`19-hardware-aware/README.md`](../19-hardware-aware/README.md) |
+| calibration governor, hardware profile, runtime fallback | [`19-hardware-aware/03-calibration-governor.md`](../19-hardware-aware/03-calibration-governor.md) |
+| MachineIR, MIR, target pseudo, register bank, spill hint | [`19-hardware-aware/05-machineir-and-mir-customization.md`](../19-hardware-aware/05-machineir-and-mir-customization.md) |
+| stackmap, patchpoint, statepoint, coroutine, convergence control | [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md) |

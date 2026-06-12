@@ -369,3 +369,31 @@ foundations ────────┐
 
 - [`ROADMAP.md`](ROADMAP.md) tracks topics intentionally left out or only covered at an introductory level.
 - [`EVAL.md`](EVAL.md) contains the corpus self-test and path-specific self-test prompts.
+
+## Advanced integration capstone
+
+After the focused learning paths above, use this ordered capstone to connect the
+advanced chapters without collapsing their abstraction boundaries:
+
+1. Build and inspect a New PM pipeline with
+   [`17-new-pass-manager/`](17-new-pass-manager/), preserving BCIR analyses and
+   placing normal-form verifiers at stage boundaries.
+2. Legalize BCIR/MLIR operations with
+   [`18-mlir-lowering-to-llvm/`](18-mlir-lowering-to-llvm/), including
+   `ConversionTarget`, `TypeConverter`, materializations, Transform dialect
+   sequencing, and metadata translation.
+3. Choose intrinsic, runtime-call, metadata, or target-pseudo dispatch using
+   [`12-backend-jit/06-custom-bcir-intrinsics.md`](12-backend-jit/06-custom-bcir-intrinsics.md)
+   and [`19-hardware-aware/README.md`](19-hardware-aware/README.md).
+4. Preserve advanced call-site semantics—attributes, operand bundles,
+   stackmaps/patchpoints, GC relocation, coroutine and convergence tokens—using
+   [`13-advanced-ir/`](13-advanced-ir/).
+5. Integrate lazy compilation, replacement, retirement, and local/remote JITLink
+   using [`12-backend-jit/07-advanced-orc-runtime-integration.md`](12-backend-jit/07-advanced-orc-runtime-integration.md).
+6. Validate the result with the artifact manifest, standalone LLVM verifier,
+   invalid/adversarial fixture gates, optional MLIR gate, BCIR mapping gate, and
+   lit suite documented in [`tools/README.md`](tools/README.md).
+
+The capstone's rule is evidence by layer: verifier success establishes LLVM IR
+well-formedness, not target availability, runtime correctness, normal-form
+conformance, or hardware profitability.

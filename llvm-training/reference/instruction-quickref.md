@@ -263,3 +263,20 @@ take SSA values. See [`../08-pitfalls/01-nested-instruction-expressions.md`](../
 - [`../08-pitfalls/README.md`](../08-pitfalls/README.md) — common mistakes
 - [`../10-grammar/llvm-ir.tm`](../10-grammar/llvm-ir.tm) — exact syntax productions
 - LLVM LangRef: https://llvm.org/docs/LangRef.html#instruction-reference
+
+## Advanced call-site preservation checklist
+
+When creating or rewriting `call`, `invoke`, or intrinsic call sites, preserve or
+recompute every applicable contract:
+
+| Call-site component | Review question | Guide |
+|---|---|---|
+| Calling convention, return/parameter/call-site attributes | Does the cloned declaration and call still match the ABI and memory/optimization contract? | [`../13-advanced-ir/04-attributes.md`](../13-advanced-ir/04-attributes.md) |
+| Operand bundles | Are `deopt`, `funclet`, GC, or `convergencectrl` payloads still attached to the correct call? | [`../13-advanced-ir/07-operand-bundles.md`](../13-advanced-ir/07-operand-bundles.md) |
+| Intrinsic overload and `immarg` operands | Does the declaration suffix match operand/result types, and are required immediate operands constants? | [`intrinsics.md`](intrinsics.md) |
+| Exceptional successors | If the operation can unwind, is it an `invoke` with valid normal/unwind blocks and pad structure? | [`../16-exception-handling/README.md`](../16-exception-handling/README.md) |
+| Statepoint/patchpoint live values | Are runtime IDs, live operands, relocation indices, and side-table expectations stable? | [`intrinsics-quickref.md`](intrinsics-quickref.md) |
+| Target/runtime dispatch | Is the call portable, target-gated, JIT-only, or dependent on a registered custom intrinsic? | [`../19-hardware-aware/README.md`](../19-hardware-aware/README.md) |
+
+Verifier acceptance does not prove ABI compatibility, target feature support,
+operand-bundle preservation, runtime registration, or BCIR normal-form validity.

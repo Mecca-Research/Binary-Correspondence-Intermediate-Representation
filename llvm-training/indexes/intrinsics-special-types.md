@@ -22,3 +22,13 @@
 | `half`, `bfloat`, `x86_amx`, `<vscale x N x T>` | Special scalar/target/vector types with portability constraints | [`13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md) |
 | `undef`, `poison`, `freeze` | Special value semantics and stabilizing instruction for undefined/poison values | [`13-advanced-ir/05-poison-undef-freeze.md`](../13-advanced-ir/05-poison-undef-freeze.md), [`13-advanced-ir/examples/poison-undef-freeze.ll`](../13-advanced-ir/examples/poison-undef-freeze.ll) |
 | `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn`, `reassoc`, `fast` | Fast-math flags for relaxed floating-point optimization | [`13-advanced-ir/06-fast-math-flags.md`](../13-advanced-ir/06-fast-math-flags.md), [`13-advanced-ir/examples/fast-math-flags.ll`](../13-advanced-ir/examples/fast-math-flags.ll) |
+
+## BCIR and hardware-aware dispatch
+
+| Name/family | Contract | See |
+|---|---|---|
+| `llvm.bcir.*` / GAADMSF sketch intrinsics | Project-specific operations require TableGen registration, memory effects, legalization, and fallback policy | [`12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md), [`19-hardware-aware/01-dragon-egg-gaadmsf-intrinsics.md`](../19-hardware-aware/01-dragon-egg-gaadmsf-intrinsics.md) |
+| Programming pulse / flow execution calls | Explicit side effects and state belong in operands or runtime ABI, not ignorable metadata | [`19-hardware-aware/02-programming-pulses-and-flow-execution.md`](../19-hardware-aware/02-programming-pulses-and-flow-execution.md) |
+| RISC-V/custom target intrinsic | Target feature gate plus portable/runtime fallback | [`19-hardware-aware/04-riscv-and-target-specific-codegen.md`](../19-hardware-aware/04-riscv-and-target-specific-codegen.md) |
+| `token` from statepoint/coroutine/convergence families | Opaque sequencing/control value with family-specific producer-consumer rules | [`13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md) |
+| MIR virtual/physical registers | Machine-level operands, not LLVM SSA values or LLVM IR types | [`19-hardware-aware/05-machineir-and-mir-customization.md`](../19-hardware-aware/05-machineir-and-mir-customization.md) |

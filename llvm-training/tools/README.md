@@ -40,24 +40,26 @@ Use these script groups when advanced examples or reference paths change:
 
 ## CMake batch targets
 
-The repository root `CMakeLists.txt` exposes first-class custom targets for the
+The training-only `llvm-training/CMakeLists.txt` exposes first-class custom targets for the
 training corpus. Configure the project once, then run the targets from the build
 directory with `cmake --build`:
 
 ```bash
-cmake -S . -B build
-cmake --build build --target llvm-training-verify-examples
-cmake --build build --target llvm-training-smoke-llc
-cmake --build build --target llvm-training-smoke-lli
-cmake --build build --target llvm-training-verify-exercises
-cmake --build build --target llvm-training-verify-invalid-fixtures
-cmake --build build --target llvm-training-verify-opt-diff
-cmake --build build --target llvm-training-verify-opaque-pointers
-cmake --build build --target llvm-training-lit
-cmake --build build --target llvm-training-verify-manifest
-cmake --build build --target llvm-training-verify-csv-schema
-cmake --build build --target llvm-training-verify-mlir-examples
-cmake --build build --target llvm-training-verify-bcir-mapping
+cmake -S llvm-training -B build/llvm-training
+cmake --build build/llvm-training --target llvm-training-verify-examples
+cmake --build build/llvm-training --target llvm-training-smoke-llc
+cmake --build build/llvm-training --target llvm-training-smoke-lli
+cmake --build build/llvm-training --target llvm-training-verify-exercises
+cmake --build build/llvm-training --target llvm-training-verify-invalid-fixtures
+cmake --build build/llvm-training --target llvm-training-verify-adversarial-fixtures
+cmake --build build/llvm-training --target llvm-training-verify-opt-diff
+cmake --build build/llvm-training --target llvm-training-verify-opaque-pointers
+cmake --build build/llvm-training --target llvm-training-lit
+cmake --build build/llvm-training --target llvm-training-verify-manifest
+cmake --build build/llvm-training --target llvm-training-verify-csv-schema
+cmake --build build/llvm-training --target llvm-training-verify-mlir-examples
+cmake --build build/llvm-training --target llvm-training-verify-bcir-mapping
+cmake --build build/llvm-training --target llvm-training-check
 ```
 
 The initial lit suite lives in `llvm-training/tests/` and delegates to the same
@@ -185,3 +187,29 @@ When adding a new script:
 4. write demo output either to stdout or to a clearly named file under `${TMPDIR:-/tmp}`;
 5. make it fail closed when a required fixture disappears;
 6. wire it into `.github/workflows/ci.yml` when it guards repository health.
+
+## Advanced chapter integration gates
+
+`verify-manifest.sh` now checks two synchronized inventories: every standalone
+`*/examples/*.ll` module and every file below an `examples/` directory. The
+second inventory forces MLIR, MIR-shaped text, Markdown/C++ sketches,
+source-like BCIR files, invalid fixtures, target-only artifacts, JIT-only
+artifacts, and analysis-only notes to receive an explicit classification in
+`../examples/README.md`.
+
+`run-if-tools.sh` is the optional-tool wrapper used by the training-only CMake
+project and selected CI steps. It recognizes both unversioned LLVM tools and
+version-suffixed binaries such as `llvm-as-20`; when a declared tool family is
+absent it prints a clean skip instead of running a verifier with incomplete
+prerequisites.
+
+Configure all training targets independently from the BCIR IR build:
+
+```bash
+cmake -S llvm-training -B build/llvm-training
+cmake --build build/llvm-training --target llvm-training-check
+```
+
+The aggregate target includes deterministic repository gates and optional LLVM,
+MLIR, and lit-backed gates. Optional tools skip cleanly; a present toolchain that
+rejects a checked fixture still fails the target.

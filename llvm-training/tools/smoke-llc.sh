@@ -7,6 +7,26 @@ REPO_ROOT=$(cd -- "$TRAINING_ROOT/.." && pwd)
 
 SKIP_POLICY="$SCRIPT_DIR/smoke-llc-skip.txt"
 
+find_tool() {
+  local base=$1
+  local tool
+  if [ -n "${LLVM_SUFFIX:-}" ] && command -v "${base}${LLVM_SUFFIX}" >/dev/null 2>&1; then
+    printf '%s' "${base}${LLVM_SUFFIX}"
+    return 0
+  fi
+  if command -v "$base" >/dev/null 2>&1; then
+    printf '%s' "$base"
+    return 0
+  fi
+  while IFS= read -r tool; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '%s' "$tool"
+      return 0
+    fi
+  done < <(compgen -c | sed -n -E "s/^(${base}-[0-9]+)$/\\1/p" | sort -Vu)
+  return 1
+}
+
 # Curated allowlist for portable assembly emission. This intentionally avoids
 # examples that demonstrate non-default address spaces, target-specific
 # intrinsics, GC/statepoint tokens, or analysis/vectorizer-only before/after
@@ -69,10 +89,10 @@ count=0
 
 print_skips || exit 1
 
-if ! command -v llc >/dev/null 2>&1; then
-  printf 'error: required tool not found on PATH: llc\n' >&2
+LLC=$(find_tool llc) || {
+  printf 'error: required tool not found on PATH: llc (or llc-N)\n' >&2
   exit 127
-fi
+}
 
 for example in "${EXAMPLES[@]}"; do
   file="$TRAINING_ROOT/$example"
@@ -85,7 +105,7 @@ for example in "${EXAMPLES[@]}"; do
   fi
 
   printf '[llc] %s ... ' "$(relpath "$file")"
-  if output=$(llc -filetype=asm "$file" -o /dev/null 2>&1); then
+  if output=$("$LLC" -filetype=asm "$file" -o /dev/null 2>&1); then
     printf 'ok\n'
   else
     printf 'FAILED\n'

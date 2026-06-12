@@ -31,3 +31,15 @@ then use the [adversarial review](../exercises/templates/review-adversarial-ir.p
 [metadata preservation](../exercises/templates/preserve-metadata-through-pass.prompt.md)
 templates. These resources connect verifier-valid risks to the normal-form,
 pass-manager, advanced-IR, and pitfall material indexed above.
+
+## Advanced lowering dispatch
+
+| BCIR concern | Canonical path | Required preservation / gate |
+|---|---|---|
+| Stage normal forms | [`bcir-mapping/11-normal-forms-and-verification.md`](../bcir-mapping/11-normal-forms-and-verification.md) | Stable claim IDs, explicit byte strides, runtime boundaries, address spaces, and diagnostic metadata; run [`tools/verify-bcir-mapping.sh`](../tools/verify-bcir-mapping.sh) |
+| New PM pipeline placement | [`17-new-pass-manager/04-adaptive-bcir-pipelines.md`](../17-new-pass-manager/04-adaptive-bcir-pipelines.md) | Run normal-form verification after import, canonicalization, custom transforms, and final lowering |
+| MLIR conversion legality | [`18-mlir-lowering-to-llvm/04-bcir-dialect-to-llvm.md`](../18-mlir-lowering-to-llvm/04-bcir-dialect-to-llvm.md) | Make illegal BCIR operations explicit in the conversion target; preserve provenance through type conversion/materialization |
+| Transform-driven lowering | [`18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md`](../18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md) | Keep transform handles separate from payload IR; verify payload normal form after each named sequence |
+| GAADMSF/Dragon Egg dispatch | [`19-hardware-aware/01-dragon-egg-gaadmsf-intrinsics.md`](../19-hardware-aware/01-dragon-egg-gaadmsf-intrinsics.md) | Select registered intrinsic/target pseudo only when the backend owns semantics; otherwise retain runtime fallback |
+| Calibration and memory/register hints | [`19-hardware-aware/03-calibration-governor.md`](../19-hardware-aware/03-calibration-governor.md), [`19-hardware-aware/06-register-allocation-and-memory-hints.md`](../19-hardware-aware/06-register-allocation-and-memory-hints.md) | Required state is an operand/runtime value; advisory policy may be metadata and must be safe to drop |
+| ORC deployment and replacement | [`12-backend-jit/07-advanced-orc-runtime-integration.md`](../12-backend-jit/07-advanced-orc-runtime-integration.md) | Track generation, symbol ownership, resource retirement, target compatibility, and remote transport diagnostics |

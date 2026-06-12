@@ -26,3 +26,16 @@
 | `c"..."` | C-style char array constant | [`03-constants/03-strings.md`](../03-constants/03-strings.md) |
 | `binary_id`, `input_class`, `trace_id` | Dynamic trace schema fields | [`15-binary-analysis/02-dynamic-traces-and-counters.md`](../15-binary-analysis/02-dynamic-traces-and-counters.md) |
 | `opcode_hash`, `cyclomatic_complexity` | Interpretable BCSA feature fields | [`15-binary-analysis/03-interpretable-bcsa-features.md`](../15-binary-analysis/03-interpretable-bcsa-features.md) |
+
+## Advanced runtime and lowering symbols
+
+| Symbol / namespace | Meaning | See |
+|---|---|---|
+| `llvm.experimental.stackmap`, `llvm.experimental.patchpoint.*` | Runtime side-table and patchable call-site records | [`reference/intrinsics-quickref.md#stackmap-and-patchpoint-intrinsics`](../reference/intrinsics-quickref.md#stackmap-and-patchpoint-intrinsics) |
+| `llvm.experimental.gc.statepoint`, `llvm.experimental.gc.relocate` | GC safepoint token and relocated managed pointer | [`13-advanced-ir/03-special-types-and-tokens.md`](../13-advanced-ir/03-special-types-and-tokens.md) |
+| `llvm.matrix.*`, `llvm.coro.*`, `llvm.experimental.convergence.*` | Matrix, coroutine, and convergence intrinsic families | [`reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md) |
+| `llvm.bcir.*` | Project-specific intrinsic spelling used as a design boundary; requires registration/lowering before production use | [`12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md) |
+| `bcir.*` MLIR operations | BCIR dialect law and conversion inputs | [`18-mlir-lowering-to-llvm/04-bcir-dialect-to-llvm.md`](../18-mlir-lowering-to-llvm/04-bcir-dialect-to-llvm.md) |
+| `!bcir.reg`, `!bcir.map`, `!bcir.diag` | Training metadata used to illustrate correspondence, mapping, and diagnostics | [`bcir-mapping/10-metadata-and-diagnostics.md`](../bcir-mapping/10-metadata-and-diagnostics.md) |
+| `llvmGetPassPluginInfo` | New PM plugin entry point | [`17-new-pass-manager/03-passbuilder-callbacks-and-plugins.md`](../17-new-pass-manager/03-passbuilder-callbacks-and-plugins.md) |
+| ORC `MaterializationUnit`, `ResourceTracker`, `JITDylib` | Lazy definition, lifetime, and symbol-namespace ownership | [`12-backend-jit/07-advanced-orc-runtime-integration.md`](../12-backend-jit/07-advanced-orc-runtime-integration.md) |
