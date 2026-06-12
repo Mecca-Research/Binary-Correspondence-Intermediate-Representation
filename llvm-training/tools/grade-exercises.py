@@ -12,13 +12,37 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 from typing import Any
 
+from safe_process import ProcessResult, run_bounded
+
 SCHEMA_VERSION = "1.0"
 SUPPORTED_KINDS = {"llvm-ir", "mlir", "markdown-review", "pass-output", "diagnostic"}
+MAX_ANSWER_BYTES = 1024 * 1024
+FORBIDDEN_GENERATED_SUFFIXES = {".sh", ".bash", ".so", ".dylib", ".dll", ".o", ".obj", ".a", ".exe"}
+FORBIDDEN_GENERATED_NAMES = {"Makefile", "CMakeLists.txt", "build.ninja", "meson.build"}
+
+
+def confined_answer(root: Path, candidate: Path) -> Path:
+    """Resolve an answer while rejecting lexical and symlink escapes."""
+    resolved_root = root.resolve(strict=True)
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(f"answer path escapes configured attempt root: {candidate}") from exc
+    return resolved
+
+
+def validate_attempt_tree(root: Path) -> None:
+    """Reject generated executable/build artifacts that the baseline must not consume."""
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            confined_answer(root, path)
+        if path.is_file() and (path.name in FORBIDDEN_GENERATED_NAMES or path.suffix.lower() in FORBIDDEN_GENERATED_SUFFIXES):
+            raise ValueError(f"unsupported generated executable or build artifact: {path}")
 
 
 @dataclasses.dataclass
@@ -32,6 +56,7 @@ class Check:
     command: list[str] | None = None
     stdout: str = ""
     stderr: str = ""
+    outcome: str = "incorrect_answer"
 
     def as_dict(self) -> dict[str, Any]:
         value = dataclasses.asdict(self)
@@ -52,28 +77,16 @@ def find_tool(name: str) -> str | None:
     return None
 
 
-def run_command(command: list[str], cwd: Path, timeout: float, stdin: str | None = None) -> subprocess.CompletedProcess[str] | None:
-    try:
-        return subprocess.run(
-            command,
-            cwd=cwd,
-            input=stdin,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-            env={"PATH": os.environ.get("PATH", ""), "HOME": str(cwd), "LANG": "C", "LC_ALL": "C"},
-        )
-    except subprocess.TimeoutExpired as exc:
-        return subprocess.CompletedProcess(command, 124, exc.stdout or "", f"timed out after {timeout:g}s")
+def run_command(command: list[str], timeout: float, stdin: str | None = None) -> ProcessResult:
+    return run_bounded(command, timeout=timeout, stdin=stdin)
 
 
 def version_for(tool: str | None) -> dict[str, str] | None:
     if not tool:
         return None
-    result = run_command([tool, "--version"], Path.cwd(), 5)
-    text = ((result.stdout if result else "") or (result.stderr if result else "")).splitlines()
-    return {"path": tool, "version": text[0].strip() if text else "version unavailable"}
+    result = run_command([tool, "--version"], 5)
+    text = (result.stdout or result.stderr).splitlines()
+    return {"path": str(Path(tool).resolve()), "version": text[0].strip() if text else "version unavailable"}
 
 
 def allocate_points(entry: dict[str, Any], specs: list[dict[str, Any]]) -> dict[str, float]:
@@ -175,8 +188,7 @@ def run_semantic(answer: Path, entry: dict[str, Any], vector: dict[str, Any], in
     harness = temp / f"semantic-{index}.ll"
     harness.write_text(module, encoding="utf-8")
     command = [lli, str(harness)]
-    result = run_command(command, temp, timeout)
-    assert result is not None
+    result = run_command(command, timeout)
     return result.returncode == 0, ("test vector matched" if result.returncode == 0 else f"lli exited {result.returncode}"), command, result.stdout, result.stderr
 
 
@@ -186,6 +198,8 @@ def grade_entry(entry: dict[str, Any], answer: Path, tools: dict[str, str | None
     checks: list[Check] = []
     timeout = float(entry.get("timeout_seconds", 10))
     exists = answer.is_file()
+    if exists and answer.stat().st_size > MAX_ANSWER_BYTES:
+        exists = False
     text = answer.read_text(encoding="utf-8", errors="replace") if exists else ""
     non_empty = bool(text.strip())
     normalized = text
@@ -194,18 +208,20 @@ def grade_entry(entry: dict[str, Any], answer: Path, tools: dict[str, str | None
         temp = Path(temp_name)
         for spec in specs:
             points = point_values.get(spec["dimension"], 0.0)
-            status, message, command, stdout, stderr = "fail", "", None, "", ""
+            status, message, command, stdout, stderr, outcome = "fail", "", None, "", "", "incorrect_answer"
             typ = spec["type"]
             if typ == "exists":
                 status, message = ("pass", "answer file exists") if exists else ("fail", "answer file is missing")
+                outcome = "pass" if exists else "invalid_answer"
             elif typ == "non-empty":
                 status, message = ("pass", "answer file is non-empty") if non_empty else ("fail", "answer file is empty or missing")
+                outcome = "pass" if non_empty else "invalid_answer"
             elif not non_empty:
-                status, message = "skip", "answer is unavailable; prerequisite check did not pass"
+                status, message, outcome = "skip", "answer is unavailable; prerequisite check did not pass", "invalid_answer"
             elif typ == "tool":
                 tool = tools.get(spec["tool"])
                 if not tool:
-                    status, message = "skip", f"required tool not found: {spec['tool']}"
+                    status, message, outcome = "skip", f"required tool not found: {spec['tool']}", "missing_tool"
                 else:
                     if spec["tool"] == "llvm-as":
                         command = [tool, str(answer), "-o", os.devnull]
@@ -213,39 +229,45 @@ def grade_entry(entry: dict[str, Any], answer: Path, tools: dict[str, str | None
                         command = [tool, "-passes=verify", str(answer), "-o", os.devnull]
                     else:
                         command = [tool, str(answer), "-o", os.devnull]
-                    result = run_command(command, temp, timeout)
-                    assert result is not None
+                    result = run_command(command, timeout)
                     stdout, stderr = result.stdout, result.stderr
                     status = "pass" if result.returncode == 0 else "fail"
-                    message = "tool accepted answer" if status == "pass" else f"tool exited {result.returncode}"
+                    outcome = "pass" if status == "pass" else ("timeout" if result.timed_out else "invalid_answer")
+                    message = "tool accepted answer" if status == "pass" else ("tool timed out" if result.timed_out else f"tool exited {result.returncode}")
             elif typ == "normalize":
                 tool = tools.get("opt")
                 if not tool:
-                    status, message = "skip", "opt unavailable; structural checks use original text"
+                    status, message, outcome = "skip", "opt unavailable; structural checks use original text", "missing_tool"
                 else:
                     command = [tool, "-S", str(answer), "-o", "-"]
-                    result = run_command(command, temp, timeout)
-                    assert result is not None
+                    result = run_command(command, timeout)
                     stdout, stderr = result.stdout, result.stderr
                     if result.returncode == 0:
                         normalized = result.stdout
-                        status, message = "pass", "opt -S produced normalized textual IR"
+                        status, message, outcome = "pass", "opt -S produced normalized textual IR", "pass"
                     else:
-                        status, message = "fail", f"opt -S exited {result.returncode}"
+                        status, message, outcome = "fail", ("opt -S timed out" if result.timed_out else f"opt -S exited {result.returncode}"), ("timeout" if result.timed_out else "invalid_answer")
             elif typ == "rubric":
                 passed, message = rubric_check(spec, text)
                 status = "pass" if passed else "fail"
+                outcome = "pass" if passed else "incorrect_answer"
             elif typ == "semantic":
+                if not entry.get("safe_deterministic_lli", False):
+                    status, message, outcome = "fail", "lli execution is not allowlisted for this exercise", "grader_failure"
+                    checks.append(Check(spec["id"], spec["dimension"], status, 0.0, points, message, outcome=outcome))
+                    continue
                 lli = tools.get("lli")
                 if not lli:
-                    status, message = "skip", "lli unavailable"
+                    status, message, outcome = "skip", "lli unavailable", "missing_tool"
                 else:
                     passed, message, command, stdout, stderr = run_semantic(answer, entry, spec["vector"], int(spec["id"].rsplit(".", 1)[1]), lli, timeout, temp)
                     status = "pass" if passed else "fail"
+                    outcome = "pass" if passed else ("timeout" if "timed out" in stderr else "incorrect_answer")
             else:
                 passed, message = structural_check(spec, normalized)
                 status = "pass" if passed else "fail"
-            checks.append(Check(spec["id"], spec["dimension"], status, points if status == "pass" else 0.0, points, message, command, stdout[-4000:], stderr[-4000:]))
+                outcome = "pass" if passed else "incorrect_answer"
+            checks.append(Check(spec["id"], spec["dimension"], status, points if status == "pass" else 0.0, points, message, command, stdout, stderr, outcome))
 
     earned = sum(item.points_earned for item in checks)
     available = sum(item.points_available for item in checks)
@@ -313,6 +335,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--attempts", type=Path, help="directory containing NNN/answer.<ext> attempt directories")
     parser.add_argument("--exercise", action="append", help="grade only this stable three-digit exercise ID (repeatable)")
     parser.add_argument("--answer", type=Path, help="answer file for a single --exercise")
+    parser.add_argument("--attempt-root", type=Path, help="configured root that must contain every untrusted answer")
     parser.add_argument("--registry", type=Path, help="override exercises.json")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--output", type=Path, help="write report to this path instead of stdout")
@@ -348,10 +371,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.self_test:
             answer = repo_root / entry["reference_solution_path"]
         elif args.answer:
-            answer = args.answer.resolve()
+            attempt_root = args.attempt_root or args.answer.parent
+            validate_attempt_tree(attempt_root.resolve(strict=True))
+            answer = confined_answer(attempt_root, args.answer)
         else:
+            attempt_root = args.attempts.resolve(strict=True)
+            validate_attempt_tree(attempt_root)
             extension = {"llvm-ir": ".ll", "mlir": ".mlir", "markdown-review": ".md", "pass-output": ".ll", "diagnostic": ".md"}[entry["answer_kind"]]
-            answer = args.attempts.resolve() / exercise_id / ("answer" + extension)
+            answer = confined_answer(attempt_root, attempt_root / exercise_id / ("answer" + extension))
         results.append(grade_entry(entry, answer, tools))
 
     earned = sum(item["points_earned"] for item in results)
@@ -361,7 +388,10 @@ def main(argv: list[str] | None = None) -> int:
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "registry": str(registry_path),
         "registry_sha256": hashlib.sha256(registry_path.read_bytes()).hexdigest(),
-        "toolchain": {name: info for name, path in tools.items() if (info := version_for(path))},
+        "toolchain": {
+            "python": {"path": str(Path(sys.executable).resolve()), "version": sys.version.splitlines()[0]},
+            **{name: (version_for(path) or {"path": None, "version": "missing"}) for name, path in tools.items()},
+        },
         "results": results,
         "aggregate": {"points_earned": round(earned, 3), "points_available": round(available, 3), "score_percent": round(100 * earned / available, 2) if available else 0.0},
     }
@@ -382,4 +412,15 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        message = str(exc)
+        invalid_markers = ("answer path", "attempt root", "unsupported generated", "answer file")
+        outcome = "invalid_answer" if any(marker in message for marker in invalid_markers) else "grader_failure"
+        payload = {"schema_version": SCHEMA_VERSION, "error": {"outcome": outcome, "message": message}}
+        if "--format" in sys.argv and "json" in sys.argv:
+            print(json.dumps(payload, sort_keys=True))
+        else:
+            print(f"grader failure: {exc}", file=sys.stderr)
+        raise SystemExit(2)
