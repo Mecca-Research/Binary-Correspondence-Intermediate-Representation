@@ -109,6 +109,19 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
+- **Physics-anchored calibration + learning placement** (Phase 13, LangRef §13):
+  the L1 microbenchmark harness (`kbcir.microbench`) measures streaming/strided/
+  random/compute regimes with deterministic access orders, quantizes to Q8
+  ratios (stream = 256 by definition), and freezes generation-tagged tables
+  that substitute the seeded constants (`CalibratedProfile.apply`; the
+  checked-in ratio-1 reference table reproduces them exactly — vec16 @ 7808
+  survives table application). The L2 portfolio (`kbcir.portfolio`) holds
+  frozen, generation-tagged gain schedules selected by a deterministic
+  workload-class table; swaps deploy only behind the **replay gate** — a
+  counterfactual no-regression certificate judged on the incumbent's M(π,Θ).
+  The **L0 prohibition** (no learned inference on the hot path) is normative.
+  Law: `bcir.kbcir.calibration` / `portfolio` / `replay_certificate` +
+  capability `cal_gen`, verified under R8/R9.
 - **Duration-aware GEM scheduling + StreamPack v2** (Phase 12): the five GEM
   upgrades — `gem.schedule.schedule_eft` (HEFT-lite: LPT priority + earliest
   finish time, hazard producers serialize by claim id), `execute_tokens` (the
@@ -152,8 +165,11 @@ C++ ports of the five declared GEM passes (`bcir-classify-lanes`,
 `bcir-select-realization`, `bcir-batch`, `bcir-schedule`, `bcir-lower-to-llvm`)
 mirroring the oracle; BCIR-native instruction selection + register allocation +
 linking behind the `bcir.target.lower_contract` seam (GPU via a
-PTX/`gpu`-dialect path); a trained ML model behind `LinearCalibrator`; a live
-Kafka broker deployment.
+PTX/`gpu`-dialect path); a native (C-runtime) microbench backend filling the
+same frozen-table schema with bare-metal numbers; L2 portfolio entries learned
+offline (e.g. Bayesian optimization) on real telemetry, deployed through the
+replay gate; a live Kafka broker deployment; R13 policy provenance + the
+regret ledger (the L3 meta-loop, LangRef §13).
 
 ## Non-regression rules
 

@@ -89,6 +89,10 @@ irdl.dialect @bcir {
   // Constrained (RCSP) rail: B(H,Theta) caps + the (max,+) overlap price.
   irdl.operation @"kbcir.budget"
   irdl.operation @"kbcir.scheduled_price"
+  // Learning placement (LangRef Sec. 13): L1 frozen tables + L2 portfolio/gate.
+  irdl.operation @"kbcir.calibration"
+  irdl.operation @"kbcir.portfolio"
+  irdl.operation @"kbcir.replay_certificate"
 
   // ---- BCIR-4: GEM StreamPack ----
   irdl.operation @"gem.stream_pack" {

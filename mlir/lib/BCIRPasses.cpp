@@ -464,6 +464,84 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R8: an L1 calibration table is well-formed -- the streaming baseline is
+    // the Q8 unit by definition, ratios floor at it, the table is
+    // generation-tagged, and its target resolves.
+    llvm::DenseMap<StringRef, TargetCapabilityOp> capabilityByName;
+    root->walk(
+        [&](TargetCapabilityOp t) { capabilityByName[t.getSymName()] = t; });
+    root->walk([&](KBCIRCalibrationOp cal) {
+      if (!capabilityByName.count(cal.getTarget())) {
+        cal.emitError("R8: calibration target @")
+            << cal.getTarget() << " does not resolve";
+        ok = false;
+      }
+      if (static_cast<int64_t>(cal.getStreamQ8()) != 256) {
+        cal.emitError(
+            "R8: calibration stream_q8 must be 256 (the Q8 baseline)");
+        ok = false;
+      }
+      if (static_cast<int64_t>(cal.getCalGen()) < 1 ||
+          static_cast<int64_t>(cal.getStridedQ8()) < 256 ||
+          static_cast<int64_t>(cal.getRandomQ8()) < 256 ||
+          static_cast<int64_t>(cal.getComputeQ8()) < 256) {
+        cal.emitError("R8: calibration cal_gen/ratios out of range");
+        ok = false;
+      }
+    });
+
+    // R9: L2 learning placement -- portfolios carry parallel generation/
+    // certification state over declared policies; a replay certificate admits
+    // only on zero regressions over at least one episode.
+    llvm::DenseMap<StringRef, KBCIRPolicyOp> policyByName;
+    root->walk([&](KBCIRPolicyOp p) { policyByName[p.getSymName()] = p; });
+    root->walk([&](KBCIRPortfolioOp pf) {
+      size_t n = pf.getPolicies().size();
+      if (n != static_cast<size_t>(pf.getGens().size()) ||
+          n != static_cast<size_t>(pf.getCertified().size())) {
+        pf.emitError("R9: portfolio policies/gens/certified arity mismatch");
+        ok = false;
+      }
+      for (Attribute a : pf.getPolicies()) {
+        auto ref = dyn_cast<FlatSymbolRefAttr>(a);
+        if (ref && !policyByName.count(ref.getValue())) {
+          pf.emitError("R9: portfolio references unknown policy @")
+              << ref.getValue();
+          ok = false;
+        }
+      }
+      for (int64_t g : pf.getGens())
+        if (g < 1) {
+          pf.emitError("R9: portfolio generation tags must be >= 1");
+          ok = false;
+          break;
+        }
+      for (int64_t c : pf.getCertified())
+        if (c != 0 && c != 1) {
+          pf.emitError("R9: portfolio certification flags must be 0 or 1");
+          ok = false;
+          break;
+        }
+    });
+    root->walk([&](KBCIRReplayCertificateOp rc) {
+      if (!policyByName.count(rc.getCandidate()) ||
+          !policyByName.count(rc.getIncumbent())) {
+        rc.emitError("R9: replay certificate references an unknown policy");
+        ok = false;
+      }
+      int64_t episodes = static_cast<int64_t>(rc.getEpisodes());
+      int64_t regressions = static_cast<int64_t>(rc.getRegressions());
+      if (episodes < 1 || regressions < 0) {
+        rc.emitError("R9: replay certificate episodes/regressions out of range");
+        ok = false;
+      }
+      if (rc.getAdmitted() && regressions != 0) {
+        rc.emitError("R9: admitted replay certificate carries ")
+            << regressions << " regression(s)";
+        ok = false;
+      }
+    });
+
     // R9: a duration-aware schedule certificate is well-formed -- known mode,
     // non-negative makespan, knee/pipeline >= 1, and a declared plan.
     root->walk([&](GEMScheduleOp sc) {

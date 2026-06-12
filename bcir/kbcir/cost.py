@@ -197,6 +197,8 @@ class TargetProfile:
     isa_features: frozenset[str] = frozenset()
     affinity_domains: int = 1               # cores / SMs available for pinning (CT2)
     mem_channels: int = 4                   # concurrent bandwidth-bound streams sustained
+    cal_gen: int = 0                        # cost-table generation (0 = seeded constants;
+                                            # >=1 = a frozen CalibratedProfile was applied)
     mem: MemoryHierarchy = MemoryHierarchy.default()
 
     @property
