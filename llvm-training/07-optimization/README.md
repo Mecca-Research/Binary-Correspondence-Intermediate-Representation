@@ -21,6 +21,7 @@
 | BOLT layout walkthrough and evidence review | [`07-bolt-layout-walkthrough.md`](07-bolt-layout-walkthrough.md) |
 | Deep BCIR optimizer legality, metadata, and pipeline staging | [`08-deep-optimization-lessons.md`](08-deep-optimization-lessons.md) |
 | Performance analysis, benchmarking controls, telemetry, and measurement workflow | [`09-performance-analysis-benchmarking.md`](09-performance-analysis-benchmarking.md) |
+| Deterministic no-LTO/ThinLTO/FullLTO artifacts and optional BOLT rewrite | [`10-lto-bolt-experiment-matrix.md`](10-lto-bolt-experiment-matrix.md) |
 
 ## Examples
 

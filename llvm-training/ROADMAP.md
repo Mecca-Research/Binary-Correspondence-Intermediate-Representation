@@ -17,10 +17,15 @@ introductory or intermediate coverage for these advanced families:
 - **Backend/JIT diagnostics** — codegen stages, TableGen source-vs-generated
   boundaries, ORC/LLJIT ownership, layers, MC emission, relocations, and
   missing-symbol triage are covered in [`12-backend-jit/`](12-backend-jit/).
-- **Binary-analysis evidence** — side-channel review, dynamic traces, hardware
-  counters, PGO/LTO/BOLT artifacts, and interpretable BCSA feature schemas are
-  covered in [`15-binary-analysis/`](15-binary-analysis/) and
-  [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md).
+- **Introductory PGO/LTO/BOLT coverage** — the concepts, pipeline boundaries,
+  and evidence-review prompts are covered in
+  [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md)
+  and the binary-analysis material in [`15-binary-analysis/`](15-binary-analysis/).
+- **Deterministic LTO/BOLT artifact matrix** — a checked manifest, tiny
+  cross-translation-unit fixture, matching-version tool discovery, JSON report,
+  no-LTO/ThinLTO/FullLTO artifact summaries, and optional profile-driven BOLT
+  leg are covered in
+  [`07-optimization/10-lto-bolt-experiment-matrix.md`](07-optimization/10-lto-bolt-experiment-matrix.md).
 - **Repair and prediction exercises** — exercises now include standalone IR
   writing, invalid-fixture repair, pass-output prediction, metadata/attribute
   reviews, BCIR lowering, MLIR reviews, and backend/JIT diagnostics.
@@ -40,17 +45,19 @@ new chapter before relying on this corpus alone:
   frontend lowering rules.
 - **Production MLIR pass/dialect implementation** — TableGen ODS, conversion
   pattern code, pass pipelines, and build integration are only sketched.
-- **Statistically complete benchmarking methodology** — dynamic-analysis
-  chapters define schemas and review loops, not a complete sampling or
-  significance-analysis workflow.
+- **Statistically rigorous performance studies** — the deterministic LTO/BOLT
+  matrix compares build artifacts only. The corpus still does not provide a
+  complete workload-selection, profile-collection, repeated-trial, noise-control,
+  or significance-analysis methodology for runtime speedup claims.
 - **Production-grade hardware-counter harness** — counter examples show schema
   shape and review use, not a deployable cross-platform collection harness.
-- **Guaranteed BOLT availability in CI** — PGO/LTO/BOLT material explains
-  concepts and expected artifacts, but CI environments may not ship `llvm-bolt`
-  or a compatible binary-rewriting setup.
-- **Exhaustive FullLTO-vs-ThinLTO empirical matrix** — the LTO material explains
-  review prompts, not a target-by-target empirical matrix across workloads and
-  toolchain versions.
+- **Guaranteed BOLT profiling/rewrite in CI** — the optional runner records
+  explicit unsupported results and preserves baseline evidence, but CI does not
+  require BOLT until it has a stable matching binary-rewriting and profile
+  environment.
+- **Exhaustive target/workload LTO study** — the checked matrix is intentionally
+  tiny and host-oriented, not a target-by-target empirical study across real
+  workloads and toolchain versions.
 - **Complete backend target development** — TableGen and codegen chapters are
   diagnostic guides, not a full target-porting manual.
 - **Calls / returns / comparisons** — a small dedicated chapter may be worth
