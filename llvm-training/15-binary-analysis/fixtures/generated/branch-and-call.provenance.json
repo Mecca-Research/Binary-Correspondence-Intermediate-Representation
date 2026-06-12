@@ -1,0 +1,40 @@
+{
+  "build": {
+    "command": [
+      "{clang}",
+      "--target=x86_64-unknown-linux-gnu",
+      "-Wno-unused-command-line-argument",
+      "-O0",
+      "-c",
+      "{source}",
+      "-o",
+      "{artifact}"
+    ],
+    "expected_artifact_type": "ELF64 x86-64 relocatable object",
+    "optimization_flags": [
+      "-O0"
+    ]
+  },
+  "checked_in_csv": "llvm-training/15-binary-analysis/fixtures/generated/branch-and-call.csv",
+  "classification": "deterministic",
+  "collection_command": [
+    "python3",
+    "llvm-training/tools/generate-binary-analysis-fixtures.py",
+    "--fixture",
+    "branch-and-call-x86_64",
+    "--write"
+  ],
+  "fixture_id": "branch-and-call-x86_64",
+  "note": "Tool versions describe the last regeneration environment; --check compares deterministic CSV evidence and stable provenance fields, not version strings.",
+  "schema_version": 1,
+  "source_fixture": "llvm-training/15-binary-analysis/fixtures/branch-and-call.s",
+  "target": {
+    "architecture": "x86_64",
+    "object_format": "ELF64",
+    "triple": "x86_64-unknown-linux-gnu"
+  },
+  "toolchain": {
+    "clang": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 1026de6a0a1b60acae9cf0515b529c2a9aaebcab)",
+    "python": "3.12.13"
+  }
+}

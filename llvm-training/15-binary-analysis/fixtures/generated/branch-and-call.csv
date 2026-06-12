@@ -1,0 +1,14 @@
+fixture,evidence_kind,scope,name,value,unit,classification
+branch-and-call-x86_64,basic-block-count,classify_and_increment,basic_blocks,3,blocks,deterministic
+branch-and-call-x86_64,basic-block-count,increment,basic_blocks,1,blocks,deterministic
+branch-and-call-x86_64,call-edge,classify_and_increment,classify_and_increment->increment,1,edge,deterministic
+branch-and-call-x86_64,instruction-class-count,artifact,compare-test,1,instructions,deterministic
+branch-and-call-x86_64,instruction-class-count,artifact,conditional-branch,1,instructions,deterministic
+branch-and-call-x86_64,instruction-class-count,artifact,direct-call,1,instructions,deterministic
+branch-and-call-x86_64,instruction-class-count,artifact,integer-arithmetic,2,instructions,deterministic
+branch-and-call-x86_64,instruction-class-count,artifact,return,3,instructions,deterministic
+branch-and-call-x86_64,object-section,artifact,.bss|NOBITS|AW,4,bytes,deterministic
+branch-and-call-x86_64,object-section,artifact,.data|PROGBITS|AW,4,bytes,deterministic
+branch-and-call-x86_64,object-section,artifact,.text|PROGBITS|AX,17,bytes,deterministic
+branch-and-call-x86_64,symbol,artifact,classify_and_increment,1,present,deterministic
+branch-and-call-x86_64,symbol,artifact,increment,1,present,deterministic

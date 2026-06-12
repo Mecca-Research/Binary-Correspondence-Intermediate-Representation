@@ -30,6 +30,16 @@ add_custom_target(llvm-training-verify-exercise-manifests
   USES_TERMINAL
   VERBATIM)
 add_training_script_target(llvm-training-verify-csv-schema verify-csv-schema.sh)
+add_custom_target(llvm-training-verify-binary-analysis-evidence
+  COMMAND "${TOOLS_DIR}/verify-binary-analysis-evidence.py"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  USES_TERMINAL
+  VERBATIM)
+add_custom_target(llvm-training-check-binary-analysis-fixtures
+  COMMAND "${TOOLS_DIR}/generate-binary-analysis-fixtures.py" --check
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  USES_TERMINAL
+  VERBATIM)
 add_training_script_target(llvm-training-verify-opaque-pointers verify-opaque-pointers.sh)
 add_training_script_target(llvm-training-verify-mlir-examples verify-mlir-examples.sh)
 add_training_script_target(llvm-training-verify-bcir-mapping verify-bcir-mapping.sh)
@@ -54,6 +64,8 @@ add_custom_target(llvm-training-check
     llvm-training-verify-manifest
     llvm-training-verify-exercise-manifests
     llvm-training-verify-csv-schema
+    llvm-training-verify-binary-analysis-evidence
+    llvm-training-check-binary-analysis-fixtures
     llvm-training-verify-opaque-pointers
     llvm-training-verify-mlir-examples
     llvm-training-verify-bcir-mapping

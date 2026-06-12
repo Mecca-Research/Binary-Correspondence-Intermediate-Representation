@@ -10,6 +10,7 @@ runtime evidence.
 
 - Post-codegen evidence includes side-channel review, dynamic traces, performance counters, and interpretable BCSA feature schemas.
 - Tiny CSV examples document schema and reasoning flow; they are not hardware-portable benchmark claims.
+- Manifest-backed fixtures make deterministic static evidence regenerable while keeping timing and hardware counters optional.
 - Constant-time review starts from control-flow and memory-access shape before adding trace/counter evidence.
 - Keep binary-analysis features interpretable enough to explain why two binaries appear corresponding or divergent.
 
@@ -24,6 +25,12 @@ Read these chapters after the backend/JIT path:
 3. [`03-interpretable-bcsa-features.md`](03-interpretable-bcsa-features.md) —
    lightweight static features and triage heuristics for BCSA before expensive
    dense embeddings.
+4. [`04-reproducible-evidence-pipelines.md`](04-reproducible-evidence-pipelines.md)
+   — manifest-backed fixture generation, deterministic drift checks, provenance,
+   and the boundary between static evidence and host-sensitive measurements.
 
 The example data files are deliberately tiny. They define schemas and review
-patterns rather than claiming hardware-portable benchmark numbers.
+patterns rather than claiming hardware-portable benchmark numbers. Every CSV is
+classified in [`evidence-manifest.json`](evidence-manifest.json); schematic rows
+remain teaching examples unless a manifest-backed generator and provenance file
+say otherwise.

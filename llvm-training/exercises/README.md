@@ -149,6 +149,11 @@ If your LLVM tools are installed with a version suffix, replace `llvm-as` and
 39. [`039-graph-description-to-llvm-metadata.prompt.md`](039-graph-description-to-llvm-metadata.prompt.md) — encode a graph description as LLVM metadata attached to scalar IR.
 40. [`040-debug-gaadmsf-lowering.prompt.md`](040-debug-gaadmsf-lowering.prompt.md) — debug a GAADMSF lowering with an invalid `phi` predecessor.
 
+### Binary-analysis evidence review
+
+41. [`041-interpret-static-binary-evidence.prompt.md`](041-interpret-static-binary-evidence.prompt.md) — interpret manifest-backed static evidence without promoting feature similarity to semantic equivalence.
+42. [`042-review-evidence-provenance.prompt.md`](042-review-evidence-provenance.prompt.md) — separate deterministic static provenance from optional host-sensitive performance measurements.
+
 ## Agent-training templates
 
 Reusable prompt templates live under [`templates/`](templates/). They are not

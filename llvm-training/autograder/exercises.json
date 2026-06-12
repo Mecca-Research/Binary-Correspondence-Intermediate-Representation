@@ -124,6 +124,52 @@
         {"id": "safety.no-legacy-metadata", "dimension": "structure", "type": "absent", "patterns": ["metadata\\s*!", "\\bi32\\*"]}
       ],
       "comparison_strategy": {"type": "normalized-structural", "normalize_with": "opt -S", "raw_reference_diff": false}
+    },
+    {
+      "id": "041",
+      "prompt_path": "llvm-training/exercises/041-interpret-static-binary-evidence.prompt.md",
+      "reference_solution_path": "llvm-training/exercises/041-interpret-static-binary-evidence.solution.md",
+      "answer_kind": "markdown-review",
+      "required_tools": [],
+      "timeout_seconds": 5,
+      "expected_points": 100,
+      "reference_expected_percent": 100,
+      "scoring_dimensions": [
+        {"id": "artifact", "points": 10},
+        {"id": "rubric", "points": 90}
+      ],
+      "structural_assertions": [],
+      "rubric_checks": [
+        {"id": "rubric.required-evidence", "dimension": "rubric", "mode": "all", "terms": ["instruction-class", "basic blocks", "call edge", "deterministic"]},
+        {"id": "rubric.equivalence-limit", "dimension": "rubric", "mode": "all", "terms": ["semantic equivalence", "constants", "predicates"]},
+        {"id": "rubric.additional-checks", "dimension": "rubric", "mode": "any", "terms": ["symbolically", "tests", "control/data-flow", "abi"]},
+        {"id": "rubric.prohibited-claims", "dimension": "rubric", "mode": "absent", "terms": ["feature similarity proves semantic equivalence", "deterministic means universally faster"]},
+        {"id": "rubric.explanation-completeness", "dimension": "rubric", "mode": "min-words", "minimum": 100}
+      ],
+      "comparison_strategy": {"type": "deterministic-rubric-coverage", "semantic_proof": false}
+    },
+    {
+      "id": "042",
+      "prompt_path": "llvm-training/exercises/042-review-evidence-provenance.prompt.md",
+      "reference_solution_path": "llvm-training/exercises/042-review-evidence-provenance.solution.md",
+      "answer_kind": "markdown-review",
+      "required_tools": [],
+      "timeout_seconds": 5,
+      "expected_points": 100,
+      "reference_expected_percent": 100,
+      "scoring_dimensions": [
+        {"id": "artifact", "points": 10},
+        {"id": "rubric", "points": 90}
+      ],
+      "structural_assertions": [],
+      "rubric_checks": [
+        {"id": "rubric.required-limits", "dimension": "rubric", "mode": "all", "terms": ["host-sensitive", "semantic equivalence", "golden value"]},
+        {"id": "rubric.required-provenance", "dimension": "rubric", "mode": "all", "terms": ["target triple", "toolchain versions", "collection command"]},
+        {"id": "rubric.measurement-policy", "dimension": "rubric", "mode": "all", "terms": ["warm-up", "repetitions", "variance"]},
+        {"id": "rubric.prohibited-claims", "dimension": "rubric", "mode": "absent", "terms": ["universally faster", "proves semantic equivalence"]},
+        {"id": "rubric.explanation-completeness", "dimension": "rubric", "mode": "min-words", "minimum": 100}
+      ],
+      "comparison_strategy": {"type": "deterministic-rubric-coverage", "semantic_proof": false}
     }
   ]
 }
