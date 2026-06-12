@@ -280,6 +280,15 @@ def verify_pack(module: Module, pack) -> list[Diagnostic]:
     traced = {t.claim_id for t in pack.trace_notes}
     prefetches = {p.name for p in pack.prefetches}
 
+    # R10: stream structure -- v2 pipeline/double-buffer contracts are well-formed.
+    if getattr(pack, "pipeline_depth", 1) < 1:
+        diags.append(Diagnostic(
+            "R10", f"invalid pipeline_depth {pack.pipeline_depth} (must be >= 1)"))
+    for pf in pack.prefetches:
+        if getattr(pf, "buffers", 1) not in (1, 2):
+            diags.append(Diagnostic(
+                "R10", f"prefetch {pf.name}: invalid buffer count {pf.buffers} (1 or 2)"))
+
     # R10: stream provenance -- every segment maps back to a live BCIR claim.
     for seg in pack.segments:
         if seg.claim_id not in traced:

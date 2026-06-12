@@ -84,6 +84,9 @@ bcir.module @full_vec_add_ct1 attributes {
   // M(pi,Theta): the (max,+) wave-overlap price. One claim => the degenerate
   // case: makespan == serial Sigma score, overlap gain 0 (gem.overlap oracle).
   bcir.kbcir.scheduled_price @overlap_price { plan = @plan0, makespan = 7808 : i64, serial = 7808 : i64, overlap_gain = 0 : i64 }
+  // Duration-aware schedule certificate (gem.schedule oracle): EFT dispatch of
+  // the K_BCIR durations under the target's bandwidth knee.
+  bcir.gem.schedule @sched0 { plan = @plan0, mode = "eft", makespan = 7808 : i64, knee = 4 : i32 }
 
   // ---- BCIR-4: GEM StreamPack (hydrated, prefetch + provenance) ----
   %sp = bcir.gem.stream_pack @sp0 attributes {
@@ -112,5 +115,6 @@ bcir.module @full_vec_add_ct1 attributes {
 // CHECK: bcir.kbcir.select @add
 // CHECK: bcir.kbcir.budget @thermal_cap
 // CHECK: bcir.kbcir.scheduled_price @overlap_price
+// CHECK: bcir.gem.schedule @sched0
 // CHECK: bcir.gem.stream_pack @sp0
 // CHECK: bcir.verify.plan_selection @vr_plan

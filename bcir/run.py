@@ -38,6 +38,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="constrained (RCSP) selection, e.g. thermal=700,power=700")
     p.add_argument("--overlap", action="store_true",
                    help="price the plan under wave overlap: M(pi,Theta) makespan vs serial")
+    p.add_argument("--eft", action="store_true",
+                   help="duration-aware (HEFT-lite) schedule: LPT + EFT + locality + knee")
+    p.add_argument("--tokens", action="store_true",
+                   help="token-DAG execution schedule (pipelined phases, no barriers)")
     p.add_argument("--codegen", metavar="TARGET",
                    help="per-target codegen via llc (aarch64|riscv64|nvptx64|bpf|x86_64|c|all)")
     args = p.parse_args(argv)
@@ -86,6 +90,15 @@ def main(argv: list[str] | None = None) -> int:
         sp = price_scheduled(module, result, h, theta, policy)
         print(f"[overlap] M(pi,Theta): makespan={sp.makespan} serial={sp.serial} "
               f"gain={sp.overlap_gain}")
+
+    if args.eft or args.tokens:
+        from .gem import durations_from, execute_tokens, schedule_eft
+        d = durations_from(result)
+        for flag, fn in (("eft", schedule_eft), ("tokens", execute_tokens)):
+            if getattr(args, flag):
+                s = fn(module, d, h)
+                print(f"[{flag}] makespan={s.makespan} knee={s.knee} "
+                      f"affinity={s.affinity}")
 
     if args.emit_llvm or args.run or args.jit or args.wasm:
         from .lower import compile_and_run, emit_kernel_ll, jit_run, run_wasm_node

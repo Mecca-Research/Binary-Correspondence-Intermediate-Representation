@@ -140,6 +140,28 @@ bcir.module @r9_price {
 
 // -----
 
+// R9: a schedule certificate with an unknown dispatch mode.
+bcir.module @r9_schedule {
+  bcir.kbcir.plan @plan0 {
+    %pa = bcir.kbcir.path @pA {
+      claim = @c, realization = "cpu.vector.u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
+      cost = #bcir.costvec<compute = 1, memory = 0, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
+    } : !bcir.path
+  }
+  // expected-error @+1 {{R9: unknown schedule mode 'vibes'}}
+  bcir.gem.schedule @bad { plan = @plan0, mode = "vibes", makespan = 8 : i64, knee = 2 : i32 }
+}
+
+// -----
+
+// R10: a prefetch whose double-buffer contract names an illegal buffer count.
+bcir.module @r10_buffers {
+  // expected-error @+1 {{R10: prefetch pf0 invalid buffer count (1 or 2)}}
+  bcir.gem.prefetch @pf0 { distance = 4 : i32, targets = [@A], hint = "T1", pattern = "double_buffer", buffers = 3 : i32 }
+}
+
+// -----
+
 // R12: a lowering contract that neither preserves the BCIR semantic
 // (bounds/hazard/precision) nor carries an explicit discharge.
 bcir.module @r12 {

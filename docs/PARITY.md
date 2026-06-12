@@ -40,6 +40,10 @@ accuracy, contention, verification`.
 | budget B(H,Θ) (RCSP) | `kbcir.rcsp.Budget` / `optimize_constrained` | `bcir.kbcir.budget` + `bcir.kbcir.select` `budget` (feasibility: `-bcir-verify` R9) |
 | Pareto front | `kbcir.rcsp.pareto_plans` (label dominance) | RCSP labels over the same candidate DAG |
 | scheduled price M(π,Θ) | `gem.overlap.price_scheduled` / `optimize_scheduled` | `bcir.kbcir.scheduled_price` (consistency: `-bcir-verify` R9) |
+| duration-aware schedule | `gem.schedule.schedule_eft` (LPT+EFT+locality+knee) | `bcir.gem.schedule` mode `eft` (R9) |
+| token-DAG execution | `gem.schedule.execute_tokens` (pipelined phases) | `bcir.gem.schedule` mode `tokens` (R9) |
+| bandwidth knee | `gem.schedule.bandwidth_knee` / `TargetProfile.mem_channels` | `bcir.target.capability` `mem_channels` |
+| pipelined StreamPack (ABI v2) | `gem.streampack.hydrate_pipelined` / `abi` v2 codec | `bcir.gem.stream_pack` `pipeline_depth`, `bcir.gem.prefetch` `buffers` (R10) |
 | StreamPack | `gem.streampack.StreamPack` | `bcir.gem.stream_pack` |
 | lane segment | `gem.streampack.LaneSegment` | `bcir.gem.lane_segment` |
 | verifier R1–R12 | `verify.{verify,verify_plan,verify_pack,verify_lowering}` | `bcir.verify.*` ops + the `-bcir-verify` pass (R1–R12) |

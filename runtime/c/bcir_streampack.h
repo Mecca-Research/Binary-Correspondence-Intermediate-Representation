@@ -28,16 +28,17 @@
 
 #define BCIR_STREAMPACK_MAGIC   "BSPK"   /* bytes 0..3 of the header */
 #define BCIR_STREAMPACK_VERSION 1
+#define BCIR_STREAMPACK_VERSION_MAX 2    /* v2: append-only pipeline/double-buffer */
 #define BCIR_STREAMPACK_HEADER_SIZE 64
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* 64-byte, cache-line header. */
+/* 64-byte, cache-line header. v2 appends fields into the v1 reserved pad. */
 typedef struct bcir_streampack_header {
   uint8_t  magic[4];        /* "BSPK" */
-  uint16_t version;         /* = BCIR_STREAMPACK_VERSION */
+  uint16_t version;         /* 1..BCIR_STREAMPACK_VERSION_MAX */
   uint16_t flags;           /* reserved (0) */
   uint32_t topo_gen;        /* generation tags (R11) */
   uint32_t map_gen;
@@ -46,7 +47,8 @@ typedef struct bcir_streampack_header {
   uint32_t n_prefetches;
   uint32_t n_blocks;
   uint32_t n_trace;
-  uint8_t  reserved[24];    /* pad to 64 bytes */
+  uint16_t pipeline_depth;  /* v2: phases in flight (decoders see 1 for v1) */
+  uint8_t  reserved[22];    /* pad to 64 bytes */
 } bcir_streampack_header;
 
 /* Lane geometries (must match bcir/model/lanes.py and BCIRAttrs.td). */
@@ -63,8 +65,13 @@ typedef enum bcir_lane {
  *                stride_k:u32  opcode:str  reads:u32_array  writes:u32_array
  *                prefetch:str  fence_before:str_array  fence_after:str_array
  *   prefetch  := name:str  distance:u32  targets:u32_array  hint:str  pattern:str
+ *                [v2: buffers:u8  (2 = double-buffer contract)]
  *   block     := base:u64  count:u64  strides:u64_array
  *   trace     := claim_id:u64  src_hash:u64  trace_hash:u64
+ *
+ * v2 (append-only): the header gains pipeline_depth (in the v1 pad) and the
+ * prefetch record appends buffers:u8. Segment/block/trace records are unchanged,
+ * so v1 walkers remain correct on the segment stream of a v2 pack.
  */
 
 #ifdef __cplusplus

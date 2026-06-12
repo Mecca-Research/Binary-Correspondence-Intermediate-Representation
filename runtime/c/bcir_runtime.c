@@ -86,7 +86,8 @@ bcir_status bcir_sp_validate(const uint8_t *data, size_t len,
   if (data[0] != 'B' || data[1] != 'S' || data[2] != 'P' || data[3] != 'K')
     return BCIR_ERR_MAGIC;
   uint16_t version = rd16(data + 4);
-  if (version != BCIR_STREAMPACK_VERSION) return BCIR_ERR_VERSION;
+  if (version < BCIR_STREAMPACK_VERSION || version > BCIR_STREAMPACK_VERSION_MAX)
+    return BCIR_ERR_VERSION;
   uint32_t stored = rd32(data + len - 4);
   if (bcir_crc32(data, len - 4) != stored) return BCIR_ERR_CRC;
   if (hdr) {
@@ -100,6 +101,9 @@ bcir_status bcir_sp_validate(const uint8_t *data, size_t len,
     hdr->n_prefetches = rd32(data + 24);
     hdr->n_blocks = rd32(data + 28);
     hdr->n_trace = rd32(data + 32);
+    /* v2 appended into the v1 pad; v1 packs are single-phase-in-flight. */
+    hdr->pipeline_depth = (version >= 2) ? rd16(data + 36) : 1;
+    if (hdr->pipeline_depth == 0) hdr->pipeline_depth = 1;
   }
   return BCIR_OK;
 }

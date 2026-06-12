@@ -66,3 +66,35 @@ def test_python_encodes_c_decodes():
         assert out["seg0.opcode"] == seg.opcode
         assert int(out["seg0.read0"]) == seg.reads[0]
         assert int(out["seg0.write0"]) == seg.writes[0]
+        assert int(out["pipeline_depth"]) == 1  # v1 pack: single phase in flight
+
+
+def test_python_encodes_v2_c_decodes():
+    # StreamPack v2 (append-only): the C runtime accepts the new version and
+    # reads the pipeline contract; the segment stream stays v1-shaped.
+    clang = which("clang")
+    if clang is None:
+        return
+    from bcir.gem import hydrate_pipelined
+    from bcir.kbcir import optimize as _opt
+    m = vector_add(1024)
+    pack = hydrate_pipelined(m, _opt(m, TargetProfile.x86_avx512(), Theta.cool()),
+                             depth=2)
+    with tempfile.TemporaryDirectory() as d:
+        exe = os.path.join(d, "test_runtime")
+        build = subprocess.run(
+            [clang, "-std=c11", "-O2",
+             os.path.join(_C_DIR, "bcir_runtime.c"),
+             os.path.join(_C_DIR, "test_runtime.c"),
+             "-I", _C_DIR, "-o", exe],
+            capture_output=True, text=True)
+        assert build.returncode == 0, build.stderr
+        blob = os.path.join(d, "pack.bin")
+        with open(blob, "wb") as f:
+            f.write(encode(pack))
+        run = subprocess.run([exe, blob], capture_output=True, text=True)
+        assert run.returncode == 0, run.stdout + run.stderr
+        out = dict(line.split("=", 1) for line in run.stdout.splitlines() if "=" in line)
+        assert int(out["version"]) == 2
+        assert int(out["pipeline_depth"]) == 2
+        assert int(out["walked"]) == len(pack.segments)
