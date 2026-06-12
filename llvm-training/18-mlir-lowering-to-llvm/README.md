@@ -94,6 +94,9 @@ metadata-related examples.
   source-level prelock and HAM hint shape.
 - [`examples/bcir-register-prelock-ham-hints-lowered.ll`](examples/bcir-register-prelock-ham-hints-lowered.ll) —
   standalone LLVM IR with explicit resource lookup, prefetch, and metadata.
+- [`examples/memref-type-conversion.mlir`](examples/memref-type-conversion.mlir) —
+  deterministic registered-dialect fixture whose declared Tier 4 pipeline
+  converts a memref function boundary and translates it to verified LLVM IR.
 - [`examples/bcir-conversion-pass-skeleton.cpp.md`](examples/bcir-conversion-pass-skeleton.cpp.md) —
   implementation skeleton for a BCIR conversion pass.
 - [`examples/bcir-transform-sequence.mlir`](examples/bcir-transform-sequence.mlir) —

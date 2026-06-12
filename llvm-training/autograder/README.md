@@ -84,6 +84,37 @@ checked-in references and requires every executed check to meet the registry's
 expected percentage; checks needing unavailable optional tools remain explicit
 skips.
 
+## MLIR validation tiers
+
+MLIR results use the highest tier actually demonstrated; lower tiers are
+prerequisites, not aliases for lowering correctness. The machine-readable
+example contract is [`mlir-examples.json`](mlir-examples.json), and MLIR exercise
+manifests carry matching `mlir_validation` metadata.
+
+| Tier | Evidence required | What a pass means |
+| --- | --- | --- |
+| **0** | File presence and rubric/manual review. | The artifact is present and reviewable; no parser claim is made. |
+| **1** | `mlir-opt --allow-unregistered-dialect` parsing. | Generic syntax is accepted. Unregistered BCIR sketches remain explicitly classified and this is **not** verifier or lowering correctness. |
+| **2** | Parsing without `--allow-unregistered-dialect`, including registered-dialect verifier checks. | All operations/types used by the artifact are registered and verify. |
+| **3** | The registry-declared `mlir-opt` conversion pipeline completes and post-pipeline legality assertions pass. | The declared conversion eliminated operations/types marked illegal by the grading contract. |
+| **4** | `mlir-translate --mlir-to-llvmir`, matching-major `llvm-as`, and `opt -passes=verify` all succeed. | The converted artifact reaches valid LLVM IR for the declared toolchain. |
+
+Run the tiered example grader with:
+
+```sh
+bash llvm-training/tools/verify-mlir-examples.sh
+LLVM_SUFFIX=-18 bash llvm-training/tools/verify-mlir-examples.sh --require-tools
+```
+
+The first form preserves a clean general-job skip when MLIR/LLVM tools are not
+installed, but prints **reduced MLIR grading coverage** rather than reporting a
+full validation pass. The MLIR-specific CI rail uses `--require-tools`. Registry
+checks cover custom/non-LLVM type conversion, illegal-operation elimination,
+required BCIR runtime calls, and metadata in applicable checked lowered
+artifacts. The intentionally incomplete conversion fixture must leave
+`bcir.unlowered` behind; observing that expected failure proves the legality
+check is active rather than silently treating pipeline exit status as success.
+
 ## Grading model
 
 ### LLVM IR

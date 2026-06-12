@@ -21,6 +21,23 @@
     "answer_kind": {
       "enum": ["llvm_ir", "markdown_review", "optimizer_prediction", "mlir_review", "diagnostic", "adversarial_analysis"]
     },
+    "mlir_validation": {
+      "description": "Highest MLIR validation tier claimed by this exercise; syntax-only and rubric-only work must be explicit.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_tier", "classification", "registry_sources"],
+      "properties": {
+        "expected_tier": {"type": "integer", "minimum": 0, "maximum": 4},
+        "classification": {
+          "enum": ["file-and-rubric-review", "unregistered-dialect-sketch", "registered-dialect", "conversion-pipeline", "translated-llvm-ir"]
+        },
+        "registry_sources": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/repositoryPath"}
+        }
+      }
+    },
     "required_tools": {
       "type": "array",
       "uniqueItems": true,

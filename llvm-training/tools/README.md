@@ -18,7 +18,7 @@ the same checks without a build-system dependency.
 | `verify-opaque-pointers.sh` | Scans modern `*/examples/*.ll` fixtures for legacy typed-pointer syntax and allows migration-only or intentionally invalid `.ll.txt` fixtures to keep typed-pointer demonstrations explicit. | POSIX shell utilities, `awk` |
 | `verify-manifest.sh` | Compares discovered standalone `*/examples/*.ll` files against the table in `llvm-training/examples/README.md` so new or removed examples do not silently drift from the manifest. | POSIX shell utilities |
 | `verify-csv-schema.sh` | Validates checked-in `15-binary-analysis/examples/*.csv` fixtures for registered schema-family column counts, non-empty headers, consistent non-empty data rows, and at least one data row. The parser handles single-line CSV records with quoted commas. | POSIX shell utilities, `awk` |
-| `verify-mlir-examples.sh` | Validates `*/examples/*.mlir` syntax with `mlir-opt --allow-unregistered-dialect` when `mlir-opt` is installed, and reports a clean skip otherwise. | Optional `mlir-opt` |
+| `verify-mlir-examples.sh` | Grades the MLIR registry through Tiers 0–4: explicit unregistered syntax sketches, registered verification, declared pipelines, LLVM translation, assembly, and verifier checks. | Optional `mlir-opt`, `mlir-translate`, `llvm-as`, `opt` (required with `--require-tools`) |
 | `verify-bcir-mapping.sh` | Validates BCIR mapping fixtures under `bcir-mapping/examples/`: current source-like `.bcir.txt` claim fragments are checked for required markers and lowered `.ll` companions, and real `.bcir` sources are assembled with `bcir-as`, compared to sibling `.generated.ll` files, verified, and refreshed with `UPDATE_BCIR_MAPPING=1`. | POSIX shell utilities; optional `llvm-as`, `opt` for `.bcir.txt` lowered companions; `tools/bcir-as/bcir-as`, `llvm-as`, `opt` when `.bcir` fixtures exist |
 | `smoke-bolt.sh` | Builds the BOLT layout demo fixture, records baseline symbol/disassembly text, and exits with a clean skip when `llvm-bolt` is not installed. A full profile-driven rewrite still requires host support for `perf2bolt`/`perf`; see the walkthrough. | Optional `llvm-bolt`; `clang` and `llvm-objdump` when BOLT is present |
 | `demo-mem2reg.sh` | Demonstrates `mem2reg` on the checked-in diamond example, first verifying the fixture and then printing the promoted SSA form to stdout. | `opt` |
@@ -156,10 +156,15 @@ checked-in CSV files under `../15-binary-analysis/examples/`, maps each known
 schema family by filename to its expected column count, supports quoted commas in
 single-line CSV records, and fails if headers or data rows disappear.
 
-`verify-mlir-examples.sh` is optional-toolchain-friendly. It exits successfully
-with an explicit skip when `mlir-opt` is unavailable, but when MLIR is installed
-it parses all chapter-local `.mlir` examples with unregistered dialects allowed
-so dialect sketches still receive syntax coverage.
+`verify-mlir-examples.sh` is registry-driven and optional-toolchain-friendly.
+Without a complete MLIR/LLVM toolchain it exits successfully but reports reduced
+coverage (Tier 0 only), never a full MLIR pass. With tools present it keeps
+unregistered BCIR sketches at Tier 1, parses registered examples without the
+unregistered escape hatch, executes declared conversion pipelines, checks
+illegal-op/type elimination and structural requirements, translates supported
+LLVM-dialect results, then runs matching-major `llvm-as` and
+`opt -passes=verify`. The MLIR-specific CI rail passes `--require-tools` so a
+missing tool is a failure there.
 
 `verify-bcir-mapping.sh` validates both source-like `.bcir.txt` claim fragments
 and real `.bcir` assembler fixtures under `bcir-mapping/examples/`. The

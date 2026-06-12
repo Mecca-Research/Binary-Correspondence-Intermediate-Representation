@@ -155,7 +155,7 @@ def validate_manifest(path: Path, data: Any, repo_root: Path, errors: list[str])
     if not isinstance(data, dict):
         errors.append(f"{path}: manifest root must be an object")
         return None
-    unknown = set(data) - REQUIRED_FIELDS
+    unknown = set(data) - (REQUIRED_FIELDS | {"mlir_validation"})
     missing = REQUIRED_FIELDS - set(data)
     if unknown:
         errors.append(f"{path}: unknown fields: {', '.join(sorted(unknown))}")
@@ -173,6 +173,35 @@ def validate_manifest(path: Path, data: Any, repo_root: Path, errors: list[str])
         repository_path(repo_root, data.get("solution"), f"{path}: solution", errors)
     if data.get("answer_kind") not in ANSWER_KINDS:
         errors.append(f"{path}: unsupported answer_kind {data.get('answer_kind')!r}")
+
+    mlir_validation = data.get("mlir_validation")
+    if data.get("answer_kind") == "mlir_review":
+        if not isinstance(mlir_validation, dict):
+            errors.append(f"{path}: mlir_review exercises require mlir_validation tier metadata")
+        else:
+            allowed = {"expected_tier", "classification", "registry_sources"}
+            unknown_mlir = set(mlir_validation) - allowed
+            if unknown_mlir:
+                errors.append(f"{path}: unknown mlir_validation fields: {', '.join(sorted(unknown_mlir))}")
+            tier = mlir_validation.get("expected_tier")
+            classification = mlir_validation.get("classification")
+            expected_class = {
+                0: "file-and-rubric-review",
+                1: "unregistered-dialect-sketch",
+                2: "registered-dialect",
+                3: "conversion-pipeline",
+                4: "translated-llvm-ir",
+            }.get(tier)
+            if expected_class is None or classification != expected_class:
+                errors.append(f"{path}: mlir_validation classification does not match expected_tier")
+            sources = mlir_validation.get("registry_sources")
+            if not isinstance(sources, list) or not all(isinstance(source, str) for source in sources):
+                errors.append(f"{path}: mlir_validation.registry_sources must be an array of paths")
+            else:
+                for source in sources:
+                    repository_path(repo_root, source, f"{path}: mlir_validation.registry_sources", errors)
+    elif mlir_validation is not None:
+        errors.append(f"{path}: mlir_validation is only valid for mlir_review exercises")
 
     tools = data.get("required_tools")
     if not isinstance(tools, list) or not all(isinstance(tool, str) and tool in TOOLS for tool in tools):

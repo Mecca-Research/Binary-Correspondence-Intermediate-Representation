@@ -186,6 +186,7 @@ scripts may still skip them if the local target support is unavailable.
 | `llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-after.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-after.ll -o /dev/null` |
 | `llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-before.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-before.ll -o /dev/null` |
 | `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints-lowered.ll` | `llvm-as llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints-lowered.ll -o /dev/null` |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/memref-type-conversion-lowered.ll` | `llvm-as llvm-training/18-mlir-lowering-to-llvm/examples/memref-type-conversion-lowered.ll -o /dev/null` |
 | `llvm-training/19-hardware-aware/examples/calibration-governor-metadata.ll` | `llvm-as llvm-training/19-hardware-aware/examples/calibration-governor-metadata.ll -o /dev/null` |
 | `llvm-training/19-hardware-aware/examples/dragon-egg-flow-execution.ll` | `llvm-as llvm-training/19-hardware-aware/examples/dragon-egg-flow-execution.ll -o /dev/null` |
 | `llvm-training/19-hardware-aware/examples/gaadmsf-programming-pulse.ll` | `llvm-as llvm-training/19-hardware-aware/examples/gaadmsf-programming-pulse.ll -o /dev/null` |
@@ -244,6 +245,7 @@ targets for `verify-examples.sh`:
 | `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-graph-to-llvm-dialect.mlir` | MLIR data/sketch artifact | Parsed by the optional MLIR verifier, never by `llvm-as` or portable `llc` smoke. |
 | `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-graph-to-vector.mlir` | MLIR data/sketch artifact | Parsed by the optional MLIR verifier, never by `llvm-as` or portable `llc` smoke. |
 | `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints.mlir` | MLIR data/sketch artifact | Parsed by the optional MLIR verifier, never by `llvm-as` or portable `llc` smoke. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/memref-type-conversion.mlir` | Tier 4 registered MLIR conversion fixture | The registry lowers memref/func/arith to LLVM dialect, translates it, assembles it, and verifies it. |
 | `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-transform-sequence.mlir` | Transform dialect sketch | Optional-MLIR syntax fixture; transform execution depends on registered payload dialects/passes. |
 | `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-transform-vectorize-then-lower.mlir` | Transform dialect sketch | Optional-MLIR syntax fixture; transform execution depends on registered payload dialects/passes. |
 | `llvm-training/bcir-mapping/examples/bcir-operation.prompt.md` | Mapping prompt | Review-only learner prompt paired with BCIR runtime-boundary examples. |
