@@ -88,6 +88,20 @@ bcir.module @full_vec_add_ct1 attributes {
   // the K_BCIR durations under the target's bandwidth knee.
   bcir.gem.schedule @sched0 { plan = @plan0, mode = "eft", makespan = 7808 : i64, knee = 4 : i32 }
 
+  // ---- LangRef Sec. 13: learning placement, as certified data ----
+  // L1: the physics-anchored frozen cost table (ratio-1 reference: reproduces
+  // the seeded constants; gather_penalty = 8192/256 = 32, base_overhead = 4).
+  bcir.kbcir.calibration @cal_cpu {
+    target = @cpu, cal_gen = 1 : i64, samples = 0 : i64,
+    provenance = "reference (ratio-1; reproduces the seeded constants exactly)",
+    stream_q8 = 256 : i64, strided_q8 = 256 : i64, random_q8 = 8192 : i64, compute_q8 = 256 : i64
+  }
+  // L2: the certified gain-schedule portfolio + the replay gate that admitted it.
+  bcir.kbcir.portfolio @gains { policies = [@perf], gens = array<i64: 1>, certified = array<i64: 1> }
+  bcir.kbcir.replay_certificate @perf_cert {
+    candidate = @perf, incumbent = @perf, episodes = 3 : i64, regressions = 0 : i64, admitted = true
+  }
+
   // ---- BCIR-4: GEM StreamPack (hydrated, prefetch + provenance) ----
   %sp = bcir.gem.stream_pack @sp0 attributes {
     source_plan = @plan0, topo_gen = 1 : i64, map_gen = 1 : i64, data_gen = 4 : i64
@@ -116,5 +130,8 @@ bcir.module @full_vec_add_ct1 attributes {
 // CHECK: bcir.kbcir.budget @thermal_cap
 // CHECK: bcir.kbcir.scheduled_price @overlap_price
 // CHECK: bcir.gem.schedule @sched0
+// CHECK: bcir.kbcir.calibration @cal_cpu
+// CHECK: bcir.kbcir.portfolio @gains
+// CHECK: bcir.kbcir.replay_certificate @perf_cert
 // CHECK: bcir.gem.stream_pack @sp0
 // CHECK: bcir.verify.plan_selection @vr_plan

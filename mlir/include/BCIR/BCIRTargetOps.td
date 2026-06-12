@@ -20,7 +20,10 @@ def BCIR_TargetCapabilityOp : BCIR_Op<"target.capability", [Symbol]> {
     DefaultValuedAttr<I32Attr, "0">:$gather_penalty,
     DefaultValuedAttr<I32Attr, "1">:$affinity_domains,
     // Roofline knee: concurrent bandwidth-bound streams the memory sustains.
-    DefaultValuedAttr<I32Attr, "4">:$mem_channels);
+    DefaultValuedAttr<I32Attr, "4">:$mem_channels,
+    // Cost-table generation (0 = seeded constants; >=1 = a frozen
+    // kbcir.calibration table was applied -- L1 freshness).
+    DefaultValuedAttr<I64Attr, "0">:$cal_gen);
   let assemblyFormat = "$sym_name attr-dict";
 }
 

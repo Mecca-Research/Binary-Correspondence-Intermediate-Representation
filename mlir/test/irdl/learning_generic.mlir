@@ -1,0 +1,28 @@
+// RUN: mlir-opt --irdl-file=%S/../../irdl/bcir.irdl.mlir %s | FileCheck %s
+//
+// Learning placement (LangRef Sec. 13) in generic syntax: the L1 frozen
+// calibration table (ratio-1 reference reproduces the seeded constants:
+// gather_penalty 32, base_overhead 4), the L2 certified policy portfolio, and
+// the replay gate certificate. Mirrors bcir/kbcir/{microbench,portfolio}.py
+// (docs/PARITY.md).
+
+"bcir.target.capability"() {sym_name = "cpu", triple = "x86_64-avx512",
+  isa_features = ["avx512f"], lane_widths = [1, 8, 16], cal_gen = 1 : i64} : () -> ()
+"bcir.kbcir.calibration"() {sym_name = "cal_cpu", target = "cpu",
+  cal_gen = 1 : i64, samples = 0 : i64,
+  provenance = "reference (ratio-1; reproduces the seeded constants exactly)",
+  stream_q8 = 256 : i64, strided_q8 = 256 : i64, random_q8 = 8192 : i64,
+  compute_q8 = 256 : i64} : () -> ()
+"bcir.kbcir.policy"() {sym_name = "latency", mode = "latency",
+  weights = [2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1]} : () -> ()
+"bcir.kbcir.portfolio"() {sym_name = "gains", policies = ["latency"],
+  gens = array<i64: 1>, certified = array<i64: 1>} : () -> ()
+"bcir.kbcir.replay_certificate"() {sym_name = "cert", candidate = "latency",
+  incumbent = "latency", episodes = 3 : i64, regressions = 0 : i64,
+  admitted = true} : () -> ()
+
+// CHECK: "bcir.kbcir.calibration"
+// CHECK: random_q8 = 8192
+// CHECK: "bcir.kbcir.portfolio"
+// CHECK: "bcir.kbcir.replay_certificate"
+// CHECK: admitted = true

@@ -127,6 +127,51 @@ semantic (lane geometry, bounds, hazard, precision) or carries an explicit
 discharge in `bcir.trace`. LLVM is the **first** backend, not the center.
 Encoded via `bcir.isa.*` / `bcir.target.lower_contract`.
 
+## 13. Learning placement (normative policy)
+
+Learning and measurement enter BCIR only where decisions are slow enough to
+amortize inference, reversible at the next checkpoint, and produce artifacts
+the R-laws can check. The placement criterion is the **amortization
+inequality** — place learning at a layer only if
+
+```
+E[improvement per decision]  >>  decision rate x inference cost
+```
+
+— stratified by timescale, **never by importance**:
+
+- **L0 (the hot path — PROHIBITED).** No learned inference executes on the hot
+  path: lane-promotion *application*, prefetch issue, bounds masks, the
+  StreamPack ABI, stackify, fences. At hot-path rates even a nanosecond-scale
+  inference swamps what it optimizes. Decisions are **compiled out**: the
+  binary artifact carries decisions, never models. This prohibition is law,
+  not guidance.
+- **L1 (plan time — frozen tables only).** Learning and measurement supply
+  *inputs to exact search, never the search*: cost tables T_i, tier factors,
+  gather penalties, coupling factors — produced offline, **quantized to
+  integer Q8, frozen, generation-tagged** (`bcir.kbcir.calibration`,
+  `kbcir.microbench.CalibratedProfile`, `cal_gen` on the target capability).
+  Plan-time "inference" is a table lookup; determinism and the pinned scores
+  are preserved by construction. The verifier gates table well-formedness
+  under R8.
+- **L2 (checkpoints — portfolio + replay gate).** Gain schedules (policy
+  weight vectors, thresholds) adapt only at checkpoints, only as members of a
+  **portfolio of frozen, generation-tagged policies**
+  (`bcir.kbcir.portfolio`), selected at plan time by a deterministic
+  workload-class table. A schedule swap requires an admitting **replay
+  certificate** (`bcir.kbcir.replay_certificate`): counterfactual replay on
+  logged Θ episodes, judged by the incumbent's scheduled metric M(π,Θ), zero
+  regressions over ≥ 1 episodes (verified under R9). Shadow → canary →
+  promote; never silent.
+- **L3 (the meta-policy — measured, human-actuated).** Where the
+  heuristic/learned boundary itself sits is a measured question (the regret
+  ledger) but an actuated decision stays human until policy provenance is a
+  verifier law (the planned R13). The framework reserves the slot; it does not
+  yet automate the flip.
+
+The legality laws (R1–R12), lane semantics, and hazard contracts are **never
+learnable**: they are laws, not preferences.
+
 ## 15. Milestone map
 
 1. LangRef v0.1 — this document. ✔
@@ -136,6 +181,7 @@ Encoded via `bcir.isa.*` / `bcir.target.lower_contract`.
 5. K_BCIR planner — candidate-path/costvec/selected-path IR. ◑ (runnable in `bcir/`: the scalarized rail, the constrained RCSP/Pareto rail (`kbcir.rcsp`), and the (max,+) overlap price (`gem.overlap`))
 6. GEM hydration — GraphPlan/LanePlan/StreamPack IR. ◑ (runnable in `bcir/`: hydration, duration-aware EFT/token scheduling (`gem.schedule`), and pipelined v2 packs (`hydrate_pipelined`))
 7. LLVM as first backend. ◑ (MLIR-native `-convert-bcir-to-llvm` lowers compute/barrier to the LLVM dialect; oracle AOT (clang) + JIT (lli))
+8. Physics-anchored calibration + learning placement (§13). ✔ (microbench harness → frozen Q8 tables (`kbcir.microbench`); policy portfolio + replay gate (`kbcir.portfolio`); the L0 prohibition is normative; certificates verified under R8/R9)
 
 Until the MLIR toolchain exists on this host, the oracle (`bcir/`, runnable via
 `python -m bcir.run`) demonstrates Milestones 5–7 in miniature and is the

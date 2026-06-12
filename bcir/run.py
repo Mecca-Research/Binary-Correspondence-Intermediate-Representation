@@ -42,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="duration-aware (HEFT-lite) schedule: LPT + EFT + locality + knee")
     p.add_argument("--tokens", action="store_true",
                    help="token-DAG execution schedule (pipelined phases, no barriers)")
+    p.add_argument("--tables", metavar="FILE",
+                   help="apply a frozen calibration table (JSON; see bcir.kbcir.microbench)")
     p.add_argument("--codegen", metavar="TARGET",
                    help="per-target codegen via llc (aarch64|riscv64|nvptx64|bpf|x86_64|c|all)")
     args = p.parse_args(argv)
@@ -50,6 +52,13 @@ def main(argv: list[str] | None = None) -> int:
     h = TARGETS[args.target]
     theta = _THETAS[args.theta]
     policy = POLICIES.get(args.policy, PERF)
+
+    if args.tables:
+        from .kbcir.microbench import load_table
+        table = load_table(args.tables)
+        h = table.apply(h)
+        print(f"[tables] applied {args.tables} (cal_gen={h.cal_gen}, "
+              f"gather_penalty={h.gather_penalty}, base_overhead={h.base_overhead})")
 
     diags = verify(module)
     if diags:

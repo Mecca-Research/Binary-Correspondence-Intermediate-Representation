@@ -162,6 +162,43 @@ bcir.module @r10_buffers {
 
 // -----
 
+// R8: a calibration table whose streaming baseline is not the Q8 unit.
+bcir.module @r8_calibration {
+  bcir.target.capability @cpu {
+    triple = "x86_64-avx512", isa_features = ["avx512f"], lane_widths = array<i64: 1, 8, 16>
+  }
+  // expected-error @+1 {{R8: calibration stream_q8 must be 256 (the Q8 baseline)}}
+  bcir.kbcir.calibration @bad {
+    target = @cpu, cal_gen = 1 : i64, samples = 5 : i64, provenance = "microbench",
+    stream_q8 = 128 : i64, strided_q8 = 256 : i64, random_q8 = 8192 : i64, compute_q8 = 256 : i64
+  }
+}
+
+// -----
+
+// R9: an admitted replay certificate that carries regressions -- the gate
+// never deploys a gain schedule on a measured loss.
+bcir.module @r9_replay {
+  bcir.kbcir.policy @latency { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.policy @hotbias { mode = #bcir.policy_mode<energy>, weights = array<i64: 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0> }
+  // expected-error @+1 {{R9: admitted replay certificate carries 1 regression(s)}}
+  bcir.kbcir.replay_certificate @forged {
+    candidate = @hotbias, incumbent = @latency, episodes = 3 : i64,
+    regressions = 1 : i64, admitted = true
+  }
+}
+
+// -----
+
+// R9: a portfolio whose certification state does not cover its policies.
+bcir.module @r9_portfolio {
+  bcir.kbcir.policy @latency { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  // expected-error @+1 {{R9: portfolio policies/gens/certified arity mismatch}}
+  bcir.kbcir.portfolio @gains { policies = [@latency], gens = array<i64: 1, 1>, certified = array<i64: 1> }
+}
+
+// -----
+
 // R12: a lowering contract that neither preserves the BCIR semantic
 // (bounds/hazard/precision) nor carries an explicit discharge.
 bcir.module @r12 {

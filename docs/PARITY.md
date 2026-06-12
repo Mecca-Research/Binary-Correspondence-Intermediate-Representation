@@ -44,6 +44,9 @@ accuracy, contention, verification`.
 | token-DAG execution | `gem.schedule.execute_tokens` (pipelined phases) | `bcir.gem.schedule` mode `tokens` (R9) |
 | bandwidth knee | `gem.schedule.bandwidth_knee` / `TargetProfile.mem_channels` | `bcir.target.capability` `mem_channels` |
 | pipelined StreamPack (ABI v2) | `gem.streampack.hydrate_pipelined` / `abi` v2 codec | `bcir.gem.stream_pack` `pipeline_depth`, `bcir.gem.prefetch` `buffers` (R10) |
+| L1 frozen cost table | `kbcir.microbench.CalibratedProfile` (`cal_gen`, Q8 ratios) | `bcir.kbcir.calibration` + capability `cal_gen` (R8) |
+| L2 policy portfolio | `kbcir.portfolio.PolicyPortfolio` (class-table selection) | `bcir.kbcir.portfolio` (R9) |
+| L2 replay gate | `kbcir.portfolio.replay_gate` / `ReplayCertificate` | `bcir.kbcir.replay_certificate` (R9: admitted ⇒ zero regressions) |
 | StreamPack | `gem.streampack.StreamPack` | `bcir.gem.stream_pack` |
 | lane segment | `gem.streampack.LaneSegment` | `bcir.gem.lane_segment` |
 | verifier R1–R12 | `verify.{verify,verify_plan,verify_pack,verify_lowering}` | `bcir.verify.*` ops + the `-bcir-verify` pass (R1–R12) |

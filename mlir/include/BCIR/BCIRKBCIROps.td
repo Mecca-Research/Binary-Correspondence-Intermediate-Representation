@@ -53,6 +53,40 @@ def BCIR_KBCIRBudgetOp : BCIR_Op<"kbcir.budget", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_KBCIRCalibrationOp : BCIR_Op<"kbcir.calibration", [Symbol]> {
+  let summary = "L1 frozen cost table: measured Q8 ratios, generation-tagged";
+  // The physics-anchored calibration certificate (LangRef Sec. 13): host
+  // microbenchmark ratios against the streaming baseline (stream_q8 == 256 by
+  // definition, verified under R8). gather_penalty = random_q8/256,
+  // base_overhead = 4*strided_q8/256. Mirrors bcir/kbcir/microbench.py.
+  let arguments = (ins SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$target,
+                       I64Attr:$cal_gen, I64Attr:$samples, StrAttr:$provenance,
+                       I64Attr:$stream_q8, I64Attr:$strided_q8,
+                       I64Attr:$random_q8, I64Attr:$compute_q8);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
+def BCIR_KBCIRPortfolioOp : BCIR_Op<"kbcir.portfolio", [Symbol]> {
+  let summary = "L2 policy portfolio: frozen gain schedules + certification state";
+  // `policies` reference kbcir.policy ops; `gens`/`certified` are parallel
+  // arrays (certified: 0/1). Plan-time selection is a workload-class table
+  // lookup; mutation only through an admitting replay certificate. Mirrors
+  // bcir/kbcir/portfolio.py (verified under R9).
+  let arguments = (ins SymbolNameAttr:$sym_name, FlatSymbolRefArrayAttr:$policies,
+                       DenseI64ArrayAttr:$gens, DenseI64ArrayAttr:$certified);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
+def BCIR_KBCIRReplayCertificateOp : BCIR_Op<"kbcir.replay_certificate", [Symbol]> {
+  let summary = "L2 replay gate: counterfactual no-regression policy-swap certificate";
+  // admitted requires regressions == 0 over >= 1 episodes (verified, R9):
+  // a gain schedule never deploys on a measured loss.
+  let arguments = (ins SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$candidate,
+                       FlatSymbolRefAttr:$incumbent, I64Attr:$episodes,
+                       I64Attr:$regressions, BoolAttr:$admitted);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
 def BCIR_KBCIRScheduledPriceOp : BCIR_Op<"kbcir.scheduled_price", [Symbol]> {
   let summary = "M(pi,Theta): the (max,+) wave-overlap price of a plan";
   // makespan composes series with (+) and CT2 wave parallelism with max; the
