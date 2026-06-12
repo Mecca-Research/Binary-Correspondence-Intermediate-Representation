@@ -24,6 +24,7 @@
         {"id": "safety.no-typed-pointers", "dimension": "structure", "type": "absent", "patterns": ["\\bi(?:8|16|32|64)\\*", "\\bgetelementptr\\s+inbounds\\s*\\("]}
       ],
       "comparison_strategy": {"type": "structural-and-execution", "normalize_with": "opt -S", "raw_reference_diff": false},
+      "safe_deterministic_lli": true,
       "semantic_tests": [
         {"function": "add", "return_type": "i32", "args": [{"type": "i32", "value": "2"}, {"type": "i32", "value": "3"}], "expected": "5"},
         {"function": "add", "return_type": "i32", "args": [{"type": "i32", "value": "-1"}, {"type": "i32", "value": "1"}], "expected": "0"}
