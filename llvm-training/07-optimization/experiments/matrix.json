@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "fixture": {
+    "sources": ["main.c", "worker.c"],
+    "expected_symbols": ["main"],
+    "tracked_symbols": ["main", "matrix_transform", "matrix_checksum", "local_bias"]
+  },
+  "dimensions": {
+    "lto": ["none", "thin", "full"],
+    "bolt_rewrite": [false, true],
+    "target": ["host"],
+    "optimization": ["O0", "O2"]
+  },
+  "configurations": [
+    {"id": "none-O0-host", "lto": "none", "bolt_rewrite": false, "target": "host", "optimization": "O0"},
+    {"id": "none-O2-host", "lto": "none", "bolt_rewrite": false, "target": "host", "optimization": "O2"},
+    {"id": "thin-O0-host", "lto": "thin", "bolt_rewrite": false, "target": "host", "optimization": "O0"},
+    {"id": "thin-O2-host", "lto": "thin", "bolt_rewrite": false, "target": "host", "optimization": "O2"},
+    {"id": "full-O0-host", "lto": "full", "bolt_rewrite": false, "target": "host", "optimization": "O0"},
+    {"id": "full-O2-host", "lto": "full", "bolt_rewrite": false, "target": "host", "optimization": "O2"},
+    {"id": "full-O2-host-bolt", "lto": "full", "bolt_rewrite": true, "target": "host", "optimization": "O2"}
+  ]
+}

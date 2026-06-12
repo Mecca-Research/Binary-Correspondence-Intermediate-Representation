@@ -102,6 +102,16 @@ jobs:
             echo "llc not present; skipping llvm-training llc smoke validation"
           fi
 
+      - name: LLVM training deterministic LTO matrix
+        run: |
+          for lto in none thin full; do
+            bash llvm-training/tools/run-lto-matrix.sh \
+              --lto "$lto" \
+              --output "build/lto-matrix-$lto" \
+              --require-supported
+            python3 -m json.tool "build/lto-matrix-$lto/report.json" >/dev/null
+          done
+
       - name: Optional BOLT smoke fixture
         run: bash llvm-training/tools/smoke-bolt.sh
 

@@ -280,3 +280,13 @@ python3 llvm-training/tools/run-eval.py run \
   --exercise 001 \
   --fixture-adapter reference
 ```
+
+## LTO/BOLT artifact experiments
+
+- `run-lto-matrix.sh` executes the checked-in no-LTO/ThinLTO/FullLTO manifest,
+  verifies matching LLVM tool versions, and emits deterministic summaries plus
+  an evaluation-oriented JSON report.
+- `run-bolt-experiment.sh` preserves the baseline, supplied profile, rewrite
+  command, rewritten summary, and tool versions for an optional BOLT leg.
+- `smoke-bolt.sh` runs the baseline and reports unavailable BOLT/profile support
+  explicitly rather than treating it as a successful rewrite.
