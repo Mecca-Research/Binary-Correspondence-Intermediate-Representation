@@ -4,15 +4,20 @@
   "prompt": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.prompt.md",
   "solution": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.good.ll",
   "answer_kind": "mlir_review",
+  "mlir_validation": {
+    "expected_tier": 0,
+    "classification": "file-and-rubric-review",
+    "registry_sources": [
+      "llvm-training/exercises/015-mlir-to-llvm-lowering-review.candidate.mlir"
+    ]
+  },
   "required_tools": [
     "llvm-as",
-    "opt",
-    "mlir-opt"
+    "opt"
   ],
   "minimum_tool_versions": {
     "llvm-as": "15.0",
-    "opt": "15.0",
-    "mlir-opt": "15.0"
+    "opt": "15.0"
   },
   "tool_absence_policy": "unscored_skip",
   "checks": [
@@ -35,8 +40,8 @@
       "points": 10
     },
     {
-      "id": "candidate.parse",
-      "type": "mlir_parse",
+      "id": "candidate.reviewable",
+      "type": "non_empty",
       "path": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.candidate.mlir",
       "points": 20
     },

@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "toolchain_major": 18,
+  "examples": [
+    {
+      "source": "llvm-training/14-mlir-bridge/examples/arith-to-llvm.mlir",
+      "required_dialects": ["arith", "builtin", "func", "llvm"],
+      "required_plugins_tools": ["mlir-opt", "mlir-translate", "llvm-as", "opt"],
+      "pass_pipeline": "builtin.module(convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)",
+      "expected_tier": 4,
+      "expected_lowered_artifact": "llvm-training/14-mlir-bridge/examples/arith-to-llvm-lowered.ll",
+      "checks": {"forbid_lowered": ["arith.", "func.func", "builtin.unrealized_conversion_cast"], "require_llvm_ir": ["define i32 @add_one", " add i32 "]}
+    },
+    {
+      "source": "llvm-training/14-mlir-bridge/examples/llvm-dialect-call.mlir",
+      "required_dialects": ["builtin", "llvm"],
+      "required_plugins_tools": ["mlir-opt", "mlir-translate", "llvm-as", "opt"],
+      "pass_pipeline": "builtin.module(canonicalize)",
+      "expected_tier": 4,
+      "expected_lowered_artifact": null,
+      "checks": {"forbid_lowered": ["bcir."], "require_llvm_ir": ["declare i32 @callee", "call i32 @callee"]}
+    },
+    {
+      "source": "llvm-training/14-mlir-bridge/examples/lowered-llvm-dialect.mlir",
+      "required_dialects": ["builtin", "llvm"],
+      "required_plugins_tools": ["mlir-opt", "mlir-translate", "llvm-as", "opt"],
+      "pass_pipeline": "builtin.module(canonicalize)",
+      "expected_tier": 4,
+      "expected_lowered_artifact": null,
+      "checks": {"forbid_lowered": ["bcir.graph", "!bcir."], "required_runtime_calls": ["@bcir_prefetch_vertex", "@bcir_lookup_child", "@bcir_consume_mixed_stride"]}
+    },
+    {
+      "source": "llvm-training/14-mlir-bridge/examples/bcir-vertex-graph-lowered-llvm-dialect.mlir",
+      "required_dialects": ["builtin", "llvm"],
+      "required_plugins_tools": ["mlir-opt", "mlir-translate", "llvm-as", "opt"],
+      "pass_pipeline": "builtin.module(canonicalize)",
+      "expected_tier": 4,
+      "expected_lowered_artifact": "llvm-training/14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll",
+      "checks": {"forbid_lowered": ["bcir.graph", "bcir.vertex", "!bcir."], "required_runtime_calls": ["@bcir.consume.edge"], "required_artifact_metadata": ["!bcir.vertex", "!bcir.edge", "!bcir.hint"]}
+    },
+    {
+      "source": "llvm-training/18-mlir-lowering-to-llvm/examples/bcir-graph-to-llvm-dialect.mlir",
+      "required_dialects": ["builtin", "llvm"],
+      "required_plugins_tools": ["mlir-opt", "mlir-translate", "llvm-as", "opt"],
+      "pass_pipeline": "builtin.module(canonicalize)",
+      "expected_tier": 4,
+      "expected_lowered_artifact": null,
+      "checks": {"forbid_lowered": ["bcir.graph", "!bcir."], "required_runtime_calls": ["@bcir_lookup_vertex", "@bcir_visit_vertex"]}
+    },
+    {
+      "source": "llvm-training/18-mlir-lowering-to-llvm/examples/memref-type-conversion.mlir",
+      "required_dialects": ["arith", "builtin", "func", "llvm", "memref"],
+      "required_plugins_tools": ["mlir-opt", "mlir-translate", "llvm-as", "opt"],
+      "pass_pipeline": "builtin.module(expand-strided-metadata,convert-index-to-llvm,convert-arith-to-llvm,convert-func-to-llvm,finalize-memref-to-llvm,reconcile-unrealized-casts)",
+      "expected_tier": 4,
+      "expected_lowered_artifact": "llvm-training/18-mlir-lowering-to-llvm/examples/memref-type-conversion-lowered.ll",
+      "checks": {"require_source": ["memref<?xi32>"], "forbid_lowered": ["memref<", "memref.", "func.func", "builtin.unrealized_conversion_cast"], "require_lowered": ["!llvm.struct", "llvm.load"], "require_llvm_ir": ["define i32 @load_first", "load i32"]}
+    },
+    {
+      "source": "llvm-training/14-mlir-bridge/examples/bcir-dialect-sketch.mlir",
+      "required_dialects": ["bcir (unregistered sketch)", "builtin"],
+      "required_plugins_tools": ["mlir-opt"],
+      "pass_pipeline": null,
+      "expected_tier": 1,
+      "expected_lowered_artifact": null,
+      "classification": "unregistered-dialect-sketch"
+    },
+    {
+      "source": "llvm-training/14-mlir-bridge/examples/bcir-vertex-graph.mlir",
+      "required_dialects": ["bcir (unregistered sketch)", "builtin"],
+      "required_plugins_tools": ["mlir-opt"],
+      "pass_pipeline": null,
+      "expected_tier": 1,
+      "expected_lowered_artifact": "llvm-training/14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll",
+      "classification": "unregistered-dialect-sketch",
+      "checks": {"required_artifact_metadata": ["!bcir.vertex", "!bcir.edge", "!bcir.hint"], "required_artifact_runtime_calls": ["@bcir.consume.edge"]}
+    },
+    {
+      "source": "llvm-training/18-mlir-lowering-to-llvm/examples/bcir-graph-to-affine.mlir",
+      "required_dialects": ["affine", "arith", "bcir (unregistered sketch)", "builtin", "func", "memref"],
+      "required_plugins_tools": ["mlir-opt"],
+      "pass_pipeline": null,
+      "expected_tier": 1,
+      "expected_lowered_artifact": null,
+      "classification": "unregistered-dialect-sketch"
+    },
+    {
+      "source": "llvm-training/18-mlir-lowering-to-llvm/examples/bcir-graph-to-vector.mlir",
+      "required_dialects": ["bcir (unregistered sketch)", "builtin", "func", "vector"],
+      "required_plugins_tools": ["mlir-opt"],
+      "pass_pipeline": null,
+      "expected_tier": 1,
+      "expected_lowered_artifact": null,
+      "classification": "unregistered-dialect-sketch"
+    },
+    {
+      "source": "llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints.mlir",
+      "required_dialects": ["bcir (unregistered sketch)", "builtin"],
+      "required_plugins_tools": ["mlir-opt"],
+      "pass_pipeline": null,
+      "expected_tier": 1,
+      "expected_lowered_artifact": "llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints-lowered.ll",
+      "classification": "unregistered-dialect-sketch",
+      "checks": {"required_artifact_metadata": ["!bcir.graph", "!bcir.claim", "!bcir.ham"], "required_artifact_runtime_calls": ["@bcir.gaadmsf.transfer", "@llvm.prefetch.p0"]}
+    },
+    {
+      "source": "llvm-training/18-mlir-lowering-to-llvm/examples/bcir-transform-sequence.mlir",
+      "required_dialects": ["transform (version-dependent sketch)"],
+      "required_plugins_tools": [],
+      "pass_pipeline": null,
+      "expected_tier": 0,
+      "expected_lowered_artifact": null,
+      "classification": "rubric-only-version-dependent-sketch"
+    },
+    {
+      "source": "llvm-training/18-mlir-lowering-to-llvm/examples/bcir-transform-vectorize-then-lower.mlir",
+      "required_dialects": ["transform (version-dependent sketch)"],
+      "required_plugins_tools": [],
+      "pass_pipeline": null,
+      "expected_tier": 0,
+      "expected_lowered_artifact": null,
+      "classification": "rubric-only-version-dependent-sketch"
+    },
+    {
+      "source": "llvm-training/autograder/fixtures/mlir/incomplete-bcir-conversion.mlir",
+      "required_dialects": ["arith", "bcir (intentionally unregistered)", "builtin", "func", "llvm"],
+      "required_plugins_tools": ["mlir-opt"],
+      "pass_pipeline": "builtin.module(convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)",
+      "expected_tier": 3,
+      "expected_lowered_artifact": null,
+      "classification": "expected-failure-fixture",
+      "expected_failure": {"kind": "illegal-ops-remaining", "operations": ["bcir.unlowered"]},
+      "checks": {"forbid_lowered": ["bcir.unlowered"]}
+    }
+  ]
+}

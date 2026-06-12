@@ -4,6 +4,11 @@
   "prompt": "llvm-training/exercises/034-review-mlir-to-llvm-type-conversion.prompt.md",
   "solution": "llvm-training/exercises/034-review-mlir-to-llvm-type-conversion.solution.md",
   "answer_kind": "mlir_review",
+  "mlir_validation": {
+    "expected_tier": 0,
+    "classification": "file-and-rubric-review",
+    "registry_sources": []
+  },
   "required_tools": [],
   "minimum_tool_versions": {},
   "tool_absence_policy": "reduced_confidence_score",

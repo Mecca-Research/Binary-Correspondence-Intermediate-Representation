@@ -82,7 +82,7 @@ jobs:
             echo "llvm-lit/lit not present; skipping llvm-training lit tests"
           fi
 
-      - name: LLVM training MLIR examples
+      - name: LLVM training MLIR examples (reduced coverage allowed)
         run: bash llvm-training/tools/verify-mlir-examples.sh
 
       - name: LLVM training BCIR mapping fixtures
@@ -126,3 +126,8 @@ jobs:
 
       - name: Validate Phase-6 passes (verify / promote / lower)
         run: bash tools/wsl/check_passes.sh
+
+      - name: Grade training MLIR conversion and LLVM translation tiers
+        env:
+          LLVM_SUFFIX: "-18"
+        run: bash llvm-training/tools/verify-mlir-examples.sh --require-tools
