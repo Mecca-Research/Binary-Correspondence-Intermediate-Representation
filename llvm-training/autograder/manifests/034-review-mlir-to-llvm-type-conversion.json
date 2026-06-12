@@ -1,0 +1,50 @@
+{
+  "id": "034",
+  "title": "Review MLIR-to-LLVM type conversion",
+  "prompt": "llvm-training/exercises/034-review-mlir-to-llvm-type-conversion.prompt.md",
+  "solution": "llvm-training/exercises/034-review-mlir-to-llvm-type-conversion.solution.md",
+  "answer_kind": "mlir_review",
+  "required_tools": [],
+  "minimum_tool_versions": {},
+  "tool_absence_policy": "reduced_confidence_score",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/034-review-mlir-to-llvm-type-conversion.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/034-review-mlir-to-llvm-type-conversion.solution.md",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/034-review-mlir-to-llvm-type-conversion.solution.md",
+      "points": 10
+    },
+    {
+      "id": "review.rubric",
+      "type": "rubric_terms",
+      "path": "llvm-training/exercises/034-review-mlir-to-llvm-type-conversion.solution.md",
+      "terms": [
+        "MLIR",
+        "LLVM"
+      ],
+      "mode": "any",
+      "points": 80
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "mlir-review",
+    "llvm-training"
+  ],
+  "difficulty": "advanced",
+  "license": "Apache-2.0",
+  "determinism": "review_rubric",
+  "timeout_seconds": 10
+}

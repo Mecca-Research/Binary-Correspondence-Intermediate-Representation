@@ -24,6 +24,11 @@ function(add_optional_training_target target label script)
 endfunction()
 
 add_training_script_target(llvm-training-verify-manifest verify-manifest.sh)
+add_custom_target(llvm-training-verify-exercise-manifests
+  COMMAND "${TOOLS_DIR}/verify-exercise-manifests.py"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  USES_TERMINAL
+  VERBATIM)
 add_training_script_target(llvm-training-verify-csv-schema verify-csv-schema.sh)
 add_training_script_target(llvm-training-verify-opaque-pointers verify-opaque-pointers.sh)
 add_training_script_target(llvm-training-verify-mlir-examples verify-mlir-examples.sh)
@@ -47,6 +52,7 @@ add_custom_target(llvm-training-lit
 add_custom_target(llvm-training-check
   DEPENDS
     llvm-training-verify-manifest
+    llvm-training-verify-exercise-manifests
     llvm-training-verify-csv-schema
     llvm-training-verify-opaque-pointers
     llvm-training-verify-mlir-examples

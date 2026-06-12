@@ -1,0 +1,79 @@
+{
+  "id": "018",
+  "title": "Repair an immarg intrinsic call",
+  "prompt": "llvm-training/exercises/018-fix-immarg-intrinsic.prompt.md",
+  "solution": "llvm-training/exercises/018-fix-immarg-intrinsic.solution.ll",
+  "answer_kind": "diagnostic",
+  "required_tools": [
+    "llvm-as",
+    "opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0"
+  },
+  "tool_absence_policy": "hard_failure",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/018-fix-immarg-intrinsic.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/018-fix-immarg-intrinsic.solution.ll",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/018-fix-immarg-intrinsic.solution.ll",
+      "points": 10
+    },
+    {
+      "id": "llvm.assemble",
+      "type": "llvm_assemble",
+      "path": "llvm-training/exercises/018-fix-immarg-intrinsic.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "llvm.verify",
+      "type": "llvm_verify",
+      "path": "llvm-training/exercises/018-fix-immarg-intrinsic.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "structure.symbol",
+      "type": "contains_symbol",
+      "path": "llvm-training/exercises/018-fix-immarg-intrinsic.solution.ll",
+      "symbol": "@prefetch_read_high_locality",
+      "points": 15
+    },
+    {
+      "id": "structure.instruction",
+      "type": "contains_instruction",
+      "path": "llvm-training/exercises/018-fix-immarg-intrinsic.solution.ll",
+      "instruction": "call",
+      "points": 5
+    },
+    {
+      "id": "broken.expected-diagnostic",
+      "type": "expected_diagnostic",
+      "path": "llvm-training/exercises/018-fix-immarg-intrinsic.invalid.ll.txt",
+      "tool": "llvm-as",
+      "diagnostic": "error",
+      "points": 10
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "repair",
+    "llvm-training"
+  ],
+  "difficulty": "intermediate",
+  "license": "Apache-2.0",
+  "determinism": "deterministic",
+  "timeout_seconds": 10
+}

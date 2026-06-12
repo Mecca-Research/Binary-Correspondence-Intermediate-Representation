@@ -1,0 +1,68 @@
+{
+  "id": "020",
+  "title": "Predict mem2reg",
+  "prompt": "llvm-training/exercises/020-predict-mem2reg.prompt.md",
+  "solution": "llvm-training/exercises/020-predict-mem2reg.after-mem2reg.ll",
+  "answer_kind": "optimizer_prediction",
+  "required_tools": [
+    "llvm-as",
+    "opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0"
+  },
+  "tool_absence_policy": "reduced_confidence_score",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/020-predict-mem2reg.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/020-predict-mem2reg.after-mem2reg.ll",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/020-predict-mem2reg.after-mem2reg.ll",
+      "points": 10
+    },
+    {
+      "id": "input.assemble",
+      "type": "llvm_assemble",
+      "path": "llvm-training/exercises/020-predict-mem2reg.input.ll",
+      "points": 25
+    },
+    {
+      "id": "input.verify",
+      "type": "llvm_verify",
+      "path": "llvm-training/exercises/020-predict-mem2reg.input.ll",
+      "points": 20
+    },
+    {
+      "id": "prediction.rubric",
+      "type": "rubric_terms",
+      "path": "llvm-training/exercises/020-predict-mem2reg.prompt.md",
+      "terms": [
+        "Expected observation",
+        "opt"
+      ],
+      "mode": "all",
+      "points": 35
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "optimizer-prediction",
+    "llvm-training"
+  ],
+  "difficulty": "intermediate",
+  "license": "Apache-2.0",
+  "determinism": "toolchain_dependent",
+  "timeout_seconds": 20
+}

@@ -1,0 +1,50 @@
+{
+  "id": "038",
+  "title": "Design a custom pass for BCIR invariants",
+  "prompt": "llvm-training/exercises/038-custom-pass-bcir-invariants.prompt.md",
+  "solution": "llvm-training/exercises/038-custom-pass-bcir-invariants.solution.md",
+  "answer_kind": "markdown_review",
+  "required_tools": [],
+  "minimum_tool_versions": {},
+  "tool_absence_policy": "reduced_confidence_score",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/038-custom-pass-bcir-invariants.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/038-custom-pass-bcir-invariants.solution.md",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/038-custom-pass-bcir-invariants.solution.md",
+      "points": 10
+    },
+    {
+      "id": "review.rubric",
+      "type": "rubric_terms",
+      "path": "llvm-training/exercises/038-custom-pass-bcir-invariants.solution.md",
+      "terms": [
+        "BCIR",
+        "invariant"
+      ],
+      "mode": "any",
+      "points": 80
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "bcir-lowering",
+    "llvm-training"
+  ],
+  "difficulty": "advanced",
+  "license": "Apache-2.0",
+  "determinism": "review_rubric",
+  "timeout_seconds": 10
+}

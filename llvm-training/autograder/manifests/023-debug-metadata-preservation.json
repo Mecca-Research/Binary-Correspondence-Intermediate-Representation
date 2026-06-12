@@ -1,0 +1,71 @@
+{
+  "id": "023",
+  "title": "Preserve debug metadata while simplifying IR",
+  "prompt": "llvm-training/exercises/023-debug-metadata-preservation.prompt.md",
+  "solution": "llvm-training/exercises/023-debug-metadata-preservation.solution.ll",
+  "answer_kind": "llvm_ir",
+  "required_tools": [
+    "llvm-as",
+    "opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0"
+  },
+  "tool_absence_policy": "hard_failure",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/023-debug-metadata-preservation.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/023-debug-metadata-preservation.solution.ll",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/023-debug-metadata-preservation.solution.ll",
+      "points": 10
+    },
+    {
+      "id": "llvm.assemble",
+      "type": "llvm_assemble",
+      "path": "llvm-training/exercises/023-debug-metadata-preservation.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "llvm.verify",
+      "type": "llvm_verify",
+      "path": "llvm-training/exercises/023-debug-metadata-preservation.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "structure.symbol",
+      "type": "contains_symbol",
+      "path": "llvm-training/exercises/023-debug-metadata-preservation.solution.ll",
+      "symbol": "@accumulate_debug",
+      "points": 15
+    },
+    {
+      "id": "structure.metadata",
+      "type": "contains_metadata",
+      "path": "llvm-training/exercises/023-debug-metadata-preservation.solution.ll",
+      "metadata": "!dbg",
+      "points": 15
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "standalone-llvm-ir",
+    "llvm-training"
+  ],
+  "difficulty": "intermediate",
+  "license": "Apache-2.0",
+  "determinism": "deterministic",
+  "timeout_seconds": 10
+}

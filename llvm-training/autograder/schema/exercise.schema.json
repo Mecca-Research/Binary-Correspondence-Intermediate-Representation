@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bcir.dev/schemas/llvm-training/exercise.schema.json",
+  "title": "LLVM training exercise manifest",
+  "description": "Declarative grading contract for one graded LLVM training exercise. Paths are repository-relative.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "title", "prompt", "solution", "answer_kind", "required_tools",
+    "minimum_tool_versions", "tool_absence_policy", "checks", "score", "tags",
+    "difficulty", "license", "determinism", "timeout_seconds"
+  ],
+  "properties": {
+    "id": {"type": "string", "pattern": "^(?:[0-9]{3}|adv-[a-z0-9][a-z0-9-]*)$"},
+    "title": {"type": "string", "minLength": 1},
+    "prompt": {"$ref": "#/$defs/repositoryPath"},
+    "solution": {
+      "description": "Trusted reference artifact, or null when the exercise intentionally has no canonical answer.",
+      "oneOf": [{"$ref": "#/$defs/repositoryPath"}, {"type": "null"}]
+    },
+    "answer_kind": {
+      "enum": ["llvm_ir", "markdown_review", "optimizer_prediction", "mlir_review", "diagnostic", "adversarial_analysis"]
+    },
+    "required_tools": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/toolName"}
+    },
+    "minimum_tool_versions": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/toolName"},
+      "additionalProperties": {"type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}$"}
+    },
+    "tool_absence_policy": {
+      "enum": ["hard_failure", "unscored_skip", "reduced_confidence_score"]
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/check"}
+    },
+    "score": {"type": "number", "exclusiveMinimum": 0},
+    "tags": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"}
+    },
+    "difficulty": {"enum": ["beginner", "intermediate", "advanced"]},
+    "license": {"type": "string", "const": "Apache-2.0"},
+    "determinism": {"enum": ["deterministic", "toolchain_dependent", "review_rubric"]},
+    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 300}
+  },
+  "$defs": {
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^llvm-training/(?!.*(?:^|/)\\.\\.(?:/|$))[^\\n]+$"
+    },
+    "toolName": {
+      "type": "string",
+      "enum": ["FileCheck", "clang", "lli", "llc", "llvm-as", "mlir-opt", "opt", "python3"]
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "points"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "type": {
+          "enum": [
+            "file_exists", "non_empty", "llvm_assemble", "llvm_verify", "mlir_parse",
+            "contains_symbol", "contains_instruction", "contains_metadata", "forbids_pattern",
+            "run_and_compare", "expected_diagnostic", "rubric_terms", "custom_script"
+          ]
+        },
+        "points": {"type": "number", "minimum": 0},
+        "path": {"$ref": "#/$defs/repositoryPath"},
+        "tool": {"$ref": "#/$defs/toolName"},
+        "symbol": {"type": "string", "minLength": 1},
+        "instruction": {"type": "string", "minLength": 1},
+        "metadata": {"type": "string", "minLength": 1},
+        "pattern": {"type": "string", "minLength": 1},
+        "command": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "expected_stdout": {"type": "string"},
+        "diagnostic": {"type": "string", "minLength": 1},
+        "terms": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "mode": {"enum": ["all", "any"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"enum": ["file_exists", "non_empty", "llvm_assemble", "llvm_verify", "mlir_parse", "expected_diagnostic"]}}}, "then": {"required": ["path"]}},
+        {"if": {"properties": {"type": {"const": "contains_symbol"}}}, "then": {"required": ["path", "symbol"]}},
+        {"if": {"properties": {"type": {"const": "contains_instruction"}}}, "then": {"required": ["path", "instruction"]}},
+        {"if": {"properties": {"type": {"const": "contains_metadata"}}}, "then": {"required": ["path", "metadata"]}},
+        {"if": {"properties": {"type": {"const": "forbids_pattern"}}}, "then": {"required": ["path", "pattern"]}},
+        {"if": {"properties": {"type": {"const": "run_and_compare"}}}, "then": {"required": ["tool", "command", "expected_stdout"]}},
+        {"if": {"properties": {"type": {"const": "expected_diagnostic"}}}, "then": {"required": ["tool", "diagnostic"]}},
+        {"if": {"properties": {"type": {"const": "rubric_terms"}}}, "then": {"required": ["path", "terms", "mode"]}},
+        {"if": {"properties": {"type": {"const": "custom_script"}}}, "then": {"required": ["tool", "command"]}}
+      ]
+    }
+  }
+}

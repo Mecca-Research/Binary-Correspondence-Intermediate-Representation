@@ -1,0 +1,71 @@
+{
+  "id": "002",
+  "title": "If/else with phi",
+  "prompt": "llvm-training/exercises/002-if-else-phi.prompt.md",
+  "solution": "llvm-training/exercises/002-if-else-phi.solution.ll",
+  "answer_kind": "llvm_ir",
+  "required_tools": [
+    "llvm-as",
+    "opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0"
+  },
+  "tool_absence_policy": "hard_failure",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/002-if-else-phi.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/002-if-else-phi.solution.ll",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/002-if-else-phi.solution.ll",
+      "points": 10
+    },
+    {
+      "id": "llvm.assemble",
+      "type": "llvm_assemble",
+      "path": "llvm-training/exercises/002-if-else-phi.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "llvm.verify",
+      "type": "llvm_verify",
+      "path": "llvm-training/exercises/002-if-else-phi.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "structure.symbol",
+      "type": "contains_symbol",
+      "path": "llvm-training/exercises/002-if-else-phi.solution.ll",
+      "symbol": "@select_max",
+      "points": 15
+    },
+    {
+      "id": "structure.instruction",
+      "type": "contains_instruction",
+      "path": "llvm-training/exercises/002-if-else-phi.solution.ll",
+      "instruction": "phi",
+      "points": 15
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "standalone-llvm-ir",
+    "llvm-training"
+  ],
+  "difficulty": "beginner",
+  "license": "Apache-2.0",
+  "determinism": "deterministic",
+  "timeout_seconds": 10
+}
