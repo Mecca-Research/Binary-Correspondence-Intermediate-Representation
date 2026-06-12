@@ -41,6 +41,9 @@ jobs:
       - name: LLVM training declarative exercise manifests
         run: python3 llvm-training/tools/verify-exercise-manifests.py
 
+      - name: LLVM training controlled variant determinism
+        run: python3 -m unittest llvm-training/autograder/tests/test_generate_exercise_variants.py
+
       - name: LLVM training adversarial fixtures
         run: llvm-training/tools/run-if-tools.sh "LLVM adversarial verifier" llvm-as opt -- bash llvm-training/tools/verify-adversarial-fixtures.sh
 

@@ -6,6 +6,13 @@ not a scaled fine-tuning corpus, a data-generation pipeline, or a replacement
 for the teaching material. The tracked prompts, reference artifacts, and
 autograder manifests remain the source of truth.
 
+## Controlled variants
+
+[`VARIANT_POLICY.md`](VARIANT_POLICY.md) defines the reviewed, fixed-seed
+variant-generation contract, rejection gates, semantic-family leakage rules, and
+small initial budget. Generated variant JSON Lines files are review artifacts and
+are not part of the curated export unless maintainers explicitly promote them.
+
 ## Tracked contracts
 
 - [`schema-v1.json`](schema-v1.json) is the JSON Schema for one JSON Lines
