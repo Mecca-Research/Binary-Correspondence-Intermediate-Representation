@@ -106,3 +106,11 @@ opt -S \
 In a real BCIR plugin pipeline, insert verifier passes around destructive stages,
 for example `bcir-verify,sccp,loop-rotate,bcir-verify`, and register those names
 with a pipeline parsing callback.
+
+## Adversarial pass-pipeline checks
+
+The [adversarial exercise track](../exercises/adversarial/) provides seeds and
+prompt templates for isolating the first pass that loses metadata, operand
+bundles, debug provenance, address-space facts, or BCIR 1:1 correspondence.
+Record the exact pipeline and test prefixes during reduction rather than keeping
+only the final failing module.

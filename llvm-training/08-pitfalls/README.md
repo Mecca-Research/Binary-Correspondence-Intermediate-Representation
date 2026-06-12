@@ -98,3 +98,11 @@ If you write an IR generator (compiler, JIT, DSL frontend):
 
 Most of the pitfalls below would have been caught the first time the
 generator was wired into CI.
+
+## Adversarial review and fuzzing track
+
+The [adversarial exercise track](../exercises/adversarial/) turns these pitfalls
+into classified seeds. It explicitly separates verifier-valid semantic hazards,
+expected-invalid inputs, target-specific cases, and metadata-preservation tests.
+Use it when a bug can survive `llvm-as`, when reduction might delete the evidence,
+or when a target-only example must stay out of portable smoke tests.

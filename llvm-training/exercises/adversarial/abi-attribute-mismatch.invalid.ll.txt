@@ -1,0 +1,6 @@
+; adversarial-class: intentionally-invalid
+; Category: ABI attribute mismatch.
+; `zeroext` is an integer ABI attribute and cannot be attached to a float
+; parameter. llvm-as is expected to reject this verifier-invalid declaration.
+
+declare float @abi_attribute_mismatch(float zeroext)

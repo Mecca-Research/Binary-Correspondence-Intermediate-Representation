@@ -1,3 +1,4 @@
+; adversarial-class: assemble-valid-semantically-risky
 ; llvm-training-invalid-kind: semantic-only
 ; Adversarial BCIR fixture: opaque pointers remove the pointee type from `ptr`,
 ; but GEP still carries a source element type. This verifies while silently
