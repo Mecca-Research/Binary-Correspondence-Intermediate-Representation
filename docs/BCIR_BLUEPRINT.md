@@ -76,6 +76,10 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   (eBPF — an integer-only scalar kernel, since eBPF has no FP), **x86_64**, and a
   portable **C-source fallback** (compiles anywhere). SPIR-V is a registered
   descriptor that reports cleanly when no SPIR-V backend is built into `llc`.
+- **Scope, stated plainly:** per-target codegen is a *data-driven routing layer
+  over the LLVM toolchain* (`llc`/`clang`/`lli` as subprocesses). BCIR-native
+  instruction selection, register allocation, and linking are **future work**;
+  the `bcir.target.lower_contract` descriptors are the seam where they land.
 - The float kernel emitter gained an `elem`/`width_override` so FP-less targets
   (eBPF) get an integer scalar kernel. CLI: `python -m bcir.run vector_add --codegen all`.
 
@@ -108,6 +112,12 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
 - **Compiled `bcir-opt`** (`mlir/lib/BCIRDialect.cpp` + `mlir/tools/bcir-opt.cpp`):
   the dialect builds and the *pretty* ODS corpus parses/verifies/FileCheck-round-trips
   through it on LLVM 18 (CI `mlir-rail-validate`).
+- **Verifier laws R1–R12 complete on both rails** (Phase 10): the oracle runs the
+  full chain (`verify` R1–R7, `verify_plan` R8–R9, `verify_pack` R10–R11,
+  `verify_lowering` R12 — the lowered kernel is checked against the selected
+  lane geometry, bounds guard, hazard fence, precision, and a no-invented-
+  instructions whitelist); the MLIR `-bcir-verify` pass enforces all twelve
+  structurally, negative-tested per law (`mlir/test/passes/verify_laws*.mlir`).
 - **Real ML calibrator** — `kbcir.calibrate.LinearCalibrator`, an online linear-model
   SGD that learns to predict thermal pressure from telemetry features (behind the
   same interface as `EwmaCalibrator`).
@@ -115,9 +125,12 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   `connect()` lazy kafka-python backend).
 
 ### Still forward
-Per-target `bcir.target.lower_contract` codegen (ARM/RISC-V via clang
-cross-targets; GPU via a PTX/`gpu`-dialect path) using the compiled dialect; a
-trained ML model behind `LinearCalibrator`; a live Kafka broker deployment.
+C++ ports of the five declared GEM passes (`bcir-classify-lanes`,
+`bcir-select-realization`, `bcir-batch`, `bcir-schedule`, `bcir-lower-to-llvm`)
+mirroring the oracle; BCIR-native instruction selection + register allocation +
+linking behind the `bcir.target.lower_contract` seam (GPU via a
+PTX/`gpu`-dialect path); a trained ML model behind `LinearCalibrator`; a live
+Kafka broker deployment.
 
 ## Non-regression rules
 

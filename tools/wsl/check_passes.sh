@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate the Phase-6 bcir-opt passes: -bcir-verify (R1/R2/R4/R6),
+# Validate the bcir-opt passes: -bcir-verify (laws R1-R12),
 # -bcir-promote-lanes (GGG->UX opt-law), -convert-bcir-to-llvm (LLVM lowering).
 # Run tools/wsl/build_mlir.sh first (or set BCIR_OPT).
 set -uo pipefail
@@ -16,7 +16,9 @@ fail=0
 
 echo "[passes] -bcir-verify negative cases (-verify-diagnostics)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_laws.mlir" \
-  && echo "  PASS verify_laws (R1/R2/R4/R6)" || { echo "  FAIL verify_laws"; fail=1; }
+  && echo "  PASS verify_laws (R1-R7)" || { echo "  FAIL verify_laws"; fail=1; }
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_laws_deep.mlir" \
+  && echo "  PASS verify_laws_deep (R8-R12)" || { echo "  FAIL verify_laws_deep"; fail=1; }
 
 echo "[passes] -bcir-verify on the pretty corpus (must be clean)"
 for f in "${ROOT}"/mlir/examples/*.mlir; do

@@ -39,7 +39,8 @@ accuracy, contention, verification`.
 | min-plus select | `kbcir.realize.optimize` + `semiring` | `bcir.kbcir.select` (`#bcir.semiring<min_plus>`) |
 | StreamPack | `gem.streampack.StreamPack` | `bcir.gem.stream_pack` |
 | lane segment | `gem.streampack.LaneSegment` | `bcir.gem.lane_segment` |
-| verifier R1–R12 | `verify.verify` | `bcir.verify.*` |
+| verifier R1–R12 | `verify.{verify,verify_plan,verify_pack,verify_lowering}` | `bcir.verify.*` ops + the `-bcir-verify` pass (R1–R12) |
+| memory tier id | `kbcir.cost.MemTier` | `BCIR_MemTier` (`BCIRAttrs.td`) |
 | lowering (AOT) | `lower.llvm` (clang) | `bcir.target.lower_contract` |
 | concurrency/affinity (CT2) | `gem.schedule_concurrent` | `bcir.gem.lane_segment` `affinity`/`unroll` |
 | ROP/MAP front-ends (CT3) | `frontends.{rop,map}` | `bcir.parse.*` / `bcir.binary.*` |
@@ -67,7 +68,14 @@ lane width: x86_avx512→16, x86_avx2→8, arm64_neon→4, nvidia_ptx→32.
 
 ## How parity is enforced today
 
-`bcir/tests/` pins the exact scores and per-target widths (17 checks, runnable
-with `python -m bcir.tests.run_all`, no third-party deps). When the MLIR
-toolchain is available, the `mlir/examples` + `mlir/test/irdl` corpus round-trips
-through `bcir-opt` / stock `mlir-opt` and must carry the same constants.
+`bcir/tests/` pins the exact scores and per-target widths (runnable with
+`python -m bcir.tests.run_all`, no third-party deps). When the MLIR toolchain is
+available, the `mlir/examples` + `mlir/test/irdl` corpus round-trips through
+`bcir-opt` / stock `mlir-opt` and must carry the same constants.
+
+The verifier laws are negative-tested **per law on both rails**: the oracle in
+`bcir/tests/test_verify.py` (R1–R12 across module/plan/pack/lowering artifacts)
+and the dialect in `mlir/test/passes/verify_laws.mlir` (R1–R7) +
+`verify_laws_deep.mlir` (R8–R12) via `-bcir-verify -verify-diagnostics`. The
+pretty ODS corpus must stay clean under the full `-bcir-verify`
+(`tools/wsl/check_passes.sh`, CI `mlir-rail-validate`).

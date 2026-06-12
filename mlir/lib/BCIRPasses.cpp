@@ -22,13 +22,15 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
+
 using namespace mlir;
 
 namespace bcir {
 namespace {
 
 //===----------------------------------------------------------------------===//
-// -bcir-verify : semantic laws R1 / R2 / R4 / R6 (mirrors bcir/verify).
+// -bcir-verify : semantic laws R1-R12 (mirrors bcir/verify, docs/PARITY.md).
 //===----------------------------------------------------------------------===//
 
 // Which lanes are legal for each access-pattern shape (LangRef R6).
@@ -50,13 +52,46 @@ static bool laneLegalForStride(Lane lane, StrideClass sc) {
   return false;
 }
 
+// A hazard contract that orders accesses (R5: atomic semantics demand one).
+static bool hazardOrdered(HazardMode h) {
+  return h == HazardMode::Atomic || h == HazardMode::Barriered;
+}
+
+// A claim on the decoupled GGG/random tail (CT2): same-phase conflicts through
+// it lose their implicit wave serialization (R5).
+static bool claimSparse(ClaimOp c) {
+  return c.getLane() == Lane::GGG || c.getStrideClass() == StrideClass::Random;
+}
+
+static llvm::DenseSet<StringRef> symbolSet(ArrayAttr refs) {
+  llvm::DenseSet<StringRef> out;
+  for (Attribute a : refs)
+    if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
+      out.insert(ref.getValue());
+  return out;
+}
+
+// A read/write hazard between two claims (RAW / WAR / WAW).
+static bool claimsConflict(ClaimOp a, ClaimOp b) {
+  auto aw = symbolSet(a.getWrites()), ar = symbolSet(a.getReads());
+  auto bw = symbolSet(b.getWrites()), br = symbolSet(b.getReads());
+  auto intersects = [](const llvm::DenseSet<StringRef> &x,
+                       const llvm::DenseSet<StringRef> &y) {
+    for (StringRef s : x)
+      if (y.count(s))
+        return true;
+    return false;
+  };
+  return intersects(aw, br) || intersects(aw, bw) || intersects(bw, ar);
+}
+
 struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyPass)
 
   StringRef getArgument() const final { return "bcir-verify"; }
   StringRef getDescription() const final {
-    return "Verify BCIR semantic laws R1 (RID uniqueness), R2 (resource "
-           "resolution), R4 (phase DAG acyclicity), R6 (lane/stride legality).";
+    return "Verify the BCIR semantic laws R1-R12: registry, domain, phase DAG, "
+           "hazard, lane, bounds, cost, plan, provenance, generation, lowering.";
   }
 
   void runOnOperation() override {
@@ -65,9 +100,9 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
 
     // R1: registry uniqueness -- every RID unique.
     llvm::DenseMap<uint32_t, ResourceOp> rids;
-    llvm::DenseSet<StringRef> resourceNames;
+    llvm::DenseMap<StringRef, ResourceOp> resourceByName;
     root->walk([&](ResourceOp r) {
-      resourceNames.insert(r.getSymName());
+      resourceByName[r.getSymName()] = r;
       uint32_t rid = r.getRid();
       if (rids.count(rid)) {
         r.emitError("R1: duplicate RID ") << rid;
@@ -81,7 +116,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     auto checkRefs = [&](ClaimOp c, ArrayAttr refs, StringRef which) {
       for (Attribute a : refs) {
         auto ref = dyn_cast<FlatSymbolRefAttr>(a);
-        if (ref && !resourceNames.count(ref.getValue())) {
+        if (ref && !resourceByName.count(ref.getValue())) {
           c.emitError("R2: claim ")
               << c.getSymName() << " " << which << " undeclared resource @"
               << ref.getValue();
@@ -92,6 +127,75 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     root->walk([&](ClaimOp c) {
       checkRefs(c, c.getReads(), "reads");
       checkRefs(c, c.getWrites(), "writes");
+    });
+
+    // R3: domain legality -- claim domain contracts correspond to registry
+    // placement; MMIO writes need an ordered hazard; HAM is illegal on MMIO.
+    root->walk([&](ResourceOp r) {
+      if (r.getAccess() && *r.getAccess() == Access::HAM &&
+          r.getDomainKind() == Domain::MMIO) {
+        r.emitError("R3: resource ")
+            << r.getSymName() << " HAM access is illegal in the MMIO domain";
+        ok = false;
+      }
+    });
+    root->walk([&](ClaimOp c) {
+      bool anyResolved = false, domainBacked = false;
+      auto touch = [&](ArrayAttr refs) {
+        for (Attribute a : refs) {
+          auto ref = dyn_cast<FlatSymbolRefAttr>(a);
+          if (!ref)
+            continue;
+          auto it = resourceByName.find(ref.getValue());
+          if (it == resourceByName.end())
+            continue;
+          anyResolved = true;
+          if (it->second.getDomainKind() == c.getDomain())
+            domainBacked = true;
+        }
+      };
+      touch(c.getReads());
+      touch(c.getWrites());
+      if (anyResolved && !domainBacked) {
+        c.emitError("R3: claim ")
+            << c.getSymName()
+            << " declares a domain not backed by any touched resource";
+        ok = false;
+      }
+      for (Attribute a : c.getWrites()) {
+        auto ref = dyn_cast<FlatSymbolRefAttr>(a);
+        if (!ref)
+          continue;
+        auto it = resourceByName.find(ref.getValue());
+        if (it != resourceByName.end() &&
+            it->second.getDomainKind() == Domain::MMIO &&
+            !hazardOrdered(c.getHazard())) {
+          c.emitError("R3: claim ")
+              << c.getSymName() << " MMIO write to @" << ref.getValue()
+              << " requires an atomic/barriered hazard";
+          ok = false;
+        }
+      }
+    });
+    root->walk([&](LoadOp l) {
+      auto it = resourceByName.find(l.getSrc());
+      if (it != resourceByName.end() &&
+          it->second.getDomainKind() != l.getDomain()) {
+        l.emitError(
+            "R3: load domain contract does not match the resource domain of @")
+            << l.getSrc();
+        ok = false;
+      }
+    });
+    root->walk([&](StoreOp s) {
+      auto it = resourceByName.find(s.getDst());
+      if (it != resourceByName.end() &&
+          it->second.getDomainKind() != s.getDomain()) {
+        s.emitError(
+            "R3: store domain contract does not match the resource domain of @")
+            << s.getDst();
+        ok = false;
+      }
     });
 
     // R4: phase DAG legality -- dependencies form an acyclic graph.
@@ -127,11 +231,237 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     }
 
+    // R5: hazard legality -- atomic semantics carry an ordered hazard contract,
+    // and same-phase conflicts through the decoupled GGG tail are ordered.
+    llvm::DenseMap<StringRef, SmallVector<ClaimOp, 4>> claimsByPhase;
+    llvm::DenseMap<StringRef, ClaimOp> claimByName;
+    root->walk([&](ClaimOp c) {
+      claimByName[c.getSymName()] = c;
+      claimsByPhase[c.getPhase()].push_back(c);
+      StringRef op = c.getOp();
+      bool atomicSemantics = c.getLane() == Lane::A ||
+                             op.starts_with("atomic") || op.contains("cmpxchg");
+      if (atomicSemantics && !hazardOrdered(c.getHazard())) {
+        c.emitError("R5: claim ")
+            << c.getSymName()
+            << " atomic semantics require an atomic/barriered hazard";
+        ok = false;
+      }
+    });
+    for (auto &entry : claimsByPhase) {
+      auto &group = entry.second;
+      for (size_t i = 0; i < group.size(); ++i) {
+        for (size_t j = i + 1; j < group.size(); ++j) {
+          ClaimOp a = group[i], b = group[j];
+          if (!(claimSparse(a) || claimSparse(b)) || !claimsConflict(a, b))
+            continue;
+          for (ClaimOp c : {a, b}) {
+            if (!hazardOrdered(c.getHazard())) {
+              c.emitError("R5: claim ")
+                  << c.getSymName()
+                  << " conflicts across the decoupled GGG tail in phase @"
+                  << entry.first << " without an atomic/barriered hazard";
+              ok = false;
+            }
+          }
+        }
+      }
+    }
+
     // R6: lane legality -- lane matches the declared access pattern.
     root->walk([&](ClaimOp c) {
       if (!laneLegalForStride(c.getLane(), c.getStrideClass())) {
         c.emitError("R6: claim ")
             << c.getSymName() << " lane illegal for its stride class";
+        ok = false;
+      }
+    });
+
+    // R7: bounds legality -- strict bounds discharge statically for affine
+    // patterns; data-dependent patterns need a runtime verify contract.
+    auto resourceCount = [](ResourceOp r) -> int64_t {
+      ArrayRef<int64_t> shape = r.getShape();
+      if (shape.empty())
+        return 0; // unknown extent: not statically checkable
+      int64_t n = 1;
+      for (int64_t d : shape)
+        n *= d;
+      return n;
+    };
+    root->walk([&](ClaimOp c) {
+      if (c.getBounds() != Bounds::Strict)
+        return;
+      StrideClass sc = c.getStrideClass();
+      bool dataDependent =
+          sc == StrideClass::Cacheline || sc == StrideClass::Random;
+      if (dataDependent) {
+        if (c.getVerify() == Verify::None) {
+          c.emitError("R7: claim ")
+              << c.getSymName()
+              << " data-dependent access with strict bounds requires a "
+                 "runtime verify contract";
+          ok = false;
+        }
+        return;
+      }
+      // Affine: the stride applies to the streamed read source; writes land
+      // unit-stride (a conservative under-approximation, never a false
+      // positive).
+      int64_t count = static_cast<int64_t>(c.getCount());
+      int64_t offset = static_cast<int64_t>(c.getOffset());
+      int64_t k = std::max<int64_t>(1, c.getStrideK());
+      int64_t readExtent = count > 0 ? offset + (count - 1) * k + 1 : 0;
+      int64_t writeExtent = offset + count;
+      auto checkExtent = [&](ArrayAttr refs, int64_t extent, StringRef kind) {
+        for (Attribute a : refs) {
+          auto ref = dyn_cast<FlatSymbolRefAttr>(a);
+          if (!ref)
+            continue;
+          auto it = resourceByName.find(ref.getValue());
+          if (it == resourceByName.end())
+            continue;
+          int64_t n = resourceCount(it->second);
+          if (n > 0 && extent > n) {
+            c.emitError("R7: claim ")
+                << c.getSymName() << " " << kind << " of @" << ref.getValue()
+                << " overruns the resource (extent " << extent << " > " << n
+                << ")";
+            ok = false;
+          }
+        }
+      };
+      checkExtent(c.getReads(), readExtent, "read");
+      checkExtent(c.getWrites(), writeExtent, "write");
+    });
+
+    // R8/R9: K_BCIR plan laws -- every candidate carries a declared cost path
+    // (R8); the selection is drawn from its candidate set and realizes the
+    // claim it plans (R9).
+    llvm::DenseMap<StringRef, KBCIRPathOp> pathByName;
+    llvm::DenseMap<StringRef, KBCIRPlanOp> planByName;
+    root->walk([&](KBCIRPathOp p) { pathByName[p.getSymName()] = p; });
+    root->walk([&](KBCIRPlanOp p) { planByName[p.getSymName()] = p; });
+    root->walk([&](KBCIRSelectOp s) {
+      if (s.getFrom().empty()) {
+        s.emitError("R8: empty candidate set for claim @") << s.getClaim();
+        ok = false;
+      }
+      bool selectedInFrom = false;
+      for (Attribute a : s.getFrom()) {
+        auto ref = dyn_cast<FlatSymbolRefAttr>(a);
+        if (!ref)
+          continue;
+        if (ref.getValue() == s.getSelected())
+          selectedInFrom = true;
+        if (!pathByName.count(ref.getValue())) {
+          s.emitError("R8: candidate path @")
+              << ref.getValue() << " does not resolve to a declared cost path";
+          ok = false;
+        }
+      }
+      if (!selectedInFrom) {
+        s.emitError("R9: selected path @")
+            << s.getSelected() << " is not among the candidate set";
+        ok = false;
+      }
+      if (auto p = pathByName.lookup(s.getSelected())) {
+        if (p.getClaim() != s.getClaim()) {
+          s.emitError("R9: selected path @")
+              << s.getSelected() << " realizes claim @" << p.getClaim()
+              << ", not @" << s.getClaim();
+          ok = false;
+        }
+      }
+      if (static_cast<int64_t>(s.getScore()) < 0) {
+        s.emitError("R9: negative plan score");
+        ok = false;
+      }
+    });
+
+    // R10: stream provenance -- segments map back to live claims/phases/
+    // prefetches/resources; packs hydrate from a declared plan.
+    llvm::DenseMap<StringRef, GEMPrefetchOp> prefetchByName;
+    root->walk([&](GEMPrefetchOp p) { prefetchByName[p.getSymName()] = p; });
+    root->walk([&](GEMLaneSegmentOp seg) {
+      if (!claimByName.count(seg.getClaim())) {
+        seg.emitError("R10: segment ")
+            << seg.getSymName() << " references unknown claim @"
+            << seg.getClaim();
+        ok = false;
+      }
+      if (!phaseOps.count(seg.getPhase())) {
+        seg.emitError("R10: segment ")
+            << seg.getSymName() << " references unknown phase @"
+            << seg.getPhase();
+        ok = false;
+      }
+      if (auto pf = seg.getPrefetchAttr()) {
+        if (!prefetchByName.count(pf.getValue())) {
+          seg.emitError("R10: segment ")
+              << seg.getSymName() << " references undeclared prefetch @"
+              << pf.getValue();
+          ok = false;
+        }
+      }
+      for (ArrayAttr refs : {seg.getReads(), seg.getWrites()}) {
+        for (Attribute a : refs) {
+          auto ref = dyn_cast<FlatSymbolRefAttr>(a);
+          if (ref && !resourceByName.count(ref.getValue())) {
+            seg.emitError("R10: segment ")
+                << seg.getSymName() << " references undeclared resource @"
+                << ref.getValue();
+            ok = false;
+          }
+        }
+      }
+    });
+
+    // R11: generation validity -- pack tags match the live registry maxima; a
+    // mismatch is a stale pack that must rehydrate (patch/repack/replan).
+    uint64_t regMapGen = 0, regDataGen = 0;
+    bool anyResources = !resourceByName.empty();
+    for (auto &it : resourceByName) {
+      regMapGen = std::max(regMapGen, it.second.getMapGen());
+      regDataGen = std::max(regDataGen, it.second.getDataGen());
+    }
+    root->walk([&](GEMStreamPackOp sp) {
+      if (!planByName.count(sp.getSourcePlan())) {
+        sp.emitError("R10: stream pack source plan @")
+            << sp.getSourcePlan() << " does not resolve";
+        ok = false;
+      }
+      if (sp.getTopoGen() < 1) {
+        sp.emitError("R11: invalid topo_gen (must be >= 1)");
+        ok = false;
+      }
+      if (!anyResources)
+        return;
+      if (sp.getMapGen() != regMapGen) {
+        sp.emitError("R11: stale StreamPack: map_gen ")
+            << sp.getMapGen() << " != registry " << regMapGen
+            << " (rehydrate: repack)";
+        ok = false;
+      }
+      if (sp.getDataGen() != regDataGen) {
+        sp.emitError("R11: stale StreamPack: data_gen ")
+            << sp.getDataGen() << " != registry " << regDataGen
+            << " (rehydrate: replan)";
+        ok = false;
+      }
+    });
+
+    // R12: lowering legality -- a lowering contract preserves the BCIR
+    // semantic (lane is the contract's own field; bounds/hazard/precision must
+    // be named) or carries an explicit discharge attribute.
+    root->walk([&](TargetLowerContractOp lc) {
+      StringRef p = lc.getPreserves();
+      bool preserved = p.contains("bounds") && p.contains("hazard") &&
+                       p.contains("precision");
+      if (!preserved && !lc->hasAttr("discharge")) {
+        lc.emitError("R12: lowering contract ")
+            << lc.getSymName()
+            << " must preserve bounds/hazard/precision or carry an explicit "
+               "discharge";
         ok = false;
       }
     });
