@@ -15,7 +15,7 @@ bcir.module @full_vec_add_ct1 attributes {
   bcir.target.capability @cpu {
     triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"],
     lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32,
-    gather_penalty = 8 : i32, affinity_domains = 16 : i32
+    gather_penalty = 8 : i32, affinity_domains = 16 : i32, cal_gen = 1 : i64
   }
   bcir.target.capability @gpu {
     triple = "nvptx64-warp", isa_features = ["ptx", "warp"],
@@ -101,6 +101,9 @@ bcir.module @full_vec_add_ct1 attributes {
   bcir.kbcir.replay_certificate @perf_cert {
     candidate = @perf, incumbent = @perf, episodes = 3 : i64, regressions = 0 : i64, admitted = true
   }
+  // L3: the regret ledger (the boundary dashboard) -- the seeded portfolio is
+  // hindsight-optimal on the standard episodes, so the books read zero.
+  bcir.kbcir.regret_ledger @regret_perf { rule = @perf, episodes = 3 : i64, total_regret = 0 : i64, worst_regret = 0 : i64, gen = 1 : i64 }
 
   // ---- BCIR-4: GEM StreamPack (hydrated, prefetch + provenance) ----
   %sp = bcir.gem.stream_pack @sp0 attributes {
@@ -120,6 +123,7 @@ bcir.module @full_vec_add_ct1 attributes {
   bcir.verify.plan_selection @vr_plan { plan = @plan0, claim = @add, candidates = [@add_cpu_u8, @add_cpu_u16], selected = @add_cpu_u16, semiring = #bcir.semiring<min_plus>, score = 7808 : i64 }
   bcir.verify.stream_provenance @vr_stream { stream_pack = @sp0, source_plan = @plan0, claims = [@add], segments = [@seg0], trace_notes = [@add_trace] }
   bcir.verify.generation_tags @vr_gen { stream_pack = @sp0, topo_gen = 1 : i64, map_gen = 1 : i64, data_gen = 4 : i64, required_map_gen = 1 : i64, required_data_gen = 4 : i64 }
+  bcir.verify.policy_provenance @vr_policy { portfolio = @gains, certificates = [@perf_cert], calibrations = [@cal_cpu] }
 }
 
 // CHECK-LABEL: bcir.module @full_vec_add_ct1
@@ -133,5 +137,7 @@ bcir.module @full_vec_add_ct1 attributes {
 // CHECK: bcir.kbcir.calibration @cal_cpu
 // CHECK: bcir.kbcir.portfolio @gains
 // CHECK: bcir.kbcir.replay_certificate @perf_cert
+// CHECK: bcir.kbcir.regret_ledger @regret_perf
 // CHECK: bcir.gem.stream_pack @sp0
 // CHECK: bcir.verify.plan_selection @vr_plan
+// CHECK: bcir.verify.policy_provenance @vr_policy

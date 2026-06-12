@@ -98,4 +98,15 @@ def BCIR_VerifyGenerationTagsOp : BCIR_Op<"verify.generation_tags", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_VerifyPolicyProvenanceOp : BCIR_Op<"verify.policy_provenance", [Symbol]> {
+  let summary = "R13: decision-rule provenance certificate (LangRef Sec. 13)";
+  // Every rule in force is generation-tagged and witnessed: promoted portfolio
+  // entries by admitting replay certificates, calibrated capabilities by their
+  // frozen tables. Rule swaps are never silent.
+  let arguments = (ins SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$portfolio,
+                       FlatSymbolRefArrayAttr:$certificates,
+                       FlatSymbolRefArrayAttr:$calibrations);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
 #endif // BCIR_VERIFY_OPS

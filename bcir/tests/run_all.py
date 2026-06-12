@@ -20,6 +20,7 @@ _MODULES = [
     "bcir.tests.test_schedule",
     "bcir.tests.test_microbench",
     "bcir.tests.test_portfolio",
+    "bcir.tests.test_regret",
     "bcir.tests.test_targets",
     "bcir.tests.test_verify",
     "bcir.tests.test_etl",

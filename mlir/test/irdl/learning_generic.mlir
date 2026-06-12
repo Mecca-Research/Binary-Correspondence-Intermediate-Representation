@@ -20,9 +20,16 @@
 "bcir.kbcir.replay_certificate"() {sym_name = "cert", candidate = "latency",
   incumbent = "latency", episodes = 3 : i64, regressions = 0 : i64,
   admitted = true} : () -> ()
+"bcir.kbcir.regret_ledger"() {sym_name = "regret_latency", rule = "latency",
+  episodes = 3 : i64, total_regret = 0 : i64, worst_regret = 0 : i64,
+  gen = 1 : i64} : () -> ()
+"bcir.verify.policy_provenance"() {sym_name = "vr_policy", portfolio = "gains",
+  certificates = ["cert"], calibrations = ["cal_cpu"]} : () -> ()
 
 // CHECK: "bcir.kbcir.calibration"
 // CHECK: random_q8 = 8192
 // CHECK: "bcir.kbcir.portfolio"
 // CHECK: "bcir.kbcir.replay_certificate"
 // CHECK: admitted = true
+// CHECK: "bcir.kbcir.regret_ledger"
+// CHECK: "bcir.verify.policy_provenance"
