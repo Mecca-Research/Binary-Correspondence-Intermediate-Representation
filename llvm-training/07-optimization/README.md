@@ -6,6 +6,7 @@
 - Transforms are pipeline-sensitive: a pass that works alone may depend on earlier canonicalization or invalidate later analyses.
 - Use `opt` debugging flags and before/after IR snapshots to distinguish semantic changes from version-dependent formatting.
 - PGO, LTO, and BOLT add profile- and link-time feedback layers; keep their assumptions separate from plain IR legality.
+- Benchmark pipeline changes with verified IR, controlled profiles and targets, separate compile/runtime measurements, and BCIR-specific telemetry.
 
 ## Chapter dispatcher
 
@@ -18,7 +19,9 @@
 | Debugging pass pipelines and reduced examples | [`05-debugging-passes.md`](05-debugging-passes.md) |
 | PGO, LTO, and BOLT overview | [`06-pgo-lto-bolt.md`](06-pgo-lto-bolt.md) |
 | BOLT layout walkthrough and evidence review | [`07-bolt-layout-walkthrough.md`](07-bolt-layout-walkthrough.md) |
+| Deep BCIR optimizer legality, metadata, and pipeline staging | [`08-deep-optimization-lessons.md`](08-deep-optimization-lessons.md) |
+| Performance analysis, benchmarking controls, telemetry, and measurement workflow | [`09-performance-analysis-benchmarking.md`](09-performance-analysis-benchmarking.md) |
 
 ## Examples
 
-Open the `examples/` directory in this chapter for standalone artifacts and small fixtures that accompany the lessons. Files ending in `.ll` are intended to assemble unless the lesson or filename says they are intentionally invalid.
+Open the `examples/` directory in this chapter for standalone artifacts and small fixtures that accompany the lessons. The performance-analysis lesson uses [`examples/bcir-benchmark-kernel.ll`](examples/bcir-benchmark-kernel.ll) with the reproducibility worksheet in [`examples/bcir-benchmark-pipeline-notes.md`](examples/bcir-benchmark-pipeline-notes.md). Files ending in `.ll` are intended to assemble unless the lesson or filename says they are intentionally invalid.
