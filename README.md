@@ -5,7 +5,7 @@ lane-typed, **cost-governed** correspondence IR that selects legal physical
 realization paths via the tropical (min,+) optimizer
 
 ```
-K_BCIR(G | H, Θ) = min_π  Σ_i  T_i ⊗ f_i(π)  =  min_π  C_H(π, Θ)
+K_BCIR(G | H, Θ) = min_{π ∈ Legal(G,H)}  M(π, Θ)
 ```
 
 > **Two separate things live in this repo.** `bcir/` + `mlir/` **are** the BCIR
