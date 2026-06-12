@@ -1,0 +1,50 @@
+{
+  "id": "036",
+  "title": "Identify an ORC JIT layer failure",
+  "prompt": "llvm-training/exercises/036-identify-orc-layer-failure.prompt.md",
+  "solution": "llvm-training/exercises/036-identify-orc-layer-failure.solution.md",
+  "answer_kind": "markdown_review",
+  "required_tools": [],
+  "minimum_tool_versions": {},
+  "tool_absence_policy": "reduced_confidence_score",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/036-identify-orc-layer-failure.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/036-identify-orc-layer-failure.solution.md",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/036-identify-orc-layer-failure.solution.md",
+      "points": 10
+    },
+    {
+      "id": "review.rubric",
+      "type": "rubric_terms",
+      "path": "llvm-training/exercises/036-identify-orc-layer-failure.solution.md",
+      "terms": [
+        "symbol",
+        "layer"
+      ],
+      "mode": "any",
+      "points": 80
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "backend-jit-review",
+    "llvm-training"
+  ],
+  "difficulty": "advanced",
+  "license": "Apache-2.0",
+  "determinism": "review_rubric",
+  "timeout_seconds": 10
+}

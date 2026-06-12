@@ -1,0 +1,72 @@
+{
+  "id": "015",
+  "title": "Review an MLIR-to-LLVM lowering for BCIR patterns",
+  "prompt": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.prompt.md",
+  "solution": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.good.ll",
+  "answer_kind": "mlir_review",
+  "required_tools": [
+    "llvm-as",
+    "opt",
+    "mlir-opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0",
+    "mlir-opt": "15.0"
+  },
+  "tool_absence_policy": "unscored_skip",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.good.ll",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.good.ll",
+      "points": 10
+    },
+    {
+      "id": "candidate.parse",
+      "type": "mlir_parse",
+      "path": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.candidate.mlir",
+      "points": 20
+    },
+    {
+      "id": "lowering.assemble",
+      "type": "llvm_assemble",
+      "path": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.good.ll",
+      "points": 20
+    },
+    {
+      "id": "lowering.verify",
+      "type": "llvm_verify",
+      "path": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.good.ll",
+      "points": 20
+    },
+    {
+      "id": "lowering.metadata",
+      "type": "contains_metadata",
+      "path": "llvm-training/exercises/015-mlir-to-llvm-lowering-review.good.ll",
+      "metadata": "!bcir.ham.hint",
+      "points": 20
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "mlir-review",
+    "llvm-training"
+  ],
+  "difficulty": "intermediate",
+  "license": "Apache-2.0",
+  "determinism": "toolchain_dependent",
+  "timeout_seconds": 20
+}

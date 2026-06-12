@@ -1,0 +1,79 @@
+{
+  "id": "017",
+  "title": "Repair a duplicate symbol",
+  "prompt": "llvm-training/exercises/017-fix-duplicate-symbol.prompt.md",
+  "solution": "llvm-training/exercises/017-fix-duplicate-symbol.solution.ll",
+  "answer_kind": "diagnostic",
+  "required_tools": [
+    "llvm-as",
+    "opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0"
+  },
+  "tool_absence_policy": "hard_failure",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/017-fix-duplicate-symbol.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/017-fix-duplicate-symbol.solution.ll",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/017-fix-duplicate-symbol.solution.ll",
+      "points": 10
+    },
+    {
+      "id": "llvm.assemble",
+      "type": "llvm_assemble",
+      "path": "llvm-training/exercises/017-fix-duplicate-symbol.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "llvm.verify",
+      "type": "llvm_verify",
+      "path": "llvm-training/exercises/017-fix-duplicate-symbol.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "structure.symbol",
+      "type": "contains_symbol",
+      "path": "llvm-training/exercises/017-fix-duplicate-symbol.solution.ll",
+      "symbol": "@adjust_up",
+      "points": 15
+    },
+    {
+      "id": "structure.instruction",
+      "type": "contains_instruction",
+      "path": "llvm-training/exercises/017-fix-duplicate-symbol.solution.ll",
+      "instruction": "add",
+      "points": 5
+    },
+    {
+      "id": "broken.expected-diagnostic",
+      "type": "expected_diagnostic",
+      "path": "llvm-training/exercises/017-fix-duplicate-symbol.invalid.ll.txt",
+      "tool": "llvm-as",
+      "diagnostic": "error",
+      "points": 10
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "repair",
+    "llvm-training"
+  ],
+  "difficulty": "intermediate",
+  "license": "Apache-2.0",
+  "determinism": "deterministic",
+  "timeout_seconds": 10
+}

@@ -1,0 +1,71 @@
+{
+  "id": "039",
+  "title": "Lower a graph description to LLVM metadata",
+  "prompt": "llvm-training/exercises/039-graph-description-to-llvm-metadata.prompt.md",
+  "solution": "llvm-training/exercises/039-graph-description-to-llvm-metadata.solution.ll",
+  "answer_kind": "llvm_ir",
+  "required_tools": [
+    "llvm-as",
+    "opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0"
+  },
+  "tool_absence_policy": "hard_failure",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/039-graph-description-to-llvm-metadata.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/039-graph-description-to-llvm-metadata.solution.ll",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/039-graph-description-to-llvm-metadata.solution.ll",
+      "points": 10
+    },
+    {
+      "id": "llvm.assemble",
+      "type": "llvm_assemble",
+      "path": "llvm-training/exercises/039-graph-description-to-llvm-metadata.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "llvm.verify",
+      "type": "llvm_verify",
+      "path": "llvm-training/exercises/039-graph-description-to-llvm-metadata.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "structure.symbol",
+      "type": "contains_symbol",
+      "path": "llvm-training/exercises/039-graph-description-to-llvm-metadata.solution.ll",
+      "symbol": "@apply_graph_edge",
+      "points": 15
+    },
+    {
+      "id": "structure.metadata",
+      "type": "contains_metadata",
+      "path": "llvm-training/exercises/039-graph-description-to-llvm-metadata.solution.ll",
+      "metadata": "!bcir.graph.edge.attr",
+      "points": 15
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "bcir-lowering",
+    "llvm-training"
+  ],
+  "difficulty": "advanced",
+  "license": "Apache-2.0",
+  "determinism": "deterministic",
+  "timeout_seconds": 10
+}

@@ -1,0 +1,68 @@
+{
+  "id": "022",
+  "title": "Predict Loop Vectorizer behavior",
+  "prompt": "llvm-training/exercises/022-predict-loop-vectorizer.prompt.md",
+  "solution": null,
+  "answer_kind": "optimizer_prediction",
+  "required_tools": [
+    "llvm-as",
+    "opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0"
+  },
+  "tool_absence_policy": "reduced_confidence_score",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/022-predict-loop-vectorizer.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/022-predict-loop-vectorizer.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/022-predict-loop-vectorizer.prompt.md",
+      "points": 10
+    },
+    {
+      "id": "input.assemble",
+      "type": "llvm_assemble",
+      "path": "llvm-training/exercises/022-predict-loop-vectorizer.input.ll",
+      "points": 25
+    },
+    {
+      "id": "input.verify",
+      "type": "llvm_verify",
+      "path": "llvm-training/exercises/022-predict-loop-vectorizer.input.ll",
+      "points": 20
+    },
+    {
+      "id": "prediction.rubric",
+      "type": "rubric_terms",
+      "path": "llvm-training/exercises/022-predict-loop-vectorizer.prompt.md",
+      "terms": [
+        "Expected observation",
+        "opt"
+      ],
+      "mode": "all",
+      "points": 35
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "optimizer-prediction",
+    "llvm-training"
+  ],
+  "difficulty": "intermediate",
+  "license": "Apache-2.0",
+  "determinism": "toolchain_dependent",
+  "timeout_seconds": 20
+}

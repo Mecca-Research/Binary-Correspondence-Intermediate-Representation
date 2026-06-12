@@ -42,6 +42,22 @@ repository-relative. The initial registry covers representative construction,
 indexing, review, MLIR-boundary, and metadata exercises; entries can be added
 without changing the core grader.
 
+The complete graded-set metadata lives in per-exercise manifests under
+[`manifests/`](manifests/) and is governed by
+[`schema/exercise.schema.json`](schema/exercise.schema.json). These manifests
+cover every numbered exercise and make points, tool requirements, minimum tool
+versions, tool-absence policy, determinism, and timeouts reviewable without
+replacing the human-readable prompts. Validate them with:
+
+```sh
+python3 llvm-training/tools/verify-exercise-manifests.py
+```
+
+`exercises.json` remains the executable grader's smaller compatibility registry
+until the grader consumes the new check vocabulary directly. A manifest is
+required for every numbered graded exercise even when that exercise is not yet
+registered with the executable grader.
+
 ## Usage
 
 From the repository root:

@@ -177,6 +177,19 @@ maintainer is intentionally refreshing outputs with:
 UPDATE_BCIR_MAPPING=1 ./llvm-training/tools/verify-bcir-mapping.sh
 ```
 
+## Exercise manifest verifier
+
+`verify-exercise-manifests.py` is a dependency-free validator for the
+per-exercise JSON files in `../autograder/manifests/`. It checks the checked-in
+JSON Schema contract, referenced repository paths, unique IDs, exact point
+totals, required-tool/minimum-version consistency, and one-to-one coverage of
+numbered graded prompts. It does not execute grading checks, so LLVM and MLIR
+tools are not required to run it.
+
+```bash
+python3 llvm-training/tools/verify-exercise-manifests.py
+```
+
 ## Adding a script
 
 When adding a new script:

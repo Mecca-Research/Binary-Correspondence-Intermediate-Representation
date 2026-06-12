@@ -11,7 +11,37 @@ backend/JIT diagnosis, and advanced BCIR verification/debugging. Follow the conv
 - the expected observation, such as successful assembly, a specific diagnostic,
   or a review checklist;
 - a standalone `*.solution.ll` file for executable LLVM IR answers, or a
-  `*.solution.md` file for markdown-only review answers.
+  `*.solution.md` file for markdown-only review answers; and
+- a declarative grading manifest under [`../autograder/manifests/`](../autograder/manifests/)
+  that validates against
+  [`exercise.schema.json`](../autograder/schema/exercise.schema.json).
+
+## Graded-set manifest policy
+
+A new numbered exercise **must have a manifest before it enters the graded
+set**. The prose prompt remains the learner-facing teaching explanation; the
+manifest references that prompt and encodes only the machine-readable grading
+contract, including answer kind, tools and minimum versions, tool-absence
+behavior, checks and their explicit points, determinism, timeout, tags, license,
+and difficulty. Do not move teaching prose into JSON.
+
+Every check has an explicit `points` value, and the check-point sum must equal
+the manifest's `score`. Tool-backed checks must declare their tools in both
+`required_tools` and `minimum_tool_versions`. Choose the `tool_absence_policy`
+explicitly: `hard_failure`, `unscored_skip`, or `reduced_confidence_score`.
+
+Validate the complete manifest set from the repository root:
+
+```sh
+python3 llvm-training/tools/verify-exercise-manifests.py
+```
+
+The validator checks the schema contract, all referenced paths, unique exercise
+and check IDs, exact point totals, tool declarations, and one-to-one coverage of
+numbered `*.prompt.md` files. The checked-in manifests are organized
+incrementally by the family tags documented below: standalone LLVM IR, repair,
+optimizer prediction, BCIR lowering, MLIR review, backend/JIT review, and
+adversarial analysis.
 
 Repair exercises keep broken starting points as `*.invalid.ll.txt` so they remain
 visibly intentional failures and do not enter any known-good `.ll` verification

@@ -1,0 +1,78 @@
+{
+  "id": "026",
+  "title": "Repair poison-prone control flow with freeze",
+  "prompt": "llvm-training/exercises/026-poison-freeze-repair.prompt.md",
+  "solution": "llvm-training/exercises/026-poison-freeze-repair.solution.ll",
+  "answer_kind": "diagnostic",
+  "required_tools": [
+    "llvm-as",
+    "opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0"
+  },
+  "tool_absence_policy": "hard_failure",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/026-poison-freeze-repair.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "llvm-training/exercises/026-poison-freeze-repair.solution.ll",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "llvm-training/exercises/026-poison-freeze-repair.solution.ll",
+      "points": 10
+    },
+    {
+      "id": "llvm.assemble",
+      "type": "llvm_assemble",
+      "path": "llvm-training/exercises/026-poison-freeze-repair.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "llvm.verify",
+      "type": "llvm_verify",
+      "path": "llvm-training/exercises/026-poison-freeze-repair.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "structure.symbol",
+      "type": "contains_symbol",
+      "path": "llvm-training/exercises/026-poison-freeze-repair.solution.ll",
+      "symbol": "@select_after_overflow",
+      "points": 15
+    },
+    {
+      "id": "structure.instruction",
+      "type": "contains_instruction",
+      "path": "llvm-training/exercises/026-poison-freeze-repair.solution.ll",
+      "instruction": "add",
+      "points": 5
+    },
+    {
+      "id": "repair.freeze",
+      "type": "contains_instruction",
+      "path": "llvm-training/exercises/026-poison-freeze-repair.solution.ll",
+      "instruction": "freeze",
+      "points": 10
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "repair",
+    "llvm-training"
+  ],
+  "difficulty": "intermediate",
+  "license": "Apache-2.0",
+  "determinism": "deterministic",
+  "timeout_seconds": 10
+}
