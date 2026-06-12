@@ -5,3 +5,6 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+
+# Reproducible LLVM training dataset exports (release snapshots are intentional exceptions)
+llvm-training/dataset/*.jsonl
