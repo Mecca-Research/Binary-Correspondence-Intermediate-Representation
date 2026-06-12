@@ -226,3 +226,18 @@ cmake --build build/llvm-training --target llvm-training-check
 The aggregate target includes deterministic repository gates and optional LLVM,
 MLIR, and lit-backed gates. Optional tools skip cleanly; a present toolchain that
 rejects a checked fixture still fails the target.
+
+## Provider-neutral evaluation runner
+
+`run-eval.py` materializes exercise prompts/context, invokes a provider-neutral
+local command adapter or deterministic fixture adapter, calls the executable
+autograder, and writes JSON Lines plus aggregate/reproducibility reports to a
+caller-owned output directory. See [`../eval/README.md`](../eval/README.md) for
+the adapter contract, modes, resume behavior, metrics, and security boundary.
+
+```bash
+python3 llvm-training/tools/run-eval.py run \
+  --output-dir /tmp/bcir-eval/reference \
+  --exercise 001 \
+  --fixture-adapter reference
+```
