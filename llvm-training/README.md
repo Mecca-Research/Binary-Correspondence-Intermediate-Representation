@@ -166,6 +166,7 @@ Use the checked-in tool scripts from the repository root:
 ./llvm-training/tools/smoke-llc.sh
 ./llvm-training/tools/smoke-lli.sh
 ./llvm-training/tools/verify-exercises.sh
+./llvm-training/tools/grade-exercises.sh --self-test
 ./llvm-training/tools/verify-invalid-fixtures.sh
 ./llvm-training/tools/verify-opt-diff.sh
 ./llvm-training/tools/verify-opaque-pointers.sh
@@ -203,7 +204,10 @@ working and should never be renamed to a known-good `.ll` example. Anything else
 in those known-good files that doesn't assemble and verify shouldn't ship.
 
 `verify-exercises.sh` applies the same assembler-and-verifier contract to every
-checked-in `llvm-training/exercises/*.solution.ll` reference answer. Use
+checked-in `llvm-training/exercises/*.solution.ll` reference answer. The separate
+[`autograder/`](autograder/README.md) subsystem grades untrusted external attempt
+artifacts with declarative structural, rubric, and optional execution checks; it
+does not replace or overload the reference verifier. Use
 `verify-invalid-fixtures.sh` for intentionally broken `.invalid.ll.txt` repair
 fixtures, `verify-opt-diff.sh` for golden optimizer-output pairs,
 `verify-mlir-examples.sh` for MLIR syntax coverage, `verify-bcir-mapping.sh` for
