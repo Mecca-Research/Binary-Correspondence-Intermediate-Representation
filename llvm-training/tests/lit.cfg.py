@@ -33,7 +33,7 @@ def find_versioned_tool(base):
     return max(candidates, default=(None, None))[1]
 
 
-for tool in ["bash", "diff", "llvm-as", "opt", "mlir-opt"]:
+for tool in ["bash", "diff", "llvm-as", "opt", "lli", "mlir-opt"]:
     resolved = find_versioned_tool(tool)
     if resolved:
         config.available_features.add(tool)

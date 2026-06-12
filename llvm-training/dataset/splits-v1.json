@@ -91,6 +91,16 @@
         "llvm-training-exercise-036",
         "llvm-training-exercise-037"
       ]
+    },
+    {
+      "id": "binary-evidence-review-v1",
+      "concept_family": "binary-evidence-review",
+      "split": "validation",
+      "rationale": "Static binary-evidence interpretation and provenance review share evidence vocabulary and source lineage.",
+      "exercise_ids": [
+        "llvm-training-exercise-041",
+        "llvm-training-exercise-042"
+      ]
     }
   ],
   "exercises": [
@@ -333,6 +343,18 @@
       "split": "test",
       "leakage_group": "repair-debug-template-v1",
       "concept_family": "repair-and-debugging"
+    },
+    {
+      "id": "llvm-training-exercise-041",
+      "split": "validation",
+      "leakage_group": "binary-evidence-review-v1",
+      "concept_family": "binary-evidence-review"
+    },
+    {
+      "id": "llvm-training-exercise-042",
+      "split": "validation",
+      "leakage_group": "binary-evidence-review-v1",
+      "concept_family": "binary-evidence-review"
     }
   ]
 }

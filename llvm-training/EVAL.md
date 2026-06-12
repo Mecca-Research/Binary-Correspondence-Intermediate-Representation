@@ -209,3 +209,50 @@ LLVM source):
 - When should a BCIR operation become plain LLVM IR versus a runtime-call wrapper?
 - Why do HAM prefetch operands need immediate constants?
 - Why should diagnostic metadata never carry semantics required for execution?
+
+## Executable score interpretation
+
+`tools/grade-exercises.py` reports two percentages for each exercise:
+
+- `score_percent` is the authoritative raw score: earned points divided by the
+  complete rubric. Skipped checks earn zero and therefore never inflate it.
+- `executed_score_percent` describes only checks that actually ran. It is useful
+  for diagnosing reference fixtures, but must not be reported as model quality
+  when optional checks were skipped.
+
+A `score_confidence` of `full` means no checks were skipped. `reduced` means at
+least one optional tool or prerequisite was unavailable; inspect every explicit
+`skip` record before comparing runs. Markdown/diagnostic rubric coverage is a
+deterministic lexical/structural signal, not proof that the explanation is
+semantically complete.
+
+### Reproducibility fields
+
+Archive the JSON report with its `schema_version`, UTC `generated_at`, registry
+path and SHA-256, selected stable exercise IDs, answer paths/checksums maintained
+by the surrounding evaluation runner, complete check outcomes and commands,
+Python/LLVM/MLIR tool paths and versions, repository commit and dirty state,
+generator identity/revision, generation parameters, timeout, and random seed (if
+any). Dataset runs must also preserve dataset schema version, split-manifest
+checksum, leakage group, concept family, and per-record prompt/solution hashes.
+Do not compare aggregate scores across different manifests, splits, skip sets,
+or major toolchains without labeling the difference.
+
+### Minimum quality gates
+
+A publishable evaluation run must satisfy all of the following:
+
+1. Exercise manifests and dataset export validate with no drift.
+2. Registered reference solutions receive 100% raw scores with zero skipped
+   checks on the required CI toolchain.
+3. Partial-credit fixtures score strictly between zero and full credit and
+   retain at least one failed check.
+4. Malformed submissions produce bounded `invalid_answer` records, not grader
+   crashes or `grader_failure` outcomes.
+5. Repeated solution-free exports are byte-for-byte identical.
+6. Held-out model-visible prompt/context bundles contain no reference-solution
+   content or `*.solution.*` path; trusted reference fixture adapters are only
+   for grader self-tests and cannot be used as model inputs.
+7. The complete pre-existing training verification suite still passes, so the
+   grader cannot replace or weaken artifact, manifest, invalid-fixture, MLIR, or
+   optimization checks.

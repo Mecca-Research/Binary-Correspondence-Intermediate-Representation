@@ -287,6 +287,7 @@ def grade_entry(entry: dict[str, Any], answer: Path, tools: dict[str, str | None
         "score_percent": round(100 * earned / available, 2) if available else 0.0,
         "executed_score_percent": round(100 * executed_earned / executed_available, 2) if executed_available else 0.0,
         "skipped_checks": sum(item.status == "skip" for item in checks),
+        "score_confidence": "reduced" if any(item.status == "skip" for item in checks) else "full",
     }
 
 
@@ -318,6 +319,8 @@ def report_text(report: dict[str, Any]) -> str:
         lines.append(f"\nExercise {result['exercise_id']} ({result['answer_kind']}): {result['points_earned']}/{result['points_available']} ({result['score_percent']:.2f}%)")
         if result["rubric_coverage_only"]:
             lines.append("  NOTE: markdown/diagnostic scoring measures deterministic rubric coverage, not semantic proof.")
+        if result["score_confidence"] == "reduced":
+            lines.append("  NOTE: one or more checks were skipped; skipped points remain unearned and confidence is reduced.")
         for check in result["checks"]:
             marker = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}[check["status"]]
             lines.append(f"  [{marker}] {check['id']}: {check['points_earned']}/{check['points_available']} - {check['message']}")
@@ -393,7 +396,13 @@ def main(argv: list[str] | None = None) -> int:
             **{name: (version_for(path) or {"path": None, "version": "missing"}) for name, path in tools.items()},
         },
         "results": results,
-        "aggregate": {"points_earned": round(earned, 3), "points_available": round(available, 3), "score_percent": round(100 * earned / available, 2) if available else 0.0},
+        "aggregate": {
+            "points_earned": round(earned, 3),
+            "points_available": round(available, 3),
+            "score_percent": round(100 * earned / available, 2) if available else 0.0,
+            "skipped_checks": sum(item["skipped_checks"] for item in results),
+            "score_confidence": "reduced" if any(item["skipped_checks"] for item in results) else "full",
+        },
     }
     output = json.dumps(report, indent=2, sort_keys=True) + "\n" if args.format == "json" else report_text(report)
     if args.output:

@@ -29,6 +29,16 @@ add_custom_target(llvm-training-verify-exercise-manifests
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
   USES_TERMINAL
   VERBATIM)
+add_custom_target(llvm-training-autograder-self-test
+  COMMAND "${TOOLS_DIR}/grade-exercises.py" --self-test --format json
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  USES_TERMINAL
+  VERBATIM)
+add_custom_target(llvm-training-verify-dataset-export
+  COMMAND "${TOOLS_DIR}/verify-dataset-export.py"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  USES_TERMINAL
+  VERBATIM)
 add_training_script_target(llvm-training-verify-csv-schema verify-csv-schema.sh)
 add_custom_target(llvm-training-verify-binary-analysis-evidence
   COMMAND "${TOOLS_DIR}/verify-binary-analysis-evidence.py"
@@ -63,6 +73,8 @@ add_custom_target(llvm-training-check
   DEPENDS
     llvm-training-verify-manifest
     llvm-training-verify-exercise-manifests
+    llvm-training-autograder-self-test
+    llvm-training-verify-dataset-export
     llvm-training-verify-csv-schema
     llvm-training-verify-binary-analysis-evidence
     llvm-training-check-binary-analysis-fixtures

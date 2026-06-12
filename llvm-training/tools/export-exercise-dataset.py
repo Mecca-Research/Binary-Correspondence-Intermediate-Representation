@@ -21,6 +21,15 @@ def normalized_text(path: Path) -> str:
     return path.read_bytes().decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
 
 
+def model_visible_prompt(text: str) -> str:
+    """Remove reference-solution paths from held-out/model-visible prompt text."""
+    return re.sub(
+        r"(?:llvm-training/exercises/)?[^\s`\"']*\.solution\.(ll|mlir|md)",
+        lambda match: f"answer.{match.group(1)}",
+        text,
+    )
+
+
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -117,14 +126,15 @@ def build_record(
         if not (repo_root / relative).is_file():
             raise ValueError(f"{stable_id}: missing referenced source file: {relative}")
 
-    prompt = normalized_text(repo_root / manifest["prompt"])
+    source_prompt = normalized_text(repo_root / manifest["prompt"])
+    prompt = model_visible_prompt(source_prompt)
     solution_path = manifest.get("solution")
     if solution_path:
         solution_kind = "file"
         solution_text = normalized_text(repo_root / solution_path)
     else:
         solution_kind = "prompt_expected_observation"
-        solution_text = expected_observation(prompt, stable_id)
+        solution_text = expected_observation(source_prompt, stable_id)
 
     required_tools = list(manifest["required_tools"])
     llvm_assumption = "LLVM >= 15 with opaque pointers"

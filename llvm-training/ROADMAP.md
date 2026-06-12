@@ -33,6 +33,13 @@ introductory or intermediate coverage for these advanced families:
   standalone `.ll`, before/after pass snapshots, `.invalid.ll.txt` fixtures,
   `.mlir` review artifacts, CSV/data artifacts, and generated BCIR mapping
   outputs.
+- **Closed-loop grading and dataset export** — the active training workflow now
+  validates 42 declarative exercise manifests, grades reference or external
+  attempts with deterministic partial credit, records explicit optional-tool
+  skips, and exports 42 stable-ID records across curated train/validation/test
+  splits. The export is a small evaluation and regression dataset for grader,
+  agent, and curriculum quality checks—not a production-scale fine-tuning
+  corpus. Held-out bundles omit reference-solution content by default.
 
 ## Remaining gaps
 
