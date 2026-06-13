@@ -421,7 +421,7 @@ def verify_lowering(module: Module, result, ll_text: str, elem: str = "f32",
 
 
 def verify_provenance(portfolio, certificates=(), h=None, table=None,
-                      verdicts=()) -> list[Diagnostic]:
+                      verdicts=(), gate_certificates=()) -> list[Diagnostic]:
     """Policy/table provenance law R13: every decision rule in force carries a
     generation tag and an admitting certificate -- rule swaps and table
     applications are never silent -- and every boundary verdict carries an MDL
@@ -430,9 +430,23 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
     `portfolio` is a `kbcir.portfolio.PolicyPortfolio`, `certificates` an
     iterable of `ReplayCertificate`s, `h` a `TargetProfile`, `table` a
     `kbcir.microbench.CalibratedProfile`, `verdicts` an iterable of
-    `kbcir.regret.BoundaryVerdict` (all duck-typed).
+    `kbcir.regret.BoundaryVerdict`, `gate_certificates` the
+    `ReplayCertificate`s of learned MoE gates proposed for deployment (all
+    duck-typed).
     """
     diags: list[Diagnostic] = []
+
+    # R13: learned-gate provenance -- a MoE gate (kbcir.moegate) may deploy only
+    # behind an admitting replay certificate (zero regressions vs the incumbent
+    # classify router). The network proposes a route; the verifier disposes.
+    for cert in gate_certificates:
+        if not cert.admitted:
+            diags.append(Diagnostic(
+                "R13",
+                f"learned gate {cert.candidate!r} cannot deploy: replay gate "
+                f"not passed ({cert.regressions} regression(s) over "
+                f"{cert.episodes} episode(s) vs {cert.incumbent!r})",
+            ))
 
     # R13: boundary-verdict provenance -- a retune recommendation must be backed
     # by description-length evidence (data_fit > complexity), and a keep must not

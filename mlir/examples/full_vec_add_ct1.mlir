@@ -115,6 +115,12 @@ bcir.module @full_vec_add_ct1 attributes {
   bcir.kbcir.replay_certificate @perf_cert {
     candidate = @perf, incumbent = @perf, episodes = 3 : i64, regressions = 0 : i64, admitted = true
   }
+  // L2: the learned MoE gate (kbcir.moegate) -- a GNN over the claim graph routes
+  // among the @gains experts; deployed frozen, behind an admitting replay gate.
+  bcir.kbcir.moe_gate @gate0 {
+    portfolio = @gains, num_experts = 4 : i64, hidden = 8 : i64, gate_gen = 1 : i64,
+    fingerprint = 4242424242 : i64, episodes = 3 : i64, regressions = 0 : i64, admitted = true
+  }
   // L3: the regret ledger (the boundary dashboard) -- the seeded portfolio is
   // hindsight-optimal on the standard episodes, so the books read zero and the
   // MDL evidence (data_fit 0 <= complexity) yields a principled "keep" verdict.
@@ -154,6 +160,7 @@ bcir.module @full_vec_add_ct1 attributes {
 // CHECK: bcir.kbcir.calibration @cal_cpu_bayes
 // CHECK: bcir.kbcir.portfolio @gains
 // CHECK: bcir.kbcir.replay_certificate @perf_cert
+// CHECK: bcir.kbcir.moe_gate @gate0
 // CHECK: bcir.kbcir.regret_ledger @regret_perf
 // CHECK: bcir.gem.stream_pack @sp0
 // CHECK: bcir.verify.plan_selection @vr_plan

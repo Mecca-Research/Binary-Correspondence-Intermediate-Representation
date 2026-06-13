@@ -24,6 +24,14 @@ from .portfolio import (
     episodes_from,
     replay_gate,
 )
+from .moegate import (
+    FrozenGate,
+    GNNGate,
+    freeze,
+    gate_replay_gate,
+    ledger_labels,
+    train_gate,
+)
 from .realize import Candidate, ChosenStep, RealizationResult, candidates_for, optimize
 from .softdp import (
     SoftResult,
@@ -68,6 +76,12 @@ __all__ = [
     "classify",
     "episodes_from",
     "replay_gate",
+    "FrozenGate",
+    "GNNGate",
+    "freeze",
+    "gate_replay_gate",
+    "ledger_labels",
+    "train_gate",
     "BoundaryVerdict",
     "RegretLedger",
     "RegretMeasurement",

@@ -281,6 +281,20 @@ bcir.module @r9_soft_zero {
 
 // -----
 
+// R13: a learned MoE gate proposed for deployment whose replay gate did not
+// pass (regressions > 0) -- the network proposes a route, the verifier disposes.
+bcir.module @r13_moe_gate {
+  bcir.kbcir.policy @latency { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.portfolio @gains { policies = [@latency], gens = array<i64: 1>, certified = array<i64: 1> }
+  // expected-error @+1 {{R13: admitted MoE gate carries 2 regression(s)}}
+  bcir.kbcir.moe_gate @gate0 {
+    portfolio = @gains, num_experts = 4 : i64, hidden = 8 : i64, gate_gen = 1 : i64,
+    fingerprint = 123456 : i64, episodes = 5 : i64, regressions = 2 : i64, admitted = true
+  }
+}
+
+// -----
+
 // R12: a lowering contract that neither preserves the BCIR semantic
 // (bounds/hazard/precision) nor carries an explicit discharge.
 bcir.module @r12 {

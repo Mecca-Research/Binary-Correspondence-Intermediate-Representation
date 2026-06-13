@@ -109,6 +109,20 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
+- **The learned MoE gate — a GNN over the claim graph** (Phase 18, LangRef §13):
+  `kbcir.moegate` is the literal "ensemble of specialized compilers" — a one-layer
+  Graph Neural Network over the claim graph (message passing + hardtanh embed +
+  mean readout) with a softmax routing head, replacing the hand-coded
+  `classify(Θ)` with a *learned* router over the certified portfolio experts.
+  Trained by exact softmax-cross-entropy SGD (hand-rolled, no autograd, no deps)
+  on the **regret ledger** (`ledger_labels`: the label is the hindsight-best
+  expert). It is the *safe* learning regime — it only selects among
+  already-certified experts, never emits a table — and deploys **frozen** to a Q8
+  integer gate (`freeze`/`FrozenGate`, exact integer routing via a hardtanh clamp,
+  deterministic across hosts) only behind an admitting **replay certificate**
+  (`gate_replay_gate`: no regression vs `classify` under M(π,Θ)). Witnessed by
+  **R13** (`bcir.kbcir.moe_gate`: routes a known portfolio, admitted ⇒ zero
+  regressions, a deployed gate must have passed). CLI: `python -m bcir.run --moe`.
 - **Bayesian cost model with conformal error bars** (Phase 17, LangRef §13):
   `kbcir.bayescal` upgrades the point microbench table to a posterior with a
   certified interval — a conjugate-Gaussian (VI-exact) posterior over each Q8

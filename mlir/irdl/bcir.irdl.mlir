@@ -97,6 +97,8 @@ irdl.dialect @bcir {
   irdl.operation @"kbcir.portfolio"
   irdl.operation @"kbcir.replay_certificate"
   irdl.operation @"kbcir.regret_ledger"
+  // The learned MoE gate: a GNN router over the claim graph (the ensemble).
+  irdl.operation @"kbcir.moe_gate"
 
   // ---- BCIR-4: GEM StreamPack ----
   irdl.operation @"gem.stream_pack" {
