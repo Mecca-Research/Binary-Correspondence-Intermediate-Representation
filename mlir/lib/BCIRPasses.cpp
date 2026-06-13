@@ -681,6 +681,28 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R13: search-accelerator provenance -- a learned candidate ordering
+    // (kbcir.accel) speeds the exact search but must reproduce the exact optimum.
+    // A deployed accelerator carries an equivalence certificate with zero
+    // mismatches; ordering changes work, never the result.
+    root->walk([&](KBCIRSearchAccelOp acc) {
+      int64_t checked = static_cast<int64_t>(acc.getChecked());
+      int64_t mism = static_cast<int64_t>(acc.getMismatches());
+      if (checked < 1 || mism < 0) {
+        acc.emitError("R13: search accelerator checked/mismatches out of range");
+        ok = false;
+      }
+      if (acc.getAdmitted() && mism != 0) {
+        acc.emitError("R13: admitted search accelerator changed the optimum (")
+            << mism << " mismatch(es))";
+        ok = false;
+      }
+      if (!acc.getAdmitted()) {
+        acc.emitError("R13: deployed search accelerator is not certified exact");
+        ok = false;
+      }
+    });
+
     // R9: a duration-aware schedule certificate is well-formed -- known mode,
     // non-negative makespan, knee/pipeline >= 1, and a declared plan.
     root->walk([&](GEMScheduleOp sc) {

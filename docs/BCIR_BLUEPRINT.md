@@ -109,6 +109,20 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
+- **The propose-verify search accelerator** (Phase 19, LangRef §13): `kbcir.accel`
+  is the safest place learning touches the (hot-ish) plan-time search — a learned
+  candidate ordering speeds the exact RCSP search but **provably returns the same
+  optimum**, because the optimum is invariant to candidate visitation order.
+  `optimize_ordered` is an exact branch-and-bound with an *admissible* suffix
+  bound + budget feasibility pruning; a good order (greedy, or the learned
+  `LearnedRanker` trained on the exact optimizer's own choices, frozen to Q8)
+  tightens the incumbent earlier — it finds the optimum as the *first* complete
+  plan and prunes more (fewer expansions) — while any order, even worst-first,
+  returns the exact optimum. The `accelerator_certificate` checks equivalence to
+  `optimize_constrained` (mismatches must be 0), witnessed by **R13**
+  (`bcir.kbcir.search_accel`: admitted ⇒ zero mismatches; a deployed accelerator
+  must be certified exact). The network proposes an order; the verifier disposes.
+  CLI: `python -m bcir.run --accel`.
 - **The learned MoE gate — a GNN over the claim graph** (Phase 18, LangRef §13):
   `kbcir.moegate` is the literal "ensemble of specialized compilers" — a one-layer
   Graph Neural Network over the claim graph (message passing + hardtanh embed +

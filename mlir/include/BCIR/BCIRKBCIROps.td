@@ -143,6 +143,19 @@ def BCIR_KBCIRMoEGateOp : BCIR_Op<"kbcir.moe_gate", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_KBCIRSearchAccelOp : BCIR_Op<"kbcir.search_accel", [Symbol]> {
+  let summary = "Propose-verify search accelerator: a learned candidate ordering";
+  // A learned order over the RCSP candidate DAG speeds the exact branch-and-bound
+  // search but must reproduce the exact optimum (LangRef Sec. 13): ordering
+  // changes work, never the result. `order` names the heuristic (greedy/learned);
+  // `mismatches` counts cases where the accelerated optimum differed from the
+  // exact one over `checked` cases. R13: admitted => mismatches == 0, and a
+  // deployed accelerator must be admitted. Mirrors bcir/kbcir/accel.py.
+  let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$order,
+                       I64Attr:$checked, I64Attr:$mismatches, BoolAttr:$admitted);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
 def BCIR_KBCIRScheduledPriceOp : BCIR_Op<"kbcir.scheduled_price", [Symbol]> {
   let summary = "M(pi,Theta): the (max,+) wave-overlap price of a plan";
   // makespan composes series with (+) and CT2 wave parallelism with max; the

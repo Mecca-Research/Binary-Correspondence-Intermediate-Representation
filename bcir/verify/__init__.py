@@ -421,7 +421,8 @@ def verify_lowering(module: Module, result, ll_text: str, elem: str = "f32",
 
 
 def verify_provenance(portfolio, certificates=(), h=None, table=None,
-                      verdicts=(), gate_certificates=()) -> list[Diagnostic]:
+                      verdicts=(), gate_certificates=(), accel_certificates=()
+                      ) -> list[Diagnostic]:
     """Policy/table provenance law R13: every decision rule in force carries a
     generation tag and an admitting certificate -- rule swaps and table
     applications are never silent -- and every boundary verdict carries an MDL
@@ -446,6 +447,18 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
                 f"learned gate {cert.candidate!r} cannot deploy: replay gate "
                 f"not passed ({cert.regressions} regression(s) over "
                 f"{cert.episodes} episode(s) vs {cert.incumbent!r})",
+            ))
+
+    # R13: search-accelerator provenance -- a learned candidate ordering
+    # (kbcir.accel) speeds the exact search but must reproduce the exact optimum.
+    # A deployed accelerator carries an equivalence certificate with zero
+    # mismatches; ordering changes work, never the result.
+    for cert in accel_certificates:
+        if not cert.admitted:
+            diags.append(Diagnostic(
+                "R13",
+                f"search accelerator {cert.order_name!r} changed the optimum: "
+                f"{cert.mismatches} mismatch(es) over {cert.checked} case(s)",
             ))
 
     # R13: boundary-verdict provenance -- a retune recommendation must be backed

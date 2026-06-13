@@ -32,6 +32,19 @@ from .moegate import (
     ledger_labels,
     train_gate,
 )
+from .accel import (
+    AccelCertificate,
+    FrozenRanker,
+    LearnedRanker,
+    SearchStats,
+    accelerator_certificate,
+    greedy_order,
+    identity_order,
+    optimize_ordered,
+    ranker_samples,
+    train_ranker,
+    worst_order,
+)
 from .realize import Candidate, ChosenStep, RealizationResult, candidates_for, optimize
 from .softdp import (
     SoftResult,
@@ -82,6 +95,17 @@ __all__ = [
     "gate_replay_gate",
     "ledger_labels",
     "train_gate",
+    "AccelCertificate",
+    "FrozenRanker",
+    "LearnedRanker",
+    "SearchStats",
+    "accelerator_certificate",
+    "greedy_order",
+    "identity_order",
+    "optimize_ordered",
+    "ranker_samples",
+    "train_ranker",
+    "worst_order",
     "BoundaryVerdict",
     "RegretLedger",
     "RegretMeasurement",
