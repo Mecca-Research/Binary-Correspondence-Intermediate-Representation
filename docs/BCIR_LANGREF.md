@@ -173,9 +173,17 @@ E[improvement per decision]  >>  decision rate x inference cost
   gather penalties, coupling factors — produced offline, **quantized to
   integer Q8, frozen, generation-tagged** (`bcir.kbcir.calibration`,
   `kbcir.microbench.CalibratedProfile`, `cal_gen` on the target capability).
-  Plan-time "inference" is a table lookup; determinism and the pinned scores
-  are preserved by construction. The verifier gates table well-formedness
-  under R8.
+  The table may be a point estimate (microbench) or a **Bayesian posterior with
+  a certified conformal error bar** (`kbcir.bayescal`): a conjugate-Gaussian
+  (VI-exact) posterior over each ratio + a distribution-free split-conformal
+  `±δ` at a stated coverage, optionally inferred likelihood-free by **ABC** with
+  the GEM/`optimize` forward model as the simulator. The frozen artifact is
+  still Q8 integers plus an integer `δ`; the conformal guarantee lets later
+  selection be made *robust* over the credible interval. Plan-time "inference"
+  is a table lookup; determinism and the pinned scores are preserved by
+  construction. The verifier gates table well-formedness — and the conformal
+  guarantee (coverage in (0,1), `δ ≥ 0`, no interval from ≤ 1 sample) — under
+  R8/R13.
 - **L2 (checkpoints — portfolio + replay gate).** Gain schedules (policy
   weight vectors, thresholds) adapt only at checkpoints, only as members of a
   **portfolio of frozen, generation-tagged policies**

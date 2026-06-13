@@ -497,6 +497,26 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
                 f"(cal_gen {h.cal_gen})",
             ))
 
+    # R13: conformal-guarantee provenance -- a Bayesian-calibrated table that
+    # claims a coverage level must carry a valid coverage in (0,1) and a
+    # non-negative +/- delta, and it may not certify a finite interval from too
+    # few samples (a coverage guarantee from <= 1 observation is not a guarantee).
+    if table is not None and getattr(table, "coverage_milli", 0):
+        cov = table.coverage_milli
+        delta = getattr(table, "random_delta_q8", 0)
+        samples = getattr(getattr(table, "point", None), "samples", 0)
+        if not (0 < cov < 1000):
+            diags.append(Diagnostic(
+                "R13", f"conformal coverage {cov}/1000 out of range (0,1000)"))
+        if delta < 0:
+            diags.append(Diagnostic("R13", "conformal delta must be >= 0"))
+        if delta > 0 and samples <= 1:
+            diags.append(Diagnostic(
+                "R13",
+                f"conformal interval (delta {delta}) certified from {samples} "
+                f"sample(s): a coverage guarantee needs >= 2 observations",
+            ))
+
     return diags
 
 

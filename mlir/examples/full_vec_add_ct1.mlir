@@ -102,6 +102,14 @@ bcir.module @full_vec_add_ct1 attributes {
     provenance = "reference (ratio-1; reproduces the seeded constants exactly)",
     stream_q8 = 256 : i64, strided_q8 = 256 : i64, random_q8 = 8192 : i64, compute_q8 = 256 : i64
   }
+  // A Bayesian/conformal table (kbcir.bayescal): the same point estimate plus a
+  // certified +/- delta on the random ratio at 90% coverage (split conformal).
+  bcir.kbcir.calibration @cal_cpu_bayes {
+    target = @cpu, cal_gen = 1 : i64, samples = 8 : i64,
+    provenance = "bayes (conjugate VI + split conformal cov=0.9)",
+    stream_q8 = 256 : i64, strided_q8 = 256 : i64, random_q8 = 8192 : i64, compute_q8 = 256 : i64,
+    coverage_milli = 900 : i64, random_delta_q8 = 256 : i64
+  }
   // L2: the certified gain-schedule portfolio + the replay gate that admitted it.
   bcir.kbcir.portfolio @gains { policies = [@perf], gens = array<i64: 1>, certified = array<i64: 1> }
   bcir.kbcir.replay_certificate @perf_cert {
@@ -143,6 +151,7 @@ bcir.module @full_vec_add_ct1 attributes {
 // CHECK: bcir.kbcir.scheduled_price @overlap_price
 // CHECK: bcir.gem.schedule @sched0
 // CHECK: bcir.kbcir.calibration @cal_cpu
+// CHECK: bcir.kbcir.calibration @cal_cpu_bayes
 // CHECK: bcir.kbcir.portfolio @gains
 // CHECK: bcir.kbcir.replay_certificate @perf_cert
 // CHECK: bcir.kbcir.regret_ledger @regret_perf

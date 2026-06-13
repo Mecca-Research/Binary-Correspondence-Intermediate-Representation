@@ -10,10 +10,12 @@ from .cost import (
     Theta,
     Tier,
 )
-# NOTE: `kbcir.microbench` is deliberately NOT re-exported here -- it doubles
-# as a CLI (`python -m bcir.kbcir.microbench`), and importing it at package
-# scope would shadow that entry point. Import it directly:
+# NOTE: the calibration modules `kbcir.microbench` and `kbcir.bayescal` are
+# deliberately NOT re-exported here -- microbench doubles as a CLI
+# (`python -m bcir.kbcir.microbench`) and importing either at package scope would
+# shadow that entry point. Import them directly:
 #     from bcir.kbcir.microbench import CalibratedProfile, calibrate_profile, ...
+#     from bcir.kbcir.bayescal import bayes_calibrate, abc_calibrate, ...
 from .portfolio import (
     PolicyPortfolio,
     PortfolioEntry,

@@ -512,6 +512,19 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         cal.emitError("R8: calibration cal_gen/ratios out of range");
         ok = false;
       }
+      // Conformal guarantee (Bayesian table): a claimed coverage must be a real
+      // probability and the certified +/- delta non-negative. coverage 0 = a
+      // plain point table (no guarantee), which is always well-formed.
+      int64_t cov = static_cast<int64_t>(cal.getCoverageMilli());
+      if (cov != 0 && !(cov > 0 && cov < 1000)) {
+        cal.emitError("R8: conformal coverage ")
+            << cov << "/1000 out of range (0,1000)";
+        ok = false;
+      }
+      if (static_cast<int64_t>(cal.getRandomDeltaQ8()) < 0) {
+        cal.emitError("R8: conformal delta must be >= 0");
+        ok = false;
+      }
     });
 
     // R9: L2 learning placement -- portfolios carry parallel generation/
