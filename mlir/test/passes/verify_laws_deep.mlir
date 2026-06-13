@@ -233,6 +233,29 @@ bcir.module @r13_ledger {
 
 // -----
 
+// R9: a soft_select whose free energy exceeds the hard minimum (softmin <= min
+// is violated).
+bcir.module @r9_soft_bound {
+  // expected-error @+1 {{R9: soft_select free_energy 8000 exceeds the hard minimum 7808}}
+  bcir.kbcir.soft_select @bad {
+    claim = @add, temperature_milli = 3000000 : i64, score = 7808 : i64,
+    free_energy = 8000 : i64, selected = @add_cpu_u16
+  }
+}
+
+// -----
+
+// R9: a soft_select at temperature 0 that does not recover the tropical score.
+bcir.module @r9_soft_zero {
+  // expected-error @+1 {{R9: at temperature 0 soft_select free_energy 7000 must equal the tropical score 7808}}
+  bcir.kbcir.soft_select @bad {
+    claim = @add, temperature_milli = 0 : i64, score = 7808 : i64,
+    free_energy = 7000 : i64, selected = @add_cpu_u16
+  }
+}
+
+// -----
+
 // R12: a lowering contract that neither preserves the BCIR semantic
 // (bounds/hazard/precision) nor carries an explicit discharge.
 bcir.module @r12 {

@@ -76,6 +76,23 @@ exactly under an unbounded budget. Budget feasibility and scheduled-price
 consistency (makespan + overlap_gain = serial) are verifier obligations under
 law R9 (`bcir.kbcir.budget`, `bcir.kbcir.scheduled_price`, `-bcir-verify`).
 
+**Temperature (the soft generalization).** The tropical (min,+) selection is the
+zero-temperature limit of a log-sum-exp dynamic program:
+
+```
+F_T(G | H, Θ) = −T · log Σ_{π ∈ Legal} exp( −score(π) / T )   →   min_π score(π)   as T → 0
+```
+
+`F_T` is the Gibbs free energy over realization plans; at `T > 0` it yields a
+*posterior over plans* (per-claim marginals, an expected cost vector) and is
+**differentiable** — `∂F_T/∂w = E_π[C]`, the expected sufficient statistic — so
+the optimizer becomes a learnable layer (`kbcir.softdp`). This is an L2/L3
+offline organ (LangRef §13): learning happens at `T > 0`, then anneals and
+**freezes** to a `T = 0` integer table for the certified hot path. At `T = 0` it
+delegates to `optimize` and is bit-exact; the degenerate-case law (`F_T ≤`
+hard score, with equality at `T = 0`) is a verifier obligation under R9
+(`bcir.kbcir.soft_select`).
+
 ## 3–9. Laws (summary)
 
 - **Module law (§3).** A module is a registry-governed execution universe;

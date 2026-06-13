@@ -71,6 +71,12 @@ bcir.module @full_vec_add_ct1 attributes {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @add_cpu_u16, score = 7808 : i64
     } : !bcir.path
+    // The temperature dial (kbcir.softdp): the soft log-sum-exp twin at T=0
+    // recovers the tropical select exactly -- free_energy == score == 7808.
+    bcir.kbcir.soft_select @sel_soft {
+      claim = @add, temperature_milli = 0 : i64, score = 7808 : i64,
+      free_energy = 7808 : i64, selected = @add_cpu_u16
+    }
     // Constrained (RCSP) rail: a 700 thermal/power cap makes vec16 (1088)
     // infeasible -- the budgeted optimum is vec8 at score 9472 (the oracle:
     // optimize_constrained(..., Budget.of(thermal=700)); a point no PERF
@@ -131,6 +137,7 @@ bcir.module @full_vec_add_ct1 attributes {
 // CHECK: bcir.mem.tier @hbm
 // CHECK: bcir.claim @add
 // CHECK: bcir.kbcir.select @add
+// CHECK: bcir.kbcir.soft_select @sel_soft
 // CHECK: bcir.kbcir.budget @thermal_cap
 // CHECK: bcir.kbcir.scheduled_price @overlap_price
 // CHECK: bcir.gem.schedule @sched0

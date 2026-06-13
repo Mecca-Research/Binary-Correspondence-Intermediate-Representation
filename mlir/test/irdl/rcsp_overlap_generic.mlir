@@ -16,7 +16,12 @@
 "bcir.kbcir.plan"() ({}) {sym_name = "plan0"} : () -> ()
 "bcir.kbcir.scheduled_price"() {sym_name = "overlap_price", plan = "plan0",
   makespan = 7808 : i64, serial = 7808 : i64, overlap_gain = 0 : i64} : () -> ()
+// The temperature dial: at T=0 the soft twin recovers the tropical score exactly.
+"bcir.kbcir.soft_select"() {sym_name = "sel_soft", claim = "add",
+  temperature_milli = 0 : i64, score = 7808 : i64, free_energy = 7808 : i64,
+  selected = "add_cpu_u8"} : () -> ()
 
 // CHECK: "bcir.kbcir.budget"
 // CHECK: "bcir.kbcir.select"
 // CHECK: "bcir.kbcir.scheduled_price"
+// CHECK: "bcir.kbcir.soft_select"

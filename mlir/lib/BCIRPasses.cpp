@@ -465,6 +465,29 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R9: the finite-temperature soft select is consistent with its tropical
+    // twin -- the Gibbs free energy never exceeds the hard minimum (softmin <=
+    // min), and at temperature 0 it recovers it exactly.
+    root->walk([&](KBCIRSoftSelectOp ss) {
+      int64_t T = static_cast<int64_t>(ss.getTemperatureMilli());
+      int64_t F = static_cast<int64_t>(ss.getFreeEnergy());
+      int64_t score = static_cast<int64_t>(ss.getScore());
+      if (T < 0) {
+        ss.emitError("R9: soft_select temperature must be >= 0");
+        ok = false;
+      }
+      if (F > score) {
+        ss.emitError("R9: soft_select free_energy ")
+            << F << " exceeds the hard minimum " << score;
+        ok = false;
+      }
+      if (T == 0 && F != score) {
+        ss.emitError("R9: at temperature 0 soft_select free_energy ")
+            << F << " must equal the tropical score " << score;
+        ok = false;
+      }
+    });
+
     // R8: an L1 calibration table is well-formed -- the streaming baseline is
     // the Q8 unit by definition, ratios floor at it, the table is
     // generation-tagged, and its target resolves.

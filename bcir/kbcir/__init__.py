@@ -23,6 +23,13 @@ from .portfolio import (
     replay_gate,
 )
 from .realize import Candidate, ChosenStep, RealizationResult, candidates_for, optimize
+from .softdp import (
+    SoftResult,
+    free_energy,
+    grad_free_energy_wrt_weights,
+    softselect,
+    temperature_sweep,
+)
 from .regret import (
     BoundaryVerdict,
     RegretLedger,
@@ -65,6 +72,11 @@ __all__ = [
     "boundary_report",
     "ledger_from_episodes",
     "measure_regret",
+    "SoftResult",
+    "free_energy",
+    "grad_free_energy_wrt_weights",
+    "softselect",
+    "temperature_sweep",
     "dag_shortest_path",
     "PERF",
     "POLICIES",

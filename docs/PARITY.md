@@ -40,6 +40,7 @@ accuracy, contention, verification`.
 | budget B(H,Θ) (RCSP) | `kbcir.rcsp.Budget` / `optimize_constrained` | `bcir.kbcir.budget` + `bcir.kbcir.select` `budget` (feasibility: `-bcir-verify` R9) |
 | Pareto front | `kbcir.rcsp.pareto_plans` (label dominance) | RCSP labels over the same candidate DAG |
 | scheduled price M(π,Θ) | `gem.overlap.price_scheduled` / `optimize_scheduled` | `bcir.kbcir.scheduled_price` (consistency: `-bcir-verify` R9) |
+| soft/differentiable select | `kbcir.softdp.softselect` / `free_energy` (T=0 ⇒ `optimize`) | `bcir.kbcir.soft_select` (R9: F ≤ score; T=0 ⇒ F == score) |
 | duration-aware schedule | `gem.schedule.schedule_eft` (LPT+EFT+locality+knee) | `bcir.gem.schedule` mode `eft` (R9) |
 | token-DAG execution | `gem.schedule.execute_tokens` (pipelined phases) | `bcir.gem.schedule` mode `tokens` (R9) |
 | bandwidth knee | `gem.schedule.bandwidth_knee` / `TargetProfile.mem_channels` | `bcir.target.capability` `mem_channels` |
