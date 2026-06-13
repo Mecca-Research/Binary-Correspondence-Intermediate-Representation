@@ -420,16 +420,38 @@ def verify_lowering(module: Module, result, ll_text: str, elem: str = "f32",
     return diags
 
 
-def verify_provenance(portfolio, certificates=(), h=None, table=None) -> list[Diagnostic]:
+def verify_provenance(portfolio, certificates=(), h=None, table=None,
+                      verdicts=()) -> list[Diagnostic]:
     """Policy/table provenance law R13: every decision rule in force carries a
     generation tag and an admitting certificate -- rule swaps and table
-    applications are never silent.
+    applications are never silent -- and every boundary verdict carries an MDL
+    justification consistent with the recommendation it makes.
 
     `portfolio` is a `kbcir.portfolio.PolicyPortfolio`, `certificates` an
     iterable of `ReplayCertificate`s, `h` a `TargetProfile`, `table` a
-    `kbcir.microbench.CalibratedProfile` (all duck-typed).
+    `kbcir.microbench.CalibratedProfile`, `verdicts` an iterable of
+    `kbcir.regret.BoundaryVerdict` (all duck-typed).
     """
     diags: list[Diagnostic] = []
+
+    # R13: boundary-verdict provenance -- a retune recommendation must be backed
+    # by description-length evidence (data_fit > complexity), and a keep must not
+    # sit on regret that has already outgrown the model-complexity cost. The
+    # dashboard cannot recommend a swap the MDL/evidence does not justify.
+    for v in verdicts:
+        justified = v.data_fit_nats > v.complexity_nats
+        if v.verdict == "retune" and not justified:
+            diags.append(Diagnostic(
+                "R13",
+                f"retune verdict for {v.rule!r} is unjustified: data_fit "
+                f"{v.data_fit_nats:.3f} <= complexity {v.complexity_nats:.3f}",
+            ))
+        if v.verdict == "keep" and justified:
+            diags.append(Diagnostic(
+                "R13",
+                f"keep verdict for {v.rule!r} ignores justified regret: data_fit "
+                f"{v.data_fit_nats:.3f} > complexity {v.complexity_nats:.3f}",
+            ))
 
     # R13: gain-schedule provenance -- a promoted (gen > 1) certified entry must
     # be backed by an admitting replay certificate covering exactly that swap.

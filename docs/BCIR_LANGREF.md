@@ -189,12 +189,25 @@ E[improvement per decision]  >>  decision rate x inference cost
   heuristic/learned boundary itself sits is a measured question: the **regret
   ledger** (`kbcir.regret`, `bcir.kbcir.regret_ledger`) continuously books each
   deployed rule's gap to the hindsight-best alternative under one neutral
-  yardstick, and `boundary_report` renders the verdict (keep / retune). The
-  verdict is a recommendation, never an actuation: a flagged rule is a
-  *candidate* for retuning, the swap still goes through the L2 replay gate,
-  and **R13 (policy provenance)** witnesses the whole chain. Actuation stays
-  human by policy; any future automation of the flip must run behind both the
-  gate and R13.
+  yardstick. The retune trigger is **not a magic threshold** but the **MDL /
+  Bayesian-evidence** two-part code: a swap is recommended iff it shortens the
+  total description length,
+
+  ```
+  ΔL = Σ_i regret_i/best_i  −  (k/2)·ln(N)  >  0
+       \___ data fit (saving) _/   \__ BIC complexity _/
+  ```
+
+  i.e. the accumulated *relative* regret (the bits the deployed rule wastes)
+  must outweigh the model-complexity penalty of specifying and certifying the
+  swap (the large-sample Bayesian evidence, Schwarz 1978). Few episodes of small
+  regret never flag — that would be overfitting noise — while sustained or large
+  regret does. The verdict is a recommendation, never an actuation: a flagged
+  rule is a *candidate* for retuning, the swap still goes through the L2 replay
+  gate, and **R13 (policy provenance)** witnesses the chain *and the evidence* —
+  a verdict is illegal unless it is consistent with its MDL margin (retune ⟺
+  data_fit > complexity). Actuation stays human by policy; any future automation
+  of the flip must run behind both the gate and R13.
 
 The legality laws (R1–R12), lane semantics, and hazard contracts are **never
 learnable**: they are laws, not preferences.
