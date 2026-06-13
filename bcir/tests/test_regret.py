@@ -1,5 +1,6 @@
 """L3 regret ledger + policy provenance (law R13) tests."""
 
+import math
 from dataclasses import replace
 
 from bcir.examples import vector_add
@@ -14,6 +15,7 @@ from bcir.kbcir import (
 from bcir.kbcir.cost import TargetProfile, Theta
 from bcir.kbcir.microbench import reference_table
 from bcir.kbcir.portfolio import PortfolioEntry
+from bcir.kbcir.regret import BoundaryVerdict, RegretLedger, RegretMeasurement
 from bcir.kbcir.weights import ENERGY, PERF, SAFE, THROUGHPUT, Policy
 from bcir.verify import verify_provenance
 
@@ -24,6 +26,15 @@ HOTBIAS = Policy("hotbias", (0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0))
 
 def _laws(diags):
     return {d.law for d in diags}
+
+
+def _ledger_with(rule, regret, best, episodes):
+    """A synthetic ledger: `episodes` measurements, each `regret` over `best`."""
+    L = RegretLedger()
+    for _ in range(episodes):
+        L.record(RegretMeasurement(rule=rule, deployed=best + regret, best=best,
+                                   best_rule="x"))
+    return L
 
 
 # --- the regret ledger ------------------------------------------------------------
@@ -67,6 +78,68 @@ def test_ledger_books_accumulate_and_render():
     assert "hotbias" in ledger.dashboard()
     verdicts = {v.rule: v.verdict for v in boundary_report(ledger)}
     assert verdicts["hotbias"] == "retune"
+
+
+# --- the MDL / Bayesian-evidence retune criterion --------------------------------
+
+def test_mdl_keeps_negligible_sustained_regret():
+    # ~0.1% regret per episode over a handful of episodes: the BIC penalty
+    # dominates, so KEEP. The old magic threshold (>0) would have flagged it --
+    # that was overfitting noise. This is the whole point of the principled rule.
+    v = boundary_report(_ledger_with("r", regret=8, best=7808, episodes=5))[0]
+    assert v.verdict == "keep"
+    assert v.evidence_margin < 0
+
+
+def test_mdl_retunes_on_large_sustained_regret():
+    v = boundary_report(_ledger_with("r", regret=1664, best=7808, episodes=5))[0]
+    assert v.verdict == "retune"
+    assert v.evidence_margin > 0
+
+
+def test_mdl_accumulates_evidence_with_episodes():
+    # SAME ~15% per-episode regret: keep at 2 episodes (the evidence hasn't paid
+    # the (k/2)ln N complexity yet), retune at 10 (sustained regret justifies it).
+    few = boundary_report(_ledger_with("r", 1171, 7808, 2))[0]
+    many = boundary_report(_ledger_with("r", 1171, 7808, 10))[0]
+    assert few.verdict == "keep"
+    assert many.verdict == "retune"
+
+
+def test_evidence_margin_components_are_pinned():
+    # frac 1664/7808 -> 213 milli-nats/episode; data_fit = 0.426 over 2 episodes;
+    # complexity = (1/2) ln 2. The margin is positive, so: retune.
+    v = boundary_report(_ledger_with("r", 1664, 7808, 2))[0]
+    assert abs(v.data_fit_nats - 0.426) < 1e-9
+    assert abs(v.complexity_nats - 0.5 * math.log(2)) < 1e-9
+    assert v.verdict == "retune" and v.evidence_margin > 0
+
+
+def test_default_dashboard_uses_the_mdl_criterion():
+    # The zero-regret default portfolio reads all-keep with zero data-fit bits.
+    ledger = ledger_from_episodes(vector_add(1024), AVX, EPISODES,
+                                  PolicyPortfolio.default())
+    for v in boundary_report(ledger):
+        assert v.verdict == "keep" and v.data_fit_nats == 0.0
+
+
+# --- R13: boundary-verdict provenance --------------------------------------------
+
+def test_consistent_verdicts_satisfy_R13():
+    verdicts = boundary_report(_ledger_with("r", 1664, 7808, 10))
+    assert verify_provenance(None, verdicts=verdicts) == []
+
+
+def test_forged_retune_without_evidence_is_R13():
+    bad = BoundaryVerdict(rule="r", verdict="retune", regret_rate=0, episodes=3,
+                          data_fit_nats=0.1, complexity_nats=0.8)
+    assert "R13" in _laws(verify_provenance(None, verdicts=[bad]))
+
+
+def test_keep_ignoring_justified_regret_is_R13():
+    bad = BoundaryVerdict(rule="r", verdict="keep", regret_rate=999, episodes=10,
+                          data_fit_nats=1.5, complexity_nats=1.0)
+    assert "R13" in _laws(verify_provenance(None, verdicts=[bad]))
 
 
 def test_ledger_is_deterministic():

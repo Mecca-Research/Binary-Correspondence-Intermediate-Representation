@@ -109,6 +109,19 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
+- **MDL / Bayesian-evidence retune law** (Phase 16, LangRef §13): the boundary
+  dashboard's retune trigger is now the principled two-part code
+  `ΔL = Σ regret_i/best_i − (k/2)·ln(N)` (the BIC large-sample Bayesian
+  evidence, Schwarz 1978) instead of a magic regret-rate threshold — a swap is
+  recommended only when the accumulated relative regret pays for the
+  model-complexity cost of specifying and certifying it (few episodes of small
+  regret never flag; sustained or large regret does, and the *same* per-episode
+  regret flips keep→retune as evidence accumulates). `kbcir.regret` carries
+  `data_fit_nats`/`complexity_nats`/`evidence_margin`; the verdict is folded
+  into **R13** on both rails (`verify_provenance` verdicts obligation +
+  `bcir.kbcir.regret_ledger` `data_fit_milli`/`complexity_milli`/`verdict`):
+  a verdict is illegal unless consistent with its MDL margin
+  (retune ⟺ data_fit > complexity).
 - **The temperature dial** (Phase 15, LangRef §8/§13): `kbcir.softdp` is the
   soft, differentiable twin of `optimize` — a log-sum-exp dynamic program over
   the same legal candidate DAG whose `T → 0` limit recovers the tropical

@@ -93,9 +93,17 @@ def BCIR_KBCIRRegretLedgerOp : BCIR_Op<"kbcir.regret_ledger", [Symbol]> {
   // against the hindsight-best alternative under one neutral yardstick.
   // An instrument, never an actuator: verdicts recommend, the replay gate
   // decides, R13 witnesses. Mirrors bcir/kbcir/regret.py (verified, R13).
+  // The retune trigger is the MDL / Bayesian-evidence two-part code, not a
+  // magic threshold: `data_fit_milli` (sum_i regret_i/best_i, in milli-nats) is
+  // the description-length saving a swap buys; `complexity_milli` is the BIC
+  // penalty (k/2)*ln(N) it costs. `verdict` is "keep" or "retune", and R13
+  // checks it is consistent: retune <=> data_fit_milli > complexity_milli.
   let arguments = (ins SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$rule,
                        I64Attr:$episodes, I64Attr:$total_regret,
-                       I64Attr:$worst_regret, I64Attr:$gen);
+                       I64Attr:$worst_regret, I64Attr:$gen,
+                       DefaultValuedAttr<I64Attr, "0">:$data_fit_milli,
+                       DefaultValuedAttr<I64Attr, "0">:$complexity_milli,
+                       DefaultValuedAttr<StrAttr, "\"keep\"">:$verdict);
   let assemblyFormat = "$sym_name attr-dict";
 }
 

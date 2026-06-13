@@ -18,12 +18,17 @@ generation-tagged like every other decision artifact (law R13).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from ..model import Module
 from .cost import Theta
 from .realize import optimize
 from .weights import PERF, Policy
+
+# Default model-structure cost of a retune: one binary keep-vs-swap decision
+# (Delta-k = 1 free parameter). The BIC/MDL complexity penalty is (k/2)*ln(N).
+RETUNE_FREE_PARAMS = 1
 
 
 @dataclass(frozen=True)
@@ -42,16 +47,38 @@ class RegretMeasurement:
 
 @dataclass
 class RegretEntry:
-    """The ledger's books for one decision rule."""
+    """The ledger's books for one decision rule.
+
+    `total_fit_milli` accumulates the per-episode *fractional* regret
+    (regret/best, in milli-units): the dimensionless data-fit improvement a swap
+    would buy, summed over episodes. It is the MDL two-part code's data term --
+    bits the deployed rule wastes relative to hindsight -- and the only extra
+    book the principled retune criterion needs.
+    """
 
     rule: str
     episodes: int = 0
     total_regret: int = 0
     worst_regret: int = 0
+    total_fit_milli: int = 0
 
     @property
     def regret_rate(self) -> int:
         return self.total_regret // self.episodes if self.episodes else 0
+
+    def data_fit_nats(self) -> float:
+        """Sum_i regret_i/best_i -- the MDL data term (description-length saving)."""
+        return self.total_fit_milli / 1000.0
+
+    def complexity_nats(self, free_params: int = RETUNE_FREE_PARAMS) -> float:
+        """(k/2)*ln(N) -- the BIC model-complexity penalty (large-sample Bayesian
+        evidence, Schwarz 1978): the bits a retune costs to specify and certify."""
+        return (free_params / 2.0) * math.log(self.episodes) if self.episodes >= 1 else 0.0
+
+    def evidence_margin(self, free_params: int = RETUNE_FREE_PARAMS) -> float:
+        """Delta-L = data_fit - complexity. > 0 iff a retune shortens the total
+        description length (equivalently, has the higher Bayesian evidence)."""
+        return self.data_fit_nats() - self.complexity_nats(free_params)
 
 
 @dataclass
@@ -66,26 +93,38 @@ class RegretLedger:
         e.episodes += 1
         e.total_regret += m.regret
         e.worst_regret = max(e.worst_regret, m.regret)
+        e.total_fit_milli += round(1000 * m.regret / m.best) if m.best else 0
 
     def dashboard(self) -> str:
         lines = [f"regret ledger (gen {self.gen})",
-                 f"{'rule':<12} {'episodes':>8} {'total':>8} {'worst':>8} {'rate':>8}"]
+                 f"{'rule':<12} {'episodes':>8} {'total':>8} {'rate':>8} "
+                 f"{'fit':>7} {'cost':>7} {'verdict':>8}"]
         for name in sorted(self.entries):
             e = self.entries[name]
+            fit, cx = e.data_fit_nats(), e.complexity_nats()
+            verdict = "retune" if fit > cx else "keep"
             lines.append(f"{e.rule:<12} {e.episodes:>8} {e.total_regret:>8} "
-                         f"{e.worst_regret:>8} {e.regret_rate:>8}")
+                         f"{e.regret_rate:>8} {fit:>7.3f} {cx:>7.3f} {verdict:>8}")
         return "\n".join(lines)
 
 
 @dataclass(frozen=True)
 class BoundaryVerdict:
     """Where the boundary belongs for one rule: keep it, or retune through the
-    gate. A verdict is a recommendation -- never an actuation."""
+    gate. A verdict is a recommendation -- never an actuation -- and it carries
+    its MDL/evidence justification so R13 can witness it (`verify_provenance`)."""
 
     rule: str
-    verdict: str         # "keep" | "retune"
+    verdict: str            # "keep" | "retune"
     regret_rate: int
     episodes: int
+    data_fit_nats: float = 0.0      # MDL data term: bits a swap would save
+    complexity_nats: float = 0.0    # BIC penalty: bits a swap costs
+
+    @property
+    def evidence_margin(self) -> float:
+        """Delta-L = data_fit - complexity; > 0 is the principled retune trigger."""
+        return self.data_fit_nats - self.complexity_nats
 
 
 def measure_regret(module: Module, h, theta: Theta, deployed: Policy,
@@ -128,14 +167,30 @@ def ledger_from_episodes(module: Module, h, episodes: list[Theta], portfolio,
     return ledger
 
 
-def boundary_report(ledger: RegretLedger, retune_threshold: int = 0) -> list[BoundaryVerdict]:
-    """The boundary dashboard: rules whose sustained regret rate exceeds the
-    threshold are candidates for retuning (through the replay gate); the rest
-    keep their slot. Deterministic, sorted by rule name."""
+def boundary_report(ledger: RegretLedger,
+                    free_params: int = RETUNE_FREE_PARAMS) -> list[BoundaryVerdict]:
+    """The boundary dashboard, on a principled (MDL / Bayesian-evidence) trigger.
+
+    A rule is a retune candidate iff switching shortens the total two-part code:
+
+        Delta-L  =  sum_i regret_i/best_i   -   (k/2) * ln(N)   >   0
+                    \\___ data fit (saving) _/    \\__ BIC complexity _/
+
+    i.e. the accumulated *relative* regret (the bits the deployed rule wastes)
+    must outweigh the model-complexity penalty of specifying and certifying a
+    swap (the large-sample Bayesian evidence, Schwarz 1978). This replaces the
+    old magic regret-rate threshold: a swap is recommended only when the
+    evidence pays for it -- few episodes of small regret never flag (that would
+    be overfitting noise), sustained or large regret does. Deterministic, sorted
+    by rule name. A verdict is a recommendation; actuation goes through the L2
+    replay gate and R13."""
     out: list[BoundaryVerdict] = []
     for name in sorted(ledger.entries):
         e = ledger.entries[name]
-        verdict = "retune" if e.regret_rate > retune_threshold else "keep"
-        out.append(BoundaryVerdict(rule=name, verdict=verdict,
-                                   regret_rate=e.regret_rate, episodes=e.episodes))
+        fit = e.data_fit_nats()
+        cx = e.complexity_nats(free_params)
+        out.append(BoundaryVerdict(
+            rule=name, verdict="retune" if fit > cx else "keep",
+            regret_rate=e.regret_rate, episodes=e.episodes,
+            data_fit_nats=fit, complexity_nats=cx))
     return out

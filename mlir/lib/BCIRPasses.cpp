@@ -619,6 +619,21 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         rl.emitError("R13: regret ledger books do not balance");
         ok = false;
       }
+      // The MDL / Bayesian-evidence retune trigger: a "retune" verdict must be
+      // backed by description-length evidence (data_fit > complexity); a "keep"
+      // must not sit on regret that has already outgrown the complexity cost.
+      int64_t fit = static_cast<int64_t>(rl.getDataFitMilli());
+      int64_t cx = static_cast<int64_t>(rl.getComplexityMilli());
+      StringRef verdict = rl.getVerdict();
+      if (verdict != "keep" && verdict != "retune") {
+        rl.emitError("R13: regret ledger verdict must be keep or retune");
+        ok = false;
+      } else if ((verdict == "retune") != (fit > cx)) {
+        rl.emitError("R13: regret verdict '")
+            << verdict << "' inconsistent with the MDL evidence (data_fit "
+            << fit << " vs complexity " << cx << ")";
+        ok = false;
+      }
     });
 
     // R9: a duration-aware schedule certificate is well-formed -- known mode,

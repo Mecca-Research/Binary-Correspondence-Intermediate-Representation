@@ -233,6 +233,16 @@ bcir.module @r13_ledger {
 
 // -----
 
+// R13: a retune verdict the MDL evidence does not justify (data_fit <=
+// complexity) -- the dashboard cannot recommend a swap the bits do not pay for.
+bcir.module @r13_unjustified_retune {
+  bcir.kbcir.policy @latency { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  // expected-error @+1 {{R13: regret verdict 'retune' inconsistent with the MDL evidence (data_fit 100 vs complexity 800)}}
+  bcir.kbcir.regret_ledger @bad { rule = @latency, episodes = 3 : i64, total_regret = 50 : i64, worst_regret = 20 : i64, gen = 1 : i64, data_fit_milli = 100 : i64, complexity_milli = 800 : i64, verdict = "retune" }
+}
+
+// -----
+
 // R9: a soft_select whose free energy exceeds the hard minimum (softmin <= min
 // is violated).
 bcir.module @r9_soft_bound {

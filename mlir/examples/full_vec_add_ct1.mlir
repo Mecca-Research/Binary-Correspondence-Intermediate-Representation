@@ -108,8 +108,9 @@ bcir.module @full_vec_add_ct1 attributes {
     candidate = @perf, incumbent = @perf, episodes = 3 : i64, regressions = 0 : i64, admitted = true
   }
   // L3: the regret ledger (the boundary dashboard) -- the seeded portfolio is
-  // hindsight-optimal on the standard episodes, so the books read zero.
-  bcir.kbcir.regret_ledger @regret_perf { rule = @perf, episodes = 3 : i64, total_regret = 0 : i64, worst_regret = 0 : i64, gen = 1 : i64 }
+  // hindsight-optimal on the standard episodes, so the books read zero and the
+  // MDL evidence (data_fit 0 <= complexity) yields a principled "keep" verdict.
+  bcir.kbcir.regret_ledger @regret_perf { rule = @perf, episodes = 3 : i64, total_regret = 0 : i64, worst_regret = 0 : i64, gen = 1 : i64, data_fit_milli = 0 : i64, complexity_milli = 549 : i64, verdict = "keep" }
 
   // ---- BCIR-4: GEM StreamPack (hydrated, prefetch + provenance) ----
   %sp = bcir.gem.stream_pack @sp0 attributes {
