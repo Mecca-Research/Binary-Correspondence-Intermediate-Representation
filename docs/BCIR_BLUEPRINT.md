@@ -109,6 +109,19 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
+- **Provenance manifest + deterministic replay** (Phase 20, LangRef §13): the
+  version-DAG spine that makes the constantly-updating computation DAG
+  reproducible and debuggable. `kbcir.provenance` chains a plan's inputs
+  (module/target/theta/policy) and its in-force decision-rule generations
+  (calibration cal_gen + fingerprint, policy gens, gate/ranker fingerprints,
+  StreamPack topo/map/data_gen) into a single content hash — **the commit hash
+  of a plan**. Manifest equality ⇒ identical plan (`reproduces`); `replay`
+  raises on any input/artifact change (tamper-evidence); `diff` reports *which*
+  component moved across generations (the debugging view). An immutable plan is
+  a committed manifest; a "saved file" is a closed branch. Witnessed by **R13**
+  (`verify.verify_manifest`, `bcir.kbcir.provenance_manifest`): a deployed plan's
+  manifest must reproduce its recorded score/shape on replay. CLI:
+  `python -m bcir.run --manifest`.
 - **The propose-verify search accelerator** (Phase 19, LangRef §13): `kbcir.accel`
   is the safest place learning touches the (hot-ish) plan-time search — a learned
   candidate ordering speeds the exact RCSP search but **provably returns the same

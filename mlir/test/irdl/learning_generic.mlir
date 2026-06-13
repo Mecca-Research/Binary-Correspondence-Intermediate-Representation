@@ -30,6 +30,8 @@
   episodes = 3 : i64, regressions = 0 : i64, admitted = true} : () -> ()
 "bcir.kbcir.search_accel"() {sym_name = "accel0", order = "learned",
   checked = 4 : i64, mismatches = 0 : i64, admitted = true} : () -> ()
+"bcir.kbcir.provenance_manifest"() {sym_name = "manifest0", digest = 7777777 : i64,
+  score = 7808 : i64, n_artifacts = 0 : i64, reproduced = true} : () -> ()
 
 // CHECK: "bcir.kbcir.calibration"
 // CHECK: random_q8 = 8192
@@ -40,3 +42,4 @@
 // CHECK: "bcir.verify.policy_provenance"
 // CHECK: "bcir.kbcir.moe_gate"
 // CHECK: "bcir.kbcir.search_accel"
+// CHECK: "bcir.kbcir.provenance_manifest"

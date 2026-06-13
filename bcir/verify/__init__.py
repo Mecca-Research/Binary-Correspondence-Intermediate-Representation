@@ -420,6 +420,36 @@ def verify_lowering(module: Module, result, ll_text: str, elem: str = "f32",
     return diags
 
 
+def verify_manifest(manifest, module, h, theta, policy=None, artifacts=()) -> list[Diagnostic]:
+    """Provenance-manifest law R13: a deployed plan's manifest must (a) hash to the
+    inputs/artifacts it claims (tamper-evidence) and (b) reproduce the recorded
+    optimal score and plan shape (determinism). A failure means the plan is not
+    reproducible from its stated provenance -- the debugging/determinism violation.
+    """
+    from ..kbcir.provenance import build_manifest
+    from ..kbcir.weights import PERF
+
+    diags: list[Diagnostic] = []
+    fresh = build_manifest(module, h, theta, policy or PERF, artifacts)
+    if fresh.digest != manifest.digest:
+        diags.append(Diagnostic(
+            "R13",
+            f"manifest digest {manifest.digest} != recomputed {fresh.digest} "
+            f"(changed components: {fresh.diff(manifest)})",
+        ))
+        return diags
+    if fresh.score != manifest.score:
+        diags.append(Diagnostic(
+            "R13",
+            f"manifest is not reproducible: recorded score {manifest.score} != "
+            f"replayed {fresh.score}",
+        ))
+    if fresh.widths != manifest.widths:
+        diags.append(Diagnostic(
+            "R13", "manifest is not reproducible: replayed plan shape differs"))
+    return diags
+
+
 def verify_provenance(portfolio, certificates=(), h=None, table=None,
                       verdicts=(), gate_certificates=(), accel_certificates=()
                       ) -> list[Diagnostic]:

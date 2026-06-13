@@ -52,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--accel", action="store_true",
                    help="propose-verify search accelerator: greedy vs worst candidate "
                         "ordering (same optimum, fewer expansions)")
+    p.add_argument("--manifest", action="store_true",
+                   help="print the provenance manifest (the commit hash of this plan) "
+                        "and confirm it replays")
     p.add_argument("--soft-temp", metavar="T", type=float, default=None,
                    help="soft (log-sum-exp) plan distribution at temperature T "
                         "(T=0 reproduces the tropical optimizer exactly)")
@@ -138,6 +141,12 @@ def main(argv: list[str] | None = None) -> int:
             classic = pf.select(th).name
             flag = "" if learned == classic else "  <- diverges"
             print(f"  theta={name:<9} learned={learned:<11} classify={classic}{flag}")
+
+    if args.manifest:
+        from .kbcir import build_manifest, reproduces
+        man = build_manifest(module, h, theta, policy)
+        print(f"[manifest] digest={man.digest} score={man.score} "
+              f"widths={dict(man.widths)} reproduces={reproduces(man, module, h, theta, policy)}")
 
     if args.accel:
         from .kbcir import greedy_order, optimize_ordered, worst_order

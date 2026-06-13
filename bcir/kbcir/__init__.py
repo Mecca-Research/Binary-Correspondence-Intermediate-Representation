@@ -32,6 +32,14 @@ from .moegate import (
     ledger_labels,
     train_gate,
 )
+from .provenance import (
+    ProvenanceManifest,
+    ProvenanceMismatch,
+    build_manifest,
+    manifest_for,
+    replay,
+    reproduces,
+)
 from .accel import (
     AccelCertificate,
     FrozenRanker,
@@ -95,6 +103,12 @@ __all__ = [
     "gate_replay_gate",
     "ledger_labels",
     "train_gate",
+    "ProvenanceManifest",
+    "ProvenanceMismatch",
+    "build_manifest",
+    "manifest_for",
+    "replay",
+    "reproduces",
     "AccelCertificate",
     "FrozenRanker",
     "LearnedRanker",

@@ -703,6 +703,23 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R13: provenance-manifest reproducibility -- a deployed plan's manifest (the
+    // commit hash of its inputs + in-force decision-rule generations) must have
+    // reproduced its recorded score/shape on replay. Manifest equality => the
+    // identical plan; a plan that cannot be reproduced from its provenance is not
+    // a closed branch.
+    root->walk([&](KBCIRProvenanceManifestOp pm) {
+      if (static_cast<int64_t>(pm.getScore()) < 0 ||
+          static_cast<int64_t>(pm.getNArtifacts()) < 0) {
+        pm.emitError("R13: manifest score/n_artifacts out of range");
+        ok = false;
+      }
+      if (!pm.getReproduced()) {
+        pm.emitError("R13: deployed plan manifest did not reproduce on replay");
+        ok = false;
+      }
+    });
+
     // R9: a duration-aware schedule certificate is well-formed -- known mode,
     // non-negative makespan, knee/pipeline >= 1, and a declared plan.
     root->walk([&](GEMScheduleOp sc) {
