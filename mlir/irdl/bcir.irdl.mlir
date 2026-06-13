@@ -89,6 +89,8 @@ irdl.dialect @bcir {
   // Constrained (RCSP) rail: B(H,Theta) caps + the (max,+) overlap price.
   irdl.operation @"kbcir.budget"
   irdl.operation @"kbcir.scheduled_price"
+  // The temperature dial: the soft log-sum-exp twin of the tropical select.
+  irdl.operation @"kbcir.soft_select"
   // Learning placement (LangRef Sec. 13): L1 frozen tables + L2 portfolio/gate
   // + the L3 regret ledger (the boundary dashboard).
   irdl.operation @"kbcir.calibration"

@@ -99,6 +99,20 @@ def BCIR_KBCIRRegretLedgerOp : BCIR_Op<"kbcir.regret_ledger", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_KBCIRSoftSelectOp : BCIR_Op<"kbcir.soft_select", [Symbol]> {
+  let summary = "Finite-temperature (log-sum-exp) twin of the tropical select";
+  // The Gibbs free energy F_T = -T log sum exp(-score/T) over legal plans -- the
+  // soft, differentiable generalization of kbcir.select (LangRef Sec. 8).
+  // `temperature_milli` is T x 1000 (integer for IR determinism). Degenerate-case
+  // law (verified, R9): free_energy <= score (softmin <= min) and, at
+  // temperature 0, free_energy == score -- exact recovery of the tropical
+  // optimizer. Mirrors bcir/kbcir/softdp.py.
+  let arguments = (ins SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$claim,
+                       I64Attr:$temperature_milli, I64Attr:$score,
+                       I64Attr:$free_energy, FlatSymbolRefAttr:$selected);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
 def BCIR_KBCIRScheduledPriceOp : BCIR_Op<"kbcir.scheduled_price", [Symbol]> {
   let summary = "M(pi,Theta): the (max,+) wave-overlap price of a plan";
   // makespan composes series with (+) and CT2 wave parallelism with max; the

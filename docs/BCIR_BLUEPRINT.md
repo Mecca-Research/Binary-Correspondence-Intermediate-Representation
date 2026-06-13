@@ -109,6 +109,18 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
+- **The temperature dial** (Phase 15, LangRef §8/§13): `kbcir.softdp` is the
+  soft, differentiable twin of `optimize` — a log-sum-exp dynamic program over
+  the same legal candidate DAG whose `T → 0` limit recovers the tropical
+  optimizer *exactly* (at `T = 0` it delegates to the integer `optimize`, so
+  every pinned score is bit-identical). At `T > 0` it returns the Gibbs free
+  energy `F_T`, per-claim plan marginals, and the expected cost vector — with
+  an exact analytic gradient `∂F_T/∂w = E_π[C]` (no autograd), making the
+  optimizer a learnable layer. The single abstraction behind the
+  Solomonoff/Bayesian/softmax lineages: learn at `T > 0` offline, anneal and
+  freeze to a `T = 0` table for the certified hot path. Law:
+  `bcir.kbcir.soft_select` (R9: `F ≤` score; `T = 0 ⇒ F ==` score). CLI:
+  `bcir.run --soft-temp T`.
 - **R13 policy provenance + the regret ledger** (Phase 14, LangRef §10/§13):
   the law that makes rule swaps witnessable — a promoted portfolio entry
   requires its admitting replay certificate, a calibrated profile must present

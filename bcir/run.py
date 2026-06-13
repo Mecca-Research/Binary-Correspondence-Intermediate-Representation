@@ -46,6 +46,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="apply a frozen calibration table (JSON; see bcir.kbcir.microbench)")
     p.add_argument("--regret", action="store_true",
                    help="print the L3 regret ledger over the standard Theta episodes")
+    p.add_argument("--soft-temp", metavar="T", type=float, default=None,
+                   help="soft (log-sum-exp) plan distribution at temperature T "
+                        "(T=0 reproduces the tropical optimizer exactly)")
     p.add_argument("--codegen", metavar="TARGET",
                    help="per-target codegen via llc (aarch64|riscv64|nvptx64|bpf|x86_64|c|all)")
     args = p.parse_args(argv)
@@ -101,6 +104,16 @@ def main(argv: list[str] | None = None) -> int:
         sp = price_scheduled(module, result, h, theta, policy)
         print(f"[overlap] M(pi,Theta): makespan={sp.makespan} serial={sp.serial} "
               f"gain={sp.overlap_gain}")
+
+    if args.soft_temp is not None:
+        from .kbcir import softselect
+        s = softselect(module, h, theta, policy, args.soft_temp)
+        print(f"[softdp] T={s.temperature} free_energy={s.free_energy:.2f} "
+              f"hard_score={s.hard_score} gap={s.gap:.2f}")
+        for cid in sorted(s.marginals):
+            dist = ", ".join(f"{name}={p:.3f}" for name, p in
+                             sorted(s.marginals[cid].items(), key=lambda kv: -kv[1]))
+            print(f"  claim {cid} marginals: {dist}  (MAP={s.map_by_claim[cid]})")
 
     if args.regret:
         from .kbcir import PolicyPortfolio, boundary_report, ledger_from_episodes
