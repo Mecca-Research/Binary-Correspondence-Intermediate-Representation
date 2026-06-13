@@ -187,12 +187,18 @@ E[improvement per decision]  >>  decision rate x inference cost
 - **L2 (checkpoints — portfolio + replay gate).** Gain schedules (policy
   weight vectors, thresholds) adapt only at checkpoints, only as members of a
   **portfolio of frozen, generation-tagged policies**
-  (`bcir.kbcir.portfolio`), selected at plan time by a deterministic
-  workload-class table. A schedule swap requires an admitting **replay
-  certificate** (`bcir.kbcir.replay_certificate`): counterfactual replay on
-  logged Θ episodes, judged by the incumbent's scheduled metric M(π,Θ), zero
-  regressions over ≥ 1 episodes (verified under R9). Shadow → canary →
-  promote; never silent.
+  (`bcir.kbcir.portfolio`), selected at plan time by a router. The router may be
+  the deterministic workload-class table (`classify`) or a **learned
+  Mixture-of-Experts gate** — a GNN over the claim graph trained on the regret
+  ledger (`kbcir.moegate`, `bcir.kbcir.moe_gate`). The gate is the *safe*
+  learning regime: it only *selects among already-certified experts*, never
+  emits a table or policy; it deploys **frozen** (Q8 integer routing,
+  deterministic across hosts) and only behind an admitting replay certificate.
+  A schedule swap or a gate deployment requires that **replay certificate**
+  (`bcir.kbcir.replay_certificate`): counterfactual replay on logged Θ episodes,
+  judged by the incumbent's scheduled metric M(π,Θ), zero regressions over ≥ 1
+  episodes (verified under R9/R13). The network proposes a route; the verifier
+  disposes. Shadow → canary → promote; never silent.
 - **L3 (the meta-policy — measured, human-actuated).** Where the
   heuristic/learned boundary itself sits is a measured question: the **regret
   ledger** (`kbcir.regret`, `bcir.kbcir.regret_ledger`) continuously books each

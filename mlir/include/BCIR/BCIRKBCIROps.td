@@ -127,6 +127,22 @@ def BCIR_KBCIRSoftSelectOp : BCIR_Op<"kbcir.soft_select", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_KBCIRMoEGateOp : BCIR_Op<"kbcir.moe_gate", [Symbol]> {
+  let summary = "L2 learned MoE gate: a GNN router over the claim graph (the ensemble)";
+  // The learned replacement for classify(Theta) (LangRef Sec. 13): a GNN over the
+  // claim graph routes among the certified `portfolio` experts. It is the *safe*
+  // learning regime -- it selects among already-certified experts, never emits a
+  // table -- and deploys frozen (Q8 integer routing) only behind an admitting
+  // replay certificate. `fingerprint` is the frozen params' provenance hash.
+  // R13: dims positive, portfolio resolves, admitted => regressions == 0, and a
+  // deployed gate must be admitted. Mirrors bcir/kbcir/moegate.py.
+  let arguments = (ins SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$portfolio,
+                       I64Attr:$num_experts, I64Attr:$hidden, I64Attr:$gate_gen,
+                       I64Attr:$fingerprint, I64Attr:$episodes, I64Attr:$regressions,
+                       BoolAttr:$admitted);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
 def BCIR_KBCIRScheduledPriceOp : BCIR_Op<"kbcir.scheduled_price", [Symbol]> {
   let summary = "M(pi,Theta): the (max,+) wave-overlap price of a plan";
   // makespan composes series with (+) and CT2 wave parallelism with max; the

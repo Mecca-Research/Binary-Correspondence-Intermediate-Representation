@@ -46,6 +46,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="apply a frozen calibration table (JSON; see bcir.kbcir.microbench)")
     p.add_argument("--regret", action="store_true",
                    help="print the L3 regret ledger over the standard Theta episodes")
+    p.add_argument("--moe", action="store_true",
+                   help="train the learned MoE gate (GNN over the claim graph) on the "
+                        "regret ledger and show its route vs the classify router")
     p.add_argument("--soft-temp", metavar="T", type=float, default=None,
                    help="soft (log-sum-exp) plan distribution at temperature T "
                         "(T=0 reproduces the tropical optimizer exactly)")
@@ -114,6 +117,24 @@ def main(argv: list[str] | None = None) -> int:
             dist = ", ".join(f"{name}={p:.3f}" for name, p in
                              sorted(s.marginals[cid].items(), key=lambda kv: -kv[1]))
             print(f"  claim {cid} marginals: {dist}  (MAP={s.map_by_claim[cid]})")
+
+    if args.moe:
+        from .kbcir import (PolicyPortfolio, freeze, gate_replay_gate,
+                            ledger_labels, train_gate)
+        thetas = list(_THETAS.values())
+        pf = PolicyPortfolio.default()
+        samples, experts = ledger_labels(module, h, thetas, pf)
+        gate = freeze(train_gate(samples, experts, epochs=300))
+        cert = gate_replay_gate(module, h, thetas, gate, pf)
+        print(f"[moe] gate routes among {len(experts)} experts "
+              f"(fingerprint={gate.fingerprint}); replay cert: "
+              f"{cert.regressions}/{cert.episodes} regressions, "
+              f"admitted={cert.admitted}")
+        for name, th in _THETAS.items():
+            learned = gate.route_policy(module, th).name
+            classic = pf.select(th).name
+            flag = "" if learned == classic else "  <- diverges"
+            print(f"  theta={name:<9} learned={learned:<11} classify={classic}{flag}")
 
     if args.regret:
         from .kbcir import PolicyPortfolio, boundary_report, ledger_from_episodes

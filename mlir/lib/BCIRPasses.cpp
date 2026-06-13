@@ -649,6 +649,38 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R13: learned-gate provenance -- a deployed MoE gate (kbcir.moegate) routes
+    // among certified portfolio experts and may deploy only behind an admitting
+    // replay certificate (zero regressions vs the incumbent classify router). The
+    // network proposes a route; the verifier disposes.
+    llvm::DenseSet<StringRef> portfolioNames;
+    root->walk([&](KBCIRPortfolioOp pf) { portfolioNames.insert(pf.getSymName()); });
+    root->walk([&](KBCIRMoEGateOp gate) {
+      if (!portfolioNames.count(gate.getPortfolio())) {
+        gate.emitError("R13: MoE gate routes to unknown portfolio @")
+            << gate.getPortfolio();
+        ok = false;
+      }
+      if (static_cast<int64_t>(gate.getNumExperts()) < 1 ||
+          static_cast<int64_t>(gate.getHidden()) < 1 ||
+          static_cast<int64_t>(gate.getGateGen()) < 1 ||
+          static_cast<int64_t>(gate.getEpisodes()) < 1 ||
+          static_cast<int64_t>(gate.getRegressions()) < 0) {
+        gate.emitError("R13: MoE gate dimensions/books out of range");
+        ok = false;
+      }
+      int64_t regressions = static_cast<int64_t>(gate.getRegressions());
+      if (gate.getAdmitted() && regressions != 0) {
+        gate.emitError("R13: admitted MoE gate carries ")
+            << regressions << " regression(s)";
+        ok = false;
+      }
+      if (!gate.getAdmitted()) {
+        gate.emitError("R13: deployed MoE gate did not pass its replay gate");
+        ok = false;
+      }
+    });
+
     // R9: a duration-aware schedule certificate is well-formed -- known mode,
     // non-negative makespan, knee/pipeline >= 1, and a declared plan.
     root->walk([&](GEMScheduleOp sc) {
