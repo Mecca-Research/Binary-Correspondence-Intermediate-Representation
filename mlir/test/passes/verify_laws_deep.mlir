@@ -295,6 +295,17 @@ bcir.module @r13_moe_gate {
 
 // -----
 
+// R13: a search accelerator deployed as admitted but whose learned ordering
+// changed the optimum (mismatches > 0) -- ordering may change work, never result.
+bcir.module @r13_search_accel {
+  // expected-error @+1 {{R13: admitted search accelerator changed the optimum (1 mismatch(es))}}
+  bcir.kbcir.search_accel @accel0 {
+    order = "learned", checked = 12 : i64, mismatches = 1 : i64, admitted = true
+  }
+}
+
+// -----
+
 // R12: a lowering contract that neither preserves the BCIR semantic
 // (bounds/hazard/precision) nor carries an explicit discharge.
 bcir.module @r12 {

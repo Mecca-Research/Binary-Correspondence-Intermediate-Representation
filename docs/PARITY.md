@@ -50,6 +50,7 @@ accuracy, contention, verification`.
 | L2 policy portfolio | `kbcir.portfolio.PolicyPortfolio` (class-table selection) | `bcir.kbcir.portfolio` (R9) |
 | L2 replay gate | `kbcir.portfolio.replay_gate` / `ReplayCertificate` | `bcir.kbcir.replay_certificate` (R9: admitted ⇒ zero regressions) |
 | L2 learned MoE gate | `kbcir.moegate` (`train_gate` GNN / `freeze` Q8 / `gate_replay_gate`) | `bcir.kbcir.moe_gate` (R13: routes certified experts, admitted ⇒ zero regressions) |
+| search accelerator | `kbcir.accel` (`optimize_ordered` B&B / `train_ranker` / `accelerator_certificate`) | `bcir.kbcir.search_accel` (R13: admitted ⇒ zero mismatches; same optimum) |
 | L3 regret ledger | `kbcir.regret.RegretLedger` / `measure_regret` / `boundary_report` | `bcir.kbcir.regret_ledger` (R13: books balance, rule resolves) |
 | MDL/evidence retune | `kbcir.regret` `data_fit_nats`/`complexity_nats`/`evidence_margin` (BIC: ΔL = Σ regret/best − (k/2)ln N) | `bcir.kbcir.regret_ledger` `data_fit_milli`/`complexity_milli`/`verdict` (R13: retune ⟺ data_fit > complexity) |
 | policy provenance R13 | `verify.verify_provenance` | `bcir.verify.policy_provenance` + `-bcir-verify` R13 (promotion coverage, table correspondence) |

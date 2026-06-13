@@ -99,6 +99,8 @@ irdl.dialect @bcir {
   irdl.operation @"kbcir.regret_ledger"
   // The learned MoE gate: a GNN router over the claim graph (the ensemble).
   irdl.operation @"kbcir.moe_gate"
+  // The propose-verify search accelerator: a learned candidate ordering.
+  irdl.operation @"kbcir.search_accel"
 
   // ---- BCIR-4: GEM StreamPack ----
   irdl.operation @"gem.stream_pack" {

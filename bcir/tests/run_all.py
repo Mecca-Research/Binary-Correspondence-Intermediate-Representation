@@ -21,6 +21,7 @@ _MODULES = [
     "bcir.tests.test_microbench",
     "bcir.tests.test_bayescal",
     "bcir.tests.test_moegate",
+    "bcir.tests.test_accel",
     "bcir.tests.test_portfolio",
     "bcir.tests.test_regret",
     "bcir.tests.test_softdp",

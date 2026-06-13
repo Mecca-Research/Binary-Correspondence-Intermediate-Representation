@@ -49,6 +49,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--moe", action="store_true",
                    help="train the learned MoE gate (GNN over the claim graph) on the "
                         "regret ledger and show its route vs the classify router")
+    p.add_argument("--accel", action="store_true",
+                   help="propose-verify search accelerator: greedy vs worst candidate "
+                        "ordering (same optimum, fewer expansions)")
     p.add_argument("--soft-temp", metavar="T", type=float, default=None,
                    help="soft (log-sum-exp) plan distribution at temperature T "
                         "(T=0 reproduces the tropical optimizer exactly)")
@@ -135,6 +138,15 @@ def main(argv: list[str] | None = None) -> int:
             classic = pf.select(th).name
             flag = "" if learned == classic else "  <- diverges"
             print(f"  theta={name:<9} learned={learned:<11} classify={classic}{flag}")
+
+    if args.accel:
+        from .kbcir import greedy_order, optimize_ordered, worst_order
+        gr, gs = optimize_ordered(module, h, theta, policy, order=greedy_order)
+        wr, ws = optimize_ordered(module, h, theta, policy, order=worst_order)
+        print(f"[accel] same optimum: greedy={gr.score} worst={wr.score} "
+              f"(exact); greedy expansions={gs.expansions} "
+              f"(first plan {gs.first_complete_cost}) vs "
+              f"worst expansions={ws.expansions} (first plan {ws.first_complete_cost})")
 
     if args.regret:
         from .kbcir import PolicyPortfolio, boundary_report, ledger_from_episodes

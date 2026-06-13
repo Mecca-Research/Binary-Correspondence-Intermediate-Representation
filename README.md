@@ -52,6 +52,7 @@ python -m bcir.run vector_add --target x86_avx512 --wasm             # compile t
 python -m bcir.run vector_add --budget thermal=700 --overlap         # RCSP rail: vec8 @ 9472 + M(pi,Theta)
 python -m bcir.run vector_add --soft-temp 3000                       # temperature dial: soft plan distribution (T=0 == tropical)
 python -m bcir.run vector_add --moe                                  # learned MoE gate (GNN) route vs classify, replay-gated
+python -m bcir.run vector_add --accel                                # propose-verify search accelerator (same optimum, fewer expansions)
 python -m bcir.kbcir.microbench --target x86_avx512 --out cal.json   # measure -> freeze a Q8 cost table
 python -m bcir.kbcir.microbench --target x86_avx512 --bayes          # Bayesian posterior + conformal +/- delta
 python -m bcir.run vector_add --tables bcir/kbcir/tables/x86_64_reference.json  # apply frozen table

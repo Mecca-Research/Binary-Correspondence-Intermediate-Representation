@@ -28,6 +28,8 @@
 "bcir.kbcir.moe_gate"() {sym_name = "gate0", portfolio = "gains", num_experts = 4 : i64,
   hidden = 8 : i64, gate_gen = 1 : i64, fingerprint = 4242424242 : i64,
   episodes = 3 : i64, regressions = 0 : i64, admitted = true} : () -> ()
+"bcir.kbcir.search_accel"() {sym_name = "accel0", order = "learned",
+  checked = 4 : i64, mismatches = 0 : i64, admitted = true} : () -> ()
 
 // CHECK: "bcir.kbcir.calibration"
 // CHECK: random_q8 = 8192
@@ -37,3 +39,4 @@
 // CHECK: "bcir.kbcir.regret_ledger"
 // CHECK: "bcir.verify.policy_provenance"
 // CHECK: "bcir.kbcir.moe_gate"
+// CHECK: "bcir.kbcir.search_accel"
