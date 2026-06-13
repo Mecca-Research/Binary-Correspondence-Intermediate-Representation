@@ -176,6 +176,21 @@ bcir.module @r8_calibration {
 
 // -----
 
+// R8: a Bayesian/conformal table whose claimed coverage is not a probability.
+bcir.module @r8_conformal {
+  bcir.target.capability @cpu {
+    triple = "x86_64-avx512", isa_features = ["avx512f"], lane_widths = array<i64: 1, 8, 16>
+  }
+  // expected-error @+1 {{R8: conformal coverage 1500/1000 out of range (0,1000)}}
+  bcir.kbcir.calibration @bad {
+    target = @cpu, cal_gen = 1 : i64, samples = 8 : i64, provenance = "bayes",
+    stream_q8 = 256 : i64, strided_q8 = 256 : i64, random_q8 = 8192 : i64, compute_q8 = 256 : i64,
+    coverage_milli = 1500 : i64, random_delta_q8 = 128 : i64
+  }
+}
+
+// -----
+
 // R9: an admitted replay certificate that carries regressions -- the gate
 // never deploys a gain schedule on a measured loss.
 bcir.module @r9_replay {

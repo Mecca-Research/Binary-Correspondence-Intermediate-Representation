@@ -59,10 +59,16 @@ def BCIR_KBCIRCalibrationOp : BCIR_Op<"kbcir.calibration", [Symbol]> {
   // microbenchmark ratios against the streaming baseline (stream_q8 == 256 by
   // definition, verified under R8). gather_penalty = random_q8/256,
   // base_overhead = 4*strided_q8/256. Mirrors bcir/kbcir/microbench.py.
+  // A Bayesian/conformal table (kbcir.bayescal) additionally carries
+  // `coverage_milli` (the split-conformal coverage x1000; 0 = a plain point
+  // table, no guarantee) and `random_delta_q8` (the certified +/- half-width on
+  // the random ratio). R8: coverage in (0,1000) and delta >= 0 when claimed.
   let arguments = (ins SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$target,
                        I64Attr:$cal_gen, I64Attr:$samples, StrAttr:$provenance,
                        I64Attr:$stream_q8, I64Attr:$strided_q8,
-                       I64Attr:$random_q8, I64Attr:$compute_q8);
+                       I64Attr:$random_q8, I64Attr:$compute_q8,
+                       DefaultValuedAttr<I64Attr, "0">:$coverage_milli,
+                       DefaultValuedAttr<I64Attr, "0">:$random_delta_q8);
   let assemblyFormat = "$sym_name attr-dict";
 }
 

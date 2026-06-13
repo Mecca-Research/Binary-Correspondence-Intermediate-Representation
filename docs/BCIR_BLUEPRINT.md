@@ -109,6 +109,18 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
+- **Bayesian cost model with conformal error bars** (Phase 17, LangRef §13):
+  `kbcir.bayescal` upgrades the point microbench table to a posterior with a
+  certified interval — a conjugate-Gaussian (VI-exact) posterior over each Q8
+  ratio (`gaussian_update`), a distribution-free split-conformal `±δ` at a
+  stated coverage (`conformal_delta`, Vovk), and likelihood-free **ABC**
+  (`abc_calibrate`) that uses the GEM/`optimize` forward model as the simulator
+  (accept a proposed table iff its *simulated* plan score lands within epsilon
+  of the observed). The frozen `BayesianCalibratedProfile` applies like a point
+  table (Q8) and additionally carries the conformal `δ`; the conformal guarantee
+  is witnessed under R8/R13 (`bcir.kbcir.calibration` `coverage_milli` /
+  `random_delta_q8`: coverage a real probability, `δ ≥ 0`, no interval from ≤ 1
+  sample). CLI: `python -m bcir.kbcir.microbench --bayes`.
 - **MDL / Bayesian-evidence retune law** (Phase 16, LangRef §13): the boundary
   dashboard's retune trigger is now the principled two-part code
   `ΔL = Σ regret_i/best_i − (k/2)·ln(N)` (the BIC large-sample Bayesian

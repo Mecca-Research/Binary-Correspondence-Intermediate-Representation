@@ -198,15 +198,31 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--n", type=int, default=1 << 18)
     p.add_argument("--repeats", type=int, default=5)
     p.add_argument("--cal-gen", type=int, default=1)
+    p.add_argument("--bayes", action="store_true",
+                   help="Bayesian table: conjugate posterior + conformal +/- delta "
+                        "over --bayes-runs repeated measurements")
+    p.add_argument("--bayes-runs", type=int, default=8)
+    p.add_argument("--coverage", type=float, default=0.9)
     args = p.parse_args(argv)
 
-    table = calibrate_profile(TARGETS[args.target], n=args.n, repeats=args.repeats,
-                              cal_gen=args.cal_gen)
-    text = table.to_json()
+    h = TARGETS[args.target]
+    if args.bayes:
+        from .bayescal import bayes_calibrate
+        raws = [run_microbench(n=args.n, repeats=args.repeats) for _ in range(args.bayes_runs)]
+        bt = bayes_calibrate(h, raws, coverage=args.coverage, cal_gen=args.cal_gen)
+        text = bt.to_json()
+        lo, hi = bt.gather_penalty_interval()
+        summary = (f"[bayescal] cal_gen={bt.cal_gen} gather_penalty={bt.gather_penalty} "
+                   f"in [{lo},{hi}] @ {args.coverage:.0%} (delta_q8={bt.random_delta_q8})")
+    else:
+        bt = calibrate_profile(h, n=args.n, repeats=args.repeats, cal_gen=args.cal_gen)
+        text = bt.to_json()
+        summary = f"[microbench] cal_gen={bt.cal_gen} gather_penalty={bt.gather_penalty}"
+
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(text + "\n")
-        print(f"[microbench] frozen table -> {args.out} (cal_gen={table.cal_gen})")
+        print(f"{summary} -> {args.out}")
     else:
         print(text)
     return 0

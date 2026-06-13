@@ -46,6 +46,7 @@ accuracy, contention, verification`.
 | bandwidth knee | `gem.schedule.bandwidth_knee` / `TargetProfile.mem_channels` | `bcir.target.capability` `mem_channels` |
 | pipelined StreamPack (ABI v2) | `gem.streampack.hydrate_pipelined` / `abi` v2 codec | `bcir.gem.stream_pack` `pipeline_depth`, `bcir.gem.prefetch` `buffers` (R10) |
 | L1 frozen cost table | `kbcir.microbench.CalibratedProfile` (`cal_gen`, Q8 ratios) | `bcir.kbcir.calibration` + capability `cal_gen` (R8) |
+| L1 Bayesian + conformal table | `kbcir.bayescal` (`gaussian_update` VI / `conformal_delta` / `bayes_calibrate` / `abc_calibrate`) | `bcir.kbcir.calibration` `coverage_milli`/`random_delta_q8` (R8/R13) |
 | L2 policy portfolio | `kbcir.portfolio.PolicyPortfolio` (class-table selection) | `bcir.kbcir.portfolio` (R9) |
 | L2 replay gate | `kbcir.portfolio.replay_gate` / `ReplayCertificate` | `bcir.kbcir.replay_certificate` (R9: admitted ⇒ zero regressions) |
 | L3 regret ledger | `kbcir.regret.RegretLedger` / `measure_regret` / `boundary_report` | `bcir.kbcir.regret_ledger` (R13: books balance, rule resolves) |
