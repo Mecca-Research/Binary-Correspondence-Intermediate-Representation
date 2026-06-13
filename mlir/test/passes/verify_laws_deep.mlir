@@ -306,6 +306,17 @@ bcir.module @r13_search_accel {
 
 // -----
 
+// R13: a deployed plan whose provenance manifest did not reproduce on replay --
+// a plan that cannot be reproduced from its commit hash is not a closed branch.
+bcir.module @r13_manifest {
+  // expected-error @+1 {{R13: deployed plan manifest did not reproduce on replay}}
+  bcir.kbcir.provenance_manifest @man0 {
+    digest = 7777777 : i64, score = 7808 : i64, n_artifacts = 0 : i64, reproduced = false
+  }
+}
+
+// -----
+
 // R12: a lowering contract that neither preserves the BCIR semantic
 // (bounds/hazard/precision) nor carries an explicit discharge.
 bcir.module @r12 {

@@ -126,6 +126,11 @@ bcir.module @full_vec_add_ct1 attributes {
   bcir.kbcir.search_accel @accel0 {
     order = "learned", checked = 4 : i64, mismatches = 0 : i64, admitted = true
   }
+  // The provenance manifest: the commit hash of this plan (score 7808). Manifest
+  // equality => identical plan; replay reproduced it (the version-DAG spine).
+  bcir.kbcir.provenance_manifest @manifest0 {
+    digest = 7777777 : i64, score = 7808 : i64, n_artifacts = 0 : i64, reproduced = true
+  }
   // L3: the regret ledger (the boundary dashboard) -- the seeded portfolio is
   // hindsight-optimal on the standard episodes, so the books read zero and the
   // MDL evidence (data_fit 0 <= complexity) yields a principled "keep" verdict.
@@ -167,6 +172,7 @@ bcir.module @full_vec_add_ct1 attributes {
 // CHECK: bcir.kbcir.replay_certificate @perf_cert
 // CHECK: bcir.kbcir.moe_gate @gate0
 // CHECK: bcir.kbcir.search_accel @accel0
+// CHECK: bcir.kbcir.provenance_manifest @manifest0
 // CHECK: bcir.kbcir.regret_ledger @regret_perf
 // CHECK: bcir.gem.stream_pack @sp0
 // CHECK: bcir.verify.plan_selection @vr_plan

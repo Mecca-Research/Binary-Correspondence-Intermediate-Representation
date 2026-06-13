@@ -156,6 +156,19 @@ def BCIR_KBCIRSearchAccelOp : BCIR_Op<"kbcir.search_accel", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_KBCIRProvenanceManifestOp : BCIR_Op<"kbcir.provenance_manifest", [Symbol]> {
+  let summary = "Provenance manifest: the commit hash of a plan (R13 reproducibility)";
+  // The content hash chaining a plan's inputs (module/target/theta/policy) and the
+  // in-force decision-rule generations, with the recorded optimal `score`
+  // (LangRef Sec. 13). Manifest equality => identical plan; an immutable plan is a
+  // committed manifest. R13: a deployed plan's manifest must have `reproduced` ==
+  // true (replay reproduced the recorded score/shape). Mirrors
+  // bcir/kbcir/provenance.py + verify.verify_manifest.
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$digest, I64Attr:$score,
+                       I64Attr:$n_artifacts, BoolAttr:$reproduced);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
 def BCIR_KBCIRScheduledPriceOp : BCIR_Op<"kbcir.scheduled_price", [Symbol]> {
   let summary = "M(pi,Theta): the (max,+) wave-overlap price of a plan";
   // makespan composes series with (+) and CT2 wave parallelism with max; the

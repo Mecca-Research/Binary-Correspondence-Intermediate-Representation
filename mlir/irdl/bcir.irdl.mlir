@@ -101,6 +101,8 @@ irdl.dialect @bcir {
   irdl.operation @"kbcir.moe_gate"
   // The propose-verify search accelerator: a learned candidate ordering.
   irdl.operation @"kbcir.search_accel"
+  // The provenance manifest: the commit hash of a plan (R13 reproducibility).
+  irdl.operation @"kbcir.provenance_manifest"
 
   // ---- BCIR-4: GEM StreamPack ----
   irdl.operation @"gem.stream_pack" {

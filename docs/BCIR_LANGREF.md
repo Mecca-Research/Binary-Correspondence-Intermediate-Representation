@@ -223,6 +223,17 @@ E[improvement per decision]  >>  decision rate x inference cost
   data_fit > complexity). Actuation stays human by policy; any future automation
   of the flip must run behind both the gate and R13.
 
+**Provenance is the spine.** Every decision rule in force is frozen and
+generation-tagged; a **provenance manifest** (`kbcir.provenance`,
+`bcir.kbcir.provenance_manifest`) chains a plan's inputs and those generations
+into a single content hash — the commit hash of a plan. Manifest equality ⇒ an
+identical plan, so the constantly-updating computation DAG is reproducible and
+debuggable: an immutable plan is a *committed* manifest (a closed branch), a
+candidate under evaluation is an *open* branch, and `diff` reports which
+generation moved between two runs. Nothing is globally immutable, but everything
+is immutable *within its generation*. R13 (`verify.verify_manifest`) requires a
+deployed plan's manifest to reproduce its recorded score and shape on replay.
+
 The legality laws (R1–R12), lane semantics, and hazard contracts are **never
 learnable**: they are laws, not preferences.
 
