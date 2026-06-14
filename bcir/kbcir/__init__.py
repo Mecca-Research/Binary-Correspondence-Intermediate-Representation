@@ -93,6 +93,12 @@ from .operad import (
     f_index,
     f_label,
 )
+from .calibloop import (
+    CalibrationCertificate,
+    close_loop,
+    measure_and_close,
+    rescore_plan,
+)
 from .throttle import (
     AmortizationCertificate,
     ThrottleReport,
@@ -208,6 +214,10 @@ __all__ = [
     "enrich_memory",
     "f_index",
     "f_label",
+    "CalibrationCertificate",
+    "close_loop",
+    "measure_and_close",
+    "rescore_plan",
     "AmortizationCertificate",
     "ThrottleReport",
     "TIER_BUDGET",

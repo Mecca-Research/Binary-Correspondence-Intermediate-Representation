@@ -63,6 +63,10 @@ def main(argv: list[str] | None = None) -> int:
                         "(T=0 reproduces the tropical optimizer exactly)")
     p.add_argument("--codegen", metavar="TARGET",
                    help="per-target codegen via llc (aarch64|riscv64|nvptx64|bpf|x86_64|c|all)")
+    p.add_argument("--calibrate", action="store_true",
+                   help="close the calibration loop on real hardware: microbench this "
+                        "host, freeze the Q8 table, fold --theta as telemetry, replan, "
+                        "and certify the measured win")
     args = p.parse_args(argv)
 
     module = PROGRAMS[args.program]()
@@ -156,6 +160,24 @@ def main(argv: list[str] | None = None) -> int:
         man = build_manifest(module, h, theta, policy)
         print(f"[manifest] digest={man.digest} score={man.score} "
               f"widths={dict(man.widths)} reproduces={reproduces(man, module, h, theta, policy)}")
+
+    if args.calibrate:
+        from .kbcir import measure_and_close
+        from .kbcir.calibrate import EwmaCalibrator
+        from .telemetry import DataDNA
+        # fold the chosen Theta in as telemetry from the live machine (vs the
+        # shipped cool default), so a hot machine shows the replan win.
+        events = ([DataDNA(segment_id="cli", claim_id=0, thermal=theta.thermal,
+                           utilization=theta.utilization, voltage=theta.voltage,
+                           misses=theta.mem_pressure)]
+                  if (theta.thermal or theta.voltage or theta.mem_pressure) else ())
+        cert, table = measure_and_close(module, h, events=events,
+                                        calibrator=EwmaCalibrator(alpha=200))
+        print(f"[calibrate] {table.provenance}")
+        print(f"  cal_gen={table.cal_gen} gather_penalty={table.gather_penalty} "
+              f"base_overhead={table.base_overhead} measured_thermal={cert.measured_thermal}")
+        print(f"  seeded={dict(cert.seeded_widths)} -> calibrated={dict(cert.calibrated_widths)} "
+              f"replanned={cert.replanned} win={cert.win} admissible={cert.admissible}")
 
     if args.accel:
         from .kbcir import greedy_order, optimize_ordered, worst_order

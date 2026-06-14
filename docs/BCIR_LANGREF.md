@@ -262,7 +262,13 @@ E[improvement per decision]  >>  decision rate x inference cost
   is a table lookup; determinism and the pinned scores are preserved by
   construction. The verifier gates table well-formedness — and the conformal
   guarantee (coverage in (0,1), `δ ≥ 0`, no interval from ≤ 1 sample) — under
-  R8/R13.
+  R8/R13. The loop is **closed and certified** (`kbcir.calibloop`): measure →
+  freeze → apply → replan emits a `CalibrationCertificate` whose **win** is the
+  measured cost of *not* recalibrating (the stale plan, faithfully rescored on
+  the machine telemetry reports, minus the recalibrated optimum); it is
+  admissible only when `cal_gen ≥ 1` and `win ≥ 0` (R13,
+  `verify.verify_calibration`). Measurement stays offline (L2/L3); the frozen
+  table and every downstream decision are integer and reproducible.
 - **L2 (checkpoints — portfolio + replay gate).** Gain schedules (policy
   weight vectors, thresholds) adapt only at checkpoints, only as members of a
   **portfolio of frozen, generation-tagged policies**
@@ -397,7 +403,7 @@ module into this operad: the deterministic fixpoint, made intelligent.
 5. K_BCIR planner — candidate-path/costvec/selected-path IR. ◑ (runnable in `bcir/`: the scalarized rail, the constrained RCSP/Pareto rail (`kbcir.rcsp`), and the (max,+) overlap price (`gem.overlap`); now MLIR-native too — `-bcir-select-realization` recomputes the min-plus `cost·weights` and reproduces the oracle's 7808 cool / 9472 under the thermal cap)
 6. GEM hydration — GraphPlan/LanePlan/StreamPack IR. ◑ (runnable in `bcir/`: hydration, duration-aware EFT/token scheduling (`gem.schedule`), pipelined v2 packs; the MLIR-native GEM pipeline passes `-bcir-classify-lanes / -batch / -schedule / -lower-to-llvm` mirror the oracle stages and are cross-checked against it)
 7. LLVM as first backend. ◑ (MLIR-native `-convert-bcir-to-llvm` lowers compute/barrier to the LLVM dialect; `-bcir-lower-to-llvm` checks the GEM StreamPack lowering contract (R12); oracle AOT (clang) + JIT (lli))
-8. Physics-anchored calibration + learning placement (§13). ✔ (microbench harness → frozen Q8 tables (`kbcir.microbench`); policy portfolio + replay gate (`kbcir.portfolio`); the L0 prohibition is normative; certificates verified under R8/R9)
+8. Physics-anchored calibration + learning placement (§13). ✔ (microbench harness → frozen Q8 tables (`kbcir.microbench`); policy portfolio + replay gate (`kbcir.portfolio`); the L0 prohibition is normative; the calibration loop is **closed + certified** (`kbcir.calibloop`: measure → freeze → replan → a generation-tagged certified replan win, R13); certificates verified under R8/R9/R13)
 9. R13 policy provenance + the regret ledger. ✔ (`verify_provenance` / `-bcir-verify` R13; `kbcir.regret` — the boundary dashboard; the third-order loop is measured and certified, actuation human by policy)
 
 Until the MLIR toolchain exists on this host, the oracle (`bcir/`, runnable via

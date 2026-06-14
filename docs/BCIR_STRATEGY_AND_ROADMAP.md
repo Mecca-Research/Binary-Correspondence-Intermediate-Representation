@@ -70,10 +70,17 @@ to close that gap, not add more intelligence.
 ## 3. Roadmap
 
 ### Near term (substrate + evidence — the priority)
-1. **Close the calibration loop on real hardware.** Wire `kbcir.microbench` →
-   frozen Q8 tables → CI, with a trained calibrator and a real measurement run,
-   so selected plans are optimal w.r.t. silicon, not a model. Add a measured
-   replan win to the worked-example matrix.
+1. **Close the calibration loop on real hardware.** ◑ — the loop is now closed
+   and certified (`kbcir.calibloop`): `measure_and_close` microbenches the host,
+   freezes a generation-tagged Q8 table, folds telemetry into Θ, replans, and
+   emits a `CalibrationCertificate` recording the **measured replan win** (the
+   cost of *not* recalibrating, via faithful `rescore_plan`), witnessed by R13
+   (`verify.verify_calibration`). Runnable on real silicon: `python -m bcir.run
+   … --theta hot --calibrate` flips vec16→vec8 with a certified win.
+   **Remaining:** a *trained* calibrator + a live broker, and bare-metal numbers
+   from the C runtime (the stdlib harness measures through the interpreter, so
+   gather ratios are conservative — the table schema is the contract a native
+   backend fills).
 2. **C++/MLIR GEM passes against the oracle.** ✔ (this milestone) — the five
    declared GEM passes are implemented MLIR-native and cross-checked against the
    oracle's pinned constants. Next: widen them past the single-claim example
