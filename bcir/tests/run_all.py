@@ -24,6 +24,7 @@ _MODULES = [
     "bcir.tests.test_accel",
     "bcir.tests.test_provenance",
     "bcir.tests.test_egraph",
+    "bcir.tests.test_memory",
     "bcir.tests.test_throttle",
     "bcir.tests.test_portfolio",
     "bcir.tests.test_regret",

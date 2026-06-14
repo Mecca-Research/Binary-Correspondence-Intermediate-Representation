@@ -159,10 +159,13 @@ def build_manifest(module: Module, h, theta: Theta, policy: Policy = PERF,
 
 
 def manifest_for(module: Module, h, theta: Theta, policy: Policy = PERF, *,
-                 table=None, gate=None, pack=None, extra=()) -> ProvenanceManifest:
+                 table=None, gate=None, pack=None, memory=None,
+                 extra=()) -> ProvenanceManifest:
     """Convenience: assemble the artifact tags from the actual learned objects (the
     calibration table generation, the gate fingerprint, the StreamPack generation
-    tags) and record the manifest."""
+    tags, a frozen memory module's generation + fingerprint) and record the
+    manifest. A `memory` module chains the e-graph fixpoint artifact (Phase 21)
+    into the plan's commit hash (Phase 20)."""
     arts = list(extra)
     if table is not None:
         arts.append(("cal_fp", _fnv(table.gather_penalty, table.base_overhead,
@@ -174,6 +177,9 @@ def manifest_for(module: Module, h, theta: Theta, policy: Policy = PERF, *,
         arts.append(("topo_gen", pack.topo_gen))
         arts.append(("map_gen", pack.map_gen))
         arts.append(("data_gen", pack.data_gen))
+    if memory is not None:
+        arts.append(("mem_gen", memory.generation))
+        arts.append(("mem_fp", memory.fingerprint))
     return build_manifest(module, h, theta, policy, arts)
 
 

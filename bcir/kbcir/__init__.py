@@ -49,6 +49,22 @@ from .egraph import (
     saturate,
     shared_blocks,
 )
+# NOTE: `kbcir.memory.freeze` (freeze an expression into a memory module) is
+# deliberately NOT re-exported here -- the package already exports
+# `moegate.freeze` (freeze a learned gate). Import the memory producer directly:
+#     from bcir.kbcir.memory import freeze
+from .memory import (
+    DEFAULT_BUDGET,
+    MemoryModule,
+    UnsaturatedMemory,
+    fingerprint,
+    freeze_module,
+    from_result,
+    is_idempotent,
+    memory_artifacts,
+    reresolve,
+    try_freeze,
+)
 from .throttle import (
     AmortizationCertificate,
     ThrottleReport,
@@ -132,6 +148,16 @@ __all__ = [
     "optimize_expr",
     "saturate",
     "shared_blocks",
+    "DEFAULT_BUDGET",
+    "MemoryModule",
+    "UnsaturatedMemory",
+    "fingerprint",
+    "freeze_module",
+    "from_result",
+    "is_idempotent",
+    "memory_artifacts",
+    "reresolve",
+    "try_freeze",
     "AmortizationCertificate",
     "ThrottleReport",
     "TIER_BUDGET",
