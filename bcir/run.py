@@ -63,6 +63,10 @@ def main(argv: list[str] | None = None) -> int:
                         "(T=0 reproduces the tropical optimizer exactly)")
     p.add_argument("--codegen", metavar="TARGET",
                    help="per-target codegen via llc (aarch64|riscv64|nvptx64|bpf|x86_64|c|all)")
+    p.add_argument("--emit-c", action="store_true",
+                   help="print the portable C23 kernel for the selected realization")
+    p.add_argument("--run-c", action="store_true",
+                   help="compile+run the C23 kernel self-check (clang -std=c23 / gcc -std=c2x)")
     p.add_argument("--calibrate", action="store_true",
                    help="close the calibration loop on real hardware: microbench this "
                         "host, freeze the Q8 table, fold --theta as telemetry, replan, "
@@ -160,6 +164,20 @@ def main(argv: list[str] | None = None) -> int:
         man = build_manifest(module, h, theta, policy)
         print(f"[manifest] digest={man.digest} score={man.score} "
               f"widths={dict(man.widths)} reproduces={reproduces(man, module, h, theta, policy)}")
+
+    if args.emit_c or args.run_c:
+        from .lower import compile_and_run_c, emit_kernel_c
+        try:
+            if args.emit_c:
+                print("\n/* ---- portable C23 kernel ---- */")
+                print(emit_kernel_c(module, result, fn_name="bcir_kernel"))
+            if args.run_c:
+                ok, out = compile_and_run_c(module, result, fn_name="bcir_kernel")
+                print(f"[run-c] C23 build+run {'OK' if ok else 'FAILED'}: {out.strip()}")
+                if not ok:
+                    return 1
+        except NotImplementedError as exc:
+            print(f"[c] {exc}")
 
     if args.calibrate:
         from .kbcir import measure_and_close

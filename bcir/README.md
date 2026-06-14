@@ -18,12 +18,12 @@ gem/        GEM (BCIR-4): StreamPack hydration, deterministic phase executor, an
             CT2 concurrent wave scheduling + GGG decoupling + affinity
 etl/        M5 Event Transduction: events, FSM transducer, parser, binary decoder
 frontends/  CT3 front-ends: rop (declarative) + map (macro-assembly) -> claims
-lower/      BCIR-5: legal LLVM IR run AOT (clang) or CT5 JIT (lli)
+lower/      BCIR-5: legal LLVM IR run AOT (clang) / CT5 JIT (lli) / portable C23 kernel
 telemetry.py CT4 "data DNA" schema + sinks (null/list/file; Kafka-ready)
 verify/     runnable subset of LangRef verifier laws R1-R12
 examples.py the goal-graph corpus (vector_add, saxpy_strided, histogram_gather, ...)
 run.py      the CLI (--target/--theta/--policy/--run/--jit/--schedule)
-tests/      314 checks + a dependency-free runner
+tests/      327 checks + a dependency-free runner
 ```
 
 ## Run it

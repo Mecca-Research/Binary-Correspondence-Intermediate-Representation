@@ -15,13 +15,14 @@
     deps), ~11.8K LOC: model, K_BCIR optimizer (min-plus + RCSP/Pareto +
     (max,+) overlap), GEM hydration/scheduling/execution, ROP/MAP front-ends, M5
     ETL, telemetry/calibration, StreamPack ABI, the R1–R13 verifier, lowering
-    (clang AOT / lli JIT / WASM / stackify / per-target llc), **and** the
+    (clang AOT / lli JIT / WASM / stackify / per-target llc / **portable C23
+    kernel**), **and** the
     Phase 13–26 organs: calibration (microbench + Bayesian/conformal), policy
     portfolio + replay gate, MoE gate, search accelerator, soft optimizer, regret
     ledger, provenance manifest, e-graph + memory-module fixpoints, the two-truth
     quarantine, modular mapping functions, the enriched-operad memory
     interface, and the closed calibration loop (`calibloop`: measure → freeze →
-    replan → certified win). Suite: `python -m bcir.tests.run_all` (**314 checks**).
+    replan → certified win). Suite: `python -m bcir.tests.run_all` (**327 checks**).
   - **`mlir/`** — the law: the ODS/TableGen dialect family (~80 ops), the compiled
     `bcir-opt` with `-bcir-verify` (R1–R13), `-bcir-promote-lanes`,
     `-convert-bcir-to-llvm`, and the **GEM pipeline passes** (`-bcir-classify-lanes
@@ -53,12 +54,13 @@
 
 ## Confirmed limitations
 
-1. **No BCIR-native code generation.** All machine-code paths exit through the
-   LLVM toolchain as subprocesses (`clang`/`llc`/`lli`/wasm-ld/node). Instruction
-   selection, register allocation, and linking are not implemented;
-   `bcir.target.lower_contract` is the designated seam. *(The strategic response
-   is to emit C/LLVM and reuse the resident backend — see the roadmap — not to
-   chase general isel.)*
+1. **No BCIR-native instruction selection** (by design — the strategy is to emit
+   C/LLVM and reuse the resident backend). A portable **C23 kernel backend**
+   (`lower.c_kernel`) now emits restrict-qualified, bounds-safe, width-driven C
+   from the selected StreamPack (library-first, self-checking, R12-verified), and
+   LLVM/llc/lli/wasm remain the other machine-code paths. Register allocation and
+   linking are still the resident toolchain's job; `bcir.target.lower_contract` is
+   the seam. **Remaining:** GPU-C dialect variants and one target end-to-end.
 2. **Cost constants are measured but conservative.** The calibration loop is now
    closed and certified (`kbcir.calibloop`: measure → freeze → apply → replan →
    `CalibrationCertificate`, R13, with a certified replan win and a `--calibrate`
@@ -83,8 +85,9 @@
 2. **Widen the GEM passes + corpus**: multi-claim batching/fusion and real
    durations; reductions, tiled matmul, scan; per-target parity beyond
    `vector_add`.
-3. **A first-class C backend** (kernel lingua franca) and **one
-   `lower_contract` end to end** on a niche where BCIR's cost model wins.
+3. **C backend** ✔ — portable C23 kernels (`lower.c_kernel`, R12). Next:
+   **one `lower_contract` end to end** on a niche where BCIR's cost model wins,
+   and GPU-C dialect variants.
 4. **Driver/runtime integration** of the rehydrating planner (the StreamPack as
    the hot, Θ-replanned artifact).
 
@@ -97,4 +100,6 @@
 - 2026-06-14: Refreshed for Phases 13–26 (learning/intelligence organs), R13, the
   oracle optimization pass (recursive-planning overhead removed; hot/cold locked),
   and the MLIR-native GEM pipeline passes cross-checked against the oracle. Added
-  `docs/BCIR_STRATEGY_AND_ROADMAP.md`.
+  `docs/BCIR_STRATEGY_AND_ROADMAP.md`. Closed the calibration loop
+  (`kbcir.calibloop`, R13) and added the portable **C23 kernel backend**
+  (`lower.c_kernel`, R12: `verify.verify_c_lowering`).

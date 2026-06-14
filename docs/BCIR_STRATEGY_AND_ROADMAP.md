@@ -89,9 +89,14 @@ to close that gap, not add more intelligence.
    worked-example parity beyond `vector_add`.
 
 ### Mid term (one target, end to end)
-4. **A first-class C backend** (kernel lingua franca) — emit clean C from the
-   selected StreamPack so the resident toolchain compiles it; the natural artifact
-   for a driver-resident JIT. (See §4.)
+4. **A first-class C backend** (kernel lingua franca). ◑ — `lower.c_kernel` emits
+   a portable **C23** kernel from the selected StreamPack (lane width → loop,
+   `restrict` pointers, a bounds-safe scalar tail, `static_assert` + `#pragma STDC
+   FP_CONTRACT OFF` for reproducible float), library-first (`emit_kernel_c` is a
+   pure `plan → C string`, reusable AOT via `compile_and_run_c` or driver-embedded)
+   and R12-checked (`verify.verify_c_lowering`). **Remaining:** GPU-C dialect
+   variants per `lower_contract`, and the C runtime feeding bare-metal calibration
+   numbers (closes the loop's remaining half). (See §4.)
 5. **One `bcir.target.lower_contract` end to end** — pick a niche where BCIR's
    cost model beats LLVM's (gather/scatter-heavy or power-capped) and show a
    measured win.
@@ -121,13 +126,18 @@ to close that gap, not add more intelligence.
 - **Enriched operad / memory interface** — C++ only if/when it becomes
   load-bearing for plan-time caching/retrieval; otherwise Python-side tooling.
 
-### The C backend (for discussion)
-- **Keep a C backend as a first-class lowering target.** C is the universal
-  kernel language (CUDA C / HIP / OpenCL C / ISPC / plain CPU C / eBPF-restricted
-  C). Emitting C (a) sidesteps native isel while remaining a real deliverable,
-  (b) is the natural artifact for a driver-resident JIT (emit → compile with the
-  resident toolchain), and (c) gives portability LLVM-IR alone does not. The
-  codegen layer already has a C-source fallback target; promote it.
+### The C backend (decisions taken: portable C kernels, library-first)
+- **A C backend is a first-class lowering target.** ✔ — `lower.c_kernel` emits
+  portable **C23** (the chosen output: plain portable C, not GPU dialects yet, not
+  native isel). C is the universal kernel language (CUDA C / HIP / OpenCL C / ISPC
+  / plain CPU C / eBPF-restricted C); emitting it (a) sidesteps native isel while
+  remaining a real deliverable, (b) is the natural artifact for a driver-resident
+  JIT, and (c) gives portability LLVM-IR alone does not. The codegen C-source
+  fallback now delegates to it (one C emitter).
+- **Library-first** ✔ — `emit_kernel_c` is a pure `plan → C string`, reusable both
+  AOT (`compile_and_run_c`, self-checking) and driver-embedded (emit → hand to the
+  resident toolchain). Next: package the planner+emitter as a reusable library
+  usable both AOT and embedded.
 - **Should drivers be compilers?** Yes — and that is where BCIR belongs. The
   StreamPack-rehydration design *is* a driver-resident specializer; the product
   is the planning + verification brain inside a runtime (like a GPU shader
