@@ -198,6 +198,36 @@ semantic (lane geometry, bounds, hazard, precision) or carries an explicit
 discharge in `bcir.trace`. LLVM is the **first** backend, not the center.
 Encoded via `bcir.isa.*` / `bcir.target.lower_contract`.
 
+**Modular Mapping Functions (`kbcir.mapping`).** A lowering — and any
+representation change — is a mapping function `f` between cost-bearing
+representations, and R12 imposes two further laws on it:
+
+- **Objective-support preservation.** `Supp(J)` is the set of cost dimensions on
+  which the objective `J` is nonzero — *where the objective matters*. A legal map
+  must carry that support forward,
+
+  ```
+  f(Supp(J)) ⊆ Supp(J')
+  ```
+
+  so a lowering may sharpen, rescale, or fuse a cost but may not silently **drop**
+  a dimension that mattered (lose the thermal / security / accuracy / verification
+  term) unless it carries an explicit discharge — the same escape R12 already
+  grants bounds/hazard/precision. The objective's footprint is an invariant of
+  legal lowering (`verify.verify_support_preservation`, R12).
+- **Commutativity / path independence.** If two conversion paths reach the same
+  target — a direct map `Φ` and a two-step `Ψ` then `Λ` — they must agree:
+
+  ```
+  Λ ∘ Ψ = Φ
+  ```
+
+  A result may not depend on which legal path produced it. This is the
+  PARITY/manifest discipline generalized to **any** representation rail:
+  oracle↔MLIR parity, manifest replay (`reproduces`), JSON round-trips, and any
+  future rail are instances of one commuting-square law
+  (`verify.verify_commutativity`, R12).
+
 ## 13. Learning placement (normative policy)
 
 Learning and measurement enter BCIR only where decisions are slow enough to
@@ -296,6 +326,34 @@ version-DAG spine (the manifest) with one checkable law.
 
 The legality laws (R1–R12), lane semantics, and hazard contracts are **never
 learnable**: they are laws, not preferences.
+
+## 14. The two-truth separation (MOPC)
+
+What makes §13 *enforceable* rather than aspirational is that BCIR carries **two
+distinct kinds of truth** and quarantines them apart (`kbcir.twotruth`):
+
+- **Classical truth `v`** — deterministic, binary, generation-independent: the
+  legality verdicts of the R-laws. A claim is legal or it is not; a manifest
+  reproduces or it does not; a memory module is a fixpoint or it is not. There is
+  no "0.7 legal." This is the only truth `verify.*` speaks (a `Diagnostic` carries
+  no confidence).
+- **Graded truth `(v, w)`** — a *graded proposition*: a value carried with a
+  confidence `w ∈ [0,1]`. This is the learned/measured machinery — the softdp
+  plan posterior (§2), the bayescal conformal interval (§13 L1), the regret
+  ledger's evidence (§13 L3). It answers *which legal plan is best*, never
+  *whether a plan is legal*.
+
+**The quarantine (the single most important discipline, enforced not stated): a
+graded proposition may inform but never become a legality verdict.** Graded truth
+is kept out of the verifier. The only sanctioned crossing is a `decide` — an
+explicit, *recorded* collapse of a graded proposition to a classical value at a
+frozen threshold (the anneal/freeze of §2/§13 made auditable). The crossing is
+never silent, and **R13** (`verify.verify_quarantine`) is the guard that no
+confidence-weighted value reaches the R-laws except as the classical value of a
+recorded decision. The graded algebra (`g_and`/`g_or`/`g_not` — "dynamic truth
+tables that learn") lives entirely on the graded side: it proposes, and the
+classical laws dispose. This is the safe way to import learned dynamic truth —
+keep it out of the verifier.
 
 ## 15. Milestone map
 

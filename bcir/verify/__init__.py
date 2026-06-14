@@ -339,6 +339,49 @@ _GUARD_RE = re.compile(r"icmp\s+\w+\s+i64\s+%\w+,\s*%n\b")
 _WIDTH_RE = re.compile(r"\bwidth=(\d+)\b")
 
 
+def verify_support_preservation(source, target, mapping=None) -> list[Diagnostic]:
+    """Objective-support law R12 (refinement): a mapping function must preserve
+    where the objective matters -- `f(Supp(J)) ⊆ Supp(J')`. A lowering may
+    sharpen, rescale, or fuse a cost dimension, but it may not silently *drop* one
+    that was nonzero (lose the thermal/security/accuracy/verification term) unless
+    `mapping` explicitly discharges it (the same escape R12 grants bounds/hazard/
+    precision). The objective's footprint is an invariant of legal lowering.
+
+    `source`/`target` are `kbcir.cost.CostVector`s (J, J'); `mapping` a
+    `kbcir.mapping.MappingFunction` (defaults to the identity dimension map with
+    no discharges).
+    """
+    from ..kbcir.mapping import MappingFunction
+
+    f = mapping or MappingFunction(name="identity")
+    diags: list[Diagnostic] = []
+    for d in sorted(f.dropped(source, target)):
+        tgt = f.dim_map.get(d, d)
+        diags.append(Diagnostic(
+            "R12",
+            f"objective support not preserved: source dimension {d!r} is nonzero "
+            f"but maps to {tgt!r} which the target drops, with no discharge "
+            f"(map {f.name!r})",
+        ))
+    return diags
+
+
+def verify_commutativity(square, inputs, eq=None) -> list[Diagnostic]:
+    """Commutativity / path-independence law R12 (parity): two conversion paths
+    that reach the same target must agree -- `Λ ∘ Ψ = Φ`. The PARITY/manifest
+    discipline generalized to any representation rail: a result may not depend on
+    which legal path produced it. `square` is a `kbcir.mapping.CommutingSquare`.
+    """
+    diags: list[Diagnostic] = []
+    for x in square.mismatches(inputs, eq):
+        diags.append(Diagnostic(
+            "R12",
+            f"conversion paths disagree on {x!r}: lam(psi(x)) != phi(x) -- the "
+            f"square {square.name!r} does not commute (Λ∘Ψ ≠ Φ)",
+        ))
+    return diags
+
+
 def verify_lowering(module: Module, result, ll_text: str, elem: str = "f32",
                     width_override: int | None = None) -> list[Diagnostic]:
     """Lowering law R12: the emitted LLVM IR preserves the BCIR semantic (lane
@@ -513,6 +556,64 @@ def verify_memory(mm, generation=None, *, recheck=True) -> list[Diagnostic]:
                 "R13",
                 f"memory module fingerprint {mm.fingerprint} != recomputed "
                 f"{again.fingerprint} (content does not match its hash)",
+            ))
+
+    return diags
+
+
+def verify_quarantine(verdict_inputs=(), decisions=(), diagnostics=None) -> list[Diagnostic]:
+    """Two-truth quarantine law R13 (MOPC): graded truth may inform a verdict but
+    never *be* one. The verifier speaks classical truth (deterministic, binary);
+    the learned/measured machinery speaks graded truth `(value, confidence)`. A
+    graded proposition may cross into a legality verdict only as the classical
+    value of a *recorded* `decide` -- never raw, never silently.
+
+    Flags (all R13):
+      * any `verdict_inputs` element that is a graded proposition (or a decision
+        still wrapping one) -- graded truth reached a classical boundary uncollapsed;
+      * any `decisions` collapse that is malformed (confidence/threshold out of the
+        Q-milli range) -- a crossing that cannot be audited;
+      * any `diagnostics` carrying a confidence -- a verdict is binary; a graded
+        verdict is a category error (the verifier must never emit one).
+    """
+    from ..kbcir.twotruth import Decision, Graded, is_classical
+
+    diags: list[Diagnostic] = []
+
+    # R13: no graded proposition crosses uncollapsed into a verdict input.
+    for x in verdict_inputs:
+        if not is_classical(x):
+            inner = x.value if isinstance(x, Decision) else x
+            conf = getattr(inner, "confidence_milli", "?")
+            diags.append(Diagnostic(
+                "R13",
+                f"graded proposition (confidence {conf}/1000, source "
+                f"{getattr(inner, 'source', '?')!r}) crossed into a legality "
+                f"verdict; collapse it with decide() first",
+            ))
+
+    # R13: every recorded collapse is well-formed (auditable).
+    for d in decisions:
+        if not (0 <= d.confidence_milli <= 1000 and 0 <= d.threshold_milli <= 1000):
+            diags.append(Diagnostic(
+                "R13",
+                f"malformed two-truth collapse (confidence {d.confidence_milli}, "
+                f"threshold {d.threshold_milli}); a crossing must be auditable",
+            ))
+        if not is_classical(d.value):
+            diags.append(Diagnostic(
+                "R13",
+                "two-truth collapse still wraps a graded value; decide() must "
+                "yield classical truth",
+            ))
+
+    # R13: a verdict is classical -- a Diagnostic may not carry a confidence.
+    for diag in (diagnostics or ()):
+        if isinstance(diag, Graded) or hasattr(diag, "confidence_milli"):
+            diags.append(Diagnostic(
+                "R13",
+                "a legality verdict carries a confidence; classical truth is "
+                "binary (graded verdicts are quarantined out of the laws)",
             ))
 
     return diags
