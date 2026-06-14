@@ -619,6 +619,34 @@ def verify_quarantine(verdict_inputs=(), decisions=(), diagnostics=None) -> list
     return diags
 
 
+def verify_enriched(operad, root=None) -> list[Diagnostic]:
+    """Enriched-operad integrity law R13 (the higher memory interface): the
+    interpretive layer over the memory modules must be self-consistent so it can
+    be trusted to *inform* (never legislate). Witnesses, for a
+    `kbcir.operad.EnrichedOperad`:
+
+      * **label consistency** -- when labeling is active, every operation carries a
+        non-empty hierarchical label;
+      * **content-addressed index integrity** -- when indexing is active, every
+        operation's index equals `f_index(name, label, children)` (so identical
+        operations share an index: CSE / the liked-pair identity, and tamper is
+        evident);
+      * **mapping integrity** -- every child index resolves (`Trace` never dangles),
+        and, if `root` is given, the whole reachable structure is well-formed.
+
+    This is the analog of `verify_memory` for the enriched structure. The labels
+    and indexes it guards are interpretive metadata, quarantined out of R1-R12
+    (§14): this law checks the memory interface's own integrity, not legality.
+    """
+    diags: list[Diagnostic] = []
+    for index, reason in operad.problems():
+        diags.append(Diagnostic("R13", f"enriched operation {index}: {reason}"))
+    if root is not None and operad.get(root) is None:
+        diags.append(Diagnostic(
+            "R13", f"enriched operad root {root} does not resolve"))
+    return diags
+
+
 def verify_provenance(portfolio, certificates=(), h=None, table=None,
                       verdicts=(), gate_certificates=(), accel_certificates=(),
                       amortization_certificates=(), memory_modules=()) -> list[Diagnostic]:
