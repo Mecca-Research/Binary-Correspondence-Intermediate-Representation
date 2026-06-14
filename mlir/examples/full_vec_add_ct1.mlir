@@ -131,6 +131,22 @@ bcir.module @full_vec_add_ct1 attributes {
   bcir.kbcir.provenance_manifest @manifest0 {
     digest = 7777777 : i64, score = 7808 : i64, n_artifacts = 0 : i64, reproduced = true
   }
+  // The building-blocks engine: equality saturation extracted an equivalent form
+  // no costlier than the original (a rewrite never raises the selected cost).
+  bcir.egraph.extract @egraph0 {
+    original_cost = 5 : i64, optimized_cost = 3 : i64, iterations = 3 : i64,
+    enodes = 11 : i64, saturated = true
+  }
+  // The L1 cost throttle: the learned gate pays for itself within the L1 budget
+  // (gain >= inference_cost); the hot path (L0) runs zero learned inference.
+  bcir.kbcir.amortization @throttle_gate {
+    component = "moe_gate", tier = "L1", inference_cost = 300 : i64, gain = 6000 : i64,
+    budget = 100000 : i64
+  }
+  bcir.kbcir.amortization @throttle_hot {
+    component = "lane_promote", tier = "L0", inference_cost = 0 : i64, gain = 0 : i64,
+    budget = 0 : i64
+  }
   // L3: the regret ledger (the boundary dashboard) -- the seeded portfolio is
   // hindsight-optimal on the standard episodes, so the books read zero and the
   // MDL evidence (data_fit 0 <= complexity) yields a principled "keep" verdict.
@@ -173,6 +189,8 @@ bcir.module @full_vec_add_ct1 attributes {
 // CHECK: bcir.kbcir.moe_gate @gate0
 // CHECK: bcir.kbcir.search_accel @accel0
 // CHECK: bcir.kbcir.provenance_manifest @manifest0
+// CHECK: bcir.egraph.extract @egraph0
+// CHECK: bcir.kbcir.amortization @throttle_gate
 // CHECK: bcir.kbcir.regret_ledger @regret_perf
 // CHECK: bcir.gem.stream_pack @sp0
 // CHECK: bcir.verify.plan_selection @vr_plan

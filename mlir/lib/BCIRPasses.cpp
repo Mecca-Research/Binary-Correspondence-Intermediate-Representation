@@ -488,6 +488,23 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R9: the equality-saturation building-blocks engine never raises the
+    // selected cost -- a rewrite is legal only if optimized_cost <= original_cost
+    // (the bound on the "abundance of unliked pairs"; LangRef Sec. 11).
+    root->walk([&](EGraphExtractOp eg) {
+      int64_t orig = static_cast<int64_t>(eg.getOriginalCost());
+      int64_t opt = static_cast<int64_t>(eg.getOptimizedCost());
+      if (orig < 0 || opt < 0 || static_cast<int64_t>(eg.getIterations()) < 0) {
+        eg.emitError("R9: egraph.extract costs/iterations out of range");
+        ok = false;
+      }
+      if (opt > orig) {
+        eg.emitError("R9: egraph rewrite raised the cost (optimized ")
+            << opt << " > original " << orig << ")";
+        ok = false;
+      }
+    });
+
     // R8: an L1 calibration table is well-formed -- the streaming baseline is
     // the Q8 unit by definition, ratios floor at it, the table is
     // generation-tagged, and its target resolves.
@@ -699,6 +716,26 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
       if (!acc.getAdmitted()) {
         acc.emitError("R13: deployed search accelerator is not certified exact");
+        ok = false;
+      }
+    });
+
+    // R13: amortization provenance (the L1 cost throttle) -- a deployed learned
+    // component must belong at its tier: L0 carries no inference, and elsewhere
+    // it pays for itself (gain >= inference_cost) within the tier's budget.
+    root->walk([&](KBCIRAmortizationOp am) {
+      int64_t cost = static_cast<int64_t>(am.getInferenceCost());
+      int64_t gain = static_cast<int64_t>(am.getGain());
+      int64_t budget = static_cast<int64_t>(am.getBudget());
+      if (am.getTier() == "L0" && cost != 0) {
+        am.emitError("R13: component ")
+            << am.getComponent() << " at L0 runs learned inference (cost " << cost
+            << "); the hot path carries decisions, not models";
+        ok = false;
+      } else if (cost < 0 || gain < cost || cost > budget) {
+        am.emitError("R13: component ")
+            << am.getComponent() << " fails amortization (gain " << gain
+            << " vs cost " << cost << ", budget " << budget << ")";
         ok = false;
       }
     });

@@ -54,6 +54,7 @@ python -m bcir.run vector_add --soft-temp 3000                       # temperatu
 python -m bcir.run vector_add --moe                                  # learned MoE gate (GNN) route vs classify, replay-gated
 python -m bcir.run vector_add --accel                                # propose-verify search accelerator (same optimum, fewer expansions)
 python -m bcir.run vector_add --manifest                             # provenance manifest (the commit hash of the plan) + replay check
+python -m bcir.run vector_add --egraph                               # building-blocks engine: claims -> shared blocks after CSE
 python -m bcir.kbcir.microbench --target x86_avx512 --out cal.json   # measure -> freeze a Q8 cost table
 python -m bcir.kbcir.microbench --target x86_avx512 --bayes          # Bayesian posterior + conformal +/- delta
 python -m bcir.run vector_add --tables bcir/kbcir/tables/x86_64_reference.json  # apply frozen table

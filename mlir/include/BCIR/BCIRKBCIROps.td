@@ -169,6 +169,19 @@ def BCIR_KBCIRProvenanceManifestOp : BCIR_Op<"kbcir.provenance_manifest", [Symbo
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_KBCIRAmortizationOp : BCIR_Op<"kbcir.amortization", [Symbol]> {
+  let summary = "L1 cost throttle: a learned component's tier-placement certificate";
+  // Keeps performance throttled where it matters (LangRef Sec. 13): a deployed
+  // learned component declares its plan-time `inference_cost`, the `gain` it
+  // buys, and the tier `budget`. R13: tier "L0" => inference_cost == 0 (the hot
+  // path carries decisions, not models); otherwise gain >= inference_cost (it
+  // pays for itself) and inference_cost <= budget (the throttle). Mirrors
+  // bcir/kbcir/throttle.py.
+  let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$component, StrAttr:$tier,
+                       I64Attr:$inference_cost, I64Attr:$gain, I64Attr:$budget);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
 def BCIR_KBCIRScheduledPriceOp : BCIR_Op<"kbcir.scheduled_price", [Symbol]> {
   let summary = "M(pi,Theta): the (max,+) wave-overlap price of a plan";
   // makespan composes series with (+) and CT2 wave parallelism with max; the

@@ -52,4 +52,18 @@ def BCIR_OptChoiceOp : BCIR_Op<"opt.choice", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_EGraphExtractOp : BCIR_Op<"egraph.extract", [Symbol]> {
+  let summary = "Equality-saturation building-blocks engine: extract the cheapest form";
+  // The building-blocks (composition) engine (LangRef Sec. 11): atoms (liked
+  // pairs / e-classes) compose via operators (unliked pairs), congruence finds
+  // shared blocks (CSE), rewrites saturate the equivalent forms to a fixpoint or
+  // a budget, and extraction returns the min-cost representative. R9: a rewrite
+  // never raises the selected cost, so `optimized_cost <= original_cost`. Mirrors
+  // bcir/kbcir/egraph.py.
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$original_cost,
+                       I64Attr:$optimized_cost, I64Attr:$iterations,
+                       I64Attr:$enodes, BoolAttr:$saturated);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
 #endif // BCIR_OPT_OPS

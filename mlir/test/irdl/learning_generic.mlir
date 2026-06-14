@@ -32,6 +32,10 @@
   checked = 4 : i64, mismatches = 0 : i64, admitted = true} : () -> ()
 "bcir.kbcir.provenance_manifest"() {sym_name = "manifest0", digest = 7777777 : i64,
   score = 7808 : i64, n_artifacts = 0 : i64, reproduced = true} : () -> ()
+"bcir.egraph.extract"() {sym_name = "egraph0", original_cost = 5 : i64,
+  optimized_cost = 3 : i64, iterations = 3 : i64, enodes = 11 : i64, saturated = true} : () -> ()
+"bcir.kbcir.amortization"() {sym_name = "throttle_gate", component = "moe_gate",
+  tier = "L1", inference_cost = 300 : i64, gain = 6000 : i64, budget = 100000 : i64} : () -> ()
 
 // CHECK: "bcir.kbcir.calibration"
 // CHECK: random_q8 = 8192
@@ -43,3 +47,5 @@
 // CHECK: "bcir.kbcir.moe_gate"
 // CHECK: "bcir.kbcir.search_accel"
 // CHECK: "bcir.kbcir.provenance_manifest"
+// CHECK: "bcir.egraph.extract"
+// CHECK: "bcir.kbcir.amortization"

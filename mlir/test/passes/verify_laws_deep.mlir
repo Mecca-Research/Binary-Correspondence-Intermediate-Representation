@@ -317,6 +317,41 @@ bcir.module @r13_manifest {
 
 // -----
 
+// R9: an equality-saturation extraction that RAISED the cost -- a rewrite is
+// legal only if it does not increase the selected cost.
+bcir.module @r9_egraph {
+  // expected-error @+1 {{R9: egraph rewrite raised the cost (optimized 7 > original 5)}}
+  bcir.egraph.extract @eg0 {
+    original_cost = 5 : i64, optimized_cost = 7 : i64, iterations = 3 : i64,
+    enodes = 9 : i64, saturated = true
+  }
+}
+
+// -----
+
+// R13: a learned component running inference on the L0 hot path -- the hot path
+// carries decisions, not models.
+bcir.module @r13_l0 {
+  // expected-error @+1 {{R13: component rogue at L0 runs learned inference}}
+  bcir.kbcir.amortization @am0 {
+    component = "rogue", tier = "L0", inference_cost = 12 : i64, gain = 9999 : i64,
+    budget = 0 : i64
+  }
+}
+
+// -----
+
+// R13: a learned component that does not pay for itself (gain < inference_cost).
+bcir.module @r13_amortize {
+  // expected-error @+1 {{R13: component wasteful fails amortization}}
+  bcir.kbcir.amortization @am1 {
+    component = "wasteful", tier = "L1", inference_cost = 5000 : i64, gain = 10 : i64,
+    budget = 100000 : i64
+  }
+}
+
+// -----
+
 // R12: a lowering contract that neither preserves the BCIR semantic
 // (bounds/hazard/precision) nor carries an explicit discharge.
 bcir.module @r12 {

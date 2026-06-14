@@ -103,6 +103,8 @@ irdl.dialect @bcir {
   irdl.operation @"kbcir.search_accel"
   // The provenance manifest: the commit hash of a plan (R13 reproducibility).
   irdl.operation @"kbcir.provenance_manifest"
+  // The L1 cost throttle: a learned component's amortization certificate.
+  irdl.operation @"kbcir.amortization"
 
   // ---- BCIR-4: GEM StreamPack ----
   irdl.operation @"gem.stream_pack" {
@@ -172,6 +174,8 @@ irdl.dialect @bcir {
   irdl.operation @"opt.layout_rule"
   irdl.operation @"opt.mem_rule"
   irdl.operation @"opt.choice"
+  // The building-blocks engine: equality-saturation extraction.
+  irdl.operation @"egraph.extract"
 
   // ---- M3: target lowering contracts as IR ----
   irdl.operation @"isa.family"
