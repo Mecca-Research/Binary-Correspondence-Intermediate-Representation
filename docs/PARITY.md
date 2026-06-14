@@ -64,6 +64,7 @@ accuracy, contention, verification`.
 | StreamPack | `gem.streampack.StreamPack` | `bcir.gem.stream_pack` |
 | lane segment | `gem.streampack.LaneSegment` | `bcir.gem.lane_segment` |
 | verifier R1–R13 | `verify.{verify,verify_plan,verify_pack,verify_lowering,verify_provenance}` | `bcir.verify.*` ops + the `-bcir-verify` pass (R1–R13) |
+| GEM pipeline (classify→select→batch→schedule→lower) | `kbcir.realize.optimize` / `gem.{hydrate,schedule,execute}` (the oracle stages) | `-bcir-classify-lanes / -bcir-select-realization / -bcir-batch / -bcir-schedule / -bcir-lower-to-llvm` (`mlir/lib/BCIRPasses.cpp`); `-bcir-select-realization` recomputes the min-plus `cost·weights` and reproduces 7808/9472 (`mlir/test/passes/gem_passes{,_neg}.mlir`) |
 | memory tier id | `kbcir.cost.MemTier` | `BCIR_MemTier` (`BCIRAttrs.td`) |
 | lowering (AOT) | `lower.llvm` (clang) | `bcir.target.lower_contract` |
 | concurrency/affinity (CT2) | `gem.schedule_concurrent` | `bcir.gem.lane_segment` `affinity`/`unroll` |
@@ -110,8 +111,15 @@ available, the `mlir/examples` + `mlir/test/irdl` corpus round-trips through
 `bcir-opt` / stock `mlir-opt` and must carry the same constants.
 
 The verifier laws are negative-tested **per law on both rails**: the oracle in
-`bcir/tests/test_verify.py` (R1–R12 across module/plan/pack/lowering artifacts)
-and the dialect in `mlir/test/passes/verify_laws.mlir` (R1–R7) +
-`verify_laws_deep.mlir` (R8–R12) via `-bcir-verify -verify-diagnostics`. The
+`bcir/tests/test_verify.py` (R1–R13 across module/plan/pack/lowering/provenance
+artifacts) and the dialect in `mlir/test/passes/verify_laws.mlir` (R1–R7) +
+`verify_laws_deep.mlir` (R8–R13) via `-bcir-verify -verify-diagnostics`. The
 pretty ODS corpus must stay clean under the full `-bcir-verify`
 (`tools/wsl/check_passes.sh`, CI `mlir-rail-validate`).
+
+The **GEM pipeline passes** carry the same dual-rail discipline:
+`mlir/test/passes/gem_passes.mlir` FileCheck-pins the recomputed plan (the
+min-plus `cost·weights` reproduces the oracle's 7808 cool / 9472 under the cap),
+and `gem_passes_neg.mlir` negative-tests the cross-check (a declared selection
+that is not the true argmin, or a StreamPack segment that breaks the R12 lowering
+contract, is rejected) via `-verify-diagnostics`.

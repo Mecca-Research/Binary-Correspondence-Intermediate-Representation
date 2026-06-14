@@ -50,5 +50,19 @@ fi
 echo "[passes] memory ordering (barrier -> llvm.fence)"
 run_fc -convert-bcir-to-llvm "${T}/memory_ordering.mlir"
 
+echo "[passes] GEM pipeline (classify/select/batch/schedule/lower)"
+GEM="-bcir-classify-lanes -bcir-select-realization -bcir-batch -bcir-schedule -bcir-lower-to-llvm"
+if [ -n "${FC}" ]; then
+  "${BO}" ${GEM} "${T}/gem_passes.mlir" 2>/tmp/pe | "${FC}" "${T}/gem_passes.mlir" \
+    && echo "  PASS gem_passes.mlir" || { echo "  FAIL gem_passes.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" ${GEM} "${T}/gem_passes.mlir" >/dev/null 2>/tmp/pe \
+    && echo "  RUN-ONLY gem_passes.mlir" || { echo "  FAIL gem_passes.mlir"; cat /tmp/pe; fail=1; }
+fi
+echo "[passes] GEM cross-checks against the oracle (-verify-diagnostics)"
+"${BO}" -bcir-select-realization -bcir-lower-to-llvm -verify-diagnostics -split-input-file \
+  "${T}/gem_passes_neg.mlir" \
+  && echo "  PASS gem_passes_neg.mlir" || { echo "  FAIL gem_passes_neg.mlir"; fail=1; }
+
 [ "${fail}" -eq 0 ] && echo "[passes] all passes validate" || echo "[passes] FAILURES"
 exit "${fail}"

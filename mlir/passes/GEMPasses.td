@@ -1,8 +1,11 @@
 //===- GEMPasses.td - GEM / K_BCIR pass declarations --------*- tablegen -*-===//
 //
-// Pass declarations for the GEM pipeline (LangRef Milestone 4..7). Implemented in
-// C++ in a later toolchain phase; the bcir/ oracle is the executable reference
-// today (classify -> realize -> batch -> schedule -> prefetch -> StreamPack).
+// Pass declarations for the GEM pipeline (LangRef Milestone 4..7). Implemented
+// MLIR-native in lib/BCIRPasses.cpp (PassWrapper style, registered by
+// registerBCIRPasses) and cross-checked against the bcir/ oracle's pinned
+// constants (docs/PARITY.md): classify -> select -> batch -> schedule -> lower.
+// -bcir-select-realization recomputes the min-plus score (cost . weights) and
+// reproduces the oracle's 7808 (cool) / 9472 (under the thermal cap).
 //
 //===----------------------------------------------------------------------===//
 #ifndef GEM_PASSES
