@@ -10,6 +10,7 @@ from shutil import which
 
 from ..model import Module, Opcode
 from ..kbcir.realize import RealizationResult
+from ..lower.c_kernel import emit_kernel_c
 from ..lower.llvm import _find_elementwise, emit_kernel_ll
 from .targets import CODEGEN_TARGETS, CodegenTarget
 
@@ -83,14 +84,11 @@ def codegen(module: Module, result: RealizationResult, target_name: str,
 
 
 def emit_c_source(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel") -> str:
-    """Portable C-source fallback -- the universal bootstrap target (any C compiler)."""
-    claim, _ = _find_elementwise(module, result)
-    op = _C_OP[claim.opcode]
-    return f"""/* BCIR -> portable C (universal codegen fallback). op={claim.op} */
-void {fn_name}(const float *A, const float *B, float *C, long n) {{
-  for (long i = 0; i < n; i++) C[i] = A[i] {op} B[i];
-}}
-"""
+    """Portable C-source fallback -- the universal bootstrap target (any C23
+    compiler). Delegates to the C kernel backend (`lower.c_kernel.emit_kernel_c`):
+    the K_BCIR-selected lane width drives the loop, pointers are restrict-qualified,
+    and a scalar tail keeps it bounds-safe (R12: `verify.verify_c_lowering`)."""
+    return emit_kernel_c(module, result, fn_name)
 
 
 def codegen_c(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
@@ -106,10 +104,15 @@ def codegen_c(module: Module, result: RealizationResult, fn_name: str = "bcir_ke
         obj = os.path.join(workdir, "kernel.o")
         with open(src, "w") as f:
             f.write(emit_c_source(module, result, fn_name))
-        r = subprocess.run([cc, "-O2", "-c", src, "-o", obj], capture_output=True, text=True)
-        ok = r.returncode == 0 and os.path.exists(obj)
+        r = None
+        for std in ("-std=c23", "-std=c2x"):   # C23 (clang) then c2x (gcc 13)
+            r = subprocess.run([cc, std, "-O2", "-c", src, "-o", obj],
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                break
+        ok = r is not None and r.returncode == 0 and os.path.exists(obj)
         data = open(obj, "rb").read() if ok else None
-        return CodegenResult(ok, "c", data, "compiled" if ok else r.stderr.strip())
+        return CodegenResult(ok, "c", data, "compiled" if ok else (r.stderr.strip() if r else "no compiler"))
     finally:
         if created:
             import shutil

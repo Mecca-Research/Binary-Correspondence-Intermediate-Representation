@@ -463,6 +463,80 @@ def verify_lowering(module: Module, result, ll_text: str, elem: str = "f32",
     return diags
 
 
+def verify_c_lowering(module: Module, result, c_text: str, elem: str = "f32",
+                      width_override: int | None = None) -> list[Diagnostic]:
+    """Lowering law R12 for the portable C backend: the emitted C23 kernel
+    (`lower.c_kernel.emit_kernel_c`) preserves the K_BCIR-selected realization --
+    lane geometry (the selected width drives the loop), precision (the contracted
+    element type), bounds (a trip-count guard so the kernel is safe for any n),
+    the elementwise op, and the non-aliasing contract (`restrict` when the read
+    and write resources are disjoint).
+    """
+    from ..gem import hydrate
+    from ..lower.c_kernel import C_OP, _ctype
+    from ..lower.llvm import find_elementwise
+
+    diags: list[Diagnostic] = []
+    try:
+        claim, cand = find_elementwise(module, result)
+    except NotImplementedError:
+        return [Diagnostic("R12", "no lowerable elementwise claim selected in this plan")]
+
+    head = c_text.splitlines()[0] if c_text else ""
+    if not head.startswith("/* BCIR -> portable C"):
+        return [Diagnostic("R12", "missing C lowering discharge note (head comment)")]
+    m = re.search(r"\bwidth=(\d+)\b", head)
+    if m is None:
+        return [Diagnostic("R12", "C discharge note does not declare a width")]
+    declared_w = int(m.group(1))
+
+    w = int(width_override) if width_override else int(cand.width)
+    w = w if w >= 1 else 1
+    if declared_w != w:
+        diags.append(Diagnostic(
+            "R12",
+            f"lane geometry not preserved: declared width {declared_w} != selected "
+            f"width {w} (candidate {cand.name})"))
+
+    # Lane geometry in the body: a width-w fixed-trip loop (w>1) or a pure scalar
+    # loop (w==1, no vector-width loop).
+    if w > 1 and f"< {w}u" not in c_text:
+        diags.append(Diagnostic(
+            "R12", f"lane geometry not preserved: no width-{w} loop emitted"))
+    if w == 1 and re.search(r"<\s*\d+u", c_text):
+        diags.append(Diagnostic(
+            "R12", "lane geometry not preserved: a vector-width loop in a scalar kernel"))
+
+    # Precision: the contracted element type on the kernel signature.
+    ctype = _ctype(elem)
+    if f"const {ctype} " not in c_text:
+        diags.append(Diagnostic(
+            "R12", f"precision not preserved: kernel does not operate on {ctype}"))
+
+    # The elementwise op.
+    op = C_OP.get(claim.opcode)
+    if op and f"] {op} B" not in c_text and f"] {op} B[i]" not in c_text:
+        diags.append(Diagnostic(
+            "R12", f"op not preserved: elementwise '{op}' not emitted"))
+
+    # Bounds: a trip-count guard on n (the strict bounds contract -> a loop over n).
+    if "< n" not in c_text and "<= n" not in c_text:
+        diags.append(Diagnostic(
+            "R12", "bounds not preserved: no trip-count guard on n"))
+
+    # Non-aliasing: restrict when the read/write resources are disjoint.
+    pack = hydrate(module, result)
+    seg = next((s for s in pack.segments if s.claim_id == claim.id), None)
+    reads = tuple(seg.reads) if seg else tuple(claim.rd)
+    writes = tuple(seg.writes) if seg else tuple(claim.wr)
+    if not (set(reads) & set(writes)) and "restrict" not in c_text:
+        diags.append(Diagnostic(
+            "R12", "aliasing contract not preserved: disjoint operands but no "
+            "restrict-qualified pointers"))
+
+    return diags
+
+
 def verify_manifest(manifest, module, h, theta, policy=None, artifacts=()) -> list[Diagnostic]:
     """Provenance-manifest law R13: a deployed plan's manifest must (a) hash to the
     inputs/artifacts it claims (tamper-evidence) and (b) reproduce the recorded
