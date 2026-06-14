@@ -85,6 +85,14 @@ from .mapping import (
     identity_dimmap,
     support,
 )
+from .operad import (
+    EnrichedOp,
+    EnrichedOperad,
+    TwoCell,
+    enrich_memory,
+    f_index,
+    f_label,
+)
 from .throttle import (
     AmortizationCertificate,
     ThrottleReport,
@@ -194,6 +202,12 @@ __all__ = [
     "MappingFunction",
     "identity_dimmap",
     "support",
+    "EnrichedOp",
+    "EnrichedOperad",
+    "TwoCell",
+    "enrich_memory",
+    "f_index",
+    "f_label",
     "AmortizationCertificate",
     "ThrottleReport",
     "TIER_BUDGET",

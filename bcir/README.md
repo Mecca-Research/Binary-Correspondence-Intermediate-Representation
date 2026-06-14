@@ -12,7 +12,8 @@ model/      BCIR-0..2 semantic model: lanes, opcodes, resources, claims, phases
 kbcir/      K_BCIR (BCIR-3): cost vectors, target profiles + memory hierarchy,
             min-plus semiring, Theta-driven weights, the optimizer, the CT4 calibrator,
             the e-graph engine + memory-module fixpoint (a = Lim(Res(U))), provenance,
-            the two-truth quarantine (MOPC) + modular mapping functions (support/parity)
+            the two-truth quarantine (MOPC) + modular mapping functions (support/parity),
+            the enriched-operad memory interface (labels + content-addressed indexes + trace)
 gem/        GEM (BCIR-4): StreamPack hydration, deterministic phase executor, and
             CT2 concurrent wave scheduling + GGG decoupling + affinity
 etl/        M5 Event Transduction: events, FSM transducer, parser, binary decoder
@@ -22,7 +23,7 @@ telemetry.py CT4 "data DNA" schema + sinks (null/list/file; Kafka-ready)
 verify/     runnable subset of LangRef verifier laws R1-R12
 examples.py the goal-graph corpus (vector_add, saxpy_strided, histogram_gather, ...)
 run.py      the CLI (--target/--theta/--policy/--run/--jit/--schedule)
-tests/      290 checks + a dependency-free runner
+tests/      303 checks + a dependency-free runner
 ```
 
 ## Run it

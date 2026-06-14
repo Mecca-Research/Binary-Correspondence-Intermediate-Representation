@@ -355,7 +355,40 @@ tables that learn") lives entirely on the graded side: it proposes, and the
 classical laws dispose. This is the safe way to import learned dynamic truth —
 keep it out of the verifier.
 
-## 15. Milestone map
+## 15. The enriched-operad memory interface (the higher intelligence layer)
+
+The memory module (§11, `a = Lim(Res(U))`) is already an **operad**: its e-nodes
+are operations, the operators are the composition `γ`, the atoms are the identity
+`η`, and the extraction tree is the operad's operation tree. The higher
+intelligence layer **enriches** that operad with labels and indexes
+(`kbcir.operad`, `O_L = ((O_L(n)), γ_L, η_L, L, I)`) to make memory navigable,
+traceable, and queryable — without touching the deterministic spine:
+
+- **Labeling `L`.** A hierarchical, descriptive label per operation
+  (`L(op) = (L1, L2, …)`, e.g. `("MEMORY","op","mul")`). Composition preserves it,
+  `L(γ_L(…)) = f_L(L(parent), L(children…))` (`f_label`).
+- **Indexing `I`.** A **content-addressed** index — the FNV fingerprint of
+  `(name, label, child indexes)` — kept consistent under composition
+  `I(γ_L(…)) = f_I(…)` (`f_index`). Content addressing (**not** random UUIDs) is
+  the discipline that keeps the layer deterministic: structurally identical
+  operations get the *same* index, so CSE / the liked-pair identity `a = a` falls
+  out for free and reproducibility is preserved.
+- **Trace.** Reverse mapping from any operation to its constituent sources (the
+  operation tree `T = (V,E)`, the `SourceMap`); rewrites are recorded as
+  **2-cells** (the higher-category layer: transformations between operations).
+
+**Where it sits.** Labels and indexes are *interpretive* metadata, quarantined on
+the graded side of §14: they may **inform** planning, retrieval, and debugging but
+are never read by the R-laws. The lower IR (StreamPack, realized plan) carries
+decisions, not labels — so the layer is conditionally activatable
+(`enable_labeling` / `enable_indexing`), matching the cost/benefit tiering: full
+on the memory interface, selective in pipelines, off on the hot path. Its own
+integrity (label consistency, content-addressed index uniqueness, mapping
+integrity) is checkable under R13 (`verify.verify_enriched`) — the analog of
+`verify_memory` for the enriched structure. `enrich_memory` lifts a frozen memory
+module into this operad: the deterministic fixpoint, made intelligent.
+
+## 16. Milestone map
 
 1. LangRef v0.1 — this document. ✔
 2. Declarative dialect definitions — `mlir/include/BCIR/*.td`. ✔ (tblgen-validated; compiled `bcir-opt` parses + verifies the pretty corpus on LLVM 18)
@@ -371,7 +404,7 @@ Until the MLIR toolchain exists on this host, the oracle (`bcir/`, runnable via
 `python -m bcir.run`) demonstrates Milestones 5–7 in miniature and is the
 conformance reference for the dialects.
 
-## 16. Thesis
+## 17. Thesis
 
 > BCIR is a registry-first, phase-ordered, lane-typed, cost-governed
 > correspondence IR. K_BCIR is the IR-level optimization calculus that selects
