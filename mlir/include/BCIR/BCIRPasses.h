@@ -18,6 +18,15 @@ std::unique_ptr<mlir::Pass> createVerifyPass();
 std::unique_ptr<mlir::Pass> createPromoteLanesPass();
 std::unique_ptr<mlir::Pass> createConvertToLLVMPass();
 
+// The GEM pipeline (LangRef Milestone 4..7): classify -> select -> batch ->
+// schedule -> lower. MLIR-native implementations of the bcir/ oracle stages,
+// cross-checked against its pinned constants (docs/PARITY.md).
+std::unique_ptr<mlir::Pass> createClassifyLanesPass();
+std::unique_ptr<mlir::Pass> createSelectRealizationPass();
+std::unique_ptr<mlir::Pass> createBatchPass();
+std::unique_ptr<mlir::Pass> createSchedulePass();
+std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
+
 /// Register all BCIR passes with the global pass registry (for bcir-opt).
 void registerBCIRPasses();
 

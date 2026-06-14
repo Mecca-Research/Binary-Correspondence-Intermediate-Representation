@@ -1006,6 +1006,316 @@ struct ConvertToLLVMPass
   }
 };
 
+//===----------------------------------------------------------------------===//
+// The GEM pipeline (LangRef Milestone 4..7): classify -> select -> batch ->
+// schedule -> lower. MLIR-native implementations of the same stages the bcir/
+// oracle runs (docs/PARITY.md); each recomputes its stage and cross-checks the
+// declared IR against the oracle's pinned constants (e.g. score 7808 / 9472).
+//===----------------------------------------------------------------------===//
+
+// The 12 cost-vector dimensions in canonical (DIMS) order -- the order the
+// K_BCIR policy weight vector indexes (mirrors bcir/kbcir/cost.py DIMS).
+static void costToArray(CostVectorAttr cv, int64_t out[12]) {
+  out[0] = cv.getCompute();    out[1] = cv.getMemory();
+  out[2] = cv.getFabric();     out[3] = cv.getSync();
+  out[4] = cv.getCompile();    out[5] = cv.getThermal();
+  out[6] = cv.getPower();      out[7] = cv.getReliability();
+  out[8] = cv.getSecurity();   out[9] = cv.getAccuracy();
+  out[10] = cv.getContention(); out[11] = cv.getVerification();
+}
+
+// score(pi) = sum_d w_d * cost_d -- the scalarized K_BCIR cost (the dot product
+// the min-plus selection minimizes; LangRef Sec. 2 degenerate rail).
+static int64_t scalarize(CostVectorAttr cv, ArrayRef<int64_t> w) {
+  int64_t cost[12];
+  costToArray(cv, cost);
+  int64_t s = 0;
+  for (int i = 0; i < 12 && i < static_cast<int>(w.size()); ++i)
+    s += cost[i] * w[i];
+  return s;
+}
+
+// The mnemonic for a lane (for annotation; matches BCIRAttrs.td spellings).
+static StringRef laneSpelling(Lane l) {
+  switch (l) {
+  case Lane::U:   return "u";
+  case Lane::UX:  return "ux";
+  case Lane::T:   return "t";
+  case Lane::GGG: return "ggg";
+  case Lane::A:   return "a";
+  case Lane::H:   return "h";
+  }
+  return "?";
+}
+
+// The canonical (preferred) lane the classifier assigns to an access pattern --
+// the most specific legal lane for the stride class (mirrors the oracle's lane
+// classification: unit/strided stream on U, cacheline on UX, tile on T, random
+// quarantined to GGG).
+static Lane canonicalLane(StrideClass sc) {
+  switch (sc) {
+  case StrideClass::Scalar:    return Lane::U;
+  case StrideClass::Unit:      return Lane::U;
+  case StrideClass::Strided:   return Lane::U;
+  case StrideClass::Cacheline: return Lane::UX;
+  case StrideClass::Tile:      return Lane::T;
+  case StrideClass::Random:    return Lane::GGG;
+  }
+  return Lane::U;
+}
+
+//===----------------------------------------------------------------------===//
+// -bcir-classify-lanes : access pattern -> canonical lane, annotated per claim.
+//===----------------------------------------------------------------------===//
+struct ClassifyLanesPass
+    : public PassWrapper<ClassifyLanesPass, OperationPass<>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ClassifyLanesPass)
+
+  StringRef getArgument() const final { return "bcir-classify-lanes"; }
+  StringRef getDescription() const final {
+    return "Classify each claim's access pattern into its canonical lane "
+           "(annotates kbcir.classified_lane; mirrors the oracle classifier).";
+  }
+
+  void runOnOperation() override {
+    Builder b(&getContext());
+    getOperation()->walk([&](ClaimOp c) {
+      Lane lane = canonicalLane(c.getStrideClass());
+      c->setAttr("kbcir.classified_lane", b.getStringAttr(laneSpelling(lane)));
+    });
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// -bcir-select-realization : K_BCIR min-plus selection over the candidate DAG.
+// Recomputes score(pi) = cost . weights for each candidate, picks the budget-
+// feasible argmin, and cross-checks the IR's declared selection (the oracle's
+// realize.optimize, MLIR-native: reproduces 7808 cool / 9472 under the cap).
+//===----------------------------------------------------------------------===//
+struct SelectRealizationPass
+    : public PassWrapper<SelectRealizationPass, OperationPass<>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SelectRealizationPass)
+
+  StringRef getArgument() const final { return "bcir-select-realization"; }
+  StringRef getDescription() const final {
+    return "K_BCIR min-plus realization selection over the candidate DAG "
+           "(reproduces the oracle score; annotates kbcir.computed_*).";
+  }
+
+  void runOnOperation() override {
+    Operation *root = getOperation();
+    Builder b(&getContext());
+    bool ok = true;
+
+    llvm::DenseMap<StringRef, KBCIRPathOp> pathByName;
+    llvm::DenseMap<StringRef, KBCIRBudgetOp> budgetByName;
+    llvm::DenseMap<int, KBCIRPolicyOp> policyByMode;  // PolicyMode -> first policy
+    root->walk([&](KBCIRPathOp p) { pathByName[p.getSymName()] = p; });
+    root->walk([&](KBCIRBudgetOp bud) { budgetByName[bud.getSymName()] = bud; });
+    root->walk([&](KBCIRPolicyOp p) {
+      policyByMode.try_emplace(static_cast<int>(p.getMode()), p);
+    });
+
+    root->walk([&](KBCIRSelectOp s) {
+      auto polIt = policyByMode.find(static_cast<int>(s.getPolicy()));
+      if (polIt == policyByMode.end()) {
+        s.emitError("bcir-select-realization: no kbcir.policy declares the "
+                    "selection's policy mode");
+        ok = false;
+        return;
+      }
+      ArrayRef<int64_t> w = polIt->second.getWeights();
+
+      // Optional budget (RCSP rail): a candidate is feasible iff every named
+      // cost dim is within its cap.
+      KBCIRBudgetOp budget;
+      if (auto bref = s.getBudgetAttr())
+        budget = budgetByName.lookup(bref.getValue());
+      auto feasible = [&](KBCIRPathOp p) {
+        if (!budget)
+          return true;
+        ArrayAttr dims = budget.getDims();
+        ArrayRef<int64_t> caps = budget.getCaps();
+        for (size_t i = 0; i < dims.size() && i < caps.size(); ++i)
+          if (auto name = dyn_cast<StringAttr>(dims[i]))
+            if (auto v = costDim(p.getCost(), name.getValue()))
+              if (*v > caps[i])
+                return false;
+        return true;
+      };
+
+      // argmin over the feasible candidates (deterministic: first wins on tie).
+      StringRef bestName;
+      int64_t bestScore = 0;
+      bool have = false;
+      for (Attribute a : s.getFrom()) {
+        auto ref = dyn_cast<FlatSymbolRefAttr>(a);
+        if (!ref)
+          continue;
+        auto p = pathByName.lookup(ref.getValue());
+        if (!p || !feasible(p))
+          continue;
+        int64_t sc = scalarize(p.getCost(), w);
+        if (!have || sc < bestScore) {
+          have = true;
+          bestScore = sc;
+          bestName = ref.getValue();
+        }
+      }
+      if (!have) {
+        s.emitError("bcir-select-realization: no feasible candidate for claim @")
+            << s.getClaim();
+        ok = false;
+        return;
+      }
+
+      // Annotate the computed plan, then cross-check the declared selection.
+      s->setAttr("kbcir.computed_selected",
+                 FlatSymbolRefAttr::get(&getContext(), bestName));
+      s->setAttr("kbcir.computed_score", b.getI64IntegerAttr(bestScore));
+      if (bestName != s.getSelected()) {
+        s.emitError("bcir-select-realization: computed argmin @")
+            << bestName << " != declared selected @" << s.getSelected();
+        ok = false;
+      }
+      if (bestScore != static_cast<int64_t>(s.getScore())) {
+        s.emitError("bcir-select-realization: computed score ")
+            << bestScore << " != declared score "
+            << static_cast<int64_t>(s.getScore());
+        ok = false;
+      }
+    });
+    if (!ok)
+      signalPassFailure();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// -bcir-batch : group same-phase claims into GEM batches (fusion vs hazards).
+// Same phase + same lane + no read/write conflict join one batch; else a new
+// batch. Annotates kbcir.batch per claim (deterministic by claim id).
+//===----------------------------------------------------------------------===//
+struct BatchPass : public PassWrapper<BatchPass, OperationPass<>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(BatchPass)
+
+  StringRef getArgument() const final { return "bcir-batch"; }
+  StringRef getDescription() const final {
+    return "Form GEM batches from same-phase fusion-compatible claims "
+           "(annotates kbcir.batch).";
+  }
+
+  void runOnOperation() override {
+    Builder b(&getContext());
+    // Collect claims per phase, ordered by claim id (deterministic).
+    llvm::DenseMap<StringRef, SmallVector<ClaimOp>> byPhase;
+    getOperation()->walk([&](ClaimOp c) { byPhase[c.getPhase()].push_back(c); });
+    int64_t nextBatch = 0;
+    for (auto &kv : byPhase) {
+      SmallVector<ClaimOp> &claims = kv.second;
+      llvm::sort(claims, [](ClaimOp a, ClaimOp b) {
+        return a.getClaimId() < b.getClaimId();
+      });
+      SmallVector<ClaimOp> open;  // claims already placed in the current batch
+      int64_t batch = -1;
+      for (ClaimOp c : claims) {
+        bool fits = batch >= 0;
+        for (ClaimOp o : open)
+          if (o.getLane() != c.getLane() || claimsConflict(o, c)) {
+            fits = false;
+            break;
+          }
+        if (!fits) {
+          batch = nextBatch++;
+          open.clear();
+        }
+        c->setAttr("kbcir.batch", b.getI64IntegerAttr(batch));
+        open.push_back(c);
+      }
+    }
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// -bcir-schedule : phase-sliced deterministic order. Topological by phase id,
+// then ascending claim id within a phase (matches the oracle's deterministic
+// executor). Annotates kbcir.exec_order per claim.
+//===----------------------------------------------------------------------===//
+struct SchedulePass : public PassWrapper<SchedulePass, OperationPass<>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SchedulePass)
+
+  StringRef getArgument() const final { return "bcir-schedule"; }
+  StringRef getDescription() const final {
+    return "Phase-sliced deterministic scheduling (annotates kbcir.exec_order).";
+  }
+
+  void runOnOperation() override {
+    Operation *root = getOperation();
+    Builder b(&getContext());
+    llvm::DenseMap<StringRef, int32_t> phaseId;
+    root->walk([&](PhaseOp p) { phaseId[p.getSymName()] = p.getId(); });
+
+    SmallVector<ClaimOp> claims;
+    root->walk([&](ClaimOp c) { claims.push_back(c); });
+    llvm::sort(claims, [&](ClaimOp a, ClaimOp b) {
+      int32_t pa = phaseId.lookup(a.getPhase()), pb = phaseId.lookup(b.getPhase());
+      if (pa != pb)
+        return pa < pb;
+      return a.getClaimId() < b.getClaimId();
+    });
+    int64_t order = 0;
+    for (ClaimOp c : claims)
+      c->setAttr("kbcir.exec_order", b.getI64IntegerAttr(order++));
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// -bcir-lower-to-llvm : the GEM lowering contract (R12 at the StreamPack level).
+// Each gem.lane_segment must preserve its claim's lane geometry and resource set
+// through hydration. Annotates kbcir.lowered = true; errors on a contract break.
+//===----------------------------------------------------------------------===//
+struct LowerToLLVMPass : public PassWrapper<LowerToLLVMPass, OperationPass<>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerToLLVMPass)
+
+  StringRef getArgument() const final { return "bcir-lower-to-llvm"; }
+  StringRef getDescription() const final {
+    return "Check the GEM StreamPack lowering contract (lane/resource "
+           "preservation, R12) and mark segments lowered.";
+  }
+
+  void runOnOperation() override {
+    Operation *root = getOperation();
+    Builder b(&getContext());
+    bool ok = true;
+    llvm::DenseMap<StringRef, ClaimOp> claimByName;
+    root->walk([&](ClaimOp c) { claimByName[c.getSymName()] = c; });
+
+    root->walk([&](GEMLaneSegmentOp seg) {
+      auto c = claimByName.lookup(seg.getClaim());
+      if (!c) {
+        seg.emitError("bcir-lower-to-llvm: segment references unknown claim @")
+            << seg.getClaim();
+        ok = false;
+        return;
+      }
+      if (seg.getLane() != c.getLane()) {
+        seg.emitError("bcir-lower-to-llvm: segment lane not preserved (R12): ")
+            << laneSpelling(seg.getLane()) << " != claim lane "
+            << laneSpelling(c.getLane());
+        ok = false;
+      }
+      if (seg.getReads() != c.getReads() || seg.getWrites() != c.getWrites()) {
+        seg.emitError("bcir-lower-to-llvm: segment resource set not preserved "
+                      "(R12) for claim @")
+            << seg.getClaim();
+        ok = false;
+      }
+      seg->setAttr("kbcir.lowered", b.getBoolAttr(true));
+    });
+    if (!ok)
+      signalPassFailure();
+  }
+};
+
 }  // namespace
 
 std::unique_ptr<Pass> createVerifyPass() {
@@ -1017,11 +1327,31 @@ std::unique_ptr<Pass> createPromoteLanesPass() {
 std::unique_ptr<Pass> createConvertToLLVMPass() {
   return std::make_unique<ConvertToLLVMPass>();
 }
+std::unique_ptr<Pass> createClassifyLanesPass() {
+  return std::make_unique<ClassifyLanesPass>();
+}
+std::unique_ptr<Pass> createSelectRealizationPass() {
+  return std::make_unique<SelectRealizationPass>();
+}
+std::unique_ptr<Pass> createBatchPass() {
+  return std::make_unique<BatchPass>();
+}
+std::unique_ptr<Pass> createSchedulePass() {
+  return std::make_unique<SchedulePass>();
+}
+std::unique_ptr<Pass> createLowerToLLVMPass() {
+  return std::make_unique<LowerToLLVMPass>();
+}
 
 void registerBCIRPasses() {
   PassRegistration<VerifyPass>();
   PassRegistration<PromoteLanesPass>();
   PassRegistration<ConvertToLLVMPass>();
+  PassRegistration<ClassifyLanesPass>();
+  PassRegistration<SelectRealizationPass>();
+  PassRegistration<BatchPass>();
+  PassRegistration<SchedulePass>();
+  PassRegistration<LowerToLLVMPass>();
 }
 
 }  // namespace bcir
