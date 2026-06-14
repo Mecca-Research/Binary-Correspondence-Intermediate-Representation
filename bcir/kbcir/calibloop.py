@@ -150,9 +150,16 @@ def close_loop(module: Module, h: HProfile, *, table: CalibratedProfile = None,
 
 
 def measure_and_close(module: Module, h: HProfile, *, events=(), n: int = 1 << 16,
-                      repeats: int = 5, cal_gen: int = 1, **kw):
+                      repeats: int = 5, cal_gen: int = 1, native: bool = False, **kw):
     """Run the loop on REAL hardware: microbench this host, freeze the Q8 table,
     then close the loop. Returns (certificate, table). Offline (L2/L3) -- never on
-    the hot path. The table is the deterministic artifact the planner consumes."""
-    table = calibrate_profile(h, n=n, repeats=repeats, cal_gen=cal_gen)
+    the hot path. The table is the deterministic artifact the planner consumes.
+
+    `native=True` uses the **bare-metal C microbench** (real cache latency) instead
+    of the conservative interpreter harness."""
+    if native:
+        from .microbench import calibrate_native
+        table = calibrate_native(h, n=max(n, 1 << 22), repeats=repeats, cal_gen=cal_gen)
+    else:
+        table = calibrate_profile(h, n=n, repeats=repeats, cal_gen=cal_gen)
     return close_loop(module, h, table=table, events=events, **kw), table

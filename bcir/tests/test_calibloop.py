@@ -121,3 +121,27 @@ def test_reference_table_is_the_ratio1_anchor():
     t = reference_table()
     assert t.gather_penalty == 32 and t.base_overhead == 4
     assert not close_loop(vector_add(1024), AVX, table=t).replanned
+
+
+# --- bare-metal calibration: real cache latency (closes the conservative half) ---
+
+def test_native_microbench_measures_a_wellformed_table():
+    from bcir.kbcir.microbench import calibrate_native, native_available
+    if not native_available():
+        return  # skip cleanly without a C compiler / the native source
+    t = calibrate_native(AVX, n=1 << 20, repeats=3, cal_gen=2)
+    assert t.cal_gen == 2 and t.name == AVX.name
+    assert t.stream_q8 == 256                              # streaming baseline (R8)
+    assert all(r >= 256 for r in (t.stream_q8, t.strided_q8, t.random_q8, t.compute_q8))
+    # bare metal sees real latency: gather is at least as dear as streaming.
+    assert t.random_q8 >= t.stream_q8 and t.gather_penalty >= 1
+    assert "bare-metal" in t.provenance
+
+
+def test_native_loop_closes_admissibly():
+    from bcir.kbcir.microbench import native_available
+    if not native_available():
+        return
+    cert, table = measure_and_close(vector_add(1024), AVX, native=True, cal_gen=3)
+    assert table.cal_gen == 3 and cert.admissible
+    assert verify_calibration(cert) == []

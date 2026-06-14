@@ -112,6 +112,26 @@ def emit_kernel_c(module: Module, result: RealizationResult, fn_name: str = "bci
     return head + body
 
 
+def emit_header_c(fn_name: str = "bcir_kernel", elem: str = "f32") -> str:
+    """A freestanding C23 header declaring the kernel ABI -- the stable contract a
+    driver/runtime compiles the emitted kernel against (no BCIR dependency)."""
+    ctype = _ctype(elem)
+    guard = f"BCIR_{fn_name.upper()}_H"
+    includes = "#include <stddef.h>\n"
+    if elem == "i32":
+        includes += "#include <stdint.h>\n"
+    return (
+        f"/* BCIR kernel ABI (freestanding, generated). Stable contract for a "
+        f"resident toolchain. */\n"
+        f"#ifndef {guard}\n#define {guard}\n"
+        f"{includes}\n"
+        f"/* Elementwise C = A op B over n elements; A,B,C are non-overlapping. */\n"
+        f"void {fn_name}(const {ctype} *restrict A, const {ctype} *restrict B,\n"
+        f"             {ctype} *restrict C, size_t n);\n"
+        f"#endif /* {guard} */\n"
+    )
+
+
 def emit_selfcheck_c(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
                      elem: str = "f32") -> str:
     """Wrap the kernel with a self-checking C23 `main` (the AOT path). Checks the

@@ -186,6 +186,48 @@ def calibrate_profile(h: TargetProfile, n: int = 1 << 18, repeats: int = 5,
     return calibrate_from_raw(run_microbench(n=n, repeats=repeats), h, cal_gen)
 
 
+# Path to the bare-metal C microbench (the measurement half on real silicon).
+_NATIVE_SRC = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "runtime", "c", "bcir_microbench.c"))
+
+
+def native_available() -> bool:
+    """True iff a C compiler and the native microbench source are both present."""
+    from shutil import which
+    return os.path.exists(_NATIVE_SRC) and bool(which("clang") or which("cc") or which("gcc"))
+
+
+def calibrate_native(h: TargetProfile, n: int = 1 << 22, repeats: int = 5,
+                     cal_gen: int = 1, cc: str = None) -> CalibratedProfile:
+    """Measure this host with the **bare-metal C microbench** (cache effects are
+    real, unlike the interpreter harness) and freeze the Q8 table for `h`.
+
+    Compiles `runtime/c/bcir_microbench.c`, runs it, and parses its JSON (the same
+    `CalibratedProfile` schema). Raises `RuntimeError` if no compiler/source.
+    Offline (L2/L3) only -- the frozen table is the artifact the planner consumes.
+    """
+    import subprocess
+    import tempfile
+    from shutil import which
+
+    cc = cc or which("clang") or which("cc") or which("gcc")
+    if cc is None or not os.path.exists(_NATIVE_SRC):
+        raise RuntimeError("native microbench needs a C compiler + runtime/c/bcir_microbench.c")
+    with tempfile.TemporaryDirectory() as d:
+        exe = os.path.join(d, "mb")
+        build = subprocess.run([cc, "-O2", "-std=c11", _NATIVE_SRC, "-o", exe],
+                               capture_output=True, text=True)
+        if build.returncode != 0:
+            raise RuntimeError("native microbench build failed:\n" + build.stderr)
+        run = subprocess.run([exe, str(n), str(repeats), str(cal_gen)],
+                             capture_output=True, text=True)
+        if run.returncode != 0:
+            raise RuntimeError("native microbench run failed:\n" + run.stderr)
+        raw = CalibratedProfile.from_json(run.stdout)
+    # adopt the target's name; keep the measured ratios + generation.
+    return replace(raw, name=h.name, cal_gen=max(1, cal_gen))
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 

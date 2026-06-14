@@ -71,6 +71,12 @@ def main(argv: list[str] | None = None) -> int:
                    help="close the calibration loop on real hardware: microbench this "
                         "host, freeze the Q8 table, fold --theta as telemetry, replan, "
                         "and certify the measured win")
+    p.add_argument("--native", action="store_true",
+                   help="with --calibrate, use the bare-metal C microbench (real cache "
+                        "latency) instead of the conservative interpreter harness")
+    p.add_argument("--bench", action="store_true",
+                   help="measured-evidence rail: time BCIR's selected realization vs the "
+                        "scalar baseline (compile + run); reports the measured speedup")
     args = p.parse_args(argv)
 
     module = PROGRAMS[args.program]()
@@ -189,13 +195,25 @@ def main(argv: list[str] | None = None) -> int:
                            utilization=theta.utilization, voltage=theta.voltage,
                            misses=theta.mem_pressure)]
                   if (theta.thermal or theta.voltage or theta.mem_pressure) else ())
-        cert, table = measure_and_close(module, h, events=events,
+        cert, table = measure_and_close(module, h, events=events, native=args.native,
                                         calibrator=EwmaCalibrator(alpha=200))
-        print(f"[calibrate] {table.provenance}")
+        print(f"[calibrate{'/native' if args.native else ''}] {table.provenance}")
         print(f"  cal_gen={table.cal_gen} gather_penalty={table.gather_penalty} "
               f"base_overhead={table.base_overhead} measured_thermal={cert.measured_thermal}")
         print(f"  seeded={dict(cert.seeded_widths)} -> calibrated={dict(cert.calibrated_widths)} "
               f"replanned={cert.replanned} win={cert.win} admissible={cert.admissible}")
+
+    if args.bench:
+        from .bench import bench_available, compare
+        if not bench_available():
+            print("[bench] no C compiler; skipping")
+        else:
+            for opt in ("-O1", "-O2", "-O3"):
+                c = compare(args.program, target=args.target, theta=args.theta,
+                            policy=args.policy, opt=opt)
+                print(f"[bench] {opt}: bcir(w{c.bcir.width})={c.bcir.ns_per_call}ns "
+                      f"scalar={c.baseline.ns_per_call}ns "
+                      f"speedup={c.speedup_milli / 1000:.2f}x bcir_wins={c.bcir_wins}")
 
     if args.accel:
         from .kbcir import greedy_order, optimize_ordered, worst_order

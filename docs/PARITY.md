@@ -67,7 +67,10 @@ accuracy, contention, verification`.
 | GEM pipeline (classify→select→batch→schedule→lower) | `kbcir.realize.optimize` / `gem.{hydrate,schedule,execute}` (the oracle stages) | `-bcir-classify-lanes / -bcir-select-realization / -bcir-batch / -bcir-schedule / -bcir-lower-to-llvm` (`mlir/lib/BCIRPasses.cpp`); `-bcir-select-realization` recomputes the min-plus `cost·weights` and reproduces 7808/9472 (`mlir/test/passes/gem_passes{,_neg}.mlir`) |
 | memory tier id | `kbcir.cost.MemTier` | `BCIR_MemTier` (`BCIRAttrs.td`) |
 | lowering (AOT) | `lower.llvm` (clang) | `bcir.target.lower_contract` |
-| C kernel backend (C23) | `lower.c_kernel` (`emit_kernel_c` / `emit_selfcheck_c` / `compile_and_run_c`) + `verify.verify_c_lowering` | `bcir.target.lower_contract` (R12: selected width → loop, `restrict`, bounds tail, precision; portable C23 for any resident toolchain) |
+| C kernel backend (C23) | `lower.c_kernel` (`emit_kernel_c` / `emit_header_c` / `emit_selfcheck_c` / `compile_and_run_c`) + `verify.verify_c_lowering` | `bcir.target.lower_contract` (R12: selected width → loop, `restrict`, bounds tail, precision; portable C23 for any resident toolchain) |
+| library facade (embeddable) | `bcir.api` (`build_artifact` / `compile_kernel` / `KernelArtifact`) | *(host library surface)* plan → C source + ABI header + metadata + R12 attestation + provenance digest; AOT or driver-embedded |
+| bare-metal calibration | `runtime/c/bcir_microbench.c` + `kbcir.microbench.calibrate_native` | feeds the frozen `CalibratedProfile` schema with real cache latency (closes the loop's conservative half) |
+| measured-evidence rail | `bcir.bench` (`compare` / `measure` / `Comparison`) | *(host measurement)* times BCIR's selected realization vs the scalar baseline; reports the measured speedup (honest, not pinned) |
 | concurrency/affinity (CT2) | `gem.schedule_concurrent` | `bcir.gem.lane_segment` `affinity`/`unroll` |
 | ROP/MAP front-ends (CT3) | `frontends.{rop,map}` | `bcir.parse.*` / `bcir.binary.*` |
 | data-DNA telemetry (CT4) | `telemetry.DataDNA` + `kbcir.calibrate` | `bcir.trace.data_dna` |
