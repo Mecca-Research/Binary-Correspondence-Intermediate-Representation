@@ -28,6 +28,7 @@ _MODULES = [
     "bcir.tests.test_twotruth",
     "bcir.tests.test_mapping",
     "bcir.tests.test_operad",
+    "bcir.tests.test_hot_cold",
     "bcir.tests.test_throttle",
     "bcir.tests.test_portfolio",
     "bcir.tests.test_regret",
