@@ -561,6 +561,32 @@ def verify_memory(mm, generation=None, *, recheck=True) -> list[Diagnostic]:
     return diags
 
 
+def verify_calibration(cert) -> list[Diagnostic]:
+    """Calibration-closure law R13: a closed calibration loop is admissible only
+    when its frozen table is generation-tagged (`cal_gen >= 1`) and recalibrating
+    never regresses -- the win (the measured cost of *not* recalibrating) is
+    `>= 0`. A negative win means the "recalibrated" plan is not the optimum under
+    the measured model (a broken loop, a stale rescore, or a tampered
+    certificate); a `cal_gen < 1` table is an untagged measurement that may not be
+    deployed. `cert` is a `kbcir.calibloop.CalibrationCertificate` (duck-typed).
+    """
+    diags: list[Diagnostic] = []
+    if cert.cal_gen < 1:
+        diags.append(Diagnostic(
+            "R13",
+            f"calibration table is not generation-tagged (cal_gen {cert.cal_gen}); "
+            f"a measured table must be frozen + tagged before it is deployed",
+        ))
+    if cert.win < 0:
+        diags.append(Diagnostic(
+            "R13",
+            f"calibration loop regressed: win {cert.win} < 0 (stale cost "
+            f"{cert.stale_cost} < recalibrated {cert.calibrated_cost}); the "
+            f"recalibrated plan is not optimal under the measured model",
+        ))
+    return diags
+
+
 def verify_quarantine(verdict_inputs=(), decisions=(), diagnostics=None) -> list[Diagnostic]:
     """Two-truth quarantine law R13 (MOPC): graded truth may inform a verdict but
     never *be* one. The verifier speaks classical truth (deterministic, binary);

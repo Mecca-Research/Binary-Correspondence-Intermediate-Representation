@@ -23,7 +23,7 @@ telemetry.py CT4 "data DNA" schema + sinks (null/list/file; Kafka-ready)
 verify/     runnable subset of LangRef verifier laws R1-R12
 examples.py the goal-graph corpus (vector_add, saxpy_strided, histogram_gather, ...)
 run.py      the CLI (--target/--theta/--policy/--run/--jit/--schedule)
-tests/      305 checks + a dependency-free runner
+tests/      314 checks + a dependency-free runner
 ```
 
 ## Run it

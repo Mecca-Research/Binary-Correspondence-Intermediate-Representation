@@ -19,6 +19,7 @@ _MODULES = [
     "bcir.tests.test_overlap",
     "bcir.tests.test_schedule",
     "bcir.tests.test_microbench",
+    "bcir.tests.test_calibloop",
     "bcir.tests.test_bayescal",
     "bcir.tests.test_moegate",
     "bcir.tests.test_accel",

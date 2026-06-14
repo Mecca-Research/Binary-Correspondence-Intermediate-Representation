@@ -70,6 +70,7 @@ accuracy, contention, verification`.
 | concurrency/affinity (CT2) | `gem.schedule_concurrent` | `bcir.gem.lane_segment` `affinity`/`unroll` |
 | ROP/MAP front-ends (CT3) | `frontends.{rop,map}` | `bcir.parse.*` / `bcir.binary.*` |
 | data-DNA telemetry (CT4) | `telemetry.DataDNA` + `kbcir.calibrate` | `bcir.trace.data_dna` |
+| calibration loop (closed) | `kbcir.calibloop` (`close_loop` / `measure_and_close` / `rescore_plan` / `CalibrationCertificate`) + `verify.verify_calibration` | `bcir.kbcir.calibration` (R13: measure → freeze → replan; `cal_gen ≥ 1` ∧ `win ≥ 0`; the measured cost of not recalibrating) |
 | JIT (CT5) | `lower.jit` (lli) | per-target `bcir.target.lower_contract` |
 | StreamPack ABI (Phase 7) | `abi.streampack_abi` (v1) | `runtime/c/bcir_streampack.h` |
 | WASM (Phase 7) | `lower.wasm` (clang→wasm + node) | per-target `bcir.target.lower_contract` |

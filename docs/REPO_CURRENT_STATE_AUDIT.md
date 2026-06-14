@@ -19,8 +19,9 @@
     Phase 13–26 organs: calibration (microbench + Bayesian/conformal), policy
     portfolio + replay gate, MoE gate, search accelerator, soft optimizer, regret
     ledger, provenance manifest, e-graph + memory-module fixpoints, the two-truth
-    quarantine, modular mapping functions, and the enriched-operad memory
-    interface. Suite: `python -m bcir.tests.run_all` (**305 checks**).
+    quarantine, modular mapping functions, the enriched-operad memory
+    interface, and the closed calibration loop (`calibloop`: measure → freeze →
+    replan → certified win). Suite: `python -m bcir.tests.run_all` (**314 checks**).
   - **`mlir/`** — the law: the ODS/TableGen dialect family (~80 ops), the compiled
     `bcir-opt` with `-bcir-verify` (R1–R13), `-bcir-promote-lanes`,
     `-convert-bcir-to-llvm`, and the **GEM pipeline passes** (`-bcir-classify-lanes
@@ -58,10 +59,13 @@
    `bcir.target.lower_contract` is the designated seam. *(The strategic response
    is to emit C/LLVM and reuse the resident backend — see the roadmap — not to
    chase general isel.)*
-2. **Cost constants are modeled, not measured.** Target profiles ship seeded
-   constants; calibration learns from telemetry but no trained model or live
-   broker is wired into CI. Until this closes, "optimal" means optimal w.r.t. the
-   model. **This is the top priority.**
+2. **Cost constants are measured but conservative.** The calibration loop is now
+   closed and certified (`kbcir.calibloop`: measure → freeze → apply → replan →
+   `CalibrationCertificate`, R13, with a certified replan win and a `--calibrate`
+   CLI), but the stdlib microbench measures *through the interpreter*, so absolute
+   ratios are conservative (gather collapses to ratio-1). **Remaining:** a trained
+   calibrator + live broker, and bare-metal numbers from the C runtime filling the
+   same frozen-table schema.
 3. **The example corpus is small** (elementwise, strided, gather, tile-MACC
    skeletons). Multi-claim fusion and joint optimization are future work, and the
    GEM passes are exercised on the single-claim plan.
@@ -73,8 +77,9 @@
 
 ## Recommended next milestones (see the roadmap for detail)
 
-1. **Close the calibration loop on real hardware** (trained calibrator, frozen
-   tables in CI, a measured replan win). *Top priority.*
+1. **Calibration loop** ◑ — closed + certified on host (`kbcir.calibloop`, R13).
+   Remaining: a *trained* calibrator + live broker, and bare-metal numbers from
+   the C runtime. *Top priority for the remaining half.*
 2. **Widen the GEM passes + corpus**: multi-claim batching/fusion and real
    durations; reductions, tiled matmul, scan; per-target parity beyond
    `vector_add`.
