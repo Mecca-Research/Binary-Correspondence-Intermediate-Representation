@@ -109,6 +109,27 @@ runtime registration). Deep semantics stay in the ODS rail + the `bcir/` oracle.
   foundation for the stack-machine bytecode targets (WASM / JVM / CIL).
 
 ### Done since (LangRef M3 + CT4 depth)
+- **The building-blocks engine — equality saturation** (Phase 21, LangRef §11):
+  `kbcir.egraph` is the *composition* engine atop decomposition (phases/claims)
+  and partition (lanes/candidates): an e-graph where atoms and shared
+  subexpressions are e-classes (the liked-pair memory, found by hashconsing/CSE),
+  operators and rewrites are the unliked pairs that merge classes (congruence
+  closure), and `optimize_expr` saturates the legal rewrites (identity
+  elimination `x+0→x`, constant folding `1+1→2`, distributive factoring/fusion
+  `a*b+a*c→a*(b+c)`) to a fixpoint or a budget, then **extracts the min-cost
+  representative**. The result is always ≤ the input cost (R9: a rewrite never
+  raises the selected cost; `bcir.egraph.extract`). The BCIR bridge maps claims
+  to expressions so CSE across claims is the shared-block memory. CLI:
+  `python -m bcir.run --egraph`.
+- **The L1 cost throttle** (Phase 22, LangRef §13): `kbcir.throttle` makes the
+  amortization tiering a *checkable* artifact. An `AmortizationCertificate`
+  declares a learned component's tier, plan-time `inference_cost`, the `gain` it
+  buys, and the tier `budget`; it is admitted iff the **L0 prohibition** holds
+  (the hot path runs zero learned inference — decisions are compiled out), it
+  **pays for itself** (gain ≥ inference_cost), and it is **within budget** (the
+  throttle). Witnessed by R13 (`bcir.kbcir.amortization`); cross-references the
+  provenance manifest (the manifest records *which* components ran, the throttle
+  bounds *what they cost*). The accelerator is the ideal: net-negative overhead.
 - **Provenance manifest + deterministic replay** (Phase 20, LangRef §13): the
   version-DAG spine that makes the constantly-updating computation DAG
   reproducible and debuggable. `kbcir.provenance` chains a plan's inputs

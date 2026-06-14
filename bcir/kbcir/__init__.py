@@ -40,6 +40,22 @@ from .provenance import (
     replay,
     reproduces,
 )
+from .egraph import (
+    EGraph,
+    EGraphResult,
+    Expr,
+    module_exprs,
+    optimize_expr,
+    saturate,
+    shared_blocks,
+)
+from .throttle import (
+    AmortizationCertificate,
+    ThrottleReport,
+    TIER_BUDGET,
+    certify,
+    measure_inference_cost,
+)
 from .accel import (
     AccelCertificate,
     FrozenRanker,
@@ -109,6 +125,18 @@ __all__ = [
     "manifest_for",
     "replay",
     "reproduces",
+    "EGraph",
+    "EGraphResult",
+    "Expr",
+    "module_exprs",
+    "optimize_expr",
+    "saturate",
+    "shared_blocks",
+    "AmortizationCertificate",
+    "ThrottleReport",
+    "TIER_BUDGET",
+    "certify",
+    "measure_inference_cost",
     "AccelCertificate",
     "FrozenRanker",
     "LearnedRanker",

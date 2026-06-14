@@ -451,8 +451,8 @@ def verify_manifest(manifest, module, h, theta, policy=None, artifacts=()) -> li
 
 
 def verify_provenance(portfolio, certificates=(), h=None, table=None,
-                      verdicts=(), gate_certificates=(), accel_certificates=()
-                      ) -> list[Diagnostic]:
+                      verdicts=(), gate_certificates=(), accel_certificates=(),
+                      amortization_certificates=()) -> list[Diagnostic]:
     """Policy/table provenance law R13: every decision rule in force carries a
     generation tag and an admitting certificate -- rule swaps and table
     applications are never silent -- and every boundary verdict carries an MDL
@@ -489,6 +489,26 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
                 "R13",
                 f"search accelerator {cert.order_name!r} changed the optimum: "
                 f"{cert.mismatches} mismatch(es) over {cert.checked} case(s)",
+            ))
+
+    # R13: amortization provenance (the L1 cost throttle) -- a deployed learned
+    # component must belong at its tier: the L0 prohibition (no inference on the
+    # hot path), it pays for itself (gain >= inference_cost), and it is within the
+    # tier's inference budget. Performance is throttled where it matters.
+    for cert in amortization_certificates:
+        if cert.tier == "L0" and cert.inference_cost != 0:
+            diags.append(Diagnostic(
+                "R13",
+                f"component {cert.component!r} at L0 runs learned inference "
+                f"(cost {cert.inference_cost}); the hot path carries decisions, "
+                f"not models",
+            ))
+        elif not cert.admitted:
+            diags.append(Diagnostic(
+                "R13",
+                f"component {cert.component!r} fails amortization at {cert.tier}: "
+                f"gain {cert.gain} vs inference_cost {cert.inference_cost}, "
+                f"budget {cert._budget()}",
             ))
 
     # R13: boundary-verdict provenance -- a retune recommendation must be backed

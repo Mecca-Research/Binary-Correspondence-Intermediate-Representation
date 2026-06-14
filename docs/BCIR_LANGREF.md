@@ -135,12 +135,27 @@ R10–R11, `verify_lowering` R12, `verify_provenance` R13 — and the MLIR-nativ
 `-bcir-verify` pass enforces the structurally checkable form of all thirteen
 on the dialect.
 
-## 11. Rewrite laws
+## 11. Rewrite laws (the building-blocks engine)
 
 Lane promotion (`GGG→UX→U(k)→U`), tile formation, layout (`AoS→SoA→AoSoA`),
 prefetch introduction, GGG quarantine. A rewrite is legal **only if** it does not
 increase the selected K_BCIR cost (or strictly improves legality) and the module
 still passes R1–R12. Encoded via `bcir.opt.*`.
+
+The **composition** engine that applies them is an e-graph / equality saturation
+(`kbcir.egraph`, `bcir.egraph.extract`) — the realization of the liked/unliked-pair
+model. **Liked pairs** are e-classes: an atom or a shared subexpression is a class
+(the identity `a = a`, the memory module), and hashconsing finds common
+subexpressions for free (CSE). **Unliked pairs** are operators and the rewrites
+they enable: a rewrite proves two forms equal and *merges* their classes
+(congruence closure), folding an unliked result toward a simpler liked attractor
+(`x+0→x`, `1+1→2`, `a*b+a*c→a*(b+c)`). **Resolution** is saturation (apply all
+legal rewrites to a fixpoint or a budget — the bound on complexity generation)
+followed by **extraction** of the min-cost representative per class. Because
+extraction returns the minimum, the optimized cost is always ≤ the input cost —
+an R9 obligation. Nothing is globally immutable: a liked pair holds *within* a
+generation; across generations it is an unliked pair resolved by rehydration, and
+the provenance manifest pins identity.
 
 ## 12. Lowering contracts
 

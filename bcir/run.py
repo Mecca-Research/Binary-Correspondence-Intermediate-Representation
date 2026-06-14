@@ -55,6 +55,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--manifest", action="store_true",
                    help="print the provenance manifest (the commit hash of this plan) "
                         "and confirm it replays")
+    p.add_argument("--egraph", action="store_true",
+                   help="building-blocks engine: how many shared blocks the claims "
+                        "compose to after CSE (liked-pair memory)")
     p.add_argument("--soft-temp", metavar="T", type=float, default=None,
                    help="soft (log-sum-exp) plan distribution at temperature T "
                         "(T=0 reproduces the tropical optimizer exactly)")
@@ -141,6 +144,12 @@ def main(argv: list[str] | None = None) -> int:
             classic = pf.select(th).name
             flag = "" if learned == classic else "  <- diverges"
             print(f"  theta={name:<9} learned={learned:<11} classify={classic}{flag}")
+
+    if args.egraph:
+        from .kbcir import shared_blocks
+        nclaims = sum(len(ph.claims) for ph in module.phases)
+        print(f"[egraph] {nclaims} claim(s) compose to {shared_blocks(module)} "
+              f"building block(s) after CSE (shared liked pairs)")
 
     if args.manifest:
         from .kbcir import build_manifest, reproduces
