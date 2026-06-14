@@ -450,9 +450,77 @@ def verify_manifest(manifest, module, h, theta, policy=None, artifacts=()) -> li
     return diags
 
 
+def verify_memory(mm, generation=None, *, recheck=True) -> list[Diagnostic]:
+    """Memory-module fixpoint law R13: an artifact may be frozen and
+    generation-tagged as a *memory module* only when it is the fixpoint of
+    resolution -- `a = Lim(Res(U))`, `saturated == True` -- never a budget cutoff
+    `Res^k(U)`. Freezing a non-saturated extraction pins a non-canonical,
+    still-improvable representative as memory and breaks the determinism the
+    provenance manifest depends on (two runs that cut off at different `k` need
+    not agree). The saturation witness IS the admitting certificate for entry
+    into a generation.
+
+    With `recheck` (default), the verifier does not merely trust the recorded
+    `saturated` flag: it independently re-resolves the stored representative
+    (`Res(Lim(Res(U)))`) and confirms it is a genuine, stable fixpoint -- the
+    tamper-evidence analog of `verify_manifest` recomputing the digest.
+    """
+    from ..kbcir.memory import try_freeze, _costs_for
+
+    diags: list[Diagnostic] = []
+
+    # R13: the fixpoint witness. A budget cutoff is not Lim(Res(U)).
+    if not mm.saturated:
+        diags.append(Diagnostic(
+            "R13",
+            f"memory module is not a fixpoint: saturated == False after "
+            f"{mm.iterations} round(s) -- a budget cutoff Res^k(U), not "
+            f"Lim(Res(U)); not admissible as memory",
+        ))
+
+    # R13: a frozen artifact must be generation-tagged (immutable within a gen).
+    if mm.generation < 1:
+        diags.append(Diagnostic(
+            "R13",
+            f"memory module has no generation tag (generation {mm.generation}); "
+            f"a frozen artifact is immutable within a generation and must carry one",
+        ))
+    elif generation is not None and mm.generation != generation:
+        diags.append(Diagnostic(
+            "R13",
+            f"memory module generation {mm.generation} != expected {generation}",
+        ))
+
+    # R13: independent fixpoint recheck (tamper-evidence). Re-resolving the stored
+    # representative must reproduce it, saturated -- idempotence Res(Lim) = Lim.
+    if recheck and mm.saturated:
+        again = try_freeze(mm.expr, generation=mm.generation, costs=_costs_for(mm.expr))
+        if not again.saturated:
+            diags.append(Diagnostic(
+                "R13",
+                "memory module fails the fixpoint recheck: its representative does "
+                "not re-resolve to saturation (the recorded witness is unsound)",
+            ))
+        elif again.expr != mm.expr:
+            diags.append(Diagnostic(
+                "R13",
+                "memory module is not idempotent: re-resolving its representative "
+                "yields a different form, so it is not Lim(Res(U)) (tampered or "
+                "frozen before saturation)",
+            ))
+        elif again.fingerprint != mm.fingerprint:
+            diags.append(Diagnostic(
+                "R13",
+                f"memory module fingerprint {mm.fingerprint} != recomputed "
+                f"{again.fingerprint} (content does not match its hash)",
+            ))
+
+    return diags
+
+
 def verify_provenance(portfolio, certificates=(), h=None, table=None,
                       verdicts=(), gate_certificates=(), accel_certificates=(),
-                      amortization_certificates=()) -> list[Diagnostic]:
+                      amortization_certificates=(), memory_modules=()) -> list[Diagnostic]:
     """Policy/table provenance law R13: every decision rule in force carries a
     generation tag and an admitting certificate -- rule swaps and table
     applications are never silent -- and every boundary verdict carries an MDL
@@ -462,10 +530,18 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
     iterable of `ReplayCertificate`s, `h` a `TargetProfile`, `table` a
     `kbcir.microbench.CalibratedProfile`, `verdicts` an iterable of
     `kbcir.regret.BoundaryVerdict`, `gate_certificates` the
-    `ReplayCertificate`s of learned MoE gates proposed for deployment (all
-    duck-typed).
+    `ReplayCertificate`s of learned MoE gates proposed for deployment, and
+    `memory_modules` the `kbcir.memory.MemoryModule`s proposed for freezing into
+    a generation (all duck-typed).
     """
     diags: list[Diagnostic] = []
+
+    # R13: memory-module provenance -- an e-graph extraction may be frozen and
+    # generation-tagged only when it is the resolution fixpoint a = Lim(Res(U))
+    # (saturated), never a budget cutoff. The saturation witness is its admitting
+    # certificate; this ties the e-graph engine (Phase 21) to the manifest (20).
+    for mm in memory_modules:
+        diags += verify_memory(mm)
 
     # R13: learned-gate provenance -- a MoE gate (kbcir.moegate) may deploy only
     # behind an admitting replay certificate (zero regressions vs the incumbent

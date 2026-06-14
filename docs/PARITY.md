@@ -53,6 +53,7 @@ accuracy, contention, verification`.
 | search accelerator | `kbcir.accel` (`optimize_ordered` B&B / `train_ranker` / `accelerator_certificate`) | `bcir.kbcir.search_accel` (R13: admitted ⇒ zero mismatches; same optimum) |
 | provenance manifest | `kbcir.provenance` (`build_manifest` / `replay` / `reproduces` / `verify_manifest`) | `bcir.kbcir.provenance_manifest` (R13: deployed ⇒ reproduced; manifest equality ⇒ identical plan) |
 | building-blocks engine (e-graph) | `kbcir.egraph` (`EGraph` / `optimize_expr` / `saturate` / `shared_blocks`) | `bcir.egraph.extract` (R9: optimized_cost ≤ original_cost) |
+| memory module (fixpoint) | `kbcir.memory` (`MemoryModule` / `freeze` / `freeze_module` / `is_idempotent` / `memory_artifacts`) + `verify.verify_memory` | `bcir.kbcir.memory_module` (R13: `saturated ⇒ admissible`; `a = Lim(Res(U))`, idempotent, chains into the manifest) |
 | L1 cost throttle | `kbcir.throttle` (`AmortizationCertificate` / `certify` / `ThrottleReport`) | `bcir.kbcir.amortization` (R13: L0 ⇒ zero inference; gain ≥ cost ≤ budget) |
 | L3 regret ledger | `kbcir.regret.RegretLedger` / `measure_regret` / `boundary_report` | `bcir.kbcir.regret_ledger` (R13: books balance, rule resolves) |
 | MDL/evidence retune | `kbcir.regret` `data_fit_nats`/`complexity_nats`/`evidence_margin` (BIC: ΔL = Σ regret/best − (k/2)ln N) | `bcir.kbcir.regret_ledger` `data_fit_milli`/`complexity_milli`/`verdict` (R13: retune ⟺ data_fit > complexity) |

@@ -149,13 +149,47 @@ model. **Liked pairs** are e-classes: an atom or a shared subexpression is a cla
 subexpressions for free (CSE). **Unliked pairs** are operators and the rewrites
 they enable: a rewrite proves two forms equal and *merges* their classes
 (congruence closure), folding an unliked result toward a simpler liked attractor
-(`x+0→x`, `1+1→2`, `a*b+a*c→a*(b+c)`). **Resolution** is saturation (apply all
-legal rewrites to a fixpoint or a budget — the bound on complexity generation)
-followed by **extraction** of the min-cost representative per class. Because
-extraction returns the minimum, the optimized cost is always ≤ the input cost —
-an R9 obligation. Nothing is globally immutable: a liked pair holds *within* a
-generation; across generations it is an unliked pair resolved by rehydration, and
-the provenance manifest pins identity.
+(`x+0→x`, `1+1→2`, `a*b+a*c→a*(b+c)`). **Resolution** `Res(·)` is one round of
+rewriting + congruence rebuild; **extraction** picks the min-cost representative
+per class. Because extraction returns the minimum, the optimized cost is always
+≤ the input cost — an R9 obligation.
+
+**The Axiom of Memory Modules — `a = Lim(Res(U))`.** Resolution is *monotone* (a
+merged class never un-merges) over a *bounded* lattice (finitely many e-nodes
+under a terminating rule set), so by Knaster–Tarski/Kleene the iteration
+`Res^k(U)` converges to a least fixpoint
+
+```
+Lim(Res(U)) = Res^∞(U) = the smallest X with Res(X) = X      (≡ saturation).
+```
+
+A **memory module** is the extraction of that fixpoint, *frozen* and
+*generation-tagged*: `memory = Extract(Lim(Res(U)))` (`kbcir.memory`,
+`bcir.kbcir.memory_module`). The **admissibility law** (the fixpoint witness) is
+the bridge from the e-graph engine (§11) to the provenance spine (§13): an
+artifact may be frozen into a generation **only if** resolution reached its
+fixpoint —
+
+```
+saturated == True   ⇒   admissible as memory.
+```
+
+A *budget cutoff* is a partial `Res^k(U)`, `k < ∞`; freezing it pins a
+non-canonical, still-improvable representative as "memory," and because a cutoff
+is budget/order dependent while the fixpoint is canonical (confluence), two runs
+that cut off differently need not agree — breaking the determinism the manifest
+depends on. Idempotence `Res(Lim(Res(U))) = Lim(Res(U))` makes a memory module
+its own attractor — the `a = a` identity at module scope — so re-resolving a
+frozen module reproduces it; the verifier exploits this for tamper-evidence
+(`verify.verify_memory` independently re-resolves rather than trusting the
+recorded witness, the analog of `verify_manifest` recomputing the digest).
+Witnessed by R13.
+
+Nothing is globally immutable: a liked pair holds *within* a generation; across
+generations it is an unliked pair resolved by rehydration, and the provenance
+manifest pins identity. A frozen memory module's generation + content fingerprint
+chain into that manifest (`manifest_for(..., memory=…)`), so an admissible
+(saturated) extraction is itself part of a plan's commit hash.
 
 ## 12. Lowering contracts
 
@@ -249,6 +283,17 @@ generation moved between two runs. Nothing is globally immutable, but everything
 is immutable *within its generation*. R13 (`verify.verify_manifest`) requires a
 deployed plan's manifest to reproduce its recorded score and shape on replay.
 
+The **memory module** (§11, `kbcir.memory`) is the e-graph's contribution to this
+spine: a frozen, generation-tagged *saturated* extraction `a = Lim(Res(U))`. Its
+admissibility law — `saturated == True ⇒ admissible`, the fixpoint witness as the
+admitting certificate — is what lets it earn a generation tag at all; a budget
+cutoff `Res^k(U)` may not be frozen. An admissible module's generation +
+fingerprint chain into the manifest (`manifest_for(..., memory=…)`), and R13
+(`verify.verify_memory`, folded into `verify_provenance`) independently
+re-resolves the stored representative to confirm it is a genuine fixpoint before
+admitting it. This ties the building-blocks engine (the e-graph) to the
+version-DAG spine (the manifest) with one checkable law.
+
 The legality laws (R1–R12), lane semantics, and hazard contracts are **never
 learnable**: they are laws, not preferences.
 
@@ -257,7 +302,7 @@ learnable**: they are laws, not preferences.
 1. LangRef v0.1 — this document. ✔
 2. Declarative dialect definitions — `mlir/include/BCIR/*.td`. ✔ (tblgen-validated; compiled `bcir-opt` parses + verifies the pretty corpus on LLVM 18)
 3. Verifier-first compiler. ✔ (laws R1–R13: the oracle runs the full chain — module R1–R7, plan R8–R9, stream R10–R11, lowering R12, provenance R13 — and the MLIR-native `-bcir-verify` enforces all thirteen structurally, negative-tested per law)
-4. Rewrite laws. ◑ (MLIR-native `-bcir-promote-lanes` (GGG→UX); the rest authored as `bcir.opt.*` IR + run in the oracle)
+4. Rewrite laws. ◑ (MLIR-native `-bcir-promote-lanes` (GGG→UX); the rest authored as `bcir.opt.*` IR + run in the oracle; the **composition** engine is an e-graph / equality saturation (`kbcir.egraph`) whose saturated extractions freeze into generation-tagged **memory modules** `a = Lim(Res(U))` (`kbcir.memory`, R13: `saturated ⇒ admissible`))
 5. K_BCIR planner — candidate-path/costvec/selected-path IR. ◑ (runnable in `bcir/`: the scalarized rail, the constrained RCSP/Pareto rail (`kbcir.rcsp`), and the (max,+) overlap price (`gem.overlap`))
 6. GEM hydration — GraphPlan/LanePlan/StreamPack IR. ◑ (runnable in `bcir/`: hydration, duration-aware EFT/token scheduling (`gem.schedule`), and pipelined v2 packs (`hydrate_pipelined`))
 7. LLVM as first backend. ◑ (MLIR-native `-convert-bcir-to-llvm` lowers compute/barrier to the LLVM dialect; oracle AOT (clang) + JIT (lli))
