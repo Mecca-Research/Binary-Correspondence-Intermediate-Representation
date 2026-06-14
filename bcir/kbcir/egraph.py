@@ -98,11 +98,12 @@ class EGraph:
 
     # union-find
     def find(self, c: int) -> int:
+        parent = self._parent                # localize the hot dict lookup
         root = c
-        while self._parent[root] != root:
-            root = self._parent[root]
-        while self._parent[c] != root:
-            self._parent[c], c = root, self._parent[c]
+        while parent[root] != root:
+            root = parent[root]
+        while parent[c] != root:
+            parent[c], c = root, parent[c]
         return root
 
     def _new_class(self) -> int:
@@ -164,11 +165,12 @@ class EGraph:
 
     def classes(self) -> dict:
         """root class id -> list of (op, val, child-roots) canonical enodes."""
+        find = self.find                     # localize hot lookups (called O(enodes))
+        eoc = self._enode_of_class
         out: dict[int, list] = {}
-        for eid in self._enodes:
-            cls = self.find(self._enode_of_class[eid])
-            op, val, children = self._enodes[eid]
-            out.setdefault(cls, []).append((op, val, tuple(self.find(c) for c in children)))
+        for eid, (op, val, children) in self._enodes.items():
+            out.setdefault(find(eoc[eid]), []).append(
+                (op, val, tuple(find(c) for c in children)))
         return out
 
     def class_has_const(self, cid: int, value: int) -> bool:
@@ -348,14 +350,19 @@ class EGraphResult:
         return self.original_cost - self.optimized_cost      # >= 0 (rewrites never raise cost)
 
 
+def _expr_cost(expr: Expr, costs: dict) -> int:
+    """The cost of an expression as written -- op cost plus the cost of each
+    argument. Identical to extracting an unsaturated e-graph of `expr` (each class
+    has one enode), but without building a throwaway graph: the input's price."""
+    return costs.get(expr.op, 1) + sum(_expr_cost(a, costs) for a in expr.args)
+
+
 def optimize_expr(expr: Expr, rules=None, costs: dict = None,
                   budget: int = 30) -> EGraphResult:
     """Optimize an expression through the e-graph; the result cost is always
     <= the original (R9: a rewrite never increases the selected cost)."""
     costs = costs or DEFAULT_COSTS
-    base = EGraph()
-    root0 = base.add(expr)
-    _, original_cost = base.extract(root0, costs)
+    original_cost = _expr_cost(expr, costs)
 
     eg = EGraph()
     root = eg.add(expr)

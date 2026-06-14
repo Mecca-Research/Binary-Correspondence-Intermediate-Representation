@@ -144,11 +144,11 @@ def _norm_artifacts(artifacts) -> tuple:
     return tuple(sorted((str(n), int(t)) for n, t in artifacts))
 
 
-def build_manifest(module: Module, h, theta: Theta, policy: Policy = PERF,
-                   artifacts=()) -> ProvenanceManifest:
-    """Record a plan's provenance: run the optimizer and chain its inputs + the
-    in-force decision-rule generations into a manifest (the flight-recorder entry)."""
-    result = optimize(module, h, theta, policy)
+def _manifest_from_result(module: Module, h, theta: Theta, policy: Policy,
+                          artifacts, result: RealizationResult) -> ProvenanceManifest:
+    """Assemble a manifest from an *already-computed* plan -- the digest depends
+    only on the inputs/artifacts, the score/shape on the result. Factored out so
+    the planner is run exactly once per manifest (no recursive re-planning)."""
     arts = _norm_artifacts(artifacts)
     mm, mt, mth, mp = (hash_module(module), hash_target(h), hash_theta(theta),
                        hash_policy(policy))
@@ -156,6 +156,14 @@ def build_manifest(module: Module, h, theta: Theta, policy: Policy = PERF,
     return ProvenanceManifest(digest=_digest(mm, mt, mth, mp, arts), score=result.score,
                               widths=widths, artifacts=arts,
                               m_module=mm, m_target=mt, m_theta=mth, m_policy=mp)
+
+
+def build_manifest(module: Module, h, theta: Theta, policy: Policy = PERF,
+                   artifacts=()) -> ProvenanceManifest:
+    """Record a plan's provenance: run the optimizer and chain its inputs + the
+    in-force decision-rule generations into a manifest (the flight-recorder entry)."""
+    return _manifest_from_result(module, h, theta, policy, artifacts,
+                                 optimize(module, h, theta, policy))
 
 
 def manifest_for(module: Module, h, theta: Theta, policy: Policy = PERF, *,
@@ -192,13 +200,16 @@ class ProvenanceMismatch(Exception):
 def replay(manifest: ProvenanceManifest, module: Module, h, theta: Theta,
            policy: Policy = PERF, artifacts=()) -> RealizationResult:
     """Reproduce the plan from the manifest. Raises if the supplied inputs do not
-    hash to the manifest's digest (you are replaying a different commit)."""
-    fresh = build_manifest(module, h, theta, policy, artifacts)
+    hash to the manifest's digest (you are replaying a different commit). The
+    planner runs exactly once -- the digest check reuses the replayed plan instead
+    of re-planning (no recursive optimize)."""
+    result = optimize(module, h, theta, policy)
+    fresh = _manifest_from_result(module, h, theta, policy, artifacts, result)
     if fresh.digest != manifest.digest:
         raise ProvenanceMismatch(
             f"inputs hash to {fresh.digest}, manifest records {manifest.digest} "
             f"(changed: {fresh.diff(manifest)})")
-    return optimize(module, h, theta, policy)
+    return result
 
 
 def reproduces(manifest: ProvenanceManifest, module: Module, h, theta: Theta,
