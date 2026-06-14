@@ -20,10 +20,12 @@ etl/        M5 Event Transduction: events, FSM transducer, parser, binary decode
 frontends/  CT3 front-ends: rop (declarative) + map (macro-assembly) -> claims
 lower/      BCIR-5: legal LLVM IR run AOT (clang) / CT5 JIT (lli) / portable C23 kernel
 telemetry.py CT4 "data DNA" schema + sinks (null/list/file; Kafka-ready)
-verify/     runnable subset of LangRef verifier laws R1-R12
+verify/     runnable subset of LangRef verifier laws R1-R13
+api.py      the embeddable library facade: plan -> KernelArtifact (C + ABI header + R12 attestation)
+bench.py    the measured-evidence rail: time the selected realization vs the baseline
 examples.py the goal-graph corpus (vector_add, saxpy_strided, histogram_gather, ...)
-run.py      the CLI (--target/--theta/--policy/--run/--jit/--schedule)
-tests/      327 checks + a dependency-free runner
+run.py      the CLI (--target/--theta/--policy/--run/--jit/--emit-c/--calibrate/--bench)
+tests/      338 checks + a dependency-free runner
 ```
 
 ## Run it

@@ -77,10 +77,11 @@ to close that gap, not add more intelligence.
    cost of *not* recalibrating, via faithful `rescore_plan`), witnessed by R13
    (`verify.verify_calibration`). Runnable on real silicon: `python -m bcir.run
    … --theta hot --calibrate` flips vec16→vec8 with a certified win.
-   **Remaining:** a *trained* calibrator + a live broker, and bare-metal numbers
-   from the C runtime (the stdlib harness measures through the interpreter, so
-   gather ratios are conservative — the table schema is the contract a native
-   backend fills).
+   **Bare-metal numbers** now land via the C microbench
+   (`runtime/c/bcir_microbench.c`, `kbcir.microbench.calibrate_native`,
+   `--calibrate --native`): real cache latency, so the gather ratio no longer
+   collapses (measured here `random_q8 ≈ 1500` ⇒ gather_penalty ≈ 5, vs the
+   interpreter's ratio-1). **Remaining:** a *trained* calibrator + a live broker.
 2. **C++/MLIR GEM passes against the oracle.** ✔ (this milestone) — the five
    declared GEM passes are implemented MLIR-native and cross-checked against the
    oracle's pinned constants. Next: widen them past the single-claim example
@@ -89,22 +90,33 @@ to close that gap, not add more intelligence.
    worked-example parity beyond `vector_add`.
 
 ### Mid term (one target, end to end)
-4. **A first-class C backend** (kernel lingua franca). ◑ — `lower.c_kernel` emits
+4. **A first-class C backend** (kernel lingua franca). ✔ — `lower.c_kernel` emits
    a portable **C23** kernel from the selected StreamPack (lane width → loop,
    `restrict` pointers, a bounds-safe scalar tail, `static_assert` + `#pragma STDC
-   FP_CONTRACT OFF` for reproducible float), library-first (`emit_kernel_c` is a
-   pure `plan → C string`, reusable AOT via `compile_and_run_c` or driver-embedded)
-   and R12-checked (`verify.verify_c_lowering`). **Remaining:** GPU-C dialect
-   variants per `lower_contract`, and the C runtime feeding bare-metal calibration
-   numbers (closes the loop's remaining half). (See §4.)
-5. **One `bcir.target.lower_contract` end to end** — pick a niche where BCIR's
-   cost model beats LLVM's (gather/scatter-heavy or power-capped) and show a
-   measured win.
+   FP_CONTRACT OFF` for reproducible float), R12-checked
+   (`verify.verify_c_lowering`). **Library-first ✔**: the embeddable façade
+   `bcir.api` turns a program into a `KernelArtifact` — C source + a freestanding
+   ABI header + metadata + the R12 attestation + the provenance digest — reusable
+   AOT (`compile_kernel(run=True)`) or driver-embedded (`to_files`). **Remaining:**
+   GPU-C dialect variants per `lower_contract`. (See §4.)
+5. **Measured-evidence rail** (`bcir.bench`, `--bench`). ◑ — times BCIR's selected
+   realization vs the scalar baseline on the host toolchain. **Honest first
+   finding:** for the elementwise C backend, lane width is *measured-neutral*
+   (≈ parity, occasionally worse than the compiler's own vectorizer) — because
+   these kernels are **bandwidth-bound**, exactly as the cost model says
+   (`vector_add`'s score is 98% memory). So BCIR's provable win is **not** beating
+   the vectorizer on simple loops; it is where the compiler models *nothing* — the
+   next step:
+6. **One `lower_contract` end to end on a niche the compiler can't model** —
+   gather/scatter avoidance or Θ (thermal/power) feasibility. This needs a
+   gather/blocked C lowering (beyond the current unit-stride elementwise emitter);
+   the evidence rail is ready to measure it.
 
 ### Long term (the research result)
-6. **Driver/runtime integration** — BCIR as the rehydrating planner inside an
-   accelerator runtime (Θ-driven replan, generation-tagged repack).
-7. **BCIR-native instruction selection** behind `lower_contract`, only where a
+7. **Driver/runtime integration** — BCIR as the rehydrating planner inside an
+   accelerator runtime (Θ-driven replan, generation-tagged repack), called through
+   the `bcir.api` façade.
+8. **BCIR-native instruction selection** behind `lower_contract`, only where a
    target's economics demand it (do not chase general isel).
 
 ## 4. C and C++ implementation plan
