@@ -14,16 +14,18 @@ from shutil import which
 
 from bcir.silicon import (
     CounterSampler,
+    HwSample,
     cache_topology,
     cpufreq_info,
     perf_counters_available,
+    read_hw_counters,
     sample_into_ring,
     summary,
     tier_capacities,
 )
 from bcir.kbcir import TARGETS, place, silicon_tier_capacity
 from bcir.kbcir.cost import MemTier
-from bcir.gem.dvfs import NOMINAL, plan_dvfs, quantize_to_silicon
+from bcir.gem.dvfs import NOMINAL, actuate, plan_dvfs, quantize_to_silicon
 from bcir.kbcir import optimize
 from bcir.kbcir.cost import Theta
 from bcir.examples import vector_add
@@ -171,3 +173,55 @@ def test_dvfs_quantizes_to_the_real_cpu_frequency():
 def test_perf_counter_probe_is_honest():
     # whatever the answer, it must be a clean bool (no raise) -- the honest split.
     assert isinstance(perf_counters_available(), bool)
+
+
+# --- hardware PMU counters: attempt, then degrade gracefully ----------------------
+
+def test_hw_counters_attempt_degrades_gracefully():
+    hw = read_hw_counters(lambda: sum(range(300_000)))
+    if hw is None:
+        return  # no PMU exposed (this guest: perf_event_open -> ENOENT) -- honest path
+    assert isinstance(hw, HwSample)
+    assert hw.cycles > 0 and hw.instructions > 0 and hw.ipc_milli >= 0
+
+
+def test_hw_pmu_summary_matches_the_probe():
+    assert summary()["hw_pmu"] == perf_counters_available()
+
+
+def test_ring_feed_runs_work_once_with_or_without_a_pmu():
+    # the PMU may be absent; either way work runs exactly once and a real record lands.
+    ring = TelemetryRing(capacity=8)
+    delta = sample_into_ring(ring, claim_id=7, work=lambda: sum(range(100_000)))
+    rec = ring.read_one()
+    assert rec.claim_id == 7 and rec.cycles > 0 and delta.wall_ns > 0
+
+
+# --- DVFS actuation: attempt to set the clock, report the boundary honestly --------
+
+def test_dvfs_actuation_attempts_and_reports_the_boundary():
+    fq = cpufreq_info()
+    m = vector_add(1 << 16)
+    targets = quantize_to_silicon(plan_dvfs(m, optimize(m, AVX, Theta.cool()), Theta.cool()), fq)
+    if not targets:
+        return  # no readable nominal frequency on this host
+    results = actuate(targets, fq)
+    assert len(results) == len(targets)
+    for r in results:
+        assert r.requested_khz > 0
+        assert r.applied == fq.actuatable          # never claims to have set what it couldn't
+        if not r.applied:
+            assert r.reason and r.observed_khz is None         # honest dry-run + reason
+        else:
+            assert r.observed_khz is not None                  # confirmed on real hardware
+
+
+def test_dvfs_actuation_is_a_safe_noop_without_a_governor():
+    # in a sandbox (no userspace governor / no privilege) actuate must not mutate the
+    # system: every result is a dry-run that names the missing capability.
+    fq = cpufreq_info()
+    if fq.actuatable:
+        return  # this host CAN actuate -- covered by the test above
+    from bcir.gem.dvfs import FreqTarget
+    res = actuate([FreqTarget(phase_id=0, clock_q8=192, target_khz=1_000_000, settable=False)], fq)
+    assert res[0].applied is False and "governor" in res[0].reason.lower()

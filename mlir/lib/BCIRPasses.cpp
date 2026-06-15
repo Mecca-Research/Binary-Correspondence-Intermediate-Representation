@@ -1320,7 +1320,42 @@ struct LowerToLLVMPass : public PassWrapper<LowerToLLVMPass, OperationPass<>> {
             << seg.getOpcode() << "' (claim @" << seg.getClaim() << ")";
         ok = false;
       }
+      // R15 (DVFS clock legality): the clock must be a legal step in [64, 512]
+      // (0.25x..2x Q8), and a pim (memory-bound) segment must not overclock -- more
+      // core frequency does not help bandwidth-bound work. Mirrors gem.dvfs.
+      int64_t clk = seg.getClockQ8();
+      if (clk < 64 || clk > 512) {
+        seg.emitError("R15: clock_q8 ") << clk << " out of legal range [64, 512]";
+        ok = false;
+      } else if (seg.getDispatch() == "pim" && clk > 256) {
+        seg.emitError("R15: pim (memory-bound) segment must not overclock (clock_q8 ")
+            << clk << " > 256)";
+        ok = false;
+      }
       seg->setAttr("kbcir.lowered", b.getBoolAttr(true));
+    });
+
+    // R16 (allocator placement legality): an on-chip placement must fit. A resource
+    // placed in L1 must be <= 64 KiB, in L2 <= 4 MiB (static caps; size =
+    // product(shape) * 4 B). Mirrors kbcir.allocator's capacity gate -- the planner
+    // may not promote a tensor into an SRAM tier it cannot fit. L3/DRAM/HBM: no cap.
+    root->walk([&](ResourceOp r) {
+      auto pl = r.getPlacement();
+      if (!pl)
+        return;
+      ArrayRef<int64_t> shape = r.getShape();
+      if (shape.empty())
+        return;  // dynamic extent: not statically checkable
+      int64_t bytes = 4;
+      for (int64_t d : shape)
+        bytes *= (d > 0 ? d : 1);
+      int64_t cap = (*pl == MemTier::L1) ? (64 * 1024)
+                  : (*pl == MemTier::L2) ? (4 * 1024 * 1024) : 0;
+      if (cap && bytes > cap) {
+        r.emitError("R16: placement ") << stringifyMemTier(*pl) << " does not fit @"
+            << r.getSymName() << " (" << bytes << " B > " << cap << " B)";
+        ok = false;
+      }
     });
     if (!ok)
       signalPassFailure();

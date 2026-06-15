@@ -156,3 +156,59 @@ def quantize_to_silicon(plan: DVFSPlan, cpufreq=None) -> list[FreqTarget]:
         out.append(FreqTarget(phase_id=d.phase_id, clock_q8=d.clock_q8,
                               target_khz=target, settable=cpufreq.actuatable))
     return out
+
+
+# --- real DVFS actuation (attempt to write the clock; report the boundary) --------
+
+_SETSPEED = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_setspeed"
+_CURFREQ = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"
+
+
+@dataclass(frozen=True)
+class ActuationResult:
+    phase_id: int
+    requested_khz: int
+    observed_khz: int | None     # scaling_cur_freq read back after the write (None if not read)
+    applied: bool                # the frequency was actually set on this host
+    reason: str                  # why not, when applied is False (the honest boundary)
+
+
+def actuate(targets, cpufreq=None) -> list[ActuationResult]:
+    """**Attempt** to set the real CPU frequency for each phase target, degrading
+    gracefully and reporting the boundary -- never faking success.
+
+    Actuation requires a `userspace` cpufreq governor and a writable
+    `scaling_setspeed` (root / CAP_SYS_ADMIN). When present, we write `target_khz`
+    and read `scaling_cur_freq` back to confirm. When absent (the common sandbox
+    case: no governor, no privilege), we return a *dry-run* result that records what
+    would be set and exactly why it could not be -- so the same code path lights up
+    on a bare-metal host with the governor configured. Never raises."""
+    if cpufreq is None:
+        from ..silicon import cpufreq_info
+        cpufreq = cpufreq_info()
+    out: list[ActuationResult] = []
+    for t in targets:
+        if not cpufreq.actuatable:
+            reason = ("no cpufreq governor exposed" if cpufreq.governor is None
+                      else f"governor is '{cpufreq.governor}', need 'userspace'"
+                      if cpufreq.governor != "userspace"
+                      else "scaling_setspeed not writable (need root/CAP_SYS_ADMIN)")
+            out.append(ActuationResult(phase_id=t.phase_id, requested_khz=t.target_khz,
+                                       observed_khz=None, applied=False, reason=reason))
+            continue
+        try:
+            with open(_SETSPEED, "w") as f:
+                f.write(str(t.target_khz))
+            observed = None
+            try:
+                with open(_CURFREQ) as f:
+                    observed = int(f.read().strip())
+            except OSError:
+                pass
+            out.append(ActuationResult(phase_id=t.phase_id, requested_khz=t.target_khz,
+                                       observed_khz=observed, applied=True, reason=""))
+        except OSError as e:                      # lost the race / permission revoked
+            out.append(ActuationResult(phase_id=t.phase_id, requested_khz=t.target_khz,
+                                       observed_khz=None, applied=False,
+                                       reason=f"write failed: {e.strerror}"))
+    return out

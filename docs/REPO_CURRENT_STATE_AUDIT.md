@@ -177,3 +177,20 @@
   `reduce.*` op), mirroring `gem.cim`; built + validated on LLVM **18 and 19**, with
   positive+negative `.mlir` cases. DVFS/allocator MLIR laws follow the same pattern
   (tracked). +9 oracle tests (429 total) + the R14 MLIR law (positive+negative).
+- 2026-06-15: **Privileged/bare-metal paths (attempt + degrade) + R15/R16 MLIR
+  parity.** `bcir.silicon.read_hw_counters` opens real hardware PMU counters
+  (cycles/instructions/cache-misses via `perf_event_open`, user-space) and feeds the
+  ring with them when present; this guest exposes no PMU (ENOENT) so it degrades to
+  OS counters — reported, not faked. `gem.dvfs.actuate` **attempts** to set the real
+  CPU clock (`scaling_setspeed`, read back via `scaling_cur_freq`) and returns a
+  dry-run `ActuationResult` naming the missing capability when there is no
+  `userspace` governor / privilege (the sandbox case) — a safe no-op. **MLIR
+  parity:** `bcir.gem.lane_segment.clock_q8` (append-only) + **R15**
+  (`-bcir-lower-to-llvm`: clock ∈ [64,512]; a `pim` memory-bound segment must not
+  overclock) mirroring `gem.dvfs`; and `bcir.resource.placement` (append-only
+  `BCIR_MemTier`) + **R16** (an L1 placement ≤ 64 KiB, L2 ≤ 4 MiB; static
+  `product(shape)*4`) mirroring `kbcir.allocator`. Built + validated on LLVM **18
+  and 19** (positive + negative `.mlir`). New `docs/HARDWARE_VALIDATION.md` states
+  the sandbox limits and the exact bare-metal rig (PMU + `intel_pstate=passive`
+  userspace governor + root + RAPL) needed to measure the DVFS power-savings claim —
+  which we do **not** assert until measured. +5 oracle tests (434 total).

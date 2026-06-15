@@ -60,7 +60,11 @@ def BCIR_ResourceOp : BCIR_Op<"resource", [Symbol]> {
     OptionalAttr<BCIR_AccessAttr>:$access,
     DefaultValuedAttr<I32Attr, "0">:$priority,
     DefaultValuedAttr<I64Attr, "0">:$map_gen,
-    DefaultValuedAttr<I64Attr, "0">:$data_gen);
+    DefaultValuedAttr<I64Attr, "0">:$data_gen,
+    // Allocator placement tier (append-only; mirrors kbcir.allocator.Placement).
+    // R16 (lower-to-llvm): an on-chip placement must fit -- a resource placed in L1
+    // must be <= 64 KiB, in L2 <= 4 MiB (static caps; size = product(shape) * 4 B).
+    OptionalAttr<BCIR_MemTierAttr>:$placement);
   let results = (outs BCIR_ResourceType:$handle);
   let assemblyFormat = "$sym_name attr-dict `:` type($handle)";
 }
