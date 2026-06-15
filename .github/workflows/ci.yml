@@ -132,7 +132,8 @@ jobs:
     # carry the SymbolTable trait, so LLVM 19's stricter "symbol's parent must be a
     # SymbolTable" verifier is satisfied (the trait is a no-op on the lax LLVM 18).
     # The scripts auto-resolve the toolchain (build_mlir.sh picks the installed
-    # MLIR; FileCheck-NN is searched), so adding a version is a one-line change.
+    # MLIR; FileCheck-NN is searched; the training grader grades against the
+    # LLVM_SUFFIX major), so adding a version is a one-line change.
     strategy:
       fail-fast: false
       matrix:

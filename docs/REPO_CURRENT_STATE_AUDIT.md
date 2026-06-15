@@ -127,4 +127,6 @@
   the trained calibrator (`FrozenCalibrator`) + live `Broker` (Kafka bridge); and
   the multi-version LLVM CI matrix (LLVM 18 + 19, both gating — the `SymbolTable`
   forward-compat sweep on the six container ops landed, so 19 is green not
-  informational).
+  informational; the training MLIR grader now grades against the matrix's
+  `LLVM_SUFFIX` major instead of a hard-pinned 18, and the 18-calibrated corpus
+  grades clean on 19).

@@ -27,6 +27,19 @@ def find_tool(base: str, major: int) -> str | None:
     return None
 
 
+def expected_major(registry_major: int) -> int:
+    """The toolchain major version to grade against.
+
+    The registry pins a canonical major (``toolchain_major``), but the
+    multi-version MLIR CI matrix selects a toolchain through ``LLVM_SUFFIX``
+    (e.g. ``-19``). When that suffix names a major, grade against it so each
+    matrix entry validates its own LLVM instead of the pinned default; absent a
+    suffix (the standalone training rail) fall back to the registry pin.
+    """
+    match = re.search(r"(\d+)", os.environ.get("LLVM_SUFFIX", ""))
+    return int(match.group(1)) if match else registry_major
+
+
 def run(command: list[str], *, output: Path | None = None) -> tuple[bool, str]:
     completed = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if output is not None and completed.returncode == 0:
@@ -115,7 +128,7 @@ def main() -> int:
             print(f"error: {error}", file=sys.stderr)
         return 1
 
-    major = int(registry["toolchain_major"])
+    major = expected_major(int(registry["toolchain_major"]))
     tools = {base: find_tool(base, major) for base in TOOL_BASES}
     missing = sorted(base for base, path in tools.items() if path is None)
     if missing:
