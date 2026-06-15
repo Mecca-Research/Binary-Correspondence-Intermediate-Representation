@@ -178,6 +178,20 @@ class CounterSampler:
 def perf_counters_available() -> bool:
     """True iff the guest exposes a hardware PMU via perf_event_open (else we use the
     OS counters above). Best-effort; never raises."""
+    return _perf_open(0) is not None
+
+
+# --- hardware PMU counters (perf_event_open; degrades to None with no PMU) --------
+
+_PERF_HW = {"cycles": 0, "instructions": 1, "cache_refs": 2, "cache_misses": 3,
+            "branches": 4, "branch_misses": 5}
+_IOC_ENABLE, _IOC_DISABLE, _IOC_RESET = 0x2400, 0x2401, 0x2403
+_SYS_perf_event_open = 298  # x86_64
+
+
+def _perf_open(config: int):
+    """Open one user-space hardware counter; return an fd (int) or None if no PMU /
+    not permitted. Caller closes the fd."""
     try:
         import ctypes
         libc = ctypes.CDLL(None, use_errno=True)
@@ -189,31 +203,77 @@ def perf_counters_available() -> bool:
                         ("flags", ctypes.c_uint64), ("wakeup", ctypes.c_uint32),
                         ("bp_type", ctypes.c_uint32), ("bp_addr", ctypes.c_uint64),
                         ("bp_len", ctypes.c_uint64)]
-        a = _attr(); a.type = 0; a.size = ctypes.sizeof(a); a.config = 0
+        a = _attr(); a.type = 0; a.size = ctypes.sizeof(a); a.config = config
         a.flags = (1 << 0) | (1 << 20)            # disabled + exclude_kernel
-        fd = libc.syscall(298, ctypes.byref(a), 0, -1, -1, 0)  # x86_64 perf_event_open
-        if fd >= 0:
-            os.close(fd)
-            return True
+        fd = libc.syscall(_SYS_perf_event_open, ctypes.byref(a), 0, -1, -1, 0)
+        return int(fd) if fd >= 0 else None
     except Exception:
-        pass
-    return False
+        return None
+
+
+@dataclass(frozen=True)
+class HwSample:
+    cycles: int
+    instructions: int
+    cache_misses: int
+
+    @property
+    def ipc_milli(self) -> int:
+        return (self.instructions * 1000) // max(1, self.cycles)
+
+
+def read_hw_counters(work) -> HwSample | None:
+    """Run `work()` under real hardware PMU counters (cycles / instructions /
+    cache-misses, user-space). Returns an `HwSample`, or **None when the host exposes
+    no PMU** (e.g. most cloud guests: perf_event_open -> ENOENT) -- and in that case
+    `work()` is NOT run, so the caller can run it once under the OS-counter fallback.
+    Closes every fd it opens."""
+    import ctypes
+    fds = {name: _perf_open(cfg) for name, cfg in
+           (("cycles", 0), ("instructions", 1), ("cache_misses", 3))}
+    if any(fd is None for fd in fds.values()):     # no PMU: do NOT run work here
+        for fd in fds.values():
+            if fd is not None:
+                os.close(fd)
+        return None
+    libc = ctypes.CDLL(None, use_errno=True)
+    try:
+        for fd in fds.values():
+            libc.ioctl(fd, _IOC_RESET, 0)
+            libc.ioctl(fd, _IOC_ENABLE, 0)
+        work()                                     # committed: work runs exactly once
+        vals = {}
+        for name, fd in fds.items():
+            libc.ioctl(fd, _IOC_DISABLE, 0)
+            try:
+                vals[name] = int.from_bytes(os.read(fd, 8), "little", signed=False)
+            except OSError:
+                vals[name] = 0
+        return HwSample(cycles=vals["cycles"], instructions=vals["instructions"],
+                        cache_misses=vals["cache_misses"])
+    finally:
+        for fd in fds.values():
+            os.close(fd)
 
 
 # --- the telemetry-ring feed -----------------------------------------------------
 
 def sample_into_ring(ring, claim_id: int, work) -> Counters:
-    """Run `work()`, measure the real OS counters around it, and write one record
-    into the zero-copy telemetry ring. `cycles` = measured CPU nanoseconds, `misses`
-    = page faults (this guest has no cache-miss PMU; the field carries the real fault
-    count instead). Returns the measured delta. The kernel writes, the consumer
-    `drain()`s the same buffer -- a real measured signal through the ring."""
+    """Run `work()` once, measure it, and write one record into the zero-copy
+    telemetry ring. When a hardware PMU is present, the real cycle + cache-miss
+    counts are used (`misses` carries L*-miss counts); otherwise `cycles` = measured
+    CPU nanoseconds and `misses` = page faults. The kernel writes, the consumer
+    `drain()`s the same buffer -- a real measured signal."""
     from .telemetry import DataDNA
     sampler = CounterSampler()
-    work()
+    hw = read_hw_counters(work)              # runs work() iff a PMU is present
+    if hw is None:
+        work()                              # no PMU: run once under OS counters
     c = sampler.lap()
-    ring.write(DataDNA(segment_id="", claim_id=claim_id, cycles=c.cpu_ns, bytes=0,
-                       misses=c.minor_faults + c.major_faults, thermal=0, voltage=0,
+    cycles = hw.cycles if hw else c.cpu_ns
+    misses = hw.cache_misses if hw else (c.minor_faults + c.major_faults)
+    ring.write(DataDNA(segment_id="", claim_id=claim_id, cycles=cycles, bytes=0,
+                       misses=misses, thermal=0, voltage=0,
                        utilization=min(100, (c.cpu_ns * 100) // max(1, c.wall_ns))))
     return c
 

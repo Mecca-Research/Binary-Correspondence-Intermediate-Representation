@@ -65,7 +65,11 @@ def BCIR_GEMLaneSegmentOp : BCIR_Op<"gem.lane_segment", [Symbol]> {
     // CIM/PIM dispatch target (append-only; mirrors gem.streampack.LaneSegment.dispatch).
     // "core" = execute on the compute core; "pim" = dispatch to the memory controller
     // (processing-in-memory). R14 (lower-to-llvm) legalizes: "pim" only on a reduction.
-    DefaultValuedAttr<StrAttr, "\"core\"">:$dispatch);
+    DefaultValuedAttr<StrAttr, "\"core\"">:$dispatch,
+    // Phase-aware DVFS clock (Q8; 256 = nominal x1.0; mirrors gem.dvfs). R15
+    // (lower-to-llvm): must be a legal step in [64, 512] (0.25x..2x), and a "pim"
+    // (memory-bound) segment must NOT overclock (clock_q8 <= 256).
+    DefaultValuedAttr<I32Attr, "256">:$clock_q8);
   let assemblyFormat = "$sym_name attr-dict";
 }
 

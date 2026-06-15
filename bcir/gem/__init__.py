@@ -22,8 +22,8 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
                  "execute_tokens", "schedule_eft"),
     "async_tokens": ("AsyncPlan", "async_plan"),
     "cim": ("CIMDecision", "annotate_cim", "cim_decision"),
-    "dvfs": ("DVFSDecision", "DVFSPlan", "FreqTarget", "classify", "clock_for",
-             "phase_totals", "plan_dvfs", "quantize_to_silicon"),
+    "dvfs": ("DVFSDecision", "DVFSPlan", "FreqTarget", "ActuationResult", "classify",
+             "clock_for", "phase_totals", "plan_dvfs", "quantize_to_silicon", "actuate"),
 }
 
 _NAME_TO_MOD: dict[str, str] = {name: mod for mod, names in _EXPORTS.items() for name in names}
