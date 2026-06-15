@@ -22,7 +22,7 @@
     ledger, provenance manifest, e-graph + memory-module fixpoints, the two-truth
     quarantine, modular mapping functions, the enriched-operad memory
     interface, and the closed calibration loop (`calibloop`: measure → freeze →
-    replan → certified win). Suite: `python -m bcir.tests.run_all` (**338 checks**).
+    replan → certified win). Suite: `python -m bcir.tests.run_all` (**344 checks**).
   - **`mlir/`** — the law: the ODS/TableGen dialect family (~80 ops), the compiled
     `bcir-opt` with `-bcir-verify` (R1–R13), `-bcir-promote-lanes`,
     `-convert-bcir-to-llvm`, and the **GEM pipeline passes** (`-bcir-classify-lanes
@@ -51,6 +51,14 @@
 6. CI gates every push: the oracle suite, the C runtime, the LLVM-training
    validators, and the full MLIR rail (tblgen, IRDL round-trip, `bcir-opt` build,
    ODS corpus, pass tests including the GEM pipeline).
+7. **First measured win on real silicon.** The evidence rail (`bcir.bench`) shows
+   BCIR's gather-avoidance (picking the direct realization over GGG) is **~6–7×
+   faster** than the gather form (random indices) — the bare-metal-calibrated
+   `gather_penalty` realized. And budget feasibility (`rcsp.feasible`,
+   `api.build_artifact(budget=…)`) is a **correctness** win: BCIR emits the
+   feasible vec8 where the naive max-width vec16 violates a 700 thermal/power cap.
+   The library façade (`bcir.api`) packages a plan as a deployable, R12-attested
+   artifact (AOT or driver-embedded).
 
 ## Confirmed limitations
 
@@ -85,9 +93,10 @@
 2. **Widen the GEM passes + corpus**: multi-claim batching/fusion and real
    durations; reductions, tiled matmul, scan; per-target parity beyond
    `vector_add`.
-3. **C backend** ✔ — portable C23 kernels (`lower.c_kernel`, R12). Next:
-   **one `lower_contract` end to end** on a niche where BCIR's cost model wins,
-   and GPU-C dialect variants.
+3. **C backend** ✔ — portable C23 kernels (`lower.c_kernel`, R12) + the library
+   façade (`bcir.api`). The cost-model win is now **measured** (gather avoidance
+   ~6–7×; budget feasibility a correctness win). Next: GPU-C gather variants and
+   multi-claim fusion.
 4. **Driver/runtime integration** of the rehydrating planner (the StreamPack as
    the hot, Θ-replanned artifact).
 

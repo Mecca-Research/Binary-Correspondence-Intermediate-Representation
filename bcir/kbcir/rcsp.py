@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..model import Module
-from .cost import DIMS, Theta, _INDEX
+from .cost import DIMS, CostVector, Theta, _INDEX
 from .realize import (
     Candidate,
     ChosenStep,
@@ -154,6 +154,27 @@ def optimize_constrained(module: Module, h, theta: Theta, policy: Policy = PERF,
         if (lab.score, lab.res) < (best.score, best.res):
             best = lab
     return _reconstruct(best, trail)
+
+
+def plan_resources(result: RealizationResult, theta: Theta) -> CostVector:
+    """R(pi, Theta) = sum_i T_i (X) f_i(pi): the plan's accumulated *coupled*
+    resource vector (the same accumulation the RCSP label DP and the optimizer
+    use). The basis for budget feasibility."""
+    total = CostVector.zero()
+    prev = None
+    for step in result.steps:
+        cand = step.candidate
+        total = total + cand.base.couple(_context_factor(prev, cand, theta))
+        prev = cand
+    return total
+
+
+def feasible(result: RealizationResult, theta: Theta, budget: Budget) -> bool:
+    """True iff R(pi, Theta) <= B on every capped dimension. A budget-unaware
+    compiler (always max width) has no concept of this -- the BCIR correctness
+    property: a deployed plan provably fits its thermal/power/bandwidth caps."""
+    res = plan_resources(result, theta)
+    return all(res.v[d] <= cap for d, cap in budget.caps)
 
 
 def pareto_plans(module: Module, h, theta: Theta, policy: Policy = PERF,

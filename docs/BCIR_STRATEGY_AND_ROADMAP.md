@@ -99,18 +99,27 @@ to close that gap, not add more intelligence.
    ABI header + metadata + the R12 attestation + the provenance digest — reusable
    AOT (`compile_kernel(run=True)`) or driver-embedded (`to_files`). **Remaining:**
    GPU-C dialect variants per `lower_contract`. (See §4.)
-5. **Measured-evidence rail** (`bcir.bench`, `--bench`). ◑ — times BCIR's selected
-   realization vs the scalar baseline on the host toolchain. **Honest first
-   finding:** for the elementwise C backend, lane width is *measured-neutral*
-   (≈ parity, occasionally worse than the compiler's own vectorizer) — because
-   these kernels are **bandwidth-bound**, exactly as the cost model says
-   (`vector_add`'s score is 98% memory). So BCIR's provable win is **not** beating
-   the vectorizer on simple loops; it is where the compiler models *nothing* — the
-   next step:
-6. **One `lower_contract` end to end on a niche the compiler can't model** —
-   gather/scatter avoidance or Θ (thermal/power) feasibility. This needs a
-   gather/blocked C lowering (beyond the current unit-stride elementwise emitter);
-   the evidence rail is ready to measure it.
+5. **Measured-evidence rail** (`bcir.bench`, `--bench`). ✔ — times BCIR's selected
+   realization vs a baseline on the host toolchain. **Finding (honest):** on
+   *lane width alone* for elementwise kernels, BCIR is measured-neutral (these
+   kernels are bandwidth-bound — exactly as the cost model says, `vector_add`'s
+   score is 98% memory; BCIR does not beat the compiler's vectorizer on simple
+   loops, and we do not claim it does). The win is where the compiler models
+   *nothing* — item 6.
+6. **The niche the compiler can't model — measured win.** ✔
+   - **Gather/scatter avoidance** (`bench.compare_gather`, `--bench-gather`):
+     BCIR's cost model penalizes GGG by `gather_penalty` (now bare-metal-calibrated
+     at ~6×) and picks the direct realization; the avoided gather form is
+     **measured 6–7× slower** on silicon (random indices, 4 MB working set) — the
+     penalty realized, the cost model vindicated. A budget-/aliasing-aware
+     decision a plain `clang -O3` does not make.
+   - **Θ / budget feasibility** (`api.build_artifact(budget=…)`, `rcsp.feasible`,
+     `--budget`): under a 700 thermal/power cap, vec16 (1088) is **infeasible**;
+     BCIR emits the feasible vec8 (640) — a **correctness** property a budget-
+     unaware compiler (always max width) cannot honor. Demonstrated as a checkable
+     contrast (the naive vec16 fails the cap; an over-tight cap raises `Infeasible`).
+   **Remaining:** GPU-C gather variants; thermal *speed* (vs feasibility) needs HW
+   control we don't have in CI.
 
 ### Long term (the research result)
 7. **Driver/runtime integration** — BCIR as the rehydrating planner inside an

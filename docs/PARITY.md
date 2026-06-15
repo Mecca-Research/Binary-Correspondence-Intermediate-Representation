@@ -71,6 +71,8 @@ accuracy, contention, verification`.
 | library facade (embeddable) | `bcir.api` (`build_artifact` / `compile_kernel` / `KernelArtifact`) | *(host library surface)* plan → C source + ABI header + metadata + R12 attestation + provenance digest; AOT or driver-embedded |
 | bare-metal calibration | `runtime/c/bcir_microbench.c` + `kbcir.microbench.calibrate_native` | feeds the frozen `CalibratedProfile` schema with real cache latency (closes the loop's conservative half) |
 | measured-evidence rail | `bcir.bench` (`compare` / `measure` / `Comparison`) | *(host measurement)* times BCIR's selected realization vs the scalar baseline; reports the measured speedup (honest, not pinned) |
+| gather avoidance (measured) | `bcir.bench.compare_gather` + `lower.c_kernel.emit_gather_kernel_c` (`--bench-gather`) | *(host measurement)* direct vs the avoided gather form; the `gather_penalty` realized (~6× on silicon, random indices) — the cost model vindicated |
+| budget feasibility (RCSP) | `kbcir.rcsp` (`feasible` / `plan_resources` / `optimize_constrained`) + `api.build_artifact(budget=…)` | `bcir.kbcir.budget` + `bcir.kbcir.select` `budget` (R9): `R(π,Θ) ⪯ B`; BCIR emits the *feasible* plan (vec8) where the naive max-width (vec16) violates the cap — a correctness property |
 | concurrency/affinity (CT2) | `gem.schedule_concurrent` | `bcir.gem.lane_segment` `affinity`/`unroll` |
 | ROP/MAP front-ends (CT3) | `frontends.{rop,map}` | `bcir.parse.*` / `bcir.binary.*` |
 | data-DNA telemetry (CT4) | `telemetry.DataDNA` + `kbcir.calibrate` | `bcir.trace.data_dna` |

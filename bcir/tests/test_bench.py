@@ -6,10 +6,20 @@ measured-neutral -- confirming the memory-dominated cost model) is documented in
 the strategy roadmap, not pinned here.
 """
 
-from bcir.bench import Comparison, Measurement, bench_available, compare, measure
-from bcir.examples import vector_add
+from bcir.bench import (
+    Comparison,
+    GatherComparison,
+    Measurement,
+    bench_available,
+    compare,
+    compare_gather,
+    measure,
+)
+from bcir.examples import saxpy_strided, vector_add
 from bcir.kbcir import TARGETS, optimize
 from bcir.kbcir.cost import Theta
+from bcir.kbcir.realize import candidates_for
+from bcir.model import Lane
 
 
 def test_rail_produces_valid_measurements():
@@ -41,3 +51,41 @@ def test_both_realizations_are_correct_under_timing():
     c = compare("vector_add", opt="-O1", n=1 << 14, reps=20)
     assert c.bcir.ok, c.bcir.detail
     assert c.baseline.ok, c.baseline.detail
+
+
+# --- gather avoidance: the cost-model decision + the measured penalty -------------
+
+def test_cost_model_avoids_gather_on_a_strided_claim():
+    # On a strided claim both a strided (U) and a gather (GGG) candidate exist; the
+    # gather candidate must cost strictly more (gather_penalty), so it is never the
+    # cheapest -- BCIR avoids GGG by construction.
+    m = saxpy_strided(1024)
+    claim = m.phases[0].claims[0]
+    h = TARGETS["x86_avx512"]
+    cands = candidates_for(claim, h, m.resource(claim.rd[0]))
+    by_lane = {c.lane: c for c in cands}
+    assert Lane.U in by_lane and Lane.GGG in by_lane          # both realizations offered
+    from bcir.kbcir.weights import PERF, weights
+    w = weights(h, Theta.cool(), 0, PERF)
+    assert by_lane[Lane.GGG].base.dot(w) > by_lane[Lane.U].base.dot(w)  # gather is dearer
+
+
+def test_gather_avoidance_is_measured_and_correct():
+    if not bench_available():
+        return
+    # a working set that exceeds cache (4 MB) so the random gather pays real
+    # misses -- the gather_penalty realized on silicon.
+    c = compare_gather("vector_add", opt="-O2", n=1 << 20, reps=40, shuffle=True)
+    assert isinstance(c, GatherComparison)
+    assert c.direct.ok and c.gather.ok                        # both built + self-checked
+    assert c.direct.ns_per_call > 0 and c.gather.ns_per_call > 0
+    # avoiding GGG is measurably faster. We observe ~6.5x; assert a conservative
+    # 1.5x floor to stay CI-robust across cache sizes.
+    assert c.avoidance_wins and c.speedup_milli >= 1500
+
+
+def test_identity_gather_isolates_indexed_load_overhead():
+    if not bench_available():
+        return
+    c = compare_gather("vector_add", opt="-O2", n=1 << 16, reps=30, shuffle=False)
+    assert c.direct.ok and c.gather.ok and c.speedup_milli > 0
