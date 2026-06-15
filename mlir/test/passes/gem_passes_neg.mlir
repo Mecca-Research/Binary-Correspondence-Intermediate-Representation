@@ -46,3 +46,32 @@ bcir.module @bad_segment {
   // expected-error @+1 {{bcir-lower-to-llvm: segment resource set not preserved (R12) for claim @add}}
   bcir.gem.lane_segment @seg0 { claim = @add, phase = @p0, lane = #bcir.lane<u>, width = 16 : i32, opcode = "f32.add", reads = [@A], writes = [@C], fence_before = [], fence_after = [] }
 }
+
+// -----
+
+// R14 (CIM/PIM dispatch legality): a NON-reduction segment cannot be dispatched to
+// processing-in-memory (mirrors gem.cim in the oracle: only reduce.* offloads).
+bcir.module @bad_pim_dispatch {
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @add attributes {
+    claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A, @B], writes = [@C], count = 4 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 4 step 1 }
+  // expected-error @+1 {{R14: pim dispatch illegal for non-reduction op 'vector.add' (claim @add)}}
+  bcir.gem.lane_segment @seg0 { claim = @add, phase = @p0, lane = #bcir.lane<u>, width = 16 : i32, opcode = "vector.add", reads = [@A, @B], writes = [@C], fence_before = [], fence_after = [], dispatch = "pim" }
+}
+
+// -----
+
+// R14 (positive): a reduction segment MAY be dispatched to processing-in-memory --
+// it lowers clean (no diagnostic).
+bcir.module @ok_pim_dispatch {
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @reduce attributes {
+    claim_id = 1 : i32, phase = @p0, op = "reduce.gather", reads = [@TABLE], writes = [@ACC], count = 1024 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>
+  } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.gem.lane_segment @seg0 { claim = @reduce, phase = @p0, lane = #bcir.lane<u>, width = 1 : i32, opcode = "reduce.gather", reads = [@TABLE], writes = [@ACC], fence_before = [], fence_after = [], dispatch = "pim" }
+}

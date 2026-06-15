@@ -125,3 +125,34 @@ def plan_dvfs(module, result: RealizationResult, theta: Theta,
         decisions.append(DVFSDecision(phase_id=pid, compute=compute, memory=memory,
                                       klass=klass, clock_q8=clock, reason=reason))
     return DVFSPlan(decisions=tuple(decisions))
+
+
+# --- real cpufreq wiring (read the table; actuation honestly gated) ---------------
+
+@dataclass(frozen=True)
+class FreqTarget:
+    phase_id: int
+    clock_q8: int
+    target_khz: int          # nominal_khz * clock_q8 / 256, snapped to a real step
+    settable: bool           # can this host actuate the frequency (userspace gov + root)?
+
+
+def quantize_to_silicon(plan: DVFSPlan, cpufreq=None) -> list[FreqTarget]:
+    """Map the Q8 clock plan onto the *real* CPU frequency: each phase's clock scales
+    the nominal frequency and snaps to the nearest exposed scaling step (when the
+    host lists them). `settable` reports whether DVFS can actually be actuated here
+    (a `userspace` governor + writable `scaling_setspeed`) -- we never claim to have
+    set a clock we could not. Returns [] if no nominal frequency is readable."""
+    if cpufreq is None:
+        from ..silicon import cpufreq_info
+        cpufreq = cpufreq_info()
+    if not cpufreq.available:
+        return []
+    nominal = cpufreq.nominal_khz
+    out: list[FreqTarget] = []
+    for d in plan.decisions:
+        want = (nominal * d.clock_q8) // NOMINAL
+        target = min(cpufreq.steps_khz, key=lambda s: abs(s - want)) if cpufreq.steps_khz else want
+        out.append(FreqTarget(phase_id=d.phase_id, clock_q8=d.clock_q8,
+                              target_khz=target, settable=cpufreq.actuatable))
+    return out

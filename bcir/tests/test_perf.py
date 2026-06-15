@@ -37,10 +37,15 @@ def _bcir_modules_after(code: str) -> set[str]:
     return set(out.stdout.split())
 
 
+# Top-level opt-in modules that must also stay off the simple path.
+_HEAVY_TOP = ("bcir.silicon",)
+
+
 def _heavy() -> set[str]:
     return ({f"bcir.kbcir.{m}" for m in _HEAVY_KBCIR}
             | {f"bcir.lower.{m}" for m in _HEAVY_LOWER}
-            | {f"bcir.gem.{m}" for m in _HEAVY_GEM})
+            | {f"bcir.gem.{m}" for m in _HEAVY_GEM}
+            | set(_HEAVY_TOP))
 
 
 # --- the simple path stays lean ---------------------------------------------------

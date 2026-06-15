@@ -1312,6 +1312,14 @@ struct LowerToLLVMPass : public PassWrapper<LowerToLLVMPass, OperationPass<>> {
             << seg.getClaim();
         ok = false;
       }
+      // R14 (CIM/PIM dispatch legality): a segment dispatched to processing-in-memory
+      // must be a reduction -- PIM does element-local reduce work, not general SIMD.
+      // Mirrors gem.cim in the oracle (only reduce.* claims are offloaded).
+      if (seg.getDispatch() == "pim" && !seg.getOpcode().starts_with("reduce.")) {
+        seg.emitError("R14: pim dispatch illegal for non-reduction op '")
+            << seg.getOpcode() << "' (claim @" << seg.getClaim() << ")";
+        ok = false;
+      }
       seg->setAttr("kbcir.lowered", b.getBoolAttr(true));
     });
     if (!ok)
