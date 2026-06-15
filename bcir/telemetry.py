@@ -173,6 +173,29 @@ class TelemetryRing(TelemetrySink):
         return self._head - self._tail
 
 
+def parse_shared_ring(buf) -> list[DataDNA]:
+    """Read records from a shared-memory ring written by the C producer
+    (`lower.memory_model.emit_ring_header_c`): an mmap/bytes/bytearray with the
+    32-byte header (head, capacity, record_size) + fixed records. Samples by pointer
+    offset only -- no syscall, no serialization. Returns up to `min(head, capacity)`
+    records, oldest-first (the live window the producer has published)."""
+    head, capacity, record_size, _ = struct.unpack_from("<4Q", buf, 0)
+    if capacity == 0 or record_size == 0:
+        return []
+    n = min(head, capacity)                 # records currently live in the ring
+    base = 4 * 8
+    out: list[DataDNA] = []
+    # oldest live slot first (head has wrapped iff head > capacity).
+    start = head - n
+    for k in range(n):
+        slot = (start + k) % capacity
+        cid, cyc, byt, mis, th, vo, ut = struct.unpack_from(
+            TelemetryRing._FMT, buf, base + slot * record_size)
+        out.append(DataDNA(segment_id="", claim_id=cid, cycles=cyc, bytes=byt,
+                           misses=mis, thermal=th, voltage=vo, utilization=ut))
+    return out
+
+
 class KafkaSink(TelemetrySink):
     """Kafka transport for the data-DNA loop (the production backend).
 

@@ -171,6 +171,77 @@ def _mem_cost(p: ResourceProfile, tier: MemTier, h: TargetProfile) -> int:
     return traffic + latency
 
 
+@dataclass(frozen=True)
+class Pool:
+    pool_id: int
+    members: tuple[int, ...]   # rids sharing this arena (pairwise-disjoint live ranges)
+    size_bytes: int            # arena size = the largest member
+
+
+@dataclass(frozen=True)
+class PoolPlan:
+    pools: tuple
+    naive_bytes: int           # sum of every resource's bytes (no reuse)
+
+    @property
+    def peak_bytes(self) -> int:
+        return sum(p.size_bytes for p in self.pools)
+
+    @property
+    def saved_bytes(self) -> int:
+        return self.naive_bytes - self.peak_bytes
+
+    @property
+    def is_noop(self) -> bool:
+        return self.saved_bytes == 0
+
+    def pool_of(self, rid: int) -> int:
+        for p in self.pools:
+            if rid in p.members:
+                return p.pool_id
+        raise KeyError(rid)
+
+
+def live_intervals(module: Module) -> dict[int, tuple[int, int]]:
+    """Each touched resource's [first_phase, last_phase] live range (the lineage span
+    over the phase order) -- the input to liveness-based pooling."""
+    order = {ph.phase_id: i for i, ph in enumerate(module.phases)}
+    span: dict[int, tuple[int, int]] = {}
+    for ph in module.phases:
+        pos = order[ph.phase_id]
+        for c in ph.claims:
+            for rid in c.io_rids():
+                lo, hi = span.get(rid, (pos, pos))
+                span[rid] = (min(lo, pos), max(hi, pos))
+    return span
+
+
+def pool_plan(module: Module) -> PoolPlan:
+    """Predictive pool allocation: resources whose live ranges do **not** overlap can
+    share one memory arena, so peak memory (sum of arena sizes) is below the naive
+    sum of every tensor -- defragmenting *before* the kernel runs. Greedy interval
+    partitioning (left-edge): each resource, in start order, reuses the first arena
+    whose last member has already died, else opens a new one. Deterministic and
+    gains-only: `peak_bytes <= naive_bytes` always (a single-phase program where
+    everything is simultaneously live is a clean no-op). A modeled *footprint* gain,
+    not a runtime speedup."""
+    intervals = live_intervals(module)
+    sizes = {rid: module.resource(rid).count * module.resource(rid).elem_bytes
+             for rid in intervals}
+    arenas: list[dict] = []     # each: {members:[rid], last:int, size:int}
+    for rid in sorted(intervals, key=lambda r: (intervals[r][0], r)):
+        lo, hi = intervals[rid]
+        slot = next((a for a in arenas if a["last"] < lo), None)   # disjoint -> reuse
+        if slot is None:
+            arenas.append({"members": [rid], "last": hi, "size": sizes[rid]})
+        else:
+            slot["members"].append(rid)
+            slot["last"] = hi
+            slot["size"] = max(slot["size"], sizes[rid])
+    pools = tuple(Pool(i, tuple(a["members"]), a["size"]) for i, a in enumerate(arenas))
+    return PoolPlan(pools=pools, naive_bytes=sum(sizes.values()))
+
+
 def silicon_tier_capacity() -> dict[MemTier, int]:
     """The real machine's fast-tier byte capacities (from `bcir.silicon`, read off
     /sys cache topology), falling back to the modeled defaults on a host that does

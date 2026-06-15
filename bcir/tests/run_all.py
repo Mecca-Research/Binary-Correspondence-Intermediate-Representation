@@ -65,6 +65,7 @@ _MODULES = [
     "bcir.tests.test_fuzzy_routing",
     "bcir.tests.test_dvfs",
     "bcir.tests.test_silicon",
+    "bcir.tests.test_persistent_oracles",
 ]
 
 

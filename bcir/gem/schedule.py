@@ -181,3 +181,64 @@ def execute_tokens(module: Module, durations: dict[int, int], target=None,
               domains, knee, locality, finish_of, sched)
     sched.makespan = max(finish_of.values(), default=0)
     return sched
+
+
+# --- phase-aware DVFS over the schedule timeline (schedule_power_rail) ------------
+
+@dataclass(frozen=True)
+class PowerRailDecision:
+    claim_id: int
+    start: int
+    finish: int
+    klass: str            # compute | memory | balanced
+    clock_q8: int         # Q8 clock for this slot's interval (256 = nominal)
+    reason: str
+
+    @property
+    def duration(self) -> int:
+        return max(0, self.finish - self.start)
+
+
+@dataclass(frozen=True)
+class PowerRail:
+    decisions: tuple
+
+    @property
+    def energy_saved_milli(self) -> int:
+        """Modeled energy avoided by downclocking memory-bound slots: sum over slots
+        of (nominal - clock) x interval, in milli of a nominal slot-cycle. A *model*
+        (power ~ clock on a bandwidth-bound slot whose throughput is clock-insensitive)
+        -- NOT a measured Joule figure; see docs/HARDWARE_VALIDATION.md."""
+        from .dvfs import NOMINAL
+        return sum(((NOMINAL - d.clock_q8) * d.duration * 1000) // NOMINAL
+                   for d in self.decisions if d.clock_q8 < NOMINAL)
+
+    @property
+    def downclocked(self) -> tuple:
+        return tuple(d.claim_id for d in self.decisions if d.clock_q8 < 256)
+
+
+def schedule_power_rail(sched: GemSchedule, result, theta, h=None) -> PowerRail:
+    """A power-orchestration pass over the *placed timeline*: for each scheduled Slot,
+    classify its claim's arithmetic intensity and set a per-slot clock for that
+    slot's [start, finish) interval. Extended memory-bound slots (e.g. a long
+    bandwidth-bound prefetch/stream window) are downclocked -- their throughput is
+    bandwidth-bound, so scaling the core clock to the data-arrival bound saves power
+    without losing throughput; compute-bound slots overclock (thermal budget
+    permitting); balanced hold nominal. Unlike per-phase `plan_dvfs`, this keys off
+    the schedule's real slot intervals. Deterministic; sorted by (start, claim_id).
+    The energy figure is *modeled* (no RAPL in-sandbox -- docs/HARDWARE_VALIDATION.md)."""
+    from ..kbcir.cost import COMPUTE, MEMORY
+    from .dvfs import classify, clock_for
+    base_of = {s.claim_id: s.candidate.base.v for s in result.steps}
+    out: list[PowerRailDecision] = []
+    for slot in sorted(sched.slots, key=lambda s: (s.start, s.claim_id)):
+        base = base_of.get(slot.claim_id)
+        if base is None:
+            continue
+        klass = classify(base[COMPUTE], base[MEMORY])
+        clock, reason = clock_for(klass, theta)
+        out.append(PowerRailDecision(claim_id=slot.claim_id, start=slot.start,
+                                     finish=slot.finish, klass=klass, clock_q8=clock,
+                                     reason=reason))
+    return PowerRail(decisions=tuple(out))
