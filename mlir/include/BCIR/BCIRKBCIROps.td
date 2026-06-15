@@ -14,7 +14,7 @@ def BCIR_KBCIRPolicyOp : BCIR_Op<"kbcir.policy", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
-def BCIR_KBCIRPlanOp : BCIR_Op<"kbcir.plan", [Symbol, NoTerminator]> {
+def BCIR_KBCIRPlanOp : BCIR_Op<"kbcir.plan", [Symbol, SymbolTable, NoTerminator]> {
   let summary = "K_BCIR candidate-path + selected-plan region";
   let arguments = (ins SymbolNameAttr:$sym_name);
   let regions = (region SizedRegion<1>:$body);

@@ -90,8 +90,10 @@ to close that gap, not add more intelligence.
    are MLIR-native and cross-checked. Dual-rail parity extended to Phase-23+:
    the **R7 reduction-write rule mirrored in C++** (`-bcir-verify`) with a
    reduction `.mlir` example (`gather_reduce_ct1.mlir`). A **multi-version LLVM CI
-   matrix** now runs (18 gating, 19 informational); LLVM 19 needs a `SymbolTable`
-   forward-compat sweep (the one blocker found — see the audit).
+   matrix** now runs with **LLVM 18 and 19 both gating**: the `SymbolTable`
+   forward-compat sweep landed (the six Symbol-container ops carry the trait), so
+   19's stricter Symbol verifier is satisfied and the rail is green, not
+   informational.
 3. **Widen the corpus.** ◑ — `gather_reduce` (reduction gather-avoidance, ~16×),
    `saxpy_strided` (strided gather-avoidance, ~1.4×), `fused_chain` (overlap +
    the fusion discount), `scan_chain` (a serializing dependency chain),

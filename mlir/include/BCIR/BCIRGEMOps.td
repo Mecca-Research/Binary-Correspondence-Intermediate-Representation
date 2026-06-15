@@ -7,7 +7,7 @@ include "BCIR/BCIRTypes.td"
 include "BCIR/BCIRAttrs.td"
 include "mlir/IR/SymbolInterfaces.td"
 
-def BCIR_GEMStreamPackOp : BCIR_Op<"gem.stream_pack", [Symbol, NoTerminator]> {
+def BCIR_GEMStreamPackOp : BCIR_Op<"gem.stream_pack", [Symbol, SymbolTable, NoTerminator]> {
   let summary = "Hydrated GEM StreamPack (hot executable artifact)";
   // `pipeline_depth` (StreamPack ABI v2, append-only): phases in flight; 2 =
   // double-buffered software pipelining (mirrors gem.streampack.hydrate_pipelined).

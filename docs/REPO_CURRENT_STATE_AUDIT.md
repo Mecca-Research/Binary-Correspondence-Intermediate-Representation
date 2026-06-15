@@ -28,7 +28,7 @@
     `-convert-bcir-to-llvm`, and the **GEM pipeline passes** (`-bcir-classify-lanes
     / -select-realization / -batch / -schedule / -lower-to-llvm`), plus the IRDL
     projection for stock `mlir-opt`. Validated in CI on a multi-version matrix —
-    LLVM 18 gating, LLVM 19 informational (`mlir-rail-validate`).
+    LLVM 18 and 19, both gating (`mlir-rail-validate`).
 - **`runtime/c/`** — the freestanding (no-libc) C StreamPack runtime for the
   frozen ABI v1, with a Python-encode ↔ C-decode parity gate.
 
@@ -85,14 +85,14 @@
 4. **Intelligence ahead of substrate.** Phases 13–26 added a rich learned/
    categorical optimization stack over a backend that cannot yet codegen and
    tables that are not yet measured; the ROI is unproven until §1–2 close.
-5. **Multi-version LLVM matrix (LLVM 18 gating, 19 forward-compat tracked).** The
-   `mlir-rail-validate` CI job is now a parametric matrix: **LLVM 18 gates**
-   (validated), **LLVM 19 runs informationally** (`continue-on-error`). LLVM 19
-   *builds* `bcir-opt`, but its stricter Symbol verifier requires the
-   `SymbolTable` trait on the Symbol-container ops (`registry` / `kbcir.plan` /
-   `gem.stream_pack` / `parse.grammar` / `transducer` / `binary.format`) — a
-   mechanical **forward-compat sweep** (the only LLVM 19 blocker found), tracked
-   here as the next MLIR-rail task.
+5. **Multi-version LLVM matrix (LLVM 18 + 19, both gating).** The
+   `mlir-rail-validate` CI job is a parametric matrix and **both LLVM 18 and 19
+   now gate** (the forward-compat sweep is done). The Symbol-container ops
+   (`registry` / `kbcir.plan` / `gem.stream_pack` / `parse.grammar` /
+   `fsm.machine` / `binary.format`) carry the `SymbolTable` trait, so LLVM 19's
+   stricter "symbol's parent must have the SymbolTable trait" verifier is
+   satisfied; the trait is a no-op under the lax LLVM 18, so the same ODS builds
+   and validates clean on both. No remaining LLVM 19 blocker.
 
 ## Recommended next milestones (see the roadmap for detail)
 
@@ -125,4 +125,6 @@
   the reduction test pair); the strided gather-avoidance (`saxpy_strided`,
   ~1.4×); `scan_chain` (serialization) + the fusion discount + per-target parity;
   the trained calibrator (`FrozenCalibrator`) + live `Broker` (Kafka bridge); and
-  the multi-version LLVM CI matrix (18 gating, 19 forward-compat tracked).
+  the multi-version LLVM CI matrix (LLVM 18 + 19, both gating — the `SymbolTable`
+  forward-compat sweep on the six container ops landed, so 19 is green not
+  informational).

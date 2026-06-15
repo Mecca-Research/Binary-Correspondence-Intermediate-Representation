@@ -126,18 +126,17 @@ jobs:
   mlir-rail-validate:
     name: BCIR MLIR rail (LLVM ${{ matrix.llvm }})
     runs-on: ubuntu-latest
-    # Multi-version matrix. LLVM 18 is the validated, gating rail; LLVM 19 runs
-    # informationally (continue-on-error) -- it builds, but its stricter Symbol
-    # verifier requires the SymbolTable trait on the Symbol-container ops
-    # (registry / kbcir.plan / gem.stream_pack / parse / transducer / binary.format);
-    # that forward-compat sweep is tracked in REPO_CURRENT_STATE_AUDIT.md. The
-    # scripts auto-resolve the toolchain (build_mlir.sh picks the installed MLIR;
-    # FileCheck-NN is searched), so adding a version is a one-line matrix change.
+    # Multi-version matrix: LLVM 18 and 19 are both validated, gating rails. The
+    # forward-compat sweep is done -- the Symbol-container ops (registry /
+    # kbcir.plan / gem.stream_pack / parse.grammar / fsm.machine / binary.format)
+    # carry the SymbolTable trait, so LLVM 19's stricter "symbol's parent must be a
+    # SymbolTable" verifier is satisfied (the trait is a no-op on the lax LLVM 18).
+    # The scripts auto-resolve the toolchain (build_mlir.sh picks the installed
+    # MLIR; FileCheck-NN is searched), so adding a version is a one-line change.
     strategy:
       fail-fast: false
       matrix:
         llvm: ["18", "19"]
-    continue-on-error: ${{ matrix.llvm != '18' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
