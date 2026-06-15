@@ -93,6 +93,24 @@ def fused_chain(n: int = 1024) -> Module:
     return m
 
 
+
+def scan_chain(n: int = 1024) -> Module:
+    """A two-stage dependency chain (a scan/pipeline): T = A + B, then O = T + C.
+    The second claim reads the first's output (RAW), so the two *serialize* -- the
+    scheduler cannot overlap them (overlap_gain 0), the counterpart to fused_chain
+    where independent claims do overlap. They share no read operand, so no fusion
+    discount applies either: the schedule price equals the serial sum."""
+    m = Module(name="scan_chain")
+    for rid, nm in ((80, "A"), (81, "B"), (82, "C"), (83, "T"), (84, "O")):
+        m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,), name=nm))
+    c1 = Claim(id=8001, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+               count=n, rd=(80, 81), wr=(83,), op="vector.add", domain=Domain.RAM)
+    c2 = Claim(id=8002, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+               count=n, rd=(83, 82), wr=(84,), op="vector.add", domain=Domain.RAM)
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[c1, c2]))
+    return m
+
+
 def tiled_matmul(n: int = 256) -> Module:
     """A tile matmul-accumulate claim (T lane)."""
     m = Module(name="tiled_matmul")
@@ -112,5 +130,6 @@ PROGRAMS = {
     "histogram_gather": histogram_gather,
     "gather_reduce": gather_reduce,
     "fused_chain": fused_chain,
+    "scan_chain": scan_chain,
     "tiled_matmul": tiled_matmul,
 }

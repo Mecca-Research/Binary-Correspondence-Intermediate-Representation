@@ -22,13 +22,13 @@
     ledger, provenance manifest, e-graph + memory-module fixpoints, the two-truth
     quarantine, modular mapping functions, the enriched-operad memory
     interface, and the closed calibration loop (`calibloop`: measure → freeze →
-    replan → certified win). Suite: `python -m bcir.tests.run_all` (**356 checks**).
+    replan → certified win). Suite: `python -m bcir.tests.run_all` (**361 checks**).
   - **`mlir/`** — the law: the ODS/TableGen dialect family (~80 ops), the compiled
     `bcir-opt` with `-bcir-verify` (R1–R13), `-bcir-promote-lanes`,
     `-convert-bcir-to-llvm`, and the **GEM pipeline passes** (`-bcir-classify-lanes
     / -select-realization / -batch / -schedule / -lower-to-llvm`), plus the IRDL
-    projection for stock `mlir-opt`. Validated on LLVM 18 in CI
-    (`mlir-rail-validate`).
+    projection for stock `mlir-opt`. Validated in CI on a multi-version matrix —
+    LLVM 18 gating, LLVM 19 informational (`mlir-rail-validate`).
 - **`runtime/c/`** — the freestanding (no-libc) C StreamPack runtime for the
   frozen ABI v1, with a Python-encode ↔ C-decode parity gate.
 
@@ -76,14 +76,23 @@
    online model frozen to deterministic Q8) and **a live broker**
    (`telemetry.Broker`, pub/sub fan-out). The frozen calibrator drives the loop end
    to end. *(Production hardening — a real Kafka deployment — remains operational.)*
-3. **The example corpus is small** (elementwise, strided, gather, tile-MACC
-   skeletons). Multi-claim fusion and joint optimization are future work, and the
-   GEM passes are exercised on the single-claim plan.
+3. **The example corpus is widening.** Beyond vector_add: `saxpy_strided`
+   (strided gather-avoidance, ~1.4× measured), `gather_reduce` (reduction
+   gather-avoidance, ~16×), `fused_chain` (multi-claim overlap + the fusion
+   discount), `scan_chain` (a dependency chain that serializes), with per-target
+   parity pinned for saxpy/histogram. Real tiled matmul / scan codegen and
+   joint multi-claim optimization remain future work.
 4. **Intelligence ahead of substrate.** Phases 13–26 added a rich learned/
    categorical optimization stack over a backend that cannot yet codegen and
    tables that are not yet measured; the ROI is unproven until §1–2 close.
-5. **LLVM version pinning is loose**: validated on LLVM 18; no multi-version CI
-   matrix.
+5. **Multi-version LLVM matrix (LLVM 18 gating, 19 forward-compat tracked).** The
+   `mlir-rail-validate` CI job is now a parametric matrix: **LLVM 18 gates**
+   (validated), **LLVM 19 runs informationally** (`continue-on-error`). LLVM 19
+   *builds* `bcir-opt`, but its stricter Symbol verifier requires the
+   `SymbolTable` trait on the Symbol-container ops (`registry` / `kbcir.plan` /
+   `gem.stream_pack` / `parse.grammar` / `transducer` / `binary.format`) — a
+   mechanical **forward-compat sweep** (the only LLVM 19 blocker found), tracked
+   here as the next MLIR-rail task.
 
 ## Recommended next milestones (see the roadmap for detail)
 
@@ -112,3 +121,8 @@
   `docs/BCIR_STRATEGY_AND_ROADMAP.md`. Closed the calibration loop
   (`kbcir.calibloop`, R13) and added the portable **C23 kernel backend**
   (`lower.c_kernel`, R12: `verify.verify_c_lowering`).
+- 2026-06-15: MLIR-side R7 reduction-write parity (+ `gather_reduce_ct1.mlir` and
+  the reduction test pair); the strided gather-avoidance (`saxpy_strided`,
+  ~1.4×); `scan_chain` (serialization) + the fusion discount + per-target parity;
+  the trained calibrator (`FrozenCalibrator`) + live `Broker` (Kafka bridge); and
+  the multi-version LLVM CI matrix (18 gating, 19 forward-compat tracked).

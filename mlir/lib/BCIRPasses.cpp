@@ -327,12 +327,15 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
       // Affine: the stride applies to the streamed read source; writes land
       // unit-stride (a conservative under-approximation, never a false
-      // positive).
+      // positive). A reduction (op "reduce.*") accumulates count reads into a
+      // single location, so its write extent is one element, not count (mirrors
+      // bcir/verify R7).
       int64_t count = static_cast<int64_t>(c.getCount());
       int64_t offset = static_cast<int64_t>(c.getOffset());
       int64_t k = std::max<int64_t>(1, c.getStrideK());
       int64_t readExtent = count > 0 ? offset + (count - 1) * k + 1 : 0;
-      int64_t writeExtent = offset + count;
+      bool isReduction = c.getOp().starts_with("reduce.");
+      int64_t writeExtent = offset + (isReduction ? 1 : count);
       auto checkExtent = [&](ArrayAttr refs, int64_t extent, StringRef kind) {
         for (Attribute a : refs) {
           auto ref = dyn_cast<FlatSymbolRefAttr>(a);

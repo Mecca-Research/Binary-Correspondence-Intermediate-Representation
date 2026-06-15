@@ -143,3 +143,41 @@ bcir.module @r7_random {
     verify = #bcir.verify<none>, bounds = #bcir.bounds<strict>
   } { %i = bcir.index_range 0 to 1024 step 1 }
 }
+
+// -----
+
+// R7 (reduction): a `reduce.*` claim accumulates count reads into a single
+// location, so its write extent is one element, not count. Writing a 1-element
+// accumulator with count 1024 is therefore clean (mirrors bcir/verify R7).
+bcir.module @r7_reduce_ok {
+  bcir.registry @RES {
+    %t = bcir.resource @TABLE { rid = 50 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    %acc = bcir.resource @ACC { rid = 51 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> } : !bcir.resource
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @r attributes {
+    claim_id = 1 : i32, phase = @p0, op = "reduce.gather", reads = [@TABLE], writes = [@ACC], count = 1024 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>,
+    verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>
+  } { %i = bcir.index_range 0 to 1024 step 1 }
+}
+
+// -----
+
+// R7 (the rule is reduction-specific): a NON-reduction claim writing count
+// elements into the same 1-element resource still overruns it.
+bcir.module @r7_nonreduce_overrun {
+  bcir.registry @RES {
+    %t = bcir.resource @TABLE { rid = 50 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    %acc = bcir.resource @ACC { rid = 51 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> } : !bcir.resource
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  // expected-error @+1 {{R7: claim w write of @ACC overruns the resource (extent 1024 > 1)}}
+  bcir.claim @w attributes {
+    claim_id = 1 : i32, phase = @p0, op = "vector.scatter", reads = [@TABLE], writes = [@ACC], count = 1024 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>,
+    verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>
+  } { %i = bcir.index_range 0 to 1024 step 1 }
+}

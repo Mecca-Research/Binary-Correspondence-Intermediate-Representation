@@ -24,9 +24,9 @@ verify/     runnable subset of LangRef verifier laws R1-R13
 api.py      the embeddable library facade: plan -> KernelArtifact (C + ABI header + R12 attestation)
 bench.py    the measured-evidence rail: time the selected realization vs the baseline
 examples.py the goal-graph corpus (vector_add, saxpy_strided, histogram_gather,
-            gather_reduce, fused_chain, tiled_matmul)
+            gather_reduce, fused_chain, scan_chain, tiled_matmul)
 run.py      the CLI (--target/--theta/--policy/--run/--emit-c/--calibrate/--bench/--bench-reduce)
-tests/      356 checks + a dependency-free runner
+tests/      361 checks + a dependency-free runner
 ```
 
 ## Run it

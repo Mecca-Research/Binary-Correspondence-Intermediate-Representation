@@ -30,7 +30,14 @@ from .examples import PROGRAMS
 from .kbcir import TARGETS, optimize
 from .kbcir.cost import Theta
 from .kbcir.weights import PERF, POLICIES
-from .lower.c_kernel import emit_gather_kernel_c, emit_kernel_c, emit_reduce_c, find_reduce
+from .lower.c_kernel import (
+    emit_gather_kernel_c,
+    emit_kernel_c,
+    emit_reduce_c,
+    emit_strided_c,
+    find_reduce,
+    find_strided,
+)
 from .lower.llvm import find_elementwise
 
 _THETAS = {"cool": Theta.cool(), "hot": Theta.hot(), "mem_bound": Theta.mem_bound()}
@@ -392,3 +399,83 @@ def compare_reduce(program="gather_reduce", *, target: str = "x86_avx512", theta
         blocked = Measurement("blocked", 1, opt, n, reps, int(bm.group(1)), True)
         gather = Measurement("gather", 1, opt, n, reps, int(gm.group(1)), True)
         return ReduceComparison(name, opt, n, reps, cand.name, True, blocked, gather)
+
+
+# --- strided gather avoidance: a non-reduction gather program, lowered two ways --
+
+def _emit_strided_bench_c(module, result, n: int, reps: int, k: int) -> str:
+    direct = emit_strided_c(module, result, "bcir_strided", "f32", gather=False)
+    gather = emit_strided_c(module, result, "bcir_strided_gather", "f32", gather=True)
+    return (
+        "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
+        "#include <time.h>\n#include <limits.h>\n\n"
+        + direct + "\n" + gather
+        + f"""
+static long now_ns(void) {{ struct timespec t; timespec_get(&t, TIME_UTC);
+  return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }}
+
+int main(void) {{
+  size_t n = {n}u, k = {k}u;
+  float *X = malloc(n*k*sizeof *X), *Yd = malloc(n*sizeof *Yd), *Yg = malloc(n*sizeof *Yg);
+  long *idx = malloc(n*sizeof *idx);
+  if (!X || !Yd || !Yg || !idx) return 2;
+  for (size_t i = 0; i < n*k; ++i) X[i] = (float)(i % 1000);
+  for (size_t i = 0; i < n; ++i) {{ idx[i] = (long)(i*k); Yd[i] = 0; Yg[i] = 0; }}
+  bcir_strided(X, Yd, n, k);
+  bcir_strided_gather(X, idx, Yg, n);
+  for (size_t i = 0; i < n; ++i) if (Yd[i] != Yg[i]) {{ printf("FAIL i=%zu\\n", i); return 1; }}
+  long bd = LONG_MAX, bg = LONG_MAX;
+  for (int r = 0; r < {reps}; ++r) {{ long t0 = now_ns(); bcir_strided(X, Yd, n, k);
+    long d = now_ns() - t0; if (d > 0 && d < bd) bd = d; }}
+  for (int r = 0; r < {reps}; ++r) {{ long t0 = now_ns(); bcir_strided_gather(X, idx, Yg, n);
+    long d = now_ns() - t0; if (d > 0 && d < bg) bg = d; }}
+  volatile float s = Yd[n - 1] + Yg[n - 1]; (void)s;
+  printf("BLOCKED %ld\\nGATHER %ld\\n", bd, bg);
+  free(X); free(Yd); free(Yg); free(idx);
+  return 0;
+}}
+"""
+    )
+
+
+def compare_strided(program="saxpy_strided", *, target: str = "x86_avx512",
+                    theta: str = "cool", policy: str = "latency", opt: str = "-O2",
+                    n: int = 1 << 22, reps: int = 40) -> ReduceComparison:
+    """Lower a strided program two ways and measure: BCIR's selected direct strided
+    realization vs the gather form of the same access (`X[i*k]` vs `X[idx[i]]`,
+    idx[i]=i*k). The harness verifies identical Y, then times them -- a
+    non-reduction gather avoidance (BCIR knows the stride, so it avoids the slower
+    gather instruction)."""
+    module = PROGRAMS[program]() if isinstance(program, str) else program
+    name = program if isinstance(program, str) else getattr(program, "name", "module")
+    h = TARGETS[target]
+    th = _THETAS.get(theta, Theta.cool())
+    pol = POLICIES.get(policy, PERF)
+    result = optimize(module, h, th, pol)
+    claim, cand = find_strided(module, result)
+    k = max(1, claim.stride_k)
+    bad = Measurement("", 1, opt, n, reps, 0, False, "build/run failed")
+    cc = _which("clang", "cc", "gcc")
+    if cc is None:
+        return ReduceComparison(name, opt, n, reps, cand.name, False, bad, bad)
+    with tempfile.TemporaryDirectory() as d:
+        src = os.path.join(d, "tbench.c")
+        exe = os.path.join(d, "tbench")
+        with open(src, "w") as f:
+            f.write(_emit_strided_bench_c(module, result, n, reps, k))
+        build = None
+        for std in ("-std=c23", "-std=c2x"):
+            build = subprocess.run([cc, std, opt, src, "-o", exe], capture_output=True, text=True)
+            if build.returncode == 0:
+                break
+        if build is None or build.returncode != 0:
+            return ReduceComparison(name, opt, n, reps, cand.name, False, bad, bad)
+        run = subprocess.run([exe], capture_output=True, text=True)
+        bm, gm = _BLK_RE.search(run.stdout or ""), _GRD_RE.search(run.stdout or "")
+        correct = run.returncode == 0 and "FAIL" not in run.stdout
+        if not (bm and gm and correct):
+            return ReduceComparison(name, opt, n, reps, cand.name, False, bad, bad)
+        direct = Measurement("strided", 1, opt, n, reps, int(bm.group(1)), True)
+        gather = Measurement("gather", 1, opt, n, reps, int(gm.group(1)), True)
+        return ReduceComparison(name, opt, n, reps, cand.name, True, direct, gather)
+

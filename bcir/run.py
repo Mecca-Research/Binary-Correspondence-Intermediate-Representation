@@ -83,6 +83,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--bench-reduce", action="store_true",
                    help="measured gather/blocked reduction (gather_reduce): time BCIR's "
                         "selected blocked realization vs the gather form (same sum)")
+    p.add_argument("--bench-strided", action="store_true",
+                   help="measured strided gather-avoidance (saxpy_strided): time BCIR's "
+                        "direct strided realization vs the gather form (same result)")
     args = p.parse_args(argv)
 
     module = PROGRAMS[args.program]()
@@ -251,6 +254,22 @@ def main(argv: list[str] | None = None) -> int:
                           f"penalty={c.speedup_milli / 1000:.2f}x wins={c.avoidance_wins}")
             except NotImplementedError as exc:
                 print(f"[bench-reduce] {exc}")
+
+    if args.bench_strided:
+        from .bench import bench_available, compare_strided
+        if not bench_available():
+            print("[bench-strided] no C compiler; skipping")
+        else:
+            try:
+                for opt in ("-O2", "-O3"):
+                    c = compare_strided(args.program if args.program == "saxpy_strided"
+                                        else "saxpy_strided", target=args.target,
+                                        theta=args.theta, policy=args.policy, opt=opt)
+                    print(f"[bench-strided] {opt}: selected={c.selected} correct={c.correct} "
+                          f"strided={c.blocked.ns_per_call}ns gather={c.gather.ns_per_call}ns "
+                          f"penalty={c.speedup_milli / 1000:.2f}x wins={c.avoidance_wins}")
+            except NotImplementedError as exc:
+                print(f"[bench-strided] {exc}")
 
     if args.accel:
         from .kbcir import greedy_order, optimize_ordered, worst_order

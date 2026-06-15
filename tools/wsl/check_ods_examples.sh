@@ -10,7 +10,7 @@ if [ -z "${BO}" ]; then
   echo "bcir-opt not built; run tools/wsl/build_mlir.sh first (skipping)." >&2
   exit 0
 fi
-FC="$(command -v FileCheck-18 || command -v FileCheck || true)"
+FC="$(command -v FileCheck-19 || command -v FileCheck-18 || command -v FileCheck-17 || command -v FileCheck || true)"
 echo "[ods] bcir-opt: ${BO}"
 echo "[ods] FileCheck: ${FC:-<none; parse-only>}"
 
