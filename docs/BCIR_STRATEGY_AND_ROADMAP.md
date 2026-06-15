@@ -278,3 +278,56 @@ lane/width attributes), not C loop structure, and the segment still records
 compiler-unreachable wins remain **gather avoidance**
 (`compare_gather`/`reduce`/`strided`), algorithmic (contiguous vs random access),
 unaffected by loop form.
+
+## 7. Adaptive capabilities (2026-06-15): the "smart" layer
+
+Eight intent-aware capabilities, each tied to an existing organ and each landing as
+a **deterministic, opt-in oracle capability** -- invoked explicitly, never wired
+into the default `optimize`/`build_artifact`/import path, so the startup (§6.1) and
+codegen work is not regressed (the `test_perf` guard asserts none of them load on
+the simple path). Every one is **gains-only**: it falls back to current behavior
+when no modeled win exists, and that fallback is tested.
+
+1. **RL allocator / smart malloc** (`kbcir.allocator`, tied to the `moegate` freeze
+   discipline). Derives each resource's lifespan/frequency/size from the claim graph
+   (no model change) and a frozen Q8 scorer (`FrozenPlacer`, `train_placer`) predicts
+   "heat"; `place()` promotes hot/ephemeral resources to fast SRAM tiers and large
+   cold ones to HBM -- but only when it fits and the modeled memory cost strictly
+   drops (`Placement.is_noop` otherwise). Cold data never evicts hot data from SRAM.
+2. **Compute-in-memory awareness** (`gem.cim`, `LaneSegment.dispatch`). `annotate_cim`
+   marks a large reduction segment `dispatch="pim"` when the bytes-not-moved beat
+   PIM's compute surcharge + a fixed dispatch overhead; small reductions and all
+   non-reductions stay on the core.
+3. **Persistent ("living") e-graph** (`kbcir.egraph.ResidentEGraph`). Built and
+   saturated once and kept resident; `pivot(bump=...)` re-extracts an equivalent
+   cheaper sub-graph under telemetry-reweighted costs WITHOUT re-parsing or
+   rebuilding (`resident_size` invariant across pivots). Extraction always returns
+   the min, so a pivot never raises cost.
+4. **JIT specialist synthesis** (`lower.specialist`). A `ShapeLedger` detects hot
+   shapes; `synthesize()` bakes the count as a compile-time constant and unrolls
+   (`emit_specialist_c`) only for shapes that are both frequent and small enough to
+   unroll -- otherwise the generic runtime-`n` kernel. The specialist computes the
+   identical result (compile+self-check tested).
+5. **Active regret sensing** (`kbcir.sensing`). Estimates per-path performance
+   *uncertainty* (integer variance / coefficient of variation) and turns on
+   high-resolution telemetry only for uncertain paths, capped by a budget; confident
+   paths go quiet. Active gating costs strictly less than logging everything.
+6. **Zero-copy telemetry ring** (`telemetry.TelemetryRing`). A preallocated bytearray
+   (the shared region); the writer `struct.pack_into`s atomic stats and the reader
+   `unpack_from`s the same buffer -- no serialization, no syscall, non-blocking,
+   wrap-around with a `dropped` counter. Also a `TelemetrySink`, so a `Broker` fans
+   into it.
+7. **Fuzzy / continuous MoE routing** (`kbcir.moegate`). `GNNGate.route_fuzzy` /
+   `blend` flow data partially through every expert at a temperature (anneal soft ->
+   hard); `harden()` collapses to one expert once a path dominates. The frozen gate
+   gains a deterministic Q8 `distribution()` (exact simplex, `argmax == route`).
+8. **Phase-aware DVFS** (`gem.dvfs`). Classifies each phase's arithmetic intensity
+   from the selected cost vectors and sets a Q8 clock: downclock memory-bound phases
+   (power saved, throughput unaffected because they are bandwidth-bound), overclock
+   compute-bound ones -- suppressed whenever Theta is thermal/power-capped; balanced
+   phases hold nominal.
+
+These are oracle-side (Python) capabilities; MLIR-law parity for them is future
+work (they extend the planning/telemetry layer, not the verified R1-R13 spine --
+e.g. `LaneSegment.dispatch` is an append-only field the MLIR segment can mirror
+later). +48 tests (420 total).

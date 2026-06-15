@@ -22,6 +22,8 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
     "memory_model": ("barrier_fence_ir", "fence_ordering", "hazard_to_ordering"),
     "stackify": ("BinOp", "Const", "Local", "stackify", "to_cil", "to_jvm", "to_wasm"),
     "wasm": ("compile_to_wasm", "is_valid_wasm", "run_wasm_node"),
+    "specialist": ("ShapeKey", "ShapeLedger", "SpecialistResult", "emit_specialist_c",
+                   "specializable", "synthesize"),
 }
 
 _NAME_TO_MOD: dict[str, str] = {name: mod for mod, names in _EXPORTS.items() for name in names}

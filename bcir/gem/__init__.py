@@ -21,6 +21,9 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
     "schedule": ("GemSchedule", "Slot", "TAIL_STREAM", "bandwidth_knee", "durations_from",
                  "execute_tokens", "schedule_eft"),
     "async_tokens": ("AsyncPlan", "async_plan"),
+    "cim": ("CIMDecision", "annotate_cim", "cim_decision"),
+    "dvfs": ("DVFSDecision", "DVFSPlan", "classify", "clock_for", "phase_totals",
+             "plan_dvfs"),
 }
 
 _NAME_TO_MOD: dict[str, str] = {name: mod for mod, names in _EXPORTS.items() for name in names}

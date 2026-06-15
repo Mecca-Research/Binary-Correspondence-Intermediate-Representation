@@ -27,12 +27,12 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
              "TargetProfile", "Theta", "Tier"),
     "portfolio": ("PolicyPortfolio", "PortfolioEntry", "ReplayCertificate", "classify",
                   "episodes_from", "replay_gate"),
-    "moegate": ("FrozenGate", "GNNGate", "freeze", "gate_replay_gate", "ledger_labels",
-                "train_gate"),
+    "moegate": ("FrozenGate", "GNNGate", "freeze", "gate_replay_gate", "harden",
+                "ledger_labels", "train_gate"),
     "provenance": ("ProvenanceManifest", "ProvenanceMismatch", "build_manifest",
                    "manifest_for", "replay", "reproduces"),
-    "egraph": ("EGraph", "EGraphResult", "Expr", "module_exprs", "optimize_expr",
-               "saturate", "shared_blocks"),
+    "egraph": ("EGraph", "EGraphResult", "Expr", "ResidentEGraph", "module_exprs",
+               "optimize_expr", "saturate", "shared_blocks"),
     "memory": ("DEFAULT_BUDGET", "MemoryModule", "UnsaturatedMemory", "fingerprint",
                "freeze_module", "from_result", "is_idempotent", "memory_artifacts",
                "reresolve", "try_freeze"),
@@ -59,6 +59,10 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
              "plan_resources"),
     "semiring": ("dag_shortest_path",),
     "weights": ("PERF", "POLICIES", "Policy", "weights"),
+    "allocator": ("ResourceProfile", "FrozenPlacer", "Placement", "DEFAULT_PLACER",
+                  "profile_resources", "place", "train_placer"),
+    "sensing": ("PathSamples", "RegretSensor", "TelemetryDecision", "total_overhead",
+                "full_resolution_overhead"),
 }
 
 _NAME_TO_MOD: dict[str, str] = {name: mod for mod, names in _EXPORTS.items() for name in names}
