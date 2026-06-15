@@ -112,6 +112,36 @@ def emit_kernel_c(module: Module, result: RealizationResult, fn_name: str = "bci
     return head + body
 
 
+def emit_gather_kernel_c(module: Module, result: RealizationResult,
+                         fn_name: str = "bcir_gather", elem: str = "f32") -> str:
+    """Emit the **gather** realization the cost model AVOIDS: an indexed read
+    `C[i] = A[idx[i]] op B[i]` (an extra `const long *restrict idx`). This is the
+    form a gather/scatter-unaware lowering would use; it pays `gather_penalty`
+    (indexed loads + cache misses) on silicon. BCIR's cost model prefers the
+    direct realization (`emit_kernel_c`) whenever the access is not random."""
+    claim, _ = find_elementwise(module, result)
+    op = C_OP[claim.opcode]
+    ctype = _ctype(elem)
+    includes = "#include <stddef.h>\n"
+    fp_pragma = ""
+    if elem == "i32":
+        includes += "#include <stdint.h>\n"
+    else:
+        fp_pragma = "#pragma STDC FP_CONTRACT OFF\n"
+    return (
+        f"/* BCIR -> gather realization (cost-model-AVOIDED; pays gather_penalty). "
+        f"op={claim.op or op} elem={ctype}. */\n"
+        f"{includes}"
+        f'static_assert(sizeof({ctype}) == 4, "BCIR {ctype} gather needs a 4-byte element");\n'
+        f"{fp_pragma}\n"
+        f"void {fn_name}(const {ctype} *restrict A, const {ctype} *restrict B,\n"
+        f"             {ctype} *restrict C, const long *restrict idx, size_t n) {{\n"
+        f"  for (size_t i = 0; i < n; ++i)\n"
+        f"    C[i] = A[idx[i]] {op} B[i];\n"
+        f"}}\n"
+    )
+
+
 def emit_header_c(fn_name: str = "bcir_kernel", elem: str = "f32") -> str:
     """A freestanding C23 header declaring the kernel ABI -- the stable contract a
     driver/runtime compiles the emitted kernel against (no BCIR dependency)."""

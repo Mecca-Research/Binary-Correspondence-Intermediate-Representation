@@ -25,7 +25,7 @@ api.py      the embeddable library facade: plan -> KernelArtifact (C + ABI heade
 bench.py    the measured-evidence rail: time the selected realization vs the baseline
 examples.py the goal-graph corpus (vector_add, saxpy_strided, histogram_gather, ...)
 run.py      the CLI (--target/--theta/--policy/--run/--jit/--emit-c/--calibrate/--bench)
-tests/      338 checks + a dependency-free runner
+tests/      344 checks + a dependency-free runner
 ```
 
 ## Run it

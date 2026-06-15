@@ -77,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--bench", action="store_true",
                    help="measured-evidence rail: time BCIR's selected realization vs the "
                         "scalar baseline (compile + run); reports the measured speedup")
+    p.add_argument("--bench-gather", action="store_true",
+                   help="measured gather-avoidance: time BCIR's direct realization vs the "
+                        "gather form it avoids (random indices); reports the gather penalty")
     args = p.parse_args(argv)
 
     module = PROGRAMS[args.program]()
@@ -214,6 +217,21 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[bench] {opt}: bcir(w{c.bcir.width})={c.bcir.ns_per_call}ns "
                       f"scalar={c.baseline.ns_per_call}ns "
                       f"speedup={c.speedup_milli / 1000:.2f}x bcir_wins={c.bcir_wins}")
+
+    if args.bench_gather:
+        from .bench import bench_available, compare_gather
+        if not bench_available():
+            print("[bench-gather] no C compiler; skipping")
+        else:
+            try:
+                for opt in ("-O2", "-O3"):
+                    c = compare_gather(args.program, target=args.target, theta=args.theta,
+                                       policy=args.policy, opt=opt, shuffle=True)
+                    print(f"[bench-gather] {opt}: direct(w{c.direct.width})="
+                          f"{c.direct.ns_per_call}ns gather={c.gather.ns_per_call}ns "
+                          f"avoided_penalty={c.speedup_milli / 1000:.2f}x wins={c.avoidance_wins}")
+            except NotImplementedError as exc:
+                print(f"[bench-gather] {exc}")
 
     if args.accel:
         from .kbcir import greedy_order, optimize_ordered, worst_order

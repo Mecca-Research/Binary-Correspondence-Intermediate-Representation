@@ -26,6 +26,7 @@ from dataclasses import asdict, dataclass
 from .examples import PROGRAMS
 from .kbcir import TARGETS, build_manifest, optimize
 from .kbcir.cost import Theta
+from .kbcir.rcsp import Budget, Infeasible, feasible, optimize_constrained
 from .kbcir.weights import PERF, POLICIES
 from .lower.c_kernel import C_OP, compile_and_run_c, emit_header_c, emit_kernel_c
 from .lower.llvm import find_elementwise
@@ -49,6 +50,8 @@ class KernelArtifact:
     manifest_digest: int
     attested: bool                 # R12 (verify_c_lowering) passed with no diagnostics
     diagnostics: tuple             # ((law, message), ...) -- empty iff attested
+    budget: tuple                  # ((dim, cap), ...) -- the RCSP caps in force (or ())
+    feasible: bool                 # R(pi,Theta) <= B on every cap (True when no budget)
     kernel_c: str
     header_c: str
 
@@ -83,20 +86,36 @@ def _resolve(program):
     return getattr(program, "name", "module"), program
 
 
+def _parse_budget(budget) -> Budget:
+    """Accept a Budget, a {dim: cap} dict, or a "thermal=700,power=700" string."""
+    if budget is None:
+        return Budget.unbounded()
+    if isinstance(budget, Budget):
+        return budget
+    if isinstance(budget, dict):
+        return Budget.of(**{k: int(v) for k, v in budget.items()})
+    caps = {k: int(v) for k, v in (kv.split("=", 1) for kv in str(budget).split(","))}
+    return Budget.of(**caps)
+
+
 def build_artifact(program, *, target: str = "x86_avx512", theta: str = "cool",
                    policy: str = "latency", elem: str = "f32", table=None,
-                   fn_name: str = "bcir_kernel") -> KernelArtifact:
+                   budget=None, fn_name: str = "bcir_kernel") -> KernelArtifact:
     """Plan a program for a target/Θ and emit a deployable, R12-attested kernel
     artifact. `table` is an optional frozen `CalibratedProfile` (applies measured
-    constants). Pure -- no compilation."""
+    constants); `budget` (a `Budget`, dict, or "thermal=700,power=700") switches to
+    the constrained (RCSP) rail -- the emitted plan is **feasible** under the caps,
+    a correctness property a budget-unaware compiler cannot honor. Raises
+    `Infeasible` if no legal plan fits. Pure -- no compilation."""
     name, module = _resolve(program)
     h = TARGETS[target]
     if table is not None:
         h = table.apply(h)
     th = _THETAS.get(theta, Theta.cool())
     pol = POLICIES.get(policy, PERF)
+    b = _parse_budget(budget)
 
-    result = optimize(module, h, th, pol)
+    result = optimize_constrained(module, h, th, pol, b) if b.caps else optimize(module, h, th, pol)
     claim, cand = find_elementwise(module, result)  # raises if not lowerable
     kernel_c = emit_kernel_c(module, result, fn_name, elem)
     header_c = emit_header_c(fn_name, elem)
@@ -108,6 +127,7 @@ def build_artifact(program, *, target: str = "x86_avx512", theta: str = "cool",
         op=C_OP.get(claim.opcode, "?"), width=int(cand.width), score=int(result.score),
         cal_gen=int(getattr(h, "cal_gen", 0)), manifest_digest=int(manifest.digest),
         attested=not diags, diagnostics=tuple((d.law, d.message) for d in diags),
+        budget=tuple(b.caps), feasible=feasible(result, th, b),
         kernel_c=kernel_c, header_c=header_c)
 
 

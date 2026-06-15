@@ -135,7 +135,7 @@ from .regret import (
     ledger_from_episodes,
     measure_regret,
 )
-from .rcsp import Budget, Infeasible, optimize_constrained, pareto_plans
+from .rcsp import Budget, Infeasible, feasible, optimize_constrained, pareto_plans, plan_resources
 from .semiring import dag_shortest_path
 from .weights import PERF, POLICIES, Policy, weights
 
@@ -155,8 +155,10 @@ __all__ = [
     "optimize",
     "Budget",
     "Infeasible",
+    "feasible",
     "optimize_constrained",
     "pareto_plans",
+    "plan_resources",
     "PolicyPortfolio",
     "PortfolioEntry",
     "ReplayCertificate",
