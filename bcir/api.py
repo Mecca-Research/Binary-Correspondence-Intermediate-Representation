@@ -117,9 +117,13 @@ def build_artifact(program, *, target: str = "x86_avx512", theta: str = "cool",
 
     result = optimize_constrained(module, h, th, pol, b) if b.caps else optimize(module, h, th, pol)
     claim, cand = find_elementwise(module, result)  # raises if not lowerable
-    kernel_c = emit_kernel_c(module, result, fn_name, elem)
+    # The target's widest lane drives the width-aware lowering: a full-lane width is
+    # realized by an idiomatic loop (compiler vectorizes to >= the lane), a
+    # sub-maximal width is capped to honor the thermal/power throttle (R12).
+    hw_width = h.vector_width
+    kernel_c = emit_kernel_c(module, result, fn_name, elem, hw_width=hw_width)
     header_c = emit_header_c(fn_name, elem)
-    diags = verify_c_lowering(module, result, kernel_c, elem)
+    diags = verify_c_lowering(module, result, kernel_c, elem, hw_width=hw_width)
     manifest = build_manifest(module, h, th, pol)
 
     return KernelArtifact(
@@ -144,5 +148,6 @@ def compile_kernel(program, *, run: bool = False, **kw):
     th = _THETAS.get(kw.get("theta", "cool"), Theta.cool())
     pol = POLICIES.get(kw.get("policy", "latency"), PERF)
     result = optimize(module, h, th, pol)        # deterministic: same plan as build_artifact
-    ok, out = compile_and_run_c(module, result, fn_name=art.fn_name, elem=kw.get("elem", "f32"))
+    ok, out = compile_and_run_c(module, result, fn_name=art.fn_name, elem=kw.get("elem", "f32"),
+                                hw_width=h.vector_width)   # self-check the deployed (go-fast) form
     return art, (ok, out)

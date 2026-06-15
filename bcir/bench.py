@@ -9,15 +9,16 @@ toolchain, times both, and reports the measured speedup.
 Honest finding (the performance audit, docs/BCIR_STRATEGY_AND_ROADMAP.md): for a
 plain elementwise kernel the *loop form* is measured-neutral -- the kernel is
 memory-bandwidth-bound and a modern `-O2`/`-O3` vectorizer realizes the selected
-lane width from an idiomatic loop on its own, so width-W blocking is within
-measurement noise of the scalar baseline (and, at cache-resident sizes, the
-hand-blocked loop can even trail the plain loop by capping the compiler's
-interleave). The lane width is therefore best understood as the cost model's
-*recommendation to the backend* (and, when narrower than the hardware lane, a
-deliberate thermal/power throttle), not a hand-coded speedup. BCIR's *measured*
-wins come from choices the compiler cannot make for you: **gather avoidance**
-(contiguous vs random access -- `compare_gather` ~6.5x, `compare_reduce` ~16x,
-`compare_strided` ~1.4x) and budget feasibility, not loop blocking.
+lane width from an idiomatic loop on its own. Hand-blocked vs idiomatic is within
+measurement noise: under rigorous separate-process, alternated, median-of-N timing
+neither reliably wins (the winner flips with size, opt level, and cache
+alignment). The lane width is therefore the cost model's *recommendation to the
+backend* -- a floor at the full hardware lane (let the compiler interleave), a
+ceiling when narrower than the lane (a deliberate thermal/power throttle, honored
+by a hard cap) -- not a hand-coded speedup. BCIR's *measured* wins come from
+choices the compiler cannot make for you: **gather avoidance** (contiguous vs
+random access -- `compare_gather` ~6.5x, `compare_reduce` ~16x, `compare_strided`
+~1.4x) and budget feasibility, not loop blocking.
 
 Offline tooling (it shells out to a compiler); never the hot path. Timings are
 environment-dependent -- the rail reports the measured number, it does not pin it.
@@ -83,8 +84,9 @@ class Comparison:
 
 
 def _emit_timed_c(module, result, fn_name: str, elem: str, n: int, reps: int,
-                  width_override) -> str:
-    kernel = emit_kernel_c(module, result, fn_name, elem, width_override=width_override)
+                  width_override, hw_width=None) -> str:
+    kernel = emit_kernel_c(module, result, fn_name, elem, width_override=width_override,
+                           hw_width=hw_width)
     claim, _ = find_elementwise(module, result)
     op = "+" if elem != "i32" else "+"
     ctype = "int32_t" if elem == "i32" else "float"
@@ -130,8 +132,11 @@ def _which(*names):
 
 
 def measure(module, result, *, label: str, elem: str = "f32", opt: str = "-O1",
-            n: int = 1 << 20, reps: int = 200, width_override=None) -> Measurement:
-    """Compile + time one realization (the selected width, or `width_override`)."""
+            n: int = 1 << 20, reps: int = 200, width_override=None,
+            hw_width=None) -> Measurement:
+    """Compile + time one realization (the selected width, or `width_override`).
+    `hw_width` (the target's widest lane) drives the width-aware lowering so the
+    timed kernel is exactly the deployed one (go-fast at the full lane)."""
     _, cand = find_elementwise(module, result)
     w = int(width_override) if width_override else int(cand.width)
     cc = _which("clang", "cc", "gcc")
@@ -141,7 +146,8 @@ def measure(module, result, *, label: str, elem: str = "f32", opt: str = "-O1",
         src = os.path.join(d, "bench.c")
         exe = os.path.join(d, "bench")
         with open(src, "w") as f:
-            f.write(_emit_timed_c(module, result, "bcir_kernel", elem, n, reps, width_override))
+            f.write(_emit_timed_c(module, result, "bcir_kernel", elem, n, reps, width_override,
+                                  hw_width=hw_width))
         build = None
         for std in ("-std=c23", "-std=c2x"):
             build = subprocess.run([cc, std, opt, src, "-o", exe], capture_output=True, text=True)
@@ -168,9 +174,10 @@ def compare(program, *, target: str = "x86_avx512", theta: str = "cool",
     th = _THETAS.get(theta, Theta.cool())
     pol = POLICIES.get(policy, PERF)
     result = optimize(module, h, th, pol)
-    bcir = measure(module, result, label="bcir-selected", elem=elem, opt=opt, n=n, reps=reps)
+    bcir = measure(module, result, label="bcir-selected", elem=elem, opt=opt, n=n, reps=reps,
+                   hw_width=h.vector_width)
     base = measure(module, result, label="scalar-baseline", elem=elem, opt=opt, n=n,
-                   reps=reps, width_override=1)
+                   reps=reps, width_override=1, hw_width=h.vector_width)
     return Comparison(program=name, target=h.name, opt=opt, bcir=bcir, baseline=base)
 
 
@@ -207,8 +214,9 @@ _DIRECT_RE = re.compile(r"^DIRECT (\d+)$", re.MULTILINE)
 _GATHER_RE = re.compile(r"^GATHER (\d+)$", re.MULTILINE)
 
 
-def _emit_gather_bench_c(module, result, elem: str, n: int, reps: int, shuffle: bool) -> str:
-    direct = emit_kernel_c(module, result, "bcir_direct", elem)        # BCIR's choice
+def _emit_gather_bench_c(module, result, elem: str, n: int, reps: int, shuffle: bool,
+                         hw_width=None) -> str:
+    direct = emit_kernel_c(module, result, "bcir_direct", elem, hw_width=hw_width)  # BCIR's choice
     gather = emit_gather_kernel_c(module, result, "bcir_gather", elem)  # the avoided form
     op = "+" if find_elementwise(module, result)[0].opcode.name == "ADD" else (
         "-" if find_elementwise(module, result)[0].opcode.name == "SUB" else "*")
@@ -281,7 +289,8 @@ def compare_gather(program, *, target: str = "x86_avx512", theta: str = "cool",
         src = os.path.join(d, "gbench.c")
         exe = os.path.join(d, "gbench")
         with open(src, "w") as f:
-            f.write(_emit_gather_bench_c(module, result, elem, n, reps, shuffle))
+            f.write(_emit_gather_bench_c(module, result, elem, n, reps, shuffle,
+                                         hw_width=h.vector_width))
         build = None
         for std in ("-std=c23", "-std=c2x"):
             build = subprocess.run([cc, std, opt, src, "-o", exe], capture_output=True, text=True)

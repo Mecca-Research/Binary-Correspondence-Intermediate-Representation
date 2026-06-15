@@ -139,3 +139,16 @@
   elementwise loop-form finding (bandwidth-bound, measured-neutral; the width cap
   is a load-bearing thermal throttle) and corrected the `bench.py` narrative; the
   width-aware C codegen + R12 refinement is a tracked follow-up.
+- 2026-06-15: **Width-aware C lowering + R12 refinement** (strategy §6.2). The C
+  backend used to cap at the selected width *unconditionally* — even at the full
+  hardware lane, which let the planner override the compiler's isel. Now the width
+  is a *floor* at the full lane (idiomatic loop, `emit_kernel_c(hw_width=…)`) and a
+  *ceiling* when sub-maximal (a hard cap that honors a `Theta.hot` thermal
+  throttle). R12 (`verify_c_lowering`) refined to match: no sub-lane cap on a
+  full-lane kernel, a mandatory cap on a throttled one. Threaded `h.vector_width`
+  through api/bench/CLI/self-check. Rigorous re-measurement (separate-process,
+  alternated, median-of-N) showed the prior “~12% blocked penalty” was a
+  measurement artifact — loop form is measured-neutral — so this lands as a
+  correctness/semantics fix, not a speedup. Dual-rail-safe (MLIR R12 checks
+  StreamPack lane-segment preservation, not C structure; segment width unchanged).
+  +5 tests (372 total).

@@ -53,11 +53,35 @@ def _selected_segment(module: Module, result: RealizationResult, claim):
 
 
 def emit_kernel_c(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
-                  elem: str = "f32", width_override: int | None = None) -> str:
+                  elem: str = "f32", width_override: int | None = None,
+                  hw_width: int | None = None) -> str:
     """Emit a portable C23 kernel for the selected elementwise realization, driven
     by the GEM StreamPack segment (lane width -> loop structure, op, resources).
     `elem` is "f32" (float) or "i32" (int32_t for FP-less targets); `width_override`
-    forces a width. Pure: no I/O, reusable AOT or driver-embedded."""
+    forces a width. Pure: no I/O, reusable AOT or driver-embedded.
+
+    **Width-aware lowering** (`hw_width` = the target's widest lane,
+    `HProfile.vector_width`): the selected width is the K_BCIR plan's lane decision,
+    but how it is realized depends on whether it is the *full* hardware lane or a
+    deliberate sub-maximal throttle:
+
+      * `w == hw_width` (the go-fast case): the width is a *floor*. Emit the
+        **idiomatic** loop and let the resident compiler vectorize to >= the lane
+        and interleave as it sees fit -- the planner picked the strategy, the
+        compiler owns instruction selection. (Hand-blocking pins it at exactly `w`
+        per step. On bandwidth-bound elementwise kernels the two are
+        measured-neutral -- loop form is within noise -- so this is a correctness /
+        division-of-labor refinement, not a guaranteed speedup; the floor matters
+        for compute-bound kernels and stops the lowering from second-guessing isel.)
+      * `1 < w < hw_width` (a thermal/power throttle, e.g. a hot-machine AVX-512
+        downclock dodge): emit a **fixed-trip width-`w`** loop so the compiler
+        vectorizes to exactly `w`, physically honoring the sub-maximal lane.
+      * `w == 1`: a pure scalar loop.
+
+    When `hw_width` is not given the lowering conservatively caps at `w` (the literal
+    geometry-encoding form) -- the same code as before this change, so callers that
+    do not know the target are unaffected. The R12 contract
+    (`verify.verify_c_lowering`, which takes the same `hw_width`) checks the rule."""
     claim, cand = find_elementwise(module, result)
     seg = _selected_segment(module, result, claim)
     w = int(width_override) if width_override else int(seg.width if seg else cand.width)
@@ -79,10 +103,19 @@ def emit_kernel_c(module: Module, result: RealizationResult, fn_name: str = "bci
         # reproducible float: disallow contraction so a + b is a single rounding.
         fp_pragma = "#pragma STDC FP_CONTRACT OFF\n"
 
+    # Full hardware lane (go-fast) vs deliberate sub-maximal throttle vs scalar.
+    full_lane = hw_width is not None and w == int(hw_width)
+    if w == 1:
+        geom = "scalar"
+    elif full_lane:
+        geom = "full hardware lane: idiomatic loop, the compiler vectorizes to >= width"
+    else:
+        geom = "throttled lane: capped loop honors the sub-maximal width"
+
     head = (
         f"/* BCIR -> portable C23 kernel (lower_contract). op={claim.op or op} "
         f"lane={cand.lane.name} width={w} elem={ctype} "
-        f"(K_BCIR-selected; StreamPack {seg.name if seg else '-'}). */\n"
+        f"(K_BCIR-selected; {geom}; StreamPack {seg.name if seg else '-'}). */\n"
         f"{includes}"
         f'static_assert(sizeof({ctype}) == 4, "BCIR {ctype} kernel needs a 4-byte element");\n'
         f"{fp_pragma}\n"
@@ -90,17 +123,25 @@ def emit_kernel_c(module: Module, result: RealizationResult, fn_name: str = "bci
     sig = (f"void {fn_name}(const {ctype} *{rqual} A, const {ctype} *{rqual} B,\n"
            f"             {ctype} *{rqual} C, size_t n)")
 
-    if w == 1:
+    if w == 1 or full_lane:
+        # Idiomatic loop: scalar (w==1) or the full-lane go-fast form. The compiler
+        # realizes the lane and interleaves freely (the width is a floor); a
+        # hand-blocked loop would pin it at exactly w. Measured-neutral on
+        # bandwidth-bound kernels -- this is the correct division of labor, not a
+        # speedup claim.
         body = (f"{sig} {{\n"
                 f"  for (size_t i = 0; i < n; ++i)\n"
                 f"    C[i] = A[i] {op} B[i];\n"
                 f"}}\n")
     else:
+        # Sub-maximal throttle: a fixed-trip width-w inner loop the compiler
+        # vectorizes to exactly w (honoring the deliberate sub-maximal lane), plus a
+        # bounds-safe scalar tail.
         body = (
             f"{sig} {{\n"
             f"  size_t i = 0;\n"
-            f"  /* width-{w} lane: a fixed-trip inner loop the compiler vectorizes "
-            f"(the K_BCIR-selected width) */\n"
+            f"  /* width-{w} lane: a fixed-trip inner loop capped at the selected "
+            f"(sub-maximal) width -- honors the thermal/power throttle */\n"
             f"  for (; i + {w}u <= n; i += {w}u)\n"
             f"    for (size_t j = 0; j < {w}u; ++j)\n"
             f"      C[i + j] = A[i + j] {op} B[i + j];\n"
@@ -249,14 +290,16 @@ def emit_header_c(fn_name: str = "bcir_kernel", elem: str = "f32") -> str:
 
 
 def emit_selfcheck_c(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
-                     elem: str = "f32") -> str:
+                     elem: str = "f32", hw_width: int | None = None) -> str:
     """Wrap the kernel with a self-checking C23 `main` (the AOT path). Checks the
-    selected count and a non-divisible size (count + 7) to exercise the tail."""
+    selected count and a non-divisible size (count + 7) to exercise the tail.
+    `hw_width` is forwarded so the self-check validates the exact deployed kernel
+    (the go-fast form at the full lane)."""
     claim, _ = find_elementwise(module, result)
     n = max(1, claim.count)
     op = C_OP[claim.opcode]
     ctype = _ctype(elem)
-    kernel = emit_kernel_c(module, result, fn_name, elem)
+    kernel = emit_kernel_c(module, result, fn_name, elem, hw_width=hw_width)
     if elem == "i32":
         init = "A[i] = (int32_t)i; B[i] = (int32_t)(2u * i); C[i] = -1;"
         fmt = "%d"
@@ -293,9 +336,11 @@ int main(void) {{
 
 
 def compile_and_run_c(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
-                      elem: str = "f32", workdir: str | None = None) -> tuple[bool, str]:
+                      elem: str = "f32", workdir: str | None = None,
+                      hw_width: int | None = None) -> tuple[bool, str]:
     """Emit the self-checking C, compile it (C23: clang -std=c23, else gcc -std=c2x),
-    run, and check it printed OK. Returns (ok, combined_output)."""
+    run, and check it printed OK. Returns (ok, combined_output). `hw_width` selects
+    the width-aware form so the self-check validates the deployed kernel."""
     cc = _which("clang") or _which("cc") or _which("gcc")
     if cc is None:
         return False, "no C compiler on PATH"
@@ -306,7 +351,7 @@ def compile_and_run_c(module: Module, result: RealizationResult, fn_name: str = 
         src = os.path.join(workdir, "kernel_check.c")
         exe = os.path.join(workdir, "prog")
         with open(src, "w") as f:
-            f.write(emit_selfcheck_c(module, result, fn_name, elem))
+            f.write(emit_selfcheck_c(module, result, fn_name, elem, hw_width=hw_width))
         build = None
         for std in ("-std=c23", "-std=c2x"):
             build = subprocess.run([cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe],

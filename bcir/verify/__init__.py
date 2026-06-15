@@ -467,14 +467,25 @@ def verify_lowering(module: Module, result, ll_text: str, elem: str = "f32",
 
 
 def verify_c_lowering(module: Module, result, c_text: str, elem: str = "f32",
-                      width_override: int | None = None) -> list[Diagnostic]:
+                      width_override: int | None = None,
+                      hw_width: int | None = None) -> list[Diagnostic]:
     """Lowering law R12 for the portable C backend: the emitted C23 kernel
     (`lower.c_kernel.emit_kernel_c`) preserves the K_BCIR-selected realization --
-    lane geometry (the selected width drives the loop), precision (the contracted
-    element type), bounds (a trip-count guard so the kernel is safe for any n),
-    the elementwise op, and the non-aliasing contract (`restrict` when the read
-    and write resources are disjoint).
-    """
+    lane geometry, precision (the contracted element type), bounds (a trip-count
+    guard so the kernel is safe for any n), the elementwise op, and the
+    non-aliasing contract (`restrict` when the read and write resources are
+    disjoint).
+
+    Lane geometry is *width-aware* (`hw_width` = the target's widest lane,
+    `HProfile.vector_width`): the lowering must **honor** the selected width, which
+    means different things at the full lane vs a throttle. (a) `w == 1`: a scalar
+    loop, no vector cap. (b) `w == hw_width` (go-fast): the idiomatic loop is
+    correct -- the compiler realizes >= the lane -- so the kernel must NOT cap below
+    the lane (a hidden sub-width cap would throttle the backend). (c) `1 < w <
+    hw_width` (a deliberate thermal/power throttle): the kernel MUST cap at `w`
+    (a fixed-trip width-`w` loop) so the compiler cannot widen past the sub-maximal
+    lane. With no `hw_width` the check conservatively requires the cap for `w > 1`
+    (the literal geometry-encoding form -- unchanged from before)."""
     from ..gem import hydrate
     from ..lower.c_kernel import C_OP, _ctype
     from ..lower.llvm import find_elementwise
@@ -501,14 +512,27 @@ def verify_c_lowering(module: Module, result, c_text: str, elem: str = "f32",
             f"lane geometry not preserved: declared width {declared_w} != selected "
             f"width {w} (candidate {cand.name})"))
 
-    # Lane geometry in the body: a width-w fixed-trip loop (w>1) or a pure scalar
-    # loop (w==1, no vector-width loop).
-    if w > 1 and f"< {w}u" not in c_text:
-        diags.append(Diagnostic(
-            "R12", f"lane geometry not preserved: no width-{w} loop emitted"))
-    if w == 1 and re.search(r"<\s*\d+u", c_text):
-        diags.append(Diagnostic(
-            "R12", "lane geometry not preserved: a vector-width loop in a scalar kernel"))
+    # Lane geometry in the body, width-aware (see the docstring).
+    full_lane = hw_width is not None and w == int(hw_width)
+    if w == 1:
+        if re.search(r"<\s*\d+u", c_text):
+            diags.append(Diagnostic(
+                "R12", "lane geometry not preserved: a vector-width loop in a scalar kernel"))
+    elif full_lane:
+        # Go-fast: the idiomatic loop realizes >= the full lane. Geometry is the
+        # recorded width (checked above) + a bounds-safe loop; a cap *below* the
+        # lane would secretly throttle the backend, so reject it.
+        sub_caps = [int(x) for x in re.findall(r"<\s*(\d+)u", c_text) if int(x) < w]
+        if sub_caps:
+            diags.append(Diagnostic(
+                "R12", f"lane geometry not preserved: full-width kernel caps below the "
+                       f"hardware lane (found width-{min(sub_caps)} cap, lane is {w})"))
+    else:
+        # Deliberate sub-maximal throttle: the cap MUST be physically honored, else
+        # the compiler widens past the selected (thermal/power-limited) lane.
+        if f"< {w}u" not in c_text:
+            diags.append(Diagnostic(
+                "R12", f"lane geometry not preserved: no width-{w} throttle cap emitted"))
 
     # Precision: the contracted element type on the kernel signature.
     ctype = _ctype(elem)

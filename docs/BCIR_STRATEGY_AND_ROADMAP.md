@@ -239,27 +239,42 @@ stdlib floor (`dataclasses`→`inspect`→`ast`, `re`, `subprocess`, `tempfile`)
 `test_perf.py` asserts the heavy modules stay *unloaded* on the simple path — a
 deterministic guard so the tax cannot creep back as the system grows.
 
-### 6.2 The nuance: elementwise loop form is bandwidth-bound (documented)
+### 6.2 Width-aware C lowering + R12 refinement (landed)
 
-Multi-trial timing (median of 9, cache-resident N) shows the portable C kernel's
-*loop form* is measured-neutral: an elementwise kernel is memory-bandwidth-bound,
-and a modern `-O2`/`-O3` vectorizer realizes the selected lane width from an
-idiomatic loop on its own. At cache-resident sizes (N≈4k–16k) the **hand-blocked**
-width-W loop the C backend emits actually trails a plain loop by ~12% at `-O2`/`-O3`
-— the fixed-trip inner loop *caps* the compiler's vector interleave. At streaming
-sizes (≥1M) and at `-O1` it is neutral. So the explicit blocking is not earning the
-win the old bench narrative claimed (now corrected in `bcir/bench.py`).
+The elementwise loop *form* is **measured-neutral**. An earlier read suggested the
+hand-blocked loop trailed a plain loop by ~12% at cache-resident sizes; rigorous
+re-measurement (separate processes, alternated order, median-of-N) shows that was a
+**measurement artifact** — neither form reliably wins, and the apparent winner
+flips with size, opt level, cache alignment, and even timing *order* (the
+second-timed kernel wins from warm cache). The kernel is bandwidth/L1-bound; the
+loop form is in the noise. So there is no loop-form speedup to claim, and the old
+bench narrative is corrected (`bcir/bench.py`).
 
-**Why this is not a one-line fix:** the width cap is *load-bearing*. `Theta.hot`
-deliberately selects a **narrower** lane (vec8 on an AVX-512 part) to dodge the
-AVX-512 downclock — a thermal/power decision. Capping the loop at the selected
-width is exactly what honors it; a plain loop would let the compiler widen back to
-vec16 and discard the throttle. The principled fix is therefore *width-aware*:
-emit the idiomatic (uncapped) loop only when the selected width **equals** the
-hardware's widest lane (the go-fast case), and keep the cap when the width is a
-deliberate sub-maximal throttle. That threads the hardware lane width through
-`emit_kernel_c` and redefines the R12 C-lowering law (lane geometry preserved =
-the recorded width is honored, not hand-blocked unconditionally) — a spine-level
-change deserving its own focused PR. The real, compiler-unreachable wins remain
-**gather avoidance** (`compare_gather`/`reduce`/`strided`), which are algorithmic
-(contiguous vs random access), not loop-form, and are unaffected.
+What *was* wrong was a **semantics** issue, now fixed. The C backend used to cap at
+the selected width **unconditionally** — even at the full hardware lane — which
+quietly let the planner override the compiler's instruction selection (it could
+only ever run exactly `w` per step). That conflates two different meanings of the
+width. The width-aware lowering distinguishes them:
+
+- **full hardware lane** (`w == HProfile.vector_width`): the width is a *floor*.
+  Emit the **idiomatic** loop and let the compiler vectorize to >= the lane and
+  interleave freely — the planner picks the strategy, the compiler owns isel.
+- **sub-maximal width** (`1 < w < vector_width`, e.g. `Theta.hot` picking vec8 on
+  an AVX-512 part to dodge the downclock): the width is a *ceiling*. Emit the
+  fixed-trip width-`w` cap so the compiler **cannot** widen past the deliberate
+  thermal/power lane. This cap is load-bearing — a plain loop would discard the
+  throttle.
+- **scalar** (`w == 1`): a plain scalar loop.
+
+The hardware lane width threads through `emit_kernel_c` / `verify_c_lowering` /
+`compile_and_run_c` (and `bcir.api`/`bench`/CLI pass `h.vector_width`); with no
+hardware width the lowering conservatively caps (unchanged behavior). **R12** is
+refined to match: lane geometry is *preserved* when the width is honored — no
+sub-lane cap on a full-lane kernel (it must not throttle the backend), and a
+mandatory cap on a throttled kernel (it must not exceed the lane). The change is
+**dual-rail-safe**: the MLIR R12 checks StreamPack lane-segment preservation (the
+lane/width attributes), not C loop structure, and the segment still records
+`width == cand.width` unchanged — so the law/oracle parity is untouched. The real,
+compiler-unreachable wins remain **gather avoidance**
+(`compare_gather`/`reduce`/`strided`), algorithmic (contiguous vs random access),
+unaffected by loop form.
