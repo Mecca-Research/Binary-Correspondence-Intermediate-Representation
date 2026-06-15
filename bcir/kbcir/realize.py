@@ -129,6 +129,16 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
         n = max(1, claim.count)
         gp = max(1, (n - 1).bit_length())  # ceil(log2 n)
 
+    # Reducible-permutation gather (`reduce.gather`): + is commutative and the
+    # index is a permutation, so the random gather (O(gather_penalty)) has a
+    # semantically identical *blocked* sequential realization (O(1) overhead). The
+    # cost model offers both; the blocked one wins, avoiding gather_penalty.
+    if claim.op == "reduce.gather":
+        return [
+            Candidate(Lane.U, 1, "blocked", _cost(claim, h, 1, 1, tier=tier), claim.rd),
+            Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd),
+        ]
+
     cands: list[Candidate] = []
     if sc in (StrideClass.UNIT, StrideClass.SCALAR):
         for w in h.widths():

@@ -56,6 +56,43 @@ def histogram_gather(n: int = 1024, ham: bool = False) -> Module:
     return m
 
 
+def gather_reduce(n: int = 1024) -> Module:
+    """A reduction over a permutation gather: ACC = sum_i TABLE[perm[i]].
+
+    Because + is commutative and perm is a permutation, this equals sum_i TABLE[i]
+    -- so the gather (random TABLE access) has a semantically identical *blocked*
+    (sequential) realization. BCIR's cost model picks blocked (no gather_penalty);
+    a naive compiler, unable to prove perm is a permutation, must gather. The
+    `reduce.gather` op signals the reducible-permutation property to the planner."""
+    m = Module(name="gather_reduce")
+    m.add_resource(Resource(rid=50, domain=Domain.RAM, shape=(n,), name="TABLE"))
+    m.add_resource(Resource(rid=51, domain=Domain.RAM, shape=(1,), name="ACC"))
+    # The access is a permutation, but because + is commutative the claim is
+    # *realizable* unit-stride (the blocked sum) -- that is its canonical lane; the
+    # gather is the de-optimized alternative the cost model rejects. (UNIT keeps the
+    # claim and the selected blocked plan legal under the lane law R6/R9.)
+    claim = Claim(id=5000, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+                  count=n, rd=(50,), wr=(51,), op="reduce.gather", domain=Domain.RAM)
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[claim]))
+    return m
+
+
+def fused_chain(n: int = 1024) -> Module:
+    """Two independent elementwise claims that share a read operand (A): the
+    multi-claim case where (max,+) overlap pricing and fusion earn their keep --
+    C = A + B and D = A + E run as concurrent waves (makespan < serial), and
+    back-to-back in a bin they reuse A's loads (the fusion discount)."""
+    m = Module(name="fused_chain")
+    for rid, nm in ((60, "A"), (61, "B"), (62, "C"), (63, "E"), (64, "D")):
+        m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,), name=nm))
+    c1 = Claim(id=6001, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+               count=n, rd=(60, 61), wr=(62,), op="vector.add", domain=Domain.RAM)
+    c2 = Claim(id=6002, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+               count=n, rd=(60, 63), wr=(64,), op="vector.add", domain=Domain.RAM)
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[c1, c2]))
+    return m
+
+
 def tiled_matmul(n: int = 256) -> Module:
     """A tile matmul-accumulate claim (T lane)."""
     m = Module(name="tiled_matmul")
@@ -73,5 +110,7 @@ PROGRAMS = {
     "vector_add_hbm": vector_add_hbm,
     "saxpy_strided": saxpy_strided,
     "histogram_gather": histogram_gather,
+    "gather_reduce": gather_reduce,
+    "fused_chain": fused_chain,
     "tiled_matmul": tiled_matmul,
 }

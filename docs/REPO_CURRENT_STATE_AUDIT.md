@@ -22,7 +22,7 @@
     ledger, provenance manifest, e-graph + memory-module fixpoints, the two-truth
     quarantine, modular mapping functions, the enriched-operad memory
     interface, and the closed calibration loop (`calibloop`: measure → freeze →
-    replan → certified win). Suite: `python -m bcir.tests.run_all` (**344 checks**).
+    replan → certified win). Suite: `python -m bcir.tests.run_all` (**356 checks**).
   - **`mlir/`** — the law: the ODS/TableGen dialect family (~80 ops), the compiled
     `bcir-opt` with `-bcir-verify` (R1–R13), `-bcir-promote-lanes`,
     `-convert-bcir-to-llvm`, and the **GEM pipeline passes** (`-bcir-classify-lanes
@@ -69,13 +69,13 @@
    LLVM/llc/lli/wasm remain the other machine-code paths. Register allocation and
    linking are still the resident toolchain's job; `bcir.target.lower_contract` is
    the seam. **Remaining:** GPU-C dialect variants and one target end-to-end.
-2. **Cost constants are now measured on bare metal.** The calibration loop is
-   closed and certified (`kbcir.calibloop`, R13, `--calibrate`), and the C
-   microbench (`runtime/c/bcir_microbench.c`, `calibrate_native`, `--calibrate
-   --native`) feeds the frozen-table schema with **real cache latency** (gather no
-   longer collapses: measured `random_q8 ≈ 1500` ⇒ gather_penalty ≈ 5). The stdlib
-   harness remains as the dependency-free conservative fallback. **Remaining:** a
-   trained calibrator + a live broker.
+2. **The calibration loop is fully closed.** Bare-metal cost constants
+   (`runtime/c/bcir_microbench.c`, `calibrate_native`, `--calibrate --native`,
+   real cache latency: gather_penalty ≈ 5), R13-certified replan (`kbcir.calibloop`),
+   **a trained calibrator** (`calibrate.train_calibrator` → `FrozenCalibrator`, an
+   online model frozen to deterministic Q8) and **a live broker**
+   (`telemetry.Broker`, pub/sub fan-out). The frozen calibrator drives the loop end
+   to end. *(Production hardening — a real Kafka deployment — remains operational.)*
 3. **The example corpus is small** (elementwise, strided, gather, tile-MACC
    skeletons). Multi-claim fusion and joint optimization are future work, and the
    GEM passes are exercised on the single-claim plan.
