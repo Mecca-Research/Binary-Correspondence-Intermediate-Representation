@@ -60,7 +60,7 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
     "semiring": ("dag_shortest_path",),
     "weights": ("PERF", "POLICIES", "Policy", "weights"),
     "allocator": ("ResourceProfile", "FrozenPlacer", "Placement", "DEFAULT_PLACER",
-                  "profile_resources", "place", "train_placer"),
+                  "profile_resources", "place", "train_placer", "silicon_tier_capacity"),
     "sensing": ("PathSamples", "RegretSensor", "TelemetryDecision", "total_overhead",
                 "full_resolution_overhead"),
 }

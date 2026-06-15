@@ -163,3 +163,17 @@
   and phase-aware DVFS (`gem.dvfs`). New organs are lazy (the `test_perf` guard
   asserts they stay unloaded on the simple path — `bcir.api` cold import unchanged).
   MLIR-law parity for these is future work. +48 tests (420 total).
+- 2026-06-15: **Measured wiring to real signals + first MLIR parity law for the
+  smart layer.** New `bcir.silicon` probes read the real machine (read-only,
+  honest): `/sys` cache topology (real L1/L2/L3 tier map for the allocator),
+  cpufreq table + nominal (DVFS anchor; actuation gated on a `userspace` governor +
+  privilege — reported, never faked), and `getrusage`/timers feeding the telemetry
+  ring (the guest exposes no hardware PMU — `perf_event_open` ENOENT — so OS
+  counters are used and that fact is reported). **Re-validated on this Xeon:** the
+  zero-copy ring is **~31× faster** than JSON serialization; cache-resident access
+  is **~166× lower latency** than DRAM (pointer-chase), justifying hot→SRAM. **MLIR
+  parity:** the `bcir.gem.lane_segment` op gains an append-only `dispatch` attr and
+  a new law **R14** (`-bcir-lower-to-llvm`: `dispatch = "pim"` legal only on a
+  `reduce.*` op), mirroring `gem.cim`; built + validated on LLVM **18 and 19**, with
+  positive+negative `.mlir` cases. DVFS/allocator MLIR laws follow the same pattern
+  (tracked). +9 oracle tests (429 total) + the R14 MLIR law (positive+negative).

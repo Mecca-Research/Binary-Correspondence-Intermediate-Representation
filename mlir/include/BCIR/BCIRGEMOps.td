@@ -61,7 +61,11 @@ def BCIR_GEMLaneSegmentOp : BCIR_Op<"gem.lane_segment", [Symbol]> {
     DefaultValuedAttr<I32Attr, "-1">:$affinity,
     DefaultValuedAttr<I32Attr, "1">:$unroll,
     // Duration-aware scheduling: the K_BCIR step cost as execution duration.
-    DefaultValuedAttr<I64Attr, "0">:$duration);
+    DefaultValuedAttr<I64Attr, "0">:$duration,
+    // CIM/PIM dispatch target (append-only; mirrors gem.streampack.LaneSegment.dispatch).
+    // "core" = execute on the compute core; "pim" = dispatch to the memory controller
+    // (processing-in-memory). R14 (lower-to-llvm) legalizes: "pim" only on a reduction.
+    DefaultValuedAttr<StrAttr, "\"core\"">:$dispatch);
   let assemblyFormat = "$sym_name attr-dict";
 }
 

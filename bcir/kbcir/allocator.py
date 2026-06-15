@@ -171,11 +171,27 @@ def _mem_cost(p: ResourceProfile, tier: MemTier, h: TargetProfile) -> int:
     return traffic + latency
 
 
-def place(module: Module, h: TargetProfile, placer: FrozenPlacer = DEFAULT_PLACER) -> Placement:
+def silicon_tier_capacity() -> dict[MemTier, int]:
+    """The real machine's fast-tier byte capacities (from `bcir.silicon`, read off
+    /sys cache topology), falling back to the modeled defaults on a host that does
+    not expose them. Pass the result to `place(tier_capacity=...)` to size SRAM
+    promotion to the actual cache, not an assumption."""
+    from ..silicon import tier_capacities
+    real = tier_capacities()
+    if not real:
+        return dict(_FAST_CAPACITY)
+    return {t: real.get(t, _FAST_CAPACITY[t]) for t in _FAST_TIERS}
+
+
+def place(module: Module, h: TargetProfile, placer: FrozenPlacer = DEFAULT_PLACER,
+          tier_capacity: dict | None = None) -> Placement:
     """Plan resource placement: rank by predicted heat, fill the fast tiers by
     capacity, and admit a relocation only when it fits and strictly lowers modeled
     memory cost (gains-only). Cold/large resources stay in DRAM, or go to HBM when
-    that is bandwidth-cheaper than their declared tier."""
+    that is bandwidth-cheaper than their declared tier. `tier_capacity` overrides the
+    fast-tier byte budgets (pass `silicon_tier_capacity()` for the real cache sizes;
+    defaults to the modeled `_FAST_CAPACITY`)."""
+    caps = {t: (tier_capacity or _FAST_CAPACITY).get(t, _FAST_CAPACITY[t]) for t in _FAST_TIERS}
     profiles = profile_resources(module)
     tiers: dict[int, MemTier] = {rid: p.declared_tier for rid, p in profiles.items()}
     moved: list[int] = []
@@ -183,7 +199,7 @@ def place(module: Module, h: TargetProfile, placer: FrozenPlacer = DEFAULT_PLACE
 
     # Hottest first; ties broken by rid for determinism.
     ranked = sorted(profiles.values(), key=lambda p: (-placer.heat(p), p.rid))
-    remaining = dict(_FAST_CAPACITY)
+    remaining = dict(caps)
 
     for p in ranked:
         default_cost = _mem_cost(p, p.declared_tier, h)
@@ -193,13 +209,13 @@ def place(module: Module, h: TargetProfile, placer: FrozenPlacer = DEFAULT_PLACE
         # and lowers modeled cost. (Cold data never evicts hot data from SRAM.)
         if hot:
             for t in _FAST_TIERS:
-                if p.size_bytes <= _FAST_CAPACITY[t] and remaining[t] >= p.size_bytes:
+                if p.size_bytes <= caps[t] and remaining[t] >= p.size_bytes:
                     cost = _mem_cost(p, t, h)
                     if cost < best_cost:
                         best_tier, best_cost = t, cost
                         break
         # COLD/large that cannot be cached: prefer the bandwidth tier when cheaper.
-        if best_tier == p.declared_tier and p.size_bytes > _FAST_CAPACITY[MemTier.L3]:
+        if best_tier == p.declared_tier and p.size_bytes > caps[MemTier.L3]:
             hbm = _mem_cost(p, _BANDWIDTH_TIER, h)
             if hbm < best_cost:
                 best_tier, best_cost = _BANDWIDTH_TIER, hbm
