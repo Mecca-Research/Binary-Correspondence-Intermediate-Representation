@@ -55,6 +55,7 @@ _MODULES = [
     "bcir.tests.test_memory_model",
     "bcir.tests.test_codegen",
     "bcir.tests.test_async",
+    "bcir.tests.test_perf",
 ]
 
 
