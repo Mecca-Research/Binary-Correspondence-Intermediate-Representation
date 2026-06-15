@@ -1,255 +1,90 @@
-"""K_BCIR: the IR-level cost algebra and min-plus realization optimizer (BCIR-3)."""
+"""K_BCIR: the IR-level cost algebra and min-plus realization optimizer (BCIR-3).
 
-from .cost import (
-    CostVector,
-    HProfile,
-    MemoryHierarchy,
-    MemTier,
-    TARGETS,
-    TargetProfile,
-    Theta,
-    Tier,
-)
-# NOTE: the calibration modules `kbcir.microbench` and `kbcir.bayescal` are
-# deliberately NOT re-exported here -- microbench doubles as a CLI
-# (`python -m bcir.kbcir.microbench`) and importing either at package scope would
-# shadow that entry point. Import them directly:
-#     from bcir.kbcir.microbench import CalibratedProfile, calibrate_profile, ...
-#     from bcir.kbcir.bayescal import bayes_calibrate, abc_calibrate, ...
-from .portfolio import (
-    PolicyPortfolio,
-    PortfolioEntry,
-    ReplayCertificate,
-    classify,
-    episodes_from,
-    replay_gate,
-)
-from .moegate import (
-    FrozenGate,
-    GNNGate,
-    freeze,
-    gate_replay_gate,
-    ledger_labels,
-    train_gate,
-)
-from .provenance import (
-    ProvenanceManifest,
-    ProvenanceMismatch,
-    build_manifest,
-    manifest_for,
-    replay,
-    reproduces,
-)
-from .egraph import (
-    EGraph,
-    EGraphResult,
-    Expr,
-    module_exprs,
-    optimize_expr,
-    saturate,
-    shared_blocks,
-)
-# NOTE: `kbcir.memory.freeze` (freeze an expression into a memory module) is
-# deliberately NOT re-exported here -- the package already exports
-# `moegate.freeze` (freeze a learned gate). Import the memory producer directly:
-#     from bcir.kbcir.memory import freeze
-from .memory import (
-    DEFAULT_BUDGET,
-    MemoryModule,
-    UnsaturatedMemory,
-    fingerprint,
-    freeze_module,
-    from_result,
-    is_idempotent,
-    memory_artifacts,
-    reresolve,
-    try_freeze,
-)
-from .twotruth import (
-    Decision,
-    Graded,
-    GradedTruthLeak,
-    assert_classical,
-    decide,
-    from_conformal,
-    from_regret,
-    from_soft,
-    g_and,
-    g_not,
-    g_or,
-    is_classical,
-)
-from .mapping import (
-    CommutingSquare,
-    MappingFunction,
-    identity_dimmap,
-    support,
-)
-from .operad import (
-    EnrichedOp,
-    EnrichedOperad,
-    TwoCell,
-    enrich_memory,
-    f_index,
-    f_label,
-)
-from .calibloop import (
-    CalibrationCertificate,
-    close_loop,
-    measure_and_close,
-    rescore_plan,
-)
-from .throttle import (
-    AmortizationCertificate,
-    ThrottleReport,
-    TIER_BUDGET,
-    certify,
-    measure_inference_cost,
-)
-from .accel import (
-    AccelCertificate,
-    FrozenRanker,
-    LearnedRanker,
-    SearchStats,
-    accelerator_certificate,
-    greedy_order,
-    identity_order,
-    optimize_ordered,
-    ranker_samples,
-    train_ranker,
-    worst_order,
-)
-from .realize import Candidate, ChosenStep, RealizationResult, candidates_for, optimize
-from .softdp import (
-    SoftResult,
-    free_energy,
-    grad_free_energy_wrt_weights,
-    softselect,
-    temperature_sweep,
-)
-from .regret import (
-    BoundaryVerdict,
-    RegretLedger,
-    RegretMeasurement,
-    boundary_report,
-    ledger_from_episodes,
-    measure_regret,
-)
-from .rcsp import Budget, Infeasible, feasible, optimize_constrained, pareto_plans, plan_resources
-from .semiring import dag_shortest_path
-from .weights import PERF, POLICIES, Policy, weights
+Imports are **lazy** (PEP 562): the public names below resolve to their submodule
+on first access, so the simple plan -> emit path (`cost` + `realize` + `weights` +
+`rcsp` + `semiring` + `provenance`) does not eagerly drag in the learned/categorical
+research stack (egraph / memory / twotruth / operad / calibloop / throttle / accel /
+softdp / regret / portfolio / moegate / mapping). This keeps startup latency low for
+the lowest, simplest use -- planning a kernel -- while the full API stays available
+on demand. `from bcir.kbcir import optimize` and `bcir.kbcir.EGraph` both still work.
 
-__all__ = [
-    "CostVector",
-    "HProfile",
-    "MemoryHierarchy",
-    "MemTier",
-    "TARGETS",
-    "TargetProfile",
-    "Theta",
-    "Tier",
-    "Candidate",
-    "ChosenStep",
-    "RealizationResult",
-    "candidates_for",
-    "optimize",
-    "Budget",
-    "Infeasible",
-    "feasible",
-    "optimize_constrained",
-    "pareto_plans",
-    "plan_resources",
-    "PolicyPortfolio",
-    "PortfolioEntry",
-    "ReplayCertificate",
-    "classify",
-    "episodes_from",
-    "replay_gate",
-    "FrozenGate",
-    "GNNGate",
-    "freeze",
-    "gate_replay_gate",
-    "ledger_labels",
-    "train_gate",
-    "ProvenanceManifest",
-    "ProvenanceMismatch",
-    "build_manifest",
-    "manifest_for",
-    "replay",
-    "reproduces",
-    "EGraph",
-    "EGraphResult",
-    "Expr",
-    "module_exprs",
-    "optimize_expr",
-    "saturate",
-    "shared_blocks",
-    "DEFAULT_BUDGET",
-    "MemoryModule",
-    "UnsaturatedMemory",
-    "fingerprint",
-    "freeze_module",
-    "from_result",
-    "is_idempotent",
-    "memory_artifacts",
-    "reresolve",
-    "try_freeze",
-    "Decision",
-    "Graded",
-    "GradedTruthLeak",
-    "assert_classical",
-    "decide",
-    "from_conformal",
-    "from_regret",
-    "from_soft",
-    "g_and",
-    "g_not",
-    "g_or",
-    "is_classical",
-    "CommutingSquare",
-    "MappingFunction",
-    "identity_dimmap",
-    "support",
-    "EnrichedOp",
-    "EnrichedOperad",
-    "TwoCell",
-    "enrich_memory",
-    "f_index",
-    "f_label",
-    "CalibrationCertificate",
-    "close_loop",
-    "measure_and_close",
-    "rescore_plan",
-    "AmortizationCertificate",
-    "ThrottleReport",
-    "TIER_BUDGET",
-    "certify",
-    "measure_inference_cost",
-    "AccelCertificate",
-    "FrozenRanker",
-    "LearnedRanker",
-    "SearchStats",
-    "accelerator_certificate",
-    "greedy_order",
-    "identity_order",
-    "optimize_ordered",
-    "ranker_samples",
-    "train_ranker",
-    "worst_order",
-    "BoundaryVerdict",
-    "RegretLedger",
-    "RegretMeasurement",
-    "boundary_report",
-    "ledger_from_episodes",
-    "measure_regret",
-    "SoftResult",
-    "free_energy",
-    "grad_free_energy_wrt_weights",
-    "softselect",
-    "temperature_sweep",
-    "dag_shortest_path",
-    "PERF",
-    "POLICIES",
-    "Policy",
-    "weights",
-]
+Deliberately NOT re-exported (import the submodule directly):
+    from bcir.kbcir.microbench import calibrate_profile, ...   # doubles as a CLI
+    from bcir.kbcir.bayescal import bayes_calibrate, ...
+    from bcir.kbcir.memory import freeze                        # `freeze` here == moegate.freeze
+"""
+
+from __future__ import annotations
+
+import importlib
+import importlib.util
+
+# name -> submodule. The grouping is the old eager `from .mod import (...)` block,
+# now resolved on demand. (The single source of truth for what each module exports
+# to the package namespace.)
+_EXPORTS: dict[str, tuple[str, ...]] = {
+    "cost": ("CostVector", "HProfile", "MemoryHierarchy", "MemTier", "TARGETS",
+             "TargetProfile", "Theta", "Tier"),
+    "portfolio": ("PolicyPortfolio", "PortfolioEntry", "ReplayCertificate", "classify",
+                  "episodes_from", "replay_gate"),
+    "moegate": ("FrozenGate", "GNNGate", "freeze", "gate_replay_gate", "ledger_labels",
+                "train_gate"),
+    "provenance": ("ProvenanceManifest", "ProvenanceMismatch", "build_manifest",
+                   "manifest_for", "replay", "reproduces"),
+    "egraph": ("EGraph", "EGraphResult", "Expr", "module_exprs", "optimize_expr",
+               "saturate", "shared_blocks"),
+    "memory": ("DEFAULT_BUDGET", "MemoryModule", "UnsaturatedMemory", "fingerprint",
+               "freeze_module", "from_result", "is_idempotent", "memory_artifacts",
+               "reresolve", "try_freeze"),
+    "twotruth": ("Decision", "Graded", "GradedTruthLeak", "assert_classical", "decide",
+                 "from_conformal", "from_regret", "from_soft", "g_and", "g_not", "g_or",
+                 "is_classical"),
+    "mapping": ("CommutingSquare", "MappingFunction", "identity_dimmap", "support"),
+    "operad": ("EnrichedOp", "EnrichedOperad", "TwoCell", "enrich_memory", "f_index",
+               "f_label"),
+    "calibloop": ("CalibrationCertificate", "close_loop", "measure_and_close",
+                  "rescore_plan"),
+    "throttle": ("AmortizationCertificate", "ThrottleReport", "TIER_BUDGET", "certify",
+                 "measure_inference_cost"),
+    "accel": ("AccelCertificate", "FrozenRanker", "LearnedRanker", "SearchStats",
+              "accelerator_certificate", "greedy_order", "identity_order",
+              "optimize_ordered", "ranker_samples", "train_ranker", "worst_order"),
+    "realize": ("Candidate", "ChosenStep", "RealizationResult", "candidates_for",
+                "optimize"),
+    "softdp": ("SoftResult", "free_energy", "grad_free_energy_wrt_weights", "softselect",
+               "temperature_sweep"),
+    "regret": ("BoundaryVerdict", "RegretLedger", "RegretMeasurement", "boundary_report",
+               "ledger_from_episodes", "measure_regret"),
+    "rcsp": ("Budget", "Infeasible", "feasible", "optimize_constrained", "pareto_plans",
+             "plan_resources"),
+    "semiring": ("dag_shortest_path",),
+    "weights": ("PERF", "POLICIES", "Policy", "weights"),
+}
+
+_NAME_TO_MOD: dict[str, str] = {name: mod for mod, names in _EXPORTS.items() for name in names}
+
+__all__ = sorted(_NAME_TO_MOD)
+
+# `weights` is both an exported function and a submodule name. Bind the function
+# eagerly so it is not shadowed: Python will not overwrite an existing parent
+# attribute when the `weights` submodule is later imported, but an unbound name
+# would be. (weights.py is tiny and on the core planning path anyway.)
+from .weights import weights  # noqa: E402
+
+
+def __getattr__(name: str):
+    """Resolve an exported name (or a submodule) lazily on first access (PEP 562)."""
+    mod = _NAME_TO_MOD.get(name)
+    if mod is not None:
+        value = getattr(importlib.import_module(f".{mod}", __name__), name)
+        globals()[name] = value  # cache so subsequent access skips __getattr__
+        return value
+    if importlib.util.find_spec(f"{__name__}.{name}") is not None:
+        submodule = importlib.import_module(f".{name}", __name__)
+        globals()[name] = submodule
+        return submodule
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(__all__) | set(globals()))

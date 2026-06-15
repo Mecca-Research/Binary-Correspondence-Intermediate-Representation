@@ -201,3 +201,65 @@ to close that gap, not add more intelligence.
 4. **Complexity / bus factor** — theory ahead of load-bearing utility.
    Mitigation: prioritize substrate + measurement; let new intelligence land only
    behind a measured win.
+
+## 6. Performance audit (2026-06-15): the simplest-process tax
+
+The recurring failure mode of complexity-first systems is that the machinery built
+to win at scale *loses at the simplest levels* — the fixed cost of the framework
+dominates the trivial job. We audited BCIR end to end for this and found one large,
+reproducible bottleneck and one real-but-nuanced one. Guards (structural, not
+timing) live in `bcir/tests/test_perf.py`.
+
+### 6.1 The bottleneck: startup/import overhead (fixed — the headline)
+
+The dominant cost of the simplest use — plan a program and emit a kernel — was
+never the planning math (`optimize()` ≈ **0.05 ms**) or the emitted loop, but the
+**fixed import cost** of eagerly loading the Phase-13..26 learned/categorical
+research stack (egraph / memory / twotruth / operad / calibloop / accel / regret /
+softdp / moegate / portfolio / throttle / mapping / bayescal / microbench) and the
+GEM executor (concurrency / overlap / schedule / async) — none of which the
+`plan -> emit` path touches. To compute `C = A + B` you paid for the entire brain.
+
+**Fix:** the `bcir.kbcir`, `bcir.lower`, and `bcir.gem` packages now import lazily
+(PEP 562 module `__getattr__`); the public API is unchanged (`from bcir.kbcir
+import optimize`, `bcir.kbcir.EGraph`, and submodule imports all still work), but a
+name resolves to its submodule only on first access. Names that collide with a
+same-named submodule (`weights` / `stackify` / `execute`) are bound eagerly so the
+function wins. Measured cold-import latency (min of 7 runs, clang-18 host):
+
+| import | before | after | Δ |
+|---|---|---|---|
+| `bcir.kbcir` (planner) | 62.2 ms | 31.7 ms | **−49%** |
+| `bcir.api` (public facade) | 88.2 ms | 58.7 ms | **−33%** |
+| `bcir.bench` | 89.4 ms | 55.4 ms | **−38%** |
+
+For a CLI/driver invocation that plans one simple kernel this is the dominant term
+(`python -m bcir.run vector_add` cold ≈ 67 ms total). The residual is unavoidable
+stdlib floor (`dataclasses`→`inspect`→`ast`, `re`, `subprocess`, `tempfile`).
+`test_perf.py` asserts the heavy modules stay *unloaded* on the simple path — a
+deterministic guard so the tax cannot creep back as the system grows.
+
+### 6.2 The nuance: elementwise loop form is bandwidth-bound (documented)
+
+Multi-trial timing (median of 9, cache-resident N) shows the portable C kernel's
+*loop form* is measured-neutral: an elementwise kernel is memory-bandwidth-bound,
+and a modern `-O2`/`-O3` vectorizer realizes the selected lane width from an
+idiomatic loop on its own. At cache-resident sizes (N≈4k–16k) the **hand-blocked**
+width-W loop the C backend emits actually trails a plain loop by ~12% at `-O2`/`-O3`
+— the fixed-trip inner loop *caps* the compiler's vector interleave. At streaming
+sizes (≥1M) and at `-O1` it is neutral. So the explicit blocking is not earning the
+win the old bench narrative claimed (now corrected in `bcir/bench.py`).
+
+**Why this is not a one-line fix:** the width cap is *load-bearing*. `Theta.hot`
+deliberately selects a **narrower** lane (vec8 on an AVX-512 part) to dodge the
+AVX-512 downclock — a thermal/power decision. Capping the loop at the selected
+width is exactly what honors it; a plain loop would let the compiler widen back to
+vec16 and discard the throttle. The principled fix is therefore *width-aware*:
+emit the idiomatic (uncapped) loop only when the selected width **equals** the
+hardware's widest lane (the go-fast case), and keep the cap when the width is a
+deliberate sub-maximal throttle. That threads the hardware lane width through
+`emit_kernel_c` and redefines the R12 C-lowering law (lane geometry preserved =
+the recorded width is honored, not hand-blocked unconditionally) — a spine-level
+change deserving its own focused PR. The real, compiler-unreachable wins remain
+**gather avoidance** (`compare_gather`/`reduce`/`strided`), which are algorithmic
+(contiguous vs random access), not loop-form, and are unaffected.

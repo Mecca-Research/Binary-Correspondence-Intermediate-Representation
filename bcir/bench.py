@@ -6,13 +6,18 @@ cost-model-selected lane geometry actually win? It compiles BCIR's selected
 realization and a naive baseline (the scalar width-1 kernel) with the host
 toolchain, times both, and reports the measured speedup.
 
-The niche it targets is the **driver-as-compiler** case: a resident toolchain
-compiles fast (a low opt level), so the explicit lane geometry BCIR emits -- the
-width-W loop -- delivers SIMD/ILP that the naive scalar kernel does not get from
-the compiler alone. At aggressive `-O3` the compiler's own vectorizer closes the
-gap; at the `-O1`/`-O2` a JIT actually uses, BCIR's choice is measurably faster.
-This is the first measured evidence that the cost model earns its keep, not a
-claim of replacing LLVM's backend.
+Honest finding (the performance audit, docs/BCIR_STRATEGY_AND_ROADMAP.md): for a
+plain elementwise kernel the *loop form* is measured-neutral -- the kernel is
+memory-bandwidth-bound and a modern `-O2`/`-O3` vectorizer realizes the selected
+lane width from an idiomatic loop on its own, so width-W blocking is within
+measurement noise of the scalar baseline (and, at cache-resident sizes, the
+hand-blocked loop can even trail the plain loop by capping the compiler's
+interleave). The lane width is therefore best understood as the cost model's
+*recommendation to the backend* (and, when narrower than the hardware lane, a
+deliberate thermal/power throttle), not a hand-coded speedup. BCIR's *measured*
+wins come from choices the compiler cannot make for you: **gather avoidance**
+(contiguous vs random access -- `compare_gather` ~6.5x, `compare_reduce` ~16x,
+`compare_strided` ~1.4x) and budget feasibility, not loop blocking.
 
 Offline tooling (it shells out to a compiler); never the hot path. Timings are
 environment-dependent -- the rail reports the measured number, it does not pin it.

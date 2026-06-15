@@ -130,3 +130,12 @@
   informational; the training MLIR grader now grades against the matrix's
   `LLVM_SUFFIX` major instead of a hard-pinned 18, and the 18-calibrated corpus
   grades clean on 19).
+- 2026-06-15: **Performance audit** (strategy doc §6). Found the simplest-process
+  tax was fixed *import* overhead — planning a kernel eagerly loaded the whole
+  Phase-13..26 research stack + GEM executor. Made `bcir.kbcir` / `bcir.lower` /
+  `bcir.gem` import lazily (PEP 562; public API unchanged): `bcir.api` cold import
+  −33%, `bcir.kbcir` −49%. Added structural perf guards (`bcir/tests/test_perf.py`)
+  so the heavy stack stays unloaded on the plan→emit path. Documented the
+  elementwise loop-form finding (bandwidth-bound, measured-neutral; the width cap
+  is a load-bearing thermal throttle) and corrected the `bench.py` narrative; the
+  width-aware C codegen + R12 refinement is a tracked follow-up.
