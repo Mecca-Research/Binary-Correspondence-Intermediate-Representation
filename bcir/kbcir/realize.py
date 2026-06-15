@@ -139,6 +139,7 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
             Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd),
         ]
 
+
     cands: list[Candidate] = []
     if sc in (StrideClass.UNIT, StrideClass.SCALAR):
         for w in h.widths():

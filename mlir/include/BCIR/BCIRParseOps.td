@@ -11,7 +11,7 @@
 include "BCIR/BCIRDialect.td"
 include "mlir/IR/SymbolInterfaces.td"
 
-def BCIR_ParseGrammarOp : BCIR_Op<"parse.grammar", [Symbol, NoTerminator]> {
+def BCIR_ParseGrammarOp : BCIR_Op<"parse.grammar", [Symbol, SymbolTable, NoTerminator]> {
   let summary = "Structured-text grammar container";
   let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$syntax, StrAttr:$start_symbol);
   let regions = (region SizedRegion<1>:$body);

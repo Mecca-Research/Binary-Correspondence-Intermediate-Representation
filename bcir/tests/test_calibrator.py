@@ -54,6 +54,35 @@ def test_broker_with_no_subscribers_is_a_noop():
     Broker().emit(DataDNA(segment_id="s", claim_id=0))         # does not raise
 
 
+def test_broker_bridges_to_kafka_and_local_sinks():
+    # The production wiring: the runtime publishes once to the broker, which fans
+    # out to a local sink (the calibrator's feed) AND a KafkaSink (the production
+    # transport) simultaneously. Tested with a duck-typed producer (no real broker).
+    import json
+
+    from bcir.telemetry import KafkaSink
+
+    class FakeProducer:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, topic, value=None):
+            self.sent.append((topic, value))
+
+        def flush(self):
+            pass
+
+    fp = FakeProducer()
+    b = Broker()
+    local = b.subscribe(ListSink())                            # local calibrator feed
+    b.subscribe(KafkaSink(fp, topic="bcir.dna"))               # production bridge
+    b.emit(DataDNA(segment_id="s", claim_id=9, thermal=55))
+    b.flush()
+    assert len(local.events) == 1                              # local subscriber got it
+    assert len(fp.sent) == 1 and fp.sent[0][0] == "bcir.dna"
+    assert json.loads(fp.sent[0][1].decode())["claim_id"] == 9  # serialized to Kafka
+
+
 # --- the loop driven by the trained calibrator (closing the last half) -----------
 
 def test_frozen_calibrator_drives_the_loop():

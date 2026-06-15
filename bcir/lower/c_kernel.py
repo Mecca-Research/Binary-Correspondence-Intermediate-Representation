@@ -30,7 +30,7 @@ import subprocess
 import tempfile
 
 from ..gem import hydrate
-from ..model import Module, Opcode
+from ..model import Module, Opcode, StrideClass
 from ..kbcir.realize import RealizationResult
 from .llvm import find_elementwise
 
@@ -179,6 +179,51 @@ def emit_reduce_c(module: Module, result: RealizationResult, fn_name: str = "bci
         f"  {ctype} acc = 0;\n"
         f"  for (size_t i = 0; i < n; ++i) acc += {read};\n"
         f"  return acc;\n"
+        f"}}\n"
+    )
+
+
+def find_strided(module: Module, result: RealizationResult) -> tuple:
+    """Return (claim, candidate) for the selected STRIDED claim (a strided-vs-gather
+    choice -- the cost model picks the direct strided realization over GGG)."""
+    by_claim = result.by_claim()
+    for ph in module.phases:
+        for claim in ph.claims:
+            if claim.stride_class == StrideClass.STRIDED:
+                cand = by_claim.get(claim.id)
+                if cand is not None:
+                    return claim, cand
+    raise NotImplementedError("no strided claim selected in this plan")
+
+
+def emit_strided_c(module: Module, result: RealizationResult, fn_name: str = "bcir_strided",
+                   elem: str = "f32", gather: bool | None = None) -> str:
+    """Lower a STRIDED claim `Y[i] = X[i*k]` to C: the **direct strided** access
+    (the cost model's pick) or the **gather** alternative `Y[i] = X[idx[i]]` (a
+    gather-unaware lowering, idx[i] = i*k -- the same elements through indexed
+    loads). A non-reduction gather avoidance: BCIR knows the access is strided, so
+    it emits direct addressing and avoids the slower gather instruction.
+    `gather=None` follows the selected candidate."""
+    claim, cand = find_strided(module, result)
+    if gather is None:
+        gather = cand.name == "gather"
+    k = max(1, claim.stride_k)
+    ctype = _ctype(elem)
+    inc = "#include <stddef.h>\n" + ("#include <stdint.h>\n" if elem == "i32" else "")
+    if gather:
+        return (
+            f"/* BCIR -> strided lowering (gather; K_BCIR-selected={cand.name}). */\n"
+            f"{inc}\n"
+            f"void {fn_name}(const {ctype} *restrict X, const long *restrict idx,\n"
+            f"             {ctype} *restrict Y, size_t n) {{\n"
+            f"  for (size_t i = 0; i < n; ++i) Y[i] = X[idx[i]];\n"
+            f"}}\n"
+        )
+    return (
+        f"/* BCIR -> strided lowering (direct, stride {k}; K_BCIR-selected={cand.name}). */\n"
+        f"{inc}\n"
+        f"void {fn_name}(const {ctype} *restrict X, {ctype} *restrict Y, size_t n, size_t k) {{\n"
+        f"  for (size_t i = 0; i < n; ++i) Y[i] = X[i * k];\n"
         f"}}\n"
     )
 

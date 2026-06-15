@@ -41,7 +41,7 @@ def BCIR_ModuleOp : BCIR_Op<"module",
   let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
 }
 
-def BCIR_RegistryOp : BCIR_Op<"registry", [NoTerminator, Symbol]> {
+def BCIR_RegistryOp : BCIR_Op<"registry", [NoTerminator, Symbol, SymbolTable]> {
   let summary = "A registry namespace of resources";
   let arguments = (ins SymbolNameAttr:$sym_name);
   let regions = (region SizedRegion<1>:$body);

@@ -15,6 +15,7 @@ from bcir.bench import (
     compare,
     compare_gather,
     compare_reduce,
+    compare_strided,
     measure,
 )
 from bcir.examples import gather_reduce, saxpy_strided, vector_add
@@ -115,3 +116,17 @@ def test_reduce_gather_avoidance_is_correct_and_measured():
     # observed ~17x; assert a conservative 2x floor (random-load reduction is
     # dominated by gather latency, so the win is large and robust).
     assert c.avoidance_wins and c.speedup_milli >= 2000
+
+
+def test_strided_gather_avoidance_is_measured_non_reduction():
+    # saxpy_strided: the cost model picks the direct strided realization over the
+    # gather; a non-reduction gather avoidance (BCIR knows the stride).
+    m = saxpy_strided(1024)
+    r = optimize(m, TARGETS["x86_avx512"], Theta.cool())
+    assert r.steps[0].candidate.name == "strided"     # gather avoided by selection
+    if not bench_available():
+        return
+    c = compare_strided("saxpy_strided", opt="-O2", n=1 << 22, reps=30)
+    assert c.selected == "strided" and c.correct       # identical Y
+    # observed ~1.4x (the gather-instruction overhead); conservative 1.1x floor.
+    assert c.avoidance_wins and c.speedup_milli >= 1100

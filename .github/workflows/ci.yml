@@ -124,17 +124,29 @@ jobs:
         run: bash llvm-training/tools/smoke-bolt.sh
 
   mlir-rail-validate:
-    name: BCIR MLIR rail (tblgen + IRDL + bcir-opt)
+    name: BCIR MLIR rail (LLVM ${{ matrix.llvm }})
     runs-on: ubuntu-latest
+    # Multi-version matrix: LLVM 18 and 19 are both validated, gating rails. The
+    # forward-compat sweep is done -- the Symbol-container ops (registry /
+    # kbcir.plan / gem.stream_pack / parse.grammar / fsm.machine / binary.format)
+    # carry the SymbolTable trait, so LLVM 19's stricter "symbol's parent must be a
+    # SymbolTable" verifier is satisfied (the trait is a no-op on the lax LLVM 18).
+    # The scripts auto-resolve the toolchain (build_mlir.sh picks the installed
+    # MLIR; FileCheck-NN is searched; the training grader grades against the
+    # LLVM_SUFFIX major), so adding a version is a one-line change.
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["18", "19"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install MLIR 18 toolchain + dev libs
+      - name: Install MLIR ${{ matrix.llvm }} toolchain + dev libs
         run: |
           sudo apt-get update
-          sudo apt-get install -y mlir-18-tools libmlir-18-dev llvm-18-dev \
-            llvm-18-tools cmake ninja-build
+          sudo apt-get install -y mlir-${{ matrix.llvm }}-tools libmlir-${{ matrix.llvm }}-dev \
+            llvm-${{ matrix.llvm }}-dev llvm-${{ matrix.llvm }}-tools cmake ninja-build
 
       - name: Validate ODS dialect family (mlir-tblgen)
         run: bash tools/wsl/tblgen_check.sh
@@ -153,7 +165,7 @@ jobs:
 
       - name: Grade training MLIR conversion and LLVM translation tiers (required tools)
         env:
-          LLVM_SUFFIX: "-18"
+          LLVM_SUFFIX: "-${{ matrix.llvm }}"
         run: |
           bash llvm-training/tools/verify-mlir-examples.sh --require-tools
           python3 llvm-training/tools/grade-exercises.py --self-test --format json --output build/mlir-rail-training-scores.json

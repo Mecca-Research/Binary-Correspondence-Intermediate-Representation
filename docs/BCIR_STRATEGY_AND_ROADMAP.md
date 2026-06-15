@@ -86,12 +86,19 @@ to close that gap, not add more intelligence.
    §13) and a **live broker** (`telemetry.Broker`, pub/sub fan-out: the runtime
    publishes data-DNA, the calibrator subscribes). The frozen calibrator drives
    `close_loop` end to end. **Loop fully closed.** ✔
-2. **C++/MLIR GEM passes against the oracle.** ✔ (this milestone) — the five
-   declared GEM passes are implemented MLIR-native and cross-checked against the
-   oracle's pinned constants. Next: widen them past the single-claim example
-   (multi-claim batching/fusion, real durations).
-3. **Widen the corpus** — reductions, real tiled matmul, scan; per-target
-   worked-example parity beyond `vector_add`.
+2. **C++/MLIR GEM passes against the oracle.** ✔ — the five declared GEM passes
+   are MLIR-native and cross-checked. Dual-rail parity extended to Phase-23+:
+   the **R7 reduction-write rule mirrored in C++** (`-bcir-verify`) with a
+   reduction `.mlir` example (`gather_reduce_ct1.mlir`). A **multi-version LLVM CI
+   matrix** now runs with **LLVM 18 and 19 both gating**: the `SymbolTable`
+   forward-compat sweep landed (the six Symbol-container ops carry the trait), so
+   19's stricter Symbol verifier is satisfied and the rail is green, not
+   informational.
+3. **Widen the corpus.** ◑ — `gather_reduce` (reduction gather-avoidance, ~16×),
+   `saxpy_strided` (strided gather-avoidance, ~1.4×), `fused_chain` (overlap +
+   the fusion discount), `scan_chain` (a serializing dependency chain),
+   per-target parity pinned (saxpy/histogram). Remaining: real tiled matmul/scan
+   codegen, joint multi-claim optimization.
 
 ### Mid term (one target, end to end)
 4. **A first-class C backend** (kernel lingua franca). ✔ — `lower.c_kernel` emits

@@ -11,7 +11,7 @@
 include "BCIR/BCIRDialect.td"
 include "mlir/IR/SymbolInterfaces.td"
 
-def BCIR_FSMMachineOp : BCIR_Op<"fsm.machine", [Symbol, NoTerminator]> {
+def BCIR_FSMMachineOp : BCIR_Op<"fsm.machine", [Symbol, SymbolTable, NoTerminator]> {
   let summary = "Finite-state or pushdown transducer machine";
   let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$kind,
                        FlatSymbolRefAttr:$input_stream,

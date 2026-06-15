@@ -11,7 +11,7 @@
 include "BCIR/BCIRDialect.td"
 include "mlir/IR/SymbolInterfaces.td"
 
-def BCIR_BinaryFormatOp : BCIR_Op<"binary.format", [Symbol, NoTerminator]> {
+def BCIR_BinaryFormatOp : BCIR_Op<"binary.format", [Symbol, SymbolTable, NoTerminator]> {
   let summary = "Binary file or packet format container";
   let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$endianness, I64Attr:$alignment_bits);
   let regions = (region SizedRegion<1>:$body);
