@@ -113,6 +113,34 @@ class RegretSensor:
         return sorted(out, key=lambda d: d.path)
 
 
+DEFAULT_MARGIN_THRESHOLD = 64    # Q8 ranker margin below which a column is "uncertain"
+
+
+def sense_by_ranker(ranker, blocks, *, margin_threshold: int = DEFAULT_MARGIN_THRESHOLD,
+                    budget: int = DEFAULT_HIRES_BUDGET) -> list[TelemetryDecision]:
+    """A-priori telemetry gating by the LearnedRanker's predictive confidence (the
+    complement of `RegretSensor.sense`, which gates a posteriori on observed
+    variance). For each block `(path, cands, scores)` the ranker reports its decision
+    margin; a wide margin (>= threshold) means the planner already knows the optimal
+    realization, so telemetry stays **off** (the noop -- you do not pay to confirm
+    what the model is sure of). A narrow margin means the candidates look alike, so
+    the column is instrumented at high resolution -- narrowest margin first, capped at
+    `budget`. Deterministic; sorted by path. (`cv_milli` carries the margin here.)"""
+    scored = [(path, ranker.confidence(cands, scores)) for path, cands, scores in blocks]
+    ranked = sorted(scored, key=lambda t: (t[1], t[0]))     # least-confident first
+    out: list[TelemetryDecision] = []
+    hires = 0
+    for path, margin in ranked:
+        if margin < margin_threshold and hires < budget:
+            res = "high"
+            hires += 1
+        else:
+            res = "off"                                      # confident: no telemetry
+        out.append(TelemetryDecision(path=path, resolution=res, cv_milli=margin,
+                                     samples=0))
+    return sorted(out, key=lambda d: d.path)
+
+
 def total_overhead(decisions: list[TelemetryDecision]) -> int:
     return sum(d.overhead for d in decisions)
 

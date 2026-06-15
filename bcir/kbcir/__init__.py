@@ -60,9 +60,10 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
     "semiring": ("dag_shortest_path",),
     "weights": ("PERF", "POLICIES", "Policy", "weights"),
     "allocator": ("ResourceProfile", "FrozenPlacer", "Placement", "DEFAULT_PLACER",
-                  "profile_resources", "place", "train_placer", "silicon_tier_capacity"),
+                  "profile_resources", "place", "train_placer", "silicon_tier_capacity",
+                  "Pool", "PoolPlan", "live_intervals", "pool_plan"),
     "sensing": ("PathSamples", "RegretSensor", "TelemetryDecision", "total_overhead",
-                "full_resolution_overhead"),
+                "full_resolution_overhead", "sense_by_ranker", "DEFAULT_MARGIN_THRESHOLD"),
 }
 
 _NAME_TO_MOD: dict[str, str] = {name: mod for mod, names in _EXPORTS.items() for name in names}

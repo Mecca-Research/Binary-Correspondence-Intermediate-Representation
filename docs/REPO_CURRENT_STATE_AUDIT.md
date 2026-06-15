@@ -194,3 +194,29 @@
   the sandbox limits and the exact bare-metal rig (PMU + `intel_pstate=passive`
   userspace governor + root + RAPL) needed to measure the DVFS power-savings claim —
   which we do **not** assert until measured. +5 oracle tests (434 total).
+- 2026-06-15: **Second pass over the adaptive layer — audited 8 proposed
+  refinements, shipped the ones that hold gains, excluded the ones that don't.**
+  Verdicts: (1) Persistent EGraph + pivot — **already DONE** (`ResidentEGraph`), no
+  change. (2) Uncertainty-gated sensing — **shipped the delta**:
+  `accel.FrozenRanker.confidence` (top-2 z-margin) + `sensing.sense_by_ranker`
+  (a-priori gating: instrument only columns the ranker can't resolve). (3)
+  Continuous routing — **excluded**: a soft distribution already exists
+  (`moegate.route_fuzzy`); an execution-layer blend is redundant compute (recomputes
+  the answer N×) — exploration value only, **no steady-state gain**, not shipped. (4)
+  Predictive allocator — **shipped** `allocator.pool_plan`/`live_intervals`
+  (liveness interval-partitioning: disjoint-lifetime tensors share an arena ⇒
+  peak ≤ naive; gains-only modeled footprint win). (5) CIM/PIM partitioning —
+  **shipped** `c_kernel.optimize_spatial` + `is_pim_target` (a `pim` ISA-feature
+  target binds reductions to memory, modeled transport-saved; reuses the R14 law;
+  real PIM emitter is next-phase). (6) JIT specialist — **measured, no gain**:
+  specialist-vs-generic = generic/spec ≈ 1.0 on bandwidth-bound elementwise (same
+  finding as the loop-form audit), so it is **not** wired as a perf path — kept only
+  as a correctness-preserving option (`test_specialist_is_correctness_preserving_only`).
+  (7) Zero-copy ring — **shipped the C side**: `memory_model.emit_ring_header_c`
+  (atomic release-store producer via `hazard_to_ordering`) + `telemetry.parse_shared_ring`;
+  measured C-writes/Python-reads the same mmap, no syscall/serialization. (8)
+  Phase-aware DVFS — **shipped** `gem.schedule.schedule_power_rail` (per-Slot clock
+  over the placed timeline; energy figure modeled — no RAPL in-sandbox). All
+  deterministic, opt-in, off the simple path (test_perf guard). +13 tests (447
+  total). No new MLIR laws needed (these are planning/runtime passes; the PIM
+  binding is covered by R14).

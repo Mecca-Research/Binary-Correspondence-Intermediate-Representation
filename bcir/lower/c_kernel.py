@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+from dataclasses import dataclass
 
 from ..gem import hydrate
 from ..model import Module, Opcode, StrideClass
@@ -194,6 +195,69 @@ def find_reduce(module: Module, result: RealizationResult) -> tuple:
                 if cand is not None:
                     return claim, cand
     raise NotImplementedError("no reduce.gather claim selected in this plan")
+
+
+# --- CIM/PIM-aware spatial partitioning (optimize_spatial) ------------------------
+
+@dataclass(frozen=True)
+class SpatialBinding:
+    claim_id: int
+    target: str                # "pim" | "core"
+    transport_bytes_saved: int  # operand bytes that stay in memory (host transport skipped)
+
+
+@dataclass(frozen=True)
+class SpatialPlan:
+    bindings: tuple
+    pim_capable: bool
+
+    @property
+    def offloaded(self) -> tuple:
+        return tuple(b.claim_id for b in self.bindings if b.target == "pim")
+
+    @property
+    def total_bytes_saved(self) -> int:
+        return sum(b.transport_bytes_saved for b in self.bindings)
+
+    @property
+    def is_noop(self) -> bool:
+        return not self.offloaded
+
+
+def is_pim_target(h) -> bool:
+    """A target is PIM/CIM-capable iff its ISA features advertise `pim` (e.g.
+    `TargetProfile(..., isa_features=frozenset({"pim"}))`)."""
+    return "pim" in getattr(h, "isa_features", frozenset())
+
+
+def optimize_spatial(module: Module, result: RealizationResult, h) -> SpatialPlan:
+    """Spatial layout pass: on a **PIM-capable** target, bind a reduction straight to
+    the memory controller -- the reduce runs in memory and only the scalar result
+    crosses the bus, skipping the host<-device transport of the read stream -- when
+    `cim_decision` says it wins. Everything else stays on the core. The reported
+    saving is the operand bytes that never move (`count * elem_bytes`).
+
+    This is **modeled**: there is no real PIM device in the sandbox, so it does not
+    emit device-controller code -- it produces the binding decision and the
+    transport-avoided figure. On a non-PIM target every claim stays on the core (a
+    clean no-op). Next-phase work (a real PIM target + emitter) is tracked in
+    docs/HARDWARE_VALIDATION.md."""
+    from ..gem.cim import cim_decision    # lazy: keep gem.cim off the simple emit path
+    pim = is_pim_target(h)
+    by_claim = result.by_claim()
+    bindings: list[SpatialBinding] = []
+    for ph in module.phases:
+        for claim in ph.claims:
+            if claim.id not in by_claim:
+                continue
+            target, saved = "core", 0
+            if pim and (claim.op or "").startswith("reduce.") and claim.rd:
+                res = module.resource(claim.rd[0])
+                eb = res.elem_bytes if res else 4
+                if cim_decision(claim.op, claim.count, eb, h).offload:
+                    target, saved = "pim", claim.count * eb   # read stream stays in memory
+            bindings.append(SpatialBinding(claim.id, target, saved))
+    return SpatialPlan(bindings=tuple(bindings), pim_capable=pim)
 
 
 def emit_reduce_c(module: Module, result: RealizationResult, fn_name: str = "bcir_reduce",

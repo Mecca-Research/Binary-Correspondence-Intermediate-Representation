@@ -186,14 +186,29 @@ class FrozenRanker:
 
     wq: list
 
-    def order(self, cands, scores):
+    def _scored(self, cands, scores):
         scale = max(scores) if scores else 1
         out = []
         for i, c in enumerate(cands):
             feats = candidate_features(c, scores[i], scale)
             z = sum(self.wq[k] * round(feats[k] * Q8) for k in range(len(self.wq))) >> 8
             out.append((z, i))                                  # higher z = try first
-        return [i for _, i in sorted(out, key=lambda t: (-t[0], t[1]))]
+        return out
+
+    def order(self, cands, scores):
+        return [i for _, i in sorted(self._scored(cands, scores), key=lambda t: (-t[0], t[1]))]
+
+    def confidence(self, cands, scores) -> int:
+        """The ranker's *predictive certainty* for this column: the integer z-margin
+        between the top-1 and top-2 candidates. A wide margin means the ranker is sure
+        which realization is optimal (low predictive variance); a narrow margin means
+        it is unsure (the candidates look alike -- high variance). Used a priori to
+        gate telemetry: only instrument columns the planner cannot already resolve.
+        A single candidate has nothing to resolve -> maximal confidence."""
+        zs = sorted((z for z, _ in self._scored(cands, scores)), reverse=True)
+        if len(zs) < 2:
+            return 1 << 30
+        return zs[0] - zs[1]
 
 
 def ranker_samples(module: Module, h, thetas: list, policy: Policy = PERF):
