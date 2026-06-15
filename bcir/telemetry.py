@@ -70,6 +70,31 @@ class FileSink(TelemetrySink):
             f.write(json.dumps(event.to_dict()) + "\n")
 
 
+@dataclass
+class Broker(TelemetrySink):
+    """A live pub/sub broker: a `TelemetrySink` that fans out every event to its
+    subscribers. The runtime emits the data-DNA once; the broker delivers it to,
+    e.g., a `ListSink` feeding the calibrator, a `FileSink` for audit, and a
+    `KafkaSink` for production -- the live half of the calibration loop (the
+    runtime publishes; the trained calibrator subscribes). Pure fan-out;
+    deterministic delivery order."""
+
+    subscribers: list = field(default_factory=list)
+
+    def subscribe(self, sink: TelemetrySink) -> TelemetrySink:
+        """Register a sink to receive every subsequent event; returns it."""
+        self.subscribers.append(sink)
+        return sink
+
+    def emit(self, event: DataDNA) -> None:
+        for sink in self.subscribers:
+            sink.emit(event)
+
+    def flush(self) -> None:
+        for sink in self.subscribers:
+            sink.flush()
+
+
 class KafkaSink(TelemetrySink):
     """Kafka transport for the data-DNA loop (the production backend).
 

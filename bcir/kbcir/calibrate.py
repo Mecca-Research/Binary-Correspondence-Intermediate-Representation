@@ -103,6 +103,64 @@ class LinearCalibrator:
         )
 
 
+@dataclass(frozen=True)
+class FrozenCalibrator:
+    """A trained `LinearCalibrator` frozen to Q8 integer weights -- deterministic
+    across hosts (the LangRef Sec. 13 freeze: learning happens offline at L2/L3,
+    then anneals to a frozen, generation-tagged integer artifact). Predicts
+    thermal pressure from telemetry features and projects Theta, integer-only, so
+    it can stand in for `EwmaCalibrator` in the calibration loop on the certified
+    rail (`measure_and_close(..., calibrator=frozen)`)."""
+
+    w_q8: tuple[int, ...]      # 4 weights (utilization, voltage, misses, bias) in Q8
+    gen: int = 1
+    samples: int = 0
+
+    def predict(self, e: DataDNA) -> int:
+        """Predicted thermal pressure (0..100), integer (mirrors the trained
+        LinearCalibrator's linear model, quantized)."""
+        feats = (e.utilization, e.voltage, e.misses, 100)   # 0..100; bias feature == 1.0*100
+        acc = sum(wi * fi for wi, fi in zip(self.w_q8, feats)) >> 8
+        return max(0, min(100, acc))
+
+    def update(self, theta: Theta, events: list[DataDNA]) -> Theta:
+        if not events:
+            return theta
+        pred = sum(self.predict(e) for e in events) // len(events)
+        clamp = lambda v: max(0, min(100, int(v)))
+        return Theta(
+            thermal=clamp(pred), power=theta.power,
+            mem_pressure=clamp(_avg(events, "misses")), contention=theta.contention,
+            noise=theta.noise, wear=theta.wear,
+            utilization=clamp(_avg(events, "utilization")),
+            voltage=clamp(_avg(events, "voltage")),
+        )
+
+    def to_json(self) -> str:
+        import json
+        return json.dumps({"w_q8": list(self.w_q8), "gen": self.gen, "samples": self.samples},
+                          sort_keys=True)
+
+    @staticmethod
+    def from_json(text: str) -> "FrozenCalibrator":
+        import json
+        d = json.loads(text)
+        return FrozenCalibrator(tuple(d["w_q8"]), d["gen"], d.get("samples", 0))
+
+
+def train_calibrator(dataset: list[DataDNA], epochs: int = 300, lr: float = 0.2,
+                     gen: int = 1) -> FrozenCalibrator:
+    """Train a `LinearCalibrator` on a labeled telemetry dataset (each event's
+    `thermal` is the target), then **freeze** the learned weights to Q8 integers.
+    Offline (L2/L3, floats during training); the returned artifact is deterministic
+    integer and generation-tagged -- the only form that touches the certified rail."""
+    model = LinearCalibrator(lr=lr)
+    for _ in range(max(1, epochs)):
+        model.partial_fit(dataset)
+    w_q8 = tuple(int(round(wi * 256)) for wi in model.w)
+    return FrozenCalibrator(w_q8=w_q8, gen=max(1, gen), samples=len(dataset))
+
+
 def adaptive_policy(theta: Theta) -> Policy:
     """Pick a scalarization policy from the live runtime state."""
     if theta.thermal >= 60 or theta.power >= 60 or theta.voltage >= 60:

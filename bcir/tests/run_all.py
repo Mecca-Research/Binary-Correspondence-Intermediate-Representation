@@ -17,6 +17,8 @@ _MODULES = [
     "bcir.tests.test_kbcir",
     "bcir.tests.test_rcsp",
     "bcir.tests.test_overlap",
+    "bcir.tests.test_fusion",
+    "bcir.tests.test_calibrator",
     "bcir.tests.test_schedule",
     "bcir.tests.test_microbench",
     "bcir.tests.test_calibloop",

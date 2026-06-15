@@ -80,6 +80,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--bench-gather", action="store_true",
                    help="measured gather-avoidance: time BCIR's direct realization vs the "
                         "gather form it avoids (random indices); reports the gather penalty")
+    p.add_argument("--bench-reduce", action="store_true",
+                   help="measured gather/blocked reduction (gather_reduce): time BCIR's "
+                        "selected blocked realization vs the gather form (same sum)")
     args = p.parse_args(argv)
 
     module = PROGRAMS[args.program]()
@@ -232,6 +235,22 @@ def main(argv: list[str] | None = None) -> int:
                           f"avoided_penalty={c.speedup_milli / 1000:.2f}x wins={c.avoidance_wins}")
             except NotImplementedError as exc:
                 print(f"[bench-gather] {exc}")
+
+    if args.bench_reduce:
+        from .bench import bench_available, compare_reduce
+        if not bench_available():
+            print("[bench-reduce] no C compiler; skipping")
+        else:
+            try:
+                for opt in ("-O2", "-O3"):
+                    c = compare_reduce(args.program if args.program == "gather_reduce"
+                                       else "gather_reduce", target=args.target,
+                                       theta=args.theta, policy=args.policy, opt=opt)
+                    print(f"[bench-reduce] {opt}: selected={c.selected} correct={c.correct} "
+                          f"blocked={c.blocked.ns_per_call}ns gather={c.gather.ns_per_call}ns "
+                          f"penalty={c.speedup_milli / 1000:.2f}x wins={c.avoidance_wins}")
+            except NotImplementedError as exc:
+                print(f"[bench-reduce] {exc}")
 
     if args.accel:
         from .kbcir import greedy_order, optimize_ordered, worst_order

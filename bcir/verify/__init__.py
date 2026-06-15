@@ -174,10 +174,13 @@ def verify(module: Module) -> list[Diagnostic]:
                 continue
             # Affine pattern: the touched extent is statically known. The stride
             # applies to the streamed read source; writes land unit-stride (a
-            # conservative under-approximation -- never a false positive).
+            # conservative under-approximation -- never a false positive). A
+            # reduction (op "reduce.*") accumulates count reads into a single
+            # location, so its write extent is one element, not count.
             k = max(1, claim.stride_k)
             read_extent = claim.offset + (claim.count - 1) * k + 1 if claim.count > 0 else 0
-            write_extent = claim.offset + claim.count
+            is_reduction = claim.op.startswith("reduce.")
+            write_extent = claim.offset + (1 if is_reduction else claim.count)
             for rid, extent, kind in (
                 [(r, read_extent, "read") for r in claim.rd]
                 + [(w, write_extent, "write") for w in claim.wr]

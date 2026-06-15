@@ -142,6 +142,47 @@ def emit_gather_kernel_c(module: Module, result: RealizationResult,
     )
 
 
+def find_reduce(module: Module, result: RealizationResult) -> tuple:
+    """Return (claim, candidate) for the selected `reduce.gather` claim (a
+    reducible-permutation reduction with a blocked-vs-gather choice)."""
+    by_claim = result.by_claim()
+    for ph in module.phases:
+        for claim in ph.claims:
+            if claim.op == "reduce.gather":
+                cand = by_claim.get(claim.id)
+                if cand is not None:
+                    return claim, cand
+    raise NotImplementedError("no reduce.gather claim selected in this plan")
+
+
+def emit_reduce_c(module: Module, result: RealizationResult, fn_name: str = "bcir_reduce",
+                  elem: str = "i32", gather: bool | None = None) -> str:
+    """Lower a `reduce.gather` claim to C: `acc = sum_i T[i]` (blocked) or
+    `acc = sum_i T[idx[i]]` (gather), per the K_BCIR-selected realization. Integer
+    by default -- integer addition is associative, so the blocked (sequential) and
+    gather (permuted) sums are bit-identical, which is what makes the gather
+    avoidance a *correct* transformation (the win is pure: same answer, no random
+    access). `gather=None` follows the selected candidate."""
+    claim, cand = find_reduce(module, result)
+    if gather is None:
+        gather = cand.name == "gather"
+    ctype = _ctype(elem)
+    includes = "#include <stddef.h>\n" + ("#include <stdint.h>\n" if elem == "i32" else "")
+    idx_param = ", const long *restrict idx" if gather else ""
+    read = "T[idx[i]]" if gather else "T[i]"
+    mode = "gather" if gather else "blocked"
+    return (
+        f"/* BCIR -> reduce.gather lowering ({mode}; K_BCIR-selected={cand.name}). "
+        f"integer sum is order-independent, so blocked == gather exactly. */\n"
+        f"{includes}\n"
+        f"{ctype} {fn_name}(const {ctype} *restrict T{idx_param}, size_t n) {{\n"
+        f"  {ctype} acc = 0;\n"
+        f"  for (size_t i = 0; i < n; ++i) acc += {read};\n"
+        f"  return acc;\n"
+        f"}}\n"
+    )
+
+
 def emit_header_c(fn_name: str = "bcir_kernel", elem: str = "f32") -> str:
     """A freestanding C23 header declaring the kernel ABI -- the stable contract a
     driver/runtime compiles the emitted kernel against (no BCIR dependency)."""

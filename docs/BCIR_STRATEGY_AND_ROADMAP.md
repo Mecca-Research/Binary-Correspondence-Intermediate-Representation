@@ -77,11 +77,15 @@ to close that gap, not add more intelligence.
    cost of *not* recalibrating, via faithful `rescore_plan`), witnessed by R13
    (`verify.verify_calibration`). Runnable on real silicon: `python -m bcir.run
    … --theta hot --calibrate` flips vec16→vec8 with a certified win.
-   **Bare-metal numbers** now land via the C microbench
+   **Bare-metal numbers** land via the C microbench
    (`runtime/c/bcir_microbench.c`, `kbcir.microbench.calibrate_native`,
-   `--calibrate --native`): real cache latency, so the gather ratio no longer
-   collapses (measured here `random_q8 ≈ 1500` ⇒ gather_penalty ≈ 5, vs the
-   interpreter's ratio-1). **Remaining:** a *trained* calibrator + a live broker.
+   `--calibrate --native`): real cache latency, gather ratio no longer collapses
+   (`random_q8 ≈ 1500` ⇒ gather_penalty ≈ 5). The **last half is closed**: a
+   *trained* calibrator (`kbcir.calibrate.train_calibrator` → `FrozenCalibrator`,
+   an online linear model fit offline then frozen to deterministic Q8 integers,
+   §13) and a **live broker** (`telemetry.Broker`, pub/sub fan-out: the runtime
+   publishes data-DNA, the calibrator subscribes). The frozen calibrator drives
+   `close_loop` end to end. **Loop fully closed.** ✔
 2. **C++/MLIR GEM passes against the oracle.** ✔ (this milestone) — the five
    declared GEM passes are implemented MLIR-native and cross-checked against the
    oracle's pinned constants. Next: widen them past the single-claim example
@@ -113,6 +117,19 @@ to close that gap, not add more intelligence.
      **measured 6–7× slower** on silicon (random indices, 4 MB working set) — the
      penalty realized, the cost model vindicated. A budget-/aliasing-aware
      decision a plain `clang -O3` does not make.
+   - **End-to-end on a real gather program** (`examples.gather_reduce`,
+     `bench.compare_reduce`, `--bench-reduce`): a reduction over a permutation,
+     `reduce.gather`, where the cost model *selects* the blocked (sequential)
+     realization over the gather. BCIR lowers the selected kernel; the harness
+     verifies blocked and gather compute the **identical integer sum** (a correct
+     transformation — integer add is associative) and measures the blocked form
+     **~16–17× faster**. The gather avoidance is now a selected, lowered,
+     correctness-checked, measured win — not just a contrast harness.
+   - **Multi-claim fusion** (`examples.fused_chain`, `gem.overlap`): two
+     independent claims sharing a read operand price under the (max,+) wave
+     schedule below their serial Σ — `overlap_gain > 0` (measured 13696 → 7808,
+     a 43% makespan cut) where a single claim has none. The StreamPack/`-bcir-batch`
+     groups them; the fusion discount applies when they share a bin back-to-back.
    - **Θ / budget feasibility** (`api.build_artifact(budget=…)`, `rcsp.feasible`,
      `--budget`): under a 700 thermal/power cap, vec16 (1088) is **infeasible**;
      BCIR emits the feasible vec8 (640) — a **correctness** property a budget-
