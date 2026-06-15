@@ -11,6 +11,15 @@ def test_artifact_carries_metadata_and_r12_attestation():
     assert a.program == "vector_add" and a.width == 16 and a.op == "+"
     assert a.score == 7808 and a.manifest_digest != 0
     assert a.attested and a.diagnostics == ()           # R12 clean
+    # width 16 == the AVX-512 widest lane -> the shipped kernel is the go-fast
+    # idiomatic loop (the resident compiler vectorizes to >= the lane), not blocked.
+    assert "full hardware lane" in a.kernel_c and "16u" not in a.kernel_c
+
+
+def test_throttled_artifact_caps_to_honor_the_thermal_lane():
+    a = build_artifact("vector_add", target="x86_avx512", theta="hot")  # vec8 < lane 16
+    assert a.width == 8 and a.attested
+    assert "throttled lane" in a.kernel_c and "< 8u" in a.kernel_c       # cap honored
 
 
 def test_header_declares_the_kernel_abi():

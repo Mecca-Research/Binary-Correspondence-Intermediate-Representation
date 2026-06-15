@@ -35,6 +35,8 @@ def test_kernel_is_c23_and_restrict_qualified():
 
 
 def test_selected_width_drives_the_loop():
+    # The default (no hardware width given): conservatively cap at the selected
+    # width -- the literal geometry-encoding form, unchanged by the width-aware work.
     m, r = _plan(Theta.cool())                       # AVX-512 cool -> vec16
     assert "width=16" in emit_kernel_c(m, r)
     assert "for (; i + 16u <= n; i += 16u)" in emit_kernel_c(m, r)
@@ -48,6 +50,45 @@ def test_scalar_width_emits_no_vector_loop():
     c = emit_kernel_c(m, r, width_override=1)
     assert "width=1" in c and "for (size_t i = 0; i < n; ++i)" in c
     assert "u <= n" not in c                          # no vector-width loop
+
+
+# --- width-aware lowering: go-fast at the full lane, cap only when throttled ------
+
+def test_full_hardware_lane_emits_an_idiomatic_uncapped_loop():
+    # cool -> selected width 16 == AVX-512 widest lane -> go-fast: an idiomatic loop
+    # the resident compiler vectorizes to >= the lane (and interleaves wider than a
+    # hand-blocked loop could). No < 16u cap; geometry recorded in the head note.
+    m, r = _plan(Theta.cool())
+    c = emit_kernel_c(m, r, hw_width=AVX.vector_width)
+    assert "width=16" in c and "full hardware lane" in c
+    assert "16u" not in c                                       # not hand-blocked
+    assert "for (size_t i = 0; i < n; ++i)" in c                # the idiomatic loop
+    assert verify_c_lowering(m, r, c, hw_width=AVX.vector_width) == []   # R12 clean
+
+
+def test_sub_maximal_width_keeps_the_throttle_cap():
+    # hot -> selected width 8 < widest lane 16 -> a deliberate thermal/power throttle:
+    # the loop MUST cap at 8 so the compiler cannot widen past the sub-maximal lane.
+    m, r = _plan(Theta.hot())
+    c = emit_kernel_c(m, r, hw_width=AVX.vector_width)
+    assert "width=8" in c and "throttled lane" in c and "< 8u" in c
+    assert verify_c_lowering(m, r, c, hw_width=AVX.vector_width) == []
+
+
+def test_r12_rejects_a_full_lane_kernel_that_hides_a_sub_width_cap():
+    # a go-fast kernel must not secretly cap below the lane (that throttles the backend).
+    m, r = _plan(Theta.cool())
+    good = emit_kernel_c(m, r, hw_width=AVX.vector_width)
+    bad = good.replace("for (size_t i = 0; i < n; ++i)\n    C[i] = A[i] + B[i];",
+                       "for (size_t j = 0; j < 8u; ++j) C[j] = A[j] + B[j];")
+    assert "R12" in _laws(verify_c_lowering(m, r, bad, hw_width=AVX.vector_width))
+
+
+def test_r12_rejects_a_throttle_kernel_with_the_cap_removed():
+    # stripping the throttle cap lets the compiler widen past the thermal-limited lane.
+    m, r = _plan(Theta.hot())
+    bad = emit_kernel_c(m, r, hw_width=AVX.vector_width).replace("< 8u", "< n")
+    assert "R12" in _laws(verify_c_lowering(m, r, bad, hw_width=AVX.vector_width))
 
 
 def test_i32_kernel_uses_stdint_and_no_fp_pragma():

@@ -185,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args.emit_c:
                 print("\n/* ---- portable C23 kernel ---- */")
-                print(emit_kernel_c(module, result, fn_name="bcir_kernel"))
+                print(emit_kernel_c(module, result, fn_name="bcir_kernel", hw_width=h.vector_width))
             if args.run_c:
                 ok, out = compile_and_run_c(module, result, fn_name="bcir_kernel")
                 print(f"[run-c] C23 build+run {'OK' if ok else 'FAILED'}: {out.strip()}")
