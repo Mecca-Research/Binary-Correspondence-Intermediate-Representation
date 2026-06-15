@@ -44,6 +44,11 @@ class LaneSegment:
     prefetch: str | None = None
     fence_before: tuple[str, ...] = ()
     fence_after: tuple[str, ...] = ()
+    # CIM/PIM dispatch target (append-only). "core" = execute on the compute core
+    # (default); "pim" = dispatch to the memory controller / processing-in-memory,
+    # set by `gem.cim.annotate_cim` only when the data-movement saved outweighs the
+    # in-memory compute surcharge (a large reduction). The lowering reads this.
+    dispatch: str = "core"
 
 
 @dataclass(frozen=True)

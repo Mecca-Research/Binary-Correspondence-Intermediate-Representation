@@ -152,3 +152,14 @@
   correctness/semantics fix, not a speedup. Dual-rail-safe (MLIR R12 checks
   StreamPack lane-segment preservation, not C structure; segment width unchanged).
   +5 tests (372 total).
+- 2026-06-15: **Adaptive "smart" layer** (strategy §7) — 8 intent-aware
+  capabilities, each deterministic, opt-in (never on the default plan/emit/import
+  path), and gains-only (tested no-op fallback): RL allocator / smart malloc
+  (`kbcir.allocator`), compute-in-memory dispatch (`gem.cim` + `LaneSegment.dispatch`),
+  persistent e-graph with telemetry pivot (`kbcir.egraph.ResidentEGraph`), JIT shape
+  specialist (`lower.specialist`), active uncertainty-gated telemetry
+  (`kbcir.sensing`), zero-copy telemetry ring (`telemetry.TelemetryRing`), fuzzy/
+  continuous MoE routing (`kbcir.moegate.route_fuzzy`/`harden` + `FrozenGate.distribution`),
+  and phase-aware DVFS (`gem.dvfs`). New organs are lazy (the `test_perf` guard
+  asserts they stay unloaded on the simple path — `bcir.api` cold import unchanged).
+  MLIR-law parity for these is future work. +48 tests (420 total).

@@ -19,12 +19,14 @@ import subprocess
 import sys
 import types
 
-# Modules that must NOT load merely to plan a program and emit its kernel.
+# Modules that must NOT load merely to plan a program and emit its kernel. Includes
+# the opt-in "smart" organs (allocator / sensing / cim / dvfs / specialist): they
+# are capabilities the caller invokes explicitly, never on the simple path.
 _HEAVY_KBCIR = ("calibloop", "microbench", "accel", "portfolio", "moegate", "regret",
                 "softdp", "egraph", "operad", "twotruth", "memory", "throttle",
-                "mapping", "bayescal")
-_HEAVY_LOWER = ("jit", "wasm")                                   # JIT + WASM/stack paths
-_HEAVY_GEM = ("concurrency", "overlap", "schedule", "async_tokens")  # the GEM executor
+                "mapping", "bayescal", "allocator", "sensing")
+_HEAVY_LOWER = ("jit", "wasm", "specialist")                    # JIT + WASM/stack + specialist
+_HEAVY_GEM = ("concurrency", "overlap", "schedule", "async_tokens", "cim", "dvfs")
 
 
 def _bcir_modules_after(code: str) -> set[str]:

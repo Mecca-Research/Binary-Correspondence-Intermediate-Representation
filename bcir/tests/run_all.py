@@ -56,6 +56,14 @@ _MODULES = [
     "bcir.tests.test_codegen",
     "bcir.tests.test_async",
     "bcir.tests.test_perf",
+    "bcir.tests.test_allocator",
+    "bcir.tests.test_cim",
+    "bcir.tests.test_resident_egraph",
+    "bcir.tests.test_specialist",
+    "bcir.tests.test_sensing",
+    "bcir.tests.test_ring",
+    "bcir.tests.test_fuzzy_routing",
+    "bcir.tests.test_dvfs",
 ]
 
 

@@ -14,6 +14,7 @@ later implement.
 from __future__ import annotations
 
 import json
+import struct
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 
@@ -93,6 +94,83 @@ class Broker(TelemetrySink):
     def flush(self) -> None:
         for sink in self.subscribers:
             sink.flush()
+
+
+@dataclass
+class RingStats:
+    written: int = 0
+    read: int = 0
+    dropped: int = 0          # records overwritten before they were read (ring full)
+
+
+class TelemetryRing(TelemetrySink):
+    """A zero-copy telemetry ring buffer between the kernel (writer) and the GNN /
+    calibrator (reader).
+
+    The buffer is a single **preallocated** ``bytearray`` -- the model of a fixed
+    shared-memory region. The kernel packs the atomic numeric stats (claim_id,
+    cycles, bytes, misses, thermal, voltage, utilization) directly into the buffer
+    with ``struct.pack_into`` (no per-event allocation, no JSON, no syscall); the
+    reader unpacks straight out of the *same* buffer with ``struct.unpack_from``.
+    No serialization, no transport, non-blocking: an empty read returns ``None`` and
+    a full ring overwrites its oldest unread record (counted as ``dropped``) rather
+    than blocking. Fixed-width records mean head/tail are simple monotonic counters.
+
+    It is also a `TelemetrySink`, so a `Broker` can fan events into it like any other
+    backend -- but the hot path is `write`/`read_one`, which never leaves the buffer.
+    """
+
+    # claim_id, cycles, bytes, misses, thermal, voltage, utilization (7 x int64).
+    _FMT = "<7q"
+
+    def __init__(self, capacity: int = 1024):
+        if capacity < 1:
+            raise ValueError("ring capacity must be >= 1")
+        self.capacity = capacity
+        self.record_size = struct.calcsize(self._FMT)
+        self.buf = bytearray(capacity * self.record_size)   # the fixed shared region
+        self._head = 0          # total records written (monotonic)
+        self._tail = 0          # total records read (monotonic)
+        self.stats = RingStats()
+
+    def write(self, event: DataDNA) -> None:
+        """Pack one record into the shared buffer at the head slot (no allocation).
+        If the ring is full, the oldest unread record is overwritten (dropped)."""
+        slot = self._head % self.capacity
+        struct.pack_into(self._FMT, self.buf, slot * self.record_size,
+                         event.claim_id, event.cycles, event.bytes, event.misses,
+                         event.thermal, event.voltage, event.utilization)
+        self._head += 1
+        self.stats.written += 1
+        if self._head - self._tail > self.capacity:         # overwrote an unread slot
+            self._tail = self._head - self.capacity
+            self.stats.dropped += 1
+
+    def emit(self, event: DataDNA) -> None:                 # TelemetrySink interface
+        self.write(event)
+
+    def read_one(self) -> DataDNA | None:
+        """Unpack the oldest unread record straight from the buffer, or None if the
+        ring is empty (non-blocking)."""
+        if self._tail >= self._head:
+            return None
+        slot = self._tail % self.capacity
+        cid, cyc, byt, mis, th, vo, ut = struct.unpack_from(
+            self._FMT, self.buf, slot * self.record_size)
+        self._tail += 1
+        self.stats.read += 1
+        return DataDNA(segment_id="", claim_id=cid, cycles=cyc, bytes=byt, misses=mis,
+                       thermal=th, voltage=vo, utilization=ut)
+
+    def drain(self) -> list[DataDNA]:
+        out: list[DataDNA] = []
+        while (e := self.read_one()) is not None:
+            out.append(e)
+        return out
+
+    @property
+    def pending(self) -> int:
+        return self._head - self._tail
 
 
 class KafkaSink(TelemetrySink):

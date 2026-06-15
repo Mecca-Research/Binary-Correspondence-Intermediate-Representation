@@ -108,6 +108,25 @@ def _softmax(logits: list[float]) -> list[float]:
     return [e / s for e in ex]
 
 
+def _softmax_t(logits: list[float], temperature: float) -> list[float]:
+    """Temperature-scaled softmax: high T -> flat (explore all paths), T -> 0 ->
+    one-hot (exploit). The fuzzy/continuous routing knob."""
+    t = max(1e-9, float(temperature))
+    return _softmax([v / t for v in logits])
+
+
+def harden(distribution: list[float], threshold: float = 0.7) -> tuple[bool, "int | None"]:
+    """Collapse a fuzzy routing distribution to a single expert once one path
+    dominates (max weight >= `threshold`) -- the end of exploration. Returns
+    (hardened, expert_index): if no path is confident enough, (False, None) and the
+    caller keeps blending. Deterministic (argmax, ties -> lowest index)."""
+    bi, best = 0, distribution[0]
+    for k in range(1, len(distribution)):
+        if distribution[k] > best:
+            bi, best = k, distribution[k]
+    return (best >= threshold, bi if best >= threshold else None)
+
+
 def _lcg(seed: int):
     state = seed & 0xFFFFFFFFFFFFFFFF
     while True:
@@ -159,6 +178,22 @@ class GNNGate:
 
     def route_policy(self, module: Module, theta: Theta) -> Policy:
         return self.experts[self.route(module, theta)]
+
+    # --- fuzzy / continuous routing (exploration before hardening) ---------------
+
+    def route_fuzzy(self, module: Module, theta: Theta, temperature: float = 1.0) -> list[float]:
+        """Continuous edge weights over the experts at a given temperature -- data
+        flows *partially* through every path so gradients can be gathered from all
+        optimizations at once. Anneal `temperature` toward 0 to harden the choice."""
+        z = self._embed(module) + theta_features(theta)
+        logits = [self.c[k] + sum(self.U[k][j] * z[j] for j in range(len(z)))
+                  for k in range(self.num_experts)]
+        return _softmax_t(logits, temperature)
+
+    def blend(self, module: Module, theta: Theta,
+              temperature: float = 1.0) -> list[tuple[Policy, float]]:
+        """The fuzzy route as (expert, weight) pairs -- the partial flows."""
+        return list(zip(self.experts, self.route_fuzzy(module, theta, temperature)))
 
 
 def _new_gate(experts: list, hidden: int, seed: int) -> GNNGate:
@@ -244,7 +279,8 @@ class FrozenGate:
             h = ((h ^ (v & 0xFFFFFFFF)) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
         return h
 
-    def route(self, module: Module, theta: Theta) -> int:
+    def logits(self, module: Module, theta: Theta) -> list[int]:
+        """Integer routing logits over the experts (no floats; the shared forward)."""
         H, T = self.hidden, _THETA_FEATS
         agg = _aggregated(module)
         xq = [[round(v * Q8) for v in a] for a in agg]
@@ -257,14 +293,31 @@ class FrozenGate:
         n = max(1, len(agg))
         g = [s // n for s in hsum]
         zq = g + [round(t * Q8) for t in theta_features(theta)]
-        logits = [self.cq[k] + (sum(self.Uq[k][j] * zq[j]
-                                    for j in range(H + T)) >> 8)
-                  for k in range(self.num_experts)]
+        return [self.cq[k] + (sum(self.Uq[k][j] * zq[j] for j in range(H + T)) >> 8)
+                for k in range(self.num_experts)]
+
+    def route(self, module: Module, theta: Theta) -> int:
+        logits = self.logits(module, theta)
         best, bi = logits[0], 0
         for k in range(1, len(logits)):
             if logits[k] > best:
                 best, bi = logits[k], k
         return bi
+
+    def distribution(self, module: Module, theta: Theta, temperature: int = 1) -> list[int]:
+        """Q8 fuzzy weights over experts (sum == 256), deterministic integer -- the
+        frozen gate's continuous edge directions, no floats. A monotone normalization
+        of the logits (higher logit => more flow); `temperature` >= 1 flattens it
+        (divides the logit spread). `argmax(distribution) == route`."""
+        lg = self.logits(module, theta)
+        lo = min(lg)
+        t = max(1, int(temperature))
+        shifted = [(v - lo) // t + 1 for v in lg]      # strictly positive, monotone
+        tot = sum(shifted) or 1
+        w = [(s * Q8) // tot for s in shifted]
+        bi = max(range(len(w)), key=lambda k: (w[k], -k))
+        w[bi] += Q8 - sum(w)                            # exact: weights sum to Q8
+        return w
 
     def route_policy(self, module: Module, theta: Theta) -> Policy:
         return self.experts[self.route(module, theta)]

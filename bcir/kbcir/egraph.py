@@ -399,3 +399,65 @@ def shared_blocks(module) -> int:
         eg.add(expr)
     eg.rebuild()
     return len(eg.classes())
+
+
+# --- the resident (persistent) e-graph: re-extract on telemetry, no re-parse -----
+
+@dataclass
+class ResidentEGraph:
+    """A *living* e-graph: built and saturated once, then kept resident so that when
+    telemetry reports a bottleneck the planner can **pivot** to an equivalent, more
+    efficient sub-graph by re-extracting under reweighted costs -- WITHOUT
+    re-parsing the source or re-saturating. The equivalence classes are already
+    proven; a pivot is just a fresh min-cost extraction over the standing graph.
+
+    `pivot(bump=...)` raises the cost of a reported-bottleneck op (e.g. telemetry
+    says `mul` stalls) and re-extracts; if the class holds a cheaper equivalent
+    under the new costs, extraction returns it. Gains-only: extraction always
+    returns the min, so a pivot never raises the selected cost. The standing graph
+    is not mutated (`resident_size` is invariant across pivots), proving no rebuild.
+    """
+
+    eg: EGraph
+    root: int
+    costs: dict
+    stats: SaturationStats
+    pivots: int = 0
+    _built_enodes: int = 0
+
+    @classmethod
+    def build(cls, expr: Expr, rules=None, costs: dict = None,
+              budget: int = 30) -> "ResidentEGraph":
+        eg = EGraph()
+        root = eg.add(expr)
+        st = saturate(eg, rules, budget)
+        return cls(eg=eg, root=root, costs=dict(costs or DEFAULT_COSTS),
+                   stats=st, _built_enodes=len(eg._enodes))
+
+    def current(self) -> EGraphResult:
+        """Extract the best composition for the resident root under the live costs."""
+        best, cost = self.eg.extract(self.root, self.costs)
+        return EGraphResult(original_cost=int(cost), optimized_cost=int(cost),
+                            optimized=best, iterations=0, enodes=len(self.eg._enodes),
+                            saturated=self.stats.saturated)
+
+    def pivot(self, *, costs: dict = None, bump: dict = None) -> EGraphResult:
+        """Re-cost and re-extract over the standing graph (no rebuild, no re-parse).
+        `costs` replaces entries; `bump` adds to op costs (a telemetry bottleneck)."""
+        new = dict(self.costs)
+        if costs:
+            new.update(costs)
+        for op, delta in (bump or {}).items():
+            new[op] = new.get(op, 1) + delta
+        self.costs = new
+        self.pivots += 1
+        return self.current()
+
+    @property
+    def resident_size(self) -> int:
+        """Enodes held resident; invariant across pivots (the graph is not rebuilt)."""
+        return len(self.eg._enodes)
+
+    @property
+    def rebuilt_since_build(self) -> bool:
+        return self.resident_size != self._built_enodes
