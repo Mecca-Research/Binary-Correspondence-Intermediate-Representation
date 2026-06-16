@@ -31,9 +31,11 @@
 #include "mlir/IR/BuiltinOps.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <array>
 #include <cstdint>
@@ -175,6 +177,34 @@ static int64_t scalarizeCost(const Cost &c, ArrayRef<int64_t> w) {
   return s;
 }
 
+// Intra-phase redundancy factors (realize.fused_candidates / _context_factor's
+// dependency-based half), applied to every candidate of a claim in Q8 (256 == x1.0).
+using Factor = std::array<int64_t, 12>;
+constexpr Factor kIdentity = {256, 256, 256, 256, 256, 256, 256, 256, 256, 256, 256, 256};
+
+// producer->consumer deforestation: the intermediate never round-trips -> x0.75 memory.
+static Factor deforestFactor() {
+  Factor f = kIdentity;
+  f[1] = 192;
+  return f;
+}
+
+// CSE / duplicate elimination: the value is already computed, so no recompute
+// (compute zeroed) and only a copy of the result is written instead of re-reading
+// every operand (memory scaled from `nrd+nwr` streams to the `1+nwr` a copy needs).
+static Factor cseFactor(int nrd, int nwr) {
+  int64_t full = static_cast<int64_t>(nrd) + nwr, copy = 1 + nwr;
+  Factor f = kIdentity;
+  f[0] = 0;
+  f[1] = (copy * 256) / std::max<int64_t>(1, full);
+  return f;
+}
+
+static void applyFactor(Cost &c, const Factor &f) {
+  for (int i = 0; i < 12; ++i)
+    c[i] = (c[i] * f[i]) >> 8;
+}
+
 struct CostModelPass : public PassWrapper<CostModelPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CostModelPass)
 
@@ -228,27 +258,99 @@ struct CostModelPass : public PassWrapper<CostModelPass, OperationPass<>> {
         weights = p.getWeights();
     });
 
-    root->walk([&](ClaimOp c) {
+    // Phase id for ordering (topological by id -- the SchedulePass convention);
+    // claims are processed in (phase id, declared) order, the fused_candidates walk.
+    llvm::DenseMap<StringRef, int32_t> phaseId;
+    root->walk([&](PhaseOp p) { phaseId[p.getSymName()] = p.getId(); });
+    SmallVector<ClaimOp> claims;
+    root->walk([&](ClaimOp c) { claims.push_back(c); });
+    llvm::stable_sort(claims, [&](ClaimOp a, ClaimOp z) {
+      return phaseId.lookup(a.getPhase()) < phaseId.lookup(z.getPhase());
+    });
+
+    // Per-phase intra-phase data-flow state (reset at a phase boundary -- a barrier
+    // materializes intermediates, so the credits are intra-phase only).
+    int32_t curPhase = 0;
+    bool havePhase = false;
+    llvm::DenseSet<StringRef> produced;        // rids written so far (deforestation)
+    llvm::DenseMap<StringRef, int> version;    // value numbering (a write bumps it)
+    llvm::StringSet<> seen;                     // value-numbered compute signatures
+
+    auto refs = [](ArrayAttr a, SmallVectorImpl<StringRef> &out) {
+      for (Attribute x : a)
+        if (auto r = dyn_cast<FlatSymbolRefAttr>(x))
+          out.push_back(r.getValue());
+    };
+
+    for (ClaimOp c : claims) {
+      int32_t pid = phaseId.lookup(c.getPhase());
+      if (!havePhase || pid != curPhase) {
+        produced.clear();
+        version.clear();
+        seen.clear();
+        curPhase = pid;
+        havePhase = true;
+      }
+
+      SmallVector<StringRef> reads, writes;
+      refs(c.getReads(), reads);
+      refs(c.getWrites(), writes);
+
       // Cost resource = the first read (cost.py: rd[0]); its domain selects the tier
       // and its access flags HAM.
       Domain dom = c.getDomain();
       bool ham = false;
-      if (!c.getReads().empty()) {
-        if (auto ref = dyn_cast<FlatSymbolRefAttr>(c.getReads()[0])) {
-          if (auto r = resByName.lookup(ref.getValue())) {
-            dom = r.getDomainKind();
-            ham = r.getAccess() && *r.getAccess() == Access::HAM;
-          }
+      if (!reads.empty())
+        if (auto r = resByName.lookup(reads[0])) {
+          dom = r.getDomainKind();
+          ham = r.getAccess() && *r.getAccess() == Access::HAM;
         }
-      }
+
       SmallVector<Cost> cands = candidatesFor(c, h, dom, ham);
       if (cands.empty())
-        return;
+        continue;
 
+      // value-numbered compute signature: op + (read, version) pairs.
+      std::string sig = c.getOp().str();
+      for (StringRef rd : reads) {
+        sig += "|";
+        sig += rd.str();
+        sig += "@";
+        sig += std::to_string(version.lookup(rd));
+      }
+      bool cse = !reads.empty() && seen.count(sig);
+      bool defo = false;
+      if (!cse)
+        for (StringRef rd : reads)
+          if (produced.count(rd)) {
+            defo = true;
+            break;
+          }
+      if (cse || defo) {
+        Factor f = cse ? cseFactor(static_cast<int>(reads.size()),
+                                   static_cast<int>(writes.size()))
+                       : deforestFactor();
+        for (Cost &cc : cands)
+          applyFactor(cc, f);
+      }
+
+      // Bookkeeping: first occurrence records the signature; writes bump versions.
+      if (!reads.empty())
+        seen.insert(sig);
+      for (StringRef w : writes)
+        version[w] = version.lookup(w) + 1;
+      for (StringRef w : writes)
+        produced.insert(w);
+
+      // Annotate the computed candidate count, the argmin cost + score, and which
+      // redundancy credit (if any) the claim earned.
       c->setAttr("kbcir.cm_candidates",
                  b.getI64IntegerAttr(static_cast<int64_t>(cands.size())));
+      if (cse)
+        c->setAttr("kbcir.cm_fusion", b.getStringAttr("cse"));
+      else if (defo)
+        c->setAttr("kbcir.cm_fusion", b.getStringAttr("deforest"));
 
-      // argmin under the policy weights (deterministic: first wins on a tie).
       size_t best = 0;
       if (!weights.empty()) {
         int64_t bestScore = scalarizeCost(cands[0], weights);
@@ -265,7 +367,7 @@ struct CostModelPass : public PassWrapper<CostModelPass, OperationPass<>> {
       c->setAttr("kbcir.cm_min_cost",
                  CostVectorAttr::get(&getContext(), bc[0], bc[1], bc[2], bc[3], bc[4],
                                      bc[5], bc[6], bc[7], bc[8], bc[9], bc[10], bc[11]));
-    });
+    }
   }
 };
 

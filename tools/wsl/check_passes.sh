@@ -69,6 +69,8 @@ else
 fi
 echo "[passes] cost model (the K_BCIR cost algebra recomputed from claim + capability)"
 run_fc -bcir-cost-model "${T}/cost_model.mlir"
+echo "[passes] cost-model fusion (intra-phase deforestation + CSE)"
+run_fc -bcir-cost-model "${T}/cost_model_fusion.mlir"
 echo "[passes] -bcir-cost-model cross-check on the pretty corpus (reproduces 7808)"
 "${BO}" -bcir-cost-model "${ROOT}/mlir/examples/full_vec_add_ct1.mlir" >/dev/null 2>/tmp/pe \
   && echo "  PASS cost-model on full_vec_add_ct1.mlir" || { echo "  FAIL cost-model on full_vec_add"; cat /tmp/pe; fail=1; }
