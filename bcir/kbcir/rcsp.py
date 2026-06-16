@@ -27,6 +27,7 @@ from .realize import (
     _context_factor,
     _flatten,
     candidates_for,
+    fused_candidates,
 )
 from .weights import PERF, Policy, weights
 
@@ -94,17 +95,16 @@ def _expand(module: Module, h, theta: Theta, policy: Policy,
     """Run the label DP over the layered candidate DAG; return the sink labels
     paired with their (phase_id, claim) trail for reconstruction."""
     flat = _flatten(module)
+    cand_map = fused_candidates(module, h)    # producer->consumer deforestation, shared with optimize
     prev: list[_Label] = [_Label(0, (0,) * len(dims), None, None)]
     trail: list[tuple[int, object]] = []
 
     for phase_id, claim in flat:
         trail.append((phase_id, claim))
         w_phase = weights(h, theta, phase_id, policy)
-        cost_rid = claim.rd[0] if claim.rd else claim.primary_rid
-        resource = module.resource(cost_rid) if cost_rid is not None else None
 
         column: dict[int, list[_Label]] = {}
-        for ci, cand in enumerate(candidates_for(claim, h, resource)):
+        for ci, cand in enumerate(cand_map[claim.id]):
             slot = column.setdefault(ci, [])
             for lab in prev:
                 factor = _context_factor(lab.cand, cand, theta)

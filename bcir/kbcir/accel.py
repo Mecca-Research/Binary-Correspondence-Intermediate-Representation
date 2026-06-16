@@ -39,6 +39,7 @@ from ..model import Claim, Lane, Module
 from .cost import MEMORY, N, Theta
 from .rcsp import Budget
 from .realize import (
+    fused_candidates,
     Candidate,
     ChosenStep,
     RealizationResult,
@@ -62,13 +63,14 @@ class SearchStats:
 # --- the exact branch-and-bound search (optimum invariant to candidate order) ----
 
 def _columns(module: Module, h, theta: Theta, policy: Policy):
-    """Per claim: (phase_id, claim, w_phase, candidates, static_scores)."""
+    """Per claim: (phase_id, claim, w_phase, candidates, static_scores). Uses the
+    fusion-aware candidates (producer->consumer deforestation baked in) so the
+    accelerated search reproduces `realize.optimize`'s exact optimum."""
+    cand_map = fused_candidates(module, h)
     cols = []
     for phase_id, claim in _flatten(module):
         w = weights(h, theta, phase_id, policy)
-        cost_rid = claim.rd[0] if claim.rd else claim.primary_rid
-        resource = module.resource(cost_rid) if cost_rid is not None else None
-        cands = candidates_for(claim, h, resource)
+        cands = cand_map[claim.id]
         scores = [c.base.dot(w) for c in cands]                 # static (no coupling)
         cols.append((phase_id, claim, w, cands, scores))
     return cols

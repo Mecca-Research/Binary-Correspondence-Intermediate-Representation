@@ -90,3 +90,41 @@ def test_per_target_parity_saxpy_and_histogram():
     histo = {t: optimize(histogram_gather(1024), TARGETS[t], COOL).score
              for t in ("x86_avx512", "nvidia_ptx")}
     assert histo == {"x86_avx512": 528384, "nvidia_ptx": 266240}
+
+
+# --- producer->consumer deforestation (the second fusion kind) --------------------
+
+def _pc(c2_reads, n=1 << 16):
+    """A two-claim phase; c1 writes 62; c2 reads `c2_reads` (use 62 to consume it)."""
+    m = Module(name="pc")
+    for rid in (60, 61, 62, 63, 64, 65):
+        m.add_resource(Resource(rid=rid, shape=(n,)))
+    c1 = Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+               count=n, rd=(60, 61), wr=(62,), op="vector.add")
+    c2 = Claim(id=2, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+               count=n, rd=c2_reads, wr=(64,), op="vector.add")
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[c1, c2]))
+    return m
+
+
+def test_producer_consumer_deforestation_lowers_the_plan_score():
+    # c2 consuming c1's output (62) fuses: the intermediate never round-trips to
+    # memory (deforestation), so the plan is strictly cheaper than an identical chain
+    # whose 2nd claim reads an UNRELATED operand -- with the widths unchanged.
+    fused = optimize(_pc((62, 63)), AVX, COOL)        # producer -> consumer
+    indep = optimize(_pc((65, 63)), AVX, COOL)        # no dependency
+    assert fused.score < indep.score                  # the deforestation gain (~12%)
+    assert {c: x.width for c, x in fused.by_claim().items()} == \
+           {c: x.width for c, x in indep.by_claim().items()}     # no width churn
+
+
+def test_deforestation_preserves_makespan_le_serial():
+    # the discount is dependency-based (uniform in plan + schedule pricing), so a
+    # serialized producer->consumer chain still has makespan == serial, gain 0.
+    m = _pc((62, 63))
+    sp = price_scheduled(m, optimize(m, AVX, COOL), AVX, COOL)
+    assert sp.makespan == sp.serial and sp.overlap_gain == 0
+
+
+def test_single_claim_is_unaffected_by_deforestation():
+    assert optimize(vector_add(1024), AVX, COOL).score == 7808   # pinned: no producer
