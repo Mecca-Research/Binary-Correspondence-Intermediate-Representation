@@ -37,6 +37,7 @@ accuracy, contention, verification`.
 | policy / weights | `kbcir.weights.Policy` | `bcir.kbcir.policy` |
 | candidate path | `kbcir.realize.Candidate` | `bcir.kbcir.path` |
 | cost algebra (candidate costs) | `kbcir.cost._cost` / `realize.candidates_for` / `_stride_penalty` | **`-bcir-cost-model`** (`BCIRCostModel.cpp`, C++23): recomputes the 12-d candidate costs from `bcir.claim` + `bcir.target.capability` (constexpr tier table + seeded constants); reproduces vec16 @ 7808 / gather @ 528384 / tile @ 126976 from the claim alone (`cost_model.mlir`) |
+| verification cost (12th axis) | `realize._verify_cost` (the verify-contract discharge cost: `none`/`bounds` free, `exact`/`hash` O(n); width-independent) | `BCIRCostModel.h::verifyCostFor` (mirror); `cost_model_verify.mlir` (bounds → verification 0 @ 7808, exact → verification 1024 @ 8832); a tradeable RCSP resource (`test_verify_cost.py`) |
 | min-plus select | `kbcir.realize.optimize` + `semiring` | `bcir.kbcir.select` (`#bcir.semiring<min_plus>`) |
 | min-plus **plan** (coupled shortest path) | `kbcir.realize.optimize` + `semiring.dag_shortest_path` + `_context_factor` | **`-bcir-plan`** (`BCIRPlanPass.cpp`, C++23): the layered tropical shortest path over the fused candidate columns with the path-based shared-input fusion; reproduces `optimize` for *all* modules (7808 / corpus 1015808·101888·1595520; `plan.mlir`, `gem_corpus.mlir`) |
 | budget B(H,Θ) (RCSP) | `kbcir.rcsp.Budget` / `optimize_constrained` | `bcir.kbcir.budget` + `bcir.kbcir.select` `budget`; **`-bcir-rcsp`** (`BCIRPasses.cpp`, C++23) recomputes the budget-feasible label-DP argmin (reproduces 9472 under the 700 cap) and cross-checks the declared selection |
@@ -113,7 +114,7 @@ accuracy, contention, verification`.
 | data-DNA telemetry (CT4) | `telemetry.DataDNA` + `kbcir.calibrate` | `bcir.trace.data_dna` |
 | calibration loop (closed) | `kbcir.calibloop` (`close_loop` / `measure_and_close` / `rescore_plan` / `CalibrationCertificate`) + `verify.verify_calibration` | `bcir.kbcir.calibration` (R13: measure → freeze → replan; `cal_gen ≥ 1` ∧ `win ≥ 0`; the measured cost of not recalibrating) |
 | JIT (CT5) | `lower.jit` (lli) | per-target `bcir.target.lower_contract` |
-| StreamPack ABI (Phase 7) | `abi.streampack_abi` (v1) | `runtime/c/bcir_streampack.h` |
+| StreamPack ABI (Phase 7) | `abi.streampack_abi` (v1/v2 codec) | `runtime/c/bcir_streampack.h` (spec) + `bcir_runtime.c` (decode) + **`bcir_encode.c`** (`bcir_sp_reencode`, byte-identical re-encode, the full C round-trip; `test_c_encoder.py`) |
 | WASM (Phase 7) | `lower.wasm` (clang→wasm + node) | per-target `bcir.target.lower_contract` |
 | stackify (Phase 7) | `lower.stackify` (→ wasm/jvm/cil) | foundation for `bcir.target.lower_contract` encoders |
 | C runtime (Phase 8) | `runtime/c/bcir_runtime.{h,c}` decodes `abi.streampack_abi` | `runtime/c/bcir_streampack.h` (C23: `restrict`/`[[nodiscard]]`/frozen-ABI `static_assert`; fuzzed under libFuzzer+ASan/UBSan via `runtime/c/fuzz_streampack.c`) |

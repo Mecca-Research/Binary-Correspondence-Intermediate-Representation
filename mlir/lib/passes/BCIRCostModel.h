@@ -138,6 +138,15 @@ inline Cost baseCost(int64_t count, int streams, int opclass, int width,
   return c;
 }
 
+// realize._verify_cost -- the cost of discharging the claim's verify contract (the
+// producer for the 12th cost axis). none/bounds are free (the bounds check is fused into
+// the access the memory axis already prices); the expensive contracts carry a real,
+// size-proportional, width-independent cost the optimizer can trade. Mirrors the oracle.
+inline int64_t verifyCostFor(Verify v, int64_t count) {
+  int64_t n = std::max<int64_t>(1, count);
+  return (v == Verify::Exact || v == Verify::Hash) ? n : 0;
+}
+
 // realize.candidates_for -- the legal realizations (width + base cost), declared order.
 inline SmallVector<Cand> candidatesFor(ClaimOp c, const Cap &h, Domain dom, bool ham) {
   StringRef op = c.getOp();
@@ -147,12 +156,21 @@ inline SmallVector<Cand> candidatesFor(ClaimOp c, const Cap &h, Domain dom, bool
   int opclass = opClassFor(op);
   TierQ8 tier = tierForDomain(dom);
   int64_t gp = ham ? std::max<int64_t>(1, bitLength(count - 1)) : h.gatherPenalty;
+  int64_t vcost = verifyCostFor(c.getVerify(), count);
+  // Add the verification cost to every realization (width-independent, so the per-claim
+  // selection is unchanged); applied on every return path.
+  auto withVerify = [&](SmallVector<Cand> &o) -> SmallVector<Cand> & {
+    if (vcost)
+      for (Cand &cc : o)
+        cc.cost[11] += vcost;
+    return o;
+  };
 
   SmallVector<Cand> out;
   if (op == "reduce.gather") {
     out.push_back({1, baseCost(count, streams, opclass, 1, 1, tier, h)});
     out.push_back({1, baseCost(count, streams, opclass, 1, gp, tier, h)});
-    return out;
+    return withVerify(out);
   }
   switch (sc) {
   case StrideClass::Unit:
@@ -179,7 +197,7 @@ inline SmallVector<Cand> candidatesFor(ClaimOp c, const Cap &h, Domain dom, bool
     out.push_back({16, baseCost(count, streams, opclass, 16, 1, tier, h)});
     break;
   }
-  return out;
+  return withVerify(out);
 }
 
 inline int64_t scalarize(const Cost &c, ArrayRef<int64_t> w) {

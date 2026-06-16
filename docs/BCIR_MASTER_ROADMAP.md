@@ -89,7 +89,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | K_BCIR **overlap (max,+)** | `-bcir-overlap` | MLIR/C++ | ✅ **ported** (makespan/gain) |
 | K_BCIR **RCSP / Pareto** (per-claim + plan-level) | `-bcir-rcsp`, `-bcir-rcsp-plan` | MLIR/C++ | ✅ **ported** (9472, {16,8}@17280) |
 | GEM classify / batch / schedule / lower | `-bcir-*` passes | MLIR/C++ | ✅ |
-| GEM **hydrate** (plan → StreamPack **bytes**) | Python `abi.streampack_abi.encode` | **C** (the encoder) | ◑ the `bcir-hydrate` *pipeline* lowers lane segments; the byte **encoder** is Python-only |
+| GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
 | StreamPack ABI **decoder** | **C** `runtime/c/bcir_runtime.c` | **C** (frozen ABI) | ✅ CRC-gated parity + libFuzzer |
 | ETL binary-record decoder | **C** `runtime/c/bcir_binrec.c` | **C** | ✅ parity + libFuzzer |
@@ -169,10 +169,16 @@ The optimizer core is ported. What is still Python-only **and** belongs on the l
    `verify_laws_deep.mlir`; they remain enforced at the `-bcir-lower-to-llvm` checkpoint
    too (defense in depth). Verifier dual-rail symmetry is complete — every law R1–R16 is
    checkable by `-bcir-verify` alone.
-2. **The `verification` cost dimension (R8 verify-cost).** The 12th cost axis is modeled
-   as 0; give it a real producer — the cost of discharging a claim's verify contract
-   (bounds / exact / hash) — on both rails, so the optimizer can trade verification
-   cost against compute/memory.
+2. ✅ **The `verification` cost dimension (the 12th cost axis). DONE.** It now has a real
+   producer on both rails (`realize._verify_cost` / `BCIRCostModel.h::verifyCostFor`,
+   cross-checked by `cost_model_verify.mlir`): the cost of discharging a claim's verify
+   contract. `none`/`bounds` are free (the bounds check fuses into the access the memory
+   axis already prices, so every existing pinned score is unchanged); `exact` (recompute
+   + compare) and `hash` (digest every output) carry an O(n) cost. It is width-independent
+   (the contract is a property of the claim, not the lane), so it never perturbs the
+   per-claim selection but *is* a tradeable plan resource — an RCSP cap on `verification`
+   can make a claim infeasible (`test_verify_cost.py`). exact/hash were previously unused,
+   so this is purely additive.
 3. **A C++ `-bcir-verify` law-for-law differential** against the oracle verifier (the
    remaining toolchain-rail step of the verifier differential).
 
@@ -188,9 +194,12 @@ The C runtime has the decoders (StreamPack, ETL-binary) and now the executor:
    telemetry parity (`test_c_executor.py`, `check_runtime.sh`) and a libFuzzer + ASan/UBSan
    harness (`fuzz_exec.c`). The StreamPack is now a no-Python hot artifact a driver runs
    end-to-end.
-2. **The StreamPack encoder in C** (today Python `abi.streampack_abi.encode`; C only
-   decodes) — completes a full C round-trip so a driver-resident hydrate emits the
-   artifact without Python.
+2. ✅ **The StreamPack encoder in C** (`runtime/c/bcir_encode.c`). **DONE.** A freestanding
+   `bcir_sp_reencode` parses a pack and re-serializes it through value-based write
+   primitives, **byte-identical** to `bcir.abi.encode` across the corpus and both ABI
+   versions (v1 + v2 pipeline/double-buffer tails) — the full C round-trip, so a
+   driver-resident hydrate emits the artifact with no Python and no libc. Parity gate
+   `test_c_encoder.py` + `check_runtime.sh`; libFuzzer + ASan/UBSan harness `fuzz_encode.c`.
 3. **The `precision="compensated"` C-kernel emission variant** — the precision module
    models the compensated Q8 reduction; the C-kernel emitter does not yet produce it
    (a numerical-accuracy lowering gap).
@@ -240,20 +249,25 @@ that stay on the Python/ops side.
 In recommended order — each is gated by the generated differential harness + FileCheck
 + the C-runtime parity/fuzz scripts:
 
-1. ✅ **`-bcir-verify` R14 + R15 + R16** (§5.1.1). **DONE** — first-class verifier laws,
-   dual-rail, with positive/negative `verify_laws_deep.mlir` cases.
-2. ✅ **The C StreamPack executor** (§5.2.1). **DONE** — `runtime/c/bcir_exec.{h,c}`,
-   freestanding, Python↔C parity-gated + libFuzzer'd.
-3. **The C StreamPack encoder** (§5.2.2). `runtime/c/bcir_encode.c` mirroring
-   `streampack_abi.encode`, CRC-gated, with a Python-encode == C-encode parity test —
-   completing the full C round-trip (the next step).
-4. **The verify-cost dimension** (§5.1.2). Give the `verification` cost axis a producer
-   on both rails and pin the new scores.
+1. ✅ **`-bcir-verify` R14 + R15 + R16** (§5.1.1). **DONE** — first-class verifier laws.
+2. ✅ **The C StreamPack executor** (§5.2.1). **DONE** — `runtime/c/bcir_exec.{h,c}`.
+3. ✅ **The C StreamPack encoder** (§5.2.2). **DONE** — `runtime/c/bcir_encode.c`, byte-
+   identical to `bcir.abi.encode` (full C round-trip).
+4. ✅ **The verify-cost dimension** (§5.1.2). **DONE** — the 12th axis has a producer on
+   both rails (exact/hash O(n); bounds/none free).
 5. **The `precision="compensated"` C-kernel** (§5.2.3) + its accuracy-contract verifier
-   law.
-6. **Multi-claim bundle optimization** (§5.3.1) — the first genuinely *new* optimizer
-   capability, where the combinatorial (min,+) formulation earns its keep.
-7. **(When a rig is available)** the measured real-silicon replan win (§5.4).
+   law — *the next step.* The precision module models the compensated Q8 reduction; the
+   C-kernel emitter and a dual-rail accuracy law are the remaining lowering gap.
+6. **A C++ `-bcir-verify` law-for-law differential** (§5.1.3) — fault-inject each law on
+   the toolchain rail and confirm `-bcir-verify` flags it (the oracle side already does).
+7. **Multi-claim bundle (joint) optimization** (§5.3.1) — the first genuinely *new*
+   optimizer capability, where the combinatorial (min,+) formulation earns its keep
+   beyond the pairwise coupling that ships today (bound compile time; emit search
+   certificates).
+8. **Proof-carrying optimization records** (§5.3.2) — `bcir-explain` / `bcir-replay` /
+   `bcir-reduce` over R13's provenance foundation.
+9. **(When a rig is available)** the measured real-silicon replan win (§5.4) — the top
+   differentiator.
 
 ---
 

@@ -74,6 +74,8 @@ _MODULES = [
     "bcir.tests.test_etl_binrec",
     "bcir.tests.test_native_object_gate",
     "bcir.tests.test_c_executor",
+    "bcir.tests.test_c_encoder",
+    "bcir.tests.test_verify_cost",
     "bcir.tests.test_smart_laws",
     "bcir.tests.test_fuzz",
     "bcir.tests.test_measured_silicon",

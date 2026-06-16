@@ -127,6 +127,20 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-16: **C StreamPack encoder + the verification cost dimension.** (1)
+  `runtime/c/bcir_encode.c` -- the write-side twin of `bcir/abi/streampack_abi.py`:
+  `bcir_sp_reencode` parses a pack and re-serializes it through value-based write
+  primitives, **byte-identical** to the Python encoder across the corpus and both ABI
+  versions (v1 + v2 pipeline/double-buffer tails). With the decoder + executor, the
+  StreamPack is a full no-Python, no-libc C round-trip. Parity gate `test_c_encoder.py`
+  + `check_runtime.sh`; libFuzzer + ASan/UBSan `fuzz_encode.c`. (2) The 12th cost axis
+  (`verification`), modeled as 0 until now, gains a real producer on both rails
+  (`realize._verify_cost` / `BCIRCostModel.h::verifyCostFor`, `cost_model_verify.mlir`):
+  the verify-contract discharge cost -- `none`/`bounds` free (the bounds check fuses into
+  the priced access, so every existing pinned score is unchanged), `exact`/`hash` an O(n)
+  cost. Width-independent (never perturbs selection), a tradeable RCSP resource. exact/hash
+  were unused, so purely additive. +9 tests (553 total).
+
 - 2026-06-16: **The C StreamPack executor + R14/R15/R16 as first-class `-bcir-verify`
   laws.** (1) `runtime/c/bcir_exec.{h,c}` is the C twin of `bcir/gem/execute.py`: a
   freestanding `bcir_sp_execute` that decodes a pack and dispatches its claims in GEM
