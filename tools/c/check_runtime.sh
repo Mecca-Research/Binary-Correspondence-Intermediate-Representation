@@ -43,6 +43,30 @@ for std in c11 c23; do
 done
 echo "  PASS bcir_binrec freestanding (C11 + C23)"
 
+echo "[c-runtime] StreamPack executor: freestanding compile (C11 + C23) + Python->C parity"
+# bcir_exec.c is the C twin of bcir/gem/execute.py -- the deterministic phase-sliced
+# executor that turns the StreamPack into a no-Python hot artifact.
+for std in c11 c23; do
+  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -I "${C}" -c "${C}/bcir_exec.c" -o /dev/null \
+    || { echo "  FAIL: bcir_exec not freestanding-clean under -std=${std}"; exit 1; }
+done
+"${CC}" -std=c23 -O2 "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/test_exec.c" -I "${C}" -o "${tmp}/test_exec" \
+  || { echo "  FAIL: executor harness build"; exit 1; }
+python3 -c "
+from bcir.examples import multi_histogram
+from bcir.kbcir import optimize
+from bcir.kbcir.cost import TargetProfile, Theta
+from bcir.gem import hydrate, execute
+from bcir.abi import encode
+m=multi_histogram(); r=optimize(m, TargetProfile.x86_avx512(), Theta.cool())
+open('${tmp}/exec.bin','wb').write(encode(hydrate(m, r)))
+open('${tmp}/exec.order','w').write(' '.join(str(i) for i in execute(m).order))
+" || { echo "  FAIL: python encode"; exit 1; }
+c_order="$("${tmp}/test_exec" "${tmp}/exec.bin" | sed -n 's/^order: //p')"
+[ "${c_order}" = "$(cat "${tmp}/exec.order")" ] \
+  && echo "  PASS executor parity (Python gem.execute == C bcir_sp_execute: ${c_order})" \
+  || { echo "  FAIL: executor order parity (C='${c_order}' PY='$(cat "${tmp}/exec.order")')"; exit 1; }
+
 echo "[c-runtime] frozen Q8 table (#embed / fallback): build + self-check (C11 + C23)"
 # Drift gate: the committed runtime/c/{q8_tiers.bin,bcir_q8_tables.h} must equal a
 # fresh emission from the oracle (bcir.kbcir.cost.MemoryHierarchy.default()).

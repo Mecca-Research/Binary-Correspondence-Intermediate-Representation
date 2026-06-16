@@ -37,9 +37,9 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
 
   StringRef getArgument() const final { return "bcir-verify"; }
   StringRef getDescription() const final {
-    return "Verify the BCIR semantic laws R1-R13: registry, domain, phase DAG, "
+    return "Verify the BCIR semantic laws R1-R16: registry, domain, phase DAG, "
            "hazard, lane, bounds, cost, plan, provenance, generation, lowering, "
-           "policy provenance.";
+           "policy provenance, CIM/PIM dispatch, DVFS clock, allocator placement.";
   }
 
   void runOnOperation() override {
@@ -749,6 +749,51 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             ok = false;
           }
         }
+      }
+      // R14 (CIM/PIM dispatch legality): a segment dispatched to processing-in-memory
+      // must be a reduction -- PIM does element-local reduce work, not general SIMD.
+      // First-class here in -bcir-verify (dual-rail with verify.verify_cim and the
+      // -bcir-lower-to-llvm checkpoint); mirrors gem.cim (only reduce.* is offloaded).
+      if (seg.getDispatch() == "pim" && !seg.getOpcode().starts_with("reduce.")) {
+        seg.emitError("R14: pim dispatch illegal for non-reduction op '")
+            << seg.getOpcode() << "' (claim @" << seg.getClaim() << ")";
+        ok = false;
+      }
+      // R15 (DVFS clock legality): clock_q8 must be a legal step in [64, 512]
+      // (0.25x..2x), and a pim (memory-bound) segment must not overclock (clock_q8
+      // <= 256) -- more core frequency does not help bandwidth-bound work. Dual-rail
+      // with verify.verify_dvfs; mirrors gem.dvfs.
+      int64_t clk = seg.getClockQ8();
+      if (clk < 64 || clk > 512) {
+        seg.emitError("R15: clock_q8 ") << clk << " out of legal range [64, 512]";
+        ok = false;
+      } else if (seg.getDispatch() == "pim" && clk > 256) {
+        seg.emitError("R15: pim (memory-bound) segment must not overclock (clock_q8 ")
+            << clk << " > 256)";
+        ok = false;
+      }
+    });
+
+    // R16 (allocator placement legality): an on-chip placement must fit -- a resource
+    // placed in L1 must be <= 64 KiB, in L2 <= 4 MiB (static caps; size =
+    // product(shape) * 4 B); L3/DRAM/HBM have no cap. First-class here in -bcir-verify
+    // (dual-rail with verify.verify_allocator); mirrors kbcir.allocator's capacity gate.
+    root->walk([&](ResourceOp r) {
+      auto pl = r.getPlacement();
+      if (!pl)
+        return;
+      ArrayRef<int64_t> shape = r.getShape();
+      if (shape.empty())
+        return; // dynamic extent: not statically checkable
+      int64_t bytes = 4;
+      for (int64_t d : shape)
+        bytes *= (d > 0 ? d : 1);
+      int64_t cap = (*pl == MemTier::L1) ? (64 * 1024)
+                  : (*pl == MemTier::L2) ? (4 * 1024 * 1024) : 0;
+      if (cap && bytes > cap) {
+        r.emitError("R16: placement ") << stringifyMemTier(*pl) << " does not fit @"
+            << r.getSymName() << " (" << bytes << " B > " << cap << " B)";
+        ok = false;
       }
     });
 

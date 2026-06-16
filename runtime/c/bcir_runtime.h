@@ -25,7 +25,8 @@ typedef enum bcir_status {
   BCIR_ERR_TRUNCATED = 1,
   BCIR_ERR_MAGIC = 2,
   BCIR_ERR_VERSION = 3,
-  BCIR_ERR_CRC = 4
+  BCIR_ERR_CRC = 4,
+  BCIR_ERR_NOSPACE = 5   /* a caller-provided buffer was too small (executor) */
 } bcir_status;
 
 /* zlib-compatible CRC-32 (reflected, poly 0xEDB88320). */

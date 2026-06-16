@@ -1,9 +1,11 @@
 // RUN: bcir-opt -bcir-verify -verify-diagnostics -split-input-file %s
 //
-// The deep verifier laws: K_BCIR plan laws R8/R9, GEM stream laws R10/R11, and
-// the lowering-contract law R12, as the MLIR-native `-bcir-verify` pass. Each
-// section is an independent module with a single law violation (mirrors
-// bcir/verify verify_plan / verify_pack / verify_lowering in the oracle).
+// The deep verifier laws: K_BCIR plan laws R8/R9, GEM stream laws R10/R11, the
+// lowering-contract law R12, and the smart-lowering laws R14 (CIM/PIM dispatch) /
+// R15 (DVFS clock) / R16 (allocator placement) -- all as the MLIR-native
+// `-bcir-verify` pass (R14-R16 are now first-class verifier laws, dual-rail with
+// verify.{verify_cim,verify_dvfs,verify_allocator}). Each section is an independent
+// module with a single law violation (mirrors bcir/verify in the oracle).
 
 // R8: a selection drawn from a candidate that has no declared cost path.
 bcir.module @r8 {
@@ -361,4 +363,108 @@ bcir.module @r12 {
     stride_class = #bcir.stride_class<unit>, opcode = @vadd,
     legal_if = "avx2", preserves = "bounds"
   }
+}
+
+// -----
+
+// R14 (CIM/PIM dispatch): a NON-reduction segment cannot be dispatched to
+// processing-in-memory -- now a first-class -bcir-verify law (PIM does element-local
+// reduce work, not general SIMD; mirrors gem.cim / verify.verify_cim).
+bcir.module @r14_pim_nonreduce {
+  bcir.registry @RES {
+    %a = bcir.resource @A { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    %b = bcir.resource @B { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    %c = bcir.resource @C { rid = 3 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @add attributes {
+    claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A, @B], writes = [@C], count = 1024 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 1024 step 1 }
+  // expected-error @+1 {{R14: pim dispatch illegal for non-reduction op 'vector.add' (claim @add)}}
+  bcir.gem.lane_segment @seg0 { claim = @add, phase = @p0, lane = #bcir.lane<u>, width = 16 : i32, opcode = "vector.add", reads = [@A, @B], writes = [@C], fence_before = [], fence_after = [], dispatch = "pim" }
+}
+
+// -----
+
+// R14 (positive): a reduction segment MAY be dispatched to PIM -- verifies clean.
+bcir.module @r14_pim_reduce_ok {
+  bcir.registry @RES {
+    %t = bcir.resource @TABLE { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    %acc = bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> } : !bcir.resource
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @reduce attributes {
+    claim_id = 1 : i32, phase = @p0, op = "reduce.gather", reads = [@TABLE], writes = [@ACC], count = 1024 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.gem.lane_segment @seg0 { claim = @reduce, phase = @p0, lane = #bcir.lane<u>, width = 1 : i32, opcode = "reduce.gather", reads = [@TABLE], writes = [@ACC], fence_before = [], fence_after = [], dispatch = "pim" }
+}
+
+// -----
+
+// R15 (DVFS clock): a clock outside the legal step range [64, 512] is illegal.
+bcir.module @r15_clock_range {
+  bcir.registry @RES {
+    %a = bcir.resource @A { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    %b = bcir.resource @B { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    %c = bcir.resource @C { rid = 3 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @add attributes {
+    claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A, @B], writes = [@C], count = 1024 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 1024 step 1 }
+  // expected-error @+1 {{R15: clock_q8 1000 out of legal range [64, 512]}}
+  bcir.gem.lane_segment @seg0 { claim = @add, phase = @p0, lane = #bcir.lane<u>, width = 16 : i32, opcode = "vector.add", reads = [@A, @B], writes = [@C], fence_before = [], fence_after = [], clock_q8 = 1000 : i32 }
+}
+
+// -----
+
+// R15 (DVFS clock): a memory-bound (pim) reduction must NOT overclock (clock_q8 > 256).
+bcir.module @r15_pim_overclock {
+  bcir.registry @RES {
+    %t = bcir.resource @TABLE { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    %acc = bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> } : !bcir.resource
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @reduce attributes {
+    claim_id = 1 : i32, phase = @p0, op = "reduce.gather", reads = [@TABLE], writes = [@ACC], count = 1024 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 1024 step 1 }
+  // expected-error @+1 {{R15: pim (memory-bound) segment must not overclock (clock_q8 320 > 256)}}
+  bcir.gem.lane_segment @seg0 { claim = @reduce, phase = @p0, lane = #bcir.lane<u>, width = 1 : i32, opcode = "reduce.gather", reads = [@TABLE], writes = [@ACC], fence_before = [], fence_after = [], dispatch = "pim", clock_q8 = 320 : i32 }
+}
+
+// -----
+
+// R16 (allocator placement): a 1 Mi-element i32 tensor (4 MiB) cannot be L1-resident
+// (<= 64 KiB) -- now a first-class -bcir-verify law (mirrors verify.verify_allocator).
+bcir.module @r16_l1_too_big {
+  bcir.registry @RES {
+    // expected-error @+1 {{R16: placement l1 does not fit @BIG (4194304 B > 65536 B)}}
+    %b = bcir.resource @BIG { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1048576>, layout = #bcir.layout<soa>, placement = #bcir.mem_tier<l1> } : !bcir.resource
+  }
+}
+
+// -----
+
+// R16 (positive): a small tensor MAY be L1-resident; R15 (positive): a downclock is
+// legal. Verifies clean (no diagnostic).
+bcir.module @r16_r15_ok {
+  bcir.registry @RES {
+    %s = bcir.resource @SMALL { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa>, placement = #bcir.mem_tier<l1> } : !bcir.resource
+    %d = bcir.resource @DST { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> } : !bcir.resource
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @copy attributes {
+    claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@SMALL], writes = [@DST], count = 64 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 64 step 1 }
+  bcir.gem.lane_segment @seg0 { claim = @copy, phase = @p0, lane = #bcir.lane<u>, width = 8 : i32, opcode = "vector.add", reads = [@SMALL], writes = [@DST], fence_before = [], fence_after = [], clock_q8 = 128 : i32 }
 }
