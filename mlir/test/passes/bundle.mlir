@@ -42,8 +42,6 @@ bcir.module @bundle {
 // CHECK-LABEL: bcir.module @bundle
 // exactly one bundle detected.
 // CHECK: kbcir.bundle_count = 1
-// c1 and c3 are the bundle (shared read @r1).
-// CHECK-DAG: bcir.claim @c1 attributes {{.*}}kbcir.bundle = 0
-// CHECK-DAG: bcir.claim @c1 attributes {{.*}}kbcir.bundle_shared = @r1
-// CHECK-DAG: bcir.claim @c3 attributes {{.*}}kbcir.bundle = 0
-// CHECK-DAG: bcir.claim @c3 attributes {{.*}}kbcir.bundle_shared = @r1
+// c1 and c3 are the bundle (shared read @r1); one CHECK-DAG per claim (non-overlapping).
+// CHECK-DAG: bcir.claim @c1 attributes {{.*}}kbcir.bundle = 0 : i64, kbcir.bundle_shared = @r1
+// CHECK-DAG: bcir.claim @c3 attributes {{.*}}kbcir.bundle = 0 : i64, kbcir.bundle_shared = @r1
