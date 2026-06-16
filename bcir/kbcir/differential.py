@@ -618,6 +618,147 @@ def emit_theta_test() -> str:
     return "\n".join(head) + body.rstrip() + f"\n\n// CHECK: kbcir.plan_score = {score}\n"
 
 
+# --- the six-target capability matrix (the cross-rail per-target artifact) --------
+#
+# The committed gem_corpus.mlir pins the law to the oracle on ONE target
+# (x86_avx512). This matrix pins it on ALL SIX: each program is emitted once per
+# target with that target's `bcir.target.capability` seeds, and the C++
+# optimizer-core passes -- -bcir-plan (the coupled shortest path), -bcir-overlap
+# (the (max,+) scheduled price), and -bcir-rcsp-plan (the accumulated-budget label
+# DP) -- must recompute the oracle's per-target plan score / makespan / constrained
+# optimum FROM THE CAPABILITY ALONE (the emitted path costs are decoration the plan
+# pass ignores). So the six-target parity moves from "proven on the Python rail"
+# (run_campaign) to "proven on the MLIR/C++ rail" (this file under bcir-opt).
+#
+# A compact, surface-covering program set keeps the artifact reviewable while
+# exercising every target-sensitive cost path:
+#   * vector_add      -- per-target lane width (avx512/sve/rvv 16, avx2 8, neon 4, ptx 32)
+#   * fused_chain     -- (max,+) overlap gain + shared-input fusion (distinct per target)
+#   * scan_chain      -- producer->consumer deforestation, serialized (overlap_gain 0)
+#   * histogram_gather-- the GGG gather lane (ptx's gather_penalty 16 vs the CPUs' 32)
+#   * tiled_matmul    -- the T-lane tile path (target-invariant under latency weights)
+MATRIX = ("vector_add", "fused_chain", "scan_chain", "histogram_gather", "tiled_matmul")
+
+
+def _two_independent_vec(n: int = 1024) -> Module:
+    """Two independent unit-stride add claims over disjoint operands (no shared read,
+    no dependency) -- the clean RCSP shape: each realizes at the target's max width,
+    and a plan-wide thermal cap can narrow ONE of them (the accumulated-budget
+    decision a per-claim cap cannot make). Mirrors mlir/test/passes/rcsp_plan.mlir."""
+    m = Module(name="two_vec")
+    for rid in (1, 2, 3, 4, 5, 6):
+        m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,)))
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[
+        Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+              count=n, rd=(1, 2), wr=(3,), op="vector.add", domain=Domain.RAM),
+        Claim(id=2, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+              count=n, rd=(4, 5), wr=(6,), op="vector.add", domain=Domain.RAM)]))
+    return m
+
+
+def _rcsp_for_target(module: Module, h, theta: Theta):
+    """Pick a plan-wide thermal cap for `module` on target `h` and solve it.
+
+    Returns (Budget, constrained RealizationResult). The cap is the unconstrained
+    plan's accumulated thermal minus one -- which *binds* (forces a narrower width on
+    one claim) on targets with an intermediate lane that lowers heat (avx512/sve/rvv:
+    {16,16}->{16,8}); on targets whose widest lane is already heat-minimal (avx2/neon/
+    ptx) that cap is infeasible, so we fall back to the exact accumulation (a feasible,
+    non-binding cap). Either way it is a real per-target -bcir-rcsp-plan parity check."""
+    from .rcsp import Budget, Infeasible, optimize_constrained, plan_resources
+
+    unconstrained = optimize(module, h, theta, PERF)
+    accum_thermal = plan_resources(unconstrained, theta).v[5]  # THERMAL dim
+    for cap in (accum_thermal - 1, accum_thermal):
+        budget = Budget.of(thermal=cap)
+        try:
+            return budget, optimize_constrained(module, h, theta, PERF, budget)
+        except Infeasible:
+            continue
+    raise AssertionError(f"no feasible thermal cap for {module.name} on {h.name}")
+
+
+def _matrix_check_block(lines: list[str], label: str, pairs: list[tuple[str, int]]) -> None:
+    """Append a FileCheck block: a CHECK-LABEL on the module op, then a plain CHECK per
+    module-level attribute. The annotations print in the module op's attr-dict (one
+    line, alphabetically sorted); forward-scanning CHECKs match them in that order, and
+    the CHECK-LABEL isolates the module so equal scores on other targets don't collide
+    (the proven idiom in mlir/test/passes/plan.mlir). `pairs` must be in attr order."""
+    lines.append(f"// CHECK-LABEL: bcir.module @{label}")
+    for attr, value in pairs:
+        lines.append(f"// CHECK: kbcir.{attr} = {value}")
+
+
+def emit_target_matrix() -> str:
+    """Emit the six-target capability matrix as one self-checking FileCheck file --
+    the artifact `bcir-opt -bcir-plan -bcir-overlap -bcir-rcsp-plan` recomputes in
+    mlir/test/passes/target_matrix.mlir. Regenerate with
+    `python -m bcir.kbcir.differential --emit-matrix`."""
+    from ..examples import PROGRAMS
+    from ..gem.overlap import price_scheduled
+
+    th = Theta.cool()
+    out: list[str] = [
+        "// RUN: bcir-opt -bcir-plan -bcir-overlap -bcir-rcsp-plan %s | FileCheck %s",
+        "//",
+        "// The six-target capability matrix. Each program is emitted once per TARGET",
+        "// with that target's bcir.target.capability seeds (lane widths, gather penalty,",
+        "// cacheline, heat/power density, affinity domains, ...); the C++ optimizer-core",
+        "// passes must recompute the oracle's per-target plan score (-bcir-plan), (max,+)",
+        "// scheduled makespan/gain (-bcir-overlap), and constrained optimum (-bcir-rcsp-",
+        "// plan) FROM THE CAPABILITY ALONE -- the emitted path costs are decoration the",
+        "// plan/overlap/rcsp passes ignore. GENERATED by the oracle; regenerate with",
+        "// `python -m bcir.kbcir.differential --emit-matrix`. This is the six-target",
+        "// parity (run_campaign) carried onto the MLIR/C++ rail.",
+        "",
+    ]
+
+    # --- -bcir-plan + -bcir-overlap: the coupled plan + scheduled price, per target ---
+    for name in MATRIX:
+        for tname, h in TARGETS.items():
+            module = PROGRAMS[name]()
+            res = optimize(module, h, th, PERF)
+            sp = price_scheduled(module, res, h, th, PERF)
+            body = to_mlir(module, h, th, PERF, module_suffix=f"_{tname}", result=res)
+            out.append(body.rstrip())
+            out.append("")
+            _matrix_check_block(out, f"{_module_label(module.name, tname)}", [
+                ("overlap_gain", sp.overlap_gain),
+                ("overlap_makespan", sp.makespan),
+                ("plan_score", res.score),
+            ])
+            out.append("")
+
+    # --- -bcir-rcsp-plan: the plan-wide constrained optimum, per target ---------------
+    out.append("// -- plan-level constrained selection (RCSP): a thermal cap narrows the")
+    out.append("// -- plan where it binds (avx512/sve/rvv) and is feasibly inert otherwise.")
+    out.append("")
+    for tname, h in TARGETS.items():
+        module = _two_independent_vec()
+        budget, rc = _rcsp_for_target(module, h, th)
+        body = to_mlir(module, h, th, PERF, module_suffix=f"_{tname}", budget=budget)
+        out.append(body.rstrip())
+        out.append("")
+        label = _module_label(module.name, tname)
+        out.append(f"// CHECK-LABEL: bcir.module @{label}")
+        out.append(f"// CHECK: kbcir.rcsp_plan_score = {rc.score}")
+        for step in rc.steps:
+            out.append(f"// CHECK: bcir.claim @c{step.claim_id}")
+            out.append(f"// CHECK-SAME: kbcir.rcsp_width = {step.candidate.width}")
+        out.append("")
+    return "\n".join(out) + "\n"
+
+
+def _module_label(module_name: str, target: str) -> str:
+    """The emitted module symbol (to_mlir sanitizes name+suffix the same way)."""
+    from ..lower.mlir import _ident
+    return _ident(f"{module_name}_{target}")
+
+
+_MATRIX_MLIR_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "mlir",
+                                 "test", "passes", "target_matrix.mlir")
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="bcir.kbcir.differential",
                                 description="Generated Python<->MLIR differential testing")
@@ -627,6 +768,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="(re)write mlir/test/passes/gem_corpus.mlir from the oracle")
     p.add_argument("--emit-theta", action="store_true",
                    help="(re)write mlir/test/passes/theta_hot.mlir (hot-Theta plan parity)")
+    p.add_argument("--emit-matrix", action="store_true",
+                   help="(re)write mlir/test/passes/target_matrix.mlir (six-target parity)")
     p.add_argument("--emit", metavar="PROGRAM",
                    help="print the GEM-pipeline MLIR for one program (see examples.PROGRAMS)")
     p.add_argument("--target", default="x86_avx512")
@@ -647,6 +790,12 @@ def main(argv: list[str] | None = None) -> int:
         path = os.path.normpath(_THETA_MLIR_PATH)
         with open(path, "w", encoding="utf-8") as f:
             f.write(emit_theta_test())
+        print(f"[differential] wrote {path}")
+        return 0
+    if args.emit_matrix:
+        path = os.path.normpath(_MATRIX_MLIR_PATH)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(emit_target_matrix())
         print(f"[differential] wrote {path}")
         return 0
 
