@@ -220,3 +220,20 @@
   deterministic, opt-in, off the simple path (test_perf guard). +13 tests (447
   total). No new MLIR laws needed (these are planning/runtime passes; the PIM
   binding is covered by R14).
+- 2026-06-16: **Mined two prior-project (BDI) research notes — MPAT + AEDACI — for
+  precision/accuracy ideas; shipped the deterministic, integer subset, skipped the
+  bloat.** New `kbcir.precision` (opt-in, off the default plan path — pinned scores
+  unchanged): the Q8-ULP error unit (`ulp_distance`); integer interval error bounds
+  (`Interval`, `accuracy_bound`, `reduction_error_bound`) that give the `accuracy`
+  cost dim a real producer + `meets_tolerance` (a checkable accuracy contract);
+  a **compensated Q8 reduction** (`compensated_reduce_q8`, residual-carry MAC) that
+  is bit-identical to the int64-exact result vs the naive accumulator's `count`-ULP
+  drift — the measured numerical win; and stability diagnostics (`cancellation`,
+  `condition_milli`) emitted as two-truth `Graded` signals (inform, never legislate).
+  **Skipped as bloat/wrong-substrate:** the ECC/coding-theory catalogue, ML decoders
+  and the novel-algorithm zoo, arbitrary-precision bignum, decimal, CORDIC,
+  root-finder/optimizer/quadrature libraries, affine arithmetic, the Newton-Raphson
+  condition search, and the runtime hot-patch/kernel-daemon machinery. +10 tests
+  (457 total). Next-step roadmap (the MLIR/C/C++ lowering pass): a `precision=
+  "compensated"` C-kernel variant + the accuracy-contract verifier law on both rails
+  (strategy §8).

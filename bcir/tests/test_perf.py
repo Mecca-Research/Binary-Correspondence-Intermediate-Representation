@@ -24,7 +24,7 @@ import types
 # are capabilities the caller invokes explicitly, never on the simple path.
 _HEAVY_KBCIR = ("calibloop", "microbench", "accel", "portfolio", "moegate", "regret",
                 "softdp", "egraph", "operad", "twotruth", "memory", "throttle",
-                "mapping", "bayescal", "allocator", "sensing")
+                "mapping", "bayescal", "allocator", "sensing", "precision")
 _HEAVY_LOWER = ("jit", "wasm", "specialist")                    # JIT + WASM/stack + specialist
 _HEAVY_GEM = ("concurrency", "overlap", "schedule", "async_tokens", "cim", "dvfs")
 

@@ -64,6 +64,10 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
                   "Pool", "PoolPlan", "live_intervals", "pool_plan"),
     "sensing": ("PathSamples", "RegretSensor", "TelemetryDecision", "total_overhead",
                 "full_resolution_overhead", "sense_by_ranker", "DEFAULT_MARGIN_THRESHOLD"),
+    "precision": ("Interval", "iadd", "isub", "imul_q8", "ulp_distance",
+                  "reduction_error_bound", "accuracy_bound", "meets_tolerance",
+                  "naive_reduce_q8", "compensated_reduce_q8", "exact_reduce_q8",
+                  "cancellation", "condition_milli", "Q8", "ULP"),
 }
 
 _NAME_TO_MOD: dict[str, str] = {name: mod for mod, names in _EXPORTS.items() for name in names}

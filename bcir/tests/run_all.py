@@ -66,6 +66,7 @@ _MODULES = [
     "bcir.tests.test_dvfs",
     "bcir.tests.test_silicon",
     "bcir.tests.test_persistent_oracles",
+    "bcir.tests.test_precision",
 ]
 
 
