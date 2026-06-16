@@ -37,8 +37,8 @@ accuracy, contention, verification`.
 | policy / weights | `kbcir.weights.Policy` | `bcir.kbcir.policy` |
 | candidate path | `kbcir.realize.Candidate` | `bcir.kbcir.path` |
 | min-plus select | `kbcir.realize.optimize` + `semiring` | `bcir.kbcir.select` (`#bcir.semiring<min_plus>`) |
-| budget B(H,Θ) (RCSP) | `kbcir.rcsp.Budget` / `optimize_constrained` | `bcir.kbcir.budget` + `bcir.kbcir.select` `budget` (feasibility: `-bcir-verify` R9) |
-| Pareto front | `kbcir.rcsp.pareto_plans` (label dominance) | RCSP labels over the same candidate DAG |
+| budget B(H,Θ) (RCSP) | `kbcir.rcsp.Budget` / `optimize_constrained` | `bcir.kbcir.budget` + `bcir.kbcir.select` `budget`; **`-bcir-rcsp`** (`BCIRPasses.cpp`, C++23) recomputes the budget-feasible label-DP argmin (reproduces 9472 under the 700 cap) and cross-checks the declared selection |
+| Pareto front | `kbcir.rcsp.pareto_plans` (label dominance) | **`-bcir-rcsp`** computes the front over (score, thermal, power) by label dominance, annotates `kbcir.pareto_size` (the {vec16, vec8} front = 2; scalar dominated) — `mlir/test/passes/rcsp.mlir` |
 | scheduled price M(π,Θ) | `gem.overlap.price_scheduled` / `optimize_scheduled` | `bcir.kbcir.scheduled_price` (consistency: `-bcir-verify` R9) |
 | soft/differentiable select | `kbcir.softdp.softselect` / `free_energy` (T=0 ⇒ `optimize`) | `bcir.kbcir.soft_select` (R9: F ≤ score; T=0 ⇒ F == score) |
 | duration-aware schedule | `gem.schedule.schedule_eft` (LPT+EFT+locality+knee) | `bcir.gem.schedule` mode `eft` (R9) |

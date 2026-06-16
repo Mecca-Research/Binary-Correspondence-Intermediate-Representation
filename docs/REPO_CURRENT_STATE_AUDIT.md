@@ -117,6 +117,19 @@
 
 ## Changelog
 
+- 2026-06-16: **MLIR toolchain in place + the optimizer core starts porting to C++23.**
+  The dev toolchain (mlir-18-tools / libmlir-18-dev / llvm-18-dev) builds `bcir-opt`
+  locally; every pass validates, including the generated `gem_corpus.mlir` (the C++
+  `-bcir-select-realization` recomputes the oracle's per-claim scores for the widened
+  corpus -- the prior Python work confirmed against the real law). The dialect now
+  builds at **C++23** (renamed the `bcir.opt.*` `$requires` attr -> `$require`, a C++20+
+  keyword that blocked the standard bump). First optimizer-core port: **`-bcir-rcsp`**
+  (`BCIRPasses.cpp`) ports `kbcir.rcsp` -- the budget-feasible label-DP argmin + the
+  Pareto front over (score, thermal, power); reproduces 9472 under the 700 cap and the
+  size-2 {vec16, vec8} front (`mlir/test/passes/rcsp.mlir` + a `gem_corpus` cross-check,
+  gated by `check_passes.sh`). Remaining C++ ports: the cost model on the MLIR rail
+  (enables overlap (max,+) + fusion/CSE recomputation). PMU/RAPL/DVFS real-silicon
+  calibration is explicitly deferred ("do later").
 - 2026-06-16: **Next-steps phase 2 -- real-silicon calibration path, R14-R16
   verifier + verifier differential, trust-boundary fuzzing, the overlap conformance
   net.** (1) `bcir.silicon` reads real RAPL package energy + on-die thermal and

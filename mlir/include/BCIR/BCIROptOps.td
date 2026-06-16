@@ -24,14 +24,14 @@ def BCIR_OptRewriteRuleOp : BCIR_Op<"opt.rewrite_rule", [Symbol]> {
   let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$kind,
                        BCIR_LaneAttr:$from_lane, BCIR_LaneAttr:$to_lane,
                        BCIR_StrideClassAttr:$from_stride, BCIR_StrideClassAttr:$to_stride,
-                       StrAttr:$requires, StrAttr:$preserves, StrAttr:$cost_axis);
+                       StrAttr:$require, StrAttr:$preserves, StrAttr:$cost_axis);
   let assemblyFormat = "$sym_name attr-dict";
 }
 
 def BCIR_OptLayoutRuleOp : BCIR_Op<"opt.layout_rule", [Symbol]> {
   let summary = "Declarative layout transformation law (e.g. AoS->SoA)";
   let arguments = (ins SymbolNameAttr:$sym_name, BCIR_LayoutAttr:$from_layout,
-                       BCIR_LayoutAttr:$to_layout, StrAttr:$requires, StrAttr:$preserves,
+                       BCIR_LayoutAttr:$to_layout, StrAttr:$require, StrAttr:$preserves,
                        StrAttr:$cost_axis);
   let assemblyFormat = "$sym_name attr-dict";
 }
@@ -40,7 +40,7 @@ def BCIR_OptMemRuleOp : BCIR_Op<"opt.mem_rule", [Symbol]> {
   let summary = "Declarative memory-tier movement law (e.g. hot CXL->HBM)";
   let arguments = (ins SymbolNameAttr:$sym_name, BCIR_MemTierAttr:$from_tier,
                        BCIR_MemTierAttr:$to_tier, I32Attr:$min_priority,
-                       StrAttr:$requires, StrAttr:$cost_axis);
+                       StrAttr:$require, StrAttr:$cost_axis);
   let assemblyFormat = "$sym_name attr-dict";
 }
 

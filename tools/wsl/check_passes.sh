@@ -67,6 +67,12 @@ else
   "${BO}" ${GEM} "${T}/gem_corpus.mlir" >/dev/null 2>/tmp/pe \
     && echo "  RUN-ONLY gem_corpus.mlir" || { echo "  FAIL gem_corpus.mlir"; cat /tmp/pe; fail=1; }
 fi
+echo "[passes] RCSP / Pareto (the deterministic optimizer core ported to C++)"
+run_fc -bcir-rcsp "${T}/rcsp.mlir"
+echo "[passes] -bcir-rcsp cross-check on the widened corpus (argmin reproduces the oracle)"
+"${BO}" -bcir-rcsp "${T}/gem_corpus.mlir" >/dev/null 2>/tmp/pe \
+  && echo "  PASS rcsp on gem_corpus.mlir" || { echo "  FAIL rcsp on gem_corpus.mlir"; cat /tmp/pe; fail=1; }
+
 echo "[passes] GEM cross-checks against the oracle (-verify-diagnostics)"
 "${BO}" -bcir-select-realization -bcir-lower-to-llvm -verify-diagnostics -split-input-file \
   "${T}/gem_passes_neg.mlir" \

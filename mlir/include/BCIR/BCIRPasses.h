@@ -1,9 +1,11 @@
 //===- BCIRPasses.h - BCIR compiler passes -----------------------*- C++ -*-===//
 //
 // Phase 6: the MLIR rail as a real compiler.
-//   -bcir-verify           semantic laws R1/R2/R4/R6 as a module pass
+//   -bcir-verify           semantic laws R1-R16 as a module pass
 //   -bcir-promote-lanes    the opt-law (GGG -> UX promotion) as a rewrite
 //   -convert-bcir-to-llvm  BCIR compute/barrier -> LLVM dialect (TypeConverter + patterns)
+//   -bcir-classify-lanes / -select-realization / -rcsp / -batch / -schedule /
+//   -lower-to-llvm         the GEM pipeline + RCSP/Pareto (the optimizer core, C++23)
 //
 //===----------------------------------------------------------------------===//
 #ifndef BCIR_BCIRPASSES_H
@@ -23,6 +25,9 @@ std::unique_ptr<mlir::Pass> createConvertToLLVMPass();
 // cross-checked against its pinned constants (docs/PARITY.md).
 std::unique_ptr<mlir::Pass> createClassifyLanesPass();
 std::unique_ptr<mlir::Pass> createSelectRealizationPass();
+// -bcir-rcsp: constrained selection (budget label-DP) + the Pareto front, the
+// deterministic optimizer core ported from bcir/kbcir/rcsp.py.
+std::unique_ptr<mlir::Pass> createRcspPass();
 std::unique_ptr<mlir::Pass> createBatchPass();
 std::unique_ptr<mlir::Pass> createSchedulePass();
 std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
