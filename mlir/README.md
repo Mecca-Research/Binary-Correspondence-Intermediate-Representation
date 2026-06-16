@@ -16,12 +16,15 @@ executable conformance oracle that must agree with these definitions
 >   build the real dialect (`tools/wsl/build_mlir.sh`); the *pretty* ODS corpus in
 >   `examples/` parses/verifies + FileCheck-round-trips through it
 >   (`tools/wsl/check_ods_examples.sh`).
-> - **Phase-6 passes** — `lib/BCIRPasses.cpp` makes `bcir-opt` a real compiler, not
->   just a parser: `-bcir-verify` (laws R1/R2/R4/R6), `-bcir-promote-lanes` (the
->   GGG→UX opt-law), and `-convert-bcir-to-llvm` (TypeConverter + ConversionPatterns
->   lowering compute/barrier to the LLVM dialect). Tests in `test/passes/`, gated
->   by `tools/wsl/check_passes.sh`.
-> - **RCSP / Pareto (optimizer core, C++23)** — `-bcir-rcsp` (`lib/BCIRPasses.cpp`) ports
+> - **Modular pass library (C++23)** — `bcir-opt` is a real compiler, not a parser.
+>   The passes are one translation unit per group under `lib/passes/`
+>   (`BCIRVerifyPass`, `BCIRPromotePass`, `BCIRConvertToLLVM`, `BCIRGEMPasses`,
+>   `BCIRSelectPass`, `BCIRRcspPass`), sharing `lib/passes/BCIRPassSupport.h`;
+>   `lib/BCIRPasses.cpp` is registration-only. `-bcir-verify` (R1–R16),
+>   `-bcir-promote-lanes` (GGG→UX), `-convert-bcir-to-llvm` (compute/barrier → LLVM).
+>   Tests in `test/passes/`, gated by `tools/wsl/check_passes.sh`. The C/C++/MLIR
+>   lowering plan is `docs/BCIR_LOWERING_PLAN.md`.
+> - **RCSP / Pareto (optimizer core, C++23)** — `-bcir-rcsp` (`lib/passes/BCIRRcspPass.cpp`) ports
 >   `bcir/kbcir/rcsp.py`: the budget-feasible min-plus label-DP argmin + the Pareto front
 >   over (score, thermal, power). Reproduces the oracle's 9472 under the 700 cap and the
 >   {vec16, vec8} front (size 2); `test/passes/rcsp.mlir` + a cross-check on `gem_corpus.mlir`.
