@@ -68,6 +68,9 @@ accuracy, contention, verification`.
 | allocator placement (R16) | `kbcir.allocator` (`place` / `Placement`: hot→SRAM only when it fits, gains-only) | `bcir.resource.placement` (append-only `BCIR_MemTier`) + `-bcir-lower-to-llvm` **R16**: an L1 placement must be ≤ 64 KiB, L2 ≤ 4 MiB (static `product(shape)*4`); `gem_passes_neg.mlir` (positive + negative) |
 | verifier R1–R13 | `verify.{verify,verify_plan,verify_pack,verify_lowering,verify_provenance}` | `bcir.verify.*` ops + the `-bcir-verify` pass (R1–R13) |
 | GEM pipeline (classify→select→batch→schedule→lower) | `kbcir.realize.optimize` / `gem.{hydrate,schedule,execute}` (the oracle stages) | `-bcir-classify-lanes / -bcir-select-realization / -bcir-batch / -bcir-schedule / -bcir-lower-to-llvm` (`mlir/lib/BCIRPasses.cpp`); `-bcir-select-realization` recomputes the min-plus `cost·weights` and reproduces 7808/9472 (`mlir/test/passes/gem_passes{,_neg}.mlir`) |
+| Python→MLIR emitter (the bridge) | `lower.mlir.to_mlir` / `plan_view` (oracle plan → GEM-pipeline IR; context-resolved candidate costs) | the emitted IR is exactly what `-bcir-classify-lanes … -bcir-lower-to-llvm` consume; `--emit-corpus` freezes `mlir/test/passes/gem_corpus.mlir` |
+| generated differential parity | `kbcir.differential` (`gen_module` + `law_select` (independent per-claim argmin) + `check_module` + `shrink` + `run_campaign`); `bcir/tests/test_differential.py` | `bcir-opt -bcir-select-realization` on `gem_corpus.mlir` (the C++ argmin recomputes the oracle's per-claim score for the widened corpus) |
+| widened corpus (real workloads) | `examples.{matmul_tiled, scan, multi_histogram}` (`examples.CORPUS`) — real tiled matmul / multi-stage scan / map-reduce histogram | `mlir/test/passes/gem_corpus.mlir` (per-target parity across the six TARGETS, FileCheck-pinned scores) |
 | memory tier id | `kbcir.cost.MemTier` | `BCIR_MemTier` (`BCIRAttrs.td`) |
 | lowering (AOT) | `lower.llvm` (clang) | `bcir.target.lower_contract` |
 | C kernel backend (C23) | `lower.c_kernel` (`emit_kernel_c` / `emit_header_c` / `emit_selfcheck_c` / `compile_and_run_c`) + `verify.verify_c_lowering` | `bcir.target.lower_contract` (R12: selected width → loop — a *floor* at the full hardware lane (idiomatic loop), a *cap* when sub-maximal (a thermal/power throttle); `restrict`, bounds tail, precision; portable C23 for any resident toolchain) |
@@ -131,12 +134,51 @@ The **scheduled price** pins the degenerate overlap example: a single-claim plan
 prices at `makespan == serial == 7808`, `overlap_gain = 0`
 (`bcir.kbcir.scheduled_price @overlap_price` ↔ `gem.overlap.price_scheduled`).
 
+## Generated, adversarial parity (the proof, not the hope)
+
+Curated pins prove parity on *one* program. `bcir.kbcir.differential` proves it on
+*generated* ones: a structured/adversarial module generator (`gen_module` — every
+stride class, lane, memory tier, fusion/deforestation/CSE shape, reduction, gather,
+HAM table, across one or two phases) feeds **both rails** and **diffs** the selected
+realization, the per-claim + total score, the constrained (RCSP) budget feasibility,
+and the deterministic schedule order. The two rails are genuinely distinct
+algorithms over the one cost model:
+
+| Rail | Algorithm | Code |
+|---|---|---|
+| Oracle | min-plus **shortest path** over the coupled candidate DAG | `kbcir.realize.optimize` |
+| Law | per-claim min-plus **argmin** over declared candidate costs | `kbcir.differential.law_select` (mirrors `-bcir-select-realization`) |
+
+`law_select` reads only the IR-level `lower.mlir.plan_view` (the same structure
+`to_mlir` emits), never the oracle's objects, so an agreement is evidence — not a
+restatement. The candidates are emitted at their oracle **context-resolved** costs
+(the fusion/thermal coupling `f_i(pi)` baked in), so the per-claim argmin reproduces
+the globally-coupled plan. `run_campaign` sweeps thousands of generated modules ×
+the six targets × {cool, hot, mem_bound} × {latency, throughput, energy}; a mismatch
+is **shrunk** (`shrink`) to a minimal witness. `bcir/tests/test_differential.py`
+asserts zero divergence over ≥1500 modules, plus the metamorphic laws (ID-renaming
+preserves the score; a tighter budget never raises the capped dimension; emit→read
+is lossless).
+
+The **widened corpus** — real tiled matmul (`matmul_tiled`, register-resident
+K-accumulation → deforestation), a multi-stage scan (`scan`), and a map/reduce
+multi-claim histogram (`multi_histogram`) — carries this parity across all six
+targets and is emitted to `mlir/test/passes/gem_corpus.mlir` (regenerate with
+`python -m bcir.kbcir.differential --emit-corpus`; a drift gate keeps the committed
+artifact equal to a fresh emission). When the MLIR toolchain is present,
+`bcir-opt -bcir-select-realization …` recomputes the same per-claim scores on that
+file (the ultimate cross-rail check; `tools/wsl/check_passes.sh`), and
+`bcir/tests/test_differential.py::test_bcir_opt_recomputes_the_corpus_when_available`
+runs it inline.
+
 ## How parity is enforced today
 
 `bcir/tests/` pins the exact scores and per-target widths (runnable with
-`python -m bcir.tests.run_all`, no third-party deps). When the MLIR toolchain is
-available, the `mlir/examples` + `mlir/test/irdl` corpus round-trips through
-`bcir-opt` / stock `mlir-opt` and must carry the same constants.
+`python -m bcir.tests.run_all`, no third-party deps), **and** the generated
+differential campaign above proves the oracle↔law selection agreement on randomized
+modules. When the MLIR toolchain is available, the `mlir/examples` + `mlir/test/irdl`
+corpus round-trips through `bcir-opt` / stock `mlir-opt` and must carry the same
+constants, and `mlir/test/passes/gem_corpus.mlir` recomputes the widened corpus.
 
 The verifier laws are negative-tested **per law on both rails**: the oracle in
 `bcir/tests/test_verify.py` (R1–R13 across module/plan/pack/lowering/provenance

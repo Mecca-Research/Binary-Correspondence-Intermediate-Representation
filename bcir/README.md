@@ -24,9 +24,13 @@ verify/     runnable subset of LangRef verifier laws R1-R13
 api.py      the embeddable library facade: plan -> KernelArtifact (C + ABI header + R12 attestation)
 bench.py    the measured-evidence rail: time the selected realization vs the baseline
 examples.py the goal-graph corpus (vector_add, saxpy_strided, histogram_gather,
-            gather_reduce, fused_chain, scan_chain, tiled_matmul)
-run.py      the CLI (--target/--theta/--policy/--run/--emit-c/--calibrate/--bench/--bench-reduce)
-tests/      361 checks + a dependency-free runner
+            gather_reduce, fused_chain, scan_chain, tiled_matmul) + the widened
+            CORPUS: matmul_tiled (real blocked matmul), scan, multi_histogram
+run.py      the CLI (--target/--theta/--policy/--run/--emit-c/--emit-mlir/--calibrate/--bench)
+kbcir/differential.py  generated, adversarial Python<->MLIR parity (gen_module +
+            independent law_select + check_module + shrink + run_campaign)
+lower/mlir.py  to_mlir: emit GEM-pipeline BCIR-MLIR from any oracle plan (the bridge)
+tests/      483 checks + a dependency-free runner
 ```
 
 ## Run it
@@ -39,6 +43,13 @@ python -m bcir.run vector_add --target x86_avx512 --theta hot  # replans vec16 -
 
 # Lower + compile + run the selected kernel via clang (self-checking):
 python -m bcir.run vector_add --target x86_avx512 --run
+
+# Emit the GEM-pipeline MLIR for the plan (the law rail recomputes the score):
+python -m bcir.run multi_histogram --target nvidia_ptx --emit-mlir
+
+# Generated, adversarial Python<->MLIR parity (a proof, not curated pins):
+python -m bcir.kbcir.differential -n 5000        # campaign across the six targets
+python -m bcir.kbcir.differential --emit-corpus  # (re)freeze mlir/test/passes/gem_corpus.mlir
 
 # Tests (no pytest required; also works under `python -m pytest bcir/tests`):
 python -m bcir.tests.run_all

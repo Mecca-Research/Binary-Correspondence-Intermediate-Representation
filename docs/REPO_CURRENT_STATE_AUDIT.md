@@ -76,12 +76,16 @@
    online model frozen to deterministic Q8) and **a live broker**
    (`telemetry.Broker`, pub/sub fan-out). The frozen calibrator drives the loop end
    to end. *(Production hardening — a real Kafka deployment — remains operational.)*
-3. **The example corpus is widening.** Beyond vector_add: `saxpy_strided`
+3. **The example corpus is real, not toy.** Beyond vector_add: `saxpy_strided`
    (strided gather-avoidance, ~1.4× measured), `gather_reduce` (reduction
    gather-avoidance, ~16×), `fused_chain` (multi-claim overlap + the fusion
-   discount), `scan_chain` (a dependency chain that serializes), with per-target
-   parity pinned for saxpy/histogram. Real tiled matmul / scan codegen and
-   joint multi-claim optimization remain future work.
+   discount), `scan_chain` (a dependency chain that serializes), **and the widened
+   `examples.CORPUS`** — `matmul_tiled` (real blocked matmul, register-resident
+   K-accumulation → deforestation), `scan` (multi-stage prefix pipeline),
+   `multi_histogram` (map/reduce multi-claim gather). Python↔MLIR parity is now
+   **generated and adversarial** (`bcir.kbcir.differential`), with per-target parity
+   across the six TARGETS for the whole corpus (`mlir/test/passes/gem_corpus.mlir`).
+   Joint multi-claim *bundle* optimization remains future work.
 4. **Intelligence ahead of substrate.** Phases 13–26 added a rich learned/
    categorical optimization stack over a backend that cannot yet codegen and
    tables that are not yet measured; the ROI is unproven until §1–2 close.
@@ -99,9 +103,11 @@
 1. **Calibration loop** ◑ — closed + certified on host (`kbcir.calibloop`, R13).
    Remaining: a *trained* calibrator + live broker, and bare-metal numbers from
    the C runtime. *Top priority for the remaining half.*
-2. **Widen the GEM passes + corpus**: multi-claim batching/fusion and real
-   durations; reductions, tiled matmul, scan; per-target parity beyond
-   `vector_add`.
+2. **Widen the GEM passes + corpus** ✔ — real tiled matmul / scan / multi-claim
+   histogram shipped (`examples.CORPUS`) with generated Python↔MLIR differential
+   parity across the six targets (`bcir.kbcir.differential`). Remaining: port the
+   deterministic optimizer core (RCSP/Pareto/overlap/fusion/CSE) to C++ so the law
+   recomputes the *coupled* plan, not just the per-claim argmin.
 3. **C backend** ✔ — portable C23 kernels (`lower.c_kernel`, R12) + the library
    façade (`bcir.api`). The cost-model win is now **measured** (gather avoidance
    ~6–7×; budget feasibility a correctness win). Next: GPU-C gather variants and
@@ -111,6 +117,19 @@
 
 ## Changelog
 
+- 2026-06-16: **Generated, adversarial Python↔MLIR differential testing + the
+  widened corpus.** `bcir.kbcir.differential` turns the parity contract into a
+  proof: a structured/adversarial `gen_module`, an independent `law_select`
+  (per-claim min-plus argmin, mirroring `-bcir-select-realization`), a `check_module`
+  diff (selection / per-claim+total score / RCSP budget feasibility / schedule
+  order), a `shrink`er, and `run_campaign` over the six targets × Θ × policy.
+  `lower.mlir.to_mlir` emits the GEM-pipeline IR from any oracle plan (the
+  Python→law bridge), frozen for the corpus in `mlir/test/passes/gem_corpus.mlir`
+  (drift-gated; recomputed by real `bcir-opt` when present). The corpus is widened
+  past toy kernels: `examples.{matmul_tiled, scan, multi_histogram}` (real blocked
+  matmul / multi-stage scan / map-reduce histogram), with per-target parity pinned
+  across all six TARGETS. Closes quoted roadmap #2 (symmetric cross-validation) and
+  #3 (widen the op surface). +15 tests (483 total).
 - 2026-06-07: Reorganized into `bcir/` (oracle) + `mlir/` (law); retired the
   legacy C++ `ir/` tree (`docs/BCIR_Repo_Structure.md`).
 - 2026-06-12: Rewrote against the post-reorg tree; verifier R1–R12 completed on

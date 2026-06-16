@@ -114,7 +114,8 @@ def scan_chain(n: int = 1024) -> Module:
 
 
 def tiled_matmul(n: int = 256) -> Module:
-    """A tile matmul-accumulate claim (T lane)."""
+    """A tile matmul-accumulate claim (T lane) -- the single-claim *skeleton* kept
+    for back-compat. `matmul_tiled` is the real, multi-tile blocked kernel."""
     m = Module(name="tiled_matmul")
     m.add_resource(Resource(rid=40, domain=Domain.RAM, shape=(n, n), name="A"))
     m.add_resource(Resource(rid=41, domain=Domain.RAM, shape=(n, n), name="B"))
@@ -122,6 +123,119 @@ def tiled_matmul(n: int = 256) -> Module:
     claim = Claim(id=4000, opcode=Opcode.T_MACC, lane=Lane.T, stride_class=StrideClass.TILE,
                   count=n * n, rd=(40, 41), wr=(42,), op="linalg.matmul", domain=Domain.RAM)
     m.add_phase(Phase(phase_id=0, deps=(), claims=[claim]))
+    return m
+
+
+# --- the widened corpus: real tiled matmul / scan / multi-claim histogram --------
+#
+# The optimization claims must generalize past toy kernels. These three builders
+# replace the single-claim skeletons with the real workload geometry: a blocked
+# matmul whose K-accumulation is a register-resident dependency chain, a multi-stage
+# scan/prefix pipeline, and a map/reduce histogram of independent gathers feeding a
+# reduction. Each carries Python<->MLIR parity across the six TARGETS (see
+# bcir.kbcir.differential + mlir/test/passes/gem_corpus.mlir).
+
+def matmul_tiled(n: int = 256, tile: int = 128) -> Module:
+    """A real blocked matmul C[n,n] = A[n,n] @ B[n,n], tiled into `tile`x`tile`
+    blocks (the T lane). Each output tile C[i,j] accumulates over the K dimension as
+    a register-resident chain of T_MACC claims -- the accumulator reads *and* writes
+    the same C tile, so producer->consumer **deforestation** keeps it off the memory
+    bus (k>0 reads the partial from k-1); distinct output tiles are independent
+    (wave overlap). This is the structured workload the single-T_MACC `tiled_matmul`
+    skeleton stood in for: the optimizer now sees real tile geometry, not one
+    mega-claim."""
+    g = max(1, n // max(1, tile))
+    if g * g > 900_000:
+        raise ValueError(f"matmul_tiled grid {g}x{g} too large (n//tile must keep g^2 < 9e5)")
+    m = Module(name="matmul_tiled")
+    tcount = tile * tile
+
+    # Non-overlapping per-array RID spaces (each holds up to g^2 < 1e6 tiles), so the
+    # builder stays R1-legal for any g, not just the default 2x2.
+    def aid(i, k): return 1_000_000 + i * g + k
+    def bid(k, j): return 2_000_000 + k * g + j
+    def cid(i, j): return 3_000_000 + i * g + j
+
+    for i in range(g):
+        for k in range(g):
+            m.add_resource(Resource(rid=aid(i, k), domain=Domain.RAM,
+                                    shape=(tile, tile), name=f"A_{i}_{k}"))
+    for k in range(g):
+        for j in range(g):
+            m.add_resource(Resource(rid=bid(k, j), domain=Domain.RAM,
+                                    shape=(tile, tile), name=f"B_{k}_{j}"))
+    for i in range(g):
+        for j in range(g):
+            m.add_resource(Resource(rid=cid(i, j), domain=Domain.HBM,
+                                    shape=(tile, tile), name=f"C_{i}_{j}"))
+
+    claims = []
+    claim_id = 4000
+    for i in range(g):
+        for j in range(g):
+            for k in range(g):
+                # k>0 accumulates into the existing C tile (read it back -> fuse it).
+                rd = (aid(i, k), bid(k, j)) + ((cid(i, j),) if k > 0 else ())
+                claims.append(Claim(id=claim_id, opcode=Opcode.T_MACC, lane=Lane.T,
+                                    stride_class=StrideClass.TILE, count=tcount, rd=rd,
+                                    wr=(cid(i, j),), op="linalg.matmul", domain=Domain.RAM))
+                claim_id += 1
+    m.add_phase(Phase(phase_id=0, deps=(), claims=claims))
+    return m
+
+
+def scan(n: int = 4096, stages: int = 4) -> Module:
+    """A multi-stage scan / prefix pipeline: O0 = A + B, then Ok = O(k-1) + Ck for
+    k = 1..stages-1. Each stage reads the previous stage's output (a RAW hazard), so
+    the stages **serialize** -- but they fuse: producer->consumer deforestation keeps
+    each intermediate off the memory bus. The widened counterpart to the 2-claim
+    `scan_chain`: a real dependency chain the scheduler must respect."""
+    stages = max(1, stages)
+    m = Module(name="scan")
+    m.add_resource(Resource(rid=8000, domain=Domain.RAM, shape=(n,), name="A"))
+    m.add_resource(Resource(rid=8001, domain=Domain.RAM, shape=(n,), name="B"))
+    claims = []
+    prev_out = None
+    for s in range(stages):
+        out_rid = 8100 + s
+        m.add_resource(Resource(rid=out_rid, domain=Domain.RAM, shape=(n,), name=f"O{s}"))
+        if s == 0:
+            rd = (8000, 8001)
+        else:
+            c_rid = 8200 + s
+            m.add_resource(Resource(rid=c_rid, domain=Domain.RAM, shape=(n,), name=f"C{s}"))
+            rd = (prev_out, c_rid)
+        claims.append(Claim(id=8300 + s, opcode=Opcode.ADD, lane=Lane.U,
+                            stride_class=StrideClass.UNIT, count=n, rd=rd, wr=(out_rid,),
+                            op="vector.add", domain=Domain.RAM))
+        prev_out = out_rid
+    m.add_phase(Phase(phase_id=0, deps=(), claims=claims))
+    return m
+
+
+def multi_histogram(n: int = 1024, bins: int = 3) -> Module:
+    """A multi-claim histogram: `bins` partial-histogram gathers over a shared input
+    (random access -> the GGG lane) run as independent waves, then a reduction merges
+    the partials in a second phase. Exercises the gather lane across *multiple* claims
+    and a cross-phase reduce -- the map/reduce histogram the single-claim
+    `histogram_gather` stood in for."""
+    bins = max(1, bins)
+    m = Module(name="multi_histogram")
+    m.add_resource(Resource(rid=9000, domain=Domain.RAM, shape=(n,), name="INP"))
+    part_rids = []
+    gathers = []
+    for b in range(bins):
+        prid = 9100 + b
+        m.add_resource(Resource(rid=prid, domain=Domain.RAM, shape=(n,), name=f"PART{b}"))
+        part_rids.append(prid)
+        gathers.append(Claim(id=9300 + b, opcode=Opcode.GGG_LOAD, lane=Lane.GGG,
+                             stride_class=StrideClass.RANDOM, count=n, rd=(9000,),
+                             wr=(prid,), op="histogram.scatter", domain=Domain.RAM))
+    m.add_resource(Resource(rid=9200, domain=Domain.RAM, shape=(n,), name="OUT"))
+    merge = Claim(id=9400, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+                  count=n, rd=tuple(part_rids), wr=(9200,), op="reduce.add", domain=Domain.RAM)
+    m.add_phase(Phase(phase_id=0, deps=(), claims=gathers))
+    m.add_phase(Phase(phase_id=1, deps=(0,), claims=[merge]))
     return m
 
 
@@ -134,4 +248,11 @@ PROGRAMS = {
     "fused_chain": fused_chain,
     "scan_chain": scan_chain,
     "tiled_matmul": tiled_matmul,
+    "matmul_tiled": matmul_tiled,
+    "scan": scan,
+    "multi_histogram": multi_histogram,
 }
+
+# The widened corpus (the real, multi-claim workloads), carried with Python<->MLIR
+# parity across the six TARGETS by bcir.kbcir.differential.
+CORPUS = ("matmul_tiled", "scan", "multi_histogram")
