@@ -124,8 +124,19 @@ net) + FileCheck, and builds on the now-working LLVM 18/19 toolchain.
    bins/tail, series over phases. Reproduces the oracle: matmul makespan 253952 / gain
    761856, scan & histogram gain 0, the shared-input chain gain 5888
    (`mlir/test/passes/overlap.mlir` + a corpus cross-check).
-5. **Plan-level multi-claim RCSP.** Extend `-bcir-rcsp` from per-claim to an
-   accumulated-budget label-DP across the plan (the full `rcsp.optimize_constrained`).
+5. ✅ **Plan-level multi-claim RCSP. DONE.** `-bcir-rcsp-plan` (`BCIRRcspPlanPass.cpp`)
+   ports `rcsp.optimize_constrained`: the accumulated-budget label DP over the fused
+   candidate columns (labels carry score + per-tracked-dim totals; dominated labels
+   pruned, infeasible extensions cut). A plan-wide cap bounds the *plan's* thermal/
+   power, so it narrows just one claim where a per-claim cap cannot — reproduces the
+   oracle: two vec16 claims (thermal 2176) under thermal≤2000 → {16, 8} @ 17280,
+   under ≤1500 → {8, 8} @ 18944 (`mlir/test/passes/rcsp_plan.mlir`).
+
+**The deterministic optimizer core is now fully on the MLIR rail (C++23):** cost
+algebra + fusion (`-bcir-cost-model`) → coupled shortest path (`-bcir-plan` =
+`optimize`) → (max,+) overlap (`-bcir-overlap`) → per-claim + plan-level constrained
+search (`-bcir-rcsp`, `-bcir-rcsp-plan`), each bit-exact against the oracle and
+gated by `check_passes.sh` + the differential harness.
 6. **C runtime hardening (C23) + fuzz.** libFuzzer + ASan/UBSan on the StreamPack C
    decoder and the MLIR parser; `_BitInt`/`#embed` in the runtime.
 7. **Deferred ("do later"):** PMU/RAPL/DVFS real-silicon calibration — the software
@@ -133,19 +144,23 @@ net) + FileCheck, and builds on the now-working LLVM 18/19 toolchain.
 
 ## 5. The immediate next build step
 
-**Step 5 — plan-level multi-claim RCSP** (steps 1–4 done; `optimize` + `price_scheduled`
-are fully ported). Extend `-bcir-rcsp` from the per-claim feasible argmin to the
-accumulated-budget label-DP across the whole plan (`rcsp.optimize_constrained`'s
-`_expand`/`_insert`): labels carry (score, tracked-resource-totals) along the fused
-candidate columns, dominated labels are pruned, infeasible extensions cut — so a
-budget caps the *plan's* accumulated thermal/power, not each claim's. Reuses the
-fused columns + `_context_factor` already in `BCIRCostModel.h`; cross-check against
-`optimize_constrained` over the corpus under a cap. That closes the optimizer-core
-port (cost → fusion → shortest path → overlap → constrained search, all in C++).
+**The optimizer-core port (steps 1–5) is complete** — the entire deterministic
+K_BCIR optimizer (cost algebra, fusion/CSE, the coupled min-plus shortest path, the
+(max,+) overlap, and per-claim + plan-level constrained search) now runs on the MLIR
+rail in C++23, each bit-exact against the Python oracle. The remaining lowering work,
+in priority order:
 
-After step 5 the deterministic optimizer core lives entirely on the MLIR rail; the
-remaining lowering work is the C runtime (C23 `_BitInt`/`#embed` + libFuzzer/ASan)
-and the deferred real-silicon calibration.
+1. **Named pass pipelines** (`bcir-plan`, `bcir-hydrate`, `bcir-lower-llvm`,
+   `bcir-aot`, `bcir-audit`) wiring the now-complete passes into declared
+   input/output-level pipelines with verifier checkpoints — stop relying on ad-hoc
+   pass ordering.
+2. **The cost model from a Θ context op** — generalize `_context_factor`'s thermal
+   coupling (today the cool regime) by carrying Θ in the IR, so the C++ plan matches
+   the oracle under hot/mem-bound Θ too.
+3. **C runtime hardening (C23)** — `_BitInt`/`#embed`/`restrict` in the StreamPack C
+   runtime + emitted kernels; libFuzzer + ASan/UBSan on the C/MLIR decoders.
+4. **Deferred ("do later"):** PMU/RAPL/DVFS real-silicon calibration — the software
+   path is merged; it needs a bare-metal rig to publish a measured replan win.
 
 ---
 

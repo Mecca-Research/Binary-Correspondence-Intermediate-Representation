@@ -39,6 +39,12 @@ executable conformance oracle that must agree with these definitions
 >   (`lib/passes/BCIROverlapPass.cpp`) ports `gem/overlap.py`: the (max,+) wave makespan
 >   M(pi,Theta) over the coupled plan. Reproduces the oracle — matmul makespan 253952 /
 >   gain 761856, the shared-input chain gain 5888 (`test/passes/overlap.mlir`).
+> - **RCSP plan-level (optimizer core, C++23)** — `-bcir-rcsp-plan`
+>   (`lib/passes/BCIRRcspPlanPass.cpp`) ports `rcsp.optimize_constrained`: the
+>   accumulated-budget label DP over the plan. A plan-wide cap narrows one claim where a
+>   per-claim cap cannot — thermal≤2000 → {16,8} @ 17280 (`test/passes/rcsp_plan.mlir`).
+>   **With it the whole deterministic optimizer core is on the MLIR rail** (cost+fusion →
+>   shortest path → overlap → constrained search; see `docs/BCIR_LOWERING_PLAN.md`).
 > - **RCSP / Pareto (optimizer core, C++23)** — `-bcir-rcsp` (`lib/passes/BCIRRcspPass.cpp`) ports
 >   `bcir/kbcir/rcsp.py`: the budget-feasible min-plus label-DP argmin + the Pareto front
 >   over (score, thermal, power). Reproduces the oracle's 9472 under the 700 cap and the
