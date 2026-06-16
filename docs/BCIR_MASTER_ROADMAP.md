@@ -55,7 +55,7 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 
 | Fact | **Now** |
 |---|---|
-| Oracle conformance tests (`python -m bcir.tests.run_all`) | **580**, incl. the generated differential + verifier + fuzz campaigns |
+| Oracle conformance tests (`python -m bcir.tests.run_all`) | **592**, incl. the generated differential + verifier + fuzz campaigns |
 | Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
 | GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
 | Verifier laws | **R1–R17** all first-class + dual-rail in `-bcir-verify` (+ the `-bcir-lower-to-llvm` checkpoint + the Python oracle ref) |
@@ -233,17 +233,28 @@ The C runtime has the decoders (StreamPack, ETL-binary) and now the executor:
    certificates; `replay` reproduces it bit-for-bit from the same inputs (the digest gate
    + the per-claim decisions) or reports exactly what diverged; `reduce` minimizes a module
    to a legal witness. Round-trips through JSON (`test_proof.py`).
-3. **Compositional semantics** — functions/calls, control flow, dynamic shapes,
-   alias/effect modeling, numerical contracts (the path past straight-line array
-   kernels).
+3. ◑ **Compositional semantics. FIRST SLICE DONE.** `kbcir.compose` extends planning past
+   straight-line kernels along the central equation's own series-parallel grain — a region
+   tree: `Seq` (series, sum cost), `Cond` (control flow: worst-case **max** over branches +
+   a probability-weighted **expected** cost), `Call`/`Function` (reuse via inline argument
+   substitution; recursion rejected for bounded compile time), and `dynamic` claims (count
+   as a static upper bound, worst-case priced — the plan holds for any actual ≤ the bound).
+   It reuses `optimize` for the leaves, so a `Leaf([vector_add])` prices to exactly 7808
+   (`test_compose.py`). **Remaining:** alias/effect modeling across calls, an MLIR func/if
+   op family, and inter-procedural plan reuse (summary costs instead of full inline).
 
 ### 5.4 Measured real-silicon calibration (DEFERRED — the top differentiator)
 
-The software path is merged and certified on host; the one thing no architecture
-substitutes for is a *measured* (not synthetic) replan win on a bare-metal rig with
-`intel_pstate=passive` + a userspace governor + RAPL exposed (the exact rig is in
-`HARDWARE_VALIDATION.md`). This converts "optimal-w.r.t.-a-model" into evidence and is
-the single most valuable next result once a rig is available.
+The software path is merged and certified on host, and now **push-button**:
+`tools/silicon/measure_replan.sh` runs the whole probe→read-PMU/RAPL/thermal→fold-Θ→
+replan→certify loop and prints the **measured** win on a rig (provenance=real) or degrades
+honestly otherwise (synthetic, no fabricated number). It is **CI-exercised in degrade mode**
+(`test_silicon_runbook.py`) so the rig path can never silently rot, and `--require-real`
+guarantees a sandbox run can't masquerade as a measured result. The one thing no
+architecture substitutes for is the *measured* (not synthetic) replan win itself — it needs
+a bare-metal rig with `intel_pstate=passive` + a userspace governor + RAPL exposed (the
+exact rig is in `HARDWARE_VALIDATION.md`). That converts "optimal-w.r.t.-a-model" into
+evidence and is the single most valuable next result once a rig is available.
 
 ### 5.5 Native backend (DEFERRED — gated)
 
@@ -282,13 +293,17 @@ In recommended order — each is gated by the generated differential harness + F
 7. ✅ **Multi-claim bundle (joint) optimization** (§5.3.1). **DONE** — a real 12% matmul
    gain, with search certificates.
 8. ✅ **Proof-carrying records** (§5.3.2). **DONE** — `bcir.run --explain/--replay/--reduce`.
-9. **Compositional semantics** (§5.3.3) — functions/calls, control flow, dynamic shapes,
-   alias/effect modeling — *the next frontier* past straight-line array kernels.
-10. **MLIR ports of the new oracle capabilities** — bundle (joint) optimization and the
-    proof-carrying decision record land first in the Python oracle (the reference); the
-    C++/MLIR ports are the follow-on (the established oracle→law cadence).
-11. **(When a rig is available)** the measured real-silicon replan win (§5.4) — the top
-    differentiator.
+9. ◑ **Compositional semantics** (§5.3.3) — *first slice DONE* (`kbcir.compose`: Seq/Cond/
+   Call/Function + dynamic shapes). **Next:** alias/effect modeling + an MLIR func/if op
+   family + inter-procedural summary costs.
+10. ◑ **MLIR ports of the new oracle capabilities** — bundle **detection** ported
+    (`-bcir-bundle`, the law-rail analysis that annotates the input-sharing bundles).
+    **Next:** the bundle joint-reorder *transformation* (reorder the cost-model columns +
+    re-price) and the proof-carrying decision record as IR annotations.
+11. **(When a rig is available)** the measured real-silicon replan win (§5.4) — the
+    software path is push-button (`tools/silicon/measure_replan.sh`) and CI-exercised in
+    degrade mode; it lights up the instant a rig with PMU + RAPL + a userspace governor is
+    present (`HARDWARE_VALIDATION.md`). The top differentiator.
 
 ---
 

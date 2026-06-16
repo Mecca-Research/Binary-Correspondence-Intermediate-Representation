@@ -71,6 +71,22 @@ A **bare-metal Linux host** (or a "metal" cloud instance / a KVM guest started w
    - fix turbo for determinism (`echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo`);
    - a quiet machine (no co-tenant noise — the opposite of a shared CI runner).
 
+## The runbook (push-button)
+
+`tools/silicon/measure_replan.sh` runs the whole CT4 loop — probe real signals → read
+PMU/RAPL/thermal → fold into Θ → train+freeze a calibrator → replan → certify the win:
+
+```
+bash tools/silicon/measure_replan.sh                 # auto: real on a rig, synthetic in a sandbox
+bash tools/silicon/measure_replan.sh --require-real   # FAIL if no real signals — run this ON the rig
+```
+
+On a rig with the capabilities above it prints `MEASURED replan win = N (provenance=real)`
+— the CT4 evidence. Anywhere else it degrades honestly (`provenance=synthetic`, no measured
+number) and exits 0, so the path is exercised in CI (the "degrade mode" step) and can never
+silently rot; `--require-real` guarantees a sandbox run can't masquerade as a measured
+result. Gated by `bcir/tests/test_silicon_runbook.py`.
+
 ## Honest status line
 
 - **Measured & real now:** the cache tier map, cache-latency tiers, the zero-copy

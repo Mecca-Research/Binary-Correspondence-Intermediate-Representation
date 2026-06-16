@@ -127,6 +127,20 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-16: **Compositional semantics (first slice) + the CT4 runbook + bundle-detection
+  on the law rail.** (1) `kbcir.compose` extends planning past straight-line kernels along
+  the central equation's series-parallel grain: a region tree of `Seq` (sum), `Cond`
+  (control flow -- worst-case max + probability-weighted expected), `Call`/`Function`
+  (reuse via inline argument substitution; recursion rejected), and `dynamic` claims (count
+  as a static upper bound, worst-case priced -- the plan holds for any actual <= the bound).
+  Reuses `optimize` for leaves, so `Leaf([vector_add])` prices to exactly 7808.
+  (2) `tools/silicon/measure_replan.sh` makes the rig-gated measured replan **push-button**
+  and CI-exercises it in degrade mode (synthetic, no fabricated number; `--require-real`
+  fails without a rig) -- the measured win still needs the bare-metal rig
+  (HARDWARE_VALIDATION.md). (3) `-bcir-bundle` (`BCIRBundlePass.cpp`) ports the bundle
+  *analysis* to the law rail: it annotates the input-sharing bundles (`kbcir.bundle` /
+  `bundle_shared` / `bundle_count`); `bundle.mlir`. The joint-reorder transformation +
+  proof-carrying MLIR are the next increment. +13 tests (592 total).
 - 2026-06-16: **Compensated precision + R17 accuracy law, bundle (joint) optimization,
   proof-carrying records, verifier law-for-law differential.** Four layers:
   (1) `lower.c_kernel.emit_compensated_reduce_c` lowers the residual-carry Q8 reduction

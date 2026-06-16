@@ -46,6 +46,7 @@ void registerBCIRPasses() {
   ::mlir::registerPass([] { return createOverlapPass(); });
   ::mlir::registerPass([] { return createRcspPass(); });
   ::mlir::registerPass([] { return createRcspPlanPass(); });
+  ::mlir::registerPass([] { return createBundlePass(); });
   ::mlir::registerPass([] { return createBatchPass(); });
   ::mlir::registerPass([] { return createSchedulePass(); });
   ::mlir::registerPass([] { return createLowerToLLVMPass(); });
