@@ -1,12 +1,12 @@
-# Out-of-tree build for the BCIR MLIR dialect family + GEM passes.
+# Out-of-tree build for the BCIR MLIR dialect family + GEM/RCSP passes (C++23).
 #
-# NOT built in this milestone: this host has clang only (no mlir-tblgen, MLIR/LLVM
-# dev libs, or a configured MLIR_DIR/LLVM_DIR). These .td files are authored v0.x
-# specs validated against MLIR 20 in WSL. To build:
+# Build (needs cmake + ninja + libmlir-NN-dev + llvm-NN-dev; CI installs LLVM 18+19):
 #
-#   source tools/wsl/env.sh          # sets MLIR_DIR / LLVM_DIR
-#   tools/wsl/tblgen_check.sh        # ODS -> *.inc generation only
+#   sudo apt-get install -y mlir-18-tools libmlir-18-dev llvm-18-dev cmake ninja-build
 #   tools/wsl/build_mlir.sh          # full dialect lib + bcir-opt
+#   tools/wsl/check_passes.sh        # validate every pass (incl. -bcir-rcsp + corpus)
+#
+# MLIR_DIR / LLVM_DIR auto-resolve from /usr/lib/llvm-*/lib/cmake; override to pin.
 #
 cmake_minimum_required(VERSION 3.20)
 project(bcir-mlir LANGUAGES CXX C)
@@ -22,6 +22,15 @@ include(TableGen)
 include(AddLLVM)
 include(AddMLIR)
 include(HandleLLVMOptions)
+
+# BCIR lowering targets C++23 (HandleLLVMOptions defaults to LLVM's C++17). The
+# deterministic optimizer-core passes use C++20/23 idioms (std::ranges, structured
+# bindings, designated inits, <=> where useful). C++26 (-std=c++2c) is still
+# experimental in clang-18/gcc-13 and the stock MLIR 18 headers do not yet compile
+# clean under it, so 23 is the gating standard; the BCIR code itself is c++2c-ready.
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${MLIR_INCLUDE_DIRS})

@@ -21,6 +21,10 @@ executable conformance oracle that must agree with these definitions
 >   GGG→UX opt-law), and `-convert-bcir-to-llvm` (TypeConverter + ConversionPatterns
 >   lowering compute/barrier to the LLVM dialect). Tests in `test/passes/`, gated
 >   by `tools/wsl/check_passes.sh`.
+> - **RCSP / Pareto (optimizer core, C++23)** — `-bcir-rcsp` (`lib/BCIRPasses.cpp`) ports
+>   `bcir/kbcir/rcsp.py`: the budget-feasible min-plus label-DP argmin + the Pareto front
+>   over (score, thermal, power). Reproduces the oracle's 9472 under the 700 cap and the
+>   {vec16, vec8} front (size 2); `test/passes/rcsp.mlir` + a cross-check on `gem_corpus.mlir`.
 > - **GEM pipeline + generated parity** — `-bcir-classify-lanes / -select-realization /
 >   -batch / -schedule / -lower-to-llvm` recompute the oracle's plan; `test/passes/
 >   gem_passes.mlir` (curated `vector_add` @ 7808/9472) and `test/passes/gem_corpus.mlir`

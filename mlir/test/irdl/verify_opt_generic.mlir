@@ -20,10 +20,10 @@
   "score_kbcir", "select_min_plus_plan", "hydrate_gem_stream"]} : () -> ()
 "bcir.opt.rewrite_rule"() {sym_name = "ggg_to_ux", kind = "lane_promotion",
   from_lane = "ggg", to_lane = "ux", from_stride = "random", to_stride = "cacheline",
-  requires = "cacheline_bucket_proof", preserves = "claim_semantics,bounds,hazard",
+  require = "cacheline_bucket_proof", preserves = "claim_semantics,bounds,hazard",
   cost_axis = "memory"} : () -> ()
 "bcir.opt.mem_rule"() {sym_name = "cxl_to_hbm", from_tier = "cxl", to_tier = "hbm",
-  min_priority = 80 : i32, requires = "target_has_hbm,resource_hot", cost_axis = "memory"} : () -> ()
+  min_priority = 80 : i32, require = "target_has_hbm,resource_hot", cost_axis = "memory"} : () -> ()
 
 // CHECK: "bcir.verify.registry_symbols"
 // CHECK: "bcir.verify.plan_selection"

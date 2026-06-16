@@ -45,7 +45,8 @@ The port boundary is BCIR's own **L0–L3 / two-truth line**: deterministic inte
 | Verifier **R1–R13** | Python `bcir.verify` + `-bcir-verify` | **MLIR/C++** (law) + Python (oracle ref) | dual-rail ✅ |
 | Verifier **R14–R16** (CIM / DVFS clock / alloc tier) | `-bcir-lower-to-llvm` + oracle gates (`gem.cim`, `gem.dvfs`, `kbcir.allocator`) + `verify.{verify_cim,verify_dvfs,verify_allocator,verify_smart_lowering}` | **MLIR/C++** (law) + Python (oracle ref) | MLIR ✅; oracle-gate ✅; **`bcir.verify` fns ✅ (dual-rail)** |
 | K_BCIR selection (min-plus scalarization) | Python `realize` + `-bcir-select-realization` | **MLIR/C++** | selection scoring ✅ (reproduces 7808/9472) |
-| K_BCIR **RCSP / Pareto / overlap / fusion / CSE** | Python (`rcsp`, `overlap`, `realize.fused_candidates`) | **MLIR/C++** (deterministic) | **oracle-only** — the next big C++ port after selection |
+| K_BCIR **RCSP / Pareto** | Python (`rcsp`) + **`-bcir-rcsp`** (`BCIRPasses.cpp`, C++23: budget label-DP argmin + Pareto front) | **MLIR/C++** | **ported ✅** (reproduces 9472 + the size-2 front; `rcsp.mlir`) |
+| K_BCIR **overlap / fusion / CSE** | Python (`overlap`, `realize.fused_candidates`) | **MLIR/C++** (deterministic) | **oracle-only** — the next C++ port (needs the cost model on the MLIR rail to recompute base costs) |
 | GEM classify / batch / schedule / lower | `-bcir-classify-lanes/-batch/-schedule/-lower-to-llvm` | **MLIR/C++** | ✅ |
 | GEM hydrate (plan → StreamPack) | Python `gem.streampack.hydrate` | **MLIR/C++** | partial (lower-to-llvm consumes segments; full hydrate op pending) |
 | GEM deterministic executor | Python `gem.execute` | **C++/C** (hot path) | oracle-only |
@@ -105,7 +106,7 @@ The `BCIR_Roadmap` Phase A–H structure and the 0.2→1.0 release ladder remain
 
 ### Mid/long-term
 - ☐ **Multi-claim joint (bundle) optimization** (quoted #5) — where the (min,+) formulation should start paying for itself; bound compile time + emit search certificates.
-- ☐ **Port RCSP/Pareto/overlap/fusion/CSE to C++** (the deterministic optimizer core not yet on the MLIR rail) — completes "law catches the oracle."
+- ◑ **Port RCSP/Pareto/overlap/fusion/CSE to C++** (the deterministic optimizer core) — ✅ **RCSP + Pareto** ported (`-bcir-rcsp`, C++23; reproduces 9472 + the size-2 Pareto front, cross-checks the corpus). **Remaining:** the **cost model** on the MLIR rail (compute base costs from claim + capability), which then enables a C++ **overlap (max,+)** and **fusion/CSE** recomputation (today those trust the emitter-baked path costs). Completes "law catches the oracle." *(Unblocked: the MLIR toolchain is built + gating in CI on LLVM 18+19.)*
 - ☐ **Proof-carrying optimization records** (Phase D): R13 is in; add replayable decision records + rewrite/lowering certificates + `bcir-explain`/`bcir-replay`/`bcir-reduce`.
 - ☐ **Compositional semantics** (Phase F): functions/calls, control flow, dynamic shapes, alias/effect modeling, numerical contracts.
 - ☐ **Native backend** (quoted #6) — only behind the documented decision gate; if taken, a one-target experiment (eBPF or x86-64 scalar) with stop criteria.
