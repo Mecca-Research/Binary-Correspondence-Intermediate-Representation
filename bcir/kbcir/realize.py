@@ -79,6 +79,19 @@ def _streams(claim: Claim) -> int:
     return len(claim.rd) + len(claim.wr)
 
 
+def _verify_cost(claim: Claim) -> int:
+    """The cost of discharging the claim's verify contract -- the producer for the 12th
+    cost axis (VERIFICATION). `none`/`bounds` are modeled as free: a bounds check is
+    fused into / hoisted above the access the memory axis already prices. The expensive
+    contracts carry a real, size-proportional cost the optimizer can trade against the
+    rest of the vector (e.g. an RCSP cap on verification, or a policy that weights it):
+    `exact` recomputes + compares every element, `hash` digests every output element --
+    both O(n). Width-independent (the contract is a property of the claim, not the lane),
+    so it shifts every realization equally and never perturbs the per-claim selection."""
+    n = max(1, claim.count)
+    return n if claim.verify in ("exact", "hash") else 0
+
+
 def _stride_penalty(claim: Claim, h: HProfile) -> int:
     sc = claim.stride_class
     if sc in (StrideClass.UNIT, StrideClass.SCALAR, StrideClass.TILE):
@@ -110,7 +123,8 @@ def _cost(claim: Claim, h: HProfile, width: int, stride_penalty: int, extra_comp
     thermal = width * h.thermal_density + ceil * h.per_op_heat
     power = width * h.power_density + ceil * h.per_op_heat
     return CostVector.of(
-        compute=compute, memory=memory, thermal=thermal, power=power, compile=extra_compile
+        compute=compute, memory=memory, thermal=thermal, power=power, compile=extra_compile,
+        verification=_verify_cost(claim),
     )
 
 

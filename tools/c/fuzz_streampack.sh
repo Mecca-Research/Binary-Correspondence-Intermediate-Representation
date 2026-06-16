@@ -93,4 +93,17 @@ if "${tmp}/fuzz_exec" -runs="${RUNS}" -max_total_time=60 "${tmp}/corpus_exec" >"
 else
   echo "  FAIL: libFuzzer executor found a crash"; tail -40 "${tmp}/flog3"; exit 1
 fi
+
+echo "[fuzz] libFuzzer on the StreamPack encoder (${RUNS} runs)"
+# bcir_encode.c re-serializes an untrusted pack; a malformed input must return a status
+# and the writer must never exceed the output buffer (incl. the small-buffer NOSPACE path).
+"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
+  "${C}/fuzz_encode.c" "${C}/bcir_encode.c" "${C}/bcir_runtime.c" -I "${C}" -o "${tmp}/fuzz_encode" \
+  || { echo "  FAIL: encoder fuzzer build"; exit 1; }
+mkdir -p "${tmp}/corpus_enc" && cp "${tmp}/pack.bin" "${tmp}/corpus_enc/"
+if "${tmp}/fuzz_encode" -runs="${RUNS}" -max_total_time=60 "${tmp}/corpus_enc" >"${tmp}/flog4" 2>&1; then
+  echo "  PASS libFuzzer encoder (${RUNS} runs, no crash)"
+else
+  echo "  FAIL: libFuzzer encoder found a crash"; tail -40 "${tmp}/flog4"; exit 1
+fi
 echo "[fuzz] ok"

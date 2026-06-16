@@ -67,6 +67,22 @@ c_order="$("${tmp}/test_exec" "${tmp}/exec.bin" | sed -n 's/^order: //p')"
   && echo "  PASS executor parity (Python gem.execute == C bcir_sp_execute: ${c_order})" \
   || { echo "  FAIL: executor order parity (C='${c_order}' PY='$(cat "${tmp}/exec.order")')"; exit 1; }
 
+echo "[c-runtime] StreamPack encoder: freestanding compile (C11 + C23) + byte-identical re-encode"
+# bcir_encode.c is the C write-side twin of bcir/abi/streampack_abi.py -- the full C
+# round-trip (a driver emits the artifact with no Python).
+for std in c11 c23; do
+  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -I "${C}" -c "${C}/bcir_encode.c" -o /dev/null \
+    || { echo "  FAIL: bcir_encode not freestanding-clean under -std=${std}"; exit 1; }
+done
+"${CC}" -std=c23 -O2 "${C}/bcir_encode.c" "${C}/bcir_runtime.c" "${C}/test_encode.c" -I "${C}" -o "${tmp}/test_encode" \
+  || { echo "  FAIL: encoder harness build"; exit 1; }
+"${tmp}/test_encode" "${tmp}/exec.bin" "${tmp}/reenc.bin" >/dev/null || { echo "  FAIL: C re-encode"; exit 1; }
+if cmp -s "${tmp}/exec.bin" "${tmp}/reenc.bin"; then
+  echo "  PASS encoder parity (C bcir_sp_reencode == Python encode, byte-identical)"
+else
+  echo "  FAIL: encoder bytes differ from the Python encoding"; exit 1
+fi
+
 echo "[c-runtime] frozen Q8 table (#embed / fallback): build + self-check (C11 + C23)"
 # Drift gate: the committed runtime/c/{q8_tiers.bin,bcir_q8_tables.h} must equal a
 # fresh emission from the oracle (bcir.kbcir.cost.MemoryHierarchy.default()).
