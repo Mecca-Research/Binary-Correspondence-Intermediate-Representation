@@ -12,6 +12,7 @@
 //   -bcir-classify-lanes /  the GEM pipeline                (BCIRGEMPasses.cpp)
 //   -bcir-batch / -bcir-schedule / -bcir-lower-to-llvm
 //   -bcir-select-realization  min-plus selection            (BCIRSelectPass.cpp)
+//   -bcir-cost-model        K_BCIR cost algebra (cost.py)    (BCIRCostModel.cpp)
 //   -bcir-rcsp              RCSP / Pareto (optimizer core)   (BCIRRcspPass.cpp)
 //
 //===----------------------------------------------------------------------===//
@@ -28,6 +29,7 @@ void registerBCIRPasses() {
   ::mlir::registerPass([] { return createConvertToLLVMPass(); });
   ::mlir::registerPass([] { return createClassifyLanesPass(); });
   ::mlir::registerPass([] { return createSelectRealizationPass(); });
+  ::mlir::registerPass([] { return createCostModelPass(); });
   ::mlir::registerPass([] { return createRcspPass(); });
   ::mlir::registerPass([] { return createBatchPass(); });
   ::mlir::registerPass([] { return createSchedulePass(); });

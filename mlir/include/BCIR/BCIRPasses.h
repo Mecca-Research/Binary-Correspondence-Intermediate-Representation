@@ -25,6 +25,9 @@ std::unique_ptr<mlir::Pass> createConvertToLLVMPass();
 // cross-checked against its pinned constants (docs/PARITY.md).
 std::unique_ptr<mlir::Pass> createClassifyLanesPass();
 std::unique_ptr<mlir::Pass> createSelectRealizationPass();
+// -bcir-cost-model: the K_BCIR cost algebra (cost.py) on the MLIR rail -- recompute
+// candidate costs from claim + target.capability instead of trusting declared paths.
+std::unique_ptr<mlir::Pass> createCostModelPass();
 // -bcir-rcsp: constrained selection (budget label-DP) + the Pareto front, the
 // deterministic optimizer core ported from bcir/kbcir/rcsp.py.
 std::unique_ptr<mlir::Pass> createRcspPass();
