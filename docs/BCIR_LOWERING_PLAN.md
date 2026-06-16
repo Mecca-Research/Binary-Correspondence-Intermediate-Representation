@@ -103,10 +103,13 @@ net) + FileCheck, and builds on the now-working LLVM 18/19 toolchain.
    (compute 64, memory 3840), gather @ **528384**, tile @ **126976** — from the claim
    graph alone. `mlir/test/passes/cost_model.mlir` + a cross-check on
    `full_vec_add_ct1.mlir`. **The law no longer depends on emitter-baked path costs.**
-2. **Fusion / deforestation / CSE in C++.** With base costs in C++, port
-   `fused_candidates` (shared-input fusion, producer→consumer deforestation, CSE
-   value-numbering) + `_context_factor` as a cost-adjustment pass; verify the
-   discounts the emitter baked in.
+2. ✅ **Fusion / deforestation / CSE in C++. DONE.** `-bcir-cost-model` now processes
+   claims in (phase, declared) order with value-numbering + a produced-rid set,
+   applying the two dependency-based redundancy credits (producer→consumer
+   **deforestation** ×0.75 memory; **CSE** = compute zeroed + copy-priced memory),
+   matching the oracle's `fused_candidates` bit-for-bit (7808 / 5888 / 5100) and
+   annotating `kbcir.cm_fusion`. `mlir/test/passes/cost_model_fusion.mlir`. (The
+   *path-based* shared-input half of `_context_factor` lands with step 3.)
 3. **Min-plus shortest path over the layered DAG in C++.** Replace per-claim argmin
    with the true coupled shortest path (`semiring.dag_shortest_path`), so multi-claim
    plans with context coupling are recomputed natively. Now selection == the oracle's
@@ -122,14 +125,15 @@ net) + FileCheck, and builds on the now-working LLVM 18/19 toolchain.
 
 ## 5. The immediate next build step
 
-**Step 2 — fusion / deforestation / CSE in C++** (`-bcir-cost-model` is done). With
-base costs now computed on the MLIR rail, port `realize.fused_candidates`: process a
-phase's claims in declared order with value-numbering (a write bumps an operand's
-version) and a produced-rid set, applying the **CSE** copy-cost factor when a claim's
-`(op, operand-versions)` repeats and the **deforestation** ×0.75-memory factor when a
-claim consumes a same-phase producer's write. Emit it either as an extension of
-`-bcir-cost-model` (adjusting `cm_min_cost`) or a dedicated `-bcir-fuse`, FileCheck-ed
-on a multi-claim module (a `scan`-shaped chain) where the consumer's recomputed memory
-drops 25% — exactly the discount the emitter bakes today. Then **step 3** (the layered
-min-plus shortest path with `_context_factor`) makes the C++ selection match the
-oracle's `optimize` for *all* modules, not just coupling-free ones.
+**Step 3 — the layered min-plus shortest path in C++** (steps 1–2 are done). Build a
+`-bcir-plan` pass that, over the fused candidate columns (one per claim, from the
+cost model), runs `semiring.dag_shortest_path`: SOURCE → per-claim candidate nodes →
+SINK, edge cost = `cand.cost.couple(_context_factor(prev, cand)).dot(w)`, where the
+*path-based* `_context_factor` adds the shared-input fusion discount (prev wide + cand
+wide + shared reads → ×0.75 memory). It emits the full plan (per-claim selected width
++ total score), making the C++ selection match the oracle's `optimize` for **all**
+modules, not just the coupling-free per-claim argmin `-bcir-select-realization` does
+today. Cross-check: it reproduces 7808 on `vector_add` and the corpus plan scores.
+(Note: `_context_factor`'s *thermal* coupling needs Θ, which isn't in the IR — the
+cool regime, valid for the whole corpus/curated set, is the first target; a `Θ`
+context op generalizes it. Then steps 4–5: overlap (max,+) and plan-level RCSP.)

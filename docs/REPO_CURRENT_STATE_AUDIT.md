@@ -117,6 +117,14 @@
 
 ## Changelog
 
+- 2026-06-16: **Optimizer-core C++ port, step 2 -- fusion / deforestation / CSE.**
+  `-bcir-cost-model` now processes claims in (phase, declared) order with
+  value-numbering + a produced-rid set and applies the two intra-phase redundancy
+  credits -- producer->consumer deforestation (x0.75 memory) and CSE (compute zeroed,
+  copy-priced memory) -- matching the oracle's `fused_candidates` bit-for-bit
+  (7808 / 5888 / 5100) and annotating `kbcir.cm_fusion`.
+  `mlir/test/passes/cost_model_fusion.mlir`. Next: step 3, the layered min-plus
+  shortest path with `_context_factor` (the full `optimize` in C++).
 - 2026-06-16: **The keystone C++ port -- `-bcir-cost-model` (the K_BCIR cost algebra).**
   `mlir/lib/passes/BCIRCostModel.cpp` recomputes each claim's candidate set + 12-d cost
   vectors from `bcir.claim` + `bcir.target.capability` (a faithful C++23 port of
