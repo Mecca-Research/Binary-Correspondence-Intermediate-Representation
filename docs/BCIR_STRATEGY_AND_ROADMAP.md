@@ -331,3 +331,44 @@ These are oracle-side (Python) capabilities; MLIR-law parity for them is future
 work (they extend the planning/telemetry layer, not the verified R1-R13 spine --
 e.g. `LaneSegment.dispatch` is an append-only field the MLIR segment can mirror
 later). +48 tests (420 total).
+
+## 8. Mined ideas: precision/accuracy (2026-06-16)
+
+Two large prior-project (BDI) research notes — the *Machine Precision Analysis
+Toolkit (MPAT)* and the *Approximation Error Detection & Correction Interface
+(AEDACI)* — were mined for ideas that enhance BCIR **without bloat**. The two
+inventories converged: the portable subset is the part that re-expresses in
+**integers / Q8**; the rest is float-bound, non-deterministic, or off-target.
+
+**Included** — one cohesive, deterministic, opt-in module `kbcir.precision`
+(off the default plan path, so the pinned scores 7808/9472 are unchanged; tied to
+the existing `accuracy` cost dim, the `precision` contract, and the two-truth
+quarantine):
+- **Q8-ULP error unit** (`ulp_distance`) — the integer error currency the rest
+  report in (1 tick = 2^-8).
+- **Integer interval error bounds** (`Interval`, `accuracy_bound`,
+  `reduction_error_bound`) — a provable static accuracy bound (naive reduction =
+  `count` ULP; compensated = 1 ULP), the producer the `accuracy` cost dim never had,
+  plus `meets_tolerance` (a checkable accuracy contract, verifier-law-shaped).
+- **Compensated Q8 reduction** (`compensated_reduce_q8`) — a residual-carry MAC
+  (integer Kahan/TwoSum analog) that is **bit-identical to the int64-exact** result
+  (loop invariant `acc*256 + resid == Σ x·w`), versus the naive accumulator that
+  drifts up to `count` ULP. The *measured* numerical win (test-proven).
+- **Stability diagnostics** (`cancellation`, `condition_milli`) — catastrophic-
+  cancellation / ill-conditioning signals emitted as two-truth `Graded` propositions
+  that inform but never legislate.
+
+**Skipped (bloat / wrong substrate)** — the entire ECC / coding-theory catalogue
+(Hamming/CRC/RS/BCH/LDPC/Turbo/Polar/Fountain/Quantum), ML decoders and the
+novel-algorithm zoo, arbitrary-precision bignum, decimal (DPD/BCD), CORDIC,
+root-finder / optimizer / quadrature libraries, affine arithmetic, the
+Newton-Raphson condition *search*, and the runtime hot-patch / kernel-daemon
+machinery. These are transmission-integrity, hardware, or float/stochastic features
+with no clean deterministic BCIR surface.
+
+**Roadmap (the next step the user named — MLIR / C / C++ lowering):** lower the
+compensated reduction as a `precision="compensated"` C-kernel variant; mirror the
+accuracy-contract check (`meets_tolerance`) as a verifier law on both rails (an
+R-law + MLIR parity); optionally feed `accuracy_bound` into the cost vector's
+accuracy dim behind a policy flag (it would change selection, so it stays opt-in
+until measured).
