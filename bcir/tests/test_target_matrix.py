@@ -1,6 +1,6 @@
 """Six-target capability matrix: per-target Python<->MLIR parity pins + drift gate.
 
-Task #1 of docs/BCIR_LOWERING_PLAN.md section 5: emit + test all six TARGETS so the
+Six-target capability matrix (docs/BCIR_MASTER_ROADMAP.md §4): emit + test all six TARGETS so the
 C++ optimizer-core passes -- ``-bcir-plan`` (the coupled shortest path), ``-bcir-
 overlap`` (the (max,+) scheduled price), ``-bcir-rcsp-plan`` (the accumulated-budget
 label DP) -- reproduce the oracle *per target*. The real bcir-opt cross-check runs in

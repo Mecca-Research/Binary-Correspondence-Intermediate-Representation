@@ -7,7 +7,7 @@
 > explicit criteria under which that decision would flip, and the stop criteria for a
 > native-isel experiment if one is ever taken.
 
-Pairs with `BCIR_LOWERING_PLAN.md` §5 #3 and `BCIR_MASTER_ROADMAP.md` row 6
+Pairs with `BCIR_MASTER_ROADMAP.md` §5.5 (native backend — gated)
 ("Native backend — only if warranted ⛔ DEFERRED").
 
 ## 1. The decision

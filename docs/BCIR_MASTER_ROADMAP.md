@@ -1,123 +1,341 @@
-# BCIR Master Roadmap — MLIR / C / C++ lowering (current-state reconciliation)
+# BCIR Master Roadmap
 
-> **Status: current implementation guide.** Supersedes the lowering sections of the
-> two pasted planning notes (`BCIR_next_phase` = the original ODS/build-layer bootstrap;
-> `BCIR_Roadmap` = the Phase A–H post-roadmap audit). Both were written against an
-> **older** tree (136/303 tests, the 5 GEM passes *unimplemented*, "R13 is the next
-> law"). This document reconciles them against the repo as it stands and gives the
-> definitive MLIR/C/C++ placement, a lowering+testing audit, and the next steps.
-> Pairs with `BCIR_STRATEGY_AND_ROADMAP.md` (strategy), `REPO_CURRENT_STATE_AUDIT.md`
-> (snapshot), and `BCIR_LOWERING_PLAN.md` (the reformulated MLIR/C/C++ lowering plan +
-> the ordered port-from-the-oracle build steps).
+> **Status: the single, current, authoritative roadmap.** This document consolidates
+> and supersedes the former strategy/blueprint/plan notes — `BCIR_STRATEGY_AND_ROADMAP.md`,
+> `BCIR_LOWERING_PLAN.md`, `BCIR_BLUEPRINT.md`, `BCIR_Codex_Blueprint.md`,
+> `BCIR_Full_LLVM_Build_Blueprint.md`, and `BCIR_LLVM_IR.md` (all removed in the
+> consolidation; their unique content is folded in here). It pairs with the docs that
+> stay separate because they are **normative reference / evidence / governance**, not
+> roadmap:
+> - [`BCIR_LANGREF.md`](BCIR_LANGREF.md) — the IR language + R1–R16 law spec (normative).
+> - [`BCIR_STREAMPACK_ABI.md`](BCIR_STREAMPACK_ABI.md) — the frozen binary ABI (v1 + append-only v2).
+> - [`PARITY.md`](PARITY.md) — the active oracle↔law cross-map (dual-rail enforcement).
+> - [`BCIR_NATIVE_OBJECT_GATE.md`](BCIR_NATIVE_OBJECT_GATE.md) — the native-isel decision gate.
+> - [`HARDWARE_VALIDATION.md`](HARDWARE_VALIDATION.md) — what is measured vs blocked on real silicon.
+> - [`CLANG_COMPARISON.md`](CLANG_COMPARISON.md) — the measured BCIR-vs-Clang evidence.
+> - [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) — the dated snapshot + changelog.
+> - [`BCIR_Repo_Structure.md`](BCIR_Repo_Structure.md) — directory layout + build entry points.
 
-## 0. Current state at a glance (measured)
+---
 
-| Fact | Pasted-roadmap assumption | **Now** |
-|---|---|---|
-| Oracle conformance tests | 136 / 303 | **509** (incl. the generated differential + verifier + fuzz campaigns) |
-| 5 GEM C++ passes (classify/select/batch/schedule/lower) | *unimplemented* | **all implemented** in `mlir/lib/BCIRPasses.cpp` |
-| Verifier laws | R1–R12, "R13 next" | **R1–R16** (R1–R13 dual-rail; R14 CIM-dispatch, R15 DVFS-clock, R16 allocator-tier as MLIR laws + oracle gates) |
-| LLVM version policy | loose, single-version | **multi-version matrix LLVM 18 + 19, both gating** |
-| Perf vs Clang | none | **measured** (`docs/CLANG_COMPARISON.md`: match on dense, 1.3–14× on irregular memory) |
-| Calibration loop | seeded constants | **closed on host** (microbench → `FrozenCalibrator` → R13 replan) + real-signal wiring (`bcir.silicon`) |
+## 1. What BCIR is (positioning)
 
-## 1. Reconciliation of the quoted six-item roadmap
+BCIR is a **cost-governed planning + verification layer above LLVM**, designed to live
+inside a driver/runtime — not a Clang replacement. It models what LLVM does not:
 
-| # | Quoted item | Status | Evidence / gap |
+- **Cost as a first-class IR object** — a 12-dimensional integer/Q-fixed cost vector
+  per realization, scalarized under a policy; the optimizer is a tropical (min-plus)
+  shortest path with (max,+) wave overlap and resource-constrained search (RCSP).
+- **Θ-feasibility** — live runtime state (thermal/power/contention) changes what is
+  *legal*, not just what is fast: a thermal cap can make max-width vec16 infeasible and
+  the feasible vec8 the correct plan.
+- **A principled ML boundary** — the **two-truth quarantine** (L0–L3): learned/graded
+  machinery is quarantined off the deterministic decision/execution path and may only
+  *inform* it through frozen Q8 artifacts; it can never *become* a legality verdict.
+- **Provenance + reproducibility as obligations** — every plan carries a replayable
+  provenance manifest (R11/R13); the same inputs reproduce the same plan bit-for-bit.
+
+**Niche-first philosophy.** "Forcing a refactor of Clang/LLVM" is a research result,
+not a milestone. The goal is to demonstrate *on silicon* that cost-as-IR + Θ-feasibility
++ frozen-learned planning beats LLVM on workloads LLVM handles poorly — irregular
+memory (gather/scatter avoidance), multi-target placement, and power/thermal-capped
+kernels — while *matching* LLVM on dense kernels (which it must, since it delegates
+instruction selection to the resident backend). The measured evidence is in
+`CLANG_COMPARISON.md`: **match** on dense (0.98–1.00×), **win** on intent the backend
+lacks (gather avoidance 6.0×, reduction order 14.1×, strided 1.33×), plus budget
+feasibility as a correctness win.
+
+**Three highest-ROI shapes:** (1) cost-governed scheduling/placement + verification
+above LLVM; (2) the planning brain of an AI-accelerator / heterogeneous-SoC
+runtime/driver; (3) a principled ML-in-compilers research vehicle.
+
+---
+
+## 2. Current state at a glance (measured)
+
+| Fact | **Now** |
+|---|---|
+| Oracle conformance tests (`python -m bcir.tests.run_all`) | **540**, incl. the generated differential + verifier + fuzz campaigns |
+| Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
+| GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
+| Verifier laws | **R1–R16** (R1–R13 dual-rail in `-bcir-verify`; R16 in `-bcir-verify`; R14/R15 in `-bcir-lower-to-llvm` + oracle gates) |
+| Named pass pipelines | `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm` / `bcir-aot` with verifier checkpoints |
+| Θ context op | `bcir.kbcir.theta` — the C++ plan matches the oracle under **hot** Θ (matmul hot 1159168), not just cool |
+| Six-target capability matrix | all six TARGETS cross-checked on the MLIR rail (`target_matrix.mlir`) — the law plans per-target from the capability seeds alone |
+| C23 in the runtime + kernels | `_BitInt(N)` exact-width Q-fixed lanes + `#embed` frozen Q8 tables (both with C11 fallbacks) |
+| Trust-boundary fuzz | Python (`kbcir.fuzz`) + **libFuzzer + ASan/UBSan** on the StreamPack **and** ETL-binary C decoders (500k runs in CI) |
+| Native object emission | decision gate documented (DEFERRED); the warranted slice (C → resident compiler → real eBPF/x86-64 object) is closed and ELF-verified |
+| LLVM version policy | multi-version matrix **LLVM 18 + 19, both gating** |
+| Perf vs Clang | **measured** (`CLANG_COMPARISON.md`): match on dense, 1.3–14× on irregular memory |
+| Calibration loop | **closed on host** (microbench → `FrozenCalibrator` → R13 replan) + real-signal wiring (`bcir.silicon`); a *measured* bare-metal replan win is the one deferred item |
+
+---
+
+## 3. The MLIR / C / C++ / Python placement map (the two-truth line)
+
+The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiable:
+
+> **Deterministic + integer/Q-fixed on the decision/execution path → C++/MLIR (law)
+> or C (runtime). Graded / float / train-time → Python that *freezes* to Q8.**
+
+| Subsystem | Today | **Target home** | Status |
 |---|---|---|---|
-| 1 | Implement the 5 GEM passes in C++, cross-checked vs pinned scores | ✅ **DONE** | `BCIRPasses.cpp` classify/select/batch/schedule/lower; `-bcir-select-realization` recomputes min-plus and reproduces **7808/9472**; `gem_passes{,_neg}.mlir` |
-| 2 | Symmetric cross-validation; extend parity beyond `vector_add` | ✅ **DONE** | Multi-version matrix ✅; **generated, adversarial Python↔MLIR differential** (`bcir.kbcir.differential`: `gen_module` + independent `law_select` + `shrink` + `run_campaign`) proves oracle↔law agreement over thousands of random modules + the six targets; `mlir/test/passes/gem_corpus.mlir` recomputes the widened corpus under `bcir-opt` |
-| 3 | Widen the op surface (reductions, real matmul, scan/histogram) | ✅ **DONE** | `reduce.gather` ✅; **real corpus** shipped (`examples.{matmul_tiled, scan, multi_histogram}` = `examples.CORPUS`): blocked matmul with register-resident K-accumulation, a multi-stage scan pipeline, a map/reduce multi-claim histogram — MLIR parity across all six targets (`test_differential.py`) |
-| 4 | Close the CT4 loop live (real HW counters, broker, measured replan) | ◑ **PARTIAL** | Loop closed on host (`calibloop`, `FrozenCalibrator`, `Broker`, microbench, `bcir.silicon`); **gap:** real PMU counters + RAPL need a bare-metal rig (documented in `HARDWARE_VALIDATION.md`); no live broker in CI |
-| 5 | Multi-claim joint optimization | ◑ **PARTIAL** | Pairwise coupling shipped: shared-input fusion, producer→consumer **deforestation**, **CSE**, (max,+) overlap; **gap:** true combinatorial *bundle* joint optimization |
-| 6 | Native backend — only if warranted | ⛔ **DEFERRED (correct)** | Decision gate stands; LLVM front-half is the chosen path; `bcir.target.lower_contract` structures either choice |
-
-**Risk register (from `BCIR_Roadmap`) — current status:** *validation realism* — largely **mitigated** (Clang comparison + multi-version matrix + 468 tests). *Multi-rail divergence / "law trails the oracle"* — **mitigated for the GEM pipeline** (5 passes + R1–R16 in C++). *Substrate/intelligence inversion* — **partially mitigated** (calibration closed on host, silicon wiring, honest hardware-limit doc); the learned organs remain modeled until a bare-metal rig closes them. *Doc drift, fuzzing, packaging, ASan/UBSan, generated schema* — **still open** (the `BCIR_Roadmap` Phase A/B items remain the right next work).
-
-**Net:** the quoted roadmap is now **~3 done, 2 partial, 1 deferred** — items #2 (symmetric cross-validation) and #3 (widen the op surface) closed by the generated differential harness + the real corpus; #1 was already done; the project has *added* beyond it (R14–R16, the adaptive smart layer, CSE/deforestation, silicon wiring, the Clang evidence rail). The forward plan is no longer "build the 5 passes" or "make parity generated" but **"close calibration on real hardware, port the deterministic optimizer core (RCSP/Pareto/fusion) to C++, and fuzz the trust boundaries."**
-
-## 2. The MLIR / C / C++ placement map (where every part goes)
-
-The port boundary is BCIR's own **L0–L3 / two-truth line**: deterministic integer/Q-fixed machinery is C++/MLIR (and the C runtime); graded, float, train-time machinery stays Python and emits frozen Q8 the deterministic rail consumes. This is unchanged and correct.
-
-| Subsystem | Today (impl) | **Target home** | Status |
-|---|---|---|---|
-| Semantic model (registry/claim/phase/resource) | Python `bcir.model` + ODS ops | **MLIR/C++** (ODS is the law) | ODS ✅; C++ accessors used by passes ✅ |
-| Verifier **R1–R13** | Python `bcir.verify` + `-bcir-verify` | **MLIR/C++** (law) + Python (oracle ref) | dual-rail ✅ |
-| Verifier **R14–R16** (CIM / DVFS clock / alloc tier) | `-bcir-lower-to-llvm` + oracle gates (`gem.cim`, `gem.dvfs`, `kbcir.allocator`) + `verify.{verify_cim,verify_dvfs,verify_allocator,verify_smart_lowering}` | **MLIR/C++** (law) + Python (oracle ref) | MLIR ✅; oracle-gate ✅; **`bcir.verify` fns ✅ (dual-rail)** |
-| K_BCIR selection (min-plus scalarization) | Python `realize` + `-bcir-select-realization` | **MLIR/C++** | selection scoring ✅ (reproduces 7808/9472) |
-| K_BCIR **RCSP / Pareto** | Python (`rcsp`) + **`-bcir-rcsp`** (`BCIRPasses.cpp`, C++23: budget label-DP argmin + Pareto front) | **MLIR/C++** | **ported ✅** (reproduces 9472 + the size-2 front; `rcsp.mlir`) |
-| K_BCIR **overlap / fusion / CSE** | Python (`overlap`, `realize.fused_candidates`) | **MLIR/C++** (deterministic) | **oracle-only** — the next C++ port (needs the cost model on the MLIR rail to recompute base costs) |
-| GEM classify / batch / schedule / lower | `-bcir-classify-lanes/-batch/-schedule/-lower-to-llvm` | **MLIR/C++** | ✅ |
-| GEM hydrate (plan → StreamPack) | Python `gem.streampack.hydrate` | **MLIR/C++** | partial (lower-to-llvm consumes segments; full hydrate op pending) |
-| GEM deterministic executor | Python `gem.execute` | **C++/C** (hot path) | oracle-only |
-| StreamPack ABI codec | **C** `runtime/c/` + Python encoder | **C** (frozen ABI) | ✅ (CRC-gated, parity-tested) |
-| Portable kernel emission (C23) | Python `lower.c_kernel` | **C++** (or stays a thin emitter) | emits C; Clang compiles — the kernel is the *output*, the emitter can be C++ later |
-| Lowering contracts (`target.lower_contract`, `isa.*`, `packet.*`) | ODS ops | **MLIR/C++** (law) | ODS ✅; consumed by lowering |
-| Telemetry **ring** (zero-copy) | Python `telemetry` + **C** producer (`memory_model.emit_ring_header_c`) | **C** (shared mmap) | ✅ C↔Python bridge |
+| Dialect / ODS (the law's vocabulary) | `mlir/include/BCIR/*.td` | MLIR | ✅ |
+| Verifier **R1–R13** | `-bcir-verify` + `bcir.verify` | MLIR/C++ + Python (oracle ref) | ✅ dual-rail |
+| Verifier **R16** (allocator tier) | `-bcir-verify` + oracle | MLIR/C++ + Python | ✅ dual-rail |
+| Verifier **R14/R15** (CIM dispatch / DVFS clock) | `-bcir-lower-to-llvm` + oracle gates | MLIR/C++ + Python | ◑ enforced in lowering; **not yet first-class `-bcir-verify`** |
+| K_BCIR **cost model** (`_cost`, candidates, stride/tier) | `-bcir-cost-model` (C++23) | MLIR/C++ | ✅ **ported** (bit-exact: vec16 7808, gather 528384, tile 126976) |
+| K_BCIR **fusion / CSE / deforestation** | `-bcir-cost-model` | MLIR/C++ | ✅ **ported** (7808 / 5888 / 5100) |
+| K_BCIR **min-plus shortest path** (`optimize`) | `-bcir-plan` | MLIR/C++ | ✅ **ported** (per-target, hot/cool Θ) |
+| K_BCIR **overlap (max,+)** | `-bcir-overlap` | MLIR/C++ | ✅ **ported** (makespan/gain) |
+| K_BCIR **RCSP / Pareto** (per-claim + plan-level) | `-bcir-rcsp`, `-bcir-rcsp-plan` | MLIR/C++ | ✅ **ported** (9472, {16,8}@17280) |
+| GEM classify / batch / schedule / lower | `-bcir-*` passes | MLIR/C++ | ✅ |
+| GEM **hydrate** (plan → StreamPack **bytes**) | Python `abi.streampack_abi.encode` | **C** (the encoder) | ◑ the `bcir-hydrate` *pipeline* lowers lane segments; the byte **encoder** is Python-only |
+| GEM **deterministic executor** (decode → drive kernels) | Python `gem.execute` | **C** (hot path) | ☐ **oracle-only — the next C runtime port** |
+| StreamPack ABI **decoder** | **C** `runtime/c/bcir_runtime.c` | **C** (frozen ABI) | ✅ CRC-gated parity + libFuzzer |
+| ETL binary-record decoder | **C** `runtime/c/bcir_binrec.c` | **C** | ✅ parity + libFuzzer |
+| Portable kernel emission (C23 + `_BitInt`/`#embed`) | Python `lower.c_kernel` | C output (emitter may become C++) | ✅ |
+| Telemetry ring (zero-copy) | **C** producer + Python reader | **C** | ✅ |
 | Real-signal probes / DVFS actuation | Python `bcir.silicon`, `gem.dvfs.actuate` | **C/C++** (runtime) | read ✅; actuation gated (needs bare-metal) |
-| **Stays Python (graded, offline, L2/L3):** `bayescal`, `softdp`, `moegate` *training*, `microbench`, `regret` ledger, `calibrate` SGD | Python | **Python** (emit frozen Q8 + generation tags) | by design — porting them would violate the quarantine |
-| Enriched operad / memory-module fixpoints / two-truth | Python | **Python** unless load-bearing for plan-time caching | research-side tooling |
+| **Learned organs** (bayescal/softdp/moegate train/calibrate SGD/regret) | Python | **Python** (freeze to Q8) | by design — porting them violates the quarantine |
+| Enriched operad / memory-module fixpoints / two-truth | Python | **Python** unless load-bearing for plan-time caching | research-side |
 
-**One-line rule:** *anything deterministic and integer on the decision/execution path → MLIR-C++ (law) or C (runtime); anything float/learned/train-time → Python that freezes to Q8.*
+**One-line rule:** *anything deterministic and integer on the decision/execution path
+→ MLIR/C++ (law) or C (runtime); anything float/learned/train-time → Python that
+freezes to Q8.*
 
-## 3. Lowering audit (what lowers where today, and the gaps)
+---
 
-**Implemented lowering paths (all Python-emitted today, compiled by the resident toolchain):**
-- **Portable C23 kernel** (`lower.c_kernel`, R12-attested) — the primary path; matches Clang on dense, wins on irregular memory.
-- **LLVM IR** AOT (clang) / JIT (lli), **WASM** (node), **stackify** (JVM/CIL/WASM bytecode), **per-target llc** descriptors (x86-64, AArch64, RISC-V, NVPTX, eBPF, best-effort SPIR-V).
-- **MLIR** `-convert-bcir-to-llvm` (LLVM-dialect lowering) + the GEM pipeline `→ lower-to-llvm` (R12/R14/R15/R16 contract checks).
+## 4. What's done (the landed work)
 
-**Lowering gaps (prioritized):**
-1. **`precision="compensated"` C-kernel variant** — the precision module models compensated reduction; the *emitter* doesn't yet produce it. (Small, high-signal.)
-2. **Width-aware codegen on the MLIR rail** — the oracle emits floor-vs-cap (go-fast/throttle); the MLIR `lower-to-llvm` records width but doesn't emit the C. (The C emission is Python-only.)
-3. **Real tiled-matmul / scan lowering** — the tile path is a skeleton; no blocked-matmul or scan kernel emitter.
-4. **GPU-C gather variants** — NVPTX/SPIR-V descriptors exist; no gather/scatter kernel emitter per target.
-5. **One target end-to-end** — every machine-code path still shells out to clang/llc/lli; no BCIR-native object emission (correctly gated).
+**The deterministic optimizer core is fully on the MLIR rail (C++23)** — the headline
+of the last cycle. Each stage is bit-exact against the oracle and gated by
+`check_passes.sh` + the generated differential harness:
 
-## 4. Testing audit (what's covered, and the gaps)
+```
+-bcir-cost-model (cost + fusion/CSE)  →  -bcir-plan (coupled min-plus optimize)
+   →  -bcir-overlap (max,+ M(π,Θ))  →  -bcir-rcsp / -bcir-rcsp-plan (constrained search)
+```
 
-**Covered:** 468 oracle conformance tests; the MLIR rail (tblgen, IRDL round-trip, `bcir-opt` build, ODS examples, R1–R16 pass tests incl. `gem_passes{,_neg}`) on **LLVM 18 + 19**; StreamPack C-decode parity; the **measured Clang comparison** (`test_clang_compare`, gated); per-target parity pins for saxpy/histogram; pinned 7808/9472 both rails.
+- **Cost algebra + fusion/CSE/deforestation** recompute every claim's 12-d cost from
+  `bcir.claim` + `bcir.target.capability` (a `constexpr` tier table + the seeded
+  constants), so the law no longer trusts emitter-baked path costs.
+- **Coupled shortest path** reproduces the oracle's `optimize` on every module and, via
+  the `bcir.kbcir.theta` context op, under hot Θ too.
+- **Six-target capability matrix** (`target_matrix.mlir`): each program is emitted once
+  per TARGET; `-bcir-plan`/`-overlap`/`-rcsp-plan` recompute the oracle's per-target
+  result from the capability alone — avx512/sve/rvv 16→7808, avx2 8→9472, neon 4→12800,
+  ptx 32→6976; the GPU's coalesced gather halves histogram (266240 vs 528384).
+- **Verifier R1–R16** run on both rails, negative-tested per law, plus a verifier
+  *differential* (`gen_illegal_module` + `run_verifier_campaign`) that fault-injects each
+  law and confirms the verifier catches it.
+- **C23 where it pays:** `_BitInt(N)` exact-width Q-fixed lane kernels (the place a
+  standard int promotes or has no type at all) and `#embed` frozen Q8 tables, both with
+  preprocessor-selected C11 fallbacks; bit-identical across `-std=c23`/`-std=c11`.
+- **Trust-boundary fuzz:** libFuzzer + ASan/UBSan on the StreamPack **and** ETL-binary
+  C decoders; the Python `kbcir.fuzz` covers the StreamPack codec, ROP/MAP/ETL
+  front-ends, `etl.binary`, calibration JSON, and the MLIR emitter.
+- **Native object gate** (`BCIR_NATIVE_OBJECT_GATE.md`): documented GO/STOP criteria;
+  the warranted slice (emit C → resident compiler → real eBPF/x86-64 ELF object) is
+  closed and ELF-verified — no hand-rolled isel.
+- **Calibration software path** closed end-to-end (`bcir.silicon` reads real PMU + RAPL
+  + on-die thermal; `kbcir.calibloop.measured_replan` trains+freezes a `LinearCalibrator`
+  and certifies the win) — it degrades honestly in a sandbox and lights up on a rig.
+- **Adaptive "smart" layer** (8 deterministic, opt-in, gains-only capabilities): RL
+  allocator, compute-in-memory dispatch (R14), persistent e-graph with telemetry pivot,
+  JIT shape specialist, uncertainty-gated sensing, zero-copy telemetry ring, fuzzy MoE
+  routing, phase-aware DVFS — all off the default plan/emit path (`test_perf` guard).
+- **Precision module** (`kbcir.precision`, opt-in): Q8-ULP error unit, integer interval
+  error bounds, a compensated Q8 reduction (bit-identical to int64-exact), stability
+  diagnostics as two-truth `Graded` signals.
 
-**Testing gaps (the `BCIR_Roadmap` Phase B items):**
-1. ✅ **Generated differential Python↔MLIR testing** — `bcir.kbcir.differential`: a structured/adversarial `gen_module` runs both rails (oracle shortest-path vs. independent `law_select` per-claim argmin) and diffs the selected realization / per-claim + total score / budget feasibility / schedule order, **shrinking** mismatches to a minimal witness (`shrink`). `run_campaign` sweeps the six targets × Θ × policy; `test_differential.py` asserts zero divergence over ≥1500 modules; `mlir/test/passes/gem_corpus.mlir` recomputes the widened corpus under real `bcir-opt`. *(This turned "two rails that must agree" into a proof.)*
-2. ✅ **Property / metamorphic tests** — shipped in `test_differential.py`: ID-renaming preserves the score; a tighter budget never raises the capped dimension (and feasibility holds); emit→read (`plan_view`→`law_select`) is lossless; the committed corpus equals a fresh emission (drift gate).
-3. ◑ **Fuzzing of trust boundaries** — ✅ a generator-seeded Python fuzz (`bcir.kbcir.fuzz`) covers the StreamPack codec, the ROP/MAP/ETL front-ends, the calibration JSON, and the MLIR emitter (valid round-trip + graceful malformed rejection). **Remaining:** libFuzzer + ASan/UBSan for the C/C++ decoders (the StreamPack C runtime, the MLIR parser) on the toolchain rail.
-4. ✅ **R14–R16 in the Python verifier** — `verify.{verify_cim,verify_dvfs,verify_allocator,verify_smart_lowering}` mirror the `-bcir-lower-to-llvm` laws (dual-rail symmetry), negative-tested per law; plus a **verifier differential** (`gen_illegal_module` + `run_verifier_campaign`) that fault-injects each law and confirms the verifier catches it.
-5. ☐ **Compile-time / peak-memory regression budgets**; reproducibility checks that rebuild archived plans from frozen inputs.
+The earlier-cycle spine is also done: the 5 C++ GEM passes, the multi-version LLVM
+matrix, the R13 provenance manifest, the generated adversarial Python↔MLIR differential,
+the widened corpus (real tiled matmul / scan / multi-claim histogram), the StreamPack
+freeze + freestanding C decoder, the portable C23 kernel backend, and the measured
+Clang comparison.
 
-## 5. The updated master roadmap (reconciled)
+---
 
-The `BCIR_Roadmap` Phase A–H structure and the 0.2→1.0 release ladder remain the right spine; below is the **reconciled, current-state** version. ✅ done · ◑ in progress · ☐ next.
+## 5. The forward roadmap (what's next)
 
-### Near-term — finish "BCIR 0.2: reproducible compiler" (≈90% done)
-- ✅ 5 C++ GEM passes; ✅ multi-version LLVM matrix; ✅ compilation/provenance manifest (R13); ✅ measured baseline vs Clang.
-- ✅ **Generated differential Python↔MLIR parity** (Phase B.1) — `bcir.kbcir.differential` (generator + independent law rail + diff + shrink) + `lower.mlir.to_mlir` emitter; was the top correctness lever, now landed.
-- ✅ **Widen the corpus**: real tiled matmul + scan + multi-claim histogram (`examples.CORPUS`), with MLIR parity across the six targets (`gem_corpus.mlir`) — closes quoted #2, #3.
-- ☐ **Named pass pipelines** (`bcir-plan`, `bcir-hydrate`, `bcir-lower-llvm`, `bcir-aot`, `bcir-audit`) with declared input/output levels + verifier checkpoints (stop relying on ad-hoc ordering). *(Now the highest-value MLIR-rail lever: the `to_mlir` emitter gives the named-pipeline inputs for free.)*
-- ☐ **Doc-classification + link CI** (Normative / Current / Historical / Research) + retired-path checker.
-- ✅ **R14–R16 as `bcir.verify` functions** (dual-rail symmetry) — `verify.{verify_cim,verify_dvfs,verify_allocator}`.
-- ✅ **Verifier differential** — `gen_illegal_module` + `run_verifier_campaign` fault-inject each law and confirm the verifier catches it (the C++ `-bcir-verify` law-for-law diff is the remaining toolchain-rail step).
-- ◑ **Fuzz the trust boundaries** — `bcir.kbcir.fuzz` (Python, generator-seeded); C/C++ libFuzzer + ASan/UBSan remain.
+### 5.1 Oracle → MLIR / C++ (plan-time law) — remaining ports
 
-### Mid-term — "BCIR 0.3: measured adaptive compiler" (the headline)
-- ◑ **Close CT4 on real hardware** (quoted #4): the *software path* now lands end-to-end — `bcir.silicon` reads real PMU + **RAPL energy** + **on-die thermal**, `kbcir.calibloop.measured_replan` builds measured telemetry, trains+freezes a `LinearCalibrator`, replans, and certifies the win (`MeasuredReplanCertificate`, provenance-tagged real-vs-synthetic; CLI `bcir.run --silicon`). It degrades honestly in a sandbox (synthetic, win 0) and lights up the identical path on a bare-metal rig. **Remaining:** run it on a rig with `intel_pstate=passive` + RAPL exposed and publish one *measured* (not synthetic) replan win. *This is still the single most valuable next result — it converts "optimal-w.r.t.-a-model" into evidence.*
-- ☐ Durable telemetry (schema registry, backpressure, auth); live broker in CI behind a fake producer (the unit exists).
-- ☐ Fuzzing + ASan/UBSan jobs; compile-time/memory regression budgets.
+The optimizer core is ported. What is still Python-only **and** belongs on the law rail:
 
-### Mid/long-term
-- ☐ **Multi-claim joint (bundle) optimization** (quoted #5) — where the (min,+) formulation should start paying for itself; bound compile time + emit search certificates.
-- ◑ **Port RCSP/Pareto/overlap/fusion/CSE to C++** (the deterministic optimizer core) — ✅ **RCSP + Pareto** ported (`-bcir-rcsp`, C++23; reproduces 9472 + the size-2 Pareto front, cross-checks the corpus). **Remaining:** the **cost model** on the MLIR rail (compute base costs from claim + capability), which then enables a C++ **overlap (max,+)** and **fusion/CSE** recomputation (today those trust the emitter-baked path costs). Completes "law catches the oracle." *(Unblocked: the MLIR toolchain is built + gating in CI on LLVM 18+19.)*
-- ☐ **Proof-carrying optimization records** (Phase D): R13 is in; add replayable decision records + rewrite/lowering certificates + `bcir-explain`/`bcir-replay`/`bcir-reduce`.
-- ☐ **Compositional semantics** (Phase F): functions/calls, control flow, dynamic shapes, alias/effect modeling, numerical contracts.
-- ☐ **Native backend** (quoted #6) — only behind the documented decision gate; if taken, a one-target experiment (eBPF or x86-64 scalar) with stop criteria.
+1. **R14 (CIM/PIM dispatch) + R15 (DVFS clock bounds) as first-class `-bcir-verify`
+   checks.** Today they are enforced inside `-bcir-lower-to-llvm` (`BCIRGEMPasses.cpp`);
+   R16 already moved into `-bcir-verify`. Moving R14/R15 completes verifier dual-rail
+   symmetry (every law checkable by `-bcir-verify` alone). *(Small, high-signal.)*
+2. **The `verification` cost dimension (R8 verify-cost).** The 12th cost axis is modeled
+   as 0; give it a real producer — the cost of discharging a claim's verify contract
+   (bounds / exact / hash) — on both rails, so the optimizer can trade verification
+   cost against compute/memory.
+3. **A C++ `-bcir-verify` law-for-law differential** against the oracle verifier (the
+   remaining toolchain-rail step of the verifier differential).
 
-### Release criteria (reconciled)
-- **0.2** (reproducible compiler): + differential parity, named pipelines, wider corpus, doc cleanup, initial fuzzing. *(GEM passes + matrix + manifest already done.)*
-- **0.3** (measured adaptive): real-hardware CT4 evidence + durable telemetry + perf regression tracking.
-- **0.4** (proof-carrying): replay records + certificates + `bcir-explain`/`replay`/`reduce`.
-- **1.0**: stable language/ABI policy, no known Python↔C++ divergence (generated+fuzzed), ≥2 real hardware targets with measured evidence, R1–R16 dual-rail symmetry, one external frontend, published benchmark methodology, upgrade tests, a clear native-backend decision.
+### 5.2 Oracle → C (run-time hot path) — remaining ports
 
-## 6. Bottom line
+The C runtime has the decoders (StreamPack, ETL-binary) but not the executor:
 
-The pasted roadmaps remain a sound *spine*, but their headline task (the 5 C++ GEM passes) and their "next law" (R13) are **done**, validation realism is **measured**, and as of this phase two of the three former center-of-gravity items are also done: Python↔C++/MLIR equivalence is now **generated and adversarial** (`bcir.kbcir.differential` — thousands of random modules diffed across the six targets, shrunk on mismatch, recomputed by real `bcir-opt` on the committed corpus), and the corpus is **widened** past toy kernels (real tiled matmul / scan / multi-claim histogram with per-target MLIR parity). The center of gravity now narrows to **three**: (1) **close calibration on real silicon** (the one differentiator no amount of architecture substitutes for — now the single most valuable next result), (2) **port the deterministic optimizer core to C++/MLIR** (RCSP/Pareto/overlap/fusion/CSE — the remaining "law catches the oracle" gap, for which the generated harness is the readymade conformance net), and (3) **fuzz the trust boundaries** (parsers, decoders, MLIR — seeded by the new `gen_module`). The MLIR/C/C++ split is settled by the two-truth line — deterministic core to C++/MLIR + C runtime, graded organs stay Python and freeze to Q8.
+1. **The deterministic StreamPack executor** (`gem/execute.py` → C) — *the next C
+   runtime port.* Decode the pack, then drive the emitted kernels in topological phase
+   order (ascending claim id within a phase) with per-phase telemetry into the zero-copy
+   ring. This makes the StreamPack a self-contained, no-Python hot artifact a driver can
+   run end-to-end.
+2. **The StreamPack encoder in C** (today Python `abi.streampack_abi.encode`; C only
+   decodes) — completes a full C round-trip so a driver-resident hydrate emits the
+   artifact without Python.
+3. **The `precision="compensated"` C-kernel emission variant** — the precision module
+   models the compensated Q8 reduction; the C-kernel emitter does not yet produce it
+   (a numerical-accuracy lowering gap).
+
+### 5.3 New deterministic features (not ports) — for C++/MLIR
+
+1. **Multi-claim bundle (joint) optimization** — the genuine combinatorial joint step
+   over claim bundles, where the (min,+) formulation should start paying for itself
+   beyond the pairwise coupling (shared-input fusion, deforestation, CSE, overlap) that
+   ships today. Must bound compile time and emit search certificates.
+2. **Proof-carrying optimization records** — replayable decision records + rewrite /
+   lowering certificates + `bcir-explain` / `bcir-replay` / `bcir-reduce` (R13 is the
+   foundation).
+3. **Compositional semantics** — functions/calls, control flow, dynamic shapes,
+   alias/effect modeling, numerical contracts (the path past straight-line array
+   kernels).
+
+### 5.4 Measured real-silicon calibration (DEFERRED — the top differentiator)
+
+The software path is merged and certified on host; the one thing no architecture
+substitutes for is a *measured* (not synthetic) replan win on a bare-metal rig with
+`intel_pstate=passive` + a userspace governor + RAPL exposed (the exact rig is in
+`HARDWARE_VALIDATION.md`). This converts "optimal-w.r.t.-a-model" into evidence and is
+the single most valuable next result once a rig is available.
+
+### 5.5 Native backend (DEFERRED — gated)
+
+BCIR-native instruction selection stays deferred behind the documented decision gate
+(`BCIR_NATIVE_OBJECT_GATE.md`): every seeded target has a resident LLVM backend, so the
+GO criteria (G1 no resident backend + G2 measured ≥2× economics) are unmet. Revisit for
+a bare PIM/CIM controller or a driver-resident eBPF JIT under a latency SLA.
+
+### 5.6 Stays Python (the quarantine)
+
+The learned organs (`bayescal`, `softdp`, `moegate` training, `calibrate` SGD, `regret`
+ledger, `microbench`), the offline calibration, the enriched operad / memory-module
+fixpoints, the conformance **oracle** itself, and the generators (`differential.gen_module`,
+`fuzz`) stay Python by design and emit generation-tagged frozen Q8 artifacts. Porting
+them would violate the two-truth quarantine. L2 portfolio offline learning (Bayesian
+optimization) and a production Kafka broker deployment are operational/research items
+that stay on the Python/ops side.
+
+---
+
+## 6. Next build steps (concrete, prioritized)
+
+In recommended order — each is gated by the generated differential harness + FileCheck
++ the C-runtime parity/fuzz scripts:
+
+1. **`-bcir-verify` R14 + R15** (§5.1.1). Lift the CIM-dispatch and DVFS-clock checks
+   out of `-bcir-lower-to-llvm` into the dedicated verifier pass, with positive/negative
+   `.mlir` and a `verify.verify_dvfs`/`verify_cim` law-for-law diff. *(Smallest, closes
+   verifier symmetry.)*
+2. **The C StreamPack executor** (§5.2.1). `runtime/c/bcir_exec.{h,c}`: a freestanding
+   `bcir_sp_execute(pack, kernels, ring)` that walks segments in phase order and invokes
+   per-claim kernels, with a Python↔C parity gate (the oracle `gem.execute` order is the
+   reference) and a libFuzzer harness on the segment-walk. *(The biggest C-runtime gap;
+   makes the StreamPack a no-Python hot artifact.)*
+3. **The C StreamPack encoder** (§5.2.2). `runtime/c/bcir_encode.c` mirroring
+   `streampack_abi.encode`, CRC-gated, with a Python-encode == C-encode parity test —
+   completing the full C round-trip.
+4. **The verify-cost dimension** (§5.1.2). Give the `verification` cost axis a producer
+   on both rails and pin the new scores.
+5. **The `precision="compensated"` C-kernel** (§5.2.3) + its accuracy-contract verifier
+   law.
+6. **Multi-claim bundle optimization** (§5.3.1) — the first genuinely *new* optimizer
+   capability, where the combinatorial (min,+) formulation earns its keep.
+7. **(When a rig is available)** the measured real-silicon replan win (§5.4).
+
+---
+
+## 7. Release ladder (reconciled)
+
+✅ done · ◑ in progress · ☐ next
+
+- **0.2 — reproducible compiler** (✅ effectively complete): 5 C++ GEM passes, multi-version
+  LLVM matrix, R13 provenance manifest, generated differential parity, the widened
+  corpus, the full optimizer-core C++ port, named pipelines, the six-target matrix,
+  initial + C fuzzing. *Remaining polish:* doc-classification/link CI.
+- **0.3 — measured adaptive compiler** (◑): real-hardware CT4 evidence (§5.4) + durable
+  telemetry (schema registry, backpressure, a live broker in CI behind a fake producer)
+  + compile-time/peak-memory regression budgets.
+- **0.4 — proof-carrying** (☐): replay records + certificates + `bcir-explain`/`replay`/`reduce` (§5.3.2).
+- **1.0** (☐): stable language/ABI policy; no known Python↔C++ divergence (generated +
+  fuzzed); ≥2 real hardware targets with measured evidence; R1–R16 dual-rail symmetry
+  (§5.1.1); one external frontend; published benchmark methodology; upgrade tests; a
+  clear native-backend decision (the gate, §5.5).
+
+---
+
+## 8. Risk register
+
+- **Substrate/intelligence inversion** — a rich learned/categorical stack over a backend
+  that can't yet codegen on real silicon and tables that aren't yet measured. *Mitigation:*
+  §5.4 (real-silicon calibration) is the top priority; the quarantine keeps the learned
+  side off the deterministic path until measured.
+- **Multi-rail divergence** ("the law trails the oracle") — *largely mitigated:* the
+  whole optimizer core + R1–R16 are dual-rail and cross-checked by the generated
+  differential + the committed corpus/matrix under real `bcir-opt`. Remaining: §5.1.1/§5.1.3.
+- **Validation realism** ("green ≠ competitive") — *mitigated:* the measured Clang
+  comparison + the multi-version matrix + 540 tests. Remaining: continuous perf
+  regression gating (0.3).
+- **Complexity / bus factor** — the adaptive + learned organs are large. *Mitigation:*
+  lazy imports keep the simple plan→emit path light (`test_perf` guard); every organ is
+  opt-in and off the default path.
+
+---
+
+## Appendix A — capability tracks & the build history (what's built)
+
+BCIR's capability model (the CT tracks, from the original blueprint), all oracle-done
+and law-authored:
+
+- **CT1 — memory hierarchy:** L1/L2/L3/DRAM/HBM/CXL/SSD tiers with Q8 bandwidth/latency
+  factors (frozen in `runtime/c/bcir_q8_tables.h`); HAM (O(log n) access) and CXL
+  semantics.
+- **CT2 — concurrency / wave scheduling:** affinity domains, (max,+) overlap, the
+  decoupled GGG tail.
+- **CT3 — front-ends:** ROP (declarative) + MAP (macro-assembly) → claims; the M5 ETL
+  (events / FSM transducer / parser / binary record decode).
+- **CT4 — calibration / measurement:** microbench → frozen Q8 cost tables → R13 replan;
+  real-signal probes (`bcir.silicon`).
+- **CT5 — learning organs:** the L1–L3 learned stack (bayescal / portfolio / MoE gate /
+  accelerator / softdp / regret / e-graph / two-truth / operad), each frozen to Q8.
+
+The implementation arrived in phases (a condensed history; the dated detail lives in
+`REPO_CURRENT_STATE_AUDIT.md`): the StreamPack freeze + freestanding C runtime; the
+compiled `bcir-opt` on LLVM 18/19 with R1–R16; the learning/intelligence organs; the
+oracle optimization pass (hot/cold locked); the MLIR-native GEM pipeline; the calibration
+loop; the portable C23 kernel backend; the measured Clang comparison; the generated
+differential + widened corpus; the full deterministic optimizer-core C++ port; the
+six-target capability matrix; C23 `_BitInt`/`#embed` + ETL-binary C fuzz; and the
+native-object decision gate.
+
+**Non-regression invariants (design law, from the blueprints — must always hold):**
+determinism (the same inputs reproduce the same plan bit-for-bit); back-compat (the
+StreamPack ABI is append-only; old readers stay correct — `BCIR_STREAMPACK_ABI.md`); the
+lowering never invents LLVM instructions (only legal load/store/add/atomicrmw/cmpxchg/
+fence/calls); **atomics are never rewritten** into barrier+load+binop+store; the IRDL
+projection stays C++-free; and the two-truth quarantine is never crossed (no learned
+inference on the hot path, L0).
+
+## Appendix B — what was consolidated / removed
+
+Folded into this document and **removed**: `BCIR_STRATEGY_AND_ROADMAP.md` (strategy →
+§1, §8), `BCIR_LOWERING_PLAN.md` (the lowering status → §3, §4), `BCIR_BLUEPRINT.md`
+(capability tracks / phase inventory → Appendix A), `BCIR_Codex_Blueprint.md` +
+`BCIR_Full_LLVM_Build_Blueprint.md` + `BCIR_LLVM_IR.md` (the old C++ `ir/`-tree rebuild
+work-orders — obsolete since the `ir/` skeleton was retired into the `bcir/` oracle +
+`mlir/` law; their forward items survive in §5). **Kept** (normative / evidence /
+governance, not roadmap): `BCIR_LANGREF.md`, `BCIR_STREAMPACK_ABI.md`, `PARITY.md`,
+`BCIR_NATIVE_OBJECT_GATE.md`, `HARDWARE_VALIDATION.md`, `CLANG_COMPARISON.md`,
+`BCIR_Repo_Structure.md`, and `REPO_CURRENT_STATE_AUDIT.md`.

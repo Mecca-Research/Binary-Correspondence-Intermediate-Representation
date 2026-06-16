@@ -88,7 +88,7 @@ bcir.surface(text) ─► bcir.core(typed graph) ─┬─► ir/irdl  (pure-IR 
   and `ir/runtime/` (engine); target `bcir-lowering` → `bcir-llvm`.
 - `include/bcir/*` headers moved next to their sections (logical include path
   `bcir/<name>.hpp` preserved).
-- `docs_BCIR_LLVM_IR.md` → `docs/BCIR_LLVM_IR.md`.
+- `docs_BCIR_LLVM_IR.md` → `docs/BCIR_LLVM_IR.md` (since consolidated into `docs/BCIR_MASTER_ROADMAP.md`).
 - **Removed**: the hand-written `runtime/llvm/*.ll` seed, its `validate_*.sh`
   scripts, the `BCIR_Phase4_Assembler_and_Blob_Pipeline.md` doc, and the
   corresponding CI steps. Rationale: basic, duplicated the canonical model, and

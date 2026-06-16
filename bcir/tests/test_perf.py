@@ -1,6 +1,6 @@
 """Performance-audit regression guards: keep the *machinery* out of the simple path.
 
-The lowest-level performance finding (docs/BCIR_STRATEGY_AND_ROADMAP.md, the
+The lowest-level performance finding (docs/REPO_CURRENT_STATE_AUDIT.md changelog, the
 performance-audit section): the dominant cost of the simplest BCIR use -- plan a
 program and emit a kernel -- was never the planning math (~0.05 ms) or the emitted
 loop (memory-bandwidth-bound; loop form is within measurement noise), but the

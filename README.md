@@ -70,8 +70,8 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 
 ## Where the law lives
 
-- [`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md) — the normative language reference (levels, laws R1–R12, the equation).
-- [`docs/BCIR_BLUEPRINT.md`](docs/BCIR_BLUEPRINT.md) — the target-open / heterogeneous build program (CT1–CT5).
+- [`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md) — the normative language reference (levels, laws R1–R16, the equation).
+- [`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md) — the single master roadmap: positioning, current state, the MLIR/C/C++ placement map, and the next build steps.
 - [`docs/PARITY.md`](docs/PARITY.md) — the Python (`bcir/`) ↔ MLIR (`mlir/`) lockstep contract.
 - [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md) — how the repo is organized and why.
 
