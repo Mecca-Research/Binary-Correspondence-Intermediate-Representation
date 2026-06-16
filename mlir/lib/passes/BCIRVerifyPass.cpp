@@ -806,14 +806,14 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // tight tolerance on a long reduction is the law that FORCES the compensated
     // realization. First-class here in -bcir-verify (dual-rail with verify.verify_accuracy).
     root->walk([&](ClaimOp c) {
-      auto prec = c.getPrecision();
+      auto prec = c.getPrecision();   // std::optional<PrecisionAttr>
       if (!prec)
         return;
-      int64_t tol = prec.getToleranceQ16();
+      int64_t tol = prec->getToleranceQ16();
       if (tol <= 0)
         return; // no declared tolerance: unconstrained
       int64_t count = std::max<int64_t>(1, static_cast<int64_t>(c.getCount()));
-      int64_t bound = c.getOp().starts_with("reduce.") ? (prec.getExact() ? 1 : count) : 1;
+      int64_t bound = c.getOp().starts_with("reduce.") ? (prec->getExact() ? 1 : count) : 1;
       if (bound > tol) {
         c.emitError("R17: accuracy bound ") << bound << " ULP exceeds tolerance " << tol
             << " ULP @" << c.getSymName()
