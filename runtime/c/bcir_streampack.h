@@ -26,6 +26,27 @@
 
 #include <stdint.h>
 
+/* C23 niceties, portably guarded so the freestanding header still builds under C11
+ * and as C++ (the runtime targets C23; the macros degrade cleanly). */
+#if defined(__cplusplus)
+#  define BCIR_RESTRICT __restrict
+#  define BCIR_NODISCARD [[nodiscard]]
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
+#  define BCIR_RESTRICT restrict
+#  define BCIR_NODISCARD [[nodiscard]]
+#else
+#  define BCIR_RESTRICT restrict
+#  define BCIR_NODISCARD
+#endif
+
+#if defined(__cplusplus) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L)
+#  define BCIR_STATIC_ASSERT(c, m) static_assert(c, m)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#  define BCIR_STATIC_ASSERT(c, m) _Static_assert(c, m)
+#else
+#  define BCIR_STATIC_ASSERT(c, m)
+#endif
+
 #define BCIR_STREAMPACK_MAGIC   "BSPK"   /* bytes 0..3 of the header */
 #define BCIR_STREAMPACK_VERSION 1
 #define BCIR_STREAMPACK_VERSION_MAX 2    /* v2: append-only pipeline/double-buffer */
@@ -48,8 +69,12 @@ typedef struct bcir_streampack_header {
   uint32_t n_blocks;
   uint32_t n_trace;
   uint16_t pipeline_depth;  /* v2: phases in flight (decoders see 1 for v1) */
-  uint8_t  reserved[22];    /* pad to 64 bytes */
+  uint8_t  reserved[26];    /* pad to 64 bytes (38 used + 26 = 64) */
 } bcir_streampack_header;
+
+/* The 64-byte cache-line header is the frozen ABI -- lock its size at compile time. */
+BCIR_STATIC_ASSERT(sizeof(bcir_streampack_header) == BCIR_STREAMPACK_HEADER_SIZE,
+                   "BCIR StreamPack header must be exactly 64 bytes (frozen ABI v1/v2)");
 
 /* Lane geometries (must match bcir/model/lanes.py and BCIRAttrs.td). */
 typedef enum bcir_lane {

@@ -99,9 +99,28 @@ echo "[passes] RCSP / Pareto (the deterministic optimizer core ported to C++)"
 run_fc -bcir-rcsp "${T}/rcsp.mlir"
 echo "[passes] RCSP plan-level (accumulated-budget label-DP across the plan)"
 run_fc -bcir-rcsp-plan "${T}/rcsp_plan.mlir"
+echo "[passes] hot-Theta plan parity (the kbcir.theta context op)"
+run_fc -bcir-plan "${T}/theta_hot.mlir"
 echo "[passes] -bcir-rcsp cross-check on the widened corpus (argmin reproduces the oracle)"
 "${BO}" -bcir-rcsp "${T}/gem_corpus.mlir" >/dev/null 2>/tmp/pe \
   && echo "  PASS rcsp on gem_corpus.mlir" || { echo "  FAIL rcsp on gem_corpus.mlir"; cat /tmp/pe; fail=1; }
+
+echo "[passes] named pipelines (bcir-audit / -optimize / -hydrate / -lower-llvm / -aot)"
+EX="${ROOT}/mlir/examples/full_vec_add_ct1.mlir"
+audit_out="$("${BO}" -bcir-audit "${EX}" 2>/tmp/pe)"
+if grep -q "kbcir.plan_score = 7808" <<<"${audit_out}" \
+   && grep -q "kbcir.overlap_makespan = 7808" <<<"${audit_out}" \
+   && grep -q "kbcir.cm_min_score = 7808" <<<"${audit_out}"; then
+  echo "  PASS bcir-audit (verify + cost/plan/overlap = 7808)"
+else echo "  FAIL bcir-audit"; cat /tmp/pe; fail=1; fi
+aot_out="$("${BO}" -bcir-aot "${EX}" 2>/tmp/pe)"
+if grep -q "llvm.fadd" <<<"${aot_out}" && grep -q "kbcir.lowered = true" <<<"${aot_out}"; then
+  echo "  PASS bcir-aot (verify -> hydrate -> LLVM: llvm.fadd + lowered)"
+else echo "  FAIL bcir-aot"; cat /tmp/pe; fail=1; fi
+for pl in bcir-optimize bcir-hydrate bcir-lower-llvm; do
+  "${BO}" -${pl} "${EX}" >/dev/null 2>/tmp/pe \
+    && echo "  PASS ${pl}" || { echo "  FAIL ${pl}"; cat /tmp/pe; fail=1; }
+done
 
 echo "[passes] GEM cross-checks against the oracle (-verify-diagnostics)"
 "${BO}" -bcir-select-realization -bcir-lower-to-llvm -verify-diagnostics -split-input-file \

@@ -58,29 +58,27 @@ struct PlanPass : public PassWrapper<PlanPass, OperationPass<>> {
     if (cols.empty())
       return;
 
+    int64_t theta = cm::firstThetaThermal(root);
     int64_t total = 0;
-    SmallVector<int> chosen = cm::planChosen(cols, w, total);
+    SmallVector<int> chosen = cm::planChosen(cols, w, theta, total);
     if (chosen.empty())
       return;
 
-    int64_t prevDist = 0;
     for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
       // The chosen edge cost = this candidate coupled by the context of the chosen
-      // predecessor (identity at the source), scalarized.
+      // predecessor (source = no fusion, thermal coupling still applies), scalarized.
       cm::Cost e = cols[i].cands[chosen[i]].cost;
-      if (i > 0) {
-        cm::Factor f = cm::contextFactor(cols[i - 1].reads,
-                                         cols[i - 1].cands[chosen[i - 1]].width,
-                                         cols[i].reads, cols[i].cands[chosen[i]].width);
-        cm::applyFactor(e, f);
-      }
+      cm::Factor f = (i > 0)
+          ? cm::contextFactor(theta, cols[i - 1].reads,
+                              cols[i - 1].cands[chosen[i - 1]].width, cols[i].reads,
+                              cols[i].cands[chosen[i]].width)
+          : cm::contextFactor(theta, {}, 0, cols[i].reads, cols[i].cands[chosen[i]].width);
+      cm::applyFactor(e, f);
       int64_t edge = cm::scalarize(e, w);
       cols[i].claim->setAttr("kbcir.plan_width",
                              b.getI64IntegerAttr(cols[i].cands[chosen[i]].width));
       cols[i].claim->setAttr("kbcir.plan_cost", b.getI64IntegerAttr(edge));
-      prevDist += edge;
     }
-    (void)prevDist;
     root->setAttr("kbcir.plan_score", b.getI64IntegerAttr(total));
   }
 };

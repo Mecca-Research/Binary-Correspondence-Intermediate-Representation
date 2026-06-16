@@ -17,6 +17,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang lld llvm nodejs
+          # compiler-rt for the C-runtime libFuzzer + ASan/UBSan harness (best-effort).
+          sudo apt-get install -y libclang-rt-18-dev || true
 
       - name: BCIR oracle (Python conformance tests)
         run: python3 -m bcir.tests.run_all
@@ -36,6 +38,9 @@ jobs:
 
       - name: Freestanding C StreamPack runtime (no-libc + Python->C ABI parity)
         run: bash tools/c/check_runtime.sh
+
+      - name: StreamPack C decoder fuzz (libFuzzer + ASan/UBSan on the trust boundary)
+        run: FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
 
       - name: LLVM training examples and invalid-example tripwire
         run: |

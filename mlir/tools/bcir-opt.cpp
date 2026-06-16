@@ -22,6 +22,7 @@ int main(int argc, char **argv) {
   registry.insert<bcir::BCIRDialect, mlir::LLVM::LLVMDialect,
                   mlir::func::FuncDialect>();
   bcir::registerBCIRPasses();
+  bcir::registerBCIRPipelines();
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "BCIR optimizer driver\n", registry));
 }

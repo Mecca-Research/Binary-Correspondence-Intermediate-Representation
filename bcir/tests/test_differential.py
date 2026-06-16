@@ -267,6 +267,16 @@ def test_committed_corpus_mlir_matches_the_emitter():
         "gem_corpus.mlir drifted; regenerate with --emit-corpus"
 
 
+def test_committed_theta_mlir_matches_the_emitter():
+    # the hot-Theta plan-parity artifact must equal a fresh emission (drift gate).
+    from bcir.kbcir.differential import _THETA_MLIR_PATH, emit_theta_test
+    path = os.path.normpath(_THETA_MLIR_PATH)
+    assert os.path.exists(path), "run `python -m bcir.kbcir.differential --emit-theta`"
+    with open(path, encoding="utf-8") as f:
+        assert f.read() == emit_theta_test(), \
+            "theta_hot.mlir drifted; regenerate with --emit-theta"
+
+
 # --- the shrinker -----------------------------------------------------------------
 
 def test_shrink_minimizes_a_failing_module():

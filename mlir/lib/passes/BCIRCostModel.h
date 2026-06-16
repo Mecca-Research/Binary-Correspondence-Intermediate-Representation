@@ -313,21 +313,45 @@ inline bool sharesRead(ArrayRef<StringRef> a, ArrayRef<StringRef> b) {
   return false;
 }
 
-// realize._context_factor (path-based half, cool regime): a wide candidate whose wide
-// predecessor shares a read operand discounts memory x0.75 (cache-line reuse).
-inline Factor contextFactor(ArrayRef<StringRef> prevReads, int64_t prevWidth,
-                            ArrayRef<StringRef> curReads, int64_t curWidth) {
+// realize._context_factor (path-based half): a wide candidate whose wide predecessor
+// shares a read operand discounts memory x0.75 (cache-line reuse); and, on a hot part
+// (thetaThermal >= 60), a width>=16 candidate pays x1.25 heat/current (the AVX-512
+// downclock). `thetaThermal` 0 == the cool regime (the coupling reduces to fusion).
+inline Factor contextFactor(int64_t thetaThermal, ArrayRef<StringRef> prevReads,
+                            int64_t prevWidth, ArrayRef<StringRef> curReads,
+                            int64_t curWidth) {
   Factor f = kIdentity;
   if (prevWidth > 1 && curWidth > 1 && sharesRead(prevReads, curReads))
     f[1] = 192;
+  if (thetaThermal >= 60 && curWidth >= 16) {
+    f[5] = 320; // thermal x1.25
+    f[6] = 320; // power x1.25
+  }
   return f;
+}
+
+// The live thermal pressure of the first bcir.kbcir.theta op (0 == cool); the
+// multiplicative thermal coupling depends on it (the emitter folds Theta into the
+// policy weights separately, for scalarization).
+inline int64_t firstThetaThermal(Operation *root) {
+  int64_t thermal = 0;
+  bool found = false;
+  root->walk([&](Operation *op) {
+    if (!found && op->getName().getStringRef() == "bcir.kbcir.theta") {
+      if (auto a = op->getAttrOfType<IntegerAttr>("thermal"))
+        thermal = a.getInt();
+      found = true;
+    }
+  });
+  return thermal;
 }
 
 // The layered tropical shortest path over the fused candidate columns. Returns the
 // chosen candidate index per column (and the total score via `total`). Edge cost =
 // scalarize(cand.cost coupled by the path-based context factor, w). Empty -> {}.
 inline SmallVector<int> planChosen(const std::vector<Column> &cols,
-                                   ArrayRef<int64_t> w, int64_t &total) {
+                                   ArrayRef<int64_t> w, int64_t thetaThermal,
+                                   int64_t &total) {
   total = 0;
   const int n = static_cast<int>(cols.size());
   if (n == 0 || w.empty())
@@ -341,14 +365,18 @@ inline SmallVector<int> planChosen(const std::vector<Column> &cols,
     back[i].assign(cands.size(), -1);
     for (size_t ci = 0; ci < cands.size(); ++ci) {
       if (i == 0) {
-        dist[i][ci] = scalarize(cands[ci].cost, w);
+        // from SOURCE: no fusion predecessor, but the thermal coupling still applies.
+        Cost e = cands[ci].cost;
+        applyFactor(e, contextFactor(thetaThermal, {}, 0, cols[i].reads, cands[ci].width));
+        dist[i][ci] = scalarize(e, w);
         continue;
       }
       for (size_t pi = 0; pi < cols[i - 1].cands.size(); ++pi) {
         if (dist[i - 1][pi] == kInf)
           continue;
-        Factor f = contextFactor(cols[i - 1].reads, cols[i - 1].cands[pi].width,
-                                 cols[i].reads, cands[ci].width);
+        Factor f = contextFactor(thetaThermal, cols[i - 1].reads,
+                                 cols[i - 1].cands[pi].width, cols[i].reads,
+                                 cands[ci].width);
         Cost e = cands[ci].cost;
         applyFactor(e, f);
         int64_t d = dist[i - 1][pi] + scalarize(e, w);

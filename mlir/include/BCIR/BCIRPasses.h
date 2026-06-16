@@ -44,6 +44,10 @@ std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
 /// Register all BCIR passes with the global pass registry (for bcir-opt).
 void registerBCIRPasses();
 
+/// Register the named pass pipelines (bcir-audit / -optimize / -hydrate /
+/// -lower-llvm / -aot) with verifier checkpoints.
+void registerBCIRPipelines();
+
 }  // namespace bcir
 
 #endif  // BCIR_BCIRPASSES_H

@@ -207,6 +207,12 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
                  f"shape = array<i64: {shape}>, layout = #bcir.layout<soa>{access} }} "
                  ": !bcir.resource")
     L.append("  }")
+    # live runtime state Theta: the emitter folds it into the policy weights (for
+    # scalarization) AND emits it raw, so -bcir-plan / -bcir-overlap can apply the
+    # multiplicative thermal coupling (the AVX-512 downclock) the weights cannot encode.
+    L.append(f"  bcir.kbcir.theta @theta {{ thermal = {theta.thermal} : i32, "
+             f"power = {theta.power} : i32, mem_pressure = {theta.mem_pressure} : i32, "
+             f"contention = {theta.contention} : i32 }}")
     # policy (theta-folded weights; mode drives -bcir-select-realization lookup).
     wlist = ", ".join(str(x) for x in pv.weights)
     L.append(f"  bcir.kbcir.policy @perf {{ mode = #bcir.policy_mode<{pv.policy_mode}>, "

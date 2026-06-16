@@ -11,14 +11,16 @@ if [ -z "${CC}" ]; then
   exit 0
 fi
 
-echo "[c-runtime] freestanding compile (-ffreestanding -nostdlib)"
-"${CC}" -ffreestanding -nostdlib -std=c11 -Wall -Wextra -c "${C}/bcir_runtime.c" -o /dev/null \
-  || { echo "  FAIL: runtime is not freestanding-clean"; exit 1; }
-echo "  PASS freestanding"
+echo "[c-runtime] freestanding compile (-ffreestanding -nostdlib), C11 + C23"
+for std in c11 c23; do
+  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -c "${C}/bcir_runtime.c" -o /dev/null \
+    || { echo "  FAIL: runtime not freestanding-clean under -std=${std}"; exit 1; }
+done
+echo "  PASS freestanding (C11 + C23; ABI static_assert holds)"
 
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
-echo "[c-runtime] build harness + Python->C ABI parity"
-"${CC}" -std=c11 -O2 "${C}/bcir_runtime.c" "${C}/test_runtime.c" -I "${C}" -o "${tmp}/test_runtime" \
+echo "[c-runtime] build harness (C23) + Python->C ABI parity"
+"${CC}" -std=c23 -O2 "${C}/bcir_runtime.c" "${C}/test_runtime.c" -I "${C}" -o "${tmp}/test_runtime" \
   || { echo "  FAIL: harness build"; exit 1; }
 python3 -c "
 from bcir.examples import vector_add
