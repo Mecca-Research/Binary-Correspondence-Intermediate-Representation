@@ -117,6 +117,19 @@
 
 ## Changelog
 
+- 2026-06-16: **Optimizer-core C++ port COMPLETE -- step 5, plan-level RCSP.** New
+  `-bcir-rcsp-plan` (`BCIRRcspPlanPass.cpp`) ports `rcsp.optimize_constrained`: the
+  accumulated-budget label DP over the fused candidate columns (labels carry score +
+  per-tracked-dim totals; dominance pruning + infeasible-extension cuts). A plan-wide
+  cap bounds the plan's accumulated thermal/power -- it narrows one claim where a
+  per-claim cap cannot: two vec16 claims (thermal 2176) under thermal<=2000 ->
+  {16,8} @ 17280, <=1500 -> {8,8} @ 18944, matching optimize_constrained.
+  `mlir/test/passes/rcsp_plan.mlir`. **With this the whole deterministic optimizer
+  core is on the MLIR rail (C++23):** cost+fusion (`-bcir-cost-model`) -> coupled
+  shortest path (`-bcir-plan`) -> overlap (`-bcir-overlap`) -> per-claim + plan-level
+  constrained search (`-bcir-rcsp`, `-bcir-rcsp-plan`), all bit-exact vs the oracle.
+  Next (BCIR_LOWERING_PLAN.md): named pass pipelines, a Theta context op, C-runtime
+  hardening.
 - 2026-06-16: **Optimizer-core C++ port, step 4 -- overlap (max,+) M(pi,Theta).** New
   `-bcir-overlap` (`BCIROverlapPass.cpp`) ports `gem/overlap.py`'s
   `price_scheduled`/`_makespan`: over the coupled plan it does the wave assignment by

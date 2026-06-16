@@ -35,6 +35,8 @@ std::unique_ptr<mlir::Pass> createOverlapPass();
 // -bcir-rcsp: constrained selection (budget label-DP) + the Pareto front, the
 // deterministic optimizer core ported from bcir/kbcir/rcsp.py.
 std::unique_ptr<mlir::Pass> createRcspPass();
+// -bcir-rcsp-plan: plan-level constrained selection (accumulated-budget label-DP).
+std::unique_ptr<mlir::Pass> createRcspPlanPass();
 std::unique_ptr<mlir::Pass> createBatchPass();
 std::unique_ptr<mlir::Pass> createSchedulePass();
 std::unique_ptr<mlir::Pass> createLowerToLLVMPass();

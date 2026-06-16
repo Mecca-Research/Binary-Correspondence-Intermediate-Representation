@@ -97,6 +97,8 @@ else
 fi
 echo "[passes] RCSP / Pareto (the deterministic optimizer core ported to C++)"
 run_fc -bcir-rcsp "${T}/rcsp.mlir"
+echo "[passes] RCSP plan-level (accumulated-budget label-DP across the plan)"
+run_fc -bcir-rcsp-plan "${T}/rcsp_plan.mlir"
 echo "[passes] -bcir-rcsp cross-check on the widened corpus (argmin reproduces the oracle)"
 "${BO}" -bcir-rcsp "${T}/gem_corpus.mlir" >/dev/null 2>/tmp/pe \
   && echo "  PASS rcsp on gem_corpus.mlir" || { echo "  FAIL rcsp on gem_corpus.mlir"; cat /tmp/pe; fail=1; }
