@@ -6,6 +6,21 @@
 // argmin must recompute the oracle's per-claim score for every claim (parity).
 
 bcir.module @matmul_tiled_avx512 {
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, gather_penalty = 32 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.registry @RES {
+    %r1000000 = bcir.resource @r1000000 { rid = 1000000 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r1000001 = bcir.resource @r1000001 { rid = 1000001 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r1000002 = bcir.resource @r1000002 { rid = 1000002 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r1000003 = bcir.resource @r1000003 { rid = 1000003 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r2000000 = bcir.resource @r2000000 { rid = 2000000 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r2000001 = bcir.resource @r2000001 { rid = 2000001 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r2000002 = bcir.resource @r2000002 { rid = 2000002 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r2000003 = bcir.resource @r2000003 { rid = 2000003 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r3000000 = bcir.resource @r3000000 { rid = 3000000 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r3000001 = bcir.resource @r3000001 { rid = 3000001 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r3000002 = bcir.resource @r3000002 { rid = 3000002 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r3000003 = bcir.resource @r3000003 { rid = 3000003 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+  }
   bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r1000000, @r2000000], writes = [@r3000000], count = 16384 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 16384 step 1 }
@@ -72,6 +87,18 @@ bcir.module @matmul_tiled_avx512 {
 // CHECK-DAG: kbcir.lowered = true
 
 bcir.module @scan_avx512 {
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, gather_penalty = 32 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.registry @RES {
+    %r8000 = bcir.resource @r8000 { rid = 8000 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r8001 = bcir.resource @r8001 { rid = 8001 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r8100 = bcir.resource @r8100 { rid = 8100 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r8101 = bcir.resource @r8101 { rid = 8101 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r8102 = bcir.resource @r8102 { rid = 8102 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r8103 = bcir.resource @r8103 { rid = 8103 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r8201 = bcir.resource @r8201 { rid = 8201 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r8202 = bcir.resource @r8202 { rid = 8202 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r8203 = bcir.resource @r8203 { rid = 8203 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+  }
   bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @c8300 attributes { claim_id = 8300 : i32, phase = @p0, op = "vector.add", reads = [@r8000, @r8001], writes = [@r8100], count = 4096 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 4096 step 1 }
@@ -118,6 +145,14 @@ bcir.module @scan_avx512 {
 // CHECK-DAG: kbcir.lowered = true
 
 bcir.module @multi_histogram_avx512 {
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, gather_penalty = 32 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.registry @RES {
+    %r9000 = bcir.resource @r9000 { rid = 9000 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r9100 = bcir.resource @r9100 { rid = 9100 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r9101 = bcir.resource @r9101 { rid = 9101 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r9102 = bcir.resource @r9102 { rid = 9102 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+    %r9200 = bcir.resource @r9200 { rid = 9200 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
+  }
   bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.phase @p1 { id = 1 : i32, deps = [@p0] }

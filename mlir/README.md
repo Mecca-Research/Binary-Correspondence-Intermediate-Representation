@@ -29,6 +29,12 @@ executable conformance oracle that must agree with these definitions
 >   `bcir.claim` + `bcir.target.capability` (constexpr tier table + seeded constants),
 >   so the law stops trusting emitter-baked path costs. Reproduces vec16 @ 7808 /
 >   gather @ 528384 / tile @ 126976 from the claim alone (`test/passes/cost_model.mlir`).
+> - **Plan / min-plus shortest path (optimizer core, C++23)** — `-bcir-plan`
+>   (`lib/passes/BCIRPlanPass.cpp`) is the full `realize.optimize` in C++: the coupled
+>   tropical shortest path over the fused candidate columns (shared cost+fusion logic in
+>   `lib/passes/BCIRCostModel.h`). Reproduces the oracle's coupled score on every module —
+>   7808, the shared-input chain 13696 (`test/passes/plan.mlir`), and the corpus
+>   1015808 / 101888 / 1595520 (`gem_corpus.mlir`).
 > - **RCSP / Pareto (optimizer core, C++23)** — `-bcir-rcsp` (`lib/passes/BCIRRcspPass.cpp`) ports
 >   `bcir/kbcir/rcsp.py`: the budget-feasible min-plus label-DP argmin + the Pareto front
 >   over (score, thermal, power). Reproduces the oracle's 9472 under the 700 cap and the

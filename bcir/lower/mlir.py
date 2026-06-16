@@ -184,6 +184,28 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
         L.append("// min-plus argmin must recompute the oracle's per-claim score (parity).")
         L.append("")
     L.append(f"bcir.module @{_ident(name)} {{")
+    # target capability H (the seeded constants -bcir-cost-model / -bcir-plan read to
+    # recompute costs from first principles). Cost seeds default to the CPU values.
+    isa = ", ".join(f"\"{x}\"" for x in sorted(h.isa_features))
+    lw = ", ".join(str(x) for x in h.lane_widths)
+    L.append(f"  bcir.target.capability @cpu {{ triple = \"{h.triple}\", "
+             f"isa_features = [{isa}], lane_widths = array<i64: {lw}>, "
+             f"cacheline = {h.cacheline} : i32, gather_penalty = {h.gather_penalty} : i32, "
+             f"thermal_density = {h.thermal_density} : i32, power_density = {h.power_density} : i32, "
+             f"mem_unit = {h.mem_unit} : i32, base_overhead = {h.base_overhead} : i32, "
+             f"per_op_heat = {h.per_op_heat} : i32, elem_bytes = {h.elem_bytes} : i32 }}")
+    # registry: the resources the claims reference (so the cost model resolves the
+    # tier from each claim's read[0] domain, and HAM access).
+    L.append("  bcir.registry @RES {")
+    for rid in sorted(module.resources):
+        r = module.resources[rid]
+        shape = ", ".join(str(d) for d in (r.shape or (1,)))
+        access = f", access = #bcir.access<{'ham' if r.access == 'ham' else 'flat'}>"
+        L.append(f"    %r{rid} = bcir.resource @r{rid} {{ rid = {rid} : i32, "
+                 f"domain_kind = #bcir.domain<{_DOMAIN_SPELL[r.domain]}>, "
+                 f"shape = array<i64: {shape}>, layout = #bcir.layout<soa>{access} }} "
+                 ": !bcir.resource")
+    L.append("  }")
     # policy (theta-folded weights; mode drives -bcir-select-realization lookup).
     wlist = ", ".join(str(x) for x in pv.weights)
     L.append(f"  bcir.kbcir.policy @perf {{ mode = #bcir.policy_mode<{pv.policy_mode}>, "

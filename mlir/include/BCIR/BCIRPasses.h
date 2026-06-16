@@ -28,6 +28,8 @@ std::unique_ptr<mlir::Pass> createSelectRealizationPass();
 // -bcir-cost-model: the K_BCIR cost algebra (cost.py) on the MLIR rail -- recompute
 // candidate costs from claim + target.capability instead of trusting declared paths.
 std::unique_ptr<mlir::Pass> createCostModelPass();
+// -bcir-plan: the layered min-plus shortest path (the full realize.optimize in C++).
+std::unique_ptr<mlir::Pass> createPlanPass();
 // -bcir-rcsp: constrained selection (budget label-DP) + the Pareto front, the
 // deterministic optimizer core ported from bcir/kbcir/rcsp.py.
 std::unique_ptr<mlir::Pass> createRcspPass();

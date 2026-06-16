@@ -74,6 +74,17 @@ run_fc -bcir-cost-model "${T}/cost_model_fusion.mlir"
 echo "[passes] -bcir-cost-model cross-check on the pretty corpus (reproduces 7808)"
 "${BO}" -bcir-cost-model "${ROOT}/mlir/examples/full_vec_add_ct1.mlir" >/dev/null 2>/tmp/pe \
   && echo "  PASS cost-model on full_vec_add_ct1.mlir" || { echo "  FAIL cost-model on full_vec_add"; cat /tmp/pe; fail=1; }
+echo "[passes] plan: the layered min-plus shortest path (the full realize.optimize in C++)"
+run_fc -bcir-plan "${T}/plan.mlir"
+echo "[passes] -bcir-plan reproduces the oracle's coupled scores on the widened corpus"
+plan_out="$("${BO}" -bcir-plan "${T}/gem_corpus.mlir" 2>/tmp/pe)"
+if grep -q "kbcir.plan_score = 1015808" <<<"${plan_out}" \
+   && grep -q "kbcir.plan_score = 101888" <<<"${plan_out}" \
+   && grep -q "kbcir.plan_score = 1595520" <<<"${plan_out}"; then
+  echo "  PASS plan on gem_corpus (matmul 1015808 / scan 101888 / histogram 1595520)"
+else
+  echo "  FAIL plan on gem_corpus"; cat /tmp/pe; fail=1
+fi
 echo "[passes] RCSP / Pareto (the deterministic optimizer core ported to C++)"
 run_fc -bcir-rcsp "${T}/rcsp.mlir"
 echo "[passes] -bcir-rcsp cross-check on the widened corpus (argmin reproduces the oracle)"

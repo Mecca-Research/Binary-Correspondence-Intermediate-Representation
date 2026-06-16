@@ -34,7 +34,7 @@ quarantine; porting the cost algebra to C++ *completes* it.
 | **Cost model** (`_cost`, `candidates_for`, stride/tier penalties) | `bcir/kbcir/cost.py` + `realize.py` | → **MLIR/C++** | ☐ **Python-only** (the keystone gap) |
 | **Fusion / deforestation / CSE** (`fused_candidates`, `_context_factor`) | `bcir/kbcir/realize.py` | → **MLIR/C++** | ☐ Python-only (needs the cost model first) |
 | **Overlap (max,+)** scheduled price | `bcir/gem/overlap.py` | → **MLIR/C++** | ☐ Python-only (`differential.check_overlap` nets the law) |
-| Min-plus **shortest path** over the layered DAG | `bcir/kbcir/semiring.py` | → **MLIR/C++** | ☐ Python-only (C++ does per-claim argmin) |
+| Min-plus **shortest path** over the layered DAG | `bcir/kbcir/semiring.py` + `realize.optimize` | **`-bcir-plan`** (`BCIRPlanPass.cpp`) | ✅ **ported** — reproduces the oracle's coupled `optimize` (7808 / corpus 1015808·101888·1595520) |
 | Python→MLIR **emitter** (the bridge) | `bcir/lower/mlir.py` | Python (stays) | ✅ — but its job *shrinks* as the cost model moves to C++ |
 | Portable **C23 kernel** emission | `bcir/lower/c_kernel.py` | C output (emitter may become C++) | ✅ emits C23 |
 | **StreamPack ABI** codec + runtime | `runtime/c/` + Python encoder | **C** (frozen ABI) | ✅ CRC-gated parity |
@@ -110,10 +110,14 @@ net) + FileCheck, and builds on the now-working LLVM 18/19 toolchain.
    matching the oracle's `fused_candidates` bit-for-bit (7808 / 5888 / 5100) and
    annotating `kbcir.cm_fusion`. `mlir/test/passes/cost_model_fusion.mlir`. (The
    *path-based* shared-input half of `_context_factor` lands with step 3.)
-3. **Min-plus shortest path over the layered DAG in C++.** Replace per-claim argmin
-   with the true coupled shortest path (`semiring.dag_shortest_path`), so multi-claim
-   plans with context coupling are recomputed natively. Now selection == the oracle's
-   `optimize` for *all* modules, not just coupling-free ones.
+3. ✅ **Min-plus shortest path over the layered DAG in C++. DONE.** `-bcir-plan`
+   (`BCIRPlanPass.cpp`) runs the coupled tropical shortest path over the fused
+   candidate columns, each edge coupling `_context_factor`'s path-based shared-input
+   fusion (a wide candidate whose wide predecessor shares a read → ×0.75 memory). It
+   reproduces the oracle's `optimize` bit-for-bit on *every* module: 7808 on
+   `vector_add`, 13696 on the shared-input chain (`plan.mlir`), and the corpus —
+   matmul **1015808**, scan **101888**, histogram **1595520** (the emitter now emits a
+   registry + capability so the law plans from first principles; `gem_corpus.mlir`).
 4. **Overlap (max,+) in C++.** Port `gem/overlap.py` (`price_scheduled`, the binned
    wave makespan); `differential.check_overlap` already pins the R9 invariant.
 5. **Plan-level multi-claim RCSP.** Extend `-bcir-rcsp` from per-claim to an
@@ -125,7 +129,17 @@ net) + FileCheck, and builds on the now-working LLVM 18/19 toolchain.
 
 ## 5. The immediate next build step
 
-**Step 3 — the layered min-plus shortest path in C++** (steps 1–2 are done). Build a
+**Step 4 — overlap (max,+) in C++** (steps 1–3 are done; `optimize` is fully ported).
+Port `gem/overlap.py`'s `price_scheduled` / `_makespan`: over the planned claims,
+bin same-phase claims across the target's affinity domains and compute the (max,+)
+wave makespan vs the serial Σ, emitting `bcir.kbcir.scheduled_price`
+(makespan / serial / overlap_gain). `differential.check_overlap` already pins the R9
+invariant (makespan + gain == serial == score, 0 ≤ makespan ≤ serial) the C++ pass
+must satisfy. Then step 5: plan-level multi-claim RCSP (accumulated-budget label-DP).
+
+---
+
+### (historical) Step 3 — the layered min-plus shortest path in C++. Build a
 `-bcir-plan` pass that, over the fused candidate columns (one per claim, from the
 cost model), runs `semiring.dag_shortest_path`: SOURCE → per-claim candidate nodes →
 SINK, edge cost = `cand.cost.couple(_context_factor(prev, cand)).dot(w)`, where the
