@@ -28,7 +28,9 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <string>
+#include <vector>
 
 using namespace mlir;
 
@@ -210,6 +212,7 @@ struct Column {
   ClaimOp claim;
   int32_t phase;
   SmallVector<StringRef> reads;
+  SmallVector<StringRef> writes;
   SmallVector<Cand> cands;     // deforestation/CSE already baked in
   StringRef fusion;            // "", "deforest", or "cse"
 };
@@ -223,7 +226,7 @@ inline void symRefs(ArrayAttr a, SmallVectorImpl<StringRef> &out) {
 // realize.fused_candidates: claims in (phase id, declared) order with the intra-phase
 // deforestation/CSE credits baked into every candidate. The plan pass adds the
 // path-based shared-input factor per edge on top of these.
-inline SmallVector<Column>
+inline std::vector<Column>
 fusedColumns(Operation *root, const Cap &h,
              const llvm::DenseMap<StringRef, ResourceOp> &resByName) {
   llvm::DenseMap<StringRef, int32_t> phaseId;
@@ -234,7 +237,7 @@ fusedColumns(Operation *root, const Cap &h,
     return phaseId.lookup(a.getPhase()) < phaseId.lookup(z.getPhase());
   });
 
-  SmallVector<Column> cols;
+  std::vector<Column> cols;
   int32_t curPhase = 0;
   bool havePhase = false;
   llvm::DenseSet<StringRef> produced;
@@ -254,8 +257,8 @@ fusedColumns(Operation *root, const Cap &h,
     col.claim = c;
     col.phase = pid;
     symRefs(c.getReads(), col.reads);
-    SmallVector<StringRef> writes;
-    symRefs(c.getWrites(), writes);
+    symRefs(c.getWrites(), col.writes);
+    SmallVector<StringRef> &writes = col.writes;
 
     Domain dom = c.getDomain();
     bool ham = false;
@@ -298,6 +301,74 @@ fusedColumns(Operation *root, const Cap &h,
     cols.push_back(std::move(col));
   }
   return cols;
+}
+
+// --- the coupled min-plus shortest path (realize.optimize) ----------------------
+
+inline bool sharesRead(ArrayRef<StringRef> a, ArrayRef<StringRef> b) {
+  for (StringRef x : a)
+    for (StringRef y : b)
+      if (x == y)
+        return true;
+  return false;
+}
+
+// realize._context_factor (path-based half, cool regime): a wide candidate whose wide
+// predecessor shares a read operand discounts memory x0.75 (cache-line reuse).
+inline Factor contextFactor(ArrayRef<StringRef> prevReads, int64_t prevWidth,
+                            ArrayRef<StringRef> curReads, int64_t curWidth) {
+  Factor f = kIdentity;
+  if (prevWidth > 1 && curWidth > 1 && sharesRead(prevReads, curReads))
+    f[1] = 192;
+  return f;
+}
+
+// The layered tropical shortest path over the fused candidate columns. Returns the
+// chosen candidate index per column (and the total score via `total`). Edge cost =
+// scalarize(cand.cost coupled by the path-based context factor, w). Empty -> {}.
+inline SmallVector<int> planChosen(const std::vector<Column> &cols,
+                                   ArrayRef<int64_t> w, int64_t &total) {
+  total = 0;
+  const int n = static_cast<int>(cols.size());
+  if (n == 0 || w.empty())
+    return {};
+  const int64_t kInf = std::numeric_limits<int64_t>::max();
+  std::vector<std::vector<int64_t>> dist(n);
+  std::vector<std::vector<int>> back(n);
+  for (int i = 0; i < n; ++i) {
+    const auto &cands = cols[i].cands;
+    dist[i].assign(cands.size(), kInf);
+    back[i].assign(cands.size(), -1);
+    for (size_t ci = 0; ci < cands.size(); ++ci) {
+      if (i == 0) {
+        dist[i][ci] = scalarize(cands[ci].cost, w);
+        continue;
+      }
+      for (size_t pi = 0; pi < cols[i - 1].cands.size(); ++pi) {
+        if (dist[i - 1][pi] == kInf)
+          continue;
+        Factor f = contextFactor(cols[i - 1].reads, cols[i - 1].cands[pi].width,
+                                 cols[i].reads, cands[ci].width);
+        Cost e = cands[ci].cost;
+        applyFactor(e, f);
+        int64_t d = dist[i - 1][pi] + scalarize(e, w);
+        if (d < dist[i][ci]) {
+          dist[i][ci] = d;
+          back[i][ci] = static_cast<int>(pi);
+        }
+      }
+    }
+  }
+  int lastBest = 0;
+  for (size_t ci = 1; ci < cols[n - 1].cands.size(); ++ci)
+    if (dist[n - 1][ci] < dist[n - 1][lastBest])
+      lastBest = static_cast<int>(ci);
+  total = dist[n - 1][lastBest];
+  SmallVector<int> chosen(n, 0);
+  chosen[n - 1] = lastBest;
+  for (int i = n - 1; i > 0; --i)
+    chosen[i - 1] = back[i][chosen[i]];
+  return chosen;
 }
 
 // The first target.capability (the optimizer's H); null if none declared.

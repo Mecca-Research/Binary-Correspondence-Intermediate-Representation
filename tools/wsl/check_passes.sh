@@ -85,6 +85,16 @@ if grep -q "kbcir.plan_score = 1015808" <<<"${plan_out}" \
 else
   echo "  FAIL plan on gem_corpus"; cat /tmp/pe; fail=1
 fi
+echo "[passes] overlap: the (max,+) scheduled price M(pi,Theta) (gem/overlap.py in C++)"
+run_fc -bcir-overlap "${T}/overlap.mlir"
+echo "[passes] -bcir-overlap reproduces the oracle's makespan on the widened corpus"
+ov_out="$("${BO}" -bcir-overlap "${T}/gem_corpus.mlir" 2>/tmp/pe)"
+if grep -q "kbcir.overlap_gain = 761856" <<<"${ov_out}" \
+   && grep -q "kbcir.overlap_makespan = 253952" <<<"${ov_out}"; then
+  echo "  PASS overlap on gem_corpus (matmul makespan 253952, gain 761856)"
+else
+  echo "  FAIL overlap on gem_corpus"; cat /tmp/pe; fail=1
+fi
 echo "[passes] RCSP / Pareto (the deterministic optimizer core ported to C++)"
 run_fc -bcir-rcsp "${T}/rcsp.mlir"
 echo "[passes] -bcir-rcsp cross-check on the widened corpus (argmin reproduces the oracle)"

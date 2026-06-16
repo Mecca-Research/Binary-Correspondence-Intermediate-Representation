@@ -14,6 +14,7 @@
 //   -bcir-select-realization  min-plus selection            (BCIRSelectPass.cpp)
 //   -bcir-cost-model        K_BCIR cost algebra (cost.py)    (BCIRCostModel.cpp)
 //   -bcir-plan              min-plus shortest path (optimize) (BCIRPlanPass.cpp)
+//   -bcir-overlap           (max,+) scheduled price M(pi,T)  (BCIROverlapPass.cpp)
 //   -bcir-rcsp              RCSP / Pareto (optimizer core)   (BCIRRcspPass.cpp)
 //
 //===----------------------------------------------------------------------===//
@@ -32,6 +33,7 @@ void registerBCIRPasses() {
   ::mlir::registerPass([] { return createSelectRealizationPass(); });
   ::mlir::registerPass([] { return createCostModelPass(); });
   ::mlir::registerPass([] { return createPlanPass(); });
+  ::mlir::registerPass([] { return createOverlapPass(); });
   ::mlir::registerPass([] { return createRcspPass(); });
   ::mlir::registerPass([] { return createBatchPass(); });
   ::mlir::registerPass([] { return createSchedulePass(); });

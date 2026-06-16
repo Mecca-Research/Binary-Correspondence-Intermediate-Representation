@@ -117,6 +117,16 @@
 
 ## Changelog
 
+- 2026-06-16: **Optimizer-core C++ port, step 4 -- overlap (max,+) M(pi,Theta).** New
+  `-bcir-overlap` (`BCIROverlapPass.cpp`) ports `gem/overlap.py`'s
+  `price_scheduled`/`_makespan`: over the coupled plan it does the wave assignment by
+  conflict, round-robin affinity bins, per-bin re-coupling against the in-bin
+  predecessor, max over bins/tail, series over phases. Reproduces the oracle's
+  scheduled price bit-for-bit: matmul makespan 253952 / gain 761856 (4 tile chains
+  fan out over 8 domains), scan & histogram gain 0, the shared-input chain gain 5888.
+  The emitter now also emits `affinity_domains`; `gem_corpus.mlir` regenerated.
+  `mlir/test/passes/overlap.mlir` + a corpus cross-check (check_passes.sh). Next:
+  step 5, plan-level multi-claim RCSP -- the last optimizer-core piece.
 - 2026-06-16: **Optimizer-core C++ port, step 3 -- the layered min-plus shortest path
   (the full optimize() in C++).** New `-bcir-plan` (`BCIRPlanPass.cpp`) runs the coupled
   tropical shortest path over the fused candidate columns (shared cost/fusion logic now

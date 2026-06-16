@@ -30,6 +30,8 @@ std::unique_ptr<mlir::Pass> createSelectRealizationPass();
 std::unique_ptr<mlir::Pass> createCostModelPass();
 // -bcir-plan: the layered min-plus shortest path (the full realize.optimize in C++).
 std::unique_ptr<mlir::Pass> createPlanPass();
+// -bcir-overlap: the (max,+) scheduled price M(pi,Theta) (gem/overlap.py).
+std::unique_ptr<mlir::Pass> createOverlapPass();
 // -bcir-rcsp: constrained selection (budget label-DP) + the Pareto front, the
 // deterministic optimizer core ported from bcir/kbcir/rcsp.py.
 std::unique_ptr<mlir::Pass> createRcspPass();

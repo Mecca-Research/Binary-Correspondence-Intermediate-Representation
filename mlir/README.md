@@ -35,6 +35,10 @@ executable conformance oracle that must agree with these definitions
 >   `lib/passes/BCIRCostModel.h`). Reproduces the oracle's coupled score on every module —
 >   7808, the shared-input chain 13696 (`test/passes/plan.mlir`), and the corpus
 >   1015808 / 101888 / 1595520 (`gem_corpus.mlir`).
+> - **Overlap / scheduled price (optimizer core, C++23)** — `-bcir-overlap`
+>   (`lib/passes/BCIROverlapPass.cpp`) ports `gem/overlap.py`: the (max,+) wave makespan
+>   M(pi,Theta) over the coupled plan. Reproduces the oracle — matmul makespan 253952 /
+>   gain 761856, the shared-input chain gain 5888 (`test/passes/overlap.mlir`).
 > - **RCSP / Pareto (optimizer core, C++23)** — `-bcir-rcsp` (`lib/passes/BCIRRcspPass.cpp`) ports
 >   `bcir/kbcir/rcsp.py`: the budget-feasible min-plus label-DP argmin + the Pareto front
 >   over (score, thermal, power). Reproduces the oracle's 9472 under the 700 cap and the

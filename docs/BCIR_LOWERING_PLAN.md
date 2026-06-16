@@ -33,7 +33,7 @@ quarantine; porting the cost algebra to C++ *completes* it.
 | K_BCIR **RCSP / Pareto** (budget label-DP + front) | `BCIRRcspPass.cpp` | MLIR/C++ | ✅ **ported** (reproduces 9472 + size-2 front) |
 | **Cost model** (`_cost`, `candidates_for`, stride/tier penalties) | `bcir/kbcir/cost.py` + `realize.py` | → **MLIR/C++** | ☐ **Python-only** (the keystone gap) |
 | **Fusion / deforestation / CSE** (`fused_candidates`, `_context_factor`) | `bcir/kbcir/realize.py` | → **MLIR/C++** | ☐ Python-only (needs the cost model first) |
-| **Overlap (max,+)** scheduled price | `bcir/gem/overlap.py` | → **MLIR/C++** | ☐ Python-only (`differential.check_overlap` nets the law) |
+| **Overlap (max,+)** scheduled price | `bcir/gem/overlap.py` | **`-bcir-overlap`** (`BCIROverlapPass.cpp`) | ✅ **ported** — reproduces `price_scheduled` (matmul makespan 253952 / gain 761856, corpus) |
 | Min-plus **shortest path** over the layered DAG | `bcir/kbcir/semiring.py` + `realize.optimize` | **`-bcir-plan`** (`BCIRPlanPass.cpp`) | ✅ **ported** — reproduces the oracle's coupled `optimize` (7808 / corpus 1015808·101888·1595520) |
 | Python→MLIR **emitter** (the bridge) | `bcir/lower/mlir.py` | Python (stays) | ✅ — but its job *shrinks* as the cost model moves to C++ |
 | Portable **C23 kernel** emission | `bcir/lower/c_kernel.py` | C output (emitter may become C++) | ✅ emits C23 |
@@ -118,8 +118,12 @@ net) + FileCheck, and builds on the now-working LLVM 18/19 toolchain.
    `vector_add`, 13696 on the shared-input chain (`plan.mlir`), and the corpus —
    matmul **1015808**, scan **101888**, histogram **1595520** (the emitter now emits a
    registry + capability so the law plans from first principles; `gem_corpus.mlir`).
-4. **Overlap (max,+) in C++.** Port `gem/overlap.py` (`price_scheduled`, the binned
-   wave makespan); `differential.check_overlap` already pins the R9 invariant.
+4. ✅ **Overlap (max,+) in C++. DONE.** `-bcir-overlap` (`BCIROverlapPass.cpp`) ports
+   `gem/overlap.py`'s `price_scheduled`/`_makespan`: wave assignment by conflict, round-
+   robin affinity bins, per-bin re-coupling against the in-bin predecessor, max over
+   bins/tail, series over phases. Reproduces the oracle: matmul makespan 253952 / gain
+   761856, scan & histogram gain 0, the shared-input chain gain 5888
+   (`mlir/test/passes/overlap.mlir` + a corpus cross-check).
 5. **Plan-level multi-claim RCSP.** Extend `-bcir-rcsp` from per-claim to an
    accumulated-budget label-DP across the plan (the full `rcsp.optimize_constrained`).
 6. **C runtime hardening (C23) + fuzz.** libFuzzer + ASan/UBSan on the StreamPack C
@@ -129,13 +133,19 @@ net) + FileCheck, and builds on the now-working LLVM 18/19 toolchain.
 
 ## 5. The immediate next build step
 
-**Step 4 — overlap (max,+) in C++** (steps 1–3 are done; `optimize` is fully ported).
-Port `gem/overlap.py`'s `price_scheduled` / `_makespan`: over the planned claims,
-bin same-phase claims across the target's affinity domains and compute the (max,+)
-wave makespan vs the serial Σ, emitting `bcir.kbcir.scheduled_price`
-(makespan / serial / overlap_gain). `differential.check_overlap` already pins the R9
-invariant (makespan + gain == serial == score, 0 ≤ makespan ≤ serial) the C++ pass
-must satisfy. Then step 5: plan-level multi-claim RCSP (accumulated-budget label-DP).
+**Step 5 — plan-level multi-claim RCSP** (steps 1–4 done; `optimize` + `price_scheduled`
+are fully ported). Extend `-bcir-rcsp` from the per-claim feasible argmin to the
+accumulated-budget label-DP across the whole plan (`rcsp.optimize_constrained`'s
+`_expand`/`_insert`): labels carry (score, tracked-resource-totals) along the fused
+candidate columns, dominated labels are pruned, infeasible extensions cut — so a
+budget caps the *plan's* accumulated thermal/power, not each claim's. Reuses the
+fused columns + `_context_factor` already in `BCIRCostModel.h`; cross-check against
+`optimize_constrained` over the corpus under a cap. That closes the optimizer-core
+port (cost → fusion → shortest path → overlap → constrained search, all in C++).
+
+After step 5 the deterministic optimizer core lives entirely on the MLIR rail; the
+remaining lowering work is the C runtime (C23 `_BitInt`/`#embed` + libFuzzer/ASan)
+and the deferred real-silicon calibration.
 
 ---
 
