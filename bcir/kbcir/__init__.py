@@ -58,6 +58,8 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
     "rcsp": ("Budget", "Infeasible", "feasible", "optimize_constrained", "pareto_plans",
              "plan_resources"),
     "bundle": ("Bundle", "BundleCertificate", "find_bundles", "optimize_bundled"),
+    "compose": ("Call", "Cond", "CompositeResult", "Function", "Leaf", "Region", "Seq",
+                "plan_composite", "plan_holds_for", "worst_case_module"),
     # NB: proof.{replay,reduce} are intentionally NOT re-exported here -- `replay` would
     # shadow provenance.replay. Reach them via `bcir.kbcir.proof.{replay,reduce}`.
     "proof": ("ClaimDecision", "DecisionRecord", "ReplayResult", "RewriteCertificate",

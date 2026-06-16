@@ -78,11 +78,13 @@ _MODULES = [
     "bcir.tests.test_verify_cost",
     "bcir.tests.test_precision_lowering",
     "bcir.tests.test_bundle",
+    "bcir.tests.test_compose",
     "bcir.tests.test_proof",
     "bcir.tests.test_verify_differential",
     "bcir.tests.test_smart_laws",
     "bcir.tests.test_fuzz",
     "bcir.tests.test_measured_silicon",
+    "bcir.tests.test_silicon_runbook",
     "bcir.tests.test_clang_compare",
 ]
 

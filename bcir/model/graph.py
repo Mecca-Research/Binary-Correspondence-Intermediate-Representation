@@ -61,6 +61,8 @@ class Claim:
     primary_rid: Optional[int] = None
     precision: str = ""              # "" (naive) | "compensated" (residual-carry MAC)
     tolerance_ulp: int = 0           # accuracy contract: 0 = none; >0 = max Q8-ULP error (R17)
+    dynamic: bool = False            # True: `count` is a static UPPER BOUND (dynamic shape);
+                                     # the plan is valid + worst-case-priced for any actual <= count
 
     def io_rids(self) -> tuple[int, ...]:
         return tuple(self.rd) + tuple(self.wr)

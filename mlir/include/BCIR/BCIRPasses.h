@@ -37,6 +37,8 @@ std::unique_ptr<mlir::Pass> createOverlapPass();
 std::unique_ptr<mlir::Pass> createRcspPass();
 // -bcir-rcsp-plan: plan-level constrained selection (accumulated-budget label-DP).
 std::unique_ptr<mlir::Pass> createRcspPlanPass();
+// -bcir-bundle: detect multi-claim (joint) input-sharing bundles (kbcir.bundle analysis).
+std::unique_ptr<mlir::Pass> createBundlePass();
 std::unique_ptr<mlir::Pass> createBatchPass();
 std::unique_ptr<mlir::Pass> createSchedulePass();
 std::unique_ptr<mlir::Pass> createLowerToLLVMPass();

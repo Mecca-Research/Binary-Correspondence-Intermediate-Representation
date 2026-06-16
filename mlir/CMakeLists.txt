@@ -88,6 +88,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIROverlapPass.cpp     # (max,+) scheduled price (gem/overlap.py)
   lib/passes/BCIRRcspPass.cpp        # RCSP / Pareto (per-claim)
   lib/passes/BCIRRcspPlanPass.cpp    # plan-level accumulated-budget label-DP
+  lib/passes/BCIRBundlePass.cpp      # multi-claim (joint) bundle detection
   DEPENDS
     BCIRAttrsIncGen
     BCIRTypesIncGen

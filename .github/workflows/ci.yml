@@ -45,6 +45,12 @@ jobs:
       - name: StreamPack C decoder fuzz (libFuzzer + ASan/UBSan on the trust boundary)
         run: FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
 
+      - name: CT4 measured-replan runbook (degrade mode; the rig path stays exercised)
+        # No PMU/RAPL/governor in CI, so this degrades honestly (synthetic, no measured win)
+        # and exits 0 -- it gates that the rig path never silently rots. On a bare-metal rig
+        # `--require-real` produces the measured win (HARDWARE_VALIDATION.md).
+        run: bash tools/silicon/measure_replan.sh
+
       - name: LLVM training examples and invalid-example tripwire
         run: |
           if command -v llvm-as >/dev/null && command -v opt >/dev/null; then
