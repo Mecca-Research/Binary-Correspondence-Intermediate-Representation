@@ -1,0 +1,91 @@
+"""Proof-carrying optimization records: explain / replay / reduce (bcir-explain/replay/reduce).
+
+Roadmap (BCIR_MASTER_ROADMAP.md §5.3 / §6): replayable decision records + rewrite
+certificates over R13's provenance foundation. `explain` builds a `DecisionRecord` (the
+provenance digest + the per-claim candidates-weighed-and-chosen rationale + the bundle
+rewrite certificates); `replay` reproduces it bit-for-bit from the same inputs or reports
+exactly what diverged; `reduce` minimizes a module to a witness. The record round-trips
+through JSON, and the CLI exposes all three.
+"""
+
+from bcir.kbcir import TARGETS, optimize
+from bcir.kbcir.cost import Theta
+from bcir.kbcir.proof import DecisionRecord, explain, explain_text, reduce, replay
+from bcir.examples import fused_chain, matmul_tiled, multi_histogram, vector_add
+from bcir.verify import verify
+
+AVX = TARGETS["x86_avx512"]
+SVE = TARGETS["arm64_sve"]
+COOL = Theta.cool()
+HOT = Theta.hot()
+
+
+def test_explain_records_the_per_claim_rationale():
+    rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
+    assert rec.module_name == "vec_add" and rec.target == "x86_avx512"
+    assert rec.theta == "cool" and rec.policy == "latency"
+    assert rec.total_score == 7808
+    (d,) = rec.decisions
+    assert d.claim_id == 1000 and d.chosen == "vec16" and d.width == 16 and d.score == 7808
+    cands = dict(d.candidates)
+    # the optimizer weighed all three widths; vec16 (7808) beat vec8 (9472) and scalar.
+    assert cands["vec16"] == 7808 and cands["vec8"] == 9472 and cands["vec16"] < cands["vec8"]
+
+
+def test_record_round_trips_through_json():
+    rec = explain(matmul_tiled(), AVX, COOL, target_name="x86_avx512", joint=True)
+    assert DecisionRecord.from_json(rec.to_json()) == rec
+
+
+def test_replay_reproduces_from_the_same_inputs():
+    rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
+    rr = replay(rec, vector_add(), AVX, COOL)
+    assert rr.reproduced and rr.mismatches == ()
+    assert bool(rr) is True
+
+
+def test_replay_detects_a_changed_commit():
+    rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
+    # different target -> a different commit: the provenance digest gate catches it.
+    rr = replay(rec, vector_add(), SVE, COOL)
+    assert not rr.reproduced
+    assert any("digest" in m for m in rr.mismatches)
+    # different Theta likewise diverges.
+    assert not replay(rec, vector_add(), AVX, HOT).reproduced
+
+
+def test_joint_explain_carries_bundle_rewrite_certificates():
+    rec = explain(matmul_tiled(), AVX, COOL, target_name="x86_avx512", joint=True)
+    assert rec.certificates and all(c.kind == "bundle" and c.gain > 0 for c in rec.certificates)
+    # the same certificates must replay identically.
+    assert replay(rec, matmul_tiled(), AVX, COOL, joint=True).reproduced
+    # ... and a non-joint replay of a joint record diverges on the certificates.
+    assert not replay(rec, matmul_tiled(), AVX, COOL, joint=False).reproduced
+
+
+def test_explain_text_is_human_readable():
+    txt = explain_text(explain(vector_add(), AVX, COOL, target_name="x86_avx512"))
+    assert "vec_add" in txt and "provenance digest" in txt and "claim 1000" in txt
+    assert "vec16" in txt and "weighed:" in txt
+
+
+def test_reduce_minimizes_to_a_legal_witness():
+    # fused_chain has 2 claims; reduce to the minimal still-plannable module.
+    red = reduce(fused_chain(), lambda m: any(ph.claims for ph in m.phases))
+    assert sum(len(ph.claims) for ph in red.phases) >= 1
+    assert verify(red) == []                       # the witness stays legal
+    assert optimize(red, AVX, COOL).score > 0      # ... and plannable
+
+    # multi_histogram reduces too, preserving the predicate (a gather claim present).
+    def has_gather(m):
+        return any(c.op == "histogram.scatter" for ph in m.phases for c in ph.claims)
+    red2 = reduce(multi_histogram(), has_gather)
+    assert has_gather(red2) and verify(red2) == []
+
+
+def test_reduce_rejects_a_predicate_that_does_not_hold():
+    try:
+        reduce(vector_add(), lambda m: False)
+        assert False, "expected ValueError"
+    except ValueError:
+        pass

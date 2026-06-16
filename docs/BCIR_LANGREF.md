@@ -118,12 +118,18 @@ hard score, with equality at `T = 0`) is a verifier obligation under R9
   bandwidth knee, or the `!bcir.token` DAG (pipelined phases, ABI v2
   double-buffer contracts).
 
-## 10. Verifier laws (R1–R13)
+## 10. Verifier laws (R1–R17)
 
 R1 registry uniqueness · R2 registry resolution · R3 domain legality ·
 R4 phase-DAG legality · R5 hazard legality · R6 lane legality · R7 bounds
 legality · R8 cost completeness · R9 plan legality · R10 stream provenance ·
-R11 generation validity · R12 lowering legality · **R13 policy provenance** —
+R11 generation validity · R12 lowering legality · **R13 policy provenance** ·
+**R14 CIM/PIM dispatch** (PIM only for `reduce.*`) · **R15 DVFS clock** (Q8 ∈
+[64,512]; no PIM overclock) · **R16 allocator placement** (L1 ≤ 64 KiB / L2 ≤ 4 MiB) ·
+**R17 accuracy contract** (a claim's static Q8-ULP error bound ≤ its declared tolerance;
+a long `reduce.*` is bounded by `count` ULP naive but 1 ULP compensated, so a tight
+tolerance forces `precision="compensated"`). R14–R17 are first-class `-bcir-verify` laws,
+dual-rail with `verify.{verify_cim,verify_dvfs,verify_allocator,verify_accuracy}`. —
 every decision rule in force (gain schedule, cost table) carries a generation
 tag and an admitting certificate: a promoted portfolio entry requires its
 replay certificate, a calibrated profile must present its frozen table with

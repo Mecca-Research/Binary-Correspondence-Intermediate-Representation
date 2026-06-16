@@ -18,7 +18,9 @@ echo "[passes] -bcir-verify negative cases (-verify-diagnostics)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_laws.mlir" \
   && echo "  PASS verify_laws (R1-R7)" || { echo "  FAIL verify_laws"; fail=1; }
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_laws_deep.mlir" \
-  && echo "  PASS verify_laws_deep (R8-R13)" || { echo "  FAIL verify_laws_deep"; fail=1; }
+  && echo "  PASS verify_laws_deep (R8-R16)" || { echo "  FAIL verify_laws_deep"; fail=1; }
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_accuracy.mlir" \
+  && echo "  PASS verify_accuracy (R17 accuracy contract)" || { echo "  FAIL verify_accuracy"; fail=1; }
 
 echo "[passes] -bcir-verify on the pretty corpus (must be clean)"
 for f in "${ROOT}"/mlir/examples/*.mlir; do

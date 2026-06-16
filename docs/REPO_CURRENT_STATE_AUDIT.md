@@ -15,7 +15,7 @@
   - **`bcir/`** — the executable conformance oracle (pure Python, no third-party
     deps), ~11.8K LOC: model, K_BCIR optimizer (min-plus + RCSP/Pareto +
     (max,+) overlap), GEM hydration/scheduling/execution, ROP/MAP front-ends, M5
-    ETL, telemetry/calibration, StreamPack ABI, the R1–R13 verifier, lowering
+    ETL, telemetry/calibration, StreamPack ABI, the R1–R17 verifier, lowering
     (clang AOT / lli JIT / WASM / stackify / per-target llc / **portable C23
     kernel**), **and** the
     Phase 13–26 organs: calibration (microbench + Bayesian/conformal), policy
@@ -23,9 +23,9 @@
     ledger, provenance manifest, e-graph + memory-module fixpoints, the two-truth
     quarantine, modular mapping functions, the enriched-operad memory
     interface, and the closed calibration loop (`calibloop`: measure → freeze →
-    replan → certified win). Suite: `python -m bcir.tests.run_all` (**540 checks**).
+    replan → certified win). Suite: `python -m bcir.tests.run_all` (**580 checks**).
   - **`mlir/`** — the law: the ODS/TableGen dialect family (~80 ops), the compiled
-    `bcir-opt` with `-bcir-verify` (R1–R16), `-bcir-promote-lanes`,
+    `bcir-opt` with `-bcir-verify` (R1–R17), `-bcir-promote-lanes`,
     `-convert-bcir-to-llvm`, the **GEM pipeline passes** (`-bcir-classify-lanes
     / -select-realization / -batch / -schedule / -lower-to-llvm`), the **full
     deterministic optimizer core in C++23** (`-bcir-cost-model` cost+fusion/CSE →
@@ -94,7 +94,7 @@
    `multi_histogram` (map/reduce multi-claim gather). Python↔MLIR parity is now
    **generated and adversarial** (`bcir.kbcir.differential`), with per-target parity
    across the six TARGETS for the whole corpus (`mlir/test/passes/gem_corpus.mlir`).
-   Joint multi-claim *bundle* optimization remains future work.
+   Joint multi-claim *bundle* optimization now ships (`kbcir.bundle`, a 12% matmul gain).
 4. **Intelligence ahead of substrate.** Phases 13–26 added a rich learned/
    categorical optimization stack over a backend that cannot yet codegen and
    tables that are not yet measured; the ROI is unproven until §1–2 close.
@@ -127,6 +127,23 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-16: **Compensated precision + R17 accuracy law, bundle (joint) optimization,
+  proof-carrying records, verifier law-for-law differential.** Four layers:
+  (1) `lower.c_kernel.emit_compensated_reduce_c` lowers the residual-carry Q8 reduction
+  (`precision="compensated"`), bit-identical to the int64-exact result (the naive form
+  drifts up to n ULP); the **R17 accuracy contract** is now dual-rail
+  (`verify.verify_accuracy` + the MLIR `-bcir-verify` R17 law on `#bcir.precision<…,exact,
+  tol>`): a tight tolerance on a long reduction forces the compensated realization.
+  (2) **Multi-claim bundle (joint) optimization** (`kbcir.bundle.optimize_bundled`) -- the
+  first genuinely new optimizer capability: jointly reorder input-sharing claims (bounded,
+  exhaustive, dependency-preserving) to recover the fusion discount the pairwise shortest
+  path misses; a real **12% gain on tiled matmul**, emitting a search certificate per gain,
+  corpus otherwise pinned. (3) **Proof-carrying records** (`kbcir.proof`; CLI `bcir.run
+  --explain/--replay/--reduce`): a replayable `DecisionRecord` (R13 digest + per-claim
+  rationale + rewrite certificates) that reproduces bit-for-bit or diffs. (4) The **C++
+  `-bcir-verify` law-for-law differential** is complete -- every law R1-R17 has a
+  toolchain-rail negative case + a coverage gate. Verifier laws are now **R1-R17**. +19
+  tests (580 total).
 - 2026-06-16: **C StreamPack encoder + the verification cost dimension.** (1)
   `runtime/c/bcir_encode.c` -- the write-side twin of `bcir/abi/streampack_abi.py`:
   `bcir_sp_reencode` parses a pack and re-serializes it through value-based write

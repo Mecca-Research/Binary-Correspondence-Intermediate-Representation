@@ -1,4 +1,4 @@
-//===- BCIRVerifyPass.cpp - the -bcir-verify semantic laws R1-R16 -*- C++ -*-===//
+//===- BCIRVerifyPass.cpp - the -bcir-verify semantic laws R1-R17 -*- C++ -*-===//
 //
 // Part of the modular BCIR MLIR pass library (split out of the former monolithic
 // BCIRPasses.cpp). Shared helpers live in BCIRPassSupport.h; registration in
@@ -37,9 +37,10 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
 
   StringRef getArgument() const final { return "bcir-verify"; }
   StringRef getDescription() const final {
-    return "Verify the BCIR semantic laws R1-R16: registry, domain, phase DAG, "
+    return "Verify the BCIR semantic laws R1-R17: registry, domain, phase DAG, "
            "hazard, lane, bounds, cost, plan, provenance, generation, lowering, "
-           "policy provenance, CIM/PIM dispatch, DVFS clock, allocator placement.";
+           "policy provenance, CIM/PIM dispatch, DVFS clock, allocator placement, "
+           "accuracy contract.";
   }
 
   void runOnOperation() override {
@@ -793,6 +794,30 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (cap && bytes > cap) {
         r.emitError("R16: placement ") << stringifyMemTier(*pl) << " does not fit @"
             << r.getSymName() << " (" << bytes << " B > " << cap << " B)";
+        ok = false;
+      }
+    });
+
+    // R17 (accuracy-contract legality): a claim that declares an accuracy tolerance
+    // (precision contract with tol > 0) must realize within it -- its static worst-case
+    // Q8-ULP error bound must not exceed the tolerance. A reduce.* over `count` terms
+    // drifts up to `count` ULP with the naive accumulator but only 1 ULP when exact
+    // (compensated, the residual-carry MAC); any other op truncates at most 1 ULP. So a
+    // tight tolerance on a long reduction is the law that FORCES the compensated
+    // realization. First-class here in -bcir-verify (dual-rail with verify.verify_accuracy).
+    root->walk([&](ClaimOp c) {
+      auto prec = c.getPrecision();
+      if (!prec)
+        return;
+      int64_t tol = prec.getToleranceQ16();
+      if (tol <= 0)
+        return; // no declared tolerance: unconstrained
+      int64_t count = std::max<int64_t>(1, static_cast<int64_t>(c.getCount()));
+      int64_t bound = c.getOp().starts_with("reduce.") ? (prec.getExact() ? 1 : count) : 1;
+      if (bound > tol) {
+        c.emitError("R17: accuracy bound ") << bound << " ULP exceeds tolerance " << tol
+            << " ULP @" << c.getSymName()
+            << " (a compensated reduction would bound it at 1)";
         ok = false;
       }
     });
