@@ -117,6 +117,17 @@
 
 ## Changelog
 
+- 2026-06-16: **Optimizer-core C++ port, step 3 -- the layered min-plus shortest path
+  (the full optimize() in C++).** New `-bcir-plan` (`BCIRPlanPass.cpp`) runs the coupled
+  tropical shortest path over the fused candidate columns (shared cost/fusion logic now
+  in `BCIRCostModel.h`), each edge coupling `_context_factor`'s path-based shared-input
+  fusion. It reproduces the oracle's `optimize` bit-for-bit on every module: 7808
+  (vector_add), 13696 (shared-input chain, `plan.mlir`), and the corpus -- matmul
+  1015808 / scan 101888 / histogram 1595520. The emitter (`to_mlir`) now emits a
+  registry + capability so the law plans from first principles; passes are scoped per
+  bcir.module. The per-claim argmin `-bcir-select-realization` is now subsumed by the
+  coupled `-bcir-plan` for multi-claim. Next: step 4 overlap (max,+), step 5
+  plan-level RCSP. See `BCIR_LOWERING_PLAN.md`.
 - 2026-06-16: **Optimizer-core C++ port, step 2 -- fusion / deforestation / CSE.**
   `-bcir-cost-model` now processes claims in (phase, declared) order with
   value-numbering + a produced-rid set and applies the two intra-phase redundancy
