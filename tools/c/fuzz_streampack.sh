@@ -80,4 +80,17 @@ if "${tmp}/fuzz_binrec" -runs="${RUNS}" -max_total_time=60 -max_len=64 >"${tmp}/
 else
   echo "  FAIL: libFuzzer binrec found a crash"; tail -40 "${tmp}/flog2"; exit 1
 fi
+
+echo "[fuzz] libFuzzer on the StreamPack executor (${RUNS} runs)"
+# bcir_exec.c runs an untrusted pack end to end with fixed caller buffers; a malformed
+# pack must return a status and never read/write out of bounds (incl. the NOSPACE path).
+"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
+  "${C}/fuzz_exec.c" "${C}/bcir_exec.c" "${C}/bcir_runtime.c" -I "${C}" -o "${tmp}/fuzz_exec" \
+  || { echo "  FAIL: executor fuzzer build"; exit 1; }
+mkdir -p "${tmp}/corpus_exec" && cp "${tmp}/pack.bin" "${tmp}/corpus_exec/"   # seed from a real pack
+if "${tmp}/fuzz_exec" -runs="${RUNS}" -max_total_time=60 "${tmp}/corpus_exec" >"${tmp}/flog3" 2>&1; then
+  echo "  PASS libFuzzer executor (${RUNS} runs, no crash)"
+else
+  echo "  FAIL: libFuzzer executor found a crash"; tail -40 "${tmp}/flog3"; exit 1
+fi
 echo "[fuzz] ok"

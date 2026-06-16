@@ -109,28 +109,40 @@
 
 ## Recommended next milestones (see [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5–6 for detail)
 
-The deterministic optimizer core (cost model, fusion/CSE, min-plus plan, (max,+)
-overlap, per-claim + plan-level RCSP) is **fully ported to C++/MLIR** and bit-exact vs
-the oracle; the six-target capability matrix, C23 `_BitInt`/`#embed`, the ETL-binary C
-decoder fuzz, and the native-object gate all landed. The next build steps:
+The deterministic optimizer core is **fully ported to C++/MLIR**; the six-target
+capability matrix, C23 `_BitInt`/`#embed`, the ETL-binary C decoder fuzz, the
+native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
+**R14/R15/R16 as first-class `-bcir-verify` laws** all landed. The next build steps:
 
-1. **Verifier dual-rail symmetry** — lift **R14 (CIM dispatch) + R15 (DVFS clock)** out
-   of `-bcir-lower-to-llvm` into first-class `-bcir-verify` checks (R16 already moved),
-   and give the **`verification` cost axis** a real producer (today modeled as 0).
-2. **The C StreamPack executor** (`gem/execute.py` → `runtime/c/`) — decode the pack and
-   drive the emitted kernels in phase order with per-phase telemetry, so the StreamPack
-   is a no-Python hot artifact a driver runs end-to-end; plus the **C encoder** for a
-   full C round-trip.
-3. **Measured real-silicon calibration** — the software path (`kbcir.calibloop`,
+1. **The C StreamPack encoder** (`runtime/c/`, mirroring `streampack_abi.encode`,
+   CRC-gated) — completes a full C round-trip, and the **`verification` cost axis** a
+   real producer (today modeled as 0).
+2. **Measured real-silicon calibration** — the software path (`kbcir.calibloop`,
    `bcir.silicon`) is closed + certified on host; the one deferred result is a *measured*
    (not synthetic) replan win on a bare-metal rig (the rig spec is in
    `HARDWARE_VALIDATION.md`). *The single most valuable next result.*
-4. **Multi-claim bundle (joint) optimization** — the first genuinely new optimizer
+3. **Multi-claim bundle (joint) optimization** — the first genuinely new optimizer
    capability, where the combinatorial (min,+) formulation earns its keep beyond the
    pairwise coupling that ships today.
 
 ## Changelog
 
+- 2026-06-16: **The C StreamPack executor + R14/R15/R16 as first-class `-bcir-verify`
+  laws.** (1) `runtime/c/bcir_exec.{h,c}` is the C twin of `bcir/gem/execute.py`: a
+  freestanding `bcir_sp_execute` that decodes a pack and dispatches its claims in GEM
+  order -- topological phase order (first appearance in the pack), then ascending
+  claim_id within a phase -- invoking an optional per-claim kernel callback and
+  collecting per-phase telemetry, with no libc and caller-owned scratch/phases buffers.
+  Python<->C dispatch-order + telemetry parity (`bcir/tests/test_c_executor.py`,
+  `tools/c/check_runtime.sh`) and a libFuzzer + ASan/UBSan harness (`fuzz_exec.c`, wired
+  into `fuzz_streampack.sh`) -- the StreamPack is now a no-Python hot artifact a driver
+  runs end to end. (2) `-bcir-verify` (`BCIRVerifyPass.cpp`) gains **R14** (CIM/PIM
+  dispatch: pim only for reduce.*), **R15** (DVFS clock in [64,512]; pim must not
+  overclock), and **R16** (allocator placement: L1 <= 64 KiB, L2 <= 4 MiB) as
+  first-class verifier laws -- previously enforced only at the `-bcir-lower-to-llvm`
+  checkpoint -- so the dedicated verifier now checks all R1-R16 (dual-rail with
+  `verify.{verify_cim,verify_dvfs,verify_allocator}`); positive/negative cases in
+  `mlir/test/passes/verify_laws_deep.mlir`. +4 tests (544 total).
 - 2026-06-16: **Doc consolidation -- one master roadmap.** Reviewed all 15 `docs/`
   files; consolidated the strategy/blueprint/plan notes into a single, current
   [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) (positioning + measured state + the

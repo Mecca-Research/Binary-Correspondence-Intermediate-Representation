@@ -58,7 +58,7 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 | Oracle conformance tests (`python -m bcir.tests.run_all`) | **540**, incl. the generated differential + verifier + fuzz campaigns |
 | Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
 | GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
-| Verifier laws | **R1–R16** (R1–R13 dual-rail in `-bcir-verify`; R16 in `-bcir-verify`; R14/R15 in `-bcir-lower-to-llvm` + oracle gates) |
+| Verifier laws | **R1–R16** all first-class + dual-rail in `-bcir-verify` (+ the `-bcir-lower-to-llvm` checkpoint + the Python oracle ref) |
 | Named pass pipelines | `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm` / `bcir-aot` with verifier checkpoints |
 | Θ context op | `bcir.kbcir.theta` — the C++ plan matches the oracle under **hot** Θ (matmul hot 1159168), not just cool |
 | Six-target capability matrix | all six TARGETS cross-checked on the MLIR rail (`target_matrix.mlir`) — the law plans per-target from the capability seeds alone |
@@ -82,8 +82,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 |---|---|---|---|
 | Dialect / ODS (the law's vocabulary) | `mlir/include/BCIR/*.td` | MLIR | ✅ |
 | Verifier **R1–R13** | `-bcir-verify` + `bcir.verify` | MLIR/C++ + Python (oracle ref) | ✅ dual-rail |
-| Verifier **R16** (allocator tier) | `-bcir-verify` + oracle | MLIR/C++ + Python | ✅ dual-rail |
-| Verifier **R14/R15** (CIM dispatch / DVFS clock) | `-bcir-lower-to-llvm` + oracle gates | MLIR/C++ + Python | ◑ enforced in lowering; **not yet first-class `-bcir-verify`** |
+| Verifier **R14/R15/R16** (CIM dispatch / DVFS clock / alloc placement) | `-bcir-verify` + the `-bcir-lower-to-llvm` checkpoint + oracle | MLIR/C++ + Python | ✅ **first-class `-bcir-verify` laws** (dual-rail with `verify.{verify_cim,verify_dvfs,verify_allocator}`) |
 | K_BCIR **cost model** (`_cost`, candidates, stride/tier) | `-bcir-cost-model` (C++23) | MLIR/C++ | ✅ **ported** (bit-exact: vec16 7808, gather 528384, tile 126976) |
 | K_BCIR **fusion / CSE / deforestation** | `-bcir-cost-model` | MLIR/C++ | ✅ **ported** (7808 / 5888 / 5100) |
 | K_BCIR **min-plus shortest path** (`optimize`) | `-bcir-plan` | MLIR/C++ | ✅ **ported** (per-target, hot/cool Θ) |
@@ -91,7 +90,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | K_BCIR **RCSP / Pareto** (per-claim + plan-level) | `-bcir-rcsp`, `-bcir-rcsp-plan` | MLIR/C++ | ✅ **ported** (9472, {16,8}@17280) |
 | GEM classify / batch / schedule / lower | `-bcir-*` passes | MLIR/C++ | ✅ |
 | GEM **hydrate** (plan → StreamPack **bytes**) | Python `abi.streampack_abi.encode` | **C** (the encoder) | ◑ the `bcir-hydrate` *pipeline* lowers lane segments; the byte **encoder** is Python-only |
-| GEM **deterministic executor** (decode → drive kernels) | Python `gem.execute` | **C** (hot path) | ☐ **oracle-only — the next C runtime port** |
+| GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
 | StreamPack ABI **decoder** | **C** `runtime/c/bcir_runtime.c` | **C** (frozen ABI) | ✅ CRC-gated parity + libFuzzer |
 | ETL binary-record decoder | **C** `runtime/c/bcir_binrec.c` | **C** | ✅ parity + libFuzzer |
 | Portable kernel emission (C23 + `_BitInt`/`#embed`) | Python `lower.c_kernel` | C output (emitter may become C++) | ✅ |
@@ -163,10 +162,13 @@ Clang comparison.
 
 The optimizer core is ported. What is still Python-only **and** belongs on the law rail:
 
-1. **R14 (CIM/PIM dispatch) + R15 (DVFS clock bounds) as first-class `-bcir-verify`
-   checks.** Today they are enforced inside `-bcir-lower-to-llvm` (`BCIRGEMPasses.cpp`);
-   R16 already moved into `-bcir-verify`. Moving R14/R15 completes verifier dual-rail
-   symmetry (every law checkable by `-bcir-verify` alone). *(Small, high-signal.)*
+1. ✅ **R14 (CIM/PIM dispatch) + R15 (DVFS clock) + R16 (allocator placement) as
+   first-class `-bcir-verify` checks. DONE.** All three are now enforced by the dedicated
+   `-bcir-verify` pass (`BCIRVerifyPass.cpp`, dual-rail with `verify.{verify_cim,
+   verify_dvfs,verify_allocator}`), with positive/negative `.mlir` cases in
+   `verify_laws_deep.mlir`; they remain enforced at the `-bcir-lower-to-llvm` checkpoint
+   too (defense in depth). Verifier dual-rail symmetry is complete — every law R1–R16 is
+   checkable by `-bcir-verify` alone.
 2. **The `verification` cost dimension (R8 verify-cost).** The 12th cost axis is modeled
    as 0; give it a real producer — the cost of discharging a claim's verify contract
    (bounds / exact / hash) — on both rails, so the optimizer can trade verification
@@ -176,13 +178,16 @@ The optimizer core is ported. What is still Python-only **and** belongs on the l
 
 ### 5.2 Oracle → C (run-time hot path) — remaining ports
 
-The C runtime has the decoders (StreamPack, ETL-binary) but not the executor:
+The C runtime has the decoders (StreamPack, ETL-binary) and now the executor:
 
-1. **The deterministic StreamPack executor** (`gem/execute.py` → C) — *the next C
-   runtime port.* Decode the pack, then drive the emitted kernels in topological phase
-   order (ascending claim id within a phase) with per-phase telemetry into the zero-copy
-   ring. This makes the StreamPack a self-contained, no-Python hot artifact a driver can
-   run end-to-end.
+1. ✅ **The deterministic StreamPack executor** (`gem/execute.py` → `runtime/c/bcir_exec.c`).
+   **DONE.** A freestanding `bcir_sp_execute` decodes the pack and dispatches its claims
+   in GEM order — topological phase order (first appearance in the pack), then ascending
+   claim id within a phase — invoking an optional per-claim kernel callback and collecting
+   per-phase telemetry, with no libc and caller-owned memory. Python↔C dispatch-order +
+   telemetry parity (`test_c_executor.py`, `check_runtime.sh`) and a libFuzzer + ASan/UBSan
+   harness (`fuzz_exec.c`). The StreamPack is now a no-Python hot artifact a driver runs
+   end-to-end.
 2. **The StreamPack encoder in C** (today Python `abi.streampack_abi.encode`; C only
    decodes) — completes a full C round-trip so a driver-resident hydrate emits the
    artifact without Python.
@@ -235,18 +240,13 @@ that stay on the Python/ops side.
 In recommended order — each is gated by the generated differential harness + FileCheck
 + the C-runtime parity/fuzz scripts:
 
-1. **`-bcir-verify` R14 + R15** (§5.1.1). Lift the CIM-dispatch and DVFS-clock checks
-   out of `-bcir-lower-to-llvm` into the dedicated verifier pass, with positive/negative
-   `.mlir` and a `verify.verify_dvfs`/`verify_cim` law-for-law diff. *(Smallest, closes
-   verifier symmetry.)*
-2. **The C StreamPack executor** (§5.2.1). `runtime/c/bcir_exec.{h,c}`: a freestanding
-   `bcir_sp_execute(pack, kernels, ring)` that walks segments in phase order and invokes
-   per-claim kernels, with a Python↔C parity gate (the oracle `gem.execute` order is the
-   reference) and a libFuzzer harness on the segment-walk. *(The biggest C-runtime gap;
-   makes the StreamPack a no-Python hot artifact.)*
+1. ✅ **`-bcir-verify` R14 + R15 + R16** (§5.1.1). **DONE** — first-class verifier laws,
+   dual-rail, with positive/negative `verify_laws_deep.mlir` cases.
+2. ✅ **The C StreamPack executor** (§5.2.1). **DONE** — `runtime/c/bcir_exec.{h,c}`,
+   freestanding, Python↔C parity-gated + libFuzzer'd.
 3. **The C StreamPack encoder** (§5.2.2). `runtime/c/bcir_encode.c` mirroring
    `streampack_abi.encode`, CRC-gated, with a Python-encode == C-encode parity test —
-   completing the full C round-trip.
+   completing the full C round-trip (the next step).
 4. **The verify-cost dimension** (§5.1.2). Give the `verification` cost axis a producer
    on both rails and pin the new scores.
 5. **The `precision="compensated"` C-kernel** (§5.2.3) + its accuracy-contract verifier
