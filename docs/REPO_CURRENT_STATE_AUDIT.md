@@ -237,3 +237,21 @@
   (457 total). Next-step roadmap (the MLIR/C/C++ lowering pass): a `precision=
   "compensated"` C-kernel variant + the accuracy-contract verifier law on both rails
   (strategy §8).
+- 2026-06-16: **Final BDI-notes mining pass for K_BCIR/GEM (5 docs) — verdict +
+  one shipped gain.** Screened all five uploads against the two engines with a hard
+  filter (deterministic integer, IR-level/plan-time, gains-only). Result: **four
+  yield nothing** — `paradigms_and_concepts` (philosophy/survey), the `BDI SRS`
+  (requirements prose), the `AI-Trainer` (a float toy-VM + symbolic curriculum), and
+  `PrimeDivisor_Tools` (symbolic-AI; its divisor-lattice tiling idea tests **neutral**
+  — the ceil cost model already prefers wider-with-remainder, so divisor-alignment
+  gives no gain). `execution_and_compiler_research` is ~95% runtime/backend; its
+  "strength reduction" is exactly what BCIR delegates to LLVM. BCIR already has the
+  rigorous versions (min-plus, RCSP, Pareto, (max,+) overlap, EFT/HEFT, affinity,
+  bandwidth-knee). **The one real gap it named** — *deforestation / producer→consumer
+  fusion* — is now shipped: `realize.fused_candidates` bakes a memory discount into a
+  consumer claim that reads an operand a prior same-phase claim produced (the
+  intermediate never round-trips), applied **uniformly** across optimize / RCSP /
+  overlap / accel / softdp so `makespan ≤ serial` and the unbounded-RCSP == optimize
+  invariants hold. Measured **~12% lower plan score** on a producer→consumer chain,
+  no width churn, pinned 7808/9472 intact. Oracle-only (no `mlir/` change; the MLIR
+  select reproduces 7808 for single-claim vector_add unchanged). +3 tests (460 total).

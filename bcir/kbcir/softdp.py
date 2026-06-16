@@ -48,6 +48,7 @@ from .realize import (
     _context_factor,
     _flatten,
     candidates_for,
+    fused_candidates,
     optimize,
 )
 from .weights import PERF, Policy, weights
@@ -88,6 +89,7 @@ def _build_dag(module: Module, h, theta: Theta, policy: Policy):
     cost vector. Returns (n_nodes, columns, out_edges, in_edges) where an edge is
     (other_node, scalar_weight, coupled_cost_vector)."""
     flat = _flatten(module)
+    cand_map = fused_candidates(module, h)            # producer->consumer deforestation (shared)
     n0 = 1
     node_meta: list[tuple | None] = [None]            # 0 = SOURCE
     out_edges: list[list[tuple[int, float, tuple]]] = [[]]
@@ -99,11 +101,9 @@ def _build_dag(module: Module, h, theta: Theta, policy: Policy):
 
     for phase_id, claim in flat:
         w_phase = weights(h, theta, phase_id, policy)
-        cost_rid = claim.rd[0] if claim.rd else claim.primary_rid
-        resource = module.resource(cost_rid) if cost_rid is not None else None
         col_nodes: list[int] = []
         col_cands: list[Candidate] = []
-        for cand in candidates_for(claim, h, resource):
+        for cand in cand_map[claim.id]:
             nid = len(node_meta)
             node_meta.append((phase_id, claim, cand))
             out_edges.append([])

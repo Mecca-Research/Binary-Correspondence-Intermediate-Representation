@@ -20,7 +20,7 @@ candidate. The optimizer reduces cost only among provably-legal realizations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..model import Claim, Lane, Module, Opcode, StrideClass
 from .cost import (
@@ -43,6 +43,7 @@ class Candidate:
     name: str           # scalar / vec8 / vec16 / strided / gather / ux_bucket / tile / noop / barrier
     base: CostVector
     reads: tuple[int, ...] = ()
+    writes: tuple[int, ...] = ()    # the claim's write RIDs (for producer->consumer fusion)
 
 
 @dataclass
@@ -135,8 +136,8 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
     # cost model offers both; the blocked one wins, avoiding gather_penalty.
     if claim.op == "reduce.gather":
         return [
-            Candidate(Lane.U, 1, "blocked", _cost(claim, h, 1, 1, tier=tier), claim.rd),
-            Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd),
+            Candidate(Lane.U, 1, "blocked", _cost(claim, h, 1, 1, tier=tier), claim.rd, claim.wr),
+            Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd, claim.wr),
         ]
 
 
@@ -164,15 +165,24 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
     if not cands:  # defensive fallback
         cands.append(Candidate(claim.lane, 1, "scalar",
                                _cost(claim, h, 1, _stride_penalty(claim, h), tier=tier), claim.rd))
-    return cands
+    wr = tuple(claim.wr)
+    return [replace(c, writes=wr) for c in cands]
 
 
 # --- context coupling f_i(pi) ---------------------------------------------------
 
+# Deforestation discount (x0.75 memory): a fused producer->consumer pass elides the
+# intermediate operand's round-trip. Baked into the consumer's base cost in `optimize`
+# (dependency-based) so it prices identically in the plan score and the GEM makespan.
+_DEFOREST_FACTOR = tuple(192 if i == MEMORY else 256 for i in range(len(IDENTITY_FACTOR)))
+
+
 def _context_factor(prev: "Candidate | None", cand: Candidate, theta: Theta) -> tuple[int, ...]:
     f = list(IDENTITY_FACTOR)
     # Fusion / locality: a vector candidate that shares a read operand with its vector
-    # predecessor reuses loaded cache lines -> discount memory traffic.
+    # predecessor reuses loaded cache lines -> discount memory traffic. (Producer->
+    # consumer "deforestation" fusion is dependency-based, not path-based, so it is
+    # baked into the consumer's base cost in `optimize`, not here.)
     if prev is not None and cand.width > 1 and prev.width > 1 and set(prev.reads) & set(cand.reads):
         f[MEMORY] = 192  # x0.75
     # Thermal coupling: wide SIMD on a hot machine pays extra heat/current (AVX-512 downclock).
@@ -211,6 +221,31 @@ def _flatten(module: Module) -> list[tuple[int, Claim]]:
     return flat
 
 
+# --- fusion-aware candidate generation (shared by the tropical + RCSP rails) -----
+
+def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
+    """Per-claim candidate lists with the **producer->consumer deforestation** discount
+    baked in: if a claim reads an operand a PRIOR same-phase claim produced, that
+    intermediate need not round-trip through memory (the pair fuses into one pass), so
+    the consumer's candidates carry a memory discount. Computed from the intra-phase
+    dependency structure (not path adjacency), so the tropical optimizer and the RCSP
+    rail price fusion identically -- and it applies uniformly to the plan score and the
+    GEM makespan/serial pricing, preserving makespan <= serial. A barrier between
+    phases materializes intermediates, so the credit is intra-phase only."""
+    out: dict[int, list[Candidate]] = {}
+    produced: dict[int, set[int]] = {}
+    for phase_id, claim in _flatten(module):
+        cost_rid = claim.rd[0] if claim.rd else claim.primary_rid
+        resource = module.resource(cost_rid) if cost_rid is not None else None
+        pset = produced.setdefault(phase_id, set())
+        cands = candidates_for(claim, h, resource)
+        if pset & set(claim.rd):                         # consumes a just-produced operand
+            cands = [replace(c, base=c.base.couple(_DEFOREST_FACTOR)) for c in cands]
+        pset |= set(claim.wr)
+        out[claim.id] = cands
+    return out
+
+
 # --- the optimizer --------------------------------------------------------------
 
 def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -> RealizationResult:
@@ -224,16 +259,13 @@ def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -
     prev_nodes: list[int] = [0]
     prev_cands: list[Candidate | None] = [None]
 
+    cand_map = fused_candidates(module, h)    # candidates with deforestation baked in
     for phase_id, claim in flat:
         w_phase = weights(h, theta, phase_id, policy)
         col_nodes: list[int] = []
         col_cands: list[Candidate] = []
 
-        # Memory traffic is dominated by the streamed/gathered read source; fall back to the write target.
-        cost_rid = claim.rd[0] if claim.rd else claim.primary_rid
-        resource = module.resource(cost_rid) if cost_rid is not None else None
-
-        for cand in candidates_for(claim, h, resource):
+        for cand in cand_map[claim.id]:
             nid = len(node_meta)
             node_meta.append((phase_id, claim, cand))
             adj.append([])

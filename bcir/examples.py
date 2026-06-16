@@ -98,8 +98,10 @@ def scan_chain(n: int = 1024) -> Module:
     """A two-stage dependency chain (a scan/pipeline): T = A + B, then O = T + C.
     The second claim reads the first's output (RAW), so the two *serialize* -- the
     scheduler cannot overlap them (overlap_gain 0), the counterpart to fused_chain
-    where independent claims do overlap. They share no read operand, so no fusion
-    discount applies either: the schedule price equals the serial sum."""
+    where independent claims do overlap. They DO fuse, though: c2 consumes T which c1
+    produced, so producer->consumer **deforestation** discounts c2's memory (the
+    intermediate T need not round-trip) -- a lower plan score even though the schedule
+    still serializes (makespan == serial: the gain is fusion, not overlap)."""
     m = Module(name="scan_chain")
     for rid, nm in ((80, "A"), (81, "B"), (82, "C"), (83, "T"), (84, "O")):
         m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,), name=nm))

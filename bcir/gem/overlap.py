@@ -141,19 +141,20 @@ def optimize_scheduled(module: Module, h, theta, policy: Policy = PERF
     makespan most (deterministic first-best tie-break). Returns the plan
     (serial-repriced, so verify_plan R9 holds) and its scheduled price.
     """
-    from ..kbcir.realize import optimize
+    from ..kbcir.realize import fused_candidates, optimize
 
     result = optimize(module, h, theta, policy)
     assignment = dict(result.by_claim())
     if not assignment:
         return result, ScheduledPrice(0, 0)
 
+    cand_map = fused_candidates(module, h)    # fusion-aware alternatives (consistent costs)
     best_m = _makespan(module, assignment, h, theta, policy)
     changed = False
     for _phase_id, claim in _flatten(module):
         current = assignment[claim.id]
         best_cand, best_trial = current, best_m
-        for alt in candidates_for(claim, h, _resource_for(module, claim)):
+        for alt in cand_map[claim.id]:
             if alt == current:
                 continue
             trial = dict(assignment)
