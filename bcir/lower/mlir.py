@@ -191,6 +191,7 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
     L.append(f"  bcir.target.capability @cpu {{ triple = \"{h.triple}\", "
              f"isa_features = [{isa}], lane_widths = array<i64: {lw}>, "
              f"cacheline = {h.cacheline} : i32, gather_penalty = {h.gather_penalty} : i32, "
+             f"affinity_domains = {h.affinity_domains} : i32, "
              f"thermal_density = {h.thermal_density} : i32, power_density = {h.power_density} : i32, "
              f"mem_unit = {h.mem_unit} : i32, base_overhead = {h.base_overhead} : i32, "
              f"per_op_heat = {h.per_op_heat} : i32, elem_bytes = {h.elem_bytes} : i32 }}")

@@ -85,6 +85,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRSelectPass.cpp      # min-plus selection
   lib/passes/BCIRCostModel.cpp       # K_BCIR cost algebra (cost.py port)
   lib/passes/BCIRPlanPass.cpp        # min-plus shortest path (realize.optimize)
+  lib/passes/BCIROverlapPass.cpp     # (max,+) scheduled price (gem/overlap.py)
   lib/passes/BCIRRcspPass.cpp        # RCSP / Pareto (optimizer core)
   DEPENDS
     BCIRAttrsIncGen
