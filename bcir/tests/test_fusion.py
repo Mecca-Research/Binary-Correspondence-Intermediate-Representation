@@ -128,3 +128,54 @@ def test_deforestation_preserves_makespan_le_serial():
 
 def test_single_claim_is_unaffected_by_deforestation():
     assert optimize(vector_add(1024), AVX, COOL).score == 7808   # pinned: no producer
+
+
+# --- CSE / duplicate-claim elimination (the egraph's liked-pair, finally priced) ---
+
+def _cse(c2_reads, rewrite_a=False, n=1 << 16):
+    """c1 = A(10)+B(11)->D(12); optionally a claim rewriting A(10); then c2 over
+    `c2_reads`->E(13). With c2_reads=(10,11) and no rewrite, c2 duplicates c1 (CSE)."""
+    m = Module(name="cse")
+    for rid in (10, 11, 12, 13, 14, 15):
+        m.add_resource(Resource(rid=rid, shape=(n,)))
+    claims = [Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+                    count=n, rd=(10, 11), wr=(12,), op="vector.add")]
+    if rewrite_a:                                  # bumps A(10)'s value-number
+        claims.append(Claim(id=9, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+                            count=n, rd=(14, 15), wr=(10,), op="vector.add"))
+    claims.append(Claim(id=2, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+                        count=n, rd=c2_reads, wr=(13,), op="vector.add"))
+    m.add_phase(Phase(phase_id=0, deps=(), claims=claims))
+    return m
+
+
+def _c2(result):
+    return next(s.cost for s in result.steps if s.claim_id == 2)
+
+
+def test_cse_prices_a_duplicate_claim_as_a_copy():
+    # c2 = A+B recomputes c1's value -> CSE: priced as a copy (no recompute, no
+    # operand reload), strictly cheaper than an identical-shape distinct claim.
+    dup = optimize(_cse((10, 11)), AVX, COOL)             # duplicate of c1 -> CSE
+    distinct = optimize(_cse((14, 11)), AVX, COOL)        # different operand -> full
+    assert _c2(dup) < _c2(distinct)                       # the CSE copy is cheaper (~15%)
+    assert {c: x.width for c, x in dup.by_claim().items()} == \
+           {c: x.width for c, x in distinct.by_claim().items()}    # no width churn
+
+
+def test_cse_value_numbering_invalidates_when_an_operand_is_rewritten():
+    # rewriting A(10) between the two A+B claims bumps its version, so c2 is NOT a CSE
+    # of c1 (the values differ) -- it is no longer priced as the cheap copy.
+    valid = optimize(_cse((10, 11)), AVX, COOL)                  # CSE holds
+    invalidated = optimize(_cse((10, 11), rewrite_a=True), AVX, COOL)  # A rewritten between
+    assert _c2(invalidated) > _c2(valid)                          # CSE correctly withdrawn
+
+
+def test_cse_is_consistent_across_the_tropical_and_rcsp_rails():
+    from bcir.kbcir.rcsp import optimize_constrained
+    m = _cse((10, 11))
+    assert optimize_constrained(m, AVX, COOL).score == optimize(m, AVX, COOL).score
+
+
+def test_cse_leaves_the_single_claim_pin_intact():
+    assert optimize(vector_add(1024), AVX, COOL).score == 7808   # no duplicate -> no-op

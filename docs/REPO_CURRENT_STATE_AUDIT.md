@@ -255,3 +255,24 @@
   invariants hold. Measured **~12% lower plan score** on a producer→consumer chain,
   no width churn, pinned 7808/9472 intact. Oracle-only (no `mlir/` change; the MLIR
   select reproduces 7808 for single-claim vector_add unchanged). +3 tests (460 total).
+- 2026-06-16: **Full optimizer-completeness audit (10 classic data-flow opts) + CSE
+  shipped.** Audited K_BCIR/GEM for every classic optimization the cost model should
+  capture but doesn't (the producer→consumer-fusion miss suggested others). Verdict:
+  **CSE / duplicate-claim elimination was MISSING and is now fixed** — the egraph
+  already detected the liked-pair (`module_exprs`/`shared_blocks`) but it never
+  reached the plan cost. `realize.fused_candidates` now value-numbers each claim
+  `(op, operand-versions)`; a repeat within a phase is priced as a *copy* (compute
+  zeroed, memory scaled to the copy fraction), and a write between duplicates bumps
+  the operand version and soundly withdraws the credit. ~15% cheaper on a duplicate,
+  applied uniformly across all five rails, 7808/9472 + makespan≤serial intact, +4
+  tests (464 total). The rest, assessed and **not** shipped (honest): **DCE** —
+  blocked (no `Resource.is_output` flag, so "written but never read" is the program's
+  result, e.g. C in vector_add); **in-place/WAR** — no gain in the traffic-based
+  memory cost (`x=x+y` streams the same 3 operands as `z=x+y`; the saving is
+  allocation, already covered by `allocator.pool_plan` liveness); **residency /
+  multi-hop shared-input** — order-dependent, can't be priced uniformly without
+  breaking makespan≤serial / overlap_gain==0 (or it over-credits past cache
+  eviction); **reduction-tree depth** — doesn't fit the atomic-claim granularity
+  (intra-claim critical path isn't modeled); **algebraic-identity / const-fold /
+  remat** — N/A or speculative on array kernels. Oracle-only (no `mlir/`; the MLIR
+  select reproduces 7808 for single-claim vector_add unchanged).

@@ -24,7 +24,9 @@ from dataclasses import dataclass, field, replace
 
 from ..model import Claim, Lane, Module, Opcode, StrideClass
 from .cost import (
+    COMPUTE,
     MEMORY,
+    N,
     POWER,
     THERMAL,
     CostVector,
@@ -223,24 +225,60 @@ def _flatten(module: Module) -> list[tuple[int, Claim]]:
 
 # --- fusion-aware candidate generation (shared by the tropical + RCSP rails) -----
 
+def _cse_factor(claim: Claim) -> tuple[int, ...]:
+    """The copy-cost factor for a claim that is a common subexpression of an earlier
+    one: the value is already computed, so there is no recompute (compute zeroed) and
+    only the result is copied to this claim's output instead of re-reading every
+    operand (memory scaled from `len(rd)+len(wr)` streams down to the `1 + len(wr)` a
+    copy needs). Conservative on thermal/power (left as-is)."""
+    full = len(claim.rd) + len(claim.wr)
+    copy = 1 + len(claim.wr)
+    mem_q8 = (copy * 256) // max(1, full)
+    return tuple(0 if i == COMPUTE else (mem_q8 if i == MEMORY else 256) for i in range(N))
+
+
 def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
-    """Per-claim candidate lists with the **producer->consumer deforestation** discount
-    baked in: if a claim reads an operand a PRIOR same-phase claim produced, that
-    intermediate need not round-trip through memory (the pair fuses into one pass), so
-    the consumer's candidates carry a memory discount. Computed from the intra-phase
-    dependency structure (not path adjacency), so the tropical optimizer and the RCSP
-    rail price fusion identically -- and it applies uniformly to the plan score and the
-    GEM makespan/serial pricing, preserving makespan <= serial. A barrier between
-    phases materializes intermediates, so the credit is intra-phase only."""
+    """Per-claim candidate lists with the **redundancy discounts** baked in, computed
+    from intra-phase data flow (not path adjacency) so all five rails -- tropical,
+    RCSP, soft, accel, scheduled overlap -- price them identically and the plan score,
+    makespan, and serial bound stay consistent (makespan <= serial). Two discounts,
+    applied at most one per claim (CSE wins, being the larger):
+
+      * **CSE / duplicate elimination**: a claim whose (op, operand value-numbers)
+        matches an earlier same-phase claim recomputes a value already in hand -- it
+        becomes a copy (no recompute, no operand reload). Value numbering (a write
+        bumps an operand's version) makes the match sound: a rewrite between the two
+        invalidates it. The egraph proves the same liked-pair CSE; this prices it.
+      * **producer->consumer deforestation**: a claim reading an operand a prior
+        same-phase claim produced fuses with it, so the intermediate never round-trips
+        to memory (a memory discount).
+
+    A barrier between phases materializes intermediates, so both credits are
+    intra-phase only; single-claim programs (e.g. vector_add) get neither (a no-op,
+    so the pinned scores are preserved)."""
     out: dict[int, list[Candidate]] = {}
-    produced: dict[int, set[int]] = {}
+    produced: dict[int, set[int]] = {}            # phase -> rids written so far (deforestation)
+    version: dict[int, dict[int, int]] = {}       # phase -> {rid: write count} (value numbering)
+    seen: dict[int, dict[tuple, int]] = {}        # phase -> {compute signature: first claim}
     for phase_id, claim in _flatten(module):
         cost_rid = claim.rd[0] if claim.rd else claim.primary_rid
         resource = module.resource(cost_rid) if cost_rid is not None else None
         pset = produced.setdefault(phase_id, set())
+        ver = version.setdefault(phase_id, {})
+        seenmap = seen.setdefault(phase_id, {})
+        # value-numbered compute signature: same op + same operands AT THE SAME VERSIONS.
+        sig = (claim.op or claim.opcode, tuple((r, ver.get(r, 0)) for r in claim.rd))
+
         cands = candidates_for(claim, h, resource)
-        if pset & set(claim.rd):                         # consumes a just-produced operand
+        if claim.rd and sig in seenmap:                  # CSE: identical value already computed
+            cands = [replace(c, base=c.base.couple(_cse_factor(claim))) for c in cands]
+        elif pset & set(claim.rd):                       # producer->consumer deforestation
             cands = [replace(c, base=c.base.couple(_DEFOREST_FACTOR)) for c in cands]
+
+        if claim.rd:
+            seenmap.setdefault(sig, claim.id)            # first occurrence pays full
+        for r in claim.wr:                               # a write creates a new operand version
+            ver[r] = ver.get(r, 0) + 1
         pset |= set(claim.wr)
         out[claim.id] = cands
     return out
