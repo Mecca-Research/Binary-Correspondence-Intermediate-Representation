@@ -18,10 +18,19 @@
 //   -bcir-rcsp              RCSP / Pareto (per-claim)        (BCIRRcspPass.cpp)
 //   -bcir-rcsp-plan         plan-level accumulated-budget DP (BCIRRcspPlanPass.cpp)
 //
+// registerBCIRPipelines() wires these into declared input/output-level pipelines
+// with verifier checkpoints (so callers stop hand-ordering passes):
+//   bcir-audit       verify -> classify -> cost-model -> plan -> overlap (read-only)
+//   bcir-optimize    classify -> cost-model -> plan        (claims+H -> coupled plan)
+//   bcir-hydrate     classify -> select -> batch -> schedule -> lower  (plan -> StreamPack)
+//   bcir-lower-llvm  verify -> convert-bcir-to-llvm        (-> LLVM dialect)
+//   bcir-aot         verify -> hydrate -> convert-bcir-to-llvm  (the full AOT path)
+//
 //===----------------------------------------------------------------------===//
 
 #include "BCIR/BCIRPasses.h"
 
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
 
 namespace bcir {
@@ -40,6 +49,67 @@ void registerBCIRPasses() {
   ::mlir::registerPass([] { return createBatchPass(); });
   ::mlir::registerPass([] { return createSchedulePass(); });
   ::mlir::registerPass([] { return createLowerToLLVMPass(); });
+}
+
+void registerBCIRPipelines() {
+  using ::mlir::OpPassManager;
+  using ::mlir::PassPipelineRegistration;
+
+  // The GEM hydrate chain (plan -> StreamPack), reused by aot.
+  auto hydrate = [](OpPassManager &pm) {
+    pm.addPass(createClassifyLanesPass());
+    pm.addPass(createSelectRealizationPass());
+    pm.addPass(createBatchPass());
+    pm.addPass(createSchedulePass());
+    pm.addPass(createLowerToLLVMPass());
+  };
+
+  // Read-only analysis + the R1-R16 verifier checkpoint up front: recompute the cost
+  // model, the coupled plan, and the scheduled price (no IR lowering).
+  static PassPipelineRegistration<> audit(
+      "bcir-audit",
+      "Verify (R1-R16) then recompute cost/plan/overlap annotations (read-only).",
+      [](OpPassManager &pm) {
+        pm.addPass(createVerifyPass());
+        pm.addPass(createClassifyLanesPass());
+        pm.addPass(createCostModelPass());
+        pm.addPass(createPlanPass());
+        pm.addPass(createOverlapPass());
+      });
+
+  // claims + capability -> the coupled K_BCIR plan (the optimize pipeline; named
+  // bcir-optimize because -bcir-plan is the single-pass flag).
+  static PassPipelineRegistration<> optimize(
+      "bcir-optimize",
+      "classify -> cost-model -> plan: the coupled K_BCIR plan from first principles.",
+      [](OpPassManager &pm) {
+        pm.addPass(createClassifyLanesPass());
+        pm.addPass(createCostModelPass());
+        pm.addPass(createPlanPass());
+      });
+
+  // declared plan -> hydrated, lane-lowered GEM StreamPack (R12/R14-R16 checked).
+  static PassPipelineRegistration<> hydratePipe(
+      "bcir-hydrate",
+      "classify -> select -> batch -> schedule -> lower: plan -> GEM StreamPack.",
+      hydrate);
+
+  // verify checkpoint -> BCIR compute/barrier lowered to the LLVM dialect.
+  static PassPipelineRegistration<> lowerLLVM(
+      "bcir-lower-llvm", "Verify then lower BCIR compute/barrier to the LLVM dialect.",
+      [](OpPassManager &pm) {
+        pm.addPass(createVerifyPass());
+        pm.addPass(createConvertToLLVMPass());
+      });
+
+  // the full AOT path: verify -> hydrate -> LLVM dialect.
+  static PassPipelineRegistration<> aot(
+      "bcir-aot", "Full AOT: verify -> GEM hydrate -> LLVM dialect.",
+      [hydrate](OpPassManager &pm) {
+        pm.addPass(createVerifyPass());
+        hydrate(pm);
+        pm.addPass(createConvertToLLVMPass());
+      });
 }
 
 }  // namespace bcir

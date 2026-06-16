@@ -16,6 +16,12 @@ executable conformance oracle that must agree with these definitions
 >   build the real dialect (`tools/wsl/build_mlir.sh`); the *pretty* ODS corpus in
 >   `examples/` parses/verifies + FileCheck-round-trips through it
 >   (`tools/wsl/check_ods_examples.sh`).
+> - **Named pipelines (verifier-checkpointed)** — `registerBCIRPipelines` wires the
+>   passes into declared input/output-level pipelines: `bcir-audit` (verify ->
+>   cost/plan/overlap), `bcir-optimize` (claims+H -> coupled plan), `bcir-hydrate`
+>   (plan -> StreamPack), `bcir-lower-llvm`, and `bcir-aot` (verify -> hydrate ->
+>   LLVM). A `bcir.kbcir.theta` op carries the runtime state so `-bcir-plan`/`-overlap`
+>   apply the hot-Theta thermal coupling (`test/passes/theta_hot.mlir`).
 > - **Modular pass library (C++23)** — `bcir-opt` is a real compiler, not a parser.
 >   The passes are one translation unit per group under `lib/passes/`
 >   (`BCIRVerifyPass`, `BCIRPromotePass`, `BCIRConvertToLLVM`, `BCIRGEMPasses`,

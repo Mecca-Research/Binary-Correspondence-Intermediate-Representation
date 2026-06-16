@@ -114,7 +114,9 @@ accuracy, contention, verification`.
 | StreamPack ABI (Phase 7) | `abi.streampack_abi` (v1) | `runtime/c/bcir_streampack.h` |
 | WASM (Phase 7) | `lower.wasm` (clang→wasm + node) | per-target `bcir.target.lower_contract` |
 | stackify (Phase 7) | `lower.stackify` (→ wasm/jvm/cil) | foundation for `bcir.target.lower_contract` encoders |
-| C runtime (Phase 8) | `runtime/c/bcir_runtime.{h,c}` decodes `abi.streampack_abi` | `runtime/c/bcir_streampack.h` |
+| C runtime (Phase 8) | `runtime/c/bcir_runtime.{h,c}` decodes `abi.streampack_abi` | `runtime/c/bcir_streampack.h` (C23: `restrict`/`[[nodiscard]]`/frozen-ABI `static_assert`; fuzzed under libFuzzer+ASan/UBSan via `runtime/c/fuzz_streampack.c`) |
+| named pass pipelines | `bcir.run` CLI stages | **MLIR** `registerBCIRPipelines`: `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm` / `bcir-aot` (verifier-checkpointed) |
+| live state Θ (cost coupling) | `kbcir.cost.Theta` + `weights()` fold | `bcir.kbcir.theta` op (thermal/power/...) — `-bcir-plan`/`-bcir-overlap` apply the multiplicative thermal coupling under hot Θ (matmul hot 1159168; `theta_hot.mlir`) |
 | async tokens (Phase 8) | `gem.async_tokens` (fork/await plan) | `bcir.async.fork` / `bcir.async.await` (`!bcir.token`) |
 | memory model (Phase 8) | `lower.memory_model` (hazard→ordering) | `BCIR_MemOrdering` + barrier `ordering` → `llvm.fence` |
 | per-target codegen (Phase 9) | `codegen.*` (llc → ARM/RISC-V/PTX/eBPF/C) | `bcir.target.lower_contract` (one per target) |

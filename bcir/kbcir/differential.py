@@ -590,6 +590,32 @@ def emit_corpus_mlir() -> str:
 
 _CORPUS_MLIR_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "mlir",
                                  "test", "passes", "gem_corpus.mlir")
+_THETA_MLIR_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "mlir",
+                                "test", "passes", "theta_hot.mlir")
+
+
+def emit_theta_test() -> str:
+    """Emit matmul_tiled under Theta.hot() as a self-checking `-bcir-plan` file -- the
+    hot-Theta plan parity that the kbcir.theta context op enables: the width-16 tiles
+    pay the AVX-512 thermal coupling (x1.25), so the C++ plan reproduces the oracle's
+    hot optimize() (1159168 vs the cool 1015808)."""
+    from ..examples import matmul_tiled
+
+    h = TARGETS["x86_avx512"]
+    th = Theta.hot()
+    score = optimize(matmul_tiled(), h, th, PERF).score
+    body = to_mlir(matmul_tiled(), h, th, PERF, module_suffix="_hot")
+    head = [
+        "// RUN: bcir-opt -bcir-plan %s | FileCheck %s",
+        "//",
+        "// Hot-Theta plan parity -- the bcir.kbcir.theta context op lifts the cool-regime",
+        "// restriction. matmul_tiled emitted under Theta.hot(): the width-16 tiles pay the",
+        "// AVX-512 thermal coupling (x1.25) the policy weights cannot encode, so -bcir-plan",
+        "// reproduces the oracle's hot optimize() score (the cool plan was 1015808).",
+        "// Regenerate: python -m bcir.kbcir.differential --emit-theta.",
+        "",
+    ]
+    return "\n".join(head) + body.rstrip() + f"\n\n// CHECK: kbcir.plan_score = {score}\n"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -599,6 +625,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--emit-corpus", action="store_true",
                    help="(re)write mlir/test/passes/gem_corpus.mlir from the oracle")
+    p.add_argument("--emit-theta", action="store_true",
+                   help="(re)write mlir/test/passes/theta_hot.mlir (hot-Theta plan parity)")
     p.add_argument("--emit", metavar="PROGRAM",
                    help="print the GEM-pipeline MLIR for one program (see examples.PROGRAMS)")
     p.add_argument("--target", default="x86_avx512")
@@ -613,6 +641,12 @@ def main(argv: list[str] | None = None) -> int:
         path = os.path.normpath(_CORPUS_MLIR_PATH)
         with open(path, "w", encoding="utf-8") as f:
             f.write(emit_corpus_mlir())
+        print(f"[differential] wrote {path}")
+        return 0
+    if args.emit_theta:
+        path = os.path.normpath(_THETA_MLIR_PATH)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(emit_theta_test())
         print(f"[differential] wrote {path}")
         return 0
 

@@ -29,11 +29,14 @@ typedef enum bcir_status {
 } bcir_status;
 
 /* zlib-compatible CRC-32 (reflected, poly 0xEDB88320). */
-uint32_t bcir_crc32(const uint8_t *data, size_t len);
+BCIR_NODISCARD uint32_t bcir_crc32(const uint8_t *BCIR_RESTRICT data, size_t len);
 
-/* Validate magic + version + CRC and copy the header out. */
-bcir_status bcir_sp_validate(const uint8_t *data, size_t len,
-                             bcir_streampack_header *hdr);
+/* Validate magic + version + CRC and copy the header out. A trust boundary: every
+ * field is bounds-checked, so any malformed/hostile buffer returns an error status
+ * (never reads out of bounds) -- exercised by runtime/c/fuzz_streampack.c. */
+BCIR_NODISCARD bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data,
+                                            size_t len,
+                                            bcir_streampack_header *BCIR_RESTRICT hdr);
 
 /* A zero-copy view of one lane segment (pointers into the buffer). */
 typedef struct bcir_segment_view {
@@ -55,9 +58,11 @@ uint32_t bcir_seg_write_rid(const bcir_segment_view *seg, uint16_t i);
 /* Per-segment callback; return nonzero to stop the walk early. */
 typedef int (*bcir_seg_fn)(const bcir_segment_view *seg, void *ctx);
 
-/* Validate, then walk every lane segment in order, invoking `fn`. */
-bcir_status bcir_sp_for_each_segment(const uint8_t *data, size_t len,
-                                     bcir_seg_fn fn, void *ctx);
+/* Validate, then walk every lane segment in order, invoking `fn`. Bounds-checked end
+ * to end: a hostile/truncated buffer returns BCIR_ERR_TRUNCATED, never an OOB read. */
+BCIR_NODISCARD bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data,
+                                                    size_t len, bcir_seg_fn fn,
+                                                    void *ctx);
 
 #ifdef __cplusplus
 }

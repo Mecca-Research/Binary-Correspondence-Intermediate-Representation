@@ -6,7 +6,7 @@
 #include "bcir_runtime.h"
 
 /* --- zlib-compatible CRC-32 (bitwise; no table, freestanding) --- */
-uint32_t bcir_crc32(const uint8_t *data, size_t len) {
+uint32_t bcir_crc32(const uint8_t *BCIR_RESTRICT data, size_t len) {
   uint32_t c = 0xFFFFFFFFu;
   for (size_t i = 0; i < len; i++) {
     c ^= data[i];
@@ -16,15 +16,15 @@ uint32_t bcir_crc32(const uint8_t *data, size_t len) {
   return c ^ 0xFFFFFFFFu;
 }
 
-/* --- little-endian readers --- */
-static uint16_t rd16(const uint8_t *p) {
+/* --- little-endian readers (byte-wise; host-endian-independent) --- */
+static uint16_t rd16(const uint8_t *BCIR_RESTRICT p) {
   return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
 }
-static uint32_t rd32(const uint8_t *p) {
+static uint32_t rd32(const uint8_t *BCIR_RESTRICT p) {
   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
          ((uint32_t)p[3] << 24);
 }
-static uint64_t rd64(const uint8_t *p) {
+static uint64_t rd64(const uint8_t *BCIR_RESTRICT p) {
   return (uint64_t)rd32(p) | ((uint64_t)rd32(p + 4) << 32);
 }
 
@@ -80,8 +80,8 @@ uint32_t bcir_seg_write_rid(const bcir_segment_view *seg, uint16_t i) {
   return (i < seg->n_writes) ? rd32(seg->writes + (size_t)i * 4u) : 0u;
 }
 
-bcir_status bcir_sp_validate(const uint8_t *data, size_t len,
-                             bcir_streampack_header *hdr) {
+bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
+                             bcir_streampack_header *BCIR_RESTRICT hdr) {
   if (len < (size_t)BCIR_STREAMPACK_HEADER_SIZE + 4u) return BCIR_ERR_TRUNCATED;
   if (data[0] != 'B' || data[1] != 'S' || data[2] != 'P' || data[3] != 'K')
     return BCIR_ERR_MAGIC;
@@ -108,7 +108,7 @@ bcir_status bcir_sp_validate(const uint8_t *data, size_t len,
   return BCIR_OK;
 }
 
-bcir_status bcir_sp_for_each_segment(const uint8_t *data, size_t len,
+bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data, size_t len,
                                      bcir_seg_fn fn, void *ctx) {
   bcir_streampack_header hdr;
   bcir_status st = bcir_sp_validate(data, len, &hdr);

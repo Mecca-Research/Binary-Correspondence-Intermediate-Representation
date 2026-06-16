@@ -137,28 +137,38 @@ algebra + fusion (`-bcir-cost-model`) → coupled shortest path (`-bcir-plan` =
 `optimize`) → (max,+) overlap (`-bcir-overlap`) → per-claim + plan-level constrained
 search (`-bcir-rcsp`, `-bcir-rcsp-plan`), each bit-exact against the oracle and
 gated by `check_passes.sh` + the differential harness.
-6. **C runtime hardening (C23) + fuzz.** libFuzzer + ASan/UBSan on the StreamPack C
-   decoder and the MLIR parser; `_BitInt`/`#embed` in the runtime.
-7. **Deferred ("do later"):** PMU/RAPL/DVFS real-silicon calibration — the software
+6. ✅ **C runtime hardening (C23) + fuzz. DONE.** The StreamPack C decoder (a trust
+   boundary) gains `restrict` + `[[nodiscard]]` + a frozen-ABI `static_assert` (which
+   caught the header struct being 60 vs the declared 64 bytes), builds clean under
+   C11 + C23, and is fuzzed under **libFuzzer + ASan/UBSan** (`runtime/c/fuzz_streampack.c`,
+   `tools/c/fuzz_streampack.sh`, 500k runs in CI) with a sanitizer smoke over a real
+   pack + byte mutations. `_BitInt`/`#embed` in the emitted kernels is future work.
+7. ✅ **Named pass pipelines + Θ context op. DONE** (see Section 5).
+8. **Deferred ("do later"):** PMU/RAPL/DVFS real-silicon calibration — the software
    path is merged; it needs a bare-metal rig to publish a measured replan win.
 
 ## 5. The immediate next build step
 
-**The optimizer-core port (steps 1–5) is complete** — the entire deterministic
-K_BCIR optimizer (cost algebra, fusion/CSE, the coupled min-plus shortest path, the
-(max,+) overlap, and per-claim + plan-level constrained search) now runs on the MLIR
-rail in C++23, each bit-exact against the Python oracle. The remaining lowering work,
-in priority order:
+**The optimizer-core port (steps 1–5) is complete**, and the post-optimizer lowering
+batch has landed too: ✅ **named pass pipelines** (`bcir-audit` / `bcir-optimize` /
+`bcir-hydrate` / `bcir-lower-llvm` / `bcir-aot`, with verifier checkpoints —
+`registerBCIRPipelines`); ✅ a **Θ context op** (`bcir.kbcir.theta`) that carries the
+runtime state into the IR so `-bcir-plan`/`-bcir-overlap` apply the multiplicative
+thermal coupling — the C++ plan now matches the oracle under **hot** Θ too (matmul
+hot 1159168; `theta_hot.mlir`), not just the cool regime; ✅ **C-runtime hardening
+(C23)** — `restrict` + `[[nodiscard]]` + a frozen-ABI `static_assert` (which caught
+the 60-vs-64-byte header struct shortfall) on the StreamPack decoder, plus a
+**libFuzzer + ASan/UBSan** harness on that trust boundary (`fuzz_streampack.sh`,
+500k runs in CI). The remaining lowering work, in priority order:
 
-1. **Named pass pipelines** (`bcir-plan`, `bcir-hydrate`, `bcir-lower-llvm`,
-   `bcir-aot`, `bcir-audit`) wiring the now-complete passes into declared
-   input/output-level pipelines with verifier checkpoints — stop relying on ad-hoc
-   pass ordering.
-2. **The cost model from a Θ context op** — generalize `_context_factor`'s thermal
-   coupling (today the cool regime) by carrying Θ in the IR, so the C++ plan matches
-   the oracle under hot/mem-bound Θ too.
-3. **C runtime hardening (C23)** — `_BitInt`/`#embed`/`restrict` in the StreamPack C
-   runtime + emitted kernels; libFuzzer + ASan/UBSan on the C/MLIR decoders.
+1. **A target.capability matrix** — emit + test all six TARGETS' capability seeds so
+   `-bcir-plan`/`-overlap`/`-rcsp-plan` reproduce the oracle per-target (today the
+   committed corpus is x86_avx512; the six-target parity is proven on the Python rail).
+2. **More C23 where it pays** — `_BitInt(N)` for the Q-fixed lane arithmetic in the
+   *emitted kernels* (the StreamPack ABI keeps frozen widths), `#embed` for frozen Q8
+   tables baked into the C runtime; extend the fuzz coverage to the ROP/MAP/ETL C paths.
+3. **Native object emission** (the documented decision gate) — one target end-to-end
+   (eBPF or x86-64 scalar) with stop criteria, only if warranted.
 4. **Deferred ("do later"):** PMU/RAPL/DVFS real-silicon calibration — the software
    path is merged; it needs a bare-metal rig to publish a measured replan win.
 

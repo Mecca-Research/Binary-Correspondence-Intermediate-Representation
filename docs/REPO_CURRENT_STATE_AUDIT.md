@@ -117,6 +117,21 @@
 
 ## Changelog
 
+- 2026-06-16: **Post-optimizer lowering batch -- named pipelines, the Theta context op,
+  C-runtime hardening.** (1) `registerBCIRPipelines` adds named, verifier-checkpointed
+  pipelines: `bcir-audit` (verify -> cost/plan/overlap), `bcir-optimize` (claims+H ->
+  coupled plan), `bcir-hydrate` (plan -> StreamPack), `bcir-lower-llvm`, `bcir-aot`
+  (verify -> hydrate -> LLVM). (2) New `bcir.kbcir.theta` op carries the runtime state
+  into the IR; `-bcir-plan`/`-bcir-overlap` now apply the multiplicative thermal
+  coupling, so the C++ plan matches the oracle under hot Theta (matmul hot 1159168,
+  `theta_hot.mlir`) -- the cool-regime restriction is lifted; the cool corpus is
+  unchanged (theta 0). (3) The StreamPack C decoder (a trust boundary) gains `restrict`
+  + `[[nodiscard]]` + a frozen-ABI `static_assert` -- which caught the header struct
+  being 60 bytes vs the declared 64 (reserved[22]->[26]); builds clean under C11 + C23
+  and is fuzzed under libFuzzer + ASan/UBSan (`runtime/c/fuzz_streampack.c`,
+  `tools/c/fuzz_streampack.sh`, 500k runs in CI) with a sanitizer smoke over a real
+  pack + byte mutations. +1 test (drift gate; 510 total). Deferred: real-silicon
+  calibration (needs a rig).
 - 2026-06-16: **Optimizer-core C++ port COMPLETE -- step 5, plan-level RCSP.** New
   `-bcir-rcsp-plan` (`BCIRRcspPlanPass.cpp`) ports `rcsp.optimize_constrained`: the
   accumulated-budget label DP over the fused candidate columns (labels carry score +

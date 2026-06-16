@@ -14,6 +14,22 @@ def BCIR_KBCIRPolicyOp : BCIR_Op<"kbcir.policy", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_KBCIRThetaOp : BCIR_Op<"kbcir.theta", [Symbol]> {
+  let summary = "Live runtime state Theta (0..100 normalized pressures)";
+  // The runtime state the K_BCIR equation conditions on (mirrors bcir/kbcir/cost.py
+  // Theta). The emitter folds Theta into the policy weights for scalarization; this
+  // op additionally carries the raw pressures the *multiplicative* context coupling
+  // needs -- -bcir-plan / -bcir-overlap read `thermal` to apply the AVX-512 downclock
+  // (a wide width>=16 candidate on a hot part, thermal>=60, pays x1.25 heat/current).
+  // Absent (or thermal 0) == the cool regime. Defaulted so existing IR parses.
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       DefaultValuedAttr<I32Attr, "0">:$thermal,
+                       DefaultValuedAttr<I32Attr, "0">:$power,
+                       DefaultValuedAttr<I32Attr, "0">:$mem_pressure,
+                       DefaultValuedAttr<I32Attr, "0">:$contention);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
 def BCIR_KBCIRPlanOp : BCIR_Op<"kbcir.plan", [Symbol, SymbolTable, NoTerminator]> {
   let summary = "K_BCIR candidate-path + selected-plan region";
   let arguments = (ins SymbolNameAttr:$sym_name);

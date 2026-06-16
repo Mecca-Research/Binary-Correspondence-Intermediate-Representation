@@ -128,6 +128,7 @@ struct RcspPlanPass : public PassWrapper<RcspPlanPass, OperationPass<>> {
     std::vector<cm::Column> cols = cm::fusedColumns(root, h, resByName);
     if (cols.empty())
       return;
+    int64_t theta = cm::firstThetaThermal(root);
 
     const int nt = static_cast<int>(trackedDim.size());
     // The label DP (rcsp._expand): one non-dominated label set per column.
@@ -142,8 +143,8 @@ struct RcspPlanPass : public PassWrapper<RcspPlanPass, OperationPass<>> {
         for (size_t pi = 0; pi < prev.size(); ++pi) {
           const Label &p = prev[pi];
           cm::Cost e = cand.cost;
-          cm::applyFactor(e, cm::contextFactor(p.lastReads, p.lastWidth, cols[i].reads,
-                                               cand.width));
+          cm::applyFactor(e, cm::contextFactor(theta, p.lastReads, p.lastWidth,
+                                               cols[i].reads, cand.width));
           SmallVector<int64_t> res(nt);
           bool feasible = true;
           for (int t = 0; t < nt; ++t) {

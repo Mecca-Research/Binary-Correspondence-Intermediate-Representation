@@ -64,15 +64,17 @@ static bool conflict(const Scheduled &a, const Scheduled &b) {
 }
 
 // Serial (min,+) cost of a real in-bin execution chain, re-coupling each step against
-// its actual in-bin predecessor (overlap.py::_chain_cost).
-static int64_t chainCost(ArrayRef<const Scheduled *> chain, ArrayRef<int64_t> w) {
+// its actual in-bin predecessor (overlap.py::_chain_cost). The thermal coupling
+// applies per step (even the first) when hot.
+static int64_t chainCost(ArrayRef<const Scheduled *> chain, ArrayRef<int64_t> w,
+                         int64_t theta) {
   int64_t total = 0;
   const Scheduled *prev = nullptr;
   for (const Scheduled *s : chain) {
     cm::Cost e = s->cand.cost;
-    if (prev)
-      cm::applyFactor(e, cm::contextFactor(prev->reads, prev->cand.width, s->reads,
-                                           s->cand.width));
+    cm::applyFactor(e, prev ? cm::contextFactor(theta, prev->reads, prev->cand.width,
+                                                s->reads, s->cand.width)
+                            : cm::contextFactor(theta, {}, 0, s->reads, s->cand.width));
     total += cm::scalarize(e, w);
     prev = s;
   }
@@ -110,8 +112,9 @@ struct OverlapPass : public PassWrapper<OverlapPass, OperationPass<>> {
     if (cols.empty())
       return;
 
+    int64_t theta = cm::firstThetaThermal(root);
     int64_t serial = 0;
-    SmallVector<int> chosen = cm::planChosen(cols, w, serial);
+    SmallVector<int> chosen = cm::planChosen(cols, w, theta, serial);
     if (chosen.empty())
       return;
 
@@ -169,11 +172,11 @@ struct OverlapPass : public PassWrapper<OverlapPass, OperationPass<>> {
         int64_t waveMax = 0;
         for (auto &bin : bins)
           if (!bin.empty())
-            waveMax = std::max(waveMax, chainCost(bin, w));
+            waveMax = std::max(waveMax, chainCost(bin, w, theta));
         mainTotal += waveMax;
       }
 
-      int64_t tailTotal = chainCost(tail, w);
+      int64_t tailTotal = chainCost(tail, w, theta);
       makespan += std::max(mainTotal, tailTotal);
     }
 

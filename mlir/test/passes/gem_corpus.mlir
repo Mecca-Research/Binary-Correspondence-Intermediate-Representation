@@ -21,6 +21,7 @@ bcir.module @matmul_tiled_avx512 {
     %r3000002 = bcir.resource @r3000002 { rid = 3000002 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
     %r3000003 = bcir.resource @r3000003 { rid = 3000003 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
   }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
   bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r1000000, @r2000000], writes = [@r3000000], count = 16384 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 16384 step 1 }
@@ -99,6 +100,7 @@ bcir.module @scan_avx512 {
     %r8202 = bcir.resource @r8202 { rid = 8202 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
     %r8203 = bcir.resource @r8203 { rid = 8203 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
   }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
   bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @c8300 attributes { claim_id = 8300 : i32, phase = @p0, op = "vector.add", reads = [@r8000, @r8001], writes = [@r8100], count = 4096 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 4096 step 1 }
@@ -153,6 +155,7 @@ bcir.module @multi_histogram_avx512 {
     %r9102 = bcir.resource @r9102 { rid = 9102 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
     %r9200 = bcir.resource @r9200 { rid = 9200 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
   }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
   bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.phase @p1 { id = 1 : i32, deps = [@p0] }
