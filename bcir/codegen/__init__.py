@@ -11,11 +11,12 @@ from .codegen import (
     codegen,
     codegen_all,
     codegen_c,
+    codegen_object_c,
     emit_c_source,
 )
 from .targets import CODEGEN_TARGETS, CodegenTarget
 
 __all__ = [
-    "CodegenResult", "codegen", "codegen_all", "codegen_c", "emit_c_source",
-    "CODEGEN_TARGETS", "CodegenTarget",
+    "CodegenResult", "codegen", "codegen_all", "codegen_c", "codegen_object_c",
+    "emit_c_source", "CODEGEN_TARGETS", "CodegenTarget",
 ]

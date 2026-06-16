@@ -124,3 +124,65 @@ def codegen_all(module: Module, result: RealizationResult) -> dict:
     out = {name: codegen(module, result, name) for name in CODEGEN_TARGETS}
     out["c"] = codegen_c(module, result)
     return out
+
+
+# --- the native-object decision gate: one target end-to-end via the resident cc ----
+#
+# docs/BCIR_NATIVE_OBJECT_GATE.md: BCIR-native instruction selection (a hand-rolled
+# ELF/relocation emitter) is DEFERRED -- the warranted path is to emit the kernel and
+# let the *resident compiler* finish it to a real object. This closes that loop for one
+# target end-to-end (eBPF integer-scalar, or x86-64 scalar) by compiling the emitted C
+# straight to a relocatable object with `clang --target=...`, then proving the bytes are
+# a genuine ELF object for the expected machine. eBPF is integer-only (no FP), so it
+# takes the i32 kernel and `-ffreestanding` (no libc). EM_BPF = 247, EM_X86_64 = 62.
+_OBJECT_TARGETS: dict[str, dict] = {
+    "bpf":    {"triple": "bpf", "e_machine": 247, "elem": "i32", "freestanding": True},
+    "x86_64": {"triple": "x86_64-linux-gnu", "e_machine": 62, "elem": "i32", "freestanding": False},
+}
+
+
+def _elf_machine(obj: bytes) -> int | None:
+    """The ELF e_machine of a relocatable object, or None if it is not ELF."""
+    import struct
+    if len(obj) < 20 or obj[:4] != b"\x7fELF":
+        return None
+    endi = "<" if obj[5] == 1 else ">"     # EI_DATA: 1 = little-endian
+    return struct.unpack_from(endi + "H", obj, 18)[0]
+
+
+def codegen_object_c(module: Module, result: RealizationResult, target: str = "bpf",
+                     fn_name: str = "bcir_kernel", workdir: str | None = None) -> CodegenResult:
+    """Compile the emitted C kernel to a REAL native object for `target` via the
+    resident compiler -- the warranted slice of the native-object decision gate (no
+    BCIR-native isel). Returns the object bytes; `ok` iff it is an ELF object for the
+    target's expected machine (eBPF EM_BPF=247 / x86-64 EM_X86_64=62)."""
+    if target not in _OBJECT_TARGETS:
+        return CodegenResult(False, target, None, f"unknown object target {target!r}")
+    spec = _OBJECT_TARGETS[target]
+    cc = _tool("clang")  # need --target= cross support (clang, not cc/gcc)
+    if cc is None:
+        return CodegenResult(False, target, None, "clang not found (needed for --target)")
+    created = workdir is None
+    workdir = workdir or tempfile.mkdtemp(prefix="bcir-obj-")
+    try:
+        src = os.path.join(workdir, "kernel.c")
+        obj = os.path.join(workdir, "kernel.o")
+        with open(src, "w") as f:
+            f.write(emit_kernel_c(module, result, fn_name, elem=spec["elem"]))
+        cmd = [cc, f"--target={spec['triple']}", "-O2", "-std=c23", "-c", src, "-o", obj]
+        if spec["freestanding"]:
+            cmd.insert(1, "-ffreestanding")
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0 or not os.path.exists(obj):
+            return CodegenResult(False, target, None,
+                                 f"clang --target={spec['triple']} failed:\n{r.stderr.strip()}")
+        data = open(obj, "rb").read()
+        mach = _elf_machine(data)
+        ok = mach == spec["e_machine"]
+        return CodegenResult(ok, target, data,
+                             f"{len(data)}-byte ELF object, e_machine={mach}" if ok
+                             else f"unexpected object (e_machine={mach}, want {spec['e_machine']})")
+    finally:
+        if created:
+            import shutil
+            shutil.rmtree(workdir, ignore_errors=True)
