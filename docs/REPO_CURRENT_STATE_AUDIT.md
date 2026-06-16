@@ -276,3 +276,29 @@
   (intra-claim critical path isn't modeled); **algebraic-identity / const-fold /
   remat** — N/A or speculative on array kernels. Oracle-only (no `mlir/`; the MLIR
   select reproduces 7808 for single-claim vector_add unchanged).
+- 2026-06-16: **Fair BCIR-vs-Clang comparative analysis** (`bcir/clang_compare.py`,
+  `docs/CLANG_COMPARISON.md`). Held the compiler constant (Clang 18) and compared
+  BCIR's planned realization vs the naive one, separate binaries, alternated,
+  median-of-N. Verdict (Xeon @ 2.80 GHz): **MATCH** on simple dense kernels
+  (elementwise 0.98x stream / 1.00x L1 -- BCIR's go-fast loop regresses nothing);
+  **WIN** wherever BCIR exploits program intent Clang's backend lacks -- gather
+  avoidance **6.0x**, reduction order **14.1x**, strided-vs-gather **1.33x**; plus
+  budget feasibility (a correctness win). **LOSE** only where a planning layer is
+  expected to: it cannot out-codegen the backend it delegates to (MATCH is the
+  ceiling on pure compute) and carries a one-time ~58 ms Python import (per-kernel
+  plan+emit is 0.31 ms, ~1% of the 34 ms compile that happens anyway). +4 gated
+  tests (468 total). Confirms the design contract: a cost-governed access-pattern /
+  feasibility planner on top of LLVM, not a faster LLVM.
+- 2026-06-16: **Master lowering roadmap reconciliation** (`docs/BCIR_MASTER_ROADMAP.md`).
+  Reconciled the two pasted planning notes (the original ODS/build-layer bootstrap and
+  the Phase A-H post-roadmap audit) against the current tree: their headline task (the
+  5 C++ GEM passes) and "next law" (R13) are **done**, validation realism is now
+  **measured** (Clang comparison + LLVM 18/19 matrix + 468 tests), so the quoted
+  six-item roadmap stands at ~1 done / 4 partial / 1 deferred. The doc gives the
+  definitive **MLIR / C / C++ placement map** (deterministic core -> C++/MLIR + C
+  runtime; graded organs stay Python and freeze to Q8 -- the two-truth line), a
+  lowering audit (what emits where + gaps: compensated-C variant, real matmul/scan,
+  GPU-C gather, one target end-to-end), a testing audit (gaps: generated differential
+  Python<->MLIR parity, property/metamorphic, fuzzing, R14-R16 as bcir.verify fns), and
+  the reconciled 0.2->1.0 ladder. Center of gravity now: generated adversarial
+  cross-rail equivalence, closing calibration on real silicon, and widening the corpus.

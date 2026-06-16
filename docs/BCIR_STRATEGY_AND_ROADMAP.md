@@ -2,7 +2,9 @@
 
 > Living strategy note. Pairs with the honest snapshot in
 > [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) and the normative
-> status in [`BCIR_LANGREF.md`](BCIR_LANGREF.md) §16 (milestone map). Last
+> status in [`BCIR_LANGREF.md`](BCIR_LANGREF.md) §16 (milestone map). The
+> MLIR/C/C++ **lowering** placement, reconciliation, and audit live in
+> [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md). Last
 > revised 2026-06-14 (Phases 13–26 + the oracle optimization pass + the
 > MLIR-native GEM pipeline passes).
 
