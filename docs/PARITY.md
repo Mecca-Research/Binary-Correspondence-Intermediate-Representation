@@ -36,6 +36,7 @@ accuracy, contention, verification`.
 | cost vector | `kbcir.cost.CostVector` (12-d) | `#bcir.costvec<...>` |
 | policy / weights | `kbcir.weights.Policy` | `bcir.kbcir.policy` |
 | candidate path | `kbcir.realize.Candidate` | `bcir.kbcir.path` |
+| cost algebra (candidate costs) | `kbcir.cost._cost` / `realize.candidates_for` / `_stride_penalty` | **`-bcir-cost-model`** (`BCIRCostModel.cpp`, C++23): recomputes the 12-d candidate costs from `bcir.claim` + `bcir.target.capability` (constexpr tier table + seeded constants); reproduces vec16 @ 7808 / gather @ 528384 / tile @ 126976 from the claim alone (`cost_model.mlir`) |
 | min-plus select | `kbcir.realize.optimize` + `semiring` | `bcir.kbcir.select` (`#bcir.semiring<min_plus>`) |
 | budget B(H,Θ) (RCSP) | `kbcir.rcsp.Budget` / `optimize_constrained` | `bcir.kbcir.budget` + `bcir.kbcir.select` `budget`; **`-bcir-rcsp`** (`BCIRPasses.cpp`, C++23) recomputes the budget-feasible label-DP argmin (reproduces 9472 under the 700 cap) and cross-checks the declared selection |
 | Pareto front | `kbcir.rcsp.pareto_plans` (label dominance) | **`-bcir-rcsp`** computes the front over (score, thermal, power) by label dominance, annotates `kbcir.pareto_size` (the {vec16, vec8} front = 2; scalar dominated) — `mlir/test/passes/rcsp.mlir` |

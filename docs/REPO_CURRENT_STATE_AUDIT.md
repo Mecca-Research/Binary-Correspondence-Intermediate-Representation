@@ -117,6 +117,18 @@
 
 ## Changelog
 
+- 2026-06-16: **The keystone C++ port -- `-bcir-cost-model` (the K_BCIR cost algebra).**
+  `mlir/lib/passes/BCIRCostModel.cpp` recomputes each claim's candidate set + 12-d cost
+  vectors from `bcir.claim` + `bcir.target.capability` (a faithful C++23 port of
+  `cost.py::_cost` / `realize.candidates_for` / `_stride_penalty`, constexpr tier table +
+  seeded constants read off the capability, which gained
+  mem_unit/base_overhead/thermal_density/power_density/per_op_heat/elem_bytes defaulted
+  to the CPU seeds). Reproduces the oracle bit-for-bit -- vec16 @ 7808 (compute 64,
+  memory 3840), gather @ 528384, tile @ 126976 -- from the claim graph alone, so the
+  law no longer trusts emitter-baked path costs. `mlir/test/passes/cost_model.mlir` +
+  a cross-check on `full_vec_add_ct1.mlir`, gated by `check_passes.sh`. Next:
+  fusion/CSE (step 2) then the layered min-plus shortest path (step 3) -- see
+  `BCIR_LOWERING_PLAN.md`.
 - 2026-06-16: **De-monolithed the C++ pass library + the reformulated lowering plan.**
   The 1.5k-line `mlir/lib/BCIRPasses.cpp` is split into one TU per pass group under
   `mlir/lib/passes/` (`BCIRVerifyPass`, `BCIRPromotePass`, `BCIRConvertToLLVM`,

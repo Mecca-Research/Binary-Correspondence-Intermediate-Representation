@@ -67,6 +67,11 @@ else
   "${BO}" ${GEM} "${T}/gem_corpus.mlir" >/dev/null 2>/tmp/pe \
     && echo "  RUN-ONLY gem_corpus.mlir" || { echo "  FAIL gem_corpus.mlir"; cat /tmp/pe; fail=1; }
 fi
+echo "[passes] cost model (the K_BCIR cost algebra recomputed from claim + capability)"
+run_fc -bcir-cost-model "${T}/cost_model.mlir"
+echo "[passes] -bcir-cost-model cross-check on the pretty corpus (reproduces 7808)"
+"${BO}" -bcir-cost-model "${ROOT}/mlir/examples/full_vec_add_ct1.mlir" >/dev/null 2>/tmp/pe \
+  && echo "  PASS cost-model on full_vec_add_ct1.mlir" || { echo "  FAIL cost-model on full_vec_add"; cat /tmp/pe; fail=1; }
 echo "[passes] RCSP / Pareto (the deterministic optimizer core ported to C++)"
 run_fc -bcir-rcsp "${T}/rcsp.mlir"
 echo "[passes] -bcir-rcsp cross-check on the widened corpus (argmin reproduces the oracle)"

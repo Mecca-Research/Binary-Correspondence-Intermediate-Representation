@@ -92,13 +92,17 @@ Not novelty for its own sake — only where determinism, memory, or speed improv
 Each step is gated by the generated differential harness (the ready-made conformance
 net) + FileCheck, and builds on the now-working LLVM 18/19 toolchain.
 
-1. **`-bcir-cost-model` — port the K_BCIR cost algebra to C++ (the keystone).**
-   A pass that, from `bcir.claim` + `bcir.target.capability`, computes each claim's
-   candidate set and 12-d cost vectors (mirroring `cost.py::_cost`,
-   `realize.candidates_for`, `_stride_penalty`, the memory-tier factors) using
-   `constexpr` seeded tables. Annotates the computed `bcir.kbcir.path` costs and
-   cross-checks the emitted ones. *This is what lets the law stop trusting the
-   emitter.* Reproduces 7808 from the claim graph alone.
+1. ✅ **`-bcir-cost-model` — port the K_BCIR cost algebra to C++ (the keystone). DONE.**
+   `mlir/lib/passes/BCIRCostModel.cpp` computes each claim's candidate set + 12-d cost
+   vectors from `bcir.claim` + `bcir.target.capability` (a faithful port of
+   `cost.py::_cost` / `realize.candidates_for` / `_stride_penalty`, with a `constexpr`
+   memory-tier table and the seeded constants read off the capability — extended with
+   `mem_unit`/`base_overhead`/`thermal_density`/`power_density`/`per_op_heat`/`elem_bytes`,
+   all defaulted to the CPU seeds). Annotates `kbcir.cm_candidates`/`cm_min_cost`/
+   `cm_min_score`; reproduces the oracle bit-for-bit across op-classes — vec16 @ **7808**
+   (compute 64, memory 3840), gather @ **528384**, tile @ **126976** — from the claim
+   graph alone. `mlir/test/passes/cost_model.mlir` + a cross-check on
+   `full_vec_add_ct1.mlir`. **The law no longer depends on emitter-baked path costs.**
 2. **Fusion / deforestation / CSE in C++.** With base costs in C++, port
    `fused_candidates` (shared-input fusion, producer→consumer deforestation, CSE
    value-numbering) + `_context_factor` as a cost-adjustment pass; verify the
@@ -118,10 +122,14 @@ net) + FileCheck, and builds on the now-working LLVM 18/19 toolchain.
 
 ## 5. The immediate next build step
 
-**Step 1 — `-bcir-cost-model`.** It is the keystone: every later C++ port
-(fusion/CSE, shortest path, overlap) needs the cost algebra on the MLIR rail, and the
-differential harness + the `bcir.target.capability` op already provide the inputs and
-the conformance net. Deliver it as a new modular TU `mlir/lib/passes/BCIRCostModel.cpp`
-with a `constexpr` seeded-constant table mirroring `cost.py`, a FileCheck test that
-recomputes 7808 from `full_vec_add_ct1.mlir`'s claim alone, and a cross-check over the
-generated corpus — exactly the pattern `-bcir-rcsp` followed.
+**Step 2 — fusion / deforestation / CSE in C++** (`-bcir-cost-model` is done). With
+base costs now computed on the MLIR rail, port `realize.fused_candidates`: process a
+phase's claims in declared order with value-numbering (a write bumps an operand's
+version) and a produced-rid set, applying the **CSE** copy-cost factor when a claim's
+`(op, operand-versions)` repeats and the **deforestation** ×0.75-memory factor when a
+claim consumes a same-phase producer's write. Emit it either as an extension of
+`-bcir-cost-model` (adjusting `cm_min_cost`) or a dedicated `-bcir-fuse`, FileCheck-ed
+on a multi-claim module (a `scan`-shaped chain) where the consumer's recomputed memory
+drops 25% — exactly the discount the emitter bakes today. Then **step 3** (the layered
+min-plus shortest path with `_context_factor`) makes the C++ selection match the
+oracle's `optimize` for *all* modules, not just coupling-free ones.

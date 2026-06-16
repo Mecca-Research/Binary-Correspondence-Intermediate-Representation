@@ -24,6 +24,11 @@ executable conformance oracle that must agree with these definitions
 >   `-bcir-promote-lanes` (GGG→UX), `-convert-bcir-to-llvm` (compute/barrier → LLVM).
 >   Tests in `test/passes/`, gated by `tools/wsl/check_passes.sh`. The C/C++/MLIR
 >   lowering plan is `docs/BCIR_LOWERING_PLAN.md`.
+> - **Cost model (optimizer core, C++23)** — `-bcir-cost-model` (`lib/passes/BCIRCostModel.cpp`)
+>   ports `cost.py`: recomputes each claim's candidate cost vectors from
+>   `bcir.claim` + `bcir.target.capability` (constexpr tier table + seeded constants),
+>   so the law stops trusting emitter-baked path costs. Reproduces vec16 @ 7808 /
+>   gather @ 528384 / tile @ 126976 from the claim alone (`test/passes/cost_model.mlir`).
 > - **RCSP / Pareto (optimizer core, C++23)** — `-bcir-rcsp` (`lib/passes/BCIRRcspPass.cpp`) ports
 >   `bcir/kbcir/rcsp.py`: the budget-feasible min-plus label-DP argmin + the Pareto front
 >   over (score, thermal, power). Reproduces the oracle's 9472 under the 700 cap and the

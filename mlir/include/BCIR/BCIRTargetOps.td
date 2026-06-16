@@ -21,6 +21,16 @@ def BCIR_TargetCapabilityOp : BCIR_Op<"target.capability", [Symbol]> {
     DefaultValuedAttr<I32Attr, "1">:$affinity_domains,
     // Roofline knee: concurrent bandwidth-bound streams the memory sustains.
     DefaultValuedAttr<I32Attr, "4">:$mem_channels,
+    // K_BCIR cost-model seeds (mirror bcir/kbcir/cost.py TargetProfile defaults).
+    // Defaulted to the CPU seeds so existing IR parses unchanged; a GPU/PIM target
+    // overrides them. -bcir-cost-model reads these to recompute candidate costs from
+    // first principles instead of trusting the emitter-baked path costs.
+    DefaultValuedAttr<I32Attr, "1">:$mem_unit,          // bandwidth term / element / stream
+    DefaultValuedAttr<I32Attr, "4">:$base_overhead,     // latency term / access (unit stride)
+    DefaultValuedAttr<I32Attr, "64">:$thermal_density,  // heat ~ vector width
+    DefaultValuedAttr<I32Attr, "64">:$power_density,     // current draw ~ vector width
+    DefaultValuedAttr<I32Attr, "1">:$per_op_heat,
+    DefaultValuedAttr<I32Attr, "4">:$elem_bytes,
     // Cost-table generation (0 = seeded constants; >=1 = a frozen
     // kbcir.calibration table was applied -- L1 freshness).
     DefaultValuedAttr<I64Attr, "0">:$cal_gen);

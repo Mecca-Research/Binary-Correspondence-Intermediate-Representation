@@ -83,6 +83,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRConvertToLLVM.cpp   # compute/barrier -> LLVM dialect
   lib/passes/BCIRGEMPasses.cpp       # classify / batch / schedule / lower
   lib/passes/BCIRSelectPass.cpp      # min-plus selection
+  lib/passes/BCIRCostModel.cpp       # K_BCIR cost algebra (cost.py port)
   lib/passes/BCIRRcspPass.cpp        # RCSP / Pareto (optimizer core)
   DEPENDS
     BCIRAttrsIncGen
