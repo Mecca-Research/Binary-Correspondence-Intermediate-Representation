@@ -29,7 +29,7 @@ executable conformance oracle that must agree with these definitions
 >   `lib/BCIRPasses.cpp` is registration-only. `-bcir-verify` (R1–R16),
 >   `-bcir-promote-lanes` (GGG→UX), `-convert-bcir-to-llvm` (compute/barrier → LLVM).
 >   Tests in `test/passes/`, gated by `tools/wsl/check_passes.sh`. The C/C++/MLIR
->   lowering plan is `docs/BCIR_LOWERING_PLAN.md`.
+>   placement map + roadmap is `docs/BCIR_MASTER_ROADMAP.md`.
 > - **Cost model (optimizer core, C++23)** — `-bcir-cost-model` (`lib/passes/BCIRCostModel.cpp`)
 >   ports `cost.py`: recomputes each claim's candidate cost vectors from
 >   `bcir.claim` + `bcir.target.capability` (constexpr tier table + seeded constants),
@@ -50,7 +50,7 @@ executable conformance oracle that must agree with these definitions
 >   accumulated-budget label DP over the plan. A plan-wide cap narrows one claim where a
 >   per-claim cap cannot — thermal≤2000 → {16,8} @ 17280 (`test/passes/rcsp_plan.mlir`).
 >   **With it the whole deterministic optimizer core is on the MLIR rail** (cost+fusion →
->   shortest path → overlap → constrained search; see `docs/BCIR_LOWERING_PLAN.md`).
+>   shortest path → overlap → constrained search; see `docs/BCIR_MASTER_ROADMAP.md`).
 > - **RCSP / Pareto (optimizer core, C++23)** — `-bcir-rcsp` (`lib/passes/BCIRRcspPass.cpp`) ports
 >   `bcir/kbcir/rcsp.py`: the budget-feasible min-plus label-DP argmin + the Pareto front
 >   over (score, thermal, power). Reproduces the oracle's 9472 under the 700 cap and the
