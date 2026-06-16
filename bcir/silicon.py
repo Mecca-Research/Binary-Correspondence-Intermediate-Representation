@@ -256,6 +256,182 @@ def read_hw_counters(work) -> HwSample | None:
             os.close(fd)
 
 
+# --- RAPL energy + on-die thermal (the real power/heat signals) ------------------
+#
+# These close the calibration loop's *physical* half: RAPL gives the package energy
+# (Joules) consumed by a unit of work, and the thermal zones give the die
+# temperature -- the real drivers of the thermal/power pressure Theta that flips
+# vec16 -> vec8. Both are read-only and degrade to None on a host that does not
+# expose them (most cloud guests hide RAPL; many hide coretemp), so a measured
+# calibration on real silicon lights up exactly the same code path that reports
+# "unavailable" here.
+
+_RAPL_BASE = "/sys/class/powercap"
+_THERMAL_BASE = "/sys/class/thermal"
+
+
+def rapl_available() -> bool:
+    """True iff a readable RAPL package energy counter is exposed."""
+    return _rapl_energy_path() is not None
+
+
+def _rapl_energy_path() -> str | None:
+    """The first readable intel-rapl package `energy_uj` (or None)."""
+    try:
+        for d in sorted(os.listdir(_RAPL_BASE)):
+            if d.startswith("intel-rapl:"):
+                p = f"{_RAPL_BASE}/{d}/energy_uj"
+                if _read(p) is not None:
+                    return p
+    except OSError:
+        pass
+    return None
+
+
+def read_rapl_uj() -> int | None:
+    """Current RAPL package energy counter in microjoules, or None if unreadable.
+    The counter wraps at `max_energy_range_uj`; use `RaplSampler` for deltas."""
+    p = _rapl_energy_path()
+    if p is None:
+        return None
+    v = _read(p)
+    try:
+        return int(v) if v is not None else None
+    except ValueError:
+        return None
+
+
+class RaplSampler:
+    """Measure real package energy consumed across a unit of work (microjoules),
+    handling the counter wraparound at `max_energy_range_uj`. Returns None deltas on
+    a host with no RAPL -- never a fabricated figure."""
+
+    def __init__(self):
+        self._path = _rapl_energy_path()
+        self._max = self._read_max()
+        self._start = self._now()
+
+    def _read_max(self) -> int | None:
+        if self._path is None:
+            return None
+        v = _read(self._path.replace("energy_uj", "max_energy_range_uj"))
+        try:
+            return int(v) if v else None
+        except ValueError:
+            return None
+
+    def _now(self) -> int | None:
+        v = _read(self._path) if self._path else None
+        try:
+            return int(v) if v is not None else None
+        except ValueError:
+            return None
+
+    @property
+    def available(self) -> bool:
+        return self._start is not None
+
+    def lap_uj(self) -> int | None:
+        """Microjoules since the last lap (or construction); None if no RAPL."""
+        now = self._now()
+        if now is None or self._start is None:
+            return None
+        delta = now - self._start
+        if delta < 0 and self._max:                  # the counter wrapped
+            delta += self._max
+        self._start = now
+        return max(0, delta)
+
+
+_CPU_ZONE_TYPES = ("x86_pkg_temp", "coretemp", "cpu", "soc")
+
+
+def read_thermal_millideg() -> int | None:
+    """The CPU/package die temperature in milli-degrees Celsius, or None. Prefers a
+    zone typed as the CPU package (x86_pkg_temp / coretemp / cpu / soc) so a hot but
+    irrelevant zone (battery, wifi, ambient) cannot drive Theta; falls back to the
+    max across all zones only when no CPU zone is typed."""
+    try:
+        zones = [d for d in os.listdir(_THERMAL_BASE) if d.startswith("thermal_zone")]
+    except OSError:
+        return None
+
+    def _temp(z: str) -> int | None:
+        t = _read(f"{_THERMAL_BASE}/{z}/temp")
+        try:
+            return int(t) if t is not None else None
+        except ValueError:
+            return None
+
+    cpu_temps, all_temps = [], []
+    for z in zones:
+        v = _temp(z)
+        if v is None:
+            continue
+        all_temps.append(v)
+        ztype = (_read(f"{_THERMAL_BASE}/{z}/type") or "").lower()
+        if any(tag in ztype for tag in _CPU_ZONE_TYPES):
+            cpu_temps.append(v)
+    pool = cpu_temps or all_temps                 # prefer CPU zones; else any zone
+    return max(pool) if pool else None
+
+
+# Thermal pressure mapping: 40 C (idle) -> 0, 95 C (throttle) -> 100, clamped. The
+# same 0..100 scale Theta.thermal uses, so a measured temperature drives the replan.
+_THERMAL_FLOOR_C = 40
+_THERMAL_CEIL_C = 95
+
+
+def thermal_pressure() -> int | None:
+    """The real die temperature mapped to Theta's 0..100 thermal pressure, or None
+    when no thermal zone is exposed (sandbox)."""
+    milli = read_thermal_millideg()
+    if milli is None:
+        return None
+    c = milli / 1000.0
+    span = _THERMAL_CEIL_C - _THERMAL_FLOOR_C
+    return max(0, min(100, int(round((c - _THERMAL_FLOOR_C) * 100 / span))))
+
+
+def silicon_dna(work, claim_id: int = 0):
+    """Run `work()` once under every real signal the host exposes (PMU cache-misses,
+    RAPL energy, on-die temperature, OS utilization) and assemble a `DataDNA` -- the
+    *measured* telemetry that feeds the calibration loop. Returns (DataDNA,
+    provenance) where `provenance` is the set of signals that were genuinely real
+    (e.g. {"pmu", "rapl", "thermal", "os"}); a signal absent on this host falls back
+    to a derived/zero value and is omitted from the set (honest, never faked)."""
+    from .telemetry import DataDNA
+
+    provenance: set[str] = set()
+    rapl = RaplSampler()
+    sampler = CounterSampler()
+    hw = read_hw_counters(work)                       # runs work() iff a PMU is present
+    if hw is None:
+        work()                                       # no PMU: run once under OS counters
+    else:
+        provenance.add("pmu")
+    c = sampler.lap()
+    energy_uj = rapl.lap_uj()
+    if energy_uj is not None:
+        provenance.add("rapl")
+    if "os" not in provenance:
+        provenance.add("os")
+    therm = thermal_pressure()
+    thermal = therm if therm is not None else 0
+    if therm is not None:
+        provenance.add("thermal")
+    misses = hw.cache_misses if hw else (c.minor_faults + c.major_faults)
+    util = min(100, (c.cpu_ns * 100) // max(1, c.wall_ns))
+    # Voltage axis (reserved): a coarse power proxy from RAPL (uJ over wall-ns ->
+    # milliwatts), clamped to 0..100; 0 when no RAPL.
+    voltage = 0
+    if energy_uj is not None and c.wall_ns > 0:
+        voltage = min(100, (energy_uj * 1000) // max(1, c.wall_ns))
+    dna = DataDNA(segment_id="silicon", claim_id=claim_id, cycles=(hw.cycles if hw else c.cpu_ns),
+                  bytes=0, misses=misses, thermal=thermal, voltage=int(voltage), utilization=util)
+    return dna, provenance
+
+
 # --- the telemetry-ring feed -----------------------------------------------------
 
 def sample_into_ring(ring, claim_id: int, work) -> Counters:
@@ -293,4 +469,6 @@ def summary() -> dict:
         "dvfs_actuatable": fq.actuatable,
         "hw_pmu": perf_counters_available(),
         "os_counters": True,
+        "rapl_energy": rapl_available(),
+        "thermal_zone": read_thermal_millideg() is not None,
     }

@@ -77,6 +77,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--native", action="store_true",
                    help="with --calibrate, use the bare-metal C microbench (real cache "
                         "latency) instead of the conservative interpreter harness")
+    p.add_argument("--silicon", action="store_true",
+                   help="close the loop on REAL silicon signals (PMU + RAPL energy + "
+                        "on-die thermal): build measured telemetry, train+freeze a "
+                        "calibrator, replan, and certify the win (honest about which "
+                        "signals the host exposes; synthetic + win 0 in a sandbox)")
     p.add_argument("--bench", action="store_true",
                    help="measured-evidence rail: time BCIR's selected realization vs the "
                         "scalar baseline (compile + run); reports the measured speedup")
@@ -219,6 +224,19 @@ def main(argv: list[str] | None = None) -> int:
               f"base_overhead={table.base_overhead} measured_thermal={cert.measured_thermal}")
         print(f"  seeded={dict(cert.seeded_widths)} -> calibrated={dict(cert.calibrated_widths)} "
               f"replanned={cert.replanned} win={cert.win} admissible={cert.admissible}")
+
+    if args.silicon:
+        from .kbcir.calibloop import measured_replan
+        from .silicon import summary as silicon_summary
+        sig = silicon_summary()
+        print(f"[silicon] PMU={sig['hw_pmu']} RAPL={sig['rapl_energy']} "
+              f"thermal={sig['thermal_zone']} (real signals drive Theta)")
+        mc = measured_replan(module, h, samples=8)
+        print(f"[silicon] provenance={mc.provenance} measured={mc.measured} "
+              f"samples={mc.samples}")
+        print(f"[silicon] seeded={dict(mc.cert.seeded_widths)} -> "
+              f"calibrated={dict(mc.cert.calibrated_widths)} replanned={mc.replanned} "
+              f"win={mc.win} admissible={mc.cert.admissible}")
 
     if args.bench:
         from .bench import bench_available, compare

@@ -13,7 +13,7 @@
 
 | Fact | Pasted-roadmap assumption | **Now** |
 |---|---|---|
-| Oracle conformance tests | 136 / 303 | **483** (incl. the generated differential campaign) |
+| Oracle conformance tests | 136 / 303 | **509** (incl. the generated differential + verifier + fuzz campaigns) |
 | 5 GEM C++ passes (classify/select/batch/schedule/lower) | *unimplemented* | **all implemented** in `mlir/lib/BCIRPasses.cpp` |
 | Verifier laws | R1–R12, "R13 next" | **R1–R16** (R1–R13 dual-rail; R14 CIM-dispatch, R15 DVFS-clock, R16 allocator-tier as MLIR laws + oracle gates) |
 | LLVM version policy | loose, single-version | **multi-version matrix LLVM 18 + 19, both gating** |
@@ -43,7 +43,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line**: deterministic inte
 |---|---|---|---|
 | Semantic model (registry/claim/phase/resource) | Python `bcir.model` + ODS ops | **MLIR/C++** (ODS is the law) | ODS ✅; C++ accessors used by passes ✅ |
 | Verifier **R1–R13** | Python `bcir.verify` + `-bcir-verify` | **MLIR/C++** (law) + Python (oracle ref) | dual-rail ✅ |
-| Verifier **R14–R16** (CIM / DVFS clock / alloc tier) | `-bcir-lower-to-llvm` + oracle gates (`gem.cim`, `gem.dvfs`, `kbcir.allocator`) | **MLIR/C++** (law) | MLIR ✅; oracle-gate ✅; *no `bcir.verify` fn yet* |
+| Verifier **R14–R16** (CIM / DVFS clock / alloc tier) | `-bcir-lower-to-llvm` + oracle gates (`gem.cim`, `gem.dvfs`, `kbcir.allocator`) + `verify.{verify_cim,verify_dvfs,verify_allocator,verify_smart_lowering}` | **MLIR/C++** (law) + Python (oracle ref) | MLIR ✅; oracle-gate ✅; **`bcir.verify` fns ✅ (dual-rail)** |
 | K_BCIR selection (min-plus scalarization) | Python `realize` + `-bcir-select-realization` | **MLIR/C++** | selection scoring ✅ (reproduces 7808/9472) |
 | K_BCIR **RCSP / Pareto / overlap / fusion / CSE** | Python (`rcsp`, `overlap`, `realize.fused_candidates`) | **MLIR/C++** (deterministic) | **oracle-only** — the next big C++ port after selection |
 | GEM classify / batch / schedule / lower | `-bcir-classify-lanes/-batch/-schedule/-lower-to-llvm` | **MLIR/C++** | ✅ |
@@ -80,8 +80,8 @@ The port boundary is BCIR's own **L0–L3 / two-truth line**: deterministic inte
 **Testing gaps (the `BCIR_Roadmap` Phase B items):**
 1. ✅ **Generated differential Python↔MLIR testing** — `bcir.kbcir.differential`: a structured/adversarial `gen_module` runs both rails (oracle shortest-path vs. independent `law_select` per-claim argmin) and diffs the selected realization / per-claim + total score / budget feasibility / schedule order, **shrinking** mismatches to a minimal witness (`shrink`). `run_campaign` sweeps the six targets × Θ × policy; `test_differential.py` asserts zero divergence over ≥1500 modules; `mlir/test/passes/gem_corpus.mlir` recomputes the widened corpus under real `bcir-opt`. *(This turned "two rails that must agree" into a proof.)*
 2. ✅ **Property / metamorphic tests** — shipped in `test_differential.py`: ID-renaming preserves the score; a tighter budget never raises the capped dimension (and feasibility holds); emit→read (`plan_view`→`law_select`) is lossless; the committed corpus equals a fresh emission (drift gate).
-3. ☐ **Fuzzing of trust boundaries** — ROP/MAP parsers, ETL decoder, MLIR parser, StreamPack C/Python decoders, calibration/telemetry JSON; libFuzzer + ASan/UBSan for C/C++. *(The generated `Module` corpus is now the seed for a structure-aware MLIR fuzz; this is the next testing lever.)*
-4. ☐ **R14–R16 in the Python verifier** — they exist as MLIR laws + oracle gates but not as `bcir.verify` functions; add them for full dual-rail symmetry.
+3. ◑ **Fuzzing of trust boundaries** — ✅ a generator-seeded Python fuzz (`bcir.kbcir.fuzz`) covers the StreamPack codec, the ROP/MAP/ETL front-ends, the calibration JSON, and the MLIR emitter (valid round-trip + graceful malformed rejection). **Remaining:** libFuzzer + ASan/UBSan for the C/C++ decoders (the StreamPack C runtime, the MLIR parser) on the toolchain rail.
+4. ✅ **R14–R16 in the Python verifier** — `verify.{verify_cim,verify_dvfs,verify_allocator,verify_smart_lowering}` mirror the `-bcir-lower-to-llvm` laws (dual-rail symmetry), negative-tested per law; plus a **verifier differential** (`gen_illegal_module` + `run_verifier_campaign`) that fault-injects each law and confirms the verifier catches it.
 5. ☐ **Compile-time / peak-memory regression budgets**; reproducibility checks that rebuild archived plans from frozen inputs.
 
 ## 5. The updated master roadmap (reconciled)
@@ -94,11 +94,12 @@ The `BCIR_Roadmap` Phase A–H structure and the 0.2→1.0 release ladder remain
 - ✅ **Widen the corpus**: real tiled matmul + scan + multi-claim histogram (`examples.CORPUS`), with MLIR parity across the six targets (`gem_corpus.mlir`) — closes quoted #2, #3.
 - ☐ **Named pass pipelines** (`bcir-plan`, `bcir-hydrate`, `bcir-lower-llvm`, `bcir-aot`, `bcir-audit`) with declared input/output levels + verifier checkpoints (stop relying on ad-hoc ordering). *(Now the highest-value MLIR-rail lever: the `to_mlir` emitter gives the named-pipeline inputs for free.)*
 - ☐ **Doc-classification + link CI** (Normative / Current / Historical / Research) + retired-path checker.
-- ☐ **R14–R16 as `bcir.verify` functions** (dual-rail symmetry).
-- ☐ **Verifier differential** — extend the generated harness to *illegal* modules and diff the Python verifier against `-bcir-verify` law-for-law (the natural next use of `gen_module`).
+- ✅ **R14–R16 as `bcir.verify` functions** (dual-rail symmetry) — `verify.{verify_cim,verify_dvfs,verify_allocator}`.
+- ✅ **Verifier differential** — `gen_illegal_module` + `run_verifier_campaign` fault-inject each law and confirm the verifier catches it (the C++ `-bcir-verify` law-for-law diff is the remaining toolchain-rail step).
+- ◑ **Fuzz the trust boundaries** — `bcir.kbcir.fuzz` (Python, generator-seeded); C/C++ libFuzzer + ASan/UBSan remain.
 
 ### Mid-term — "BCIR 0.3: measured adaptive compiler" (the headline)
-- ◑ **Close CT4 on real hardware** (quoted #4): a bare-metal rig with PMU + `intel_pstate=passive` userspace governor + RAPL; train `LinearCalibrator` on real counters; one *measured* (not synthetic) replan win. *This is the single most valuable next result — it converts "optimal-w.r.t.-a-model" into evidence.*
+- ◑ **Close CT4 on real hardware** (quoted #4): the *software path* now lands end-to-end — `bcir.silicon` reads real PMU + **RAPL energy** + **on-die thermal**, `kbcir.calibloop.measured_replan` builds measured telemetry, trains+freezes a `LinearCalibrator`, replans, and certifies the win (`MeasuredReplanCertificate`, provenance-tagged real-vs-synthetic; CLI `bcir.run --silicon`). It degrades honestly in a sandbox (synthetic, win 0) and lights up the identical path on a bare-metal rig. **Remaining:** run it on a rig with `intel_pstate=passive` + RAPL exposed and publish one *measured* (not synthetic) replan win. *This is still the single most valuable next result — it converts "optimal-w.r.t.-a-model" into evidence.*
 - ☐ Durable telemetry (schema registry, backpressure, auth); live broker in CI behind a fake producer (the unit exists).
 - ☐ Fuzzing + ASan/UBSan jobs; compile-time/memory regression budgets.
 

@@ -117,6 +117,21 @@
 
 ## Changelog
 
+- 2026-06-16: **Next-steps phase 2 -- real-silicon calibration path, R14-R16
+  verifier + verifier differential, trust-boundary fuzzing, the overlap conformance
+  net.** (1) `bcir.silicon` reads real RAPL package energy + on-die thermal and
+  `kbcir.calibloop.measured_replan` (`MeasuredReplanCertificate`, CLI
+  `bcir.run --silicon`) closes CT4's software path -- measured telemetry trains a
+  frozen `LinearCalibrator`, replans, certifies the win, provenance-tagged
+  real-vs-synthetic (honest degrade in a sandbox; lights up on a bare-metal rig).
+  (2) `verify.{verify_cim,verify_dvfs,verify_allocator,verify_smart_lowering}` add
+  R14-R16 to the Python verifier (dual-rail with `-bcir-lower-to-llvm`), plus a
+  verifier differential (`gen_illegal_module` + `run_verifier_campaign`). (3)
+  `kbcir.fuzz` fuzzes the trust boundaries seeded by `gen_module`. (4)
+  `kbcir.differential.check_overlap` nets the (max,+) scheduled-price law for the
+  pending C++ optimizer-core port. +26 tests (509 total). The C++ port of
+  RCSP/Pareto/overlap/fusion/CSE and a measured replan on real silicon remain the
+  toolchain/hardware-gated next steps.
 - 2026-06-16: **Generated, adversarial Python↔MLIR differential testing + the
   widened corpus.** `bcir.kbcir.differential` turns the parity contract into a
   proof: a structured/adversarial `gen_module`, an independent `law_select`

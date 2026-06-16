@@ -145,7 +145,12 @@ class FrozenCalibrator:
     def from_json(text: str) -> "FrozenCalibrator":
         import json
         d = json.loads(text)
-        return FrozenCalibrator(tuple(d["w_q8"]), d["gen"], d.get("samples", 0))
+        if not isinstance(d, dict) or "w_q8" not in d or "gen" not in d:
+            raise ValueError("FrozenCalibrator JSON must be an object with w_q8 and gen")
+        w = d["w_q8"]
+        if not isinstance(w, (list, tuple)):
+            raise ValueError("FrozenCalibrator w_q8 must be an array")
+        return FrozenCalibrator(tuple(w), d["gen"], d.get("samples", 0))
 
 
 def train_calibrator(dataset: list[DataDNA], epochs: int = 300, lr: float = 0.2,
