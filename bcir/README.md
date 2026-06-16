@@ -20,7 +20,9 @@ etl/        M5 Event Transduction: events, FSM transducer, parser, binary decode
 frontends/  CT3 front-ends: rop (declarative) + map (macro-assembly) -> claims
 lower/      BCIR-5: legal LLVM IR run AOT (clang) / CT5 JIT (lli) / portable C23 kernel
 telemetry.py CT4 "data DNA" schema + sinks (null/list/file; Kafka-ready)
-verify/     runnable subset of LangRef verifier laws R1-R13
+verify/     runnable LangRef verifier laws R1-R16 (R14-R16: verify_cim/dvfs/allocator)
+silicon.py  real-signal probes: PMU + RAPL energy + on-die thermal + cpufreq (honest)
+kbcir/fuzz.py  fuzz the trust boundaries (StreamPack/ROP/MAP/ETL/JSON/MLIR), gen-seeded
 api.py      the embeddable library facade: plan -> KernelArtifact (C + ABI header + R12 attestation)
 bench.py    the measured-evidence rail: time the selected realization vs the baseline
 examples.py the goal-graph corpus (vector_add, saxpy_strided, histogram_gather,
@@ -48,8 +50,12 @@ python -m bcir.run vector_add --target x86_avx512 --run
 python -m bcir.run multi_histogram --target nvidia_ptx --emit-mlir
 
 # Generated, adversarial Python<->MLIR parity (a proof, not curated pins):
-python -m bcir.kbcir.differential -n 5000        # campaign across the six targets
+python -m bcir.kbcir.differential -n 5000        # campaign across the six targets + verifier diff
 python -m bcir.kbcir.differential --emit-corpus  # (re)freeze mlir/test/passes/gem_corpus.mlir
+python -m bcir.kbcir.fuzz -n 4000                # fuzz the trust boundaries (gen-seeded)
+
+# Close the calibration loop on real silicon (PMU + RAPL + thermal; honest in a sandbox):
+python -m bcir.run vector_add --silicon
 
 # Tests (no pytest required; also works under `python -m pytest bcir/tests`):
 python -m bcir.tests.run_all

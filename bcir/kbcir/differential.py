@@ -182,6 +182,31 @@ def check_plan(module: Module, pv: PlanView, oracle: RealizationResult,
     return ms
 
 
+def check_overlap(module: Module, h, theta: Theta, oracle: RealizationResult,
+                  policy: Policy = PERF) -> list[Mismatch]:
+    """The (max,+) scheduled-price law -- the conformance net for the deterministic
+    optimizer core's *overlap* piece, the next slice to port to C++/MLIR. The oracle
+    `gem.overlap.price_scheduled` must satisfy the same R9 invariant the MLIR
+    VerifyPass enforces on `bcir.kbcir.scheduled_price`: makespan >= 0, the serial
+    bound equals the plan score, and makespan + overlap_gain == serial (so the
+    makespan never exceeds the serial sum -- overlap only ever helps)."""
+    from ..gem.overlap import price_scheduled
+
+    sp = price_scheduled(module, oracle, h, theta, policy)
+    ms: list[Mismatch] = []
+    if sp.makespan < 0 or sp.makespan + sp.overlap_gain != sp.serial:
+        ms.append(Mismatch("overlap", 0,
+                           f"inconsistent scheduled price (makespan {sp.makespan} + gain "
+                           f"{sp.overlap_gain} != serial {sp.serial})"))
+    if sp.serial != oracle.score:
+        ms.append(Mismatch("overlap", 0,
+                           f"serial bound {sp.serial} != plan score {oracle.score}"))
+    if sp.makespan > sp.serial:
+        ms.append(Mismatch("overlap", 0,
+                           f"makespan {sp.makespan} exceeds serial {sp.serial}"))
+    return ms
+
+
 def check_module(module: Module, target: str = "x86_avx512", theta: str = "cool",
                  policy: str = "latency") -> CheckResult:
     """Plan `module` on both rails and diff them. The single-call entry point."""
@@ -191,6 +216,7 @@ def check_module(module: Module, target: str = "x86_avx512", theta: str = "cool"
     oracle = optimize(module, h, th, pol)
     pv = plan_view(module, h, th, pol, oracle)
     ms = check_plan(module, pv, oracle)
+    ms += check_overlap(module, h, th, oracle, pol)
     return CheckResult(module=module.name, target=target, theta=theta, policy=policy,
                        n_claims=len(pv.claims), score=oracle.score, mismatches=ms)
 
@@ -342,6 +368,64 @@ def m_count(pool: _RidPool, rid: int) -> int:
     return r.count if r is not None else -1
 
 
+# --- verifier differential: generated illegal modules ----------------------------
+#
+# The plan-parity campaign diffs the optimizer rails on *legal* modules. This is its
+# counterpart for the verifier: generate modules with exactly one injected law
+# violation and confirm the Python verifier (the conformance oracle) flags that law.
+# It is the "illegal modules" testing lever (BCIR_Roadmap Phase B.3) -- fault
+# injection seeded off the same generator -- and the seed corpus for a future
+# structure-aware MLIR `-bcir-verify` fuzz once the toolchain is in the loop.
+
+def _verifier_base(rng: random.Random) -> Module:
+    """A small, deterministically-clean single-claim module to inject faults into
+    (gen_module would risk incidental diagnostics; this base verifies empty)."""
+    n = rng.choice(_SAFE_COUNTS)
+    m = Module(name=f"vbase{rng.randrange(1 << 24):06x}")
+    for rid in (1, 2, 3):
+        m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,)))
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[
+        Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+              count=n, rd=(1, 2), wr=(3,), op="vector.add", domain=Domain.RAM)]))
+    return m
+
+
+def _inject(m: Module, mut) -> Module:
+    c = m.phases[0].claims[0]
+    mut(m, c)
+    return m
+
+
+# law -> a one-line mutation that makes the base illegal for exactly that law.
+_INJECTORS = {
+    "R2": lambda m, c: setattr(c, "rd", (1, 999)),                 # dangling resource ref
+    "R3": lambda m, c: setattr(c, "domain", Domain.HBM),          # domain not backed by any touched resource
+    "R5": lambda m, c: (setattr(c, "opcode", Opcode.ATOMIC_ADD),  # atomic opcode + unique hazard
+                        setattr(c, "hazard", "unique")),
+    "R6": lambda m, c: setattr(c, "lane", Lane.T),                # lane illegal for UNIT stride
+    "R7": lambda m, c: setattr(c, "count", c.count + 1_000_000),  # affine read/write overruns the resource
+}
+
+
+def gen_illegal_module(rng: random.Random) -> tuple[Module, str]:
+    """Return (module, expected_law): a clean base with exactly one injected law
+    violation. The Python verifier must report `expected_law`."""
+    law = rng.choice(sorted(_INJECTORS))
+    return _inject(_verifier_base(rng), _INJECTORS[law]), law
+
+
+def check_verifier(module: Module, expected_law: str) -> list[Mismatch]:
+    """Diff the verifier against the injected fault: the expected law must fire, and
+    a module with no injected fault must verify clean (checked by the caller)."""
+    from ..verify import verify
+
+    laws = {d.law for d in verify(module)}
+    if expected_law not in laws:
+        return [Mismatch("verify", 0,
+                         f"verifier missed injected {expected_law} (reported {sorted(laws)})")]
+    return []
+
+
 # --- the shrinker ---------------------------------------------------------------
 
 def shrink(module: Module, fails, max_passes: int = 40) -> Module:
@@ -457,6 +541,22 @@ def run_campaign(n: int = 200, seed: int = 0, targets=None, thetas=None,
     return rep
 
 
+def run_verifier_campaign(n: int = 200, seed: int = 0) -> list[Mismatch]:
+    """Generate `n` illegal modules (one injected law each) and confirm the verifier
+    flags each; also confirm the un-mutated base verifies clean. Returns the list of
+    misses (empty == the verifier caught every injected fault)."""
+    from ..verify import verify
+
+    rng = random.Random(seed)
+    misses: list[Mismatch] = []
+    for _ in range(n):
+        if verify(_verifier_base(rng)):                  # the base must be clean
+            misses.append(Mismatch("verify", 0, "verifier flagged a clean base module"))
+        module, law = gen_illegal_module(rng)
+        misses.extend(check_verifier(module, law))
+    return misses
+
+
 # --- corpus .mlir emission (the committed cross-rail artifact) --------------------
 
 def emit_corpus_mlir() -> str:
@@ -521,7 +621,11 @@ def main(argv: list[str] | None = None) -> int:
     for r in rep.bugs[:10]:
         print(f"  BUG {r.module} {r.target}/{r.theta}/{r.policy}: "
               f"{[ (m.kind, m.claim_id, m.detail) for m in r.bugs ]}")
-    return 1 if rep.bugs else 0
+    vmiss = run_verifier_campaign(n=max(50, args.n // 4), seed=args.seed)
+    print(f"verifier differential: {len(vmiss)} miss(es)")
+    for mm in vmiss[:10]:
+        print(f"  MISS {mm.detail}")
+    return 1 if (rep.bugs or vmiss) else 0
 
 
 if __name__ == "__main__":

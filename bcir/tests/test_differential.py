@@ -21,12 +21,18 @@ from bcir.kbcir.differential import (
     _CORPUS_MLIR_PATH,
     check_budget,
     check_module,
+    check_overlap,
+    check_verifier,
     emit_corpus_mlir,
+    gen_illegal_module,
     gen_module,
     law_select,
     run_campaign,
+    run_verifier_campaign,
     shrink,
 )
+from bcir.gem.overlap import price_scheduled
+from bcir.kbcir.realize import optimize as _optimize
 from bcir.kbcir.rcsp import Budget, feasible, optimize_constrained, plan_resources
 from bcir.kbcir.weights import PERF
 from bcir.lower.mlir import plan_view, to_mlir
@@ -194,6 +200,47 @@ def test_reparse_roundtrip_preserves_the_plan():
         t = rng.choice(list(TARGETS))
         res = check_module(m, target=t)
         assert res.ok, res.mismatches
+
+
+# --- verifier differential (illegal modules) + the overlap law net ----------------
+
+def test_verifier_catches_every_injected_law():
+    # generated illegal modules (one injected law each): the verifier must flag it,
+    # and the un-mutated base must verify clean.
+    assert run_verifier_campaign(n=2000, seed=20240601) == []
+
+
+def test_each_injector_is_caught_and_isolated():
+    from bcir.verify import verify
+    rng = random.Random(13)
+    seen = set()
+    for _ in range(120):
+        m, law = gen_illegal_module(rng)
+        laws = {d.law for d in verify(m)}
+        assert law in laws, (law, laws)
+        seen.add(law)
+    assert seen == {"R2", "R3", "R5", "R6", "R7"}        # every injector exercised
+
+
+def test_check_verifier_flags_a_missed_law():
+    # a base with no fault has no expected law to find -> check_verifier reports the miss.
+    m = gen_module(random.Random(1))
+    assert check_verifier(m, "R7")                        # R7 not present -> a miss is reported
+
+
+def test_overlap_law_holds_across_generated_modules():
+    # the (max,+) scheduled price is R9-consistent (makespan + gain == serial,
+    # 0 <= makespan <= serial == score) on every generated module -- the conformance
+    # net for the C++ overlap port.
+    rng = random.Random(77)
+    for _ in range(150):
+        m = gen_module(rng)
+        h = TARGETS[rng.choice(list(TARGETS))]
+        r = _optimize(m, h, Theta.cool(), PERF)
+        assert check_overlap(m, h, Theta.cool(), r, PERF) == []
+        sp = price_scheduled(m, r, h, Theta.cool(), PERF)
+        assert sp.makespan + sp.overlap_gain == sp.serial == r.score
+        assert 0 <= sp.makespan <= sp.serial
 
 
 # --- the emitter: well-formed IR + committed-corpus drift gate --------------------

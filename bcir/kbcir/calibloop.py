@@ -31,7 +31,6 @@ import json
 from dataclasses import asdict, dataclass
 
 from ..model import Module
-from ..telemetry import DataDNA
 from .calibrate import EwmaCalibrator
 from .cost import HProfile, Theta
 from .microbench import CalibratedProfile, calibrate_profile, reference_table
@@ -109,6 +108,8 @@ class CalibrationCertificate:
     @staticmethod
     def from_json(text: str) -> "CalibrationCertificate":
         d = json.loads(text)
+        if not isinstance(d, dict):
+            raise ValueError("CalibrationCertificate JSON must be an object")
         return CalibrationCertificate(
             target=d["target"], cal_gen=d["cal_gen"], provenance=d["provenance"],
             ratios=tuple(d["ratios"]), measured_thermal=d["measured_thermal"],
@@ -147,6 +148,82 @@ def close_loop(module: Module, h: HProfile, *, table: CalibratedProfile = None,
         seeded_widths=_widths(seeded), calibrated_widths=_widths(calibrated),
         stale_cost=int(stale if stale is not None else calibrated.score),
         calibrated_cost=int(calibrated.score))
+
+
+@dataclass(frozen=True)
+class MeasuredReplanCertificate:
+    """A `CalibrationCertificate` plus the *provenance of the telemetry* it closed
+    on: which physical signals (PMU / RAPL / thermal / OS) were genuinely measured,
+    or `("synthetic",)` when the host exposes none (a sandbox). `measured` is True
+    only when at least one real silicon signal drove the replan -- so a "measured
+    replan win" is never claimed from fabricated telemetry."""
+
+    cert: CalibrationCertificate
+    provenance: tuple                  # sorted signal tags, or ("synthetic",)
+    samples: int
+
+    @property
+    def measured(self) -> bool:
+        return self.provenance not in ((), ("synthetic",))
+
+    @property
+    def win(self) -> int:
+        return self.cert.win
+
+    @property
+    def replanned(self) -> bool:
+        return self.cert.replanned
+
+    def to_json(self) -> str:
+        import json
+        return json.dumps({"provenance": list(self.provenance), "samples": self.samples,
+                           "measured": self.measured, "certificate": json.loads(self.cert.to_json())},
+                          indent=2, sort_keys=True)
+
+
+def measured_replan(module: Module, h: HProfile, *, work=None, samples: int = 8,
+                    default_theta: Theta = None, policy: Policy = PERF,
+                    cal_gen: int = 1):
+    """Close the calibration loop on **real silicon signals**: sample the host's PMU
+    / RAPL / thermal counters around `work` `samples` times (a memory-streaming probe
+    by default), train + freeze a `LinearCalibrator` on that measured telemetry, then
+    compare the shipped (cool) plan against the recalibrated optimum and certify the
+    replan win. Returns a `MeasuredReplanCertificate` whose `provenance` records the
+    real signals used; on a host that exposes none it degrades to a single nominal
+    sample tagged `("synthetic",)` -- honest, never a faked measurement. The frozen
+    table is microbenched once (the deterministic Q8 artifact); only the Theta-side
+    telemetry comes from the live signals."""
+    from ..silicon import silicon_dna
+    from .calibrate import train_calibrator
+    from .microbench import calibrate_profile
+
+    default_theta = default_theta if default_theta is not None else Theta.cool()
+    n = max(1, module.phases[0].claims[0].count) if module.phases and module.phases[0].claims else 1 << 16
+
+    def _probe():
+        # a memory-streaming unit of work sized to the kernel -- the real bandwidth
+        # signal the cost model prices against (sum over a freshly-touched buffer).
+        buf = bytearray(min(1 << 20, max(4096, n)))
+        s = 0
+        for i in range(0, len(buf), 64):
+            s += buf[i]
+        return s
+
+    probe = work if work is not None else _probe
+    events = []
+    provenance: set[str] = set()
+    for _ in range(max(1, samples)):
+        dna, prov = silicon_dna(probe, claim_id=0)
+        events.append(dna)
+        provenance |= prov
+
+    real = provenance - {"os"}                          # OS counters alone are not "silicon"
+    tags = tuple(sorted(provenance)) if real else ("synthetic",)
+    table = calibrate_profile(h, n=min(n, 1 << 16), repeats=3, cal_gen=cal_gen)
+    cert = close_loop(module, h, table=table, events=events, default_theta=default_theta,
+                      calibrator=(train_calibrator(events, gen=cal_gen) if real else None),
+                      policy=policy)
+    return MeasuredReplanCertificate(cert=cert, provenance=tags, samples=len(events))
 
 
 def measure_and_close(module: Module, h: HProfile, *, events=(), n: int = 1 << 16,

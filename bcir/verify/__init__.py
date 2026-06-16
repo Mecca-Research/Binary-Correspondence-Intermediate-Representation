@@ -8,6 +8,7 @@ artifacts of the correspondence chain, one entry point per artifact:
     verify_pack(module, pack)            R10-R11 GEM stream laws
     verify_lowering(module, result, ll)  R12    lowering-contract law
     verify_provenance(portfolio, ...)    R13    policy/table provenance law
+    verify_smart_lowering(module, ...)   R14-16 CIM dispatch / DVFS clock / alloc tier
     verify_all(...)                      the whole chain
 
 Mirrored by the MLIR `-bcir-verify` pass (docs/PARITY.md): the structurally
@@ -685,6 +686,111 @@ def verify_calibration(cert) -> list[Diagnostic]:
             f"{cert.stale_cost} < recalibrated {cert.calibrated_cost}); the "
             f"recalibrated plan is not optimal under the measured model",
         ))
+    return diags
+
+
+# --- R14-R16: the smart-lowering laws (dual-rail with -bcir-lower-to-llvm) --------
+#
+# These three already exist as MLIR laws + oracle *gates* (gem.cim / gem.dvfs /
+# kbcir.allocator); the functions below add them to the Python verifier so the laws
+# are symmetric on both rails (docs/PARITY.md, R14-R16). Each mirrors exactly the
+# structural check `mlir/lib/BCIRPasses.cpp` (LowerToLLVMPass) performs.
+
+# R16 on-chip capacity caps -- the static SRAM budgets the MLIR law uses
+# (BCIRPasses.cpp): a placement into L1 must fit 64 KiB, into L2 4 MiB. L3/DRAM/HBM
+# carry no static cap.
+_L1_CAP_BYTES = 64 * 1024
+_L2_CAP_BYTES = 4 * 1024 * 1024
+# R15 legal DVFS clock range (Q8; 256 == nominal x1.0): 0.25x .. 2x.
+_CLOCK_MIN_Q8 = 64
+_CLOCK_MAX_Q8 = 512
+_CLOCK_NOMINAL_Q8 = 256
+
+
+def verify_cim(pack) -> list[Diagnostic]:
+    """R14 (CIM/PIM dispatch legality): a StreamPack segment dispatched to
+    processing-in-memory must be a reduction -- PIM does element-local reduce work,
+    not general SIMD. Mirrors the MLIR `-bcir-lower-to-llvm` R14 law
+    (`dispatch="pim"` legal only on a `reduce.*` op) and the `gem.cim` gate.
+    `pack` is a `gem.streampack.StreamPack` (duck-typed)."""
+    diags: list[Diagnostic] = []
+    for seg in pack.segments:
+        if getattr(seg, "dispatch", "core") == "pim" and not seg.opcode.startswith("reduce."):
+            diags.append(Diagnostic(
+                "R14",
+                f"segment {seg.name}: pim dispatch illegal for non-reduction op "
+                f"{seg.opcode!r} (claim {seg.claim_id})",
+            ))
+    return diags
+
+
+def verify_dvfs(plan) -> list[Diagnostic]:
+    """R15 (DVFS clock legality): every per-phase clock is a legal Q8 step in
+    [64, 512] (0.25x..2x), and a memory-bound phase must not overclock -- more core
+    frequency cannot speed bandwidth-bound work. Mirrors the MLIR
+    `-bcir-lower-to-llvm` R15 law (clock_q8 in [64,512]; a pim/memory-bound segment
+    must not overclock) and the `gem.dvfs` gate. `plan` is a `gem.dvfs.DVFSPlan`
+    (duck-typed: `.decisions` with `phase_id`, `clock_q8`, `klass`)."""
+    diags: list[Diagnostic] = []
+    for d in plan.decisions:
+        if not (_CLOCK_MIN_Q8 <= d.clock_q8 <= _CLOCK_MAX_Q8):
+            diags.append(Diagnostic(
+                "R15",
+                f"phase {d.phase_id}: clock_q8 {d.clock_q8} out of legal range "
+                f"[{_CLOCK_MIN_Q8}, {_CLOCK_MAX_Q8}]",
+            ))
+        elif d.klass == "memory" and d.clock_q8 > _CLOCK_NOMINAL_Q8:
+            diags.append(Diagnostic(
+                "R15",
+                f"phase {d.phase_id}: memory-bound phase must not overclock "
+                f"(clock_q8 {d.clock_q8} > {_CLOCK_NOMINAL_Q8})",
+            ))
+    return diags
+
+
+def verify_allocator(module: Module, placement) -> list[Diagnostic]:
+    """R16 (allocator placement legality): an on-chip placement must fit -- a
+    resource placed in L1 must be <= 64 KiB, in L2 <= 4 MiB (static size =
+    count * elem_bytes). The planner may not promote a tensor into an SRAM tier it
+    cannot fit. Mirrors the MLIR `-bcir-lower-to-llvm` R16 law and the
+    `kbcir.allocator` capacity gate. `placement` is a `kbcir.allocator.Placement`
+    (duck-typed: `.tiers` maps rid -> MemTier); L3/DRAM/HBM carry no cap."""
+    from ..kbcir.cost import MemTier
+
+    caps = {MemTier.L1: _L1_CAP_BYTES, MemTier.L2: _L2_CAP_BYTES}
+    diags: list[Diagnostic] = []
+    for rid, tier in placement.tiers.items():
+        cap = caps.get(tier)
+        if cap is None:
+            continue
+        res = module.resource(rid)
+        if res is None or not res.shape:
+            continue  # dynamic/unknown extent: not statically checkable
+        # Mirror the MLIR law EXACTLY: BCIRPasses.cpp computes product(shape) * 4
+        # (the ResourceOp carries no elem_bytes attr, so the law assumes a 4-byte
+        # element). Using 4 here keeps the two rails in lock-step at the cap boundary.
+        nbytes = res.count * 4
+        if nbytes > cap:
+            diags.append(Diagnostic(
+                "R16",
+                f"placement {tier.name} does not fit RID {rid} "
+                f"({nbytes} B > {cap} B)",
+            ))
+    return diags
+
+
+def verify_smart_lowering(module: Module, pack=None, dvfs_plan=None,
+                          placement=None) -> list[Diagnostic]:
+    """Run the smart-lowering laws R14-R16 over whichever artifacts are provided
+    (CIM StreamPack, DVFS plan, allocator placement) -- the dual-rail counterpart
+    to the MLIR `-bcir-lower-to-llvm` R14/R15/R16 checks."""
+    diags: list[Diagnostic] = []
+    if pack is not None:
+        diags += verify_cim(pack)
+    if dvfs_plan is not None:
+        diags += verify_dvfs(dvfs_plan)
+    if placement is not None:
+        diags += verify_allocator(module, placement)
     return diags
 
 
