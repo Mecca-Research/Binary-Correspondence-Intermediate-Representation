@@ -452,6 +452,109 @@ def emit_reduce_c(module: Module, result: RealizationResult, fn_name: str = "bci
     )
 
 
+def emit_compensated_reduce_c(fn_name: str = "bcir_reduce_comp") -> str:
+    """Emit a **compensated** Q8 reduction kernel (`precision="compensated"`) -- the
+    C lowering of `kbcir.precision.compensated_reduce_q8`. A Q8 multiply-accumulate
+    `acc = (sum_i T[i]*weight) >> 8` with a *residual carry*: the truncated low 8 bits of
+    each term are carried forward (the integer Kahan/TwoSum analog), so the loop invariant
+    `acc*256 + resid == sum(T[i]*weight so far)` holds and the result is **bit-identical to
+    the int64-exact reduction** -- with no wide final accumulator. The naive per-term-
+    truncating form (`emit_reduce_c`) drifts below it by up to `n` ULP.
+
+    Determinism note: requires arithmetic (floor) right shift on signed ints -- the C23
+    semantics, and universal on real targets -- so `full >> 8` matches the oracle's `>>`."""
+    return (
+        f"/* BCIR -> compensated Q8 reduction (precision=\"compensated\"; residual-carry MAC). "
+        f"acc*256 + resid == sum(T[i]*weight) so far -> bit-identical to the int64-exact "
+        f"reduction (vs naive per-term truncation, which drifts up to n ULP). */\n"
+        "#include <stddef.h>\n#include <stdint.h>\n"
+        '_Static_assert((-256 >> 8) == -1, "BCIR compensated reduction needs arithmetic '
+        '(floor) signed right shift");\n'
+        f"int32_t {fn_name}(const int32_t *restrict T, int32_t weight, size_t n) {{\n"
+        f"  int32_t acc = 0, resid = 0;   /* resid is the carried low 8 bits, in [0, 255] */\n"
+        f"  for (size_t i = 0; i < n; ++i) {{\n"
+        f"    int64_t full = (int64_t)T[i] * (int64_t)weight + resid;\n"
+        f"    acc += (int32_t)(full >> 8);\n"
+        f"    resid = (int32_t)(full & 0xFF);\n"
+        f"  }}\n"
+        f"  return acc;\n"
+        f"}}\n"
+    )
+
+
+def emit_compensated_selfcheck_c(fn_name: str = "bcir_reduce_comp", n: int = 1000) -> str:
+    """Wrap the compensated kernel with a self-checking `main`: it computes the
+    compensated, naive, and int64-exact reductions over the same Q8 data and asserts the
+    compensated result is **bit-identical to exact**, the naive form **drifts** below it
+    (demonstrating the win), and the drift never exceeds the `n`-ULP bound the accuracy
+    contract relies on. The inputs (weight < 1.0 in Q8) guarantee per-term truncation, so
+    the naive accumulator visibly loses precision."""
+    kernel = emit_compensated_reduce_c(fn_name)
+    return (
+        "#include <stddef.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n\n"
+        + kernel
+        + f"""
+static int64_t naive(const int32_t *T, int32_t w, size_t n) {{
+  int64_t acc = 0;                          /* per-term truncation: acc += (T[i]*w) >> 8 */
+  for (size_t i = 0; i < n; ++i) acc += ((int64_t)T[i] * w) >> 8;
+  return acc;
+}}
+static int64_t exact(const int32_t *T, int32_t w, size_t n) {{
+  int64_t s = 0;                            /* full width, shift once at the end */
+  for (size_t i = 0; i < n; ++i) s += (int64_t)T[i] * w;
+  return s >> 8;
+}}
+
+static int check(size_t n) {{
+  int32_t *T = malloc(n * sizeof *T);
+  if (!T) return 2;
+  for (size_t i = 0; i < n; ++i) T[i] = (int32_t)(1 + (i % 5));   /* small Q8 values */
+  const int32_t w = 200;                    /* 0.78 in Q8 -> every term truncates */
+  int64_t comp = {fn_name}(T, w, n), nv = naive(T, w, n), ex = exact(T, w, n);
+  free(T);
+  if (comp != ex) {{ printf("FAIL n=%zu comp=%lld exact=%lld\\n", n, (long long)comp, (long long)ex); return 1; }}
+  if (nv > ex) {{ printf("FAIL n=%zu naive=%lld > exact=%lld\\n", n, (long long)nv, (long long)ex); return 1; }}
+  if (ex - nv > (int64_t)n) {{ printf("FAIL n=%zu drift=%lld > n\\n", n, (long long)(ex - nv)); return 1; }}
+  return (ex - nv > 0) ? 0 : 3;             /* the naive form must visibly drift */
+}}
+
+int main(void) {{
+  if (check({n}u)) return 1;
+  if (check({n}u + 7u)) return 1;
+  puts("OK {fn_name}");
+  return 0;
+}}
+"""
+    )
+
+
+def compile_and_run_compensated_c(fn_name: str = "bcir_reduce_comp", n: int = 1000,
+                                  std: str = "c23", workdir: str | None = None) -> tuple[bool, str]:
+    """Emit the compensated-reduction self-check, compile under `-std=<std>`, run, and
+    confirm it printed OK (compensated == exact, naive drifts within the n-ULP bound)."""
+    cc = _which("clang") or _which("cc") or _which("gcc")
+    if cc is None:
+        return False, "no C compiler on PATH"
+    created = workdir is None
+    workdir = workdir or tempfile.mkdtemp(prefix="bcir-comp-")
+    try:
+        src = os.path.join(workdir, "comp_check.c")
+        exe = os.path.join(workdir, "cprog")
+        with open(src, "w") as f:
+            f.write(emit_compensated_selfcheck_c(fn_name, n))
+        build = subprocess.run([cc, f"-std={std}", "-O2", "-Wall", "-Wextra", src, "-o", exe],
+                               capture_output=True, text=True)
+        if build.returncode != 0:
+            return False, "compensated build failed:\n" + build.stdout + build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        ok = run.returncode == 0 and "OK" in run.stdout
+        return ok, run.stdout + run.stderr
+    finally:
+        if created:
+            import shutil
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
 def find_strided(module: Module, result: RealizationResult) -> tuple:
     """Return (claim, candidate) for the selected STRIDED claim (a strided-vs-gather
     choice -- the cost model picks the direct strided realization over GGG)."""

@@ -94,6 +94,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--bench-strided", action="store_true",
                    help="measured strided gather-avoidance (saxpy_strided): time BCIR's "
                         "direct strided realization vs the gather form (same result)")
+    p.add_argument("--bundle", action="store_true",
+                   help="multi-claim bundle (joint) optimization: jointly reorder input-"
+                        "sharing claims and print the plan + search certificates")
+    p.add_argument("--explain", action="store_true",
+                   help="print the proof-carrying decision record (candidates weighed + "
+                        "the choice, per claim); add --bundle for rewrite certificates")
+    p.add_argument("--explain-json", metavar="FILE",
+                   help="write the decision record (JSON) to FILE")
+    p.add_argument("--replay", metavar="FILE",
+                   help="replay a saved decision record (JSON) and confirm it reproduces")
+    p.add_argument("--reduce", action="store_true",
+                   help="minimize the program to a legal, plannable witness (bcir-reduce)")
     args = p.parse_args(argv)
 
     module = PROGRAMS[args.program]()
@@ -115,6 +127,34 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {d.law}: {d.message}")
 
     print(f"program={args.program} target={h.name} theta={args.theta} policy={policy.name}")
+
+    if args.bundle or args.explain or args.explain_json or args.replay or args.reduce:
+        from .kbcir.proof import DecisionRecord, explain, explain_text, reduce, replay
+        if args.reduce:
+            red = reduce(module, lambda m: bool(any(ph.claims for ph in m.phases)))
+            nclaims = sum(len(ph.claims) for ph in red.phases)
+            print(f"[reduce] minimal witness: {len(red.phases)} phase(s), {nclaims} claim(s)")
+            return 0
+        if args.replay:
+            with open(args.replay, encoding="utf-8") as f:
+                record = DecisionRecord.from_json(f.read())
+            rr = replay(record, module, h, theta, policy, joint=args.bundle)
+            if rr.reproduced:
+                print(f"[replay] reproduced bit-for-bit (digest {record.digest})")
+            else:
+                print(f"[replay] DIVERGED ({len(rr.mismatches)}):")
+                for m in rr.mismatches:
+                    print(f"  {m}")
+            return 0 if rr.reproduced else 1
+        record = explain(module, h, theta, policy, target_name=h.name, joint=args.bundle)
+        if args.explain or args.bundle:
+            print(explain_text(record))
+        if args.explain_json:
+            with open(args.explain_json, "w", encoding="utf-8") as f:
+                f.write(record.to_json())
+            print(f"[explain] wrote {args.explain_json}")
+        return 0
+
     if args.budget:
         from .kbcir import Budget, Infeasible, optimize_constrained
         caps = {k: int(v) for k, v in (kv.split("=", 1) for kv in args.budget.split(","))}

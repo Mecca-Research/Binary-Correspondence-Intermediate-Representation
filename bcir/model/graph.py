@@ -59,6 +59,8 @@ class Claim:
     offset: int = 0
     cost_class: str = "bandwidth"
     primary_rid: Optional[int] = None
+    precision: str = ""              # "" (naive) | "compensated" (residual-carry MAC)
+    tolerance_ulp: int = 0           # accuracy contract: 0 = none; >0 = max Q8-ULP error (R17)
 
     def io_rids(self) -> tuple[int, ...]:
         return tuple(self.rd) + tuple(self.wr)

@@ -779,11 +779,41 @@ def verify_allocator(module: Module, placement) -> list[Diagnostic]:
     return diags
 
 
+def verify_accuracy(module: Module) -> list[Diagnostic]:
+    """R17 (accuracy-contract legality): a claim that declares an accuracy tolerance
+    (`tolerance_ulp > 0`) must realize within it -- its static worst-case Q8-ULP error
+    bound (`precision.accuracy_bound`, compensated iff `precision == "compensated"`) must
+    not exceed the declared tolerance. A `reduce.*` over `count` terms drifts up to `count`
+    ULP with the naive accumulator but only 1 ULP compensated, so a tight tolerance is the
+    law that FORCES the compensated realization (`precision="compensated"`, lowered by
+    `lower.c_kernel.emit_compensated_reduce_c`). Dual-rail with the MLIR `-bcir-verify` R17
+    law. Claims with no declared tolerance (the default) are unconstrained -- a no-op."""
+    from ..kbcir.precision import accuracy_bound
+
+    diags: list[Diagnostic] = []
+    for ph in module.phases:
+        for claim in ph.claims:
+            tol = getattr(claim, "tolerance_ulp", 0)
+            if tol <= 0:
+                continue
+            compensated = getattr(claim, "precision", "") == "compensated"
+            bound = accuracy_bound(claim, compensated=compensated)
+            if bound > tol:
+                diags.append(Diagnostic(
+                    "R17",
+                    f"claim {claim.id} accuracy bound {bound} ULP exceeds tolerance {tol} "
+                    f"ULP (precision={claim.precision or 'naive'!r}; a compensated "
+                    f"reduction would bound it at 1)",
+                ))
+    return diags
+
+
 def verify_smart_lowering(module: Module, pack=None, dvfs_plan=None,
                           placement=None) -> list[Diagnostic]:
-    """Run the smart-lowering laws R14-R16 over whichever artifacts are provided
-    (CIM StreamPack, DVFS plan, allocator placement) -- the dual-rail counterpart
-    to the MLIR `-bcir-lower-to-llvm` R14/R15/R16 checks."""
+    """Run the smart-lowering laws R14-R17 over whichever artifacts are provided
+    (CIM StreamPack, DVFS plan, allocator placement) plus the always-checkable
+    accuracy contract (R17) -- the dual-rail counterpart to the MLIR
+    `-bcir-lower-to-llvm` / `-bcir-verify` R14/R15/R16/R17 checks."""
     diags: list[Diagnostic] = []
     if pack is not None:
         diags += verify_cim(pack)
@@ -791,6 +821,7 @@ def verify_smart_lowering(module: Module, pack=None, dvfs_plan=None,
         diags += verify_dvfs(dvfs_plan)
     if placement is not None:
         diags += verify_allocator(module, placement)
+    diags += verify_accuracy(module)
     return diags
 
 

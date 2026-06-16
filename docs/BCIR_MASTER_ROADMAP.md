@@ -7,7 +7,7 @@
 > consolidation; their unique content is folded in here). It pairs with the docs that
 > stay separate because they are **normative reference / evidence / governance**, not
 > roadmap:
-> - [`BCIR_LANGREF.md`](BCIR_LANGREF.md) — the IR language + R1–R16 law spec (normative).
+> - [`BCIR_LANGREF.md`](BCIR_LANGREF.md) — the IR language + R1–R17 law spec (normative).
 > - [`BCIR_STREAMPACK_ABI.md`](BCIR_STREAMPACK_ABI.md) — the frozen binary ABI (v1 + append-only v2).
 > - [`PARITY.md`](PARITY.md) — the active oracle↔law cross-map (dual-rail enforcement).
 > - [`BCIR_NATIVE_OBJECT_GATE.md`](BCIR_NATIVE_OBJECT_GATE.md) — the native-isel decision gate.
@@ -55,10 +55,10 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 
 | Fact | **Now** |
 |---|---|
-| Oracle conformance tests (`python -m bcir.tests.run_all`) | **540**, incl. the generated differential + verifier + fuzz campaigns |
+| Oracle conformance tests (`python -m bcir.tests.run_all`) | **580**, incl. the generated differential + verifier + fuzz campaigns |
 | Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
 | GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
-| Verifier laws | **R1–R16** all first-class + dual-rail in `-bcir-verify` (+ the `-bcir-lower-to-llvm` checkpoint + the Python oracle ref) |
+| Verifier laws | **R1–R17** all first-class + dual-rail in `-bcir-verify` (+ the `-bcir-lower-to-llvm` checkpoint + the Python oracle ref) |
 | Named pass pipelines | `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm` / `bcir-aot` with verifier checkpoints |
 | Θ context op | `bcir.kbcir.theta` — the C++ plan matches the oracle under **hot** Θ (matmul hot 1159168), not just cool |
 | Six-target capability matrix | all six TARGETS cross-checked on the MLIR rail (`target_matrix.mlir`) — the law plans per-target from the capability seeds alone |
@@ -125,7 +125,7 @@ of the last cycle. Each stage is bit-exact against the oracle and gated by
   per TARGET; `-bcir-plan`/`-overlap`/`-rcsp-plan` recompute the oracle's per-target
   result from the capability alone — avx512/sve/rvv 16→7808, avx2 8→9472, neon 4→12800,
   ptx 32→6976; the GPU's coalesced gather halves histogram (266240 vs 528384).
-- **Verifier R1–R16** run on both rails, negative-tested per law, plus a verifier
+- **Verifier R1–R17** run on both rails, negative-tested per law, plus a verifier
   *differential* (`gen_illegal_module` + `run_verifier_campaign`) that fault-injects each
   law and confirms the verifier catches it.
 - **C23 where it pays:** `_BitInt(N)` exact-width Q-fixed lane kernels (the place a
@@ -167,7 +167,7 @@ The optimizer core is ported. What is still Python-only **and** belongs on the l
    `-bcir-verify` pass (`BCIRVerifyPass.cpp`, dual-rail with `verify.{verify_cim,
    verify_dvfs,verify_allocator}`), with positive/negative `.mlir` cases in
    `verify_laws_deep.mlir`; they remain enforced at the `-bcir-lower-to-llvm` checkpoint
-   too (defense in depth). Verifier dual-rail symmetry is complete — every law R1–R16 is
+   too (defense in depth). Verifier dual-rail symmetry is complete — every law R1–R17 is
    checkable by `-bcir-verify` alone.
 2. ✅ **The `verification` cost dimension (the 12th cost axis). DONE.** It now has a real
    producer on both rails (`realize._verify_cost` / `BCIRCostModel.h::verifyCostFor`,
@@ -179,8 +179,17 @@ The optimizer core is ported. What is still Python-only **and** belongs on the l
    per-claim selection but *is* a tradeable plan resource — an RCSP cap on `verification`
    can make a claim infeasible (`test_verify_cost.py`). exact/hash were previously unused,
    so this is purely additive.
-3. **A C++ `-bcir-verify` law-for-law differential** against the oracle verifier (the
-   remaining toolchain-rail step of the verifier differential).
+3. ✅ **A C++ `-bcir-verify` law-for-law differential. DONE.** Every law **R1–R17** now
+   has a negative `-verify-diagnostics` case in the committed `verify_laws*.mlir` /
+   `verify_accuracy.mlir` (run under `bcir-opt` in CI), and a coverage gate
+   (`test_verify_differential.py`) guarantees no law silently loses its toolchain-rail
+   negative case — the systematic complement to the oracle-rail `run_verifier_campaign`.
+
+**New: the accuracy contract (R17).** `verify.verify_accuracy` and the MLIR `-bcir-verify`
+R17 law (consuming the `#bcir.precision<…, exact, tol>` attr) are the dual-rail accuracy
+contract: a claim with a declared tolerance must realize within its static Q8-ULP error
+bound — a `reduce.*` over `count` terms is bounded by `count` ULP naive but 1 ULP
+compensated, so a tight tolerance forces the compensated realization.
 
 ### 5.2 Oracle → C (run-time hot path) — remaining ports
 
@@ -200,19 +209,30 @@ The C runtime has the decoders (StreamPack, ETL-binary) and now the executor:
    versions (v1 + v2 pipeline/double-buffer tails) — the full C round-trip, so a
    driver-resident hydrate emits the artifact with no Python and no libc. Parity gate
    `test_c_encoder.py` + `check_runtime.sh`; libFuzzer + ASan/UBSan harness `fuzz_encode.c`.
-3. **The `precision="compensated"` C-kernel emission variant** — the precision module
-   models the compensated Q8 reduction; the C-kernel emitter does not yet produce it
-   (a numerical-accuracy lowering gap).
+3. ✅ **The `precision="compensated"` C-kernel. DONE.** `lower.c_kernel.emit_compensated_
+   reduce_c` lowers the residual-carry Q8 MAC (`kbcir.precision.compensated_reduce_q8`):
+   the dropped low 8 bits are carried forward, so the result is **bit-identical to the
+   int64-exact reduction** (vs the naive per-term-truncating form, which drifts up to `n`
+   ULP). Self-check compiles + runs under C11 and C23 (`test_precision_lowering.py`).
 
 ### 5.3 New deterministic features (not ports) — for C++/MLIR
 
-1. **Multi-claim bundle (joint) optimization** — the genuine combinatorial joint step
-   over claim bundles, where the (min,+) formulation should start paying for itself
-   beyond the pairwise coupling (shared-input fusion, deforestation, CSE, overlap) that
-   ships today. Must bound compile time and emit search certificates.
-2. **Proof-carrying optimization records** — replayable decision records + rewrite /
-   lowering certificates + `bcir-explain` / `bcir-replay` / `bcir-reduce` (R13 is the
-   foundation).
+1. ✅ **Multi-claim bundle (joint) optimization. DONE.** `kbcir.bundle.optimize_bundled`
+   is the genuine combinatorial step beyond the pairwise coupling: it finds the clusters
+   of claims that share a read operand and jointly searches the intra-phase order
+   (bounded, exhaustive, dependency-preserving) that minimizes the plan score — recovering
+   the fusion discount the pairwise shortest path misses when sharers are interleaved.
+   Correctness-preserving (only mutually-independent same-phase claims are reordered, never
+   across a conflicting pair) and a no-op where there is nothing to join; it emits a
+   `BundleCertificate` per improving bundle (a proof-carrying search record). A real **12%
+   gain on the tiled-matmul corpus**, scores otherwise pinned (`test_bundle.py`).
+2. ✅ **Proof-carrying optimization records. DONE.** `kbcir.proof` (CLI `bcir.run
+   --explain` / `--replay FILE` / `--reduce`): `explain` builds a replayable
+   `DecisionRecord` — the R13 provenance digest + the per-claim *rationale* (the
+   candidates the optimizer weighed and the one it chose) + the bundle rewrite
+   certificates; `replay` reproduces it bit-for-bit from the same inputs (the digest gate
+   + the per-claim decisions) or reports exactly what diverged; `reduce` minimizes a module
+   to a legal witness. Round-trips through JSON (`test_proof.py`).
 3. **Compositional semantics** — functions/calls, control flow, dynamic shapes,
    alias/effect modeling, numerical contracts (the path past straight-line array
    kernels).
@@ -255,19 +275,20 @@ In recommended order — each is gated by the generated differential harness + F
    identical to `bcir.abi.encode` (full C round-trip).
 4. ✅ **The verify-cost dimension** (§5.1.2). **DONE** — the 12th axis has a producer on
    both rails (exact/hash O(n); bounds/none free).
-5. **The `precision="compensated"` C-kernel** (§5.2.3) + its accuracy-contract verifier
-   law — *the next step.* The precision module models the compensated Q8 reduction; the
-   C-kernel emitter and a dual-rail accuracy law are the remaining lowering gap.
-6. **A C++ `-bcir-verify` law-for-law differential** (§5.1.3) — fault-inject each law on
-   the toolchain rail and confirm `-bcir-verify` flags it (the oracle side already does).
-7. **Multi-claim bundle (joint) optimization** (§5.3.1) — the first genuinely *new*
-   optimizer capability, where the combinatorial (min,+) formulation earns its keep
-   beyond the pairwise coupling that ships today (bound compile time; emit search
-   certificates).
-8. **Proof-carrying optimization records** (§5.3.2) — `bcir-explain` / `bcir-replay` /
-   `bcir-reduce` over R13's provenance foundation.
-9. **(When a rig is available)** the measured real-silicon replan win (§5.4) — the top
-   differentiator.
+5. ✅ **`precision="compensated"` C-kernel + the R17 accuracy law** (§5.2.3 / §5.1). **DONE**
+   — dual-rail accuracy contract.
+6. ✅ **The C++ `-bcir-verify` law-for-law differential** (§5.1.3). **DONE** — every law
+   R1–R17 has a toolchain-rail negative case + a coverage gate.
+7. ✅ **Multi-claim bundle (joint) optimization** (§5.3.1). **DONE** — a real 12% matmul
+   gain, with search certificates.
+8. ✅ **Proof-carrying records** (§5.3.2). **DONE** — `bcir.run --explain/--replay/--reduce`.
+9. **Compositional semantics** (§5.3.3) — functions/calls, control flow, dynamic shapes,
+   alias/effect modeling — *the next frontier* past straight-line array kernels.
+10. **MLIR ports of the new oracle capabilities** — bundle (joint) optimization and the
+    proof-carrying decision record land first in the Python oracle (the reference); the
+    C++/MLIR ports are the follow-on (the established oracle→law cadence).
+11. **(When a rig is available)** the measured real-silicon replan win (§5.4) — the top
+    differentiator.
 
 ---
 
@@ -284,7 +305,7 @@ In recommended order — each is gated by the generated differential harness + F
   + compile-time/peak-memory regression budgets.
 - **0.4 — proof-carrying** (☐): replay records + certificates + `bcir-explain`/`replay`/`reduce` (§5.3.2).
 - **1.0** (☐): stable language/ABI policy; no known Python↔C++ divergence (generated +
-  fuzzed); ≥2 real hardware targets with measured evidence; R1–R16 dual-rail symmetry
+  fuzzed); ≥2 real hardware targets with measured evidence; R1–R17 dual-rail symmetry
   (§5.1.1); one external frontend; published benchmark methodology; upgrade tests; a
   clear native-backend decision (the gate, §5.5).
 
@@ -297,7 +318,7 @@ In recommended order — each is gated by the generated differential harness + F
   §5.4 (real-silicon calibration) is the top priority; the quarantine keeps the learned
   side off the deterministic path until measured.
 - **Multi-rail divergence** ("the law trails the oracle") — *largely mitigated:* the
-  whole optimizer core + R1–R16 are dual-rail and cross-checked by the generated
+  whole optimizer core + R1–R17 are dual-rail and cross-checked by the generated
   differential + the committed corpus/matrix under real `bcir-opt`. Remaining: §5.1.1/§5.1.3.
 - **Validation realism** ("green ≠ competitive") — *mitigated:* the measured Clang
   comparison + the multi-version matrix + 540 tests. Remaining: continuous perf
@@ -327,7 +348,7 @@ and law-authored:
 
 The implementation arrived in phases (a condensed history; the dated detail lives in
 `REPO_CURRENT_STATE_AUDIT.md`): the StreamPack freeze + freestanding C runtime; the
-compiled `bcir-opt` on LLVM 18/19 with R1–R16; the learning/intelligence organs; the
+compiled `bcir-opt` on LLVM 18/19 with R1–R17; the learning/intelligence organs; the
 oracle optimization pass (hot/cold locked); the MLIR-native GEM pipeline; the calibration
 loop; the portable C23 kernel backend; the measured Clang comparison; the generated
 differential + widened corpus; the full deterministic optimizer-core C++ port; the
