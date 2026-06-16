@@ -34,4 +34,26 @@ open('${tmp}/pack.bin','wb').write(encode(pack))
 out="$("${tmp}/test_runtime" "${tmp}/pack.bin")" || { echo "  FAIL: C decode"; echo "${out}"; exit 1; }
 echo "${out}" | grep -q "^OK$" && echo "  PASS parity (Python encode -> C decode)" \
   || { echo "  FAIL: parity"; echo "${out}"; exit 1; }
+
+echo "[c-runtime] ETL binary-record decoder: freestanding compile (C11 + C23)"
+# bcir_binrec.c is the C twin of bcir/etl/binary.py (a second binary trust boundary).
+for std in c11 c23; do
+  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -I "${C}" -c "${C}/bcir_binrec.c" -o /dev/null \
+    || { echo "  FAIL: bcir_binrec not freestanding-clean under -std=${std}"; exit 1; }
+done
+echo "  PASS bcir_binrec freestanding (C11 + C23)"
+
+echo "[c-runtime] frozen Q8 table (#embed / fallback): build + self-check (C11 + C23)"
+# Drift gate: the committed runtime/c/{q8_tiers.bin,bcir_q8_tables.h} must equal a
+# fresh emission from the oracle (bcir.kbcir.cost.MemoryHierarchy.default()).
+python3 -m bcir.abi.q8_tables --emit >/dev/null || { echo "  FAIL: q8 emit"; exit 1; }
+if ! git -C "${ROOT}" diff --quiet -- runtime/c/q8_tiers.bin runtime/c/bcir_q8_tables.h 2>/dev/null; then
+  echo "  FAIL: Q8 table drifted from the oracle (regenerate: python -m bcir.abi.q8_tables --emit)"; exit 1
+fi
+for std in c11 c23; do
+  "${CC}" -std=${std} -Wall -Wextra -I "${C}" "${C}/test_q8_tables.c" -o "${tmp}/q8_${std}" \
+    || { echo "  FAIL: Q8 table build under -std=${std}"; exit 1; }
+  "${tmp}/q8_${std}" | grep -q "^OK q8" || { echo "  FAIL: Q8 self-check under -std=${std}"; exit 1; }
+done
+echo "  PASS Q8 table (#embed-guarded; fallback self-check OK under C11 + C23)"
 echo "[c-runtime] ok"

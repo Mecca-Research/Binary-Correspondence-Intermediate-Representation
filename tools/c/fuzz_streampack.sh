@@ -67,4 +67,17 @@ if "${tmp}/fuzz" -runs="${RUNS}" -max_total_time=60 "${tmp}/corpus" >"${tmp}/flo
 else
   echo "  FAIL: libFuzzer found a crash"; tail -40 "${tmp}/flog"; exit 1
 fi
+
+echo "[fuzz] libFuzzer on the ETL binary-record decoder (${RUNS} runs)"
+# bcir_binrec.c is the C twin of bcir/etl/binary.py -- a second binary trust boundary
+# (driver/device packet field extraction). An arbitrary descriptor + buffer must never
+# read out of bounds; ASan/UBSan would catch it.
+"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
+  "${C}/fuzz_binrec.c" "${C}/bcir_binrec.c" -I "${C}" -o "${tmp}/fuzz_binrec" \
+  || { echo "  FAIL: binrec fuzzer build"; exit 1; }
+if "${tmp}/fuzz_binrec" -runs="${RUNS}" -max_total_time=60 -max_len=64 >"${tmp}/flog2" 2>&1; then
+  echo "  PASS libFuzzer binrec (${RUNS} runs, no crash)"
+else
+  echo "  FAIL: libFuzzer binrec found a crash"; tail -40 "${tmp}/flog2"; exit 1
+fi
 echo "[fuzz] ok"

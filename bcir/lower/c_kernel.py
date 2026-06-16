@@ -154,6 +154,170 @@ def emit_kernel_c(module: Module, result: RealizationResult, fn_name: str = "bci
     return head + body
 
 
+# --- Q-fixed lane arithmetic with exact-width _BitInt(N) (C23) --------------------
+
+def _std_int_for(bits: int) -> str:
+    """The smallest standard signed integer type holding >= `bits` value bits -- the
+    C11 fallback when _BitInt(N) is unavailable."""
+    for w in (8, 16, 32, 64):
+        if bits <= w:
+            return f"int{w}_t"
+    raise ValueError(f"no standard integer type for {bits} bits (max 64)")
+
+
+def emit_qfixed_kernel_c(module: Module, result: RealizationResult,
+                         fn_name: str = "bcir_qfixed", lane_bits: int = 16,
+                         frac_bits: int = 8) -> str:
+    """Emit a **Q-fixed** elementwise kernel whose lanes are *exactly* `lane_bits`
+    wide, using C23 `_BitInt(N)` (ISO/IEC 9899:2023 6.2.5) -- the place _BitInt pays.
+
+    The K_BCIR cost algebra is Q8 fixed point (256 == x1.0); the deterministic
+    integer/Q-fixed execution path is exactly where exact-width lanes matter. A
+    Q(`lane_bits-frac_bits`).`frac_bits` lane multiply is `(a * b) >> frac_bits`; the
+    product needs `2*lane_bits` bits, so a standard `int16_t` lane would silently
+    promote to `int` (32-bit) and a 12- or 24-bit lane has *no* standard type at all.
+    `_BitInt(N)` gives the exact storage width the frozen ABI declares and a
+    well-defined `2N`-bit product accumulator -- no promotion surprises, deterministic
+    wraparound across hosts.
+
+      * MUL -> Q-fixed scaled multiply `(int_2N)a * b >> frac_bits` narrowed to N bits
+        (the same `>> 8` coupling the cost model does, generalized to N/Q).
+      * ADD/SUB -> same-scale lane add/sub, computed in the 2N accumulator and narrowed
+        (so an N-bit overflow wraps deterministically, not via promotion).
+
+    Portable by construction: the lane/accumulator types are a `_BitInt(N)`/`_BitInt(2N)`
+    pair under C23 (when `__BITINT_MAXWIDTH__` admits 2N) and the smallest standard
+    int pair otherwise, selected by the preprocessor -- so the *same source* builds and
+    gives bit-identical results under `-std=c23` and `-std=c11` (the AOT self-check
+    asserts both agree). Pure: no I/O, reusable AOT or driver-embedded."""
+    if not (1 <= frac_bits < lane_bits):
+        raise ValueError(f"need 1 <= frac_bits ({frac_bits}) < lane_bits ({lane_bits})")
+    if 2 * lane_bits > 64:
+        raise ValueError(f"lane_bits {lane_bits}: 2*lane_bits must be <= 64 for the fallback")
+    claim, cand = find_elementwise(module, result)
+    op = C_OP[claim.opcode]
+    is_mul = claim.opcode == Opcode.MUL
+    n2 = 2 * lane_bits
+    lane_std = _std_int_for(lane_bits)
+    acc_std = _std_int_for(n2)
+    qm, qn = lane_bits - frac_bits, frac_bits
+
+    reads = tuple(claim.rd)
+    writes = tuple(claim.wr)
+    rqual = " restrict" if not (set(reads) & set(writes)) else ""
+
+    # MUL rescales by >> frac_bits; ADD/SUB keep the Q scale (no shift).
+    combine = (f"((q_acc_t)A[i] * (q_acc_t)B[i]) >> {qn}" if is_mul
+               else f"(q_acc_t)A[i] {op} (q_acc_t)B[i]")
+
+    return (
+        f"/* BCIR -> Q-fixed C23 kernel (exact-width _BitInt). op={claim.op or op} "
+        f"format=Q{qm}.{qn} lane_bits={lane_bits} (K_BCIR-selected width={cand.width}; "
+        f"the {'scaled multiply' if is_mul else 'same-scale add/sub'} of the integer "
+        f"execution path). */\n"
+        "#include <stddef.h>\n#include <stdint.h>\n"
+        f"#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L \\\n"
+        f"    && defined(__BITINT_MAXWIDTH__) && __BITINT_MAXWIDTH__ >= {n2}\n"
+        f"  typedef _BitInt({lane_bits}) q_lane_t;   /* exact {lane_bits}-bit Q-fixed lane */\n"
+        f"  typedef _BitInt({n2}) q_acc_t;     /* exact {n2}-bit product accumulator */\n"
+        f"  #define BCIR_QFIXED_BITINT 1\n"
+        f"#else\n"
+        f"  typedef {lane_std} q_lane_t;     /* portable fallback: smallest std int >= {lane_bits} bits */\n"
+        f"  typedef {acc_std} q_acc_t;\n"
+        f"  #define BCIR_QFIXED_BITINT 0\n"
+        f"#endif\n"
+        f'_Static_assert(BCIR_QFIXED_BITINT || sizeof(q_acc_t) * 8 >= {n2},\n'
+        f'               "BCIR Q-fixed accumulator must hold the {n2}-bit product");\n'
+        f"\n"
+        f"void {fn_name}(const q_lane_t *{rqual} A, const q_lane_t *{rqual} B,\n"
+        f"             q_lane_t *{rqual} C, size_t n) {{\n"
+        f"  for (size_t i = 0; i < n; ++i)\n"
+        f"    C[i] = (q_lane_t)({combine});\n"
+        f"}}\n"
+    )
+
+
+def emit_qfixed_selfcheck_c(module: Module, result: RealizationResult,
+                            fn_name: str = "bcir_qfixed", lane_bits: int = 16,
+                            frac_bits: int = 8) -> str:
+    """Wrap the Q-fixed kernel with a self-checking `main`: it computes the reference
+    in a 64-bit accumulator and asserts the kernel matches at the selected count and a
+    tail-exercising size. In-range inputs keep the Q-fixed result within `lane_bits`,
+    so the `_BitInt(N)` and standard-int fallback builds are bit-identical."""
+    claim, _ = find_elementwise(module, result)
+    n = max(1, claim.count)
+    is_mul = claim.opcode == Opcode.MUL
+    op = C_OP[claim.opcode]
+    kernel = emit_qfixed_kernel_c(module, result, fn_name, lane_bits, frac_bits)
+    ref = (f"((int64_t)A[i] * (int64_t)B[i]) >> {frac_bits}" if is_mul
+           else f"(int64_t)A[i] {op} (int64_t)B[i]")
+    # Inputs use ~half the lane so the product>>frac and the sum stay within lane_bits.
+    half = lane_bits // 2
+    return (
+        "#include <stddef.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n\n"
+        + kernel
+        + f"""
+static int check(size_t n) {{
+  q_lane_t *A = malloc(n * sizeof *A), *B = malloc(n * sizeof *B), *C = malloc(n * sizeof *C);
+  if (!A || !B || !C) {{ free(A); free(B); free(C); return 2; }}
+  for (size_t i = 0; i < n; ++i) {{
+    A[i] = (q_lane_t)((int64_t)(i % {1 << half}) - {1 << (half - 1)});
+    B[i] = (q_lane_t)((int64_t)((i * 3 + 1) % {1 << half}) - {1 << (half - 1)});
+    C[i] = (q_lane_t)0;
+  }}
+  {fn_name}(A, B, C, n);
+  int rc = 0;
+  for (size_t i = 0; i < n; ++i) {{
+    int64_t want = {ref};
+    if ((int64_t)C[i] != want) {{
+      printf("FAIL n=%zu i=%zu got %lld want %lld\\n", n, i, (long long)C[i], (long long)want);
+      rc = 1; break;
+    }}
+  }}
+  free(A); free(B); free(C);
+  return rc;
+}}
+
+int main(void) {{
+  if (check({n}u)) return 1;        /* the selected count */
+  if (check({n}u + 7u)) return 1;   /* a tail-exercising size */
+  printf("OK {fn_name} bitint=%d\\n", BCIR_QFIXED_BITINT);
+  return 0;
+}}
+"""
+    )
+
+
+def compile_and_run_qfixed_c(module: Module, result: RealizationResult,
+                             fn_name: str = "bcir_qfixed", lane_bits: int = 16,
+                             frac_bits: int = 8, std: str = "c23",
+                             workdir: str | None = None) -> tuple[bool, str]:
+    """Emit the Q-fixed self-check, compile under `-std=<std>` (c23 exercises the
+    `_BitInt(N)` lanes; c11 exercises the portable fallback), run, and confirm it
+    printed OK. Returns (ok, combined_output)."""
+    cc = _which("clang") or _which("cc") or _which("gcc")
+    if cc is None:
+        return False, "no C compiler on PATH"
+    created = workdir is None
+    workdir = workdir or tempfile.mkdtemp(prefix="bcir-qfixed-")
+    try:
+        src = os.path.join(workdir, "qfixed_check.c")
+        exe = os.path.join(workdir, "qprog")
+        with open(src, "w") as f:
+            f.write(emit_qfixed_selfcheck_c(module, result, fn_name, lane_bits, frac_bits))
+        build = subprocess.run([cc, f"-std={std}", "-O2", "-Wall", "-Wextra", src, "-o", exe],
+                               capture_output=True, text=True)
+        if build.returncode != 0:
+            return False, "Q-fixed build failed:\n" + build.stdout + build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        ok = run.returncode == 0 and "OK" in run.stdout
+        return ok, run.stdout + run.stderr
+    finally:
+        if created:
+            import shutil
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
 def emit_gather_kernel_c(module: Module, result: RealizationResult,
                          fn_name: str = "bcir_gather", elem: str = "f32") -> str:
     """Emit the **gather** realization the cost model AVOIDS: an indexed read

@@ -81,8 +81,9 @@ Not novelty for its own sake — only where determinism, memory, or speed improv
   (e.g. `std::submdspan`, reflection when it lands) only behind a feature check.
 - **C23 in the runtime + emitted kernels:** `constexpr` objects, `[[attributes]]`,
   `typeof`, `_BitInt(N)` for exact fixed-width lanes, and `#embed` for frozen Q8
-  tables baked into the C runtime. The C-kernel emitter already targets C23; widen it
-  to emit `restrict` + `_BitInt` + `[[assume]]` where the contract proves it safe.
+  tables baked into the C runtime. ✅ The C-kernel emitter targets C23 and now emits
+  exact-width `_BitInt(N)` Q-fixed lanes (`emit_qfixed_kernel_c`, with a C11 fallback)
+  and bakes the frozen Q8 tier table with `#embed` (`bcir.abi.q8_tables`); see §5 #2.
 - **Memory/speed where it matters:** the deterministic hot path (executor, StreamPack
   decode, cost evaluation in a search loop) is exactly where C/C++ beat the Python
   oracle — arena allocation, cache-friendly SoA cost vectors, branch-free min-plus.
@@ -142,7 +143,8 @@ gated by `check_passes.sh` + the differential harness.
    caught the header struct being 60 vs the declared 64 bytes), builds clean under
    C11 + C23, and is fuzzed under **libFuzzer + ASan/UBSan** (`runtime/c/fuzz_streampack.c`,
    `tools/c/fuzz_streampack.sh`, 500k runs in CI) with a sanitizer smoke over a real
-   pack + byte mutations. `_BitInt`/`#embed` in the emitted kernels is future work.
+   pack + byte mutations. (`_BitInt`/`#embed` in the emitted kernels + the ETL binary C
+   decoder fuzz landed later — see §5 #2.)
 7. ✅ **Named pass pipelines + Θ context op. DONE** (see Section 5).
 8. **Deferred ("do later"):** PMU/RAPL/DVFS real-silicon calibration — the software
    path is merged; it needs a bare-metal rig to publish a measured replan win.
@@ -159,8 +161,10 @@ hot 1159168; `theta_hot.mlir`), not just the cool regime; ✅ **C-runtime harden
 (C23)** — `restrict` + `[[nodiscard]]` + a frozen-ABI `static_assert` (which caught
 the 60-vs-64-byte header struct shortfall) on the StreamPack decoder, plus a
 **libFuzzer + ASan/UBSan** harness on that trust boundary (`fuzz_streampack.sh`,
-500k runs in CI); ✅ the **six-target capability matrix** — see below. The remaining
-lowering work, in priority order:
+500k runs in CI); ✅ the **six-target capability matrix**, ✅ **more C23 where it pays**
+(`_BitInt(N)` Q-fixed kernels + `#embed` Q8 tables + the ETL binary C-path fuzz), and
+✅ the **native-object decision gate** (documented + the warranted one-target slice).
+The post-optimizer lowering batch, in priority order — all four now landed:
 
 1. ✅ **A target.capability matrix. DONE.** All six TARGETS are now emitted with their
    own `bcir.target.capability` seeds and cross-checked on the MLIR/C++ rail:
@@ -179,11 +183,37 @@ lowering work, in priority order:
    @ 17280 on the ladder targets. Pinned on the Python rail by
    `bcir/tests/test_target_matrix.py` (incl. the widened corpus across all six). The
    six-target parity is now proven on **both** rails, not just Python.
-2. **More C23 where it pays** — `_BitInt(N)` for the Q-fixed lane arithmetic in the
-   *emitted kernels* (the StreamPack ABI keeps frozen widths), `#embed` for frozen Q8
-   tables baked into the C runtime; extend the fuzz coverage to the ROP/MAP/ETL C paths.
-3. **Native object emission** (the documented decision gate) — one target end-to-end
-   (eBPF or x86-64 scalar) with stop criteria, only if warranted.
+2. ✅ **More C23 where it pays. DONE.** Three landings, each compiled + run-checked in
+   CI under **C23 *and* C11** (clang 18):
+   - **`_BitInt(N)` Q-fixed kernels** (`lower.c_kernel.emit_qfixed_kernel_c`): a Q-fixed
+     elementwise lane uses an *exact* `_BitInt(N)` storage type and a `_BitInt(2N)`
+     product accumulator — the place a standard `int16_t` would silently promote to
+     `int` and a 12-/20-/24-bit lane has *no* standard type at all — with a portable
+     standard-int fallback selected by the preprocessor, so the same source is
+     bit-identical under `-std=c23` (uses `_BitInt`) and `-std=c11` (fallback). This is
+     the Q8 `>> 8` coupling the cost model does, generalized to N/Q.
+     (`bcir/tests/test_c23_kernels.py`.)
+   - **`#embed` frozen Q8 tables** (`bcir.abi.q8_tables` → `runtime/c/{q8_tiers.bin,
+     bcir_q8_tables.h}`): the K_BCIR memory-tier Q8 factors are frozen to a binary blob
+     baked into the runtime with C23 `#embed` (nested-`__has_embed` guard) and an
+     identical fallback array for pre-`#embed` toolchains. Drift-gated (committed ==
+     a fresh emission from `MemoryHierarchy.default()`), self-checked in C.
+     (`bcir/tests/test_q8_embed.py`, `runtime/c/test_q8_tables.c`.)
+   - **ETL/ROP/MAP fuzz, incl. the C path**: the ETL binary decoder (the one binary
+     trust boundary among the front-ends) gains a bounds-checked C twin
+     `runtime/c/bcir_binrec.c` with a libFuzzer + ASan/UBSan harness
+     (`fuzz_binrec.c`, wired into `fuzz_streampack.sh`/CI) and a Python↔C decode-parity
+     gate (`bcir/tests/test_etl_binrec.py`); the Python `kbcir.fuzz` adds an
+     `etl.binary` boundary alongside the existing ROP/MAP text fuzz.
+3. ✅ **Native object emission — the gate documented + the warranted slice closed.**
+   `docs/BCIR_NATIVE_OBJECT_GATE.md` makes the decision gate explicit — BCIR-native
+   isel stays **DEFERRED** (every seeded target has a resident LLVM backend), with
+   numbered GO criteria (G1–G4) and STOP criteria (S1–S4). The warranted path (emit
+   the kernel, let the *resident compiler* finish it) now closes one target
+   end-to-end: `codegen.codegen_object_c` compiles the emitted C kernel straight to a
+   real **eBPF** object (integer-only i32, `-ffreestanding`, `EM_BPF`=247) and an
+   **x86-64 scalar** object (`EM_X86_64`=62), verified at the ELF-header level — no
+   hand-rolled isel. (`bcir/tests/test_native_object_gate.py`.)
 4. **Deferred ("do later"):** PMU/RAPL/DVFS real-silicon calibration — the software
    path is merged; it needs a bare-metal rig to publish a measured replan win.
 

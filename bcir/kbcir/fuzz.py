@@ -140,6 +140,41 @@ def _fuzz_frontends(rng: random.Random, findings: list[FuzzFinding]) -> None:
                                         f"{type(e).__name__}: {e}"))
 
 
+# --- ETL binary-record decoder (the binary twin of the text front-ends) ----------
+
+def _fuzz_etl_binary(rng: random.Random, findings: list[FuzzFinding]) -> None:
+    """Fuzz `etl.binary.decode` -- the binary trust boundary whose C twin is
+    `runtime/c/bcir_binrec.c` (libFuzzer'd separately). A random (often illegal:
+    unaligned, oversized, out-of-bounds) record over a random/short buffer must reject
+    with a domain error, never an ungraceful crash -- the Python-side analog of the C
+    decoder's bounds-check contract (and a round-trip on a clean byte-aligned record)."""
+    from ..etl.binary import BinaryField, BinaryRecord, decode
+
+    # A legal byte-aligned record round-trips to the values its own bytes encode.
+    width = rng.choice((8, 16, 32))
+    nbytes = width // 8
+    fld = BinaryField("v", offset_bits=0, width_bits=width, kind="u")
+    payload = rng.randbytes(nbytes)
+    rec = BinaryRecord("clean", (fld,))
+    if decode(rec, payload)["v"] != int.from_bytes(payload, "little"):
+        findings.append(FuzzFinding("etl_binary", "roundtrip",
+                                    "byte-aligned decode != int.from_bytes"))
+
+    # Adversarial: random fields (often unaligned / oversized) over a short buffer.
+    fields = tuple(
+        BinaryField(f"f{i}", offset_bits=rng.randint(0, 96), width_bits=rng.randint(0, 96),
+                    kind=rng.choice(("u", "s", "f", "bytes")))
+        for i in range(rng.randint(1, 4)))
+    record = BinaryRecord("fuzz", fields)
+    data = _mutate_bytes(rng.randbytes(rng.randint(0, 8)), rng)
+    try:
+        decode(record, data)
+    except _GRACEFUL:
+        pass
+    except Exception as e:  # noqa: BLE001 - anything else is a robustness bug
+        findings.append(FuzzFinding("etl_binary", "ungraceful", f"{type(e).__name__}: {e}"))
+
+
 # --- the MLIR emitter (structure-aware, seeded by gen_module) ---------------------
 
 def _fuzz_mlir(rng: random.Random, findings: list[FuzzFinding]) -> None:
@@ -174,6 +209,7 @@ def run_fuzz(n: int = 400, seed: int = 0) -> list[FuzzFinding]:
         _fuzz_streampack(rng, findings)
         _fuzz_json(rng, findings)
         _fuzz_frontends(rng, findings)
+        _fuzz_etl_binary(rng, findings)
         _fuzz_mlir(rng, findings)
     return findings
 
