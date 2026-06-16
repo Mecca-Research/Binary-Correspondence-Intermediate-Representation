@@ -117,6 +117,17 @@
 
 ## Changelog
 
+- 2026-06-16: **De-monolithed the C++ pass library + the reformulated lowering plan.**
+  The 1.5k-line `mlir/lib/BCIRPasses.cpp` is split into one TU per pass group under
+  `mlir/lib/passes/` (`BCIRVerifyPass`, `BCIRPromotePass`, `BCIRConvertToLLVM`,
+  `BCIRGEMPasses`, `BCIRSelectPass`, `BCIRRcspPass`) sharing `BCIRPassSupport.h`;
+  `BCIRPasses.cpp` is now registration-only (factory-callback `registerPass`). Builds
+  clean at C++23, all passes/ODS/IRDL validate, every flag still registered -- a far
+  better CI module than a single script. New `docs/BCIR_LOWERING_PLAN.md` reanalyzes
+  the oracle vs the MLIR/C/C++ rails, sets the two-truth placement, the C23/C++23/26
+  modernization map, and the ordered port plan -- the immediate next build step is
+  `-bcir-cost-model` (the K_BCIR cost algebra on the MLIR rail, the keystone that lets
+  the law recompute costs instead of trusting emitter-baked path costs).
 - 2026-06-16: **MLIR toolchain in place + the optimizer core starts porting to C++23.**
   The dev toolchain (mlir-18-tools / libmlir-18-dev / llvm-18-dev) builds `bcir-opt`
   locally; every pass validates, including the generated `gem_corpus.mlir` (the C++

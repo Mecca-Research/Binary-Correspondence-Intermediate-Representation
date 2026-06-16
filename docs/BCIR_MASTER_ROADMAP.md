@@ -6,8 +6,9 @@
 > **older** tree (136/303 tests, the 5 GEM passes *unimplemented*, "R13 is the next
 > law"). This document reconciles them against the repo as it stands and gives the
 > definitive MLIR/C/C++ placement, a lowering+testing audit, and the next steps.
-> Pairs with `BCIR_STRATEGY_AND_ROADMAP.md` (strategy) and `REPO_CURRENT_STATE_AUDIT.md`
-> (snapshot).
+> Pairs with `BCIR_STRATEGY_AND_ROADMAP.md` (strategy), `REPO_CURRENT_STATE_AUDIT.md`
+> (snapshot), and `BCIR_LOWERING_PLAN.md` (the reformulated MLIR/C/C++ lowering plan +
+> the ordered port-from-the-oracle build steps).
 
 ## 0. Current state at a glance (measured)
 

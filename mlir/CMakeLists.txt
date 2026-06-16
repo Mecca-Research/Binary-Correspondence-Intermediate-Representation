@@ -77,7 +77,13 @@ add_custom_target(bcir_tablegen DEPENDS
 # --- dialect C++ library + bcir-opt (LangRef Milestone 3) ---
 add_mlir_dialect_library(MLIRBCIR
   lib/BCIRDialect.cpp
-  lib/BCIRPasses.cpp
+  lib/BCIRPasses.cpp                 # registration only
+  lib/passes/BCIRVerifyPass.cpp      # R1-R16 semantic laws
+  lib/passes/BCIRPromotePass.cpp     # GGG->UX opt-law
+  lib/passes/BCIRConvertToLLVM.cpp   # compute/barrier -> LLVM dialect
+  lib/passes/BCIRGEMPasses.cpp       # classify / batch / schedule / lower
+  lib/passes/BCIRSelectPass.cpp      # min-plus selection
+  lib/passes/BCIRRcspPass.cpp        # RCSP / Pareto (optimizer core)
   DEPENDS
     BCIRAttrsIncGen
     BCIRTypesIncGen

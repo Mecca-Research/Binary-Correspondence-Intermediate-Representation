@@ -1,0 +1,127 @@
+# BCIR Lowering Plan — MLIR / C++ / C (reformulated)
+
+> **Status: current implementation guide for the lowering rail.** Written after the
+> C++ pass library was de-monolithed (`mlir/lib/passes/*.cpp`), the build moved to
+> **C++23**, and the first optimizer-core piece (**RCSP/Pareto**) was ported to C++.
+> Pairs with `BCIR_MASTER_ROADMAP.md` (program-wide) and `PARITY.md` (the oracle↔law
+> cross-map). This document reanalyzes what lives where and gives the ordered C/C++
+> build plan from the Python oracle.
+
+## 0. The line that decides where code goes
+
+BCIR's **two-truth quarantine** is the placement rule, and it is not negotiable:
+
+> **Deterministic + integer/Q-fixed on the decision/execution path → C++/MLIR (law)
+> or C (runtime). Graded / float / train-time → Python that *freezes* to Q8.**
+
+So the optimizer's *search and cost algebra* (integer, deterministic) belong in
+C++/MLIR; the hot *execution + ABI* belong in C; the *learned organs* (bayescal,
+softdp, moegate, calibrate SGD, regret) stay in Python and emit frozen Q8 artifacts
+the deterministic rail consumes. Porting a learned organ to C++ would violate the
+quarantine; porting the cost algebra to C++ *completes* it.
+
+## 1. Where the lowering lives today (measured)
+
+| Layer | Today | Home | State |
+|---|---|---|---|
+| Dialect / ODS (the law's vocabulary) | `mlir/include/BCIR/*.td` | MLIR | ✅ |
+| Verifier **R1–R16** | `mlir/lib/passes/BCIRVerifyPass.cpp` + `bcir.verify` (Python oracle ref) | MLIR/C++ + Python | ✅ dual-rail |
+| Lane opt-law (GGG→UX) | `BCIRPromotePass.cpp` | MLIR/C++ | ✅ |
+| compute/barrier → LLVM | `BCIRConvertToLLVM.cpp` | MLIR/C++ | ✅ (partial dialect) |
+| GEM pipeline (classify/batch/schedule/lower, R12/R14–R16) | `BCIRGEMPasses.cpp` | MLIR/C++ | ✅ |
+| K_BCIR **selection** (min-plus argmin over *declared* path costs) | `BCIRSelectPass.cpp` | MLIR/C++ | ✅ (trusts emitted costs) |
+| K_BCIR **RCSP / Pareto** (budget label-DP + front) | `BCIRRcspPass.cpp` | MLIR/C++ | ✅ **ported** (reproduces 9472 + size-2 front) |
+| **Cost model** (`_cost`, `candidates_for`, stride/tier penalties) | `bcir/kbcir/cost.py` + `realize.py` | → **MLIR/C++** | ☐ **Python-only** (the keystone gap) |
+| **Fusion / deforestation / CSE** (`fused_candidates`, `_context_factor`) | `bcir/kbcir/realize.py` | → **MLIR/C++** | ☐ Python-only (needs the cost model first) |
+| **Overlap (max,+)** scheduled price | `bcir/gem/overlap.py` | → **MLIR/C++** | ☐ Python-only (`differential.check_overlap` nets the law) |
+| Min-plus **shortest path** over the layered DAG | `bcir/kbcir/semiring.py` | → **MLIR/C++** | ☐ Python-only (C++ does per-claim argmin) |
+| Python→MLIR **emitter** (the bridge) | `bcir/lower/mlir.py` | Python (stays) | ✅ — but its job *shrinks* as the cost model moves to C++ |
+| Portable **C23 kernel** emission | `bcir/lower/c_kernel.py` | C output (emitter may become C++) | ✅ emits C23 |
+| **StreamPack ABI** codec + runtime | `runtime/c/` + Python encoder | **C** (frozen ABI) | ✅ CRC-gated parity |
+| Telemetry ring (zero-copy) | `runtime/c` producer + Python reader | **C** | ✅ |
+| Learned organs (bayescal/softdp/moegate/calibrate/regret) | Python | **Python** (freeze to Q8) | by design |
+
+**Net:** the *law's structure* (verify, GEM pipeline, selection, RCSP/Pareto) is on
+the MLIR rail; the *cost algebra that feeds it* is still Python. The select/RCSP
+passes therefore trust the **emitter-baked** path costs. Closing that — computing
+costs in C++ from the claim graph + target capability — is the next keystone.
+
+## 2. The reformulated split (target homes)
+
+- **MLIR/C++ (plan-time law):** dialect + verifier (R1–R16), the **whole** K_BCIR
+  optimizer core — cost model, candidate enumeration, fusion/CSE/deforestation,
+  min-plus shortest path, RCSP/Pareto, overlap (max,+), selection — and the lowering
+  contracts. Goal: the MLIR rail recomputes the oracle's plan *from first principles*
+  (claim graph + `bcir.target.capability`), not from emitted numbers.
+- **C (run-time):** the StreamPack ABI codec, the deterministic executor hot path,
+  the telemetry ring, the emitted compute kernels (C23). No allocation churn, no GC,
+  arena/`mmap` lifetimes, SIMD-friendly layouts.
+- **Python (train-time / graded):** the learned organs and the offline calibration
+  SGD, each freezing to a generation-tagged Q8 artifact; plus the conformance
+  **oracle** (`bcir/`) and the **generators** (`differential.gen_module`, `fuzz`)
+  that keep the C++/C rails honest. The Python→MLIR emitter remains the test bridge.
+
+## 3. Modernization: where C23 / C++23 / C++26 actually pay
+
+Not novelty for its own sake — only where determinism, memory, or speed improves:
+
+- **C++23 in the passes (now the build standard):**
+  - `constexpr` **cost tables** — the seeded target constants (mem_unit, base_overhead,
+    thermal/power density, tier Q8 factors) become `constexpr std::array` tables,
+    folded at compile time and trivially deterministic across hosts.
+  - `std::span` / `std::ranges` for cost-vector and candidate iteration (no copies,
+    clearer than index loops); `std::mdspan` (C++23) for tile geometry in the matmul
+    cost path.
+  - `std::expected<Plan, Diagnostic>` for pass-internal cost/plan computation
+    (explicit error channel alongside MLIR's `LogicalResult`).
+  - structured bindings + designated initializers throughout (already used).
+- **C++26 (where the toolchain allows):** gated — clang-18/gcc-13 `-std=c++2c` is
+  experimental and the stock MLIR 18 headers don't compile clean under it, so C++23
+  is the **gating** standard and the code stays `c++2c`-ready. Adopt C++26 niceties
+  (e.g. `std::submdspan`, reflection when it lands) only behind a feature check.
+- **C23 in the runtime + emitted kernels:** `constexpr` objects, `[[attributes]]`,
+  `typeof`, `_BitInt(N)` for exact fixed-width lanes, and `#embed` for frozen Q8
+  tables baked into the C runtime. The C-kernel emitter already targets C23; widen it
+  to emit `restrict` + `_BitInt` + `[[assume]]` where the contract proves it safe.
+- **Memory/speed where it matters:** the deterministic hot path (executor, StreamPack
+  decode, cost evaluation in a search loop) is exactly where C/C++ beat the Python
+  oracle — arena allocation, cache-friendly SoA cost vectors, branch-free min-plus.
+
+## 4. The ordered build plan (from the oracle)
+
+Each step is gated by the generated differential harness (the ready-made conformance
+net) + FileCheck, and builds on the now-working LLVM 18/19 toolchain.
+
+1. **`-bcir-cost-model` — port the K_BCIR cost algebra to C++ (the keystone).**
+   A pass that, from `bcir.claim` + `bcir.target.capability`, computes each claim's
+   candidate set and 12-d cost vectors (mirroring `cost.py::_cost`,
+   `realize.candidates_for`, `_stride_penalty`, the memory-tier factors) using
+   `constexpr` seeded tables. Annotates the computed `bcir.kbcir.path` costs and
+   cross-checks the emitted ones. *This is what lets the law stop trusting the
+   emitter.* Reproduces 7808 from the claim graph alone.
+2. **Fusion / deforestation / CSE in C++.** With base costs in C++, port
+   `fused_candidates` (shared-input fusion, producer→consumer deforestation, CSE
+   value-numbering) + `_context_factor` as a cost-adjustment pass; verify the
+   discounts the emitter baked in.
+3. **Min-plus shortest path over the layered DAG in C++.** Replace per-claim argmin
+   with the true coupled shortest path (`semiring.dag_shortest_path`), so multi-claim
+   plans with context coupling are recomputed natively. Now selection == the oracle's
+   `optimize` for *all* modules, not just coupling-free ones.
+4. **Overlap (max,+) in C++.** Port `gem/overlap.py` (`price_scheduled`, the binned
+   wave makespan); `differential.check_overlap` already pins the R9 invariant.
+5. **Plan-level multi-claim RCSP.** Extend `-bcir-rcsp` from per-claim to an
+   accumulated-budget label-DP across the plan (the full `rcsp.optimize_constrained`).
+6. **C runtime hardening (C23) + fuzz.** libFuzzer + ASan/UBSan on the StreamPack C
+   decoder and the MLIR parser; `_BitInt`/`#embed` in the runtime.
+7. **Deferred ("do later"):** PMU/RAPL/DVFS real-silicon calibration — the software
+   path is merged; it needs a bare-metal rig to publish a measured replan win.
+
+## 5. The immediate next build step
+
+**Step 1 — `-bcir-cost-model`.** It is the keystone: every later C++ port
+(fusion/CSE, shortest path, overlap) needs the cost algebra on the MLIR rail, and the
+differential harness + the `bcir.target.capability` op already provide the inputs and
+the conformance net. Deliver it as a new modular TU `mlir/lib/passes/BCIRCostModel.cpp`
+with a `constexpr` seeded-constant table mirroring `cost.py`, a FileCheck test that
+recomputes 7808 from `full_vec_add_ct1.mlir`'s claim alone, and a cross-check over the
+generated corpus — exactly the pattern `-bcir-rcsp` followed.
