@@ -21,6 +21,14 @@ jobs:
       - name: BCIR oracle (Python conformance tests)
         run: python3 -m bcir.tests.run_all
 
+      - name: BCIR generated Python<->MLIR differential parity (large campaign)
+        run: |
+          python3 -m bcir.kbcir.differential -n 8000 --seed 1
+          python3 -m bcir.kbcir.differential -n 8000 --seed 2
+          # the committed corpus IR must equal a fresh emission (drift gate)
+          python3 -m bcir.kbcir.differential --emit-corpus
+          git diff --exit-code -- mlir/test/passes/gem_corpus.mlir
+
       - name: Freestanding C StreamPack runtime (no-libc + Python->C ABI parity)
         run: bash tools/c/check_runtime.sh
 

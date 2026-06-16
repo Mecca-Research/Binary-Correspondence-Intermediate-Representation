@@ -30,6 +30,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--theta", default="cool", choices=sorted(_THETAS))
     p.add_argument("--policy", default="latency", choices=sorted(POLICIES))
     p.add_argument("--emit-llvm", action="store_true", help="print the lowered LLVM IR")
+    p.add_argument("--emit-mlir", action="store_true",
+                   help="print the GEM-pipeline BCIR-MLIR for the selected plan (the law "
+                        "rail recomputes the min-plus score; see bcir.kbcir.differential)")
     p.add_argument("--run", action="store_true", help="compile+run the lowering via clang (AOT)")
     p.add_argument("--jit", action="store_true", help="JIT-run the lowering via lli (in-process)")
     p.add_argument("--wasm", action="store_true", help="compile to WASM and run via node (self-checking)")
@@ -179,6 +182,11 @@ def main(argv: list[str] | None = None) -> int:
         man = build_manifest(module, h, theta, policy)
         print(f"[manifest] digest={man.digest} score={man.score} "
               f"widths={dict(man.widths)} reproduces={reproduces(man, module, h, theta, policy)}")
+
+    if args.emit_mlir:
+        from .lower.mlir import to_mlir
+        print("\n// ---- GEM-pipeline BCIR-MLIR (the law rail) ----")
+        print(to_mlir(module, h, theta, policy, result=result, filecheck=True))
 
     if args.emit_c or args.run_c:
         from .lower import compile_and_run_c, emit_kernel_c

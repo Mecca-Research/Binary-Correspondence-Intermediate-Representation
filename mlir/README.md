@@ -21,6 +21,12 @@ executable conformance oracle that must agree with these definitions
 >   GGG→UX opt-law), and `-convert-bcir-to-llvm` (TypeConverter + ConversionPatterns
 >   lowering compute/barrier to the LLVM dialect). Tests in `test/passes/`, gated
 >   by `tools/wsl/check_passes.sh`.
+> - **GEM pipeline + generated parity** — `-bcir-classify-lanes / -select-realization /
+>   -batch / -schedule / -lower-to-llvm` recompute the oracle's plan; `test/passes/
+>   gem_passes.mlir` (curated `vector_add` @ 7808/9472) and `test/passes/gem_corpus.mlir`
+>   (the widened corpus — real matmul/scan/histogram — **generated** by the oracle via
+>   `bcir.lower.mlir.to_mlir`; regenerate with `python -m bcir.kbcir.differential
+>   --emit-corpus`) both FileCheck the law's recomputed min-plus scores.
 
 ## Dual rail
 

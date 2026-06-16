@@ -55,6 +55,8 @@ python -m bcir.run vector_add --moe                                  # learned M
 python -m bcir.run vector_add --accel                                # propose-verify search accelerator (same optimum, fewer expansions)
 python -m bcir.run vector_add --manifest                             # provenance manifest (the commit hash of the plan) + replay check
 python -m bcir.run vector_add --egraph                               # building-blocks engine: claims -> shared blocks after CSE
+python -m bcir.run multi_histogram --target nvidia_ptx --emit-mlir   # emit the GEM-pipeline MLIR for the plan (the law rail)
+python -m bcir.kbcir.differential -n 5000                            # generated, adversarial Python<->MLIR parity (proof, not pins)
 python -m bcir.kbcir.microbench --target x86_avx512 --out cal.json   # measure -> freeze a Q8 cost table
 python -m bcir.kbcir.microbench --target x86_avx512 --bayes          # Bayesian posterior + conformal +/- delta
 python -m bcir.run vector_add --tables bcir/kbcir/tables/x86_64_reference.json  # apply frozen table

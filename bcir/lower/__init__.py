@@ -20,6 +20,7 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
                  "emit_kernel_c", "emit_reduce_c", "emit_selfcheck_c", "emit_strided_c",
                  "find_reduce", "find_strided", "SpatialBinding", "SpatialPlan",
                  "optimize_spatial", "is_pim_target"),
+    "mlir": ("to_mlir", "plan_view", "PlanView", "ClaimView", "PathView"),
     "memory_model": ("barrier_fence_ir", "fence_ordering", "hazard_to_ordering",
                      "c_memory_order", "emit_ring_header_c"),
     "stackify": ("BinOp", "Const", "Local", "stackify", "to_cil", "to_jvm", "to_wasm"),

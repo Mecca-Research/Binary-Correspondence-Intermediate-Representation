@@ -59,6 +59,14 @@ else
   "${BO}" ${GEM} "${T}/gem_passes.mlir" >/dev/null 2>/tmp/pe \
     && echo "  RUN-ONLY gem_passes.mlir" || { echo "  FAIL gem_passes.mlir"; cat /tmp/pe; fail=1; }
 fi
+echo "[passes] GEM pipeline on the widened corpus (matmul/scan/histogram, generated)"
+if [ -n "${FC}" ]; then
+  "${BO}" ${GEM} "${T}/gem_corpus.mlir" 2>/tmp/pe | "${FC}" "${T}/gem_corpus.mlir" \
+    && echo "  PASS gem_corpus.mlir" || { echo "  FAIL gem_corpus.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" ${GEM} "${T}/gem_corpus.mlir" >/dev/null 2>/tmp/pe \
+    && echo "  RUN-ONLY gem_corpus.mlir" || { echo "  FAIL gem_corpus.mlir"; cat /tmp/pe; fail=1; }
+fi
 echo "[passes] GEM cross-checks against the oracle (-verify-diagnostics)"
 "${BO}" -bcir-select-realization -bcir-lower-to-llvm -verify-diagnostics -split-input-file \
   "${T}/gem_passes_neg.mlir" \

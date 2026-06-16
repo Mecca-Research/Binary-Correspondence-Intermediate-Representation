@@ -13,7 +13,7 @@
 
 | Fact | Pasted-roadmap assumption | **Now** |
 |---|---|---|
-| Oracle conformance tests | 136 / 303 | **468** |
+| Oracle conformance tests | 136 / 303 | **483** (incl. the generated differential campaign) |
 | 5 GEM C++ passes (classify/select/batch/schedule/lower) | *unimplemented* | **all implemented** in `mlir/lib/BCIRPasses.cpp` |
 | Verifier laws | R1–R12, "R13 next" | **R1–R16** (R1–R13 dual-rail; R14 CIM-dispatch, R15 DVFS-clock, R16 allocator-tier as MLIR laws + oracle gates) |
 | LLVM version policy | loose, single-version | **multi-version matrix LLVM 18 + 19, both gating** |
@@ -25,15 +25,15 @@
 | # | Quoted item | Status | Evidence / gap |
 |---|---|---|---|
 | 1 | Implement the 5 GEM passes in C++, cross-checked vs pinned scores | ✅ **DONE** | `BCIRPasses.cpp` classify/select/batch/schedule/lower; `-bcir-select-realization` recomputes min-plus and reproduces **7808/9472**; `gem_passes{,_neg}.mlir` |
-| 2 | Symmetric cross-validation; extend parity beyond `vector_add` | ◑ **PARTIAL** | Multi-version matrix ✅; reduction example `gather_reduce_ct1.mlir` ✅; **gap:** generated/differential Python↔MLIR parity (not just curated), and saxpy/histogram/tiled MLIR parity across all six targets |
-| 3 | Widen the op surface (reductions, real matmul, scan/histogram) | ◑ **PARTIAL** | `reduce.gather` modeled + lowered; `tiled_matmul` is a single `T_MACC` skeleton; **gap:** real tiled matmul / scan / multi-claim histogram codegen |
+| 2 | Symmetric cross-validation; extend parity beyond `vector_add` | ✅ **DONE** | Multi-version matrix ✅; **generated, adversarial Python↔MLIR differential** (`bcir.kbcir.differential`: `gen_module` + independent `law_select` + `shrink` + `run_campaign`) proves oracle↔law agreement over thousands of random modules + the six targets; `mlir/test/passes/gem_corpus.mlir` recomputes the widened corpus under `bcir-opt` |
+| 3 | Widen the op surface (reductions, real matmul, scan/histogram) | ✅ **DONE** | `reduce.gather` ✅; **real corpus** shipped (`examples.{matmul_tiled, scan, multi_histogram}` = `examples.CORPUS`): blocked matmul with register-resident K-accumulation, a multi-stage scan pipeline, a map/reduce multi-claim histogram — MLIR parity across all six targets (`test_differential.py`) |
 | 4 | Close the CT4 loop live (real HW counters, broker, measured replan) | ◑ **PARTIAL** | Loop closed on host (`calibloop`, `FrozenCalibrator`, `Broker`, microbench, `bcir.silicon`); **gap:** real PMU counters + RAPL need a bare-metal rig (documented in `HARDWARE_VALIDATION.md`); no live broker in CI |
 | 5 | Multi-claim joint optimization | ◑ **PARTIAL** | Pairwise coupling shipped: shared-input fusion, producer→consumer **deforestation**, **CSE**, (max,+) overlap; **gap:** true combinatorial *bundle* joint optimization |
 | 6 | Native backend — only if warranted | ⛔ **DEFERRED (correct)** | Decision gate stands; LLVM front-half is the chosen path; `bcir.target.lower_contract` structures either choice |
 
 **Risk register (from `BCIR_Roadmap`) — current status:** *validation realism* — largely **mitigated** (Clang comparison + multi-version matrix + 468 tests). *Multi-rail divergence / "law trails the oracle"* — **mitigated for the GEM pipeline** (5 passes + R1–R16 in C++). *Substrate/intelligence inversion* — **partially mitigated** (calibration closed on host, silicon wiring, honest hardware-limit doc); the learned organs remain modeled until a bare-metal rig closes them. *Doc drift, fuzzing, packaging, ASan/UBSan, generated schema* — **still open** (the `BCIR_Roadmap` Phase A/B items remain the right next work).
 
-**Net:** the quoted roadmap is **~1 done, 4 partial, 1 deferred** — and the project has *added* beyond it (R14–R16, the adaptive smart layer, CSE/deforestation, silicon wiring, the Clang evidence rail). The forward plan is no longer "build the 5 passes" but "finish parity breadth, widen the corpus, and close calibration on real hardware."
+**Net:** the quoted roadmap is now **~3 done, 2 partial, 1 deferred** — items #2 (symmetric cross-validation) and #3 (widen the op surface) closed by the generated differential harness + the real corpus; #1 was already done; the project has *added* beyond it (R14–R16, the adaptive smart layer, CSE/deforestation, silicon wiring, the Clang evidence rail). The forward plan is no longer "build the 5 passes" or "make parity generated" but **"close calibration on real hardware, port the deterministic optimizer core (RCSP/Pareto/fusion) to C++, and fuzz the trust boundaries."**
 
 ## 2. The MLIR / C / C++ placement map (where every part goes)
 
@@ -77,24 +77,25 @@ The port boundary is BCIR's own **L0–L3 / two-truth line**: deterministic inte
 
 **Covered:** 468 oracle conformance tests; the MLIR rail (tblgen, IRDL round-trip, `bcir-opt` build, ODS examples, R1–R16 pass tests incl. `gem_passes{,_neg}`) on **LLVM 18 + 19**; StreamPack C-decode parity; the **measured Clang comparison** (`test_clang_compare`, gated); per-target parity pins for saxpy/histogram; pinned 7808/9472 both rails.
 
-**Testing gaps (the `BCIR_Roadmap` Phase B items, still right):**
-1. **Generated differential Python↔MLIR testing** — replace curated parity with a structured module generator that runs both rails and diffs candidates/scores/schedules/diagnostics, shrinking mismatches. *(Highest-value: it turns "two rails that must agree" into a proof, not a hope.)*
-2. **Property / metamorphic tests** — illegal candidate can't change the legal plan; tightening a budget can't raise that resource's use; ID-renaming preserves score; reparse preserves the plan.
-3. **Fuzzing of trust boundaries** — ROP/MAP parsers, ETL decoder, MLIR parser, StreamPack C/Python decoders, calibration/telemetry JSON; libFuzzer + ASan/UBSan for C/C++.
-4. **R14–R16 in the Python verifier** — they exist as MLIR laws + oracle gates but not as `bcir.verify` functions; add them for full dual-rail symmetry.
-5. **Compile-time / peak-memory regression budgets**; reproducibility checks that rebuild archived plans from frozen inputs.
+**Testing gaps (the `BCIR_Roadmap` Phase B items):**
+1. ✅ **Generated differential Python↔MLIR testing** — `bcir.kbcir.differential`: a structured/adversarial `gen_module` runs both rails (oracle shortest-path vs. independent `law_select` per-claim argmin) and diffs the selected realization / per-claim + total score / budget feasibility / schedule order, **shrinking** mismatches to a minimal witness (`shrink`). `run_campaign` sweeps the six targets × Θ × policy; `test_differential.py` asserts zero divergence over ≥1500 modules; `mlir/test/passes/gem_corpus.mlir` recomputes the widened corpus under real `bcir-opt`. *(This turned "two rails that must agree" into a proof.)*
+2. ✅ **Property / metamorphic tests** — shipped in `test_differential.py`: ID-renaming preserves the score; a tighter budget never raises the capped dimension (and feasibility holds); emit→read (`plan_view`→`law_select`) is lossless; the committed corpus equals a fresh emission (drift gate).
+3. ☐ **Fuzzing of trust boundaries** — ROP/MAP parsers, ETL decoder, MLIR parser, StreamPack C/Python decoders, calibration/telemetry JSON; libFuzzer + ASan/UBSan for C/C++. *(The generated `Module` corpus is now the seed for a structure-aware MLIR fuzz; this is the next testing lever.)*
+4. ☐ **R14–R16 in the Python verifier** — they exist as MLIR laws + oracle gates but not as `bcir.verify` functions; add them for full dual-rail symmetry.
+5. ☐ **Compile-time / peak-memory regression budgets**; reproducibility checks that rebuild archived plans from frozen inputs.
 
 ## 5. The updated master roadmap (reconciled)
 
 The `BCIR_Roadmap` Phase A–H structure and the 0.2→1.0 release ladder remain the right spine; below is the **reconciled, current-state** version. ✅ done · ◑ in progress · ☐ next.
 
-### Near-term — finish "BCIR 0.2: reproducible compiler" (≈70% done)
+### Near-term — finish "BCIR 0.2: reproducible compiler" (≈90% done)
 - ✅ 5 C++ GEM passes; ✅ multi-version LLVM matrix; ✅ compilation/provenance manifest (R13); ✅ measured baseline vs Clang.
-- ☐ **Generated differential Python↔MLIR parity** (Phase B.1) — the top correctness lever now.
-- ☐ **Named pass pipelines** (`bcir-plan`, `bcir-hydrate`, `bcir-lower-llvm`, `bcir-aot`, `bcir-audit`) with declared input/output levels + verifier checkpoints (stop relying on ad-hoc ordering).
-- ☐ **Widen the corpus**: real tiled matmul + scan + multi-claim histogram, with MLIR parity across the six targets (closes quoted #2, #3).
+- ✅ **Generated differential Python↔MLIR parity** (Phase B.1) — `bcir.kbcir.differential` (generator + independent law rail + diff + shrink) + `lower.mlir.to_mlir` emitter; was the top correctness lever, now landed.
+- ✅ **Widen the corpus**: real tiled matmul + scan + multi-claim histogram (`examples.CORPUS`), with MLIR parity across the six targets (`gem_corpus.mlir`) — closes quoted #2, #3.
+- ☐ **Named pass pipelines** (`bcir-plan`, `bcir-hydrate`, `bcir-lower-llvm`, `bcir-aot`, `bcir-audit`) with declared input/output levels + verifier checkpoints (stop relying on ad-hoc ordering). *(Now the highest-value MLIR-rail lever: the `to_mlir` emitter gives the named-pipeline inputs for free.)*
 - ☐ **Doc-classification + link CI** (Normative / Current / Historical / Research) + retired-path checker.
 - ☐ **R14–R16 as `bcir.verify` functions** (dual-rail symmetry).
+- ☐ **Verifier differential** — extend the generated harness to *illegal* modules and diff the Python verifier against `-bcir-verify` law-for-law (the natural next use of `gen_module`).
 
 ### Mid-term — "BCIR 0.3: measured adaptive compiler" (the headline)
 - ◑ **Close CT4 on real hardware** (quoted #4): a bare-metal rig with PMU + `intel_pstate=passive` userspace governor + RAPL; train `LinearCalibrator` on real counters; one *measured* (not synthetic) replan win. *This is the single most valuable next result — it converts "optimal-w.r.t.-a-model" into evidence.*
@@ -116,4 +117,4 @@ The `BCIR_Roadmap` Phase A–H structure and the 0.2→1.0 release ladder remain
 
 ## 6. Bottom line
 
-The pasted roadmaps remain a sound *spine*, but their headline task (the 5 C++ GEM passes) and their "next law" (R13) are **done**, and validation realism is **measured**, not aspirational. The center of gravity has moved from *"make the MLIR rail a compiler"* to **three things**: (1) make Python↔C++/MLIR equivalence *generated and adversarial*, (2) **close calibration on real silicon** (the one differentiator no amount of architecture substitutes for), and (3) **widen the corpus** so optimization claims generalize beyond toy kernels. The MLIR/C/C++ split is settled by the two-truth line — deterministic core to C++/MLIR + C runtime, graded organs stay Python and freeze to Q8 — and most of the deterministic core's *law* already lives on the MLIR rail; the remaining port is the optimizer's RCSP/Pareto/fusion search.
+The pasted roadmaps remain a sound *spine*, but their headline task (the 5 C++ GEM passes) and their "next law" (R13) are **done**, validation realism is **measured**, and as of this phase two of the three former center-of-gravity items are also done: Python↔C++/MLIR equivalence is now **generated and adversarial** (`bcir.kbcir.differential` — thousands of random modules diffed across the six targets, shrunk on mismatch, recomputed by real `bcir-opt` on the committed corpus), and the corpus is **widened** past toy kernels (real tiled matmul / scan / multi-claim histogram with per-target MLIR parity). The center of gravity now narrows to **three**: (1) **close calibration on real silicon** (the one differentiator no amount of architecture substitutes for — now the single most valuable next result), (2) **port the deterministic optimizer core to C++/MLIR** (RCSP/Pareto/overlap/fusion/CSE — the remaining "law catches the oracle" gap, for which the generated harness is the readymade conformance net), and (3) **fuzz the trust boundaries** (parsers, decoders, MLIR — seeded by the new `gen_module`). The MLIR/C/C++ split is settled by the two-truth line — deterministic core to C++/MLIR + C runtime, graded organs stay Python and freeze to Q8.
