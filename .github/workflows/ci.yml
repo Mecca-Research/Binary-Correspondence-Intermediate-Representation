@@ -30,6 +30,9 @@ jobs:
           # the committed corpus IR must equal a fresh emission (drift gate)
           python3 -m bcir.kbcir.differential --emit-corpus
           git diff --exit-code -- mlir/test/passes/gem_corpus.mlir
+          # the six-target capability matrix must equal a fresh emission too (drift gate)
+          python3 -m bcir.kbcir.differential --emit-matrix
+          git diff --exit-code -- mlir/test/passes/target_matrix.mlir
 
       - name: BCIR trust-boundary fuzz (seeded by gen_module)
         run: |

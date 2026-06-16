@@ -101,6 +101,25 @@ echo "[passes] RCSP plan-level (accumulated-budget label-DP across the plan)"
 run_fc -bcir-rcsp-plan "${T}/rcsp_plan.mlir"
 echo "[passes] hot-Theta plan parity (the kbcir.theta context op)"
 run_fc -bcir-plan "${T}/theta_hot.mlir"
+echo "[passes] six-target capability matrix (-bcir-plan/-overlap/-rcsp-plan per target)"
+MATRIX="-bcir-plan -bcir-overlap -bcir-rcsp-plan"
+if [ -n "${FC}" ]; then
+  "${BO}" ${MATRIX} "${T}/target_matrix.mlir" 2>/tmp/pe | "${FC}" "${T}/target_matrix.mlir" \
+    && echo "  PASS target_matrix.mlir (FileCheck)" || { echo "  FAIL target_matrix.mlir"; cat /tmp/pe; fail=1; }
+fi
+# Robust per-target spot checks (run even without FileCheck), distinctive per-target
+# scores the C++ plan must recompute from the capability seeds alone: the ARM-NEON
+# (width 4) and PTX (width 32) vector_add plans, the GPU's cheaper coalesced gather
+# (penalty 16 -> 266240 vs the CPUs' 528384), and a plan-level RCSP constrained optimum.
+mx_out="$("${BO}" ${MATRIX} "${T}/target_matrix.mlir" 2>/tmp/pe)"
+if grep -q "kbcir.plan_score = 12800" <<<"${mx_out}" \
+   && grep -q "kbcir.plan_score = 6976" <<<"${mx_out}" \
+   && grep -q "kbcir.plan_score = 266240" <<<"${mx_out}" \
+   && grep -q "kbcir.rcsp_plan_score = 17280" <<<"${mx_out}"; then
+  echo "  PASS target_matrix per-target spot checks (neon 12800 / ptx 6976 / ptx gather 266240 / rvv-class rcsp 17280)"
+else
+  echo "  FAIL target_matrix per-target spot checks"; cat /tmp/pe; fail=1
+fi
 echo "[passes] -bcir-rcsp cross-check on the widened corpus (argmin reproduces the oracle)"
 "${BO}" -bcir-rcsp "${T}/gem_corpus.mlir" >/dev/null 2>/tmp/pe \
   && echo "  PASS rcsp on gem_corpus.mlir" || { echo "  FAIL rcsp on gem_corpus.mlir"; cat /tmp/pe; fail=1; }

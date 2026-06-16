@@ -164,7 +164,7 @@ def _path_sym(claim_id: int, name: str) -> str:
 
 def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
             result: RealizationResult | None = None, module_suffix: str = "",
-            run_pipeline: bool = True, filecheck: bool = False) -> str:
+            run_pipeline: bool = True, filecheck: bool = False, budget=None) -> str:
     """Emit the GEM-pipeline BCIR-MLIR text for `module`'s plan. The result parses
     and runs through `-bcir-classify-lanes -bcir-select-realization -bcir-batch
     -bcir-schedule -bcir-lower-to-llvm` (the same surface as
@@ -184,14 +184,21 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
         L.append("// min-plus argmin must recompute the oracle's per-claim score (parity).")
         L.append("")
     L.append(f"bcir.module @{_ident(name)} {{")
-    # target capability H (the seeded constants -bcir-cost-model / -bcir-plan read to
-    # recompute costs from first principles). Cost seeds default to the CPU values.
+    # target capability H (the seeded constants -bcir-cost-model / -bcir-plan /
+    # -bcir-overlap / -bcir-rcsp-plan read to recompute costs from first principles --
+    # the per-target descriptor that makes the six-target capability matrix work).
+    # A full mirror of cost.py TargetProfile: every seed the law consumes is emitted,
+    # so a non-x86 target (arm64 / RISC-V / GPU) plans from its own constants, not the
+    # CPU defaults. `warp` / `mem_channels` carry the warp geometry + roofline knee
+    # (mem_channels feeds -bcir-schedule's bandwidth-bound parallelism).
     isa = ", ".join(f"\"{x}\"" for x in sorted(h.isa_features))
     lw = ", ".join(str(x) for x in h.lane_widths)
     L.append(f"  bcir.target.capability @cpu {{ triple = \"{h.triple}\", "
              f"isa_features = [{isa}], lane_widths = array<i64: {lw}>, "
-             f"cacheline = {h.cacheline} : i32, gather_penalty = {h.gather_penalty} : i32, "
+             f"warp = {h.warp} : i32, cacheline = {h.cacheline} : i32, "
+             f"gather_penalty = {h.gather_penalty} : i32, "
              f"affinity_domains = {h.affinity_domains} : i32, "
+             f"mem_channels = {h.mem_channels} : i32, "
              f"thermal_density = {h.thermal_density} : i32, power_density = {h.power_density} : i32, "
              f"mem_unit = {h.mem_unit} : i32, base_overhead = {h.base_overhead} : i32, "
              f"per_op_heat = {h.per_op_heat} : i32, elem_bytes = {h.elem_bytes} : i32 }}")
@@ -217,6 +224,14 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
     wlist = ", ".join(str(x) for x in pv.weights)
     L.append(f"  bcir.kbcir.policy @perf {{ mode = #bcir.policy_mode<{pv.policy_mode}>, "
              f"weights = array<i64: {wlist}> }}")
+    # optional plan-wide budget B(H,Theta): hard caps on additive resource dims that
+    # -bcir-rcsp-plan's accumulated-budget label DP must respect (mirrors rcsp.Budget).
+    if budget is not None and budget.caps:
+        from ..kbcir.cost import DIMS as _DIMS
+        dims = ", ".join(f"\"{_DIMS[d]}\"" for d, _ in budget.caps)
+        caps = ", ".join(str(cap) for _, cap in budget.caps)
+        L.append(f"  bcir.kbcir.budget @cap {{ dims = [{dims}], "
+                 f"caps = array<i64: {caps}> }}")
     # phases
     for pid in pv.phase_ids:
         deps = ", ".join(f"@p{d}" for d in pv.phase_deps.get(pid, ()))

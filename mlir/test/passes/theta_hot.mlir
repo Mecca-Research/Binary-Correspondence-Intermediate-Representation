@@ -6,7 +6,7 @@
 // reproduces the oracle's hot optimize() score (the cool plan was 1015808).
 // Regenerate: python -m bcir.kbcir.differential --emit-theta.
 bcir.module @matmul_tiled_hot {
-  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
   bcir.registry @RES {
     %r1000000 = bcir.resource @r1000000 { rid = 1000000 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
     %r1000001 = bcir.resource @r1000001 { rid = 1000001 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource

@@ -68,6 +68,7 @@ _MODULES = [
     "bcir.tests.test_persistent_oracles",
     "bcir.tests.test_precision",
     "bcir.tests.test_differential",
+    "bcir.tests.test_target_matrix",
     "bcir.tests.test_smart_laws",
     "bcir.tests.test_fuzz",
     "bcir.tests.test_measured_silicon",
