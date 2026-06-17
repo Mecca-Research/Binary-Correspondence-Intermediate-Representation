@@ -60,6 +60,12 @@ class ChosenStep:
 class RealizationResult:
     steps: list[ChosenStep] = field(default_factory=list)
     score: int = 0
+    # The deforested candidate map optimize() already built (claim id -> candidates).
+    # Carried so downstream consumers (plan_view / to_mlir) reuse it instead of
+    # recomputing fused_candidates(). Excluded from equality/repr -- it is derived
+    # state, not part of the result's identity.
+    cand_map: dict[int, list[Candidate]] | None = field(
+        default=None, compare=False, repr=False)
 
     def by_claim(self) -> dict[int, Candidate]:
         return {s.claim_id: s.candidate for s in self.steps}
@@ -348,4 +354,4 @@ def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -
             steps.append(ChosenStep(claim.id, phase_id, cand, int(dist[node] - dist[p])))
         node = p
     steps.reverse()
-    return RealizationResult(steps, int(dist[sink]))
+    return RealizationResult(steps, int(dist[sink]), cand_map=cand_map)

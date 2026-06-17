@@ -5,6 +5,12 @@ on:
     branches: ["**"]
   pull_request:
 
+# Cancel superseded runs on the same ref (rapid pushes no longer queue 9-min rail jobs
+# behind each other).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   oracle-and-training:
     name: BCIR oracle + LLVM training
@@ -25,8 +31,11 @@ jobs:
 
       - name: BCIR generated Python<->MLIR differential parity (large campaign)
         run: |
-          python3 -m bcir.kbcir.differential -n 8000 --seed 1
-          python3 -m bcir.kbcir.differential -n 8000 --seed 2
+          # the two seeds are independent campaigns -> run them in parallel; wait on
+          # each PID so a failure in either still fails the step (bare `wait` would not).
+          python3 -m bcir.kbcir.differential -n 8000 --seed 1 & p1=$!
+          python3 -m bcir.kbcir.differential -n 8000 --seed 2 & p2=$!
+          wait "$p1"; wait "$p2"
           # the committed corpus IR must equal a fresh emission (drift gate)
           python3 -m bcir.kbcir.differential --emit-corpus
           git diff --exit-code -- mlir/test/passes/gem_corpus.mlir
@@ -36,8 +45,9 @@ jobs:
 
       - name: BCIR trust-boundary fuzz (seeded by gen_module)
         run: |
-          python3 -m bcir.kbcir.fuzz -n 4000 --seed 1
-          python3 -m bcir.kbcir.fuzz -n 4000 --seed 2
+          python3 -m bcir.kbcir.fuzz -n 4000 --seed 1 & pf1=$!
+          python3 -m bcir.kbcir.fuzz -n 4000 --seed 2 & pf2=$!
+          wait "$pf1"; wait "$pf2"
 
       - name: Freestanding C StreamPack runtime (no-libc + Python->C ABI parity)
         run: bash tools/c/check_runtime.sh
@@ -179,7 +189,17 @@ jobs:
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh ${{ matrix.llvm }}
           sudo apt-get install -y mlir-${{ matrix.llvm }}-tools libmlir-${{ matrix.llvm }}-dev \
-            llvm-${{ matrix.llvm }}-dev llvm-${{ matrix.llvm }}-tools cmake ninja-build
+            llvm-${{ matrix.llvm }}-dev llvm-${{ matrix.llvm }}-tools cmake ninja-build ccache
+
+      - name: Cache ccache (warms the bcir-opt compile against the MLIR headers)
+        # The bcir-opt compile dominates this job's wall time; ccache turns a warm run
+        # into a near-instant relink. Keyed per-LLVM-major, newest-first restore.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-mlir${{ matrix.llvm }}-${{ github.sha }}
+          restore-keys: |
+            ccache-mlir${{ matrix.llvm }}-
 
       - name: Validate ODS dialect family (mlir-tblgen)
         run: bash tools/wsl/tblgen_check.sh

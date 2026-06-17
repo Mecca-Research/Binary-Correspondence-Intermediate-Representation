@@ -179,19 +179,25 @@ def _fuzz_etl_binary(rng: random.Random, findings: list[FuzzFinding]) -> None:
 
 def _fuzz_mlir(rng: random.Random, findings: list[FuzzFinding]) -> None:
     from ..lower.mlir import plan_view, to_mlir
+    from ..kbcir.realize import optimize
     from .differential import law_select
 
     m = gen_module(rng)
     h = TARGETS[rng.choice(list(TARGETS))]
     th = Theta.cool()
-    a = to_mlir(m, h, th)
-    if to_mlir(m, h, th) != a:                       # deterministic emission
+    # Plan once and thread it through both emissions + the plan_view; the optimizer is
+    # deterministic (covered by the differential campaign), so re-running it per call
+    # here just burned CPU. The determinism check now validates emit-side determinism
+    # (text building) from a fixed plan.
+    result = optimize(m, h, th)
+    a = to_mlir(m, h, th, result=result)
+    if to_mlir(m, h, th, result=result) != a:        # deterministic emission
         findings.append(FuzzFinding("to_mlir", "roundtrip", f"non-deterministic emit ({m.name})"))
     if a.count("{") != a.count("}"):
         findings.append(FuzzFinding("to_mlir", "roundtrip", f"unbalanced braces ({m.name})"))
     # emit -> read-back: the law's argmin over the emitted plan_view reproduces the
     # oracle's per-claim selection (the bridge is lossless).
-    pv = plan_view(m, h, th)
+    pv = plan_view(m, h, th, result=result)
     law = law_select(pv)
     for cv in pv.claims:
         if law[cv.claim_id][0] != cv.selected:
