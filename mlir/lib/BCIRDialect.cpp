@@ -54,6 +54,26 @@ using namespace bcir;
   return ::mlir::success();
 }
 
+::mlir::LogicalResult ClaimOp::verify() {
+  // getCount() is uint64_t (an i64 attr); reinterpret signed so a negative literal is caught.
+  int64_t count = static_cast<int64_t>(getCount());
+  if (count < 0)
+    return emitOpError() << "count must be non-negative (got " << count << ")";
+  if (getStrideK() == 0)
+    return emitOpError() << "stride_k must be positive (got " << getStrideK() << ")";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult TargetCapabilityOp::verify() {
+  int64_t cl = getCacheline();
+  if (cl <= 0 || (cl & (cl - 1)) != 0)
+    return emitOpError() << "cacheline must be a positive power of two (got " << cl << ")";
+  for (int64_t w : getLaneWidths())
+    if (w <= 0)
+      return emitOpError() << "lane widths must be positive (got " << w << ")";
+  return ::mlir::success();
+}
+
 void BCIRDialect::initialize() {
   addOperations<
 #define GET_OP_LIST

@@ -40,6 +40,9 @@ def BCIR_TargetCapabilityOp : BCIR_Op<"target.capability", [Symbol]> {
     // kbcir.calibration table was applied -- L1 freshness).
     DefaultValuedAttr<I64Attr, "0">:$cal_gen);
   let assemblyFormat = "$sym_name attr-dict";
+  // Parse-time well-formedness: the cacheline is a positive power of two and every
+  // declared SIMD lane width is positive.
+  let hasVerifier = 1;
 }
 
 #endif // BCIR_TARGET_OPS

@@ -128,6 +128,32 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **MLIR-22 completion follow-ups + dual-rail completeness scan.** Closed the
+  remaining feature-adoption follow-ups and acted on an independent oracle↔law scan. **(1)
+  `-std=c++2c`:** the C++ standard moves to C++26 — CMake's GNU `CXX_STANDARD=26` flag mapping
+  only landed in CMake ~3.30 (ubuntu-latest + conda ship 3.28), so the base standard stays 23
+  (mapped everywhere) and `-std=c++2c` is appended when `check_cxx_compiler_flag` accepts it (the
+  later `-std` wins → the actual compile is C++26 on clang-22 / gcc-15; older toolchains stay at
+  23). **(2) `hasVerifier` on more ops:** `bcir.claim` (count non-negative — `getCount()` is
+  `uint64_t`, so it is reinterpreted signed; stride_k positive) and `bcir.target.capability`
+  (cacheline a positive power of two; lane widths positive) join `resource`/`gem.lane_segment`;
+  10 negative cases in `verify_ops.mlir`. **(3) Built the one op PARITY claimed but did not
+  exist — `bcir.kbcir.memory_module`** (the resolution-fixpoint organ `a = Lim(Res(U))`) with a
+  first-class `-bcir-verify` **R13** admissibility law (`saturated ∧ generation ≥ 1`), a
+  `verify_laws_deep.mlir` negative case, and an IRDL projection entry. **(4) Corrected the stale
+  `PARITY.md` rows the scan found:** `bundle` (was "roadmap" — `-bcir-bundle` shipped),
+  `verifier differential` (R1–R18 are first-class in `-bcir-verify`), `two_truth` (no op — it is
+  correctly *quarantined off-rail by design*, now framed like the operad row), and `target.lower_contract`
+  (the support-containment / commuting-square check is a tracked R12 refinement, not yet enforced).
+  **(5) Roadmap:** §5.1 records the MLIR-22 completion + the three narrow remaining law-rail gaps
+  (overlap re-selection sweep, the MOPC R12 refinement, the sensing telemetry gate); new §5.7 sets
+  the long-term language-frontend direction (full C / Python / C++ frontends — explicitly *not*
+  near-term). The scan's verdict: the law rail mirrors the oracle's **entire deterministic spine**
+  (84 ops, 23 passes, R1–R18); the interpretive/learned/two-truth layer is correctly off-rail. All
+  validated on **true MLIR 22.1.7**; 617 oracle tests unchanged. The deeper IRDL attribute/type
+  constraints stay structurally bounded (pure IRDL cannot reference local types via `irdl.base`
+  cleanly, nor express the cost-vector/R-law predicates without `irdl.c_pred` + compiled C++).
+
 - 2026-06-17: **Goal 4 — IRDL projection fidelity (op coverage).** The pure-IRDL portability
   projection (`mlir/irdl/bcir.irdl.mlir`, validated on stock `mlir-opt`) was missing 4 ODS ops
   and carried 1 orphan. Added the 4 K_BCIR ops it omitted — **`kbcir.theta`** (the runtime-state
