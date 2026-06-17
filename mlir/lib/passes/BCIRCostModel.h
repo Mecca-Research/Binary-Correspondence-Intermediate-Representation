@@ -569,7 +569,8 @@ inline int64_t planConstrained(const std::vector<Column> &cols, ArrayRef<int64_t
   return best;
 }
 
-
+// The first target.capability (the optimizer's H); null if none declared.
+inline TargetCapabilityOp firstCapability(Operation *root) {
   TargetCapabilityOp cap;
   root->walk([&](TargetCapabilityOp t) {
     if (!cap)
