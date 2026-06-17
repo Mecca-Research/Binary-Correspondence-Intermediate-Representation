@@ -45,19 +45,18 @@ struct CostModelPass : public PassWrapper<CostModelPass, OperationPass<>> {
     // a multi-module file (e.g. the widened corpus) is costed module-by-module.
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    // The kbcir.cm_* annotations are not plan inputs -> keep the shared plan analysis.
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
-    auto capOp = cm::firstCapability(root);
-    if (!capOp)
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
+    if (!pa.hasCap)
       return; // no target declared -> nothing to compute against
-    cm::Cap h = cm::readCap(capOp);
-    auto resByName = cm::resourcesByName(root);
-    ArrayRef<int64_t> weights = cm::firstWeights(root);
+    ArrayRef<int64_t> weights = pa.weights;
 
-    for (cm::Column &col : cm::fusedColumns(root, h, resByName)) {
+    for (const cm::Column &col : pa.cols) {
       if (col.cands.empty())
         continue;
       ClaimOp c = col.claim;
