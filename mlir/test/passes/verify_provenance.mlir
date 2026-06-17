@@ -45,3 +45,34 @@ bcir.module @r13_digest_tampered {
     m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64
   }
 }
+
+// -----
+
+// R13 m_theta cross-check against the IR (ok): the cool components + a cool kbcir.theta op
+// (all eight pressures 0). hash_theta recomputed from the op equals the declared m_theta
+// -- accepted (and the digest still recomputes).
+bcir.module @r13_theta_ok {
+  bcir.kbcir.theta @theta { thermal = 0 : i32 }
+  bcir.kbcir.provenance_manifest @man_theta {
+    digest = 9201837206445197944 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
+    reproduced = true,
+    m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64,
+    m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64
+  }
+}
+
+// -----
+
+// R13 m_theta cross-check against the IR (mismatch): the manifest records the cool m_theta
+// but the IR's kbcir.theta op is hot (thermal 80) -- the manifest is attached to a different
+// runtime state than the one in the IR, and is rejected.
+bcir.module @r13_theta_mismatch {
+  bcir.kbcir.theta @theta { thermal = 80 : i32 }
+  // expected-error @+1 {{R13: manifest m_theta 1870846051561339781 does not match hash_theta recomputed from the kbcir.theta op 7137236898939919207}}
+  bcir.kbcir.provenance_manifest @man_theta_bad {
+    digest = 9201837206445197944 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
+    reproduced = true,
+    m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64,
+    m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64
+  }
+}

@@ -76,7 +76,14 @@ executable conformance oracle that must agree with these definitions
 > - **Compositional func/if op family** — `bcir.kbcir.func` / `kbcir.call` / `kbcir.cond`
 >   (`include/BCIR/BCIRKBCIROps.td`) give `compose.py`'s region tree (functions / calls /
 >   control flow) first-class MLIR form; they round-trip through `bcir-opt`
->   (`test/passes/compose_ops.mlir`). The compositional cost stays the Python oracle's.
+>   (`test/passes/compose_ops.mlir`). The compositional cost stays the Python oracle's. The
+>   **R18** verifier law checks the call graph — every `kbcir.call` resolves to a `kbcir.func`
+>   and the graph is acyclic (no recursion), the law-rail twin of `compose.plan_composite`'s
+>   undefined-callee + recursion rejections (`test/passes/verify_callgraph.mlir`).
+> - **R13 first-principles provenance** — `-bcir-verify` recomputes a `kbcir.provenance_manifest`'s
+>   digest from its component hashes (FNV-1a, byte-identical to `provenance._digest`) and
+>   cross-checks `m_theta` against the in-IR `kbcir.theta` op, so neither the digest nor the
+>   runtime-state identity is taken on trust (`test/passes/verify_provenance.mlir`).
 
 ## Dual rail
 
