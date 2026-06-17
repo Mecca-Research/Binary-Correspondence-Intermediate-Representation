@@ -584,12 +584,120 @@ def check_plan_verifier(module: Module, result, expected_law: str) -> list[Misma
     return []
 
 
+def _artifact_law_misses(rng: random.Random) -> list[Mismatch]:
+    """One pass over the artifact-law rails R10-R18: build a clean artifact through the
+    real oracle pipeline, confirm it verifies clean, inject one fault, confirm the law
+    fires. R10/R11 (StreamPack provenance/generation via verify_pack), R12 (lowering via
+    verify_lowering), R13 (accelerator-certificate provenance via verify_provenance),
+    R14-R16 (CIM/DVFS/allocator via verify_cim/dvfs/allocator), R17 (accuracy via
+    verify_accuracy), and R18 (compositional call-graph integrity -- enforced by
+    plan_composite RAISING on an undefined callee / recursion rather than returning a
+    diagnostic, like R1's construction guard). Heavier than the module/plan rails (it
+    optimizes, hydrates and lowers), so the campaign runs it once per call, not per n."""
+    import dataclasses
+    from dataclasses import replace
+    from ..examples import vector_add
+    from ..kbcir.cost import TargetProfile, MemTier
+    from ..gem import hydrate
+    from ..gem.dvfs import DVFSDecision, DVFSPlan, plan_dvfs
+    from ..kbcir.allocator import Placement
+    from ..kbcir.accel import AccelCertificate
+    from ..kbcir import compose as _compose
+    from ..lower.llvm import emit_kernel_ll
+    from ..verify import (verify_pack, verify_lowering, verify_provenance, verify_cim,
+                          verify_dvfs, verify_allocator, verify_accuracy)
+    from ..model.graph import Claim, Resource, Module, Phase, Opcode, Lane, StrideClass, Domain
+    from .realize import optimize
+
+    h = TargetProfile.x86_avx512()
+    th = Theta.cool()
+    misses: list[Mismatch] = []
+    laws = lambda ds: {d.law for d in ds}
+
+    def fires(law: str, ok: bool, where: str) -> None:
+        if not ok:
+            misses.append(Mismatch(where, 0, f"{law}: injected fault not flagged"))
+
+    def clean(where: str, diags) -> None:
+        if diags:
+            misses.append(Mismatch(where, 0, f"clean fixture flagged {[d.law for d in diags]}"))
+
+    # R10 / R11 -- StreamPack provenance + generation validity.
+    m = vector_add(1024)
+    clean("verify_pack", verify_pack(m, hydrate(m, optimize(m, h, th))))
+    p10 = hydrate(m, optimize(m, h, th)); p10.trace_notes.clear()
+    fires("R10", "R10" in laws(verify_pack(m, p10)), "verify_pack")
+    m11 = vector_add(1024); pack11 = hydrate(m11, optimize(m11, h, th))
+    m11.resources[10] = replace(m11.resources[10], data_gen=5)      # registry drifts under a live pack
+    fires("R11", "R11" in laws(verify_pack(m11, pack11)), "verify_pack")
+
+    # R12 -- lowering contract (an invented instruction the plan never licensed).
+    res = optimize(m, h, th); ll = emit_kernel_ll(m, res)
+    clean("verify_lowering", verify_lowering(m, res, ll))
+    fires("R12", "R12" in laws(verify_lowering(m, res, ll.replace("fadd", "fdiv"))), "verify_lowering")
+
+    # R13 -- accelerator-certificate provenance (a cert claiming deployment with a mismatch).
+    clean("verify_provenance",
+          verify_provenance(None, accel_certificates=[AccelCertificate("greedy", checked=4, mismatches=0)]))
+    fires("R13", "R13" in laws(verify_provenance(
+        None, accel_certificates=[AccelCertificate("learned", checked=10, mismatches=1)])), "verify_provenance")
+
+    # R14 -- CIM/PIM dispatch legality (PIM on a non-reduction add).
+    pack = hydrate(m, optimize(m, h, th))
+    clean("verify_cim", verify_cim(pack))
+    pack.segments = [dataclasses.replace(pack.segments[0], dispatch="pim")]
+    fires("R14", "R14" in laws(verify_cim(pack)), "verify_cim")
+
+    # R15 -- DVFS clock legality (a clock far outside the legal Q8 range).
+    mdv = vector_add(1 << 16)
+    clean("verify_dvfs", verify_dvfs(plan_dvfs(mdv, optimize(mdv, h, th), th)))
+    fires("R15", "R15" in laws(verify_dvfs(
+        DVFSPlan(decisions=(DVFSDecision(0, 0, 0, "compute", 900, "x"),)))), "verify_dvfs")
+
+    # R16 -- allocator on-chip capacity (4 MiB cannot fit the 64 KiB L1 cap).
+    clean("verify_allocator", verify_allocator(m, Placement(tiers={10: MemTier.L1}, moved=(10,))))
+    fires("R16", "R16" in laws(verify_allocator(
+        vector_add(1 << 20), Placement(tiers={10: MemTier.L1}, moved=(10,)))), "verify_allocator")
+
+    # R17 -- accuracy contract (a tight tolerance the naive reduction cannot meet).
+    def _accmod(tol: int) -> Module:
+        c = Claim(id=5000, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+                  count=1000, rd=(50,), wr=(51,), op="reduce.add", domain=Domain.RAM, tolerance_ulp=tol)
+        mm = Module(name="acc")
+        mm.add_resource(Resource(rid=50, domain=Domain.RAM, shape=(1000,)))
+        mm.add_resource(Resource(rid=51, domain=Domain.RAM, shape=(1,)))
+        mm.add_phase(Phase(phase_id=0, deps=(), claims=[c]))
+        return mm
+    clean("verify_accuracy", verify_accuracy(_accmod(0)))
+    fires("R17", "R17" in laws(verify_accuracy(_accmod(1))), "verify_accuracy")
+
+    # R18 -- compositional call-graph integrity. plan_composite *raises* on an undefined
+    # callee (KeyError) or a recursive call (RecursionError) rather than returning a
+    # diagnostic, so the campaign asserts the guard fires (cf. R1's construction guard).
+    def _raises(thunk) -> bool:
+        try:
+            thunk()
+            return False
+        except (KeyError, RecursionError):
+            return True
+    undefined = _raises(lambda: _compose.plan_composite(_compose.Call(fn="ghost"), {}, {}, h, th))
+    recf = _compose.Function("rec", _compose.Call("rec"))
+    recursive = _raises(lambda: _compose.plan_composite(_compose.Call("rec"), {"rec": recf}, {}, h, th))
+    fires("R18", undefined and recursive, "plan_composite")
+
+    return misses
+
+
 def run_verifier_campaign(n: int = 200, seed: int = 0) -> list[Mismatch]:
     """Generate `n` illegal modules (one injected law each) and confirm the verifier
-    flags each; also confirm the un-mutated base + its optimal plan verify clean.
-    Two rails: module/claim laws (R2-R8 via verify) and the plan law (R9 via
-    verify_plan). R1 is enforced by construction (see _INJECTORS). Returns the misses
-    (empty == the verifier caught every injected fault)."""
+    flags each; also confirm the un-mutated base + its optimal plan verify clean. Covers
+    all 18 laws across the oracle's verify entry points: the module/claim rail (R2-R8 via
+    verify) and the plan rail (R9 via verify_plan), n iterations each; plus the artifact
+    rails R10-R18 (pack / lowering / provenance / smart-lowering / accuracy / compose),
+    run once per call by _artifact_law_misses. R1 (RID uniqueness) and R18 (call-graph
+    integrity) are enforced by construction (dict-keyed registry; plan_composite raises),
+    documented rather than diagnostic-injected. Returns the misses (empty == every
+    injected fault caught)."""
     from ..verify import verify, verify_plan
     from .realize import optimize
 
@@ -609,6 +717,8 @@ def run_verifier_campaign(n: int = 200, seed: int = 0) -> list[Mismatch]:
             misses.append(Mismatch("verify_plan", 0, "verify_plan flagged a clean plan"))
         m2, r2, plaw = gen_illegal_plan(rng)
         misses.extend(check_plan_verifier(m2, r2, plaw))
+    # artifact rails (R10-R18): heavier, run once per campaign.
+    misses.extend(_artifact_law_misses(rng))
     return misses
 
 
