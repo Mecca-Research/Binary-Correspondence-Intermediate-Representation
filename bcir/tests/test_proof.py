@@ -89,3 +89,22 @@ def test_reduce_rejects_a_predicate_that_does_not_hold():
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_mlir_replay_recheck_is_in_sync():
+    """Pins the constants -bcir-replay rechecks in mlir/test/passes/replay.mlir: the law rail
+    diffs a fresh plan's per-claim (chosen width, edge score) + total against the declared
+    kbcir.explain_* record. The faithful record (w16 / score 7808) reproduces; a tampered edge
+    score (9999) is flagged with the exact (w16/7808) != (w16/9999) divergence."""
+    from dataclasses import replace
+    from bcir.kbcir.proof import ClaimDecision
+    rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
+    assert rec.total_score == 7808
+    (d,) = rec.decisions
+    assert d.width == 16 and d.score == 7808              # the record -bcir-explain emits
+    assert replay(rec, vector_add(), AVX, COOL).reproduced  # faithful -> reproduced (replay_reproduced=true)
+    # Tamper the claim's recorded edge score: replay flags exactly that field (replay_mismatches).
+    bad = replace(rec, decisions=(replace(d, score=9999),))
+    rr = replay(bad, vector_add(), AVX, COOL)
+    assert not rr.reproduced
+    assert any("9999" in m for m in rr.mismatches)

@@ -113,6 +113,8 @@ echo "[passes] bundle joint-reorder (reorder the cost columns + re-price -> kbci
 run_fc -bcir-bundle "${T}/bundle_reorder.mlir"
 echo "[passes] explain (proof-carrying decision record as IR annotations, the proof.explain port)"
 run_fc -bcir-explain "${T}/explain.mlir"
+echo "[passes] replay (recheck the declared explain_* record vs a fresh plan, the proof.replay port)"
+run_fc -bcir-replay "${T}/replay.mlir"
 echo "[passes] compose func/if op family (round-trip: kbcir.func / kbcir.call / kbcir.cond)"
 if [ -n "${FC}" ]; then
   "${BO}" "${T}/compose_ops.mlir" 2>/tmp/pe | "${FC}" "${T}/compose_ops.mlir" \
