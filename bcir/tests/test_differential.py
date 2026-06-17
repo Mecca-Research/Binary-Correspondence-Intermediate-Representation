@@ -214,12 +214,25 @@ def test_each_injector_is_caught_and_isolated():
     from bcir.verify import verify
     rng = random.Random(13)
     seen = set()
-    for _ in range(120):
+    for _ in range(200):
         m, law = gen_illegal_module(rng)
         laws = {d.law for d in verify(m)}
         assert law in laws, (law, laws)
         seen.add(law)
-    assert seen == {"R2", "R3", "R5", "R6", "R7"}        # every injector exercised
+    # module/claim rail: R2-R8 each exercised (R1 is enforced by construction -- the
+    # registry is a dict keyed by RID, so a dup cannot exist to fault-inject).
+    assert seen == {"R2", "R3", "R4", "R5", "R6", "R7", "R8"}
+
+
+def test_plan_injectors_fire_R9():
+    # plan rail: a clean optimal plan corrupted to violate R9 must be flagged by
+    # verify_plan; the clean plan must verify clean.
+    from bcir.kbcir.differential import gen_illegal_plan, check_plan_verifier
+    rng = random.Random(29)
+    for _ in range(60):
+        m, r, law = gen_illegal_plan(rng)
+        assert law == "R9"
+        assert check_plan_verifier(m, r, law) == []
 
 
 def test_check_verifier_flags_a_missed_law():
