@@ -128,6 +128,19 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Goal 4 — IRDL projection fidelity (op coverage).** The pure-IRDL portability
+  projection (`mlir/irdl/bcir.irdl.mlir`, validated on stock `mlir-opt`) was missing 4 ODS ops
+  and carried 1 orphan. Added the 4 K_BCIR ops it omitted — **`kbcir.theta`** (the runtime-state
+  context op), **`kbcir.func`** / **`kbcir.call`** / **`kbcir.cond`** (the compose.Function/Call/
+  Cond family, regions presence-only per the loose rail) — and removed the orphan
+  **`@verify_target_capability`** (there are 12 `bcir.verify.*` ODS ops; the IRDL carried 13, the
+  extra having no ODS counterpart — the `verify_*` IRDL family now matches the ODS family exactly).
+  New `mlir/test/irdl/compose_theta_generic.mlir` round-trips the four ops through the projection.
+  Verified on **true MLIR 22.1.7** (conda `mlir-opt`): the projection loads and the whole IRDL
+  corpus round-trips. (Deeper attribute/enum/type constraint fidelity stays a structurally-bounded
+  follow-up — pure IRDL on 22 cannot express the cost-vector/R-law predicates without `irdl.c_pred`
+  + compiled C++, which is the stated rationale for keeping the projection a loose structural rail.)
+
 - 2026-06-17: **Goal 3 — parse-time op verifiers (`hasVerifier`).** The dialect had no per-op
   verifiers; all checking lived in the monolithic `-bcir-verify` pass (the cross-op semantic
   R-laws), which runs only when invoked. Added `hasVerifier = 1` + a `verify()` to the ops with
