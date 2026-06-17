@@ -15,6 +15,14 @@
 //                        kbcir.async_awaits (the awaited claim ids) + async_domain/start/finish +
 //                        async_makespan. The phase-barriered schedule is its degenerate case.
 //
+//   -bcir-power-rail   : gem.schedule.schedule_power_rail -- a per-slot DVFS overlay on the EFT
+//                        placed timeline (the join of -bcir-schedule-eft and -bcir-dvfs). Each
+//                        scheduled slot is classified by its base compute:memory mix and gets a
+//                        per-slot Q8 clock for its [start,finish) interval -- memory-bound slots
+//                        downclock (power saved at no throughput cost), keying off the real slot
+//                        intervals rather than -bcir-dvfs's per-phase totals. Annotates
+//                        kbcir.rail_class / rail_clock (per slot) + rail_energy_saved (per module).
+//
 //===----------------------------------------------------------------------===//
 
 #include "BCIR/BCIRPasses.h"
@@ -41,6 +49,29 @@ namespace {
 
 static constexpr int kTailStream = -1; // the decoupled GGG/random tail's own stream
 
+// gem.dvfs Q8 clocks + intensity thresholds + Theta safety caps (shared with -bcir-dvfs).
+static constexpr int64_t kNominal = 256, kOverclock = 320, kDownclock = 192;
+static constexpr int64_t kHiIntensity = 1000, kLoIntensity = 250;
+static constexpr int64_t kThermalCap = 70, kPowerCap = 70;
+
+// gem.dvfs.classify + clock_for: the Q8 clock for a slot's (compute, memory) base mix under Theta.
+// Downclock a memory-bound slot (bandwidth-bound -> power saved, throughput unaffected); overclock
+// a compute-bound one unless Theta is thermal/power capped; nominal otherwise.
+static int64_t railClock(int64_t compute, int64_t memory, int64_t thermal, int64_t power,
+                         StringRef &klass) {
+  int64_t intensity = (compute * 1000) / std::max<int64_t>(1, memory);
+  if (intensity >= kHiIntensity) {
+    klass = "compute";
+    return (thermal >= kThermalCap || power >= kPowerCap) ? kNominal : kOverclock;
+  }
+  if (intensity <= kLoIntensity) {
+    klass = "memory";
+    return kDownclock;
+  }
+  klass = "balanced";
+  return kNominal;
+}
+
 static bool isSparse(ClaimOp c) {
   return c.getLane() == Lane::GGG || c.getStrideClass() == StrideClass::Random;
 }
@@ -63,6 +94,7 @@ struct Info {
   int32_t phase;
   int64_t id;
   int64_t dur;
+  int64_t baseCompute, baseMemory; // the chosen candidate's base cost (for the power-rail classify)
   bool bandwidth; // cost_class == bandwidth (the default) -> knee-clamped
   SmallVector<StringRef> reads, writes;
   llvm::DenseSet<StringRef> rids; // _rids = set(rd) | set(wr) -- deduped, for locality
@@ -84,6 +116,10 @@ static SmallVector<Info> buildInfos(const std::vector<cm::Column> &cols, ArrayRe
     in.phase = cols[i].phase;
     in.id = static_cast<int64_t>(in.claim.getClaimId());
     in.dur = std::max<int64_t>(1, cm::scalarize(e, w));
+    // The base (uncoupled) compute/memory of the chosen candidate -- gem.dvfs.classify keys off
+    // this, not the contextual duration (COMPUTE=0, MEMORY=1).
+    in.baseCompute = cols[i].cands[chosen[i]].cost[0];
+    in.baseMemory = cols[i].cands[chosen[i]].cost[1];
     in.bandwidth = !in.claim.getCostClass() ||
                    *in.claim.getCostClass() == CostClass::Bandwidth;
     in.reads.assign(cols[i].reads.begin(), cols[i].reads.end());
@@ -222,6 +258,65 @@ static bool planInfos(Operation *root, SmallVector<Info> &infos, int64_t &domain
   return true;
 }
 
+// gem.schedule.schedule_eft: phase-barriered EFT waves over the topo-ordered phases. Each phase
+// dispatches its main claims (LPT + EFT placement + locality, knee-clamped) and runs its sparse
+// GGG/random tail serially on its own stream; phases compose at the barrier. Annotates each claim
+// kbcir.<prefix>_domain / _start / _finish, records [start,finish) per claim id in `intervals`
+// when non-null, and returns the makespan.
+static int64_t placeBarriered(Operation *root, SmallVector<Info> &infos, int64_t domains,
+                              int64_t knee, Builder &b, StringRef prefix,
+                              llvm::DenseMap<int64_t, std::pair<int64_t, int64_t>> *intervals) {
+  std::string p = prefix.str();
+  std::string dn = "kbcir." + p + "_domain";
+  std::string sn = "kbcir." + p + "_start";
+  std::string fn = "kbcir." + p + "_finish";
+  SmallVector<llvm::DenseSet<StringRef>> resident(domains); // locality memory, persists
+  int64_t t0 = 0, makespan = 0;
+  for (int32_t pid : topoPhases(root)) {
+    SmallVector<Info *> phaseClaims;
+    for (Info &in : infos)
+      if (in.phase == pid)
+        phaseClaims.push_back(&in);
+    std::sort(phaseClaims.begin(), phaseClaims.end(),
+              [](Info *a, Info *z) { return a->id < z->id; });
+    SmallVector<Info *> main, tail;
+    for (Info *in : phaseClaims)
+      (isSparse(in->claim) ? tail : main).push_back(in);
+
+    // Intra-phase hazard DAG (lower claim id is the producer of a conflicting pair).
+    llvm::DenseMap<int64_t, SmallVector<int64_t>> preds;
+    for (unsigned i = 0; i < main.size(); ++i)
+      for (unsigned j = 0; j < i; ++j)
+        if (conflict(main[j]->reads, main[j]->writes, main[i]->reads, main[i]->writes))
+          preds[main[i]->id].push_back(main[j]->id);
+
+    SmallVector<int64_t> domainFree(domains, t0);
+    llvm::DenseMap<int64_t, int64_t> finishOf;
+    eftDispatch(main, preds, t0, domains, knee, domainFree, resident, finishOf, b, prefix);
+    if (intervals)
+      for (Info *in : main) {
+        int64_t f = finishOf.lookup(in->id);
+        (*intervals)[in->id] = {f - in->dur, f}; // start == finish - dur (eftDispatch invariant)
+      }
+
+    int64_t tt = t0;
+    for (Info *in : tail) { // the decoupled tail: a serial chain on its own stream
+      in->claim->setAttr(dn, b.getI64IntegerAttr(kTailStream));
+      in->claim->setAttr(sn, b.getI64IntegerAttr(tt));
+      in->claim->setAttr(fn, b.getI64IntegerAttr(tt + in->dur));
+      if (intervals)
+        (*intervals)[in->id] = {tt, tt + in->dur};
+      tt += in->dur;
+    }
+    int64_t next = std::max(t0, tt);
+    for (auto &kv : finishOf)
+      next = std::max(next, kv.second);
+    t0 = next;
+    makespan = next;
+  }
+  return makespan;
+}
+
 struct ScheduleEftPass : public PassWrapper<ScheduleEftPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ScheduleEftPass)
   StringRef getArgument() const final { return "bcir-schedule-eft"; }
@@ -244,44 +339,7 @@ struct ScheduleEftPass : public PassWrapper<ScheduleEftPass, OperationPass<>> {
     int64_t domains = 1, knee = 1, theta = 0;
     if (!planInfos(root, infos, domains, knee, theta))
       return;
-
-    SmallVector<llvm::DenseSet<StringRef>> resident(domains); // locality memory, persists
-    int64_t t0 = 0, makespan = 0;
-    for (int32_t pid : topoPhases(root)) {
-      SmallVector<Info *> phaseClaims;
-      for (Info &in : infos)
-        if (in.phase == pid)
-          phaseClaims.push_back(&in);
-      std::sort(phaseClaims.begin(), phaseClaims.end(),
-                [](Info *a, Info *z) { return a->id < z->id; });
-      SmallVector<Info *> main, tail;
-      for (Info *in : phaseClaims)
-        (isSparse(in->claim) ? tail : main).push_back(in);
-
-      // Intra-phase hazard DAG (lower claim id is the producer of a conflicting pair).
-      llvm::DenseMap<int64_t, SmallVector<int64_t>> preds;
-      for (unsigned i = 0; i < main.size(); ++i)
-        for (unsigned j = 0; j < i; ++j)
-          if (conflict(main[j]->reads, main[j]->writes, main[i]->reads, main[i]->writes))
-            preds[main[i]->id].push_back(main[j]->id);
-
-      SmallVector<int64_t> domainFree(domains, t0);
-      llvm::DenseMap<int64_t, int64_t> finishOf;
-      eftDispatch(main, preds, t0, domains, knee, domainFree, resident, finishOf, b, "sched");
-
-      int64_t tt = t0;
-      for (Info *in : tail) { // the decoupled tail: a serial chain on its own stream
-        in->claim->setAttr("kbcir.sched_domain", b.getI64IntegerAttr(kTailStream));
-        in->claim->setAttr("kbcir.sched_start", b.getI64IntegerAttr(tt));
-        in->claim->setAttr("kbcir.sched_finish", b.getI64IntegerAttr(tt + in->dur));
-        tt += in->dur;
-      }
-      int64_t next = std::max(t0, tt);
-      for (auto &kv : finishOf)
-        next = std::max(next, kv.second);
-      t0 = next;
-      makespan = next;
-    }
+    int64_t makespan = placeBarriered(root, infos, domains, knee, b, "sched", nullptr);
     root->setAttr("kbcir.sched_makespan", b.getI64IntegerAttr(makespan));
     root->setAttr("kbcir.sched_knee", b.getI64IntegerAttr(knee));
   }
@@ -346,9 +404,67 @@ struct AsyncPass : public PassWrapper<AsyncPass, OperationPass<>> {
   }
 };
 
+struct PowerRailPass : public PassWrapper<PowerRailPass, OperationPass<>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PowerRailPass)
+  StringRef getArgument() const final { return "bcir-power-rail"; }
+  StringRef getDescription() const final {
+    return "Per-slot DVFS over the EFT placed timeline (gem.schedule.schedule_power_rail): "
+           "classify each scheduled slot by its base compute:memory mix and set a per-slot Q8 "
+           "clock for its [start,finish) interval (downclock memory-bound slots, overclock "
+           "compute-bound ones honoring Theta); annotates kbcir.rail_domain / rail_start / "
+           "rail_finish / rail_class / rail_clock + rail_makespan / rail_knee / rail_energy_saved.";
+  }
+
+  void runOnOperation() override {
+    Builder b(&getContext());
+    getOperation()->walk([&](Operation *mod) {
+      if (mod->getName().getStringRef() == "bcir.module")
+        runOnModule(mod, b);
+    });
+  }
+
+  void runOnModule(Operation *root, Builder &b) {
+    SmallVector<Info> infos;
+    int64_t domains = 1, knee = 1, thermal = 0;
+    if (!planInfos(root, infos, domains, knee, thermal))
+      return;
+    // Theta power for the overclock safety gate (planInfos returns thermal only).
+    KBCIRThetaOp tOp;
+    root->walk([&](KBCIRThetaOp t) {
+      if (!tOp)
+        tOp = t;
+    });
+    int64_t power = tOp ? static_cast<int64_t>(tOp.getPower()) : 0;
+
+    // The placed timeline is exactly schedule_eft's; the rail keys its per-slot clock off each
+    // slot's real [start,finish) interval (vs -bcir-dvfs's per-phase totals).
+    llvm::DenseMap<int64_t, std::pair<int64_t, int64_t>> intervals;
+    int64_t makespan = placeBarriered(root, infos, domains, knee, b, "rail", &intervals);
+
+    // Per slot: classify the claim's base mix, set its clock, and accumulate the modeled energy
+    // saved by downclocking (sum of (nominal - clock) x interval, in milli of a nominal cycle).
+    int64_t energySaved = 0;
+    for (Info &in : infos) {
+      StringRef klass;
+      int64_t clock = railClock(in.baseCompute, in.baseMemory, thermal, power, klass);
+      in.claim->setAttr("kbcir.rail_class", b.getStringAttr(klass));
+      in.claim->setAttr("kbcir.rail_clock", b.getI64IntegerAttr(clock));
+      if (clock < kNominal) {
+        auto iv = intervals.lookup(in.id);
+        int64_t dur = std::max<int64_t>(0, iv.second - iv.first);
+        energySaved += ((kNominal - clock) * dur * 1000) / kNominal;
+      }
+    }
+    root->setAttr("kbcir.rail_makespan", b.getI64IntegerAttr(makespan));
+    root->setAttr("kbcir.rail_knee", b.getI64IntegerAttr(knee));
+    root->setAttr("kbcir.rail_energy_saved", b.getI64IntegerAttr(energySaved));
+  }
+};
+
 } // namespace
 
 std::unique_ptr<Pass> createScheduleEftPass() { return std::make_unique<ScheduleEftPass>(); }
 std::unique_ptr<Pass> createAsyncPass() { return std::make_unique<AsyncPass>(); }
+std::unique_ptr<Pass> createPowerRailPass() { return std::make_unique<PowerRailPass>(); }
 
 } // namespace bcir
