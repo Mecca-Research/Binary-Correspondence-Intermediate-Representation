@@ -127,6 +127,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Full-oracle paradigm audit + the one gap closed: R13 provenance digest
+  recompute.** Swept all ~55 oracle modules against the two-truth placement rule and
+  confirmed every deterministic-integer decision/execution-path component is on its correct
+  rail (MLIR/C++ optimizer core + verifier R1–R17 + GEM passes; C runtime decode/encode/
+  execute/binrec/telemetry) and every float/learned/train-time/generator module is correctly
+  Python. The single finding: `-bcir-verify` **trusted** the declared provenance digest rather
+  than recomputing it. Closed it — when the `kbcir.provenance_manifest` op carries the four
+  component hashes (`m_module`/`m_target`/`m_theta`/`m_policy`) + the in-force artifacts, R13
+  now recomputes the digest with an FNV-1a chain **byte-identical to `provenance._digest`**
+  and rejects a tampered/stale one (`verify_provenance.mlir`, real vector_add hashes; pinned
+  by `test_provenance.py`). Additive + back-compatible (a manifest omitting the components is
+  range/reproduced-checked as before). +2 tests (601 total).
 - 2026-06-17: **Compositional deepening + the MLIR ports finished (bundle joint-reorder,
   proof-carrying explain, func/if ops) + the rig contract made crisp.** (1) `kbcir.compose`
   deepens: **alias/effect modeling** (`Effect`/`effect`/`independent` -- the read/write

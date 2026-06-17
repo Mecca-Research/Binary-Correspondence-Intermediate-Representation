@@ -180,8 +180,22 @@ def BCIR_KBCIRProvenanceManifestOp : BCIR_Op<"kbcir.provenance_manifest", [Symbo
   // committed manifest. R13: a deployed plan's manifest must have `reproduced` ==
   // true (replay reproduced the recorded score/shape). Mirrors
   // bcir/kbcir/provenance.py + verify.verify_manifest.
+  //
+  // The four component hashes (`m_*`, the FNV content hashes of module/target/theta/
+  // policy from provenance.hash_*) and the in-force artifacts (`artifact_names` /
+  // `artifact_gens`, the normalized (name, generation) pairs in sorted order) let
+  // -bcir-verify *recompute* the digest from first principles (provenance._digest) and
+  // reject a tampered one, instead of trusting the declared `digest`. All defaulted, so
+  // a manifest that omits them is still range/reproduced-checked (back-compatible); the
+  // digest recompute fires the moment the component hashes are present.
   let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$digest, I64Attr:$score,
-                       I64Attr:$n_artifacts, BoolAttr:$reproduced);
+                       I64Attr:$n_artifacts, BoolAttr:$reproduced,
+                       DefaultValuedAttr<I64Attr, "0">:$m_module,
+                       DefaultValuedAttr<I64Attr, "0">:$m_target,
+                       DefaultValuedAttr<I64Attr, "0">:$m_theta,
+                       DefaultValuedAttr<I64Attr, "0">:$m_policy,
+                       OptionalAttr<StrArrayAttr>:$artifact_names,
+                       OptionalAttr<DenseI64ArrayAttr>:$artifact_gens);
   let assemblyFormat = "$sym_name attr-dict";
 }
 
