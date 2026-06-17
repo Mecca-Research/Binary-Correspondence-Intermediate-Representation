@@ -13,7 +13,7 @@ bcir.module @bad_score {
     bcir.kbcir.path @pA { claim = @c, realization = "u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @pB { claim = @c, realization = "u16", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 64, memory = 3840, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     // expected-error @+1 {{bcir-select-realization: computed score 7808 != declared score 9999}}
-    %s = bcir.kbcir.select @c from [@pA, @pB] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @pB, score = 9999 : i64 }
+    %s = bcir.kbcir.select @c from [@pA, @pB] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @pB, score = 9999 : i64 } : !bcir.path
   }
 }
 
@@ -28,7 +28,7 @@ bcir.module @bad_selected {
     bcir.kbcir.path @pB { claim = @c, realization = "u16", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 64, memory = 3840, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     // The declared score is the true min (7808) so only the *selection* is wrong.
     // expected-error @+1 {{bcir-select-realization: computed argmin @pB != declared selected @pA}}
-    %s = bcir.kbcir.select @c from [@pA, @pB] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @pA, score = 7808 : i64 }
+    %s = bcir.kbcir.select @c from [@pA, @pB] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @pA, score = 7808 : i64 } : !bcir.path
   }
 }
 

@@ -70,7 +70,7 @@ bcir.module @full_vec_add_ct1 attributes {
     %sel = bcir.kbcir.select @add from [@add_cpu_u8, @add_cpu_u16] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @add_cpu_u16, score = 7808 : i64
-    }
+    } : !bcir.path
     // The temperature dial (kbcir.softdp): the soft log-sum-exp twin at T=0
     // recovers the tropical select exactly -- free_energy == score == 7808.
     bcir.kbcir.soft_select @sel_soft {
@@ -84,7 +84,7 @@ bcir.module @full_vec_add_ct1 attributes {
     %selc = bcir.kbcir.select @add from [@add_cpu_u8, @add_cpu_u16] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       budget = @thermal_cap, selected = @add_cpu_u8, score = 9472 : i64
-    }
+    } : !bcir.path
   }
   bcir.kbcir.budget @thermal_cap { dims = ["thermal", "power"], caps = array<i64: 700, 700> }
   // M(pi,Theta): the (max,+) wave-overlap price. One claim => the degenerate

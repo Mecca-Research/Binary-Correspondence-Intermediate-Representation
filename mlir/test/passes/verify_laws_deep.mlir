@@ -14,7 +14,7 @@ bcir.module @r8 {
     %s = bcir.kbcir.select @c from [@nope] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @nope, score = 0 : i64
-    }
+    } : !bcir.path
   }
 }
 
@@ -35,7 +35,7 @@ bcir.module @r9 {
     %s = bcir.kbcir.select @c from [@pA] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @pB, score = 1 : i64
-    }
+    } : !bcir.path
   }
 }
 
@@ -52,7 +52,7 @@ bcir.module @r9_claim {
     %s = bcir.kbcir.select @c2 from [@pA] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @pA, score = 1 : i64
-    }
+    } : !bcir.path
   }
 }
 
@@ -103,7 +103,7 @@ bcir.module @r8_budget {
     %s = bcir.kbcir.select @c from [@pA] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       budget = @nope, selected = @pA, score = 1 : i64
-    }
+    } : !bcir.path
   }
 }
 
@@ -122,7 +122,7 @@ bcir.module @r9_budget {
     %s = bcir.kbcir.select @c from [@pHot] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       budget = @cap, selected = @pHot, score = 7808 : i64
-    }
+    } : !bcir.path
   }
 }
 

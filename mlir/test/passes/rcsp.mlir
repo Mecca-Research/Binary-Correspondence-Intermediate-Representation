@@ -40,13 +40,13 @@ bcir.module @rcsp_pipeline {
     %sel = bcir.kbcir.select @add from [@add_cpu_s1, @add_cpu_u8, @add_cpu_u16] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @add_cpu_u16, score = 7808 : i64
-    }
+    } : !bcir.path
     // Constrained: a 700 thermal/power cap makes scalar + vec16 (1088) infeasible; the
     // budgeted optimum is vec8 @ 9472.
     %selc = bcir.kbcir.select @add from [@add_cpu_s1, @add_cpu_u8, @add_cpu_u16] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       budget = @thermal_cap, selected = @add_cpu_u8, score = 9472 : i64
-    }
+    } : !bcir.path
   }
   bcir.kbcir.budget @thermal_cap { dims = ["thermal", "power"], caps = array<i64: 700, 700> }
 }

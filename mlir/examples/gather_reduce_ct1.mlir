@@ -49,7 +49,7 @@ bcir.module @gather_reduce_ct1 attributes {
     %sel = bcir.kbcir.select @reduce from [@blocked, @gather] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @blocked, score = 2176 : i64
-    }
+    } : !bcir.path
   }
 }
 
