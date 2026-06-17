@@ -157,3 +157,24 @@ def test_invalid_pipeline_contracts_are_R10():
     pack.pipeline_depth = 0
     laws = {d.law for d in verify_pack(m, pack)}
     assert "R10" in laws
+
+
+def test_mlir_schedule_eft_constants_are_in_sync():
+    """Pins the constants -bcir-schedule-eft annotates in mlir/test/passes/schedule_eft.mlir."""
+    from bcir.gem.schedule import schedule_eft, durations_from, bandwidth_knee
+    from bcir.kbcir import TARGETS, optimize
+    from bcir.kbcir.cost import Theta
+    from bcir.model import Module, Claim, Domain, Lane, Opcode, Resource, StrideClass, Phase
+    AVX = TARGETS["x86_avx512"]
+    m = Module(name="s")
+    for r in (10, 11, 12, 13, 14):
+        m.add_resource(Resource(rid=r, domain=Domain.RAM, shape=(1024,)))
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[
+        Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=1024,
+              rd=(10, 11), wr=(12,), op="vector.add", domain=Domain.RAM, cost_class="compute"),
+        Claim(id=2, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=1024,
+              rd=(13, 11), wr=(14,), op="vector.add", domain=Domain.RAM, cost_class="compute")]))
+    sch = schedule_eft(m, durations_from(optimize(m, AVX, Theta.cool())), AVX)
+    assert bandwidth_knee(AVX) == 4 and sch.makespan == 7808
+    assert sch.slot_of(1).domain == 0 and sch.slot_of(1).finish == 7808
+    assert sch.slot_of(2).domain == 1 and sch.slot_of(2).finish == 5888

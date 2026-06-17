@@ -49,6 +49,8 @@ std::unique_ptr<mlir::Pass> createComposePass();
 // gem.dvfs) from the IR, instead of R14/R15 only verifying a declared attr.
 std::unique_ptr<mlir::Pass> createCimPass();
 std::unique_ptr<mlir::Pass> createDvfsPass();
+// -bcir-schedule-eft: duration-aware EFT wave scheduling (gem.schedule.schedule_eft).
+std::unique_ptr<mlir::Pass> createScheduleEftPass();
 std::unique_ptr<mlir::Pass> createBatchPass();
 std::unique_ptr<mlir::Pass> createSchedulePass();
 std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
