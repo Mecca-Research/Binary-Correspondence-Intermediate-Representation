@@ -128,6 +128,20 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Goal 2 complete — all optimizer passes share the plan analysis.** Migrated the
+  remaining consumers onto `cm::PlanAnalysis` (following the validated cost/plan/overlap
+  pattern): `-bcir-rcsp-plan` (cols/θ/w for its constrained label-DP), `-bcir-cim` (needs only
+  the capability `h`), `-bcir-dvfs` (reuses `pa.chosen`; `firstThetaThermal` == the first theta
+  op's thermal, verified; keeps the theta walk for `power`), `-bcir-explain` + its `freshRecord`
+  helper + `-bcir-replay`, the `-bcir-schedule-eft` / `-bcir-async` / `-bcir-power-rail` trio
+  (via `planInfos`, which now takes `pa` and reads `memChannels`/`affinityDomains` off the
+  carried capability handle), and `-bcir-bundle` (a mutable copy of `pa.cols` for its permuted
+  re-prices). Each `markAnalysesPreserved<PlanAnalysis>()`. Verified on **true MLIR 22.1.7**: the
+  whole rail is green (tblgen, R1–R18, GEM pipeline, ODS, bytecode, IRDL) with every pinned score
+  byte-identical, and a multi-pass pipeline now builds the plan **once** instead of per pass.
+  (Non-`PlanAnalysis` passes and the GEM transforms correctly invalidate it, so an interleaved
+  transform re-plans — sharing happens within annotation-pass groups, e.g. `bcir-audit`.)
+
 - 2026-06-17: **Goal 2 (foundation) — cross-pass plan sharing via an MLIR Analysis.** Every
   optimizer pass independently re-walked the module (`cm::fusedColumns`) and re-ran the coupled
   min-plus shortest path (`cm::planChosen`) for itself — the same plan recomputed up to ~9×

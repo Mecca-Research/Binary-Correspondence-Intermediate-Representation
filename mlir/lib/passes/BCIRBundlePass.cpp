@@ -93,11 +93,12 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
     Builder b(&getContext());
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
     // phase symbol -> phase id (so claims are grouped by the actual phase).
     llvm::DenseMap<StringRef, int32_t> phaseId;
     root->walk([&](PhaseOp p) { phaseId[p.getSymName()] = p.getId(); });
@@ -120,25 +121,21 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
 
     // The cost model (for the joint-reorder re-price), if a capability + policy are present.
     // Detection is pure read/write analysis and runs even without these.
+    // A mutable copy of the shared plan's columns (Bundle re-prices permuted copies of them);
+    // sourcing cols + the base total from PlanAnalysis avoids re-walking + re-planning here.
     std::vector<cm::Column> cols;
     llvm::DenseMap<Operation *, unsigned> colOf;  // claim op -> column index
     ArrayRef<int64_t> w;
     int64_t theta = 0, baseTotal = 0;
     bool haveCost = false;
-    if (auto capOp = cm::firstCapability(root)) {
-      cm::Cap h = cm::readCap(capOp);
-      w = cm::firstWeights(root);
-      if (!w.empty()) {
-        auto resByName = cm::resourcesByName(root);
-        cols = cm::fusedColumns(root, h, resByName);
-        if (!cols.empty()) {
-          theta = cm::firstThetaThermal(root);
-          cm::planChosen(cols, w, theta, baseTotal);
-          for (unsigned i = 0; i < cols.size(); ++i)
-            colOf[cols[i].claim.getOperation()] = i;
-          haveCost = true;
-        }
-      }
+    if (pa.valid) {
+      cols = pa.cols;
+      w = pa.weights;
+      theta = pa.thetaThermal;
+      baseTotal = pa.total;
+      for (unsigned i = 0; i < cols.size(); ++i)
+        colOf[cols[i].claim.getOperation()] = i;
+      haveCost = true;
     }
 
     // Unique phase ids in first-appearance order (avoid a pair-keyed DenseMap).

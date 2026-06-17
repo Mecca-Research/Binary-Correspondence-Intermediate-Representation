@@ -59,23 +59,15 @@ struct FreshDecision {
 
 // Recompute the module's plan and the per-claim (width, edge score) + total -- the half of
 // proof.explain's record proof.replay reproduces. Returns false if the module is not plannable.
-static bool freshRecord(Operation *root, SmallVector<FreshDecision> &out, int64_t &total) {
-  auto capOp = cm::firstCapability(root);
-  if (!capOp)
+static bool freshRecord(const cm::PlanAnalysis &pa, SmallVector<FreshDecision> &out,
+                        int64_t &total) {
+  if (!pa.valid)
     return false;
-  cm::Cap h = cm::readCap(capOp);
-  ArrayRef<int64_t> w = cm::firstWeights(root);
-  if (w.empty())
-    return false;
-  auto resByName = cm::resourcesByName(root);
-  std::vector<cm::Column> cols = cm::fusedColumns(root, h, resByName);
-  if (cols.empty())
-    return false;
-  int64_t theta = cm::firstThetaThermal(root);
-  total = 0;
-  SmallVector<int> chosen = cm::planChosen(cols, w, theta, total);
-  if (chosen.empty())
-    return false;
+  const std::vector<cm::Column> &cols = pa.cols;
+  const SmallVector<int> &chosen = pa.chosen;
+  ArrayRef<int64_t> w = pa.weights;
+  int64_t theta = pa.thetaThermal;
+  total = pa.total;
   for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
     const cm::Column &col = cols[i];
     // The chosen edge cost: this candidate coupled by the chosen predecessor's context --
@@ -110,28 +102,19 @@ struct ExplainPass : public PassWrapper<ExplainPass, OperationPass<>> {
     Builder b(&getContext());
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
-    auto capOp = cm::firstCapability(root);
-    if (!capOp)
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
+    if (!pa.valid)
       return;
-    cm::Cap h = cm::readCap(capOp);
-    ArrayRef<int64_t> w = cm::firstWeights(root);
-    if (w.empty())
-      return;
-    auto resByName = cm::resourcesByName(root);
-    std::vector<cm::Column> cols = cm::fusedColumns(root, h, resByName);
-    if (cols.empty())
-      return;
-
-    int64_t theta = cm::firstThetaThermal(root);
-    int64_t total = 0;
-    SmallVector<int> chosen = cm::planChosen(cols, w, theta, total);
-    if (chosen.empty())
-      return;
+    const std::vector<cm::Column> &cols = pa.cols;
+    const SmallVector<int> &chosen = pa.chosen;
+    ArrayRef<int64_t> w = pa.weights;
+    int64_t theta = pa.thetaThermal;
+    int64_t total = pa.total;
 
     for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
       const cm::Column &col = cols[i];
@@ -181,11 +164,12 @@ struct ReplayPass : public PassWrapper<ReplayPass, OperationPass<>> {
     Builder b(&getContext());
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
     // The recorded decision record the plan carries (what proof.explain emitted at plan time).
     // Nothing to replay if the module carries no record.
     auto recTotal = root->getAttrOfType<IntegerAttr>("kbcir.explain_total");
@@ -194,7 +178,7 @@ struct ReplayPass : public PassWrapper<ReplayPass, OperationPass<>> {
 
     SmallVector<FreshDecision> fresh;
     int64_t total = 0;
-    if (!freshRecord(root, fresh, total))
+    if (!freshRecord(pa, fresh, total))
       return;
 
     // Diff the fresh plan against the record -- the module total, then each claim's chosen

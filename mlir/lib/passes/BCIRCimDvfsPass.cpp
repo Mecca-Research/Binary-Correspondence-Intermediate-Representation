@@ -65,15 +65,15 @@ struct CimPass : public PassWrapper<CimPass, OperationPass<>> {
     Builder b(&getContext());
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
-    auto capOp = cm::firstCapability(root);
-    if (!capOp)
-      return;
-    cm::Cap h = cm::readCap(capOp);
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
+    if (!pa.capOp)
+      return; // no target declared
+    const cm::Cap &h = pa.h;
     root->walk([&](ClaimOp c) {
       if (!isReduction(c.getOp()))
         return; // non-reductions are never offloaded
@@ -103,33 +103,26 @@ struct DvfsPass : public PassWrapper<DvfsPass, OperationPass<>> {
     Builder b(&getContext());
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
-    auto capOp = cm::firstCapability(root);
-    if (!capOp)
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
+    if (!pa.valid)
       return;
-    cm::Cap h = cm::readCap(capOp);
-    ArrayRef<int64_t> w = cm::firstWeights(root);
-    if (w.empty())
-      return;
-    auto resByName = cm::resourcesByName(root);
-    std::vector<cm::Column> cols = cm::fusedColumns(root, h, resByName);
-    if (cols.empty())
-      return;
+    ArrayRef<int64_t> w = pa.weights;
+    const std::vector<cm::Column> &cols = pa.cols;
     KBCIRThetaOp theta;
     root->walk([&](KBCIRThetaOp t) {
       if (!theta)
         theta = t;
     });
-    int64_t thermal = theta ? static_cast<int64_t>(theta.getThermal()) : 0;
+    // pa.thetaThermal is firstThetaThermal(root) == this first theta op's thermal.
+    int64_t thermal = pa.thetaThermal;
     int64_t power = theta ? static_cast<int64_t>(theta.getPower()) : 0;
-    int64_t total = 0;
-    SmallVector<int> chosen = cm::planChosen(cols, w, thermal, total);
-    if (chosen.empty())
-      return;
+    const SmallVector<int> &chosen = pa.chosen;
+    int64_t total = pa.total;
 
     // Per-phase (compute, memory) over the chosen realizations' base costs (COMPUTE=0,
     // MEMORY=1; gem.dvfs.phase_totals).
