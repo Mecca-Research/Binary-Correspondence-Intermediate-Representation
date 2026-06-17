@@ -25,13 +25,30 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 
 using namespace mlir;
 
 namespace bcir {
 namespace {
+
+// FNV-1a over a canonical item sequence, byte-identical to provenance._fnv: each item's
+// UTF-8 string is folded in byte by byte, then a 0xFF field separator, and the result is
+// masked into signed-i63 range. The uint64 multiply wraps mod 2^64 exactly as the Python
+// `& _MASK`. Used to recompute the R13 provenance digest (provenance._digest).
+static constexpr uint64_t kFnvOffset = 14695981039346656037ULL;
+static constexpr uint64_t kFnvPrime = 1099511628211ULL;
+
+static uint64_t fnvItem(uint64_t h, llvm::StringRef s) {
+  for (unsigned char c : s)
+    h = (h ^ static_cast<uint64_t>(c)) * kFnvPrime;
+  h = (h ^ 0xFFULL) * kFnvPrime; // field separator
+  return h;
+}
+
 struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyPass)
 
@@ -685,6 +702,38 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (!pm.getReproduced()) {
         pm.emitError("R13: deployed plan manifest did not reproduce on replay");
         ok = false;
+      }
+      // R13 digest recompute: when the manifest carries the four component hashes
+      // (the FNV content hashes of module/target/theta/policy), recompute the digest
+      // from first principles (provenance._digest = _fnv(m_module, m_target, m_theta,
+      // m_policy, artifacts)) and reject a tampered one -- the law no longer trusts the
+      // declared `digest`. The artifacts (sorted (name, generation) pairs) fold in after
+      // the components. Absent components (all zero) => back-compat range/reproduced only.
+      int64_t mm = static_cast<int64_t>(pm.getMModule());
+      int64_t mt = static_cast<int64_t>(pm.getMTarget());
+      int64_t mth = static_cast<int64_t>(pm.getMTheta());
+      int64_t mp = static_cast<int64_t>(pm.getMPolicy());
+      if (mm || mt || mth || mp) {
+        uint64_t h = kFnvOffset;
+        for (int64_t comp : {mm, mt, mth, mp})
+          h = fnvItem(h, std::to_string(comp));
+        ArrayAttr names = pm.getArtifactNamesAttr();
+        if (auto gens = pm.getArtifactGens()) {
+          for (size_t i = 0; i < gens->size(); ++i) {
+            if (names && i < names.size())
+              if (auto s = dyn_cast<StringAttr>(names[i]))
+                h = fnvItem(h, s.getValue());
+            h = fnvItem(h, std::to_string((*gens)[i]));
+          }
+        }
+        int64_t recomputed = static_cast<int64_t>(h & 0x7FFFFFFFFFFFFFFFULL);
+        if (recomputed != static_cast<int64_t>(pm.getDigest())) {
+          pm.emitError("R13: provenance digest ")
+              << static_cast<int64_t>(pm.getDigest())
+              << " does not match the digest recomputed from its component hashes "
+              << recomputed << " (tampered or stale manifest)";
+          ok = false;
+        }
       }
     });
 

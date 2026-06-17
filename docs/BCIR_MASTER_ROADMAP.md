@@ -55,7 +55,7 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 
 | Fact | **Now** |
 |---|---|
-| Oracle conformance tests (`python -m bcir.tests.run_all`) | **599**, incl. the generated differential + verifier + fuzz campaigns |
+| Oracle conformance tests (`python -m bcir.tests.run_all`) | **601**, incl. the generated differential + verifier + fuzz campaigns |
 | Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
 | GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
 | Verifier laws | **R1–R17** all first-class + dual-rail in `-bcir-verify` (+ the `-bcir-lower-to-llvm` checkpoint + the Python oracle ref) |
@@ -81,7 +81,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | Subsystem | Today | **Target home** | Status |
 |---|---|---|---|
 | Dialect / ODS (the law's vocabulary) | `mlir/include/BCIR/*.td` | MLIR | ✅ |
-| Verifier **R1–R13** | `-bcir-verify` + `bcir.verify` | MLIR/C++ + Python (oracle ref) | ✅ dual-rail |
+| Verifier **R1–R13** | `-bcir-verify` + `bcir.verify` | MLIR/C++ + Python (oracle ref) | ✅ dual-rail (R13 now **recomputes the provenance digest** byte-identically to `provenance._digest` when the manifest carries its component hashes — no longer trusts the declared digest) |
 | Verifier **R14/R15/R16** (CIM dispatch / DVFS clock / alloc placement) | `-bcir-verify` + the `-bcir-lower-to-llvm` checkpoint + oracle | MLIR/C++ + Python | ✅ **first-class `-bcir-verify` laws** (dual-rail with `verify.{verify_cim,verify_dvfs,verify_allocator}`) |
 | K_BCIR **cost model** (`_cost`, candidates, stride/tier) | `-bcir-cost-model` (C++23) | MLIR/C++ | ✅ **ported** (bit-exact: vec16 7808, gather 528384, tile 126976) |
 | K_BCIR **fusion / CSE / deforestation** | `-bcir-cost-model` | MLIR/C++ | ✅ **ported** (7808 / 5888 / 5100) |

@@ -131,3 +131,43 @@ def test_every_target_manifest_reproduces_and_verifies():
         man = build_manifest(m, h, COOL)
         assert reproduces(man, m, h, COOL)
         assert verify_manifest(man, m, h, COOL) == []
+
+
+# --- the law rail recomputes the digest (R13 digest recompute, -bcir-verify) ----
+
+def _fnv_outer(components, artifacts):
+    """An independent re-implementation of the FNV-1a chain that the C++ -bcir-verify
+    R13 digest recompute mirrors (provenance._digest over the component hashes + the
+    normalized (name, generation) artifact pairs). Pins the byte-level contract."""
+    h, prime, mask = 14695981039346656037, 1099511628211, (1 << 64) - 1
+    items = [str(c) for c in components]
+    for name, gen in artifacts:
+        items += [str(name), str(gen)]
+    for it in items:
+        for byte in it.encode("utf-8"):
+            h = ((h ^ byte) * prime) & mask
+        h = ((h ^ 0xFF) * prime) & mask
+    return h & ((1 << 63) - 1)
+
+
+def test_digest_is_the_fnv_chain_of_the_component_hashes():
+    """The digest is exactly the FNV-1a chain of the four component hashes (+ artifacts) --
+    the relation -bcir-verify recomputes so the law no longer trusts the declared digest."""
+    man = build_manifest(vector_add(1024), AVX, COOL)
+    comps = (man.m_module, man.m_target, man.m_theta, man.m_policy)
+    assert _fnv_outer(comps, man.artifacts) == man.digest
+    forged = replace(man, digest=man.digest ^ 0xABCD)
+    assert _fnv_outer(comps, forged.artifacts) != forged.digest   # a tampered digest is caught
+
+
+def test_mlir_verify_provenance_constants_are_in_sync():
+    """The constants hard-coded in mlir/test/passes/verify_provenance.mlir are a real
+    vector_add manifest's hashes; this pins them so the FileCheck cannot silently rot."""
+    man = build_manifest(vector_add(1024), AVX, COOL)
+    assert (man.m_module, man.m_target, man.m_theta, man.m_policy) == (
+        7127522701151166272, 5864064355688965777, 1870846051561339781, 4048695575545564183)
+    assert man.digest == 9201837206445197944          # the no-artifact case
+    # the with-artifacts case folds (cal_gen, 4) and (map_gen, 2) in, sorted by name.
+    arts = (("cal_gen", 4), ("map_gen", 2))
+    assert _fnv_outer((man.m_module, man.m_target, man.m_theta, man.m_policy), arts) \
+        == 3780911091132933688
