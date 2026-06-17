@@ -55,7 +55,7 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 
 | Fact | **Now** |
 |---|---|
-| Oracle conformance tests (`python -m bcir.tests.run_all`) | **592**, incl. the generated differential + verifier + fuzz campaigns |
+| Oracle conformance tests (`python -m bcir.tests.run_all`) | **599**, incl. the generated differential + verifier + fuzz campaigns |
 | Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
 | GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
 | Verifier laws | **R1–R17** all first-class + dual-rail in `-bcir-verify` (+ the `-bcir-lower-to-llvm` checkpoint + the Python oracle ref) |
@@ -88,6 +88,9 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | K_BCIR **min-plus shortest path** (`optimize`) | `-bcir-plan` | MLIR/C++ | ✅ **ported** (per-target, hot/cool Θ) |
 | K_BCIR **overlap (max,+)** | `-bcir-overlap` | MLIR/C++ | ✅ **ported** (makespan/gain) |
 | K_BCIR **RCSP / Pareto** (per-claim + plan-level) | `-bcir-rcsp`, `-bcir-rcsp-plan` | MLIR/C++ | ✅ **ported** (9472, {16,8}@17280) |
+| **Bundle** (joint) optimization (`bundle.optimize_bundled`) | `-bcir-bundle` | MLIR/C++ | ✅ **detection + joint-reorder** — reorders the cost columns, re-prices the min-plus path, annotates `kbcir.bundle_gain`/`bundle_order` (`bundle_reorder.mlir`) |
+| **Proof-carrying record** (`proof.explain`) | `-bcir-explain` | MLIR/C++ | ✅ **ported** — per-claim candidates weighed + chosen width/score, per-module total, as IR annotations (`explain.mlir`) |
+| **Compositional** func/if op family (`compose.Function/Call/Cond`) | `kbcir.func` / `kbcir.call` / `kbcir.cond` | MLIR | ✅ **op vocabulary** (round-trips; `compose_ops.mlir`) — cost stays the oracle ref |
 | GEM classify / batch / schedule / lower | `-bcir-*` passes | MLIR/C++ | ✅ |
 | GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
@@ -233,28 +236,40 @@ The C runtime has the decoders (StreamPack, ETL-binary) and now the executor:
    certificates; `replay` reproduces it bit-for-bit from the same inputs (the digest gate
    + the per-claim decisions) or reports exactly what diverged; `reduce` minimizes a module
    to a legal witness. Round-trips through JSON (`test_proof.py`).
-3. ◑ **Compositional semantics. FIRST SLICE DONE.** `kbcir.compose` extends planning past
+3. ◑ **Compositional semantics. DEEPENED.** `kbcir.compose` extends planning past
    straight-line kernels along the central equation's own series-parallel grain — a region
    tree: `Seq` (series, sum cost), `Cond` (control flow: worst-case **max** over branches +
    a probability-weighted **expected** cost), `Call`/`Function` (reuse via inline argument
    substitution; recursion rejected for bounded compile time), and `dynamic` claims (count
    as a static upper bound, worst-case priced — the plan holds for any actual ≤ the bound).
-   It reuses `optimize` for the leaves, so a `Leaf([vector_add])` prices to exactly 7808
-   (`test_compose.py`). **Remaining:** alias/effect modeling across calls, an MLIR func/if
-   op family, and inter-procedural plan reuse (summary costs instead of full inline).
+   It reuses `optimize` for the leaves, so a `Leaf([vector_add])` prices to exactly 7808.
+   The deepening adds **alias/effect modeling** (`Effect`/`effect`/`independent`: the
+   read/write footprint folded through calls, and the RAW/WAR/WAW test that decides whether
+   two calls commute) and **inter-procedural summary costs** (`summarize`/`FunctionSummary`:
+   a function is planned **once** over its formals and every cost-compatible call reuses that
+   cost instead of re-planning the body — sound, because the reuse is gated on the actuals
+   matching the formals' cost-keys, else it falls back to inline; bounds compile time to
+   O(functions + call-sites)) (`test_compose.py`). On the law rail, the **func/if op family**
+   (`kbcir.func` / `kbcir.call` / `kbcir.cond`) gives the region tree first-class MLIR form
+   (`compose_ops.mlir`). The compositional cost stays the oracle's conformance reference.
 
 ### 5.4 Measured real-silicon calibration (DEFERRED — the top differentiator)
 
 The software path is merged and certified on host, and now **push-button**:
 `tools/silicon/measure_replan.sh` runs the whole probe→read-PMU/RAPL/thermal→fold-Θ→
 replan→certify loop and prints the **measured** win on a rig (provenance=real) or degrades
-honestly otherwise (synthetic, no fabricated number). It is **CI-exercised in degrade mode**
-(`test_silicon_runbook.py`) so the rig path can never silently rot, and `--require-real`
-guarantees a sandbox run can't masquerade as a measured result. The one thing no
+honestly otherwise (synthetic, no fabricated number). The probe now **enumerates the three
+gating signals** — a hardware PMU (`perf_event_open`), RAPL energy, and a cpufreq userspace
+governor — and prints an explicit **rig-ready: YES/NO** verdict that names any missing
+signal, so the requirement to fire the win is crisply specified, never implicit. It is
+**CI-exercised in degrade mode** (`test_silicon_runbook.py`: the probe enumerates all three
+signals; `--require-real` fires exactly when all three are present) so the rig path can never
+silently rot and a sandbox run can't masquerade as a measured result. The one thing no
 architecture substitutes for is the *measured* (not synthetic) replan win itself — it needs
 a bare-metal rig with `intel_pstate=passive` + a userspace governor + RAPL exposed (the
-exact rig is in `HARDWARE_VALIDATION.md`). That converts "optimal-w.r.t.-a-model" into
-evidence and is the single most valuable next result once a rig is available.
+exact rig is in `HARDWARE_VALIDATION.md`). The measured win **fires the moment** such a host
+runs the runbook; that converts "optimal-w.r.t.-a-model" into evidence and is the single most
+valuable next result once a rig is available.
 
 ### 5.5 Native backend (DEFERRED — gated)
 
@@ -293,17 +308,23 @@ In recommended order — each is gated by the generated differential harness + F
 7. ✅ **Multi-claim bundle (joint) optimization** (§5.3.1). **DONE** — a real 12% matmul
    gain, with search certificates.
 8. ✅ **Proof-carrying records** (§5.3.2). **DONE** — `bcir.run --explain/--replay/--reduce`.
-9. ◑ **Compositional semantics** (§5.3.3) — *first slice DONE* (`kbcir.compose`: Seq/Cond/
-   Call/Function + dynamic shapes). **Next:** alias/effect modeling + an MLIR func/if op
-   family + inter-procedural summary costs.
-10. ◑ **MLIR ports of the new oracle capabilities** — bundle **detection** ported
-    (`-bcir-bundle`, the law-rail analysis that annotates the input-sharing bundles).
-    **Next:** the bundle joint-reorder *transformation* (reorder the cost-model columns +
-    re-price) and the proof-carrying decision record as IR annotations.
+9. ◑ **Compositional semantics** (§5.3.3) — *deepened* (`kbcir.compose`: Seq/Cond/Call/
+   Function + dynamic shapes, **plus** alias/effect modeling across calls and
+   inter-procedural summary costs; law-rail `kbcir.func`/`call`/`cond` op family). **Next:**
+   a verifier law for the call graph (callee resolution + recursion) and a planning pass over
+   the func/if ops.
+10. ◑ **MLIR ports of the new oracle capabilities** — bundle **detection + joint-reorder**
+    ported (`-bcir-bundle`: it now reorders the cost-model columns so a bundle is contiguous,
+    re-runs the min-plus shortest path for every legal intra-bundle order, and annotates the
+    re-priced `kbcir.bundle_gain` / `bundle_order`), and the **proof-carrying decision record
+    as IR annotations** (`-bcir-explain`: per claim the candidates weighed + chosen width/
+    score, per module the plan total — `proof.explain` on the law rail). **Next:** a `replay`
+    that checks the recorded annotations against a fresh plan on the IR.
 11. **(When a rig is available)** the measured real-silicon replan win (§5.4) — the
     software path is push-button (`tools/silicon/measure_replan.sh`) and CI-exercised in
-    degrade mode; it lights up the instant a rig with PMU + RAPL + a userspace governor is
-    present (`HARDWARE_VALIDATION.md`). The top differentiator.
+    degrade mode; the probe enumerates the three gating signals and prints a **rig-ready**
+    verdict, so the win lights up the instant a bare-metal host with PMU + RAPL + a userspace
+    governor runs the runbook (`HARDWARE_VALIDATION.md`). The top differentiator.
 
 ---
 

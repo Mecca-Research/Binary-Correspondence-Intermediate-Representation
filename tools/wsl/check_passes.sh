@@ -105,6 +105,18 @@ echo "[passes] RCSP plan-level (accumulated-budget label-DP across the plan)"
 run_fc -bcir-rcsp-plan "${T}/rcsp_plan.mlir"
 echo "[passes] bundle detection (multi-claim joint bundles, the kbcir.bundle analysis)"
 run_fc -bcir-bundle "${T}/bundle.mlir"
+echo "[passes] bundle joint-reorder (reorder the cost columns + re-price -> kbcir.bundle_gain)"
+run_fc -bcir-bundle "${T}/bundle_reorder.mlir"
+echo "[passes] explain (proof-carrying decision record as IR annotations, the proof.explain port)"
+run_fc -bcir-explain "${T}/explain.mlir"
+echo "[passes] compose func/if op family (round-trip: kbcir.func / kbcir.call / kbcir.cond)"
+if [ -n "${FC}" ]; then
+  "${BO}" "${T}/compose_ops.mlir" 2>/tmp/pe | "${FC}" "${T}/compose_ops.mlir" \
+    && echo "  PASS compose_ops.mlir" || { echo "  FAIL compose_ops.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" "${T}/compose_ops.mlir" >/dev/null 2>/tmp/pe \
+    && echo "  RUN-ONLY compose_ops.mlir" || { echo "  FAIL compose_ops.mlir"; cat /tmp/pe; fail=1; }
+fi
 echo "[passes] hot-Theta plan parity (the kbcir.theta context op)"
 run_fc -bcir-plan "${T}/theta_hot.mlir"
 echo "[passes] six-target capability matrix (-bcir-plan/-overlap/-rcsp-plan per target)"

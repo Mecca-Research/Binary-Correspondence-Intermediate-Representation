@@ -61,6 +61,22 @@ executable conformance oracle that must agree with these definitions
 >   (the widened corpus — real matmul/scan/histogram — **generated** by the oracle via
 >   `bcir.lower.mlir.to_mlir`; regenerate with `python -m bcir.kbcir.differential
 >   --emit-corpus`) both FileCheck the law's recomputed min-plus scores.
+> - **Bundle detection + joint-reorder (C++23)** — `-bcir-bundle`
+>   (`lib/passes/BCIRBundlePass.cpp`) ports `bundle.py`: it finds the input-sharing bundles
+>   (`kbcir.bundle` / `bundle_shared` / `bundle_count`) and, with a capability + policy,
+>   **reorders the cost-model columns** so a bundle is contiguous, re-runs the min-plus
+>   shortest path for every legal intra-bundle order, and annotates the re-priced
+>   `kbcir.bundle_gain` / `bundle_order` — the joint reorder the pairwise plan misses on
+>   interleaved sharers (`test/passes/bundle.mlir`, `bundle_reorder.mlir`). A re-price, not
+>   an IR mutation.
+> - **Proof-carrying explain (C++23)** — `-bcir-explain` (`lib/passes/BCIRExplainPass.cpp`)
+>   ports `proof.explain`: the decision record as IR annotations — per claim the candidates
+>   weighed (widths + scalarized costs), the chosen width/score, and any fusion credit; per
+>   module the plan total. Reproduces 7808 on `vector_add` (`test/passes/explain.mlir`).
+> - **Compositional func/if op family** — `bcir.kbcir.func` / `kbcir.call` / `kbcir.cond`
+>   (`include/BCIR/BCIRKBCIROps.td`) give `compose.py`'s region tree (functions / calls /
+>   control flow) first-class MLIR form; they round-trip through `bcir-opt`
+>   (`test/passes/compose_ops.mlir`). The compositional cost stays the Python oracle's.
 
 ## Dual rail
 

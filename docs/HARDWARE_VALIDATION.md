@@ -81,11 +81,17 @@ bash tools/silicon/measure_replan.sh                 # auto: real on a rig, synt
 bash tools/silicon/measure_replan.sh --require-real   # FAIL if no real signals — run this ON the rig
 ```
 
-On a rig with the capabilities above it prints `MEASURED replan win = N (provenance=real)`
-— the CT4 evidence. Anywhere else it degrades honestly (`provenance=synthetic`, no measured
-number) and exits 0, so the path is exercised in CI (the "degrade mode" step) and can never
-silently rot; `--require-real` guarantees a sandbox run can't masquerade as a measured
-result. Gated by `bcir/tests/test_silicon_runbook.py`.
+It opens with a **capability probe** that enumerates the three gating signals — a hardware
+PMU (`perf_event_open`), RAPL energy, and a cpufreq userspace governor (items 1–3 above) —
+and prints an explicit `rig-ready: YES` / `rig-ready: NO -- missing: …` verdict, so the
+requirement to fire the measured win is named, not implicit. On a rig with all three it
+prints `MEASURED replan win = N (provenance=real)` — the CT4 evidence. Anywhere else it
+degrades honestly (`provenance=synthetic`, no measured number) and exits 0, so the path is
+exercised in CI (the "degrade mode" step) and can never silently rot; `--require-real` fails
+exactly when the host is not rig-ready, so a sandbox run can't masquerade as a measured
+result. The measured win **fires the moment** a bare-metal host with PMU + RAPL + a userspace
+governor runs the runbook. Gated by `bcir/tests/test_silicon_runbook.py` (the probe
+enumerates all three signals; `--require-real` fires exactly when all three are present).
 
 ## Honest status line
 

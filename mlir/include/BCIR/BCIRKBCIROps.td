@@ -208,4 +208,47 @@ def BCIR_KBCIRScheduledPriceOp : BCIR_Op<"kbcir.scheduled_price", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+// --- compositional semantics: the func / if op family (BCIR-3 compose) -----------
+// The IR vocabulary for the region tree of bcir/kbcir/compose.py -- the frontier past
+// straight-line array kernels. A `kbcir.func` is a named region (define once, call many);
+// `kbcir.call` invokes it, substituting actual resources for the callee's formals; and
+// `kbcir.cond` is control flow (worst-case max + probability-weighted expected). The
+// compositional cost (series sum / branch max / call inline-or-summary) is computed by the
+// oracle, which stays the conformance reference; these ops give that program structure a
+// first-class law-rail form (annotated/analysed incrementally, like the kbcir.* family above).
+
+def BCIR_KBCIRFuncOp : BCIR_Op<"kbcir.func", [Symbol, SymbolTable, NoTerminator]> {
+  let summary = "A named compositional region (compose.Function): define once, kbcir.call many";
+  // `formals` names the callee's formal resources (the symbols a kbcir.call remaps); the
+  // body region holds the function's claims / nested calls / conds.
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       OptionalAttr<FlatSymbolRefArrayAttr>:$formals);
+  let regions = (region SizedRegion<1>:$body);
+  let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+}
+
+def BCIR_KBCIRCallOp : BCIR_Op<"kbcir.call"> {
+  let summary = "Invoke a kbcir.func, substituting actual resources for its formals (compose.Call)";
+  // `callee` is the kbcir.func; `formals`/`actuals` are the parallel substitution arrays
+  // (formal_i -> actual_i). Inline-substitution semantics: the planner sees the expanded
+  // graph (or, with an inter-procedural summary, reuses the callee's cost). Recursion is
+  // rejected by the oracle (bounded compile time).
+  let arguments = (ins FlatSymbolRefAttr:$callee,
+                       OptionalAttr<FlatSymbolRefArrayAttr>:$formals,
+                       OptionalAttr<FlatSymbolRefArrayAttr>:$actuals);
+  let assemblyFormat = "$callee attr-dict";
+}
+
+def BCIR_KBCIRCondOp : BCIR_Op<"kbcir.cond", [NoTerminator]> {
+  let summary = "Control-flow region (compose.Cond): worst-case max + prob-weighted expected";
+  // Only one branch runs, so the hard latency bound is the max over the two branches and the
+  // expected cost weights by `prob_then_milli`/1000 (defaulted 500 = even odds). `pred` names
+  // the predicate the branch keys on.
+  let arguments = (ins StrAttr:$pred,
+                       DefaultValuedAttr<I64Attr, "500">:$prob_then_milli);
+  let regions = (region SizedRegion<1>:$then_region, SizedRegion<1>:$else_region);
+  let assemblyFormat =
+      "$pred attr-dict-with-keyword `then` $then_region `else` $else_region";
+}
+
 #endif // BCIR_KBCIR_OPS

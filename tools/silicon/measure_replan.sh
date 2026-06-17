@@ -21,25 +21,28 @@ PROGRAM="${PROGRAM:-vector_add}"
 REQUIRE_REAL=0
 [ "${1:-}" = "--require-real" ] && REQUIRE_REAL=1
 
-echo "[silicon] capability probe (real signals that drive the measured replan):"
+echo "[silicon] capability probe (the three real signals the measured replan is gated on):"
+# The rig contract (HARDWARE_VALIDATION.md): the measured win fires the moment a bare-metal
+# host exposes ALL THREE -- a hardware PMU (perf_event_open), RAPL energy, and a cpufreq
+# userspace governor. The probe enumerates each, names what is missing, and prints whether
+# the host is rig-ready; the measured number itself still comes only from the real loop below.
 python3 - <<'PY'
-import json, bcir.silicon as s
-summ = s.summary()
-def avail(*keys):
-    for k in keys:
-        v = summ.get(k)
-        if isinstance(v, dict):
-            v = v.get("available", v.get("ok"))
-        if v:
-            return True
-    return False
+import bcir.silicon as s
 pmu = bool(s.perf_counters_available())
+rapl = bool(s.rapl_available())
+gov = bool(getattr(s.cpufreq_info(), "actuatable", False))
 caps = {
     "PMU (perf_event_open)": pmu,
-    "DVFS actuation (userspace governor)": bool(getattr(s.cpufreq_info(), "actuatable", False)),
+    "RAPL energy (running average power limit)": rapl,
+    "DVFS governor (cpufreq userspace)": gov,
 }
 for name, ok in caps.items():
     print(f"  {name}: {'REAL' if ok else 'unavailable'}")
+missing = [n for n, ok in caps.items() if not ok]
+if missing:
+    print("  rig-ready: NO -- missing: " + "; ".join(missing))
+else:
+    print("  rig-ready: YES (PMU + RAPL + userspace governor) -- measured win is live")
 PY
 
 echo "[silicon] measured replan (bcir.run --silicon):"
