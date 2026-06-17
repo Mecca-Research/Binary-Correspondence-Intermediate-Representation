@@ -216,6 +216,9 @@ jobs:
       - name: Validate Phase-6 passes (verify / promote / lower)
         run: bash tools/wsl/check_passes.sh
 
+      - name: Validate MLIR bytecode round-trip (Properties survive text<->bytecode)
+        run: bash tools/wsl/check_bytecode.sh
+
       - name: Grade training MLIR conversion and LLVM translation tiers (required tools)
         env:
           LLVM_SUFFIX: "-${{ matrix.llvm }}"

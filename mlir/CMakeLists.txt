@@ -66,14 +66,9 @@ mlir_tablegen(BCIROps.h.inc -gen-op-decls)
 mlir_tablegen(BCIROps.cpp.inc -gen-op-defs)
 add_public_tablegen_target(BCIROpsIncGen)
 
-# --- GEM passes ---
-set(LLVM_TARGET_DEFINITIONS passes/GEMPasses.td)
-mlir_tablegen(GEMPasses.h.inc -gen-pass-decls -name GEM)
-add_public_tablegen_target(GEMPassIncGen)
-
 # ODS -> C++ generation in one shot.
 add_custom_target(bcir_tablegen DEPENDS
-  BCIRAttrsIncGen BCIRTypesIncGen BCIRInterfacesIncGen BCIROpsIncGen GEMPassIncGen)
+  BCIRAttrsIncGen BCIRTypesIncGen BCIRInterfacesIncGen BCIROpsIncGen)
 
 # --- dialect C++ library + bcir-opt (LangRef Milestone 3) ---
 add_mlir_dialect_library(MLIRBCIR
