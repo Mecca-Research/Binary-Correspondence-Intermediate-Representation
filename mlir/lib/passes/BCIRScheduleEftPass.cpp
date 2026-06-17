@@ -82,10 +82,10 @@ static SmallVector<Info> buildInfos(const std::vector<cm::Column> &cols, ArrayRe
     Info in;
     in.claim = cols[i].claim;
     in.phase = cols[i].phase;
-    in.id = static_cast<int64_t>(cols[i].claim.getClaimId());
+    in.id = static_cast<int64_t>(in.claim.getClaimId());
     in.dur = std::max<int64_t>(1, cm::scalarize(e, w));
-    in.bandwidth = !cols[i].claim.getCostClass() ||
-                   *cols[i].claim.getCostClass() == CostClass::Bandwidth;
+    in.bandwidth = !in.claim.getCostClass() ||
+                   *in.claim.getCostClass() == CostClass::Bandwidth;
     in.reads.assign(cols[i].reads.begin(), cols[i].reads.end());
     in.writes.assign(cols[i].writes.begin(), cols[i].writes.end());
     for (StringRef r : in.reads)
