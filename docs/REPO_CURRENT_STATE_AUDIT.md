@@ -98,14 +98,15 @@
 4. **Intelligence ahead of substrate.** Phases 13–26 added a rich learned/
    categorical optimization stack over a backend that cannot yet codegen and
    tables that are not yet measured; the ROI is unproven until §1–2 close.
-5. **Multi-version LLVM matrix (LLVM 18 + 19, both gating).** The
-   `mlir-rail-validate` CI job is a parametric matrix and **both LLVM 18 and 19
-   now gate** (the forward-compat sweep is done). The Symbol-container ops
-   (`registry` / `kbcir.plan` / `gem.stream_pack` / `parse.grammar` /
-   `fsm.machine` / `binary.format`) carry the `SymbolTable` trait, so LLVM 19's
-   stricter "symbol's parent must have the SymbolTable trait" verifier is
-   satisfied; the trait is a no-op under the lax LLVM 18, so the same ODS builds
-   and validates clean on both. No remaining LLVM 19 blocker.
+5. **LLVM rail tracks the latest release (LLVM 22, gating).** The
+   `mlir-rail-validate` CI job builds + validates `bcir-opt` against **LLVM/MLIR 22**
+   (the latest release), installed from `apt.llvm.org` since Ubuntu's default repos
+   top out near 18/19. The toolchain is resolved version-agnostically (the highest
+   `/usr/lib/llvm-*` for cmake; `FileCheck` / `mlir-opt` / `mlir-tblgen` the same way),
+   so a major bump is a one-line matrix change. The Symbol-container ops (`registry` /
+   `kbcir.plan` / `gem.stream_pack` / `parse.grammar` / `fsm.machine` / `binary.format`)
+   carry the `SymbolTable` trait, satisfying the "symbol's parent must have the
+   SymbolTable trait" verifier that has only tightened since LLVM 19.
 
 ## Recommended next milestones (see [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5–6 for detail)
 
@@ -127,6 +128,16 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **MLIR rail moved to the latest LLVM/MLIR (22).** The `mlir-rail-validate` CI matrix
+  was `["18","19"]` (both from Ubuntu's default repos); it is now `["22"]`, installed from
+  apt.llvm.org (the `llvm.sh` helper adds the signed repo) since the default repos top out near
+  18/19. The toolchain resolvers were made version-agnostic (FileCheck / mlir-opt / mlir-tblgen now
+  resolve the highest `/usr/lib/llvm-*/bin/<tool>` instead of a hardcoded `-18`/`-19` fallback, which
+  would have silently degraded `check_passes.sh` to parse-only on 22). build_mlir.sh already
+  auto-resolves the highest installed `/usr/lib/llvm-*`. Compatibility against the 22 compiler +
+  verifier is validated in CI (the sandbox cannot build MLIR); this is the foundational change for
+  the LLVM-22 feature-adoption work. C++ standard stays C++23 for now (a `-std=c++2c` bump is a
+  candidate follow-up on the clang-22 toolchain).
 - 2026-06-17: **proof.replay on the IR (`-bcir-replay`).** Ports bcir/kbcir/proof.replay: a
   recheck of the proof-carrying record a deployed plan carries. BCIRExplainPass.cpp gained a
   shared freshRecord() helper (recompute the plan -> per-claim chosen width + coupled edge score +

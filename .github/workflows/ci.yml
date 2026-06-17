@@ -153,25 +153,31 @@ jobs:
   mlir-rail-validate:
     name: BCIR MLIR rail (LLVM ${{ matrix.llvm }})
     runs-on: ubuntu-latest
-    # Multi-version matrix: LLVM 18 and 19 are both validated, gating rails. The
-    # forward-compat sweep is done -- the Symbol-container ops (registry /
-    # kbcir.plan / gem.stream_pack / parse.grammar / fsm.machine / binary.format)
-    # carry the SymbolTable trait, so LLVM 19's stricter "symbol's parent must be a
-    # SymbolTable" verifier is satisfied (the trait is a no-op on the lax LLVM 18).
-    # The scripts auto-resolve the toolchain (build_mlir.sh picks the installed
-    # MLIR; FileCheck-NN is searched; the training grader grades against the
-    # LLVM_SUFFIX major), so adding a version is a one-line change.
+    # The gating MLIR rail tracks the LATEST LLVM/MLIR release (22). Ubuntu's default
+    # repos on ubuntu-latest top out near LLVM 18/19, so the toolchain comes from
+    # apt.llvm.org (the llvm.sh helper adds the signed repo). The scripts auto-resolve
+    # the toolchain version-agnostically (build_mlir.sh picks the highest installed
+    # /usr/lib/llvm-*; FileCheck / mlir-opt / mlir-tblgen resolve the same way; the
+    # training grader grades against the LLVM_SUFFIX major), so bumping the major is a
+    # one-line matrix change. The Symbol-container ops (registry / kbcir.plan /
+    # gem.stream_pack / parse.grammar / fsm.machine / binary.format) carry the
+    # SymbolTable trait, satisfying the "symbol's parent must be a SymbolTable"
+    # verifier that has only tightened since LLVM 19.
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["18", "19"]
+        llvm: ["22"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install MLIR ${{ matrix.llvm }} toolchain + dev libs
+      - name: Install MLIR ${{ matrix.llvm }} toolchain + dev libs (apt.llvm.org)
         run: |
-          sudo apt-get update
+          # The latest LLVM/MLIR is not in Ubuntu's default repos; apt.llvm.org carries
+          # it. llvm.sh adds the signed repo and installs the base llvm/clang for the major.
+          wget -O /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh ${{ matrix.llvm }}
           sudo apt-get install -y mlir-${{ matrix.llvm }}-tools libmlir-${{ matrix.llvm }}-dev \
             llvm-${{ matrix.llvm }}-dev llvm-${{ matrix.llvm }}-tools cmake ninja-build
 

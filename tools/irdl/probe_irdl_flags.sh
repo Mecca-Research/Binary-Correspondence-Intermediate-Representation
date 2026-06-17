@@ -3,7 +3,8 @@
 # expose slightly different command surfaces; do not bake assumptions -- probe.
 set -euo pipefail
 
-MLIR_OPT="${MLIR_OPT:-$(command -v mlir-opt || command -v mlir-opt-18 || true)}"
+MLIR_OPT="${MLIR_OPT:-$(ls /usr/lib/llvm-*/bin/mlir-opt 2>/dev/null | sort -V | tail -1)}"
+MLIR_OPT="${MLIR_OPT:-$(command -v mlir-opt-22 || command -v mlir-opt || command -v mlir-opt-18 || true)}"
 if [ -z "${MLIR_OPT}" ]; then
   echo "mlir-opt not found on PATH; IRDL projection cannot be validated on this host." >&2
   exit 0

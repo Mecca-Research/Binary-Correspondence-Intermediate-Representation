@@ -10,7 +10,10 @@ if [ -z "${BO}" ]; then
   echo "bcir-opt not built; run tools/wsl/build_mlir.sh first (skipping)." >&2
   exit 0
 fi
-FC="$(command -v FileCheck-19 || command -v FileCheck-18 || command -v FileCheck-17 || command -v FileCheck || true)"
+# Resolve FileCheck version-agnostically: the highest /usr/lib/llvm-*/bin/FileCheck (finds the
+# installed major -- 22 now), then fall back to versioned / unversioned names on PATH.
+FC="$(ls /usr/lib/llvm-*/bin/FileCheck 2>/dev/null | sort -V | tail -1)"
+[ -n "${FC}" ] || FC="$(command -v FileCheck-22 || command -v FileCheck-19 || command -v FileCheck-18 || command -v FileCheck || true)"
 T="${ROOT}/mlir/test/passes"
 fail=0
 

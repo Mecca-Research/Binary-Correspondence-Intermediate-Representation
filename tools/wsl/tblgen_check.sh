@@ -8,7 +8,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INC="${ROOT}/mlir/include"
 
-MLIR_TBLGEN="${MLIR_TBLGEN:-$(command -v mlir-tblgen || command -v mlir-tblgen-18 || true)}"
+# Resolve mlir-tblgen version-agnostically: the highest /usr/lib/llvm-*/bin/mlir-tblgen (the
+# installed major -- 22 now), then versioned / unversioned names on PATH.
+MLIR_TBLGEN="${MLIR_TBLGEN:-$(ls /usr/lib/llvm-*/bin/mlir-tblgen 2>/dev/null | sort -V | tail -1)}"
+MLIR_TBLGEN="${MLIR_TBLGEN:-$(command -v mlir-tblgen-22 || command -v mlir-tblgen || command -v mlir-tblgen-18 || true)}"
 if [ -z "${MLIR_TBLGEN}" ]; then
   echo "mlir-tblgen not found; cannot validate ODS on this host (install mlir-NN-tools)." >&2
   exit 0

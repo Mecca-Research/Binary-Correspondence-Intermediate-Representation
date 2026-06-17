@@ -411,7 +411,7 @@ module into this operad: the deterministic fixpoint, made intelligent.
 ## 16. Milestone map
 
 1. LangRef v0.1 — this document. ✔
-2. Declarative dialect definitions — `mlir/include/BCIR/*.td`. ✔ (tblgen-validated; compiled `bcir-opt` parses + verifies the pretty corpus on LLVM 18)
+2. Declarative dialect definitions — `mlir/include/BCIR/*.td`. ✔ (tblgen-validated; compiled `bcir-opt` parses + verifies the pretty corpus on the latest LLVM/MLIR, 22)
 3. Verifier-first compiler. ✔ (laws R1–R13: the oracle runs the full chain — module R1–R7, plan R8–R9, stream R10–R11, lowering R12, provenance R13 — and the MLIR-native `-bcir-verify` enforces all thirteen structurally, negative-tested per law)
 4. Rewrite laws. ◑ (MLIR-native `-bcir-promote-lanes` (GGG→UX); the rest authored as `bcir.opt.*` IR + run in the oracle; the **composition** engine is an e-graph / equality saturation (`kbcir.egraph`) whose saturated extractions freeze into generation-tagged **memory modules** `a = Lim(Res(U))` (`kbcir.memory`, R13: `saturated ⇒ admissible`))
 5. K_BCIR planner — candidate-path/costvec/selected-path IR. ◑ (runnable in `bcir/`: the scalarized rail, the constrained RCSP/Pareto rail (`kbcir.rcsp`), and the (max,+) overlap price (`gem.overlap`); now MLIR-native too — `-bcir-select-realization` recomputes the min-plus `cost·weights` and reproduces the oracle's 7808 cool / 9472 under the thermal cap)

@@ -6,8 +6,8 @@ TableGen/ODS per [`../docs/BCIR_LANGREF.md`](../docs/BCIR_LANGREF.md), plus a pu
 executable conformance oracle that must agree with these definitions
 ([`../docs/PARITY.md`](../docs/PARITY.md)).
 
-> **Validated on LLVM 18** (`mlir-opt`/`mlir-tblgen`/`bcir-opt` 18.1.3), gated in
-> CI (job `mlir-rail-validate`):
+> **Validated on the latest LLVM/MLIR (22)** (`mlir-opt`/`mlir-tblgen`/`bcir-opt`),
+> installed from apt.llvm.org, gated in CI (job `mlir-rail-validate`):
 > - **ODS rail** — every TableGen generator (decls **and** defs) passes for the
 >   whole `.td` family: `tools/wsl/tblgen_check.sh`.
 > - **IRDL rail** — the projection loads into stock `mlir-opt` and the
