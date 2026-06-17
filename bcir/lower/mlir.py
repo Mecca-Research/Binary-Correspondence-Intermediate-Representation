@@ -103,7 +103,9 @@ def plan_view(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF,
     if result is None:
         result = optimize(module, h, theta, policy)
     flat = _flatten(module)
-    cand_map = fused_candidates(module, h)
+    # Reuse the candidate map optimize() already built when it is threaded through;
+    # only recompute when a bare result was supplied (e.g. an externally built one).
+    cand_map = result.cand_map if result.cand_map is not None else fused_candidates(module, h)
     chosen = result.by_claim()
 
     # Weights are phase-independent in the current model; the law uses one policy

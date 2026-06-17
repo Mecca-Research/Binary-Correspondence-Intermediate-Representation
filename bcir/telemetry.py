@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import struct
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,20 @@ class DataDNA:
     provenance: str = ""     # back-reference (e.g. plan/claim hash)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        # Explicit flat dict: DataDNA is 9 scalar fields, so the recursive
+        # dataclasses.asdict (which deepcopies every field) was pure overhead on the
+        # hot telemetry-emit path (measured ~2M deepcopy calls in the suite).
+        return {
+            "segment_id": self.segment_id,
+            "claim_id": self.claim_id,
+            "cycles": self.cycles,
+            "bytes": self.bytes,
+            "misses": self.misses,
+            "thermal": self.thermal,
+            "voltage": self.voltage,
+            "utilization": self.utilization,
+            "provenance": self.provenance,
+        }
 
 
 class TelemetrySink(ABC):

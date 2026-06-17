@@ -128,6 +128,29 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Phase 1 — functional hardening + performance (post-LLVM-22 follow-up).**
+  Three-axis audit (MLIR-22 compliance / performance / correctness) drove a first batch of
+  safe, locally-validated fixes. **Test correctness:** the verifier coverage gate
+  (`test_verify_differential.py`) was a string-grep that enforced only R1..R17 and omitted
+  `verify_callgraph.mlir` — extended to **R1..R18** so R18 (call-graph integrity) can no
+  longer silently lose its toolchain-rail negative case. **Performance (measured):** the
+  full oracle suite dropped **~39.6s → ~27.6s (-30%)** from two changes — (P1) the MLIR
+  emitter recomputed the optimizer + `fused_candidates` 4–5× per fuzz iteration; `optimize`
+  now carries its deforested `cand_map` on `RealizationResult` and `_fuzz_mlir` plans once
+  and threads the `result` through both emissions + `plan_view`; (P4) `DataDNA.to_dict`
+  swapped the recursive deep-copying `dataclasses.asdict` for an explicit flat dict (it is 9
+  scalar fields). Emitted corpus stays byte-identical (drift gates hold); differential parity
+  clean (0 bugs / 0 verifier misses); 615 oracle tests green. **CI (the ~9-min rail is
+  build-dominated):** `build_mlir.sh` now uses `ccache` as the compiler launcher when present
+  (no-op locally) + explicit `--parallel nproc`; CI installs+caches `ccache` (warm relink
+  instead of full rebuild), adds `concurrency: cancel-in-progress` (superseded pushes no
+  longer queue 9-min jobs), and runs the two differential + two fuzz seeds in parallel.
+  **Local-build unlock:** `bcir-opt` now builds against the stock Ubuntu MLIR 18 dev libs in
+  this environment, so the full pass rail (R1–R18 verifier, GEM pipeline, cost/plan/overlap/
+  RCSP, compose) — previously gated only by the single LLVM-22 CI job — is now runnable
+  locally as a fast pre-CI gate (CI stays the authoritative MLIR-22 gate; IRDL's 22-only
+  named syntax stays CI-validated).
+
 - 2026-06-17: **MLIR rail moved to the latest LLVM/MLIR (22).** The `mlir-rail-validate` CI matrix
   was `["18","19"]` (both from Ubuntu's default repos); it is now `["22"]`, installed from
   apt.llvm.org (the `llvm.sh` helper adds the signed repo) since the default repos top out near

@@ -16,8 +16,18 @@ LLVM_DIR="${LLVM_DIR:-$(ls -d /usr/lib/llvm-*/lib/cmake/llvm 2>/dev/null | sort 
 GEN="Unix Makefiles"
 command -v ninja >/dev/null 2>&1 && GEN="Ninja"
 
+# Use ccache as the compiler launcher when present (CI caches CCACHE_DIR across runs);
+# the bcir-opt compile against the MLIR headers dominates the rail's wall time, and a
+# warm cache turns it from a full rebuild into a near-instant relink. No-op locally if
+# ccache isn't installed.
+LAUNCH=()
+if command -v ccache >/dev/null 2>&1; then
+  LAUNCH=(-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache)
+  echo "[build_mlir] ccache enabled ($(ccache --version | head -1))"
+fi
+
 echo "[build_mlir] generator=${GEN} MLIR_DIR=${MLIR_DIR}"
 cmake -G "${GEN}" -S "${ROOT}/mlir" -B "${BUILD}" \
-  -DMLIR_DIR="${MLIR_DIR}" -DLLVM_DIR="${LLVM_DIR}" -DCMAKE_BUILD_TYPE=Release
-cmake --build "${BUILD}" --target bcir-opt
+  -DMLIR_DIR="${MLIR_DIR}" -DLLVM_DIR="${LLVM_DIR}" -DCMAKE_BUILD_TYPE=Release "${LAUNCH[@]}"
+cmake --build "${BUILD}" --target bcir-opt --parallel "$(nproc 2>/dev/null || echo 4)"
 echo "[build_mlir] bcir-opt: $(find "${BUILD}" -name bcir-opt -type f | head -1)"

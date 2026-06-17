@@ -21,8 +21,9 @@ from bcir.kbcir.differential import run_verifier_campaign
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _PASSES = os.path.join(_ROOT, "mlir", "test", "passes")
-_FILES = ("verify_laws.mlir", "verify_laws_deep.mlir", "verify_accuracy.mlir")
-_ALL_LAWS = tuple(f"R{i}" for i in range(1, 18))   # R1 .. R17
+_FILES = ("verify_laws.mlir", "verify_laws_deep.mlir", "verify_accuracy.mlir",
+          "verify_callgraph.mlir")
+_ALL_LAWS = tuple(f"R{i}" for i in range(1, 19))   # R1 .. R18 (R18 = call-graph integrity)
 
 
 def _laws_with_negative_cases() -> set:
@@ -37,7 +38,7 @@ def _laws_with_negative_cases() -> set:
 
 
 def test_every_law_has_a_toolchain_negative_case():
-    """R1..R17 are each negatively tested by `bcir-opt -bcir-verify -verify-diagnostics`."""
+    """R1..R18 are each negatively tested by `bcir-opt -bcir-verify -verify-diagnostics`."""
     have = _laws_with_negative_cases()
     missing = [law for law in _ALL_LAWS if law not in have]
     assert not missing, f"laws lacking a toolchain-rail negative case: {missing}"
