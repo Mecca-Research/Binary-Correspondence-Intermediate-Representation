@@ -1,4 +1,4 @@
-//===- BCIRVerifyPass.cpp - the -bcir-verify semantic laws R1-R17 -*- C++ -*-===//
+//===- BCIRVerifyPass.cpp - the -bcir-verify semantic laws R1-R18 -*- C++ -*-===//
 //
 // Part of the modular BCIR MLIR pass library (split out of the former monolithic
 // BCIRPasses.cpp). Shared helpers live in BCIRPassSupport.h; registration in
@@ -54,10 +54,10 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
 
   StringRef getArgument() const final { return "bcir-verify"; }
   StringRef getDescription() const final {
-    return "Verify the BCIR semantic laws R1-R17: registry, domain, phase DAG, "
+    return "Verify the BCIR semantic laws R1-R18: registry, domain, phase DAG, "
            "hazard, lane, bounds, cost, plan, provenance, generation, lowering, "
            "policy provenance, CIM/PIM dispatch, DVFS clock, allocator placement, "
-           "accuracy contract.";
+           "accuracy contract, compositional call graph.";
   }
 
   void runOnOperation() override {
@@ -688,6 +688,14 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // The runtime state Theta the plan conditioned on (the first kbcir.theta op), used
+    // to cross-check a manifest's m_theta against the actual IR.
+    KBCIRThetaOp firstTheta;
+    root->walk([&](KBCIRThetaOp t) {
+      if (!firstTheta)
+        firstTheta = t;
+    });
+
     // R13: provenance-manifest reproducibility -- a deployed plan's manifest (the
     // commit hash of its inputs + in-force decision-rule generations) must have
     // reproduced its recorded score/shape on replay. Manifest equality => the
@@ -732,6 +740,32 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
               << static_cast<int64_t>(pm.getDigest())
               << " does not match the digest recomputed from its component hashes "
               << recomputed << " (tampered or stale manifest)";
+          ok = false;
+        }
+      }
+      // R13 component cross-check (m_theta vs the IR): when the manifest carries m_theta and
+      // the module has a kbcir.theta op, recompute hash_theta byte-identically to
+      // provenance.hash_theta (FNV-1a over the eight 0..100 pressures) and confirm it equals
+      // the declared m_theta -- so a manifest cannot be re-pointed at a different runtime
+      // state than the one in the IR. (The module/target/policy component cross-checks need
+      // the IR to carry the claim opcode / full capability fields / unfolded base weights --
+      // tracked follow-ups; the digest recompute above already binds all four components.)
+      if (mth && firstTheta) {
+        uint64_t h = kFnvOffset;
+        for (int64_t v : {static_cast<int64_t>(firstTheta.getThermal()),
+                          static_cast<int64_t>(firstTheta.getPower()),
+                          static_cast<int64_t>(firstTheta.getMemPressure()),
+                          static_cast<int64_t>(firstTheta.getContention()),
+                          static_cast<int64_t>(firstTheta.getNoise()),
+                          static_cast<int64_t>(firstTheta.getWear()),
+                          static_cast<int64_t>(firstTheta.getUtilization()),
+                          static_cast<int64_t>(firstTheta.getVoltage())})
+          h = fnvItem(h, std::to_string(v));
+        int64_t recomputedTheta = static_cast<int64_t>(h & 0x7FFFFFFFFFFFFFFFULL);
+        if (recomputedTheta != mth) {
+          pm.emitError("R13: manifest m_theta ")
+              << mth << " does not match hash_theta recomputed from the kbcir.theta op "
+              << recomputedTheta << " (manifest attached to a different runtime state)";
           ok = false;
         }
       }
@@ -870,6 +904,58 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         ok = false;
       }
     });
+
+    // R18 (compositional call-graph integrity): every kbcir.call resolves to a kbcir.func,
+    // and the call graph is acyclic -- no recursion. The oracle's compose.plan_composite
+    // raises on an undefined callee (KeyError) and on a recursive call (RecursionError, for
+    // bounded compile time); this is that law on the law rail for the kbcir.func/call/cond
+    // op family.
+    {
+      llvm::DenseMap<StringRef, Operation *> funcByName;
+      root->walk([&](KBCIRFuncOp f) { funcByName[f.getSymName()] = f.getOperation(); });
+      // call-graph edges: a func -> the callees of the kbcir.call ops in its body (attributed
+      // to the nearest enclosing kbcir.func, so calls inside a kbcir.cond branch still count).
+      llvm::DenseMap<StringRef, SmallVector<StringRef>> edges;
+      root->walk([&](KBCIRCallOp c) {
+        StringRef callee = c.getCallee();
+        if (!funcByName.count(callee)) {
+          c.emitError("R18: call to undefined function @") << callee;
+          ok = false;
+        }
+        Operation *p = c->getParentOp();
+        while (p && p->getName().getStringRef() != "bcir.kbcir.func")
+          p = p->getParentOp();
+        if (p)
+          edges[cast<KBCIRFuncOp>(p).getSymName()].push_back(callee);
+      });
+      // DFS over the func graph (white 0 / gray 1 / black 2): a back edge to a gray node is
+      // a recursive cycle. Roots in sorted name order for a deterministic verdict.
+      SmallVector<StringRef> names;
+      for (auto &kv : funcByName)
+        names.push_back(kv.first);
+      std::sort(names.begin(), names.end());
+      llvm::DenseMap<StringRef, int> color;
+      std::function<bool(StringRef)> visit = [&](StringRef n) -> bool {
+        color[n] = 1;
+        for (StringRef m : edges.lookup(n)) {
+          if (!funcByName.count(m))
+            continue; // unresolved callee already reported above
+          int cm = color.lookup(m);
+          if (cm == 1) {
+            funcByName[m]->emitError("R18: recursive call cycle through @") << m;
+            ok = false;
+            return true;
+          }
+          if (cm == 0 && visit(m))
+            return true;
+        }
+        color[n] = 2;
+        return false;
+      };
+      for (StringRef n : names)
+        if (color.lookup(n) == 0)
+          visit(n);
+    }
 
     // R11: generation validity -- pack tags match the live registry maxima; a
     // mismatch is a stale pack that must rehydrate (patch/repack/replan).

@@ -118,7 +118,7 @@ hard score, with equality at `T = 0`) is a verifier obligation under R9
   bandwidth knee, or the `!bcir.token` DAG (pipelined phases, ABI v2
   double-buffer contracts).
 
-## 10. Verifier laws (R1–R17)
+## 10. Verifier laws (R1–R18)
 
 R1 registry uniqueness · R2 registry resolution · R3 domain legality ·
 R4 phase-DAG legality · R5 hazard legality · R6 lane legality · R7 bounds
@@ -128,8 +128,14 @@ R11 generation validity · R12 lowering legality · **R13 policy provenance** ·
 [64,512]; no PIM overclock) · **R16 allocator placement** (L1 ≤ 64 KiB / L2 ≤ 4 MiB) ·
 **R17 accuracy contract** (a claim's static Q8-ULP error bound ≤ its declared tolerance;
 a long `reduce.*` is bounded by `count` ULP naive but 1 ULP compensated, so a tight
-tolerance forces `precision="compensated"`). R14–R17 are first-class `-bcir-verify` laws,
-dual-rail with `verify.{verify_cim,verify_dvfs,verify_allocator,verify_accuracy}`. —
+tolerance forces `precision="compensated"`) · **R18 compositional call graph** (every
+`kbcir.call` resolves to a `kbcir.func` and the call graph is acyclic — no recursion;
+the law-rail form of `compose.plan_composite`'s undefined-callee + recursion rejections).
+R14–R18 are first-class `-bcir-verify` laws, dual-rail with
+`verify.{verify_cim,verify_dvfs,verify_allocator,verify_accuracy}`. R13 additionally
+**recomputes** a manifest's digest from its component hashes (byte-identical to
+`provenance._digest`) and cross-checks `m_theta` against the in-IR `kbcir.theta` op, so the
+digest and the runtime-state identity are never taken on trust. —
 every decision rule in force (gain schedule, cost table) carries a generation
 tag and an admitting certificate: a promoted portfolio entry requires its
 replay certificate, a calibrated profile must present its frozen table with
@@ -138,7 +144,7 @@ swaps are never silent. Encoded as IR via the `bcir.verify.*` op family. The
 runnable full set lives in `bcir/verify`, one entry point per correspondence
 artifact — `verify(module)` R1–R8(static), `verify_plan` R8–R9, `verify_pack`
 R10–R11, `verify_lowering` R12, `verify_provenance` R13 — and the MLIR-native
-`-bcir-verify` pass enforces the structurally checkable form of all thirteen
+`-bcir-verify` pass enforces the structurally checkable form of all of R1–R18
 on the dialect.
 
 ## 11. Rewrite laws (the building-blocks engine)

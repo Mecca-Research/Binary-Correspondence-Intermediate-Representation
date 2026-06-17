@@ -22,7 +22,9 @@ echo "[passes] -bcir-verify negative cases (-verify-diagnostics)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_accuracy.mlir" \
   && echo "  PASS verify_accuracy (R17 accuracy contract)" || { echo "  FAIL verify_accuracy"; fail=1; }
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_provenance.mlir" \
-  && echo "  PASS verify_provenance (R13 digest recompute)" || { echo "  FAIL verify_provenance"; fail=1; }
+  && echo "  PASS verify_provenance (R13 digest recompute + m_theta cross-check)" || { echo "  FAIL verify_provenance"; fail=1; }
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_callgraph.mlir" \
+  && echo "  PASS verify_callgraph (R18 callee resolution + recursion)" || { echo "  FAIL verify_callgraph"; fail=1; }
 
 echo "[passes] -bcir-verify on the pretty corpus (must be clean)"
 for f in "${ROOT}"/mlir/examples/*.mlir; do

@@ -22,11 +22,20 @@ def BCIR_KBCIRThetaOp : BCIR_Op<"kbcir.theta", [Symbol]> {
   // needs -- -bcir-plan / -bcir-overlap read `thermal` to apply the AVX-512 downclock
   // (a wide width>=16 candidate on a hot part, thermal>=60, pays x1.25 heat/current).
   // Absent (or thermal 0) == the cool regime. Defaulted so existing IR parses.
+  //
+  // All eight 0..100 pressures are carried (the four extra -- noise/wear/utilization/
+  // voltage -- are the rest of provenance.hash_theta's input) so -bcir-verify can
+  // recompute hash_theta from this op and cross-check a provenance manifest's `m_theta`
+  // (R13) against the actual runtime state in the IR.
   let arguments = (ins SymbolNameAttr:$sym_name,
                        DefaultValuedAttr<I32Attr, "0">:$thermal,
                        DefaultValuedAttr<I32Attr, "0">:$power,
                        DefaultValuedAttr<I32Attr, "0">:$mem_pressure,
-                       DefaultValuedAttr<I32Attr, "0">:$contention);
+                       DefaultValuedAttr<I32Attr, "0">:$contention,
+                       DefaultValuedAttr<I32Attr, "0">:$noise,
+                       DefaultValuedAttr<I32Attr, "0">:$wear,
+                       DefaultValuedAttr<I32Attr, "0">:$utilization,
+                       DefaultValuedAttr<I32Attr, "0">:$voltage);
   let assemblyFormat = "$sym_name attr-dict";
 }
 

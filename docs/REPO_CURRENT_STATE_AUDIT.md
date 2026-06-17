@@ -127,6 +127,19 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Law-rail deepening: R18 call-graph law + R13 m_theta cross-check.** Two
+  follow-ups from the paradigm audit. (1) **R18 (compositional call-graph integrity)** in
+  `-bcir-verify`: every `kbcir.call` must resolve to a `kbcir.func` and the call graph must
+  be acyclic (DFS back-edge = recursion) -- the law-rail form of `compose.plan_composite`'s
+  undefined-callee + recursion rejections (`verify_callgraph.mlir`: resolve / undefined /
+  self-recursion / mutual-recursion-through-cond). (2) **R13 now cross-checks `m_theta`
+  against the IR**: `kbcir.theta` carries all eight pressures (added noise/wear/utilization/
+  voltage), and R13 recomputes `hash_theta` byte-identically to `provenance.hash_theta` and
+  confirms it equals the manifest's declared `m_theta`, so a manifest can't be re-pointed at
+  a different runtime state (`verify_provenance.mlir`). The module/target/policy component
+  cross-checks remain follow-ups (the IR must first carry the claim `opcode` / full
+  capability fields / unfolded base weights). LangRef R1–R18; 601 oracle tests pass
+  (MLIR-only change; the oracle recursion contract is already pinned by `test_compose.py`).
 - 2026-06-17: **Full-oracle paradigm audit + the one gap closed: R13 provenance digest
   recompute.** Swept all ~55 oracle modules against the two-truth placement rule and
   confirmed every deterministic-integer decision/execution-path component is on its correct
