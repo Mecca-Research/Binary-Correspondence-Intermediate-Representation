@@ -16,6 +16,15 @@
 //               kbcir.explain_fusion       : "deforest" / "cse" when an intra-phase credit hit
 //   per module  kbcir.explain_total       : the total plan score (== -bcir-plan's plan_score)
 //
+// -bcir-replay: the law-rail port of bcir/kbcir/proof.replay. A *recheck* of the record a
+// deployed plan carries: it recomputes a fresh plan from the same inputs (the cost machinery
+// of -bcir-plan / -bcir-explain) and DIFFS the fresh decision against the declared
+// kbcir.explain_* record -- the module total and, per claim, the chosen width + edge score.
+// Reproduction holds iff every field matches; the module gets `kbcir.replay_reproduced` (bool)
+// and, when it diverged, `kbcir.replay_mismatches` (the per-field diff, mirroring
+// ReplayResult.mismatches). The proof that a shipped plan is bit-for-bit re-derivable -- or
+// exactly where it is not (a stale / tampered record).
+//
 // Read-only: the cost machinery is exactly -bcir-plan's (BCIRCostModel.h), so the chosen
 // widths/score reproduce the oracle (7808 on vector_add) -- the record is the why, not a
 // re-decision.
@@ -32,10 +41,60 @@
 
 #include "llvm/ADT/SmallVector.h"
 
+#include <string>
+
 using namespace mlir;
 
 namespace bcir {
 namespace {
+
+// The fresh per-claim decision proof.replay diffs: the chosen lane width + the coupled edge
+// score (proof.explain writes these as kbcir.explain_chosen / explain_score; replay rechecks
+// them). The claim handle is a non-const copy so accessors are callable.
+struct FreshDecision {
+  ClaimOp claim;
+  int64_t width;
+  int64_t edge;
+};
+
+// Recompute the module's plan and the per-claim (width, edge score) + total -- the half of
+// proof.explain's record proof.replay reproduces. Returns false if the module is not plannable.
+static bool freshRecord(Operation *root, SmallVector<FreshDecision> &out, int64_t &total) {
+  auto capOp = cm::firstCapability(root);
+  if (!capOp)
+    return false;
+  cm::Cap h = cm::readCap(capOp);
+  ArrayRef<int64_t> w = cm::firstWeights(root);
+  if (w.empty())
+    return false;
+  auto resByName = cm::resourcesByName(root);
+  std::vector<cm::Column> cols = cm::fusedColumns(root, h, resByName);
+  if (cols.empty())
+    return false;
+  int64_t theta = cm::firstThetaThermal(root);
+  total = 0;
+  SmallVector<int> chosen = cm::planChosen(cols, w, theta, total);
+  if (chosen.empty())
+    return false;
+  for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
+    const cm::Column &col = cols[i];
+    // The chosen edge cost: this candidate coupled by the chosen predecessor's context --
+    // identical to -bcir-plan's / -bcir-explain's edge price.
+    cm::Cost e = col.cands[chosen[i]].cost;
+    cm::Factor f = (i > 0)
+        ? cm::contextFactor(theta, cols[i - 1].reads,
+                            cols[i - 1].cands[chosen[i - 1]].width, col.reads,
+                            col.cands[chosen[i]].width)
+        : cm::contextFactor(theta, {}, 0, col.reads, col.cands[chosen[i]].width);
+    cm::applyFactor(e, f);
+    FreshDecision d;
+    d.claim = col.claim;
+    d.width = col.cands[chosen[i]].width;
+    d.edge = cm::scalarize(e, w);
+    out.push_back(d);
+  }
+  return true;
+}
 
 struct ExplainPass : public PassWrapper<ExplainPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ExplainPass)
@@ -108,8 +167,70 @@ struct ExplainPass : public PassWrapper<ExplainPass, OperationPass<>> {
   }
 };
 
+struct ReplayPass : public PassWrapper<ReplayPass, OperationPass<>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ReplayPass)
+
+  StringRef getArgument() const final { return "bcir-replay"; }
+  StringRef getDescription() const final {
+    return "Replay-check the proof-carrying record (proof.replay): recompute a fresh plan and "
+           "diff it against the declared kbcir.explain_* record (module total + per-claim chosen "
+           "width / edge score); annotates kbcir.replay_reproduced + replay_mismatches.";
+  }
+
+  void runOnOperation() override {
+    Builder b(&getContext());
+    getOperation()->walk([&](Operation *mod) {
+      if (mod->getName().getStringRef() == "bcir.module")
+        runOnModule(mod, b);
+    });
+  }
+
+  void runOnModule(Operation *root, Builder &b) {
+    // The recorded decision record the plan carries (what proof.explain emitted at plan time).
+    // Nothing to replay if the module carries no record.
+    auto recTotal = root->getAttrOfType<IntegerAttr>("kbcir.explain_total");
+    if (!recTotal)
+      return;
+
+    SmallVector<FreshDecision> fresh;
+    int64_t total = 0;
+    if (!freshRecord(root, fresh, total))
+      return;
+
+    // Diff the fresh plan against the record -- the module total, then each claim's chosen
+    // width + edge score (proof.replay's per-claim (chosen, score, width) check).
+    SmallVector<std::string> mismatches;
+    if (total != recTotal.getInt())
+      mismatches.push_back("total score " + std::to_string(total) + " != recorded " +
+                           std::to_string(recTotal.getInt()));
+    for (FreshDecision &d : fresh) {
+      int64_t id = static_cast<int64_t>(d.claim.getClaimId());
+      auto recWidth = d.claim->getAttrOfType<IntegerAttr>("kbcir.explain_chosen");
+      auto recScore = d.claim->getAttrOfType<IntegerAttr>("kbcir.explain_score");
+      if (!recWidth || !recScore) {
+        mismatches.push_back("claim " + std::to_string(id) + " carries no recorded decision");
+        continue;
+      }
+      if (d.width != recWidth.getInt() || d.edge != recScore.getInt())
+        mismatches.push_back(
+            "claim " + std::to_string(id) + ": replay (w" + std::to_string(d.width) + "/" +
+            std::to_string(d.edge) + ") != recorded (w" + std::to_string(recWidth.getInt()) +
+            "/" + std::to_string(recScore.getInt()) + ")");
+    }
+
+    root->setAttr("kbcir.replay_reproduced", b.getBoolAttr(mismatches.empty()));
+    if (!mismatches.empty()) {
+      SmallVector<Attribute> ms;
+      for (const std::string &s : mismatches)
+        ms.push_back(b.getStringAttr(s));
+      root->setAttr("kbcir.replay_mismatches", b.getArrayAttr(ms));
+    }
+  }
+};
+
 } // namespace
 
 std::unique_ptr<Pass> createExplainPass() { return std::make_unique<ExplainPass>(); }
+std::unique_ptr<Pass> createReplayPass() { return std::make_unique<ReplayPass>(); }
 
 } // namespace bcir

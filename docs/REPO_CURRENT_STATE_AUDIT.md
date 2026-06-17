@@ -127,6 +127,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **proof.replay on the IR (`-bcir-replay`).** Ports bcir/kbcir/proof.replay: a
+  recheck of the proof-carrying record a deployed plan carries. BCIRExplainPass.cpp gained a
+  shared freshRecord() helper (recompute the plan -> per-claim chosen width + coupled edge score +
+  module total) used by the new -bcir-replay pass, which diffs the fresh decision against the
+  declared kbcir.explain_* record (module kbcir.explain_total + per-claim explain_chosen/
+  explain_score) and annotates kbcir.replay_reproduced (bool) + replay_mismatches (the per-field
+  divergence list, mirroring ReplayResult.mismatches). replay.mlir: @good carries the faithful
+  7808/w16/7808 record -> reproduced=true; @tampered declares a wrong edge score (9999) -> the
+  exact "claim 1: replay (w16/7808) != recorded (w16/9999)" divergence, reproduced=false. The
+  R13 provenance-digest gate of proof.replay is already covered by -bcir-verify's first-principles
+  provenance recheck; this pass adds the decision-record half. Pinned by test_proof.py. +1 test
+  (615). -bcir-explain is unchanged (explain.mlir validates the freshRecord factoring).
 - 2026-06-17: **Per-slot power rail (`-bcir-power-rail`).** Ports
   gem.schedule.schedule_power_rail: a per-slot DVFS overlay on the EFT *placed timeline* -- the join
   of -bcir-schedule-eft and -bcir-dvfs. BCIRScheduleEftPass.cpp gained a shared placeBarriered() free

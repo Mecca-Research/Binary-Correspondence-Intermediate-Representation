@@ -73,6 +73,12 @@ executable conformance oracle that must agree with these definitions
 >   ports `proof.explain`: the decision record as IR annotations — per claim the candidates
 >   weighed (widths + scalarized costs), the chosen width/score, and any fusion credit; per
 >   module the plan total. Reproduces 7808 on `vector_add` (`test/passes/explain.mlir`).
+> - **Replay recheck (C++23)** — `-bcir-replay` (same file) ports `proof.replay`: recompute a
+>   fresh plan from the IR (the shared `freshRecord`) and diff it against the declared
+>   `kbcir.explain_*` record — the module total + per-claim chosen width / edge score — annotating
+>   `kbcir.replay_reproduced` (bool) and, when diverged, `kbcir.replay_mismatches`. A faithful
+>   record reproduces; a tampered edge score is flagged with the exact field divergence
+>   (`test/passes/replay.mlir`).
 > - **Compositional func/if op family** — `bcir.kbcir.func` / `kbcir.call` / `kbcir.cond`
 >   (`include/BCIR/BCIRKBCIROps.td`) give `compose.py`'s region tree (functions / calls /
 >   control flow) first-class MLIR form; they round-trip through `bcir-opt`

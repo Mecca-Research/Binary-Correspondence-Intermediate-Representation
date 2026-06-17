@@ -223,7 +223,15 @@ bundle recovers the shared-input fusion discount the pairwise plan misses;
 `proof.explain`: per claim it annotates the candidates the optimizer weighed (their widths
 + scalarized costs), the chosen width, and the coupled edge score, plus any fusion credit;
 per module the plan total — reproducing the pinned 7808 on `vector_add`
-(`explain.mlir`). The `kbcir.func` / `kbcir.call` / `kbcir.cond` op family gives
+(`explain.mlir`). `-bcir-replay` is the law-rail port of `proof.replay`: it recomputes a fresh
+plan from the IR (the same cost machinery, factored into a shared `freshRecord`) and diffs it
+against the declared `kbcir.explain_*` record — the module total and, per claim, the chosen width
++ edge score — annotating `kbcir.replay_reproduced` (and `replay_mismatches` when diverged). A
+faithful record reproduces; a tampered edge score is flagged with the exact
+`replay (w16/7808) != recorded (w16/9999)` divergence (`replay.mlir`; the total-mismatch wording
+is byte-identical to `ReplayResult.mismatches`, pinned by `test_proof.py`). The R13 provenance
+digest gate of `proof.replay` is the separate `-bcir-verify` provenance recheck; this pass adds the
+decision-record half. The `kbcir.func` / `kbcir.call` / `kbcir.cond` op family gives
 `compose.py`'s region tree first-class MLIR form and round-trips through `bcir-opt`
 (`compose_ops.mlir`). **`-bcir-compose`** then computes the compositional cost on the law
 rail (`compose.plan_composite`): a region's direct `bcir.claim` leaves are priced by the
