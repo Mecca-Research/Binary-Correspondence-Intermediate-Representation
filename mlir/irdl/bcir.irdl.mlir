@@ -95,6 +95,20 @@ irdl.dialect @bcir {
     %h = irdl.any
     irdl.results(h: %h)
   }
+  // Live runtime state Theta (the context op -bcir-plan/-overlap read for the multiplicative
+  // coupling) + the compositional func/call/cond family (compose.Function/Call/Cond) -- the
+  // K_BCIR ops the projection previously omitted. Regions are presence-only (the loose rail).
+  irdl.operation @kbcir_theta
+  irdl.operation @kbcir_func {
+    %body = irdl.region
+    irdl.regions(body: %body)
+  }
+  irdl.operation @kbcir_call
+  irdl.operation @kbcir_cond {
+    %then_region = irdl.region
+    %else_region = irdl.region
+    irdl.regions(then_region: %then_region, else_region: %else_region)
+  }
   // Constrained (RCSP) rail: B(H,Theta) caps + the (max,+) overlap price.
   irdl.operation @kbcir_budget
   irdl.operation @kbcir_scheduled_price
@@ -170,7 +184,6 @@ irdl.dialect @bcir {
   irdl.operation @verify_lane_stride
   irdl.operation @verify_bounds
   irdl.operation @verify_mem_tier
-  irdl.operation @verify_target_capability
   irdl.operation @verify_cost_vector
   irdl.operation @verify_plan_selection
   irdl.operation @verify_stream_provenance
