@@ -235,6 +235,17 @@ def test_plan_injectors_fire_R9():
         assert check_plan_verifier(m, r, law) == []
 
 
+def test_artifact_laws_R10_to_R18_all_fire():
+    # the artifact rails (pack R10/R11, lowering R12, provenance R13, smart-lowering
+    # R14-R16, accuracy R17, compose R18): each clean fixture verifies clean and each
+    # injected fault is flagged (R18 via plan_composite raising). Completes the
+    # generative coverage of all 18 laws.
+    from bcir.kbcir.differential import _artifact_law_misses
+    for seed in range(8):
+        misses = _artifact_law_misses(random.Random(seed))
+        assert misses == [], [m.detail for m in misses]
+
+
 def test_check_verifier_flags_a_missed_law():
     # a base with no fault has no expected law to find -> check_verifier reports the miss.
     m = gen_module(random.Random(1))
