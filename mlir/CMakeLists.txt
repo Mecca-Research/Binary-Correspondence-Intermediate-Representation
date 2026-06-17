@@ -91,6 +91,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRBundlePass.cpp      # multi-claim (joint) bundle detection + reorder re-price
   lib/passes/BCIRExplainPass.cpp     # proof-carrying decision record (proof.explain) as IR
   lib/passes/BCIRComposePass.cpp     # compositional cost over the func/if region tree
+  lib/passes/BCIRCimDvfsPass.cpp     # recompute CIM/PIM dispatch + DVFS clock (gem.cim/dvfs)
   DEPENDS
     BCIRAttrsIncGen
     BCIRTypesIncGen

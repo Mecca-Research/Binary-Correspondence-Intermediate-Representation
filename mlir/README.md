@@ -95,6 +95,12 @@ executable conformance oracle that must agree with these definitions
 >   the oracle's 7808 leaf, 23432/18747 program, reuse-vs-re-price 10624/1, constrained 9472, and
 >   the footprint/commute/bound annotations (`test/passes/compose_cost.mlir`, `compose_summary.mlir`,
 >   `compose_budget.mlir`, `compose_effect.mlir`).
+> - **CIM/DVFS decision recompute (C++23)** — `-bcir-cim` / `-bcir-dvfs`
+>   (`lib/passes/BCIRCimDvfsPass.cpp`) derive the GEM scheduling decisions from the IR (the way
+>   `-bcir-cost-model` recomputes cost), not just R14/R15-verify a declared attr: `-bcir-cim`
+>   models core-vs-PIM cost for a reduction (`gem.cim`, offload at count 4096) and `-bcir-dvfs`
+>   classifies each phase's compute:memory intensity into a Q8 clock (`gem.dvfs`, a bandwidth-
+>   bound phase downclocks to 192). `test/passes/cim.mlir`, `dvfs.mlir`.
 > - **R13 first-principles provenance** — `-bcir-verify` recomputes a `kbcir.provenance_manifest`'s
 >   digest from its component hashes (byte-identical to `provenance._digest`) and **cross-checks
 >   every component hash** against the IR — `m_module` from the module (resources/claims incl.

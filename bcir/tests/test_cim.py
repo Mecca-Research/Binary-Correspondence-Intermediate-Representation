@@ -51,3 +51,20 @@ def test_offload_threshold_tracks_the_surcharge_and_is_deterministic():
     a = cim_decision("reduce.gather", count=4096, elem_bytes=4, h=AVX)
     b = cim_decision("reduce.gather", count=4096, elem_bytes=4, h=AVX)
     assert a == b                                                    # deterministic
+
+
+def test_mlir_cim_dvfs_constants_are_in_sync():
+    """Pins the constants -bcir-cim / -bcir-dvfs annotate in mlir/test/passes/{cim,dvfs}.mlir,
+    so the law-rail FileCheck cannot silently rot from the oracle."""
+    # CIM: a reduction over 4096 elems offloads (core 20480 > pim 10244); 1024 does not.
+    big = cim_decision("reduce.add", 4096, 4, AVX)
+    assert big.offload and big.core_cost == 20480 and big.pim_cost == 10244
+    small = cim_decision("reduce.add", 1024, 4, AVX)
+    assert not small.offload
+    # DVFS: the vector_add phase is bandwidth-bound -> downclock 192.
+    from bcir.gem.dvfs import classify, clock_for, phase_totals
+    res = optimize(vector_add(1024), AVX, Theta.cool())
+    (compute, memory), = phase_totals(vector_add(1024), res).values()
+    assert (compute, memory) == (64, 3840)
+    klass = classify(compute, memory)
+    assert klass == "memory" and clock_for(klass, Theta.cool())[0] == 192

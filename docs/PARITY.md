@@ -246,7 +246,17 @@ with `kbcir.commutes_with_prev` (disjoint footprints commute -- the RAW/WAR/WAW 
 `compose_effect.mlir`). A
 generated **compose differential** (`test_compose_differential.py`) fuzzes the metamorphic laws
 (determinism, worst≥expected, unbounded-budget degeneracy, RCSP monotonicity, summary
-consistency) over randomized region trees. The **R18** call-graph law (`-bcir-verify`) is the law-rail twin of
+consistency) over randomized region trees.
+
+The **GEM scheduling decisions** are recomputed, not just verified: `-bcir-cim` ports
+`gem.cim.cim_decision` (core-vs-PIM cost for a reduction → `kbcir.cim_offload`/`cim_core_cost`/
+`cim_pim_cost`; offload at count 4096, not 1024 — `cim.mlir`) and `-bcir-dvfs` ports `gem.dvfs`
+(per-phase compute:memory intensity → a Q8 clock → `kbcir.dvfs_class`/`dvfs_clock`; a
+bandwidth-bound `vector_add` phase downclocks to 192 — `dvfs.mlir`; constants pinned by
+`test_cim.py`). R14/R15 still verify the declared dispatch/clock is *legal* (defense in depth);
+these derive what it *should* be.
+
+The **R18** call-graph law (`-bcir-verify`) is the law-rail twin of
 `compose.plan_composite`'s rejections — every `kbcir.call` must resolve to a `kbcir.func`
 (the oracle's `KeyError`) and the call graph must be acyclic (the oracle's `RecursionError`,
 pinned oracle-side by `test_compose.py::test_undefined_call_and_recursion_are_rejected`;

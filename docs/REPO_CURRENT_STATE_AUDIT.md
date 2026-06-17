@@ -127,6 +127,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Tier-2 (1/3): CIM/PIM dispatch + DVFS clock DECISION recompute.** Two new
+  passes recompute the GEM scheduling decisions from the IR -- the way `-bcir-cost-model`
+  recomputes cost -- instead of R14/R15 only *verifying* a declared attr. (1) **`-bcir-cim`**
+  (`BCIRCimDvfsPass.cpp`) ports `gem.cim.cim_decision`: for a reduction, model core_cost
+  (`count*(elem_bytes+mem_unit)`) vs pim_cost (in-memory compute x1.5 + a 4096 dispatch setup +
+  a 1-element result) and annotate `kbcir.cim_offload`/`cim_core_cost`/`cim_pim_cost`; offload
+  iff PIM strictly wins (large reductions). (2) **`-bcir-dvfs`** ports `gem.dvfs`: plan the
+  module, sum each phase's (compute, memory), classify by intensity, and set a Q8 clock
+  (downclock memory-bound, overclock compute-bound unless Theta-capped, else nominal) ->
+  `kbcir.dvfs_class`/`dvfs_clock`. `cim.mlir` (offload at 4096 / not at 1024) + `dvfs.mlir`
+  (vector_add -> memory -> 192) pin the law rail; `test_cim.py` pins the constants. +1 test
+  (610). R14/R15 still verify legality (defense in depth); these derive the decision.
 - 2026-06-17: **Tier-1 compose remainder: alias/effect + independence + dynamic shapes on the
   law rail.** `-bcir-compose` now also ports `compose.effect`/`independent` and dynamic shapes:
   (1) **`kbcir.effect_reads`/`effect_writes`** -- each func's read/write footprint, folded

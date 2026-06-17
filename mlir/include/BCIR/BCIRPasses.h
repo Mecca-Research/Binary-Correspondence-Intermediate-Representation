@@ -45,6 +45,10 @@ std::unique_ptr<mlir::Pass> createExplainPass();
 // -bcir-compose: compositional cost over the kbcir.func/call/cond region tree
 // (compose.plan_composite) -- annotates kbcir.compose_worst / compose_expected per func.
 std::unique_ptr<mlir::Pass> createComposePass();
+// -bcir-cim / -bcir-dvfs: recompute the CIM/PIM dispatch + DVFS clock decisions (gem.cim /
+// gem.dvfs) from the IR, instead of R14/R15 only verifying a declared attr.
+std::unique_ptr<mlir::Pass> createCimPass();
+std::unique_ptr<mlir::Pass> createDvfsPass();
 std::unique_ptr<mlir::Pass> createBatchPass();
 std::unique_ptr<mlir::Pass> createSchedulePass();
 std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
