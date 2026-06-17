@@ -88,17 +88,16 @@ struct RcspPlanPass : public PassWrapper<RcspPlanPass, OperationPass<>> {
     Builder b(&getContext());
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    // Only kbcir.* annotations are added -> the shared plan analysis stays valid.
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
-    auto capOp = cm::firstCapability(root);
-    if (!capOp)
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
+    if (!pa.hasCap || pa.weights.empty())
       return;
-    ArrayRef<int64_t> w = cm::firstWeights(root);
-    if (w.empty())
-      return;
+    ArrayRef<int64_t> w = pa.weights;
     // The first budget op supplies the caps (tracked dims).
     KBCIRBudgetOp budget;
     root->walk([&](KBCIRBudgetOp bd) {
@@ -123,12 +122,8 @@ struct RcspPlanPass : public PassWrapper<RcspPlanPass, OperationPass<>> {
     if (trackedDim.empty())
       return;
 
-    cm::Cap h = cm::readCap(capOp);
-    auto resByName = cm::resourcesByName(root);
-    std::vector<cm::Column> cols = cm::fusedColumns(root, h, resByName);
-    if (cols.empty())
-      return;
-    int64_t theta = cm::firstThetaThermal(root);
+    const std::vector<cm::Column> &cols = pa.cols;
+    int64_t theta = pa.thetaThermal;
 
     const int nt = static_cast<int>(trackedDim.size());
     // The label DP (rcsp._expand): one non-dominated label set per column.

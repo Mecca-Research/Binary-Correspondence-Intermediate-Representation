@@ -234,27 +234,15 @@ static SmallVector<int32_t> topoPhases(Operation *root) {
 
 // Shared front end: plan the module and build the per-claim Info list. Returns false if the
 // module is not plannable (no capability / weights / claims).
-static bool planInfos(Operation *root, SmallVector<Info> &infos, int64_t &domains,
+static bool planInfos(const cm::PlanAnalysis &pa, SmallVector<Info> &infos, int64_t &domains,
                       int64_t &knee, int64_t &theta) {
-  auto capOp = cm::firstCapability(root);
-  if (!capOp)
+  if (!pa.valid)
     return false;
-  cm::Cap h = cm::readCap(capOp);
-  ArrayRef<int64_t> w = cm::firstWeights(root);
-  if (w.empty())
-    return false;
-  auto resByName = cm::resourcesByName(root);
-  std::vector<cm::Column> cols = cm::fusedColumns(root, h, resByName);
-  if (cols.empty())
-    return false;
-  theta = cm::firstThetaThermal(root);
-  int64_t total = 0;
-  SmallVector<int> chosen = cm::planChosen(cols, w, theta, total);
-  if (chosen.empty())
-    return false;
-  domains = std::max<int64_t>(1, capOp.getAffinityDomains());
-  knee = std::max<int64_t>(1, std::min<int64_t>(domains, capOp.getMemChannels()));
-  infos = buildInfos(cols, chosen, theta, w);
+  theta = pa.thetaThermal;
+  domains = pa.affinityDomains;
+  TargetCapabilityOp cap = pa.capOp;   // value-handle copy for the non-const accessor
+  knee = std::max<int64_t>(1, std::min<int64_t>(domains, cap.getMemChannels()));
+  infos = buildInfos(pa.cols, pa.chosen, theta, pa.weights);
   return true;
 }
 
@@ -330,14 +318,15 @@ struct ScheduleEftPass : public PassWrapper<ScheduleEftPass, OperationPass<>> {
     Builder b(&getContext());
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
     SmallVector<Info> infos;
     int64_t domains = 1, knee = 1, theta = 0;
-    if (!planInfos(root, infos, domains, knee, theta))
+    if (!planInfos(pa, infos, domains, knee, theta))
       return;
     int64_t makespan = placeBarriered(root, infos, domains, knee, b, "sched", nullptr);
     root->setAttr("kbcir.sched_makespan", b.getI64IntegerAttr(makespan));
@@ -359,14 +348,15 @@ struct AsyncPass : public PassWrapper<AsyncPass, OperationPass<>> {
     Builder b(&getContext());
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
     SmallVector<Info> infos;
     int64_t domains = 1, knee = 1, theta = 0;
-    if (!planInfos(root, infos, domains, knee, theta))
+    if (!planInfos(pa, infos, domains, knee, theta))
       return;
 
     // The fork order: claims in topo-phase order, then by id (gem.async_tokens.async_plan).
@@ -419,14 +409,15 @@ struct PowerRailPass : public PassWrapper<PowerRailPass, OperationPass<>> {
     Builder b(&getContext());
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
     SmallVector<Info> infos;
     int64_t domains = 1, knee = 1, thermal = 0;
-    if (!planInfos(root, infos, domains, knee, thermal))
+    if (!planInfos(pa, infos, domains, knee, thermal))
       return;
     // Theta power for the overclock safety gate (planInfos returns thermal only).
     KBCIRThetaOp tOp;
