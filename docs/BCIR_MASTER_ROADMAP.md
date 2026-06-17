@@ -90,7 +90,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | K_BCIR **RCSP / Pareto** (per-claim + plan-level) | `-bcir-rcsp`, `-bcir-rcsp-plan` | MLIR/C++ | ✅ **ported** (9472, {16,8}@17280) |
 | **Bundle** (joint) optimization (`bundle.optimize_bundled`) | `-bcir-bundle` | MLIR/C++ | ✅ **detection + joint-reorder** — reorders the cost columns, re-prices the min-plus path, annotates `kbcir.bundle_gain`/`bundle_order` (`bundle_reorder.mlir`) |
 | **Proof-carrying record** (`proof.explain`) | `-bcir-explain` | MLIR/C++ | ✅ **ported** — per-claim candidates weighed + chosen width/score, per-module total, as IR annotations (`explain.mlir`) |
-| **Compositional** semantics (`compose.plan_composite`) | `kbcir.func` / `kbcir.call` / `kbcir.cond` + `-bcir-compose` | MLIR/C++ | ✅ **op vocabulary** + **R18 call-graph law** + **`-bcir-compose`** (Seq sum / Cond max+expected / Leaf optimize / Call **inter-procedural summary** / **RCSP-constrained** under a `kbcir.budget` — `min M s.t. R⪯B` over the region tree, a thermal cap re-prices wide SIMD or is infeasible; reproduces plan_composite's worst/expected/reused/feasible — `compose_cost`/`_summary`/`_budget.mlir` + a generated compose differential) |
+| **Compositional** semantics (`compose.plan_composite`) | `kbcir.func` / `kbcir.call` / `kbcir.cond` + `-bcir-compose` | MLIR/C++ | ✅ **complete** — op vocabulary + **R18 call-graph law** + **`-bcir-compose`**: Seq sum / Cond max+expected / Leaf optimize / Call **inter-procedural summary** / **RCSP-constrained** under a `kbcir.budget` / **alias-effect** footprint (`kbcir.effect_reads/writes`) + sibling-call independence (`commutes_with_prev`) + **dynamic-shape** bound (`compose_dynamic`). Reproduces plan_composite's worst/expected/reused/feasible/effect/dynamic (`compose_cost`/`_summary`/`_budget`/`_effect.mlir` + a generated compose differential) |
 | GEM classify / batch / schedule / lower | `-bcir-*` passes | MLIR/C++ | ✅ |
 | GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
@@ -315,7 +315,10 @@ In recommended order — each is gated by the generated differential harness + F
    summary** (plan once, reuse cost-compatible calls, else re-price) / **RCSP-constrained** under
    a `kbcir.budget` (`min M s.t. R⪯B` over the tree — `compose_feasible`), reproducing
    plan_composite's worst/expected/reused/feasible, with a generated compose-rail differential.
-   **Next (Tier 1 remainder):** effect/independence annotation + dynamic-shape bounds on the law rail.
+   The Tier-1 remainder is **DONE** too: `-bcir-compose` annotates the alias-effect footprint
+   (`kbcir.effect_reads/writes`, folded through calls), sibling-call independence
+   (`kbcir.commutes_with_prev` = disjoint footprints commute), and the dynamic-shape bound
+   (`kbcir.compose_dynamic`; the claim op carries `dynamic`) — `compose_effect.mlir`.
 10. ◑ **MLIR ports of the new oracle capabilities** — bundle **detection + joint-reorder**
     ported (`-bcir-bundle`: it now reorders the cost-model columns so a bundle is contiguous,
     re-runs the min-plus shortest path for every legal intra-bundle order, and annotates the

@@ -238,7 +238,12 @@ and the reuse-vs-re-price 10624 / reused 1 (`compose_summary.mlir`; pinned by `t
 With a `kbcir.budget` present, each Leaf is priced by the **constrained label DP**
 (`cm::planConstrained` = `rcsp.optimize_constrained`) so the compositional plan respects
 `min M(π,Θ) s.t. R(π,Θ)⪯B`: a thermal cap re-prices wide vec16 to the feasible vec8 (9472) or
-marks the func `kbcir.compose_feasible = false` when nothing fits (`compose_budget.mlir`). A
+marks the func `kbcir.compose_feasible = false` when nothing fits (`compose_budget.mlir`). It
+also ports `compose.effect`/`independent`/dynamic: each func is annotated with its read/write
+footprint (`kbcir.effect_reads`/`effect_writes`, folded through calls' substitution), each call
+with `kbcir.commutes_with_prev` (disjoint footprints commute -- the RAW/WAR/WAW test), and
+`kbcir.compose_dynamic` (a dynamic-shape leaf makes the plan a worst-case bound;
+`compose_effect.mlir`). A
 generated **compose differential** (`test_compose_differential.py`) fuzzes the metamorphic laws
 (determinism, worst≥expected, unbounded-budget degeneracy, RCSP monotonicity, summary
 consistency) over randomized region trees. The **R18** call-graph law (`-bcir-verify`) is the law-rail twin of

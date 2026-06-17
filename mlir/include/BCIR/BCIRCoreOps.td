@@ -29,7 +29,11 @@ defvar BCIR_ClaimAttrs = (ins
   OptionalAttr<BCIR_CostClassAttr>:$cost_class,
   // The model.Opcode integer (model/opcodes.py); carried so -bcir-verify can recompute the
   // provenance hash_module (R13) from the IR. Defaulted (NOP) so existing IR parses.
-  DefaultValuedAttr<I32Attr, "0">:$opcode);
+  DefaultValuedAttr<I32Attr, "0">:$opcode,
+  // Dynamic shape (compose): `count` is a STATIC UPPER BOUND, so the plan priced at it is a
+  // worst-case latency bound that holds for any actual size <= the bound (compose.dynamic /
+  // plan_holds_for). Defaulted false (an exact static count) so existing IR parses.
+  DefaultValuedAttr<BoolAttr, "false">:$dynamic);
 
 def BCIR_ModuleOp : BCIR_Op<"module",
     [IsolatedFromAbove, NoTerminator, SymbolTable, Symbol]> {
