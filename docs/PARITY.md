@@ -211,3 +211,19 @@ min-plus `cost·weights` reproduces the oracle's 7808 cool / 9472 under the cap)
 and `gem_passes_neg.mlir` negative-tests the cross-check (a declared selection
 that is not the true argmin, or a StreamPack segment that breaks the R12 lowering
 contract, is rejected) via `-verify-diagnostics`.
+
+The **bundle joint-reorder**, **proof-carrying explain**, and **compositional func/if
+op family** extend the same rail. `-bcir-bundle` reuses the proven cost machinery
+(`BCIRCostModel.h`'s `fusedColumns` + `planChosen`): it reorders the cost-model columns
+so an input-sharing bundle is contiguous, re-runs the min-plus shortest path for every
+legal intra-bundle order, and annotates the re-priced `kbcir.bundle_gain` /
+`kbcir.bundle_order` — the law-rail twin of `bundle.optimize_bundled` (an interleaved
+bundle recovers the shared-input fusion discount the pairwise plan misses;
+`mlir/test/passes/bundle_reorder.mlir`). `-bcir-explain` is the law-rail port of
+`proof.explain`: per claim it annotates the candidates the optimizer weighed (their widths
++ scalarized costs), the chosen width, and the coupled edge score, plus any fusion credit;
+per module the plan total — reproducing the pinned 7808 on `vector_add`
+(`explain.mlir`). The `kbcir.func` / `kbcir.call` / `kbcir.cond` op family gives
+`compose.py`'s region tree first-class MLIR form and round-trips through `bcir-opt`
+(`compose_ops.mlir`); the compositional cost stays the Python oracle's conformance
+reference. All three are wired into `tools/wsl/check_passes.sh` (CI `mlir-rail-validate`).

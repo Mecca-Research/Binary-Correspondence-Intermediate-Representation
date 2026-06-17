@@ -84,14 +84,47 @@ class Function:
 class CompositeResult:
     """The compositional cost of a region: a hard worst-case bound (max over branches) and
     a probability-weighted expected cost, plus the planned-leaf count (a compile-time bound
-    witness -- finite iff there are no recursive calls)."""
+    witness -- finite iff there are no recursive calls) and the number of leaves served from
+    a function *summary* instead of being re-planned (`reused`: the inter-procedural win)."""
     worst_cost: int
     expected_cost: int
     leaves: int
+    reused: int = 0
 
     @property
     def branch_spread(self) -> int:
         return self.worst_cost - self.expected_cost
+
+
+@dataclass(frozen=True)
+class Effect:
+    """A region's read/write footprint (resource RIDs) -- the alias/effect summary the
+    inter-procedural analysis uses to decide whether two regions (e.g. two calls) commute."""
+    reads: frozenset
+    writes: frozenset
+
+    def union(self, other: "Effect") -> "Effect":
+        return Effect(self.reads | other.reads, self.writes | other.writes)
+
+    def conflicts(self, other: "Effect") -> bool:
+        """RAW / WAR / WAW between two effect footprints (a write that aliases the other's
+        read or write). Disjoint footprints commute -- they may be reordered or overlapped."""
+        return bool(self.writes & (other.reads | other.writes) or other.writes & self.reads)
+
+
+_EMPTY_EFFECT = Effect(frozenset(), frozenset())
+
+
+@dataclass(frozen=True)
+class FunctionSummary:
+    """A function planned **once**: its compositional cost + effect footprint + the
+    cost-relevant shape of its formal resources (domain/count/access). A `Call` whose
+    actuals match those shapes reuses this cost instead of re-planning the body -- the
+    inter-procedural summary that bounds compile time to O(functions + call-sites)."""
+    name: str
+    cost: CompositeResult
+    effect: Effect
+    formal_keys: tuple        # ((formal_rid, (domain, count, access)), ...) sorted
 
 
 # --- compositional planning ------------------------------------------------------
@@ -115,13 +148,17 @@ def _leaf_module(claims: tuple[Claim, ...], resources: dict[int, Resource]) -> M
 
 def plan_composite(region: Region, functions: dict[str, Function],
                    resources: dict[int, Resource], h: HProfile, theta: Theta,
-                   policy: Policy = PERF, *, _depth: int = 0,
+                   policy: Policy = PERF, *, summaries: dict = None, _depth: int = 0,
                    _active: frozenset = frozenset()) -> CompositeResult:
     """Plan a region tree compositionally (series sum, branch max/expected, call inline).
     Reuses `optimize` for the leaves, so a single-block region prices exactly like the
-    straight-line planner. Raises on recursion (bounded compile time)."""
+    straight-line planner. With `summaries` (`{name: FunctionSummary}`), a `Call` whose
+    actuals are cost-compatible with the callee's formals reuses the summary cost instead
+    of re-planning the body (the inter-procedural win; `reused` counts the saved plans).
+    Raises on recursion (bounded compile time)."""
     if _depth > 64:
         raise RecursionError("compose: region nesting too deep (>64)")
+    summaries = summaries or {}
 
     if isinstance(region, Leaf):
         if not region.claims:
@@ -130,35 +167,109 @@ def plan_composite(region: Region, functions: dict[str, Function],
         return CompositeResult(score, score, 1)
 
     if isinstance(region, Seq):
-        worst = expected = leaves = 0
+        worst = expected = leaves = reused = 0
         for part in region.parts:
             sub = plan_composite(part, functions, resources, h, theta, policy,
-                                 _depth=_depth + 1, _active=_active)
+                                 summaries=summaries, _depth=_depth + 1, _active=_active)
             worst += sub.worst_cost
             expected += sub.expected_cost
             leaves += sub.leaves
-        return CompositeResult(worst, expected, leaves)
+            reused += sub.reused
+        return CompositeResult(worst, expected, leaves, reused)
 
     if isinstance(region, Cond):
         t = plan_composite(region.then_, functions, resources, h, theta, policy,
-                           _depth=_depth + 1, _active=_active)
+                           summaries=summaries, _depth=_depth + 1, _active=_active)
         e = plan_composite(region.else_, functions, resources, h, theta, policy,
-                           _depth=_depth + 1, _active=_active)
+                           summaries=summaries, _depth=_depth + 1, _active=_active)
         p = max(0, min(1000, region.prob_then_milli))
         expected = PRED_COST + (p * t.expected_cost + (1000 - p) * e.expected_cost) // 1000
         worst = PRED_COST + max(t.worst_cost, e.worst_cost)
-        return CompositeResult(worst, expected, t.leaves + e.leaves)
+        return CompositeResult(worst, expected, t.leaves + e.leaves, t.reused + e.reused)
 
     if isinstance(region, Call):
         if region.fn not in functions:
             raise KeyError(f"compose: call to undefined function {region.fn!r}")
         if region.fn in _active:
             raise RecursionError(f"compose: recursive call to {region.fn!r} (unbounded)")
-        body = _inline(functions[region.fn].region, dict(region.arg_map))
+        amap = dict(region.arg_map)
+        summary = summaries.get(region.fn)
+        if summary is not None and _summary_applies(summary, amap, resources):
+            # Inter-procedural reuse: the body was planned once; serve its cost, plan nothing.
+            c = summary.cost
+            return CompositeResult(c.worst_cost, c.expected_cost, 0, c.reused + c.leaves)
+        body = _inline(functions[region.fn].region, amap)
         return plan_composite(body, functions, resources, h, theta, policy,
-                              _depth=_depth + 1, _active=_active | {region.fn})
+                              summaries=summaries, _depth=_depth + 1,
+                              _active=_active | {region.fn})
 
     raise TypeError(f"compose: unknown region node {type(region).__name__}")
+
+
+# --- alias / effect modeling -----------------------------------------------------
+
+def effect(region: Region, functions: dict[str, Function], *,
+           _active: frozenset = frozenset()) -> Effect:
+    """The read/write footprint of a region (resource RIDs), folding calls through their
+    argument substitution. The alias summary the inter-procedural analysis reasons over."""
+    if isinstance(region, Leaf):
+        reads = {r for c in region.claims for r in c.rd}
+        writes = {w for c in region.claims for w in c.wr}
+        return Effect(frozenset(reads), frozenset(writes))
+    if isinstance(region, Seq):
+        eff = _EMPTY_EFFECT
+        for p in region.parts:
+            eff = eff.union(effect(p, functions, _active=_active))
+        return eff
+    if isinstance(region, Cond):
+        return effect(region.then_, functions, _active=_active).union(
+            effect(region.else_, functions, _active=_active))
+    if isinstance(region, Call):
+        if region.fn not in functions or region.fn in _active:
+            return _EMPTY_EFFECT     # undefined/recursive: no statically-known footprint
+        body = _inline(functions[region.fn].region, dict(region.arg_map))
+        return effect(body, functions, _active=_active | {region.fn})
+    raise TypeError(f"compose: unknown region node {type(region).__name__}")
+
+
+def independent(a: Region, b: Region, functions: dict[str, Function]) -> bool:
+    """True iff two regions' effects are disjoint (no RAW/WAR/WAW) -- so the two may be
+    reordered or overlapped. The cross-call alias test: two calls that touch disjoint
+    resources commute even though the pairwise straight-line model cannot see across them."""
+    return not effect(a, functions).conflicts(effect(b, functions))
+
+
+# --- inter-procedural summary costs ----------------------------------------------
+
+def _cost_key(resource: Resource):
+    """A resource's cost-relevant identity: a summary is reusable only when the actual arg
+    matches the formal on (domain, element count, access) -- the inputs the cost model reads."""
+    if resource is None:
+        return (None, 1, "flat")
+    return (resource.domain, resource.count, resource.access)
+
+
+def summarize(fn: Function, functions: dict[str, Function],
+              formal_resources: dict[int, Resource], h: HProfile, theta: Theta,
+              policy: Policy = PERF) -> FunctionSummary:
+    """Plan a function **once** over its formal resources -> a `FunctionSummary` (cost +
+    effect + formal cost-keys). Reused by `plan_composite(summaries=...)` for every
+    cost-compatible call, instead of re-planning the body per call site."""
+    cost = plan_composite(fn.region, functions, formal_resources, h, theta, policy)
+    eff = effect(fn.region, functions)
+    keys = {rid: _cost_key(formal_resources.get(rid))
+            for rid in sorted(eff.reads | eff.writes)}
+    return FunctionSummary(fn.name, cost, eff, tuple(sorted(keys.items())))
+
+
+def _summary_applies(summary: FunctionSummary, amap: dict, resources: dict) -> bool:
+    """A summary's cost is exact for a call iff every formal's actual has the same cost-key
+    (domain/count/access) -- the cost model would compute the identical leaf costs."""
+    for formal_rid, key in summary.formal_keys:
+        actual_rid = amap.get(formal_rid, formal_rid)
+        if _cost_key(resources.get(actual_rid)) != key:
+            return False
+    return True
 
 
 def _inline(region: Region, amap: dict[int, int]) -> Region:

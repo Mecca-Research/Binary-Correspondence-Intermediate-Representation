@@ -9,8 +9,9 @@ straight-line scores are exactly preserved.
 """
 
 from bcir.kbcir import TARGETS, optimize
-from bcir.kbcir.compose import (Call, Cond, Function, Leaf, PRED_COST, Seq, plan_composite,
-                                plan_holds_for, worst_case_module)
+from bcir.kbcir.compose import (Call, Cond, Effect, Function, FunctionSummary, Leaf,
+                                PRED_COST, Seq, effect, independent, plan_composite,
+                                plan_holds_for, summarize, worst_case_module)
 from bcir.kbcir.cost import Theta
 from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 
@@ -125,3 +126,63 @@ def test_a_realistic_composite_program():
     assert r.worst_cost == 7808 + PRED_COST + max(7808, 2 * 7808)   # prologue + cond(max)
     assert r.leaves == 1 + 1 + 2                                    # prologue + both branches
     assert r.expected_cost < r.worst_cost
+
+
+# --- alias / effect modeling + inter-procedural summary costs (deepening) ---------
+
+def test_effect_is_the_read_write_footprint():
+    e = effect(Leaf((_add(1, 10, 11, 12),)), {})
+    assert e.reads == frozenset({10, 11}) and e.writes == frozenset({12})
+    # Seq/Cond fold; a Call folds through its argument substitution.
+    fn = Function("ew", Leaf((_add(1, 1, 2, 3),)))
+    ce = effect(Call("ew", ((1, 20), (2, 21), (3, 22))), {"ew": fn})
+    assert ce.reads == frozenset({20, 21}) and ce.writes == frozenset({22})
+
+
+def test_effect_conflict_is_raw_war_waw():
+    a = Effect(frozenset({1}), frozenset({2}))
+    assert a.conflicts(Effect(frozenset({2}), frozenset()))     # RAW (b reads a's write)
+    assert a.conflicts(Effect(frozenset(), frozenset({2})))     # WAW
+    assert a.conflicts(Effect(frozenset({2}), frozenset({1})))  # WAR (b writes a's read)
+    assert not a.conflicts(Effect(frozenset({9}), frozenset({8})))  # disjoint
+
+
+def test_independent_calls_commute_across_call_boundaries():
+    fn = Function("ew", Leaf((_add(1, 1, 2, 3),)))
+    fns = {"ew": fn}
+    disjoint = Call("ew", ((1, 20), (2, 21), (3, 22)))         # touches 20,21,22
+    base = Call("ew", ((1, 10), (2, 11), (3, 12)))             # touches 10,11,12 (writes 12)
+    aliasing = Call("ew", ((1, 12), (2, 13), (3, 14)))         # reads 12 -> RAW with base
+    assert independent(base, disjoint, fns)                    # commute (overlap/reorder ok)
+    assert not independent(base, aliasing, fns)                # do not commute
+
+
+def test_summary_plans_once_and_reuses_for_compatible_calls():
+    fn = Function("ew", Leaf((_add(1, 1, 2, 3),)))
+    formals = {r: Resource(rid=r, domain=Domain.RAM, shape=(1024,)) for r in (1, 2, 3)}
+    summ = summarize(fn, {"ew": fn}, formals, AVX, COOL)
+    assert summ.cost.worst_cost == 7808 and summ.cost.leaves == 1
+    prog = Seq(tuple(Call("ew", ((1, 10 * k), (2, 10 * k + 1), (3, 10 * k + 2)))
+                     for k in range(1, 6)))                    # 5 cost-compatible calls
+    res = {r: Resource(rid=r, domain=Domain.RAM, shape=(1024,)) for r in range(1, 60)}
+    inline = plan_composite(prog, {"ew": fn}, res, AVX, COOL)
+    with_summary = plan_composite(prog, {"ew": fn}, res, AVX, COOL, summaries={"ew": summ})
+    # identical cost...
+    assert with_summary.worst_cost == inline.worst_cost == 5 * 7808
+    # ...but the summary plans NOTHING (compile-time bounded: 1 summary + N reuses).
+    assert inline.leaves == 5 and inline.reused == 0
+    assert with_summary.leaves == 0 and with_summary.reused == 5
+
+
+def test_summary_falls_back_to_inline_for_incompatible_args():
+    """The summary cost is only reused when the actuals match the formals' cost-keys
+    (domain/count/access). An HBM actual where the formal was DRAM re-plans (sound)."""
+    fn = Function("ew", Leaf((_add(1, 1, 2, 3),)))
+    formals = {r: Resource(rid=r, domain=Domain.RAM, shape=(1024,)) for r in (1, 2, 3)}
+    summ = summarize(fn, {"ew": fn}, formals, AVX, COOL)
+    res = {40: Resource(rid=40, domain=Domain.HBM, shape=(1024,)),   # different tier
+           41: Resource(rid=41, domain=Domain.RAM, shape=(1024,)),
+           42: Resource(rid=42, domain=Domain.RAM, shape=(1024,))}
+    r = plan_composite(Call("ew", ((1, 40), (2, 41), (3, 42))), {"ew": fn}, res, AVX, COOL,
+                       summaries={"ew": summ})
+    assert r.leaves == 1 and r.reused == 0                     # re-planned, not reused

@@ -16,11 +16,18 @@ import subprocess
 from bcir.kbcir import TARGETS
 from bcir.kbcir.calibloop import measured_replan
 from bcir.examples import vector_add
-from bcir.silicon import perf_counters_available
+from bcir.silicon import cpufreq_info, perf_counters_available, rapl_available
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _RUNBOOK = os.path.join(_ROOT, "tools", "silicon", "measure_replan.sh")
 AVX = TARGETS["x86_avx512"]
+
+
+def _rig_ready() -> bool:
+    """The rig contract: the measured win is live iff the host exposes ALL THREE real
+    signals -- a hardware PMU, RAPL energy, and a cpufreq userspace governor."""
+    return (perf_counters_available() and rapl_available()
+            and bool(getattr(cpufreq_info(), "actuatable", False)))
 
 
 def test_runbook_runs_end_to_end_and_is_honest():
@@ -35,6 +42,36 @@ def test_runbook_runs_end_to_end_and_is_honest():
     else:
         # the sandbox/CI case: honest degrade, no measured number claimed.
         assert "degraded (synthetic)" in out and "no MEASURED win" in out
+
+
+def test_runbook_probe_enumerates_the_three_rig_signals():
+    """The capability probe names each of the three gating signals (PMU + RAPL + userspace
+    governor) and prints an explicit rig-ready verdict -- so the requirement to fire the
+    measured win is crisply specified, never implicit."""
+    r = subprocess.run(["bash", _RUNBOOK], capture_output=True, text=True, cwd=_ROOT)
+    assert r.returncode == 0, r.stdout + r.stderr
+    out = r.stdout
+    assert "PMU (perf_event_open)" in out
+    assert "RAPL energy" in out
+    assert "DVFS governor" in out and "userspace" in out
+    assert "rig-ready:" in out
+    if _rig_ready():
+        assert "rig-ready: YES" in out
+    else:
+        # sandbox/CI: rig-ready NO, and every absent signal is named as missing.
+        assert "rig-ready: NO" in out and "missing:" in out
+
+
+def test_rig_fires_exactly_when_all_three_signals_are_present():
+    """`--require-real` is the gate: it passes iff the host is rig-ready (all three signals),
+    and fails honestly otherwise -- the measured win fires the moment, and only the moment, a
+    bare-metal host with PMU + RAPL + a userspace governor runs the runbook."""
+    r = subprocess.run(["bash", _RUNBOOK, "--require-real"], capture_output=True, text=True,
+                       cwd=_ROOT)
+    if _rig_ready():
+        assert r.returncode == 0 and "MEASURED replan win" in r.stdout
+    else:
+        assert r.returncode == 1 and "no real signals" in r.stdout
 
 
 def test_runbook_require_real_fails_without_a_rig():

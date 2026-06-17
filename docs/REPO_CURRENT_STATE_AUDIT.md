@@ -127,6 +127,28 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Compositional deepening + the MLIR ports finished (bundle joint-reorder,
+  proof-carrying explain, func/if ops) + the rig contract made crisp.** (1) `kbcir.compose`
+  deepens: **alias/effect modeling** (`Effect`/`effect`/`independent` -- the read/write
+  footprint folded through calls + the RAW/WAR/WAW test that decides whether two calls
+  commute) and **inter-procedural summary costs** (`summarize`/`FunctionSummary` -- a
+  function is planned **once** over its formals and every cost-compatible call reuses that
+  cost instead of re-planning the body; sound because reuse is gated on the actuals matching
+  the formals' cost-keys, else it falls back to inline; bounds compile time to
+  O(functions + call-sites)). (2) `-bcir-bundle` gains the **joint-reorder transformation**:
+  it reorders the cost-model columns so an input-sharing bundle is contiguous, re-runs the
+  min-plus shortest path for every legal intra-bundle order, and annotates the re-priced
+  `kbcir.bundle_gain` / `bundle_order` (`bundle_reorder.mlir`) -- a re-price, never an IR
+  mutation. (3) `-bcir-explain` (`BCIRExplainPass.cpp`) ports `proof.explain`: the
+  proof-carrying decision record as IR annotations -- per claim the candidates weighed
+  (widths + scalarized costs), the chosen width/score, and any fusion credit; per module the
+  plan total (reproduces 7808 on `vector_add`; `explain.mlir`). (4) The `kbcir.func` /
+  `kbcir.call` / `kbcir.cond` op family gives `compose.py`'s region tree first-class MLIR
+  form and round-trips (`compose_ops.mlir`). (5) The CT4 runbook probe now **enumerates the
+  three gating signals** (PMU + RAPL + cpufreq userspace governor) and prints an explicit
+  `rig-ready` verdict; `--require-real` fires exactly when all three are present, so the
+  measured win lights up the moment a bare-metal host runs the runbook
+  (`test_silicon_runbook.py`). +7 tests (599 total).
 - 2026-06-16: **Compositional semantics (first slice) + the CT4 runbook + bundle-detection
   on the law rail.** (1) `kbcir.compose` extends planning past straight-line kernels along
   the central equation's series-parallel grain: a region tree of `Seq` (sum), `Cond`
