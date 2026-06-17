@@ -24,14 +24,21 @@ include(AddLLVM)
 include(AddMLIR)
 include(HandleLLVMOptions)
 
-# BCIR lowering targets C++23 (HandleLLVMOptions defaults to LLVM's C++17). The
-# deterministic optimizer-core passes use C++20/23 idioms (std::ranges, structured
-# bindings, designated inits, <=> where useful). 23 is the gating standard; the BCIR
-# code itself is c++2c-ready, so a -std=c++2c bump is a candidate follow-up now that the
-# clang-22 / MLIR 22 headers are the toolchain (tracked with the feature-adoption work).
+# BCIR lowering targets C++26 (-std=c++2c). HandleLLVMOptions defaults to LLVM's C++17; the
+# deterministic optimizer-core passes use C++20/23 idioms (std::ranges, structured bindings,
+# designated inits, <=> where useful) and are c++2c-clean. CMake's CXX_STANDARD=26 GNU flag
+# mapping only landed in CMake ~3.30 (ubuntu-latest + conda ship 3.28), so to stay portable
+# the base standard stays 23 (mapped everywhere) and -std=c++2c is appended when the compiler
+# accepts it -- the later -std wins, so the actual compile is C++26 on clang-22 / gcc-15,
+# while older toolchains gracefully stay at 23.
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag("-std=c++2c" BCIR_HAS_CXX2C)
+if(BCIR_HAS_CXX2C)
+  add_compile_options(-std=c++2c)
+endif()
 
 include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${MLIR_INCLUDE_DIRS})

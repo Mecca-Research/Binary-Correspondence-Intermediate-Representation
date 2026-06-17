@@ -227,6 +227,20 @@ def BCIR_KBCIRAmortizationOp : BCIR_Op<"kbcir.amortization", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_KBCIRMemoryModuleOp : BCIR_Op<"kbcir.memory_module", [Symbol]> {
+  let summary = "Memory module: a frozen, generation-tagged resolution fixpoint a = Lim(Res(U))";
+  // The building-blocks engine's saturated, immutable extraction (LangRef Sec. 13; mirrors
+  // bcir/kbcir/memory.py MemoryModule). `saturated` is the fixpoint witness (Res(state) ==
+  // state within budget); `enodes` = |Lim(Res(U))|; `iterations` = rounds of Res(.) applied;
+  // `fingerprint` is the content hash that chains into the provenance manifest (mem_fp/mem_gen).
+  // R13 admissibility law: admissible iff *saturated* AND generation-tagged (gen >= 1) -- a
+  // budget cutoff (saturated = false) or an untagged artifact is not memory.
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$cost, I64Attr:$fingerprint,
+                       I64Attr:$generation, I64Attr:$iterations, I64Attr:$enodes,
+                       BoolAttr:$saturated);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
 def BCIR_KBCIRScheduledPriceOp : BCIR_Op<"kbcir.scheduled_price", [Symbol]> {
   let summary = "M(pi,Theta): the (max,+) wave-overlap price of a plan";
   // makespan composes series with (+) and CT2 wave parallelism with max; the

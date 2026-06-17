@@ -107,6 +107,9 @@ def BCIR_ClaimOp : BCIR_Op<"claim", [Symbol, NoTerminator]> {
     BCIR_ClaimAttrs);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+  // Parse-time well-formedness: the iteration extent is non-negative and the stride
+  // multiplier is positive.
+  let hasVerifier = 1;
 }
 
 def BCIR_IndexRangeOp : BCIR_Op<"index_range", [Pure]> {

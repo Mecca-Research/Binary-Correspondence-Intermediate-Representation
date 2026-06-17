@@ -197,6 +197,30 @@ contract: a claim with a declared tolerance must realize within its static Q8-UL
 bound — a `reduce.*` over `count` terms is bounded by `count` ULP naive but 1 ULP
 compensated, so a tight tolerance forces the compensated realization.
 
+**MLIR-22 completion (2026-06-17).** The rail moved to LLVM/MLIR 22 and was made fully
+locally-validatable (true-22 via conda-forge — `tools/local/`). A dual-rail completeness scan
+confirmed the law rail now mirrors the oracle's **entire deterministic spine** (84 ODS ops,
+23 passes, **R1–R18** all first-class in `-bcir-verify` + negative-tested). Landed since:
+the **`bcir.kbcir.memory_module`** op + R13 admissibility (`saturated ∧ generation ≥ 1`;
+closes the PARITY gap that previously claimed the op); cross-pass `PlanAnalysis` sharing across
+all 9 optimizer passes; bytecode round-trip; `hasVerifier` parse-time structural checks on
+`resource`/`gem.lane_segment`/`claim`/`target.capability`; and the C++ standard at `-std=c++2c`.
+
+**Remaining law-rail gaps (narrow, from the completeness scan).** The deterministic spine is
+complete; what is left is small and precise:
+1. **Overlap re-selection sweep** — `gem/overlap.py:optimize_scheduled` adopts the legal
+   alternative that strictly lowers makespan (an iterated select→schedule→re-price). `-bcir-overlap`
+   recomputes the *price* `M(π,Θ)` but not the sweep. Buildable as a C++ pass reusing
+   `PlanAnalysis` + the `_makespan` machinery (effort M).
+2. **MOPC R12 refinement** — the support-preservation `f(Supp(J)) ⊆ Supp(J')` set-containment
+   and the commuting-square `Λ∘Ψ = Φ` path-independence (`kbcir/mapping.py`,
+   `verify.{verify_support_preservation,verify_commutativity}`) are Python-only; the MLIR R12
+   currently checks the lowering-discharge contract attr. Buildable as an `-bcir-verify` R12
+   extension on `bcir.target.lower_contract` (effort S–M).
+3. **Telemetry sensing gate** — `kbcir/sensing.py:RegretSensor.sense` (deterministic Welford
+   variance + CV-threshold over `bcir.trace.data_dna`) has no op/pass (effort S; borderline, as
+   `sense_by_ranker` leans on a learned margin).
+
 ### 5.2 Oracle → C (run-time hot path) — remaining ports
 
 The C runtime has the decoders (StreamPack, ETL-binary) and now the executor:
@@ -290,6 +314,36 @@ fixpoints, the conformance **oracle** itself, and the generators (`differential.
 them would violate the two-truth quarantine. L2 portfolio offline learning (Bayesian
 optimization) and a production Kafka broker deployment are operational/research items
 that stay on the Python/ops side.
+
+### 5.7 Long-term: full language frontends (the plug-in-compiler direction) — NOT near-term
+
+A separate, **explicitly long-horizon** track (beyond the dual-rail spine work above): turn BCIR
+from a cost-governed *planning/verification layer above LLVM* into a **plug-in compiler for whole
+language paradigms**, where a real program in C / Python / C++ is parsed into the claim graph,
+planned + verified by the K_BCIR spine, and lowered through the existing backends. The current
+ROP/MAP/ETL front-ends (`bcir.parse.*` / `bcir.binary.*`) are deliberately narrow DSL/binary
+front-ends; the paradigm frontends are a much larger, multi-year effort and are tracked here so
+the architecture leaves room for them — they are **not** scheduled against the near-term gaps in
+§5.1–§5.6.
+
+- **Full C frontend** — a Clang-compatible parser, complete ABI support (the System V / target
+  ABIs, calling conventions, struct layout), the preprocessor (macros, `#include`, conditional
+  compilation, `#embed`), and full standard-library compatibility. The C23 kernel backend
+  (`lower.c_kernel`) is the *output* seam today; this is the *input* seam.
+- **Full Python frontend** — a parser + semantics (the full grammar + name resolution + scoping),
+  the dynamic features (classes, decorators, generators, `async`/`await`), a CPython-compatibility
+  layer (the C-API / object model semantics), and ecosystem integration (NumPy/pandas array
+  semantics mapped onto the resource/claim model — the natural fit for BCIR's cost-as-IR planning).
+- **Full C++ frontend** — templates (two-phase lookup + instantiation), exceptions, RAII, the STL,
+  move semantics, and the complex ABI (Itanium name mangling, vtables, EH tables) — Clang-level
+  completeness. The hardest of the three; depends on the C frontend + a far richer type system on
+  the claim graph.
+
+**Discipline.** Each frontend must preserve the dual-rail invariant: the frontend lowers a program
+to the **same** claim graph the oracle reasons about, so the K_BCIR laws (R1–R18), the cost model,
+and the provenance/quarantine discipline apply unchanged. The frontends produce claim graphs; they
+do not become a second source of truth. Native instruction selection stays deferred
+(`BCIR_NATIVE_OBJECT_GATE.md`) — the frontends feed the resident backend, not a hand-rolled isel.
 
 ---
 

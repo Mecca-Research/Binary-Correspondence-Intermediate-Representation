@@ -250,6 +250,15 @@ bcir.module @r13_ledger {
 
 // -----
 
+// R13: an unsaturated memory module (a budget cutoff Res^k(U), not the fixpoint) is not
+// admissible -- a = Lim(Res(U)) must be saturated and generation-tagged.
+bcir.module @r13_memory {
+  // expected-error @+1 {{is not admissible (saturated=false, generation=1)}}
+  bcir.kbcir.memory_module @mem { cost = 100 : i64, fingerprint = 123 : i64, generation = 1 : i64, iterations = 3 : i64, enodes = 12 : i64, saturated = false }
+}
+
+// -----
+
 // R13: a retune verdict the MDL evidence does not justify (data_fit <=
 // complexity) -- the dashboard cannot recommend a swap the bits do not pay for.
 bcir.module @r13_unjustified_retune {

@@ -128,6 +128,8 @@ irdl.dialect @bcir {
   irdl.operation @kbcir_provenance_manifest
   // The L1 cost throttle: a learned component's amortization certificate.
   irdl.operation @kbcir_amortization
+  // Memory module: the frozen, generation-tagged resolution fixpoint a = Lim(Res(U)).
+  irdl.operation @kbcir_memory_module
 
   // ---- BCIR-4: GEM StreamPack ----
   irdl.operation @gem_stream_pack {

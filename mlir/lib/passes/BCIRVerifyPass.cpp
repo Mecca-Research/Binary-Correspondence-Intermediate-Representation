@@ -830,6 +830,20 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R13: memory-module admissibility -- a frozen a = Lim(Res(U)) is memory only when it
+    // is a *saturated* fixpoint AND generation-tagged (gen >= 1); a budget cutoff or an
+    // untagged artifact is not admissible. Mirrors bcir/kbcir/memory.py MemoryModule.admissible.
+    root->walk([&](KBCIRMemoryModuleOp mm) {
+      if (!mm.getSaturated() || mm.getGeneration() < 1) {
+        mm.emitError("R13: memory module ")
+            << mm.getSymName() << " is not admissible (saturated="
+            << (mm.getSaturated() ? "true" : "false") << ", generation="
+            << mm.getGeneration() << "); a = Lim(Res(U)) must be a saturated, "
+            << "generation-tagged fixpoint";
+        ok = false;
+      }
+    });
+
     // R13: provenance-manifest reproducibility -- a deployed plan's manifest (the
     // commit hash of its inputs + in-force decision-rule generations) must have
     // reproduced its recorded score/shape on replay. Manifest equality => the
