@@ -128,6 +128,21 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **True MLIR-22 local validation (conda-forge), solving the apt.llvm.org block.**
+  The web sandbox's network policy denies `apt.llvm.org` (`403 host_not_allowed`) — the usual
+  MLIR-22 source — and the stock Ubuntu archive tops out at MLIR 18, so prior sessions could
+  only build the rail against 18 locally (validating logic, not the 22-only rules) and leaned
+  on the single LLVM-22 CI job. Probing the egress allowlist showed **conda-forge is reachable**
+  and ships real `mlir=22.1.7` dev libs + `llvmdev` + an ABI-matched compiler. New
+  `tools/local/{setup_mlir22.sh,env_mlir22.sh,check_rail22.sh}` install micromamba + a conda
+  `m22` env and build `bcir-opt` against **true MLIR 22.1.7** (the system compiler segfaults on
+  conda's MLIR via duplicated `TypeID` statics — fixed by building with conda's
+  `gxx_linux-64`). The **whole rail is now green locally on real 22**: tblgen, R1–R18 verify,
+  GEM pipeline, cost/plan/overlap/RCSP, compose, ODS examples, bytecode round-trip, and — the
+  check an 18 build cannot do — the **IRDL named-operand corpus**. CI (apt.llvm.org) stays the
+  authoritative gate; the clean alternative is to allow `apt.llvm.org` in the environment's
+  network policy. (The 18 path, `tools/wsl/build_mlir.sh`, still works as a lighter fast loop.)
+
 - 2026-06-17: **Phase 2a — MLIR-22 feature adoption + dead-code prune.** Two empirical
   findings reshaped the planned "Properties migration": (1) the BCIR dialect **already uses
   inherent Properties storage** for every op's attributes — MLIR's `usePropertiesForAttributes`
