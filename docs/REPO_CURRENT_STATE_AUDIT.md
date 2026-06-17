@@ -128,19 +128,23 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
-- 2026-06-17: **Goal 1 complete — generative fault-injection now covers ALL 18 laws.**
-  Extended the campaign past the module/claim/plan core (R2–R9) to the artifact rails via
-  `_artifact_law_misses`, building each clean artifact through the real oracle pipeline,
-  confirming it verifies clean, then injecting one fault: **R10/R11** (StreamPack
-  provenance/generation — `hydrate` + drop a trace note / drift the registry), **R12**
-  (lowering — `emit_kernel_ll` + an invented instruction), **R13** (accelerator-certificate
-  provenance — a cert with a mismatch), **R14–R16** (CIM PIM-on-a-non-reduction / out-of-range
-  DVFS clock / oversized-L1 placement), **R17** (a tight accuracy tolerance a naive reduction
-  cannot meet). **R1** (RID uniqueness) and **R18** (call-graph integrity) are enforced *by
-  construction* — the RID-keyed registry can't hold a dup, and `plan_composite` *raises* on an
-  undefined callee/recursion — so both are asserted as guards rather than diagnostic-injected.
-  New `test_artifact_laws_R10_to_R18_all_fire`; the full campaign is clean across seeds; 617
-  oracle tests green. (Pure Python; no MLIR rail change.)
+- 2026-06-17: **Goal 2 (foundation) — cross-pass plan sharing via an MLIR Analysis.** Every
+  optimizer pass independently re-walked the module (`cm::fusedColumns`) and re-ran the coupled
+  min-plus shortest path (`cm::planChosen`) for itself — the same plan recomputed up to ~9×
+  across a pipeline. Added `cm::PlanAnalysis` (BCIRCostModel.h): a per-`bcir.module` MLIR
+  analysis that computes the fused columns + chosen plan once, requested via
+  `getChildAnalysis<PlanAnalysis>(mod)` and **shared** across passes that
+  `markAnalysesPreserved<PlanAnalysis>()` (correct because they only add `kbcir.*` annotation
+  attrs, never plan inputs). It splits `hasCap` (cost-model rail: columns only) from `valid`
+  (plan rail: + weighted shortest path) and carries the capability handle for per-pass scalars
+  (affinity domains, mem channels). Migrated the **bcir-audit core — `-bcir-cost-model`,
+  `-bcir-plan`, `-bcir-overlap`** — verified on **true MLIR 22.1.7** (conda toolchain): the
+  whole `cost+plan+overlap` pipeline now builds `PlanAnalysis` **once** (was 3×), every pinned
+  score is byte-identical (7808 / corpus 1015808·101888·1595520 / overlap 253952·761856), and
+  the full rail (tblgen, R1–R18, ODS, bytecode, IRDL) is green. The remaining consumers
+  (`-bcir-rcsp-plan`, `-bcir-cim`/`-dvfs`, `-bcir-explain`/`-replay`, `-bcir-schedule-eft`
+  `planInfos` trio, `-bcir-bundle`) still self-compute (correct) and follow the same pattern —
+  to be migrated next.
 
 - 2026-06-17: **Goal 1 — verifier fault-injection hardening (R2–R9 generative).** The
   oracle's law-for-law fault-injection campaign (`run_verifier_campaign`) exercised only 5 of

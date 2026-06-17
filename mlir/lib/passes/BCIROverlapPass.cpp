@@ -95,44 +95,37 @@ struct OverlapPass : public PassWrapper<OverlapPass, OperationPass<>> {
     Builder b(&getContext());
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    // The kbcir.overlap_* annotations are not plan inputs -> keep the shared plan.
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
-    auto capOp = cm::firstCapability(root);
-    if (!capOp)
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
+    if (!pa.valid)
       return;
-    cm::Cap h = cm::readCap(capOp);
-    ArrayRef<int64_t> w = cm::firstWeights(root);
-    if (w.empty())
-      return;
-    auto resByName = cm::resourcesByName(root);
-    std::vector<cm::Column> cols = cm::fusedColumns(root, h, resByName);
-    if (cols.empty())
-      return;
-
-    int64_t theta = cm::firstThetaThermal(root);
-    int64_t serial = 0;
-    SmallVector<int> chosen = cm::planChosen(cols, w, theta, serial);
-    if (chosen.empty())
-      return;
+    const std::vector<cm::Column> &cols = pa.cols;
+    const SmallVector<int> &chosen = pa.chosen;
+    ArrayRef<int64_t> w = pa.weights;
+    const int64_t theta = pa.thetaThermal;
+    const int64_t serial = pa.total;
 
     // The scheduled view of each chosen claim.
     std::vector<Scheduled> sched;
     SmallVector<int32_t> phaseOrder;
     for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
-      cm::Column &col = cols[i];
-      bool sparse = col.claim.getLane() == Lane::GGG ||
-                    col.claim.getStrideClass() == StrideClass::Random;
-      sched.push_back({col.claim, col.phase, static_cast<int32_t>(col.claim.getClaimId()),
+      const cm::Column &col = cols[i];
+      ClaimOp claim = col.claim;   // ClaimOp is a value handle; its accessors are non-const
+      bool sparse = claim.getLane() == Lane::GGG ||
+                    claim.getStrideClass() == StrideClass::Random;
+      sched.push_back({claim, col.phase, static_cast<int32_t>(claim.getClaimId()),
                        sparse, col.cands[chosen[i]], col.reads, col.writes});
       if (std::find(phaseOrder.begin(), phaseOrder.end(), col.phase) == phaseOrder.end())
         phaseOrder.push_back(col.phase);
     }
     llvm::sort(phaseOrder);
 
-    int64_t domains = std::max<int64_t>(1, capOp.getAffinityDomains());
+    int64_t domains = pa.affinityDomains;
     int64_t makespan = 0;
 
     for (int32_t pid : phaseOrder) {

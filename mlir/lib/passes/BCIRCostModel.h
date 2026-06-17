@@ -595,6 +595,47 @@ inline llvm::DenseMap<StringRef, ResourceOp> resourcesByName(Operation *root) {
   return m;
 }
 
+// A per-bcir.module MLIR analysis that computes the fused candidate columns + the coupled
+// min-plus chosen plan ONCE. Every plan/cost/overlap/schedule pass otherwise re-walks the
+// whole module (fusedColumns) and re-runs the shortest path (planChosen) for itself; this
+// lets them share the result via the AnalysisManager (getChildAnalysis<PlanAnalysis>),
+// preserved across the annotation passes that markAnalysesPreserved<PlanAnalysis>(). It is
+// built from a bcir.module Operation*; `valid` iff a capability + non-empty weights + a
+// non-empty plan were found. All members are owning copies so they outlive the build call.
+struct PlanAnalysis {
+  bool hasCap = false;          // a capability + costed candidate columns are available
+                                // (the cost-model rail needs only this)
+  bool valid = false;           // ... and a non-empty weighted plan (plan/overlap/schedule)
+  TargetCapabilityOp capOp;     // the module's first capability (value handle; copy out for
+                                // the non-const accessors, e.g. getMemChannels())
+  Cap h;
+  int64_t affinityDomains = 1;  // capOp.getAffinityDomains()
+  SmallVector<int64_t> weights;
+  int64_t thetaThermal = 0;
+  llvm::DenseMap<StringRef, ResourceOp> resByName;
+  std::vector<Column> cols;
+  SmallVector<int> chosen;
+  int64_t total = 0;
+
+  explicit PlanAnalysis(Operation *root) {
+    capOp = firstCapability(root);
+    if (!capOp)
+      return;
+    h = readCap(capOp);
+    affinityDomains = std::max<int64_t>(1, capOp.getAffinityDomains());
+    resByName = resourcesByName(root);
+    cols = fusedColumns(root, h, resByName);
+    ArrayRef<int64_t> w = firstWeights(root);
+    weights.assign(w.begin(), w.end());
+    thetaThermal = firstThetaThermal(root);
+    hasCap = !cols.empty();
+    if (hasCap && !weights.empty()) {
+      chosen = planChosen(cols, weights, thetaThermal, total);
+      valid = !chosen.empty();
+    }
+  }
+};
+
 }  // namespace cm
 }  // namespace bcir
 

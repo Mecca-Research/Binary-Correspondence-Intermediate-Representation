@@ -41,28 +41,19 @@ struct PlanPass : public PassWrapper<PlanPass, OperationPass<>> {
     Builder b(&getContext());
     getOperation()->walk([&](Operation *mod) {
       if (mod->getName().getStringRef() == "bcir.module")
-        runOnModule(mod, b);
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
     });
+    // The kbcir.plan_* annotations added here are not inputs to the plan, so the shared
+    // PlanAnalysis stays valid for the next pass in the pipeline.
+    markAnalysesPreserved<cm::PlanAnalysis>();
   }
 
-  void runOnModule(Operation *root, Builder &b) {
-    auto capOp = cm::firstCapability(root);
-    if (!capOp)
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
+    if (!pa.valid)
       return;
-    cm::Cap h = cm::readCap(capOp);
-    ArrayRef<int64_t> w = cm::firstWeights(root);
-    if (w.empty())
-      return;
-    auto resByName = cm::resourcesByName(root);
-    std::vector<cm::Column> cols = cm::fusedColumns(root, h, resByName);
-    if (cols.empty())
-      return;
-
-    int64_t theta = cm::firstThetaThermal(root);
-    int64_t total = 0;
-    SmallVector<int> chosen = cm::planChosen(cols, w, theta, total);
-    if (chosen.empty())
-      return;
+    const std::vector<cm::Column> &cols = pa.cols;
+    const SmallVector<int> &chosen = pa.chosen;
+    const int64_t theta = pa.thetaThermal;
 
     for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
       // The chosen edge cost = this candidate coupled by the context of the chosen
@@ -74,12 +65,12 @@ struct PlanPass : public PassWrapper<PlanPass, OperationPass<>> {
                               cols[i].cands[chosen[i]].width)
           : cm::contextFactor(theta, {}, 0, cols[i].reads, cols[i].cands[chosen[i]].width);
       cm::applyFactor(e, f);
-      int64_t edge = cm::scalarize(e, w);
+      int64_t edge = cm::scalarize(e, pa.weights);
       cols[i].claim->setAttr("kbcir.plan_width",
                              b.getI64IntegerAttr(cols[i].cands[chosen[i]].width));
       cols[i].claim->setAttr("kbcir.plan_cost", b.getI64IntegerAttr(edge));
     }
-    root->setAttr("kbcir.plan_score", b.getI64IntegerAttr(total));
+    root->setAttr("kbcir.plan_score", b.getI64IntegerAttr(pa.total));
   }
 };
 
