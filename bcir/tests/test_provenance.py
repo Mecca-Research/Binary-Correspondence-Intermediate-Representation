@@ -171,3 +171,39 @@ def test_mlir_verify_provenance_constants_are_in_sync():
     arts = (("cal_gen", 4), ("map_gen", 2))
     assert _fnv_outer((man.m_module, man.m_target, man.m_theta, man.m_policy), arts) \
         == 3780911091132933688
+
+
+def test_component_hashes_recompute_from_ir_primitives():
+    """Each component hash is the FNV-1a chain over exactly the primitives the IR carries
+    (resource/claim fields incl. the opcode; capability fields incl. name + scalable; policy
+    name + UNFOLDED base) -- the relation -bcir-verify recomputes from the IR for the
+    m_module / m_target / m_policy cross-checks (R13; BCIRVerifyPass.cpp hash*FromIR)."""
+    from bcir.kbcir.provenance import hash_module, hash_target, hash_policy
+    from bcir.kbcir.weights import PERF
+
+    def fnv(scalars):
+        h, prime, mask = 14695981039346656037, 1099511628211, (1 << 64) - 1
+        for it in scalars:
+            for b in str(it).encode("utf-8"):
+                h = ((h ^ b) * prime) & mask
+            h = ((h ^ 0xFF) * prime) & mask
+        return h & ((1 << 63) - 1)
+
+    m, H = vector_add(1024), AVX
+    mod = [m.name, m.cacheline, m.align]
+    for r in sorted(m.resources.values(), key=lambda r: r.rid):
+        mod += [r.rid, int(r.domain), *r.shape, r.layout, r.align, r.access,
+                r.priority, r.map_gen, r.data_gen]
+    for ph in m.phases:
+        mod += [ph.phase_id, *sorted(ph.deps)]
+        for c in sorted(ph.claims, key=lambda c: c.id):
+            mod += [c.id, int(c.opcode), int(c.lane), int(c.stride_class), c.count, c.stride_k,
+                    *c.rd, *c.wr, c.hazard, int(c.domain), c.verify, c.bounds, c.op,
+                    c.offset, c.cost_class]
+    assert fnv(mod) == hash_module(m) == 7127522701151166272
+    tgt = [H.name, H.triple, H.cacheline, H.elem_bytes, *sorted(H.lane_widths), H.warp,
+           H.scalable, H.gather_penalty, H.mem_unit, H.base_overhead, H.thermal_density,
+           H.power_density, H.per_op_heat, H.affinity_domains,
+           getattr(H, "mem_channels", 4), getattr(H, "cal_gen", 0)]
+    assert fnv(tgt) == hash_target(H) == 5864064355688965777
+    assert fnv([PERF.name, *PERF.base]) == hash_policy(PERF) == 4048695575545564183

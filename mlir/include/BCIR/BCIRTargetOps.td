@@ -19,6 +19,11 @@ def BCIR_TargetCapabilityOp : BCIR_Op<"target.capability", [Symbol]> {
     DefaultValuedAttr<I32Attr, "64">:$cacheline,
     DefaultValuedAttr<I32Attr, "0">:$gather_penalty,
     DefaultValuedAttr<I32Attr, "1">:$affinity_domains,
+    // The TargetProfile name + scalable flag (cost.py); carried so -bcir-verify can recompute
+    // the provenance hash_target (R13). `target_name` is the profile name (distinct from the
+    // triple and the sym_name). Defaulted so existing IR parses.
+    DefaultValuedAttr<StrAttr, "\"\"">:$target_name,
+    DefaultValuedAttr<BoolAttr, "false">:$scalable,
     // Roofline knee: concurrent bandwidth-bound streams the memory sustains.
     DefaultValuedAttr<I32Attr, "4">:$mem_channels,
     // K_BCIR cost-model seeds (mirror bcir/kbcir/cost.py TargetProfile defaults).

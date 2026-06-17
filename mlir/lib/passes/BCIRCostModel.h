@@ -321,6 +321,64 @@ fusedColumns(Operation *root, const Cap &h,
   return cols;
 }
 
+// Like fusedColumns, but over an explicit claim list treated as a single parallel block (a
+// compose `Leaf`): the same intra-block deforestation/CSE credits, no phase grouping. Used by
+// -bcir-compose to price a region's leaf claims (realize.optimize of one phase).
+inline std::vector<Column>
+fusedColumnsFromClaims(ArrayRef<ClaimOp> claims, const Cap &h,
+                       const llvm::DenseMap<StringRef, ResourceOp> &resByName) {
+  std::vector<Column> cols;
+  llvm::DenseSet<StringRef> produced;
+  llvm::DenseMap<StringRef, int> version;
+  llvm::StringSet<> seen;
+  for (ClaimOp c : claims) {
+    Column col;
+    col.claim = c;
+    col.phase = 0;
+    symRefs(c.getReads(), col.reads);
+    symRefs(c.getWrites(), col.writes);
+    Domain dom = c.getDomain();
+    bool ham = false;
+    if (!col.reads.empty())
+      if (auto r = resByName.lookup(col.reads[0])) {
+        dom = r.getDomainKind();
+        ham = r.getAccess() && *r.getAccess() == Access::HAM;
+      }
+    col.cands = candidatesFor(c, h, dom, ham);
+    std::string sig = c.getOp().str();
+    for (StringRef rd : col.reads) {
+      sig += "|";
+      sig += rd.str();
+      sig += "@";
+      sig += std::to_string(version.lookup(rd));
+    }
+    bool cse = !col.reads.empty() && seen.count(sig);
+    bool defo = false;
+    if (!cse)
+      for (StringRef rd : col.reads)
+        if (produced.count(rd)) {
+          defo = true;
+          break;
+        }
+    if (cse || defo) {
+      Factor f = cse ? cseFactor(static_cast<int>(col.reads.size()),
+                                 static_cast<int>(col.writes.size()))
+                     : deforestFactor();
+      for (Cand &cc : col.cands)
+        applyFactor(cc.cost, f);
+      col.fusion = cse ? "cse" : "deforest";
+    }
+    if (!col.reads.empty())
+      seen.insert(sig);
+    for (StringRef w : col.writes)
+      version[w] = version.lookup(w) + 1;
+    for (StringRef w : col.writes)
+      produced.insert(w);
+    cols.push_back(std::move(col));
+  }
+  return cols;
+}
+
 // --- the coupled min-plus shortest path (realize.optimize) ----------------------
 
 inline bool sharesRead(ArrayRef<StringRef> a, ArrayRef<StringRef> b) {

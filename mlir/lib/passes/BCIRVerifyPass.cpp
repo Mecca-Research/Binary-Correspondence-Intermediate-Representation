@@ -48,6 +48,148 @@ static uint64_t fnvItem(uint64_t h, llvm::StringRef s) {
   h = (h ^ 0xFFULL) * kFnvPrime; // field separator
   return h;
 }
+static int64_t fnvMask(uint64_t h) {
+  return static_cast<int64_t>(h & 0x7FFFFFFFFFFFFFFFULL);
+}
+static uint64_t fnvInt(uint64_t h, int64_t v) { return fnvItem(h, std::to_string(v)); }
+
+// provenance.hash_theta recomputed from a kbcir.theta op: FNV-1a over the eight 0..100
+// pressures (str(int) each, byte-identical to the oracle).
+static int64_t hashThetaFromIR(KBCIRThetaOp t) {
+  uint64_t h = kFnvOffset;
+  for (int64_t v : {static_cast<int64_t>(t.getThermal()), static_cast<int64_t>(t.getPower()),
+                    static_cast<int64_t>(t.getMemPressure()),
+                    static_cast<int64_t>(t.getContention()),
+                    static_cast<int64_t>(t.getNoise()), static_cast<int64_t>(t.getWear()),
+                    static_cast<int64_t>(t.getUtilization()),
+                    static_cast<int64_t>(t.getVoltage())})
+    h = fnvInt(h, v);
+  return fnvMask(h);
+}
+
+// provenance.hash_policy: _fnv(policy.name, tuple(policy.base)). The name is the mode
+// spelling (Policy.name == the mode, e.g. "latency"); base is the UNFOLDED base_weights.
+static int64_t hashPolicyFromIR(KBCIRPolicyOp pol) {
+  uint64_t h = kFnvOffset;
+  h = fnvItem(h, stringifyPolicyMode(pol.getMode()));
+  if (auto base = pol.getBaseWeights())
+    for (int64_t w : *base)
+      h = fnvInt(h, w);
+  return fnvMask(h);
+}
+
+// provenance.hash_target: _fnv over the TargetProfile fields, flattened (sorted lane widths
+// expand to scalars; scalable is a Python bool -> "True"/"False").
+static int64_t hashTargetFromIR(TargetCapabilityOp cap) {
+  uint64_t h = kFnvOffset;
+  h = fnvItem(h, cap.getTargetName());
+  h = fnvItem(h, cap.getTriple());
+  h = fnvInt(h, cap.getCacheline());
+  h = fnvInt(h, cap.getElemBytes());
+  SmallVector<int64_t> widths(cap.getLaneWidths().begin(), cap.getLaneWidths().end());
+  std::sort(widths.begin(), widths.end());
+  for (int64_t w : widths)
+    h = fnvInt(h, w);
+  h = fnvInt(h, cap.getWarp());
+  h = fnvItem(h, cap.getScalable() ? StringRef("True") : StringRef("False"));
+  h = fnvInt(h, cap.getGatherPenalty());
+  h = fnvInt(h, cap.getMemUnit());
+  h = fnvInt(h, cap.getBaseOverhead());
+  h = fnvInt(h, cap.getThermalDensity());
+  h = fnvInt(h, cap.getPowerDensity());
+  h = fnvInt(h, cap.getPerOpHeat());
+  h = fnvInt(h, cap.getAffinityDomains());
+  h = fnvInt(h, cap.getMemChannels());
+  h = fnvInt(h, cap.getCalGen());
+  return fnvMask(h);
+}
+
+// provenance.hash_module recomputed from the bcir.module IR: the goal-graph name/cacheline/
+// align, then each resource (sorted by rid) and each phase's claims (sorted by id), every
+// field flattened to a scalar exactly as _flatten yields it. Reads/writes are the resolved
+// RIDs (the oracle hashes c.rd / c.wr, the integer RIDs).
+static int64_t hashModuleFromIR(Operation *modOp) {
+  uint64_t h = kFnvOffset;
+  StringRef name;
+  if (auto a = modOp->getAttrOfType<StringAttr>("sym_name"))
+    name = a.getValue();
+  auto attrI = [&](StringRef k, int64_t def) -> int64_t {
+    if (auto a = modOp->getAttrOfType<IntegerAttr>(k))
+      return a.getInt();
+    return def;
+  };
+  h = fnvItem(h, name);
+  h = fnvInt(h, attrI("cacheline", 64));
+  h = fnvInt(h, attrI("align", 64));
+
+  SmallVector<ResourceOp> resources;
+  llvm::DenseMap<StringRef, int64_t> ridOf;
+  modOp->walk([&](ResourceOp r) {
+    resources.push_back(r);
+    ridOf[r.getSymName()] = static_cast<int64_t>(r.getRid());
+  });
+  std::sort(resources.begin(), resources.end(),
+            [](ResourceOp a, ResourceOp b) { return a.getRid() < b.getRid(); });
+  for (ResourceOp r : resources) {
+    h = fnvInt(h, static_cast<int64_t>(r.getRid()));
+    h = fnvInt(h, static_cast<int64_t>(static_cast<int>(r.getDomainKind())));
+    for (int64_t d : r.getShape())
+      h = fnvInt(h, d);
+    h = fnvItem(h, stringifyLayout(r.getLayout()));
+    h = fnvInt(h, static_cast<int64_t>(r.getAlign()));
+    h = fnvItem(h, r.getAccess() ? stringifyAccess(*r.getAccess()) : StringRef("flat"));
+    h = fnvInt(h, static_cast<int64_t>(r.getPriority()));
+    h = fnvInt(h, static_cast<int64_t>(r.getMapGen()));
+    h = fnvInt(h, static_cast<int64_t>(r.getDataGen()));
+  }
+
+  SmallVector<PhaseOp> phases;
+  llvm::DenseMap<StringRef, int64_t> phaseIdOf;
+  modOp->walk([&](PhaseOp p) {
+    phases.push_back(p);
+    phaseIdOf[p.getSymName()] = static_cast<int64_t>(p.getId());
+  });
+  for (PhaseOp ph : phases) {
+    h = fnvInt(h, static_cast<int64_t>(ph.getId()));
+    SmallVector<int64_t> deps;
+    for (Attribute a : ph.getDeps())
+      if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
+        deps.push_back(phaseIdOf.lookup(ref.getValue()));
+    std::sort(deps.begin(), deps.end());
+    for (int64_t d : deps)
+      h = fnvInt(h, d);
+    SmallVector<ClaimOp> claims;
+    modOp->walk([&](ClaimOp c) {
+      if (c.getPhase() == ph.getSymName())
+        claims.push_back(c);
+    });
+    std::sort(claims.begin(), claims.end(),
+              [](ClaimOp a, ClaimOp b) { return a.getClaimId() < b.getClaimId(); });
+    for (ClaimOp c : claims) {
+      h = fnvInt(h, static_cast<int64_t>(c.getClaimId()));
+      h = fnvInt(h, static_cast<int64_t>(c.getOpcode()));
+      h = fnvInt(h, static_cast<int64_t>(static_cast<int>(c.getLane())));
+      h = fnvInt(h, static_cast<int64_t>(static_cast<int>(c.getStrideClass())));
+      h = fnvInt(h, static_cast<int64_t>(c.getCount()));
+      h = fnvInt(h, static_cast<int64_t>(c.getStrideK()));
+      for (Attribute a : c.getReads())
+        if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
+          h = fnvInt(h, ridOf.lookup(ref.getValue()));
+      for (Attribute a : c.getWrites())
+        if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
+          h = fnvInt(h, ridOf.lookup(ref.getValue()));
+      h = fnvItem(h, stringifyHazardMode(c.getHazard()));
+      h = fnvInt(h, static_cast<int64_t>(static_cast<int>(c.getDomain())));
+      h = fnvItem(h, stringifyVerify(c.getVerify()));
+      h = fnvItem(h, stringifyBounds(c.getBounds()));
+      h = fnvItem(h, c.getOp());
+      h = fnvInt(h, static_cast<int64_t>(c.getOffset()));
+      h = fnvItem(h, c.getCostClass() ? stringifyCostClass(*c.getCostClass())
+                                      : StringRef("bandwidth"));
+    }
+  }
+  return fnvMask(h);
+}
 
 struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyPass)
@@ -688,14 +830,6 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
-    // The runtime state Theta the plan conditioned on (the first kbcir.theta op), used
-    // to cross-check a manifest's m_theta against the actual IR.
-    KBCIRThetaOp firstTheta;
-    root->walk([&](KBCIRThetaOp t) {
-      if (!firstTheta)
-        firstTheta = t;
-    });
-
     // R13: provenance-manifest reproducibility -- a deployed plan's manifest (the
     // commit hash of its inputs + in-force decision-rule generations) must have
     // reproduced its recorded score/shape on replay. Manifest equality => the
@@ -743,32 +877,53 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           ok = false;
         }
       }
-      // R13 component cross-check (m_theta vs the IR): when the manifest carries m_theta and
-      // the module has a kbcir.theta op, recompute hash_theta byte-identically to
-      // provenance.hash_theta (FNV-1a over the eight 0..100 pressures) and confirm it equals
-      // the declared m_theta -- so a manifest cannot be re-pointed at a different runtime
-      // state than the one in the IR. (The module/target/policy component cross-checks need
-      // the IR to carry the claim opcode / full capability fields / unfolded base weights --
-      // tracked follow-ups; the digest recompute above already binds all four components.)
-      if (mth && firstTheta) {
-        uint64_t h = kFnvOffset;
-        for (int64_t v : {static_cast<int64_t>(firstTheta.getThermal()),
-                          static_cast<int64_t>(firstTheta.getPower()),
-                          static_cast<int64_t>(firstTheta.getMemPressure()),
-                          static_cast<int64_t>(firstTheta.getContention()),
-                          static_cast<int64_t>(firstTheta.getNoise()),
-                          static_cast<int64_t>(firstTheta.getWear()),
-                          static_cast<int64_t>(firstTheta.getUtilization()),
-                          static_cast<int64_t>(firstTheta.getVoltage())})
-          h = fnvItem(h, std::to_string(v));
-        int64_t recomputedTheta = static_cast<int64_t>(h & 0x7FFFFFFFFFFFFFFFULL);
-        if (recomputedTheta != mth) {
-          pm.emitError("R13: manifest m_theta ")
-              << mth << " does not match hash_theta recomputed from the kbcir.theta op "
-              << recomputedTheta << " (manifest attached to a different runtime state)";
+      // R13 component cross-check against the IR: each component hash the manifest declares
+      // (m_theta / m_policy / m_target / m_module) is recomputed from the actual IR of the
+      // manifest's enclosing bcir.module -- byte-identical to provenance.hash_* -- and must
+      // agree. So a manifest cannot be re-pointed at a different runtime state, policy,
+      // target, or goal graph than the one it is attached to. Each check fires only when the
+      // component is declared (non-zero) AND the IR carries the thing to hash (so a manifest
+      // recorded alone -- digest only -- is unaffected; back-compatible).
+      Operation *modOp = pm->getParentOp();
+      while (modOp && modOp->getName().getStringRef() != "bcir.module")
+        modOp = modOp->getParentOp();
+      if (!modOp)
+        return;
+      KBCIRThetaOp theta;
+      TargetCapabilityOp cap;
+      KBCIRPolicyOp pol;
+      bool hasClaim = false;
+      modOp->walk([&](Operation *op) {
+        if (auto t = dyn_cast<KBCIRThetaOp>(op)) {
+          if (!theta)
+            theta = t;
+        } else if (auto cp = dyn_cast<TargetCapabilityOp>(op)) {
+          if (!cap)
+            cap = cp;
+        } else if (auto p = dyn_cast<KBCIRPolicyOp>(op)) {
+          if (!pol && p.getBaseWeights())
+            pol = p;
+        } else if (isa<ClaimOp>(op)) {
+          hasClaim = true;
+        }
+      });
+      auto crossCheck = [&](StringRef field, int64_t declared, int64_t recomputed) {
+        if (declared && recomputed != declared) {
+          pm.emitError("R13: manifest ")
+              << field << " " << declared
+              << " does not match the value recomputed from the IR " << recomputed
+              << " (manifest attached to different inputs)";
           ok = false;
         }
-      }
+      };
+      if (mth && theta)
+        crossCheck("m_theta", mth, hashThetaFromIR(theta));
+      if (mp && pol)
+        crossCheck("m_policy", mp, hashPolicyFromIR(pol));
+      if (mt && cap)
+        crossCheck("m_target", mt, hashTargetFromIR(cap));
+      if (mm && hasClaim)
+        crossCheck("m_module", mm, hashModuleFromIR(modOp));
     });
 
     // R9: a duration-aware schedule certificate is well-formed -- known mode,

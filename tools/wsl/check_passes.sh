@@ -121,6 +121,8 @@ else
   "${BO}" "${T}/compose_ops.mlir" >/dev/null 2>/tmp/pe \
     && echo "  RUN-ONLY compose_ops.mlir" || { echo "  FAIL compose_ops.mlir"; cat /tmp/pe; fail=1; }
 fi
+echo "[passes] compose cost (compositional plan over func/if: Seq sum / Cond max+expected / Call)"
+run_fc -bcir-compose "${T}/compose_cost.mlir"
 echo "[passes] hot-Theta plan parity (the kbcir.theta context op)"
 run_fc -bcir-plan "${T}/theta_hot.mlir"
 echo "[passes] six-target capability matrix (-bcir-plan/-overlap/-rcsp-plan per target)"

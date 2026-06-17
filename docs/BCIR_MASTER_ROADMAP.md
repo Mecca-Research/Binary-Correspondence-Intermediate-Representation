@@ -55,7 +55,7 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 
 | Fact | **Now** |
 |---|---|
-| Oracle conformance tests (`python -m bcir.tests.run_all`) | **601**, incl. the generated differential + verifier + fuzz campaigns |
+| Oracle conformance tests (`python -m bcir.tests.run_all`) | **602**, incl. the generated differential + verifier + fuzz campaigns |
 | Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
 | GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
 | Verifier laws | **R1–R18** all first-class in `-bcir-verify` (R1–R17 dual-rail with the Python oracle + the `-bcir-lower-to-llvm` checkpoint; **R18** compositional call-graph integrity — callee resolution + no recursion — for the `kbcir.func/call/cond` family). R13 also **recomputes** the manifest digest + cross-checks `m_theta` against the IR |
@@ -81,7 +81,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | Subsystem | Today | **Target home** | Status |
 |---|---|---|---|
 | Dialect / ODS (the law's vocabulary) | `mlir/include/BCIR/*.td` | MLIR | ✅ |
-| Verifier **R1–R13** | `-bcir-verify` + `bcir.verify` | MLIR/C++ + Python (oracle ref) | ✅ dual-rail (R13 now **recomputes the provenance digest** byte-identically to `provenance._digest` when the manifest carries its component hashes — no longer trusts the declared digest) |
+| Verifier **R1–R13** | `-bcir-verify` + `bcir.verify` | MLIR/C++ + Python (oracle ref) | ✅ dual-rail (R13 **recomputes the provenance digest** AND **cross-checks every component hash** — `m_module`/`m_target`/`m_theta`/`m_policy` — against the in-IR module/capability/theta/policy, byte-identical to `provenance.hash_*`; trusts neither the digest nor the input identities) |
 | Verifier **R14/R15/R16** (CIM dispatch / DVFS clock / alloc placement) | `-bcir-verify` + the `-bcir-lower-to-llvm` checkpoint + oracle | MLIR/C++ + Python | ✅ **first-class `-bcir-verify` laws** (dual-rail with `verify.{verify_cim,verify_dvfs,verify_allocator}`) |
 | K_BCIR **cost model** (`_cost`, candidates, stride/tier) | `-bcir-cost-model` (C++23) | MLIR/C++ | ✅ **ported** (bit-exact: vec16 7808, gather 528384, tile 126976) |
 | K_BCIR **fusion / CSE / deforestation** | `-bcir-cost-model` | MLIR/C++ | ✅ **ported** (7808 / 5888 / 5100) |
@@ -90,7 +90,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | K_BCIR **RCSP / Pareto** (per-claim + plan-level) | `-bcir-rcsp`, `-bcir-rcsp-plan` | MLIR/C++ | ✅ **ported** (9472, {16,8}@17280) |
 | **Bundle** (joint) optimization (`bundle.optimize_bundled`) | `-bcir-bundle` | MLIR/C++ | ✅ **detection + joint-reorder** — reorders the cost columns, re-prices the min-plus path, annotates `kbcir.bundle_gain`/`bundle_order` (`bundle_reorder.mlir`) |
 | **Proof-carrying record** (`proof.explain`) | `-bcir-explain` | MLIR/C++ | ✅ **ported** — per-claim candidates weighed + chosen width/score, per-module total, as IR annotations (`explain.mlir`) |
-| **Compositional** func/if op family (`compose.Function/Call/Cond`) | `kbcir.func` / `kbcir.call` / `kbcir.cond` | MLIR | ✅ **op vocabulary** (round-trips) + **R18 call-graph law** (callee resolution + no recursion; `verify_callgraph.mlir`) — cost stays the oracle ref |
+| **Compositional** semantics (`compose.plan_composite`) | `kbcir.func` / `kbcir.call` / `kbcir.cond` + `-bcir-compose` | MLIR/C++ | ✅ **op vocabulary** + **R18 call-graph law** (callee resolution + no recursion) + **`-bcir-compose`** (compositional cost on the law rail: Seq sum / Cond max+expected / Call inline / Leaf optimize; reproduces plan_composite's worst/expected — `compose_cost.mlir`) |
 | GEM classify / batch / schedule / lower | `-bcir-*` passes | MLIR/C++ | ✅ |
 | GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
@@ -308,11 +308,12 @@ In recommended order — each is gated by the generated differential harness + F
 7. ✅ **Multi-claim bundle (joint) optimization** (§5.3.1). **DONE** — a real 12% matmul
    gain, with search certificates.
 8. ✅ **Proof-carrying records** (§5.3.2). **DONE** — `bcir.run --explain/--replay/--reduce`.
-9. ◑ **Compositional semantics** (§5.3.3) — *deepened* (`kbcir.compose`: Seq/Cond/Call/
-   Function + dynamic shapes, **plus** alias/effect modeling across calls and
-   inter-procedural summary costs; law-rail `kbcir.func`/`call`/`cond` op family + the
-   **R18 call-graph verifier law**: callee resolution + acyclic/no-recursion). **Next:** a
-   planning pass over the func/if ops (compositional cost on the law rail, not just the oracle).
+9. ✅ **Compositional semantics** (§5.3.3) — **DONE on both rails.** Oracle `kbcir.compose`
+   (Seq/Cond/Call/Function + dynamic shapes + alias/effect modeling + inter-procedural summary
+   costs); law rail `kbcir.func`/`call`/`cond` op family, the **R18 call-graph verifier law**
+   (callee resolution + acyclic/no-recursion), and **`-bcir-compose`** — the compositional plan
+   on the law rail (Seq sum / Cond max+expected / Call inline / Leaf optimize), reproducing
+   plan_composite's worst/expected. **Next:** inter-procedural summary costs on the law rail too.
 10. ◑ **MLIR ports of the new oracle capabilities** — bundle **detection + joint-reorder**
     ported (`-bcir-bundle`: it now reorders the cost-model columns so a bundle is contiguous,
     re-runs the min-plus shortest path for every legal intra-bundle order, and annotates the

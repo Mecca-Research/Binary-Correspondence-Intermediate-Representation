@@ -90,6 +90,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRRcspPlanPass.cpp    # plan-level accumulated-budget label-DP
   lib/passes/BCIRBundlePass.cpp      # multi-claim (joint) bundle detection + reorder re-price
   lib/passes/BCIRExplainPass.cpp     # proof-carrying decision record (proof.explain) as IR
+  lib/passes/BCIRComposePass.cpp     # compositional cost over the func/if region tree
   DEPENDS
     BCIRAttrsIncGen
     BCIRTypesIncGen

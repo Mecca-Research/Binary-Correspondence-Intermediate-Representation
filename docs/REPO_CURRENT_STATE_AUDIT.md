@@ -127,6 +127,22 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Full provenance component cross-checks + the compositional plan on the law
+  rail.** Two follow-ups completed. (1) The IR now carries every field the provenance
+  `hash_*` consume: the claim `opcode`, the capability `target_name` + `scalable`, the policy
+  unfolded `base_weights`, and the module `cacheline`/`align` (all defaulted/optional ->
+  back-compatible). R13 in `-bcir-verify` recomputes **all four** component hashes
+  (`hash_module`/`hash_target`/`hash_theta`/`hash_policy`) from the manifest's enclosing
+  `bcir.module` -- byte-identical to the oracle (validated leaf-by-leaf against a real
+  vector_add manifest) -- so a manifest can be re-pointed at neither a different goal graph,
+  target, runtime state, nor policy (`verify_provenance.mlir`: a full real module + opcode/
+  capability tamper negatives; `test_provenance.py` pins the byte-exact algorithm). (2)
+  **`-bcir-compose`** (`BCIRComposePass.cpp`) computes the compositional cost over the
+  `kbcir.func`/`call`/`cond` region tree -- the law-rail `compose.plan_composite`: a region's
+  direct `bcir.claim` leaves are priced by the shared cost model (`fusedColumnsFromClaims` +
+  `planChosen`), `Seq` sums, `Cond` is worst-case max + probability-weighted expected, `Call`
+  inlines; it annotates `kbcir.compose_worst`/`compose_expected`, reproducing the oracle's
+  7808 leaf and 23432/18747 Seq/Cond/Call program (`compose_cost.mlir`). +1 test (602 total).
 - 2026-06-17: **Law-rail deepening: R18 call-graph law + R13 m_theta cross-check.** Two
   follow-ups from the paradigm audit. (1) **R18 (compositional call-graph integrity)** in
   `-bcir-verify`: every `kbcir.call` must resolve to a `kbcir.func` and the call graph must
