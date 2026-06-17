@@ -81,6 +81,10 @@ def BCIR_ResourceOp : BCIR_Op<"resource", [Symbol]> {
   // resource is addressed by its registry symbol (@A) -- the old !bcir.resource handle
   // was vestigial (never consumed), so this op is now a pure symbol.
   let assemblyFormat = "$sym_name attr-dict";
+  // Parse-time structural well-formedness (align is a positive power of two; the shape
+  // extents are positive). Cheaper + earlier than -bcir-verify (which carries the
+  // cross-op R-laws); runs on every parse/builder, not only when the pass is invoked.
+  let hasVerifier = 1;
 }
 
 def BCIR_PhaseOp : BCIR_Op<"phase", [Symbol]> {
