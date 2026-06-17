@@ -42,6 +42,9 @@ std::unique_ptr<mlir::Pass> createBundlePass();
 // -bcir-explain: the proof-carrying decision record (proof.explain) as IR annotations --
 // per claim the candidates weighed + chosen width/score; per module the total plan score.
 std::unique_ptr<mlir::Pass> createExplainPass();
+// -bcir-compose: compositional cost over the kbcir.func/call/cond region tree
+// (compose.plan_composite) -- annotates kbcir.compose_worst / compose_expected per func.
+std::unique_ptr<mlir::Pass> createComposePass();
 std::unique_ptr<mlir::Pass> createBatchPass();
 std::unique_ptr<mlir::Pass> createSchedulePass();
 std::unique_ptr<mlir::Pass> createLowerToLLVMPass();

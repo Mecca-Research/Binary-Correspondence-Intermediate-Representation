@@ -55,7 +55,7 @@ accuracy, contention, verification`.
 | L2 replay gate | `kbcir.portfolio.replay_gate` / `ReplayCertificate` | `bcir.kbcir.replay_certificate` (R9: admitted ⇒ zero regressions) |
 | L2 learned MoE gate | `kbcir.moegate` (`train_gate` GNN / `freeze` Q8 / `gate_replay_gate`) | `bcir.kbcir.moe_gate` (R13: routes certified experts, admitted ⇒ zero regressions) |
 | search accelerator | `kbcir.accel` (`optimize_ordered` B&B / `train_ranker` / `accelerator_certificate`) | `bcir.kbcir.search_accel` (R13: admitted ⇒ zero mismatches; same optimum) |
-| provenance manifest | `kbcir.provenance` (`build_manifest` / `replay` / `reproduces` / `verify_manifest`; `_fnv`/`_digest`/`hash_theta`) | `bcir.kbcir.provenance_manifest` (R13: deployed ⇒ reproduced; manifest equality ⇒ identical plan). When the op carries the four component hashes (`m_module`/`m_target`/`m_theta`/`m_policy`) + artifacts, `-bcir-verify` **recomputes the digest** byte-identically to `provenance._digest` (FNV-1a chain) and rejects a tampered one; it also **cross-checks `m_theta`** against the in-IR `kbcir.theta` op (recomputes `hash_theta` over the eight pressures), so a manifest can't be re-pointed at a different Θ — the law trusts neither the digest nor the runtime-state identity (`verify_provenance.mlir`; pinned by `test_provenance.py`) |
+| provenance manifest | `kbcir.provenance` (`build_manifest` / `replay` / `reproduces` / `verify_manifest`; `_fnv`/`_digest`/`hash_module`/`hash_target`/`hash_theta`/`hash_policy`) | `bcir.kbcir.provenance_manifest` (R13: deployed ⇒ reproduced; manifest equality ⇒ identical plan). When the op carries the four component hashes + artifacts, `-bcir-verify` **recomputes the digest** byte-identically to `provenance._digest`, and **cross-checks every component hash** against the IR — `m_module` from the `bcir.module` (resources/claims incl. the `opcode`), `m_target` from the `target.capability` (incl. `target_name`/`scalable`), `m_theta` from the `kbcir.theta`, `m_policy` from the `kbcir.policy` unfolded `base_weights` — each recomputed byte-identically to the oracle's `hash_*`. So a manifest can be re-pointed at neither a different goal graph, target, Θ, nor policy (`verify_provenance.mlir`; pinned by `test_provenance.py`) |
 | building-blocks engine (e-graph) | `kbcir.egraph` (`EGraph` / `optimize_expr` / `saturate` / `shared_blocks`) | `bcir.egraph.extract` (R9: optimized_cost ≤ original_cost) |
 | memory module (fixpoint) | `kbcir.memory` (`MemoryModule` / `freeze` / `freeze_module` / `is_idempotent` / `memory_artifacts`) + `verify.verify_memory` | `bcir.kbcir.memory_module` (R13: `saturated ⇒ admissible`; `a = Lim(Res(U))`, idempotent, chains into the manifest) |
 | two-truth quarantine (MOPC) | `kbcir.twotruth` (`Graded` / `Decision` / `decide` / `is_classical` / `g_and`/`g_or`/`g_not`) + `verify.verify_quarantine` | `bcir.kbcir.two_truth` (R13: graded `(v,w)` may inform but never *be* a verdict; the only crossing is a recorded `decide`) |
@@ -225,8 +225,13 @@ bundle recovers the shared-input fusion discount the pairwise plan misses;
 per module the plan total — reproducing the pinned 7808 on `vector_add`
 (`explain.mlir`). The `kbcir.func` / `kbcir.call` / `kbcir.cond` op family gives
 `compose.py`'s region tree first-class MLIR form and round-trips through `bcir-opt`
-(`compose_ops.mlir`); the compositional cost stays the Python oracle's conformance
-reference. The **R18** call-graph law (`-bcir-verify`) is the law-rail twin of
+(`compose_ops.mlir`). **`-bcir-compose`** then computes the compositional cost on the law
+rail (`compose.plan_composite`): a region's direct `bcir.claim` leaves are priced by the
+shared K_BCIR cost model (`fusedColumnsFromClaims` + `planChosen` — a Leaf reproduces the
+oracle's 7808), `Seq` sums, `kbcir.cond` is the worst-case max + the probability-weighted
+expected, and `kbcir.call` inlines the callee; it annotates `kbcir.compose_worst` /
+`compose_expected` per func, reproducing `plan_composite`'s 23432 / 18747 on a Seq/Cond/Call
+program (`compose_cost.mlir`). The **R18** call-graph law (`-bcir-verify`) is the law-rail twin of
 `compose.plan_composite`'s rejections — every `kbcir.call` must resolve to a `kbcir.func`
 (the oracle's `KeyError`) and the call graph must be acyclic (the oracle's `RecursionError`,
 pinned oracle-side by `test_compose.py::test_undefined_call_and_recursion_are_rejected`;

@@ -9,8 +9,13 @@ include "mlir/IR/SymbolInterfaces.td"
 
 def BCIR_KBCIRPolicyOp : BCIR_Op<"kbcir.policy", [Symbol]> {
   let summary = "K_BCIR scalarization policy (12 Q16 weights)";
+  // `weights` are the live (Theta-folded) scalarization weights -bcir-plan reads;
+  // `base_weights` are the policy's UNFOLDED base (Policy.base in weights.py), carried so
+  // -bcir-verify can recompute the provenance hash_policy (R13). The policy's name is the
+  // mode spelling (Policy.name == the mode, e.g. "latency"). Optional (back-compatible).
   let arguments = (ins SymbolNameAttr:$sym_name, BCIR_PolicyModeAttr:$mode,
-                       DenseI64ArrayAttr:$weights);
+                       DenseI64ArrayAttr:$weights,
+                       OptionalAttr<DenseI64ArrayAttr>:$base_weights);
   let assemblyFormat = "$sym_name attr-dict";
 }
 

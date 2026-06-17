@@ -134,8 +134,10 @@ the law-rail form of `compose.plan_composite`'s undefined-callee + recursion rej
 R14–R18 are first-class `-bcir-verify` laws, dual-rail with
 `verify.{verify_cim,verify_dvfs,verify_allocator,verify_accuracy}`. R13 additionally
 **recomputes** a manifest's digest from its component hashes (byte-identical to
-`provenance._digest`) and cross-checks `m_theta` against the in-IR `kbcir.theta` op, so the
-digest and the runtime-state identity are never taken on trust. —
+`provenance._digest`) and **cross-checks every component hash** — `m_theta` / `m_policy` /
+`m_target` / `m_module` — against the in-IR `kbcir.theta` / `kbcir.policy` (unfolded
+base) / `target.capability` / `bcir.module` (`hash_*`), so neither the digest nor any input
+identity is taken on trust. —
 every decision rule in force (gain schedule, cost table) carries a generation
 tag and an admitting certificate: a promoted portfolio entry requires its
 replay certificate, a calibrated profile must present its frozen table with

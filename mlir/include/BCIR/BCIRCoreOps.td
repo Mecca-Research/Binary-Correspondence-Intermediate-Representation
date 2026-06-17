@@ -26,7 +26,10 @@ defvar BCIR_ClaimAttrs = (ins
   BCIR_VerifyAttr:$verify,
   BCIR_BoundsAttr:$bounds,
   OptionalAttr<BCIR_PrecisionAttr>:$precision,
-  OptionalAttr<BCIR_CostClassAttr>:$cost_class);
+  OptionalAttr<BCIR_CostClassAttr>:$cost_class,
+  // The model.Opcode integer (model/opcodes.py); carried so -bcir-verify can recompute the
+  // provenance hash_module (R13) from the IR. Defaulted (NOP) so existing IR parses.
+  DefaultValuedAttr<I32Attr, "0">:$opcode);
 
 def BCIR_ModuleOp : BCIR_Op<"module",
     [IsolatedFromAbove, NoTerminator, SymbolTable, Symbol]> {
@@ -36,7 +39,11 @@ def BCIR_ModuleOp : BCIR_Op<"module",
     DefaultValuedAttr<StrAttr, "\"0.1\"">:$version,
     DefaultValuedAttr<StrAttr, "\"registry-first\"">:$target_model,
     DefaultValuedAttr<StrAttr, "\"gem\"">:$execution_model,
-    DefaultValuedAttr<StrAttr, "\"k_bcir\"">:$cost_model);
+    DefaultValuedAttr<StrAttr, "\"k_bcir\"">:$cost_model,
+    // The goal-graph cacheline/align (model.Module); carried for the R13 hash_module
+    // recompute. Defaulted to the model defaults so existing IR is unchanged.
+    DefaultValuedAttr<I32Attr, "64">:$cacheline,
+    DefaultValuedAttr<I32Attr, "64">:$align);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
 }

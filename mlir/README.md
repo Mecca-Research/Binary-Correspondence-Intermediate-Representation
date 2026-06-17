@@ -80,10 +80,18 @@ executable conformance oracle that must agree with these definitions
 >   **R18** verifier law checks the call graph — every `kbcir.call` resolves to a `kbcir.func`
 >   and the graph is acyclic (no recursion), the law-rail twin of `compose.plan_composite`'s
 >   undefined-callee + recursion rejections (`test/passes/verify_callgraph.mlir`).
+> - **Compositional plan (C++23)** — `-bcir-compose` (`lib/passes/BCIRComposePass.cpp`) ports
+>   `compose.plan_composite`: it walks the `kbcir.func`/`call`/`cond` region tree, prices each
+>   region's direct `bcir.claim` leaves with the shared cost model, sums in series, takes the
+>   worst-case max + probability-weighted expected at a `kbcir.cond`, and inlines a
+>   `kbcir.call`; annotates `kbcir.compose_worst`/`compose_expected` per func (reproduces the
+>   oracle's 7808 leaf + 23432/18747 program; `test/passes/compose_cost.mlir`).
 > - **R13 first-principles provenance** — `-bcir-verify` recomputes a `kbcir.provenance_manifest`'s
->   digest from its component hashes (FNV-1a, byte-identical to `provenance._digest`) and
->   cross-checks `m_theta` against the in-IR `kbcir.theta` op, so neither the digest nor the
->   runtime-state identity is taken on trust (`test/passes/verify_provenance.mlir`).
+>   digest from its component hashes (byte-identical to `provenance._digest`) and **cross-checks
+>   every component hash** against the IR — `m_module` from the module (resources/claims incl.
+>   the `opcode`), `m_target` from the capability (incl. `target_name`/`scalable`), `m_theta`
+>   from the `kbcir.theta`, `m_policy` from the policy's unfolded `base_weights` — so neither
+>   the digest nor any input identity is taken on trust (`test/passes/verify_provenance.mlir`).
 
 ## Dual rail
 
