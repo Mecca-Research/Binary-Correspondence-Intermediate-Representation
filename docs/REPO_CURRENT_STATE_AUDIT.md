@@ -127,6 +127,17 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Async token plan + pipelined schedule (`-bcir-async`).** Ports
+  gem.async_tokens.async_plan + schedule.execute_tokens: the !bcir.token fork/await DAG drives a
+  SINGLE cross-phase EFT dispatch (no phase barriers), so an independent claim of a later phase
+  overlaps an earlier one -- software pipelining falls out of the dependency structure.
+  BCIRScheduleEftPass.cpp was refactored to share the placement machinery (buildInfos / eftDispatch
+  / topoPhases as free functions, the dispatch annotating kbcir.<prefix>_*) between -bcir-schedule-eft
+  (phase-barriered) and -bcir-async (pipelined). The async pass annotates kbcir.async_awaits (the
+  awaited claim ids), async_domain/start/finish, and async_makespan. async.mlir: a phase-1
+  independent claim overlaps phase 0 (start 0), a dependent one awaits c1 (start 7808), pipelined
+  makespan 15616 vs 2*7808 phase-barriered. Pinned by test_schedule.py. +1 test (613). The EFT
+  pass's behavior is unchanged (its FileCheck validates the refactor).
 - 2026-06-17: **Tier-2 (3/3): allocator pool-plan on the law rail -- Tier-2 complete.**
   `-bcir-alloc-pool` (`BCIRAllocPoolPass.cpp`) ports `kbcir.allocator.pool_plan`: liveness-based
   memory pooling. It computes each touched resource's [first_phase, last_phase] live range (over

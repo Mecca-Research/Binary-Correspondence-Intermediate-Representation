@@ -107,6 +107,11 @@ executable conformance oracle that must agree with these definitions
 >   annotates `kbcir.sched_domain`/`sched_start`/`sched_finish` + `sched_makespan`/`sched_knee`
 >   (two shared-read compute claims parallel on domains 0/1, makespan 7808;
 >   `test/passes/schedule_eft.mlir`).
+> - **Async pipelined schedule (C++23)** — `-bcir-async` (same file) ports
+>   `gem.async_tokens.async_plan` + `schedule.execute_tokens`: the `!bcir.token` fork/await DAG
+>   drives a single cross-phase dispatch (no phase barriers), so a later-phase independent claim
+>   overlaps an earlier one — software pipelining. Annotates `kbcir.async_awaits` +
+>   `async_domain`/`async_start`/`async_finish` + `async_makespan` (`test/passes/async.mlir`).
 > - **Allocator pool-plan (C++23)** — `-bcir-alloc-pool` (`lib/passes/BCIRAllocPoolPass.cpp`)
 >   ports `kbcir.allocator.pool_plan`: resources with disjoint live ranges (the [first_phase,
 >   last_phase] span) share a memory arena (greedy left-edge), so peak footprint drops below the

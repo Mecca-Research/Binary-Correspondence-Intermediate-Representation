@@ -258,7 +258,12 @@ these derive what it *should* be. `-bcir-schedule-eft` ports `gem.schedule.sched
 duration-aware (HEFT-lite) wave scheduler: LPT priority + earliest-finish placement + locality
 + the bandwidth-knee clamp, annotating `kbcir.sched_domain`/`sched_start`/`sched_finish` per
 claim + `sched_makespan`/`sched_knee` (two shared-read compute claims run parallel on domains
-0/1, makespan 7808 — `schedule_eft.mlir`; pinned by `test_schedule.py`). `-bcir-alloc-pool`
+0/1, makespan 7808 — `schedule_eft.mlir`; pinned by `test_schedule.py`). `-bcir-async` ports
+`gem.async_tokens.async_plan` + `schedule.execute_tokens` — the `!bcir.token` fork/await DAG drives
+a single cross-phase dispatch (no phase barriers), so a later-phase independent claim overlaps an
+earlier one (software pipelining); annotates `kbcir.async_awaits`/`async_domain`/`async_start`/
+`async_finish`/`async_makespan` (a phase-1 independent claim starts at 0, makespan 15616 vs
+2·7808 — `async.mlir`; pinned by `test_schedule.py`). `-bcir-alloc-pool`
 ports `allocator.pool_plan` — liveness-based memory pooling (resources with disjoint live ranges
 share an arena, greedy left-edge), annotating `kbcir.pool_id` per resource + `pool_naive_bytes`/
 `pool_peak_bytes`/`pool_saved` (A/D and B/E share arenas, C its own → peak 12288 vs naive 20480 —
