@@ -72,6 +72,9 @@ def BCIR_GEMLaneSegmentOp : BCIR_Op<"gem.lane_segment", [Symbol]> {
     // (memory-bound) segment must NOT overclock (clock_q8 <= 256).
     DefaultValuedAttr<I32Attr, "256">:$clock_q8);
   let assemblyFormat = "$sym_name attr-dict";
+  // Parse-time well-formedness: the SIMD lane width is a positive power of two, and the
+  // stride class multiplier is positive.
+  let hasVerifier = 1;
 }
 
 #endif // BCIR_GEM_OPS

@@ -31,6 +31,29 @@ using namespace bcir;
 #define GET_OP_CLASSES
 #include "BCIROps.cpp.inc"
 
+// --- op verifiers (hasVerifier=1) ------------------------------------------------
+// Parse-time structural well-formedness, run on every parse/builder. Distinct from
+// -bcir-verify, which carries the cross-op semantic R-laws (RID resolution, the phase
+// DAG, plan legality, ...). These reject a malformed op at the point it is built.
+::mlir::LogicalResult ResourceOp::verify() {
+  int64_t align = getAlign();
+  if (align <= 0 || (align & (align - 1)) != 0)
+    return emitOpError() << "align must be a positive power of two (got " << align << ")";
+  for (int64_t d : getShape())
+    if (d <= 0)
+      return emitOpError() << "shape extents must be positive (got " << d << ")";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult GEMLaneSegmentOp::verify() {
+  int64_t width = getWidth();
+  if (width <= 0 || (width & (width - 1)) != 0)
+    return emitOpError() << "width must be a positive power of two (got " << width << ")";
+  if (getStrideK() <= 0)
+    return emitOpError() << "stride_k must be positive (got " << getStrideK() << ")";
+  return ::mlir::success();
+}
+
 void BCIRDialect::initialize() {
   addOperations<
 #define GET_OP_LIST

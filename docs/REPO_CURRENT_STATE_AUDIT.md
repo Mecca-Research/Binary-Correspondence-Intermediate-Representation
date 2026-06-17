@@ -128,6 +128,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Goal 3 — parse-time op verifiers (`hasVerifier`).** The dialect had no per-op
+  verifiers; all checking lived in the monolithic `-bcir-verify` pass (the cross-op semantic
+  R-laws), which runs only when invoked. Added `hasVerifier = 1` + a `verify()` to the ops with
+  genuinely per-op structural invariants so a malformed op is rejected **at parse/build**, not
+  just under the pass: **`bcir.resource`** (`align` is a positive power of two; `shape` extents
+  are positive) and **`bcir.gem.lane_segment`** (`width` is a positive power of two — the SIMD
+  lane width; `stride_k` is positive). New `mlir/test/passes/verify_ops.mlir` (6 negative
+  `-verify-diagnostics` cases) + a `check_passes.sh` gate. The whole positive corpus already
+  satisfies these (every `align = 64`, every shape/width positive pow2, every `stride_k = 1`),
+  so nothing was rejected; verified on **true MLIR 22.1.7** with the full rail green and 617
+  oracle tests unchanged. The pattern extends to further ops as a follow-up.
+
 - 2026-06-17: **Goal 2 complete — all optimizer passes share the plan analysis.** Migrated the
   remaining consumers onto `cm::PlanAnalysis` (following the validated cost/plan/overlap
   pattern): `-bcir-rcsp-plan` (cols/θ/w for its constrained label-DP), `-bcir-cim` (needs only

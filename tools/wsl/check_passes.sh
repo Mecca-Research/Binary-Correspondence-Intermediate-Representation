@@ -29,6 +29,10 @@ echo "[passes] -bcir-verify negative cases (-verify-diagnostics)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_callgraph.mlir" \
   && echo "  PASS verify_callgraph (R18 callee resolution + recursion)" || { echo "  FAIL verify_callgraph"; fail=1; }
 
+echo "[passes] parse-time op verifiers (hasVerifier structural well-formedness)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/verify_ops.mlir" \
+  && echo "  PASS verify_ops (resource align/shape)" || { echo "  FAIL verify_ops"; fail=1; }
+
 echo "[passes] -bcir-verify on the pretty corpus (must be clean)"
 for f in "${ROOT}"/mlir/examples/*.mlir; do
   "${BO}" -bcir-verify "${f}" >/dev/null 2>/tmp/pe \
