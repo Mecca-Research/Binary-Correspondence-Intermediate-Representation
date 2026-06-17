@@ -9,11 +9,18 @@
 //   Seq  (the ops in a region, in series)     : the SUM of their costs.
 //   Cond (kbcir.cond)                          : worst-case = PRED + max(then, else); the
 //                                               expected = PRED + prob-weighted branch cost.
-//   Call (kbcir.call)                          : the callee kbcir.func's cost (inlined, memoized).
+//   Call (kbcir.call)                          : INTER-PROCEDURAL SUMMARY -- a kbcir.func is
+//                                               planned ONCE over its formals (memoized); a
+//                                               call whose actuals are cost-compatible with
+//                                               the formals (same domain / element-count /
+//                                               access -- compose._cost_key) reuses that
+//                                               summary, else the body is re-priced with the
+//                                               actuals substituted (the inline fallback).
 //
-// Annotates each kbcir.func with kbcir.compose_worst (a hard latency bound) + kbcir.compose_
-// expected (the probability-weighted cost). Reproduces the oracle: a Leaf([vector_add]) func
-// prices to exactly 7808, and a Seq/Cond/Call program to plan_composite's worst/expected.
+// Annotates each kbcir.func with kbcir.compose_worst (a hard latency bound), kbcir.compose_
+// expected (the probability-weighted cost), and kbcir.compose_reused (leaf plans saved by
+// summary reuse). Reproduces the oracle: a Leaf([vector_add]) func prices to exactly 7808,
+// and a program reusing a func for a compatible call + re-pricing an HBM call to 10624 / 1.
 //
 //===----------------------------------------------------------------------===//
 
@@ -26,10 +33,10 @@
 #include "mlir/IR/BuiltinOps.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
-#include <utility>
 
 using namespace mlir;
 
@@ -39,6 +46,29 @@ namespace {
 // compose.PRED_COST: the fixed control-flow predicate overhead (score units).
 static constexpr int64_t kPredCost = 8;
 
+// A region's compositional cost (compose.CompositeResult): a hard worst-case bound, the
+// probability-weighted expected cost, the planned-leaf count, and the leaves saved by reuse.
+struct CC {
+  int64_t worst = 0, expected = 0, leaves = 0, reused = 0;
+};
+
+// compose._cost_key equality: a summary is reusable for an actual iff it matches the formal
+// on (domain, element count = product(shape), access).
+static bool costKeyEq(ResourceOp a, ResourceOp b) {
+  if (a.getDomainKind() != b.getDomainKind())
+    return false;
+  int64_t ca = 1, cb = 1;
+  for (int64_t d : a.getShape())
+    ca *= d;
+  for (int64_t d : b.getShape())
+    cb *= d;
+  if (ca != cb)
+    return false;
+  bool ha = a.getAccess() && *a.getAccess() == Access::HAM;
+  bool hb = b.getAccess() && *b.getAccess() == Access::HAM;
+  return ha == hb;
+}
+
 struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ComposePass)
 
@@ -46,7 +76,8 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
   StringRef getDescription() const final {
     return "Compositional cost over the kbcir.func/call/cond region tree (the law-rail "
            "compose.plan_composite): Seq = sum, Cond = worst-case max + probability-weighted "
-           "expected, Call = inline, Leaf = optimize; annotates kbcir.compose_worst/expected.";
+           "expected, Call = inter-procedural summary (plan once, reuse for cost-compatible "
+           "calls, else re-price); annotates kbcir.compose_worst/expected/reused.";
   }
 
   cm::Cap h;
@@ -54,7 +85,8 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
   int64_t theta = 0;
   llvm::DenseMap<StringRef, ResourceOp> resByName;
   llvm::DenseMap<StringRef, Operation *> funcByName;
-  llvm::DenseMap<StringRef, std::pair<int64_t, int64_t>> memo; // func -> (worst, expected)
+  llvm::DenseMap<StringRef, CC> memo; // func -> its summary (planned once over its formals)
+  llvm::DenseMap<StringRef, StringRef> emptySubst;
 
   void runOnOperation() override {
     Builder b(&getContext());
@@ -78,55 +110,119 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
     memo.clear();
     root->walk([&](KBCIRFuncOp f) { funcByName[f.getSymName()] = f.getOperation(); });
     for (auto &kv : funcByName) {
-      std::pair<int64_t, int64_t> cost = funcCost(kv.first, 0);
-      kv.second->setAttr("kbcir.compose_worst", b.getI64IntegerAttr(cost.first));
-      kv.second->setAttr("kbcir.compose_expected", b.getI64IntegerAttr(cost.second));
+      CC c = funcSummary(kv.first, 0);
+      kv.second->setAttr("kbcir.compose_worst", b.getI64IntegerAttr(c.worst));
+      kv.second->setAttr("kbcir.compose_expected", b.getI64IntegerAttr(c.expected));
+      kv.second->setAttr("kbcir.compose_reused", b.getI64IntegerAttr(c.reused));
     }
   }
 
-  std::pair<int64_t, int64_t> funcCost(StringRef name, int depth) {
+  // A function's summary: its body planned ONCE over its formals (no substitution), memoized.
+  CC funcSummary(StringRef name, int depth) {
     auto it = memo.find(name);
     if (it != memo.end())
       return it->second;
     Operation *f = funcByName.lookup(name);
     if (!f || depth > 64)
-      return {0, 0};
-    memo[name] = {0, 0}; // break any cycle (R18 rejects recursion; be safe regardless)
-    std::pair<int64_t, int64_t> cost = regionCost(f->getRegion(0).front(), depth);
-    memo[name] = cost;
-    return cost;
+      return {};
+    memo[name] = {}; // break any cycle (R18 rejects recursion; be safe regardless)
+    CC c = regionCost(f->getRegion(0).front(), depth, emptySubst);
+    memo[name] = c;
+    return c;
   }
 
-  std::pair<int64_t, int64_t> regionCost(Block &block, int depth) {
-    int64_t worst = 0, expected = 0;
-    // Leaf: the region's direct bcir.claim ops, priced as one parallel block.
+  CC regionCost(Block &block, int depth, const llvm::DenseMap<StringRef, StringRef> &subst) {
+    CC acc;
+    // Leaf: the region's direct bcir.claim ops, priced (with the substitution) as one block.
     SmallVector<ClaimOp> leaf;
     for (Operation &op : block)
       if (auto c = dyn_cast<ClaimOp>(&op))
         leaf.push_back(c);
     if (!leaf.empty()) {
-      std::vector<cm::Column> cols = cm::fusedColumnsFromClaims(leaf, h, resByName);
+      std::vector<cm::Column> cols = cm::fusedColumnsFromClaims(leaf, h, resByName, subst);
       int64_t total = 0;
       cm::planChosen(cols, w, theta, total);
-      worst += total;
-      expected += total;
+      acc.worst += total;
+      acc.expected += total;
+      acc.leaves += 1;
     }
     // Series composition with the nested control flow / calls.
     for (Operation &op : block) {
       if (auto cond = dyn_cast<KBCIRCondOp>(&op)) {
-        std::pair<int64_t, int64_t> t = regionCost(cond.getThenRegion().front(), depth + 1);
-        std::pair<int64_t, int64_t> e = regionCost(cond.getElseRegion().front(), depth + 1);
+        CC t = regionCost(cond.getThenRegion().front(), depth + 1, subst);
+        CC e = regionCost(cond.getElseRegion().front(), depth + 1, subst);
         int64_t p = std::max<int64_t>(
             0, std::min<int64_t>(1000, static_cast<int64_t>(cond.getProbThenMilli())));
-        worst += kPredCost + std::max(t.first, e.first);
-        expected += kPredCost + (p * t.second + (1000 - p) * e.second) / 1000;
+        acc.worst += kPredCost + std::max(t.worst, e.worst);
+        acc.expected += kPredCost + (p * t.expected + (1000 - p) * e.expected) / 1000;
+        acc.leaves += t.leaves + e.leaves;
+        acc.reused += t.reused + e.reused;
       } else if (auto call = dyn_cast<KBCIRCallOp>(&op)) {
-        std::pair<int64_t, int64_t> c = funcCost(call.getCallee(), depth + 1);
-        worst += c.first;
-        expected += c.second;
+        llvm::DenseMap<StringRef, StringRef> amap; // formal -> effective actual (composed)
+        buildAmap(call, subst, amap);
+        StringRef callee = call.getCallee();
+        Operation *cf = funcByName.lookup(callee);
+        if (!cf)
+          continue; // undefined callee: R18 rejects it; contribute nothing
+        if (summaryApplies(cf, amap)) {
+          CC s = funcSummary(callee, depth + 1); // reuse the once-planned cost
+          acc.worst += s.worst;
+          acc.expected += s.expected;
+          acc.reused += s.reused + s.leaves; // the leaf plans this call site saved
+        } else {
+          CC inl = regionCost(cf->getRegion(0).front(), depth + 1, amap); // re-price inlined
+          acc.worst += inl.worst;
+          acc.expected += inl.expected;
+          acc.leaves += inl.leaves;
+          acc.reused += inl.reused;
+        }
       }
     }
-    return {worst, expected};
+    return acc;
+  }
+
+  // Compose a call's (formal -> actual) map with the enclosing substitution (so an inner
+  // call's actuals are themselves remapped -- compose._inline).
+  void buildAmap(KBCIRCallOp call, const llvm::DenseMap<StringRef, StringRef> &subst,
+                 llvm::DenseMap<StringRef, StringRef> &out) {
+    ArrayAttr formals = call.getFormalsAttr();
+    ArrayAttr actuals = call.getActualsAttr();
+    if (!formals || !actuals)
+      return;
+    for (size_t i = 0; i < formals.size() && i < actuals.size(); ++i) {
+      auto f = dyn_cast<FlatSymbolRefAttr>(formals[i]);
+      auto a = dyn_cast<FlatSymbolRefAttr>(actuals[i]);
+      if (!f || !a)
+        continue;
+      StringRef actualSym = a.getValue();
+      auto it = subst.find(actualSym);
+      if (it != subst.end())
+        actualSym = it->second;
+      out[f.getValue()] = actualSym;
+    }
+  }
+
+  // compose._summary_applies: the summary's cost is exact for this call iff every formal the
+  // callee touches has an actual with the same cost-key (a formal absent from the map maps to
+  // itself, trivially matching).
+  bool summaryApplies(Operation *calleeFunc,
+                      const llvm::DenseMap<StringRef, StringRef> &amap) {
+    llvm::DenseSet<StringRef> footprint;
+    calleeFunc->walk([&](ClaimOp c) {
+      for (ArrayAttr refs : {c.getReads(), c.getWrites()})
+        for (Attribute a : refs)
+          if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
+            footprint.insert(ref.getValue());
+    });
+    for (auto &kv : amap) {
+      if (!footprint.count(kv.first))
+        continue;
+      ResourceOp rf = resByName.lookup(kv.first);
+      ResourceOp ra = resByName.lookup(kv.second);
+      if (!rf || !ra || !costKeyEq(rf, ra))
+        return false;
+    }
+    return true;
   }
 };
 
