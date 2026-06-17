@@ -101,6 +101,12 @@ executable conformance oracle that must agree with these definitions
 >   models core-vs-PIM cost for a reduction (`gem.cim`, offload at count 4096) and `-bcir-dvfs`
 >   classifies each phase's compute:memory intensity into a Q8 clock (`gem.dvfs`, a bandwidth-
 >   bound phase downclocks to 192). `test/passes/cim.mlir`, `dvfs.mlir`.
+> - **EFT schedule (C++23)** — `-bcir-schedule-eft` (`lib/passes/BCIRScheduleEftPass.cpp`) ports
+>   `gem.schedule.schedule_eft`: plan for per-claim durations, then per phase run LPT list
+>   scheduling with earliest-finish placement, locality tie-breaks, and the bandwidth-knee clamp;
+>   annotates `kbcir.sched_domain`/`sched_start`/`sched_finish` + `sched_makespan`/`sched_knee`
+>   (two shared-read compute claims parallel on domains 0/1, makespan 7808;
+>   `test/passes/schedule_eft.mlir`).
 > - **R13 first-principles provenance** — `-bcir-verify` recomputes a `kbcir.provenance_manifest`'s
 >   digest from its component hashes (byte-identical to `provenance._digest`) and **cross-checks
 >   every component hash** against the IR — `m_module` from the module (resources/claims incl.

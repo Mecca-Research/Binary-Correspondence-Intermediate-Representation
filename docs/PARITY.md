@@ -254,7 +254,11 @@ The **GEM scheduling decisions** are recomputed, not just verified: `-bcir-cim` 
 (per-phase compute:memory intensity → a Q8 clock → `kbcir.dvfs_class`/`dvfs_clock`; a
 bandwidth-bound `vector_add` phase downclocks to 192 — `dvfs.mlir`; constants pinned by
 `test_cim.py`). R14/R15 still verify the declared dispatch/clock is *legal* (defense in depth);
-these derive what it *should* be.
+these derive what it *should* be. `-bcir-schedule-eft` ports `gem.schedule.schedule_eft` — the
+duration-aware (HEFT-lite) wave scheduler: LPT priority + earliest-finish placement + locality
++ the bandwidth-knee clamp, annotating `kbcir.sched_domain`/`sched_start`/`sched_finish` per
+claim + `sched_makespan`/`sched_knee` (two shared-read compute claims run parallel on domains
+0/1, makespan 7808 — `schedule_eft.mlir`; pinned by `test_schedule.py`).
 
 The **R18** call-graph law (`-bcir-verify`) is the law-rail twin of
 `compose.plan_composite`'s rejections — every `kbcir.call` must resolve to a `kbcir.func`

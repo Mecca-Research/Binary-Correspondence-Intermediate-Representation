@@ -92,6 +92,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRExplainPass.cpp     # proof-carrying decision record (proof.explain) as IR
   lib/passes/BCIRComposePass.cpp     # compositional cost over the func/if region tree
   lib/passes/BCIRCimDvfsPass.cpp     # recompute CIM/PIM dispatch + DVFS clock (gem.cim/dvfs)
+  lib/passes/BCIRScheduleEftPass.cpp # duration-aware EFT wave scheduling (gem.schedule)
   DEPENDS
     BCIRAttrsIncGen
     BCIRTypesIncGen

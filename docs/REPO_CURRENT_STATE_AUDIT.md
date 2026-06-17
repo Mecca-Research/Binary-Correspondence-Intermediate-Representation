@@ -127,6 +127,16 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Tier-2 (2/3): EFT duration-aware schedule on the law rail.** `-bcir-schedule-eft`
+  (`BCIRScheduleEftPass.cpp`) ports `gem.schedule.schedule_eft` -- the HEFT-lite refinement of CT2
+  wave formation. It plans the module for per-claim durations (the chosen edge costs), then per
+  phase (topo order) runs an event-driven list scheduler: LPT priority (longest duration first),
+  earliest-finish-time domain placement, locality tie-breaks (the deduped operand-RID overlap with
+  each domain's resident set), and the bandwidth-knee clamp (bandwidth-class claims contend for
+  min(affinity_domains, mem_channels) slots, compute for all); the GGG/random tail runs decoupled
+  on its own stream; phases compose serially. Annotates kbcir.sched_domain/start/finish per claim +
+  sched_makespan/knee per module. `schedule_eft.mlir` (two shared-read compute claims -> domain 0
+  @7808 / domain 1 @5888, makespan 7808, knee 4); `test_schedule.py` pins the constants. +1 test (611).
 - 2026-06-17: **Tier-2 (1/3): CIM/PIM dispatch + DVFS clock DECISION recompute.** Two new
   passes recompute the GEM scheduling decisions from the IR -- the way `-bcir-cost-model`
   recomputes cost -- instead of R14/R15 only *verifying* a declared attr. (1) **`-bcir-cim`**
