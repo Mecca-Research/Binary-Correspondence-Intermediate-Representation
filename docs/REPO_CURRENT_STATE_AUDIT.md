@@ -127,6 +127,16 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Inter-procedural summary costs in `-bcir-compose`.** `kbcir.call` is no longer
+  a plain inline: a `kbcir.func` is planned **once** over its formals (memoized -- the
+  summary), and a call whose actuals are **cost-compatible** with the formals (same
+  `compose._cost_key`: domain / element-count / access -- `costKeyEq`) reuses that summary;
+  an incompatible call (e.g. an HBM actual where the formal was DRAM) re-prices the body with
+  the actuals substituted (`fusedColumnsFromClaims` gained a `subst` remap). It annotates a new
+  `kbcir.compose_reused` (leaf plans saved) alongside `compose_worst`/`expected`. Reproduces
+  the oracle's `plan_composite(summaries=...)`: a 7808 summary reused for a DRAM call + re-priced
+  to 2816 for an HBM call -> 10624 / reused 1 (`compose_summary.mlir`, pinned by
+  `test_compose.py`). +1 test (603 total). With this, compositional semantics is fully dual-rail.
 - 2026-06-17: **Full provenance component cross-checks + the compositional plan on the law
   rail.** Two follow-ups completed. (1) The IR now carries every field the provenance
   `hash_*` consume: the claim `opcode`, the capability `target_name` + `scalable`, the policy

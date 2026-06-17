@@ -229,9 +229,13 @@ per module the plan total — reproducing the pinned 7808 on `vector_add`
 rail (`compose.plan_composite`): a region's direct `bcir.claim` leaves are priced by the
 shared K_BCIR cost model (`fusedColumnsFromClaims` + `planChosen` — a Leaf reproduces the
 oracle's 7808), `Seq` sums, `kbcir.cond` is the worst-case max + the probability-weighted
-expected, and `kbcir.call` inlines the callee; it annotates `kbcir.compose_worst` /
-`compose_expected` per func, reproducing `plan_composite`'s 23432 / 18747 on a Seq/Cond/Call
-program (`compose_cost.mlir`). The **R18** call-graph law (`-bcir-verify`) is the law-rail twin of
+expected, and `kbcir.call` is an **inter-procedural summary** — a `kbcir.func` is planned
+**once** over its formals (memoized) and a call whose actuals are cost-compatible (same
+`compose._cost_key`: domain / element-count / access) reuses that summary, else the body is
+re-priced with the actuals substituted; it annotates `kbcir.compose_worst` / `compose_expected`
+/ `compose_reused` per func, reproducing `plan_composite`'s 23432 / 18747 (`compose_cost.mlir`)
+and the reuse-vs-re-price 10624 / reused 1 (`compose_summary.mlir`; pinned by `test_compose.py`).
+The **R18** call-graph law (`-bcir-verify`) is the law-rail twin of
 `compose.plan_composite`'s rejections — every `kbcir.call` must resolve to a `kbcir.func`
 (the oracle's `KeyError`) and the call graph must be acyclic (the oracle's `RecursionError`,
 pinned oracle-side by `test_compose.py::test_undefined_call_and_recursion_are_rejected`;

@@ -322,11 +322,18 @@ fusedColumns(Operation *root, const Cap &h,
 }
 
 // Like fusedColumns, but over an explicit claim list treated as a single parallel block (a
-// compose `Leaf`): the same intra-block deforestation/CSE credits, no phase grouping. Used by
-// -bcir-compose to price a region's leaf claims (realize.optimize of one phase).
+// compose `Leaf`): the same intra-block deforestation/CSE credits, no phase grouping. `subst`
+// remaps a claim's read/write symbols (formal -> actual), so -bcir-compose can re-price a
+// callee body against a call's actual resources (the inter-procedural inline fallback); pass
+// an empty map for no substitution. Used by -bcir-compose (realize.optimize of one phase).
 inline std::vector<Column>
 fusedColumnsFromClaims(ArrayRef<ClaimOp> claims, const Cap &h,
-                       const llvm::DenseMap<StringRef, ResourceOp> &resByName) {
+                       const llvm::DenseMap<StringRef, ResourceOp> &resByName,
+                       const llvm::DenseMap<StringRef, StringRef> &subst) {
+  auto remap = [&](StringRef s) -> StringRef {
+    auto it = subst.find(s);
+    return it != subst.end() ? it->second : s;
+  };
   std::vector<Column> cols;
   llvm::DenseSet<StringRef> produced;
   llvm::DenseMap<StringRef, int> version;
@@ -335,8 +342,13 @@ fusedColumnsFromClaims(ArrayRef<ClaimOp> claims, const Cap &h,
     Column col;
     col.claim = c;
     col.phase = 0;
-    symRefs(c.getReads(), col.reads);
-    symRefs(c.getWrites(), col.writes);
+    SmallVector<StringRef> rawReads, rawWrites;
+    symRefs(c.getReads(), rawReads);
+    symRefs(c.getWrites(), rawWrites);
+    for (StringRef r : rawReads)
+      col.reads.push_back(remap(r));
+    for (StringRef wsym : rawWrites)
+      col.writes.push_back(remap(wsym));
     Domain dom = c.getDomain();
     bool ham = false;
     if (!col.reads.empty())
@@ -370,10 +382,10 @@ fusedColumnsFromClaims(ArrayRef<ClaimOp> claims, const Cap &h,
     }
     if (!col.reads.empty())
       seen.insert(sig);
-    for (StringRef w : col.writes)
-      version[w] = version.lookup(w) + 1;
-    for (StringRef w : col.writes)
-      produced.insert(w);
+    for (StringRef wsym : col.writes)
+      version[wsym] = version.lookup(wsym) + 1;
+    for (StringRef wsym : col.writes)
+      produced.insert(wsym);
     cols.push_back(std::move(col));
   }
   return cols;

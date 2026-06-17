@@ -186,3 +186,23 @@ def test_summary_falls_back_to_inline_for_incompatible_args():
     r = plan_composite(Call("ew", ((1, 40), (2, 41), (3, 42))), {"ew": fn}, res, AVX, COOL,
                        summaries={"ew": summ})
     assert r.leaves == 1 and r.reused == 0                     # re-planned, not reused
+
+
+def test_summary_reuse_plus_hbm_reprice_matches_the_mlir_compose_pass():
+    """Pins the constants in mlir/test/passes/compose_summary.mlir: a func summarized to 7808,
+    reused for a DRAM call and re-priced to 2816 for an HBM call -> worst 10624, reused 1
+    (the law-rail -bcir-compose must reproduce this)."""
+    fn = Function("ew", Leaf((_add(1, 1, 2, 3),)))
+    formals = {r: Resource(rid=r, domain=Domain.RAM, shape=(1024,)) for r in (1, 2, 3)}
+    summ = summarize(fn, {"ew": fn}, formals, AVX, COOL)
+    assert summ.cost.worst_cost == 7808
+    res = {10: Resource(rid=10, domain=Domain.RAM, shape=(1024,)),
+           11: Resource(rid=11, domain=Domain.RAM, shape=(1024,)),
+           12: Resource(rid=12, domain=Domain.RAM, shape=(1024,)),
+           20: Resource(rid=20, domain=Domain.HBM, shape=(1024,)),
+           21: Resource(rid=21, domain=Domain.HBM, shape=(1024,)),
+           22: Resource(rid=22, domain=Domain.HBM, shape=(1024,))}
+    prog = Seq((Call("ew", ((1, 10), (2, 11), (3, 12))),     # DRAM -> reuse
+                Call("ew", ((1, 20), (2, 21), (3, 22)))))     # HBM  -> re-price
+    r = plan_composite(prog, {"ew": fn}, res, AVX, COOL, summaries={"ew": summ})
+    assert r.worst_cost == r.expected_cost == 10624 and r.reused == 1 and r.leaves == 1

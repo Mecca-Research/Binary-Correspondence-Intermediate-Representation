@@ -83,9 +83,12 @@ executable conformance oracle that must agree with these definitions
 > - **Compositional plan (C++23)** — `-bcir-compose` (`lib/passes/BCIRComposePass.cpp`) ports
 >   `compose.plan_composite`: it walks the `kbcir.func`/`call`/`cond` region tree, prices each
 >   region's direct `bcir.claim` leaves with the shared cost model, sums in series, takes the
->   worst-case max + probability-weighted expected at a `kbcir.cond`, and inlines a
->   `kbcir.call`; annotates `kbcir.compose_worst`/`compose_expected` per func (reproduces the
->   oracle's 7808 leaf + 23432/18747 program; `test/passes/compose_cost.mlir`).
+>   worst-case max + probability-weighted expected at a `kbcir.cond`, and treats `kbcir.call`
+>   as an **inter-procedural summary** — a func is planned once over its formals and reused for
+>   cost-compatible calls (`compose._cost_key`), else re-priced with the actuals substituted;
+>   annotates `kbcir.compose_worst`/`compose_expected`/`compose_reused` per func (reproduces the
+>   oracle's 7808 leaf, the 23432/18747 program, and reuse-vs-re-price 10624/1;
+>   `test/passes/compose_cost.mlir`, `compose_summary.mlir`).
 > - **R13 first-principles provenance** — `-bcir-verify` recomputes a `kbcir.provenance_manifest`'s
 >   digest from its component hashes (byte-identical to `provenance._digest`) and **cross-checks
 >   every component hash** against the IR — `m_module` from the module (resources/claims incl.
