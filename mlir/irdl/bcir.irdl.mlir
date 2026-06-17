@@ -14,10 +14,17 @@
 //  * IRDL uses *named* `irdl.operands/results/regions` (`name: %value`); the
 //    variadicity marker precedes the value (`name: variadic %v`). (LLVM <=19 used
 //    a positional form; MLIR 22 made the names mandatory.)
+//  * MLIR 22's IRDL forbids dots in operation names (`isValidName`: lowercase /
+//    digits / underscores only). The real ODS + `bcir-opt` dialect keeps its dotted
+//    op names (`bcir.target.capability`, `bcir.kbcir.policy`, ...); this *projection*
+//    flattens the dot to an underscore (`bcir.target_capability`,
+//    `bcir.kbcir_policy`, ...) so the structural rail still loads under stock
+//    `mlir-opt`. The generic-syntax corpus in test/irdl/ uses the same flattened
+//    names. The dotted taxonomy remains the source of truth on the compiled rail.
 //  * An IRDL dialect shares one symbol table across types and ops, so a type and
 //    an op cannot both be named `resource`. We use a single opaque `!bcir.handle`
-//    type for every handle-producing op (resource / kbcir.path / kbcir.select /
-//    gem.stream_pack); ops are otherwise unconstrained `irdl.any`.
+//    type for every handle-producing op (resource / kbcir_path / kbcir_select /
+//    gem_stream_pack); ops are otherwise unconstrained `irdl.any`.
 //  * Structural only: no `irdl.c_pred` (it requires compiled C++ and blocks
 //    runtime registration). Deep semantics stay in the ODS + bcir-opt rail and in
 //    the bcir/ oracle.
@@ -69,131 +76,131 @@ irdl.dialect @bcir {
   irdl.operation @barrier
 
   // ---- CT1: target-open container + memory hierarchy ----
-  irdl.operation @"target.capability"
-  irdl.operation @"mem.tier"
-  irdl.operation @"mem.ham"
-  irdl.operation @"mem.cxl_swap"
+  irdl.operation @target_capability
+  irdl.operation @mem_tier
+  irdl.operation @mem_ham
+  irdl.operation @mem_cxl_swap
 
   // ---- BCIR-3: K_BCIR planning ----
-  irdl.operation @"kbcir.policy"
-  irdl.operation @"kbcir.plan" {
+  irdl.operation @kbcir_policy
+  irdl.operation @kbcir_plan {
     %body = irdl.region
     irdl.regions(body: %body)
   }
-  irdl.operation @"kbcir.path" {
+  irdl.operation @kbcir_path {
     %h = irdl.any
     irdl.results(h: %h)
   }
-  irdl.operation @"kbcir.select" {
+  irdl.operation @kbcir_select {
     %h = irdl.any
     irdl.results(h: %h)
   }
   // Constrained (RCSP) rail: B(H,Theta) caps + the (max,+) overlap price.
-  irdl.operation @"kbcir.budget"
-  irdl.operation @"kbcir.scheduled_price"
+  irdl.operation @kbcir_budget
+  irdl.operation @kbcir_scheduled_price
   // The temperature dial: the soft log-sum-exp twin of the tropical select.
-  irdl.operation @"kbcir.soft_select"
+  irdl.operation @kbcir_soft_select
   // Learning placement (LangRef Sec. 13): L1 frozen tables + L2 portfolio/gate
   // + the L3 regret ledger (the boundary dashboard).
-  irdl.operation @"kbcir.calibration"
-  irdl.operation @"kbcir.portfolio"
-  irdl.operation @"kbcir.replay_certificate"
-  irdl.operation @"kbcir.regret_ledger"
+  irdl.operation @kbcir_calibration
+  irdl.operation @kbcir_portfolio
+  irdl.operation @kbcir_replay_certificate
+  irdl.operation @kbcir_regret_ledger
   // The learned MoE gate: a GNN router over the claim graph (the ensemble).
-  irdl.operation @"kbcir.moe_gate"
+  irdl.operation @kbcir_moe_gate
   // The propose-verify search accelerator: a learned candidate ordering.
-  irdl.operation @"kbcir.search_accel"
+  irdl.operation @kbcir_search_accel
   // The provenance manifest: the commit hash of a plan (R13 reproducibility).
-  irdl.operation @"kbcir.provenance_manifest"
+  irdl.operation @kbcir_provenance_manifest
   // The L1 cost throttle: a learned component's amortization certificate.
-  irdl.operation @"kbcir.amortization"
+  irdl.operation @kbcir_amortization
 
   // ---- BCIR-4: GEM StreamPack ----
-  irdl.operation @"gem.stream_pack" {
+  irdl.operation @gem_stream_pack {
     %h = irdl.any
     %body = irdl.region
     irdl.results(h: %h)
     irdl.regions(body: %body)
   }
-  irdl.operation @"gem.prefetch"
-  irdl.operation @"gem.block"
-  irdl.operation @"gem.lane_segment"
+  irdl.operation @gem_prefetch
+  irdl.operation @gem_block
+  irdl.operation @gem_lane_segment
   // Duration-aware schedule certificate (EFT waves / token DAG, knee, pipeline).
-  irdl.operation @"gem.schedule"
-  irdl.operation @"trace.note"
-  irdl.operation @"trace.data_dna"
+  irdl.operation @gem_schedule
+  irdl.operation @trace_note
+  irdl.operation @trace_data_dna
 
   // ---- M5: Event Transduction Layer (structural; loose by design) ----
-  irdl.operation @"event.stream"
-  irdl.operation @"event.kind"
-  irdl.operation @"event.emit"
-  irdl.operation @"event.consume"
+  irdl.operation @event_stream
+  irdl.operation @event_kind
+  irdl.operation @event_emit
+  irdl.operation @event_consume
 
-  irdl.operation @"fsm.machine" {
+  irdl.operation @fsm_machine {
     %body = irdl.region
     irdl.regions(body: %body)
   }
-  irdl.operation @"fsm.state"
-  irdl.operation @"fsm.transition"
-  irdl.operation @"fsm.stack"
-  irdl.operation @"fsm.capture"
-  irdl.operation @"fsm.reduce"
+  irdl.operation @fsm_state
+  irdl.operation @fsm_transition
+  irdl.operation @fsm_stack
+  irdl.operation @fsm_capture
+  irdl.operation @fsm_reduce
 
-  irdl.operation @"parse.grammar" {
+  irdl.operation @parse_grammar {
     %body = irdl.region
     irdl.regions(body: %body)
   }
-  irdl.operation @"parse.token"
-  irdl.operation @"parse.rule"
-  irdl.operation @"parse.lower_to_fsm"
+  irdl.operation @parse_token
+  irdl.operation @parse_rule
+  irdl.operation @parse_lower_to_fsm
 
-  irdl.operation @"binary.format" {
+  irdl.operation @binary_format {
     %body = irdl.region
     irdl.regions(body: %body)
   }
-  irdl.operation @"binary.field"
-  irdl.operation @"binary.record"
-  irdl.operation @"binary.decode"
+  irdl.operation @binary_field
+  irdl.operation @binary_record
+  irdl.operation @binary_decode
 
   // ---- M1: verifier obligations as IR (R1-R12) ----
-  irdl.operation @"verify.registry_symbols"
-  irdl.operation @"verify.resource_domain"
-  irdl.operation @"verify.phase_dag"
-  irdl.operation @"verify.claim_contract"
-  irdl.operation @"verify.lane_stride"
-  irdl.operation @"verify.bounds"
-  irdl.operation @"verify.mem_tier"
-  irdl.operation @"verify.target_capability"
-  irdl.operation @"verify.cost_vector"
-  irdl.operation @"verify.plan_selection"
-  irdl.operation @"verify.stream_provenance"
-  irdl.operation @"verify.generation_tags"
-  irdl.operation @"verify.policy_provenance"
+  irdl.operation @verify_registry_symbols
+  irdl.operation @verify_resource_domain
+  irdl.operation @verify_phase_dag
+  irdl.operation @verify_claim_contract
+  irdl.operation @verify_lane_stride
+  irdl.operation @verify_bounds
+  irdl.operation @verify_mem_tier
+  irdl.operation @verify_target_capability
+  irdl.operation @verify_cost_vector
+  irdl.operation @verify_plan_selection
+  irdl.operation @verify_stream_provenance
+  irdl.operation @verify_generation_tags
+  irdl.operation @verify_policy_provenance
 
   // ---- M2: optimization law as IR ----
-  irdl.operation @"opt.pipeline"
-  irdl.operation @"opt.rewrite_rule"
-  irdl.operation @"opt.layout_rule"
-  irdl.operation @"opt.mem_rule"
-  irdl.operation @"opt.choice"
+  irdl.operation @opt_pipeline
+  irdl.operation @opt_rewrite_rule
+  irdl.operation @opt_layout_rule
+  irdl.operation @opt_mem_rule
+  irdl.operation @opt_choice
   // The building-blocks engine: equality-saturation extraction.
-  irdl.operation @"egraph.extract"
+  irdl.operation @egraph_extract
 
   // ---- M3: target lowering contracts as IR ----
-  irdl.operation @"isa.family"
-  irdl.operation @"isa.feature"
-  irdl.operation @"isa.register_class"
-  irdl.operation @"isa.opcode"
-  irdl.operation @"packet.format"
-  irdl.operation @"target.lower_contract"
+  irdl.operation @isa_family
+  irdl.operation @isa_feature
+  irdl.operation @isa_register_class
+  irdl.operation @isa_opcode
+  irdl.operation @packet_format
+  irdl.operation @target_lower_contract
 
   // ---- Phase 8: async dependency tokens ----
   irdl.type @token
-  irdl.operation @"async.fork" {
+  irdl.operation @async_fork {
     %t = irdl.any
     irdl.results(t: %t)
   }
-  irdl.operation @"async.await" {
+  irdl.operation @async_await {
     %t = irdl.any
     irdl.operands(t: variadic %t)
   }
