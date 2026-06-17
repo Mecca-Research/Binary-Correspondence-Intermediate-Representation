@@ -127,6 +127,8 @@ echo "[passes] compose summary (inter-procedural: plan once, reuse compatible ca
 run_fc -bcir-compose "${T}/compose_summary.mlir"
 echo "[passes] compose budget (RCSP-constrained: thermal cap re-prices vec16->vec8 / infeasible)"
 run_fc -bcir-compose "${T}/compose_budget.mlir"
+echo "[passes] compose effect/independence + dynamic shapes (footprint / commutes / bound)"
+run_fc -bcir-compose "${T}/compose_effect.mlir"
 echo "[passes] hot-Theta plan parity (the kbcir.theta context op)"
 run_fc -bcir-plan "${T}/theta_hot.mlir"
 echo "[passes] six-target capability matrix (-bcir-plan/-overlap/-rcsp-plan per target)"

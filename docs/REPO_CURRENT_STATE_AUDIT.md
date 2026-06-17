@@ -127,6 +127,17 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Tier-1 compose remainder: alias/effect + independence + dynamic shapes on the
+  law rail.** `-bcir-compose` now also ports `compose.effect`/`independent` and dynamic shapes:
+  (1) **`kbcir.effect_reads`/`effect_writes`** -- each func's read/write footprint, folded
+  through its calls' argument substitution (`regionEffect`/`opEffect`). (2)
+  **`kbcir.commutes_with_prev`** on each call with a preceding sibling -- true iff their
+  footprints are disjoint (no RAW/WAR/WAW, `effectsConflict`), so the two reorder/overlap (the
+  cross-call alias test the pairwise plan cannot see). (3) **`kbcir.compose_dynamic`** -- the
+  claim op gained a `dynamic` attr, and a dynamic-shape leaf makes the func's cost a worst-case
+  bound that holds for any actual size <= the count (`compose.plan_holds_for`). `compose_effect.mlir`
+  pins all three. MLIR-only (the oracle effect/independent/dynamic are already tested); 609
+  oracle tests pass. **Compositional semantics is now complete on both rails.**
 - 2026-06-17: **RCSP-constrained compose + a compose-rail differential.** (1) `plan_composite`
   gained a `budget` (oracle-first): each Leaf is priced by `rcsp.optimize_constrained`, so the
   region-tree plan respects the central equation `min M(pi,Theta) s.t. R(pi,Theta) <= B` -- a

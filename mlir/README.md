@@ -88,10 +88,13 @@ executable conformance oracle that must agree with these definitions
 >   cost-compatible calls (`compose._cost_key`), else re-priced with the actuals substituted.
 >   With a `kbcir.budget` present each Leaf is priced by the **constrained** label DP
 >   (`cm::planConstrained`), so the plan respects `min M s.t. R⪯B` (a thermal cap re-prices
->   wide SIMD or marks the func `kbcir.compose_feasible = false`). Annotates `kbcir.compose_worst`/
->   `compose_expected`/`compose_reused`/`compose_feasible` per func (reproduces the oracle's 7808
->   leaf, 23432/18747 program, reuse-vs-re-price 10624/1, and the constrained 9472;
->   `test/passes/compose_cost.mlir`, `compose_summary.mlir`, `compose_budget.mlir`).
+>   wide SIMD or marks the func `kbcir.compose_feasible = false`). It also ports
+>   `compose.effect`/`independent`/dynamic: the func's `kbcir.effect_reads`/`effect_writes`
+>   footprint (folded through calls), `kbcir.commutes_with_prev` on a call (disjoint footprints
+>   commute), and `kbcir.compose_dynamic` (a dynamic-shape leaf -> a worst-case bound). Reproduces
+>   the oracle's 7808 leaf, 23432/18747 program, reuse-vs-re-price 10624/1, constrained 9472, and
+>   the footprint/commute/bound annotations (`test/passes/compose_cost.mlir`, `compose_summary.mlir`,
+>   `compose_budget.mlir`, `compose_effect.mlir`).
 > - **R13 first-principles provenance** — `-bcir-verify` recomputes a `kbcir.provenance_manifest`'s
 >   digest from its component hashes (byte-identical to `provenance._digest`) and **cross-checks
 >   every component hash** against the IR — `m_module` from the module (resources/claims incl.

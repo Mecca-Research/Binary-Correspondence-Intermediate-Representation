@@ -37,6 +37,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <utility>
 
 using namespace mlir;
 
@@ -52,7 +53,25 @@ static constexpr int64_t kPredCost = 8;
 struct CC {
   int64_t worst = 0, expected = 0, leaves = 0, reused = 0;
   bool feasible = true;
+  bool dynamic = false; // any leaf is a dynamic-shape claim -> the plan is a worst-case bound
 };
+
+// A region's read/write footprint (compose.Effect) -- resource symbols, folded through calls.
+struct Effect {
+  llvm::DenseSet<StringRef> reads, writes;
+};
+
+// compose.Effect.conflicts: a RAW/WAR/WAW between two footprints (a write that aliases the
+// other's read or write). Disjoint footprints commute (may be reordered / overlapped).
+static bool effectsConflict(const Effect &a, const Effect &b) {
+  for (StringRef wsym : a.writes)
+    if (b.reads.count(wsym) || b.writes.count(wsym))
+      return true;
+  for (StringRef wsym : b.writes)
+    if (a.reads.count(wsym))
+      return true;
+  return false;
+}
 
 // compose._cost_key equality: a summary is reusable for an actual iff it matches the formal
 // on (domain, element count = product(shape), access).
@@ -79,7 +98,8 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
     return "Compositional cost over the kbcir.func/call/cond region tree (the law-rail "
            "compose.plan_composite): Seq = sum, Cond = worst-case max + probability-weighted "
            "expected, Call = inter-procedural summary (plan once, reuse for cost-compatible "
-           "calls, else re-price); annotates kbcir.compose_worst/expected/reused.";
+           "calls, else re-price); annotates kbcir.compose_worst/expected/reused/feasible/"
+           "dynamic, the kbcir.effect_reads/writes footprint, and kbcir.commutes_with_prev.";
   }
 
   cm::Cap h;
@@ -138,12 +158,22 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
     }
     root->walk([&](KBCIRFuncOp f) { funcByName[f.getSymName()] = f.getOperation(); });
     for (auto &kv : funcByName) {
+      Operation *f = kv.second;
       CC c = funcSummary(kv.first, 0);
-      kv.second->setAttr("kbcir.compose_worst", b.getI64IntegerAttr(c.worst));
-      kv.second->setAttr("kbcir.compose_expected", b.getI64IntegerAttr(c.expected));
-      kv.second->setAttr("kbcir.compose_reused", b.getI64IntegerAttr(c.reused));
+      f->setAttr("kbcir.compose_worst", b.getI64IntegerAttr(c.worst));
+      f->setAttr("kbcir.compose_expected", b.getI64IntegerAttr(c.expected));
+      f->setAttr("kbcir.compose_reused", b.getI64IntegerAttr(c.reused));
+      // dynamic-shape contract: true => the cost is a worst-case bound holding for any actual
+      // size <= the declared count (compose.plan_holds_for), not an exact static plan.
+      f->setAttr("kbcir.compose_dynamic", b.getBoolAttr(c.dynamic));
       if (hasBudget)
-        kv.second->setAttr("kbcir.compose_feasible", b.getBoolAttr(c.feasible));
+        f->setAttr("kbcir.compose_feasible", b.getBoolAttr(c.feasible));
+      // alias/effect modeling: the function's read/write footprint + which sibling calls commute.
+      Effect eff;
+      regionEffect(f->getRegion(0).front(), emptySubst, eff, 0);
+      f->setAttr("kbcir.effect_reads", symbolArray(eff.reads, b));
+      f->setAttr("kbcir.effect_writes", symbolArray(eff.writes, b));
+      annotateIndependence(f->getRegion(0).front(), emptySubst, b, 0);
     }
   }
 
@@ -182,6 +212,9 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
       acc.worst += total;
       acc.expected += total;
       acc.leaves += 1;
+      for (ClaimOp c : leaf)
+        if (c.getDynamic())
+          acc.dynamic = true; // a dynamic-shape claim -> count is a static upper bound
     }
     // Series composition with the nested control flow / calls.
     for (Operation &op : block) {
@@ -195,6 +228,7 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
         acc.leaves += t.leaves + e.leaves;
         acc.reused += t.reused + e.reused;
         acc.feasible = acc.feasible && t.feasible && e.feasible;
+        acc.dynamic = acc.dynamic || t.dynamic || e.dynamic;
       } else if (auto call = dyn_cast<KBCIRCallOp>(&op)) {
         llvm::DenseMap<StringRef, StringRef> amap; // formal -> effective actual (composed)
         buildAmap(call, subst, amap);
@@ -208,6 +242,7 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
           acc.expected += s.expected;
           acc.reused += s.reused + s.leaves; // the leaf plans this call site saved
           acc.feasible = acc.feasible && s.feasible;
+          acc.dynamic = acc.dynamic || s.dynamic;
         } else {
           CC inl = regionCost(cf->getRegion(0).front(), depth + 1, amap); // re-price inlined
           acc.worst += inl.worst;
@@ -215,6 +250,7 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
           acc.leaves += inl.leaves;
           acc.reused += inl.reused;
           acc.feasible = acc.feasible && inl.feasible;
+          acc.dynamic = acc.dynamic || inl.dynamic;
         }
       }
     }
@@ -263,6 +299,78 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
         return false;
     }
     return true;
+  }
+
+  // compose.effect: fold one op's read/write footprint into `out`, remapping symbols through
+  // `subst` and recursing a kbcir.call into its callee (with the composed substitution).
+  void opEffect(Operation *op, const llvm::DenseMap<StringRef, StringRef> &subst, Effect &out,
+                int depth) {
+    if (depth > 64)
+      return;
+    auto remap = [&](StringRef s) -> StringRef {
+      auto it = subst.find(s);
+      return it != subst.end() ? it->second : s;
+    };
+    if (auto c = dyn_cast<ClaimOp>(op)) {
+      for (Attribute a : c.getReads())
+        if (auto r = dyn_cast<FlatSymbolRefAttr>(a))
+          out.reads.insert(remap(r.getValue()));
+      for (Attribute a : c.getWrites())
+        if (auto r = dyn_cast<FlatSymbolRefAttr>(a))
+          out.writes.insert(remap(r.getValue()));
+    } else if (auto cond = dyn_cast<KBCIRCondOp>(op)) {
+      regionEffect(cond.getThenRegion().front(), subst, out, depth + 1);
+      regionEffect(cond.getElseRegion().front(), subst, out, depth + 1);
+    } else if (auto call = dyn_cast<KBCIRCallOp>(op)) {
+      Operation *cf = funcByName.lookup(call.getCallee());
+      if (!cf)
+        return; // undefined callee: no statically-known footprint (oracle _EMPTY_EFFECT)
+      llvm::DenseMap<StringRef, StringRef> amap;
+      buildAmap(call, subst, amap);
+      regionEffect(cf->getRegion(0).front(), amap, out, depth + 1);
+    }
+  }
+
+  void regionEffect(Block &block, const llvm::DenseMap<StringRef, StringRef> &subst,
+                    Effect &out, int depth) {
+    for (Operation &op : block)
+      opEffect(&op, subst, out, depth);
+  }
+
+  // Annotate each kbcir.call that has a preceding sibling with kbcir.commutes_with_prev =
+  // independent(prev, this) -- their footprints are disjoint, so the two may be reordered or
+  // overlapped (the cross-call alias test the pairwise plan cannot see).
+  void annotateIndependence(Block &block,
+                            const llvm::DenseMap<StringRef, StringRef> &subst, Builder &b,
+                            int depth) {
+    if (depth > 64)
+      return;
+    Effect prevEff;
+    bool havePrev = false;
+    for (Operation &op : block) {
+      Effect e;
+      opEffect(&op, subst, e, depth);
+      if (auto call = dyn_cast<KBCIRCallOp>(&op)) {
+        if (havePrev)
+          call->setAttr("kbcir.commutes_with_prev",
+                        b.getBoolAttr(!effectsConflict(prevEff, e)));
+      } else if (auto cond = dyn_cast<KBCIRCondOp>(&op)) {
+        annotateIndependence(cond.getThenRegion().front(), subst, b, depth + 1);
+        annotateIndependence(cond.getElseRegion().front(), subst, b, depth + 1);
+      }
+      prevEff = std::move(e);
+      havePrev = true;
+    }
+  }
+
+  // A sorted (deterministic) FlatSymbolRef array for an effect footprint.
+  ArrayAttr symbolArray(const llvm::DenseSet<StringRef> &syms, Builder &b) {
+    SmallVector<StringRef> v(syms.begin(), syms.end());
+    std::sort(v.begin(), v.end());
+    SmallVector<Attribute> refs;
+    for (StringRef s : v)
+      refs.push_back(FlatSymbolRefAttr::get(&getContext(), s));
+    return b.getArrayAttr(refs);
   }
 };
 
