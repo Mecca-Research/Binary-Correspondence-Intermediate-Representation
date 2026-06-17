@@ -128,6 +128,21 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Goal 1 — verifier fault-injection hardening (R2–R9 generative).** The
+  oracle's law-for-law fault-injection campaign (`run_verifier_campaign`) exercised only 5 of
+  the laws (R2/R3/R5/R6/R7). Extended it to the full **module/claim rail R2–R8** (added R4 =
+  phase self-cycle, R8 = unknown cost class) and added a new **plan rail R9** (`gen_illegal_plan`
+  / `check_plan_verifier`: a clean `optimize()` result corrupted to break the score-sum and
+  total-coverage invariants, flagged through `verify_plan`). **R1 (RID uniqueness) is documented
+  as enforced by construction** — `Module.resources` is a dict keyed by RID and `add_resource`
+  rejects dups, so verify()'s R1 loop is unreachable and cannot be fault-injected (the campaign
+  states the invariant rather than faking it). New `test_plan_injectors_fire_R9`; the
+  isolation test now pins R2–R8; 900-iteration campaign clean; 616 oracle tests green. The
+  artifact laws R10–R18 (pack / lowering / smart-lowering / provenance / accuracy / call-graph)
+  remain covered by hand-written negative tests on both rails plus the R1–R18 toolchain coverage
+  gate (Phase 1); extending the *generative* campaign to them needs valid random artifact
+  generators (a tracked follow-up).
+
 - 2026-06-17: **True MLIR-22 local validation (conda-forge), solving the apt.llvm.org block.**
   The web sandbox's network policy denies `apt.llvm.org` (`403 host_not_allowed`) — the usual
   MLIR-22 source — and the stock Ubuntu archive tops out at MLIR 18, so prior sessions could

@@ -397,13 +397,21 @@ def _inject(m: Module, mut) -> Module:
 
 
 # law -> a one-line mutation that makes the base illegal for exactly that law.
+# R1 (RID uniqueness) is intentionally absent: it is enforced *by construction* --
+# Module.resources is a dict keyed by RID and Module.add_resource() raises on a dup, so
+# the registry can never hold two equal RIDs and verify()'s R1 loop is unreachable
+# belt-and-suspenders. It cannot be fault-injected through the model API (a dict cannot
+# carry the duplicate), so the campaign documents the invariant rather than faking it.
 _INJECTORS = {
     "R2": lambda m, c: setattr(c, "rd", (1, 999)),                 # dangling resource ref
     "R3": lambda m, c: setattr(c, "domain", Domain.HBM),          # domain not backed by any touched resource
+    "R4": lambda m, c: setattr(m.phases[0], "deps",               # phase depends on itself -> DAG cycle
+                               (m.phases[0].phase_id,)),
     "R5": lambda m, c: (setattr(c, "opcode", Opcode.ATOMIC_ADD),  # atomic opcode + unique hazard
                         setattr(c, "hazard", "unique")),
     "R6": lambda m, c: setattr(c, "lane", Lane.T),                # lane illegal for UNIT stride
     "R7": lambda m, c: setattr(c, "count", c.count + 1_000_000),  # affine read/write overruns the resource
+    "R8": lambda m, c: setattr(c, "cost_class", "__unknown__"),   # claim names no known cost class
 }
 
 
@@ -541,19 +549,66 @@ def run_campaign(n: int = 200, seed: int = 0, targets=None, thetas=None,
     return rep
 
 
+# Plan-law injectors (verify_plan rail): a clean optimize() result corrupted to violate
+# exactly R9. Unlike _INJECTORS (which mutate the module/claim) these mutate the
+# RealizationResult, so the law fires through verify_plan, not verify.
+_PLAN_INJECTORS = {
+    # R9: the reported score must equal the sum of the realized step costs.
+    "R9-score": lambda m, r: setattr(r, "score", r.score + 1),
+    # R9: a plan must realize every claim exactly once (drop the realization).
+    "R9-coverage": lambda m, r: r.steps.clear(),
+}
+
+
+def gen_illegal_plan(rng: random.Random):
+    """Return (module, result, expected_law): a clean base + its optimal plan with one
+    injected plan-law (R9) violation. verify_plan must report R9."""
+    from .realize import optimize
+
+    m = _verifier_base(rng)
+    h = TARGETS[rng.choice(sorted(TARGETS))]
+    r = optimize(m, h, Theta.cool())
+    key = rng.choice(sorted(_PLAN_INJECTORS))
+    _PLAN_INJECTORS[key](m, r)
+    return m, r, "R9"
+
+
+def check_plan_verifier(module: Module, result, expected_law: str) -> list[Mismatch]:
+    """The injected plan-law fault must fire through verify_plan."""
+    from ..verify import verify_plan
+
+    laws = {d.law for d in verify_plan(module, result)}
+    if expected_law not in laws:
+        return [Mismatch("verify_plan", 0,
+                         f"verify_plan missed injected {expected_law} (reported {sorted(laws)})")]
+    return []
+
+
 def run_verifier_campaign(n: int = 200, seed: int = 0) -> list[Mismatch]:
     """Generate `n` illegal modules (one injected law each) and confirm the verifier
-    flags each; also confirm the un-mutated base verifies clean. Returns the list of
-    misses (empty == the verifier caught every injected fault)."""
-    from ..verify import verify
+    flags each; also confirm the un-mutated base + its optimal plan verify clean.
+    Two rails: module/claim laws (R2-R8 via verify) and the plan law (R9 via
+    verify_plan). R1 is enforced by construction (see _INJECTORS). Returns the misses
+    (empty == the verifier caught every injected fault)."""
+    from ..verify import verify, verify_plan
+    from .realize import optimize
 
     rng = random.Random(seed)
     misses: list[Mismatch] = []
     for _ in range(n):
-        if verify(_verifier_base(rng)):                  # the base must be clean
+        # module/claim rail (R2-R8): clean base verifies clean; injected fault fires.
+        base = _verifier_base(rng)
+        if verify(base):
             misses.append(Mismatch("verify", 0, "verifier flagged a clean base module"))
         module, law = gen_illegal_module(rng)
         misses.extend(check_verifier(module, law))
+        # plan rail (R9): a clean base's optimal plan verifies clean; injected fault fires.
+        clean = _verifier_base(rng)
+        clean_plan = optimize(clean, TARGETS[rng.choice(sorted(TARGETS))], Theta.cool())
+        if verify_plan(clean, clean_plan):
+            misses.append(Mismatch("verify_plan", 0, "verify_plan flagged a clean plan"))
+        m2, r2, plaw = gen_illegal_plan(rng)
+        misses.extend(check_plan_verifier(m2, r2, plaw))
     return misses
 
 
