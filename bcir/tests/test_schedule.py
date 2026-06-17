@@ -203,3 +203,30 @@ def test_mlir_async_pipelined_schedule_is_in_sync():
     assert sch.makespan == 15616
     assert sch.slot_of(2).start == 0 and sch.slot_of(2).finish == 7808   # overlaps phase 0
     assert sch.slot_of(3).start == 7808                                  # awaits c1
+
+
+def test_mlir_power_rail_per_slot_clock_is_in_sync():
+    """Pins the constants -bcir-power-rail annotates in mlir/test/passes/power_rail.mlir: a
+    per-slot DVFS overlay on the EFT timeline -- both slots are memory-bound, so each downclocks
+    over its own interval and the modeled energy saved sums to 3424000."""
+    from bcir.gem.schedule import schedule_eft, durations_from, schedule_power_rail
+    from bcir.kbcir import TARGETS, optimize
+    from bcir.kbcir.cost import Theta
+    from bcir.model import Module, Claim, Domain, Lane, Opcode, Resource, StrideClass, Phase
+    AVX = TARGETS["x86_avx512"]
+    theta = Theta.cool()
+    m = Module(name="rail")
+    for r in (10, 11, 12, 13, 14):
+        m.add_resource(Resource(rid=r, domain=Domain.RAM, shape=(1024,)))
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[
+        Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=1024,
+              rd=(10, 11), wr=(12,), op="vector.add", domain=Domain.RAM, cost_class="compute"),
+        Claim(id=2, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=1024,
+              rd=(13, 11), wr=(14,), op="vector.add", domain=Domain.RAM, cost_class="compute")]))
+    r = optimize(m, AVX, theta)
+    sch = schedule_eft(m, durations_from(r), AVX)
+    rail = schedule_power_rail(sch, r, theta, AVX)
+    by_id = {d.claim_id: d for d in rail.decisions}
+    assert by_id[1].klass == "memory" and by_id[1].clock_q8 == 192 and by_id[1].finish == 7808
+    assert by_id[2].klass == "memory" and by_id[2].clock_q8 == 192 and by_id[2].finish == 5888
+    assert rail.downclocked == (1, 2) and rail.energy_saved_milli == 3424000

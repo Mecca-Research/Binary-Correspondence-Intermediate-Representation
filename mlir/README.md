@@ -112,6 +112,15 @@ executable conformance oracle that must agree with these definitions
 >   drives a single cross-phase dispatch (no phase barriers), so a later-phase independent claim
 >   overlaps an earlier one — software pipelining. Annotates `kbcir.async_awaits` +
 >   `async_domain`/`async_start`/`async_finish` + `async_makespan` (`test/passes/async.mlir`).
+> - **Per-slot power rail (C++23)** — `-bcir-power-rail` (same file) ports
+>   `gem.schedule.schedule_power_rail`: a per-slot DVFS overlay on the EFT *placed timeline* (the
+>   join of `-bcir-schedule-eft` + `-bcir-dvfs`). Each scheduled slot is classified by its base
+>   compute:memory mix and gets a per-slot Q8 clock over its real `[start,finish)` interval —
+>   memory-bound slots downclock to 192 (power saved at no throughput cost), keying off the slot
+>   interval rather than `-bcir-dvfs`'s per-phase totals. Annotates `kbcir.rail_domain`/`rail_start`/
+>   `rail_finish` + `rail_class`/`rail_clock` per slot, `rail_makespan`/`rail_knee`/`rail_energy_saved`
+>   per module (two memory-bound slots on the 7808/5888 timeline downclock, energy saved 3424000;
+>   `test/passes/power_rail.mlir`).
 > - **Allocator pool-plan (C++23)** — `-bcir-alloc-pool` (`lib/passes/BCIRAllocPoolPass.cpp`)
 >   ports `kbcir.allocator.pool_plan`: resources with disjoint live ranges (the [first_phase,
 >   last_phase] span) share a memory arena (greedy left-edge), so peak footprint drops below the

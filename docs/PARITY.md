@@ -263,7 +263,14 @@ claim + `sched_makespan`/`sched_knee` (two shared-read compute claims run parall
 a single cross-phase dispatch (no phase barriers), so a later-phase independent claim overlaps an
 earlier one (software pipelining); annotates `kbcir.async_awaits`/`async_domain`/`async_start`/
 `async_finish`/`async_makespan` (a phase-1 independent claim starts at 0, makespan 15616 vs
-2·7808 — `async.mlir`; pinned by `test_schedule.py`). `-bcir-alloc-pool`
+2·7808 — `async.mlir`; pinned by `test_schedule.py`). `-bcir-power-rail` ports
+`gem.schedule.schedule_power_rail` — a per-slot DVFS overlay on the EFT *placed timeline* (the join
+of `-bcir-schedule-eft` and `-bcir-dvfs`): each scheduled slot is classified by its base
+compute:memory mix and gets a per-slot Q8 clock for its real `[start,finish)` interval (memory-bound
+slots downclock to 192, keying off the slot interval rather than `-bcir-dvfs`'s per-phase totals),
+annotating `kbcir.rail_class`/`rail_clock` per slot + `rail_energy_saved` per module (two memory-bound
+slots on the 7808/5888 timeline both downclock, modeled energy saved 3424000 — `power_rail.mlir`;
+pinned by `test_schedule.py`). `-bcir-alloc-pool`
 ports `allocator.pool_plan` — liveness-based memory pooling (resources with disjoint live ranges
 share an arena, greedy left-edge), annotating `kbcir.pool_id` per resource + `pool_naive_bytes`/
 `pool_peak_bytes`/`pool_saved` (A/D and B/E share arenas, C its own → peak 12288 vs naive 20480 —

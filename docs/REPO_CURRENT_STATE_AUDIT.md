@@ -127,6 +127,19 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Per-slot power rail (`-bcir-power-rail`).** Ports
+  gem.schedule.schedule_power_rail: a per-slot DVFS overlay on the EFT *placed timeline* -- the join
+  of -bcir-schedule-eft and -bcir-dvfs. BCIRScheduleEftPass.cpp gained a shared placeBarriered() free
+  function (the phase-barriered EFT loop, now reused by -bcir-schedule-eft and the rail) plus base
+  compute/memory on each Info. The rail classifies each scheduled slot by its base compute:memory mix
+  (gem.dvfs.classify/clock_for) and sets a per-slot Q8 clock for its real [start,finish) interval --
+  memory-bound slots downclock to 192 (power saved, bandwidth-bound throughput unaffected), keying
+  off the slot interval rather than -bcir-dvfs's per-phase totals. Annotates per claim
+  kbcir.rail_domain/start/finish + rail_class/rail_clock, per module rail_makespan/rail_knee and
+  rail_energy_saved (the modeled energy avoided, sum of (nominal-clock) x interval). power_rail.mlir:
+  two memory-bound slots on the 7808/5888 timeline both downclock, energy_saved 3424000. Pinned by
+  test_schedule.py. +1 test (614). The EFT pass's behavior is unchanged (its FileCheck validates the
+  placeBarriered refactor). Also carries the buildInfos const-accessor fix from the async refactor.
 - 2026-06-17: **Async token plan + pipelined schedule (`-bcir-async`).** Ports
   gem.async_tokens.async_plan + schedule.execute_tokens: the !bcir.token fork/await DAG drives a
   SINGLE cross-phase EFT dispatch (no phase barriers), so an independent claim of a later phase
