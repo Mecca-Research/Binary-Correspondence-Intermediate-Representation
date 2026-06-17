@@ -128,6 +128,20 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Goal 1 complete — generative fault-injection now covers ALL 18 laws.**
+  Extended the campaign past the module/claim/plan core (R2–R9) to the artifact rails via
+  `_artifact_law_misses`, building each clean artifact through the real oracle pipeline,
+  confirming it verifies clean, then injecting one fault: **R10/R11** (StreamPack
+  provenance/generation — `hydrate` + drop a trace note / drift the registry), **R12**
+  (lowering — `emit_kernel_ll` + an invented instruction), **R13** (accelerator-certificate
+  provenance — a cert with a mismatch), **R14–R16** (CIM PIM-on-a-non-reduction / out-of-range
+  DVFS clock / oversized-L1 placement), **R17** (a tight accuracy tolerance a naive reduction
+  cannot meet). **R1** (RID uniqueness) and **R18** (call-graph integrity) are enforced *by
+  construction* — the RID-keyed registry can't hold a dup, and `plan_composite` *raises* on an
+  undefined callee/recursion — so both are asserted as guards rather than diagnostic-injected.
+  New `test_artifact_laws_R10_to_R18_all_fire`; the full campaign is clean across seeds; 617
+  oracle tests green. (Pure Python; no MLIR rail change.)
+
 - 2026-06-17: **Goal 1 — verifier fault-injection hardening (R2–R9 generative).** The
   oracle's law-for-law fault-injection campaign (`run_verifier_campaign`) exercised only 5 of
   the laws (R2/R3/R5/R6/R7). Extended it to the full **module/claim rail R2–R8** (added R4 =
