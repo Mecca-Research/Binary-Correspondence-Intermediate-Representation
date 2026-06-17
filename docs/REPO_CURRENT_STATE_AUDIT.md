@@ -137,7 +137,19 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
   auto-resolves the highest installed `/usr/lib/llvm-*`. Compatibility against the 22 compiler +
   verifier is validated in CI (the sandbox cannot build MLIR); this is the foundational change for
   the LLVM-22 feature-adoption work. C++ standard stays C++23 for now (a `-std=c++2c` bump is a
-  candidate follow-up on the clang-22 toolchain).
+  candidate follow-up on the clang-22 toolchain). The hand-written C++ pass library compiles clean
+  on MLIR 22 (only benign C++20 `operator==` ambiguity warnings from MLIR's own headers).
+  Three upstream MLIR-22 verifier/parse tightenings were adapted: (1) IRDL's value-list ops
+  (`irdl.operands/results/regions`) became NAMED (`name: %value`, variadicity ahead of the value);
+  (2) IRDL forbids dots in op names (`isValidName`), so the pure-IRDL portability projection +
+  corpus were flattened to underscores (`bcir.target_capability`), the compiled dotted ODS dialect
+  staying the source of truth; (3) a `Symbol` op may no longer produce an SSA result, so
+  `bcir.resource` / `bcir.gem.stream_pack` / `bcir.kbcir.path` (symbols that also returned a now-
+  vestigial, never-consumed handle) became pure symbols -- results dropped from the ODS, the ~30
+  hand-written test `.mlir`, the Python emitter, and the regenerated drift-gated corpus
+  (gem_corpus / target_matrix / theta_hot); the C++ only ever reads these by symbol, so it is
+  unaffected. `bcir.kbcir.select` is not a symbol and keeps its `!bcir.path` result. 615 oracle
+  tests + the Python<->MLIR differential stay green.
 - 2026-06-17: **proof.replay on the IR (`-bcir-replay`).** Ports bcir/kbcir/proof.replay: a
   recheck of the proof-carrying record a deployed plan carries. BCIRExplainPass.cpp gained a
   shared freshRecord() helper (recompute the plan -> per-claim chosen width + coupled edge score +

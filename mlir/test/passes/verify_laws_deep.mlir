@@ -14,7 +14,7 @@ bcir.module @r8 {
     %s = bcir.kbcir.select @c from [@nope] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @nope, score = 0 : i64
-    } : !bcir.path
+    }
   }
 }
 
@@ -23,19 +23,19 @@ bcir.module @r8 {
 // R9: the selected path is not among the candidate set.
 bcir.module @r9 {
   bcir.kbcir.plan @plan0 {
-    %pa = bcir.kbcir.path @pA {
+    bcir.kbcir.path @pA {
       claim = @c, realization = "cpu.vector.u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 1, memory = 0, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
-    %pb = bcir.kbcir.path @pB {
+    }
+    bcir.kbcir.path @pB {
       claim = @c, realization = "cpu.vector.u16", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 1, memory = 0, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
+    }
     // expected-error @+1 {{R9: selected path @pB is not among the candidate set}}
     %s = bcir.kbcir.select @c from [@pA] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @pB, score = 1 : i64
-    } : !bcir.path
+    }
   }
 }
 
@@ -44,15 +44,15 @@ bcir.module @r9 {
 // R9: the selected path realizes a different claim than the selection plans.
 bcir.module @r9_claim {
   bcir.kbcir.plan @plan0 {
-    %pa = bcir.kbcir.path @pA {
+    bcir.kbcir.path @pA {
       claim = @c1, realization = "cpu.vector.u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 1, memory = 0, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
+    }
     // expected-error @+1 {{R9: selected path @pA realizes claim @c1, not @c2}}
     %s = bcir.kbcir.select @c2 from [@pA] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @pA, score = 1 : i64
-    } : !bcir.path
+    }
   }
 }
 
@@ -74,20 +74,20 @@ bcir.module @r10 {
 // stale and must rehydrate, never execute silently.
 bcir.module @r11 {
   bcir.registry @RES {
-    %a = bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4>, layout = #bcir.layout<soa>, map_gen = 2 : i64, data_gen = 0 : i64 } : !bcir.resource
+    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4>, layout = #bcir.layout<soa>, map_gen = 2 : i64, data_gen = 0 : i64 }
   }
   bcir.kbcir.plan @plan0 {
-    %pa = bcir.kbcir.path @pA {
+    bcir.kbcir.path @pA {
       claim = @c, realization = "cpu.vector.u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 1, memory = 0, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
+    }
   }
   // expected-error @+1 {{R11: stale StreamPack: map_gen 1 != registry 2 (rehydrate: repack)}}
-  %sp = bcir.gem.stream_pack @sp0 attributes {
+  bcir.gem.stream_pack @sp0 attributes {
     source_plan = @plan0, topo_gen = 1 : i64, map_gen = 1 : i64, data_gen = 0 : i64
   } {
     bcir.gem.block @blk0 { base = 0 : i64, count = 4 : i64, strideA = 1 : i64, strideB = 1 : i64, strideD = 1 : i64 }
-  } : !bcir.stream
+  }
 }
 
 // -----
@@ -95,15 +95,15 @@ bcir.module @r11 {
 // R8: a constrained selection whose budget never resolves.
 bcir.module @r8_budget {
   bcir.kbcir.plan @plan0 {
-    %pa = bcir.kbcir.path @pA {
+    bcir.kbcir.path @pA {
       claim = @c, realization = "cpu.vector.u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 1, memory = 0, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
+    }
     // expected-error @+1 {{R8: budget @nope does not resolve}}
     %s = bcir.kbcir.select @c from [@pA] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       budget = @nope, selected = @pA, score = 1 : i64
-    } : !bcir.path
+    }
   }
 }
 
@@ -114,15 +114,15 @@ bcir.module @r8_budget {
 bcir.module @r9_budget {
   bcir.kbcir.budget @cap { dims = ["thermal"], caps = array<i64: 700> }
   bcir.kbcir.plan @plan0 {
-    %p16 = bcir.kbcir.path @pHot {
+    bcir.kbcir.path @pHot {
       claim = @c, realization = "cpu.vector.u16", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 64, memory = 3840, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
+    }
     // expected-error @+1 {{R9: selected path @pHot violates budget @cap (thermal 1088 > 700)}}
     %s = bcir.kbcir.select @c from [@pHot] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       budget = @cap, selected = @pHot, score = 7808 : i64
-    } : !bcir.path
+    }
   }
 }
 
@@ -131,10 +131,10 @@ bcir.module @r9_budget {
 // R9: a scheduled price whose (max,+) makespan books do not balance.
 bcir.module @r9_price {
   bcir.kbcir.plan @plan0 {
-    %pa = bcir.kbcir.path @pA {
+    bcir.kbcir.path @pA {
       claim = @c, realization = "cpu.vector.u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 1, memory = 0, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
+    }
   }
   // expected-error @+1 {{R9: inconsistent scheduled price (makespan 5 + overlap_gain 2 != serial 10)}}
   bcir.kbcir.scheduled_price @bad { plan = @plan0, makespan = 5 : i64, serial = 10 : i64, overlap_gain = 2 : i64 }
@@ -145,10 +145,10 @@ bcir.module @r9_price {
 // R9: a schedule certificate with an unknown dispatch mode.
 bcir.module @r9_schedule {
   bcir.kbcir.plan @plan0 {
-    %pa = bcir.kbcir.path @pA {
+    bcir.kbcir.path @pA {
       claim = @c, realization = "cpu.vector.u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 1, memory = 0, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
+    }
   }
   // expected-error @+1 {{R9: unknown schedule mode 'vibes'}}
   bcir.gem.schedule @bad { plan = @plan0, mode = "vibes", makespan = 8 : i64, knee = 2 : i32 }
@@ -372,9 +372,9 @@ bcir.module @r12 {
 // reduce work, not general SIMD; mirrors gem.cim / verify.verify_cim).
 bcir.module @r14_pim_nonreduce {
   bcir.registry @RES {
-    %a = bcir.resource @A { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %b = bcir.resource @B { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %c = bcir.resource @C { rid = 3 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @A { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @B { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @C { rid = 3 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @add attributes {
@@ -391,8 +391,8 @@ bcir.module @r14_pim_nonreduce {
 // R14 (positive): a reduction segment MAY be dispatched to PIM -- verifies clean.
 bcir.module @r14_pim_reduce_ok {
   bcir.registry @RES {
-    %t = bcir.resource @TABLE { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %acc = bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @TABLE { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @reduce attributes {
@@ -408,9 +408,9 @@ bcir.module @r14_pim_reduce_ok {
 // R15 (DVFS clock): a clock outside the legal step range [64, 512] is illegal.
 bcir.module @r15_clock_range {
   bcir.registry @RES {
-    %a = bcir.resource @A { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %b = bcir.resource @B { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %c = bcir.resource @C { rid = 3 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @A { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @B { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @C { rid = 3 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @add attributes {
@@ -427,8 +427,8 @@ bcir.module @r15_clock_range {
 // R15 (DVFS clock): a memory-bound (pim) reduction must NOT overclock (clock_q8 > 256).
 bcir.module @r15_pim_overclock {
   bcir.registry @RES {
-    %t = bcir.resource @TABLE { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %acc = bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @TABLE { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @reduce attributes {
@@ -447,7 +447,7 @@ bcir.module @r15_pim_overclock {
 bcir.module @r16_l1_too_big {
   bcir.registry @RES {
     // expected-error @+1 {{R16: placement l1 does not fit @BIG (4194304 B > 65536 B)}}
-    %b = bcir.resource @BIG { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1048576>, layout = #bcir.layout<soa>, placement = #bcir.mem_tier<l1> } : !bcir.resource
+    bcir.resource @BIG { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1048576>, layout = #bcir.layout<soa>, placement = #bcir.mem_tier<l1> }
   }
 }
 
@@ -457,8 +457,8 @@ bcir.module @r16_l1_too_big {
 // legal. Verifies clean (no diagnostic).
 bcir.module @r16_r15_ok {
   bcir.registry @RES {
-    %s = bcir.resource @SMALL { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa>, placement = #bcir.mem_tier<l1> } : !bcir.resource
-    %d = bcir.resource @DST { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @SMALL { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa>, placement = #bcir.mem_tier<l1> }
+    bcir.resource @DST { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @copy attributes {

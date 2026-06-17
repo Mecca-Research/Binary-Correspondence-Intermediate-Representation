@@ -30,9 +30,9 @@ bcir.module @full_vec_add_ct1 attributes {
 
   // ---- BCIR-1/2: registry-first resources (no raw pointers); C resides in HBM ----
   bcir.registry @RES {
-    %A = bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, align = 64 : i32, access = #bcir.access<flat>, priority = 0 : i32, map_gen = 1 : i64, data_gen = 4 : i64 } : !bcir.resource
-    %B = bcir.resource @B { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, align = 64 : i32, access = #bcir.access<flat>, priority = 0 : i32, map_gen = 1 : i64, data_gen = 4 : i64 } : !bcir.resource
-    %C = bcir.resource @C { rid = 12 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, align = 64 : i32, access = #bcir.access<flat>, priority = 80 : i32, map_gen = 1 : i64, data_gen = 0 : i64 } : !bcir.resource
+    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, align = 64 : i32, access = #bcir.access<flat>, priority = 0 : i32, map_gen = 1 : i64, data_gen = 4 : i64 }
+    bcir.resource @B { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, align = 64 : i32, access = #bcir.access<flat>, priority = 0 : i32, map_gen = 1 : i64, data_gen = 4 : i64 }
+    bcir.resource @C { rid = 12 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, align = 64 : i32, access = #bcir.access<flat>, priority = 80 : i32, map_gen = 1 : i64, data_gen = 0 : i64 }
   }
 
   // ---- BCIR-0: phase DAG + semantic claim ----
@@ -58,19 +58,19 @@ bcir.module @full_vec_add_ct1 attributes {
     weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>
   }
   bcir.kbcir.plan @plan0 {
-    %u8 = bcir.kbcir.path @add_cpu_u8 {
+    bcir.kbcir.path @add_cpu_u8 {
       claim = @add, realization = "cpu.vector.u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
-    %u16 = bcir.kbcir.path @add_cpu_u16 {
+    }
+    bcir.kbcir.path @add_cpu_u16 {
       claim = @add, realization = "cpu.vector.u16", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 64, memory = 3840, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
+    }
     // Cool Theta selects vec16 (score 7808); a hot-Theta replan picks vec8.
     %sel = bcir.kbcir.select @add from [@add_cpu_u8, @add_cpu_u16] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @add_cpu_u16, score = 7808 : i64
-    } : !bcir.path
+    }
     // The temperature dial (kbcir.softdp): the soft log-sum-exp twin at T=0
     // recovers the tropical select exactly -- free_energy == score == 7808.
     bcir.kbcir.soft_select @sel_soft {
@@ -84,7 +84,7 @@ bcir.module @full_vec_add_ct1 attributes {
     %selc = bcir.kbcir.select @add from [@add_cpu_u8, @add_cpu_u16] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       budget = @thermal_cap, selected = @add_cpu_u8, score = 9472 : i64
-    } : !bcir.path
+    }
   }
   bcir.kbcir.budget @thermal_cap { dims = ["thermal", "power"], caps = array<i64: 700, 700> }
   // M(pi,Theta): the (max,+) wave-overlap price. One claim => the degenerate
@@ -153,7 +153,7 @@ bcir.module @full_vec_add_ct1 attributes {
   bcir.kbcir.regret_ledger @regret_perf { rule = @perf, episodes = 3 : i64, total_regret = 0 : i64, worst_regret = 0 : i64, gen = 1 : i64, data_fit_milli = 0 : i64, complexity_milli = 549 : i64, verdict = "keep" }
 
   // ---- BCIR-4: GEM StreamPack (hydrated, prefetch + provenance) ----
-  %sp = bcir.gem.stream_pack @sp0 attributes {
+  bcir.gem.stream_pack @sp0 attributes {
     source_plan = @plan0, topo_gen = 1 : i64, map_gen = 1 : i64, data_gen = 4 : i64
   } {
     bcir.gem.prefetch @pf0 { distance = 4 : i32, targets = [@A, @B], hint = "T0", pattern = "linear" }
@@ -163,7 +163,7 @@ bcir.module @full_vec_add_ct1 attributes {
       opcode = "f32.add", reads = [@A, @B], writes = [@C], prefetch = @pf0, fence_before = [], fence_after = []
     }
     bcir.trace.note @add_trace { src_hash = 0 : i64, trace_hash = 0 : i64 }
-  } : !bcir.stream
+  }
 
   // ---- M1: verifier obligations as IR ----
   bcir.verify.registry_symbols @vr_symbols { registry = @RES, resources = [@A, @B, @C], rids = array<i64: 10, 11, 12> }

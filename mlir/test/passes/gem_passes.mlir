@@ -21,25 +21,25 @@ bcir.module @gem_pipeline {
   } { %i = bcir.index_range 0 to 1024 step 1 }
 
   bcir.kbcir.plan @plan0 {
-    %u8 = bcir.kbcir.path @add_cpu_u8 {
+    bcir.kbcir.path @add_cpu_u8 {
       claim = @add, realization = "cpu.vector.u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
-    %u16 = bcir.kbcir.path @add_cpu_u16 {
+    }
+    bcir.kbcir.path @add_cpu_u16 {
       claim = @add, realization = "cpu.vector.u16", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 64, memory = 3840, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
+    }
     // Cool Theta (no thermal weight): the min-plus argmin is vec16 at 7808.
     %sel = bcir.kbcir.select @add from [@add_cpu_u8, @add_cpu_u16] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       selected = @add_cpu_u16, score = 7808 : i64
-    } : !bcir.path
+    }
     // Constrained rail: a 700 thermal/power cap makes vec16 infeasible; the
     // budgeted argmin is vec8 at 9472 (a point no PERF weight selects).
     %selc = bcir.kbcir.select @add from [@add_cpu_u8, @add_cpu_u16] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,
       budget = @thermal_cap, selected = @add_cpu_u8, score = 9472 : i64
-    } : !bcir.path
+    }
   }
   bcir.kbcir.budget @thermal_cap { dims = ["thermal", "power"], caps = array<i64: 700, 700> }
 

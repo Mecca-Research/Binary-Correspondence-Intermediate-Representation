@@ -1,10 +1,11 @@
 //===- BCIRCoreOps.td - core BCIR ops (BCIR-0/1/2) ----------*- tablegen -*-===//
 //
 // Modules own registries; registries own resources; claims declare contracts;
-// phases own ordering. Mirrors bcir/model + bcir/verify. Corrected v0.1:
-// resource yields a !bcir.resource handle; claim body holds the realization
-// region directly (no bcir.region wrapper); module/registry default string attrs
-// are properly quoted.
+// phases own ordering. Mirrors bcir/model + bcir/verify. A resource is a pure
+// symbol (addressed by @name; MLIR 22 forbids a Symbol op from having an SSA
+// result, so the old !bcir.resource handle is gone). The claim body holds the
+// realization region directly (no bcir.region wrapper); module/registry default
+// string attrs are properly quoted.
 //
 //===----------------------------------------------------------------------===//
 #ifndef BCIR_CORE_OPS
@@ -76,8 +77,10 @@ def BCIR_ResourceOp : BCIR_Op<"resource", [Symbol]> {
     // R16 (lower-to-llvm): an on-chip placement must fit -- a resource placed in L1
     // must be <= 64 KiB, in L2 <= 4 MiB (static caps; size = product(shape) * 4 B).
     OptionalAttr<BCIR_MemTierAttr>:$placement);
-  let results = (outs BCIR_ResourceType:$handle);
-  let assemblyFormat = "$sym_name attr-dict `:` type($handle)";
+  // MLIR 22's Symbol verifier forbids a symbol op from producing an SSA result; a
+  // resource is addressed by its registry symbol (@A) -- the old !bcir.resource handle
+  // was vestigial (never consumed), so this op is now a pure symbol.
+  let assemblyFormat = "$sym_name attr-dict";
 }
 
 def BCIR_PhaseOp : BCIR_Op<"phase", [Symbol]> {
