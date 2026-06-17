@@ -29,6 +29,7 @@ from typing import Union
 
 from ..model import Claim, Module, Phase, Resource
 from .cost import HProfile, Theta
+from .rcsp import Budget, optimize_constrained
 from .realize import RealizationResult, optimize
 from .weights import PERF, Policy
 
@@ -148,14 +149,21 @@ def _leaf_module(claims: tuple[Claim, ...], resources: dict[int, Resource]) -> M
 
 def plan_composite(region: Region, functions: dict[str, Function],
                    resources: dict[int, Resource], h: HProfile, theta: Theta,
-                   policy: Policy = PERF, *, summaries: dict = None, _depth: int = 0,
+                   policy: Policy = PERF, *, summaries: dict = None,
+                   budget: Budget = None, _depth: int = 0,
                    _active: frozenset = frozenset()) -> CompositeResult:
     """Plan a region tree compositionally (series sum, branch max/expected, call inline).
     Reuses `optimize` for the leaves, so a single-block region prices exactly like the
     straight-line planner. With `summaries` (`{name: FunctionSummary}`), a `Call` whose
     actuals are cost-compatible with the callee's formals reuses the summary cost instead
     of re-planning the body (the inter-procedural win; `reused` counts the saved plans).
-    Raises on recursion (bounded compile time)."""
+
+    With `budget` (a `rcsp.Budget`), each Leaf is priced by the **constrained** optimizer
+    (`rcsp.optimize_constrained`) so the compositional plan respects the central equation
+    `min M(pi,Theta) s.t. R(pi,Theta) <= B` -- a per-block thermal/power cap makes wide SIMD
+    *infeasible* (the parallel block re-prices to a feasible narrower lane), and a block that
+    cannot fit raises `rcsp.Infeasible`. An unbounded/None budget is exactly the old behavior
+    (the pinned straight-line scores are unchanged). Raises on recursion (bounded compile)."""
     if _depth > 64:
         raise RecursionError("compose: region nesting too deep (>64)")
     summaries = summaries or {}
@@ -163,14 +171,17 @@ def plan_composite(region: Region, functions: dict[str, Function],
     if isinstance(region, Leaf):
         if not region.claims:
             return CompositeResult(0, 0, 0)
-        score = optimize(_leaf_module(region.claims, resources), h, theta, policy).score
+        m = _leaf_module(region.claims, resources)
+        score = (optimize(m, h, theta, policy).score if budget is None
+                 else optimize_constrained(m, h, theta, policy, budget).score)
         return CompositeResult(score, score, 1)
 
     if isinstance(region, Seq):
         worst = expected = leaves = reused = 0
         for part in region.parts:
             sub = plan_composite(part, functions, resources, h, theta, policy,
-                                 summaries=summaries, _depth=_depth + 1, _active=_active)
+                                 summaries=summaries, budget=budget, _depth=_depth + 1,
+                                 _active=_active)
             worst += sub.worst_cost
             expected += sub.expected_cost
             leaves += sub.leaves
@@ -179,9 +190,11 @@ def plan_composite(region: Region, functions: dict[str, Function],
 
     if isinstance(region, Cond):
         t = plan_composite(region.then_, functions, resources, h, theta, policy,
-                           summaries=summaries, _depth=_depth + 1, _active=_active)
+                           summaries=summaries, budget=budget, _depth=_depth + 1,
+                           _active=_active)
         e = plan_composite(region.else_, functions, resources, h, theta, policy,
-                           summaries=summaries, _depth=_depth + 1, _active=_active)
+                           summaries=summaries, budget=budget, _depth=_depth + 1,
+                           _active=_active)
         p = max(0, min(1000, region.prob_then_milli))
         expected = PRED_COST + (p * t.expected_cost + (1000 - p) * e.expected_cost) // 1000
         worst = PRED_COST + max(t.worst_cost, e.worst_cost)
@@ -200,7 +213,7 @@ def plan_composite(region: Region, functions: dict[str, Function],
             return CompositeResult(c.worst_cost, c.expected_cost, 0, c.reused + c.leaves)
         body = _inline(functions[region.fn].region, amap)
         return plan_composite(body, functions, resources, h, theta, policy,
-                              summaries=summaries, _depth=_depth + 1,
+                              summaries=summaries, budget=budget, _depth=_depth + 1,
                               _active=_active | {region.fn})
 
     raise TypeError(f"compose: unknown region node {type(region).__name__}")
@@ -251,11 +264,13 @@ def _cost_key(resource: Resource):
 
 def summarize(fn: Function, functions: dict[str, Function],
               formal_resources: dict[int, Resource], h: HProfile, theta: Theta,
-              policy: Policy = PERF) -> FunctionSummary:
+              policy: Policy = PERF, *, budget: Budget = None) -> FunctionSummary:
     """Plan a function **once** over its formal resources -> a `FunctionSummary` (cost +
     effect + formal cost-keys). Reused by `plan_composite(summaries=...)` for every
-    cost-compatible call, instead of re-planning the body per call site."""
-    cost = plan_composite(fn.region, functions, formal_resources, h, theta, policy)
+    cost-compatible call, instead of re-planning the body per call site. With `budget` the
+    summary is the function's *constrained* cost (the same caps the call sites plan under)."""
+    cost = plan_composite(fn.region, functions, formal_resources, h, theta, policy,
+                          budget=budget)
     eff = effect(fn.region, functions)
     keys = {rid: _cost_key(formal_resources.get(rid))
             for rid in sorted(eff.reads | eff.writes)}

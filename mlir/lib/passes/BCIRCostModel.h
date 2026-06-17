@@ -25,6 +25,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringSwitch.h"
 
 #include <array>
 #include <cstdint>
@@ -487,8 +488,88 @@ inline SmallVector<int> planChosen(const std::vector<Column> &cols,
   return chosen;
 }
 
-// The first target.capability (the optimizer's H); null if none declared.
-inline TargetCapabilityOp firstCapability(Operation *root) {
+// Cost-vector dimension index by name (DIMS order; cost.py / rcsp.Budget).
+inline int dimIndex(StringRef name) {
+  return llvm::StringSwitch<int>(name)
+      .Case("compute", 0).Case("memory", 1).Case("fabric", 2).Case("sync", 3)
+      .Case("compile", 4).Case("thermal", 5).Case("power", 6).Case("reliability", 7)
+      .Case("security", 8).Case("accuracy", 9).Case("contention", 10)
+      .Case("verification", 11).Default(-1);
+}
+
+// The constrained optimum SCORE over the fused columns: the accumulated-budget label DP of
+// rcsp.optimize_constrained (a label carries score + the tracked-dim resource totals along the
+// coupled path; dominated labels pruned, infeasible extensions cut). Returns the min feasible
+// score, or sets `feasible=false` (returns 0) if no plan satisfies the caps. The score-only
+// twin of -bcir-rcsp-plan, for pricing a constrained compose Leaf.
+inline int64_t planConstrained(const std::vector<Column> &cols, ArrayRef<int64_t> w,
+                               int64_t thetaThermal, ArrayRef<int> trackedDim,
+                               ArrayRef<int64_t> caps, bool &feasible) {
+  feasible = true;
+  const int n = static_cast<int>(cols.size());
+  if (n == 0 || w.empty())
+    return 0;
+  const int nt = static_cast<int>(trackedDim.size());
+  struct Lab {
+    int64_t score;
+    SmallVector<int64_t> res;
+    int64_t lastWidth;
+    ArrayRef<StringRef> lastReads;
+  };
+  auto dom = [&](const Lab &a, const Lab &b) {
+    if (a.score > b.score)
+      return false;
+    for (int i = 0; i < nt; ++i)
+      if (a.res[i] > b.res[i])
+        return false;
+    return true;
+  };
+  auto insert = [&](std::vector<Lab> &L, Lab nw) {
+    for (const Lab &ex : L)
+      if (dom(ex, nw))
+        return;
+    L.erase(std::remove_if(L.begin(), L.end(),
+                           [&](const Lab &ex) { return dom(nw, ex); }),
+            L.end());
+    L.push_back(std::move(nw));
+  };
+  std::vector<Lab> prev = {Lab{0, SmallVector<int64_t>(nt, 0), 0, {}}};
+  for (int i = 0; i < n; ++i) {
+    std::vector<Lab> cur;
+    for (size_t ci = 0; ci < cols[i].cands.size(); ++ci) {
+      const Cand &cand = cols[i].cands[ci];
+      for (const Lab &p : prev) {
+        Cost e = cand.cost;
+        applyFactor(e, contextFactor(thetaThermal, p.lastReads, p.lastWidth, cols[i].reads,
+                                     cand.width));
+        SmallVector<int64_t> res(nt);
+        bool ok = true;
+        for (int t = 0; t < nt; ++t) {
+          res[t] = p.res[t] + e[trackedDim[t]];
+          if (res[t] > caps[t]) {
+            ok = false;
+            break;
+          }
+        }
+        if (!ok)
+          continue;
+        insert(cur, Lab{p.score + scalarize(e, w), std::move(res), cand.width, cols[i].reads});
+      }
+    }
+    if (cur.empty()) {
+      feasible = false;
+      return 0;
+    }
+    prev = std::move(cur);
+  }
+  int64_t best = prev[0].score;
+  for (const Lab &l : prev)
+    if (l.score < best)
+      best = l.score;
+  return best;
+}
+
+
   TargetCapabilityOp cap;
   root->walk([&](TargetCapabilityOp t) {
     if (!cap)

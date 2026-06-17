@@ -47,9 +47,11 @@ namespace {
 static constexpr int64_t kPredCost = 8;
 
 // A region's compositional cost (compose.CompositeResult): a hard worst-case bound, the
-// probability-weighted expected cost, the planned-leaf count, and the leaves saved by reuse.
+// probability-weighted expected cost, the planned-leaf count, the leaves saved by reuse, and
+// (under a budget) whether every parallel block fit the caps.
 struct CC {
   int64_t worst = 0, expected = 0, leaves = 0, reused = 0;
+  bool feasible = true;
 };
 
 // compose._cost_key equality: a summary is reusable for an actual iff it matches the formal
@@ -87,6 +89,9 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
   llvm::DenseMap<StringRef, Operation *> funcByName;
   llvm::DenseMap<StringRef, CC> memo; // func -> its summary (planned once over its formals)
   llvm::DenseMap<StringRef, StringRef> emptySubst;
+  SmallVector<int> budgetDims;    // the first kbcir.budget's tracked cost-dim indices
+  SmallVector<int64_t> budgetCaps;
+  bool hasBudget = false;         // a budget op present -> price Leaves constrained (RCSP)
 
   void runOnOperation() override {
     Builder b(&getContext());
@@ -108,12 +113,37 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
     resByName = cm::resourcesByName(root);
     funcByName.clear();
     memo.clear();
+    // The first kbcir.budget (if any) makes each Leaf priced by the constrained label DP, so
+    // the compositional plan respects min M s.t. R <= B (the central K_BCIR equation).
+    budgetDims.clear();
+    budgetCaps.clear();
+    hasBudget = false;
+    KBCIRBudgetOp budget;
+    root->walk([&](KBCIRBudgetOp bd) {
+      if (!budget)
+        budget = bd;
+    });
+    if (budget) {
+      ArrayAttr dims = budget.getDims();
+      ArrayRef<int64_t> capArr = budget.getCaps();
+      for (size_t i = 0; i < dims.size() && i < capArr.size(); ++i)
+        if (auto nm = dyn_cast<StringAttr>(dims[i])) {
+          int d = cm::dimIndex(nm.getValue());
+          if (d >= 0) {
+            budgetDims.push_back(d);
+            budgetCaps.push_back(capArr[i]);
+          }
+        }
+      hasBudget = !budgetDims.empty();
+    }
     root->walk([&](KBCIRFuncOp f) { funcByName[f.getSymName()] = f.getOperation(); });
     for (auto &kv : funcByName) {
       CC c = funcSummary(kv.first, 0);
       kv.second->setAttr("kbcir.compose_worst", b.getI64IntegerAttr(c.worst));
       kv.second->setAttr("kbcir.compose_expected", b.getI64IntegerAttr(c.expected));
       kv.second->setAttr("kbcir.compose_reused", b.getI64IntegerAttr(c.reused));
+      if (hasBudget)
+        kv.second->setAttr("kbcir.compose_feasible", b.getBoolAttr(c.feasible));
     }
   }
 
@@ -141,7 +171,14 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
     if (!leaf.empty()) {
       std::vector<cm::Column> cols = cm::fusedColumnsFromClaims(leaf, h, resByName, subst);
       int64_t total = 0;
-      cm::planChosen(cols, w, theta, total);
+      if (hasBudget) {
+        bool feasible = true;
+        total = cm::planConstrained(cols, w, theta, budgetDims, budgetCaps, feasible);
+        if (!feasible)
+          acc.feasible = false; // no realization of this block fits the caps (rcsp.Infeasible)
+      } else {
+        cm::planChosen(cols, w, theta, total);
+      }
       acc.worst += total;
       acc.expected += total;
       acc.leaves += 1;
@@ -157,6 +194,7 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
         acc.expected += kPredCost + (p * t.expected + (1000 - p) * e.expected) / 1000;
         acc.leaves += t.leaves + e.leaves;
         acc.reused += t.reused + e.reused;
+        acc.feasible = acc.feasible && t.feasible && e.feasible;
       } else if (auto call = dyn_cast<KBCIRCallOp>(&op)) {
         llvm::DenseMap<StringRef, StringRef> amap; // formal -> effective actual (composed)
         buildAmap(call, subst, amap);
@@ -169,12 +207,14 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
           acc.worst += s.worst;
           acc.expected += s.expected;
           acc.reused += s.reused + s.leaves; // the leaf plans this call site saved
+          acc.feasible = acc.feasible && s.feasible;
         } else {
           CC inl = regionCost(cf->getRegion(0).front(), depth + 1, amap); // re-price inlined
           acc.worst += inl.worst;
           acc.expected += inl.expected;
           acc.leaves += inl.leaves;
           acc.reused += inl.reused;
+          acc.feasible = acc.feasible && inl.feasible;
         }
       }
     }
