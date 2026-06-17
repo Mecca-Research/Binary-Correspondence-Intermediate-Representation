@@ -5,10 +5,12 @@
 // compose.plan_composite's two rejections: an undefined callee (KeyError) and a recursive
 // call (RecursionError, for bounded compile time) over the kbcir.func/call/cond op family.
 
-// A well-formed acyclic call graph: @caller -> @leaf, and @leaf calls nothing. Every callee
-// resolves and the graph terminates -- no diagnostic.
+// A well-formed acyclic call graph: @caller -> @leaf, and @leaf calls nothing (its body is a
+// non-call op, so it is a graph sink). Every callee resolves and the graph terminates -- no
+// diagnostic.
 bcir.module @r18_ok {
   bcir.kbcir.func @leaf attributes { formals = [@f1, @f2, @f3] } {
+    %0 = bcir.index_range 0 to 1 step 1
   }
   bcir.kbcir.func @caller {
     bcir.kbcir.call @leaf { formals = [@f1, @f2, @f3], actuals = [@a, @b, @c] }
