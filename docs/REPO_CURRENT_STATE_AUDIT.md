@@ -128,6 +128,25 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Phase 2a — MLIR-22 feature adoption + dead-code prune.** Two empirical
+  findings reshaped the planned "Properties migration": (1) the BCIR dialect **already uses
+  inherent Properties storage** for every op's attributes — MLIR's `usePropertiesForAttributes`
+  defaults on, so `let arguments = (ins …Attr…)` is stored as properties without explicit
+  `Prop<>`/`IntProp<>` syntax (the generic dump prints `"bcir.…"() <{…}>`, the properties
+  form). The "zero Properties adoption" reading was a false negative; the further explicit
+  typed-property migration is low-ROI/high-churn and deferred. (2) **MLIR bytecode** (a stable
+  versioned format the rail never exercised) round-trips the whole positive corpus
+  byte-identically — `text -> --emit-bytecode -> text` is a no-op and passes run on bytecode
+  input — which also proves the Properties storage serializes correctly. Added
+  `tools/wsl/check_bytecode.sh` (14 modules: examples + plan/gem/overlap/rcsp/compose/async
+  corpora) and a CI gate. Removed the **dead, stale `mlir/passes/GEMPasses.td`** (generated
+  into `GEMPasses.h.inc` but never `#include`d; declared only 5 of 23 passes, mis-pinned to
+  `ModuleOp`) + its CMake/tblgen-check wiring; clean rebuild + full local rail (R1–R18,
+  GEM pipeline, ODS examples, bytecode) green. Pass-registration modernization (td-generated
+  `GEN_PASS_DEF` + stable cross-DSO TypeID) was assessed as **low practical ROI** for a single
+  `bcir-opt` binary (the internal-inline TypeID instability only bites across shared-library
+  boundaries, which the rail does not have) and deferred.
+
 - 2026-06-17: **Phase 1 — functional hardening + performance (post-LLVM-22 follow-up).**
   Three-axis audit (MLIR-22 compliance / performance / correctness) drove a first batch of
   safe, locally-validated fixes. **Test correctness:** the verifier coverage gate
