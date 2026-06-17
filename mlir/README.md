@@ -107,6 +107,11 @@ executable conformance oracle that must agree with these definitions
 >   annotates `kbcir.sched_domain`/`sched_start`/`sched_finish` + `sched_makespan`/`sched_knee`
 >   (two shared-read compute claims parallel on domains 0/1, makespan 7808;
 >   `test/passes/schedule_eft.mlir`).
+> - **Allocator pool-plan (C++23)** — `-bcir-alloc-pool` (`lib/passes/BCIRAllocPoolPass.cpp`)
+>   ports `kbcir.allocator.pool_plan`: resources with disjoint live ranges (the [first_phase,
+>   last_phase] span) share a memory arena (greedy left-edge), so peak footprint drops below the
+>   naive sum; annotates `kbcir.pool_id` per resource + `pool_naive_bytes`/`pool_peak_bytes`/
+>   `pool_saved` (A/D and B/E share arenas → peak 12288 vs naive 20480; `test/passes/alloc_pool.mlir`).
 > - **R13 first-principles provenance** — `-bcir-verify` recomputes a `kbcir.provenance_manifest`'s
 >   digest from its component hashes (byte-identical to `provenance._digest`) and **cross-checks
 >   every component hash** against the IR — `m_module` from the module (resources/claims incl.

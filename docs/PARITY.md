@@ -258,7 +258,11 @@ these derive what it *should* be. `-bcir-schedule-eft` ports `gem.schedule.sched
 duration-aware (HEFT-lite) wave scheduler: LPT priority + earliest-finish placement + locality
 + the bandwidth-knee clamp, annotating `kbcir.sched_domain`/`sched_start`/`sched_finish` per
 claim + `sched_makespan`/`sched_knee` (two shared-read compute claims run parallel on domains
-0/1, makespan 7808 — `schedule_eft.mlir`; pinned by `test_schedule.py`).
+0/1, makespan 7808 — `schedule_eft.mlir`; pinned by `test_schedule.py`). `-bcir-alloc-pool`
+ports `allocator.pool_plan` — liveness-based memory pooling (resources with disjoint live ranges
+share an arena, greedy left-edge), annotating `kbcir.pool_id` per resource + `pool_naive_bytes`/
+`pool_peak_bytes`/`pool_saved` (A/D and B/E share arenas, C its own → peak 12288 vs naive 20480 —
+`alloc_pool.mlir`; pinned by `test_persistent_oracles.py`).
 
 The **R18** call-graph law (`-bcir-verify`) is the law-rail twin of
 `compose.plan_composite`'s rejections — every `kbcir.call` must resolve to a `kbcir.func`
