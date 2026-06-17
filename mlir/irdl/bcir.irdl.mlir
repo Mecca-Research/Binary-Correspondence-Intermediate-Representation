@@ -1,4 +1,4 @@
-//===- bcir.irdl.mlir - pure-IRDL BCIR projection (LLVM 18) ---------------===//
+//===- bcir.irdl.mlir - pure-IRDL BCIR projection (LLVM 22) ---------------===//
 //
 // The portability rail: a structural BCIR dialect definition shipped as IR data
 // and loaded by stock `mlir-opt` -- no BCIR-authored C++ compiled first. The
@@ -7,11 +7,13 @@
 //
 //   mlir-opt --irdl-file=mlir/irdl/bcir.irdl.mlir <program-in-bcir-generic.mlir>
 //
-// Validated on LLVM 18 (mlir-opt 18.1.3): this file loads and the generic-syntax
+// Validated on the latest LLVM/MLIR (22): this file loads and the generic-syntax
 // corpus in test/irdl/ round-trips against it.
 //
 // Notes on the form:
-//  * LLVM 18 IRDL uses *positional* `irdl.operands/results/regions`.
+//  * IRDL uses *named* `irdl.operands/results/regions` (`name: %value`); the
+//    variadicity marker precedes the value (`name: variadic %v`). (LLVM <=19 used
+//    a positional form; MLIR 22 made the names mandatory.)
 //  * An IRDL dialect shares one symbol table across types and ops, so a type and
 //    an op cannot both be named `resource`. We use a single opaque `!bcir.handle`
 //    type for every handle-producing op (resource / kbcir.path / kbcir.select /
@@ -29,40 +31,40 @@ irdl.dialect @bcir {
   // ---- BCIR-0..2: core containers + claims ----
   irdl.operation @module {
     %body = irdl.region
-    irdl.regions(%body)
+    irdl.regions(body: %body)
   }
   irdl.operation @registry {
     %body = irdl.region
-    irdl.regions(%body)
+    irdl.regions(body: %body)
   }
   irdl.operation @resource {
     %h = irdl.any
-    irdl.results(%h)
+    irdl.results(h: %h)
   }
   irdl.operation @phase
   irdl.operation @claim {
     %body = irdl.region
-    irdl.regions(%body)
+    irdl.regions(body: %body)
   }
   irdl.operation @index_range {
     %idx = irdl.is index
-    irdl.results(%idx)
+    irdl.results(idx: %idx)
   }
   irdl.operation @load {
     %idx = irdl.is index
     %value = irdl.any
-    irdl.operands(%idx)
-    irdl.results(%value)
+    irdl.operands(idx: %idx)
+    irdl.results(value: %value)
   }
   irdl.operation @store {
     %idx = irdl.is index
     %value = irdl.any
-    irdl.operands(%value, %idx)
+    irdl.operands(value: %value, idx: %idx)
   }
   irdl.operation @compute {
     %value = irdl.any
-    irdl.operands(variadic %value)
-    irdl.results(%value)
+    irdl.operands(arg: variadic %value)
+    irdl.results(res: %value)
   }
   irdl.operation @barrier
 
@@ -76,15 +78,15 @@ irdl.dialect @bcir {
   irdl.operation @"kbcir.policy"
   irdl.operation @"kbcir.plan" {
     %body = irdl.region
-    irdl.regions(%body)
+    irdl.regions(body: %body)
   }
   irdl.operation @"kbcir.path" {
     %h = irdl.any
-    irdl.results(%h)
+    irdl.results(h: %h)
   }
   irdl.operation @"kbcir.select" {
     %h = irdl.any
-    irdl.results(%h)
+    irdl.results(h: %h)
   }
   // Constrained (RCSP) rail: B(H,Theta) caps + the (max,+) overlap price.
   irdl.operation @"kbcir.budget"
@@ -110,8 +112,8 @@ irdl.dialect @bcir {
   irdl.operation @"gem.stream_pack" {
     %h = irdl.any
     %body = irdl.region
-    irdl.results(%h)
-    irdl.regions(%body)
+    irdl.results(h: %h)
+    irdl.regions(body: %body)
   }
   irdl.operation @"gem.prefetch"
   irdl.operation @"gem.block"
@@ -129,7 +131,7 @@ irdl.dialect @bcir {
 
   irdl.operation @"fsm.machine" {
     %body = irdl.region
-    irdl.regions(%body)
+    irdl.regions(body: %body)
   }
   irdl.operation @"fsm.state"
   irdl.operation @"fsm.transition"
@@ -139,7 +141,7 @@ irdl.dialect @bcir {
 
   irdl.operation @"parse.grammar" {
     %body = irdl.region
-    irdl.regions(%body)
+    irdl.regions(body: %body)
   }
   irdl.operation @"parse.token"
   irdl.operation @"parse.rule"
@@ -147,7 +149,7 @@ irdl.dialect @bcir {
 
   irdl.operation @"binary.format" {
     %body = irdl.region
-    irdl.regions(%body)
+    irdl.regions(body: %body)
   }
   irdl.operation @"binary.field"
   irdl.operation @"binary.record"
@@ -189,10 +191,10 @@ irdl.dialect @bcir {
   irdl.type @token
   irdl.operation @"async.fork" {
     %t = irdl.any
-    irdl.results(%t)
+    irdl.results(t: %t)
   }
   irdl.operation @"async.await" {
     %t = irdl.any
-    irdl.operands(variadic %t)
+    irdl.operands(t: variadic %t)
   }
 }
