@@ -56,8 +56,9 @@ def BCIR_KBCIRPathOp : BCIR_Op<"kbcir.path", [Symbol]> {
   let arguments = (ins
     SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$claim, StrAttr:$realization,
     BCIR_LaneAttr:$lane, BCIR_LayoutAttr:$layout, BCIR_CostVectorAttr:$cost);
-  let results = (outs BCIR_PathType:$path);
-  let assemblyFormat = "$sym_name attr-dict `:` type($path)";
+  // MLIR 22 forbids a Symbol op from producing an SSA result; a path is addressed by
+  // its symbol (@p) -- the old !bcir.path handle was vestigial.
+  let assemblyFormat = "$sym_name attr-dict";
 }
 
 def BCIR_KBCIRSelectOp : BCIR_Op<"kbcir.select"> {

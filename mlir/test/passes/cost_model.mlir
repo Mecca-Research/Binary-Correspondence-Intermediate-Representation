@@ -21,14 +21,14 @@ bcir.module @cost_model {
     weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>
   }
   bcir.registry @RES {
-    %a = bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %b = bcir.resource @B { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %c = bcir.resource @C { rid = 12 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %t = bcir.resource @TABLE { rid = 30 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> } : !bcir.resource
-    %o = bcir.resource @OUT { rid = 31 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %a2 = bcir.resource @A2 { rid = 40 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa> } : !bcir.resource
-    %b2 = bcir.resource @B2 { rid = 41 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa> } : !bcir.resource
-    %c2 = bcir.resource @C2 { rid = 42 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @B { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @C { rid = 12 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @TABLE { rid = 30 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
+    bcir.resource @OUT { rid = 31 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @A2 { rid = 40 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa> }
+    bcir.resource @B2 { rid = 41 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa> }
+    bcir.resource @C2 { rid = 42 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @add attributes {

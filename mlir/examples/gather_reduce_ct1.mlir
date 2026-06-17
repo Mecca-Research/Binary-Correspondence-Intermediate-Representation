@@ -14,8 +14,8 @@ bcir.module @gather_reduce_ct1 attributes {
   execution_model = "gem", cost_model = "k_bcir"
 } {
   bcir.registry @RES {
-    %t = bcir.resource @TABLE { rid = 50 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, align = 64 : i32, access = #bcir.access<flat>, priority = 0 : i32, map_gen = 1 : i64, data_gen = 0 : i64 } : !bcir.resource
-    %acc = bcir.resource @ACC { rid = 51 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa>, align = 64 : i32, access = #bcir.access<flat>, priority = 0 : i32, map_gen = 1 : i64, data_gen = 0 : i64 } : !bcir.resource
+    bcir.resource @TABLE { rid = 50 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, align = 64 : i32, access = #bcir.access<flat>, priority = 0 : i32, map_gen = 1 : i64, data_gen = 0 : i64 }
+    bcir.resource @ACC { rid = 51 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa>, align = 64 : i32, access = #bcir.access<flat>, priority = 0 : i32, map_gen = 1 : i64, data_gen = 0 : i64 }
   }
 
   bcir.phase @p0 { id = 0 : i32, deps = [] }
@@ -36,15 +36,15 @@ bcir.module @gather_reduce_ct1 attributes {
   }
   bcir.kbcir.plan @plan0 {
     // blocked: sequential access, no gather_penalty (the cost model's choice).
-    %blk = bcir.kbcir.path @blocked {
+    bcir.kbcir.path @blocked {
       claim = @reduce, realization = "cpu.blocked", lane = #bcir.lane<u>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 64, memory = 1024, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
+    }
     // gather: random access pays gather_penalty (8x the streamed traffic here).
-    %gth = bcir.kbcir.path @gather {
+    bcir.kbcir.path @gather {
       claim = @reduce, realization = "cpu.gather", lane = #bcir.lane<ggg>, layout = #bcir.layout<soa>,
       cost = #bcir.costvec<compute = 64, memory = 8192, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
-    } : !bcir.path
+    }
     // min-plus selects blocked (2*64 + 2*1024 = 2176) over gather (16512).
     %sel = bcir.kbcir.select @reduce from [@blocked, @gather] {
       policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>,

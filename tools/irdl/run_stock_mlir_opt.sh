@@ -14,7 +14,8 @@ IRDL="${ROOT}/mlir/irdl/bcir.irdl.mlir"
 PROG="${1:-${ROOT}/mlir/test/irdl/00_smoke_generic.mlir}"
 FLAG="${BCIR_IRDL_FLAG:---irdl-file=${IRDL}}"
 
-MLIR_OPT="${MLIR_OPT:-$(command -v mlir-opt || command -v mlir-opt-18 || true)}"
+MLIR_OPT="${MLIR_OPT:-$(ls /usr/lib/llvm-*/bin/mlir-opt 2>/dev/null | sort -V | tail -1)}"
+MLIR_OPT="${MLIR_OPT:-$(command -v mlir-opt-22 || command -v mlir-opt || command -v mlir-opt-18 || true)}"
 if [ -z "${MLIR_OPT}" ]; then
   echo "mlir-opt not found; skipping (pure-IR projection is optional on this host)." >&2
   exit 0

@@ -11,8 +11,8 @@ bcir.module @cim {
     triple = "x86_64-avx512", isa_features = ["avx512f"], lane_widths = array<i64: 1, 8, 16>
   }
   bcir.registry @RES {
-    %t = bcir.resource @T { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa> } : !bcir.resource
-    %acc = bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @T { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4096>, layout = #bcir.layout<soa> }
+    bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @big attributes {

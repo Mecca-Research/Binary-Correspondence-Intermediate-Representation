@@ -15,9 +15,10 @@ def BCIR_GEMStreamPackOp : BCIR_Op<"gem.stream_pack", [Symbol, SymbolTable, NoTe
     SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$source_plan,
     I64Attr:$topo_gen, I64Attr:$map_gen, I64Attr:$data_gen,
     DefaultValuedAttr<I32Attr, "1">:$pipeline_depth);
-  let results = (outs BCIR_StreamType:$stream);
+  // MLIR 22 forbids a Symbol op from producing an SSA result; the StreamPack is
+  // addressed by its symbol -- the old !bcir.stream handle was vestigial.
   let regions = (region SizedRegion<1>:$body);
-  let assemblyFormat = "$sym_name attr-dict-with-keyword $body `:` type($stream)";
+  let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
 }
 
 def BCIR_GEMPrefetchOp : BCIR_Op<"gem.prefetch", [Symbol]> {

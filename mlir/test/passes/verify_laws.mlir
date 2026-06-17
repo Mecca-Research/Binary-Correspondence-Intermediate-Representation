@@ -8,9 +8,9 @@
 // R1: duplicate RID.
 bcir.module @r1 {
   bcir.registry @RES {
-    %a = bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4>, layout = #bcir.layout<soa> }
     // expected-error @+1 {{R1: duplicate RID 10}}
-    %b = bcir.resource @B { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @B { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4>, layout = #bcir.layout<soa> }
   }
 }
 
@@ -54,7 +54,7 @@ bcir.module @r6 {
 // R3: the claim's domain contract is not backed by any touched resource.
 bcir.module @r3 {
   bcir.registry @RES {
-    %a = bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   // expected-error @+1 {{R3: claim c declares a domain not backed by any touched resource}}
@@ -71,7 +71,7 @@ bcir.module @r3 {
 // R5: atomic semantics (lane A / atomic op) without an ordered hazard contract.
 bcir.module @r5 {
   bcir.registry @RES {
-    %t = bcir.resource @T { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @T { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   // expected-error @+1 {{R5: claim c atomic semantics require an atomic/barriered hazard}}
@@ -89,8 +89,8 @@ bcir.module @r5 {
 // serialization; the unordered end is flagged (the reader carries `atomic`).
 bcir.module @r5_tail {
   bcir.registry @RES {
-    %t = bcir.resource @T { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %o = bcir.resource @O { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @T { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @O { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   // expected-error @+1 {{R5: claim w conflicts across the decoupled GGG tail in phase @p0 without an atomic/barriered hazard}}
@@ -113,7 +113,7 @@ bcir.module @r5_tail {
 // R7: a strict-bounds affine claim statically overruns its resource.
 bcir.module @r7 {
   bcir.registry @RES {
-    %a = bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   // expected-error @+1 {{R7: claim c read of @A overruns the resource (extent 8 > 4)}}
@@ -131,8 +131,8 @@ bcir.module @r7 {
 // contract cannot discharge its bounds obligation.
 bcir.module @r7_random {
   bcir.registry @RES {
-    %a = bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %o = bcir.resource @O { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @O { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   // expected-error @+1 {{R7: claim c data-dependent access with strict bounds requires a runtime verify contract}}
@@ -151,8 +151,8 @@ bcir.module @r7_random {
 // accumulator with count 1024 is therefore clean (mirrors bcir/verify R7).
 bcir.module @r7_reduce_ok {
   bcir.registry @RES {
-    %t = bcir.resource @TABLE { rid = 50 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %acc = bcir.resource @ACC { rid = 51 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @TABLE { rid = 50 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @ACC { rid = 51 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @r attributes {
@@ -169,8 +169,8 @@ bcir.module @r7_reduce_ok {
 // elements into the same 1-element resource still overruns it.
 bcir.module @r7_nonreduce_overrun {
   bcir.registry @RES {
-    %t = bcir.resource @TABLE { rid = 50 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> } : !bcir.resource
-    %acc = bcir.resource @ACC { rid = 51 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @TABLE { rid = 50 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa> }
+    bcir.resource @ACC { rid = 51 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   // expected-error @+1 {{R7: claim w write of @ACC overruns the resource (extent 1024 > 1)}}

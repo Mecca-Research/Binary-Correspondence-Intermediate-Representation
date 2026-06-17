@@ -9,8 +9,8 @@
 // NEGATIVE: a 1000-term naive reduction with a 1-ULP tolerance -> bound 1000 > 1.
 bcir.module @r17_naive_too_loose {
   bcir.registry @RES {
-    %t = bcir.resource @T { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> } : !bcir.resource
-    %a = bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @T { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> }
+    bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   // expected-error @+1 {{R17: accuracy bound 1000 ULP exceeds tolerance 1 ULP @reduce_naive}}
@@ -28,8 +28,8 @@ bcir.module @r17_naive_too_loose {
 // POSITIVE: the SAME reduction compensated (exact = true) -> bound 1 <= 1, legal.
 bcir.module @r17_compensated_ok {
   bcir.registry @RES {
-    %t = bcir.resource @T { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> } : !bcir.resource
-    %a = bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @T { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> }
+    bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @reduce_comp attributes {
@@ -46,8 +46,8 @@ bcir.module @r17_compensated_ok {
 // POSITIVE: a generous tolerance admits the naive reduction (bound 1000 <= 2000).
 bcir.module @r17_loose_tolerance_ok {
   bcir.registry @RES {
-    %t = bcir.resource @T { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> } : !bcir.resource
-    %a = bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> } : !bcir.resource
+    bcir.resource @T { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> }
+    bcir.resource @ACC { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1000>, layout = #bcir.layout<soa> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @reduce_loose attributes {

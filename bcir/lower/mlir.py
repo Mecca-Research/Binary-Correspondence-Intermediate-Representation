@@ -209,10 +209,11 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
         r = module.resources[rid]
         shape = ", ".join(str(d) for d in (r.shape or (1,)))
         access = f", access = #bcir.access<{'ham' if r.access == 'ham' else 'flat'}>"
-        L.append(f"    %r{rid} = bcir.resource @r{rid} {{ rid = {rid} : i32, "
+        # MLIR 22 forbids a Symbol op from having an SSA result -- a resource is a pure
+        # symbol (addressed by @rN); the old !bcir.resource handle was vestigial.
+        L.append(f"    bcir.resource @r{rid} {{ rid = {rid} : i32, "
                  f"domain_kind = #bcir.domain<{_DOMAIN_SPELL[r.domain]}>, "
-                 f"shape = array<i64: {shape}>, layout = #bcir.layout<soa>{access} }} "
-                 ": !bcir.resource")
+                 f"shape = array<i64: {shape}>, layout = #bcir.layout<soa>{access} }}")
     L.append("  }")
     # live runtime state Theta: the emitter folds it into the policy weights (for
     # scalarization) AND emits it raw, so -bcir-plan / -bcir-overlap can apply the
@@ -253,11 +254,12 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
     for cv in pv.claims:
         for p in cv.paths:
             sym = _path_sym(cv.claim_id, p.name)
+            # kbcir.path is a Symbol (referenced by @sym) -> no SSA result on MLIR 22.
             L.append(
-                f"    %{sym} = bcir.kbcir.path @{sym} {{ claim = @c{cv.claim_id}, "
+                f"    bcir.kbcir.path @{sym} {{ claim = @c{cv.claim_id}, "
                 f"realization = \"{_LANE_SPELL[p.lane]}.{p.name}\", "
                 f"lane = #bcir.lane<{_LANE_SPELL[p.lane]}>, layout = #bcir.layout<soa>, "
-                f"cost = {_costvec(p.cost)} }} : !bcir.path")
+                f"cost = {_costvec(p.cost)} }}")
         frm = ", ".join(f"@{_path_sym(cv.claim_id, p.name)}" for p in cv.paths)
         L.append(
             f"    %sel_{cv.claim_id} = bcir.kbcir.select @c{cv.claim_id} from [{frm}] {{ "

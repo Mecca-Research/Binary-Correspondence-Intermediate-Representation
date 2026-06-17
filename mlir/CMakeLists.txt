@@ -1,12 +1,13 @@
 # Out-of-tree build for the BCIR MLIR dialect family + GEM/RCSP passes (C++23).
 #
-# Build (needs cmake + ninja + libmlir-NN-dev + llvm-NN-dev; CI installs LLVM 18+19):
+# Build (needs cmake + ninja + libmlir-NN-dev + llvm-NN-dev; CI tracks the latest LLVM, 22,
+# installed from apt.llvm.org since Ubuntu's default repos top out near 18/19):
 #
-#   sudo apt-get install -y mlir-18-tools libmlir-18-dev llvm-18-dev cmake ninja-build
+#   sudo apt-get install -y mlir-22-tools libmlir-22-dev llvm-22-dev cmake ninja-build
 #   tools/wsl/build_mlir.sh          # full dialect lib + bcir-opt
 #   tools/wsl/check_passes.sh        # validate every pass (incl. -bcir-rcsp + corpus)
 #
-# MLIR_DIR / LLVM_DIR auto-resolve from /usr/lib/llvm-*/lib/cmake; override to pin.
+# MLIR_DIR / LLVM_DIR auto-resolve to the highest installed /usr/lib/llvm-*/lib/cmake; override to pin.
 #
 cmake_minimum_required(VERSION 3.20)
 project(bcir-mlir LANGUAGES CXX C)
@@ -25,9 +26,9 @@ include(HandleLLVMOptions)
 
 # BCIR lowering targets C++23 (HandleLLVMOptions defaults to LLVM's C++17). The
 # deterministic optimizer-core passes use C++20/23 idioms (std::ranges, structured
-# bindings, designated inits, <=> where useful). C++26 (-std=c++2c) is still
-# experimental in clang-18/gcc-13 and the stock MLIR 18 headers do not yet compile
-# clean under it, so 23 is the gating standard; the BCIR code itself is c++2c-ready.
+# bindings, designated inits, <=> where useful). 23 is the gating standard; the BCIR
+# code itself is c++2c-ready, so a -std=c++2c bump is a candidate follow-up now that the
+# clang-22 / MLIR 22 headers are the toolchain (tracked with the feature-adoption work).
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

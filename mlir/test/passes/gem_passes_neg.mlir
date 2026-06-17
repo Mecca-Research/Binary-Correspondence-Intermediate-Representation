@@ -10,8 +10,8 @@
 bcir.module @bad_score {
   bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.kbcir.plan @plan0 {
-    %a = bcir.kbcir.path @pA { claim = @c, realization = "u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> } : !bcir.path
-    %b = bcir.kbcir.path @pB { claim = @c, realization = "u16", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 64, memory = 3840, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> } : !bcir.path
+    bcir.kbcir.path @pA { claim = @c, realization = "u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
+    bcir.kbcir.path @pB { claim = @c, realization = "u16", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 64, memory = 3840, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     // expected-error @+1 {{bcir-select-realization: computed score 7808 != declared score 9999}}
     %s = bcir.kbcir.select @c from [@pA, @pB] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @pB, score = 9999 : i64 } : !bcir.path
   }
@@ -24,8 +24,8 @@ bcir.module @bad_score {
 bcir.module @bad_selected {
   bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.kbcir.plan @plan0 {
-    %a = bcir.kbcir.path @pA { claim = @c, realization = "u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> } : !bcir.path
-    %b = bcir.kbcir.path @pB { claim = @c, realization = "u16", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 64, memory = 3840, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> } : !bcir.path
+    bcir.kbcir.path @pA { claim = @c, realization = "u8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
+    bcir.kbcir.path @pB { claim = @c, realization = "u16", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 64, memory = 3840, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     // The declared score is the true min (7808) so only the *selection* is wrong.
     // expected-error @+1 {{bcir-select-realization: computed argmin @pB != declared selected @pA}}
     %s = bcir.kbcir.select @c from [@pA, @pB] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @pA, score = 7808 : i64 } : !bcir.path
@@ -111,7 +111,7 @@ bcir.module @bad_pim_overclock {
 bcir.module @bad_l1_placement {
   bcir.registry @RES {
     // expected-error @+1 {{R16: placement l1 does not fit @BIG (4194304 B > 65536 B)}}
-    %b = bcir.resource @BIG { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1048576>, layout = #bcir.layout<soa>, placement = #bcir.mem_tier<l1> } : !bcir.resource
+    bcir.resource @BIG { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1048576>, layout = #bcir.layout<soa>, placement = #bcir.mem_tier<l1> }
   }
 }
 
@@ -121,7 +121,7 @@ bcir.module @bad_l1_placement {
 // legal. Both lower clean (no diagnostic).
 bcir.module @ok_placement_and_clock {
   bcir.registry @RES {
-    %s = bcir.resource @SMALL { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa>, placement = #bcir.mem_tier<l1> } : !bcir.resource
+    bcir.resource @SMALL { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa>, placement = #bcir.mem_tier<l1> }
   }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @add attributes {
