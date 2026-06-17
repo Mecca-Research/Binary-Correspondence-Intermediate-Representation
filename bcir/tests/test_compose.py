@@ -206,3 +206,45 @@ def test_summary_reuse_plus_hbm_reprice_matches_the_mlir_compose_pass():
                 Call("ew", ((1, 20), (2, 21), (3, 22)))))     # HBM  -> re-price
     r = plan_composite(prog, {"ew": fn}, res, AVX, COOL, summaries={"ew": summ})
     assert r.worst_cost == r.expected_cost == 10624 and r.reused == 1 and r.leaves == 1
+
+
+# --- RCSP-constrained compose: min M(pi,Theta) s.t. R(pi,Theta) <= B --------------
+
+def test_budget_unbounded_is_exactly_the_unconstrained_plan():
+    """No budget (or an unbounded one) is the degenerate case -- the pinned 7808 holds."""
+    from bcir.kbcir.rcsp import Budget
+    leaf = Leaf((_add(1, 10, 11, 12),))
+    assert plan_composite(leaf, {}, _res(), AVX, COOL).worst_cost == 7808
+    assert plan_composite(leaf, {}, _res(), AVX, COOL,
+                          budget=Budget.unbounded()).worst_cost == 7808
+
+
+def test_budget_reprices_a_leaf_when_a_thermal_cap_forbids_wide_simd():
+    """A loose thermal cap leaves vec16 (7808); a tight one makes vec16 infeasible and the
+    parallel block re-prices to the feasible vec8 (9472) -- Theta-feasibility over the tree."""
+    from bcir.kbcir.rcsp import Budget
+    leaf = Leaf((_add(1, 10, 11, 12),))
+    assert plan_composite(leaf, {}, _res(), AVX, COOL, budget=Budget.of(thermal=1200)).worst_cost == 7808
+    assert plan_composite(leaf, {}, _res(), AVX, COOL, budget=Budget.of(thermal=800)).worst_cost == 9472
+
+
+def test_budget_infeasible_leaf_raises():
+    """A cap no legal realization can satisfy makes the composite plan infeasible."""
+    from bcir.kbcir.rcsp import Budget, Infeasible
+    leaf = Leaf((_add(1, 10, 11, 12),))
+    try:
+        plan_composite(leaf, {}, _res(), AVX, COOL, budget=Budget.of(thermal=400))
+        assert False, "an unsatisfiable budget must raise Infeasible"
+    except Infeasible:
+        pass
+
+
+def test_budget_threads_through_seq_and_cond():
+    """The cap is enforced per parallel block across the whole region tree (series + branch)."""
+    from bcir.kbcir.rcsp import Budget
+    b = Budget.of(thermal=800)
+    seq = Seq((Leaf((_add(1, 10, 11, 12),)), Leaf((_add(2, 20, 21, 22),))))
+    assert plan_composite(seq, {}, _res(), AVX, COOL, budget=b).worst_cost == 2 * 9472
+    cond = Cond("p", Leaf((_add(1, 10, 11, 12),)), Leaf((_add(2, 20, 21, 22),)), prob_then_milli=500)
+    r = plan_composite(cond, {}, _res(), AVX, COOL, budget=b)
+    assert r.worst_cost == PRED_COST + max(9472, 9472)

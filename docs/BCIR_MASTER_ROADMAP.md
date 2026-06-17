@@ -55,7 +55,7 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 
 | Fact | **Now** |
 |---|---|
-| Oracle conformance tests (`python -m bcir.tests.run_all`) | **603**, incl. the generated differential + verifier + fuzz campaigns |
+| Oracle conformance tests (`python -m bcir.tests.run_all`) | **609**, incl. the generated differential (now incl. a compose-rail metamorphic campaign) + verifier + fuzz |
 | Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
 | GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
 | Verifier laws | **R1–R18** all first-class in `-bcir-verify` (R1–R17 dual-rail with the Python oracle + the `-bcir-lower-to-llvm` checkpoint; **R18** compositional call-graph integrity — callee resolution + no recursion — for the `kbcir.func/call/cond` family). R13 also **recomputes** the manifest digest + cross-checks `m_theta` against the IR |
@@ -90,7 +90,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | K_BCIR **RCSP / Pareto** (per-claim + plan-level) | `-bcir-rcsp`, `-bcir-rcsp-plan` | MLIR/C++ | ✅ **ported** (9472, {16,8}@17280) |
 | **Bundle** (joint) optimization (`bundle.optimize_bundled`) | `-bcir-bundle` | MLIR/C++ | ✅ **detection + joint-reorder** — reorders the cost columns, re-prices the min-plus path, annotates `kbcir.bundle_gain`/`bundle_order` (`bundle_reorder.mlir`) |
 | **Proof-carrying record** (`proof.explain`) | `-bcir-explain` | MLIR/C++ | ✅ **ported** — per-claim candidates weighed + chosen width/score, per-module total, as IR annotations (`explain.mlir`) |
-| **Compositional** semantics (`compose.plan_composite`) | `kbcir.func` / `kbcir.call` / `kbcir.cond` + `-bcir-compose` | MLIR/C++ | ✅ **op vocabulary** + **R18 call-graph law** + **`-bcir-compose`** (compositional cost on the law rail: Seq sum / Cond max+expected / Leaf optimize / Call **inter-procedural summary** — plan once, reuse for cost-compatible calls, re-price otherwise; reproduces plan_composite's worst/expected/reused — `compose_cost.mlir`, `compose_summary.mlir`) |
+| **Compositional** semantics (`compose.plan_composite`) | `kbcir.func` / `kbcir.call` / `kbcir.cond` + `-bcir-compose` | MLIR/C++ | ✅ **op vocabulary** + **R18 call-graph law** + **`-bcir-compose`** (Seq sum / Cond max+expected / Leaf optimize / Call **inter-procedural summary** / **RCSP-constrained** under a `kbcir.budget` — `min M s.t. R⪯B` over the region tree, a thermal cap re-prices wide SIMD or is infeasible; reproduces plan_composite's worst/expected/reused/feasible — `compose_cost`/`_summary`/`_budget.mlir` + a generated compose differential) |
 | GEM classify / batch / schedule / lower | `-bcir-*` passes | MLIR/C++ | ✅ |
 | GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
@@ -308,13 +308,14 @@ In recommended order — each is gated by the generated differential harness + F
 7. ✅ **Multi-claim bundle (joint) optimization** (§5.3.1). **DONE** — a real 12% matmul
    gain, with search certificates.
 8. ✅ **Proof-carrying records** (§5.3.2). **DONE** — `bcir.run --explain/--replay/--reduce`.
-9. ✅ **Compositional semantics** (§5.3.3) — **DONE on both rails, including inter-procedural
-   summaries.** Oracle `kbcir.compose` (Seq/Cond/Call/Function + dynamic shapes + alias/effect
-   modeling + summary costs); law rail `kbcir.func`/`call`/`cond` + the **R18 call-graph law**
-   (callee resolution + acyclic/no-recursion) + **`-bcir-compose`** — the compositional plan on
-   the law rail (Seq sum / Cond max+expected / Leaf optimize / Call **inter-procedural summary**:
-   a func is planned once over its formals and reused for cost-compatible calls, else re-priced
-   with the actuals substituted), reproducing plan_composite's worst/expected/reused.
+9. ✅ **Compositional semantics** (§5.3.3) — **DONE on both rails, end to end.** Oracle
+   `kbcir.compose` (Seq/Cond/Call/Function + dynamic shapes + alias/effect modeling + summary
+   costs + **RCSP budgets**); law rail `kbcir.func`/`call`/`cond` + the **R18 call-graph law** +
+   **`-bcir-compose`** — Seq sum / Cond max+expected / Leaf optimize / Call **inter-procedural
+   summary** (plan once, reuse cost-compatible calls, else re-price) / **RCSP-constrained** under
+   a `kbcir.budget` (`min M s.t. R⪯B` over the tree — `compose_feasible`), reproducing
+   plan_composite's worst/expected/reused/feasible, with a generated compose-rail differential.
+   **Next (Tier 1 remainder):** effect/independence annotation + dynamic-shape bounds on the law rail.
 10. ◑ **MLIR ports of the new oracle capabilities** — bundle **detection + joint-reorder**
     ported (`-bcir-bundle`: it now reorders the cost-model columns so a bundle is contiguous,
     re-runs the min-plus shortest path for every legal intra-bundle order, and annotates the

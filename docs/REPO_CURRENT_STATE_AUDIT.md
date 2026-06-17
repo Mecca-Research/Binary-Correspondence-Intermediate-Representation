@@ -127,6 +127,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **RCSP-constrained compose + a compose-rail differential.** (1) `plan_composite`
+  gained a `budget` (oracle-first): each Leaf is priced by `rcsp.optimize_constrained`, so the
+  region-tree plan respects the central equation `min M(pi,Theta) s.t. R(pi,Theta) <= B` -- a
+  thermal cap makes wide SIMD infeasible per parallel block (re-prices to vec8) or raises
+  `Infeasible`; unbounded == the old pinned scores. (2) Ported to `-bcir-compose` via a reusable
+  `cm::planConstrained` (the accumulated-budget label DP, score-only twin of `-bcir-rcsp-plan`):
+  with a `kbcir.budget` present each Leaf is priced constrained and the func is annotated
+  `kbcir.compose_feasible` (thermal<=800 -> vec8 9472 feasible; <=400 -> infeasible;
+  `compose_budget.mlir`). (3) A generated **compose differential** (`test_compose_differential.py`)
+  fuzzes the metamorphic laws -- determinism, worst>=expected, unbounded-budget degeneracy, RCSP
+  monotonicity (a feasible cap never lowers the cost), summary consistency -- over randomized
+  region trees. +6 tests (609 total). Compositional semantics is now complete on both rails.
 - 2026-06-17: **Inter-procedural summary costs in `-bcir-compose`.** `kbcir.call` is no longer
   a plain inline: a `kbcir.func` is planned **once** over its formals (memoized -- the
   summary), and a call whose actuals are **cost-compatible** with the formals (same
