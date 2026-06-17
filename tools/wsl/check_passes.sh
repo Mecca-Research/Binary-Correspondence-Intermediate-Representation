@@ -135,6 +135,8 @@ echo "[passes] dvfs (recompute phase-aware clock: gem.dvfs classify + clock_for)
 run_fc -bcir-dvfs "${T}/dvfs.mlir"
 echo "[passes] schedule-eft (duration-aware EFT waves: gem.schedule.schedule_eft)"
 run_fc -bcir-schedule-eft "${T}/schedule_eft.mlir"
+echo "[passes] alloc-pool (liveness-based memory pooling: allocator.pool_plan)"
+run_fc -bcir-alloc-pool "${T}/alloc_pool.mlir"
 echo "[passes] hot-Theta plan parity (the kbcir.theta context op)"
 run_fc -bcir-plan "${T}/theta_hot.mlir"
 echo "[passes] six-target capability matrix (-bcir-plan/-overlap/-rcsp-plan per target)"

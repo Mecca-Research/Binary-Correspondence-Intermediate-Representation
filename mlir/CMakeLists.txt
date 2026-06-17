@@ -93,6 +93,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRComposePass.cpp     # compositional cost over the func/if region tree
   lib/passes/BCIRCimDvfsPass.cpp     # recompute CIM/PIM dispatch + DVFS clock (gem.cim/dvfs)
   lib/passes/BCIRScheduleEftPass.cpp # duration-aware EFT wave scheduling (gem.schedule)
+  lib/passes/BCIRAllocPoolPass.cpp   # liveness-based memory pool planning (allocator.pool_plan)
   DEPENDS
     BCIRAttrsIncGen
     BCIRTypesIncGen

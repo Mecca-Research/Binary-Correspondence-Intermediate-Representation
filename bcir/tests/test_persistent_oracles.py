@@ -227,3 +227,21 @@ int main(void){{ size_t n={n};
         assert b.returncode == 0, b.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
         assert run.returncode == 0 and "OK" in run.stdout       # specialist == generic
+
+
+def test_mlir_alloc_pool_constants_are_in_sync():
+    """Pins the constants -bcir-alloc-pool annotates in mlir/test/passes/alloc_pool.mlir."""
+    from bcir.kbcir.allocator import pool_plan
+    from bcir.model import Module, Claim, Domain, Lane, Opcode, Resource, StrideClass, Phase
+    m = Module(name="a")
+    for r in (10, 11, 12, 13, 14):
+        m.add_resource(Resource(rid=r, domain=Domain.RAM, shape=(1024,)))
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[Claim(id=1, opcode=Opcode.ADD, lane=Lane.U,
+        stride_class=StrideClass.UNIT, count=1024, rd=(10, 11), wr=(12,), op="vector.add", domain=Domain.RAM)]))
+    m.add_phase(Phase(phase_id=1, deps=(0,), claims=[Claim(id=2, opcode=Opcode.ADD, lane=Lane.U,
+        stride_class=StrideClass.UNIT, count=1024, rd=(12, 13), wr=(14,), op="vector.add", domain=Domain.RAM)]))
+    pp = pool_plan(m)
+    assert pp.naive_bytes == 20480 and pp.peak_bytes == 12288 and pp.saved_bytes == 8192
+    assert pp.pool_of(10) == 0 and pp.pool_of(13) == 0   # A and D share an arena
+    assert pp.pool_of(11) == 1 and pp.pool_of(14) == 1   # B and E share an arena
+    assert pp.pool_of(12) == 2                            # C bridges both phases -> its own

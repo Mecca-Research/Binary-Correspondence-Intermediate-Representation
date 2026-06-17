@@ -55,7 +55,7 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 
 | Fact | **Now** |
 |---|---|
-| Oracle conformance tests (`python -m bcir.tests.run_all`) | **611**, incl. the generated differential (now incl. a compose-rail metamorphic campaign) + verifier + fuzz |
+| Oracle conformance tests (`python -m bcir.tests.run_all`) | **612**, incl. the generated differential (now incl. a compose-rail metamorphic campaign) + verifier + fuzz |
 | Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
 | GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
 | Verifier laws | **R1–R18** all first-class in `-bcir-verify` (R1–R17 dual-rail with the Python oracle + the `-bcir-lower-to-llvm` checkpoint; **R18** compositional call-graph integrity — callee resolution + no recursion — for the `kbcir.func/call/cond` family). R13 also **recomputes** the manifest digest + cross-checks `m_theta` against the IR |
@@ -94,6 +94,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | GEM classify / batch / schedule / lower | `-bcir-*` passes | MLIR/C++ | ✅ |
 | **CIM/PIM dispatch + DVFS clock DECISION** (`gem.cim` / `gem.dvfs`) | `-bcir-cim` / `-bcir-dvfs` | MLIR/C++ | ✅ **recomputed** (core-vs-PIM offload cost; per-phase intensity → Q8 clock) — the law derives the decision, not just R14/R15-verifies a declared one (`cim.mlir`, `dvfs.mlir`) |
 | **EFT duration-aware schedule** (`gem.schedule.schedule_eft`) | `-bcir-schedule-eft` | MLIR/C++ | ✅ **ported** — LPT list scheduling + earliest-finish placement + locality + the bandwidth-knee clamp; annotates per-claim domain/start/finish + makespan/knee (`schedule_eft.mlir`) |
+| **Allocator pool-plan** (`allocator.live_intervals`/`pool_plan`) | `-bcir-alloc-pool` | MLIR/C++ | ✅ **ported** — liveness-based pooling (disjoint live ranges share an arena, greedy left-edge); annotates per-resource pool_id + peak/naive/saved bytes (`alloc_pool.mlir`) |
 | GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
 | StreamPack ABI **decoder** | **C** `runtime/c/bcir_runtime.c` | **C** (frozen ABI) | ✅ CRC-gated parity + libFuzzer |

@@ -127,6 +127,16 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-17: **Tier-2 (3/3): allocator pool-plan on the law rail -- Tier-2 complete.**
+  `-bcir-alloc-pool` (`BCIRAllocPoolPass.cpp`) ports `kbcir.allocator.pool_plan`: liveness-based
+  memory pooling. It computes each touched resource's [first_phase, last_phase] live range (over
+  the phase declaration order), then greedy left-edge interval partitioning -- each resource, in
+  (start, rid) order, reuses the first arena whose last member has died (`last_phase < this start`),
+  else opens a new one. Resources with disjoint live ranges share an arena, so the peak footprint
+  (sum of arena sizes) drops below the naive sum. Annotates kbcir.pool_id per resource +
+  kbcir.pool_naive_bytes / pool_peak_bytes / pool_saved. `alloc_pool.mlir` (A/D + B/E share arenas,
+  C its own -> peak 12288 vs naive 20480, saved 8192); `test_persistent_oracles.py` pins it. +1
+  test (612). **All three Tier-2 "recompute-don't-trust" ports are now on the law rail.**
 - 2026-06-17: **Tier-2 (2/3): EFT duration-aware schedule on the law rail.** `-bcir-schedule-eft`
   (`BCIRScheduleEftPass.cpp`) ports `gem.schedule.schedule_eft` -- the HEFT-lite refinement of CT2
   wave formation. It plans the module for per-claim durations (the chosen edge costs), then per

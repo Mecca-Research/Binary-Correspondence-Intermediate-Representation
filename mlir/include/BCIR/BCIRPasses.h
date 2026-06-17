@@ -51,6 +51,8 @@ std::unique_ptr<mlir::Pass> createCimPass();
 std::unique_ptr<mlir::Pass> createDvfsPass();
 // -bcir-schedule-eft: duration-aware EFT wave scheduling (gem.schedule.schedule_eft).
 std::unique_ptr<mlir::Pass> createScheduleEftPass();
+// -bcir-alloc-pool: liveness-based memory pool planning (kbcir.allocator.pool_plan).
+std::unique_ptr<mlir::Pass> createAllocPoolPass();
 std::unique_ptr<mlir::Pass> createBatchPass();
 std::unique_ptr<mlir::Pass> createSchedulePass();
 std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
