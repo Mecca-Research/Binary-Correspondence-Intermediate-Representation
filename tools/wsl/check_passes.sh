@@ -135,6 +135,8 @@ echo "[passes] dvfs (recompute phase-aware clock: gem.dvfs classify + clock_for)
 run_fc -bcir-dvfs "${T}/dvfs.mlir"
 echo "[passes] schedule-eft (duration-aware EFT waves: gem.schedule.schedule_eft)"
 run_fc -bcir-schedule-eft "${T}/schedule_eft.mlir"
+echo "[passes] async (fork/await plan + pipelined cross-phase schedule: execute_tokens)"
+run_fc -bcir-async "${T}/async.mlir"
 echo "[passes] alloc-pool (liveness-based memory pooling: allocator.pool_plan)"
 run_fc -bcir-alloc-pool "${T}/alloc_pool.mlir"
 echo "[passes] hot-Theta plan parity (the kbcir.theta context op)"

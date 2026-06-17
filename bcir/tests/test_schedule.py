@@ -178,3 +178,28 @@ def test_mlir_schedule_eft_constants_are_in_sync():
     assert bandwidth_knee(AVX) == 4 and sch.makespan == 7808
     assert sch.slot_of(1).domain == 0 and sch.slot_of(1).finish == 7808
     assert sch.slot_of(2).domain == 1 and sch.slot_of(2).finish == 5888
+
+
+def test_mlir_async_pipelined_schedule_is_in_sync():
+    """Pins the constants -bcir-async annotates in mlir/test/passes/async.mlir: a phase-1
+    independent claim overlaps phase 0 (start 0), a dependent one awaits -> starts later."""
+    from bcir.gem.schedule import execute_tokens, durations_from
+    from bcir.gem.async_tokens import async_plan
+    from bcir.kbcir import TARGETS, optimize
+    from bcir.kbcir.cost import Theta
+    from bcir.model import Module, Claim, Domain, Lane, Opcode, Resource, StrideClass, Phase
+    AVX = TARGETS["x86_avx512"]
+    def C(i, a, b, c):
+        return Claim(id=i, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+                     count=1024, rd=(a, b), wr=(c,), op="vector.add", domain=Domain.RAM,
+                     cost_class="compute")
+    m = Module(name="async")
+    for r in range(10, 18):
+        m.add_resource(Resource(rid=r, domain=Domain.RAM, shape=(1024,)))
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[C(1, 10, 11, 12)]))
+    m.add_phase(Phase(phase_id=1, deps=(0,), claims=[C(2, 13, 14, 15), C(3, 12, 16, 17)]))
+    assert async_plan(m).awaits == {1: [], 2: [], 3: [1]}
+    sch = execute_tokens(m, durations_from(optimize(m, AVX, Theta.cool())), AVX)
+    assert sch.makespan == 15616
+    assert sch.slot_of(2).start == 0 and sch.slot_of(2).finish == 7808   # overlaps phase 0
+    assert sch.slot_of(3).start == 7808                                  # awaits c1

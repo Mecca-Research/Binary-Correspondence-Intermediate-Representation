@@ -51,6 +51,9 @@ std::unique_ptr<mlir::Pass> createCimPass();
 std::unique_ptr<mlir::Pass> createDvfsPass();
 // -bcir-schedule-eft: duration-aware EFT wave scheduling (gem.schedule.schedule_eft).
 std::unique_ptr<mlir::Pass> createScheduleEftPass();
+// -bcir-async: async fork/await plan + pipelined cross-phase schedule (gem.async_tokens +
+// schedule.execute_tokens) -- later-phase independent claims overlap earlier ones.
+std::unique_ptr<mlir::Pass> createAsyncPass();
 // -bcir-alloc-pool: liveness-based memory pool planning (kbcir.allocator.pool_plan).
 std::unique_ptr<mlir::Pass> createAllocPoolPass();
 std::unique_ptr<mlir::Pass> createBatchPass();
