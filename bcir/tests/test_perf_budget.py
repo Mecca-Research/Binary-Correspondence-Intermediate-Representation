@@ -92,3 +92,29 @@ def test_trend_summary_is_empty_for_unknown_budget():
     with tempfile.TemporaryDirectory() as d:
         assert trend_summary(os.path.join(d, "none.jsonl"), "missing") == {
             "name": "missing", "count": 0}
+
+
+def test_dense_match_band_is_baremetal_only():
+    # a dense kernel that's ~parity vs Clang (matches) must pass; a wide divergence must fail on
+    # bare-metal but be waived on shared CI (non-flaky).
+    near = _cmp(1000, 1020)                              # ~1.02x, inside the band
+    far = _cmp(500, 1500)                               # 3.0x — a suspicious "win" on a dense kernel
+    budget = Budget("dense", match_band=(700, 1300))
+    assert evaluate(near, budget, baremetal=True).ok
+    off = evaluate(far, budget, baremetal=False)
+    assert off.ok and any("match_band" in w for w in off.waived)   # waived on shared CI
+    on = evaluate(far, budget, baremetal=True)
+    assert not on.ok and any("parity band" in why for why in on.reasons)
+
+
+def test_reference_milli_is_tracked_not_asserted():
+    # a measured speedup far below the documented reference must still PASS (CI isn't strict on the
+    # exact number) — the reference only rides along into the result + trend for drift watching.
+    budget = Budget("gather", min_speedup_milli=1500, reference_milli=6000)
+    res = evaluate(_cmp(100, 250), budget, baremetal=True)   # 2.5x: above floor, below doc 6.0x
+    assert res.ok and res.reference_milli == 6000
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "t.jsonl")
+        record_trend(res, path)
+        s = trend_summary(path, "gather")
+        assert s["reference"] == 6000 and s["last_vs_reference_pct"] == round(100 * 2500 / 6000)

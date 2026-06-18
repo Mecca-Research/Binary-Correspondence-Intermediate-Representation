@@ -72,6 +72,8 @@ class HardwareChannel:
     runtime: RuntimeChannel = field(default_factory=RuntimeChannel)
     arch_match: tuple[str, ...] = ()                 # platform.machine() values this channel serves
     modeled: bool = False                            # True == cost profile is modeled (no resident driver yet)
+    capabilities: frozenset[str] = frozenset()       # declared StreamPack-execution capability (plugin
+    #                                                  routing contract); empty == use kind-default routing
 
     @property
     def widest_lane(self) -> int:
@@ -81,6 +83,55 @@ class HardwareChannel:
     def is_host_elf(self) -> bool:
         """Produces a native host ELF object (a CPU channel), vs an off-host backend (GPU/FPGA)."""
         return self.e_machine != EM_NONE
+
+
+# --- the StreamPack-execution capability vocabulary (the plugin routing contract) ---------------
+# A channel plugin declares *what GEM work it executes well* as a set of these tags (in its
+# channel.json), instead of the core hard-coding a per-kind rule. A claim is mapped to the tags it
+# could use; a channel suits the claim if it declares an overlapping tag (or "universal").
+CAPABILITY_VOCAB = frozenset({
+    "universal",        # runs anything (the CPU fallback; a fully programmable backend)
+    "data_parallel",    # elementwise / SIMD lanes
+    "reduce",           # reductions / accumulation trees
+    "gather",           # random / indexed access (scatter/gather)
+    "tile",             # blocked tiles (systolic)
+    "matmul",           # dense matmul
+    "stream_unit",      # unit-stride sequential streaming
+    "scalar_stream",    # scalar sequential streaming
+})
+
+
+def claim_required_caps(claim) -> frozenset:
+    """The capability tags a claim could be served by (cumulative — op-derived + stride-derived).
+    A channel suits the claim if its declared capabilities overlap this set."""
+    from .model import StrideClass
+
+    op = (claim.op or "")
+    sc = getattr(claim, "stride_class", None)
+    req: set = set()
+    if op.startswith("reduce."):
+        req.add("reduce")
+    if "gather" in op or sc == StrideClass.RANDOM:
+        req.add("gather")
+    if "matmul" in op:
+        req.add("matmul")
+    if sc == StrideClass.TILE:
+        req.add("tile")
+    if sc == StrideClass.UNIT:
+        req.add("stream_unit")
+    if sc == StrideClass.SCALAR:
+        req.add("scalar_stream")
+    if not req:
+        req.add("data_parallel")                     # default elementwise work
+    return frozenset(req)
+
+
+def channel_suits(claim, ch: HardwareChannel) -> bool:
+    """Does channel ``ch`` suit ``claim``? If the channel *declares* capabilities (a plugin), route
+    by the declared tags; otherwise fall back to the built-in per-kind rule (legacy, unchanged)."""
+    if ch.capabilities:
+        return "universal" in ch.capabilities or bool(ch.capabilities & claim_required_caps(claim))
+    return _claim_suits_channel(claim, ch)
 
 
 def _rt(machine: str, energy: str, zones: tuple[str, ...]) -> RuntimeChannel:
@@ -267,7 +318,7 @@ def orchestrate(module, channels, theta, policy=None) -> HeterogeneousPlan:
     placements = []
     for _phase, claim in _flatten(module):
         cands = [(c, step_of[c.name][claim.id]) for c in channels
-                 if _claim_suits_channel(claim, c) and claim.id in step_of[c.name]]
+                 if channel_suits(claim, c) and claim.id in step_of[c.name]]
         if not cands:                                # nothing suits -> the host CPU channel
             hc = host_channel()
             if hc.name not in step_of:

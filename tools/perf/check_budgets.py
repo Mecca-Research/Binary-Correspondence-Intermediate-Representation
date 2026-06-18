@@ -38,30 +38,44 @@ class _Norm:
 
 
 def _cases():
-    """(Budget, thunk -> _Norm). Imported late so the lowering path only loads when timing."""
+    """(Budget, thunk -> _Norm). The five named Clang-comparison budgets from the comparison doc.
+
+    `reference_milli` records the *documented* result (tracked in the trend log, never asserted —
+    CI is deliberately not strict on the exact speedup). Dense kernels carry a `match_band` (BCIR
+    should match Clang, not diverge); structural wins carry a conservative `min_speedup_milli` floor
+    set well below the realized number and robust cross-arch. All floors/bands are bare-metal-only.
+    Imported late so the lowering path only loads when timing."""
     from bcir.bench import compare, compare_gather, compare_reduce, compare_strided
 
-    def elementwise():                                     # memory-bound: validity only
-        c = compare("vector_add", opt="-O2", n=1 << 18, reps=30)
+    def dense_stream():                                    # doc: dense streaming 0.98x (match)
+        c = compare("vector_add", opt="-O2", n=1 << 20, reps=30)
         return _Norm(c.bcir, c.baseline, c.speedup_milli)
 
-    def gather():                                          # structural win (~6.5x realized)
+    def dense_l1():                                        # doc: dense L1-resident 1.00x (match)
+        c = compare("vector_add", opt="-O2", n=1 << 12, reps=200)   # small n stays L1-resident
+        return _Norm(c.bcir, c.baseline, c.speedup_milli)
+
+    def gather():                                          # doc: gather avoidance 6.0x
         c = compare_gather("vector_add", opt="-O2", n=1 << 18, reps=30, shuffle=True)
         return _Norm(c.direct, c.gather, c.speedup_milli)
 
-    def reduce():                                          # structural win (~16x realized)
+    def reduce():                                          # doc: reduction order 14.1x
         c = compare_reduce("gather_reduce", opt="-O2", n=1 << 18, reps=20)
         return _Norm(c.blocked, c.gather, c.speedup_milli)
 
-    def strided():                                         # cross-arch marginal: validity only
+    def strided():                                         # doc: strided access 1.33x
         c = compare_strided("saxpy_strided", opt="-O2", n=1 << 20, reps=20)
         return _Norm(c.blocked, c.gather, c.speedup_milli)  # direct strided vs the gather form
 
     return [
-        (Budget("vector_add (elementwise)"), elementwise),
-        (Budget("gather avoidance", min_speedup_milli=1500), gather),     # bare-metal floor 1.5x
-        (Budget("reduction blocking", min_speedup_milli=2000), reduce),   # bare-metal floor 2.0x
-        (Budget("strided saxpy"), strided),
+        # dense: BCIR must MATCH Clang (the cost model correctly declines to "optimize") — a wide
+        # parity band catches a real slowdown OR a suspicious win (usually an elided kernel).
+        (Budget("dense streaming", match_band=(700, 1300), reference_milli=980), dense_stream),
+        (Budget("dense L1", match_band=(700, 1300), reference_milli=1000), dense_l1),
+        # structural wins: a robust cross-arch floor far below the documented number.
+        (Budget("gather avoidance", min_speedup_milli=1500, reference_milli=6000), gather),
+        (Budget("reduction order", min_speedup_milli=2000, reference_milli=14100), reduce),
+        (Budget("strided access", min_speedup_milli=1100, reference_milli=1330), strided),
     ]
 
 
@@ -86,15 +100,16 @@ def main() -> int:
         res = evaluate(thunk(), budget, baremetal=bare)
         record_trend(res, args.trend)
         mark = "ok " if res.ok else "FAIL"
-        sys.stderr.write(f"  [{mark}] {res.name:<22} speedup={res.speedup_milli / 1000:.2f}x "
+        ref = f" (doc {res.reference_milli / 1000:.2f}x)" if res.reference_milli else ""
+        sys.stderr.write(f"  [{mark}] {res.name:<18} {res.speedup_milli / 1000:.2f}x{ref} "
                          f"ns/call={res.ns_per_call}"
                          f"{' waived=' + str(list(res.waived)) if res.waived else ''}\n")
         for why in res.reasons:
             sys.stderr.write(f"        - {why}\n")
         failed += not res.ok
 
-    sys.stderr.write(f"[check_budgets] trend log: {args.trend} "
-                     f"({len(trend_summary(args.trend, 'gather avoidance')) and 'updated'})\n")
+    sys.stderr.write(f"[check_budgets] continuous trend log: {args.trend} "
+                     f"(gather samples: {trend_summary(args.trend, 'gather avoidance').get('count', 0)})\n")
     if failed:
         sys.stderr.write(f"[check_budgets] {failed} budget(s) failed a STRICT (correctness / "
                          f"measurement-validity) check.\n")

@@ -1,0 +1,73 @@
+{
+  "format_version": 1,
+  "name": "tpu_systolic",
+  "kind": "accelerator",
+  "provenance": "simulated",
+  "modeled": true,
+  "arch_match": [],
+  "capabilities": [
+    "data_parallel",
+    "matmul",
+    "tile"
+  ],
+  "codegen": {
+    "llvm_triple": "",
+    "e_machine": 0
+  },
+  "runtime": {
+    "perf_syscall_nr": 298,
+    "energy_source": "hwmon",
+    "thermal_zone_types": [
+      "accel",
+      "soc"
+    ]
+  },
+  "calibration": {
+    "ref": "calib/tpu_systolic.v0.json",
+    "digest": "sha256:modeled-not-yet-measured",
+    "cal_gen": 0,
+    "provenance": "modeled"
+  },
+  "profile": {
+    "name": "tpu-systolic",
+    "triple": "tpu-systolic",
+    "cacheline": 64,
+    "elem_bytes": 4,
+    "lane_widths": [
+      1,
+      128
+    ],
+    "warp": 0,
+    "scalable": false,
+    "gather_penalty": 512,
+    "mem_unit": 1,
+    "base_overhead": 24,
+    "thermal_density": 64,
+    "power_density": 64,
+    "per_op_heat": 1,
+    "fma": true,
+    "isa_features": [
+      "bf16_mac",
+      "systolic"
+    ],
+    "affinity_domains": 128,
+    "mem_channels": 24,
+    "cal_gen": 0,
+    "mem_tiers": [
+      {
+        "name": "sram",
+        "latency_cyc": 3,
+        "bw_factor": 128,
+        "lat_factor": 24,
+        "capacity": 0
+      },
+      {
+        "name": "hbm",
+        "latency_cyc": 200,
+        "bw_factor": 64,
+        "lat_factor": 400,
+        "capacity": 0
+      }
+    ]
+  }
+}

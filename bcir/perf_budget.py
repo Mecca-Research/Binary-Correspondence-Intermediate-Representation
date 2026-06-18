@@ -36,11 +36,21 @@ def is_baremetal() -> bool:
 @dataclass(frozen=True)
 class Budget:
     """A named benchmark budget. Correctness + measurement validity are *always* required;
-    `min_speedup_milli` / `max_ns_per_call` are bare-metal-only perf floors (1000 == parity)."""
+    `min_speedup_milli` / `max_ns_per_call` / `match_band` are bare-metal-only (1000 == parity).
+
+    For a *structural win* (gather avoidance, reduction blocking) use `min_speedup_milli` — a floor
+    well below the realized speedup. For a *dense match* (BCIR should neither beat nor lose to Clang
+    on a memory-bound kernel — the cost model correctly declines to "optimize") use `match_band`,
+    a [lo, hi] parity window: it catches both a regression that makes BCIR much slower AND a
+    suspicious "win" that usually means a broken/elided kernel. `reference_milli` is the documented
+    Clang-comparison number (e.g. 6000 == the 6.0x gather result); it is *tracked in the trend log,
+    never asserted* — the gate is deliberately not strict on the exact speedup in CI."""
     name: str
     min_speedup_milli: int | None = None      # e.g. 1500 == require >=1.5x (bare-metal only)
     max_ns_per_call: int | None = None        # absolute latency ceiling (bare-metal only)
+    match_band: tuple | None = None           # (lo, hi) milli parity window (bare-metal only)
     expect_width: int | None = None           # the cost model must select this lane width
+    reference_milli: int | None = None        # documented speedup (trend context; never asserted)
 
 
 @dataclass(frozen=True)
@@ -53,6 +63,7 @@ class BudgetResult:
     reasons: tuple[str, ...] = ()             # why it failed (empty when ok)
     enforced: tuple[str, ...] = ()            # the strict checks that actually ran
     waived: tuple[str, ...] = ()              # perf floors skipped because not bare-metal
+    reference_milli: int | None = None        # documented Clang-comparison number (trend context)
 
     def __bool__(self) -> bool:
         return self.ok
@@ -110,10 +121,20 @@ def evaluate(comp, budget: Budget, *, baremetal: bool | None = None) -> BudgetRe
                                f"{budget.max_ns_per_call} (bare-metal)")
         else:
             waived.append(f"max_ns_per_call<={budget.max_ns_per_call}")
+    if budget.match_band is not None:
+        lo, hi = budget.match_band
+        if bare:
+            enforced.append(f"match_band[{lo},{hi}]")
+            if not (lo <= speedup <= hi):
+                reasons.append(f"speedup {speedup} outside parity band [{lo},{hi}] (bare-metal) — a "
+                               f"dense kernel should match Clang, not diverge")
+        else:
+            waived.append(f"match_band[{lo},{hi}]")
 
     return BudgetResult(name=budget.name, ok=not reasons, baremetal=bare, speedup_milli=speedup,
                         ns_per_call=bcir.ns_per_call, reasons=tuple(reasons),
-                        enforced=tuple(enforced), waived=tuple(waived))
+                        enforced=tuple(enforced), waived=tuple(waived),
+                        reference_milli=budget.reference_milli)
 
 
 # --- trend tracking --------------------------------------------------------------
@@ -126,7 +147,8 @@ def _provenance() -> dict:
 def record_trend(result: BudgetResult, path: str) -> dict:
     """Append a provenance-tagged JSON line for `result` to the trend log at `path`."""
     row = {**_provenance(), "name": result.name, "ok": result.ok,
-           "speedup_milli": result.speedup_milli, "ns_per_call": result.ns_per_call}
+           "speedup_milli": result.speedup_milli, "ns_per_call": result.ns_per_call,
+           "reference_milli": result.reference_milli}
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, sort_keys=True) + "\n")
@@ -142,11 +164,18 @@ def read_trend(path: str) -> list[dict]:
 
 
 def trend_summary(path: str, name: str) -> dict:
-    """Simple moving-series stats for one budget — count, last, min/median speedup."""
-    series = [r["speedup_milli"] for r in read_trend(path)
-              if r.get("name") == name and isinstance(r.get("speedup_milli"), int)]
-    if not series:
+    """Simple moving-series stats for one budget — count, last, min/median speedup, and (if the
+    budget carries one) the documented reference so drift against it can be watched over time."""
+    rows = [r for r in read_trend(path)
+            if r.get("name") == name and isinstance(r.get("speedup_milli"), int)]
+    if not rows:
         return {"name": name, "count": 0}
+    series = [r["speedup_milli"] for r in rows]
     ordered = sorted(series)
-    return {"name": name, "count": len(series), "last": series[-1],
-            "min": ordered[0], "median": ordered[len(ordered) // 2], "max": ordered[-1]}
+    out = {"name": name, "count": len(series), "last": series[-1],
+           "min": ordered[0], "median": ordered[len(ordered) // 2], "max": ordered[-1]}
+    refs = [r["reference_milli"] for r in rows if isinstance(r.get("reference_milli"), int)]
+    if refs:
+        out["reference"] = refs[-1]
+        out["last_vs_reference_pct"] = round(100 * series[-1] / refs[-1]) if refs[-1] else None
+    return out
