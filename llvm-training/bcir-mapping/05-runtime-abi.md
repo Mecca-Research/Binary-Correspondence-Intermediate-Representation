@@ -1,5 +1,13 @@
 # Runtime ABI Mapping
 
+> ⚠️ **Retired / historical material.** This guide references the early **LLVM-IR-schema runtime**
+> (`runtime/llvm/`, since removed). BCIR's current representation is the **MLIR dialect**
+> (`mlir/include/BCIR/`) + the **C runtime** (`runtime/c/`); see `docs/PARITY.md`,
+> `docs/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
+> **not** follow the `runtime/llvm/` paths below.
+<!-- allow-retired-paths -->
+
+
 The runtime ABI is the boundary where BCIR semantic records become concrete LLVM
 IR structs, globals, declarations, and calls. Keep this layer boring and stable:
 most verifier and linker failures come from ABI drift rather than from complex
@@ -32,33 +40,33 @@ IR instructions.
 
 ## Relevant runtime ABI structs/functions
 
-- Schema records: [`%bcir.claim`](../../runtime/llvm/bcir_claim_schema.ll),
-  [`%bcir.execctx`](../../runtime/llvm/bcir_claim_schema.ll),
-  [`%bcir.costvec.q16`](../../runtime/llvm/bcir_claim_schema.ll),
-  [`%bcir.res`](../../runtime/llvm/bcir_registry_schema.ll),
-  [`%bcir.exe`](../../runtime/llvm/bcir_registry_schema.ll),
-  [`%bcir.wl`](../../runtime/llvm/bcir_registry_schema.ll),
-  [`%bcir.blob.header`](../../runtime/llvm/bcir_blob_schema.ll), and
-  [`%bcir.blob.view`](../../runtime/llvm/bcir_blob_schema.ll).
-- Schedule records: [`%bcir.phase.range`](../../runtime/llvm/bcir_schedule_schema.ll),
-  [`%bcir.batch`](../../runtime/llvm/bcir_schedule_schema.ll),
-  [`%bcir.layout.profile`](../../runtime/llvm/bcir_schedule_schema.ll),
-  [`%bcir.prefetch.profile`](../../runtime/llvm/bcir_schedule_schema.ll),
-  [`%bcir.tile.profile`](../../runtime/llvm/bcir_schedule_schema.ll), and
-  [`%bcir.stream.pack`](../../runtime/llvm/bcir_schedule_schema.ll).
-- Accessors and verifiers: [`runtime/llvm/bcir_claim_accessors.ll`](../../runtime/llvm/bcir_claim_accessors.ll),
-  [`runtime/llvm/bcir_claim_verify.ll`](../../runtime/llvm/bcir_claim_verify.ll),
-  [`runtime/llvm/bcir_batch_verify.ll`](../../runtime/llvm/bcir_batch_verify.ll),
-  [`runtime/llvm/bcir_blob_verify.ll`](../../runtime/llvm/bcir_blob_verify.ll), and
-  [`runtime/llvm/bcir_phase_epoch.ll`](../../runtime/llvm/bcir_phase_epoch.ll).
-- Executors: [`runtime/llvm/bcir_gem_seed.ll`](../../runtime/llvm/bcir_gem_seed.ll),
-  [`runtime/llvm/bcir_worklist.ll`](../../runtime/llvm/bcir_worklist.ll),
-  [`runtime/llvm/bcir_phase_worklist.ll`](../../runtime/llvm/bcir_phase_worklist.ll),
-  and [`runtime/llvm/bcir_batch_executor.ll`](../../runtime/llvm/bcir_batch_executor.ll).
-- Existing examples: [`runtime/llvm/bcir_master_reference_v2.ll`](../../runtime/llvm/bcir_master_reference_v2.ll),
-  [`runtime/llvm/bcir_examples.ll`](../../runtime/llvm/bcir_examples.ll),
-  [`runtime/llvm/bcir_examples_phase3.ll`](../../runtime/llvm/bcir_examples_phase3.ll),
-  and [`runtime/llvm/bcir_examples_phase4_generated.ll`](../../runtime/llvm/bcir_examples_phase4_generated.ll).
+- Schema records: `%bcir.claim`,
+  `%bcir.execctx`,
+  `%bcir.costvec.q16`,
+  `%bcir.res`,
+  `%bcir.exe`,
+  `%bcir.wl`,
+  `%bcir.blob.header`, and
+  `%bcir.blob.view`.
+- Schedule records: `%bcir.phase.range`,
+  `%bcir.batch`,
+  `%bcir.layout.profile`,
+  `%bcir.prefetch.profile`,
+  `%bcir.tile.profile`, and
+  `%bcir.stream.pack`.
+- Accessors and verifiers: `runtime/llvm/bcir_claim_accessors.ll`,
+  `runtime/llvm/bcir_claim_verify.ll`,
+  `runtime/llvm/bcir_batch_verify.ll`,
+  `runtime/llvm/bcir_blob_verify.ll`, and
+  `runtime/llvm/bcir_phase_epoch.ll`.
+- Executors: `runtime/llvm/bcir_gem_seed.ll`,
+  `runtime/llvm/bcir_worklist.ll`,
+  `runtime/llvm/bcir_phase_worklist.ll`,
+  and `runtime/llvm/bcir_batch_executor.ll`.
+- Existing examples: `runtime/llvm/bcir_master_reference_v2.ll`,
+  `runtime/llvm/bcir_examples.ll`,
+  `runtime/llvm/bcir_examples_phase3.ll`,
+  and `runtime/llvm/bcir_examples_phase4_generated.ll`.
 
 ## Verifier risks
 

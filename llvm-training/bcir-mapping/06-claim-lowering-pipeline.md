@@ -1,5 +1,13 @@
 # Claim Lowering Pipeline
 
+> ⚠️ **Retired / historical material.** This guide references the early **LLVM-IR-schema runtime**
+> (`runtime/llvm/`, since removed). BCIR's current representation is the **MLIR dialect**
+> (`mlir/include/BCIR/`) + the **C runtime** (`runtime/c/`); see `docs/PARITY.md`,
+> `docs/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
+> **not** follow the `runtime/llvm/` paths below.
+<!-- allow-retired-paths -->
+
+
 BCIR claim lowering is the repeatable path from semantic operation records to
 verifier-valid LLVM IR. The important discipline is to lower one concern at a
 time: claim fields, resource binding, operation dispatch, scheduling metadata,
@@ -20,7 +28,7 @@ and diagnostics should not be hidden inside one opaque helper.
 1. **Normalize** symbolic resources, lane masks, op names, and immediate values
    into a canonical claim record.
 2. **Pack** fixed-width claim fields using the schema in
-   [`runtime/llvm/bcir_claim_schema.ll`](../../runtime/llvm/bcir_claim_schema.ll).
+   `runtime/llvm/bcir_claim_schema.ll`.
 3. **Bind** reads and writes by lowering resource IDs to registry-table GEPs and
    base-pointer loads.
 4. **Dispatch** each operation either to plain LLVM instructions or to an

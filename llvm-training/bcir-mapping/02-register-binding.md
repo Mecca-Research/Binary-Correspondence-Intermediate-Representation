@@ -1,5 +1,13 @@
 # Register and Resource Binding
 
+> ⚠️ **Retired / historical material.** This guide references the early **LLVM-IR-schema runtime**
+> (`runtime/llvm/`, since removed). BCIR's current representation is the **MLIR dialect**
+> (`mlir/include/BCIR/`) + the **C runtime** (`runtime/c/`); see `docs/PARITY.md`,
+> `docs/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
+> **not** follow the `runtime/llvm/` paths below.
+<!-- allow-retired-paths -->
+
+
 Register binding maps symbolic BCIR operands to concrete runtime resources or
 slots. LLVM IR should make this binding explicit as table lookups, struct field
 loads, and ordinary pointer arithmetic rather than as implicit register names.
@@ -28,20 +36,20 @@ loads, and ordinary pointer arithmetic rather than as implicit register names.
 
 ## Relevant runtime ABI structs/functions
 
-- [`%bcir.claim`](../../runtime/llvm/bcir_claim_schema.ll) includes fixed read
+- `%bcir.claim` includes fixed read
   and write resource-ID arrays.
-- [`@bcir.claim.rd`](../../runtime/llvm/bcir_claim_accessors.ll) and
-  [`@bcir.claim.wr`](../../runtime/llvm/bcir_claim_accessors.ll) are the canonical
+- `@bcir.claim.rd` and
+  `@bcir.claim.wr` are the canonical
   accessors for those arrays.
-- [`%bcir.res`](../../runtime/llvm/bcir_registry_schema.ll) is the resource table
+- `%bcir.res` is the resource table
   record used after binding.
-- [`%bcir.execctx`](../../runtime/llvm/bcir_claim_schema.ll) carries execution
+- `%bcir.execctx` carries execution
   state that should stay separate from resource table contents.
-- [`@bcir.registry.lookup`](../../runtime/llvm/bcir_gem_seed.ll) shows the table
-  indexing pattern, while [`@bcir.gem.execute_claim`](../../runtime/llvm/bcir_gem_seed.ll)
+- `@bcir.registry.lookup` shows the table
+  indexing pattern, while `@bcir.gem.execute_claim`
   shows opcode-based dispatch after binding.
-- Existing examples: [`runtime/llvm/bcir_master_reference_v2.ll`](../../runtime/llvm/bcir_master_reference_v2.ll),
-  [`runtime/llvm/bcir_gem_seed.ll`](../../runtime/llvm/bcir_gem_seed.ll), and
+- Existing examples: `runtime/llvm/bcir_master_reference_v2.ll`,
+  `runtime/llvm/bcir_gem_seed.ll`, and
   [`llvm-training/exercises/011-register-binding-pattern.prompt.md`](../exercises/011-register-binding-pattern.prompt.md).
 
 ## Verifier risks

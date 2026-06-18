@@ -6,7 +6,7 @@ differential on the toolchain rail. Two halves:
   * **oracle rail** -- `differential.run_verifier_campaign` fault-injects a law into a
     clean module and confirms the Python `verify` flags exactly that law (already shipped);
     here we assert it is clean and covers its injected set.
-  * **toolchain rail** -- every law R1..R17 must have a negative `-verify-diagnostics`
+  * **toolchain rail** -- every law R1..R18 must have a negative `-verify-diagnostics`
     case in the committed `verify_laws*.mlir` / `verify_accuracy.mlir`, so `bcir-opt
     -bcir-verify` is differentially tested law-for-law (the cases run under bcir-opt in CI,
     `tools/wsl/check_passes.sh`). This test is the *coverage gate*: it guarantees no law

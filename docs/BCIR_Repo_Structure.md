@@ -1,5 +1,8 @@
 # BCIR Repository Structure (decision record)
 
+<!-- allow-retired-paths -->
+
+
 This document records how the repository is organized and how the IRDL, MLIR,
 and LLVM sections stay separate. It is the steering reference for the reorg that
 introduced `ir/`.

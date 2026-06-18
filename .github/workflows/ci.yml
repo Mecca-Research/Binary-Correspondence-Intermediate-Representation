@@ -260,3 +260,24 @@ jobs:
         run: |
           bash llvm-training/tools/verify-mlir-examples.sh --require-tools
           python3 llvm-training/tools/grade-exercises.py --self-test --format json --output build/mlir-rail-training-scores.json
+
+  docs-governance:
+    name: Docs governance (status drift + links + retired paths)
+    runs-on: ubuntu-latest
+    # Pure-Python, no toolchain: keeps prose honest against the code. Three gates —
+    #   1. docs/STATUS.md must equal a fresh generation (no hand-typed count drift),
+    #   2. no broken relative Markdown links (code-aware: C++/IR snippets aren't links),
+    #   3. no *active* doc points at a retired tree (e.g. removed runtime/llvm/) without the
+    #      explicit `<!-- allow-retired-paths -->` historical marker.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: STATUS.md is generated from the tree (no count/law drift)
+        run: python3 tools/docs/gen_status.py --check
+
+      - name: No broken relative Markdown links
+        run: python3 tools/docs/check_links.py
+
+      - name: No active-doc references to retired trees (allowlist via marker)
+        run: python3 tools/docs/check_retired_paths.py

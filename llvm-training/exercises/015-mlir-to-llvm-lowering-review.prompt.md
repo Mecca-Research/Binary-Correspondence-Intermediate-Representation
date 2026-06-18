@@ -1,5 +1,13 @@
 # Exercise 015: Review an MLIR-to-LLVM lowering for BCIR patterns
 
+> ⚠️ **Retired / historical material.** This guide references the early **LLVM-IR-schema runtime**
+> (`runtime/llvm/`, since removed). BCIR's current representation is the **MLIR dialect**
+> (`mlir/include/BCIR/`) + the **C runtime** (`runtime/c/`); see `docs/PARITY.md`,
+> `docs/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
+> **not** follow the `runtime/llvm/` paths below.
+<!-- allow-retired-paths -->
+
+
 ## BCIR concept being modeled
 
 Model a code-review task for a BCIR lowering pipeline that starts from an

@@ -55,7 +55,7 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 
 | Fact | **Now** |
 |---|---|
-| Oracle conformance tests (`python -m bcir.tests.run_all`) | **615**, incl. the generated differential (now incl. a compose-rail metamorphic campaign) + verifier + fuzz |
+| Oracle conformance tests (`python -m bcir.tests.run_all`) | see **[`docs/STATUS.md`](STATUS.md)** (generated count — single source of truth), incl. the generated differential (now incl. a compose-rail metamorphic campaign) + verifier + fuzz |
 | Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
 | GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
 | Verifier laws | **R1–R18** all first-class in `-bcir-verify` (R1–R17 dual-rail with the Python oracle + the `-bcir-lower-to-llvm` checkpoint; **R18** compositional call-graph integrity — callee resolution + no recursion — for the `kbcir.func/call/cond` family). R13 also **recomputes** the manifest digest + cross-checks `m_theta` against the IR |
@@ -131,7 +131,8 @@ of the last cycle. Each stage is bit-exact against the oracle and gated by
   per TARGET; `-bcir-plan`/`-overlap`/`-rcsp-plan` recompute the oracle's per-target
   result from the capability alone — avx512/sve/rvv 16→7808, avx2 8→9472, neon 4→12800,
   ptx 32→6976; the GPU's coalesced gather halves histogram (266240 vs 528384).
-- **Verifier R1–R17** run on both rails, negative-tested per law, plus a verifier
+- **Verifier R1–R18**, negative-tested per law (R1–R17 dual-rail on the Python oracle + the
+  MLIR rail; **R18** — compositional call-graph integrity — on the MLIR rail), plus a verifier
   *differential* (`gen_illegal_module` + `run_verifier_campaign`) that fault-injects each
   law and confirms the verifier catches it.
 - **C23 where it pays:** `_BitInt(N)` exact-width Q-fixed lane kernels (the place a
@@ -173,8 +174,9 @@ The optimizer core is ported. What is still Python-only **and** belongs on the l
    `-bcir-verify` pass (`BCIRVerifyPass.cpp`, dual-rail with `verify.{verify_cim,
    verify_dvfs,verify_allocator}`), with positive/negative `.mlir` cases in
    `verify_laws_deep.mlir`; they remain enforced at the `-bcir-lower-to-llvm` checkpoint
-   too (defense in depth). Verifier dual-rail symmetry is complete — every law R1–R17 is
-   checkable by `-bcir-verify` alone.
+   too (defense in depth). Verifier dual-rail symmetry is complete — every law R1–R18 is
+   checkable by `-bcir-verify` alone (R1–R17 dual-rail; **R18** call-graph integrity on the
+   MLIR rail).
 2. ✅ **The `verification` cost dimension (the 12th cost axis). DONE.** It now has a real
    producer on both rails (`realize._verify_cost` / `BCIRCostModel.h::verifyCostFor`,
    cross-checked by `cost_model_verify.mlir`): the cost of discharging a claim's verify
@@ -185,9 +187,9 @@ The optimizer core is ported. What is still Python-only **and** belongs on the l
    per-claim selection but *is* a tradeable plan resource — an RCSP cap on `verification`
    can make a claim infeasible (`test_verify_cost.py`). exact/hash were previously unused,
    so this is purely additive.
-3. ✅ **A C++ `-bcir-verify` law-for-law differential. DONE.** Every law **R1–R17** now
+3. ✅ **A C++ `-bcir-verify` law-for-law differential. DONE.** Every law **R1–R18** now
    has a negative `-verify-diagnostics` case in the committed `verify_laws*.mlir` /
-   `verify_accuracy.mlir` (run under `bcir-opt` in CI), and a coverage gate
+   `verify_accuracy.mlir` / `verify_callgraph.mlir` (run under `bcir-opt` in CI), and a coverage gate
    (`test_verify_differential.py`) guarantees no law silently loses its toolchain-rail
    negative case — the systematic complement to the oracle-rail `run_verifier_campaign`.
 
@@ -431,7 +433,7 @@ In recommended order — each is gated by the generated differential harness + F
 5. ✅ **`precision="compensated"` C-kernel + the R17 accuracy law** (§5.2.3 / §5.1). **DONE**
    — dual-rail accuracy contract.
 6. ✅ **The C++ `-bcir-verify` law-for-law differential** (§5.1.3). **DONE** — every law
-   R1–R17 has a toolchain-rail negative case + a coverage gate.
+   R1–R18 has a toolchain-rail negative case + a coverage gate.
 7. ✅ **Multi-claim bundle (joint) optimization** (§5.3.1). **DONE** — a real 12% matmul
    gain, with search certificates.
 8. ✅ **Proof-carrying records** (§5.3.2). **DONE** — `bcir.run --explain/--replay/--reduce`.
@@ -481,11 +483,16 @@ In recommended order — each is gated by the generated differential harness + F
 - **0.2 — reproducible compiler** (✅ effectively complete): 5 C++ GEM passes, multi-version
   LLVM matrix, R13 provenance manifest, generated differential parity, the widened
   corpus, the full optimizer-core C++ port, named pipelines, the six-target matrix,
-  initial + C fuzzing. *Remaining polish:* doc-classification/link CI.
+  initial + C fuzzing, and a generated-status + broken-link + retired-path doc-governance CI
+  gate (`tools/docs/`, see [`docs/STATUS.md`](STATUS.md)).
 - **0.3 — measured adaptive compiler** (◑): real-hardware CT4 evidence (§5.4) + durable
   telemetry (schema registry, backpressure, a live broker in CI behind a fake producer)
   + compile-time/peak-memory regression budgets.
-- **0.4 — proof-carrying** (☐): replay records + certificates + `bcir-explain`/`replay`/`reduce` (§5.3.2).
+- **0.4a — proof-carrying (mechanism)** (✅): replay records + per-claim certificates +
+  `bcir.run --explain`/`--replay`/`--reduce` are implemented and tested (§5.3.2).
+- **0.4b — proof-carrying (contract)** (☐): a *stable* certificate schema (versioned, with a
+  decode/upgrade path), an external replay-CLI contract (a third party can re-check a record
+  without the producing build), and certificate upgrade tests across schema revisions.
 - **1.0** (☐): stable language/ABI policy; no known Python↔C++ divergence (generated +
   fuzzed); ≥2 real hardware targets with measured evidence; R1–R17 dual-rail symmetry
   (§5.1.1); one external frontend; published benchmark methodology; upgrade tests; a

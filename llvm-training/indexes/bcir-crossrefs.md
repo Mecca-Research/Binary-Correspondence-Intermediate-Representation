@@ -1,5 +1,13 @@
 # Index: Cross-references to the BCIR project
 
+> ⚠️ **Retired / historical material.** This guide references the early **LLVM-IR-schema runtime**
+> (`runtime/llvm/`, since removed). BCIR's current representation is the **MLIR dialect**
+> (`mlir/include/BCIR/`) + the **C runtime** (`runtime/c/`); see `docs/PARITY.md`,
+> `docs/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
+> **not** follow the `runtime/llvm/` paths below.
+<!-- allow-retired-paths -->
+
+
 The training corpus is separate from the BCIR implementation. Use this table to
 move from a training concept to the current executable oracle (`bcir/`) or MLIR
 law (`mlir/`) without relying on the retired `ir/` and `runtime/llvm/` trees.
