@@ -96,4 +96,32 @@ for std in c11 c23; do
   "${tmp}/q8_${std}" | grep -q "^OK q8" || { echo "  FAIL: Q8 self-check under -std=${std}"; exit 1; }
 done
 echo "  PASS Q8 table (#embed-guarded; fallback self-check OK under C11 + C23)"
+
+echo "[c-runtime] plug-in C frontend (bcir_cfront): IR freestanding + Python<->C parity"
+# bcir_cir.h is the freestanding BCIR claim-graph IR; bcir_cfront.c is the host compiler
+# tool (the C twin of bcir/frontends/cfront -- it lowers driver/register-map C to that IR).
+printf '#include "bcir_cir.h"\nint probe(void){return (int)sizeof(bcir_claim)+(int)BCIR_OP_LOAD+(int)BCIR_DOM_MMIO;}\n' > "${tmp}/cir_probe.c"
+for std in c11 c23; do
+  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -I "${C}" -c "${tmp}/cir_probe.c" -o /dev/null \
+    || { echo "  FAIL: bcir_cir.h not freestanding-clean under -std=${std}"; exit 1; }
+done
+echo "  PASS bcir_cir.h freestanding IR (C11 + C23)"
+"${CC}" -std=c23 -O2 -Wall -Wextra "${C}/bcir_cfront.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 "${C}/bcir_cfront.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
+  || { echo "  FAIL: C frontend build"; exit 1; }
+c_sum="$("${tmp}/test_cfront" "${C}/cfront_regmap.c")" || { echo "  FAIL: C frontend run: ${c_sum}"; exit 1; }
+py_sum="$(python3 -c "
+from bcir.frontends.cfront import compile_unit
+from bcir.model import Domain
+r=compile_unit(open('${C}/cfront_regmap.c').read(), check_clang=False)
+lf=r.lowered.functions[next(reversed(r.lowered.functions))]
+mmio=sum(1 for c in lf.claims if c.op=='c.load' and c.domain==Domain.MMIO)
+bf=sum(1 for c in lf.claims if c.op=='c.bf.get'); kn=sum(1 for c in lf.claims if c.op=='c.const')
+bo=sum(1 for c in lf.claims if c.op.startswith('c.bin.'))
+print(f'claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} binop={bo} ok={1 if r.is_clean else 0}')
+")" || { echo "  FAIL: python oracle lowering"; exit 1; }
+[ "${c_sum}" = "${py_sum}" ] \
+  && echo "  PASS C-frontend parity (Python oracle == C bcir_cfront: ${c_sum})" \
+  || { echo "  FAIL: C-frontend parity (C='${c_sum}' PY='${py_sum}')"; exit 1; }
+
 echo "[c-runtime] ok"

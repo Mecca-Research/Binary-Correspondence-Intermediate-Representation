@@ -130,6 +130,22 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Plug-in C compiler — porting the C frontend from the oracle prototype to production
+  C (`runtime/c/`).** Correction of course: the L1–L8 ladder built in `bcir/frontends/cfront/` was the
+  **oracle prototype**; per the dual-rail discipline (prototype → STOP → port to the production rail,
+  exactly as the optimizer core went oracle→MLIR and GEM hydrate/execute went oracle→C), the real
+  plug-in C compiler must live in `runtime/c/`. Added: `runtime/c/bcir_cir.h` (the freestanding BCIR
+  claim-graph IR — resources/claims/phases, enum values matching `bcir/model`), and
+  `runtime/c/bcir_cfront.c` (the host compiler tool, the C twin of `bcir/frontends/cfront/`): a
+  recursive-descent C lexer/parser + struct/bitfield layout + lowering for the **register-map slice**
+  (fixed-width integer expressions, struct member access, bitfields, volatile/MMIO register reads) →
+  the claim graph, with an R1–R8 verifier and an emitter, all in C and warning-clean (`-Wall -Wextra
+  -Werror`, C11 + C23). It is **Python↔C parity-gated**: both rails lower the same register-map
+  fixture (`runtime/c/cfront_regmap.c`) to the identical structural summary `claims=23 mmio=1 bf=3
+  const=4 binop=8 ok=1` (`bcir/tests/test_c_cfront.py` + a new section in `tools/c/check_runtime.sh`,
+  alongside the existing decoder/executor/encoder twins). The roadmap §3 now states the
+  prototype-then-port discipline explicitly and tracks the C-frontend port (◑) in the placement map.
+  Next: port arrays/calls, control flow, the preprocessor, and full ABI to C, stage by stage.
 - 2026-06-18: **C frontend L7 (preprocessor) + L8 (ABI) — the C ladder is complete.** L7: a real C
   preprocessor (`cpp.py`) runs before the parser — object/function `#define` macros (with `#`
   stringize + `##` paste, nested expansion with a hideset), `#undef`, conditional compilation
