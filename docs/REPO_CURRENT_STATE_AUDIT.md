@@ -130,6 +130,19 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — interleaved top-level declarations.** The C frontend used to
+  require every `typedef`/`enum`/`struct`/`union` *definition* before the first function (a
+  pre-function loop, then a separate function loop), so a type defined *between* two functions --
+  the way real translation units and vendor headers lay them out -- failed to parse (the `switch`
+  fixture had to hoist its `enum` to the top to work around it). The two top-level loops in
+  `bcir_cfront_compile` are now one: a `try_top_decl()` helper recognises a type definition at the
+  current token (returning whether it consumed one), and the single top-level loop calls it before
+  each function, so type defs and functions interleave freely. This matches the oracle, whose
+  `parse_unit` was already a single interleaving loop. New fixture `cfront_interleave.c` (a function,
+  then an `enum` + a `struct` defined between, then an entry that consumes both via a struct-by-value
+  param, an enum-constant compare, a `?:`, and a call) matches on both rails (`funcs=2 claims=9
+  const=2 binop=2 call=1 ok=1`) and is Clang-behaviour-equivalent. Wired into `_ABI` +
+  `tools/c/check_runtime.sh`; warning-clean; 693 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — `switch`/`case`.** Desugared to a nested if/else-if chain on
   both rails. A clause's labels OR together (`disc==A || disc==B`) so the shared `case A: case B:`
   pattern works; a top-level `break;` terminates the clause (dropped); `default` is the final
