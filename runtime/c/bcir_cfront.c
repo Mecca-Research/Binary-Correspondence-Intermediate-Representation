@@ -420,6 +420,15 @@ static void p_block(CC *c){            /* `{ stmts }` or a single statement */
   if(is(c,"{")){c->i++;while(!is(c,"}")&&!isk(c,T_END)&&!c->failed)p_stmt(c);eat(c,"}");}
   else p_stmt(c);
 }
+/* a `name = expr` assignment or a bare expression, WITHOUT the trailing `;` (the for-loop step). */
+static void p_simple(CC *c) {
+  if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id);
+    if(v && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='='){
+      c->i+=2; uint32_t val=p_expr(c);
+      bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
+      return; } }
+  (void)p_expr(c);
+}
 static void p_stmt(CC *c) {
   if(is(c,"return")){c->i++;
     if(!is(c,";")){uint32_t rv=p_expr(c);c->fn->return_rid=rv;c->fn->has_return=1;marker(c,"c.return",rv,1);}
@@ -435,6 +444,24 @@ static void p_stmt(CC *c) {
     c->i++;marker(c,"c.loop",0,0);
     eat(c,"(");uint32_t cond=p_expr(c);eat(c,")");
     marker(c,"c.loop.test",cond,1); p_block(c); marker(c,"c.endloop",0,0); return;
+  }
+  if(is(c,"for")){                     /* for(init; cond; step) body == init; while(cond){body; step} */
+    c->i++; eat(c,"(");
+    if(is(c,";")) c->i++;              /* empty init */
+    else p_stmt(c);                   /* init: a decl / assignment / expr (consumes its `;`) */
+    marker(c,"c.loop",0,0);
+    uint32_t cond;
+    if(is(c,";")){ cond=temp(c,4); bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
+      if(cl){cl->n_wr=1;cl->wr[0]=cond;cl->n_imm=1;cl->imm[0]=1;} }   /* empty cond -> 1 */
+    else cond=p_expr(c);
+    eat(c,";");
+    marker(c,"c.loop.test",cond,1);
+    int step_start=c->i,pd=1;          /* record the step tokens; skip to the matching `)` */
+    while(!isk(c,T_END)&&pd){ if(is(c,"("))pd++; else if(is(c,")")){pd--; if(!pd)break;} c->i++; }
+    int step_end=c->i; eat(c,")");
+    p_block(c);                        /* the loop body */
+    if(step_end>step_start){ int save=c->i; c->i=step_start; p_simple(c); c->i=save; }  /* step @ iter end */
+    marker(c,"c.endloop",0,0); return;
   }
   if(is(c,"{")){p_block(c);return;}
   int looks_decl=0;

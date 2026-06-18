@@ -650,8 +650,10 @@ over the binary grammar on both rails), lowered to a scalar `c.select` claim, an
 `(cond ? a : b)` — Clang-behaviour-equivalent (`cfront_ternary.c`, both rails `claims=13 ok=1`). *Still
 to port:* **function pointers**, **multi-dimensional arrays**; the comma
 operator, `sizeof`/`_Alignof`/`typeof`, casts + compound literals, integer promotions + usual arithmetic
-conversions, pointer-arithmetic completeness; the rest of control flow (`for`, `do/while`, `switch` +
-fallthrough, `break`/`continue`, `goto` or a structured-lowering/diagnostic policy); designated +
+conversions, pointer-arithmetic completeness; the rest of control flow — ✅ **`for`** (desugared onto
+the existing `while` machinery on both rails: `init; while(cond){ body; step }`, the step lowered at
+the loop-body end; Clang-equivalent, `cfront_for.c`), still `do/while`, `switch` +
+fallthrough, `break`/`continue`, `goto` or a structured-lowering/diagnostic policy; designated +
 compound initializers; storage classes + linkage (`static`/`extern`/`thread_local`); `restrict` +
 alias/effect propagation; `_Atomic` + C-memory-model legality; scalable IR allocation (no fixed
 `BCIR_MAX_*`); fuller x86-64/AArch64 ABI; real object/dependency output via a resident backend. **Exit:**

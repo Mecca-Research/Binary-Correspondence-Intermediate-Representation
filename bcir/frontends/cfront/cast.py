@@ -105,6 +105,14 @@ class While:
     body: tuple = ()
 
 
+@dataclass(frozen=True)
+class For:
+    init: object                    # a Decl / ExprStmt, or None
+    cond: object                    # the loop test (IntLit(1) if omitted)
+    step: object                    # an ExprStmt run at the end of each iteration, or None
+    body: tuple = ()
+
+
 # --- top level ---
 @dataclass(frozen=True)
 class Param:
