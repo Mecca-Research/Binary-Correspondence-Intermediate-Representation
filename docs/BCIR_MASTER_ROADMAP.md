@@ -660,8 +660,11 @@ the loop-body end; `cfront_for.c`), ✅ **`do/while`** (a `WhileNode` `test_at_e
 `BreakNode` / `c.break` marker emitted as `break;`, correct in every loop form), and ✅ **`continue`**
 (a per-loop `goto __cont_<id>;` + a `__cont_<id>:` label placed at the loop's continue point -- before
 the `for` step / the `do/while` bottom test / at the `while` body end -- so it runs the step in a
-`for`, which the naive `while(1)` desugar would skip; `cfront_continue.c`), all Clang-equivalent;
-still `switch` + fallthrough, `goto` or a structured-lowering/diagnostic policy; designated +
+`for`, which the naive `while(1)` desugar would skip; `cfront_continue.c`), and ✅ **`switch`/`case`**
+(desugared to a nested if/else-if chain on both rails: a clause's labels OR together for the shared
+`case A: case B:` pattern, a top-level `break;` terminates the clause, `default` is the final `else`;
+enum cases fold to their values; `cfront_switch.c`), all Clang-equivalent; still cross-clause
+fallthrough, `goto`, and interleaved top-level decls in the C rail; designated +
 compound initializers; storage classes + linkage (`static`/`extern`/`thread_local`); `restrict` +
 alias/effect propagation; `_Atomic` + C-memory-model legality; scalable IR allocation (no fixed
 `BCIR_MAX_*`); fuller x86-64/AArch64 ABI; real object/dependency output via a resident backend. **Exit:**
