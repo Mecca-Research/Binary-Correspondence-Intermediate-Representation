@@ -130,6 +130,20 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — `switch`/`case`.** Desugared to a nested if/else-if chain on
+  both rails. A clause's labels OR together (`disc==A || disc==B`) so the shared `case A: case B:`
+  pattern works; a top-level `break;` terminates the clause (dropped); `default` is the final
+  `else`; enum cases fold to their integer values. The oracle desugars in the parser (`_switch` ->
+  nested `If` AST, re-evaluating the discriminant per label -- free for the variable/field
+  discriminants drivers use); the C frontend builds the chain inline with `c.if`/`c.else`/`c.endif`
+  markers, re-lowering the discriminant per label via a token rewind, and OR-ing the per-label
+  `disc==value` comparisons (`c.bin.lor` added to the C emitter). The key emit-ordering fix: a
+  clause's condition claims are emitted *after* its `c.else` (in the new else scope), not in the
+  previous then-block. New fixture `cfront_switch.c` (integer cases incl. a shared multi-label clause
+  + default, and an enum state-machine decode) matches on both rails (`funcs=2 claims=16 const=6
+  binop=6 ok=1`) and both functions are Clang-behaviour-equivalent. Wired into `_CONTROL` +
+  `tools/c/check_runtime.sh`; warning-clean; 693 tests pass. (Cross-clause fallthrough -- a non-empty
+  case without a break -- and interleaved top-level decls in the C rail remain unsupported.)
 - 2026-06-18: **C compiler (Phase 2) — `continue` (completes the loop story).** `continue;` jumps to
   the nearest loop's *continue point*, emitted as a per-loop `goto __cont_<id>;` with a
   `__cont_<id>:` label placed correctly per loop form: before the **`for`** step (so it runs the step

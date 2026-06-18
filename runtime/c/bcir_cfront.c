@@ -496,6 +496,36 @@ static void p_stmt(CC *c) {
   }
   if(is(c,"break")){ c->i++; eat(c,";"); marker(c,"c.break",0,0); return; }
   if(is(c,"continue")){ c->i++; eat(c,";"); marker(c,"c.continue",0,0); return; }
+  if(is(c,"switch")){                  /* switch(disc){case V:..;break; default:..} -> if/else-if */
+    c->i++; eat(c,"(");
+    int disc_start=c->i;               /* re-lower the discriminant per case label (cheap for a var) */
+    { int pd=1; while(!isk(c,T_END)&&pd){ if(is(c,"("))pd++; else if(is(c,")")){pd--; if(!pd)break;} c->i++; } }
+    eat(c,")"); eat(c,"{");
+    int nopen=0, first=1;
+    while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
+      if(!first) marker(c,"c.else",0,0);             /* open this clause's scope FIRST, so its */
+      uint32_t condrid=0; int have_cond=0, is_default=0;   /* condition claims land in the else, */
+      while(is(c,"case")||is(c,"default")){          /* not the previous then-block. */
+        if(is(c,"case")){ c->i++; uint32_t valrid=p_expr(c); eat(c,":");
+          int save=c->i; c->i=disc_start; uint32_t drid=p_expr(c); c->i=save;   /* disc, re-lowered */
+          uint32_t cmp=temp(c,4); bcir_claim *e=new_claim(c,"c.bin.eq",BCIR_OP_SUB);
+          if(e){e->n_rd=2;e->rd[0]=drid;e->rd[1]=valrid;e->n_wr=1;e->wr[0]=cmp;}
+          if(have_cond){ uint32_t o=temp(c,4); bcir_claim *l=new_claim(c,"c.bin.lor",BCIR_OP_ADD);
+            if(l){l->n_rd=2;l->rd[0]=condrid;l->rd[1]=cmp;l->n_wr=1;l->wr[0]=o;} condrid=o; }
+          else { condrid=cmp; have_cond=1; }
+        } else { c->i++; eat(c,":"); is_default=1; }
+      }
+      if(!is_default){ marker(c,"c.if",condrid,1); nopen++; }
+      while(!is(c,"case")&&!is(c,"default")&&!is(c,"}")&&!isk(c,T_END)&&!c->failed){
+        if(is(c,"break")){ c->i++; eat(c,";"); break; }   /* the switch terminator (dropped) */
+        p_stmt(c);
+      }
+      first=0;
+    }
+    eat(c,"}");
+    for(int k=0;k<nopen;k++) marker(c,"c.endif",0,0);     /* close the else-if nesting */
+    return;
+  }
   if(is(c,"{")){p_block(c);return;}
   int looks_decl=0;
   if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
@@ -567,7 +597,7 @@ static const bcir_resource *res_of(const bcir_func *f,uint32_t rid){
 static const char *binop_c(const char *suf){
   struct {const char *s,*c;} M[]={{"add","+"},{"sub","-"},{"mul","*"},{"div","/"},{"mod","%"},
     {"and","&"},{"or","|"},{"xor","^"},{"shl","<<"},{"shr",">>"},{"eq","=="},{"ne","!="},
-    {"lt","<"},{"gt",">"},{"le","<="},{"ge",">="},{0,0}};
+    {"lt","<"},{"gt",">"},{"le","<="},{"ge",">="},{"lor","||"},{"land","&&"},{0,0}};
   for(int i=0;M[i].s;i++) if(!strcmp(M[i].s,suf)) return M[i].c; return "+";
 }
 static const char *unop_c(const char *suf){return !strcmp(suf,"neg")?"-":!strcmp(suf,"bnot")?"~":"!";}
