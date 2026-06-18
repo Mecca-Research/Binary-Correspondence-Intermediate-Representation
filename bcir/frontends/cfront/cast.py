@@ -117,10 +117,22 @@ class Func:
 class Aggregate:
     kind: str                       # struct | union
     tag: str
-    members: tuple                  # (TypeRef, name)
+    members: tuple                  # (TypeRef, name, bit_width)
+    packed: bool = False            # __attribute__((packed)) — no inter-member padding
+    align: int = 0                  # __attribute__((aligned(N))) / alignas(N) — forced alignment
+
+
+@dataclass(frozen=True)
+class Global:
+    """A top-level (file-scope) variable, e.g. a `const uint8_t table[] = { ... }` (the seam C23
+    `#embed` initializers land in once the preprocessor has expanded them to a byte list)."""
+    type: TypeRef
+    name: str
+    init: tuple = ()                # initializer element expressions (for an array/scalar)
 
 
 @dataclass
 class Unit:
     aggregates: dict = field(default_factory=dict)   # tag -> Aggregate
     funcs: list = field(default_factory=list)        # Func, in order
+    globals: list = field(default_factory=list)      # Global, in order

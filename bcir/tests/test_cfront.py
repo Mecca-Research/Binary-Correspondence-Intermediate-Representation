@@ -9,6 +9,8 @@ artifacts (parse / lower / verify / plan / emit / explain) always run.
 
 import os
 import shutil
+import subprocess
+import tempfile
 
 from bcir.frontends.cfront import compile_unit
 
@@ -21,8 +23,8 @@ def _fixture(name: str) -> str:
         return f.read()
 
 
-def _assert_six_artifacts(name: str):
-    r = compile_unit(_fixture(name))
+def _assert_six_artifacts(name: str, *, includes=None, embeds=None):
+    r = compile_unit(_fixture(name), includes=includes, embeds=embeds)
     # (2) claim graph, (3) plan, (4) emitted C, (6a) R1–R18 verifier, explain — always.
     assert r.lowered.functions, f"{name}: no functions lowered"
     assert r.is_clean, f"{name}: R1–R18 not clean: {[(d.law, d.message) for d in r.diagnostics]}"
@@ -125,6 +127,91 @@ def test_L6_bounded_loop():
     body = r.lowered.functions["l6_weighted_sum"].body
     assert any(isinstance(n, WhileNode) for n in body), "while should lower to a WhileNode"
     assert "while (1)" in r.emitted["l6_weighted_sum"]
+
+
+# --- L7: the preprocessor (macros / conditionals / include / #embed) -----------------------------
+
+def test_L7_object_and_function_macros():
+    r = _assert_six_artifacts("L7_macros.c")
+    # the #if HW_REV>=2 branch was taken and FIELD()/MASK expanded into the claim graph.
+    assert any(c.op == "c.bin.shr" for c in r.lowered.functions["l7_decode"].claims)
+
+
+def test_L7_include_project_header():
+    r = _assert_six_artifacts("L7_include.c", includes={"regmap.h": _fixture("regmap.h")})
+    # REG_BASE (0x40000000) from the header must have reached the lowered constants.
+    consts = {c.imm[0] for c in r.lowered.functions["l7_regaddr"].claims if c.op == "c.const"}
+    assert 0x40000000 in consts
+
+
+def test_L7_c23_embed_table():
+    data = bytes((i * 37) & 0xFF for i in range(16))
+    r = _assert_six_artifacts("L7_embed.c", embeds={"crc.bin": data})
+    g = r.lowered.functions["l7_crc_step"].globals_used
+    assert "crc_table" in g.values()                          # the #embed table is a referenced global
+    assert r.lowered.aggregates == r.lowered.aggregates       # (no aggregates needed here)
+
+
+def test_L7_preprocessor_unit():
+    from bcir.frontends.cfront.cpp import preprocess
+    out = preprocess("#define A 2\n#define SQ(x) ((x)*(x))\nint v = SQ(A+1);")
+    assert "((2+1)*(2+1))" in out.replace(" ", "")            # arg expanded + rescanned
+    assert preprocess("#if 1+1==2\nyes\n#else\nno\n#endif").strip() == "yes"
+    assert preprocess("#ifdef X\na\n#elifndef Y\nb\n#endif").strip() == "b"   # C23 #elifndef
+    assert preprocess("x\n#embed \"d\"\ny", embeds={"d": bytes([1, 2, 3])}).split() == \
+        ["x", "1,", "2,", "3", "y"]
+
+
+# --- L8: ABI — struct return-by-value, packed/aligned, calling convention vs Clang ----------------
+
+def _clang_layout(struct_src: str, tag: str, fields: list):
+    """sizeof + offsetof of `struct tag` as *Clang* computes them (the ABI ground truth)."""
+    probe = (f"#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n{struct_src}\n"
+             f"int main(void){{ printf(\"%zu\", sizeof(struct {tag}));"
+             + "".join(f' printf(" %zu", offsetof(struct {tag}, {f}));' for f in fields)
+             + " return 0; }")
+    with tempfile.TemporaryDirectory() as d:
+        src, exe = os.path.join(d, "p.c"), os.path.join(d, "p")
+        open(src, "w").write(probe)
+        if subprocess.run([_CLANG, "-std=c23", src, "-o", exe],
+                          capture_output=True).returncode != 0:
+            subprocess.run([_CLANG, src, "-o", exe], capture_output=True, check=True)
+        nums = [int(x) for x in subprocess.run([exe], capture_output=True, text=True).stdout.split()]
+    return nums[0], dict(zip(fields, nums[1:]))
+
+
+def test_L8_struct_return_by_value():
+    r = _assert_six_artifacts("L8_struct_return.c")
+    assert r.lowered.functions["l8_swap"].ret_type.is_aggregate    # returns a struct by value
+
+
+def test_L8_packed_layout_matches_clang():
+    r = _assert_six_artifacts("L8_packed.c")
+    hdr = r.lowered.aggregates["wire_hdr"]
+    # the frontend's packed layout (no padding): cmd@0, addr@1, len@5, size 7.
+    assert hdr.field("addr")[1] == 1 and hdr.field("len")[1] == 5 and hdr.size == 7
+    if _CLANG:                                                # cross-check against Clang's ABI
+        src = ("struct __attribute__((packed)) wire_hdr "
+               "{ uint8_t cmd; uint32_t addr; uint16_t len; };")
+        size, offs = _clang_layout(src, "wire_hdr", ["cmd", "addr", "len"])
+        assert size == hdr.size
+        assert offs == {"cmd": hdr.field("cmd")[1], "addr": hdr.field("addr")[1],
+                        "len": hdr.field("len")[1]}
+
+
+def test_L8_natural_and_aligned_layout_matches_clang():
+    src = ("#include <stdint.h>\n"
+           "struct natural { uint8_t a; uint32_t b; uint16_t c; };\n"
+           "struct __attribute__((aligned(16))) blk { uint32_t v; };\n"
+           "uint32_t use(struct natural n) { return n.a; }\n")
+    r = compile_unit(src, check_clang=False)
+    nat, blk = r.lowered.aggregates["natural"], r.lowered.aggregates["blk"]
+    assert nat.field("b")[1] == 4 and nat.size == 12          # natural alignment padding
+    assert blk.align == 16 and blk.size == 16                 # forced alignment
+    if _CLANG:
+        size, offs = _clang_layout("struct natural { uint8_t a; uint32_t b; uint16_t c; };",
+                                   "natural", ["a", "b", "c"])
+        assert size == nat.size and offs["b"] == nat.field("b")[1]
 
 
 # --- C.2: the self-check artifact + attestation --------------------------------------------------
