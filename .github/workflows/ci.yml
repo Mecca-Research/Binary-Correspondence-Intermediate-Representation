@@ -19,6 +19,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        # cache-apt-pkgs-action always runs `apt-get update` ("Updating APT package list..."), which
+        # can hang indefinitely on a congested/timing-out apt mirror. Bound it: 3 retries, a 20s
+        # per-source timeout (a slow mirror fails fast and retries instead of hanging), no
+        # translation indexes, and drop the ESM/Pro sources (our packages are all in main).
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
       - name: Install lowering toolchain (clang/lld/llvm for AOT/JIT/WASM tests; node for WASM)
         # Caches the INSTALLED file tree (not just the .debs), so a warm run restores it in seconds
         # and skips apt's dpkg unpack/configure entirely -- the remaining install-time floor. Pinned
@@ -179,6 +189,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
       - name: Install the C lowering toolchain
         # Caches the installed file tree (restores in seconds; skips dpkg unpack on a warm run).
         # Pinned to v1.6.1 by commit SHA; bump `version` to invalidate.
@@ -226,17 +242,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Add the apt.llvm.org signed repo (LLVM ${{ matrix.llvm }})
+      - name: Add the apt.llvm.org signed repo + harden apt (LLVM ${{ matrix.llvm }})
         # The latest LLVM/MLIR is not in Ubuntu's default repos; apt.llvm.org carries it (the repo
-        # llvm.sh would add). The next step installs from it. Cheap (~a few seconds), so it runs
-        # even on a cache hit (the install action then just restores files and skips apt).
+        # llvm.sh would add). The install action runs its own `apt-get update` (which picks this repo
+        # up), so we don't update here. Harden apt against mirror hangs: retries + a 20s per-source
+        # timeout + no translation indexes, and drop the slow ESM/Pro sources.
         run: |
           . /etc/os-release                                       # VERSION_CODENAME (e.g. noble)
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-${{ matrix.llvm }} main" \
             | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
-          sudo apt-get update    # fetch the apt.llvm.org lists (a cache miss needs them to install)
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
       - name: Install MLIR ${{ matrix.llvm }} toolchain + dev libs (cached installed-tree)
         # Install ONLY what the rail needs -- the MLIR/LLVM dev libs + tools (mlir-opt / mlir-tblgen
