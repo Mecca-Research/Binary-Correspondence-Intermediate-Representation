@@ -26,11 +26,19 @@ _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 # (control flow is not a flat StreamPack segment stream, so the loop runs the straight-line set).
 _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_callgraph.c"]
 _CONTROL = ["cfront_branch.c", "cfront_while.c"]
-_FIXTURES = _STRAIGHTLINE + _CONTROL
+_PREPROC = ["cfront_macros.c", "cfront_ppinc.c"]      # L7: exercise the preprocessor
+_FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC
 
 
-def _oracle(src: str):
-    r = compile_unit(src, check_clang=False)
+def _includes_for(fx: str) -> dict:
+    """The #include header map the oracle needs (the C frontend reads the sibling file)."""
+    if fx == "cfront_ppinc.c":
+        return {"cfront_ppdefs.h": open(os.path.join(_C, "cfront_ppdefs.h"), encoding="utf-8").read()}
+    return {}
+
+
+def _oracle(src: str, includes=None):
+    r = compile_unit(src, check_clang=False, includes=includes)
     funcs = r.lowered.functions
     entry = funcs[next(reversed(funcs))]
     cl = entry.claims
@@ -48,8 +56,8 @@ def _build_frontend(d: str) -> str:
     exe = os.path.join(d, "tcf")
     for std in ("c23", "c11"):
         b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C,
-                            os.path.join(_C, "bcir_cfront.c"), os.path.join(_C, "test_cfront.c"),
-                            "-o", exe], capture_output=True, text=True)
+                            os.path.join(_C, "bcir_cfront.c"), os.path.join(_C, "bcir_cpp.c"),
+                            os.path.join(_C, "test_cfront.c"), "-o", exe], capture_output=True, text=True)
         if b.returncode == 0:
             return exe
     raise AssertionError(f"C frontend build failed:\n{b.stderr}")
@@ -130,7 +138,7 @@ def test_python_c_parity_and_equivalence_across_fixtures():
     if not _CC:
         # quick tier: still validate the oracle side computes the summaries.
         for fx in _FIXTURES:
-            s, _, _ = _oracle(open(os.path.join(_C, fx), encoding="utf-8").read())
+            s, _, _ = _oracle(open(os.path.join(_C, fx), encoding="utf-8").read(), _includes_for(fx))
             assert "ok=1" in s
         return
     with tempfile.TemporaryDirectory() as d:
@@ -138,16 +146,17 @@ def test_python_c_parity_and_equivalence_across_fixtures():
         for fx in _FIXTURES:
             path = os.path.join(_C, fx)
             src = open(path, encoding="utf-8").read()
-            oracle_summary, _r, entry = _oracle(src)
+            oracle_summary, r, entry = _oracle(src, _includes_for(fx))
             c_summary, c_emit = _c_run(exe, path)
             assert c_summary == oracle_summary, f"{fx}: parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
-            assert _equiv(src, c_emit, entry) == "MATCH", f"{fx}: emitted C not behaviour-equivalent"
+            # equivalence uses the PREPROCESSED source (r.source) so Clang needs no #include.
+            assert _equiv(r.source, c_emit, entry) == "MATCH", f"{fx}: emitted C not behaviour-equivalent"
 
 
 def _build_loop(d: str) -> str:
     exe = os.path.join(d, "loop")
-    srcs = [os.path.join(_C, s) for s in ("bcir_cfront.c", "bcir_plan.c", "bcir_hydrate.c",
-                                          "bcir_exec.c", "bcir_runtime.c", "test_cfront_loop.c")]
+    srcs = [os.path.join(_C, s) for s in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c",
+            "bcir_hydrate.c", "bcir_exec.c", "bcir_runtime.c", "test_cfront_loop.c")]
     for std in ("c23", "c11"):
         b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
                            capture_output=True, text=True)
@@ -179,13 +188,46 @@ def test_full_compile_execute_loop_in_c():
 def test_c_frontend_builds_warning_clean():
     if not _CC:
         return
-    for std in ("c23", "c11"):
-        b = subprocess.run([_CC, f"-std={std}", "-Wall", "-Wextra", "-Werror", "-I", _C, "-c",
-                            os.path.join(_C, "bcir_cfront.c"), "-o", os.devnull],
-                           capture_output=True, text=True)
-        if b.returncode == 0:
-            return
-    raise AssertionError(f"C frontend has warnings:\n{b.stderr}")
+    for unit in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c"):
+        ok = False
+        for std in ("c23", "c11"):
+            b = subprocess.run([_CC, f"-std={std}", "-Wall", "-Wextra", "-Werror", "-I", _C, "-c",
+                                os.path.join(_C, unit), "-o", os.devnull], capture_output=True, text=True)
+            if b.returncode == 0:
+                ok = True
+                break
+        assert ok, f"{unit} has warnings:\n{b.stderr}"
+
+
+def test_c_preprocessor_macros_conditionals_and_embed():
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        drv = os.path.join(d, "drv.c")
+        open(drv, "w").write(
+            '#include <stdio.h>\n#include "bcir_cpp.h"\n'
+            'int main(int c,char**v){static char o[65536],e[256],s[65536];'
+            'size_t n=fread(s,1,sizeof s-1,stdin);s[n]=0;'
+            'if(bcir_cpp_run(s,c>1?v[1]:"",o,sizeof o,e,sizeof e)){printf("ERR %s",e);return 1;}'
+            'fputs(o,stdout);return 0;}\n')
+        exe = os.path.join(d, "drv")
+        b = subprocess.run([_CC, "-std=c11", "-O1", "-I", _C, os.path.join(_C, "bcir_cpp.c"), drv,
+                            "-o", exe], capture_output=True, text=True)
+        assert b.returncode == 0, b.stderr
+
+        def pp(src, basedir=""):
+            return subprocess.run([exe, basedir], input=src, capture_output=True, text=True).stdout
+
+        # function macro + object macro + rescanning
+        out = pp("#define A 2\n#define SQ(x) ((x)*(x))\nint v = SQ(A+1);\n").replace(" ", "")
+        assert "((2+1)*(2+1))" in out
+        # #if arithmetic + #elifndef (C23)
+        assert pp("#if 1+1==2\nyes\n#else\nno\n#endif\n").split() == ["yes"]
+        assert pp("#ifdef X\na\n#elifndef Y\nb\n#endif\n").split() == ["b"]
+        # C23 #embed -> the byte list
+        open(os.path.join(d, "blob.bin"), "wb").write(bytes([10, 20, 30]))
+        emb = pp('x\n#embed "blob.bin"\ny\n', d)
+        assert "10, 20, 30" in emb
 
 
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():

@@ -130,6 +130,19 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Plug-in C compiler — L7 a real C preprocessor in C (`bcir_cpp.c`).** A C
+  preprocessor that runs before `bcir_cfront`'s lexer: object- and function-like `#define` macros
+  (with `#` stringize + `##` paste + expand-until-stable rescanning), `#undef`, conditional
+  compilation (`#if`/`#ifdef`/`#ifndef`/`#elif`/`#elifdef`/`#elifndef`/`#else`/`#endif` with an
+  integer constant-expression evaluator + `defined`), `#include` of project headers (resolved
+  relative to the source's directory), and **C23 `#embed`** (→ a byte list). So a real vendor
+  register-map header — with its `#define REG_BASE 0x4000_0000` macros — now ingests through the C
+  compiler. The harnesses preprocess then compile; fixtures `cfront_macros.c` (macros + `#if`) and
+  `cfront_ppinc.c` (`#include cfront_ppdefs.h`) match the oracle's structural summary exactly
+  (`claims=17 const=8 binop=9`; `claims=4 const=2 binop=2`) and are Clang-behaviour-equivalent.
+  `bcir/tests/test_c_cfront.py` adds a preprocessor unit test (macros / `#elifndef` / `#embed`);
+  `tools/c/check_runtime.sh` parity now spans all L1–L7 fixtures. Warning-clean (C11 + C23). Remaining
+  C port: L8 full ABI (§5.8).
 - 2026-06-18: **Plug-in C compiler — L6 control flow in C (if/else/while).** Ported the L6 ladder
   stage to `runtime/c/bcir_cfront.c`: `if`/`else` and bounded `while` lower through control-flow
   *marker claims* (NOP-opcode `c.if`/`c.else`/`c.endif`/`c.loop`/`c.loop.test`/`c.endloop`/`c.return`)
