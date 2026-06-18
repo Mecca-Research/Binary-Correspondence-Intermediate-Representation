@@ -342,11 +342,33 @@ class _Parser:
             cond = self._expr()
             self.eat("PUNCT", ")")
             return cast.While(cond, self._block() if self.at("PUNCT", "{") else (self._stmt(),))
+        if self.at("IDENT", "for"):
+            return self._for()
         if self._is_decl_start():
             return self._decl_stmt()
         expr = self._expr()
         self.eat("PUNCT", ";")
         return cast.ExprStmt(expr)
+
+    def _for(self) -> cast.For:
+        """`for (init ; cond ; step) body` — desugars onto the while machinery in lowering:
+        `init; while(cond){ body; step }` (no `break`/`continue` yet, so this is exact)."""
+        self.eat("IDENT", "for")
+        self.eat("PUNCT", "(")
+        if self.at("PUNCT", ";"):                  # empty init
+            init = None
+            self.nxt()
+        elif self._is_decl_start():
+            init = self._decl_stmt()               # a declaration (consumes its `;`)
+        else:
+            init = cast.ExprStmt(self._expr())
+            self.eat("PUNCT", ";")
+        cond = cast.IntLit(1) if self.at("PUNCT", ";") else self._expr()
+        self.eat("PUNCT", ";")
+        step = None if self.at("PUNCT", ")") else cast.ExprStmt(self._expr())
+        self.eat("PUNCT", ")")
+        body = self._block() if self.at("PUNCT", "{") else (self._stmt(),)
+        return cast.For(init, cond, step, body)
 
     def _if(self) -> cast.If:
         self.eat("IDENT", "if")

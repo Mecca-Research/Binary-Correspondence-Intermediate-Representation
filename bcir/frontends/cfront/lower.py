@@ -388,6 +388,19 @@ class _FuncLowerer:
             cond = self._rvalue(st.cond)
             self.block_stack.pop()
             self.block_stack[-1].append(WhileNode(cond_block, cond, self._block(st.body)))
+        elif isinstance(st, cast.For):
+            if st.init is not None:                            # init -> the enclosing block, once
+                self._stmt(st.init)
+            cond_block2: list = []
+            self.block_stack.append(cond_block2)
+            cond = self._rvalue(st.cond)
+            self.block_stack.pop()
+            body = self._block(st.body)
+            if st.step is not None:                            # the step runs at the end of each iter
+                self.block_stack.append(body)
+                self._stmt(st.step)
+                self.block_stack.pop()
+            self.block_stack[-1].append(WhileNode(cond_block2, cond, body))
         else:
             raise CLowerError(f"statement {type(st).__name__} is beyond the L1–L6 subset")
         return None

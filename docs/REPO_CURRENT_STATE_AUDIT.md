@@ -130,6 +130,17 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — `for` loops.** The next control-flow construct, dual-rail,
+  desugared onto the existing `while` machinery: `for(init; cond; step) body` ≡
+  `init; while(cond){ body; step }` (exact while there is no `break`/`continue`). The oracle adds a
+  `cast.For` node lowered to a `WhileNode` with the step appended to the body block; the C frontend
+  inlines it in `p_stmt` with a token-rewind that re-lowers the step (recorded between the 2nd `;`
+  and `)`) at the loop-body end (a new `p_simple` parses the `name = expr` step with no trailing
+  `;`). No new IR/lowering/emit ops -- it reuses the `c.loop`/`c.loop.test`/`c.endloop` markers, so
+  both rails agree on the structural summary. New fixture `cfront_for.c` (a masked-count sum + a
+  polynomial) matches on both rails (`funcs=2 claims=14 const=4 binop=5 ok=1`) and is
+  Clang-behaviour-equivalent. Wired into `_CONTROL` + `tools/c/check_runtime.sh`; warning-clean;
+  693 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — the ternary operator `?:`.** The first Phase 2 language gap,
   dual-rail. The oracle lexer gained `?` in its punct set (the "not yet lexed" gap; the C lexer's
   single-char fallback already tokenized it); both parsers layer a conditional expression
