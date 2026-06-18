@@ -106,6 +106,7 @@ class Decl:
     type: TypeRef
     name: str
     init: object = None
+    static_storage: bool = False    # `static T name = init;` — static storage duration (persists)
 
 
 @dataclass(frozen=True)

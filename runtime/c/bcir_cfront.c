@@ -621,12 +621,12 @@ static void p_stmt(CC *c) {
     return;
   }
   if(is(c,"{")){p_block(c);return;}
-  int looks_decl=0;
+  int looks_decl=0, is_static=is(c,"static");
   if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
-    looks_decl=sz>=0||is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"const")||is(c,"volatile")
+    looks_decl=sz>=0||is_static||is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"const")||is(c,"volatile")
                ||find_typedef(c,pk(c)->s,pk(c)->n)>=0;}
   if(looks_decl){
-    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return; tok nm=adv(c);
+    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return; tok nm=adv(c);   /* p_type eats `static` */
     char nb[BCIR_CIR_NAME]; idcpy(nb,&nm);
     int rk=ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR;
     uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
@@ -634,6 +634,12 @@ static void p_stmt(CC *c) {
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, nb);
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
     env_add(c,&nm,rid,&ty,si);
+    if(is_static){            /* static storage: a once-only constant init, baked into the decl */
+      long long init=0; if(is(c,"=")){c->i++;init=ce_expr(c,0);}
+      if(c->fn->n_statics<8){idcpy(c->fn->statics[c->fn->n_statics].name,&nm);
+        c->fn->statics[c->fn->n_statics].init=init;c->fn->n_statics++;}
+      eat(c,";");return;
+    }
     if(is(c,"=")){c->i++;uint32_t v=p_expr(c);
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}}
     eat(c,";");return;
@@ -733,7 +739,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
   /* declare named locals up front (mutable storage -- branch merges + loop accumulators) */
   for(size_t i=0;i<f->n_res;i++){const bcir_resource *r=&f->res[i];
     if(is_named_local(f,r->rid)){
-      if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s;\n",r->agg,r->name);
+      int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
+      if(sx>=0) w+=snprintf(o+w,on-w,"  static uint32_t %s = %lluu;\n",r->name,(unsigned long long)f->statics[sx].init);
+      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s;\n",r->agg,r->name);
       else w+=snprintf(o+w,on-w,"  uint32_t %s;\n",r->name);}}
   int depth=1, lstk[64], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)
