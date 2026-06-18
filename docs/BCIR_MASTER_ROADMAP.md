@@ -578,12 +578,19 @@ the existing C twins):
   `__atomic_thread_fence`/`__sync_synchronize` → `BARRIER`, lowered on **lane A** (R6 admits lane A for
   a scalar atomic counter as well as a RANDOM scatter-atomic; the atomic/barriered hazard discharges
   R5), emitted back as the matching seq-cst builtins, and **behaviour-equivalent under Clang** on
-  independent copies of the same seeded counter (`cfront_atomic.c`, both rails `ok=1`). *Still to
-  port:* `cmpxchg` (the `CMPXCHG` opcode) and **dynamic shapes** (`compose` dynamic bound guards).
+  independent copies of the same seeded counter (`cfront_atomic.c`, both rails `ok=1`).
+- ✅ **Compare-and-swap** — `__sync_val_compare_and_swap` / `__sync_bool_compare_and_swap` →
+  the `CMPXCHG` opcode: a 3-read claim (ptr, expected, desired) on lane A, emitted back as the
+  matching `__sync` CAS builtin, behaviour-equivalent under Clang (`cfront_cmpxchg.c`). *Still to
+  port:* **dynamic shapes** (`compose` dynamic bound guards).
 - **Multi-channel lowering decision** — which `channel.json` channel a claim targets (the
   channel-plugin routing) computed in C, so a driver picks its backend.
-- **Type-model breadth** — `typedef`, `enum`, full unions, multi-dimensional arrays, function
-  pointers — what real vendor headers need.
+- **Type-model breadth** — ✅ `typedef` (scalar/pointer/aggregate aliases, incl. `typedef struct
+  {...} N;`), ✅ `enum` (enumerators folded to their integer values at parse time), and ✅ full
+  `union` layout (members overlap at offset 0; size = the widest member) all lower on both rails,
+  parity- + Clang-equivalence-gated (`cfront_typedef.c`, `cfront_enum.c`, `cfront_union.c`). *Still
+  to port:* **multi-dimensional arrays** (a multi-index `m[i][j]` load + the pointer-to-row param
+  declarator) and **function pointers** — what remaining vendor headers need.
 
 > Channels are already a real plugin boundary (`bcir/channel_plugin.py`: target-profile schema,
 > runtime signal-provider contract, codegen identity, calibration artifact, execution-capability set,

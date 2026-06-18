@@ -33,6 +33,8 @@ class _Parser:
         self.t = toks
         self.i = 0
         self.tags = tags                      # known struct/union tags (for type detection)
+        self.typedefs: dict[str, cast.TypeRef] = {}   # typedef name -> the aliased type
+        self.enums: dict[str, int] = {}               # enumerator name -> its integer value
 
     # --- token helpers ---
     def peek(self, k: int = 0) -> Tok:
@@ -85,6 +87,18 @@ class _Parser:
     def parse_unit(self) -> cast.Unit:
         unit = cast.Unit()
         while not self.at("EOF"):
+            if self.at("IDENT", "typedef"):                    # a type alias (resolved at parse time)
+                self._typedef(unit)
+                continue
+            if self.at("IDENT", "enum"):
+                save = self.i
+                self.nxt()
+                tag = self.eat("IDENT").text if self.at("IDENT") else ""
+                if self.at("PUNCT", "{"):                      # an enum definition: register the values
+                    self._enum_body(tag)
+                    self.eat("PUNCT", ";")
+                    continue
+                self.i = save                                  # `enum tag` used as a type
             if self.at("IDENT", "struct") or self.at("IDENT", "union"):
                 save = self.i
                 kind = self.nxt().text
@@ -94,6 +108,7 @@ class _Parser:
                     agg = self._aggregate_body(kind, tag, attrs)
                     unit.aggregates[agg.tag] = agg
                     self.tags.add(agg.tag)
+                    self.eat("PUNCT", ";")
                     continue
                 self.i = save                                  # a struct *type* (func ret / global)
             tref = self._type_spec()
@@ -103,6 +118,69 @@ class _Parser:
             else:                                              # a file-scope global variable
                 unit.globals.append(self._global(tref, name))
         return unit
+
+    def _typedef(self, unit: cast.Unit) -> None:
+        """`typedef <type> <name>;` -- register `name` -> the aliased type (resolved at parse time,
+        so the lowered claim graph is identical to spelling the underlying type out). Handles scalar/
+        pointer/qualified aliases, `typedef struct/union [tag] {...} Name;`, and `typedef enum {...}
+        Name;`."""
+        self.eat("IDENT", "typedef")
+        if self.at("IDENT", "enum"):
+            self.nxt()
+            tag = self.eat("IDENT").text if self.at("IDENT") and not self.at("PUNCT", "{") else ""
+            if self.at("PUNCT", "{"):
+                self._enum_body(tag)
+            base = cast.TypeRef(base="int")                    # an enum is an int-sized scalar
+        elif self.at("IDENT", "struct") or self.at("IDENT", "union"):
+            kind = self.nxt().text
+            attrs = self._attributes()
+            tag = self.eat("IDENT").text if self.at("IDENT") else ""
+            if self.at("PUNCT", "{"):
+                agg = self._aggregate_body(kind, tag, attrs)
+                unit.aggregates[agg.tag] = agg
+                self.tags.add(agg.tag)
+                tag = agg.tag
+            base = cast.TypeRef(base=tag, aggregate=kind)
+        else:
+            base = self._type_spec()
+        tref, name = self._declarator(base)
+        self.typedefs[name] = tref
+        self.eat("PUNCT", ";")
+
+    def _enum_body(self, tag: str) -> None:
+        """Parse `{ A, B = expr, C }` -- assign each enumerator its C value (prev+1, or the given
+        constant) and register it so a later use resolves to that integer literal."""
+        self.eat("PUNCT", "{")
+        value = 0
+        while not self.at("PUNCT", "}"):
+            name = self.eat("IDENT").text
+            if self.at("OP", "="):
+                self.nxt()
+                value = self._const_eval(self._binary(0))
+            self.enums[name] = value
+            value += 1
+            if self.at("PUNCT", ","):
+                self.nxt()
+        self.eat("PUNCT", "}")
+
+    def _const_eval(self, node) -> int:
+        """Fold a constant enum initializer (integer literals, prior enumerators, basic arithmetic)."""
+        if isinstance(node, cast.IntLit):
+            return node.value
+        if isinstance(node, cast.Name):
+            if node.ident in self.enums:
+                return self.enums[node.ident]
+            raise CParseError(f"non-constant enum initializer {node.ident!r}")
+        if isinstance(node, cast.Unary):
+            v = self._const_eval(node.operand)
+            return {"-": -v, "~": ~v, "!": int(not v)}.get(node.op, v)
+        if isinstance(node, cast.Binary):
+            a, b = self._const_eval(node.lhs), self._const_eval(node.rhs)
+            ops = {"+": a + b, "-": a - b, "*": a * b, "/": a // b if b else 0,
+                   "%": a % b if b else 0, "&": a & b, "|": a | b, "^": a ^ b,
+                   "<<": a << b, ">>": a >> b}
+            return ops.get(node.op, 0)
+        raise CParseError("unsupported constant enum initializer")
 
     def _global(self, tref: cast.TypeRef, name: str) -> cast.Global:
         init: tuple = ()
@@ -136,8 +214,7 @@ class _Parser:
             members.append((tref, name, width))
             self.eat("PUNCT", ";")
         self.eat("PUNCT", "}")
-        trailing = self._attributes()                     # `} __attribute__((packed));`
-        self.eat("PUNCT", ";")
+        trailing = self._attributes()                     # `} __attribute__((packed))` (caller eats `;`)
         attrs = {**attrs, **trailing}
         return cast.Aggregate(kind=kind, tag=tag, members=tuple(members),
                               packed=bool(attrs.get("packed")), align=attrs.get("aligned", 0))
@@ -148,6 +225,7 @@ class _Parser:
         words: list[str] = []
         aggregate = ""
         base = ""
+        td: cast.TypeRef | None = None
         while self.at("IDENT"):
             w = self.peek().text
             if w in ("const", "volatile"):
@@ -160,11 +238,26 @@ class _Parser:
                 self.nxt()
                 base = self.eat("IDENT").text             # the tag
                 break
+            elif w == "enum":                             # `enum [tag] [{...}]` -> an int scalar
+                self.nxt()
+                if self.at("IDENT") and not self.at("PUNCT", "{"):
+                    self.nxt()                            # the tag (ignored; enum is int-sized)
+                if self.at("PUNCT", "{"):
+                    self._enum_body("")
+                base = "int"
+                break
+            elif not words and w in self.typedefs:        # a typedef name -> expand the alias
+                td = self.typedefs[w]
+                self.nxt()
+                break
             elif w in _TYPE_KW or is_scalar_name(w):
                 words.append(w)
                 self.nxt()
             else:
                 break
+        if td is not None:                                # merge the alias with any leading quals
+            return cast.TypeRef(base=td.base, ptr=td.ptr, array=td.array,
+                                aggregate=td.aggregate, quals=tuple(quals) + td.quals)
         if not aggregate:
             base = self._canon_scalar(words)
         return cast.TypeRef(base=base, aggregate=aggregate, quals=tuple(quals))
@@ -230,7 +323,8 @@ class _Parser:
         if not self.at("IDENT"):
             return False
         w = self.peek().text
-        return w in _TYPE_KW or is_scalar_name(w) or w in self.tags
+        return (w in _TYPE_KW or w == "enum" or is_scalar_name(w)
+                or w in self.tags or w in self.typedefs)
 
     def _stmt(self):
         if self.at("PUNCT", "{"):
@@ -341,6 +435,9 @@ class _Parser:
             return cast.IntLit(parse_int_literal(self.nxt().text))
         if self.at("IDENT"):
             w = self.peek().text
+            if w in self.enums:                           # an enumerator -> its integer literal
+                self.nxt()
+                return cast.IntLit(self.enums[w])
             if w in KEYWORDS and w != "sizeof":
                 raise CParseError(f"unexpected keyword {w!r} in expression at {self.peek().pos}")
             return cast.Name(self.nxt().text)

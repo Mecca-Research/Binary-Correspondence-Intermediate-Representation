@@ -73,7 +73,8 @@ typedef struct bcir_ctype {
   int      signd;
   uint8_t  is_volatile;      /* volatile-qualified (MMIO) */
   uint8_t  ptr_to_struct;    /* a pointer whose pointee is a struct */
-  char     tag[BCIR_CIR_NAME]; /* struct tag (kind 1, or ptr_to_struct) */
+  uint8_t  is_union;         /* the aggregate is a union (emit `union` not `struct`) */
+  char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1, or ptr_to_struct) */
 } bcir_ctype;
 
 typedef struct bcir_param { char name[BCIR_CIR_NAME]; uint32_t rid; bcir_ctype type; } bcir_param;
