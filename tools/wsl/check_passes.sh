@@ -102,6 +102,16 @@ else
 fi
 echo "[passes] overlap: the (max,+) scheduled price M(pi,Theta) (gem/overlap.py in C++)"
 run_fc -bcir-overlap "${T}/overlap.mlir"
+echo "[passes] overlap-optimize: the makespan re-selection sweep (optimize_scheduled)"
+run_fc -bcir-overlap-optimize "${T}/overlap_optimize.mlir"
+echo "[passes] sense: the regret-driven telemetry resolution gate (kbcir/sensing.py)"
+run_fc -bcir-sense "${T}/sense.mlir"
+oo_out="$("${BO}" -bcir-overlap-optimize "${T}/gem_corpus.mlir" 2>/tmp/pe)"
+if grep -q "kbcir.overlap_opt_makespan = 253952" <<<"${oo_out}"; then
+  echo "  PASS overlap-optimize on gem_corpus (sweep stable: matmul makespan 253952)"
+else
+  echo "  FAIL overlap-optimize on gem_corpus"; cat /tmp/pe; fail=1
+fi
 echo "[passes] -bcir-overlap reproduces the oracle's makespan on the widened corpus"
 ov_out="$("${BO}" -bcir-overlap "${T}/gem_corpus.mlir" 2>/tmp/pe)"
 if grep -q "kbcir.overlap_gain = 761856" <<<"${ov_out}" \

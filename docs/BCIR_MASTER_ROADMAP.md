@@ -206,20 +206,34 @@ closes the PARITY gap that previously claimed the op); cross-pass `PlanAnalysis`
 all 9 optimizer passes; bytecode round-trip; `hasVerifier` parse-time structural checks on
 `resource`/`gem.lane_segment`/`claim`/`target.capability`; and the C++ standard at `-std=c++2c`.
 
-**Remaining law-rail gaps (narrow, from the completeness scan).** The deterministic spine is
-complete; what is left is small and precise:
-1. **Overlap re-selection sweep** — `gem/overlap.py:optimize_scheduled` adopts the legal
-   alternative that strictly lowers makespan (an iterated select→schedule→re-price). `-bcir-overlap`
-   recomputes the *price* `M(π,Θ)` but not the sweep. Buildable as a C++ pass reusing
-   `PlanAnalysis` + the `_makespan` machinery (effort M).
-2. **MOPC R12 refinement** — the support-preservation `f(Supp(J)) ⊆ Supp(J')` set-containment
-   and the commuting-square `Λ∘Ψ = Φ` path-independence (`kbcir/mapping.py`,
-   `verify.{verify_support_preservation,verify_commutativity}`) are Python-only; the MLIR R12
-   currently checks the lowering-discharge contract attr. Buildable as an `-bcir-verify` R12
-   extension on `bcir.target.lower_contract` (effort S–M).
-3. **Telemetry sensing gate** — `kbcir/sensing.py:RegretSensor.sense` (deterministic Welford
-   variance + CV-threshold over `bcir.trace.data_dna`) has no op/pass (effort S; borderline, as
-   `sense_by_ranker` leans on a learned margin).
+**Remaining law-rail gaps — CLOSED (2026-06-18).** The completeness scan's three narrow gaps
+were built and dual-rail-verified against the oracle on true MLIR 22:
+1. ✅ **Overlap re-selection sweep. DONE.** `-bcir-overlap-optimize` (`BCIROverlapPass.cpp`) ports
+   `gem/overlap.py::optimize_scheduled`: from the serial optimum it sweeps each claim once in
+   column order and adopts the legal alternative that strictly lowers the scheduled makespan
+   (first-best tie-break), re-pricing serially so R9 holds. The reusable `computeMakespan` was
+   extracted (shared with `-bcir-overlap`). Matches the oracle's `(makespan, serial)` on all 11
+   corpus programs — including the real overlap gains (fused_chain 7808<13696, matmul 253952<1015808)
+   — and is a no-op where the serial optimum is already makespan-optimal (`overlap_optimize.mlir`).
+2. ✅ **MOPC R12 support-preservation. DONE.** `bcir.target.lower_contract` carries optional
+   `source_support`/`target_support`/`discharges`; `-bcir-verify` **R12** now enforces
+   `f(Supp(J)) ⊆ Supp(J')` (identity dim-map) unless discharged — reproducing
+   `kbcir/mapping.py::dropped` (`verify_laws_deep.mlir`). The commuting-square `Λ∘Ψ = Φ` stays a
+   runtime/**differential** property (path-equivalence over inputs, not a static structural check)
+   — it is the PARITY discipline already enforced by the provenance digest + the generated parity
+   campaign, so it is not a static `-bcir-verify` law by design.
+3. ✅ **Telemetry sensing gate. DONE.** `-bcir-sense` (`BCIRSensePass.cpp`) ports
+   `kbcir/sensing.py::RegretSensor.sense`: per-segment `cv_milli = 1000·stdev/mean` over the
+   `bcir.trace.data_dna` cycles (population variance, floor-isqrt — the exact integer formula),
+   ranked by `(-cv_milli, segment)`, assigning `high`/`low`/`off` under the threshold+budget gate.
+   Matches the oracle exactly (`sense.mlir`). The a-priori `sense_by_ranker` variant stays off-rail
+   (it leans on a learned ranker margin).
+
+The law rail now mirrors the oracle's **entire deterministic spine** with no known buildable gaps:
+85 ODS ops, 25 passes, R1–R18, the optimizer core (plan / RCSP / overlap + the re-selection sweep /
+bundle / schedule), the smart-lowering laws, provenance, compose, the memory-module fixpoint, the
+MOPC support law, and the sensing gate. What remains Python-only is by-design off-rail
+(quarantine/learned organs, §5.6) or inherently host-side (measurement, fuzz, toolchain).
 
 ### 5.2 Oracle → C (run-time hot path) — remaining ports
 

@@ -32,6 +32,11 @@ std::unique_ptr<mlir::Pass> createCostModelPass();
 std::unique_ptr<mlir::Pass> createPlanPass();
 // -bcir-overlap: the (max,+) scheduled price M(pi,Theta) (gem/overlap.py).
 std::unique_ptr<mlir::Pass> createOverlapPass();
+// -bcir-overlap-optimize: the makespan-driven re-selection sweep (overlap.py
+// ::optimize_scheduled) -- adopt the per-claim alternative that strictly lowers makespan.
+std::unique_ptr<mlir::Pass> createOverlapOptimizePass();
+// -bcir-sense: regret-driven telemetry resolution gate (kbcir/sensing.py RegretSensor.sense).
+std::unique_ptr<mlir::Pass> createSensePass();
 // -bcir-rcsp: constrained selection (budget label-DP) + the Pareto front, the
 // deterministic optimizer core ported from bcir/kbcir/rcsp.py.
 std::unique_ptr<mlir::Pass> createRcspPass();

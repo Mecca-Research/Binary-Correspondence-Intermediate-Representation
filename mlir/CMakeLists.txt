@@ -97,6 +97,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRCimDvfsPass.cpp     # recompute CIM/PIM dispatch + DVFS clock (gem.cim/dvfs)
   lib/passes/BCIRScheduleEftPass.cpp # duration-aware EFT wave scheduling (gem.schedule)
   lib/passes/BCIRAllocPoolPass.cpp   # liveness-based memory pool planning (allocator.pool_plan)
+  lib/passes/BCIRSensePass.cpp       # regret-driven telemetry resolution gate (kbcir/sensing.py)
   DEPENDS
     BCIRAttrsIncGen
     BCIRTypesIncGen

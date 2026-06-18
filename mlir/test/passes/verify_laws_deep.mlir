@@ -376,6 +376,22 @@ bcir.module @r12 {
 
 // -----
 
+// R12 (MOPC objective-support refinement): a lowering whose source objective is nonzero on
+// dimension 4 (Supp(J)) but whose target drops it (4 not in Supp(J')), with no discharge --
+// f(Supp(J)) must lie in Supp(J') (mapping.py::dropped). It preserves bounds/hazard/precision
+// (so the base R12 contract check passes), isolating the support law.
+bcir.module @r12_support {
+  // expected-error @+1 {{R12: lowering contract lc drops objective dimension 4 (in Supp(J) but not Supp(J'), with no discharge)}}
+  bcir.target.lower_contract @lc {
+    target = @cpu, bcir_op = "vector.add", lane = #bcir.lane<u>,
+    stride_class = #bcir.stride_class<unit>, opcode = @vadd,
+    legal_if = "avx2", preserves = "bounds,hazard,precision",
+    source_support = array<i64: 0, 4>, target_support = array<i64: 0>
+  }
+}
+
+// -----
+
 // R14 (CIM/PIM dispatch): a NON-reduction segment cannot be dispatched to
 // processing-in-memory -- now a first-class -bcir-verify law (PIM does element-local
 // reduce work, not general SIMD; mirrors gem.cim / verify.verify_cim).

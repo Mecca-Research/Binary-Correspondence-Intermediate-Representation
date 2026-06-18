@@ -81,6 +81,87 @@ static int64_t chainCost(ArrayRef<const Scheduled *> chain, ArrayRef<int64_t> w,
   return total;
 }
 
+// The (max,+) scheduled makespan of a candidate-index assignment: per phase, greedy
+// conflict waves over the affinity-domain bins (overlap.py::_makespan). A pure function of
+// the assignment, so the re-selection sweep can re-price trial assignments.
+static int64_t computeMakespan(const std::vector<cm::Column> &cols, ArrayRef<int> assign,
+                               int64_t theta, ArrayRef<int64_t> w, int64_t domains) {
+  std::vector<Scheduled> sched;
+  SmallVector<int32_t> phaseOrder;
+  for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
+    ClaimOp claim = cols[i].claim;
+    bool sparse =
+        claim.getLane() == Lane::GGG || claim.getStrideClass() == StrideClass::Random;
+    sched.push_back({claim, cols[i].phase, static_cast<int32_t>(claim.getClaimId()), sparse,
+                     cols[i].cands[assign[i]], cols[i].reads, cols[i].writes});
+    if (std::find(phaseOrder.begin(), phaseOrder.end(), cols[i].phase) == phaseOrder.end())
+      phaseOrder.push_back(cols[i].phase);
+  }
+  llvm::sort(phaseOrder);
+
+  int64_t makespan = 0;
+  for (int32_t pid : phaseOrder) {
+    SmallVector<const Scheduled *> phaseClaims;
+    for (const Scheduled &s : sched)
+      if (s.phase == pid)
+        phaseClaims.push_back(&s);
+    llvm::sort(phaseClaims,
+               [](const Scheduled *a, const Scheduled *c) { return a->id < c->id; });
+
+    SmallVector<const Scheduled *> main, tail;
+    for (const Scheduled *s : phaseClaims)
+      (s->sparse ? tail : main).push_back(s);
+
+    llvm::DenseMap<int32_t, int> waveOf;
+    int nwaves = 0;
+    for (size_t i = 0; i < main.size(); ++i) {
+      int wv = 0;
+      for (size_t j = 0; j < i; ++j)
+        if (conflict(*main[j], *main[i]))
+          wv = std::max(wv, waveOf[main[j]->id] + 1);
+      waveOf[main[i]->id] = wv;
+      nwaves = std::max(nwaves, wv + 1);
+    }
+
+    int64_t mainTotal = 0;
+    for (int wv = 0; wv < nwaves; ++wv) {
+      SmallVector<const Scheduled *> members;
+      for (const Scheduled *s : main)
+        if (waveOf[s->id] == wv)
+          members.push_back(s);
+      std::vector<SmallVector<const Scheduled *>> bins(domains);
+      for (size_t slot = 0; slot < members.size(); ++slot)
+        bins[slot % domains].push_back(members[slot]);
+      int64_t waveMax = 0;
+      for (auto &bin : bins)
+        if (!bin.empty())
+          waveMax = std::max(waveMax, chainCost(bin, w, theta));
+      mainTotal += waveMax;
+    }
+
+    int64_t tailTotal = chainCost(tail, w, theta);
+    makespan += std::max(mainTotal, tailTotal);
+  }
+  return makespan;
+}
+
+// The serial (min,+) plan score of an assignment: the chosen coupled edge per column,
+// scalarized and summed (overlap.py::_serial_result -- R9-consistent: score == Sigma steps).
+static int64_t serialScore(const std::vector<cm::Column> &cols, ArrayRef<int> assign,
+                           int64_t theta, ArrayRef<int64_t> w) {
+  int64_t total = 0;
+  for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
+    cm::Cost e = cols[i].cands[assign[i]].cost;
+    cm::Factor f = (i > 0)
+        ? cm::contextFactor(theta, cols[i - 1].reads, cols[i - 1].cands[assign[i - 1]].width,
+                            cols[i].reads, cols[i].cands[assign[i]].width)
+        : cm::contextFactor(theta, {}, 0, cols[i].reads, cols[i].cands[assign[i]].width);
+    cm::applyFactor(e, f);
+    total += cm::scalarize(e, w);
+  }
+  return total;
+}
+
 struct OverlapPass : public PassWrapper<OverlapPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(OverlapPass)
 
@@ -104,78 +185,76 @@ struct OverlapPass : public PassWrapper<OverlapPass, OperationPass<>> {
   void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
     if (!pa.valid)
       return;
-    const std::vector<cm::Column> &cols = pa.cols;
-    const SmallVector<int> &chosen = pa.chosen;
-    ArrayRef<int64_t> w = pa.weights;
-    const int64_t theta = pa.thetaThermal;
-    const int64_t serial = pa.total;
-
-    // The scheduled view of each chosen claim.
-    std::vector<Scheduled> sched;
-    SmallVector<int32_t> phaseOrder;
-    for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
-      const cm::Column &col = cols[i];
-      ClaimOp claim = col.claim;   // ClaimOp is a value handle; its accessors are non-const
-      bool sparse = claim.getLane() == Lane::GGG ||
-                    claim.getStrideClass() == StrideClass::Random;
-      sched.push_back({claim, col.phase, static_cast<int32_t>(claim.getClaimId()),
-                       sparse, col.cands[chosen[i]], col.reads, col.writes});
-      if (std::find(phaseOrder.begin(), phaseOrder.end(), col.phase) == phaseOrder.end())
-        phaseOrder.push_back(col.phase);
-    }
-    llvm::sort(phaseOrder);
-
-    int64_t domains = pa.affinityDomains;
-    int64_t makespan = 0;
-
-    for (int32_t pid : phaseOrder) {
-      SmallVector<const Scheduled *> phaseClaims;
-      for (const Scheduled &s : sched)
-        if (s.phase == pid)
-          phaseClaims.push_back(&s);
-      llvm::sort(phaseClaims,
-                 [](const Scheduled *a, const Scheduled *c) { return a->id < c->id; });
-
-      SmallVector<const Scheduled *> main, tail;
-      for (const Scheduled *s : phaseClaims)
-        (s->sparse ? tail : main).push_back(s);
-
-      // Greedy wave assignment by conflict (concurrency.schedule_concurrent).
-      llvm::DenseMap<int32_t, int> waveOf;
-      int nwaves = 0;
-      for (size_t i = 0; i < main.size(); ++i) {
-        int wv = 0;
-        for (size_t j = 0; j < i; ++j)
-          if (conflict(*main[j], *main[i]))
-            wv = std::max(wv, waveOf[main[j]->id] + 1);
-        waveOf[main[i]->id] = wv;
-        nwaves = std::max(nwaves, wv + 1);
-      }
-
-      int64_t mainTotal = 0;
-      for (int wv = 0; wv < nwaves; ++wv) {
-        SmallVector<const Scheduled *> members;
-        for (const Scheduled *s : main)
-          if (waveOf[s->id] == wv)
-            members.push_back(s);
-        // Round-robin affinity bins; one bin's claims run back-to-back.
-        std::vector<SmallVector<const Scheduled *>> bins(domains);
-        for (size_t slot = 0; slot < members.size(); ++slot)
-          bins[slot % domains].push_back(members[slot]);
-        int64_t waveMax = 0;
-        for (auto &bin : bins)
-          if (!bin.empty())
-            waveMax = std::max(waveMax, chainCost(bin, w, theta));
-        mainTotal += waveMax;
-      }
-
-      int64_t tailTotal = chainCost(tail, w, theta);
-      makespan += std::max(mainTotal, tailTotal);
-    }
-
-    root->setAttr("kbcir.overlap_serial", b.getI64IntegerAttr(serial));
+    int64_t makespan =
+        computeMakespan(pa.cols, pa.chosen, pa.thetaThermal, pa.weights, pa.affinityDomains);
+    root->setAttr("kbcir.overlap_serial", b.getI64IntegerAttr(pa.total));
     root->setAttr("kbcir.overlap_makespan", b.getI64IntegerAttr(makespan));
-    root->setAttr("kbcir.overlap_gain", b.getI64IntegerAttr(serial - makespan));
+    root->setAttr("kbcir.overlap_gain", b.getI64IntegerAttr(pa.total - makespan));
+  }
+};
+
+// -bcir-overlap-optimize: the makespan-driven re-selection sweep (overlap.py
+// ::optimize_scheduled). Starting from the serial optimum, sweep each claim once in column
+// (flatten) order and adopt the legal alternative that *strictly* lowers the scheduled
+// makespan most (deterministic first-best tie-break, carrying earlier adoptions forward).
+// The serial optimum is usually already makespan-optimal (the sweep is then a no-op -- it
+// must not churn a plan the coupled shortest path got right), but where a narrower lane
+// packs the waves better it adopts it. Re-prices serially so R9 still holds (makespan <=
+// serial). Annotates kbcir.overlap_opt_{makespan,serial,gain} + per-claim opt_width.
+struct OverlapOptimizePass : public PassWrapper<OverlapOptimizePass, OperationPass<>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(OverlapOptimizePass)
+
+  StringRef getArgument() const final { return "bcir-overlap-optimize"; }
+  StringRef getDescription() const final {
+    return "Makespan-driven re-selection sweep (port of gem/overlap.py::optimize_scheduled): "
+           "adopt the per-claim alternative that strictly lowers the scheduled makespan; "
+           "annotates kbcir.overlap_opt_makespan / overlap_opt_serial / overlap_opt_gain.";
+  }
+
+  void runOnOperation() override {
+    Builder b(&getContext());
+    getOperation()->walk([&](Operation *mod) {
+      if (mod->getName().getStringRef() == "bcir.module")
+        runOnModule(mod, b, getChildAnalysis<cm::PlanAnalysis>(mod));
+    });
+    // The sweep re-selects realizations -> it does NOT preserve the base plan analysis.
+  }
+
+  void runOnModule(Operation *root, Builder &b, const cm::PlanAnalysis &pa) {
+    if (!pa.valid)
+      return;
+    const std::vector<cm::Column> &cols = pa.cols;
+    ArrayRef<int64_t> w = pa.weights;
+    const int64_t theta = pa.thetaThermal, domains = pa.affinityDomains;
+
+    SmallVector<int> assign(pa.chosen.begin(), pa.chosen.end());   // start: the serial optimum
+    int64_t bestM = computeMakespan(cols, assign, theta, w, domains);
+    for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
+      const int cur = assign[i];
+      int bestCand = cur;
+      int64_t bestTrial = bestM;
+      for (int ci = 0; ci < static_cast<int>(cols[i].cands.size()); ++ci) {
+        if (ci == cur)
+          continue;
+        assign[i] = ci;
+        int64_t m = computeMakespan(cols, assign, theta, w, domains);
+        if (m < bestTrial) {       // strict: first alternative reaching the new minimum wins
+          bestCand = ci;
+          bestTrial = m;
+        }
+      }
+      assign[i] = bestCand;        // commit (carry the adoption into later claims' sweeps)
+      if (bestCand != cur)
+        bestM = bestTrial;
+    }
+
+    int64_t serial = serialScore(cols, assign, theta, w);   // R9-consistent re-price
+    for (int i = 0; i < static_cast<int>(cols.size()); ++i)
+      cols[i].claim->setAttr("kbcir.overlap_opt_width",
+                             b.getI64IntegerAttr(cols[i].cands[assign[i]].width));
+    root->setAttr("kbcir.overlap_opt_serial", b.getI64IntegerAttr(serial));
+    root->setAttr("kbcir.overlap_opt_makespan", b.getI64IntegerAttr(bestM));
+    root->setAttr("kbcir.overlap_opt_gain", b.getI64IntegerAttr(serial - bestM));
   }
 };
 
@@ -183,6 +262,10 @@ struct OverlapPass : public PassWrapper<OverlapPass, OperationPass<>> {
 
 std::unique_ptr<Pass> createOverlapPass() {
   return std::make_unique<OverlapPass>();
+}
+
+std::unique_ptr<Pass> createOverlapOptimizePass() {
+  return std::make_unique<OverlapOptimizePass>();
 }
 
 }  // namespace bcir
