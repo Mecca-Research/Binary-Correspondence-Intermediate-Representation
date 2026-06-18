@@ -593,10 +593,14 @@ the existing C twins):
 - **Type-model breadth** — ✅ `typedef` (scalar/pointer/aggregate aliases, incl. `typedef struct
   {...} N;`), ✅ `enum` (enumerators folded to their integer values at parse time), and ✅ full
   `union` layout (members overlap at offset 0; size = the widest member) all lower on both rails,
-  parity- + Clang-equivalence-gated (`cfront_typedef.c`, `cfront_enum.c`, `cfront_union.c`). *Still
-  to port:* **multi-dimensional arrays** (a multi-index `m[i][j]` load + the pointer-to-row param
-  declarator), **function pointers**, and the **ternary operator** `?:` (surfaced by Phase D; not yet
-  lexed) — what remaining vendor headers need.
+  parity- + Clang-equivalence-gated (`cfront_typedef.c`, `cfront_enum.c`, `cfront_union.c`). ✅
+  **Function pointers** (a `typedef`'d `RET (*name)(PARAMS)` passed as a parameter and called
+  indirectly — the HAL dispatch pattern; the indirect call lowers to a `c.call.indirect` claim that
+  R18 treats as an opaque external edge, while direct calls in the same function still travel the
+  call graph; `cfront_funcptr.c`), and ✅ the **ternary operator** `?:` (`cfront_ternary.c`) now lower
+  on both rails. *Still to port:* **multi-dimensional arrays** (a multi-index `m[i][j]` load + the
+  pointer-to-row param declarator), and **function-pointer struct members** (full dispatch tables) —
+  what remaining vendor headers need.
 - ✅ **Phase D — real register-map headers driven end-to-end** — vendor-style headers + drivers
   ingested with no hand-written claim graph, through the full `C → bcir_cpp → bcir_cfront → verify →
   emit → bcir_plan → bcir_hydrate → bcir_exec` loop, both rails agreeing and the emit
@@ -647,8 +651,13 @@ subset behave like `cc` on a small multi-file driver project):
 headers/drivers hit. ✅ **ternary `?:`** — lexed (`?` added to the oracle punct set; the C lexer's
 single-char fallback already had it), parsed as a conditional expression (right-associative, layered
 over the binary grammar on both rails), lowered to a scalar `c.select` claim, and emitted as the real
-`(cond ? a : b)` — Clang-behaviour-equivalent (`cfront_ternary.c`, both rails `claims=13 ok=1`). *Still
-to port:* **function pointers**, **multi-dimensional arrays**; the comma
+`(cond ? a : b)` — Clang-behaviour-equivalent (`cfront_ternary.c`, both rails `claims=13 ok=1`). ✅
+**function pointers** — a `typedef`'d `RET (*name)(PARAMS)` passed as a parameter and called
+indirectly (HAL dispatch); the indirect call lowers to a `c.call.indirect` claim (reads: the pointer
+value then the actuals), R18 leaves it an opaque external edge while direct calls in the same function
+still resolve through the call graph, and the emit calls through the pointer verbatim — both rails
+`funcs=2 claims=2 call=2 ok=1`, Clang-equivalent (`cfront_funcptr.c`). *Still
+to port:* **multi-dimensional arrays**, **function-pointer struct members** (dispatch tables); the comma
 operator, `sizeof`/`_Alignof`/`typeof`, casts + compound literals, integer promotions + usual arithmetic
 conversions, pointer-arithmetic completeness; ✅ **`sizeof`** (`sizeof(type)` / `sizeof expr` folds to
 a compile-time constant -- the type/operand's static size, operand not evaluated; both rails agree

@@ -23,6 +23,7 @@ from .ctype_model import (
     AggregateBuilder,
     CType,
     array,
+    funcptr,
     is_scalar_name,
     pointer,
     scalar,
@@ -162,6 +163,10 @@ class _FuncLowerer:
         return self.rid
 
     def _resolve_type(self, tref: cast.TypeRef) -> CType:
+        if tref.funcptr:                                   # a function-pointer alias (HAL dispatch)
+            ret = self._resolve_type(tref.func_ret)
+            params = tuple(self._resolve_type(p) for p in tref.func_params)
+            return funcptr(tref.base, ret, params)
         if tref.aggregate:
             base = self.aggregates[tref.base]
         elif is_scalar_name(tref.base):
@@ -356,6 +361,14 @@ class _FuncLowerer:
 
     def _call(self, node: cast.CallExpr) -> int:
         actuals = tuple(self._rvalue(a) for a in node.args)
+        # Indirect call through a function-pointer local/param (HAL dispatch): the target is dynamic,
+        # so there is no named callee -- it lowers to a `c.call.indirect` claim (reads: the pointer
+        # value then the actuals) and is *not* added to the call graph, leaving R18 to treat it as an
+        # opaque external edge (no recursion / callee-resolution constraint can apply).
+        if node.callee in self.env and self.env[node.callee][1].kind == "funcptr":
+            fptr = self.env[node.callee][0]
+            t = self._temp(scalar("uint32_t"), f"icall_{node.callee}")
+            return self._emit("c.call.indirect", Opcode.GEM_DISPATCH, (fptr, *actuals), (t,))
         # Atomics run on the A lane. A scalar atomic counter is a single-location RMW (not on
         # the decoupled GGG/scatter tail), so it stays SCALAR-shaped -- the lane law (R6) admits
         # lane A for SCALAR, and the atomic/barriered hazard discharges R5.
@@ -563,6 +576,10 @@ def lower_unit(unit: cast.Unit) -> LoweredUnit:
 
 
 def _resolve_member_type(tref: cast.TypeRef, aggregates: dict) -> CType:
+    if tref.funcptr:                                       # a function-pointer member (dispatch table)
+        ret = _resolve_member_type(tref.func_ret, aggregates)
+        params = tuple(_resolve_member_type(p, aggregates) for p in tref.func_params)
+        return funcptr(tref.base, ret, params)
     if tref.aggregate:
         base = aggregates[tref.base]
     else:

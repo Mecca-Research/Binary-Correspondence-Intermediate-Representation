@@ -68,13 +68,13 @@ typedef struct bcir_resource {
 
 /* a C type descriptor (for signatures + faithful emission). */
 typedef struct bcir_ctype {
-  uint8_t  kind;             /* 0 scalar, 1 struct-by-value, 2 pointer */
-  int      size;             /* scalar size, or pointee size for a pointer */
+  uint8_t  kind;             /* 0 scalar, 1 struct-by-value, 2 pointer, 3 function-pointer */
+  int      size;             /* scalar size, pointee size for a pointer, or 8 for a funcptr */
   int      signd;
   uint8_t  is_volatile;      /* volatile-qualified (MMIO) */
   uint8_t  ptr_to_struct;    /* a pointer whose pointee is a struct */
   uint8_t  is_union;         /* the aggregate is a union (emit `union` not `struct`) */
-  char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1, or ptr_to_struct) */
+  char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1/ptr_to_struct), or funcptr alias (kind 3) */
 } bcir_ctype;
 
 typedef struct bcir_param { char name[BCIR_CIR_NAME]; uint32_t rid; bcir_ctype type; } bcir_param;

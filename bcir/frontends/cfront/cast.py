@@ -11,11 +11,14 @@ from dataclasses import dataclass, field
 # --- type references (resolved against the type table during lowering) ---
 @dataclass(frozen=True)
 class TypeRef:
-    base: str                       # scalar name or struct/union tag
+    base: str                       # scalar name or struct/union tag (a funcptr alias: its spelling)
     ptr: int = 0                    # pointer depth
     array: tuple = ()               # array dimensions (outer-first)
     aggregate: str = ""             # "struct" | "union" | "" (scalar)
     quals: tuple = ()               # ("const",) / ("volatile",) — drives MMIO lowering (L5)
+    funcptr: bool = False           # a function-pointer alias (RET (*name)(PARAMS)) — base is its name
+    func_ret: object = None         # the return TypeRef (funcptr only)
+    func_params: tuple = ()         # the parameter TypeRefs (funcptr only) — for faithful emit
 
 
 # --- expressions ---

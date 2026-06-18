@@ -33,7 +33,8 @@ _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c"]      # L7: exercise the preprocessor
 _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-value + packed layout
         "cfront_union.c",                             # + full union (members overlap at offset 0)
-        "cfront_interleave.c"]                        # + enum/struct defined *between* two functions
+        "cfront_interleave.c",                        # + enum/struct defined *between* two functions
+        "cfront_funcptr.c"]                           # + funcptr param + indirect call (HAL dispatch)
 _FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI
 # §5.8 atomics/fences/CAS run their own gate: their memory side effects make the generic
 # pure-function equivalence harness invalid (it would call the original first and observe
@@ -63,7 +64,7 @@ def _oracle(src: str, includes=None):
     bf = sum(1 for c in cl if c.op == "c.bf.get")
     kn = sum(1 for c in cl if c.op == "c.const")
     bo = sum(1 for c in cl if c.op.startswith("c.bin."))
-    ca = sum(1 for c in cl if c.op.startswith("c.call:"))
+    ca = sum(1 for c in cl if c.op.startswith("c.call"))   # c.call:NAME (direct) + c.call.indirect
     summary = (f"funcs={len(funcs)} claims={len(cl)} mmio={mmio} bf={bf} const={kn} "
                f"binop={bo} call={ca} ok={1 if r.is_clean else 0}")
     return summary, r, entry
@@ -102,8 +103,15 @@ def _cname(ct) -> str:
 def _equiv(source: str, c_emitted: str, entry) -> str:
     """Compile the original source beside the C-frontend's emitted bcir_* and diff outputs."""
     has_ptr = any(ct.kind in ("pointer", "array") for _n, _r, ct in entry.params)
-    decls, setup, args = [], [], []
+    decls, setup, args, prelude = [], [], [], []
     for i, (_pn, _rid, ct) in enumerate(entry.params):
+        if ct.kind == "funcptr":                          # pass a real (deterministic) target fn
+            rety = _cname(ct.of) if ct.of else "uint32_t"
+            plist = ", ".join(f"{_cname(pt)} p{j}" for j, pt in enumerate(ct.params)) or "void"
+            comb = " + ".join(f"(p{j} * {2 * j + 1}u)" for j in range(len(ct.params))) or "1u"
+            prelude.append(f"static {rety} _fp{i}({plist}){{ return ({rety})({comb}); }}")
+            args.append(f"_fp{i}")
+            continue
         if ct.kind in ("pointer", "array"):
             decls.append(f"  static {_cname(ct.of)} buf{i}[256];")
             setup.append(f"    for(unsigned k=0;k<sizeof buf{i}/4;k++) ((uint32_t*)buf{i})[k]=rng();")
@@ -133,6 +141,7 @@ def _equiv(source: str, c_emitted: str, entry) -> str:
 {source}
 
 {c_emitted}
+{chr(10).join(prelude)}
 static uint64_t S=0x9E3779B97F4A7C15u;
 static uint32_t rng(void){{S=S*6364136223846793005u+1442695040888963407u;return (uint32_t)(S>>32);}}
 int main(void){{
