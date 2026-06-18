@@ -463,7 +463,8 @@ static void p_stmt(CC *c) {
   if(is(c,"while")){                   /* L6: a bounded while loop (cond re-evaluated each iter) */
     c->i++;marker(c,"c.loop",0,0);
     eat(c,"(");uint32_t cond=p_expr(c);eat(c,")");
-    marker(c,"c.loop.test",cond,1); p_block(c); marker(c,"c.endloop",0,0); return;
+    marker(c,"c.loop.test",cond,1); p_block(c);
+    marker(c,"c.cont.tgt",0,0); marker(c,"c.endloop",0,0); return;   /* continue -> re-test (top) */
   }
   if(is(c,"for")){                     /* for(init; cond; step) body == init; while(cond){body; step} */
     c->i++; eat(c,"(");
@@ -480,18 +481,21 @@ static void p_stmt(CC *c) {
     while(!isk(c,T_END)&&pd){ if(is(c,"("))pd++; else if(is(c,")")){pd--; if(!pd)break;} c->i++; }
     int step_end=c->i; eat(c,")");
     p_block(c);                        /* the loop body */
+    marker(c,"c.cont.tgt",0,0);        /* continue -> run the step, then re-test */
     if(step_end>step_start){ int save=c->i; c->i=step_start; p_simple(c); c->i=save; }  /* step @ iter end */
     marker(c,"c.endloop",0,0); return;
   }
   if(is(c,"do")){                      /* do body while(cond);  == loop { body; if(!cond) break; } */
     c->i++; marker(c,"c.loop",0,0);
     p_block(c);                        /* body runs first */
+    marker(c,"c.cont.tgt",0,0);        /* continue -> the bottom test */
     eat(c,"while"); eat(c,"(");
     uint32_t cond=p_expr(c); eat(c,")"); eat(c,";");
     marker(c,"c.loop.test",cond,1);    /* the test is at the bottom */
     marker(c,"c.endloop",0,0); return;
   }
   if(is(c,"break")){ c->i++; eat(c,";"); marker(c,"c.break",0,0); return; }
+  if(is(c,"continue")){ c->i++; eat(c,";"); marker(c,"c.continue",0,0); return; }
   if(is(c,"{")){p_block(c);return;}
   int looks_decl=0;
   if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
@@ -600,17 +604,20 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(is_named_local(f,r->rid)){
       if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s;\n",r->agg,r->name);
       else w+=snprintf(o+w,on-w,"  uint32_t %s;\n",r->name);}}
-  int depth=1;
+  int depth=1, lstk[64], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)
   for(size_t i=0;i<f->n_claims&&w<on-160;i++){const bcir_claim *cl=&f->claims[i];
     /* L6 control-flow markers (rendered as braces) */
     if(!strcmp(cl->op,"c.if")){IND();w+=snprintf(o+w,on-w,"if (%s) {\n",rname(f,cl->rd[0],a));depth++;continue;}
     if(!strcmp(cl->op,"c.else")){depth--;IND();w+=snprintf(o+w,on-w,"} else {\n");depth++;continue;}
     if(!strcmp(cl->op,"c.endif")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");continue;}
-    if(!strcmp(cl->op,"c.loop")){IND();w+=snprintf(o+w,on-w,"while (1) {\n");depth++;continue;}
+    if(!strcmp(cl->op,"c.loop")){IND();w+=snprintf(o+w,on-w,"while (1) {\n");depth++;
+      if(nls<64)lstk[nls++]=lctr++;continue;}
     if(!strcmp(cl->op,"c.loop.test")){IND();w+=snprintf(o+w,on-w,"if (!%s) break;\n",rname(f,cl->rd[0],a));continue;}
-    if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");continue;}
+    if(!strcmp(cl->op,"c.cont.tgt")){IND();w+=snprintf(o+w,on-w,"__cont_%d: ;\n",nls?lstk[nls-1]:0);continue;}
+    if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");if(nls)nls--;continue;}
     if(!strcmp(cl->op,"c.break")){IND();w+=snprintf(o+w,on-w,"break;\n");continue;}
+    if(!strcmp(cl->op,"c.continue")){IND();w+=snprintf(o+w,on-w,"goto __cont_%d;\n",nls?lstk[nls-1]:0);continue;}
     if(!strcmp(cl->op,"c.return")){IND();
       if(cl->n_rd) w+=snprintf(o+w,on-w,"return %s;\n",rname(f,cl->rd[0],a));
       else w+=snprintf(o+w,on-w,"return;\n");continue;}

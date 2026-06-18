@@ -28,7 +28,8 @@ _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_callgraph.c",
                  "cfront_typedef.c", "cfront_enum.c",
                  "cfront_ternary.c", "cfront_sizeof.c"]   # + type-model breadth + ternary ?: + sizeof
-_CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c"]
+_CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
+            "cfront_continue.c"]
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c"]      # L7: exercise the preprocessor
 _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-value + packed layout
         "cfront_union.c"]                             # + full union (members overlap at offset 0)

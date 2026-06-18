@@ -74,6 +74,8 @@ class WhileNode:
     body: list
     bound: int = 1024                      # static iteration upper bound (for the cost model)
     test_at_end: bool = False              # do/while: run body first, then test the condition
+    step: list = field(default_factory=list)   # for-loop step: runs after body, at the continue point
+    loop_id: int = 0                       # unique id for the emitter's `__cont_<id>` label
 
 
 @dataclass
@@ -86,6 +88,11 @@ class BreakNode:
     pass                                   # `break;` -- exit the nearest enclosing loop (emit-only)
 
 
+@dataclass
+class ContinueNode:
+    pass                                   # `continue;` -- jump to the loop's continue point (emit-only)
+
+
 def _flatten_block(block: list) -> list:
     """All Claim objects in a body tree, in order (the flat single-phase view verify/plan use)."""
     out: list = []
@@ -93,7 +100,7 @@ def _flatten_block(block: list) -> list:
         if isinstance(node, IfNode):
             out += _flatten_block(node.then) + _flatten_block(node.els)
         elif isinstance(node, WhileNode):
-            out += _flatten_block(node.cond_block) + _flatten_block(node.body)
+            out += _flatten_block(node.cond_block) + _flatten_block(node.body) + _flatten_block(node.step)
         elif isinstance(node, (Claim,)):
             out.append(node)
     return out
@@ -143,6 +150,11 @@ class _FuncLowerer:
         self.locals: list = []                         # (rid, name, CType) mutable named locals
         self.calls: list = []
         self.block_stack: list = [[]]                  # claims/control nodes append to the top block
+        self.loop_ctr = 0                              # unique loop ids (the `continue` label numbering)
+
+    def _next_loop_id(self) -> int:
+        self.loop_ctr += 1
+        return self.loop_ctr
 
     # --- resource allocation ---
     def _new_rid(self) -> int:
@@ -403,7 +415,8 @@ class _FuncLowerer:
             self.block_stack.append(cond_block)
             cond = self._rvalue(st.cond)
             self.block_stack.pop()
-            self.block_stack[-1].append(WhileNode(cond_block, cond, self._block(st.body)))
+            self.block_stack[-1].append(
+                WhileNode(cond_block, cond, self._block(st.body), loop_id=self._next_loop_id()))
         elif isinstance(st, cast.For):
             if st.init is not None:                            # init -> the enclosing block, once
                 self._stmt(st.init)
@@ -412,20 +425,25 @@ class _FuncLowerer:
             cond = self._rvalue(st.cond)
             self.block_stack.pop()
             body = self._block(st.body)
-            if st.step is not None:                            # the step runs at the end of each iter
-                self.block_stack.append(body)
+            step: list = []
+            if st.step is not None:                            # the step runs after body (the continue point)
+                self.block_stack.append(step)
                 self._stmt(st.step)
                 self.block_stack.pop()
-            self.block_stack[-1].append(WhileNode(cond_block2, cond, body))
+            self.block_stack[-1].append(
+                WhileNode(cond_block2, cond, body, step=step, loop_id=self._next_loop_id()))
         elif isinstance(st, cast.DoWhile):                     # body runs, then the cond is tested
             body = self._block(st.body)
             cond_block3: list = []
             self.block_stack.append(cond_block3)
             cond = self._rvalue(st.cond)
             self.block_stack.pop()
-            self.block_stack[-1].append(WhileNode(cond_block3, cond, body, test_at_end=True))
+            self.block_stack[-1].append(
+                WhileNode(cond_block3, cond, body, test_at_end=True, loop_id=self._next_loop_id()))
         elif isinstance(st, cast.Break):
             self.block_stack[-1].append(BreakNode())
+        elif isinstance(st, cast.Continue):
+            self.block_stack[-1].append(ContinueNode())
         else:
             raise CLowerError(f"statement {type(st).__name__} is beyond the L1–L6 subset")
         return None
@@ -481,8 +499,8 @@ def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Re
         elif isinstance(node, WhileNode):
             flush_run()
             _block_region(node.cond_block, functions, calls_iter)   # cond claims (cost folded in body)
-            parts.append(_block_region(node.body, functions, calls_iter))
-        elif isinstance(node, (ReturnNode, BreakNode)):
+            parts.append(_block_region(node.body + node.step, functions, calls_iter))
+        elif isinstance(node, (ReturnNode, BreakNode, ContinueNode)):
             continue
         elif node.op.startswith("c.call:"):
             flush_run()

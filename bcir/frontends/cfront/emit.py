@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from ...model import Claim
 from .ctype_model import CType
-from .lower import BreakNode, IfNode, LoweredFunc, ReturnNode, WhileNode
+from .lower import BreakNode, ContinueNode, IfNode, LoweredFunc, ReturnNode, WhileNode
 
 # op-suffix -> C operator.
 _BINOP = {"add": "+", "sub": "-", "mul": "*", "div": "/", "mod": "%", "and": "&", "or": "|",
@@ -50,32 +50,40 @@ def emit_function(lf: LoweredFunc) -> str:
             + "\n".join(decls + body) + "\n}")
 
 
-def _walk(lf: LoweredFunc, block: list, ref, depth: int) -> list:
+def _walk(lf: LoweredFunc, block: list, ref, depth: int, loops: list | None = None) -> list:
     ind = "    " * depth
+    loops = loops if loops is not None else []
     out: list = []
     for node in block:
         if isinstance(node, IfNode):
             out.append(f"{ind}if ({ref(node.cond)}) {{")
-            out += _walk(lf, node.then, ref, depth + 1)
+            out += _walk(lf, node.then, ref, depth + 1, loops)
             if node.els:
                 out.append(f"{ind}}} else {{")
-                out += _walk(lf, node.els, ref, depth + 1)
+                out += _walk(lf, node.els, ref, depth + 1, loops)
             out.append(f"{ind}}}")
         elif isinstance(node, WhileNode):
+            loops.append(node.loop_id)
             out.append(f"{ind}while (1) {{")
-            if node.test_at_end:                       # do/while: body, then recompute + test
-                out += _walk(lf, node.body, ref, depth + 1)
-                out += _walk(lf, node.cond_block, ref, depth + 1)
+            if node.test_at_end:                       # do/while: body, [continue:], recompute + test
+                out += _walk(lf, node.body, ref, depth + 1, loops)
+                out.append(f"{ind}    __cont_{node.loop_id}: ;")
+                out += _walk(lf, node.cond_block, ref, depth + 1, loops)
                 out.append(f"{ind}    if (!{ref(node.cond)}) break;")
-            else:                                      # while/for: test at the top
-                out += _walk(lf, node.cond_block, ref, depth + 1)
+            else:                                      # while/for: test, body, [continue:], step
+                out += _walk(lf, node.cond_block, ref, depth + 1, loops)
                 out.append(f"{ind}    if (!{ref(node.cond)}) break;")
-                out += _walk(lf, node.body, ref, depth + 1)
+                out += _walk(lf, node.body, ref, depth + 1, loops)
+                out.append(f"{ind}    __cont_{node.loop_id}: ;")
+                out += _walk(lf, node.step, ref, depth + 1, loops)
             out.append(f"{ind}}}")
+            loops.pop()
         elif isinstance(node, ReturnNode):
             out.append(f"{ind}return {ref(node.rid)};" if node.rid is not None else f"{ind}return;")
         elif isinstance(node, BreakNode):
             out.append(f"{ind}break;")
+        elif isinstance(node, ContinueNode):
+            out.append(f"{ind}goto __cont_{loops[-1]};")
         elif isinstance(node, Claim):
             out.append(ind + _claim_stmt(lf, node, ref))
     return out

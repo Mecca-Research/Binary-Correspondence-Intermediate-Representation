@@ -130,6 +130,11 @@ class Break:
     pass                            # `break;` — exit the nearest enclosing loop
 
 
+@dataclass(frozen=True)
+class Continue:
+    pass                            # `continue;` — jump to the nearest enclosing loop's next iteration
+
+
 # --- top level ---
 @dataclass(frozen=True)
 class Param:

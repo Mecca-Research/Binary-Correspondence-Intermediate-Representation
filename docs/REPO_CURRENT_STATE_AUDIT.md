@@ -130,6 +130,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — `continue` (completes the loop story).** `continue;` jumps to
+  the nearest loop's *continue point*, emitted as a per-loop `goto __cont_<id>;` with a
+  `__cont_<id>:` label placed correctly per loop form: before the **`for`** step (so it runs the step
+  -- the naive `while(1)` desugar would skip it, and inlining the step would redeclare temporaries),
+  before the **`do/while`** bottom test, and at the **`while`** body end (re-test at top). The oracle
+  adds a `ContinueNode` + a `WhileNode.step` field (the for-step separated from the body) + a
+  `loop_id` (assigned in lowering; the emitter threads a loop-id stack to resolve `continue` to the
+  innermost loop). The C frontend adds `c.continue` / `c.cont.tgt` markers + a loop-id stack in the
+  emitter. New fixture `cfront_continue.c` (a `for` summing odds via `continue`, and a `while` with a
+  threshold `continue`) matches on both rails (`funcs=2 claims=17 const=5 binop=6 ok=1`) and is
+  Clang-behaviour-equivalent. Wired into `_CONTROL` + `tools/c/check_runtime.sh`; warning-clean; 693
+  tests pass.
 - 2026-06-18: **C compiler (Phase 2) — `sizeof`.** `sizeof(type-name)` and `sizeof expr` fold to a
   compile-time integer constant -- the type's (or the operand's static type's) size; the operand is
   *not* evaluated. Both rails compute the same size from the shared scalar-size table + struct/union
