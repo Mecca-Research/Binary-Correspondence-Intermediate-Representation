@@ -357,6 +357,10 @@ class _Parser:
             self.nxt()
             self.eat("PUNCT", ";")
             return cast.Break()
+        if self.at("IDENT", "continue"):
+            self.nxt()
+            self.eat("PUNCT", ";")
+            return cast.Continue()
         if self._is_decl_start():
             return self._decl_stmt()
         expr = self._expr()

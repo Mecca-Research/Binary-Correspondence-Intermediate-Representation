@@ -656,10 +656,12 @@ via the shared scalar table + struct/union layout, Clang-equivalent, `cfront_siz
 `_Alignof`/`typeof`, the comma operator; the rest of control flow — ✅ **`for`** (desugared onto
 the existing `while` machinery on both rails: `init; while(cond){ body; step }`, the step lowered at
 the loop-body end; `cfront_for.c`), ✅ **`do/while`** (a `WhileNode` `test_at_end` flag / the C
-`c.loop.test` marker placed at the loop-body bottom -- body runs at least once) + ✅ **`break`** (a
-`BreakNode` / `c.break` marker emitted as `break;`, correct in every loop form), all Clang-equivalent
-(`cfront_dowhile.c`); still `continue` (needs the `for`-step interaction), `switch` +
-fallthrough, `goto` or a structured-lowering/diagnostic policy; designated +
+`c.loop.test` marker placed at the loop-body bottom -- body runs at least once), ✅ **`break`** (a
+`BreakNode` / `c.break` marker emitted as `break;`, correct in every loop form), and ✅ **`continue`**
+(a per-loop `goto __cont_<id>;` + a `__cont_<id>:` label placed at the loop's continue point -- before
+the `for` step / the `do/while` bottom test / at the `while` body end -- so it runs the step in a
+`for`, which the naive `while(1)` desugar would skip; `cfront_continue.c`), all Clang-equivalent;
+still `switch` + fallthrough, `goto` or a structured-lowering/diagnostic policy; designated +
 compound initializers; storage classes + linkage (`static`/`extern`/`thread_local`); `restrict` +
 alias/effect propagation; `_Atomic` + C-memory-model legality; scalable IR allocation (no fixed
 `BCIR_MAX_*`); fuller x86-64/AArch64 ABI; real object/dependency output via a resident backend. **Exit:**
