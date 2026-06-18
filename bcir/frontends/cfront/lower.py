@@ -14,7 +14,7 @@ Mapping:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ...kbcir import compose
 from ...model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
@@ -235,10 +235,28 @@ class _FuncLowerer:
             rid, ct = self.env[node.ident]
             return _LV("var", rid, ct)
         if isinstance(node, cast.Index):
-            base_rid, base_ct = self._addr(node.base)
-            idx = self._rvalue(node.index)
+            # collect the (possibly nested) index chain down to the ultimate base, then flatten
+            # row-major: m[i][j] on a `T m[A][B]` param -> the linear index i*B + j (Horner).
+            idx_nodes, n = [], node
+            while isinstance(n, cast.Index):
+                idx_nodes.append(n.index)
+                n = n.base
+            idx_nodes.reverse()
+            base_rid, base_ct = self._addr(n)
+            idx_rids = [self._rvalue(ix) for ix in idx_nodes]
+            shape = base_ct.shape
+            lin = idx_rids[0]
+            for d in range(1, len(idx_rids)):
+                dim = shape[d] if d < len(shape) else 1
+                k = self._temp(scalar("uint32_t"), f"k{dim}")
+                self._emit("c.const", Opcode.LOAD, (), (k,), imm=(dim,))
+                m1 = self._temp(scalar("uint32_t"), "b_mul")
+                self._emit("c.bin.mul", Opcode.MUL, (lin, k), (m1,))
+                a1 = self._temp(scalar("uint32_t"), "b_add")
+                self._emit("c.bin.add", Opcode.ADD, (m1, idx_rids[d]), (a1,))
+                lin = a1
             elem = base_ct.of if base_ct.of else scalar("uint32_t")
-            return _LV("mem", base_rid, elem, idx=idx)
+            return _LV("mem", base_rid, elem, idx=lin)
         if isinstance(node, cast.Member):
             base_rid, base_ct = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
@@ -485,6 +503,12 @@ class _FuncLowerer:
             self.rtypes.setdefault(rid, ct)
         for p in self.func.params:                            # params -> input resources (shadowing)
             ct = self._resolve_type(p.type)
+            if ct.kind == "array":                            # an array param decays to a flat
+                dims, elem = [], ct                           # element pointer + a recorded shape
+                while elem.kind == "array":
+                    dims.append(elem.count)
+                    elem = elem.of
+                ct = replace(pointer(elem), shape=tuple(dims))
             rid = self._new_rid()
             self._resource(rid, ct, p.name)
             self.env[p.name] = (rid, ct)

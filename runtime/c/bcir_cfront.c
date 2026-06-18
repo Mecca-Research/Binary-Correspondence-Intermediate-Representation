@@ -411,7 +411,22 @@ static uint32_t p_primary(CC *c) {
       for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n))
         return emit_member(c,v,&S->f[i]);
       fail(c,"unknown field");return 0;}
-    if(is(c,"[")){c->i++;uint32_t idx=p_expr(c);eat(c,"]");return emit_index(c,v,idx);}  /* L3 */
+    if(is(c,"[")){                                /* L3: base[i] / m[i][j] (row-major flatten) */
+      uint32_t idxs[3]; int ni=0;
+      while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]"); if(ni<3)idxs[ni++]=ix; }
+      uint32_t lin=idxs[0];
+      for(int d=1; d<ni; d++){                     /* lin = lin*dim + idxs[d]  (Horner) */
+        int dim = d<v->type.nadims ? v->type.adims[d] : 1;
+        uint32_t k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+        if(kc){kc->n_wr=1;kc->wr[0]=k;kc->n_imm=1;kc->imm[0]=dim;}
+        uint32_t m1=temp(c,4); bcir_claim *mc=new_claim(c,"c.bin.mul",BCIR_OP_MUL);
+        if(mc){mc->n_rd=2;mc->rd[0]=lin;mc->rd[1]=k;mc->n_wr=1;mc->wr[0]=m1;}
+        uint32_t a1=temp(c,4); bcir_claim *ac=new_claim(c,"c.bin.add",BCIR_OP_ADD);
+        if(ac){ac->n_rd=2;ac->rd[0]=m1;ac->rd[1]=idxs[d];ac->n_wr=1;ac->wr[0]=a1;}
+        lin=a1;
+      }
+      return emit_index(c,v,lin);
+    }
     return v->rid;
   }
   fail(c,"expected expression");return 0;
@@ -624,6 +639,12 @@ static int p_func(CC *c, bcir_func *fn) {
   if(!is(c,")")) for(;;){
     if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){c->i++;break;}
     bcir_ctype ty;int si;if(p_type(c,&ty,&si))return 1; tok pn=adv(c);
+    if(is(c,"[")){              /* an array parameter `T name[A][B]...` decays to a flat element ptr */
+      int nd=0;
+      while(is(c,"[")){ c->i++; long long d=isk(c,T_INT)?(long long)adv(c).v:0;
+        if(nd<3)ty.adims[nd]=(int)d; nd++; eat(c,"]"); }
+      ty.nadims=nd<3?nd:3; if(ty.kind==0) ty.kind=2;     /* T[..] -> T* (element size kept in ty.size) */
+    }
     char pb[BCIR_CIR_NAME]; idcpy(pb,&pn);
     int rk=ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR;
     uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
