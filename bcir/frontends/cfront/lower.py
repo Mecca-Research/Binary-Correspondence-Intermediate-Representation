@@ -339,7 +339,21 @@ class _FuncLowerer:
             return self._emit("c.select", Opcode.ADD, (c, a, b), (t,))
         if isinstance(node, cast.CallExpr):
             return self._call(node)
+        if isinstance(node, cast.CallMember):
+            return self._call_member(node)
         raise CLowerError(f"cannot lower expression {type(node).__name__}")
+
+    def _call_member(self, node: cast.CallMember) -> int:
+        """`o->fn(args)` / `o.fn(args)` — an indirect call through a function-pointer struct member
+        (the dispatch-table pattern). Fused into one `c.call.imember:<field>` claim (reads: the struct
+        base, then the actuals) emitted as `o->fn(args)`, so no 8-byte function-pointer value has to
+        ride in the 4-byte value model. Not added to the call graph (R18: an opaque external edge)."""
+        m = node.callee
+        base_rid, _base_ct = self._addr(m.base)
+        actuals = tuple(self._rvalue(a) for a in node.args)
+        t = self._temp(scalar("uint32_t"), f"icall_{m.field}")
+        return self._emit(f"c.call.imember:{m.field}", Opcode.GEM_DISPATCH,
+                          (base_rid, *actuals), (t,), imm=(1 if m.arrow else 0,))
 
     # --- memory read/write, with bitfield (mask/shift) + MMIO (ordered) handling ---
     def _read(self, lv: "_LV") -> int:
