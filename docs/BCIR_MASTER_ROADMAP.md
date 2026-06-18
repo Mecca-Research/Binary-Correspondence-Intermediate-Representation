@@ -617,6 +617,56 @@ the existing C twins):
 > simulator/model/provenance flag — #262); the C-side consumer of a `channel.json` is the
 > multi-channel lowering decision above.
 
+### 5.9 Oracle → C: the road from a driver-subset frontend to a C23 *replacement* compiler
+
+The plug-in C frontend is now far past a kernel emitter — frontend, R1–R18 verifier, C IR, planner,
+hydrator, executor, preprocessor, an ABI slice, atomics/CAS, MMIO/volatile, two real driver fixtures,
+and Python↔C parity. It is enough to begin real driver development inside BCIR. Becoming a *full C23
+replacement compiler* is now mostly the **ordinary, hard compiler parts** (not the BCIR optimizer).
+We complete it **systematically, one PR-sized chunk at a time**, in four phases.
+
+**Phase 1 — Driver-subset compiler, productionized** (the near-term milestone — make the existing
+subset behave like `cc` on a small multi-file driver project):
+- ✅ **Fix the CLI include-path gap** (`python -m bcir.frontends.cfront`): the file's own directory is
+  on the search path, so a driver with sibling `#include "regs.h"` headers compiles directly — plus
+  `-I` / `-D` / `-U` / `-std=` / `-E` / `-o` (the preprocessor now resolves headers from disk via a
+  search path, not just an in-memory mount). *(this chunk)*
+- Promote `bcir_cfront` to a first-class `bcir-cc` driver binary (the production compiler is already
+  in C): `bcir-cc -std=c23 -Iinclude -DREG_BASE=… --emit-claimgraph --emit-c --emit-pack file.c`.
+- Emit verified-C / StreamPack / provenance manifests as named artifacts; precise unsupported-construct
+  diagnostics; a CI gate for the CLI path. **Exit:** a small multi-file driver project builds via a
+  normal-ish compile command and passes the behaviour check.
+
+**Phase 2 — Freestanding C23 compiler (embedded/kernel subset).** Close the concrete language gaps real
+headers/drivers hit: **ternary `?:`**, **function pointers**, **multi-dimensional arrays**; the comma
+operator, `sizeof`/`_Alignof`/`typeof`, casts + compound literals, integer promotions + usual arithmetic
+conversions, pointer-arithmetic completeness; the rest of control flow (`for`, `do/while`, `switch` +
+fallthrough, `break`/`continue`, `goto` or a structured-lowering/diagnostic policy); designated +
+compound initializers; storage classes + linkage (`static`/`extern`/`thread_local`); `restrict` +
+alias/effect propagation; `_Atomic` + C-memory-model legality; scalable IR allocation (no fixed
+`BCIR_MAX_*`); fuller x86-64/AArch64 ABI; real object/dependency output via a resident backend. **Exit:**
+BCIR compiles a freestanding embedded C test suite + a nontrivial driver codebase with no hand-written
+claim graphs.
+
+**Phase 3 — Hosted C23 compiler candidate.** libc-header compatibility; full preprocessor (predefined +
+`__FILE__`/`__LINE__`/feature-test macros, `#pragma`/`_Pragma`/`#line`, `__VA_OPT__`, `__has_*`, source
+locations after expansion, the full translation phases); floating/complex/decimal; variadic functions +
+varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
+Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches
+Clang or emits a clear unsupported-feature diagnostic.
+
+**Phase 4 — General replacement compiler.** Broad cross-platform ABI matrix; Clang-grade diagnostics
+(spans, macro/include-stack notes, fix-its, error recovery, machine-readable output); the optimizer
+correctness/differential story (full cost-model bridge into the MLIR/C++ law rail, arbitrary claim-graph
+lowering, RCSP/thermal planning through C, cost-based multi-channel orchestration, IPO, alias/effect
+analysis, provenance through optimization, an LLVM-backend fallback contract); performance-regression +
+security/fuzzing programs; user docs + toolchain integration. **Exit:** a usable C23 compiler
+distribution, not only a research substrate.
+
+> Conformance scales with the phases: Csmith-style random differential, a GCC-torture / LLVM-C subset,
+> WG14/C23 feature tests, preprocessor torture, an ABI matrix (x86-64 / AArch64 / RISC-V), sanitizer
+> builds, lexer/parser/preprocessor fuzzers, real-world project builds, and miscompile-reduction tooling.
+
 ---
 
 ## 6. Next build steps (concrete, prioritized)

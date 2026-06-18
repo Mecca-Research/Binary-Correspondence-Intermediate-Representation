@@ -56,10 +56,13 @@ def _cc():
 
 
 def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | None = None,
+                 search_paths: list | None = None, defines: dict | None = None,
                  check_clang: bool = True) -> CompileResult:
     # L7: preprocess first — the expanded text is what both the parser and the Clang harness see,
-    # so the equivalence check validates the lowering of the *preprocessed* program.
-    source = preprocess(source, includes=includes, embeds=embeds)
+    # so the equivalence check validates the lowering of the *preprocessed* program. `search_paths`
+    # (the source dir + -I dirs) resolves `#include "..."` from disk; `defines` seeds -D macros.
+    source = preprocess(source, includes=includes, embeds=embeds,
+                        search_paths=search_paths, defines=defines)
     unit = parse_unit(source)
     lowered = lower_unit(unit)
     h, theta, policy = host_channel().profile, Theta.cool(), PERF

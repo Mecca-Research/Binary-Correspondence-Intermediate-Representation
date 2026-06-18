@@ -49,11 +49,16 @@ def _is_id(t: str) -> bool:
 
 
 class Preprocessor:
-    def __init__(self, includes: dict | None = None, embeds: dict | None = None):
-        self.includes = includes or {}            # name -> header text
+    def __init__(self, includes: dict | None = None, embeds: dict | None = None,
+                 search_paths: list | None = None, defines: dict | None = None):
+        self.includes = includes or {}            # name -> header text (the in-memory mount)
         self.embeds = embeds or {}                # name -> bytes
+        self.search_paths = list(search_paths or [])   # -I dirs (+ the source dir): on-disk headers
+        self._disk_cache: dict[str, str | None] = {}   # resolved header name -> text (or None)
         self.macros: dict[str, Macro] = {
             n: Macro(n, _tokens(v)) for n, v in _PREDEFINED.items()}
+        for n, v in (defines or {}).items():      # -D name[=value]  (value "" -> defined as 1)
+            self.macros[n] = Macro(n, _tokens(str(v) if v != "" else "1"))
         self._depth = 0
 
     # --- public ---
@@ -61,6 +66,25 @@ class Preprocessor:
         out: list[str] = []
         self._run(self._logical_lines(text), out, name)
         return "\n".join(out) + "\n"
+
+    # --- header resolution: the in-memory mount first, then the on-disk search path ---
+    def _resolve(self, target: str) -> str | None:
+        """The header text for `target`: the mounted map, else searched on disk (-I dirs + source
+        dir), else None. Quoted and angle includes share the search path here (a driver MVP)."""
+        if target in self.includes:
+            return self.includes[target]
+        if target in self._disk_cache:
+            return self._disk_cache[target]
+        import os  # noqa: PLC0415
+        text = None
+        for d in self.search_paths:
+            p = os.path.join(d, target)
+            if os.path.isfile(p):
+                with open(p, encoding="utf-8") as f:
+                    text = f.read()
+                break
+        self._disk_cache[target] = text
+        return text
 
     # --- line handling ---
     @staticmethod
@@ -170,15 +194,17 @@ class Preprocessor:
         rest_x = self._expand_text(rest).strip()
         system = rest_x.startswith("<")
         target = self._header_name(rest)
-        if target not in self.includes:
+        text = self._resolve(target)
+        if text is None:
             if system:
                 return                                   # an unmapped <system> header: the frontend
                 #                                          models the standard types intrinsically.
-            raise CPPError(f"#include {target!r} not found (in {name})")
+            raise CPPError(f"#include {target!r} not found (in {name}); searched the mount + "
+                           f"{len(self.search_paths)} -I path(s)")
         if self._depth > 64:
             raise CPPError("#include nesting too deep")
         self._depth += 1
-        self._run(self._logical_lines(self.includes[target]), out, target)
+        self._run(self._logical_lines(text), out, target)
         self._depth -= 1
 
     def _embed(self, rest: str) -> str:
@@ -287,7 +313,8 @@ class Preprocessor:
         expr = re.sub(r"\bdefined\s+(\w+)",
                       lambda m: "1" if m.group(1) in self.macros else "0", expr)
         expr = re.sub(r"\b__has_include\s*\(([^)]*)\)",
-                      lambda m: "1" if self._header_name(m.group(1)) in self.includes else "0", expr)
+                      lambda m: "1" if self._resolve(self._header_name(m.group(1))) is not None
+                      else "0", expr)
         expr = re.sub(r"\b__has_embed\s*\(([^)]*)\)",
                       lambda m: "1" if self._header_name(m.group(1)) in self.embeds else "0", expr)
         toks = self._expand(_tokens(expr), set())
@@ -391,5 +418,6 @@ def _apply(op: str, a: int, b: int) -> int:
     }[op]
 
 
-def preprocess(text: str, *, includes: dict | None = None, embeds: dict | None = None) -> str:
-    return Preprocessor(includes, embeds).process(text)
+def preprocess(text: str, *, includes: dict | None = None, embeds: dict | None = None,
+               search_paths: list | None = None, defines: dict | None = None) -> str:
+    return Preprocessor(includes, embeds, search_paths, defines).process(text)

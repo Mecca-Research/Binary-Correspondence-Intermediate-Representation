@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 
 from bcir.frontends.cfront import compile_unit
@@ -350,6 +351,48 @@ def test_phase_d_real_header_driver_end_to_end():
         m = dict(re.findall(r"(\w+)=([0-9]+)", out))
         assert int(m["executed"]) == int(m["claims"]) == len(entry.claims), out
         assert m["r9"] == "1" and m["r10r11"] == "1", out
+
+
+def _cli(args, cwd=None):
+    """Invoke the bcir-cfront driver CLI; return (rc, stdout, stderr)."""
+    p = subprocess.run([sys.executable, "-m", "bcir.frontends.cfront", *args],
+                       capture_output=True, text=True, cwd=cwd or _ROOT)
+    return p.returncode, p.stdout, p.stderr
+
+
+def test_cli_resolves_sibling_and_search_path_headers():
+    """The frontend CLI must compile a file with sibling/`-I` headers DIRECTLY -- the productization
+    gap a replacement compiler can't have. (`compile_unit(f.read())` used to pass no include context,
+    so `#include "uart_regs.h"` failed even though the tests/check_runtime.sh supplied the map.)"""
+    # (1) sibling header: the file's own directory is on the search path automatically.
+    rc, out, err = _cli(["runtime/c/cfront_driver_uart.c"])
+    assert rc == 0, f"sibling-header compile failed: {err}\n{out}"
+    assert "R1-R18: CLEAN" in out and "uart_configure" in out, out
+    # (2) -E preprocesses the #include + object macros (the struct + a bit position survive).
+    rc, out, _ = _cli(["-E", "runtime/c/cfront_driver_uart.c"])
+    assert rc == 0 and "struct uart_regs" in out and "uart_regs_t" in out, out
+    with tempfile.TemporaryDirectory() as d:
+        # (3) -I <dir>: a header outside the source directory resolves via the search path.
+        incd = os.path.join(d, "inc"); os.makedirs(incd)
+        with open(os.path.join(incd, "regs.h"), "w") as f:
+            f.write("typedef volatile unsigned int reg32;\nstruct dev { reg32 r; };\n")
+        src = os.path.join(d, "drv.c")
+        with open(src, "w") as f:
+            f.write('#include "regs.h"\nunsigned int rd(volatile struct dev *p){ return p->r; }\n')
+        rc, out, err = _cli(["-I", incd, src])
+        assert rc == 0, f"-I compile failed: {err}\n{out}"
+        assert "R1-R18: CLEAN" in out, out
+        # (4) a missing header is a clean diagnostic + non-zero exit (not a crash).
+        rc, out, err = _cli([src])                     # no -I -> regs.h unresolved
+        assert rc != 0 and "not found" in (out + err), (out, err)
+    # (5) -D predefines a macro used in a #if.
+    with tempfile.TemporaryDirectory() as d:
+        src = os.path.join(d, "g.c")
+        with open(src, "w") as f:
+            f.write("#if defined(WIDE)\nunsigned int w(unsigned int x){return x+1;}\n"
+                    "#else\nunsigned int w(unsigned int x){return x;}\n#endif\n")
+        rc, out, _ = _cli(["-E", "-D", "WIDE", src])
+        assert rc == 0 and "x+1" in out.replace(" ", ""), out
 
 
 def test_phase_d_uart_driver_write_and_poll_path():
