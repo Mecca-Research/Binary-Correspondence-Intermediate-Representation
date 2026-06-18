@@ -130,6 +130,21 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — function pointers (HAL dispatch).** A `typedef`'d
+  function-pointer type (`typedef uint32_t (*binop_fn)(uint32_t, uint32_t);`) passed as a parameter
+  and called indirectly -- the canonical embedded driver-op / dispatch pattern. The indirect call
+  lowers to a new `c.call.indirect` claim (reads: the function-pointer value, then the actuals); it is
+  *not* added to the call graph, so R18 treats it as an opaque external edge (no recursion /
+  callee-resolution constraint), while a *direct* call in the same function still travels the normal
+  graph. The type model gains a funcptr kind (oracle `CType(kind="funcptr")` carrying the return +
+  parameter types; C `bcir_ctype` kind 3, pointer-sized, the alias name in `tag`); the parser handles
+  the `(*name)(params)` declarator in the `typedef` (both rails preserve the funcptr shape through
+  alias expansion); the emitter renders the param via its typedef spelling and calls through the
+  pointer verbatim. The behaviour harnesses (`_equiv` + the oracle's `_harness_c`) pass a real
+  deterministic target function. New fixture `cfront_funcptr.c` matches on both rails (`funcs=2
+  claims=2 const=0 binop=0 call=2 ok=1`) and is Clang-behaviour-equivalent. The structural summary's
+  `call=` bucket now counts `c.call.indirect` alongside `c.call:NAME` (both rails + check_runtime.sh).
+  Wired into `_ABI` + `tools/c/check_runtime.sh`; warning-clean; 693 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — interleaved top-level declarations.** The C frontend used to
   require every `typedef`/`enum`/`struct`/`union` *definition* before the first function (a
   pre-function loop, then a separate function loop), so a type defined *between* two functions --

@@ -177,8 +177,15 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
 
     emitted = "\n\n".join(emit_function(lf) for lf in lowered.functions.values())
     has_ptr = any(ct.kind in ("pointer", "array") for _n, _r, ct in entry.params)
-    decls, origargs, setup = [], [], []
+    decls, origargs, setup, prelude = [], [], [], []
     for i, (pname, _rid, ct) in enumerate(entry.params):
+        if ct.kind == "funcptr":                           # pass a real (deterministic) target fn
+            rety = _cname(ct.of) if ct.of else "uint32_t"
+            plist = ", ".join(f"{_cname(pt)} p{j}" for j, pt in enumerate(ct.params)) or "void"
+            comb = " + ".join(f"(p{j} * {2 * j + 1}u)" for j in range(len(ct.params))) or "1u"
+            prelude.append(f"static {rety} _fp{i}({plist}) {{ return ({rety})({comb}); }}")
+            origargs.append(f"_fp{i}")
+            continue
         if ct.kind in ("pointer", "array"):
             elem = _cname(ct.of)
             decls.append(f"    static {elem} buf{i}[256];")
@@ -215,6 +222,7 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
 
 {emitted}
 
+{chr(10).join(prelude)}
 static uint64_t _s = 0x9E3779B97F4A7C15u;
 static uint32_t rng(void) {{ _s = _s * 6364136223846793005u + 1442695040888963407u; return (uint32_t)(_s >> 32); }}
 

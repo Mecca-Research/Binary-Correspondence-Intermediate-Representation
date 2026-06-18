@@ -36,10 +36,11 @@ class CType:
     size: int = 0
     align: int = 0
     signed: bool = False
-    of: "CType | None" = None            # element type (pointer/array)
+    of: "CType | None" = None            # element type (pointer/array), or return type (funcptr)
     count: int = 0                       # array length
     fields: tuple = ()                   # ((name, CType, byte_off, bit_off, bit_width), ...)
     volatile: bool = False               # a volatile-qualified type -> an MMIO resource
+    params: tuple = ()                   # parameter CTypes (funcptr only) — for faithful emit
 
     @property
     def is_integer(self) -> bool:
@@ -80,6 +81,13 @@ def is_scalar_name(name: str) -> bool:
 
 def pointer(of: CType) -> CType:
     return CType("pointer", name="ptr", size=PTR_SIZE, align=PTR_SIZE, signed=False, of=of)
+
+
+def funcptr(name: str, ret: CType, params: tuple = ()) -> CType:
+    """A function-pointer type — pointer-sized, carrying its return + parameter types so the emitter
+    can reconstruct a call (``name`` is the typedef spelling, used verbatim in faithful emission)."""
+    return CType("funcptr", name=name, size=PTR_SIZE, align=PTR_SIZE, signed=False,
+                 of=ret, params=tuple(params))
 
 
 def array(of: CType, count: int) -> CType:

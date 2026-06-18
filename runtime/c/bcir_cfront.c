@@ -248,6 +248,22 @@ static void p_typedef(CC *c){
   } else {
     if(p_type(c,&ty,&sidx))return;                    /* scalar / pointer / typedef-of-typedef */
   }
+  if(is(c,"(")){                                       /* typedef RET (*NAME)(PARAMS); -- a funcptr */
+    int save=c->i; c->i++;
+    if(is(c,"*")){
+      c->i++; tok nm=adv(c); eat(c,")"); eat(c,"(");
+      for(int d=1; d>0 && !isk(c,T_END) && !c->failed; ){ /* skip the parameter-type list */
+        if(is(c,"(")) d++; else if(is(c,")")) d--;
+        if(d>0) c->i++;
+      }
+      eat(c,")");
+      bcir_ctype fp; memset(&fp,0,sizeof fp); fp.kind=3; fp.size=8; fp.signd=0; idcpy(fp.tag,&nm);
+      if(c->ntd<MAXTD){idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=fp;c->td[c->ntd].sidx=-1;c->ntd++;}
+      eat(c,";");
+      return;
+    }
+    c->i=save;                                         /* not a funcptr declarator */
+  }
   tok nm=adv(c);                                      /* the alias name */
   if(c->ntd<MAXTD){idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=ty;c->td[c->ntd].sidx=sidx;c->ntd++;}
   eat(c,";");
@@ -307,6 +323,21 @@ static uint32_t p_call(CC *c, const tok *name) {
   bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
   if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
   if(c->fn->n_calls<BCIR_MAX_CALLS) idcpy(c->fn->calls[c->fn->n_calls++],name);
+  return t;
+}
+/* An indirect call through a function-pointer local/param (HAL dispatch): the target is dynamic, so
+ * there is no named callee -- a `c.call.indirect` claim (reads: the pointer value then the actuals).
+ * It is *not* added to fn->calls, so R18 leaves it an opaque external edge (no recursion/resolution). */
+static uint32_t p_icall(CC *c, const venv *fv) {
+  c->i++; /* '(' */
+  uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
+  if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a;
+    if(is(c,",")){c->i++;continue;} break; }
+  eat(c,")");
+  uint32_t t=temp(c,4);
+  bcir_claim *cl=new_claim(c,"c.call.indirect",BCIR_OP_GEM_DISPATCH);
+  if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=fv->rid;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
+    cl->n_wr=1;cl->wr[0]=t;}
   return t;
 }
 
@@ -370,7 +401,8 @@ static uint32_t p_primary(CC *c) {
     tok id=adv(c);
     const char *aop;bcir_opcode aoc;int akind;
     if(is(c,"(")&&atomic_kind(&id,&aop,&aoc,&akind)) return p_atomic(c,aop,aoc,akind);  /* atomics/fences/CAS */
-    if(is(c,"(")) return p_call(c,&id);           /* call */
+    if(is(c,"(")){ venv *fv=lookup(c,&id);        /* indirect call (funcptr var) vs. direct named call */
+      if(fv&&fv->type.kind==3) return p_icall(c,fv); return p_call(c,&id); }
     int ec=find_enum(c,id.s,id.n);                /* an enumerator -> its folded constant */
     if(ec>=0){uint32_t r=temp(c,4);bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
       if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
@@ -602,6 +634,7 @@ static const char *binop_c(const char *suf){
 }
 static const char *unop_c(const char *suf){return !strcmp(suf,"neg")?"-":!strcmp(suf,"bnot")?"~":"!";}
 static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
+  if(ty->kind==3){ snprintf(o,n,"%s",ty->tag); return; }   /* funcptr: the typedef spelling */
   int is_struct = (ty->kind==1) || ty->ptr_to_struct;
   const char *kw = ty->is_union ? "union" : "struct";
   const char *base = is_struct ? ty->tag
@@ -691,6 +724,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"uint32_t %s = bcir_%s(",rname(f,cl->wr[0],d),cl->op+7);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+w,on-w,");\n"); }
+    else if(!strcmp(cl->op,"c.call.indirect")){    /* rd[0] is the function pointer; rd[1..] the args */
+      w+=snprintf(o+w,on-w,"uint32_t %s = %s(",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k>1?", ":"",rname(f,cl->rd[k],b));
+      w+=snprintf(o+w,on-w,");\n"); }
   }
   #undef IND
   w+=snprintf(o+w,on-w,"}\n");
@@ -772,7 +809,7 @@ void bcir_cfront_summary(const bcir_unit *u,int ok,char *buf,size_t n){
       else if(!strcmp(cl->op,"c.bf.get"))bf++;
       else if(!strcmp(cl->op,"c.const"))kn++;
       else if(!strncmp(cl->op,"c.bin.",6))binop++;
-      else if(!strncmp(cl->op,"c.call:",7))calls++;}}
+      else if(!strncmp(cl->op,"c.call",6))calls++;}}   /* c.call:NAME + c.call.indirect */
   snprintf(buf,n,"funcs=%d claims=%zu mmio=%d bf=%d const=%d binop=%d call=%d ok=%d",
            u->n_funcs,nc,mmio,bf,kn,binop,calls,ok);
 }

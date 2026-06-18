@@ -143,9 +143,41 @@ class _Parser:
             base = cast.TypeRef(base=tag, aggregate=kind)
         else:
             base = self._type_spec()
-        tref, name = self._declarator(base)
+        if self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*":
+            tref, name = self._funcptr_declarator(base)    # typedef RET (*NAME)(PARAMS);
+        else:
+            tref, name = self._declarator(base)
         self.typedefs[name] = tref
         self.eat("PUNCT", ";")
+
+    def _funcptr_declarator(self, ret: cast.TypeRef):
+        """`( * NAME ) ( param-type-list )` — a function-pointer declarator. Returns a funcptr TypeRef
+        (carrying the return + parameter types for faithful emit) and the declared NAME. The name is
+        also stashed in ``base`` so a later use of the alias renders verbatim."""
+        self.eat("PUNCT", "(")
+        self.eat("OP", "*")
+        name = self.eat("IDENT").text
+        self.eat("PUNCT", ")")
+        self.eat("PUNCT", "(")
+        params: list[cast.TypeRef] = []
+        if self.at("IDENT", "void") and self.peek(1).text == ")":
+            self.nxt()
+        elif not self.at("PUNCT", ")"):
+            while True:
+                pt = self._type_spec()
+                while self.at("OP", "*"):                  # pointer parameter
+                    pt = cast.TypeRef(base=pt.base, ptr=pt.ptr + 1, aggregate=pt.aggregate,
+                                      quals=pt.quals)
+                    self.nxt()
+                if self.at("IDENT"):                       # an optional parameter name (ignored)
+                    self.nxt()
+                params.append(pt)
+                if self.at("PUNCT", ","):
+                    self.nxt()
+                    continue
+                break
+        self.eat("PUNCT", ")")
+        return (cast.TypeRef(base=name, funcptr=True, func_ret=ret, func_params=tuple(params)), name)
 
     def _enum_body(self, tag: str) -> None:
         """Parse `{ A, B = expr, C }` -- assign each enumerator its C value (prev+1, or the given
@@ -256,6 +288,8 @@ class _Parser:
             else:
                 break
         if td is not None:                                # merge the alias with any leading quals
+            if td.funcptr:                                # a function-pointer alias carries its own shape
+                return td
             return cast.TypeRef(base=td.base, ptr=td.ptr, array=td.array,
                                 aggregate=td.aggregate, quals=tuple(quals) + td.quals)
         if not aggregate:
@@ -288,6 +322,8 @@ class _Parser:
             self.nxt()
             dims.append(0 if self.at("PUNCT", "]") else parse_int_literal(self.eat("INT").text))
             self.eat("PUNCT", "]")
+        if base.funcptr and ptr == 0 and not dims:        # `binop_fn fn` — keep the funcptr shape
+            return base, name
         return cast.TypeRef(base=base.base, ptr=ptr, array=tuple(dims),
                             aggregate=base.aggregate, quals=base.quals), name
 
