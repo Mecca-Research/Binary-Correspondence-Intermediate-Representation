@@ -697,33 +697,39 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
   return w;
 }
 
+/* Try to parse a top-level type declaration (typedef / enum definition /
+ * struct|union definition) at the current token.  Returns 1 if one was consumed,
+ * 0 if the current token instead begins a function/global.  Real translation
+ * units and vendor headers interleave these with functions, so this is called
+ * from the main top-level loop rather than only before the first function. */
+static int try_top_decl(CC *c){
+  if(c->failed) return 0;
+  if(is(c,"typedef")){ p_typedef(c); return 1; }
+  if(is(c,"enum")){
+    int save=c->i; c->i++; if(isk(c,T_ID)&&!is(c,"{")) c->i++;
+    if(is(c,"{")){ p_enum_body(c); eat(c,";"); return 1; }
+    c->i=save; return 0;                             /* `enum tag` as a type -> a function follows */
+  }
+  if(is(c,"struct")||is(c,"union")){
+    /* a struct *definition*?  struct [attrs] [TAG] [attrs] {  -- lookahead past attributes. */
+    int save=c->i; c->i++; int pk_=0,al_=0; attrs(c,&pk_,&al_);
+    if(isk(c,T_ID)&&!is(c,"{")) c->i++;             /* the tag */
+    attrs(c,&pk_,&al_);
+    int isdef = is(c,"{"); c->i=save;
+    if(isdef){ p_struct_body(c); eat(c,";"); return 1; }
+    return 0;                                        /* struct used as a type -> a function follows */
+  }
+  return 0;
+}
+
 /* --- public entry -------------------------------------------------------- */
 int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
   static CC c; memset(&c,0,sizeof c); memset(out,0,sizeof *out);
   c.rid=100; c.cid=1000;
   lex(&c,src);
-  /* pre-function declarations: typedefs, enum definitions, struct/union definitions -- in any
-   * order (vendor headers interleave them), until the first function/global. */
-  for(;;){
-    if(c.failed) break;
-    if(is(&c,"typedef")){ p_typedef(&c); continue; }
-    if(is(&c,"enum")){
-      int save=c.i; c.i++; if(isk(&c,T_ID)&&!is(&c,"{")) c.i++;
-      if(is(&c,"{")){ p_enum_body(&c); eat(&c,";"); continue; }
-      c.i=save; break;                              /* `enum tag` as a type -> a function follows */
-    }
-    if(is(&c,"struct")||is(&c,"union")){
-      /* a struct *definition*?  struct [attrs] [TAG] [attrs] {  -- lookahead past attributes. */
-      int save=c.i; c.i++; int pk_=0,al_=0; attrs(&c,&pk_,&al_);
-      if(isk(&c,T_ID)&&!is(&c,"{")) c.i++;          /* the tag */
-      attrs(&c,&pk_,&al_);
-      int isdef = is(&c,"{"); c.i=save;
-      if(isdef){ p_struct_body(&c); eat(&c,";"); continue; }
-      break;                                        /* struct used as a type -> a function follows */
-    }
-    break;
-  }
   while(!isk(&c,T_END)&&!c.failed&&out->unit.n_funcs<BCIR_MAX_FUNCS){
+    if(try_top_decl(&c)) continue;       /* typedef / enum / struct|union defs, interleaved */
+    if(isk(&c,T_END)||c.failed) break;
     bcir_func *fn=&out->unit.funcs[out->unit.n_funcs];
     fn->cap_res=256; fn->res=calloc(256,sizeof(bcir_resource));
     fn->cap_claims=4096; fn->claims=calloc(4096,sizeof(bcir_claim));

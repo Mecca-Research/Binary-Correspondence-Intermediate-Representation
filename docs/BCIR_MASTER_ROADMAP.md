@@ -663,8 +663,11 @@ the `for` step / the `do/while` bottom test / at the `while` body end -- so it r
 `for`, which the naive `while(1)` desugar would skip; `cfront_continue.c`), and ✅ **`switch`/`case`**
 (desugared to a nested if/else-if chain on both rails: a clause's labels OR together for the shared
 `case A: case B:` pattern, a top-level `break;` terminates the clause, `default` is the final `else`;
-enum cases fold to their values; `cfront_switch.c`), all Clang-equivalent; still cross-clause
-fallthrough, `goto`, and interleaved top-level decls in the C rail; designated +
+enum cases fold to their values; `cfront_switch.c`), all Clang-equivalent, and ✅ **interleaved
+top-level declarations** (a `typedef`/`enum`/`struct`/`union` defined *between* functions now parses
+on the C rail too -- one top-level loop with a `try_top_decl()` helper, matching the oracle's already
+interleaving `parse_unit`; `cfront_interleave.c`); still cross-clause
+fallthrough, `goto`; designated +
 compound initializers; storage classes + linkage (`static`/`extern`/`thread_local`); `restrict` +
 alias/effect propagation; `_Atomic` + C-memory-model legality; scalable IR allocation (no fixed
 `BCIR_MAX_*`); fuller x86-64/AArch64 ABI; real object/dependency output via a resident backend. **Exit:**
