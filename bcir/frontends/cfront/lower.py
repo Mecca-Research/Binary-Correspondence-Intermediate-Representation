@@ -262,6 +262,16 @@ class _FuncLowerer:
             return self._read(self._lvalue(node))
         if isinstance(node, cast.Assign):
             return self._assign(node)
+        if isinstance(node, cast.SizeOf):
+            # sizeof folds to a compile-time constant -- the operand is NOT evaluated.
+            if node.type is not None:
+                size = self._resolve_type(node.type).size
+            elif isinstance(node.expr, cast.Name):
+                size = self.env[node.expr.ident][1].size       # the variable's declared type size
+            else:
+                size = 4                                       # an integer expression -> int
+            t = self._temp(scalar("uint32_t"), "szof")
+            return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(size,))
         if isinstance(node, cast.Ternary):
             # A scalar select: both arms are evaluated (the straight-line subset has no branches),
             # then one is chosen. The emitter renders the real C `(cond ? a : b)` -- behaviour-exact

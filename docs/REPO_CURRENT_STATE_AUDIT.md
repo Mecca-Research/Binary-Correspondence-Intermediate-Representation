@@ -130,6 +130,16 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — `sizeof`.** `sizeof(type-name)` and `sizeof expr` fold to a
+  compile-time integer constant -- the type's (or the operand's static type's) size; the operand is
+  *not* evaluated. Both rails compute the same size from the shared scalar-size table + struct/union
+  layout (a pointer is 8, a struct its laid-out size), so parity is automatic, and the emitted
+  literal matches Clang's `sizeof` (behaviour-equivalent). The oracle adds a `cast.SizeOf` node
+  (parsed with a type-vs-expression lookahead, folded in lowering where the type model lives); the C
+  frontend folds it inline in `p_primary`. New fixture `cfront_sizeof.c` (`sizeof` of a scalar,
+  struct, smaller scalar, a variable, and a pointer) matches on both rails (`funcs=1 claims=17
+  const=6 ok=1`), is Clang-equivalent, and runs the execute loop. Wired into `_STRAIGHTLINE` +
+  `tools/c/check_runtime.sh`; warning-clean; 693 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — `do/while` + `break`.** Two more control-flow forms,
   dual-rail, reusing the loop markers (no new claim ops). `do body while(cond);` puts the cond test
   at the loop-body *bottom* (body runs at least once): the oracle adds a `WhileNode.test_at_end` flag

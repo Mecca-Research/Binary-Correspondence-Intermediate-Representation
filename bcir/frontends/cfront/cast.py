@@ -36,6 +36,12 @@ class Unary:
 
 
 @dataclass(frozen=True)
+class SizeOf:
+    type: object = None             # a TypeRef for `sizeof(type)`, else None
+    expr: object = None             # the operand for `sizeof expr` (its static type's size)
+
+
+@dataclass(frozen=True)
 class Binary:
     op: str                         # + - * / % & | ^ << >> == != < > <= >= && ||
     lhs: object
