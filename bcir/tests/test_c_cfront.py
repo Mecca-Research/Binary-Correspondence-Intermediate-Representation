@@ -29,6 +29,10 @@ _CONTROL = ["cfront_branch.c", "cfront_while.c"]
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c"]      # L7: exercise the preprocessor
 _ABI = ["cfront_structret.c", "cfront_packed.c"]      # L8: struct return-by-value + packed layout
 _FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI
+# §5.8 atomics/fences run their own gate: their memory side effects make the generic
+# pure-function equivalence harness invalid (it would call the original first and observe
+# the mutated counter), so they get a side-effect-aware behaviour check below.
+_ATOMIC = ["cfront_atomic.c"]
 
 
 def _includes_for(fx: str) -> dict:
@@ -55,10 +59,13 @@ def _oracle(src: str, includes=None):
 
 def _build_frontend(d: str) -> str:
     exe = os.path.join(d, "tcf")
+    # bcir_cfront verifies (bcir_verify.c -> bcir_verify_unit / bcir_provenance_digest) and the
+    # pack law reaches into bcir_runtime.c (bcir_sp_validate), so both are linked in.
+    srcs = [os.path.join(_C, s) for s in ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c",
+            "bcir_runtime.c", "test_cfront.c")]
     for std in ("c23", "c11"):
-        b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C,
-                            os.path.join(_C, "bcir_cfront.c"), os.path.join(_C, "bcir_cpp.c"),
-                            os.path.join(_C, "test_cfront.c"), "-o", exe], capture_output=True, text=True)
+        b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
+                           capture_output=True, text=True)
         if b.returncode == 0:
             return exe
     raise AssertionError(f"C frontend build failed:\n{b.stderr}")
@@ -135,6 +142,57 @@ int main(void){{
         return subprocess.run([e], capture_output=True, text=True).stdout.strip()
 
 
+def _equiv_atomic(source: str, c_emitted: str, entry) -> str:
+    """Side-effect-aware behaviour equivalence for atomics. The generic `_equiv` calls the
+    original then the emitted bcir_* on the *same* buffer -- invalid here, since an atomic RMW
+    mutates its pointee, so the second call would start from a counter the first already moved.
+    Instead this runs each on an independent copy of the *same* seeded state and compares both the
+    return value and the final memory state (an atomic counter is a single location, not an array)."""
+    decls, setup, args_a, args_b, cell_cmp = [], [], [], [], []
+    for i, (_pn, _rid, ct) in enumerate(entry.params):
+        if ct.kind in ("pointer", "array"):
+            base = _cname(ct.of)
+            decls += [f"  {base} ca{i};", f"  {base} cb{i};"]
+            setup.append(f"    ca{i}=cb{i}=({base})rng();")
+            args_a.append(f"&ca{i}")
+            args_b.append(f"&cb{i}")
+            cell_cmp.append(f"ca{i}!=cb{i}")
+        else:
+            decls.append(f"  {_cname(ct)} s{i};")
+            setup.append(f"    s{i}=({_cname(ct)})rng();")
+            args_a.append(f"s{i}")
+            args_b.append(f"s{i}")
+    rt = _cname(entry.ret_type)
+    cells = (" || " + " || ".join(cell_cmp)) if cell_cmp else ""
+    harness = f"""#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+{source}
+
+{c_emitted}
+static uint64_t S=0x9E3779B97F4A7C15u;
+static uint32_t rng(void){{S=S*6364136223846793005u+1442695040888963407u;return (uint32_t)(S>>32);}}
+int main(void){{
+{chr(10).join(decls)}
+  for(int i=0;i<256;i++){{
+{chr(10).join(setup)}
+    {rt} ra={entry.name}({", ".join(args_a)});
+    {rt} rb=bcir_{entry.name}({", ".join(args_b)});
+    if(ra!=rb{cells}){{printf("MISMATCH@%d\\n",i);return 1;}}
+  }}
+  printf("MATCH\\n");return 0;}}"""
+    with tempfile.TemporaryDirectory() as d:
+        c, e = os.path.join(d, "a.c"), os.path.join(d, "a")
+        open(c, "w").write(harness)
+        for std in ("c23", "c2x", "c17"):
+            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e], capture_output=True, text=True)
+            if b.returncode == 0:
+                break
+        else:
+            return f"build-failed:{b.stderr.strip().splitlines()[-1] if b.stderr else '?'}"
+        return subprocess.run([e], capture_output=True, text=True).stdout.strip()
+
+
 def test_python_c_parity_and_equivalence_across_fixtures():
     if not _CC:
         # quick tier: still validate the oracle side computes the summaries.
@@ -157,7 +215,8 @@ def test_python_c_parity_and_equivalence_across_fixtures():
 def _build_loop(d: str) -> str:
     exe = os.path.join(d, "loop")
     srcs = [os.path.join(_C, s) for s in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c",
-            "bcir_hydrate.c", "bcir_exec.c", "bcir_runtime.c", "test_cfront_loop.c")]
+            "bcir_hydrate.c", "bcir_exec.c", "bcir_runtime.c", "bcir_verify.c",
+            "test_cfront_loop.c")]
     for std in ("c23", "c11"):
         b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
                            capture_output=True, text=True)
@@ -186,6 +245,60 @@ def test_full_compile_execute_loop_in_c():
             assert order == sorted(order, key=int)                       # deterministic lowering order
 
 
+def test_atomic_fence_dual_rail_parity_and_behaviour():
+    """§5.8 atomics/fences: __atomic_fetch_add/sub/xor -> ATOMIC_ADD/SUB/XOR and
+    __atomic_thread_fence/__sync_synchronize -> BARRIER lower on lane A (R6 admits lane A for a
+    scalar atomic counter; R5 demands the atomic/barriered hazard), pass R1-R8 + R18, emit the
+    matching builtins, and -- run on independent copies of the same seeded counter -- are
+    behaviour-equivalent under Clang. The full C compile->execute loop hydrates and executes every
+    atomic claim with R9/R10-R11 clean."""
+    for fx in _ATOMIC:                       # quick tier: the oracle accepts the atomic fixture.
+        s, _, _ = _oracle(open(os.path.join(_C, fx), encoding="utf-8").read())
+        assert "ok=1" in s, f"{fx}: oracle rejects atomics: {s}"
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        loop = _build_loop(d)
+        for fx in _ATOMIC:
+            path = os.path.join(_C, fx)
+            src = open(path, encoding="utf-8").read()
+            oracle_summary, r, entry = _oracle(src)
+            c_summary, c_emit = _c_run(exe, path)
+            assert c_summary == oracle_summary, f"{fx}: parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
+            assert "ok=1" in c_summary, c_summary
+            # the emitted C carries the real atomic builtins (seq-cst), not a scalar fallback.
+            assert "__atomic_fetch_" in c_emit and "__atomic_thread_fence" in c_emit, c_emit
+            assert "__ATOMIC_SEQ_CST" in c_emit, c_emit
+            assert _equiv_atomic(r.source, c_emit, entry) == "MATCH", f"{fx}: not behaviour-equivalent"
+            # the full C compile->execute loop: every atomic claim hydrates + executes, R9/R10-R11 clean.
+            out = subprocess.run([loop, path], capture_output=True, text=True).stdout.strip()
+            assert out.startswith("loop:"), out
+            m = dict(re.findall(r"(\w+)=([0-9]+)", out))
+            assert int(m["executed"]) == int(m["claims"]) == len(entry.claims), out
+            assert m["r9"] == "1" and m["r10r11"] == "1", out
+
+
+def test_c2_attestation_in_emitted_c():
+    """C.2: the emitted verified-C carries the attestation header naming the discharged laws and
+    the R13 provenance digest -- and that digest is the same one the compile->execute loop reports
+    (the manifest is reproducible across the two C entry points)."""
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        loop = _build_loop(d)
+        path = os.path.join(_C, "cfront_regmap.c")
+        _c_summary, c_emit = _c_run(exe, path)
+        assert "BCIR verified-C attestation (C.2)" in c_emit
+        assert "R1-R8 + R18" in c_emit and "R13 provenance digest" in c_emit
+        m = re.search(r"R13 provenance digest\s+([0-9a-f]{16})", c_emit)
+        assert m, c_emit
+        out = subprocess.run([loop, path], capture_output=True, text=True).stdout.strip()
+        prov = re.search(r"prov=([0-9a-f]{16})", out)
+        assert prov and prov.group(1) == m.group(1), f"digest mismatch: emit={m.group(1)} loop={prov}"
+
+
 def test_L8_packed_layout_matches_clang():
     """The C frontend's packed struct offsets must equal Clang's sizeof/offsetof (the ABI)."""
     src = open(os.path.join(_C, "cfront_packed.c"), encoding="utf-8").read()
@@ -209,7 +322,7 @@ def test_L8_packed_layout_matches_clang():
 def test_c_frontend_builds_warning_clean():
     if not _CC:
         return
-    for unit in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c"):
+    for unit in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_verify.c"):
         ok = False
         for std in ("c23", "c11"):
             b = subprocess.run([_CC, f"-std={std}", "-Wall", "-Wextra", "-Werror", "-I", _C, "-c",

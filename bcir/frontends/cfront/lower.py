@@ -307,8 +307,28 @@ class _FuncLowerer:
         self._write(self._lvalue(node.target), v)
         return v
 
+    # GCC/Clang atomic + fence builtins -> the BCIR ATOMIC_*/BARRIER opcodes (§5.8).
+    _ATOMIC = {"__atomic_fetch_add": ("c.atomic.add", Opcode.ATOMIC_ADD),
+               "__atomic_fetch_sub": ("c.atomic.sub", Opcode.ATOMIC_SUB),
+               "__atomic_fetch_xor": ("c.atomic.xor", Opcode.ATOMIC_XOR)}
+    _FENCE = {"__atomic_thread_fence", "__sync_synchronize"}
+
     def _call(self, node: cast.CallExpr) -> int:
         actuals = tuple(self._rvalue(a) for a in node.args)
+        # Atomics run on the A lane. A scalar atomic counter is a single-location RMW (not on
+        # the decoupled GGG/scatter tail), so it stays SCALAR-shaped -- the lane law (R6) admits
+        # lane A for SCALAR, and the atomic/barriered hazard discharges R5.
+        if node.callee in self._FENCE:
+            t = self._temp(scalar("uint32_t"), "fence")
+            self._emit("c.fence", Opcode.BARRIER, (), (), lane=Lane.A, hazard="barriered")
+            return t
+        if node.callee in self._ATOMIC:
+            op, oc = self._ATOMIC[node.callee]
+            ptr = actuals[0]
+            val = actuals[1] if len(actuals) > 1 else actuals[0]
+            t = self._temp(scalar("uint32_t"), "atom")
+            dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
+            return self._emit(op, oc, (ptr, val), (t,), lane=Lane.A, domain=dom, hazard="atomic")
         t = self._temp(scalar("uint32_t"), f"call_{node.callee}")
         self.calls.append((node.callee, actuals))
         return self._emit(f"c.call:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))

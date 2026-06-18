@@ -130,6 +130,26 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Plug-in C compiler — C-side infra (§5.8): the R1–R18 verifier, atomics/fences, and
+  the C.2 attestation in C.** A new `runtime/c/bcir_verify.c` (the C twin of `bcir/verify`) lands the
+  runnable LangRef laws over the claim graph + plan + StreamPack: R1–R8 (incl. **R6** lane↔stride
+  legality), **R9** plan legality (`bcir_verify_plan`), **R10–R11** StreamPack well-formedness
+  (`bcir_verify_pack`, validating magic/version/CRC + the segment count), **R12** lowering-contract,
+  **R13** provenance digest (`bcir_provenance_digest`, FNV-1a over the claim graph), R14–R16 vacuous
+  for the scalar subset, **R17** accuracy, **R18** call-graph integrity. `bcir_cfront` now verifies via
+  `bcir_verify_unit` and the loop (`test_cfront_loop.c`) checks the R9/R10–R11 verdicts. **Atomics/
+  fences:** `__atomic_fetch_add/sub/xor` → `ATOMIC_ADD/SUB/XOR` and `__atomic_thread_fence`/
+  `__sync_synchronize` → `BARRIER`, lowered on **lane A** — the lane law (R6) is widened so lane A is
+  legal for a SCALAR atomic counter (a single-location RMW, not on the decoupled GGG/scatter tail) as
+  well as a RANDOM scatter-atomic, and the atomic/barriered hazard discharges R5. They emit back as the
+  matching seq-cst builtins; the new fixture `cfront_atomic.c` matches the oracle's structural summary
+  (`claims=9 const=3 binop=1 ok=1`) and is **behaviour-equivalent under Clang** on independent copies
+  of the same seeded counter (a side-effect-aware harness, since atomics mutate their pointee). **C.2
+  attestation:** the emitted verified-C carries a header naming the discharged laws + the **R13
+  provenance digest** — the *same* digest the compile→execute loop reports (reproducible across the two
+  C entry points). Gated by `bcir/tests/test_c_cfront.py` (the §5.8 dual-rail test + the C.2 digest
+  test) and `tools/c/check_runtime.sh` (atomics in the parity + execute loops). Warning-clean
+  (C11 + C23). *Still to port in §5.8:* `cmpxchg`, dynamic shapes, multi-channel lowering.
 - 2026-06-18: **Plug-in C compiler — L8 ABI in C → the full L1–L8 C ladder is ported.** Struct
   return-by-value (a function returning a struct: a struct local built via member stores, then
   `return r`), struct member stores (`r.field = expr` → `c.store` → `memcpy` at the field offset),

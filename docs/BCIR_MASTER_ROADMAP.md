@@ -115,7 +115,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | **Allocator pool-plan** (`allocator.live_intervals`/`pool_plan`) | `-bcir-alloc-pool` | MLIR/C++ | ✅ **ported** — liveness-based pooling (disjoint live ranges share an arena, greedy left-edge); annotates per-resource pool_id + peak/naive/saved bytes (`alloc_pool.mlir`) |
 | GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
-| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ✅ **the full L1–L8 ladder ported to C + Python↔C parity-gated**: **L1** integer expr, **L2** struct/bitfield layout, **L3** pointers/arrays (GEP), **L4** functions + call graph (**R18** in C), **L5** volatile/MMIO, **L6** control flow, **L7** a real C preprocessor (`bcir_cpp.c`), **L8** ABI (struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked vs Clang). An **R1–R8 + R18 verifier**, a **faithful C emitter** (Clang-behaviour-equivalent), and the **closed loop** `C → bcir_cpp → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` (no Python). Remaining infra: R9–R17 verifier in C, C.2 attestation, atomics/fences, dynamic shapes, multi-channel (§5.8) |
+| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ✅ **the full L1–L8 ladder ported to C + Python↔C parity-gated**: **L1** integer expr, **L2** struct/bitfield layout, **L3** pointers/arrays (GEP), **L4** functions + call graph (**R18** in C), **L5** volatile/MMIO, **L6** control flow, **L7** a real C preprocessor (`bcir_cpp.c`), **L8** ABI (struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked vs Clang). A full **R1–R18 verifier** (`bcir_verify.c`: R1–R8 incl. R6 lane↔stride, R9 plan, R10–R11 StreamPack, R12, R13 provenance digest, R17, R18), **§5.8 atomics/fences** (`ATOMIC_*`/`BARRIER` on lane A), a **C.2 attestation** stamped on the emit, a **faithful C emitter** (Clang-behaviour-equivalent), and the **closed loop** `C → bcir_cpp → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` (no Python). Remaining infra: `cmpxchg`, dynamic shapes, multi-channel, type-model breadth (§5.8) |
 | StreamPack ABI **decoder** | **C** `runtime/c/bcir_runtime.c` | **C** (frozen ABI) | ✅ CRC-gated parity + libFuzzer |
 | ETL binary-record decoder | **C** `runtime/c/bcir_binrec.c` | **C** | ✅ parity + libFuzzer |
 | Portable kernel emission (C23 + `_BitInt`/`#embed`) | Python `lower.c_kernel` | C output (emitter may become C++) | ✅ |
@@ -555,9 +555,13 @@ the existing C twins):
   L7 a preprocessor (object/function macros, conditionals, `#include`, C23 `#embed`), L8 full ABI
   (struct return-by-value, `packed`/`aligned`, layout cross-checked vs Clang). Each with the
   six-artifact gate + Python↔C parity.
-- **Verifier R9–R17 in C** — the C verifier covers R1–R8 + R18; the plan/pack/lowering/accuracy laws
-  (R9 plan legality, R10–R11 StreamPack, R12 lowering-contract, R13 provenance digest, R17 accuracy)
-  must port to a C `bcir_verify.c` (twin of `bcir/verify`).
+- ✅ **Verifier R1–R18 in C (`bcir_verify.c`)** — the runnable LangRef laws over the claim graph +
+  plan + StreamPack, the C twin of `bcir/verify`: R1–R8 module/claim laws (incl. **R6** lane↔stride
+  legality), R9 plan legality (`bcir_verify_plan`), R10–R11 StreamPack well-formedness
+  (`bcir_verify_pack`, over the hydrated bytes), R12 lowering-contract, **R13 provenance digest**
+  (`bcir_provenance_digest`, FNV-1a over the claim graph), R14–R16 vacuous for the scalar subset, R17
+  accuracy (integer/Q-fixed exact), R18 call-graph integrity. `bcir_cfront` runs R1–R8+R18 at compile
+  time; the **R9/R10–R11 verdicts are checked in the closed loop** (`test_cfront_loop.c`).
 - ✅ **K_BCIR planner in C (`bcir_plan.c`)** — a compact, freestanding scalar planner (per-claim
   realization width + an integer cost; total cost) lands the *plan* in `runtime/c/`. The full cost
   model / min-plus / RCSP stays on the MLIR/C++ law rail; this is the driver-embeddable seam that
@@ -566,10 +570,16 @@ the existing C twins):
   StreamPack segments), freestanding + bounds-checked. **The loop now closes with no Python:**
   `C source → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` runs the compiled artifact end to
   end (`test_cfront_loop.c`; gated in `tools/c/check_runtime.sh` + `test_c_cfront.py`).
-- **C.2 attestation in C** — stamp the emitted C with R12/R13/R17/R18 + the R13 provenance digest
-  (a `bcir_attest.c`); the oracle does this in `pipeline.py`.
-- **Atomics/fences + dynamic shapes** — `cmpxchg`/`barrier` lowering (the `ATOMIC_*`/`BARRIER`
-  opcodes + the atomic-lane R5 contract) and dynamic-shape guards (`compose` dynamic bound).
+- ✅ **C.2 attestation in C** — `bcir_cfront` stamps the emitted verified-C with an attestation header
+  naming the discharged laws (R1–R8 + R18 clean, R9/R10–R11 checked in the loop, R12 lowering-contract,
+  R17 accuracy) and the **R13 provenance digest** — the same digest the compile→execute loop reports
+  (a reproducible manifest across the two C entry points; the oracle does this in `pipeline.py`).
+- ✅ **Atomics/fences** — `__atomic_fetch_add/sub/xor` → `ATOMIC_ADD/SUB/XOR` and
+  `__atomic_thread_fence`/`__sync_synchronize` → `BARRIER`, lowered on **lane A** (R6 admits lane A for
+  a scalar atomic counter as well as a RANDOM scatter-atomic; the atomic/barriered hazard discharges
+  R5), emitted back as the matching seq-cst builtins, and **behaviour-equivalent under Clang** on
+  independent copies of the same seeded counter (`cfront_atomic.c`, both rails `ok=1`). *Still to
+  port:* `cmpxchg` (the `CMPXCHG` opcode) and **dynamic shapes** (`compose` dynamic bound guards).
 - **Multi-channel lowering decision** — which `channel.json` channel a claim targets (the
   channel-plugin routing) computed in C, so a driver picks its backend.
 - **Type-model breadth** — `typedef`, `enum`, full unions, multi-dimensional arrays, function

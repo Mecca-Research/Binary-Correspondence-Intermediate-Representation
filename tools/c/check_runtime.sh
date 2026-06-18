@@ -106,10 +106,14 @@ for std in c11 c23; do
     || { echo "  FAIL: bcir_cir.h not freestanding-clean under -std=${std}"; exit 1; }
 done
 echo "  PASS bcir_cir.h freestanding IR (C11 + C23)"
-"${CC}" -std=c23 -O2 -Wall -Wextra "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
-  || "${CC}" -std=c11 -O2 "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
+# bcir_cfront verifies (bcir_verify.c: R1-R8+R18 / provenance digest, with R10-R11 reaching
+# bcir_sp_validate in bcir_runtime.c), so the host tool links both. bcir_verify.c is a host tool
+# (its diagnostic path uses snprintf), not freestanding.
+CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_runtime.c"
+"${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c; do  # L1-L8
+for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_atomic.c; do  # L1-L8 + §5.8 atomics
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re
@@ -139,12 +143,11 @@ for f in bcir_plan.c bcir_hydrate.c; do
       || { echo "  FAIL: ${f} not freestanding-clean under -std=${std}"; exit 1; }
   done
 done
-"${CC}" -std=c23 -O2 -I "${C}" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" \
-  "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/test_cfront_loop.c" -o "${tmp}/loop" 2>/dev/null \
-  || "${CC}" -std=c11 -O2 -I "${C}" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" \
-       "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/test_cfront_loop.c" -o "${tmp}/loop" \
+LOOP_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_plan.c ${C}/bcir_hydrate.c ${C}/bcir_exec.c ${C}/bcir_runtime.c ${C}/bcir_verify.c ${C}/test_cfront_loop.c"
+"${CC}" -std=c23 -O2 -I "${C}" ${LOOP_SRCS} -o "${tmp}/loop" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 -I "${C}" ${LOOP_SRCS} -o "${tmp}/loop" \
   || { echo "  FAIL: loop build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c; do
+for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_atomic.c; do
   out="$("${tmp}/loop" "${C}/${fx}")" || { echo "  FAIL: loop ${fx}: ${out}"; exit 1; }
   case "${out}" in
     loop:*executed=*) echo "  PASS loop ${fx} (${out#loop: })" ;;
