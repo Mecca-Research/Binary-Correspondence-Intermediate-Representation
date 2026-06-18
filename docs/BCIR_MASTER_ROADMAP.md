@@ -115,7 +115,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | **Allocator pool-plan** (`allocator.live_intervals`/`pool_plan`) | `-bcir-alloc-pool` | MLIR/C++ | ✅ **ported** — liveness-based pooling (disjoint live ranges share an arena, greedy left-edge); annotates per-resource pool_id + peak/naive/saved bytes (`alloc_pool.mlir`) |
 | GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
-| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ◑ **porting** — the register-map slice (integer expr, struct/bitfield layout, volatile/MMIO) is ported + Python↔C parity-gated (`claims=23 mmio=1 bf=3 const=4 binop=8 ok=1`, R1–R8 verifier in C); arrays/calls, control flow, the preprocessor, and full ABI port next |
+| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ◑ **porting** — ported to C + Python↔C parity-gated: **L1** integer expr, **L2** struct/bitfield layout, **L3** pointers/arrays (GEP), **L4** functions + the call graph (**R18** rejects recursion/undefined callees in C), **L5** volatile/MMIO; an **R1–R8 + R18 verifier** and a **faithful C emitter** whose output is **Clang-behaviour-equivalent** to the source (six-artifact gate, `bcir/tests/test_c_cfront.py`). Remaining: L6 control flow, L7 preprocessor, L8 full ABI, + the missing infra (§5.8) |
 | StreamPack ABI **decoder** | **C** `runtime/c/bcir_runtime.c` | **C** (frozen ABI) | ✅ CRC-gated parity + libFuzzer |
 | ETL binary-record decoder | **C** `runtime/c/bcir_binrec.c` | **C** | ✅ parity + libFuzzer |
 | Portable kernel emission (C23 + `_BitInt`/`#embed`) | Python `lower.c_kernel` | C output (emitter may become C++) | ✅ |
@@ -543,6 +543,41 @@ composes them — all decomposing to the *same* binary K_BCIR optimization + GEM
 hardware-agnostic by construction. Native instruction selection stays gated
 (`BCIR_NATIVE_OBJECT_GATE.md`): the frontends feed the resident backend + the per-channel JIT
 generator, never a hand-rolled isel.
+
+### 5.8 Oracle → C: the plug-in C compiler's remaining ports + missing infra
+
+The C frontend is porting from the oracle prototype to `runtime/c/` (§3 row). Beyond the ladder
+stages, the loop **`C input → claim graph → K_BCIR plan → verified C output → Clang behaviour check`**
+needs these components that **do not yet exist in `runtime/c/`** (researched against the oracle +
+the existing C twins):
+
+- **Ladder stages still to port:** L6 control flow (`if`/`while` → structured body + `compose.Cond`),
+  L7 a preprocessor (object/function macros, conditionals, `#include`, C23 `#embed`), L8 full ABI
+  (struct return-by-value, `packed`/`aligned`, layout cross-checked vs Clang). Each with the
+  six-artifact gate + Python↔C parity.
+- **Verifier R9–R17 in C** — the C verifier covers R1–R8 + R18; the plan/pack/lowering/accuracy laws
+  (R9 plan legality, R10–R11 StreamPack, R12 lowering-contract, R13 provenance digest, R17 accuracy)
+  must port to a C `bcir_verify.c` (twin of `bcir/verify`).
+- **K_BCIR planner in C (or an MLIR bridge)** — the cost model / min-plus / RCSP that turns the claim
+  graph into a *plan* is on the MLIR/C++ law rail, not in `runtime/c/`. A driver-embeddable compiler
+  needs either a compact C planner (`bcir_plan.c`) or a documented hand-off to `bcir-opt`. **This is
+  the biggest missing piece** — without it the C frontend produces a graph but not a *plan*.
+- **Claim-graph → StreamPack hydration in C (`bcir_hydrate.c`)** — the `gem.hydrate` step (plan →
+  StreamPack segments). With it, the C frontend's graph → a StreamPack the existing **`bcir_exec.c`
+  executes**, closing the whole loop with no Python (`bcir_encode.c` already writes the bytes).
+- **C.2 attestation in C** — stamp the emitted C with R12/R13/R17/R18 + the R13 provenance digest
+  (a `bcir_attest.c`); the oracle does this in `pipeline.py`.
+- **Atomics/fences + dynamic shapes** — `cmpxchg`/`barrier` lowering (the `ATOMIC_*`/`BARRIER`
+  opcodes + the atomic-lane R5 contract) and dynamic-shape guards (`compose` dynamic bound).
+- **Multi-channel lowering decision** — which `channel.json` channel a claim targets (the
+  channel-plugin routing) computed in C, so a driver picks its backend.
+- **Type-model breadth** — `typedef`, `enum`, full unions, multi-dimensional arrays, function
+  pointers — what real vendor headers need.
+
+> Channels are already a real plugin boundary (`bcir/channel_plugin.py`: target-profile schema,
+> runtime signal-provider contract, codegen identity, calibration artifact, execution-capability set,
+> simulator/model/provenance flag — #262); the C-side consumer of a `channel.json` is the
+> multi-channel lowering decision above.
 
 ---
 

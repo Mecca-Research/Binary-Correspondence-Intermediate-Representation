@@ -10,7 +10,7 @@
 | MLIR ODS ops (`mlir/include/BCIR/*.td`) | **85** |
 | Registered `-bcir-*` passes | **25** |
 | MLIR FileCheck tests (`mlir/test/`) | **51** (68 `expected-error` negatives) |
-| Runtime C components (`runtime/c/`) | **25** |
+| Runtime C components (`runtime/c/`) | **27** |
 | Verifier laws | **R1–R18** (18/18 covered) |
 | Hardware channels | **9** (cpu, fpga, gpu, memory, storage) |
 
@@ -43,5 +43,5 @@ R18 in `verify_callgraph.mlir`).
 
 ## Runtime C components
 
-`bcir_binrec.c`, `bcir_cfront.c`, `bcir_encode.c`, `bcir_exec.c`, `bcir_microbench.c`, `bcir_runtime.c`, `cfront_regmap.c`, `fuzz_binrec.c`, `fuzz_encode.c`, `fuzz_exec.c`, `fuzz_streampack.c`, `test_binrec.c`, `test_cfront.c`, `test_encode.c`, `test_exec.c`, `test_q8_tables.c`, `test_runtime.c`, `bcir_binrec.h`, `bcir_cfront.h`, `bcir_cir.h`, `bcir_encode.h`, `bcir_exec.h`, `bcir_q8_tables.h`, `bcir_runtime.h`, `bcir_streampack.h`
+`bcir_binrec.c`, `bcir_cfront.c`, `bcir_encode.c`, `bcir_exec.c`, `bcir_microbench.c`, `bcir_runtime.c`, `cfront_array.c`, `cfront_callgraph.c`, `cfront_regmap.c`, `fuzz_binrec.c`, `fuzz_encode.c`, `fuzz_exec.c`, `fuzz_streampack.c`, `test_binrec.c`, `test_cfront.c`, `test_encode.c`, `test_exec.c`, `test_q8_tables.c`, `test_runtime.c`, `bcir_binrec.h`, `bcir_cfront.h`, `bcir_cir.h`, `bcir_encode.h`, `bcir_exec.h`, `bcir_q8_tables.h`, `bcir_runtime.h`, `bcir_streampack.h`
 

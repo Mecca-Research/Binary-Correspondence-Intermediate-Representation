@@ -109,19 +109,21 @@ echo "  PASS bcir_cir.h freestanding IR (C11 + C23)"
 "${CC}" -std=c23 -O2 -Wall -Wextra "${C}/bcir_cfront.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 "${C}/bcir_cfront.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-c_sum="$("${tmp}/test_cfront" "${C}/cfront_regmap.c")" || { echo "  FAIL: C frontend run: ${c_sum}"; exit 1; }
-py_sum="$(python3 -c "
+for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c; do   # L1-L5 + L3 + L4 fixtures
+  c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
+  py_sum="$(python3 -c "
 from bcir.frontends.cfront import compile_unit
 from bcir.model import Domain
-r=compile_unit(open('${C}/cfront_regmap.c').read(), check_clang=False)
-lf=r.lowered.functions[next(reversed(r.lowered.functions))]
+r=compile_unit(open('${C}/${fx}').read(), check_clang=False)
+fns=r.lowered.functions; lf=fns[next(reversed(fns))]
 mmio=sum(1 for c in lf.claims if c.op=='c.load' and c.domain==Domain.MMIO)
 bf=sum(1 for c in lf.claims if c.op=='c.bf.get'); kn=sum(1 for c in lf.claims if c.op=='c.const')
-bo=sum(1 for c in lf.claims if c.op.startswith('c.bin.'))
-print(f'claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} binop={bo} ok={1 if r.is_clean else 0}')
-")" || { echo "  FAIL: python oracle lowering"; exit 1; }
-[ "${c_sum}" = "${py_sum}" ] \
-  && echo "  PASS C-frontend parity (Python oracle == C bcir_cfront: ${c_sum})" \
-  || { echo "  FAIL: C-frontend parity (C='${c_sum}' PY='${py_sum}')"; exit 1; }
+bo=sum(1 for c in lf.claims if c.op.startswith('c.bin.')); ca=sum(1 for c in lf.claims if c.op.startswith('c.call:'))
+print(f'funcs={len(fns)} claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} binop={bo} call={ca} ok={1 if r.is_clean else 0}')
+")" || { echo "  FAIL: python lowering ${fx}"; exit 1; }
+  [ "${c_sum}" = "${py_sum}" ] \
+    && echo "  PASS parity ${fx} (oracle == C: ${c_sum})" \
+    || { echo "  FAIL: parity ${fx} (C='${c_sum}' PY='${py_sum}')"; exit 1; }
+done
 
 echo "[c-runtime] ok"
