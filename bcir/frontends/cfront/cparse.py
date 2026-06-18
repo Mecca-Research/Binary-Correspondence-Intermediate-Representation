@@ -577,7 +577,7 @@ class _Parser:
             elif self.at("OP", "->"):
                 self.nxt()
                 node = cast.Member(node, self.eat("IDENT").text, arrow=True)
-            elif self.at("PUNCT", "(") and isinstance(node, cast.Name):
+            elif self.at("PUNCT", "(") and isinstance(node, (cast.Name, cast.Member)):
                 self.nxt()
                 args = []
                 if not self.at("PUNCT", ")"):
@@ -588,7 +588,8 @@ class _Parser:
                             continue
                         break
                 self.eat("PUNCT", ")")
-                node = cast.CallExpr(node.ident, tuple(args))
+                node = (cast.CallExpr(node.ident, tuple(args)) if isinstance(node, cast.Name)
+                        else cast.CallMember(node, tuple(args)))   # o->fnptr(args): dispatch table
             else:
                 break
         return node

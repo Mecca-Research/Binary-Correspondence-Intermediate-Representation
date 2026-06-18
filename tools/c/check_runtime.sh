@@ -113,7 +113,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_atomic.c cfront_cmpxchg.c cfront_driver.c cfront_driver_uart.c; do  # L1-L8 + type-model + casts + interleaved decls + funcptr dispatch + §5.8 + Phase D driver
+for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_atomic.c cfront_cmpxchg.c cfront_driver.c cfront_driver_uart.c; do  # L1-L8 + type-model + casts + interleaved decls + funcptr dispatch + §5.8 + Phase D driver
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re

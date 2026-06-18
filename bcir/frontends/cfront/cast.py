@@ -94,6 +94,12 @@ class CallExpr:
     args: tuple
 
 
+@dataclass(frozen=True)
+class CallMember:
+    callee: object                  # a Member node (`o->fn` / `o.fn`) — an indirect call via a
+    args: tuple                     # function-pointer struct member (HAL dispatch table)
+
+
 # --- statements ---
 @dataclass(frozen=True)
 class Decl:

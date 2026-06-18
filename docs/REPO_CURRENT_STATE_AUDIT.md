@@ -130,6 +130,19 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — function-pointer struct members (HAL dispatch tables).** A
+  struct of function pointers called indirectly through `o->fn(args)` -- the driver-vtable /
+  operations-struct pattern. The member access + call **fuse** into a single `c.call.imember:<field>`
+  claim (reads: the struct base, then the actuals; an imm flag records `->` vs `.`), emitted verbatim
+  as `o->fn(args)` -- so no 8-byte function-pointer value has to ride in the 4-byte (`uint32_t`) value
+  model (the obstacle that would otherwise force typed temporaries). Like the other indirect calls it
+  is not added to the call graph, so R18 treats it as an opaque external edge. A funcptr-typed struct
+  member already lays out correctly (pointer-sized) via the existing typedef path. New fixture
+  `cfront_dispatch.c` matches on both rails (`funcs=1 claims=3 const=0 binop=1 call=2 ok=1`); a
+  dedicated test (`test_funcptr_member_dispatch_table`) gates behaviour with a bespoke harness that
+  builds the struct with one real deterministic target per member (the generic `_equiv` would fill
+  the pointee with rng -> invalid call targets). Wired into `tools/c/check_runtime.sh` (parity);
+  warning-clean; 694 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — `_Alignof` / `alignof`.** The C11/C23 alignment operator
   folds to a compile-time constant -- the type's alignment, read from the same shared scalar/struct
   layout model `sizeof` uses (the operand is never evaluated; only the type-name form is valid C, so

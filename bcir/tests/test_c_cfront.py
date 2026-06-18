@@ -311,6 +311,63 @@ def test_atomic_fence_dual_rail_parity_and_behaviour():
             assert m["r9"] == "1" and m["r10r11"] == "1", out
 
 
+def test_funcptr_member_dispatch_table():
+    """Function-pointer struct members (HAL dispatch table): `o->fn(args)` fuses into one
+    `c.call.imember:<field>` claim (reads: the struct base, then the actuals), emitted verbatim as
+    `o->fn(args)` -- so no 8-byte function-pointer value rides in the 4-byte value model -- and R18
+    leaves it an opaque external edge. Oracle<->C parity + a bespoke behaviour harness: the generic
+    `_equiv` fills a pointee with seeded rng, which for a struct of function pointers would be
+    invalid call targets, so this builds the struct with one real (deterministic) target per member
+    and checks `run(&o,...)` == `bcir_run(&o,...)` over seeded inputs."""
+    fx = "cfront_dispatch.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary and "call=2" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        assert "o->add2(" in c_emit and "o->mul2(" in c_emit, c_emit       # faithful member-call emit
+        struct_ct = entry.params[0][2].of                                  # the pointed-to ops struct
+        helpers, inits = [], []
+        for fi, (fname, ftype, *_rest) in enumerate(struct_ct.fields):
+            rety = _cname(ftype.of) if ftype.of else "uint32_t"
+            plist = ", ".join(f"{_cname(pt)} p{j}" for j, pt in enumerate(ftype.params)) or "void"
+            comb = " + ".join(f"(p{j} * {2 * j + 3}u)" for j in range(len(ftype.params))) or "1u"
+            helpers.append(f"static {rety} _hm{fi}({plist}){{ return ({rety})({comb}); }}")
+            inits.append(f"  obj.{fname} = _hm{fi};")
+        scalars = [f"s{i}" for i in range(1, len(entry.params))]
+        call = ", ".join(["&obj", *scalars])
+        harness = f"""#include <stdint.h>
+#include <stdio.h>
+{r.source}
+
+{c_emit}
+{chr(10).join(helpers)}
+static uint64_t S=0x9E3779B97F4A7C15u;
+static uint32_t rng(void){{S=S*6364136223846793005u+1442695040888963407u;return (uint32_t)(S>>32);}}
+int main(void){{
+  {struct_ct.kind} {struct_ct.name} obj;
+{chr(10).join(inits)}
+  for(int i=0;i<256;i++){{
+    {''.join(f'uint32_t {s}=rng(); ' for s in scalars)}
+    if({entry.name}({call})!=bcir_{entry.name}({call})){{printf("MISMATCH@%d",i);return 1;}}
+  }}
+  printf("MATCH");return 0;}}"""
+        c, e = os.path.join(d, "disp.c"), os.path.join(d, "disp")
+        open(c, "w").write(harness)
+        for std in ("c23", "c2x", "c17"):
+            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e], capture_output=True, text=True)
+            if b.returncode == 0:
+                break
+        else:
+            raise AssertionError(f"dispatch harness build failed:\n{b.stderr}")
+        out = subprocess.run([e], capture_output=True, text=True).stdout.strip()
+        assert out == "MATCH", f"{fx}: dispatch-table emit not behaviour-equivalent ({out})"
+
+
 def test_c2_attestation_in_emitted_c():
     """C.2: the emitted verified-C carries the attestation header naming the discharged laws and
     the R13 provenance digest -- and that digest is the same one the compile->execute loop reports

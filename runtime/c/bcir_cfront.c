@@ -414,10 +414,24 @@ static uint32_t p_primary(CC *c) {
     if(ec>=0){uint32_t r=temp(c,4);bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
       if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
     venv *v=lookup(c,&id); if(!v){fail(c,"undefined identifier");return 0;}
-    if(is(c,".")||is(c,"->")){c->i++;tok fn=adv(c);sdef *S=&c->s[v->sidx];
-      for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n))
-        return emit_member(c,v,&S->f[i]);
-      fail(c,"unknown field");return 0;}
+    if(is(c,".")||is(c,"->")){
+      int arrow=is(c,"->"); c->i++; tok fn=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
+      for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
+      if(fi<0){fail(c,"unknown field");return 0;}
+      if(is(c,"(")){     /* o->fnptr(args): fused indirect call via a funcptr struct member */
+        c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
+        if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a;
+          if(is(c,",")){c->i++;continue;} break; }
+        eat(c,")");
+        uint32_t t=temp(c,4);
+        char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.imember:%s",S->f[fi].name);
+        bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+        if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=v->rid;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
+          cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=arrow;}
+        return t;
+      }
+      return emit_member(c,v,&S->f[fi]);
+    }
     if(is(c,"[")){                                /* L3: base[i] / m[i][j] (row-major flatten) */
       uint32_t idxs[3]; int ni=0;
       while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]"); if(ni<3)idxs[ni++]=ix; }
@@ -777,6 +791,11 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,");\n"); }
     else if(!strcmp(cl->op,"c.call.indirect")){    /* rd[0] is the function pointer; rd[1..] the args */
       w+=snprintf(o+w,on-w,"uint32_t %s = %s(",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k>1?", ":"",rname(f,cl->rd[k],b));
+      w+=snprintf(o+w,on-w,");\n"); }
+    else if(!strncmp(cl->op,"c.call.imember:",15)){   /* o->fn(args): funcptr struct member */
+      const char *sep=(cl->n_imm&&cl->imm[0])?"->":".";
+      w+=snprintf(o+w,on-w,"uint32_t %s = %s%s%s(",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),sep,cl->op+15);
       for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k>1?", ":"",rname(f,cl->rd[k],b));
       w+=snprintf(o+w,on-w,");\n"); }
   }

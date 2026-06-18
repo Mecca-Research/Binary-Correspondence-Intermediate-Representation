@@ -601,9 +601,11 @@ the existing C twins):
   **multi-dimensional arrays** (a 2D array parameter `uint32_t m[4][8]` decays to a flat element
   pointer with a recorded shape, and `m[i][j]` flattens row-major to the linear index `i*8 + j` —
   reusing the 1D pointer/index/load machinery on both rails; `cfront_array2d.c`, runs the full
-  execute loop) now lower on both rails. *Still to port:* **function-pointer struct members** (full
-  dispatch tables) and **array-of-row pointer declarators** (`uint32_t (*m)[8]`) — what remaining
-  vendor headers need.
+  execute loop), and ✅ **function-pointer struct members** (the HAL dispatch table -- `o->fn(args)`
+  fuses the member access + call into one `c.call.imember:<field>` claim emitted verbatim as
+  `o->fn(args)`, so no 8-byte function-pointer value rides in the 4-byte value model; R18-opaque;
+  `cfront_dispatch.c`) now lower on both rails. *Still to port:* **array-of-row pointer declarators**
+  (`uint32_t (*m)[8]`) — what remaining vendor headers need.
 - ✅ **Phase D — real register-map headers driven end-to-end** — vendor-style headers + drivers
   ingested with no hand-written claim graph, through the full `C → bcir_cpp → bcir_cfront → verify →
   emit → bcir_plan → bcir_hydrate → bcir_exec` loop, both rails agreeing and the emit
@@ -666,9 +668,11 @@ it lowers to a `c.cast:<width>` claim and emits `(type)expr`; `cfront_cast.c`, b
 ok=1`, executes the full loop). ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both
-rails `claims=21 ok=1`, runs the full execute loop). *Still
-to port:* **function-pointer struct members** (dispatch tables -- needs typed temporaries: a funcptr
-value is 8 bytes, the C value model's temps are 4), array-of-row pointer declarators
+rails `claims=21 ok=1`, runs the full execute loop) + ✅ **function-pointer struct members**
+(the HAL dispatch table: `o->fn(args)` fuses member access + call into one `c.call.imember:<field>`
+claim emitted verbatim as `o->fn(args)` -- no 8-byte funcptr value rides in the 4-byte value model,
+so no typed temporaries needed; R18-opaque; `cfront_dispatch.c`, both rails `claims=3 call=2 ok=1`).
+*Still to port:* array-of-row pointer declarators
 (`(*m)[8]`); the comma
 operator, `typeof`, compound literals, integer promotions + usual arithmetic
 conversions, pointer-arithmetic completeness; ✅ **`sizeof`** (`sizeof(type)` / `sizeof expr` folds to
