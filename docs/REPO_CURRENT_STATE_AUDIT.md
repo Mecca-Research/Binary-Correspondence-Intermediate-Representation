@@ -128,6 +128,23 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Theoretical-Max MLIR performance audit (2a) — verified near-optimal + one
+  architectural fix.** A full perf audit of the MLIR passes found the build is already close to
+  optimal: (i) the cross-pass `PlanAnalysis` sharing genuinely works — instrumented, a 3-module
+  file builds the analysis 3× across a 3-pass pipeline (1/module), not 9× (the audit's headline
+  "rebuilt per pass" suspicion was a static-analysis false alarm); (ii) the "don't beat Clang"
+  boundary is clean — the AOT/hydrate path (`classify→select→batch→schedule→lower`) never invokes
+  the coupled DP/RCSP/overlap machinery, so a kernel the resident compiler vectorizes optimally
+  pays no planning cost. The one architectural improvement landed: the O(n²) **string-set**
+  RAW/WAR/WAW conflict test in the wave scheduler (`BCIROverlapPass.cpp::conflict`, hammered by
+  the overlap re-selection sweep) is now an **O(1) integer-bitmask** intersection over a
+  per-module resource→id map (string fallback when a module has >64 resources) — byte-identical
+  makespan/gain on every pinned score (253952/761856, the corpus, the six-target matrix). Honest
+  framing: on realistic modules (≤10 claims, ≤3 resources each) the MLIR pass time is microseconds
+  — it is **not** the system bottleneck; the real perf levers were CI build caching (done, Phase 1
+  ccache) and the test suite (see the test-consolidation work). Remaining micro-opts (theta-power
+  dedup, flattened DP tables) are negligible and deferred. Full rail green; 618 oracle unchanged.
+
 - 2026-06-18: **Hardware-agnosticism / ARM (Raspberry Pi 5) compliance.** BCIR was meant to be
   hardware-agnostic but had subtle x86 wiring (the build + runtime were already portable: no x86
   intrinsics, no `-march` flags). A full audit found and fixed the blockers so the first real driver
