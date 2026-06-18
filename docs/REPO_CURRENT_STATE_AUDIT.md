@@ -130,6 +130,28 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Plug-in C compiler — L6 control flow in C (if/else/while).** Ported the L6 ladder
+  stage to `runtime/c/bcir_cfront.c`: `if`/`else` and bounded `while` lower through control-flow
+  *marker claims* (NOP-opcode `c.if`/`c.else`/`c.endif`/`c.loop`/`c.loop.test`/`c.endloop`/`c.return`)
+  that the faithful emitter renders as real C braces (with mutable named locals, so branch merges +
+  loop accumulators reproduce the source), while the realizable claims stay a flat list for
+  verify/plan/hydrate (markers are emit-only — excluded from the summary + skipped by the hydrator).
+  Early returns inside branches are preserved. Fixtures `cfront_branch.c` (clamp) + `cfront_while.c`
+  (weighted sum) match the oracle's structural summary exactly and are Clang-behaviour-equivalent
+  (`test_c_cfront.py`); the parity loop in `check_runtime.sh` covers all L1–L6 fixtures. Remaining C
+  ports: L7 preprocessor, L8 full ABI (§5.8).
+- 2026-06-18: **Plug-in C compiler — the C compile→execute loop closes (planner + StreamPack
+  hydrator), no Python.** Added `runtime/c/bcir_plan.c` (a compact freestanding K_BCIR planner:
+  per-claim realization width + an integer cost + the plan total) and `runtime/c/bcir_hydrate.c` (the
+  `gem.hydrate` twin: serializes the planned claim graph into the frozen StreamPack ABI, one segment
+  per claim, freestanding + bounds-checked). The whole loop now runs in C with no Python —
+  `C source → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` — `test_cfront_loop.c` compiles a C
+  file, plans it, hydrates a StreamPack the existing bounds-checked decoder validates, and executes
+  every claim in deterministic lowering order (claims=23 plan_cost=55 pack_bytes=1419 executed=23 for
+  the register map). Gated by `bcir/tests/test_c_cfront.py` (executed count == oracle claim count) and
+  a new `tools/c/check_runtime.sh` section. `bcir_plan.c`/`bcir_hydrate.c` are freestanding-clean
+  (C11 + C23). Roadmap §5.8 marks the planner + hydrator landed (the two biggest infra gaps); the
+  remaining C ports are L6/L7/L8, R9–R17, C.2 attestation, atomics, dynamic shapes, multi-channel.
 - 2026-06-18: **Plug-in C compiler — L3/L4 ports + a faithful C emitter + the full six-artifact gate
   in C.** Extended `runtime/c/bcir_cfront.c` to **multi-function translation units**: **L3**
   pointers/arrays (GEP-equivalent `base[i]` loads), **L4** functions + a call graph with an **R18**

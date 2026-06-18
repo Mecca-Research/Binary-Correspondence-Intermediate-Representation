@@ -115,7 +115,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | **Allocator pool-plan** (`allocator.live_intervals`/`pool_plan`) | `-bcir-alloc-pool` | MLIR/C++ | ✅ **ported** — liveness-based pooling (disjoint live ranges share an arena, greedy left-edge); annotates per-resource pool_id + peak/naive/saved bytes (`alloc_pool.mlir`) |
 | GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
-| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ◑ **porting** — ported to C + Python↔C parity-gated: **L1** integer expr, **L2** struct/bitfield layout, **L3** pointers/arrays (GEP), **L4** functions + the call graph (**R18** rejects recursion/undefined callees in C), **L5** volatile/MMIO; an **R1–R8 + R18 verifier** and a **faithful C emitter** whose output is **Clang-behaviour-equivalent** to the source (six-artifact gate, `bcir/tests/test_c_cfront.py`). Remaining: L6 control flow, L7 preprocessor, L8 full ABI, + the missing infra (§5.8) |
+| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ◑ **porting** — ported to C + Python↔C parity-gated: **L1** integer expr, **L2** struct/bitfield layout, **L3** pointers/arrays (GEP), **L4** functions + the call graph (**R18** in C), **L5** volatile/MMIO, **L6** control flow (`if`/`else`/`while`, structured markers + mutable locals); an **R1–R8 + R18 verifier**, a **faithful C emitter** (Clang-behaviour-equivalent), and the **closed loop** `C → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` (no Python). Remaining: L7 preprocessor, L8 full ABI, + R9–R17 / attestation / atomics (§5.8) |
 | StreamPack ABI **decoder** | **C** `runtime/c/bcir_runtime.c` | **C** (frozen ABI) | ✅ CRC-gated parity + libFuzzer |
 | ETL binary-record decoder | **C** `runtime/c/bcir_binrec.c` | **C** | ✅ parity + libFuzzer |
 | Portable kernel emission (C23 + `_BitInt`/`#embed`) | Python `lower.c_kernel` | C output (emitter may become C++) | ✅ |
@@ -558,13 +558,14 @@ the existing C twins):
 - **Verifier R9–R17 in C** — the C verifier covers R1–R8 + R18; the plan/pack/lowering/accuracy laws
   (R9 plan legality, R10–R11 StreamPack, R12 lowering-contract, R13 provenance digest, R17 accuracy)
   must port to a C `bcir_verify.c` (twin of `bcir/verify`).
-- **K_BCIR planner in C (or an MLIR bridge)** — the cost model / min-plus / RCSP that turns the claim
-  graph into a *plan* is on the MLIR/C++ law rail, not in `runtime/c/`. A driver-embeddable compiler
-  needs either a compact C planner (`bcir_plan.c`) or a documented hand-off to `bcir-opt`. **This is
-  the biggest missing piece** — without it the C frontend produces a graph but not a *plan*.
-- **Claim-graph → StreamPack hydration in C (`bcir_hydrate.c`)** — the `gem.hydrate` step (plan →
-  StreamPack segments). With it, the C frontend's graph → a StreamPack the existing **`bcir_exec.c`
-  executes**, closing the whole loop with no Python (`bcir_encode.c` already writes the bytes).
+- ✅ **K_BCIR planner in C (`bcir_plan.c`)** — a compact, freestanding scalar planner (per-claim
+  realization width + an integer cost; total cost) lands the *plan* in `runtime/c/`. The full cost
+  model / min-plus / RCSP stays on the MLIR/C++ law rail; this is the driver-embeddable seam that
+  drives hydration. *Future:* richer cost model / a `bcir-opt` bridge for the full optimizer.
+- ✅ **Claim-graph → StreamPack hydration in C (`bcir_hydrate.c`)** — the `gem.hydrate` step (plan →
+  StreamPack segments), freestanding + bounds-checked. **The loop now closes with no Python:**
+  `C source → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` runs the compiled artifact end to
+  end (`test_cfront_loop.c`; gated in `tools/c/check_runtime.sh` + `test_c_cfront.py`).
 - **C.2 attestation in C** — stamp the emitted C with R12/R13/R17/R18 + the R13 provenance digest
   (a `bcir_attest.c`); the oracle does this in `pipeline.py`.
 - **Atomics/fences + dynamic shapes** — `cmpxchg`/`barrier` lowering (the `ATOMIC_*`/`BARRIER`

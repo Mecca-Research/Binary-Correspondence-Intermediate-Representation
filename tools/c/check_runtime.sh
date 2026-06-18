@@ -109,7 +109,7 @@ echo "  PASS bcir_cir.h freestanding IR (C11 + C23)"
 "${CC}" -std=c23 -O2 -Wall -Wextra "${C}/bcir_cfront.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 "${C}/bcir_cfront.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c; do   # L1-L5 + L3 + L4 fixtures
+for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_branch.c cfront_while.c; do  # L1-L6
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 from bcir.frontends.cfront import compile_unit
@@ -124,6 +124,28 @@ print(f'funcs={len(fns)} claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} 
   [ "${c_sum}" = "${py_sum}" ] \
     && echo "  PASS parity ${fx} (oracle == C: ${c_sum})" \
     || { echo "  FAIL: parity ${fx} (C='${c_sum}' PY='${py_sum}')"; exit 1; }
+done
+
+echo "[c-runtime] full C compile->execute loop (cfront -> plan -> hydrate -> exec, no Python)"
+# bcir_plan.c + bcir_hydrate.c are freestanding (the driver-embeddable planner + StreamPack
+# writer that feed the existing bcir_exec.c) -- the loop closes with no Python.
+for f in bcir_plan.c bcir_hydrate.c; do
+  for std in c11 c23; do
+    "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -I "${C}" -c "${C}/${f}" -o /dev/null \
+      || { echo "  FAIL: ${f} not freestanding-clean under -std=${std}"; exit 1; }
+  done
+done
+"${CC}" -std=c23 -O2 -I "${C}" "${C}/bcir_cfront.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" \
+  "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/test_cfront_loop.c" -o "${tmp}/loop" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 -I "${C}" "${C}/bcir_cfront.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" \
+       "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/test_cfront_loop.c" -o "${tmp}/loop" \
+  || { echo "  FAIL: loop build"; exit 1; }
+for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c; do
+  out="$("${tmp}/loop" "${C}/${fx}")" || { echo "  FAIL: loop ${fx}: ${out}"; exit 1; }
+  case "${out}" in
+    loop:*executed=*) echo "  PASS loop ${fx} (${out#loop: })" ;;
+    *) echo "  FAIL: loop ${fx}: ${out}"; exit 1 ;;
+  esac
 done
 
 echo "[c-runtime] ok"

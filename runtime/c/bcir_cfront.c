@@ -258,8 +258,34 @@ static void env_add(CC *c,const tok *nm,uint32_t rid,const bcir_ctype *ty,int si
   if(c->nenv>=MAXENV)return; venv *v=&c->env[c->nenv++];
   idcpy(v->name,nm);v->rid=rid;v->type=*ty;v->sidx=sidx;
 }
+/* a control-flow marker claim (no realization; the emitter renders it as a brace). carries an
+ * optional condition rid as a read so the verifier resolves it and the emitter can test it. */
+static void marker(CC *c,const char *op,uint32_t cond,int has_cond){
+  bcir_claim *cl=new_claim(c,op,BCIR_OP_NOP);
+  if(cl&&has_cond){cl->n_rd=1;cl->rd[0]=cond;}
+}
+static void p_stmt(CC *c);
+static void p_block(CC *c){            /* `{ stmts }` or a single statement */
+  if(is(c,"{")){c->i++;while(!is(c,"}")&&!isk(c,T_END)&&!c->failed)p_stmt(c);eat(c,"}");}
+  else p_stmt(c);
+}
 static void p_stmt(CC *c) {
-  if(is(c,"return")){c->i++;if(!is(c,";")){c->fn->return_rid=p_expr(c);c->fn->has_return=1;}eat(c,";");return;}
+  if(is(c,"return")){c->i++;
+    if(!is(c,";")){uint32_t rv=p_expr(c);c->fn->return_rid=rv;c->fn->has_return=1;marker(c,"c.return",rv,1);}
+    else marker(c,"c.return",0,0);
+    eat(c,";");return;}
+  if(is(c,"if")){                      /* L6: if / else -> structured markers */
+    c->i++;eat(c,"(");uint32_t cond=p_expr(c);eat(c,")");
+    marker(c,"c.if",cond,1); p_block(c);
+    if(is(c,"else")){c->i++;marker(c,"c.else",0,0);p_block(c);}
+    marker(c,"c.endif",0,0); return;
+  }
+  if(is(c,"while")){                   /* L6: a bounded while loop (cond re-evaluated each iter) */
+    c->i++;marker(c,"c.loop",0,0);
+    eat(c,"(");uint32_t cond=p_expr(c);eat(c,")");
+    marker(c,"c.loop.test",cond,1); p_block(c); marker(c,"c.endloop",0,0); return;
+  }
+  if(is(c,"{")){p_block(c);return;}
   int looks_decl=0;
   if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
     looks_decl=sz>=0||is(c,"struct")||is(c,"union")||is(c,"const")||is(c,"volatile");}
@@ -378,34 +404,47 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
   for(int i=0;i<f->n_params;i++){char pt[64];ctype_str(&f->params[i].type,pt,sizeof pt);
     w+=snprintf(o+w,on-w,"%s%s %s",i?", ":"",pt,f->params[i].name);}
   w+=snprintf(o+w,on-w,")\n{\n");
-  /* declare named locals up front (mutable storage) */
+  /* declare named locals up front (mutable storage -- branch merges + loop accumulators) */
   for(size_t i=0;i<f->n_res;i++){const bcir_resource *r=&f->res[i];
     if(is_named_local(f,r->rid)) w+=snprintf(o+w,on-w,"  uint32_t %s;\n",r->name);}
-  for(size_t i=0;i<f->n_claims&&w<on-128;i++){const bcir_claim *cl=&f->claims[i];
+  int depth=1;
+  #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)
+  for(size_t i=0;i<f->n_claims&&w<on-160;i++){const bcir_claim *cl=&f->claims[i];
+    /* L6 control-flow markers (rendered as braces) */
+    if(!strcmp(cl->op,"c.if")){IND();w+=snprintf(o+w,on-w,"if (%s) {\n",rname(f,cl->rd[0],a));depth++;continue;}
+    if(!strcmp(cl->op,"c.else")){depth--;IND();w+=snprintf(o+w,on-w,"} else {\n");depth++;continue;}
+    if(!strcmp(cl->op,"c.endif")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");continue;}
+    if(!strcmp(cl->op,"c.loop")){IND();w+=snprintf(o+w,on-w,"while (1) {\n");depth++;continue;}
+    if(!strcmp(cl->op,"c.loop.test")){IND();w+=snprintf(o+w,on-w,"if (!%s) break;\n",rname(f,cl->rd[0],a));continue;}
+    if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");continue;}
+    if(!strcmp(cl->op,"c.return")){IND();
+      if(cl->n_rd) w+=snprintf(o+w,on-w,"return %s;\n",rname(f,cl->rd[0],a));
+      else w+=snprintf(o+w,on-w,"return;\n");continue;}
+    IND();
     if(!strncmp(cl->op,"c.bin.",6))
-      w+=snprintf(o+w,on-w,"  uint32_t %s = %s %s %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
+      w+=snprintf(o+w,on-w,"uint32_t %s = %s %s %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
     else if(!strncmp(cl->op,"c.un.",5))
-      w+=snprintf(o+w,on-w,"  uint32_t %s = (%s%s);\n",rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
+      w+=snprintf(o+w,on-w,"uint32_t %s = (%s%s);\n",rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
     else if(!strcmp(cl->op,"c.const"))
-      w+=snprintf(o+w,on-w,"  uint32_t %s = %lluu;\n",rname(f,cl->wr[0],d),(unsigned long long)cl->imm[0]);
+      w+=snprintf(o+w,on-w,"uint32_t %s = %lluu;\n",rname(f,cl->wr[0],d),(unsigned long long)cl->imm[0]);
     else if(!strcmp(cl->op,"c.copy")){
-      if(is_named_local(f,cl->wr[0])) w+=snprintf(o+w,on-w,"  %s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
-      else w+=snprintf(o+w,on-w,"  uint32_t %s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      if(is_named_local(f,cl->wr[0])) w+=snprintf(o+w,on-w,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      else w+=snprintf(o+w,on-w,"uint32_t %s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
     }else if(!strcmp(cl->op,"c.load")){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;
-      if(cl->n_rd==2) w+=snprintf(o+w,on-w,"  uint32_t %s = %s[%s];\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
+      if(cl->n_rd==2) w+=snprintf(o+w,on-w,"uint32_t %s = %s[%s];\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
       else if(cl->domain==BCIR_DOM_MMIO)
-        w+=snprintf(o+w,on-w,"  uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
+        w+=snprintf(o+w,on-w,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
-        w+=snprintf(o+w,on-w,"  uint32_t %s; { uint32_t _v; memcpy(&_v, (const char *)%s%s + %lld, sizeof _v); %s = _v; }\n",rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->wr[0],d)); }
+        w+=snprintf(o+w,on-w,"uint32_t %s; { uint32_t _v; memcpy(&_v, (const char *)%s%s + %lld, sizeof _v); %s = _v; }\n",rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->wr[0],d)); }
     }else if(!strcmp(cl->op,"c.bf.get"))
-      w+=snprintf(o+w,on-w,"  uint32_t %s = (%s >> %lld) & %lluu;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),(long long)cl->imm[0],(1ull<<cl->imm[1])-1);
+      w+=snprintf(o+w,on-w,"uint32_t %s = (%s >> %lld) & %lluu;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),(long long)cl->imm[0],(1ull<<cl->imm[1])-1);
     else if(!strncmp(cl->op,"c.call:",7)){
-      w+=snprintf(o+w,on-w,"  uint32_t %s = bcir_%s(",rname(f,cl->wr[0],d),cl->op+7);
+      w+=snprintf(o+w,on-w,"uint32_t %s = bcir_%s(",rname(f,cl->wr[0],d),cl->op+7);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+w,on-w,");\n"); }
   }
-  if(f->has_return) w+=snprintf(o+w,on-w,"  return %s;\n",rname(f,f->return_rid,d));
+  #undef IND
   w+=snprintf(o+w,on-w,"}\n");
   return w;
 }
@@ -444,8 +483,10 @@ void bcir_cfront_free(bcir_cfront_result *out){
 void bcir_cfront_summary(const bcir_unit *u,int ok,char *buf,size_t n){
   const bcir_func *f = u->n_funcs ? &u->funcs[u->n_funcs-1] : NULL;   /* the entry (last) */
   int mmio=0,bf=0,kn=0,binop=0,calls=0; size_t nc=0;
-  if(f){nc=f->n_claims;
+  if(f){
     for(size_t i=0;i<f->n_claims;i++){const bcir_claim *cl=&f->claims[i];
+      if(cl->opcode==BCIR_OP_NOP)continue;       /* control-flow markers are not real claims */
+      nc++;
       if(!strcmp(cl->op,"c.load")&&cl->domain==BCIR_DOM_MMIO)mmio++;
       else if(!strcmp(cl->op,"c.bf.get"))bf++;
       else if(!strcmp(cl->op,"c.const"))kn++;
