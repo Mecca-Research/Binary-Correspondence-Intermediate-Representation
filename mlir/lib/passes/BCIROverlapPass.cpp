@@ -35,7 +35,10 @@ using namespace mlir;
 namespace bcir {
 namespace {
 
-// A claim's chosen realization for scheduling: the picked candidate + its I/O.
+// A claim's chosen realization for scheduling: the picked candidate + its I/O. `rmask`/`wmask`
+// are the read/write resource symbols as bitmasks over a per-module resource->id map (filled
+// when the module has <= 64 distinct resource symbols, the overwhelming common case), so the
+// O(C^2) hazard test in the wave loop becomes O(1) bit-ops instead of O(R^2) string compares.
 struct Scheduled {
   ClaimOp claim;
   int32_t phase;
@@ -44,10 +47,15 @@ struct Scheduled {
   cm::Cand cand;          // chosen width + fused cost
   ArrayRef<StringRef> reads;
   ArrayRef<StringRef> writes;
+  uint64_t rmask = 0, wmask = 0;   // resource-symbol bitmasks (valid iff `maskable`)
 };
 
-static bool conflict(const Scheduled &a, const Scheduled &b) {
-  // RAW / WAR / WAW: aw & (br|bw) || bw & ar (mirrors verify._conflict).
+// RAW / WAR / WAW between two claims' read/write sets (mirrors verify._conflict). When the
+// module is small enough to bitmask, this is a 3-op intersection; otherwise the string
+// fallback is bit-identical (set membership over distinct symbols).
+static bool conflict(const Scheduled &a, const Scheduled &b, bool maskable) {
+  if (maskable)
+    return (a.wmask & (b.rmask | b.wmask)) | (b.wmask & a.rmask);
   for (StringRef w : a.writes)
     for (StringRef x : b.reads)
       if (w == x)
@@ -86,14 +94,37 @@ static int64_t chainCost(ArrayRef<const Scheduled *> chain, ArrayRef<int64_t> w,
 // the assignment, so the re-selection sweep can re-price trial assignments.
 static int64_t computeMakespan(const std::vector<cm::Column> &cols, ArrayRef<int> assign,
                                int64_t theta, ArrayRef<int64_t> w, int64_t domains) {
+  // One resource-symbol -> id map for the whole module (reads + writes). When it fits in 64
+  // ids, every claim's I/O becomes a bitmask and conflict() is O(1); otherwise the string
+  // fallback runs (bit-identical). The id space is tiny in practice (a few resources/module).
+  llvm::DenseMap<StringRef, unsigned> resId;
+  for (const cm::Column &col : cols) {
+    for (StringRef r : col.reads)
+      resId.insert({r, static_cast<unsigned>(resId.size())});
+    for (StringRef r : col.writes)
+      resId.insert({r, static_cast<unsigned>(resId.size())});
+  }
+  const bool maskable = resId.size() <= 64;
+  auto maskOf = [&](ArrayRef<StringRef> syms) -> uint64_t {
+    uint64_t m = 0;
+    for (StringRef s : syms)
+      m |= (uint64_t{1} << resId.lookup(s));
+    return m;
+  };
+
   std::vector<Scheduled> sched;
   SmallVector<int32_t> phaseOrder;
   for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
     ClaimOp claim = cols[i].claim;
     bool sparse =
         claim.getLane() == Lane::GGG || claim.getStrideClass() == StrideClass::Random;
-    sched.push_back({claim, cols[i].phase, static_cast<int32_t>(claim.getClaimId()), sparse,
-                     cols[i].cands[assign[i]], cols[i].reads, cols[i].writes});
+    Scheduled s{claim, cols[i].phase, static_cast<int32_t>(claim.getClaimId()), sparse,
+                cols[i].cands[assign[i]], cols[i].reads, cols[i].writes, 0, 0};
+    if (maskable) {
+      s.rmask = maskOf(cols[i].reads);
+      s.wmask = maskOf(cols[i].writes);
+    }
+    sched.push_back(s);
     if (std::find(phaseOrder.begin(), phaseOrder.end(), cols[i].phase) == phaseOrder.end())
       phaseOrder.push_back(cols[i].phase);
   }
@@ -117,7 +148,7 @@ static int64_t computeMakespan(const std::vector<cm::Column> &cols, ArrayRef<int
     for (size_t i = 0; i < main.size(); ++i) {
       int wv = 0;
       for (size_t j = 0; j < i; ++j)
-        if (conflict(*main[j], *main[i]))
+        if (conflict(*main[j], *main[i], maskable))
           wv = std::max(wv, waveOf[main[j]->id] + 1);
       waveOf[main[i]->id] = wv;
       nwaves = std::max(nwaves, wv + 1);
