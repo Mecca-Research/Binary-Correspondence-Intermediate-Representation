@@ -376,6 +376,13 @@ static uint32_t p_primary(CC *c) {
   if(isk(c,T_INT)){tok t=adv(c);uint32_t r=temp(c,4);
     bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
     cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return r;}
+  if(is(c,"_Alignof")||is(c,"alignof")){   /* _Alignof(type) -> the type's alignment, a folded const */
+    c->i++; eat(c,"("); bcir_ctype ty;int si; long long al=4;
+    if(!p_type(c,&ty,&si)) al = ty.kind==2?8:(ty.kind==1?c->s[si].align:(ty.size?ty.size:1));
+    eat(c,")");
+    uint32_t r=temp(c,4); bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
+    if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=al;} return r;
+  }
   if(is(c,"sizeof")){                  /* sizeof(type) / sizeof expr -> a folded constant (no eval) */
     c->i++; long long size=4; int got=0;
     if(is(c,"(")){ int save=c->i; c->i++;

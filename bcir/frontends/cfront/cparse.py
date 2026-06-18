@@ -612,6 +612,20 @@ class _Parser:
             self.i = save                          # not a type -> `sizeof ( expr )`
         return cast.SizeOf(expr=self._unary())     # sizeof expr / sizeof (expr)
 
+    def _alignof(self):
+        """`_Alignof ( type-name )` / `alignof(...)` -> a constant: the type's alignment (folded in
+        lowering from the shared layout model; unlike sizeof, only the type-name form is valid C)."""
+        self.nxt()                                 # _Alignof / alignof
+        self.eat("PUNCT", "(")
+        tref = self._type_spec()
+        ptr = 0
+        while self.at("OP", "*"):                   # `_Alignof(uint32_t *)`
+            ptr += 1
+            self.nxt()
+        self.eat("PUNCT", ")")
+        return cast.AlignOf(cast.TypeRef(base=tref.base, ptr=ptr, aggregate=tref.aggregate,
+                                         quals=tref.quals))
+
     def _primary(self):
         if self.at("INT"):
             return cast.IntLit(parse_int_literal(self.nxt().text))
@@ -622,6 +636,8 @@ class _Parser:
                 return cast.IntLit(self.enums[w])
             if w == "sizeof":
                 return self._sizeof()
+            if w in ("_Alignof", "alignof"):
+                return self._alignof()
             if w in KEYWORDS and w != "sizeof":
                 raise CParseError(f"unexpected keyword {w!r} in expression at {self.peek().pos}")
             return cast.Name(self.nxt().text)

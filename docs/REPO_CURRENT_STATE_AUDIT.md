@@ -130,6 +130,15 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — `_Alignof` / `alignof`.** The C11/C23 alignment operator
+  folds to a compile-time constant -- the type's alignment, read from the same shared scalar/struct
+  layout model `sizeof` uses (the operand is never evaluated; only the type-name form is valid C, so
+  it is simpler than `sizeof`). Both rails lower `_Alignof(T)` / `alignof(T)` to a `c.const`: scalar
+  alignment = its size, a struct = its computed alignment (the widest member, packing/`alignas`
+  respected), a pointer = 8. New fixture `cfront_alignof.c` (`uint32_t` -> 4, `uint8_t` -> 1,
+  `struct {uint8_t; uint32_t;}` -> 4) matches on both rails (`funcs=1 claims=9 const=3 binop=3
+  ok=1`), is Clang-behaviour-equivalent, and runs the full C compile->execute loop. Wired into
+  `_STRAIGHTLINE` + `tools/c/check_runtime.sh`; warning-clean; 693 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — multi-dimensional arrays.** A 2D array parameter
   (`uint32_t m[4][8]`) decays to a flat element pointer with a recorded shape, and a multi-index
   access `m[i][j]` flattens row-major to the linear index `i*8 + j` (Horner) on both rails -- so it

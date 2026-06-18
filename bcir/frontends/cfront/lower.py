@@ -324,6 +324,10 @@ class _FuncLowerer:
                 size = 4                                       # an integer expression -> int
             t = self._temp(scalar("uint32_t"), "szof")
             return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(size,))
+        if isinstance(node, cast.AlignOf):
+            # _Alignof folds to the target type's alignment (operand never evaluated, like sizeof).
+            t = self._temp(scalar("uint32_t"), "alof")
+            return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(self._resolve_type(node.type).align,))
         if isinstance(node, cast.Ternary):
             # A scalar select: both arms are evaluated (the straight-line subset has no branches),
             # then one is chosen. The emitter renders the real C `(cond ? a : b)` -- behaviour-exact
