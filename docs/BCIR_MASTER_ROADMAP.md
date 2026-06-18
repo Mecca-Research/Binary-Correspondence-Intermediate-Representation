@@ -656,9 +656,13 @@ over the binary grammar on both rails), lowered to a scalar `c.select` claim, an
 indirectly (HAL dispatch); the indirect call lowers to a `c.call.indirect` claim (reads: the pointer
 value then the actuals), R18 leaves it an opaque external edge while direct calls in the same function
 still resolve through the call graph, and the emit calls through the pointer verbatim — both rails
-`funcs=2 claims=2 call=2 ok=1`, Clang-equivalent (`cfront_funcptr.c`). *Still
+`funcs=2 claims=2 call=2 ok=1`, Clang-equivalent (`cfront_funcptr.c`). ✅ **integer casts**
+(`(type)expr` — a cast binds at the unary level on both rails; in the 32-bit-unit value model a
+narrowing cast to an unsigned fixed-width type masks, exactly matching Clang's integer promotion, so
+it lowers to a `c.cast:<width>` claim and emits `(type)expr`; `cfront_cast.c`, both rails `claims=12
+ok=1`, executes the full loop). *Still
 to port:* **multi-dimensional arrays**, **function-pointer struct members** (dispatch tables); the comma
-operator, `sizeof`/`_Alignof`/`typeof`, casts + compound literals, integer promotions + usual arithmetic
+operator, `_Alignof`/`typeof`, compound literals, integer promotions + usual arithmetic
 conversions, pointer-arithmetic completeness; ✅ **`sizeof`** (`sizeof(type)` / `sizeof expr` folds to
 a compile-time constant -- the type/operand's static size, operand not evaluated; both rails agree
 via the shared scalar table + struct/union layout, Clang-equivalent, `cfront_sizeof.c`); still

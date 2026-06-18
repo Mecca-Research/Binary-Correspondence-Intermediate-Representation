@@ -130,6 +130,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — integer casts `(type)expr`.** A cast (the register-packing /
+  field-truncation pattern) binds at the unary level on both rails -- the parser distinguishes
+  `(type-name)` from a parenthesized expression by a lookahead (scalar/struct/union/enum/qualifier/
+  typedef), parsing `(type)operand` right-associatively. In the 32-bit-unit value model a narrowing
+  cast to an unsigned fixed-width type masks (assigning the cast back into a uint32 temp zero-extends,
+  exactly Clang's integer-promotion result), so a cast lowers to a `c.cast:<width>` claim (named by
+  size so both rails agree -- `uint8_t`/`uint16_t`/`uint32_t`/`uint64_t`, pointee + ` *` for a pointer
+  cast) and emits `(type)expr` verbatim. New fixture `cfront_cast.c` (truncate to 8 / 16 bits + an
+  identity cast) matches on both rails (`funcs=1 claims=12 const=2 binop=4 ok=1`), is
+  Clang-behaviour-equivalent, and -- being straight-line scalar -- runs the full C compile->execute
+  loop (R9/R10-R11 clean). Wired into `_STRAIGHTLINE` + `tools/c/check_runtime.sh`; warning-clean;
+  693 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — function pointers (HAL dispatch).** A `typedef`'d
   function-pointer type (`typedef uint32_t (*binop_fn)(uint32_t, uint32_t);`) passed as a parameter
   and called indirectly -- the canonical embedded driver-op / dispatch pattern. The indirect call

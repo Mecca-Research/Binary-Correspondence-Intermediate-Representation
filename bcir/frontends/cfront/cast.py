@@ -39,6 +39,12 @@ class Unary:
 
 
 @dataclass(frozen=True)
+class Cast:
+    type: TypeRef                   # the target type — `(type)operand`
+    operand: object
+
+
+@dataclass(frozen=True)
 class SizeOf:
     type: object = None             # a TypeRef for `sizeof(type)`, else None
     expr: object = None             # the operand for `sizeof expr` (its static type's size)
