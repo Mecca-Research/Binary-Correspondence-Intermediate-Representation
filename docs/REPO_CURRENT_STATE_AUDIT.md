@@ -128,6 +128,23 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Closed the three remaining law-rail gaps — the deterministic spine has no known
+  buildable gaps left.** All three built and dual-rail-verified against the oracle on true MLIR 22.
+  **(1) `-bcir-overlap-optimize`** ports `gem/overlap.py::optimize_scheduled` — the makespan-driven
+  re-selection sweep (from the serial optimum, adopt the per-claim alternative that strictly lowers
+  the scheduled makespan; re-price serially for R9). `computeMakespan` was extracted from
+  `-bcir-overlap` and shared. Matches the oracle's `(makespan, serial)` on all 11 corpus programs,
+  including the real gains (fused_chain 7808<13696, matmul 253952<1015808); no-op where the serial
+  optimum is already makespan-optimal (`overlap_optimize.mlir`). **(2) MOPC R12 support-preservation**
+  — `bcir.target.lower_contract` gains optional `source_support`/`target_support`/`discharges`, and
+  `-bcir-verify` R12 enforces `f(Supp(J)) ⊆ Supp(J')` unless discharged, reproducing
+  `mapping.py::dropped` (`verify_laws_deep.mlir`). The commuting-square `Λ∘Ψ=Φ` is a runtime
+  path-equivalence (already covered by the provenance digest + parity campaign), not a static law.
+  **(3) `-bcir-sense`** ports `kbcir/sensing.py::RegretSensor.sense` — per-segment `cv_milli` over
+  the `trace.data_dna` cycles (population variance, floor-isqrt), ranked `(-cv, segment)`, gated to
+  `high`/`low`/`off`; matches the oracle exactly (`sense.mlir`). Now **85 ODS ops, 25 passes**, full
+  rail green on true 22, 617 oracle tests unchanged. Roadmap §5.1 marks the gaps closed.
+
 - 2026-06-17: **MLIR-22 completion follow-ups + dual-rail completeness scan.** Closed the
   remaining feature-adoption follow-ups and acted on an independent oracle↔law scan. **(1)
   `-std=c++2c`:** the C++ standard moves to C++26 — CMake's GNU `CXX_STANDARD=26` flag mapping

@@ -1178,6 +1178,24 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
                "discharge";
         ok = false;
       }
+      // MOPC objective-support refinement (mapping.py::dropped): under the identity
+      // dim-map, every nonzero source objective dimension must remain nonzero in the
+      // target (f(Supp(J)) subseteq Supp(J')) unless this contract discharges it. A
+      // lowering may rescale/sharpen/fuse a cost dimension but not silently drop one.
+      if (auto srcOpt = lc.getSourceSupport()) {
+        ArrayRef<int64_t> tgt = lc.getTargetSupport().value_or(ArrayRef<int64_t>{});
+        ArrayRef<int64_t> dis = lc.getDischarges().value_or(ArrayRef<int64_t>{});
+        auto has = [](ArrayRef<int64_t> s, int64_t d) {
+          return std::find(s.begin(), s.end(), d) != s.end();
+        };
+        for (int64_t d : *srcOpt)
+          if (!has(dis, d) && !has(tgt, d)) {
+            lc.emitError("R12: lowering contract ")
+                << lc.getSymName() << " drops objective dimension " << d
+                << " (in Supp(J) but not Supp(J'), with no discharge)";
+            ok = false;
+          }
+      }
     });
 
     if (!ok)

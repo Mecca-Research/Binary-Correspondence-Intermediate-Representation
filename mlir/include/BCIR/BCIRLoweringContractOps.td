@@ -54,7 +54,17 @@ def BCIR_TargetLowerContractOp : BCIR_Op<"target.lower_contract", [Symbol]> {
   let arguments = (ins SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$target, StrAttr:$bcir_op,
                        BCIR_LaneAttr:$lane, BCIR_StrideClassAttr:$stride_class,
                        FlatSymbolRefAttr:$opcode, OptionalAttr<FlatSymbolRefAttr>:$packet,
-                       StrAttr:$legal_if, StrAttr:$preserves);
+                       StrAttr:$legal_if, StrAttr:$preserves,
+                       // MOPC objective-support refinement (R12; kbcir/mapping.py): the
+                       // cost-dimension indices (0..11) where the source objective J and the
+                       // lowered objective J' are nonzero, and the indices this contract
+                       // explicitly *discharges*. f(Supp(J)) must lie in Supp(J') (identity
+                       // dim-map) unless discharged -- a lowering may rescale/fuse a dimension
+                       // but not silently drop a nonzero one. Optional + defaulted absent, so
+                       // existing contracts parse and are unchecked.
+                       OptionalAttr<DenseI64ArrayAttr>:$source_support,
+                       OptionalAttr<DenseI64ArrayAttr>:$target_support,
+                       OptionalAttr<DenseI64ArrayAttr>:$discharges);
   let assemblyFormat = "$sym_name attr-dict";
 }
 
