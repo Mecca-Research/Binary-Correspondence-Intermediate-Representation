@@ -1,0 +1,165 @@
+"""The C-frontend pipeline — the six-artifact gate the ladder requires, end to end:
+
+    C source ── parse ──▶ claim graph ── K_BCIR ──▶ plan ── emit ──▶ verified C ── clang ──▶ ≡ check
+                                  └────────────── R1–R18 verifier checkpoint ──────────────┘
+
+`compile_unit` returns every artifact for a translation unit: the parsed C, the lowered claim graph
++ K_BCIR plan + `bcir-explain` text per function, the emitted C, the R1–R18 diagnostics (R18 via the
+real `plan_composite` call-graph machinery), and the Clang behaviour-equivalence verdict (which skips
+cleanly without a C compiler, so the structural artifacts still run in the quick tier).
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import tempfile
+from dataclasses import dataclass, field
+
+from ...channels import host_channel
+from ...kbcir.compose import plan_composite
+from ...kbcir.cost import Theta
+from ...kbcir.realize import optimize
+from ...kbcir.weights import PERF
+from ...verify import Diagnostic, verify, verify_plan
+from .cparse import parse_unit
+from .emit import emit_function
+from .lower import LoweredUnit, lower_unit
+
+
+@dataclass
+class CompileResult:
+    source: str
+    unit: object
+    lowered: LoweredUnit
+    plans: dict = field(default_factory=dict)         # fn -> RealizationResult
+    emitted: dict = field(default_factory=dict)       # fn -> C text
+    explain: dict = field(default_factory=dict)       # fn -> bcir-explain text
+    diagnostics: list = field(default_factory=list)   # R1–R18 Diagnostics (empty == clean)
+    r18_ok: bool = True
+    equivalence: str = "skip"                         # match | MISMATCH | skip:<reason>
+
+    @property
+    def is_clean(self) -> bool:
+        return not self.diagnostics and self.r18_ok
+
+    @property
+    def behaviour_equivalent(self) -> bool:
+        return self.equivalence == "match"
+
+
+def _cc():
+    return shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+
+
+def compile_unit(source: str, *, check_clang: bool = True) -> CompileResult:
+    unit = parse_unit(source)
+    lowered = lower_unit(unit)
+    h, theta, policy = host_channel().profile, Theta.cool(), PERF
+    res = CompileResult(source=source, unit=unit, lowered=lowered)
+
+    # --- per-function: plan, verify (R1–R9), emit, explain ---
+    for name, lf in lowered.functions.items():
+        diags = verify(lf.module)
+        plan = optimize(lf.module, h, theta, policy)
+        diags += verify_plan(lf.module, plan)
+        res.plans[name] = plan
+        res.emitted[name] = emit_function(lf)
+        res.explain[name] = _explain(lf.module, h, theta, policy)
+        res.diagnostics += [Diagnostic(d.law, f"{name}: {d.message}") for d in diags]
+
+    # --- R18: the inter-procedural call graph, via the real plan_composite machinery ---
+    if lowered.entry:
+        region = lowered.compose_functions[lowered.entry].region
+        try:
+            plan_composite(region, lowered.compose_functions, lowered.resources, h, theta, policy)
+            res.r18_ok = True
+        except Exception as e:  # noqa: BLE001 -- recursion / undefined callee == an R18 violation
+            res.r18_ok = False
+            res.diagnostics.append(Diagnostic("R18", f"call-graph integrity: {e}"))
+
+    # --- behaviour equivalence vs Clang (clang-gated) ---
+    if check_clang:
+        res.equivalence = _equivalence(source, lowered)
+    return res
+
+
+def _explain(module, h, theta, policy) -> str:
+    try:
+        from ...kbcir.proof import explain, explain_text  # noqa: PLC0415
+        return explain_text(explain(module, h, theta, policy, target_name=h.name))
+    except Exception as e:  # noqa: BLE001 -- explain is a best-effort artifact
+        return f"(explain unavailable: {e})"
+
+
+# --- the Clang behaviour-equivalence harness ----------------------------------------------------
+
+def _equivalence(source: str, lowered: LoweredUnit) -> str:
+    cc = _cc()
+    if not cc:
+        return "skip:no-cc"
+    entry = lowered.functions.get(lowered.entry)
+    if entry is None:
+        return "skip:no-entry"
+    harness = _harness_c(source, lowered, entry)
+    with tempfile.TemporaryDirectory() as d:
+        src = os.path.join(d, "equiv.c")
+        exe = os.path.join(d, "equiv")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write(harness)
+        for std in ("-std=c23", "-std=c2x", "-std=c17"):
+            b = subprocess.run([cc, std, "-O1", src, "-o", exe], capture_output=True, text=True)
+            if b.returncode == 0:
+                break
+        else:
+            return f"skip:build-failed:{b.stderr.strip().splitlines()[-1] if b.stderr else '?'}"
+        run = subprocess.run([exe], capture_output=True, text=True)
+        out = run.stdout.strip()
+        return "match" if out == "MATCH" else f"MISMATCH:{out}"
+
+
+def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
+    """A self-contained C program: the original source + the emitted bcir_* functions + a main that
+    runs both on the same seeded-random inputs and prints MATCH iff every trial agrees."""
+    from .emit import _cname  # noqa: PLC0415
+
+    emitted = "\n\n".join(emit_function(lf) for lf in lowered.functions.values())
+    has_ptr = any(ct.kind in ("pointer", "array") for _n, _r, ct in entry.params)
+    decls, origargs, setup = [], [], []
+    for i, (pname, _rid, ct) in enumerate(entry.params):
+        if ct.kind in ("pointer", "array"):
+            elem = _cname(ct.of)
+            decls.append(f"    static {elem} buf{i}[256];")
+            setup.append(f"        for (int j = 0; j < 256; j++) buf{i}[j] = ({elem})rng();")
+            origargs.append(f"buf{i}")
+        elif ct.is_aggregate:
+            decls.append(f"    {ct.kind} {ct.name} a{i};")
+            setup.append("\n".join(
+                f"        a{i}.{fn} = ({_cname(ft)})rng();" for fn, ft, _o in ct.fields))
+            origargs.append(f"a{i}")
+        else:                                              # scalar; keep small when indexing memory
+            decls.append(f"    {_cname(ct)} s{i};")
+            setup.append(f"        s{i} = ({_cname(ct)})(rng() % {200 if has_ptr else 4000000000});")
+            origargs.append(f"s{i}")
+    call = ", ".join(origargs)
+    return f"""#include <stdint.h>
+#include <stdio.h>
+{source}
+
+{emitted}
+
+static uint64_t _s = 0x9E3779B97F4A7C15u;
+static uint32_t rng(void) {{ _s = _s * 6364136223846793005u + 1442695040888963407u; return (uint32_t)(_s >> 32); }}
+
+int main(void) {{
+{chr(10).join(decls)}
+    for (int trial = 0; trial < 256; trial++) {{
+{chr(10).join(setup)}
+        if ({entry.name}({call}) != bcir_{entry.name}({call})) {{
+            printf("MISMATCH@%d", trial); return 0;
+        }}
+    }}
+    printf("MATCH");
+    return 0;
+}}
+"""

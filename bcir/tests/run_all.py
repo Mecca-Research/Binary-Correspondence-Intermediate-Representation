@@ -131,6 +131,7 @@ _MODULES = [
     "bcir.tests.test_gem",
     "bcir.tests.test_concurrency",
     "bcir.tests.test_frontends",
+    "bcir.tests.test_cfront",
     "bcir.tests.test_telemetry",
     "bcir.tests.test_abi",
     "bcir.tests.test_stackify",

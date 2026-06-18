@@ -396,23 +396,29 @@ macros) with C11 fallbacks, exactly as the Q8 `#embed` path already does.
 ##### C.1 — A usable C frontend (the *input* seam) as a **staged conformance ladder**
 
 A Clang-compatible parser + semantics for a useful C subset → the *same* claim graph the oracle
-reasons over (so R1–R18 + the cost model apply unchanged). There is no C frontend today (only the
-ROP/MAP DSLs). Build it as an escalating ladder of language stages — **each stage is only "done"
-when it has all six artifacts** (the dual-rail discipline, applied to C):
+reasons over (so R1–R18 + the cost model apply unchanged). Built as an escalating ladder of language
+stages — **each stage is only "done" when it has all six artifacts** (the dual-rail discipline,
+applied to C):
 
 1. C source fixture · 2. claim-graph golden · 3. the K_BCIR plan · 4. the emitted C output ·
 5. behaviour equivalence against Clang on a harness · 6. an R1–R18 verifier checkpoint.
 
-| Stage | C surface |
-|---|---|
-| L1 | fixed-width integer expressions (`_BitInt`/`<stdint.h>`) |
-| L2 | structs / unions / explicit layout |
-| L3 | pointers / arrays → GEP-equivalent claim mapping |
-| L4 | functions + the call graph → **R18** |
-| L5 | `volatile` / MMIO access + bitfields |
-| L6 | control flow (branches, loops) |
-| L7 | a preprocessor subset (macros, conditional compilation, `#embed`) |
-| L8 | full ABI tests against Clang (struct layout + calling convention per the channel's real `llvm_triple`) |
+**Landed: L1–L4** (`bcir/frontends/cfront/`, `bcir.frontends.cfront.compile_unit`) — a real
+recursive-descent C lexer/parser → the claim-graph model (`Resource`/`Claim`/`Phase`), the K_BCIR
+plan, an arbitrary-scalar-claim-graph C emitter, the `plan_composite` call-graph (R18) checkpoint, a
+`bcir-explain` artifact, and a seeded-random Clang behaviour-equivalence harness (toolchain-gated).
+`python -m bcir.frontends.cfront <file.c>` prints all six artifacts.
+
+| Stage | C surface | status |
+|---|---|---|
+| L1 | fixed-width integer expressions (`_BitInt`/`<stdint.h>`) | ✅ |
+| L2 | structs / unions / explicit layout (Clang-compatible offsets) | ✅ |
+| L3 | pointers / arrays → GEP-equivalent claim mapping | ✅ |
+| L4 | functions + the call graph → **R18** (recursion + undefined-callee rejected) | ✅ |
+| L5 | `volatile` / MMIO access + bitfields | ☐ next (→ the register-map/MMIO MVP) |
+| L6 | control flow (branches, loops) | ☐ next |
+| L7 | a preprocessor subset (macros, conditional compilation, `#embed`) | ☐ |
+| L8 | full ABI tests against Clang (struct layout + calling convention per the channel's real `llvm_triple`) | ☐ |
 
 ##### C.1-MVP — the first milestone: a register-map + MMIO file (driver/kernel-relevant C)
 

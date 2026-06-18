@@ -130,6 +130,19 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C frontend MVP — ladder stages L1–L4 (the keystone's first milestone).** Built
+  `bcir/frontends/cfront/`: a recursive-descent C lexer + parser for the driver/kernel-relevant
+  subset, a type model with Clang-compatible struct/union layout, and a lowering to the **same**
+  claim-graph model the oracle reasons over (`Resource`/`Claim`/`Phase`) — the dual-rail invariant, so
+  R1–R18 + the K_BCIR cost model apply unchanged. `compile_unit` runs the full six-artifact gate per
+  function: parse → claim graph → K_BCIR plan → emitted C (an *arbitrary* scalar claim-graph C
+  emitter, not a per-pattern kernel) → R1–R18 checkpoint (R18 via the real `plan_composite`
+  call-graph machinery: recursion + undefined-callee rejected) → a seeded-random Clang
+  behaviour-equivalence harness (toolchain-gated; skips in the quick tier). Stages: L1 fixed-width
+  integer expressions, L2 struct/union member access at correct byte offsets, L3 pointer/array
+  GEP-equivalent indexing, L4 functions + a call graph. `python -m bcir.frontends.cfront <file.c>`
+  prints every artifact. Next: L5–L6 (`volatile`/MMIO + bitfields + control flow) to reach the full
+  register-map/MMIO MVP. Suite: live count + coverage in [`STATUS.md`](STATUS.md).
 - 2026-06-18: **Channel plugin boundary, Clang-comparison perf budgets, C23 + C-frontend roadmap.**
   Turned hardware channels into a real plugin boundary: `bcir/channel_plugin.py` defines a stable,
   versioned `channel.json` manifest (the seven sections — identity, target-profile schema, codegen
