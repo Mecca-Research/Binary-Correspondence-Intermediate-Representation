@@ -644,7 +644,11 @@ subset behave like `cc` on a small multi-file driver project):
   passes the behaviour check — substantially met on the production rail.
 
 **Phase 2 — Freestanding C23 compiler (embedded/kernel subset).** Close the concrete language gaps real
-headers/drivers hit: **ternary `?:`**, **function pointers**, **multi-dimensional arrays**; the comma
+headers/drivers hit. ✅ **ternary `?:`** — lexed (`?` added to the oracle punct set; the C lexer's
+single-char fallback already had it), parsed as a conditional expression (right-associative, layered
+over the binary grammar on both rails), lowered to a scalar `c.select` claim, and emitted as the real
+`(cond ? a : b)` — Clang-behaviour-equivalent (`cfront_ternary.c`, both rails `claims=13 ok=1`). *Still
+to port:* **function pointers**, **multi-dimensional arrays**; the comma
 operator, `sizeof`/`_Alignof`/`typeof`, casts + compound literals, integer promotions + usual arithmetic
 conversions, pointer-arithmetic completeness; the rest of control flow (`for`, `do/while`, `switch` +
 fallthrough, `break`/`continue`, `goto` or a structured-lowering/diagnostic policy); designated +

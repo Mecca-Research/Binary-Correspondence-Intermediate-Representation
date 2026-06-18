@@ -393,7 +393,16 @@ static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs) {
     lhs=r;
   }
 }
-static uint32_t p_expr(CC *c){return p_binrhs(c,1,p_unary(c));}
+static uint32_t p_binexpr(CC *c){return p_binrhs(c,1,p_unary(c));}
+/* p_expr layers the ternary `cond ? then : els` over the binary expression: a scalar select claim
+ * (both arms lowered, then chosen; the emitter renders the real `(cond ? a : b)`). */
+static uint32_t p_expr(CC *c){
+  uint32_t cond=p_binexpr(c);
+  if(is(c,"?")){ c->i++; uint32_t a=p_expr(c); eat(c,":"); uint32_t b=p_expr(c);
+    uint32_t t=temp(c,4); bcir_claim *cl=new_claim(c,"c.select",BCIR_OP_ADD);
+    if(cl){cl->n_rd=3;cl->rd[0]=cond;cl->rd[1]=a;cl->rd[2]=b;cl->n_wr=1;cl->wr[0]=t;} return t; }
+  return cond;
+}
 
 /* --- statements + functions ---------------------------------------------- */
 static void env_add(CC *c,const tok *nm,uint32_t rid,const bcir_ctype *ty,int sidx){
@@ -553,6 +562,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"uint32_t %s = %s %s %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
     else if(!strncmp(cl->op,"c.un.",5))
       w+=snprintf(o+w,on-w,"uint32_t %s = (%s%s);\n",rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
+    else if(!strcmp(cl->op,"c.select"))                    /* ternary: cond ? then : els */
+      w+=snprintf(o+w,on-w,"uint32_t %s = (%s ? %s : %s);\n",rname(f,cl->wr[0],d),
+                  rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
     else if(!strcmp(cl->op,"c.const"))
       w+=snprintf(o+w,on-w,"uint32_t %s = %lluu;\n",rname(f,cl->wr[0],d),(unsigned long long)cl->imm[0]);
     else if(!strcmp(cl->op,"c.copy")){

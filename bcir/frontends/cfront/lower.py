@@ -256,6 +256,15 @@ class _FuncLowerer:
             return self._read(self._lvalue(node))
         if isinstance(node, cast.Assign):
             return self._assign(node)
+        if isinstance(node, cast.Ternary):
+            # A scalar select: both arms are evaluated (the straight-line subset has no branches),
+            # then one is chosen. The emitter renders the real C `(cond ? a : b)` -- behaviour-exact
+            # for the pure scalar arms the driver subset uses (no side effects to double-run).
+            c = self._rvalue(node.cond)
+            a = self._rvalue(node.then)
+            b = self._rvalue(node.els)
+            t = self._temp(scalar("uint32_t"), "sel")
+            return self._emit("c.select", Opcode.ADD, (c, a, b), (t,))
         if isinstance(node, cast.CallExpr):
             return self._call(node)
         raise CLowerError(f"cannot lower expression {type(node).__name__}")

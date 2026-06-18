@@ -43,6 +43,13 @@ class Binary:
 
 
 @dataclass(frozen=True)
+class Ternary:
+    cond: object                    # `cond ? then : els` (conditional expression)
+    then: object
+    els: object
+
+
+@dataclass(frozen=True)
 class Assign:
     target: object                  # an lvalue expr
     value: object

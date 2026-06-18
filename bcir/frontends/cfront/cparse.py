@@ -375,7 +375,7 @@ class _Parser:
         return self._assign()
 
     def _assign(self):
-        lhs = self._binary(0)
+        lhs = self._ternary()
         if self.at("OP", "="):
             self.nxt()
             return cast.Assign(lhs, self._assign())
@@ -383,6 +383,16 @@ class _Parser:
             op = _COMPOUND[self.nxt().text]
             return cast.Assign(lhs, cast.Binary(op, lhs, self._assign()))
         return lhs
+
+    def _ternary(self):
+        cond = self._binary(0)
+        if self.at("PUNCT", "?"):                  # cond ? then : els  (right-associative)
+            self.nxt()
+            then = self._assign()                  # the middle is a full expression
+            self.eat("PUNCT", ":")
+            els = self._assign()                   # the else nests another conditional
+            return cast.Ternary(cond, then, els)
+        return cond
 
     def _binary(self, level: int):
         if level >= len(_PRECEDENCE):

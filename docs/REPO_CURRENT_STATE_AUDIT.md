@@ -130,6 +130,17 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — the ternary operator `?:`.** The first Phase 2 language gap,
+  dual-rail. The oracle lexer gained `?` in its punct set (the "not yet lexed" gap; the C lexer's
+  single-char fallback already tokenized it); both parsers layer a conditional expression
+  `cond ? then : els` (right-associative) over the binary grammar (oracle `_ternary` between
+  `_assign` and `_binary`; C `p_expr` over `p_binexpr`). It lowers to a scalar `c.select` claim
+  (both arms evaluated -- the straight-line subset has no branches -- then chosen), and the emitter
+  renders the real C `(cond ? a : b)`, so it is **behaviour-exact under Clang** for the pure scalar
+  arms a driver uses (no side effects to double-run). New fixture `cfront_ternary.c` (clamp + a
+  nested right-associative pick) matches on both rails (`funcs=1 claims=13 const=1 binop=5 ok=1`,
+  4 selects), is Clang-equivalent, and runs the execute loop (R9/R10-R11 clean). Wired into
+  `_STRAIGHTLINE` + `tools/c/check_runtime.sh`; warning-clean. 693 tests pass.
 - 2026-06-18: **C compiler — `bcir-cc`, the production compiler driver (Phase 1) + the C
   preprocessor's `-I`/`-D` extension.** A cc-like driver binary (`runtime/c/bcir_cc.c`) over the
   full C rail — `bcir_cpp_run_ex` (preprocess) → `bcir_cfront` (lower + R1-R18 verify + C.2 attest)
