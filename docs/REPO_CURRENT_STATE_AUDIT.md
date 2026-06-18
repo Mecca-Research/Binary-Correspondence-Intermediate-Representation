@@ -15,7 +15,7 @@
   - **`bcir/`** — the executable conformance oracle (pure Python, no third-party
     deps), ~11.8K LOC: model, K_BCIR optimizer (min-plus + RCSP/Pareto +
     (max,+) overlap), GEM hydration/scheduling/execution, ROP/MAP front-ends, M5
-    ETL, telemetry/calibration, StreamPack ABI, the R1–R17 verifier, lowering
+    ETL, telemetry/calibration, StreamPack ABI, the R1–R18 verifier, lowering
     (clang AOT / lli JIT / WASM / stackify / per-target llc / **portable C23
     kernel**), **and** the
     Phase 13–26 organs: calibration (microbench + Bayesian/conformal), policy
@@ -23,17 +23,19 @@
     ledger, provenance manifest, e-graph + memory-module fixpoints, the two-truth
     quarantine, modular mapping functions, the enriched-operad memory
     interface, and the closed calibration loop (`calibloop`: measure → freeze →
-    replan → certified win). Suite: `python -m bcir.tests.run_all` (**580 checks**).
-  - **`mlir/`** — the law: the ODS/TableGen dialect family (~80 ops), the compiled
-    `bcir-opt` with `-bcir-verify` (R1–R17), `-bcir-promote-lanes`,
+    replan → certified win). Suite: `python -m bcir.tests.run_all` (live count + coverage
+    in [`STATUS.md`](STATUS.md), generated from the tree — see that file rather than a
+    hard-coded number here, which is what the 580/615/631 drift came from).
+  - **`mlir/`** — the law: the ODS/TableGen dialect family (op count in [`STATUS.md`](STATUS.md)),
+    the compiled `bcir-opt` with `-bcir-verify` (R1–R18), `-bcir-promote-lanes`,
     `-convert-bcir-to-llvm`, the **GEM pipeline passes** (`-bcir-classify-lanes
     / -select-realization / -batch / -schedule / -lower-to-llvm`), the **full
     deterministic optimizer core in C++23** (`-bcir-cost-model` cost+fusion/CSE →
     `-bcir-plan` coupled min-plus → `-bcir-overlap` (max,+) → `-bcir-rcsp` /
     `-bcir-rcsp-plan` constrained search), a `bcir.kbcir.theta` context op, named pass
     pipelines (`bcir-audit`/`-optimize`/`-hydrate`/`-lower-llvm`/`-aot`), and the IRDL
-    projection for stock `mlir-opt`. Validated in CI on a multi-version matrix — LLVM 18
-    and 19, both gating (`mlir-rail-validate`).
+    projection for stock `mlir-opt`. Validated in CI on the latest LLVM/MLIR release —
+    LLVM 22, gating (`mlir-rail-validate`).
 - **`runtime/c/`** — the freestanding (no-libc) C runtime: the StreamPack ABI v1 decoder
   (Python-encode ↔ C-decode parity + libFuzzer), the ETL binary-record decoder
   (`bcir_binrec.c`, parity + libFuzzer), the C23 `#embed` frozen Q8 tier table, and the
@@ -128,6 +130,24 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Docs governance — generated status, link/retired-path CI, drift reconciliation.**
+  Added `tools/docs/gen_status.py` → [`docs/STATUS.md`](STATUS.md), the single source of truth for
+  counts + coverage (Python tests, ODS ops, registered passes, MLIR FileCheck tests, runtime-C
+  components, the R1–R18 law-coverage matrix computed from `mlir/test/passes/verify*.mlir`, and the
+  hardware-channel matrix) — so prose links here instead of carrying a hand-typed number (the root of
+  the 580/615/631 + R17/R18 drift). Added two CI gates: `tools/docs/check_links.py` (code-aware
+  broken relative-link checker — strips fenced + inline code so C++/IR snippets aren't mistaken for
+  links) and `tools/docs/check_retired_paths.py` (an *active-doc* references a retired tree — e.g. the
+  removed `runtime/llvm/` LLVM-IR-schema runtime — only with an explicit `<!-- allow-retired-paths -->`
+  historical marker). Quarantined the 86 dead `runtime/llvm/` links across the `llvm-training/`
+  substrate: retired guides now carry a deprecation banner pointing at the MLIR dialect + C runtime,
+  and dead links became plain code mentions (display text preserved). Reconciled the live snapshots:
+  the audit + roadmap now defer counts to `STATUS.md`, current-state verifier descriptions read
+  **R1–R18** (R18 = compositional call-graph integrity, with its own MLIR negative cases), the MLIR
+  rail is noted as LLVM 22, and the release ladder splits **0.4** into **0.4a** (proof-carrying
+  *mechanism* — explain/replay/reduce, ✅) and **0.4b** (proof-carrying *contract* — stable cert
+  schema + external replay-CLI contract + upgrade tests, ☐). Dated changelog entries below are left as
+  historical snapshots (they captured the count/law set accurate *at that date*).
 - 2026-06-18: **Roadmap expanded — the dependency-ordered plug-in-compiler plan (§5.7).** Replaced
   the "long-term frontends" stub with a sequenced, rationale-backed phased roadmap that elevates a
   **solid C frontend + backend to the immediate next major milestone** (it gates everything below):

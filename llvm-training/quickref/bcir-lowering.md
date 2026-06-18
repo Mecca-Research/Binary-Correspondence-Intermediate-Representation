@@ -1,5 +1,13 @@
 # Quickref: BCIR Lowering
 
+> ⚠️ **Retired / historical material.** This guide references the early **LLVM-IR-schema runtime**
+> (`runtime/llvm/`, since removed). BCIR's current representation is the **MLIR dialect**
+> (`mlir/include/BCIR/`) + the **C runtime** (`runtime/c/`); see `docs/PARITY.md`,
+> `docs/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
+> **not** follow the `runtime/llvm/` paths below.
+<!-- allow-retired-paths -->
+
+
 ## Lowering layers
 
 1. **Semantic records**: claims, resources, schedules, blobs, batches, graph fragments, and stream packs become named structs, globals, or ABI records.
@@ -37,4 +45,4 @@
 - [`../bcir-mapping/05-runtime-abi.md`](../bcir-mapping/05-runtime-abi.md)
 - [`../bcir-mapping/06-claim-lowering-pipeline.md`](../bcir-mapping/06-claim-lowering-pipeline.md)
 - [`../bcir-mapping/10-metadata-and-diagnostics.md`](../bcir-mapping/10-metadata-and-diagnostics.md)
-- [`../../runtime/llvm/README.md`](../../runtime/llvm/README.md)
+- `../../runtime/llvm/README.md`

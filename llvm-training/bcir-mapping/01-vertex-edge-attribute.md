@@ -1,5 +1,13 @@
 # Vertex, Edge, and Attribute Lowering
 
+> ⚠️ **Retired / historical material.** This guide references the early **LLVM-IR-schema runtime**
+> (`runtime/llvm/`, since removed). BCIR's current representation is the **MLIR dialect**
+> (`mlir/include/BCIR/`) + the **C runtime** (`runtime/c/`); see `docs/PARITY.md`,
+> `docs/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
+> **not** follow the `runtime/llvm/` paths below.
+<!-- allow-retired-paths -->
+
+
 BCIR graph-shaped data often starts as vertices connected by edges with
 attribute payloads. LLVM IR has no graph primitive, so the lowering must choose
 an explicit memory and ABI shape.
@@ -30,21 +38,21 @@ an explicit memory and ABI shape.
 
 ## Relevant runtime ABI structs/functions
 
-- [`%bcir.claim`](../../runtime/llvm/bcir_claim_schema.ll) can encode graph-like
+- `%bcir.claim` can encode graph-like
   vertices through packed control bits, read resource IDs, write resource IDs,
   hazard domain, and immediates.
-- [`@bcir.claim.rd`](../../runtime/llvm/bcir_claim_accessors.ll) and
-  [`@bcir.claim.wr`](../../runtime/llvm/bcir_claim_accessors.ll) expose read and
+- `@bcir.claim.rd` and
+  `@bcir.claim.wr` expose read and
   write resource edges from a claim.
-- [`%bcir.res`](../../runtime/llvm/bcir_registry_schema.ll) records resource
+- `%bcir.res` records resource
   identity, domain, base pointer, and bounds-like fields.
-- [`@bcir.registry.lookup`](../../runtime/llvm/bcir_gem_seed.ll) turns a resource
+- `@bcir.registry.lookup` turns a resource
   ID into a resource table entry.
-- [`@bcir.gem.execute_claim`](../../runtime/llvm/bcir_gem_seed.ll) is the seed
+- `@bcir.gem.execute_claim` is the seed
   executor that interprets one graph/claim node against the registry table.
-- Existing examples: [`runtime/llvm/bcir_examples_phase3.ll`](../../runtime/llvm/bcir_examples_phase3.ll)
-  for claim/batch/phase globals, [`runtime/llvm/bcir_examples_worklist.ll`](../../runtime/llvm/bcir_examples_worklist.ll)
-  for worklist-style claim arrays, and [`runtime/llvm/bcir_examples_phase4_generated.ll`](../../runtime/llvm/bcir_examples_phase4_generated.ll)
+- Existing examples: `runtime/llvm/bcir_examples_phase3.ll`
+  for claim/batch/phase globals, `runtime/llvm/bcir_examples_worklist.ll`
+  for worklist-style claim arrays, and `runtime/llvm/bcir_examples_phase4_generated.ll`
   for generated resources and batches.
 
 ## Verifier risks

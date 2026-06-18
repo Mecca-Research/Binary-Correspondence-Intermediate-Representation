@@ -1,5 +1,13 @@
 # Pitfalls — Real-World LLVM IR Bugs
 
+> ⚠️ **Retired / historical material.** This guide references the early **LLVM-IR-schema runtime**
+> (`runtime/llvm/`, since removed). BCIR's current representation is the **MLIR dialect**
+> (`mlir/include/BCIR/`) + the **C runtime** (`runtime/c/`); see `docs/PARITY.md`,
+> `docs/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
+> **not** follow the `runtime/llvm/` paths below.
+<!-- allow-retired-paths -->
+
+
 A checklist of common mistakes when writing or generating LLVM IR.
 Most entries come from the sibling **BCIR** project, where each was
 caught by `llvm-as` or `llvm-link` and fixed with a referenced commit.

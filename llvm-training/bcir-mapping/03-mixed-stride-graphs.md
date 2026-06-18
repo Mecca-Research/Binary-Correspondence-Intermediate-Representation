@@ -1,5 +1,13 @@
 # Mixed-Stride Graphs
 
+> ⚠️ **Retired / historical material.** This guide references the early **LLVM-IR-schema runtime**
+> (`runtime/llvm/`, since removed). BCIR's current representation is the **MLIR dialect**
+> (`mlir/include/BCIR/`) + the **C runtime** (`runtime/c/`); see `docs/PARITY.md`,
+> `docs/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
+> **not** follow the `runtime/llvm/` paths below.
+<!-- allow-retired-paths -->
+
+
 Mixed-stride graph lowering covers layouts where vertex or edge attributes are
 not a simple contiguous `i + 1` walk. Examples include row/column graph tiles,
 structure-of-arrays plus array-of-structures hybrids, gathered edge lists, and
@@ -58,22 +66,22 @@ shows all four steps plus a custom intrinsic-shaped backend hook.
 
 ## Relevant runtime ABI structs/functions
 
-- [`@bcir.claim.stride_code`](../../runtime/llvm/bcir_claim_accessors.ll),
-  [`@bcir.claim.opstride`](../../runtime/llvm/bcir_claim_accessors.ll), and
-  [`@bcir.claim.imm`](../../runtime/llvm/bcir_claim_accessors.ll) expose compact
+- `@bcir.claim.stride_code`,
+  `@bcir.claim.opstride`, and
+  `@bcir.claim.imm` expose compact
   and full stride information.
-- [`%bcir.batch`](../../runtime/llvm/bcir_schedule_schema.ll),
-  [`%bcir.phase.range`](../../runtime/llvm/bcir_schedule_schema.ll),
-  [`%bcir.prefetch.profile`](../../runtime/llvm/bcir_schedule_schema.ll), and
-  [`%bcir.stream.pack`](../../runtime/llvm/bcir_schedule_schema.ll) group mixed
+- `%bcir.batch`,
+  `%bcir.phase.range`,
+  `%bcir.prefetch.profile`, and
+  `%bcir.stream.pack` group mixed
   layouts into executable streams.
-- [`@bcir.op.ggg.load.v8i32.ref`](../../runtime/llvm/bcir_ops.ll) and
-  [`@bcir.op.ggg.store.v8i32.ref`](../../runtime/llvm/bcir_ops.ll) show explicit
+- `@bcir.op.ggg.load.v8i32.ref` and
+  `@bcir.op.ggg.store.v8i32.ref` show explicit
   gathered index lowering.
-- [`@bcir.classify.memory_lane`](../../runtime/llvm/bcir_lane_classifier.ll)
+- `@bcir.classify.memory_lane`
   uses lane and stride fields to classify memory behavior.
-- Existing examples: [`runtime/llvm/bcir_examples_phase3.ll`](../../runtime/llvm/bcir_examples_phase3.ll),
-  [`runtime/llvm/bcir_stream_pack.ll`](../../runtime/llvm/bcir_stream_pack.ll),
+- Existing examples: `runtime/llvm/bcir_examples_phase3.ll`,
+  `runtime/llvm/bcir_stream_pack.ll`,
   and [`llvm-training/exercises/013-mixed-stride-indexing.prompt.md`](../exercises/013-mixed-stride-indexing.prompt.md).
 
 ## Verifier risks

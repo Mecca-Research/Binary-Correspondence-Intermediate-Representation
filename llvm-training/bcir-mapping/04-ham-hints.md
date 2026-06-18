@@ -1,5 +1,13 @@
 # HAM Hints and Memory Guidance
 
+> ⚠️ **Retired / historical material.** This guide references the early **LLVM-IR-schema runtime**
+> (`runtime/llvm/`, since removed). BCIR's current representation is the **MLIR dialect**
+> (`mlir/include/BCIR/`) + the **C runtime** (`runtime/c/`); see `docs/PARITY.md`,
+> `docs/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
+> **not** follow the `runtime/llvm/` paths below.
+<!-- allow-retired-paths -->
+
+
 HAM hints are BCIR-side guidance for heterogeneous, hierarchical, or
 high-affinity memory behavior. In LLVM IR they should lower to concrete memory
 attributes, metadata, prefetch calls, address spaces, phase/barrier calls, or
@@ -28,21 +36,21 @@ runtime profile records rather than informal comments.
 
 ## Relevant runtime ABI structs/functions
 
-- [`%bcir.prefetch.profile`](../../runtime/llvm/bcir_schedule_schema.ll) stores
+- `%bcir.prefetch.profile` stores
   prefetch-related schedule information.
-- [`@bcir.op.prefetch.linear`](../../runtime/llvm/bcir_prefetch_profiles.ll) and
-  [`@bcir.op.prefetch.strided`](../../runtime/llvm/bcir_prefetch_profiles.ll)
+- `@bcir.op.prefetch.linear` and
+  `@bcir.op.prefetch.strided`
   wrap `llvm.prefetch` for linear and strided access patterns.
-- [`%bcir.claim`](../../runtime/llvm/bcir_claim_schema.ll) contains hazard-domain
+- `%bcir.claim` contains hazard-domain
   and control fields used by hint-aware scheduling.
-- [`%bcir.res`](../../runtime/llvm/bcir_registry_schema.ll) can carry resource
+- `%bcir.res` can carry resource
   domain and bounds-like values for memory placement decisions.
-- [`@bcir.op.barrier`](../../runtime/llvm/bcir_ops.ll),
-  [`@bcir.op.atomic.add.i32`](../../runtime/llvm/bcir_ops.ll), and
-  [`@bcir.op.cmpxchg.i32`](../../runtime/llvm/bcir_ops.ll) encode real ordering
+- `@bcir.op.barrier`,
+  `@bcir.op.atomic.add.i32`, and
+  `@bcir.op.cmpxchg.i32` encode real ordering
   behavior when a hint crosses into correctness.
-- Existing examples: [`runtime/llvm/bcir_prefetch_profiles.ll`](../../runtime/llvm/bcir_prefetch_profiles.ll),
-  [`runtime/llvm/bcir_examples_phase3.ll`](../../runtime/llvm/bcir_examples_phase3.ll),
+- Existing examples: `runtime/llvm/bcir_prefetch_profiles.ll`,
+  `runtime/llvm/bcir_examples_phase3.ll`,
   and [`llvm-training/exercises/014-ham-hint-metadata.prompt.md`](../exercises/014-ham-hint-metadata.prompt.md).
 
 ## Verifier risks
