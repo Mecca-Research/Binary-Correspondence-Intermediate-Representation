@@ -693,8 +693,11 @@ the `for` step / the `do/while` bottom test / at the `while` body end -- so it r
 enum cases fold to their values; `cfront_switch.c`), all Clang-equivalent, and ✅ **interleaved
 top-level declarations** (a `typedef`/`enum`/`struct`/`union` defined *between* functions now parses
 on the C rail too -- one top-level loop with a `try_top_decl()` helper, matching the oracle's already
-interleaving `parse_unit`; `cfront_interleave.c`); still cross-clause
-fallthrough, `goto`; designated +
+interleaving `parse_unit`; `cfront_interleave.c`), and ✅ **`goto` + labels** (the driver
+error-cleanup pattern -- `goto done;` / `done:;` carried as emit-only markers like break/continue,
+which already lower to a goto, so they emit verbatim and stay Clang-equivalent; the mutable
+accumulator is a real C local so skipped updates match; `cfront_goto.c`); still cross-clause
+fallthrough; designated +
 compound initializers; storage classes + linkage (`static`/`extern`/`thread_local`); `restrict` +
 alias/effect propagation; `_Atomic` + C-memory-model legality; scalable IR allocation (no fixed
 `BCIR_MAX_*`); fuller x86-64/AArch64 ABI; real object/dependency output via a resident backend. **Exit:**

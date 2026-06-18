@@ -155,6 +155,16 @@ class Continue:
     pass                            # `continue;` — jump to the nearest enclosing loop's next iteration
 
 
+@dataclass(frozen=True)
+class Goto:
+    label: str                      # `goto label;` — an unconditional jump (driver error-cleanup paths)
+
+
+@dataclass(frozen=True)
+class Label:
+    name: str                       # `name:` — a jump target at function-body scope
+
+
 # --- top level ---
 @dataclass(frozen=True)
 class Param:

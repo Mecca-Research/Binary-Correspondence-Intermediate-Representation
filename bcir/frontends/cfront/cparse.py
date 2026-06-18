@@ -399,6 +399,15 @@ class _Parser:
             self.nxt()
             self.eat("PUNCT", ";")
             return cast.Continue()
+        if self.at("IDENT", "goto"):
+            self.nxt()
+            label = self.eat("IDENT").text
+            self.eat("PUNCT", ";")
+            return cast.Goto(label)
+        if self.at("IDENT") and self.peek(1).kind == "PUNCT" and self.peek(1).text == ":":
+            name = self.nxt().text                            # `label:` — the labeled stmt follows
+            self.eat("PUNCT", ":")
+            return cast.Label(name)
         if self._is_decl_start():
             return self._decl_stmt()
         expr = self._expr()
