@@ -128,6 +128,25 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Unified heterogeneous runtime — hardware channels (`bcir/channels.py`).** The
+  recurring x86/ARM friction was a symptom: per-architecture rules (the `perf_event_open` syscall
+  number, the energy/thermal sensor paths, the codegen triple, the realizable lane widths) were
+  *scattered* as inline `platform.machine()` checks, so the architectures collided. Introduced the
+  **`HardwareChannel`** abstraction that isolates *everything* hardware-specific about one backend
+  (the K_BCIR cost `profile`, the real `llvm_triple`/`e_machine`, the `runtime` hooks, the hardware
+  `kind`) behind one uniform interface, so two channels coexist in one tower without their rules
+  colliding. A registry of the six real arch backends (x86/ARM/RISC-V/GPU, host-ELF + GPU) plus three
+  **modeled** future backends (`fpga_systolic`, `nvme_stream`, `hbm_pim` — the FPGA/NVMe/HBM-PIM
+  extension points). **`orchestrate(module, tower, theta)`** plans a module across a heterogeneous
+  tower — for each claim, the cheapest *suitable* channel by K_BCIR cost — so a reduction lands on
+  HBM/PIM, a tiled matmul on the FPGA/GPU, a gather on the GPU, control on the CPU, all in one plan,
+  every placement the **same K_BCIR arithmetic** on that channel's profile. It decomposes to a single
+  GEM StreamPack: `LaneSegment.channel` + `apply_channels` tag **one binary graph** that runs across
+  the whole tower. The silicon layer now reads its perf syscall from the host channel (one source of
+  truth — the #255 collision is structural now). New `bcir/tests/test_channels.py` (13 tests:
+  isolation, unified core, orchestration, the extension point); full suite 631 green; pure-Python (no
+  MLIR rail change). Architecture + extension path documented in `docs/HETEROGENEOUS_CHANNELS.md`.
+
 - 2026-06-18: **Test-suite consolidation (2b) — a 5.8× faster quick chain (~28s → 4.8s).** A
   measured audit corrected the premise: the bottleneck is NOT the test count or the generative
   campaigns (differential 1.4s, fuzz 1.8s — cheap), it is the **C-compiler subprocesses +

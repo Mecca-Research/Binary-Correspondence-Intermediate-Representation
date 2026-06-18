@@ -188,16 +188,15 @@ _PERF_HW = {"cycles": 0, "instructions": 1, "cache_refs": 2, "cache_misses": 3,
 _IOC_ENABLE, _IOC_DISABLE, _IOC_RESET = 0x2400, 0x2401, 0x2403
 
 
+# The perf_event_open syscall number is NOT portable (298 x86_64, 241 aarch64/riscv64, 364 armv7).
+# It is owned by the host's HardwareChannel runtime -- a single source of truth, so x86's and ARM's
+# ABI rules never collide here (the regression #255 fixed, now structural). See bcir/channels.py.
 def _perf_syscall_nr() -> int:
-    """The perf_event_open syscall number for the host ABI -- it is NOT portable.
-    x86_64 is 298; the asm-generic table (aarch64, riscv64) is 241; armv7 is 364.
-    Hardcoding the x86 number silently invokes the wrong syscall on ARM (the Pi 5)."""
-    import platform
-    return {"x86_64": 298, "aarch64": 241, "arm64": 241, "riscv64": 241,
-            "armv7l": 364, "ppc64le": 319, "s390x": 331}.get(platform.machine(), 298)
+    from .channels import host_perf_syscall_nr
+    return host_perf_syscall_nr()
 
 
-_SYS_perf_event_open = _perf_syscall_nr()  # arch-dispatched (the ABI differs per machine)
+_SYS_perf_event_open = _perf_syscall_nr()  # from the host channel (the ABI differs per machine)
 
 
 def _perf_open(config: int):

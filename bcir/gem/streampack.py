@@ -49,6 +49,11 @@ class LaneSegment:
     # set by `gem.cim.annotate_cim` only when the data-movement saved outweighs the
     # in-memory compute surcharge (a large reduction). The lowering reads this.
     dispatch: str = "core"
+    # Heterogeneous channel (append-only): the HardwareChannel that executes this segment in a
+    # mixed tower -- "host" (the planning CPU) by default, or e.g. "nvidia_ptx" / "fpga_systolic" /
+    # "hbm_pim" when `channels.orchestrate` placed the claim off the host. The executor dispatches
+    # per segment, so one StreamPack -- the same unified binary graph -- runs across the whole tower.
+    channel: str = "host"
 
 
 @dataclass(frozen=True)
