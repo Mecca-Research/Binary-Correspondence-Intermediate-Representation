@@ -103,6 +103,8 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"{ref(c.rd[0])} {_BINOP[suf]} {ref(c.rd[1])}")
     if c.op.startswith("c.un."):
         return deftmp(c.wr[0], f"({_UNOP[suf]}{ref(c.rd[0])})")
+    if c.op.startswith("c.cast:"):                           # (type)operand — width cast / reinterpret
+        return deftmp(c.wr[0], f"({c.op.split(':', 1)[1]}){ref(c.rd[0])}")
     if c.op == "c.select":                                   # ternary: cond ? then : els
         return deftmp(c.wr[0], f"({ref(c.rd[0])} ? {ref(c.rd[1])} : {ref(c.rd[2])})")
     if c.op == "c.load":

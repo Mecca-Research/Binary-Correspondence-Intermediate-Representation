@@ -42,6 +42,16 @@ _BIN = {
 }
 _UN = {"-": (Opcode.SUB, "neg"), "~": (Opcode.ADD, "bnot"), "!": (Opcode.SUB, "lnot")}
 
+# A cast's target type, named by width so both rails emit the same (uintN_t) spelling. The C value
+# model tracks everything as a 32-bit unit, so a cast renders by size (a pointer cast keeps its `*`).
+_CAST_W = {1: "uint8_t", 2: "uint16_t", 4: "uint32_t", 8: "uint64_t"}
+
+
+def _cast_name(ct: CType) -> str:
+    if ct.kind == "pointer":
+        return _cast_name(ct.of) + " *" if ct.of else "void *"
+    return _CAST_W.get(ct.size, "uint32_t")
+
 
 class CLowerError(Exception):
     pass
@@ -275,6 +285,13 @@ class _FuncLowerer:
             opcode, suf = _UN[node.op]
             t = self._temp(scalar("uint32_t"), f"u_{suf}")
             return self._emit(f"c.un.{suf}", opcode, (v,), (t,))
+        if isinstance(node, cast.Cast):
+            v = self._rvalue(node.operand)
+            ct = self._resolve_type(node.type)
+            # assigning the cast to a uint32 temp reproduces the integer-promotion semantics: a
+            # narrowing cast masks (zero-extends back), so downstream arithmetic matches Clang.
+            t = self._temp(ct if ct.is_integer else scalar("uint32_t"), "cast")
+            return self._emit(f"c.cast:{_cast_name(ct)}", Opcode.ADD, (v,), (t,))
         if isinstance(node, (cast.Index, cast.Member)):
             return self._read(self._lvalue(node))
         if isinstance(node, cast.Assign):

@@ -540,7 +540,28 @@ class _Parser:
         if self.peek().kind == "OP" and self.peek().text in ("-", "~", "!", "*", "&"):
             op = self.nxt().text
             return cast.Unary(op, self._unary())
+        if self._is_cast():                            # (type)operand — a cast binds at the unary level
+            self.eat("PUNCT", "(")
+            tref = self._type_spec()
+            ptr = 0
+            while self.at("OP", "*"):                   # `(uint32_t *)p` — a pointer cast
+                ptr += 1
+                self.nxt()
+            self.eat("PUNCT", ")")
+            return cast.Cast(cast.TypeRef(base=tref.base, ptr=ptr, aggregate=tref.aggregate,
+                                          quals=tref.quals), self._unary())
         return self._postfix()
+
+    def _is_cast(self) -> bool:
+        """At `(`, decide whether it opens a cast `(type-name)` rather than a parenthesized expr."""
+        if not self.at("PUNCT", "("):
+            return False
+        nxt = self.peek(1)
+        if nxt.kind != "IDENT":
+            return False
+        w = nxt.text
+        return (w in _TYPE_KW or w in ("struct", "union", "enum", "const", "volatile")
+                or is_scalar_name(w) or w in self.typedefs)
 
     def _postfix(self):
         node = self._primary()
