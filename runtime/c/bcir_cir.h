@@ -63,6 +63,7 @@ typedef struct bcir_resource {
   uint8_t  read_only;
   uint8_t  kind;             /* bcir_rkind */
   char     name[BCIR_CIR_NAME];
+  char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
 } bcir_resource;
 
 /* a C type descriptor (for signatures + faithful emission). */

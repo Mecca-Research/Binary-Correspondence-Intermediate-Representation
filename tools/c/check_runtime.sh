@@ -109,7 +109,7 @@ echo "  PASS bcir_cir.h freestanding IR (C11 + C23)"
 "${CC}" -std=c23 -O2 -Wall -Wextra "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_macros.c cfront_ppinc.c; do  # L1-L7
+for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c; do  # L1-L8
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re

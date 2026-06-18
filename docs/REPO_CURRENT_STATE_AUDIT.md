@@ -130,6 +130,19 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Plug-in C compiler — L8 ABI in C → the full L1–L8 C ladder is ported.** Struct
+  return-by-value (a function returning a struct: a struct local built via member stores, then
+  `return r`), struct member stores (`r.field = expr` → `c.store` → `memcpy` at the field offset),
+  `__attribute__((packed))` / `aligned(N)` / `alignas` struct layout (no-padding packed; forced
+  alignment), and a field-size-correct member load (`memcpy` the field's exact byte width into a
+  zeroed temp — fixes packed `uint8_t`/`uint16_t` reads). Fixtures `cfront_structret.c` (vec2 swap,
+  struct param + struct return) and `cfront_packed.c` (a packed wire header) match the oracle's
+  structural summary exactly and are Clang-behaviour-equivalent; the C frontend's packed offsets are
+  cross-checked against Clang's `sizeof`/`offsetof` (`size=7 addr@1 len@5`). With L8, the **entire C
+  frontend ladder (L1–L8) now lives in `runtime/c/`** — Python↔C parity + six-artifact gated across
+  all nine fixtures (`tools/c/check_runtime.sh`). The remaining `runtime/c/` ports are infra, not
+  ladder stages: the verifier R9–R17, C.2 attestation, atomics/fences, dynamic shapes, multi-channel
+  lowering (§5.8). Warning-clean (C11 + C23).
 - 2026-06-18: **Plug-in C compiler — L7 a real C preprocessor in C (`bcir_cpp.c`).** A C
   preprocessor that runs before `bcir_cfront`'s lexer: object- and function-like `#define` macros
   (with `#` stringize + `##` paste + expand-until-stable rescanning), `#undef`, conditional

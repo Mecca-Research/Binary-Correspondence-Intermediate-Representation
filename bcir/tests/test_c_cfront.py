@@ -27,7 +27,8 @@ _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_callgraph.c"]
 _CONTROL = ["cfront_branch.c", "cfront_while.c"]
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c"]      # L7: exercise the preprocessor
-_FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC
+_ABI = ["cfront_structret.c", "cfront_packed.c"]      # L8: struct return-by-value + packed layout
+_FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI
 
 
 def _includes_for(fx: str) -> dict:
@@ -183,6 +184,26 @@ def test_full_compile_execute_loop_in_c():
             assert int(m["plan_cost"]) > 0 and int(m["pack_bytes"]) > 64                # a real plan + a real pack
             order = out.split("order=")[1].split(",")
             assert order == sorted(order, key=int)                       # deterministic lowering order
+
+
+def test_L8_packed_layout_matches_clang():
+    """The C frontend's packed struct offsets must equal Clang's sizeof/offsetof (the ABI)."""
+    src = open(os.path.join(_C, "cfront_packed.c"), encoding="utf-8").read()
+    hdr = compile_unit(src, check_clang=False).lowered.aggregates["wire_hdr"]
+    assert hdr.size == 7 and hdr.field("addr")[1] == 1 and hdr.field("len")[1] == 5
+    if not _CC:
+        return
+    probe = ("#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n"
+             "struct __attribute__((packed)) wire_hdr { uint8_t cmd; uint32_t addr; uint16_t len; };\n"
+             'int main(void){printf("%zu %zu %zu %zu", sizeof(struct wire_hdr),'
+             " offsetof(struct wire_hdr,cmd), offsetof(struct wire_hdr,addr),"
+             " offsetof(struct wire_hdr,len)); return 0;}")
+    with tempfile.TemporaryDirectory() as d:
+        c, e = os.path.join(d, "p.c"), os.path.join(d, "p")
+        open(c, "w").write(probe)
+        if subprocess.run([_CC, "-std=c11", c, "-o", e], capture_output=True).returncode == 0:
+            nums = [int(x) for x in subprocess.run([e], capture_output=True, text=True).stdout.split()]
+            assert nums == [hdr.size, hdr.field("cmd")[1], hdr.field("addr")[1], hdr.field("len")[1]]
 
 
 def test_c_frontend_builds_warning_clean():
