@@ -106,15 +106,19 @@ for std in c11 c23; do
     || { echo "  FAIL: bcir_cir.h not freestanding-clean under -std=${std}"; exit 1; }
 done
 echo "  PASS bcir_cir.h freestanding IR (C11 + C23)"
-"${CC}" -std=c23 -O2 -Wall -Wextra "${C}/bcir_cfront.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
-  || "${CC}" -std=c11 -O2 "${C}/bcir_cfront.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
+"${CC}" -std=c23 -O2 -Wall -Wextra "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_branch.c cfront_while.c; do  # L1-L6
+for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_macros.c cfront_ppinc.c; do  # L1-L7
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
+import os, re
 from bcir.frontends.cfront import compile_unit
 from bcir.model import Domain
-r=compile_unit(open('${C}/${fx}').read(), check_clang=False)
+src=open('${C}/${fx}').read()
+inc={h: open(os.path.join('${C}',h)).read() for h in re.findall(r'#include\s+\"([^\"]+)\"', src)
+     if os.path.exists(os.path.join('${C}',h))}
+r=compile_unit(src, check_clang=False, includes=inc or None)
 fns=r.lowered.functions; lf=fns[next(reversed(fns))]
 mmio=sum(1 for c in lf.claims if c.op=='c.load' and c.domain==Domain.MMIO)
 bf=sum(1 for c in lf.claims if c.op=='c.bf.get'); kn=sum(1 for c in lf.claims if c.op=='c.const')
@@ -135,9 +139,9 @@ for f in bcir_plan.c bcir_hydrate.c; do
       || { echo "  FAIL: ${f} not freestanding-clean under -std=${std}"; exit 1; }
   done
 done
-"${CC}" -std=c23 -O2 -I "${C}" "${C}/bcir_cfront.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" \
+"${CC}" -std=c23 -O2 -I "${C}" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" \
   "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/test_cfront_loop.c" -o "${tmp}/loop" 2>/dev/null \
-  || "${CC}" -std=c11 -O2 -I "${C}" "${C}/bcir_cfront.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" \
+  || "${CC}" -std=c11 -O2 -I "${C}" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" \
        "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/test_cfront_loop.c" -o "${tmp}/loop" \
   || { echo "  FAIL: loop build"; exit 1; }
 for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c; do
