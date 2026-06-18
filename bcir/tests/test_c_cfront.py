@@ -38,10 +38,16 @@ _ATOMIC = ["cfront_atomic.c", "cfront_cmpxchg.c"]
 
 
 def _includes_for(fx: str) -> dict:
-    """The #include header map the oracle needs (the C frontend reads the sibling file)."""
-    if fx == "cfront_ppinc.c":
-        return {"cfront_ppdefs.h": open(os.path.join(_C, "cfront_ppdefs.h"), encoding="utf-8").read()}
-    return {}
+    """The `#include "..."` header map the oracle needs (the C frontend reads the sibling files
+    directly; the oracle is given their contents). Auto-resolved from the source, so a new fixture
+    that includes a header in runtime/c/ needs no per-file case."""
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    inc = {}
+    for h in re.findall(r'#include\s+"([^"]+)"', src):
+        p = os.path.join(_C, h)
+        if os.path.exists(p):
+            inc[h] = open(p, encoding="utf-8").read()
+    return inc
 
 
 def _oracle(src: str, includes=None):
@@ -344,6 +350,48 @@ def test_phase_d_real_header_driver_end_to_end():
         m = dict(re.findall(r"(\w+)=([0-9]+)", out))
         assert int(m["executed"]) == int(m["claims"]) == len(entry.claims), out
         assert m["r9"] == "1" and m["r10r11"] == "1", out
+
+
+def test_phase_d_uart_driver_write_and_poll_path():
+    """Phase D (the write + control-flow half): a vendor-style UART register-map header
+    (uart_regs.h) + driver (cfront_driver_uart.c) driven END TO END through the plug-in C compiler
+    with no Python. Complements the DMA driver (test_phase_d_real_header_driver_end_to_end, which is
+    read-only + a call graph) with the patterns a real driver lives on: MMIO register *writes*
+    (u->BRR/CR/DR =) and a *bounded status-poll loop* (L6 while + if). bcir_cpp expands the #include
+    + object macros; bcir_cfront lowers + R1-R18 verifies + C.2 attests; the closed loop plans /
+    hydrates / executes the straight-line entry. Also exercises typedef / enum / union, L5 volatile
+    MMIO, L2 bitfields, the L8 by-value ABI. The two rails agree on the structural summary, every
+    driver function is Clang-behaviour-equivalent, and the entry executes R9/R10-R11 clean."""
+    fx = "cfront_driver_uart.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src, _includes_for(fx))
+    assert "ok=1" in oracle_summary, oracle_summary
+    assert len(r.lowered.functions) == 3                      # cfg_low, send, configure
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        loop = _build_loop(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
+        assert "ok=1" in c_summary, c_summary
+        # the emitted C carries real volatile MMIO accesses + the union view + the C.2 attestation.
+        assert "volatile uint32_t *" in c_emit and "union uart_cfg" in c_emit, c_emit
+        assert "BCIR verified-C attestation (C.2)" in c_emit and "R13 provenance digest" in c_emit
+        # every driver function (MMIO loads/stores, control flow, the bitfield + union ABI) is
+        # behaviour-equivalent to the original under Clang.
+        for name, lf in r.lowered.functions.items():
+            assert _equiv(r.source, c_emit, lf) == "MATCH", f"{fx}:{name} not behaviour-equivalent"
+        # the straight-line entry (uart_configure) plans/hydrates/executes, R9/R10-R11 clean, and
+        # the loop's provenance digest is the one stamped in the emitted attestation.
+        out = subprocess.run([loop, os.path.join(_C, fx)], capture_output=True, text=True).stdout.strip()
+        assert out.startswith("loop:"), out
+        m = dict(re.findall(r"(\w+)=([0-9]+)", out))
+        assert int(m["executed"]) == int(m["claims"]) == len(entry.claims), out
+        assert m["r9"] == "1" and m["r10r11"] == "1", out
+        prov = re.search(r"prov=([0-9a-f]{16})", out)
+        emit_prov = re.search(r"R13 provenance digest\s+([0-9a-f]{16})", c_emit)
+        assert prov and emit_prov and prov.group(1) == emit_prov.group(1), "digest mismatch loop vs emit"
 
 
 def test_L8_packed_layout_matches_clang():

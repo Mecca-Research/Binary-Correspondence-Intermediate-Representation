@@ -130,6 +130,16 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Phase D (the write + control-flow half) — a UART driver end-to-end.** A second,
+  complementary register-map driver (`runtime/c/uart_regs.h` + `cfront_driver_uart.c`) closes the
+  patterns the DMA driver does not exercise: MMIO register **writes** (`u->BRR/CR/DR =`, ordered
+  volatile stores) and a **bounded status-poll loop** (L6 `while`+`if` re-reading `SR` each
+  iteration) — the bread-and-butter of real device drivers — alongside the same typedef/enum/union/
+  bitfield ABI and `#include`+object-macro preprocessing. Both rails agree on `funcs=3 claims=22
+  mmio=0 bf=4 const=4 binop=6 call=0 ok=1`; every function (incl. the MMIO + control-flow
+  `uart_send`) is Clang-behaviour-equivalent; the straight-line entry `uart_configure` plans /
+  hydrates / executes R9/R10-R11 clean with the loop's provenance digest matching the C.2
+  attestation. Gated by `test_phase_d_uart_driver_write_and_poll_path` + `tools/c/check_runtime.sh`.
 - 2026-06-18: **Phase D — a real register-map header driven end-to-end through the plug-in C
   compiler.** A vendor-style memory-mapped DMA-channel register map (`runtime/c/cfront_driver.h`) +
   driver (`cfront_driver.c`) is ingested with **no hand-written claim graph**, exercising the whole

@@ -597,13 +597,20 @@ the existing C twins):
   to port:* **multi-dimensional arrays** (a multi-index `m[i][j]` load + the pointer-to-row param
   declarator), **function pointers**, and the **ternary operator** `?:` (surfaced by Phase D; not yet
   lexed) — what remaining vendor headers need.
-- ✅ **Phase D — a real register-map header driven end-to-end** (`cfront_driver.{h,c}`): a
-  vendor-style memory-mapped DMA-channel register map + driver ingested with no hand-written claim
-  graph — `#include` + field macros, typedef/enum/union/bitfields, volatile MMIO, struct pointers,
-  and a call graph — through the full `C → bcir_cpp → bcir_cfront → verify → emit → bcir_plan →
-  bcir_hydrate → bcir_exec` loop, both rails agreeing (`claims=30 mmio=1 bf=3 call=2 ok=1`) and the
-  emit Clang-behaviour-equivalent. The demonstration the L1–L8 + verifier/type/atomics/channel work
-  was built toward.
+- ✅ **Phase D — real register-map headers driven end-to-end** — vendor-style headers + drivers
+  ingested with no hand-written claim graph, through the full `C → bcir_cpp → bcir_cfront → verify →
+  emit → bcir_plan → bcir_hydrate → bcir_exec` loop, both rails agreeing and the emit
+  Clang-behaviour-equivalent. Two complementary drivers cover the real-driver surface:
+  - **`cfront_driver.{h,c}`** — a DMA-channel map: the *read + decode + call-graph* path (`#include`
+    + field macros, typedef/enum/union/bitfields, volatile MMIO *loads*, struct pointers, an R18
+    call graph; `claims=30 mmio=1 bf=3 call=2 ok=1`).
+  - **`cfront_driver_uart.{regs.h,_uart.c}`** — a UART map: the *write + control-flow* path that
+    real drivers live on — MMIO register **writes** (`u->BRR/CR/DR =`) and a **bounded status-poll
+    loop** (L6 `while`+`if`), plus the union/bitfield/enum/typedef ABI (`claims=22 bf=4 ok=1`). Every
+    function (incl. the MMIO + control-flow `uart_send`) is Clang-equivalent; the straight-line entry
+    executes R9/R10–R11 clean.
+
+  Together they are the demonstration the L1–L8 + verifier/type/atomics/channel work was built toward.
 
 > Channels are already a real plugin boundary (`bcir/channel_plugin.py`: target-profile schema,
 > runtime signal-provider contract, codegen identity, calibration artifact, execution-capability set,
