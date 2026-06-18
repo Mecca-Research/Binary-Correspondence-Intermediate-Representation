@@ -1,0 +1,40 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "bcir-opt (Release, Ninja)",
+      "description": "Out-of-tree build of the BCIR dialect + GEM/RCSP passes and bcir-opt. Mirrors tools/wsl/build_mlir.sh: set MLIR_DIR / LLVM_DIR (or let CMake's find_package resolve them; the script auto-picks the highest /usr/lib/llvm-*/lib/cmake).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceParentDir}/build/mlir-build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "MLIR_DIR": "$env{MLIR_DIR}",
+        "LLVM_DIR": "$env{LLVM_DIR}"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "default",
+      "displayName": "bcir-opt (Debug + assertions)",
+      "binaryDir": "${sourceParentDir}/build/mlir-build-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "LLVM_ENABLE_ASSERTIONS": "ON" }
+    },
+    {
+      "name": "ccache",
+      "inherits": "default",
+      "displayName": "bcir-opt (Release + ccache)",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
+        "CMAKE_C_COMPILER_LAUNCHER": "ccache"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "default", "configurePreset": "default", "targets": ["bcir-opt"] },
+    { "name": "debug", "configurePreset": "debug", "targets": ["bcir-opt"] },
+    { "name": "ccache", "configurePreset": "ccache", "targets": ["bcir-opt"] }
+  ]
+}

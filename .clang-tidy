@@ -1,0 +1,21 @@
+# BCIR C / C++ static analysis. Real-bug + portability focused; the noisy/▼opinionated
+# families (fuchsia, altera, llvmlibc, abseil, full readability/naming) are off so the gate
+# stays high-signal on the freestanding C runtime (runtime/c/) and the MLIR passes (mlir/lib).
+# Needs a compile_commands.json (CMAKE_EXPORT_COMPILE_COMMANDS=ON — see mlir/CMakePresets.json).
+# Run: clang-tidy -p build/mlir-build <file>   (not a CI hard gate; available locally + pre-push).
+Checks: >
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  misc-*,
+  cppcoreguidelines-narrowing-conversions,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -misc-no-recursion,
+  -misc-non-private-member-variables-in-classes,
+  -misc-include-cleaner,
+  -clang-analyzer-optin.core.EnumCastOutOfRange
+WarningsAsErrors: ''
+HeaderFilterRegex: '(runtime/c|mlir/(lib|include))/.*'
+FormatStyle: file
