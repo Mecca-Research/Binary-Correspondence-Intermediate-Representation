@@ -130,6 +130,21 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Plug-in C compiler — the road to a C23 replacement compiler (§5.9) + the CLI
+  include-path fix (Phase 1).** Recorded the four-phase plan to take the frontend from a
+  driver-subset to a full C23 *replacement* compiler (roadmap §5.9): Phase 1 productionizes the
+  existing subset as a `cc`-like driver, Phase 2 is the freestanding embedded/kernel C23 subset,
+  Phase 3 a hosted candidate, Phase 4 a general distribution — each landed in PR-sized chunks. The
+  first chunk fixes the **CLI include-path gap**: `python -m bcir.frontends.cfront file.c` used to
+  call `compile_unit(f.read())` with no include context, so a driver with a sibling
+  `#include "uart_regs.h"` failed from the CLI even though the tests + `check_runtime.sh` supplied
+  the map (a real productization gap, not a compiler-core bug). The preprocessor now resolves headers
+  from **disk via a search path** (`Preprocessor(search_paths=…, defines=…)`; `_resolve` checks the
+  in-memory mount, then the `-I` dirs / source dir), and the CLI is a `cc`-compatible driver:
+  `-I` / `-D` / `-U` / `-std=` / `-E` / `-o`, with the source file's own directory always on the
+  search path. Gated by `test_cli_resolves_sibling_and_search_path_headers` (sibling + `-I` headers
+  compile, `-E` preprocesses, a missing header is a clean diagnostic + non-zero exit, `-D` seeds a
+  `#if`). 692 tests pass.
 - 2026-06-18: **Phase D (the write + control-flow half) — a UART driver end-to-end.** A second,
   complementary register-map driver (`runtime/c/uart_regs.h` + `cfront_driver_uart.c`) closes the
   patterns the DMA driver does not exercise: MMIO register **writes** (`u->BRR/CR/DR =`, ordered
