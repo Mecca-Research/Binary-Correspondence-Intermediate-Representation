@@ -24,6 +24,7 @@ from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
 from ...verify import Diagnostic, verify, verify_plan
 from .cparse import parse_unit
+from .cpp import preprocess
 from .emit import emit_function
 from .lower import LoweredUnit, lower_unit
 
@@ -54,7 +55,11 @@ def _cc():
     return shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 
 
-def compile_unit(source: str, *, check_clang: bool = True) -> CompileResult:
+def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | None = None,
+                 check_clang: bool = True) -> CompileResult:
+    # L7: preprocess first — the expanded text is what both the parser and the Clang harness see,
+    # so the equivalence check validates the lowering of the *preprocessed* program.
+    source = preprocess(source, includes=includes, embeds=embeds)
     unit = parse_unit(source)
     lowered = lower_unit(unit)
     h, theta, policy = host_channel().profile, Theta.cool(), PERF
@@ -191,8 +196,18 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
             setup.append(f"        s{i} = ({_cname(ct)})(rng() % {200 if has_ptr else 4000000000});")
             origargs.append(f"s{i}")
     call = ", ".join(origargs)
+    # struct-by-value returns (L8 ABI) can't be `!=`-compared — diff the bytes via memcmp.
+    if entry.ret_type.is_aggregate:
+        rt = _cname(entry.ret_type)
+        compare = (f"        {rt} ra = {entry.name}({call}), rb = bcir_{entry.name}({call});\n"
+                   f"        if (memcmp(&ra, &rb, sizeof ra) != 0) {{ printf(\"MISMATCH@%d\", "
+                   f"trial); return 0; }}")
+    else:
+        compare = (f"        if ({entry.name}({call}) != bcir_{entry.name}({call})) {{\n"
+                   f"            printf(\"MISMATCH@%d\", trial); return 0; }}")
     return f"""#include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 {source}
 
 {emitted}
@@ -204,9 +219,7 @@ int main(void) {{
 {chr(10).join(decls)}
     for (int trial = 0; trial < 256; trial++) {{
 {chr(10).join(setup)}
-        if ({entry.name}({call}) != bcir_{entry.name}({call})) {{
-            printf("MISMATCH@%d", trial); return 0;
-        }}
+{compare}
     }}
     printf("MATCH");
     return 0;

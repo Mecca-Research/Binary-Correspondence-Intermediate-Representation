@@ -403,13 +403,14 @@ applied to C):
 1. C source fixture · 2. claim-graph golden · 3. the K_BCIR plan · 4. the emitted C output ·
 5. behaviour equivalence against Clang on a harness · 6. an R1–R18 verifier checkpoint.
 
-**Landed: L1–L6 + the register-map/MMIO MVP** (`bcir/frontends/cfront/`,
-`bcir.frontends.cfront.compile_unit`) — a real recursive-descent C lexer/parser → the claim-graph
-model (`Resource`/`Claim`/`Phase`), the K_BCIR plan, an arbitrary-claim-graph C emitter (straight-line
-+ real `if`/`while` control flow), the `plan_composite` call-graph (R18) checkpoint, a `bcir-explain`
-artifact, the **C.2 verified-C attestation** (R12/R13/R17/R18 stamped on each emitted function) + a
-reusable self-check artifact (`emit_selfcheck`), and a seeded-random Clang behaviour-equivalence
-harness (toolchain-gated). `python -m bcir.frontends.cfront <file.c> [--explain|--selfcheck]`.
+**Landed: the full L1–L8 ladder** (`bcir/frontends/cfront/`, `bcir.frontends.cfront.compile_unit`) — a
+real recursive-descent C **preprocessor** + lexer/parser → the claim-graph model
+(`Resource`/`Claim`/`Phase`), the K_BCIR plan, an arbitrary-claim-graph C emitter (straight-line +
+real `if`/`while` control flow, `memcpy`-based alignment-safe member access), the `plan_composite`
+call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C attestation**
+(R12/R13/R17/R18 stamped on each emitted function) + a reusable self-check artifact
+(`emit_selfcheck`), and a seeded-random Clang behaviour-equivalence harness (toolchain-gated).
+`python -m bcir.frontends.cfront <file.c> [--explain|--selfcheck]`.
 
 | Stage | C surface | status |
 |---|---|---|
@@ -419,8 +420,14 @@ harness (toolchain-gated). `python -m bcir.frontends.cfront <file.c> [--explain|
 | L4 | functions + the call graph → **R18** (recursion + undefined-callee rejected) | ✅ |
 | L5 | `volatile`/MMIO → `Domain.MMIO` resources (ordered/`barriered`) + bitfield mask/shift claims | ✅ (the register-map/MMIO MVP) |
 | L6 | control flow — `if`/`else` → `compose.Cond`, bounded `while` (mutable named locals) | ✅ |
-| L7 | a preprocessor subset (macros, conditional compilation, `#embed`) | ☐ next |
-| L8 | full ABI tests against Clang (struct layout + calling convention per the channel's real `llvm_triple`) | ☐ next |
+| L7 | preprocessor — object/function `#define` (+ `#`/`##`), `#if`/`#ifdef`/`#elifdef`, `#include`, C23 `#embed` (→ const globals) | ✅ |
+| L8 | ABI — struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked against Clang's `sizeof`/`offsetof` | ✅ |
+
+With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
+register-map header now ingests through L7 → L5 → an R1–R18-clean plan with `bcir-explain`,
+behaviour-equivalent to Clang. Next: **Phase D** — the first real driver behind a `channel.json`
+plugin (generate/JIT a channel's kernel from an imported register map), closing the heterogeneous-
+tower loop.
 
 ##### C.1-MVP — the first milestone: a register-map + MMIO file (driver/kernel-relevant C)
 

@@ -37,6 +37,7 @@ def emit_function(lf: LoweredFunc) -> str:
     nm: dict[int, str] = {rid: pname for pname, rid, _ct in lf.params}
     for rid, name, _ct in lf.locals:
         nm[rid] = name
+    nm.update(lf.globals_used)                            # file-scope globals (defined in the source)
 
     def ref(rid: int) -> str:
         return nm.get(rid, f"t{rid}")
@@ -90,18 +91,24 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     if c.op == "c.load":
         et = _load_ctype(lf, c.wr[0])
         off = c.imm[0] if c.imm else 0
-        vol = "volatile " if c.domain.name == "MMIO" else ""
-        if len(c.rd) == 2:                                   # base[index]
+        t = ref(c.wr[0])
+        if len(c.rd) == 2:                                   # base[index] (typed array — aligned)
             return deftmp(c.wr[0], f"{ref(c.rd[0])}[{ref(c.rd[1])}]", et)
-        ptr = _base_ptr(lf, c.rd[0])
-        return deftmp(c.wr[0], f"*({vol}{et} *)((const {vol}char *){ptr} + {off})", et)
+        ptr = _base_ptr(lf, c.rd[0], ref)
+        if c.domain.name == "MMIO":                          # device register: ordered volatile load
+            return deftmp(c.wr[0], f"*(volatile {et} *)((const volatile char *){ptr} + {off})", et)
+        # plain RAM member/deref: memcpy is alignment-safe (handles packed) — Clang folds it to a load.
+        return f"{et} {t}; memcpy(&{t}, (const char *){ptr} + {off}, sizeof {t});"
     if c.op == "c.store":
         off = c.imm[0] if c.imm else 0
-        vol = "volatile " if c.domain.name == "MMIO" else ""
-        if len(c.rd) == 3:                                   # base[index] = value
+        if len(c.rd) == 3:                                   # base[index] = value (typed array)
             return f"{ref(c.rd[0])}[{ref(c.rd[1])}] = {ref(c.rd[2])};"
-        ptr = _base_ptr(lf, c.rd[0])
-        return f"*({vol}uint32_t *)(({vol}char *){ptr} + {off}) = {ref(c.rd[1])};"
+        ptr = _base_ptr(lf, c.rd[0], ref)
+        size = c.imm[1] if len(c.imm) > 1 else 4
+        if c.domain.name == "MMIO":                          # device register: ordered volatile store
+            return f"*(volatile uint32_t *)((volatile char *){ptr} + {off}) = {ref(c.rd[1])};"
+        # plain RAM member/deref: memcpy `size` bytes (correct truncation on little-endian, packed-safe).
+        return f"memcpy((char *){ptr} + {off}, &{ref(c.rd[1])}, {size});"
     if c.op == "c.bf.get":                                   # (unit >> bit_off) & mask
         bit_off, width = c.imm
         return deftmp(c.wr[0], f"({ref(c.rd[0])} >> {bit_off}) & {(1 << width) - 1}u")
@@ -122,10 +129,10 @@ def _load_ctype(lf: LoweredFunc, rid: int) -> str:
     return _cname(ct) if ct and ct.is_integer else "uint32_t"
 
 
-def _base_ptr(lf: LoweredFunc, rid: int) -> str:
+def _base_ptr(lf: LoweredFunc, rid: int, ref) -> str:
     """A pointer to the base resource: the name decays if it's a pointer/array, else address-of."""
     ct = lf.rid_types.get(rid)
-    name = next((p for p, r, _ in lf.params if r == rid), f"t{rid}")
+    name = ref(rid)
     if ct and ct.kind in ("pointer", "array"):
         return name
     return f"&{name}"

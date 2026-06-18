@@ -109,6 +109,7 @@ class LoweredFunc:
     region: object = None                 # compose.Region
     body: list = field(default_factory=list)        # the structured body tree (for emission)
     locals: list = field(default_factory=list)      # (rid, name, CType) mutable named locals
+    globals_used: dict = field(default_factory=dict)   # rid -> name (file-scope globals referenced)
 
 
 @dataclass
@@ -121,11 +122,14 @@ class LoweredUnit:
 
 
 class _FuncLowerer:
-    def __init__(self, func: cast.Func, aggregates: dict, base_rid: int, cid: list):
+    def __init__(self, func: cast.Func, aggregates: dict, base_rid: int, cid: list,
+                 genv: dict | None = None, gres: dict | None = None):
         self.func = func
         self.aggregates = aggregates
         self.rid = base_rid
         self.cid = cid                    # shared mutable [next_claim_id]
+        self.genv = genv or {}            # file-scope globals: name -> (rid, CType)
+        self.gres = gres or {}            # global rid -> Resource
         self.env: dict[str, tuple[int, CType]] = {}    # name -> (storage rid, type)
         self.resources: dict[int, Resource] = {}
         self.rtypes: dict[int, CType] = {}             # rid -> CType (for emission)
@@ -224,7 +228,8 @@ class _FuncLowerer:
         raise CLowerError(f"unsupported base expression {type(node).__name__}")
 
     def _mmio(self, base_rid: int) -> bool:
-        return self.resources[base_rid].domain == Domain.MMIO
+        res = self.resources.get(base_rid) or self.gres.get(base_rid)
+        return res is not None and res.domain == Domain.MMIO
 
     # --- rvalue lowering: returns the rid holding the value ---
     def _rvalue(self, node) -> int:
@@ -284,8 +289,11 @@ class _FuncLowerer:
             t = self._temp(scalar("uint32_t"), "bf")
             v = self._emit("c.bf.set", Opcode.ADD, (old, v), (t,), imm=(lv.bit_off, lv.bit_width))
         mmio = self._mmio(lv.rid)
-        rd = (lv.rid, v) if lv.idx is None else (lv.rid, lv.idx, v)
-        self._emit("c.store", Opcode.STORE, rd, (), imm=(lv.byte_off,) if lv.byte_off else (),
+        if lv.idx is None:                                    # member/deref: carry (offset, size)
+            rd, imm = (lv.rid, v), (lv.byte_off, max(1, lv.ct.size))
+        else:                                                 # base[idx]: a typed array store
+            rd, imm = (lv.rid, lv.idx, v), ()
+        self._emit("c.store", Opcode.STORE, rd, (), imm=imm,
                    domain=Domain.MMIO if mmio else Domain.RAM, bounds="assumed_safe",
                    lane=Lane.H if mmio else Lane.U,
                    hazard="barriered" if mmio else "unique")
@@ -344,7 +352,10 @@ class _FuncLowerer:
 
     def lower(self) -> LoweredFunc:
         self.last_return = None
-        for p in self.func.params:                            # params -> input resources
+        self.env.update(self.genv)                            # file-scope globals are in scope
+        for rid, ct in self.genv.values():
+            self.rtypes.setdefault(rid, ct)
+        for p in self.func.params:                            # params -> input resources (shadowing)
             ct = self._resolve_type(p.type)
             rid = self._new_rid()
             self._resource(rid, ct, p.name)
@@ -354,6 +365,10 @@ class _FuncLowerer:
             self._stmt(st)
         body = self.block_stack[0]
         claims = _flatten_block(body)
+        touched = {r for c in claims for r in (tuple(c.rd) + tuple(c.wr))}
+        for rid in touched & set(self.gres):                  # pull in referenced global resources
+            self.resources[rid] = self.gres[rid]
+        gnames = {rid: nm for nm, (rid, _ct) in self.genv.items() if rid in touched}
         m = Module(name=self.func.name)
         for rid in sorted(self.resources):
             m.add_resource(self.resources[rid])
@@ -362,7 +377,8 @@ class _FuncLowerer:
         return LoweredFunc(name=self.func.name, module=m, ret_type=ret_ct, params=self.params,
                            return_rid=self.last_return, claims=list(claims),
                            resources=dict(self.resources), rid_types=dict(self.rtypes),
-                           calls=list(self.calls), region=None, body=body, locals=list(self.locals))
+                           calls=list(self.calls), region=None, body=body, locals=list(self.locals),
+                           globals_used=gnames)
 
 
 def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Region":
@@ -412,17 +428,32 @@ def lower_unit(unit: cast.Unit) -> LoweredUnit:
     function to its claim-graph Module + compose.Function."""
     aggregates: dict[str, CType] = {}
     for tag, agg in unit.aggregates.items():
-        b = AggregateBuilder(agg.kind, tag)
+        b = AggregateBuilder(agg.kind, tag, packed=agg.packed, force_align=agg.align)
         for tref, mname, width in agg.members:
             b.members.append((mname, _resolve_member_type(tref, aggregates), width))
         aggregates[tag] = b.build()
 
+    genv: dict[str, tuple] = {}                            # file-scope globals: name -> (rid, CType)
+    gres: dict[int, Resource] = {}
+    for gi, g in enumerate(unit.globals):
+        ct = _resolve_member_type(g.type, aggregates)
+        if g.init and ct.kind == "array" and ct.count == 0:
+            ct = array(ct.of, len(g.init))                # `T name[] = {...}` -> sized from the init
+        elif g.init and ct.kind != "array":
+            ct = array(ct, len(g.init))
+        rid = 900000 + gi
+        gres[rid] = Resource(rid=rid, domain=Domain.RAM, elem_bytes=(ct.of.size if ct.of else ct.size),
+                             shape=(ct.count or len(g.init) or 1,), access="ro",
+                             data_gen=1, name=g.name)
+        genv[g.name] = (rid, ct)
+
     functions: dict[str, LoweredFunc] = {}
     compose_functions: dict[str, compose.Function] = {}
-    resources: dict[int, Resource] = {}
+    resources: dict[int, Resource] = dict(gres)
     cid = [1000]
     for idx, fn in enumerate(unit.funcs):
-        lf = _FuncLowerer(fn, aggregates, base_rid=100 + idx * 1000, cid=cid).lower()
+        lf = _FuncLowerer(fn, aggregates, base_rid=100 + idx * 1000, cid=cid,
+                          genv=genv, gres=gres).lower()
         functions[fn.name] = lf
         resources.update(lf.resources)
     for lf in functions.values():                          # regions need every callee's param rids

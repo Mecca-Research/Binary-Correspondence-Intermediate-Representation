@@ -88,12 +88,15 @@ def array(of: CType, count: int) -> CType:
 
 @dataclass
 class AggregateBuilder:
-    """Compute a struct/union layout the way Clang does (natural alignment, no packing). Bitfields
-    pack LSB-first into storage units of their declared type (the little-endian Clang rule the
-    behaviour-equivalence check relies on)."""
+    """Compute a struct/union layout the way Clang does (natural alignment). Bitfields pack LSB-first
+    into storage units of their declared type (the little-endian Clang rule the equivalence check
+    relies on). ``packed`` drops inter-member + tail padding (member alignment forced to 1);
+    ``force_align`` raises the aggregate alignment (`aligned(N)`/`alignas`)."""
     kind: str
     name: str
     members: list = field(default_factory=list)   # (name, CType, bit_width)  (bit_width 0 == plain)
+    packed: bool = False
+    force_align: int = 0
 
     def build(self) -> CType:
         offset = 0
@@ -102,13 +105,17 @@ class AggregateBuilder:
         bf_unit_off = None        # byte offset of the active bitfield storage unit
         bf_bits = 0               # bits already used in it
         bf_unit_size = 0
+
+        def malign(mtype: CType) -> int:
+            return 1 if self.packed else mtype.align
+
         for mname, mtype, width in self.members:
-            align = max(align, mtype.align)
+            align = max(align, malign(mtype))
             if width and self.kind == "struct":
                 unit_bits = mtype.size * 8
                 if bf_unit_off is None or bf_unit_size != mtype.size or bf_bits + width > unit_bits:
-                    if offset % mtype.align:
-                        offset += mtype.align - (offset % mtype.align)
+                    if offset % malign(mtype):
+                        offset += malign(mtype) - (offset % malign(mtype))
                     bf_unit_off, bf_bits, bf_unit_size = offset, 0, mtype.size
                     offset += mtype.size
                 laid.append((mname, mtype, bf_unit_off, bf_bits, width))
@@ -117,10 +124,11 @@ class AggregateBuilder:
                 laid.append((mname, mtype, 0, 0, width))
             else:
                 bf_unit_off, bf_bits, bf_unit_size = None, 0, 0     # a plain member flushes the unit
-                if offset % mtype.align:
-                    offset += mtype.align - (offset % mtype.align)
+                if offset % malign(mtype):
+                    offset += malign(mtype) - (offset % malign(mtype))
                 laid.append((mname, mtype, offset, 0, width))
                 offset += mtype.size
+        align = max(align, self.force_align)
         size = (max((m[1].size for m in self.members), default=0) if self.kind == "union"
                 else offset)
         if align and size % align:

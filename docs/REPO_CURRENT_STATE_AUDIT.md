@@ -130,6 +130,21 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C frontend L7 (preprocessor) + L8 (ABI) — the C ladder is complete.** L7: a real C
+  preprocessor (`cpp.py`) runs before the parser — object/function `#define` macros (with `#`
+  stringize + `##` paste, nested expansion with a hideset), `#undef`, conditional compilation
+  (`#if`/`#ifdef`/`#ifndef`/`#elif`/`#elifdef`/`#elifndef`/`#else`/`#endif`) with an integer
+  constant-expression evaluator (`defined`, `__has_include`, `__has_embed`), `#include` of project
+  headers (unmapped `<system>` headers are intrinsic no-ops), and **C23 `#embed`** (expands to a byte
+  list, usable via new file-scope `const` array globals that lower to read-only resources). The
+  preprocessed text feeds both the parser and the Clang harness, so equivalence validates the
+  *preprocessed* program. L8: **struct return-by-value** (the harness diffs returns via `memcpy`),
+  `__attribute__((packed))` / `aligned(N)` / `alignas` layout, and member access switched to
+  `memcpy` (alignment-safe / packed-safe; Clang folds it to a load) — the frontend's `sizeof`/field
+  offsets are cross-checked against Clang's ABI in the tests. A vendor register-map header now
+  ingests end to end (L7 → L5 → an R1–R18-clean plan + `bcir-explain`, behaviour-equivalent to
+  Clang). Fixtures L7_macros/L7_include/L7_embed + L8_struct_return/L8_packed added; suite: live count
+  in [`STATUS.md`](STATUS.md). Phase C effectively complete; next is Phase D (the first real driver).
 - 2026-06-18: **C frontend L5–L6 (the register-map/MMIO MVP) + the C.2 generalized backend.**
   L5: a `volatile`-qualified register-map struct (accessed through a `volatile struct *`) lowers to
   `Domain.MMIO` resources with ordered (`barriered`) load/store hazards — R3 (MMIO domain + write

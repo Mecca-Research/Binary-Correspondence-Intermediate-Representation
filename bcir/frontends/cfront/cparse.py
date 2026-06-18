@@ -54,26 +54,79 @@ class _Parser:
         return self.nxt()
 
     # --- unit ---
+    def _attributes(self) -> dict:
+        """Consume `__attribute__((packed))` / `__attribute__((aligned(N)))` / `alignas(N)` runs."""
+        attrs: dict = {}
+        while True:
+            if self.at("IDENT", "__attribute__"):
+                self.nxt()
+                self.eat("PUNCT", "(")
+                self.eat("PUNCT", "(")
+                while not self.at("PUNCT", ")"):
+                    a = self.eat("IDENT").text
+                    if a in ("packed", "__packed__"):
+                        attrs["packed"] = True
+                    elif a in ("aligned", "__aligned__"):
+                        self.eat("PUNCT", "(")
+                        attrs["aligned"] = parse_int_literal(self.eat("INT").text)
+                        self.eat("PUNCT", ")")
+                    if self.at("PUNCT", ","):
+                        self.nxt()
+                self.eat("PUNCT", ")")
+                self.eat("PUNCT", ")")
+            elif self.at("IDENT", "alignas") or self.at("IDENT", "_Alignas"):
+                self.nxt()
+                self.eat("PUNCT", "(")
+                attrs["aligned"] = parse_int_literal(self.eat("INT").text)
+                self.eat("PUNCT", ")")
+            else:
+                return attrs
+
     def parse_unit(self) -> cast.Unit:
         unit = cast.Unit()
         while not self.at("EOF"):
             if self.at("IDENT", "struct") or self.at("IDENT", "union"):
-                # Could be an aggregate *definition* or a function returning a struct. Look ahead:
-                # `struct TAG {` is a definition; `struct TAG name(` is a function.
-                if self.peek(2).kind == "PUNCT" and self.peek(2).text == "{":
-                    agg = self._aggregate()
+                save = self.i
+                kind = self.nxt().text
+                attrs = self._attributes()
+                tag = self.eat("IDENT").text if self.at("IDENT") else ""
+                if self.at("PUNCT", "{"):                      # an aggregate definition
+                    agg = self._aggregate_body(kind, tag, attrs)
                     unit.aggregates[agg.tag] = agg
                     self.tags.add(agg.tag)
                     continue
-            unit.funcs.append(self._func())
+                self.i = save                                  # a struct *type* (func ret / global)
+            tref = self._type_spec()
+            tref, name = self._declarator(tref)
+            if self.at("PUNCT", "("):                          # a function definition
+                unit.funcs.append(self._func_body(tref, name))
+            else:                                              # a file-scope global variable
+                unit.globals.append(self._global(tref, name))
         return unit
 
-    def _aggregate(self) -> cast.Aggregate:
-        kind = self.eat("IDENT").text                     # struct | union
-        tag = self.eat("IDENT").text
+    def _global(self, tref: cast.TypeRef, name: str) -> cast.Global:
+        init: tuple = ()
+        if self.at("OP", "="):
+            self.nxt()
+            if self.at("PUNCT", "{"):                          # an initializer list { e0, e1, ... }
+                self.nxt()
+                elems = []
+                while not self.at("PUNCT", "}"):
+                    elems.append(self._expr())
+                    if self.at("PUNCT", ","):
+                        self.nxt()
+                self.eat("PUNCT", "}")
+                init = tuple(elems)
+            else:
+                init = (self._expr(),)
+        self.eat("PUNCT", ";")
+        return cast.Global(type=tref, name=name, init=init)
+
+    def _aggregate_body(self, kind: str, tag: str, attrs: dict) -> cast.Aggregate:
         self.eat("PUNCT", "{")
         members = []
         while not self.at("PUNCT", "}"):
+            self._attributes()                            # member-leading alignas/attrs (consumed)
             tref = self._type_spec()
             tref, name = self._declarator(tref)
             width = 0
@@ -83,8 +136,11 @@ class _Parser:
             members.append((tref, name, width))
             self.eat("PUNCT", ";")
         self.eat("PUNCT", "}")
+        trailing = self._attributes()                     # `} __attribute__((packed));`
         self.eat("PUNCT", ";")
-        return cast.Aggregate(kind=kind, tag=tag, members=tuple(members))
+        attrs = {**attrs, **trailing}
+        return cast.Aggregate(kind=kind, tag=tag, members=tuple(members),
+                              packed=bool(attrs.get("packed")), align=attrs.get("aligned", 0))
 
     # --- types ---
     def _type_spec(self) -> cast.TypeRef:
@@ -137,15 +193,13 @@ class _Parser:
         dims = []
         while self.at("PUNCT", "["):
             self.nxt()
-            dims.append(parse_int_literal(self.eat("INT").text))
+            dims.append(0 if self.at("PUNCT", "]") else parse_int_literal(self.eat("INT").text))
             self.eat("PUNCT", "]")
         return cast.TypeRef(base=base.base, ptr=ptr, array=tuple(dims),
                             aggregate=base.aggregate, quals=base.quals), name
 
     # --- functions ---
-    def _func(self) -> cast.Func:
-        ret = self._type_spec()
-        ret, name = self._declarator(ret)
+    def _func_body(self, ret: cast.TypeRef, name: str) -> cast.Func:
         self.eat("PUNCT", "(")
         params = []
         if not (self.at("PUNCT", ")") or self.at("IDENT", "void") and self.peek(1).text == ")"):
