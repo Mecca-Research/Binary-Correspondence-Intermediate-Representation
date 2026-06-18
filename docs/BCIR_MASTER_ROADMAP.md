@@ -667,13 +667,16 @@ ok=1`, executes the full loop). ✅ **multi-dimensional arrays** (a 2D array par
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both
 rails `claims=21 ok=1`, runs the full execute loop). *Still
-to port:* **function-pointer struct members** (dispatch tables), array-of-row pointer declarators
+to port:* **function-pointer struct members** (dispatch tables -- needs typed temporaries: a funcptr
+value is 8 bytes, the C value model's temps are 4), array-of-row pointer declarators
 (`(*m)[8]`); the comma
-operator, `_Alignof`/`typeof`, compound literals, integer promotions + usual arithmetic
+operator, `typeof`, compound literals, integer promotions + usual arithmetic
 conversions, pointer-arithmetic completeness; ✅ **`sizeof`** (`sizeof(type)` / `sizeof expr` folds to
 a compile-time constant -- the type/operand's static size, operand not evaluated; both rails agree
-via the shared scalar table + struct/union layout, Clang-equivalent, `cfront_sizeof.c`); still
-`_Alignof`/`typeof`, the comma operator; the rest of control flow — ✅ **`for`** (desugared onto
+via the shared scalar table + struct/union layout, Clang-equivalent, `cfront_sizeof.c`) + ✅
+**`_Alignof`/`alignof`** (the type's alignment from the same layout model, type-name form only;
+`cfront_alignof.c`, both rails `claims=9 ok=1`, runs the loop); still
+`typeof`, the comma operator; the rest of control flow — ✅ **`for`** (desugared onto
 the existing `while` machinery on both rails: `init; while(cond){ body; step }`, the step lowered at
 the loop-body end; `cfront_for.c`), ✅ **`do/while`** (a `WhileNode` `test_at_end` flag / the C
 `c.loop.test` marker placed at the loop-body bottom -- body runs at least once), ✅ **`break`** (a

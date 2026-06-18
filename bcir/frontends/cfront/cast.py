@@ -51,6 +51,11 @@ class SizeOf:
 
 
 @dataclass(frozen=True)
+class AlignOf:
+    type: TypeRef                   # `_Alignof(type-name)` — folds to the type's alignment
+
+
+@dataclass(frozen=True)
 class Binary:
     op: str                         # + - * / % & | ^ << >> == != < > <= >= && ||
     lhs: object

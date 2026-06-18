@@ -27,7 +27,7 @@ _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 # (control flow is not a flat StreamPack segment stream, so the loop runs the straight-line set).
 _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfront_callgraph.c",
                  "cfront_typedef.c", "cfront_enum.c", "cfront_ternary.c", "cfront_sizeof.c",
-                 "cfront_cast.c"]   # type-model breadth + 2D arrays + ?: + sizeof + casts
+                 "cfront_cast.c", "cfront_alignof.c"]   # + 2D arrays + ?: + sizeof + casts + _Alignof
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
             "cfront_continue.c", "cfront_switch.c"]
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c"]      # L7: exercise the preprocessor
