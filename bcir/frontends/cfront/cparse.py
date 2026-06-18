@@ -475,6 +475,25 @@ class _Parser:
                 break
         return node
 
+    def _sizeof(self):
+        """`sizeof ( type-name )` or `sizeof unary-expr` -> a SizeOf node folded to a constant in
+        lowering (the type model -- incl. struct/union layout -- is only known there)."""
+        self.eat("IDENT", "sizeof")
+        if self.at("PUNCT", "("):
+            save = self.i
+            self.nxt()
+            if self._is_decl_start():              # sizeof ( type-name )
+                tref = self._type_spec()
+                ptr = 0
+                while self.at("OP", "*"):          # `sizeof(uint32_t *)` etc.
+                    ptr += 1
+                    self.nxt()
+                self.eat("PUNCT", ")")
+                return cast.SizeOf(type=cast.TypeRef(base=tref.base, ptr=ptr,
+                                                     aggregate=tref.aggregate, quals=tref.quals))
+            self.i = save                          # not a type -> `sizeof ( expr )`
+        return cast.SizeOf(expr=self._unary())     # sizeof expr / sizeof (expr)
+
     def _primary(self):
         if self.at("INT"):
             return cast.IntLit(parse_int_literal(self.nxt().text))
@@ -483,6 +502,8 @@ class _Parser:
             if w in self.enums:                           # an enumerator -> its integer literal
                 self.nxt()
                 return cast.IntLit(self.enums[w])
+            if w == "sizeof":
+                return self._sizeof()
             if w in KEYWORDS and w != "sizeof":
                 raise CParseError(f"unexpected keyword {w!r} in expression at {self.peek().pos}")
             return cast.Name(self.nxt().text)

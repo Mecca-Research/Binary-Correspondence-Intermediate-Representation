@@ -345,6 +345,26 @@ static uint32_t p_primary(CC *c) {
   if(isk(c,T_INT)){tok t=adv(c);uint32_t r=temp(c,4);
     bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
     cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return r;}
+  if(is(c,"sizeof")){                  /* sizeof(type) / sizeof expr -> a folded constant (no eval) */
+    c->i++; long long size=4; int got=0;
+    if(is(c,"(")){ int save=c->i; c->i++;
+      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
+                    || is(c,"const")||is(c,"volatile") || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+      if(is_type){ bcir_ctype ty;int si;
+        if(!p_type(c,&ty,&si)){ size = ty.kind==2?8:(ty.kind==1?c->s[si].size:ty.size); got=1; }
+        eat(c,")"); }
+      else c->i=save;                  /* not a type -> sizeof ( expr ) */
+    }
+    if(!got){                          /* sizeof <operand>: a variable's static type size */
+      int paren=0; if(is(c,"(")){c->i++;paren=1;}
+      if(isk(c,T_ID)){ tok vid=*pk(c); venv *v=lookup(c,&vid);
+        if(v) size = v->type.kind==2?8:(v->type.kind==1?c->s[v->sidx].size:v->type.size);
+        c->i++; }
+      if(paren) eat(c,")");
+    }
+    uint32_t r=temp(c,4); bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
+    if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=size;} return r;
+  }
   if(is(c,"(")){c->i++;uint32_t r=p_expr(c);eat(c,")");return r;}
   if(isk(c,T_ID)){
     tok id=adv(c);

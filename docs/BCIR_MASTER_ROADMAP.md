@@ -650,7 +650,10 @@ over the binary grammar on both rails), lowered to a scalar `c.select` claim, an
 `(cond ? a : b)` — Clang-behaviour-equivalent (`cfront_ternary.c`, both rails `claims=13 ok=1`). *Still
 to port:* **function pointers**, **multi-dimensional arrays**; the comma
 operator, `sizeof`/`_Alignof`/`typeof`, casts + compound literals, integer promotions + usual arithmetic
-conversions, pointer-arithmetic completeness; the rest of control flow — ✅ **`for`** (desugared onto
+conversions, pointer-arithmetic completeness; ✅ **`sizeof`** (`sizeof(type)` / `sizeof expr` folds to
+a compile-time constant -- the type/operand's static size, operand not evaluated; both rails agree
+via the shared scalar table + struct/union layout, Clang-equivalent, `cfront_sizeof.c`); still
+`_Alignof`/`typeof`, the comma operator; the rest of control flow — ✅ **`for`** (desugared onto
 the existing `while` machinery on both rails: `init; while(cond){ body; step }`, the step lowered at
 the loop-body end; `cfront_for.c`), ✅ **`do/while`** (a `WhileNode` `test_at_end` flag / the C
 `c.loop.test` marker placed at the loop-body bottom -- body runs at least once) + ✅ **`break`** (a
