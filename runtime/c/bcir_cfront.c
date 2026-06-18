@@ -31,9 +31,13 @@ typedef struct { tkind k; const char *s; int n; long long v; } tok;
 #define MAXTOK 16384
 #define MAXFLD 64
 #define MAXENV 256
+#define MAXTD 64
+#define MAXEC 256
 
 typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int byte_off, bit_off, bit_w; } field;
-typedef struct { char tag[BCIR_CIR_NAME]; field f[MAXFLD]; int nf; int size; int align; } sdef;
+typedef struct { char tag[BCIR_CIR_NAME]; field f[MAXFLD]; int nf; int size; int align; int is_union; } sdef;
+typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int sidx; } tdef;   /* a typedef alias */
+typedef struct { char name[BCIR_CIR_NAME]; long long val; } econst;           /* an enum constant */
 
 typedef struct {
   char name[BCIR_CIR_NAME];
@@ -45,6 +49,8 @@ typedef struct {
 typedef struct {
   tok t[MAXTOK]; int nt, i;
   sdef s[16]; int ns;
+  tdef td[MAXTD]; int ntd;        /* typedef aliases (resolved at parse time) */
+  econst ec[MAXEC]; int nec;      /* enum constants (folded to literals at parse time) */
   venv env[MAXENV]; int nenv;
   bcir_func *fn;
   uint32_t rid, cid;
@@ -106,6 +112,15 @@ static int find_struct(CC *c,const char *s,int n){
   for(int i=0;i<c->ns;i++) if((int)strlen(c->s[i].tag)==n&&!strncmp(c->s[i].tag,s,n)) return i;
   return -1;
 }
+static int find_typedef(CC *c,const char *s,int n){
+  for(int i=0;i<c->ntd;i++) if((int)strlen(c->td[i].name)==n&&!strncmp(c->td[i].name,s,n)) return i;
+  return -1;
+}
+static int find_enum(CC *c,const char *s,int n){
+  for(int i=0;i<c->nec;i++) if((int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;
+  return -1;
+}
+static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the constants */
 
 /* a parsed type: fills a bcir_ctype + the struct index (sidx, or -1). */
 static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
@@ -117,7 +132,11 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
     if(is(c,"unsigned")){ty->signd=0;ty->size=4;seen=1;c->i++;continue;}
     if(is(c,"struct")||is(c,"union")){c->i++;tok tag=adv(c);int si=find_struct(c,tag.s,tag.n);
       if(si<0){fail(c,"unknown struct");return 1;} ty->kind=1;ty->size=c->s[si].size;*sidx=si;
-      idcpy(ty->tag,&tag);seen=1;break;}
+      ty->is_union=(uint8_t)c->s[si].is_union;idcpy(ty->tag,&tag);seen=1;break;}
+    if(is(c,"enum")){c->i++;if(isk(c,T_ID)&&!is(c,"{"))c->i++;   /* `enum [tag] [{...}]` -> int */
+      if(is(c,"{"))p_enum_body(c); ty->kind=0;ty->size=4;ty->signd=1;seen=1;break;}
+    if(!seen&&isk(c,T_ID)){int ti=find_typedef(c,pk(c)->s,pk(c)->n);   /* a typedef alias */
+      if(ti>=0){int vol=ty->is_volatile;*ty=c->td[ti].ty;if(vol)ty->is_volatile=1;*sidx=c->td[ti].sidx;c->i++;seen=1;break;}}
     if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
       if(sz<0){if(seen)break;fail(c,"unknown type");return 1;} ty->size=sz;seen=1;c->i++;
       if(is(c,"long")||is(c,"int")||is(c,"char"))continue;break;}
@@ -143,26 +162,95 @@ static void attrs(CC *c,int *packed,int *aligned){
     else break;
   }
 }
-static void p_struct(CC *c) {
+/* Parse `struct|union [tag] [attrs] { members } [attrs]` (NO trailing `;`). Registers an sdef and
+ * returns its index (-1 on error). An anonymous aggregate (no tag, e.g. `typedef struct {...} N;`)
+ * gets a synthesized internal tag so a typedef can alias it. */
+static int p_struct_body(CC *c) {
+  int is_union = is(c,"union");
   c->i++; int packed=0,aligned=0; attrs(c,&packed,&aligned);
-  tok tag=adv(c); sdef *S=&c->s[c->ns]; idcpy(S->tag,&tag); S->nf=0; S->align=1;
+  sdef *S=&c->s[c->ns]; S->nf=0; S->align=1; S->is_union=is_union;
+  if(isk(c,T_ID)&&!is(c,"{")){tok tag=adv(c);idcpy(S->tag,&tag);}
+  else snprintf(S->tag,sizeof S->tag,"$anon%d",c->ns);   /* anonymous: synth a unique tag */
   attrs(c,&packed,&aligned);
-  eat(c,"{");
-  int off=0,bf_off=-1,bf_bits=0,bf_unit=0;
+  if(!eat(c,"{"))return -1;
+  int off=0,maxsz=0,bf_off=-1,bf_bits=0,bf_unit=0;
   while(!is(c,"}")&&!c->failed){
-    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return; tok nm=adv(c);
+    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return -1; tok nm=adv(c);
     int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;} eat(c,";");
     int sz=ty.size,al=packed?1:(sz<1?1:sz); field *f=&S->f[S->nf++];
     idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;
-    if(al>S->align)S->align=al;
-    if(width){int ub=sz*8;
+    if(al>S->align)S->align=al; if(sz>maxsz)maxsz=sz;
+    if(is_union){f->byte_off=0;f->bit_off=0;}        /* union: every member overlaps at offset 0 */
+    else if(width){int ub=sz*8;
       if(bf_off<0||bf_unit!=sz||bf_bits+width>ub){if(off%al)off+=al-(off%al);bf_off=off;bf_bits=0;bf_unit=sz;off+=sz;}
       f->byte_off=bf_off;f->bit_off=bf_bits;bf_bits+=width;
     }else{bf_off=-1;bf_bits=0;bf_unit=0;if(off%al)off+=al-(off%al);f->byte_off=off;f->bit_off=0;off+=sz;}
   }
-  eat(c,"}"); attrs(c,&packed,&aligned); eat(c,";");
+  eat(c,"}"); attrs(c,&packed,&aligned);
   int salign = packed ? 1 : S->align; if(aligned>salign) salign=aligned; S->align=salign;
-  if(off%salign)off+=salign-(off%salign); S->size=off; c->ns++;
+  int total = is_union ? maxsz : off;              /* union size = the widest member */
+  if(total%salign)total+=salign-(total%salign); S->size=total;
+  return c->ns++;
+}
+
+/* --- enum + typedef (resolved at parse time so the claim graph carries the folded result) --- */
+static long long ce_expr(CC *c,int minp);
+static long long ce_primary(CC *c){
+  if(isk(c,T_INT))return adv(c).v;
+  if(is(c,"(")){c->i++;long long v=ce_expr(c,0);eat(c,")");return v;}
+  if(is(c,"-")){c->i++;return -ce_primary(c);}
+  if(is(c,"~")){c->i++;return ~ce_primary(c);}
+  if(is(c,"!")){c->i++;return !ce_primary(c);}
+  if(isk(c,T_ID)){int e=find_enum(c,pk(c)->s,pk(c)->n);if(e>=0){c->i++;return c->ec[e].val;}}
+  fail(c,"non-constant enum initializer");return 0;
+}
+static long long ce_expr(CC *c,int minp){
+  struct{const char*t;int p;}P[]={{"|",1},{"^",2},{"&",3},{"<<",5},{">>",5},
+    {"+",6},{"-",6},{"*",7},{"/",7},{"%",7},{0,0}};
+  long long lhs=ce_primary(c);
+  for(;;){int p=-1;const char*op=0;
+    for(int i=0;P[i].t;i++) if(is(c,P[i].t)){p=P[i].p;op=P[i].t;break;}
+    if(p<minp||p<0)break; c->i++; long long rhs=ce_expr(c,p+1);
+    lhs = !strcmp(op,"+")?lhs+rhs:!strcmp(op,"-")?lhs-rhs:!strcmp(op,"*")?lhs*rhs:
+          !strcmp(op,"/")?(rhs?lhs/rhs:0):!strcmp(op,"%")?(rhs?lhs%rhs:0):
+          !strcmp(op,"&")?lhs&rhs:!strcmp(op,"|")?lhs|rhs:!strcmp(op,"^")?lhs^rhs:
+          !strcmp(op,"<<")?lhs<<rhs:lhs>>rhs;
+  }
+  return lhs;
+}
+static void p_enum_body(CC *c){
+  eat(c,"{"); long long val=0;
+  while(!is(c,"}")&&!c->failed){
+    tok nm=adv(c);
+    if(is(c,"=")){c->i++;val=ce_expr(c,0);}
+    if(c->nec<MAXEC){idcpy(c->ec[c->nec].name,&nm);c->ec[c->nec].val=val;c->nec++;}
+    val++;
+    if(is(c,","))c->i++;
+  }
+  eat(c,"}");
+}
+static void p_typedef(CC *c){
+  c->i++;                                            /* `typedef` */
+  bcir_ctype ty; int sidx=-1; memset(&ty,0,sizeof ty); ty.size=4; ty.signd=1;
+  if(is(c,"struct")||is(c,"union")){                 /* alias an aggregate (named, anon, or by tag) */
+    int save=c->i,pk_=0,al_=0; c->i++; attrs(c,&pk_,&al_);
+    if(isk(c,T_ID)&&!is(c,"{"))c->i++; attrs(c,&pk_,&al_);
+    int isdef=is(c,"{"); c->i=save;
+    if(isdef){int si=p_struct_body(c);if(si<0)return; ty.kind=1;ty.size=c->s[si].size;sidx=si;
+      ty.is_union=(uint8_t)c->s[si].is_union;snprintf(ty.tag,sizeof ty.tag,"%s",c->s[si].tag);}
+    else { c->i++; tok tag=adv(c); int si=find_struct(c,tag.s,tag.n);
+      if(si<0){fail(c,"unknown struct in typedef");return;} ty.kind=1;ty.size=c->s[si].size;sidx=si;
+      ty.is_union=(uint8_t)c->s[si].is_union;idcpy(ty.tag,&tag);}
+    while(is(c,"*")){c->i++;ty.ptr_to_struct=(ty.kind==1);ty.kind=2;}
+  } else if(is(c,"enum")){                            /* alias an enum -> an int scalar */
+    c->i++; if(isk(c,T_ID)&&!is(c,"{"))c->i++; if(is(c,"{"))p_enum_body(c);
+    ty.kind=0; ty.size=4; ty.signd=1;
+  } else {
+    if(p_type(c,&ty,&sidx))return;                    /* scalar / pointer / typedef-of-typedef */
+  }
+  tok nm=adv(c);                                      /* the alias name */
+  if(c->ntd<MAXTD){idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=ty;c->td[c->ntd].sidx=sidx;c->ntd++;}
+  eat(c,";");
 }
 
 /* --- the IR builder ------------------------------------------------------ */
@@ -222,26 +310,34 @@ static uint32_t p_call(CC *c, const tok *name) {
   return t;
 }
 
-/* §5.8: GCC/Clang atomic + fence builtins -> the BCIR ATOMIC_x / BARRIER opcodes. */
-static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *fence){
-  struct{const char *n,*op;bcir_opcode oc;int f;} A[]={
-    {"__atomic_fetch_add","c.atomic.add",BCIR_OP_ATOMIC_ADD,0},
-    {"__atomic_fetch_sub","c.atomic.sub",BCIR_OP_ATOMIC_SUB,0},
-    {"__atomic_fetch_xor","c.atomic.xor",BCIR_OP_ATOMIC_XOR,0},
-    {"__atomic_thread_fence","c.fence",BCIR_OP_BARRIER,1},
-    {"__sync_synchronize","c.fence",BCIR_OP_BARRIER,1},{0,0,0,0}};
-  for(int i=0;A[i].n;i++) if((int)strlen(A[i].n)==t->n&&!strncmp(A[i].n,t->s,t->n)){*op=A[i].op;*oc=A[i].oc;*fence=A[i].f;return 1;}
+/* §5.8: GCC/Clang atomic + fence + CAS builtins -> the BCIR ATOMIC_x / BARRIER / CMPXCHG opcodes.
+ * kind: 0 = RMW (ptr,val), 1 = fence (no operands), 2 = cmpxchg (ptr,expected,desired). */
+enum { AK_RMW=0, AK_FENCE=1, AK_CAS=2 };
+static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *kind){
+  struct{const char *n,*op;bcir_opcode oc;int k;} A[]={
+    {"__atomic_fetch_add","c.atomic.add",BCIR_OP_ATOMIC_ADD,AK_RMW},
+    {"__atomic_fetch_sub","c.atomic.sub",BCIR_OP_ATOMIC_SUB,AK_RMW},
+    {"__atomic_fetch_xor","c.atomic.xor",BCIR_OP_ATOMIC_XOR,AK_RMW},
+    {"__atomic_thread_fence","c.fence",BCIR_OP_BARRIER,AK_FENCE},
+    {"__sync_synchronize","c.fence",BCIR_OP_BARRIER,AK_FENCE},
+    {"__sync_val_compare_and_swap","c.cmpxchg.val",BCIR_OP_CMPXCHG,AK_CAS},
+    {"__sync_bool_compare_and_swap","c.cmpxchg.bool",BCIR_OP_CMPXCHG,AK_CAS},{0,0,0,0}};
+  for(int i=0;A[i].n;i++) if((int)strlen(A[i].n)==t->n&&!strncmp(A[i].n,t->s,t->n)){*op=A[i].op;*oc=A[i].oc;*kind=A[i].k;return 1;}
   return 0;
 }
-static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int fence){
+static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind){
   c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
   if(!is(c,")")) for(;;){uint32_t a=p_expr(c);if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;if(is(c,",")){c->i++;continue;}break;}
   eat(c,")");
   uint32_t t=temp(c,4); bcir_claim *cl=new_claim(c,op,oc); if(!cl)return t;
-  cl->lane=BCIR_LANE_A; cl->hazard=fence?BCIR_HZ_BARRIERED:BCIR_HZ_ATOMIC;
-  if(!fence&&na>=1){ bcir_domain dom=BCIR_DOM_RAM;
+  cl->lane=BCIR_LANE_A; cl->hazard=kind==AK_FENCE?BCIR_HZ_BARRIERED:BCIR_HZ_ATOMIC;
+  if(kind!=AK_FENCE&&na>=1){ bcir_domain dom=BCIR_DOM_RAM;
     for(size_t z=0;z<c->fn->n_res;z++) if(c->fn->res[z].rid==args[0]) dom=c->fn->res[z].domain;
-    cl->domain=dom; cl->n_rd=2; cl->rd[0]=args[0]; cl->rd[1]=(na>1)?args[1]:args[0]; cl->n_wr=1; cl->wr[0]=t; }
+    cl->domain=dom; cl->n_wr=1; cl->wr[0]=t; cl->rd[0]=args[0];
+    if(kind==AK_CAS){                                  /* CMPXCHG: ptr, expected, desired */
+      cl->n_rd=3; cl->rd[1]=(na>1)?args[1]:args[0]; cl->rd[2]=(na>2)?args[2]:cl->rd[1]; }
+    else { cl->n_rd=2; cl->rd[1]=(na>1)?args[1]:args[0]; }                 /* RMW: ptr, val */
+  }
   return t;
 }
 
@@ -252,9 +348,12 @@ static uint32_t p_primary(CC *c) {
   if(is(c,"(")){c->i++;uint32_t r=p_expr(c);eat(c,")");return r;}
   if(isk(c,T_ID)){
     tok id=adv(c);
-    const char *aop;bcir_opcode aoc;int af;
-    if(is(c,"(")&&atomic_kind(&id,&aop,&aoc,&af)) return p_atomic(c,aop,aoc,af);  /* atomics/fences */
+    const char *aop;bcir_opcode aoc;int akind;
+    if(is(c,"(")&&atomic_kind(&id,&aop,&aoc,&akind)) return p_atomic(c,aop,aoc,akind);  /* atomics/fences/CAS */
     if(is(c,"(")) return p_call(c,&id);           /* call */
+    int ec=find_enum(c,id.s,id.n);                /* an enumerator -> its folded constant */
+    if(ec>=0){uint32_t r=temp(c,4);bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
+      if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
     venv *v=lookup(c,&id); if(!v){fail(c,"undefined identifier");return 0;}
     if(is(c,".")||is(c,"->")){c->i++;tok fn=adv(c);sdef *S=&c->s[v->sidx];
       for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n))
@@ -331,7 +430,8 @@ static void p_stmt(CC *c) {
   if(is(c,"{")){p_block(c);return;}
   int looks_decl=0;
   if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
-    looks_decl=sz>=0||is(c,"struct")||is(c,"union")||is(c,"const")||is(c,"volatile");}
+    looks_decl=sz>=0||is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"const")||is(c,"volatile")
+               ||find_typedef(c,pk(c)->s,pk(c)->n)>=0;}
   if(looks_decl){
     bcir_ctype ty;int si;if(p_type(c,&ty,&si))return; tok nm=adv(c);
     char nb[BCIR_CIR_NAME]; idcpy(nb,&nm);
@@ -339,7 +439,7 @@ static void p_stmt(CC *c) {
     uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, nb);
-    if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s",ty.tag);   /* L8 struct local */
+    if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
     env_add(c,&nm,rid,&ty,si);
     if(is(c,"=")){c->i++;uint32_t v=p_expr(c);
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}}
@@ -377,7 +477,7 @@ static int p_func(CC *c, bcir_func *fn) {
     uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, pb);
-    if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s",ty.tag);
+    if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
     env_add(c,&pn,rid,&ty,si);
     if(fn->n_params<BCIR_MAX_PARAMS){bcir_param *pp=&fn->params[fn->n_params++];
       idcpy(pp->name,&pn);pp->rid=rid;pp->type=ty;}
@@ -404,10 +504,12 @@ static const char *binop_c(const char *suf){
 static const char *unop_c(const char *suf){return !strcmp(suf,"neg")?"-":!strcmp(suf,"bnot")?"~":"!";}
 static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   int is_struct = (ty->kind==1) || ty->ptr_to_struct;
+  const char *kw = ty->is_union ? "union" : "struct";
   const char *base = is_struct ? ty->tag
                    : (ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t");
-  if(ty->kind==2) snprintf(o,n,"%s%s%s *",ty->is_volatile?"volatile ":"",ty->ptr_to_struct?"struct ":"",base);
-  else if(ty->kind==1) snprintf(o,n,"struct %s",ty->tag);
+  if(ty->kind==2) snprintf(o,n,"%s%s%s%s *",ty->is_volatile?"volatile ":"",
+                           ty->ptr_to_struct?kw:"",ty->ptr_to_struct?" ":"",base);
+  else if(ty->kind==1) snprintf(o,n,"%s %s",kw,ty->tag);
   else snprintf(o,n,"%s",base);
 }
 static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
@@ -421,7 +523,7 @@ static int is_named_local(const bcir_func *f,uint32_t rid){
   return 1;
 }
 static size_t emit_func(const bcir_func *f,char *o,size_t on){
-  size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],ty[64];
+  size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64];
   ctype_str(&f->ret,ty,sizeof ty);
   w+=snprintf(o+w,on-w,"static %s bcir_%s(",ty,f->name);
   if(f->n_params==0) w+=snprintf(o+w,on-w,"void");
@@ -431,7 +533,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
   /* declare named locals up front (mutable storage -- branch merges + loop accumulators) */
   for(size_t i=0;i<f->n_res;i++){const bcir_resource *r=&f->res[i];
     if(is_named_local(f,r->rid)){
-      if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  struct %s %s;\n",r->agg,r->name);
+      if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s;\n",r->agg,r->name);
       else w+=snprintf(o+w,on-w,"  uint32_t %s;\n",r->name);}}
   int depth=1;
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)
@@ -474,6 +576,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     else if(!strncmp(cl->op,"c.atomic.",9))      /* atomic RMW -> the matching builtin */
       w+=snprintf(o+w,on-w,"uint32_t %s = __atomic_fetch_%s(%s, %s, __ATOMIC_SEQ_CST);\n",
                   rname(f,cl->wr[0],d),cl->op+9,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
+    else if(!strncmp(cl->op,"c.cmpxchg.",10))     /* compare-and-swap -> the __sync CAS builtin */
+      w+=snprintf(o+w,on-w,"uint32_t %s = __sync_%s_compare_and_swap(%s, %s, %s);\n",
+                  rname(f,cl->wr[0],d),cl->op+10,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
     else if(!strcmp(cl->op,"c.fence"))
       w+=snprintf(o+w,on-w,"__atomic_thread_fence(__ATOMIC_SEQ_CST);\n");
     else if(!strncmp(cl->op,"c.call:",7)){
@@ -491,13 +596,26 @@ int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
   static CC c; memset(&c,0,sizeof c); memset(out,0,sizeof *out);
   c.rid=100; c.cid=1000;
   lex(&c,src);
-  while(is(&c,"struct")||is(&c,"union")){
-    /* a struct *definition*?  struct [attrs] TAG [attrs] {  -- lookahead past attributes. */
-    int save=c.i; c.i++; int pk_=0,al_=0; attrs(&c,&pk_,&al_);
-    if(isk(&c,T_ID)) c.i++;                         /* the tag */
-    attrs(&c,&pk_,&al_);
-    int isdef = is(&c,"{"); c.i=save;
-    if(isdef) p_struct(&c); else break;
+  /* pre-function declarations: typedefs, enum definitions, struct/union definitions -- in any
+   * order (vendor headers interleave them), until the first function/global. */
+  for(;;){
+    if(c.failed) break;
+    if(is(&c,"typedef")){ p_typedef(&c); continue; }
+    if(is(&c,"enum")){
+      int save=c.i; c.i++; if(isk(&c,T_ID)&&!is(&c,"{")) c.i++;
+      if(is(&c,"{")){ p_enum_body(&c); eat(&c,";"); continue; }
+      c.i=save; break;                              /* `enum tag` as a type -> a function follows */
+    }
+    if(is(&c,"struct")||is(&c,"union")){
+      /* a struct *definition*?  struct [attrs] [TAG] [attrs] {  -- lookahead past attributes. */
+      int save=c.i; c.i++; int pk_=0,al_=0; attrs(&c,&pk_,&al_);
+      if(isk(&c,T_ID)&&!is(&c,"{")) c.i++;          /* the tag */
+      attrs(&c,&pk_,&al_);
+      int isdef = is(&c,"{"); c.i=save;
+      if(isdef){ p_struct_body(&c); eat(&c,";"); continue; }
+      break;                                        /* struct used as a type -> a function follows */
+    }
+    break;
   }
   while(!isk(&c,T_END)&&!c.failed&&out->unit.n_funcs<BCIR_MAX_FUNCS){
     bcir_func *fn=&out->unit.funcs[out->unit.n_funcs];

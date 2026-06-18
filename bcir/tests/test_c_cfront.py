@@ -24,15 +24,17 @@ _C = os.path.join(_ROOT, "runtime", "c")
 _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 # straight-line fixtures run the full execute loop; control-flow fixtures get parity + emit + Clang ≡
 # (control flow is not a flat StreamPack segment stream, so the loop runs the straight-line set).
-_STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_callgraph.c"]
+_STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_callgraph.c",
+                 "cfront_typedef.c", "cfront_enum.c"]   # + type-model breadth (scalar straight-line)
 _CONTROL = ["cfront_branch.c", "cfront_while.c"]
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c"]      # L7: exercise the preprocessor
-_ABI = ["cfront_structret.c", "cfront_packed.c"]      # L8: struct return-by-value + packed layout
+_ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-value + packed layout
+        "cfront_union.c"]                             # + full union (members overlap at offset 0)
 _FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI
-# §5.8 atomics/fences run their own gate: their memory side effects make the generic
+# §5.8 atomics/fences/CAS run their own gate: their memory side effects make the generic
 # pure-function equivalence harness invalid (it would call the original first and observe
-# the mutated counter), so they get a side-effect-aware behaviour check below.
-_ATOMIC = ["cfront_atomic.c"]
+# the mutated cell), so they get a side-effect-aware behaviour check below.
+_ATOMIC = ["cfront_atomic.c", "cfront_cmpxchg.c"]
 
 
 def _includes_for(fx: str) -> dict:
@@ -148,18 +150,21 @@ def _equiv_atomic(source: str, c_emitted: str, entry) -> str:
     mutates its pointee, so the second call would start from a counter the first already moved.
     Instead this runs each on an independent copy of the *same* seeded state and compares both the
     return value and the final memory state (an atomic counter is a single location, not an array)."""
+    # Seed from a small range so a compare-and-swap's expected value collides with the cell
+    # often enough to exercise the swap-taken path (not just the no-op path); equivalence holds
+    # for any inputs, but this makes the behaviour check meaningful for CAS.
     decls, setup, args_a, args_b, cell_cmp = [], [], [], [], []
     for i, (_pn, _rid, ct) in enumerate(entry.params):
         if ct.kind in ("pointer", "array"):
             base = _cname(ct.of)
             decls += [f"  {base} ca{i};", f"  {base} cb{i};"]
-            setup.append(f"    ca{i}=cb{i}=({base})rng();")
+            setup.append(f"    ca{i}=cb{i}=({base})(rng()%16);")
             args_a.append(f"&ca{i}")
             args_b.append(f"&cb{i}")
             cell_cmp.append(f"ca{i}!=cb{i}")
         else:
             decls.append(f"  {_cname(ct)} s{i};")
-            setup.append(f"    s{i}=({_cname(ct)})rng();")
+            setup.append(f"    s{i}=({_cname(ct)})(rng()%16);")
             args_a.append(f"s{i}")
             args_b.append(f"s{i}")
     rt = _cname(entry.ret_type)
@@ -245,14 +250,22 @@ def test_full_compile_execute_loop_in_c():
             assert order == sorted(order, key=int)                       # deterministic lowering order
 
 
+# the atomic builtins each fixture must emit back (the faithful-emit artifact, not a scalar fallback).
+_ATOMIC_EMITS = {
+    "cfront_atomic.c": ["__atomic_fetch_", "__atomic_thread_fence", "__ATOMIC_SEQ_CST"],
+    "cfront_cmpxchg.c": ["__sync_val_compare_and_swap", "__sync_bool_compare_and_swap"],
+}
+
+
 def test_atomic_fence_dual_rail_parity_and_behaviour():
-    """§5.8 atomics/fences: __atomic_fetch_add/sub/xor -> ATOMIC_ADD/SUB/XOR and
-    __atomic_thread_fence/__sync_synchronize -> BARRIER lower on lane A (R6 admits lane A for a
-    scalar atomic counter; R5 demands the atomic/barriered hazard), pass R1-R8 + R18, emit the
-    matching builtins, and -- run on independent copies of the same seeded counter -- are
-    behaviour-equivalent under Clang. The full C compile->execute loop hydrates and executes every
-    atomic claim with R9/R10-R11 clean."""
-    for fx in _ATOMIC:                       # quick tier: the oracle accepts the atomic fixture.
+    """§5.8 atomics/fences/CAS: __atomic_fetch_add/sub/xor -> ATOMIC_ADD/SUB/XOR,
+    __atomic_thread_fence/__sync_synchronize -> BARRIER, and __sync_{val,bool}_compare_and_swap ->
+    CMPXCHG (a 3-read claim: ptr, expected, desired) all lower on lane A (R6 admits lane A for a
+    scalar atomic; R5 demands the atomic/barriered hazard), pass R1-R8 + R18, emit the matching
+    builtins, and -- run on independent copies of the same seeded cell -- are behaviour-equivalent
+    under Clang. The full C compile->execute loop hydrates and executes every atomic claim with
+    R9/R10-R11 clean."""
+    for fx in _ATOMIC:                       # quick tier: the oracle accepts the atomic fixtures.
         s, _, _ = _oracle(open(os.path.join(_C, fx), encoding="utf-8").read())
         assert "ok=1" in s, f"{fx}: oracle rejects atomics: {s}"
     if not _CC:
@@ -267,9 +280,9 @@ def test_atomic_fence_dual_rail_parity_and_behaviour():
             c_summary, c_emit = _c_run(exe, path)
             assert c_summary == oracle_summary, f"{fx}: parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
             assert "ok=1" in c_summary, c_summary
-            # the emitted C carries the real atomic builtins (seq-cst), not a scalar fallback.
-            assert "__atomic_fetch_" in c_emit and "__atomic_thread_fence" in c_emit, c_emit
-            assert "__ATOMIC_SEQ_CST" in c_emit, c_emit
+            # the emitted C carries the real atomic builtins, not a scalar fallback.
+            for needle in _ATOMIC_EMITS[fx]:
+                assert needle in c_emit, f"{fx}: emit missing {needle}\n{c_emit}"
             assert _equiv_atomic(r.source, c_emit, entry) == "MATCH", f"{fx}: not behaviour-equivalent"
             # the full C compile->execute loop: every atomic claim hydrates + executes, R9/R10-R11 clean.
             out = subprocess.run([loop, path], capture_output=True, text=True).stdout.strip()

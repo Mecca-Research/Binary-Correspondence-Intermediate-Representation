@@ -312,6 +312,10 @@ class _FuncLowerer:
                "__atomic_fetch_sub": ("c.atomic.sub", Opcode.ATOMIC_SUB),
                "__atomic_fetch_xor": ("c.atomic.xor", Opcode.ATOMIC_XOR)}
     _FENCE = {"__atomic_thread_fence", "__sync_synchronize"}
+    # Compare-and-swap -> the CMPXCHG opcode: a 3-read claim (ptr, expected, desired). The `val`
+    # form returns the pre-swap value, the `bool` form returns whether the swap happened.
+    _CMPXCHG = {"__sync_val_compare_and_swap": "c.cmpxchg.val",
+                "__sync_bool_compare_and_swap": "c.cmpxchg.bool"}
 
     def _call(self, node: cast.CallExpr) -> int:
         actuals = tuple(self._rvalue(a) for a in node.args)
@@ -329,6 +333,15 @@ class _FuncLowerer:
             t = self._temp(scalar("uint32_t"), "atom")
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
             return self._emit(op, oc, (ptr, val), (t,), lane=Lane.A, domain=dom, hazard="atomic")
+        if node.callee in self._CMPXCHG:
+            op = self._CMPXCHG[node.callee]
+            ptr = actuals[0]
+            exp = actuals[1] if len(actuals) > 1 else ptr
+            des = actuals[2] if len(actuals) > 2 else exp
+            t = self._temp(scalar("uint32_t"), "cas")
+            dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
+            return self._emit(op, Opcode.CMPXCHG, (ptr, exp, des), (t,),
+                              lane=Lane.A, domain=dom, hazard="atomic")
         t = self._temp(scalar("uint32_t"), f"call_{node.callee}")
         self.calls.append((node.callee, actuals))
         return self._emit(f"c.call:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))

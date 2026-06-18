@@ -134,6 +134,27 @@ def channel_suits(claim, ch: HardwareChannel) -> bool:
     return _claim_suits_channel(claim, ch)
 
 
+def route_claim(claim, channels):
+    """The plan-time, *cost-free* backend pick for a claim: among the channels that suit it, prefer
+    the most specialized match -- a plugin that declares one of the claim's concrete required
+    capabilities, over a universal/legacy fallback -- tie-broken by channel name. Returns the chosen
+    channel, or ``None`` if nothing suits.
+
+    This is the decision a driver makes *before* (or without) measured costs; `orchestrate` refines
+    it with the K_BCIR cost model. It is the seam ported to C (`runtime/c/bcir_channel.c`), so both
+    rails route an identical (claim -> channel) map for a given channel set."""
+    req = claim_required_caps(claim)
+    eligible = [c for c in channels if channel_suits(claim, c)]
+    if not eligible:
+        return None
+
+    def key(c):
+        specialized = bool(c.capabilities & req) and "universal" not in c.capabilities
+        return (0 if specialized else 1, c.name)
+
+    return min(eligible, key=key)
+
+
 def _rt(machine: str, energy: str, zones: tuple[str, ...]) -> RuntimeChannel:
     return RuntimeChannel(perf_syscall_nr=_PERF_SYSCALL.get(machine, 298),
                           energy_source=energy, thermal_zone_types=zones)

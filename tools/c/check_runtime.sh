@@ -113,7 +113,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_atomic.c; do  # L1-L8 + §5.8 atomics
+for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_union.c cfront_atomic.c cfront_cmpxchg.c; do  # L1-L8 + type-model + §5.8 atomics/CAS
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re
@@ -147,12 +147,33 @@ LOOP_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_plan.c ${C}/bcir_hydrate
 "${CC}" -std=c23 -O2 -I "${C}" ${LOOP_SRCS} -o "${tmp}/loop" 2>/dev/null \
   || "${CC}" -std=c11 -O2 -I "${C}" ${LOOP_SRCS} -o "${tmp}/loop" \
   || { echo "  FAIL: loop build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_atomic.c; do
+for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_typedef.c cfront_enum.c cfront_atomic.c cfront_cmpxchg.c; do
   out="$("${tmp}/loop" "${C}/${fx}")" || { echo "  FAIL: loop ${fx}: ${out}"; exit 1; }
   case "${out}" in
     loop:*executed=*) echo "  PASS loop ${fx} (${out#loop: })" ;;
     *) echo "  FAIL: loop ${fx}: ${out}"; exit 1 ;;
   esac
 done
+
+echo "[c-runtime] multi-channel lowering decision (bcir_channel): channel.json -> backend pick"
+# bcir_channel.c is the C twin of bcir/channels' routing seam -- it consumes channel.json and
+# routes each claim to a backend; the Python<->C parity is gated in bcir/tests/test_c_channel.py.
+"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${C}/bcir_channel.c" "${C}/test_channel.c" -o "${tmp}/tch" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 -I "${C}" "${C}/bcir_channel.c" "${C}/test_channel.c" -o "${tmp}/tch" \
+  || { echo "  FAIL: channel router build"; exit 1; }
+CHJSON="${ROOT}/channels/example_cpu.channel.json ${ROOT}/channels/example_tpu.channel.json ${ROOT}/channels/example_pim.channel.json"
+c_route="$(printf 'matmul.acc 4\ngather.load 5\nscalar.mov 0\n' | "${tmp}/tch" ${CHJSON} | sed -n 's/.*route=\([^|]*\).*/\1/p' | paste -sd, -)" \
+  || { echo "  FAIL: channel route run"; exit 1; }
+py_route="$(python3 -c "
+from bcir.channel_plugin import load_manifest
+from bcir.channels import route_claim
+from bcir.model import Claim, Opcode, StrideClass
+mans=[load_manifest('${ROOT}/channels/%s.channel.json'%n) for n in ('example_cpu','example_tpu','example_pim')]
+cl=[('matmul.acc',StrideClass.TILE),('gather.load',StrideClass.RANDOM),('scalar.mov',StrideClass.SCALAR)]
+print(','.join(route_claim(Claim(id=1,opcode=Opcode.LOAD,op=o,stride_class=s),mans).name for o,s in cl))
+")" || { echo "  FAIL: python route"; exit 1; }
+[ "${c_route}" = "${py_route}" ] \
+  && echo "  PASS channel routing parity (Python route_claim == C bcir_channel_route: ${c_route})" \
+  || { echo "  FAIL: channel routing parity (C='${c_route}' PY='${py_route}')"; exit 1; }
 
 echo "[c-runtime] ok"
