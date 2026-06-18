@@ -92,7 +92,7 @@ def test_vector_add_plan_is_per_target():
 # -- the committed gem_corpus.mlir pins only x86_avx512; this pins the rest (the
 # "six-target parity proven on the Python rail" made an explicit regression).
 _CORPUS_PLAN = {
-    "matmul_tiled": {"x86_avx2": 1015808, "x86_avx512": 1015808, "arm64_neon": 1015808,
+    "matmul_tiled": {"x86_avx2": 1245184, "x86_avx512": 1015808, "arm64_neon": 1703936,
                      "arm64_sve": 1015808, "nvidia_ptx": 1015808, "riscv_rvv": 1015808},
     "scan": {"x86_avx2": 123904, "x86_avx512": 101888, "arm64_neon": 167936,
              "arm64_sve": 101888, "nvidia_ptx": 90880, "riscv_rvv": 101888},

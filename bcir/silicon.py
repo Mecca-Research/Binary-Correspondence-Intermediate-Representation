@@ -186,7 +186,18 @@ def perf_counters_available() -> bool:
 _PERF_HW = {"cycles": 0, "instructions": 1, "cache_refs": 2, "cache_misses": 3,
             "branches": 4, "branch_misses": 5}
 _IOC_ENABLE, _IOC_DISABLE, _IOC_RESET = 0x2400, 0x2401, 0x2403
-_SYS_perf_event_open = 298  # x86_64
+
+
+def _perf_syscall_nr() -> int:
+    """The perf_event_open syscall number for the host ABI -- it is NOT portable.
+    x86_64 is 298; the asm-generic table (aarch64, riscv64) is 241; armv7 is 364.
+    Hardcoding the x86 number silently invokes the wrong syscall on ARM (the Pi 5)."""
+    import platform
+    return {"x86_64": 298, "aarch64": 241, "arm64": 241, "riscv64": 241,
+            "armv7l": 364, "ppc64le": 319, "s390x": 331}.get(platform.machine(), 298)
+
+
+_SYS_perf_event_open = _perf_syscall_nr()  # arch-dispatched (the ABI differs per machine)
 
 
 def _perf_open(config: int):

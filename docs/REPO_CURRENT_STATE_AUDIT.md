@@ -128,6 +128,31 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Hardware-agnosticism / ARM (Raspberry Pi 5) compliance.** BCIR was meant to be
+  hardware-agnostic but had subtle x86 wiring (the build + runtime were already portable: no x86
+  intrinsics, no `-march` flags). A full audit found and fixed the blockers so the first real driver
+  target — ARM/aarch64 on a Pi 5 — is first-class:
+  - **B2 (parity-critical):** the tile lane width was hardcoded to 16 (AVX-512 f32) in *both* rails
+    (`realize.py`, `BCIRCostModel.h`). Now `min(16, max_lane_width)` — 16 on AVX-512/SVE/RVV/PTX
+    (pinned scores unchanged), but a realizable **4 on NEON / 8 on AVX2** (an unrealizable width was
+    previously priced). Updated the `matmul_tiled` per-target pins + regenerated `target_matrix.mlir`;
+    `tiled_matmul_arm64_neon` now scores 851968 in both rails (the regression net for B2).
+  - **B1:** `perf_event_open` syscall number was hardcoded to x86's 298 — now arch-dispatched
+    (aarch64/riscv64 = 241, armv7 = 364) so the ARM PMU actually works on a Pi 5 (`silicon.py`).
+  - **B3:** added the `aarch64` native-object target (EM_AARCH64 = 183) to the codegen object gate.
+  - **B4:** the conda MLIR-22 bootstrap now arch-selects (`micromamba-linux-aarch64`,
+    `gxx_linux-aarch64`, `aarch64-conda-linux-gnu`) so the rail builds natively on a Pi.
+  - **D1:** added `TargetProfile.for_host()` + `default_target_name()` (reads `platform.machine()`
+    + `/proc/cpuinfo` features) and made the CLI / `api.build_artifact` / `bench.compare*` default to
+    the **host** architecture instead of a hardwired `x86_avx512`; pinned the x86-asserting `test_api`
+    cases to `x86_avx512` so the suite is deterministic on any host (incl. ARM).
+  - **D3/D4:** the regenerated matrix now exercises the NEON tile path; added a native **aarch64 CI
+    job** (`ubuntu-24.04-arm`) running the oracle + differential + C runtime + the perf-syscall path.
+  Honest remainder (documented, not faked): ARM energy (RAPL is Intel-only; the Pi exposes no
+  drop-in Joules — thermal + cpufreq + PMU work, energy stays dark until a shunt monitor is wired);
+  the telemetry-ring endianness is LE-correct on the Pi (latent only on a big-endian host). Validated
+  on x86 (full rail green, 617 oracle); the aarch64 CI job proves the ARM half on real hardware.
+
 - 2026-06-18: **Closed the three remaining law-rail gaps — the deterministic spine has no known
   buildable gaps left.** All three built and dual-rail-verified against the oracle on true MLIR 22.
   **(1) `-bcir-overlap-optimize`** ports `gem/overlap.py::optimize_scheduled` — the makespan-driven

@@ -25,7 +25,7 @@ from dataclasses import asdict, dataclass
 
 from .examples import PROGRAMS
 from .kbcir import TARGETS, build_manifest, optimize
-from .kbcir.cost import Theta
+from .kbcir.cost import Theta, default_target_name
 from .kbcir.rcsp import Budget, Infeasible, feasible, optimize_constrained
 from .kbcir.weights import PERF, POLICIES
 from .lower.c_kernel import C_OP, compile_and_run_c, emit_header_c, emit_kernel_c
@@ -98,7 +98,7 @@ def _parse_budget(budget) -> Budget:
     return Budget.of(**caps)
 
 
-def build_artifact(program, *, target: str = "x86_avx512", theta: str = "cool",
+def build_artifact(program, *, target: str = "", theta: str = "cool",
                    policy: str = "latency", elem: str = "f32", table=None,
                    budget=None, fn_name: str = "bcir_kernel") -> KernelArtifact:
     """Plan a program for a target/Θ and emit a deployable, R12-attested kernel
@@ -108,7 +108,7 @@ def build_artifact(program, *, target: str = "x86_avx512", theta: str = "cool",
     a correctness property a budget-unaware compiler cannot honor. Raises
     `Infeasible` if no legal plan fits. Pure -- no compilation."""
     name, module = _resolve(program)
-    h = TARGETS[target]
+    h = TARGETS[target or default_target_name()]   # default to the host's architecture
     if table is not None:
         h = table.apply(h)
     th = _THETAS.get(theta, Theta.cool())
@@ -142,7 +142,7 @@ def compile_kernel(program, *, run: bool = False, **kw):
     if not run:
         return art
     _, module = _resolve(program)
-    h = TARGETS[kw.get("target", "x86_avx512")]
+    h = TARGETS[kw.get("target") or default_target_name()]
     if kw.get("table") is not None:
         h = kw["table"].apply(h)
     th = _THETAS.get(kw.get("theta", "cool"), Theta.cool())

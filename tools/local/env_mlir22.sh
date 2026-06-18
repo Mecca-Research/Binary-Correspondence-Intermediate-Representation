@@ -10,5 +10,10 @@ export LD_LIBRARY_PATH="${_ENV}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export MLIR_TBLGEN="${_ENV}/bin/mlir-tblgen"
 export MLIR_INCLUDE="${_ENV}/include"
 export MLIR_OPT="${_ENV}/bin/mlir-opt"
-export MLIR22_CC="${_ENV}/bin/x86_64-conda-linux-gnu-gcc"
-export MLIR22_CXX="${_ENV}/bin/x86_64-conda-linux-gnu-g++"
+# The conda compiler triple is arch-specific (so this resolves on aarch64 / Pi 5 too).
+case "$(uname -m)" in
+  aarch64|arm64) _CONDA_TRIPLE="aarch64-conda-linux-gnu" ;;
+  *)             _CONDA_TRIPLE="x86_64-conda-linux-gnu" ;;
+esac
+export MLIR22_CC="${_ENV}/bin/${_CONDA_TRIPLE}-gcc"
+export MLIR22_CXX="${_ENV}/bin/${_CONDA_TRIPLE}-g++"

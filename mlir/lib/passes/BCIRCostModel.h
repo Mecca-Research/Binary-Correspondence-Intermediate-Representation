@@ -194,9 +194,13 @@ inline SmallVector<Cand> candidatesFor(ClaimOp c, const Cap &h, Domain dom, bool
   case StrideClass::Random:
     out.push_back({1, baseCost(count, streams, opclass, 1, gp, tier, h)});
     break;
-  case StrideClass::Tile:
-    out.push_back({16, baseCost(count, streams, opclass, 16, 1, tier, h)});
+  case StrideClass::Tile: {
+    // The tile lane is the widest the hardware can issue, capped at 16 (AVX-512 f32):
+    // 16 on AVX-512/SVE/RVV/PTX, 4 on NEON, 8 on AVX2 -- never an unrealizable width.
+    int64_t tw = std::min<int64_t>(16, h.widths.back());
+    out.push_back({tw, baseCost(count, streams, opclass, tw, 1, tier, h)});
     break;
+  }
   }
   return withVerify(out);
 }

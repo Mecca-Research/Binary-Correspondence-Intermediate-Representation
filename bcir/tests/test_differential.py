@@ -75,9 +75,12 @@ def test_corpus_per_target_scores_are_pinned():
     def scores(name):
         return {t: optimize(PROGRAMS[name](), TARGETS[t], Theta.cool()).score
                 for t in sorted(TARGETS)}
+    # The tile lane is the widest the hardware can issue (capped at 16): AVX-512/SVE/RVV/PTX
+    # issue the full 16-wide tile, but NEON tops out at vec4 and AVX2 at vec8 -- so the tiled
+    # matmul costs strictly more on those parts (a realizable plan, not the old unrealizable 16).
     assert scores("matmul_tiled") == {
-        "arm64_neon": 1015808, "arm64_sve": 1015808, "nvidia_ptx": 1015808,
-        "riscv_rvv": 1015808, "x86_avx2": 1015808, "x86_avx512": 1015808}
+        "arm64_neon": 1703936, "arm64_sve": 1015808, "nvidia_ptx": 1015808,
+        "riscv_rvv": 1015808, "x86_avx2": 1245184, "x86_avx512": 1015808}
     assert scores("scan") == {
         "arm64_neon": 167936, "arm64_sve": 101888, "nvidia_ptx": 90880,
         "riscv_rvv": 101888, "x86_avx2": 123904, "x86_avx512": 101888}

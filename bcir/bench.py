@@ -34,7 +34,7 @@ from dataclasses import dataclass
 
 from .examples import PROGRAMS
 from .kbcir import TARGETS, optimize
-from .kbcir.cost import Theta
+from .kbcir.cost import Theta, default_target_name
 from .kbcir.weights import PERF, POLICIES
 from .lower.c_kernel import (
     emit_gather_kernel_c,
@@ -163,7 +163,7 @@ def measure(module, result, *, label: str, elem: str = "f32", opt: str = "-O1",
         return Measurement(label, w, opt, n, reps, int(m.group(1)), True)
 
 
-def compare(program, *, target: str = "x86_avx512", theta: str = "cool",
+def compare(program, *, target: str = default_target_name(), theta: str = "cool",
             policy: str = "latency", elem: str = "f32", opt: str = "-O1",
             n: int = 1 << 20, reps: int = 200) -> Comparison:
     """Time BCIR's selected realization against the naive scalar (width-1) baseline
@@ -264,7 +264,7 @@ int main(void) {{
     )
 
 
-def compare_gather(program, *, target: str = "x86_avx512", theta: str = "cool",
+def compare_gather(program, *, target: str = default_target_name(), theta: str = "cool",
                    policy: str = "latency", elem: str = "f32", opt: str = "-O2",
                    n: int = 1 << 20, reps: int = 200, shuffle: bool = True) -> GatherComparison:
     """Time BCIR's direct (gather-avoiding) realization against the gather form of
@@ -374,7 +374,7 @@ int main(void) {{
     )
 
 
-def compare_reduce(program="gather_reduce", *, target: str = "x86_avx512", theta: str = "cool",
+def compare_reduce(program="gather_reduce", *, target: str = default_target_name(), theta: str = "cool",
                    policy: str = "latency", opt: str = "-O2", n: int = 1 << 20,
                    reps: int = 40) -> ReduceComparison:
     """Lower a genuine `reduce.gather` program two ways and measure: BCIR's
@@ -452,7 +452,7 @@ int main(void) {{
     )
 
 
-def compare_strided(program="saxpy_strided", *, target: str = "x86_avx512",
+def compare_strided(program="saxpy_strided", *, target: str = default_target_name(),
                     theta: str = "cool", policy: str = "latency", opt: str = "-O2",
                     n: int = 1 << 22, reps: int = 40) -> ReduceComparison:
     """Lower a strided program two ways and measure: BCIR's selected direct strided

@@ -16,16 +16,23 @@ PREFIX="${MAMBA_ROOT_PREFIX:-/tmp/mamba}"
 MM="${MICROMAMBA:-/tmp/micromamba}"
 export MAMBA_ROOT_PREFIX="${PREFIX}"
 
+# Arch-select the micromamba asset + the conda compiler package (so this builds natively on a
+# Raspberry Pi 5 / aarch64, not only x86_64). conda-forge publishes mlir=22 for linux-aarch64.
+case "$(uname -m)" in
+  aarch64|arm64) MM_ASSET="micromamba-linux-aarch64"; GXX_PKG="gxx_linux-aarch64" ;;
+  *)             MM_ASSET="micromamba-linux-64";       GXX_PKG="gxx_linux-64" ;;
+esac
+
 if [ ! -x "${MM}" ]; then
-  echo "[setup_mlir22] fetching micromamba (github releases)..."
-  curl -fsSL "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-linux-64" \
+  echo "[setup_mlir22] fetching micromamba (${MM_ASSET})..."
+  curl -fsSL "https://github.com/mamba-org/micromamba-releases/releases/latest/download/${MM_ASSET}" \
     -o "${MM}"
   chmod +x "${MM}"
 fi
 
 if [ ! -x "${PREFIX}/envs/m22/bin/mlir-opt" ]; then
   echo "[setup_mlir22] creating the MLIR 22 env from conda-forge (~250 MB)..."
-  "${MM}" create -y -n m22 -c conda-forge mlir=22 llvmdev=22 gxx_linux-64 ninja cmake
+  "${MM}" create -y -n m22 -c conda-forge mlir=22 llvmdev=22 "${GXX_PKG}" ninja cmake
 fi
 
 echo "[setup_mlir22] toolchain ready at ${PREFIX}/envs/m22"
