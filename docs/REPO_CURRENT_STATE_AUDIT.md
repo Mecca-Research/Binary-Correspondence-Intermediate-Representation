@@ -130,6 +130,26 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Channel plugin boundary, Clang-comparison perf budgets, C23 + C-frontend roadmap.**
+  Turned hardware channels into a real plugin boundary: `bcir/channel_plugin.py` defines a stable,
+  versioned `channel.json` manifest (the seven sections — identity, target-profile schema, codegen
+  identity, runtime signal-provider contract, StreamPack-execution capability, calibration artifact,
+  simulator/model/provenance flag); `register_from_manifest` / `discover_plugins` admit an FPGA/NVMe/
+  HBM-PIM/accelerator extension **without editing the core**, and routing became data-driven
+  (declared `capabilities`) while the built-ins keep their exact legacy per-kind routing (pinned).
+  All nine built-ins round-trip through the format; a worked external example ships at
+  `channels/example_tpu.channel.json`. Wired the five **Clang-comparison budgets** from
+  `CLANG_COMPARISON.md` into the non-flaky gate (`bcir.perf_budget` gained a bare-metal-only
+  `match_band` for the dense 0.98×/1.00× *matches* + a `reference_milli` so the documented
+  6.0×/14.1×/1.33× *wins* are tracked in the JSONL trend log, never asserted in CI). Relearned C23
+  from ISO/IEC 9899:2024 and folded the findings into roadmap §5.7 Phase C: a Tier-1/Tier-2 C23
+  feature-adoption table (`_BitInt(N)`, `<stdckdint.h>`, `<stdbit.h>`+endian, `enum : T`, `constexpr`,
+  `typeof`, `static_assert`, `nullptr`, `[[attributes]]`, `unreachable()`, `#embed` …) mapped to the
+  oracle components each enables, the "move C beyond kernels" build-later tracks (a C graph runtime,
+  fixed-point AI processes, X-macro/`typeof`/`constexpr` metaprogramming), the staged C-frontend
+  conformance ladder (L1–L8, each gated by the six artifacts), the register-map/MMIO MVP criteria,
+  and the generalized-C-output backend closing `C input → claim graph → K_BCIR plan → verified C
+  output → Clang behaviour check`. Suite: live count + coverage in [`STATUS.md`](STATUS.md).
 - 2026-06-18: **Test tiers, perf budgets, import quarantine, packaging/governance.** Named test
   tiers — `python -m bcir.tests.run_all --tier {quick,c-runtime,silicon-degrade,thorough}` — an
   escalating capability ladder (`quick` ⊂ `c-runtime` ⊂ `silicon-degrade` ⊂ `thorough`) layered on

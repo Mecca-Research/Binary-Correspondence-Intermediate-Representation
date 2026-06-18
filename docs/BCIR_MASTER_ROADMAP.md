@@ -350,20 +350,105 @@ The keystone. Drivers, opcode tables, and the Hardware Description Layer all nee
 *verifiable* C path — generating C from BCIR and checking it against source makes importing Linux
 kernel tables / register maps / PCIe / ACPI clean; building drivers first would be debt.
 
-- **C.1 — A usable C *frontend* (NEW; the *input* seam).** A Clang-compatible parser + semantics for
-  a useful C subset → the claim graph. There is no C frontend today (only the ROP/MAP DSLs). Start
-  with the subset drivers/kernels need: fixed-width integers, structs/unions, pointers + arrays,
-  functions, control flow, bitfields, `volatile`/MMIO access — enough to ingest a register-map
-  header. It lowers C to the *same* claim graph the oracle reasons over (the dual-rail invariant), so
-  R1–R18 + the cost model apply unchanged.
-- **C.2 — Strengthen the C *lowering / codegen* (the *output* seam, already partly built).** Today
-  `lower.c_kernel` emits per-pattern C kernels (elementwise / gather / reduce / qfixed / strided /
-  compensated) and `codegen/` lowers via `llc` per the channel triple. Generalize to an *arbitrary*
-  claim graph → complete, self-verifying C; complete ABI (struct layout + calling conventions per the
-  channel's real `llvm_triple`); robustness + a C-in → plan → C-out byte/behaviour round-trip.
-- **C.3 — Full C (the multi-month horizon).** Clang-compatible parser, complete ABI support, the
-  preprocessor (macros, `#include`, conditional compilation, `#embed`), full standard-library
-  compatibility.
+##### C.0 — C23 as the substrate (relearned from ISO/IEC 9899:2024; § refs verified against the text)
+
+The C path targets **C23**, not C11/C17. C23 removes the awkward/non-portable workarounds the
+per-pattern kernels lean on today (`__builtin_*`, `xxd`-generated arrays, implementation-defined
+`enum`/sign representations) and — more importantly — makes it realistic to express *the oracle
+itself*, not just kernels, in C. Two adoption tiers:
+
+**Tier 1 — main-lowering enablers (adopt as the C path is built):**
+
+| C23 feature | § | What it unlocks for the port |
+|---|---|---|
+| `_BitInt(N)` bit-precise ints | 6.2.5 / 6.7.2.5 | Exact-width Q-fixed accumulators + RID/opcode/stride bit-fields matching the StreamPack wire format (two's-complement now *guaranteed*, Annex M). |
+| `<stdckdint.h>` `ckd_add/sub/mul` | 7.20 | Overflow-checked cost accumulation in min-plus / (max,+) / RCSP — the biggest correctness win for the cost algebra; portable, replaces `__builtin_*_overflow`. |
+| `<stdbit.h>` + endian macros | 7.18 / 7.18.2 | `__STDC_ENDIAN_NATIVE__` collapses the StreamPack encode/decode `#ifdef`s to one path (Python↔C parity); `stdc_count_ones`/`bit_width`/`bit_ceil` for Pareto bitsets + buffer rounding. |
+| `enum : underlying-type` | 6.7.2.2 | ABI-stable opcode/phase/lane/kind enums (size+representation fixed for the wire format); values wider than `int`. |
+| `constexpr` objects | 6.6 / 6.7 | Opcode/policy/channel-descriptor tables + verifier-law constants validated *at translation time* (true cost-model metaprogramming). |
+| `static_assert` (1-arg) | 6.7.11 | `static_assert(sizeof(StreamHeader)==N)` / `offsetof` / `BITINT_MAXWIDTH` wire-format + width invariants. |
+| `typeof` / `typeof_unqual` | 6.7.8 | Portable generic containers (min-plus priority queue, Pareto set, CSE table) without per-type duplication. |
+| `nullptr` / `nullptr_t` | 6.3.2.4 / 7.21.2 | Unambiguous null in the pointer-heavy claim graph + `_Generic`/variadic dispatch. |
+| `[[nodiscard]] [[fallthrough]] [[maybe_unused]] [[noreturn]]` | 6.7.12 | `[[nodiscard]]` forces handling of validator `bool`s + `ckd_*` flags (laws must not be dropped); clean opcode-dispatch `switch`. |
+| `unreachable()` | 7.21.1 | Dead-path assertion after exhaustive opcode dispatch + "proven impossible by law Rk" points. |
+| `#embed` (+ `__has_embed`) | 6.10.3 | Bake calibration tables / golden StreamPacks / provenance digests into the binary — no runtime I/O (keeps the runtime freestanding + deterministic). Already used for the frozen Q8 tables, with C11 fallbacks. |
+| binary literals `0b` + digit separators `'` | 6.4.4.1 | Readable opcode/flag masks + stride/budget constants matching the Python source. |
+
+**Tier 2 — build-later advanced (turn C into a runtime/AI/metaprogramming platform):**
+
+- **A graph runtime environment in C** (`gem/` ported): `<threads.h>` + `<stdatomic.h>` for a parallel
+  RCSP/Pareto search and a concurrent e-graph fixpoint; `[[unsequenced]]`/`[[reproducible]]` (§6.7.12.7)
+  to let the host C compiler legally fuse/CSE the pure cost kernels — mirroring K_BCIR's own
+  fusion/deforestation at the C level; `call_once` (now mandatory) for one-time channel-table init.
+- **AI-style processes in C** (fixed-point inference / table-driven nets): `_BitInt(N)` exact Q-fixed
+  activations + `ckd_*` saturating MAC + `constexpr`/`#embed` quantized weight tables; `_Decimal*` /
+  IEC 60559 (`<tgmath.h>`, Annex F/H) for reproducible Bayesian/conformal calibration under the R17
+  accuracy contract.
+- **Metaprogramming**: `typeof` + `_Generic` + X-macros + `constexpr` to *generate the StreamPack
+  (de)serializer and the R1–R18 law table from one declarative spec* — the closest C gets to the
+  oracle's single-source-of-truth design.
+
+**Porting caveats (from the standard text):** `realloc(p,0)` is now **UB** (audit the arena
+allocator); `_BitInt` widths cap at `BITINT_MAXWIDTH` (§5.2.4.2.1 — probe it, don't assume ≥128);
+gate every Tier-1 header on `__STDC_VERSION__ == 202311L` (+ the per-header `__STDC_VERSION_*_H__`
+macros) with C11 fallbacks, exactly as the Q8 `#embed` path already does.
+
+##### C.1 — A usable C frontend (the *input* seam) as a **staged conformance ladder**
+
+A Clang-compatible parser + semantics for a useful C subset → the *same* claim graph the oracle
+reasons over (so R1–R18 + the cost model apply unchanged). There is no C frontend today (only the
+ROP/MAP DSLs). Build it as an escalating ladder of language stages — **each stage is only "done"
+when it has all six artifacts** (the dual-rail discipline, applied to C):
+
+1. C source fixture · 2. claim-graph golden · 3. the K_BCIR plan · 4. the emitted C output ·
+5. behaviour equivalence against Clang on a harness · 6. an R1–R18 verifier checkpoint.
+
+| Stage | C surface |
+|---|---|
+| L1 | fixed-width integer expressions (`_BitInt`/`<stdint.h>`) |
+| L2 | structs / unions / explicit layout |
+| L3 | pointers / arrays → GEP-equivalent claim mapping |
+| L4 | functions + the call graph → **R18** |
+| L5 | `volatile` / MMIO access + bitfields |
+| L6 | control flow (branches, loops) |
+| L7 | a preprocessor subset (macros, conditional compilation, `#embed`) |
+| L8 | full ABI tests against Clang (struct layout + calling convention per the channel's real `llvm_triple`) |
+
+##### C.1-MVP — the first milestone: a register-map + MMIO file (driver/kernel-relevant C)
+
+The MVP targets exactly the C drivers/kernels need: fixed-width integers, structs/unions, arrays +
+pointers, functions, simple control flow, bitfields, `volatile`, MMIO-like resource mapping, and
+explicit layout/ABI checks. **Success criterion:** a small C file containing a *register-map struct*
++ *MMIO-style access* lowers to —
+
+1. BCIR resources / claims / phases;
+2. an **R1–R18-clean** plan;
+3. C output (or an LLVM-backed artifact);
+4. behaviour equivalence against Clang on a test harness;
+5. a provenance manifest (R13);
+6. `bcir-explain` output explaining the chosen realization.
+
+##### C.2 — Generalized C output backend (the *output* seam, already partly built)
+
+Today `lower.c_kernel` emits *per-pattern* kernels (elementwise / gather / reduce / qfixed / strided
+/ compensated) and `codegen/` lowers via `llc` per the channel triple. Generalize from per-pattern
+kernels to an **arbitrary claim graph**:
+
+- multi-claim functions + call boundaries;
+- structs + ABI layout; MMIO / `volatile` lowering; atomics / fences;
+- dynamic shapes + guards; multi-channel lowering decisions (the channel-plugin routing contract);
+- generated self-check harnesses; **R12 / R17 / R18 attestation**.
+
+The closed loop this delivers — the gate before drivers (Phase D):
+
+```
+C input → claim graph → K_BCIR plan → verified C output → Clang behaviour check
+```
+
+##### C.3 — Full C (the multi-month horizon)
+
+Clang-compatible parser, complete ABI support, the full preprocessor (macros, `#include`,
+conditional compilation, `#embed`, `__VA_OPT__`, `__has_include`), full standard-library compatibility.
 
 #### Phase M — Selective ML operations (in parallel with Phase C, but throttled — not at full speed)
 
@@ -384,10 +469,13 @@ The Hardware Description Layer. With verifiable C in hand:
 - **A dedicated `drivers/` (or `targets/`) folder = a semi-separate JIT kernel generator**, *wired
   into* the compiler but architecturally separable (a deliberate decoupling — the kernel generator
   evolves without churning the core). This is where each hardware **channel** gets its **real
-  driver**: the channel *declares* the backend (profile, triple, runtime, kind); the driver
-  *generates/JITs* its kernels and supplies its measured calibration. Phase D closes the
-  heterogeneous-tower loop — the modeled `fpga_systolic` / `nvme_stream` / `hbm_pim` channels become
-  driver-backed, and `register_channel` admits new silicon with a real codegen path.
+  driver**: the channel *declares* the backend through the now-stable **plugin boundary** — a
+  `channel.json` manifest (`bcir/channel_plugin.py`: target-profile schema, codegen identity, runtime
+  signal-provider contract, execution-capability set, calibration-artifact ref, provenance flag) — and
+  the driver *generates/JITs* its kernels and supplies its measured calibration that replaces the
+  modeled profile. Phase D closes the heterogeneous-tower loop: the modeled `fpga_systolic` /
+  `nvme_stream` / `hbm_pim` channels become driver-backed, and a new accelerator joins the tower by
+  shipping a manifest (`register_from_manifest` / `discover_plugins`) — no core edit.
 
 #### Phase F — Full language frontends (deferred until the core is rock-solid)
 
@@ -488,9 +576,13 @@ In recommended order — each is gated by the generated differential harness + F
 - **0.3 — measured adaptive compiler** (◑): real-hardware CT4 evidence (§5.4) + durable
   telemetry (schema registry, backpressure, a live broker in CI behind a fake producer)
   + compile-time/peak-memory regression budgets. *Landed:* the non-flaky perf-budget gate
-  (`bcir.perf_budget` + `tools/perf/check_budgets.py` — strict on correctness/measurement
-  validity, perf floors bare-metal-only, JSONL trend log) and named test tiers
-  (`run_all --tier {quick,c-runtime,silicon-degrade,thorough}`).
+  (`bcir.perf_budget` + `tools/perf/check_budgets.py`) now carries the five **Clang-comparison
+  budgets** (dense streaming / dense L1 *match bands*; gather / reduction / strided *win floors*) —
+  strict on correctness + measurement validity, perf floors/bands bare-metal-only, the documented
+  6.0×/14.1×/1.33× references tracked in a JSONL trend log (never asserted in CI); named test tiers
+  (`run_all --tier {quick,c-runtime,silicon-degrade,thorough}`); and the **hardware-channel plugin
+  boundary** (`bcir/channel_plugin.py` — a `channel.json` manifest format so FPGA/NVMe/HBM-PIM
+  extensions register without touching the core).
 - **0.4a — proof-carrying (mechanism)** (✅): replay records + per-claim certificates +
   `bcir.run --explain`/`--replay`/`--reduce` are implemented and tested (§5.3.2).
 - **0.4b — proof-carrying (contract)** (☐): a *stable* certificate schema (versioned, with a
