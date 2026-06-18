@@ -19,12 +19,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cache apt archives (lowering toolchain .debs)
+        # The toolchain install dominates this job's wall time and is download-bound; caching the
+        # downloaded .debs turns a warm run's multi-minute apt-get into a near-instant dpkg install.
+        # Rolling key (save fresh each run, restore newest) so apt.llvm.org/Ubuntu bumps stay warm.
+        uses: actions/cache@v4
+        with:
+          path: ~/.apt-cache
+          key: apt-train-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            apt-train-${{ runner.arch }}-
+
       - name: Install lowering toolchain (clang/lld/llvm for AOT/JIT/WASM tests; node for WASM)
         run: |
+          APT_CACHE="$HOME/.apt-cache"; mkdir -p "$APT_CACHE/partial"
+          printf 'Dir::Cache::Archives "%s";\n' "$APT_CACHE" | sudo tee /etc/apt/apt.conf.d/01keep-debs >/dev/null
           sudo apt-get update
-          sudo apt-get install -y clang lld llvm nodejs
+          # --no-install-recommends drops the -doc/example/python-binding recommends (the binaries
+          # the tests use are in the main packages; tool-specific steps self-guard on `command -v`).
+          sudo apt-get install -y --no-install-recommends clang lld llvm nodejs
           # compiler-rt for the C-runtime libFuzzer + ASan/UBSan harness (best-effort).
-          sudo apt-get install -y libclang-rt-18-dev || true
+          sudo apt-get install -y --no-install-recommends libclang-rt-18-dev || true
+          sudo chown -R "$(id -u):$(id -g)" "$APT_CACHE" || true   # so the cache save can read the .debs
 
       - name: BCIR oracle (Python conformance tests)
         run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all
@@ -177,10 +193,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cache apt archives (C lowering toolchain .debs)
+        uses: actions/cache@v4
+        with:
+          path: ~/.apt-cache
+          key: apt-arm-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            apt-arm-${{ runner.arch }}-
+
       - name: Install the C lowering toolchain
         run: |
+          APT_CACHE="$HOME/.apt-cache"; mkdir -p "$APT_CACHE/partial"
+          printf 'Dir::Cache::Archives "%s";\n' "$APT_CACHE" | sudo tee /etc/apt/apt.conf.d/01keep-debs >/dev/null
           sudo apt-get update
-          sudo apt-get install -y clang lld llvm
+          sudo apt-get install -y --no-install-recommends clang lld llvm
+          sudo chown -R "$(id -u):$(id -g)" "$APT_CACHE" || true
 
       - name: Confirm the runner is aarch64
         run: |
@@ -221,15 +248,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cache apt archives (MLIR ${{ matrix.llvm }} toolchain .debs)
+        # apt.llvm.org's llvm.sh downloads ~GBs; caching the .debs turns the warm run's 6-9 min
+        # install into a fast dpkg unpack. Rolling key keeps nightly apt.llvm.org bumps warm.
+        uses: actions/cache@v4
+        with:
+          path: ~/.apt-cache
+          key: apt-mlir${{ matrix.llvm }}-${{ github.sha }}
+          restore-keys: |
+            apt-mlir${{ matrix.llvm }}-
+
       - name: Install MLIR ${{ matrix.llvm }} toolchain + dev libs (apt.llvm.org)
         run: |
           # The latest LLVM/MLIR is not in Ubuntu's default repos; apt.llvm.org carries
           # it. llvm.sh adds the signed repo and installs the base llvm/clang for the major.
+          # Route every apt-get (llvm.sh's included) through the cached archive dir.
+          APT_CACHE="$HOME/.apt-cache"; mkdir -p "$APT_CACHE/partial"
+          printf 'Dir::Cache::Archives "%s";\n' "$APT_CACHE" | sudo tee /etc/apt/apt.conf.d/01keep-debs >/dev/null
           wget -O /tmp/llvm.sh https://apt.llvm.org/llvm.sh
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh ${{ matrix.llvm }}
           sudo apt-get install -y mlir-${{ matrix.llvm }}-tools libmlir-${{ matrix.llvm }}-dev \
             llvm-${{ matrix.llvm }}-dev llvm-${{ matrix.llvm }}-tools cmake ninja-build ccache
+          sudo chown -R "$(id -u):$(id -g)" "$APT_CACHE" || true   # so the cache save can read the .debs
 
       - name: Cache ccache (warms the bcir-opt compile against the MLIR headers)
         # The bcir-opt compile dominates this job's wall time; ccache turns a warm run
