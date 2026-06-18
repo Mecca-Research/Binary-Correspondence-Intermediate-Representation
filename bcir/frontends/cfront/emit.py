@@ -8,8 +8,9 @@ an *arbitrary* straight-line scalar claim graph, not a fixed kernel template.
 """
 from __future__ import annotations
 
+from ...model import Claim
 from .ctype_model import CType
-from .lower import LoweredFunc
+from .lower import IfNode, LoweredFunc, ReturnNode, WhileNode
 
 # op-suffix -> C operator.
 _BINOP = {"add": "+", "sub": "-", "mul": "*", "div": "/", "mod": "%", "and": "&", "or": "|",
@@ -29,58 +30,91 @@ def _cname(ct: CType) -> str:
 
 
 def emit_function(lf: LoweredFunc) -> str:
-    """The lowered function as standalone C, named `bcir_<name>` (so it can sit beside the original)."""
-    nm: dict[int, str] = {}                                  # rid -> C expression
-    for pname, rid, _ct in lf.params:
-        nm[rid] = pname
+    """The lowered function as standalone C, named `bcir_<name>` (so it can sit beside the original).
+    Walks the structured body tree, so `if`/`while`/`return` emit real C control flow; mutable named
+    locals are declared up front and assigned (so branch merges + loop accumulators reproduce the
+    source); intermediate expression results stay single-assignment temporaries."""
+    nm: dict[int, str] = {rid: pname for pname, rid, _ct in lf.params}
+    for rid, name, _ct in lf.locals:
+        nm[rid] = name
 
     def ref(rid: int) -> str:
         return nm.get(rid, f"t{rid}")
 
-    lines: list[str] = []
-    for c in lf.claims:
-        suf = c.op.split(".", 2)[-1] if "." in c.op else c.op
-        if c.op == "c.const":
-            t = c.wr[0]
-            lines.append(f"    uint32_t {ref(t)} = {c.imm[0]}u;")
-        elif c.op.startswith("c.bin."):
-            t = c.wr[0]
-            lines.append(f"    uint32_t {ref(t)} = {ref(c.rd[0])} {_BINOP[suf]} {ref(c.rd[1])};")
-        elif c.op.startswith("c.un."):
-            t = c.wr[0]
-            lines.append(f"    uint32_t {ref(t)} = ({_UNOP[suf]}{ref(c.rd[0])});")
-        elif c.op == "c.load":
-            t = c.wr[0]
-            base = c.rd[0]
-            et = _load_ctype(lf, t)
-            off = c.imm[0] if c.imm else 0
-            if len(c.rd) == 2:                               # base[index]
-                lines.append(f"    {et} {ref(t)} = {ref(base)}[{ref(c.rd[1])}];")
-            else:                                            # member / deref at byte offset
-                ptr = _base_ptr(lf, base)
-                lines.append(f"    {et} {ref(t)} = *({et} *)((const char *){ptr} + {off});")
-        elif c.op == "c.store":
-            base = c.rd[0]
-            off = c.imm[0] if c.imm else 0
-            if len(c.rd) == 3:                               # base[index] = value
-                lines.append(f"    {ref(base)}[{ref(c.rd[1])}] = {ref(c.rd[2])};")
-            else:                                            # member / deref = value
-                ptr = _base_ptr(lf, base)
-                val = c.rd[1]
-                lines.append(f"    *(uint32_t *)((char *){ptr} + {off}) = {ref(val)};")
-        elif c.op.startswith("c.call:"):
-            t = c.wr[0]
-            callee = c.op.split(":", 1)[1]
-            args = ", ".join(ref(r) for r in c.rd)
-            lines.append(f"    uint32_t {ref(t)} = bcir_{callee}({args});")
-        else:
-            raise ValueError(f"emit: unhandled claim op {c.op!r}")
-
+    decls = [f"    {_cname(ct)} {name};" for _rid, name, ct in lf.locals]
+    body = _walk(lf, lf.body, ref, 1)
     sig_params = ", ".join(f"{_cname(ct)} {pname}" for pname, _rid, ct in lf.params) or "void"
     ret = _cname(lf.ret_type)
-    body = "\n".join(lines)
-    retv = f"    return {ref(lf.return_rid)};" if lf.return_rid is not None else ""
-    return f"static {ret} bcir_{lf.name}({sig_params})\n{{\n{body}\n{retv}\n}}"
+    return (f"static {ret} bcir_{lf.name}({sig_params})\n{{\n"
+            + "\n".join(decls + body) + "\n}")
+
+
+def _walk(lf: LoweredFunc, block: list, ref, depth: int) -> list:
+    ind = "    " * depth
+    out: list = []
+    for node in block:
+        if isinstance(node, IfNode):
+            out.append(f"{ind}if ({ref(node.cond)}) {{")
+            out += _walk(lf, node.then, ref, depth + 1)
+            if node.els:
+                out.append(f"{ind}}} else {{")
+                out += _walk(lf, node.els, ref, depth + 1)
+            out.append(f"{ind}}}")
+        elif isinstance(node, WhileNode):
+            out.append(f"{ind}while (1) {{")
+            out += _walk(lf, node.cond_block, ref, depth + 1)
+            out.append(f"{ind}    if (!{ref(node.cond)}) break;")
+            out += _walk(lf, node.body, ref, depth + 1)
+            out.append(f"{ind}}}")
+        elif isinstance(node, ReturnNode):
+            out.append(f"{ind}return {ref(node.rid)};" if node.rid is not None else f"{ind}return;")
+        elif isinstance(node, Claim):
+            out.append(ind + _claim_stmt(lf, node, ref))
+    return out
+
+
+def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
+    suf = c.op.split(".", 2)[-1] if "." in c.op else c.op
+
+    def deftmp(rid: int, expr: str, ty: str = "uint32_t") -> str:
+        return f"{ty} {ref(rid)} = {expr};"
+
+    if c.op == "c.copy":                                     # write a mutable local (no new decl)
+        return f"{ref(c.wr[0])} = {ref(c.rd[0])};"
+    if c.op == "c.const":
+        return deftmp(c.wr[0], f"{c.imm[0]}u")
+    if c.op.startswith("c.bin."):
+        return deftmp(c.wr[0], f"{ref(c.rd[0])} {_BINOP[suf]} {ref(c.rd[1])}")
+    if c.op.startswith("c.un."):
+        return deftmp(c.wr[0], f"({_UNOP[suf]}{ref(c.rd[0])})")
+    if c.op == "c.load":
+        et = _load_ctype(lf, c.wr[0])
+        off = c.imm[0] if c.imm else 0
+        vol = "volatile " if c.domain.name == "MMIO" else ""
+        if len(c.rd) == 2:                                   # base[index]
+            return deftmp(c.wr[0], f"{ref(c.rd[0])}[{ref(c.rd[1])}]", et)
+        ptr = _base_ptr(lf, c.rd[0])
+        return deftmp(c.wr[0], f"*({vol}{et} *)((const {vol}char *){ptr} + {off})", et)
+    if c.op == "c.store":
+        off = c.imm[0] if c.imm else 0
+        vol = "volatile " if c.domain.name == "MMIO" else ""
+        if len(c.rd) == 3:                                   # base[index] = value
+            return f"{ref(c.rd[0])}[{ref(c.rd[1])}] = {ref(c.rd[2])};"
+        ptr = _base_ptr(lf, c.rd[0])
+        return f"*({vol}uint32_t *)(({vol}char *){ptr} + {off}) = {ref(c.rd[1])};"
+    if c.op == "c.bf.get":                                   # (unit >> bit_off) & mask
+        bit_off, width = c.imm
+        return deftmp(c.wr[0], f"({ref(c.rd[0])} >> {bit_off}) & {(1 << width) - 1}u")
+    if c.op == "c.bf.set":                                   # (old & ~(mask<<off)) | ((v&mask)<<off)
+        bit_off, width = c.imm
+        mask = (1 << width) - 1
+        clear = ~(mask << bit_off) & 0xFFFFFFFF
+        return deftmp(c.wr[0], f"({ref(c.rd[0])} & {clear}u) | "
+                               f"(({ref(c.rd[1])} & {mask}u) << {bit_off})")
+    if c.op.startswith("c.call:"):
+        callee = c.op.split(":", 1)[1]
+        return deftmp(c.wr[0], f"bcir_{callee}({', '.join(ref(r) for r in c.rd)})")
+    raise ValueError(f"emit: unhandled claim op {c.op!r}")
 
 
 def _load_ctype(lf: LoweredFunc, rid: int) -> str:

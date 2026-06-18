@@ -28,8 +28,12 @@ def _assert_six_artifacts(name: str):
     assert r.is_clean, f"{name}: R1–R18 not clean: {[(d.law, d.message) for d in r.diagnostics]}"
     for fn, lf in r.lowered.functions.items():
         assert r.plans[fn].steps, f"{name}:{fn}: empty plan"
-        assert r.emitted[fn].strip().startswith("static"), f"{name}:{fn}: no emitted C"
+        assert "static" in r.emitted[fn] and f"bcir_{fn}" in r.emitted[fn], f"{name}:{fn}: no C"
         assert r.explain[fn], f"{name}:{fn}: no explain text"
+        # C.2 attestation stamped on every emitted function.
+        att = r.attestation[fn]
+        assert att["R18_callgraph_integrity"] == "clean"
+        assert "attestation" in r.emitted[fn]
     # (5) Clang behaviour-equivalence — real under a toolchain, skipped cleanly otherwise.
     if _CLANG:
         assert r.behaviour_equivalent, f"{name}: not behaviour-equivalent ({r.equivalence})"
@@ -77,6 +81,61 @@ def test_L4_call_graph_is_R18_clean():
     main = r.lowered.functions["l4_main"]
     assert len([c for c in main.claims if c.op.startswith("c.call:")]) == 2
     assert r.r18_ok
+
+
+# --- L5: volatile / MMIO register map + bitfields ------------------------------------------------
+
+def test_L5_mmio_register_map_and_bitfields():
+    from bcir.model import Domain
+    r = _assert_six_artifacts("L5_mmio_regmap.c")
+    dec = r.lowered.functions["uart_decode"]
+    # the volatile register pointer became an MMIO resource...
+    assert any(res.domain == Domain.MMIO for res in dec.module.resources.values())
+    # ...the MMIO load is ordered (barriered, not unique)...
+    mmio_loads = [c for c in dec.claims if c.op == "c.load" and c.domain == Domain.MMIO]
+    assert mmio_loads and all(c.hazard == "barriered" for c in mmio_loads)
+    # ...and bitfields lowered to explicit mask/shift extract claims.
+    assert [c for c in dec.claims if c.op == "c.bf.get"]
+    cfg = r.lowered.aggregates["ctrl_bits"]
+    assert cfg.field("enable")[2] == 0 and cfg.field("baud")[2] == 3   # bit offsets pack LSB-first
+
+
+def test_L5_mmio_write_requires_barriered_hazard():
+    from bcir.model import Domain
+    r = compile_unit(_fixture("L5_mmio_regmap.c"), check_clang=False)
+    cfg = r.lowered.functions["uart_configure"]
+    stores = [c for c in cfg.claims if c.op == "c.store" and c.domain == Domain.MMIO]
+    assert stores and all(c.hazard == "barriered" for c in stores)   # R3: MMIO write hazard
+    assert r.is_clean                                                  # R3/R5 clean
+
+
+# --- L6: control flow (branches + bounded loops) -------------------------------------------------
+
+def test_L6_branches():
+    r = _assert_six_artifacts("L6_branch.c")
+    from bcir.frontends.cfront.lower import IfNode
+    body = r.lowered.functions["l6_clamp"].body
+    assert any(isinstance(n, IfNode) for n in body), "if should lower to an IfNode in the body tree"
+    assert "if (" in r.emitted["l6_clamp"]
+
+
+def test_L6_bounded_loop():
+    r = _assert_six_artifacts("L6_loop.c")
+    from bcir.frontends.cfront.lower import WhileNode
+    body = r.lowered.functions["l6_weighted_sum"].body
+    assert any(isinstance(n, WhileNode) for n in body), "while should lower to a WhileNode"
+    assert "while (1)" in r.emitted["l6_weighted_sum"]
+
+
+# --- C.2: the self-check artifact + attestation --------------------------------------------------
+
+def test_C2_selfcheck_artifact_runs():
+    from bcir.frontends.cfront import emit_selfcheck
+    r = compile_unit(_fixture("L5_mmio_regmap.c"))
+    sc = emit_selfcheck(r)
+    assert "int main(" in sc and "bcir_uart_decode" in sc
+    if _CLANG:                                    # the artifact is a real, compilable self-check
+        assert r.behaviour_equivalent
 
 
 def test_R18_rejects_recursion():

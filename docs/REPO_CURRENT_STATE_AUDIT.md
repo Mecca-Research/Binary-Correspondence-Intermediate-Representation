@@ -130,6 +130,21 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C frontend L5–L6 (the register-map/MMIO MVP) + the C.2 generalized backend.**
+  L5: a `volatile`-qualified register-map struct (accessed through a `volatile struct *`) lowers to
+  `Domain.MMIO` resources with ordered (`barriered`) load/store hazards — R3 (MMIO domain + write
+  hazard) and R5 clean — and bitfields lower to explicit LSB-first mask/shift extract + read-modify-
+  write claims (`c.bf.get`/`c.bf.set`), Clang-layout-compatible. L6: control flow — `if`/`else`
+  lowers through a structured body tree to real emitted C (and `compose.Cond` for the cost model),
+  bounded `while` loops to mutable named-local accumulators; the lowering switched from straight-line
+  SSA to a body tree + mutable storage so branch merges and loop accumulators reproduce the source.
+  C.2: every emitted function now carries a **verified-C attestation** (R1–R9 module/plan status,
+  R12 lowering contract — attested by Clang behaviour-equivalence, an R13-style claim-graph provenance
+  digest, R17 integer-exactness, R18 call-graph integrity, the plan score), and `emit_selfcheck`
+  produces a standalone self-checking C program (`--selfcheck`). The register-map/MMIO success
+  criterion is met: a device-register C file lowers to an R1–R18-clean plan with `bcir-explain` and is
+  byte-for-byte behaviour-equivalent to Clang. Fixtures L5/L6 added; suite: live count in
+  [`STATUS.md`](STATUS.md). Next: L7 (preprocessor subset) + L8 (full ABI).
 - 2026-06-18: **C frontend MVP — ladder stages L1–L4 (the keystone's first milestone).** Built
   `bcir/frontends/cfront/`: a recursive-descent C lexer + parser for the driver/kernel-relevant
   subset, a type model with Clang-compatible struct/union layout, and a lowering to the **same**
