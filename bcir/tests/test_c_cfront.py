@@ -312,6 +312,40 @@ def test_c2_attestation_in_emitted_c():
         assert prov and prov.group(1) == m.group(1), f"digest mismatch: emit={m.group(1)} loop={prov}"
 
 
+def test_phase_d_real_header_driver_end_to_end():
+    """Phase D: a real vendor-style register-map header (`cfront_driver.h`) + driver
+    (`cfront_driver.c`) ingested END-TO-END by the plug-in C compiler with NO hand-written claim
+    graph -- `#include` + field macros (L7), typedef/enum/union/bitfields (the type model), volatile
+    MMIO loads (L5), struct pointers (L3), and the call graph (L4 / R18) in one driver. The six
+    artifacts on the C rail: oracle<->C structural parity, the R1-R18 verdict, the faithful (Clang
+    behaviour-equivalent) emit, and the full `C -> bcir_cpp -> bcir_cfront -> bcir_plan ->
+    bcir_hydrate -> bcir_exec` loop with R9/R10-R11 clean."""
+    inc = {"cfront_driver.h": open(os.path.join(_C, "cfront_driver.h"), encoding="utf-8").read()}
+    src = open(os.path.join(_C, "cfront_driver.c"), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src, inc)
+    assert "ok=1" in oracle_summary, oracle_summary
+    # a real driver, not a toy: a memory-mapped read + bitfield decode + a call graph.
+    assert "mmio=1" in oracle_summary and "bf=3" in oracle_summary and "call=2" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        loop = _build_loop(d)
+        path = os.path.join(_C, "cfront_driver.c")
+        c_summary, c_emit = _c_run(exe, path)
+        assert c_summary == oracle_summary, f"Phase D parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
+        # the emitted verified-C carries the device semantics + the C.2 attestation.
+        assert "volatile uint32_t *" in c_emit and "BCIR verified-C attestation" in c_emit, c_emit
+        # behaviour-equivalent against the original header+driver under Clang (r.source is preprocessed).
+        assert _equiv(r.source, c_emit, entry) == "MATCH", "Phase D emit not behaviour-equivalent"
+        # the full C compile->execute loop runs the real driver, every claim, R9/R10-R11 clean.
+        out = subprocess.run([loop, path], capture_output=True, text=True).stdout.strip()
+        assert out.startswith("loop:"), out
+        m = dict(re.findall(r"(\w+)=([0-9]+)", out))
+        assert int(m["executed"]) == int(m["claims"]) == len(entry.claims), out
+        assert m["r9"] == "1" and m["r10r11"] == "1", out
+
+
 def test_L8_packed_layout_matches_clang():
     """The C frontend's packed struct offsets must equal Clang's sizeof/offsetof (the ABI)."""
     src = open(os.path.join(_C, "cfront_packed.c"), encoding="utf-8").read()

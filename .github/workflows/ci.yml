@@ -19,28 +19,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache apt archives (lowering toolchain .debs)
-        # The toolchain install dominates this job's wall time and is download-bound; caching the
-        # downloaded .debs turns a warm run's multi-minute apt-get into a near-instant dpkg install.
-        # Rolling key (save fresh each run, restore newest) so apt.llvm.org/Ubuntu bumps stay warm.
-        uses: actions/cache@v4
-        with:
-          path: ~/.apt-cache
-          key: apt-train-${{ runner.arch }}-${{ github.sha }}
-          restore-keys: |
-            apt-train-${{ runner.arch }}-
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        # cache-apt-pkgs-action always runs `apt-get update` ("Updating APT package list..."), which
+        # can hang indefinitely on a congested/timing-out apt mirror. Bound it: 3 retries, a 20s
+        # per-source timeout (a slow mirror fails fast and retries instead of hanging), no
+        # translation indexes, and drop the ESM/Pro sources (our packages are all in main).
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
       - name: Install lowering toolchain (clang/lld/llvm for AOT/JIT/WASM tests; node for WASM)
-        run: |
-          APT_CACHE="$HOME/.apt-cache"; mkdir -p "$APT_CACHE/partial"
-          printf 'Dir::Cache::Archives "%s";\n' "$APT_CACHE" | sudo tee /etc/apt/apt.conf.d/01keep-debs >/dev/null
-          sudo apt-get update
-          # --no-install-recommends drops the -doc/example/python-binding recommends (the binaries
-          # the tests use are in the main packages; tool-specific steps self-guard on `command -v`).
-          sudo apt-get install -y --no-install-recommends clang lld llvm nodejs
-          # compiler-rt for the C-runtime libFuzzer + ASan/UBSan harness (best-effort).
-          sudo apt-get install -y --no-install-recommends libclang-rt-18-dev || true
-          sudo chown -R "$(id -u):$(id -g)" "$APT_CACHE" || true   # so the cache save can read the .debs
+        # Caches the INSTALLED file tree (not just the .debs), so a warm run restores it in seconds
+        # and skips apt's dpkg unpack/configure entirely -- the remaining install-time floor. Pinned
+        # to v1.6.1 by commit SHA (supply-chain). Bump `version` to invalidate the cache.
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        with:
+          packages: clang lld llvm nodejs libclang-rt-18-dev
+          version: train-${{ runner.arch }}-v1
 
       - name: BCIR oracle (Python conformance tests)
         run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all
@@ -193,21 +189,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache apt archives (C lowering toolchain .debs)
-        uses: actions/cache@v4
-        with:
-          path: ~/.apt-cache
-          key: apt-arm-${{ runner.arch }}-${{ github.sha }}
-          restore-keys: |
-            apt-arm-${{ runner.arch }}-
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
       - name: Install the C lowering toolchain
-        run: |
-          APT_CACHE="$HOME/.apt-cache"; mkdir -p "$APT_CACHE/partial"
-          printf 'Dir::Cache::Archives "%s";\n' "$APT_CACHE" | sudo tee /etc/apt/apt.conf.d/01keep-debs >/dev/null
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang lld llvm
-          sudo chown -R "$(id -u):$(id -g)" "$APT_CACHE" || true
+        # Caches the installed file tree (restores in seconds; skips dpkg unpack on a warm run).
+        # Pinned to v1.6.1 by commit SHA; bump `version` to invalidate.
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        with:
+          packages: clang lld llvm
+          version: arm-${{ runner.arch }}-v1
 
       - name: Confirm the runner is aarch64
         run: |
@@ -248,29 +242,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache apt archives (MLIR ${{ matrix.llvm }} toolchain .debs)
-        # apt.llvm.org's llvm.sh downloads ~GBs; caching the .debs turns the warm run's 6-9 min
-        # install into a fast dpkg unpack. Rolling key keeps nightly apt.llvm.org bumps warm.
-        uses: actions/cache@v4
-        with:
-          path: ~/.apt-cache
-          key: apt-mlir${{ matrix.llvm }}-${{ github.sha }}
-          restore-keys: |
-            apt-mlir${{ matrix.llvm }}-
-
-      - name: Install MLIR ${{ matrix.llvm }} toolchain + dev libs (apt.llvm.org)
+      - name: Add the apt.llvm.org signed repo + harden apt (LLVM ${{ matrix.llvm }})
+        # The latest LLVM/MLIR is not in Ubuntu's default repos; apt.llvm.org carries it (the repo
+        # llvm.sh would add). Harden apt against mirror hangs FIRST (retries + a 20s per-source
+        # timeout + no translation indexes; drop the slow ESM/Pro sources), then `apt-get update`
+        # so the install action -- whose package-name resolution runs against the CURRENT lists,
+        # before any update of its own -- can find the llvm-${{ matrix.llvm }}/mlir packages.
         run: |
-          # The latest LLVM/MLIR is not in Ubuntu's default repos; apt.llvm.org carries
-          # it. llvm.sh adds the signed repo and installs the base llvm/clang for the major.
-          # Route every apt-get (llvm.sh's included) through the cached archive dir.
-          APT_CACHE="$HOME/.apt-cache"; mkdir -p "$APT_CACHE/partial"
-          printf 'Dir::Cache::Archives "%s";\n' "$APT_CACHE" | sudo tee /etc/apt/apt.conf.d/01keep-debs >/dev/null
-          wget -O /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh ${{ matrix.llvm }}
-          sudo apt-get install -y mlir-${{ matrix.llvm }}-tools libmlir-${{ matrix.llvm }}-dev \
-            llvm-${{ matrix.llvm }}-dev llvm-${{ matrix.llvm }}-tools cmake ninja-build ccache
-          sudo chown -R "$(id -u):$(id -g)" "$APT_CACHE" || true   # so the cache save can read the .debs
+          . /etc/os-release                                       # VERSION_CODENAME (e.g. noble)
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-${{ matrix.llvm }} main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+          sudo apt-get update   # the install action resolves names against existing lists -- needed
+
+      - name: Install MLIR ${{ matrix.llvm }} toolchain + dev libs (cached installed-tree)
+        # Install ONLY what the rail needs -- the MLIR/LLVM dev libs + tools (mlir-opt / mlir-tblgen
+        # / FileCheck) + cmake/ninja/ccache. bcir-opt builds with the runner's pre-installed g++
+        # (CMake default; no script uses clang/lld/lldb/clangd), so llvm.sh's heavy clang+lldb+clangd
+        # base is skipped. The action caches the installed file tree -> a warm run restores it in
+        # seconds and skips dpkg unpack/configure. Pinned to v1.6.1 by commit SHA.
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        with:
+          packages: llvm-${{ matrix.llvm }}-dev llvm-${{ matrix.llvm }}-tools libmlir-${{ matrix.llvm }}-dev mlir-${{ matrix.llvm }}-tools cmake ninja-build ccache
+          version: mlir${{ matrix.llvm }}-v1
 
       - name: Cache ccache (warms the bcir-opt compile against the MLIR headers)
         # The bcir-opt compile dominates this job's wall time; ccache turns a warm run
