@@ -142,6 +142,7 @@ _MODULES = [
     "bcir.tests.test_jit",
     "bcir.tests.test_wasm",
     "bcir.tests.test_c_runtime",
+    "bcir.tests.test_c_cfront",
     "bcir.tests.test_memory_model",
     "bcir.tests.test_codegen",
     "bcir.tests.test_async",

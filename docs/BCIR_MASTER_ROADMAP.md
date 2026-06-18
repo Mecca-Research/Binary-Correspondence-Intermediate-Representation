@@ -78,6 +78,24 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 > **Deterministic + integer/Q-fixed on the decision/execution path → C++/MLIR (law)
 > or C (runtime). Graded / float / train-time → Python that *freezes* to Q8.**
 
+> ### The prototype-then-port discipline (NON-NEGOTIABLE)
+>
+> The Python oracle is a **prototype rail**, not the destination. A capability is *prototyped*
+> in the oracle (cheap iteration, the conformance reference), then — **once it is validated, the
+> oracle work STOPS and the real implementation is built on the production rail**: the **MLIR/C++
+> law** for plan-time decisions, or **C in `runtime/c/`** for the runtime + the plug-in C compiler.
+> Every port is gated by a **Python↔production parity test** (oracle == law / oracle == C),
+> exactly as the optimizer core was ported to `-bcir-*` passes and GEM hydrate/execute were ported
+> to `bcir_encode.c`/`bcir_exec.c`.
+>
+> **This applies to the C frontend.** The L1–L8 ladder + C.2 in `bcir/frontends/cfront/` is the
+> *prototype*. The production plug-in C compiler is **`runtime/c/bcir_cfront.c`** (the C twin),
+> built stage-by-stage with a parity gate (`bcir/tests/test_c_cfront.py`, `tools/c/check_runtime.sh`).
+> Do **not** keep extending the oracle frontend as if it were the product — port each validated
+> stage to C and let the prototype freeze. *Started:* the register-map slice (integer expressions,
+> struct/bitfield layout, volatile/MMIO) lowers identically on both rails (`claims=23 mmio=1 bf=3
+> …`); the remaining stages (arrays/calls, control flow, preprocessor, full ABI) port next.
+
 | Subsystem | Today | **Target home** | Status |
 |---|---|---|---|
 | Dialect / ODS (the law's vocabulary) | `mlir/include/BCIR/*.td` | MLIR | ✅ |
@@ -97,6 +115,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | **Allocator pool-plan** (`allocator.live_intervals`/`pool_plan`) | `-bcir-alloc-pool` | MLIR/C++ | ✅ **ported** — liveness-based pooling (disjoint live ranges share an arena, greedy left-edge); annotates per-resource pool_id + peak/naive/saved bytes (`alloc_pool.mlir`) |
 | GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
+| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ◑ **porting** — the register-map slice (integer expr, struct/bitfield layout, volatile/MMIO) is ported + Python↔C parity-gated (`claims=23 mmio=1 bf=3 const=4 binop=8 ok=1`, R1–R8 verifier in C); arrays/calls, control flow, the preprocessor, and full ABI port next |
 | StreamPack ABI **decoder** | **C** `runtime/c/bcir_runtime.c` | **C** (frozen ABI) | ✅ CRC-gated parity + libFuzzer |
 | ETL binary-record decoder | **C** `runtime/c/bcir_binrec.c` | **C** | ✅ parity + libFuzzer |
 | Portable kernel emission (C23 + `_BitInt`/`#embed`) | Python `lower.c_kernel` | C output (emitter may become C++) | ✅ |
@@ -403,7 +422,12 @@ applied to C):
 1. C source fixture · 2. claim-graph golden · 3. the K_BCIR plan · 4. the emitted C output ·
 5. behaviour equivalence against Clang on a harness · 6. an R1–R18 verifier checkpoint.
 
-**Landed: the full L1–L8 ladder** (`bcir/frontends/cfront/`, `bcir.frontends.cfront.compile_unit`) — a
+> **This `bcir/frontends/cfront/` ladder is the oracle PROTOTYPE.** Per the prototype-then-port
+> discipline (§3), the production plug-in C compiler is **`runtime/c/bcir_cfront.c`** (C, the
+> driver-embeddable twin). The register-map slice is already ported + Python↔C parity-gated; the
+> remaining stages port stage-by-stage. Stop extending the prototype as if it were the product.
+
+**Prototyped (the full L1–L8 ladder)** (`bcir/frontends/cfront/`, `bcir.frontends.cfront.compile_unit`) — a
 real recursive-descent C **preprocessor** + lexer/parser → the claim-graph model
 (`Resource`/`Claim`/`Phase`), the K_BCIR plan, an arbitrary-claim-graph C emitter (straight-line +
 real `if`/`while` control flow, `memcpy`-based alignment-safe member access), the `plan_composite`
