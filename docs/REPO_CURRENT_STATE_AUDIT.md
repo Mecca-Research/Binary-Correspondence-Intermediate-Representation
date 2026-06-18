@@ -130,6 +130,22 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Plug-in C compiler — L3/L4 ports + a faithful C emitter + the full six-artifact gate
+  in C.** Extended `runtime/c/bcir_cfront.c` to **multi-function translation units**: **L3**
+  pointers/arrays (GEP-equivalent `base[i]` loads), **L4** functions + a call graph with an **R18**
+  check in C (rejects recursion + undefined callees), on top of the existing L1/L2/L5. Replaced the
+  trace emitter with a **faithful C emitter** (params, scalar arithmetic, member/MMIO/bitfield loads
+  via `memcpy`/`volatile`, calls, returns) so the C frontend's output is now **Clang
+  behaviour-equivalent** to the source — `bcir/tests/test_c_cfront.py` builds the emitted C beside the
+  original and diffs them on seeded-random inputs. Each shared fixture (`cfront_regmap.c`,
+  `cfront_array.c`, `cfront_callgraph.c`) now passes the full six-artifact gate on the C rail: claim
+  graph (Python↔C parity), R1–R8 + R18 verifier (`ok=1`), faithful C output, and Clang
+  behaviour-equivalence. `tools/c/check_runtime.sh` runs the parity for all three. Warning-clean
+  (`-Wall -Wextra -Werror`, C11 + C23). The roadmap adds **§5.8** — the researched list of components
+  still missing from `runtime/c/` to close `C → claim graph → K_BCIR plan → verified C → Clang check`:
+  the verifier R9–R17, a C planner (or MLIR bridge — the biggest gap), a claim-graph→StreamPack
+  hydrator (to feed `bcir_exec.c`), C.2 attestation, atomics/fences, dynamic shapes, multi-channel
+  lowering, and type-model breadth (typedef/enum/unions).
 - 2026-06-18: **Plug-in C compiler — porting the C frontend from the oracle prototype to production
   C (`runtime/c/`).** Correction of course: the L1–L8 ladder built in `bcir/frontends/cfront/` was the
   **oracle prototype**; per the dual-rail discipline (prototype → STOP → port to the production rail,

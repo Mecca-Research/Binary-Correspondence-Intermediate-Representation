@@ -51,6 +51,9 @@ typedef enum bcir_bounds { BCIR_BND_STRICT = 0, BCIR_BND_MASKED = 1, BCIR_BND_AS
 #define BCIR_CLAIM_MAX_IMM 3
 #define BCIR_CIR_NAME 32
 
+/* shape kind of a resource (drives how the emitter takes its address). */
+typedef enum bcir_rkind { BCIR_RK_SCALAR = 0, BCIR_RK_AGGREGATE = 1, BCIR_RK_POINTER = 2 } bcir_rkind;
+
 typedef struct bcir_resource {
   uint32_t rid;
   bcir_domain domain;
@@ -58,8 +61,21 @@ typedef struct bcir_resource {
   uint32_t count;            /* element count (product of shape) */
   uint8_t  is_volatile;      /* MMIO/volatile access */
   uint8_t  read_only;
+  uint8_t  kind;             /* bcir_rkind */
   char     name[BCIR_CIR_NAME];
 } bcir_resource;
+
+/* a C type descriptor (for signatures + faithful emission). */
+typedef struct bcir_ctype {
+  uint8_t  kind;             /* 0 scalar, 1 struct-by-value, 2 pointer */
+  int      size;             /* scalar size, or pointee size for a pointer */
+  int      signd;
+  uint8_t  is_volatile;      /* volatile-qualified (MMIO) */
+  uint8_t  ptr_to_struct;    /* a pointer whose pointee is a struct */
+  char     tag[BCIR_CIR_NAME]; /* struct tag (kind 1, or ptr_to_struct) */
+} bcir_ctype;
+
+typedef struct bcir_param { char name[BCIR_CIR_NAME]; uint32_t rid; bcir_ctype type; } bcir_param;
 
 typedef struct bcir_claim {
   uint32_t id;
@@ -76,13 +92,25 @@ typedef struct bcir_claim {
   char     op[BCIR_CIR_NAME]; /* semantic label, e.g. "c.bin.add" / "c.load" / "c.bf.get" */
 } bcir_claim;
 
+#define BCIR_MAX_PARAMS 8
+#define BCIR_MAX_CALLS 32
+#define BCIR_MAX_FUNCS 16
+
 /* A function lowered to a single phase of claims over its resources. */
 typedef struct bcir_func {
   char name[BCIR_CIR_NAME];
   bcir_resource *res; size_t n_res, cap_res;
   bcir_claim    *claims; size_t n_claims, cap_claims;
+  bcir_param params[BCIR_MAX_PARAMS]; int n_params;
+  bcir_ctype  ret;
   uint32_t return_rid; uint8_t has_return;
+  char calls[BCIR_MAX_CALLS][BCIR_CIR_NAME]; int n_calls;   /* callee names (R18 call graph) */
 } bcir_func;
+
+/* A translation unit: several functions sharing struct definitions + a call graph. */
+typedef struct bcir_unit {
+  bcir_func funcs[BCIR_MAX_FUNCS]; int n_funcs;
+} bcir_unit;
 
 /* opcode name (for emission / diagnostics). */
 const char *bcir_opcode_name(bcir_opcode op);

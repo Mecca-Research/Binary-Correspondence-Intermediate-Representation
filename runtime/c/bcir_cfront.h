@@ -23,24 +23,24 @@ extern "C" {
 #endif
 
 typedef struct bcir_cfront_result {
-  bcir_func func;          /* the lowered function (the entry) */
-  int ok;                  /* R1-R8 verifier clean */
+  bcir_unit unit;          /* the lowered translation unit (functions + call graph) */
+  int ok;                  /* R1-R8 + R18 verifier clean */
   char diag[256];          /* first diagnostic (empty when ok) */
-  char emitted[16384];     /* emitted verified C (the C.2 output seam) */
+  char emitted[32768];     /* faithful emitted C for every bcir_<fn> (the C.2 output seam) */
 } bcir_cfront_result;
 
-/* Compile one C translation unit (the register-map subset) into the claim graph,
- * verify it, and emit verified C. Returns 0 on success (parsed + verified), nonzero
- * on a parse/lowering error (diag set). `ok` reflects the R1-R8 verifier. */
+/* Compile one C translation unit (the L1-L5 + L3/L4 subset) into the claim graph,
+ * verify it (R1-R8 + R18 call-graph), and emit faithful C. Returns 0 on success,
+ * nonzero on a parse/lowering error (diag set). `ok` reflects the verifier. */
 int bcir_cfront_compile(const char *src, bcir_cfront_result *out);
 
 /* Release the heap arrays the result holds. */
 void bcir_cfront_free(bcir_cfront_result *out);
 
-/* A canonical, RID-independent structural summary of the lowered claim graph -- the
- * Python<->C dual-rail parity key (bcir/tests/test_c_cfront.py computes the same from
- * the oracle's lowering). Writes e.g. "claims=23 mmio=1 bf=3 const=5 binop=7 ok=1". */
-void bcir_cfront_summary(const bcir_func *f, int ok, char *buf, size_t n);
+/* A canonical, RID-independent structural summary of the entry function's claim graph --
+ * the Python<->C dual-rail parity key (bcir/tests/test_c_cfront.py computes the same from
+ * the oracle). Writes "funcs=N claims=N mmio=N bf=N const=N binop=N call=N ok=1". */
+void bcir_cfront_summary(const bcir_unit *u, int ok, char *buf, size_t n);
 
 #ifdef __cplusplus
 }
