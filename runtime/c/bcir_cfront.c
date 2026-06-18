@@ -128,15 +128,30 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
   return 0;
 }
 
-/* --- struct layout (Clang-compatible; bitfields LSB-first) --------------- */
+/* --- struct layout (Clang-compatible; bitfields LSB-first; packed/aligned, L8) --- */
+static void attrs(CC *c,int *packed,int *aligned){
+  for(;;){
+    if(is(c,"__attribute__")){c->i++;eat(c,"(");eat(c,"(");
+      while(!is(c,")")&&!isk(c,T_END)&&!c->failed){
+        if(is(c,"packed")||is(c,"__packed__")){*packed=1;c->i++;}
+        else if(is(c,"aligned")||is(c,"__aligned__")){c->i++;eat(c,"(");*aligned=(int)adv(c).v;eat(c,")");}
+        else c->i++;
+        if(is(c,","))c->i++;}
+      eat(c,")");eat(c,")");
+    } else if(is(c,"alignas")||is(c,"_Alignas")){c->i++;eat(c,"(");*aligned=(int)adv(c).v;eat(c,")");}
+    else break;
+  }
+}
 static void p_struct(CC *c) {
-  c->i++; tok tag=adv(c); sdef *S=&c->s[c->ns]; idcpy(S->tag,&tag); S->nf=0; S->align=1;
+  c->i++; int packed=0,aligned=0; attrs(c,&packed,&aligned);
+  tok tag=adv(c); sdef *S=&c->s[c->ns]; idcpy(S->tag,&tag); S->nf=0; S->align=1;
+  attrs(c,&packed,&aligned);
   eat(c,"{");
   int off=0,bf_off=-1,bf_bits=0,bf_unit=0;
   while(!is(c,"}")&&!c->failed){
     bcir_ctype ty;int si;if(p_type(c,&ty,&si))return; tok nm=adv(c);
     int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;} eat(c,";");
-    int sz=ty.size,al=sz<1?1:sz; field *f=&S->f[S->nf++];
+    int sz=ty.size,al=packed?1:(sz<1?1:sz); field *f=&S->f[S->nf++];
     idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;
     if(al>S->align)S->align=al;
     if(width){int ub=sz*8;
@@ -144,8 +159,9 @@ static void p_struct(CC *c) {
       f->byte_off=bf_off;f->bit_off=bf_bits;bf_bits+=width;
     }else{bf_off=-1;bf_bits=0;bf_unit=0;if(off%al)off+=al-(off%al);f->byte_off=off;f->bit_off=0;off+=sz;}
   }
-  eat(c,"}");eat(c,";");
-  if(off%S->align)off+=S->align-(off%S->align); S->size=off; c->ns++;
+  eat(c,"}"); attrs(c,&packed,&aligned); eat(c,";");
+  int salign = packed ? 1 : S->align; if(aligned>salign) salign=aligned; S->align=salign;
+  if(off%salign)off+=salign-(off%salign); S->size=off; c->ns++;
 }
 
 /* --- the IR builder ------------------------------------------------------ */
@@ -153,7 +169,8 @@ static uint32_t add_res(CC *c, bcir_domain dom, int elem, int count, int vol, in
   bcir_func *f=c->fn; if(f->n_res>=f->cap_res) return 0;
   bcir_resource *r=&f->res[f->n_res++];
   r->rid=c->rid++; r->domain=dom; r->elem_bytes=elem<1?1:elem; r->count=count<1?1:count;
-  r->is_volatile=vol; r->read_only=0; r->kind=kind; snprintf(r->name,sizeof r->name,"%s",nm?nm:"");
+  r->is_volatile=vol; r->read_only=0; r->kind=kind; r->agg[0]=0;
+  snprintf(r->name,sizeof r->name,"%s",nm?nm:"");
   return r->rid;
 }
 static bcir_claim *new_claim(CC *c,const char *op,bcir_opcode opc) {
@@ -176,7 +193,7 @@ static uint32_t p_expr(CC *c);
 static uint32_t emit_member(CC *c, venv *base, const field *fld) {
   uint32_t t=temp(c,fld->size);
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
-  cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=fld->byte_off;
+  cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
   if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
   if(fld->bit_w){uint32_t u=t;t=temp(c,4);
@@ -296,12 +313,24 @@ static void p_stmt(CC *c) {
     uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, nb);
+    if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s",ty.tag);   /* L8 struct local */
     env_add(c,&nm,rid,&ty,si);
     if(is(c,"=")){c->i++;uint32_t v=p_expr(c);
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}}
     eat(c,";");return;
   }
   if(isk(c,T_ID)){tok id=*pk(c);venv *v=lookup(c,&id);
+    /* L8: struct member store  v.field = expr  /  v->field = expr */
+    if(v&&v->sidx>=0&&c->t[c->i+1].k==T_PUN&&(c->t[c->i+1].s[0]=='.'||(c->t[c->i+1].n==2&&c->t[c->i+1].s[0]=='-'))){
+      c->i+=2; tok fld=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
+      for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
+      if(fi<0){fail(c,"unknown field");return;}
+      if(!eat(c,"="))return; uint32_t val=p_expr(c);
+      bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+      if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=S->f[fi].byte_off;cl->imm[1]=S->f[fi].size;
+        cl->bounds=BCIR_BND_ASSUMED;
+        if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
+      eat(c,";");return;}
     if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]=='='){
       c->i+=2;uint32_t val=p_expr(c);
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
@@ -322,6 +351,7 @@ static int p_func(CC *c, bcir_func *fn) {
     uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, pb);
+    if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s",ty.tag);
     env_add(c,&pn,rid,&ty,si);
     if(fn->n_params<BCIR_MAX_PARAMS){bcir_param *pp=&fn->params[fn->n_params++];
       idcpy(pp->name,&pn);pp->rid=rid;pp->type=ty;}
@@ -406,7 +436,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
   w+=snprintf(o+w,on-w,")\n{\n");
   /* declare named locals up front (mutable storage -- branch merges + loop accumulators) */
   for(size_t i=0;i<f->n_res;i++){const bcir_resource *r=&f->res[i];
-    if(is_named_local(f,r->rid)) w+=snprintf(o+w,on-w,"  uint32_t %s;\n",r->name);}
+    if(is_named_local(f,r->rid)){
+      if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  struct %s %s;\n",r->agg,r->name);
+      else w+=snprintf(o+w,on-w,"  uint32_t %s;\n",r->name);}}
   int depth=1;
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)
   for(size_t i=0;i<f->n_claims&&w<on-160;i++){const bcir_claim *cl=&f->claims[i];
@@ -435,8 +467,14 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(cl->n_rd==2) w+=snprintf(o+w,on-w,"uint32_t %s = %s[%s];\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
+      else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
+        w+=snprintf(o+w,on-w,"uint32_t %s; { uint32_t _v=0; memcpy(&_v, (const char *)%s%s + %lld, %lld); %s = _v; }\n",rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz,rname(f,cl->wr[0],d)); }
+    }else if(!strcmp(cl->op,"c.store")){          /* L8: member store -> memcpy `size` bytes */
+      const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->imm[0]; long long sz=cl->n_imm>1?cl->imm[1]:4;
+      if(cl->domain==BCIR_DOM_MMIO)
+        w+=snprintf(o+w,on-w,"*(volatile uint32_t *)((volatile char *)%s + %lld) = %s;\n",rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
-        w+=snprintf(o+w,on-w,"uint32_t %s; { uint32_t _v; memcpy(&_v, (const char *)%s%s + %lld, sizeof _v); %s = _v; }\n",rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->wr[0],d)); }
+        w+=snprintf(o+w,on-w,"{ uint32_t _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); }
     }else if(!strcmp(cl->op,"c.bf.get"))
       w+=snprintf(o+w,on-w,"uint32_t %s = (%s >> %lld) & %lluu;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),(long long)cl->imm[0],(1ull<<cl->imm[1])-1);
     else if(!strncmp(cl->op,"c.call:",7)){
@@ -455,7 +493,12 @@ int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
   c.rid=100; c.cid=1000;
   lex(&c,src);
   while(is(&c,"struct")||is(&c,"union")){
-    if(c.t[c.i+2].k==T_PUN&&c.t[c.i+2].n==1&&c.t[c.i+2].s[0]=='{') p_struct(&c); else break;
+    /* a struct *definition*?  struct [attrs] TAG [attrs] {  -- lookahead past attributes. */
+    int save=c.i; c.i++; int pk_=0,al_=0; attrs(&c,&pk_,&al_);
+    if(isk(&c,T_ID)) c.i++;                         /* the tag */
+    attrs(&c,&pk_,&al_);
+    int isdef = is(&c,"{"); c.i=save;
+    if(isdef) p_struct(&c); else break;
   }
   while(!isk(&c,T_END)&&!c.failed&&out->unit.n_funcs<BCIR_MAX_FUNCS){
     bcir_func *fn=&out->unit.funcs[out->unit.n_funcs];
