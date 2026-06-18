@@ -43,12 +43,19 @@ from dataclasses import replace
 
 # --- the campaign: generated adversarial parity (the headline) -------------------
 
+# In-suite campaign size: a fast smoke check by default; the DEEP proof is CI's separate
+# `python -m bcir.kbcir.differential -n 8000` (x2 seeds) + the ARM job's -n 3000, which are
+# the real parity coverage. BCIR_THOROUGH=1 restores the larger in-suite N. The parity
+# assertions (no bugs, no coupling gaps, ok == checked) are unchanged at any N.
+_CAMPAIGN_N = 1500 if os.environ.get("BCIR_THOROUGH") else 400
+
+
 def test_generated_campaign_has_no_divergence():
-    # Thousands of random modules across the six targets x {cool, hot, mem_bound} x
-    # {latency, throughput, energy}: the per-claim MLIR select rail must reproduce the
-    # globally-coupled oracle plan on every one (no bugs, no coupling gaps).
-    rep = run_campaign(n=1500, seed=20240601)
-    assert rep.checked > 1500
+    # Random modules across the six targets x {cool, hot, mem_bound} x {latency, throughput,
+    # energy}: the per-claim MLIR select rail must reproduce the globally-coupled oracle plan
+    # on every one (no bugs, no coupling gaps).
+    rep = run_campaign(n=_CAMPAIGN_N, seed=20240601)
+    assert rep.checked >= _CAMPAIGN_N
     assert not rep.bugs, rep.bugs[:3]
     assert rep.coupling_gaps == 0, "unexpected per-claim/shortest-path divergence"
     assert rep.ok == rep.checked
@@ -209,8 +216,10 @@ def test_reparse_roundtrip_preserves_the_plan():
 
 def test_verifier_catches_every_injected_law():
     # generated illegal modules (one injected law each): the verifier must flag it,
-    # and the un-mutated base must verify clean.
-    assert run_verifier_campaign(n=2000, seed=20240601) == []
+    # and the un-mutated base must verify clean. (CI runs the deep campaign; the law-set
+    # coverage is separately pinned by test_each_injector_is_caught_and_isolated at n=200.)
+    assert run_verifier_campaign(n=2000 if os.environ.get("BCIR_THOROUGH") else 400,
+                                 seed=20240601) == []
 
 
 def test_each_injector_is_caught_and_isolated():

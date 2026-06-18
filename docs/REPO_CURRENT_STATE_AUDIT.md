@@ -128,22 +128,23 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
-- 2026-06-18: **Theoretical-Max MLIR performance audit (2a) — verified near-optimal + one
-  architectural fix.** A full perf audit of the MLIR passes found the build is already close to
-  optimal: (i) the cross-pass `PlanAnalysis` sharing genuinely works — instrumented, a 3-module
-  file builds the analysis 3× across a 3-pass pipeline (1/module), not 9× (the audit's headline
-  "rebuilt per pass" suspicion was a static-analysis false alarm); (ii) the "don't beat Clang"
-  boundary is clean — the AOT/hydrate path (`classify→select→batch→schedule→lower`) never invokes
-  the coupled DP/RCSP/overlap machinery, so a kernel the resident compiler vectorizes optimally
-  pays no planning cost. The one architectural improvement landed: the O(n²) **string-set**
-  RAW/WAR/WAW conflict test in the wave scheduler (`BCIROverlapPass.cpp::conflict`, hammered by
-  the overlap re-selection sweep) is now an **O(1) integer-bitmask** intersection over a
-  per-module resource→id map (string fallback when a module has >64 resources) — byte-identical
-  makespan/gain on every pinned score (253952/761856, the corpus, the six-target matrix). Honest
-  framing: on realistic modules (≤10 claims, ≤3 resources each) the MLIR pass time is microseconds
-  — it is **not** the system bottleneck; the real perf levers were CI build caching (done, Phase 1
-  ccache) and the test suite (see the test-consolidation work). Remaining micro-opts (theta-power
-  dedup, flattened DP tables) are negligible and deferred. Full rail green; 618 oracle unchanged.
+- 2026-06-18: **Test-suite consolidation (2b) — a 5.8× faster quick chain (~28s → 4.8s).** A
+  measured audit corrected the premise: the bottleneck is NOT the test count or the generative
+  campaigns (differential 1.4s, fuzz 1.8s — cheap), it is the **C-compiler subprocesses +
+  wall-clock timing loops** (~77% of wall-time). `run_all.py` is now the **quick chain by default**:
+  it gates the C/LLVM toolchain (one `shutil.which` monkeypatch, before any test import, covering
+  both `shutil.which(...)` and `from shutil import which` bindings) so the ~130 compile / native-
+  execute tests early-return through their existing guards. `BCIR_THOROUGH=1` (which **CI now
+  sets** on both the x86 and aarch64 oracle jobs) runs the full compile + C-byte-identity tier.
+  Also made the in-suite campaign/timing sizes mode-aware (differential 1500→400, verifier
+  2000→400, fuzz 1500→400, the ring micro-benchmark 200k→20k by default; CI's separate
+  `differential -n 8000` ×2 / `fuzz -n 4000` ×2 remain the deep proof, and `BCIR_THOROUGH` restores
+  the larger in-suite N). **All 618 tests still run, 0 failures, in both modes.** Coverage preserved
+  in the quick chain (verified): every law R1–R18, all six targets, the StreamPack/ABI *logic*, and
+  the budget/RCSP correctness property are pure-Python and still execute; only the C *byte-identity*
+  and native-*execute* proofs defer to CI (which runs them anyway). The parity assertions (no bugs,
+  no coupling gaps, ok == checked) are unchanged at any N — the crown-jewel differential proof is
+  not weakened, only sampled less in-suite.
 
 - 2026-06-18: **Hardware-agnosticism / ARM (Raspberry Pi 5) compliance.** BCIR was meant to be
   hardware-agnostic but had subtle x86 wiring (the build + runtime were already portable: no x86

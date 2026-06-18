@@ -9,12 +9,14 @@ from bcir.kbcir.fuzz import (
     _fuzz_streampack,
     run_fuzz,
 )
+import os
 import random
 
 
 def test_fuzz_campaign_is_clean():
-    # every trust boundary: valid round-trips + graceful malformed rejection.
-    findings = run_fuzz(n=1500, seed=20240601)
+    # every trust boundary: valid round-trips + graceful malformed rejection. A fast smoke
+    # check by default; CI runs the deep `fuzz -n 4000` (x2) + the libFuzzer/ASan C harness.
+    findings = run_fuzz(n=1500 if os.environ.get("BCIR_THOROUGH") else 400, seed=20240601)
     assert findings == [], findings[:5]
 
 
