@@ -329,35 +329,91 @@ them would violate the two-truth quarantine. L2 portfolio offline learning (Baye
 optimization) and a production Kafka broker deployment are operational/research items
 that stay on the Python/ops side.
 
-### 5.7 Long-term: full language frontends (the plug-in-compiler direction) — NOT near-term
+### 5.7 The plug-in-compiler roadmap — C frontend → drivers → ML ops → C++/Python → ecosystem
 
-A separate, **explicitly long-horizon** track (beyond the dual-rail spine work above): turn BCIR
-from a cost-governed *planning/verification layer above LLVM* into a **plug-in compiler for whole
-language paradigms**, where a real program in C / Python / C++ is parsed into the claim graph,
-planned + verified by the K_BCIR spine, and lowered through the existing backends. The current
-ROP/MAP/ETL front-ends (`bcir.parse.*` / `bcir.binary.*`) are deliberately narrow DSL/binary
-front-ends; the paradigm frontends are a much larger, multi-year effort and are tracked here so
-the architecture leaves room for them — they are **not** scheduled against the near-term gaps in
-§5.1–§5.6.
+The next strategic arc turns BCIR from a cost-governed planning/verification layer above LLVM into a
+**plug-in compiler for whole paradigms**: a real program (C first, then Python, then C++) is parsed
+into the claim graph, planned + verified by the K_BCIR spine, lowered through the resident backend,
+and executed by GEM across the heterogeneous **channel** tower (`docs/HETEROGENEOUS_CHANNELS.md`). It
+is **dependency-ordered** — each phase unlocks the next, and building out of order (drivers before a
+*verifiable* C backend) creates technical debt. Every phase keeps the dual-rail discipline (prototype
+in the Python oracle, port to the MLIR law, lockstep) and the channel separation (each backend
+isolated, unified K_BCIR/GEM execution). The current ROP/MAP/ETL seams (`frontends.{rop,map}`,
+`bcir.binary.*`) are deliberately narrow DSL/binary front-ends; the paradigm frontends below are the
+larger effort.
 
-- **Full C frontend** — a Clang-compatible parser, complete ABI support (the System V / target
-  ABIs, calling conventions, struct layout), the preprocessor (macros, `#include`, conditional
-  compilation, `#embed`), and full standard-library compatibility. The C23 kernel backend
-  (`lower.c_kernel`) is the *output* seam today; this is the *input* seam.
-- **Full Python frontend** — a parser + semantics (the full grammar + name resolution + scoping),
-  the dynamic features (classes, decorators, generators, `async`/`await`), a CPython-compatibility
-  layer (the C-API / object model semantics), and ecosystem integration (NumPy/pandas array
-  semantics mapped onto the resource/claim model — the natural fit for BCIR's cost-as-IR planning).
-- **Full C++ frontend** — templates (two-phase lookup + instantiation), exceptions, RAII, the STL,
-  move semantics, and the complex ABI (Itanium name mangling, vtables, EH tables) — Clang-level
-  completeness. The hardest of the three; depends on the C frontend + a far richer type system on
-  the claim graph.
+#### Phase C — A solid C frontend + backend (the immediate next priority; it gates Phase D)
 
-**Discipline.** Each frontend must preserve the dual-rail invariant: the frontend lowers a program
-to the **same** claim graph the oracle reasons about, so the K_BCIR laws (R1–R18), the cost model,
-and the provenance/quarantine discipline apply unchanged. The frontends produce claim graphs; they
-do not become a second source of truth. Native instruction selection stays deferred
-(`BCIR_NATIVE_OBJECT_GATE.md`) — the frontends feed the resident backend, not a hand-rolled isel.
+The keystone. Drivers, opcode tables, and the Hardware Description Layer all need a working,
+*verifiable* C path — generating C from BCIR and checking it against source makes importing Linux
+kernel tables / register maps / PCIe / ACPI clean; building drivers first would be debt.
+
+- **C.1 — A usable C *frontend* (NEW; the *input* seam).** A Clang-compatible parser + semantics for
+  a useful C subset → the claim graph. There is no C frontend today (only the ROP/MAP DSLs). Start
+  with the subset drivers/kernels need: fixed-width integers, structs/unions, pointers + arrays,
+  functions, control flow, bitfields, `volatile`/MMIO access — enough to ingest a register-map
+  header. It lowers C to the *same* claim graph the oracle reasons over (the dual-rail invariant), so
+  R1–R18 + the cost model apply unchanged.
+- **C.2 — Strengthen the C *lowering / codegen* (the *output* seam, already partly built).** Today
+  `lower.c_kernel` emits per-pattern C kernels (elementwise / gather / reduce / qfixed / strided /
+  compensated) and `codegen/` lowers via `llc` per the channel triple. Generalize to an *arbitrary*
+  claim graph → complete, self-verifying C; complete ABI (struct layout + calling conventions per the
+  channel's real `llvm_triple`); robustness + a C-in → plan → C-out byte/behaviour round-trip.
+- **C.3 — Full C (the multi-month horizon).** Clang-compatible parser, complete ABI support, the
+  preprocessor (macros, `#include`, conditional compilation, `#embed`), full standard-library
+  compatibility.
+
+#### Phase M — Selective ML operations (in parallel with Phase C, but throttled — not at full speed)
+
+Add ML-specific ops + passes (tensor ops, attention patterns, quantization, layout/packing) *after*
+the core lowering + C support are stable enough not to be destabilized. Prototype each in the **Python
+oracle first** (cheap iteration, the conformance reference), then port to the **MLIR law** — the exact
+dual-rail discipline every existing op followed. It advances alongside C but must never block or
+destabilize the keystone.
+
+#### Phase D — Drivers, opcode tables & hardware integration (next major milestone, after C)
+
+The Hardware Description Layer. With verifiable C in hand:
+
+- **Import Linux kernel tables** — register maps, driver structures, PCIe/ACPI data — into BCIR
+  (clean now that C can be generated + verified against the source).
+- **BCIR-native ISA / opcode / registry representations** — the binary opcode tables, modeled the way
+  the claim graph models compute.
+- **A dedicated `drivers/` (or `targets/`) folder = a semi-separate JIT kernel generator**, *wired
+  into* the compiler but architecturally separable (a deliberate decoupling — the kernel generator
+  evolves without churning the core). This is where each hardware **channel** gets its **real
+  driver**: the channel *declares* the backend (profile, triple, runtime, kind); the driver
+  *generates/JITs* its kernels and supplies its measured calibration. Phase D closes the
+  heterogeneous-tower loop — the modeled `fpga_systolic` / `nvme_stream` / `hbm_pim` channels become
+  driver-backed, and `register_channel` admits new silicon with a real codegen path.
+
+#### Phase F — Full language frontends (deferred until the core is rock-solid)
+
+- **C++** — the hardest: templates (two-phase lookup + instantiation), exceptions, RAII, the STL, move
+  semantics, the complex ABI (Itanium mangling, vtables, EH tables) — Clang-level completeness. Defer
+  until the C path + core are rock-solid; depends on the C frontend + a far richer claim-graph type
+  system.
+- **Python** — start as a **transpiler / lifter** (the analyzable subset — array/numeric code — →
+  claim graph) rather than a full frontend, then grow toward full parser + semantics, the dynamic
+  features (classes, decorators, generators, `async`/`await`), a CPython-compatibility layer (the
+  C-API / object model), and ecosystem integration (NumPy/pandas array semantics on the resource/claim
+  model — the natural fit for cost-as-IR). Cheaper to *start* (the transpiler) than the C++ work.
+
+#### Phase L — The ML library + ecosystem (the payoff, on top of the compilers + kernels)
+
+Once C support + lowering + drivers + kernel infrastructure are in place, build the ML library *on
+top* of them — applying the same **"take and compress only what we need"** strategy used for the Linux
+C files: a *compressed extraction* into the BCIR claim-graph + channel model (not a wholesale
+dependency) from GCC, TensorFlow, PyTorch, Apache, pandas, NumPy, scikit-learn, XGBoost, JAX, Keras,
+XLA, SPIR-V, ONNX, Cassandra, hybrid SQL/NoSQL, and vector databases. Each contributes the kernels /
+ops / data structures BCIR needs, lowered to the same K_BCIR plan + GEM execution and orchestrated
+across the channel tower.
+
+**The through-line.** Frontends produce claim graphs; drivers populate channels; the ML library
+composes them — all decomposing to the *same* binary K_BCIR optimization + GEM Binary-Graph execution,
+hardware-agnostic by construction. Native instruction selection stays gated
+(`BCIR_NATIVE_OBJECT_GATE.md`): the frontends feed the resident backend + the per-channel JIT
+generator, never a hand-rolled isel.
 
 ---
 
@@ -404,6 +460,17 @@ In recommended order — each is gated by the generated differential harness + F
     degrade mode; the probe enumerates the three gating signals and prints a **rig-ready**
     verdict, so the win lights up the instant a bare-metal host with PMU + RAPL + a userspace
     governor runs the runbook (`HARDWARE_VALIDATION.md`). The top differentiator.
+12. **➡ THE NEXT MAJOR MILESTONE — a solid C frontend + backend (§5.7 Phase C).** The keystone
+    that unlocks drivers + the Hardware Description Layer (Phase D): a usable Clang-compatible C
+    **frontend** (a useful subset → claim graph; the *input* seam that does not exist yet), then a
+    generalized, self-verifying C **lowering/codegen** for an arbitrary claim graph (today
+    `lower.c_kernel` is per-pattern). Build this *before* drivers — generating + verifying C from
+    BCIR is what makes importing Linux kernel tables / register maps / PCIe / ACPI clean. **Phase
+    M** (selective ML ops: tensor/attention/quantization, oracle-first then MLIR) runs in parallel
+    but throttled. Then **Phase D** (drivers/opcode tables — a semi-separate `drivers/` JIT kernel
+    generator that gives each hardware **channel** its real driver), **Phase F** (C++, then a
+    Python transpiler→frontend), and **Phase L** (the ML library, *compressed* from the
+    GCC/PyTorch/TF/NumPy/… ecosystem onto the claim-graph + channel model).
 
 ---
 
