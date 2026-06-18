@@ -124,6 +124,9 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     if c.op.startswith("c.atomic."):              # atomic RMW -> the matching builtin (§5.8)
         return deftmp(c.wr[0], f"__atomic_fetch_{c.op.split('.')[-1]}("
                                f"{ref(c.rd[0])}, {ref(c.rd[1])}, __ATOMIC_SEQ_CST)")
+    if c.op.startswith("c.cmpxchg."):             # compare-and-swap -> the __sync CAS builtin
+        return deftmp(c.wr[0], f"__sync_{c.op.split('.')[-1]}_compare_and_swap("
+                               f"{ref(c.rd[0])}, {ref(c.rd[1])}, {ref(c.rd[2])})")
     if c.op == "c.fence":
         return "__atomic_thread_fence(__ATOMIC_SEQ_CST);"
     raise ValueError(f"emit: unhandled claim op {c.op!r}")
