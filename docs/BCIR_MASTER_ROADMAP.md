@@ -583,8 +583,13 @@ the existing C twins):
   the `CMPXCHG` opcode: a 3-read claim (ptr, expected, desired) on lane A, emitted back as the
   matching `__sync` CAS builtin, behaviour-equivalent under Clang (`cfront_cmpxchg.c`). *Still to
   port:* **dynamic shapes** (`compose` dynamic bound guards).
-- **Multi-channel lowering decision** — which `channel.json` channel a claim targets (the
-  channel-plugin routing) computed in C, so a driver picks its backend.
+- ✅ **Multi-channel lowering decision in C** (`bcir_channel.c`) — the C twin of `bcir/channels`'
+  routing seam: a `channel.json` reader + `bcir_claim_required_caps` / `bcir_channel_suits` /
+  `bcir_channel_route` (the cost-free plan-time backend pick — most-specialized eligible channel,
+  tie-broken by name), so a driver routes each claim to its backend with no Python. Python↔C
+  parity-gated against the new `route_claim` (`test_c_channel.py`; `channels/example_{cpu,tpu,pim}`
+  exercise the plugin/universal/legacy paths). The full K_BCIR **cost**-based pick (`orchestrate`)
+  stays on the cost-model rail; this is the eligibility + static route a driver makes first.
 - **Type-model breadth** — ✅ `typedef` (scalar/pointer/aggregate aliases, incl. `typedef struct
   {...} N;`), ✅ `enum` (enumerators folded to their integer values at parse time), and ✅ full
   `union` layout (members overlap at offset 0; size = the widest member) all lower on both rails,

@@ -130,6 +130,25 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Plug-in C compiler — §5.8 follow-ons: `cmpxchg`, type-model breadth (typedef /
+  enum / union), and the multi-channel lowering decision in C.** Three dual-rail, parity-gated
+  increments on the C compiler. **`cmpxchg`:** `__sync_val/bool_compare_and_swap` → the `CMPXCHG`
+  opcode (a 3-read claim: ptr, expected, desired) on lane A, emitted back as the matching `__sync`
+  builtin, behaviour-equivalent under Clang on independent copies of the same seeded cell
+  (`cfront_cmpxchg.c`). **Type-model breadth:** `typedef` (scalar/pointer/aggregate aliases incl.
+  `typedef struct {...} N;`, resolved at parse time), `enum` (enumerators folded to their integer
+  values), and full `union` layout (members overlap at offset 0, size = the widest member; the C
+  rail previously laid unions out as structs — a latent bug — now tracked via `sdef`/`bcir_ctype.
+  is_union` and emitted as `union tag`). New fixtures `cfront_{typedef,enum,union}.c` match the
+  oracle's structural summary on both rails and are Clang-behaviour-equivalent; typedef + enum also
+  run the full compile→execute loop. **Multi-channel lowering decision** (`runtime/c/bcir_channel.
+  {h,c}`): the C twin of `bcir/channels`' routing seam — a `channel.json` reader + `bcir_claim_
+  required_caps` / `bcir_channel_suits` / `bcir_channel_route` (the cost-free plan-time backend
+  pick, mirroring the new `bcir/channels.route_claim`), so a driver routes a claim to its backend
+  with no Python. Python↔C parity-gated (`test_c_channel.py`; `channels/example_{cpu,tpu,pim}.
+  channel.json` exercise the plugin/universal/legacy paths). All warning-clean (C11 + C23); gated in
+  `tools/c/check_runtime.sh`. Remaining type-model breadth (multi-dimensional arrays, function
+  pointers) tracked in roadmap §5.8.
 - 2026-06-18: **Plug-in C compiler — C-side infra (§5.8): the R1–R18 verifier, atomics/fences, and
   the C.2 attestation in C.** A new `runtime/c/bcir_verify.c` (the C twin of `bcir/verify`) lands the
   runnable LangRef laws over the claim graph + plan + StreamPack: R1–R8 (incl. **R6** lane↔stride
