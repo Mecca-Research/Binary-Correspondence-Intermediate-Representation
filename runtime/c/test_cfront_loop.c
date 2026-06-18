@@ -16,6 +16,7 @@
 #include "bcir_exec.h"
 #include "bcir_hydrate.h"
 #include "bcir_plan.h"
+#include "bcir_verify.h"
 
 static void dirof(const char *path, char *out, size_t cap) {
   const char *s = strrchr(path, '/');
@@ -44,20 +45,26 @@ int main(int argc, char **argv) {
   static bcir_plan_step steps[8192]; bcir_plan plan;
   if (bcir_plan_func(f, steps, 8192, &plan) != BCIR_OK) { printf("PLAN-ERR\n"); return 1; }
 
+  char vdiag[256];
+  int r9 = bcir_verify_plan(f, &plan, vdiag, sizeof vdiag);   /* R9: plan legality */
+  if (!r9) { printf("R9-ERR %s\n", vdiag); return 1; }
+
+  size_t real = 0;                          /* realizable claims (control-flow markers excluded) */
+  for (size_t i = 0; i < f->n_claims; i++) if (f->claims[i].opcode != BCIR_OP_NOP) real++;
+
   static uint8_t pack[1 << 20]; size_t plen = 0;
   if (bcir_hydrate(f, &plan, pack, sizeof pack, &plen) != BCIR_OK) { printf("HYDRATE-ERR\n"); return 1; }
 
-  bcir_streampack_header hdr;
-  if (bcir_sp_validate(pack, plen, &hdr) != BCIR_OK) { printf("PACK-INVALID\n"); return 1; }
+  int r10 = bcir_verify_pack(pack, plen, (uint32_t)real, vdiag, sizeof vdiag);  /* R10-R11 */
+  if (!r10) { printf("R10R11-ERR %s\n", vdiag); return 1; }
 
   static bcir_exec_item scratch[8192]; static bcir_phase_stat phases[256]; bcir_exec_result res;
   bcir_status st = bcir_sp_execute(pack, plen, scratch, 8192, phases, 256, record, NULL, &res);
   if (st != BCIR_OK) { printf("EXEC-ERR %d\n", (int)st); return 1; }
 
-  size_t real = 0;                          /* realizable claims (control-flow markers excluded) */
-  for (size_t i = 0; i < f->n_claims; i++) if (f->claims[i].opcode != BCIR_OP_NOP) real++;
-  printf("loop: claims=%zu plan_cost=%llu pack_bytes=%zu executed=%zu order=",
-         real, (unsigned long long)plan.total_cost, plen, res.executed);
+  printf("loop: claims=%zu plan_cost=%llu pack_bytes=%zu executed=%zu r9=%d r10r11=%d prov=%016llx order=",
+         real, (unsigned long long)plan.total_cost, plen, res.executed, r9, r10,
+         (unsigned long long)bcir_provenance_digest(f));
   for (size_t i = 0; i < g_n; i++) printf("%s%llu", i ? "," : "", (unsigned long long)g_order[i]);
   printf("\n");
   bcir_cfront_free(&r);

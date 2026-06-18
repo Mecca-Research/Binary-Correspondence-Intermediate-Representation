@@ -31,8 +31,10 @@ class Diagnostic:
 
 
 # Which lanes are legal for a declared access-pattern shape (LangRef R6).
+# Lane A (atomic) is legal for SCALAR (a single-location atomic counter -- the canonical RMW,
+# not on the decoupled GGG/scatter tail) as well as RANDOM (a scatter-atomic histogram update).
 _LEGAL_LANES = {
-    StrideClass.SCALAR: {Lane.U, Lane.H},
+    StrideClass.SCALAR: {Lane.U, Lane.H, Lane.A},
     StrideClass.UNIT: {Lane.U},
     StrideClass.STRIDED: {Lane.U, Lane.GGG},
     StrideClass.CACHELINE: {Lane.UX, Lane.GGG},

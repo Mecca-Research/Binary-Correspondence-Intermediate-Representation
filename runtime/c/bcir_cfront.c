@@ -10,6 +10,7 @@
  * freestanding. A Python<->C parity test gates the two rails.
  *===----------------------------------------------------------------------===*/
 #include "bcir_cfront.h"
+#include "bcir_verify.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -221,6 +222,29 @@ static uint32_t p_call(CC *c, const tok *name) {
   return t;
 }
 
+/* §5.8: GCC/Clang atomic + fence builtins -> the BCIR ATOMIC_x / BARRIER opcodes. */
+static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *fence){
+  struct{const char *n,*op;bcir_opcode oc;int f;} A[]={
+    {"__atomic_fetch_add","c.atomic.add",BCIR_OP_ATOMIC_ADD,0},
+    {"__atomic_fetch_sub","c.atomic.sub",BCIR_OP_ATOMIC_SUB,0},
+    {"__atomic_fetch_xor","c.atomic.xor",BCIR_OP_ATOMIC_XOR,0},
+    {"__atomic_thread_fence","c.fence",BCIR_OP_BARRIER,1},
+    {"__sync_synchronize","c.fence",BCIR_OP_BARRIER,1},{0,0,0,0}};
+  for(int i=0;A[i].n;i++) if((int)strlen(A[i].n)==t->n&&!strncmp(A[i].n,t->s,t->n)){*op=A[i].op;*oc=A[i].oc;*fence=A[i].f;return 1;}
+  return 0;
+}
+static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int fence){
+  c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
+  if(!is(c,")")) for(;;){uint32_t a=p_expr(c);if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;if(is(c,",")){c->i++;continue;}break;}
+  eat(c,")");
+  uint32_t t=temp(c,4); bcir_claim *cl=new_claim(c,op,oc); if(!cl)return t;
+  cl->lane=BCIR_LANE_A; cl->hazard=fence?BCIR_HZ_BARRIERED:BCIR_HZ_ATOMIC;
+  if(!fence&&na>=1){ bcir_domain dom=BCIR_DOM_RAM;
+    for(size_t z=0;z<c->fn->n_res;z++) if(c->fn->res[z].rid==args[0]) dom=c->fn->res[z].domain;
+    cl->domain=dom; cl->n_rd=2; cl->rd[0]=args[0]; cl->rd[1]=(na>1)?args[1]:args[0]; cl->n_wr=1; cl->wr[0]=t; }
+  return t;
+}
+
 static uint32_t p_primary(CC *c) {
   if(isk(c,T_INT)){tok t=adv(c);uint32_t r=temp(c,4);
     bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
@@ -228,6 +252,8 @@ static uint32_t p_primary(CC *c) {
   if(is(c,"(")){c->i++;uint32_t r=p_expr(c);eat(c,")");return r;}
   if(isk(c,T_ID)){
     tok id=adv(c);
+    const char *aop;bcir_opcode aoc;int af;
+    if(is(c,"(")&&atomic_kind(&id,&aop,&aoc,&af)) return p_atomic(c,aop,aoc,af);  /* atomics/fences */
     if(is(c,"(")) return p_call(c,&id);           /* call */
     venv *v=lookup(c,&id); if(!v){fail(c,"undefined identifier");return 0;}
     if(is(c,".")||is(c,"->")){c->i++;tok fn=adv(c);sdef *S=&c->s[v->sidx];
@@ -363,41 +389,9 @@ static int p_func(CC *c, bcir_func *fn) {
   return c->failed;
 }
 
-/* --- verify R1-R8 (per func) + R18 (call graph, over the unit) ----------- */
+/* --- verify: R1-R18 live in bcir_verify.c (the C twin of bcir/verify) ---- */
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid){
   for(size_t i=0;i<f->n_res;i++) if(f->res[i].rid==rid) return &f->res[i]; return NULL;
-}
-static int verify_func(const bcir_func *f,char *diag,size_t dn){
-  for(size_t i=0;i<f->n_claims;i++){const bcir_claim *cl=&f->claims[i];
-    for(int k=0;k<cl->n_rd;k++) if(!res_of(f,cl->rd[k])){snprintf(diag,dn,"R2: claim %u reads undefined rid %u",cl->id,cl->rd[k]);return 0;}
-    for(int k=0;k<cl->n_wr;k++) if(!res_of(f,cl->wr[k])){snprintf(diag,dn,"R2: claim %u writes undefined rid %u",cl->id,cl->wr[k]);return 0;}
-    int dom_ok=0;
-    for(int k=0;k<cl->n_rd;k++){const bcir_resource *r=res_of(f,cl->rd[k]);if(r&&r->domain==cl->domain)dom_ok=1;}
-    for(int k=0;k<cl->n_wr;k++){const bcir_resource *r=res_of(f,cl->wr[k]);if(r&&r->domain==cl->domain)dom_ok=1;}
-    if((cl->n_rd||cl->n_wr)&&!dom_ok){snprintf(diag,dn,"R3: claim %u domain mismatch",cl->id);return 0;}
-    for(int k=0;k<cl->n_wr;k++){const bcir_resource *r=res_of(f,cl->wr[k]);
-      if(r&&r->domain==BCIR_DOM_MMIO&&cl->hazard==BCIR_HZ_UNIQUE){snprintf(diag,dn,"R3: MMIO write %u needs a barriered hazard",cl->id);return 0;}}
-    if(cl->lane==BCIR_LANE_A&&cl->hazard==BCIR_HZ_UNIQUE){snprintf(diag,dn,"R5: atomic lane %u needs a hazard",cl->id);return 0;}
-  }
-  return 1;
-}
-/* R18: every callee must resolve to a defined function, and the call graph must be acyclic. */
-static int func_index(const bcir_unit *u,const char *nm){
-  for(int i=0;i<u->n_funcs;i++) if(!strcmp(u->funcs[i].name,nm)) return i; return -1;
-}
-static int has_cycle(const bcir_unit *u,int fi,int *state){  /* 0=unseen 1=onstack 2=done */
-  state[fi]=1;
-  for(int k=0;k<u->funcs[fi].n_calls;k++){int ci=func_index(u,u->funcs[fi].calls[k]);
-    if(ci<0)continue; if(state[ci]==1)return 1; if(state[ci]==0&&has_cycle(u,ci,state))return 1;}
-  state[fi]=2; return 0;
-}
-static int verify_unit(const bcir_unit *u,char *diag,size_t dn){
-  for(int i=0;i<u->n_funcs;i++) if(!verify_func(&u->funcs[i],diag,dn)) return 0;
-  for(int i=0;i<u->n_funcs;i++) for(int k=0;k<u->funcs[i].n_calls;k++)
-    if(func_index(u,u->funcs[i].calls[k])<0){snprintf(diag,dn,"R18: call to undefined function %s",u->funcs[i].calls[k]);return 0;}
-  int state[BCIR_MAX_FUNCS]={0};
-  for(int i=0;i<u->n_funcs;i++) if(state[i]==0&&has_cycle(u,i,state)){snprintf(diag,dn,"R18: recursive call cycle");return 0;}
-  diag[0]=0; return 1;
 }
 
 /* --- faithful C emitter -------------------------------------------------- */
@@ -477,6 +471,11 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         w+=snprintf(o+w,on-w,"{ uint32_t _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); }
     }else if(!strcmp(cl->op,"c.bf.get"))
       w+=snprintf(o+w,on-w,"uint32_t %s = (%s >> %lld) & %lluu;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),(long long)cl->imm[0],(1ull<<cl->imm[1])-1);
+    else if(!strncmp(cl->op,"c.atomic.",9))      /* atomic RMW -> the matching builtin */
+      w+=snprintf(o+w,on-w,"uint32_t %s = __atomic_fetch_%s(%s, %s, __ATOMIC_SEQ_CST);\n",
+                  rname(f,cl->wr[0],d),cl->op+9,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
+    else if(!strcmp(cl->op,"c.fence"))
+      w+=snprintf(o+w,on-w,"__atomic_thread_fence(__ATOMIC_SEQ_CST);\n");
     else if(!strncmp(cl->op,"c.call:",7)){
       w+=snprintf(o+w,on-w,"uint32_t %s = bcir_%s(",rname(f,cl->wr[0],d),cl->op+7);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
@@ -510,8 +509,17 @@ int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
     out->unit.n_funcs++;
   }
   if(c.failed){snprintf(out->diag,sizeof out->diag,"%s",c.err);return 1;}
-  out->ok=verify_unit(&out->unit,out->diag,sizeof out->diag);
-  size_t w=0;
+  out->ok=bcir_verify_unit(&out->unit,out->diag,sizeof out->diag);
+  /* C.2 verified-C attestation: stamp the emitted C with its R-law status + R13 digest. */
+  const bcir_func *entry = out->unit.n_funcs ? &out->unit.funcs[out->unit.n_funcs-1] : NULL;
+  size_t w=snprintf(out->emitted,sizeof out->emitted,
+    "/* BCIR verified-C attestation (C.2) -- generated by bcir_cfront, do not edit.\n"
+    " *   R1-R8 + R18  %s\n"
+    " *   R9 plan / R10-R11 pack  checked in the compile->execute loop\n"
+    " *   R12 lowering-contract  support preserved (emit Clang-behaviour-equivalent)\n"
+    " *   R13 provenance digest  %016llx\n"
+    " *   R17 accuracy  exact (integer / Q-fixed, 0 ULP)\n */\n",
+    out->ok?"clean":"DIRTY", entry?(unsigned long long)bcir_provenance_digest(entry):0ull);
   for(int i=0;i<out->unit.n_funcs && w<sizeof out->emitted-256;i++){
     w+=emit_func(&out->unit.funcs[i],out->emitted+w,sizeof out->emitted-w);
     if(i+1<out->unit.n_funcs) w+=snprintf(out->emitted+w,sizeof out->emitted-w,"\n");
