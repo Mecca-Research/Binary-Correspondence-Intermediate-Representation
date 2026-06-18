@@ -246,9 +246,40 @@ class TargetProfile:
         return TargetProfile(name="riscv64-rvv", triple="riscv64-rvv", lane_widths=(1, 8, 16),
                              scalable=True, isa_features=frozenset({"rvv"}), affinity_domains=4)
 
+    @staticmethod
+    def for_host() -> "TargetProfile":
+        """The profile matching the *host* machine, so a plain invocation plans for the
+        hardware it actually runs on -- a Raspberry Pi 5 gets NEON/SVE, not AVX-512. Reads
+        platform.machine() + the CPU feature flags (/proc/cpuinfo): aarch64 -> SVE if present
+        else NEON; x86_64 -> AVX-512 if avx512f else AVX2; riscv64 -> RVV; anything else -> AVX2
+        (a conservative default). BCIR is hardware-agnostic: nothing should assume x86."""
+        import platform
+        mach = platform.machine().lower()
+        feat = _host_cpu_features()
+        if mach in ("aarch64", "arm64"):
+            return TargetProfile.arm64_sve() if "sve" in feat else TargetProfile.arm64_neon()
+        if mach in ("x86_64", "amd64"):
+            return TargetProfile.x86_avx512() if "avx512f" in feat else TargetProfile.x86_avx2()
+        if mach.startswith("riscv"):
+            return TargetProfile.riscv_rvv()
+        return TargetProfile.x86_avx2()
+
 
 # Back-compat alias: existing code/tests use `HProfile`.
 HProfile = TargetProfile
+
+
+def _host_cpu_features() -> frozenset:
+    """The host CPU feature flags from /proc/cpuinfo ('flags' on x86, 'Features' on ARM);
+    empty if unreadable -- a portable best-effort that never raises."""
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith(("flags", "Features")):
+                    return frozenset(line.split(":", 1)[1].split())
+    except OSError:
+        pass
+    return frozenset()
 
 # Named registry so the CLI/tests can select a target by name.
 TARGETS = {
@@ -259,3 +290,14 @@ TARGETS = {
     "nvidia_ptx": TargetProfile.nvidia_ptx(),
     "riscv_rvv": TargetProfile.riscv_rvv(),
 }
+
+
+def default_target_name() -> str:
+    """The TARGETS key matching the host machine (TargetProfile.for_host()) -- the arch-neutral
+    default for the CLI / API / bench, so BCIR plans for the hardware it runs on rather than
+    assuming x86. Falls back to x86_avx512 only if the host profile is unnamed in TARGETS."""
+    host = TargetProfile.for_host()
+    for key, prof in TARGETS.items():
+        if prof.name == host.name:
+            return key
+    return "x86_avx512"

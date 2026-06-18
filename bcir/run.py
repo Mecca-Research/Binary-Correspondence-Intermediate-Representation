@@ -16,7 +16,7 @@ import sys
 from .examples import PROGRAMS
 from .gem import hydrate
 from .kbcir import TARGETS, optimize
-from .kbcir.cost import Theta
+from .kbcir.cost import Theta, default_target_name
 from .kbcir.weights import POLICIES, PERF
 from .verify import verify
 
@@ -26,7 +26,8 @@ _THETAS = {"cool": Theta.cool(), "hot": Theta.hot(), "mem_bound": Theta.mem_boun
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="bcir.run", description="BCIR K_BCIR oracle")
     p.add_argument("program", nargs="?", default="vector_add", choices=sorted(PROGRAMS))
-    p.add_argument("--target", default="x86_avx512", choices=sorted(TARGETS))
+    p.add_argument("--target", default=default_target_name(), choices=sorted(TARGETS),
+                   help="cost-model target (defaults to the host's architecture)")
     p.add_argument("--theta", default="cool", choices=sorted(_THETAS))
     p.add_argument("--policy", default="latency", choices=sorted(POLICIES))
     p.add_argument("--emit-llvm", action="store_true", help="print the lowered LLVM IR")

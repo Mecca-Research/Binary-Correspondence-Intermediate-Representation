@@ -160,6 +160,41 @@ jobs:
       - name: Optional BOLT smoke fixture
         run: bash llvm-training/tools/smoke-bolt.sh
 
+  # Native aarch64 (ARM) coverage: the first real driver target is a Raspberry Pi 5, so the
+  # portable core must be proven on ARM, not only x86. Catches arch regressions the x86 jobs
+  # cannot -- the perf_event_open syscall number (241 on aarch64, not x86's 298), the tile
+  # lane width (vec4 on NEON, not 16), host-arch target defaults, and the freestanding C
+  # runtime (endianness / fixed-width / no-libc) -- on GitHub's native ARM runners.
+  oracle-arm64:
+    name: BCIR oracle + C runtime (aarch64 / ARM)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install the C lowering toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm
+
+      - name: Confirm the runner is aarch64
+        run: |
+          test "$(uname -m)" = "aarch64" || { echo "expected aarch64, got $(uname -m)"; exit 1; }
+          python3 -c "from bcir.kbcir.cost import default_target_name, TargetProfile; \
+            print('host default:', default_target_name(), TargetProfile.for_host().name)"
+
+      - name: BCIR oracle (Python conformance) on ARM
+        run: python3 -m bcir.tests.run_all
+
+      - name: Python<->MLIR differential parity on ARM (smaller campaign)
+        run: python3 -m bcir.kbcir.differential -n 3000 --seed 1
+
+      - name: Freestanding C StreamPack runtime on ARM (no-libc + ABI parity)
+        run: bash tools/c/check_runtime.sh
+
+      - name: CT4 measured-replan runbook on ARM (degrade mode; exercises the perf syscall)
+        run: bash tools/silicon/measure_replan.sh
+
   mlir-rail-validate:
     name: BCIR MLIR rail (LLVM ${{ matrix.llvm }})
     runs-on: ubuntu-latest

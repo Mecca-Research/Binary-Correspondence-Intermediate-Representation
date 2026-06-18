@@ -685,16 +685,16 @@ bcir.module @tiled_matmul_x86_avx2 {
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 65536 step 1 }
   bcir.kbcir.plan @plan0 {
-    bcir.kbcir.path @path_4000_tile { claim = @c4000, realization = "t.tile", lane = #bcir.lane<t>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 8192, memory = 245760, fabric = 0, sync = 0, compile = 0, thermal = 5120, power = 5120, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
-    %sel_4000 = bcir.kbcir.select @c4000 from [@path_4000_tile] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_4000_tile, score = 507904 : i64 } : !bcir.path
+    bcir.kbcir.path @path_4000_tile { claim = @c4000, realization = "t.tile", lane = #bcir.lane<t>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 16384, memory = 294912, fabric = 0, sync = 0, compile = 0, thermal = 8704, power = 8704, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
+    %sel_4000 = bcir.kbcir.select @c4000 from [@path_4000_tile] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_4000_tile, score = 622592 : i64 } : !bcir.path
   }
-  bcir.gem.lane_segment @seg_4000 { claim = @c4000, phase = @p0, lane = #bcir.lane<t>, stride_k = 1 : i32, width = 16 : i32, opcode = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], fence_before = [], fence_after = [] }
+  bcir.gem.lane_segment @seg_4000 { claim = @c4000, phase = @p0, lane = #bcir.lane<t>, stride_k = 1 : i32, width = 8 : i32, opcode = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], fence_before = [], fence_after = [] }
 }
 
 // CHECK-LABEL: bcir.module @tiled_matmul_x86_avx2
 // CHECK: kbcir.overlap_gain = 0
-// CHECK: kbcir.overlap_makespan = 507904
-// CHECK: kbcir.plan_score = 507904
+// CHECK: kbcir.overlap_makespan = 622592
+// CHECK: kbcir.plan_score = 622592
 
 bcir.module @tiled_matmul_x86_avx512 {
   bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
@@ -731,16 +731,16 @@ bcir.module @tiled_matmul_arm64_neon {
   bcir.phase @p0 { id = 0 : i32, deps = [] }
   bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 65536 step 1 }
   bcir.kbcir.plan @plan0 {
-    bcir.kbcir.path @path_4000_tile { claim = @c4000, realization = "t.tile", lane = #bcir.lane<t>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 8192, memory = 245760, fabric = 0, sync = 0, compile = 0, thermal = 5120, power = 5120, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
-    %sel_4000 = bcir.kbcir.select @c4000 from [@path_4000_tile] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_4000_tile, score = 507904 : i64 } : !bcir.path
+    bcir.kbcir.path @path_4000_tile { claim = @c4000, realization = "t.tile", lane = #bcir.lane<t>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 32768, memory = 393216, fabric = 0, sync = 0, compile = 0, thermal = 16640, power = 16640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
+    %sel_4000 = bcir.kbcir.select @c4000 from [@path_4000_tile] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_4000_tile, score = 851968 : i64 } : !bcir.path
   }
-  bcir.gem.lane_segment @seg_4000 { claim = @c4000, phase = @p0, lane = #bcir.lane<t>, stride_k = 1 : i32, width = 16 : i32, opcode = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], fence_before = [], fence_after = [] }
+  bcir.gem.lane_segment @seg_4000 { claim = @c4000, phase = @p0, lane = #bcir.lane<t>, stride_k = 1 : i32, width = 4 : i32, opcode = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], fence_before = [], fence_after = [] }
 }
 
 // CHECK-LABEL: bcir.module @tiled_matmul_arm64_neon
 // CHECK: kbcir.overlap_gain = 0
-// CHECK: kbcir.overlap_makespan = 507904
-// CHECK: kbcir.plan_score = 507904
+// CHECK: kbcir.overlap_makespan = 851968
+// CHECK: kbcir.plan_score = 851968
 
 bcir.module @tiled_matmul_arm64_sve {
   bcir.target.capability @cpu { triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }

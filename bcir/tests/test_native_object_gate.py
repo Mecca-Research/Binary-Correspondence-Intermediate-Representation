@@ -9,6 +9,7 @@ documented. They skip cleanly when clang lacks the target.
 """
 
 import os
+import platform
 import shutil
 
 from bcir.codegen import codegen_object_c
@@ -58,8 +59,26 @@ def test_x86_64_scalar_object_end_to_end():
         return
     m, r = _plan()
     res = codegen_object_c(m, r, "x86_64")
+    # clang lists every backend, but cross-compiling an x86_64 object from a non-x86 host
+    # (e.g. a Pi 5) needs an assembler/sysroot it may lack -> best-effort off-host.
+    if platform.machine() not in ("x86_64", "amd64") and not res.ok:
+        return
     assert res.ok, res.message
     assert _elf_machine(res.artifact) == 62, "must be a real EM_X86_64 object"
+
+
+def test_aarch64_scalar_object_end_to_end():
+    """The ARM (Raspberry Pi 5) native object: emit the K_BCIR-planned kernel ->
+    clang --target=aarch64 -> a real EM_AARCH64 (183) ELF object. Native on an aarch64 host
+    (proves the gate on the Pi); a cross-compile best-effort elsewhere (skips on a toolchain gap)."""
+    if "aarch64" not in _clang_targets() and "arm64" not in _clang_targets():
+        return
+    m, r = _plan()
+    res = codegen_object_c(m, r, "aarch64")
+    if platform.machine() not in ("aarch64", "arm64") and not res.ok:
+        return
+    assert res.ok, res.message
+    assert _elf_machine(res.artifact) == 183, "must be a real EM_AARCH64 object"
 
 
 def test_ebpf_is_integer_only():

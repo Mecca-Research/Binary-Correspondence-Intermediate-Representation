@@ -23,20 +23,20 @@ def test_throttled_artifact_caps_to_honor_the_thermal_lane():
 
 
 def test_header_declares_the_kernel_abi():
-    a = build_artifact("vector_add")
+    a = build_artifact("vector_add", target="x86_avx512")
     assert "#ifndef BCIR_BCIR_KERNEL_H" in a.header_c
     assert "void bcir_kernel(const float *restrict A" in a.header_c
     assert "size_t n);" in a.header_c
 
 
 def test_kernel_is_the_c23_backend_output():
-    a = build_artifact("vector_add", theta="hot")        # hot -> vec8
+    a = build_artifact("vector_add", target="x86_avx512", theta="hot")        # hot -> vec8
     assert a.width == 8 and "width=8" in a.kernel_c
     assert "restrict" in a.kernel_c and "static_assert" in a.kernel_c
 
 
 def test_metadata_json_excludes_source():
-    a = build_artifact("vector_add")
+    a = build_artifact("vector_add", target="x86_avx512")
     md = a.metadata()
     assert "kernel_c" not in md and "header_c" not in md
     assert md["attested"] is True and md["width"] == 16
@@ -44,7 +44,7 @@ def test_metadata_json_excludes_source():
 
 def test_to_files_writes_kernel_and_header(tmp_path=None):
     import tempfile, os
-    a = build_artifact("vector_add")
+    a = build_artifact("vector_add", target="x86_avx512")
     d = tempfile.mkdtemp(prefix="bcir-api-")
     try:
         paths = a.to_files(d)
@@ -57,7 +57,7 @@ def test_to_files_writes_kernel_and_header(tmp_path=None):
 def test_compile_kernel_aot_self_checks():
     if shutil.which("clang") is None and shutil.which("cc") is None and shutil.which("gcc") is None:
         return  # skip cleanly without a C compiler
-    art, (ok, out) = compile_kernel("vector_add", run=True, theta="cool")
+    art, (ok, out) = compile_kernel("vector_add", target="x86_avx512", run=True, theta="cool")
     assert art.attested and ok, out
     assert "OK" in out
 
@@ -67,9 +67,9 @@ def test_compile_kernel_aot_self_checks():
 def test_budget_makes_bcir_emit_the_feasible_kernel():
     # Unconstrained, BCIR (like a max-width compiler) picks vec16. Under a 700
     # thermal/power cap, vec16 is infeasible -- BCIR picks the feasible vec8.
-    un = build_artifact("vector_add")
+    un = build_artifact("vector_add", target="x86_avx512")
     assert un.width == 16 and un.feasible and un.budget == ()
-    cap = build_artifact("vector_add", budget="thermal=700,power=700")
+    cap = build_artifact("vector_add", target="x86_avx512", budget="thermal=700,power=700")
     assert cap.width == 8 and cap.feasible and cap.score == 9472
     assert cap.budget == ((5, 700), (6, 700))
 
@@ -88,7 +88,7 @@ def test_the_naive_max_width_plan_is_infeasible_under_the_cap():
 def test_an_overtight_budget_is_infeasible():
     from bcir.kbcir import Infeasible
     try:
-        build_artifact("vector_add", budget="thermal=500,power=500")
+        build_artifact("vector_add", target="x86_avx512", budget="thermal=500,power=500")
         assert False, "expected Infeasible"
     except Infeasible:
         pass

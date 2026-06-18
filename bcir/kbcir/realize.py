@@ -182,7 +182,10 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
         # Correctness: do not assume locality. Only the declared GGG realization is legal (HAM-aware).
         cands.append(Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd))
     elif sc == StrideClass.TILE:
-        cands.append(Candidate(Lane.T, 16, "tile", _cost(claim, h, 16, 1, tier=tier), claim.rd))
+        # The tile lane is the widest the hardware can issue, capped at 16 (AVX-512 f32):
+        # 16 on AVX-512/SVE/RVV/PTX, but 4 on NEON, 8 on AVX2 -- never an unrealizable width.
+        tw = min(16, h.lane_widths[-1])
+        cands.append(Candidate(Lane.T, tw, "tile", _cost(claim, h, tw, 1, tier=tier), claim.rd))
 
     if not cands:  # defensive fallback
         cands.append(Candidate(claim.lane, 1, "scalar",

@@ -136,8 +136,10 @@ def codegen_all(module: Module, result: RealizationResult) -> dict:
 # a genuine ELF object for the expected machine. eBPF is integer-only (no FP), so it
 # takes the i32 kernel and `-ffreestanding` (no libc). EM_BPF = 247, EM_X86_64 = 62.
 _OBJECT_TARGETS: dict[str, dict] = {
-    "bpf":    {"triple": "bpf", "e_machine": 247, "elem": "i32", "freestanding": True},
-    "x86_64": {"triple": "x86_64-linux-gnu", "e_machine": 62, "elem": "i32", "freestanding": False},
+    "bpf":     {"triple": "bpf", "e_machine": 247, "elem": "i32", "freestanding": True},
+    "x86_64":  {"triple": "x86_64-linux-gnu", "e_machine": 62, "elem": "i32", "freestanding": False},
+    # EM_AARCH64 = 183: the ARM (Raspberry Pi 5) native-object target, alongside x86_64.
+    "aarch64": {"triple": "aarch64-linux-gnu", "e_machine": 183, "elem": "i32", "freestanding": False},
 }
 
 
