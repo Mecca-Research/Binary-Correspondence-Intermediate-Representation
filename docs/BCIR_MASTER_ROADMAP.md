@@ -652,8 +652,11 @@ to port:* **function pointers**, **multi-dimensional arrays**; the comma
 operator, `sizeof`/`_Alignof`/`typeof`, casts + compound literals, integer promotions + usual arithmetic
 conversions, pointer-arithmetic completeness; the rest of control flow — ✅ **`for`** (desugared onto
 the existing `while` machinery on both rails: `init; while(cond){ body; step }`, the step lowered at
-the loop-body end; Clang-equivalent, `cfront_for.c`), still `do/while`, `switch` +
-fallthrough, `break`/`continue`, `goto` or a structured-lowering/diagnostic policy; designated +
+the loop-body end; `cfront_for.c`), ✅ **`do/while`** (a `WhileNode` `test_at_end` flag / the C
+`c.loop.test` marker placed at the loop-body bottom -- body runs at least once) + ✅ **`break`** (a
+`BreakNode` / `c.break` marker emitted as `break;`, correct in every loop form), all Clang-equivalent
+(`cfront_dowhile.c`); still `continue` (needs the `for`-step interaction), `switch` +
+fallthrough, `goto` or a structured-lowering/diagnostic policy; designated +
 compound initializers; storage classes + linkage (`static`/`extern`/`thread_local`); `restrict` +
 alias/effect propagation; `_Atomic` + C-memory-model legality; scalable IR allocation (no fixed
 `BCIR_MAX_*`); fuller x86-64/AArch64 ABI; real object/dependency output via a resident backend. **Exit:**

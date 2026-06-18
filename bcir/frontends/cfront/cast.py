@@ -113,6 +113,17 @@ class For:
     body: tuple = ()
 
 
+@dataclass(frozen=True)
+class DoWhile:
+    cond: object                    # `do body while (cond);` — body runs, then cond is tested
+    body: tuple = ()
+
+
+@dataclass(frozen=True)
+class Break:
+    pass                            # `break;` — exit the nearest enclosing loop
+
+
 # --- top level ---
 @dataclass(frozen=True)
 class Param:

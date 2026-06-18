@@ -73,11 +73,17 @@ class WhileNode:
     cond: int                              # rid of the condition value
     body: list
     bound: int = 1024                      # static iteration upper bound (for the cost model)
+    test_at_end: bool = False              # do/while: run body first, then test the condition
 
 
 @dataclass
 class ReturnNode:
     rid: int | None                        # the returned value's rid (None == `return;`)
+
+
+@dataclass
+class BreakNode:
+    pass                                   # `break;` -- exit the nearest enclosing loop (emit-only)
 
 
 def _flatten_block(block: list) -> list:
@@ -401,6 +407,15 @@ class _FuncLowerer:
                 self._stmt(st.step)
                 self.block_stack.pop()
             self.block_stack[-1].append(WhileNode(cond_block2, cond, body))
+        elif isinstance(st, cast.DoWhile):                     # body runs, then the cond is tested
+            body = self._block(st.body)
+            cond_block3: list = []
+            self.block_stack.append(cond_block3)
+            cond = self._rvalue(st.cond)
+            self.block_stack.pop()
+            self.block_stack[-1].append(WhileNode(cond_block3, cond, body, test_at_end=True))
+        elif isinstance(st, cast.Break):
+            self.block_stack[-1].append(BreakNode())
         else:
             raise CLowerError(f"statement {type(st).__name__} is beyond the L1–L6 subset")
         return None
@@ -457,7 +472,7 @@ def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Re
             flush_run()
             _block_region(node.cond_block, functions, calls_iter)   # cond claims (cost folded in body)
             parts.append(_block_region(node.body, functions, calls_iter))
-        elif isinstance(node, ReturnNode):
+        elif isinstance(node, (ReturnNode, BreakNode)):
             continue
         elif node.op.startswith("c.call:"):
             flush_run()
