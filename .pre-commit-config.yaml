@@ -1,0 +1,80 @@
+# Pre-commit hooks for BCIR. Install once:  pip install -e .[dev] && pre-commit install --install-hooks
+# Fast gates run on commit; the heavier suite (import quarantine + the quick test chain) runs on push.
+# These mirror the CI jobs (oracle-and-training, docs-governance) so failures surface locally first.
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.(ll|mlir)$|^llvm-training/dataset/'
+      - id: end-of-file-fixer
+        exclude: '^llvm-training/dataset/'
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v18.1.8
+    hooks:
+      - id: clang-format
+        types_or: [c, c++]
+        files: '^(runtime/c|mlir/(lib|include))/.*\.(c|h|cpp|hpp)$'
+
+  # ruff (lint + format) from the locally-installed tool (`.[dev]`), so the version never
+  # drifts from pyproject's config.
+  - repo: local
+    hooks:
+      - id: ruff-lint
+        name: ruff (lint)
+        entry: ruff check --force-exclude --fix
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: ruff-format
+        name: ruff (format)
+        entry: ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      # --- project governance gates (mirror the docs-governance CI job) ---
+      - id: gen-status-drift
+        name: docs/STATUS.md is generated (no count/law drift)
+        entry: python3 tools/docs/gen_status.py --check
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: check-links
+        name: no broken relative Markdown links
+        entry: python3 tools/docs/check_links.py
+        language: system
+        files: '\.md$'
+        pass_filenames: false
+      - id: check-retired-paths
+        name: no active-doc references to retired trees
+        entry: python3 tools/docs/check_retired_paths.py
+        language: system
+        files: '\.md$'
+        pass_filenames: false
+
+      # --- heavier: only on push ---
+      - id: import-quarantine
+        name: hot/cold import quarantine (research organs stay off the simple path)
+        entry: python3 tools/perf/import_graph.py --check
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: bcir-quick
+        name: BCIR oracle quick chain (python -m bcir.tests.run_all)
+        entry: python3 -m bcir.tests.run_all
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

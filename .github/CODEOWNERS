@@ -1,0 +1,24 @@
+# Code ownership for review routing (https://docs.github.com/articles/about-code-owners).
+# Owners are requested automatically when a PR touches matching paths. Last matching pattern
+# wins, so the specific rules below override the catch-all.
+
+# Default owner for everything.
+*                       @Mecca-Research
+
+# The dual rails — both must agree (docs/PARITY.md), so changes here want a careful look.
+/bcir/                  @Mecca-Research
+/mlir/                  @Mecca-Research
+
+# The freestanding C runtime: the untrusted-input decoders (memory-safety surface, see SECURITY.md).
+/runtime/               @Mecca-Research
+
+# Normative docs + the generated single-source-of-truth status.
+/docs/                  @Mecca-Research
+
+# Build, governance, and CI plumbing.
+/tools/                 @Mecca-Research
+/.github/               @Mecca-Research
+/pyproject.toml         @Mecca-Research
+/.pre-commit-config.yaml @Mecca-Research
+/.clang-format          @Mecca-Research
+/.clang-tidy            @Mecca-Research

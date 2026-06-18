@@ -1,0 +1,19 @@
+# BCIR C / C++ style — LLVM base (this is an MLIR/LLVM out-of-tree project), widened to a
+# 100-column limit to match the prevailing line width in mlir/lib and runtime/c. Applies to the
+# freestanding C runtime (runtime/c/) and the dialect/passes (mlir/lib, mlir/include).
+# Run via pre-commit (clang-format hook) or: clang-format -i <file>.
+BasedOnStyle: LLVM
+ColumnLimit: 100
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+PointerAlignment: Left
+DerivePointerAlignment: false
+Cpp11BracedListStyle: true
+AlwaysBreakTemplateDeclarations: Yes
+AllowShortFunctionsOnASingleLine: Inline
+SortIncludes: CaseSensitive
+SpaceBeforeParens: ControlStatements
+---
+Language: Cpp
+Standard: Latest

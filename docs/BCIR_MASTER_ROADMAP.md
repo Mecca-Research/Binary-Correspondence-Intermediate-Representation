@@ -487,7 +487,10 @@ In recommended order — each is gated by the generated differential harness + F
   gate (`tools/docs/`, see [`docs/STATUS.md`](STATUS.md)).
 - **0.3 — measured adaptive compiler** (◑): real-hardware CT4 evidence (§5.4) + durable
   telemetry (schema registry, backpressure, a live broker in CI behind a fake producer)
-  + compile-time/peak-memory regression budgets.
+  + compile-time/peak-memory regression budgets. *Landed:* the non-flaky perf-budget gate
+  (`bcir.perf_budget` + `tools/perf/check_budgets.py` — strict on correctness/measurement
+  validity, perf floors bare-metal-only, JSONL trend log) and named test tiers
+  (`run_all --tier {quick,c-runtime,silicon-degrade,thorough}`).
 - **0.4a — proof-carrying (mechanism)** (✅): replay records + per-claim certificates +
   `bcir.run --explain`/`--replay`/`--reduce` are implemented and tested (§5.3.2).
 - **0.4b — proof-carrying (contract)** (☐): a *stable* certificate schema (versioned, with a

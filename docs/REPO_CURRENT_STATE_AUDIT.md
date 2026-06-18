@@ -130,6 +130,21 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Test tiers, perf budgets, import quarantine, packaging/governance.** Named test
+  tiers — `python -m bcir.tests.run_all --tier {quick,c-runtime,silicon-degrade,thorough}` — an
+  escalating capability ladder (`quick` ⊂ `c-runtime` ⊂ `silicon-degrade` ⊂ `thorough`) layered on
+  the suite's existing self-gating (a tier sets which host tools are visible + whether the full
+  campaigns run; `BCIR_THOROUGH` still maps to `thorough`, so CI is unchanged). A non-flaky
+  **perf-budget gate** (`bcir.perf_budget` + `tools/perf/check_budgets.py`): STRICT on correctness +
+  measurement validity everywhere, perf floors enforced only under `BCIR_BAREMETAL` (waived on shared
+  CI), with a provenance-tagged JSONL trend log. A **hot/cold import-quarantine** dependency-graph
+  tool (`tools/perf/import_graph.py --check`) + test that pins the 27 research organs off the simple
+  path (complements the path-level `test_perf.py` / `test_hot_cold.py`). Packaging/governance:
+  `pyproject.toml` (PEP 621 + a green-on-the-tree ruff config), `.clang-format` / `.clang-tidy`,
+  `mlir/CMakePresets.json` (mirrors `build_mlir.sh`), `SECURITY.md`, `.github/CODEOWNERS`,
+  `.pre-commit-config.yaml` (ruff + clang-format + the doc/quarantine gates; quick chain on push). CI
+  gains the perf-budget step (oracle job) and the import-quarantine gate (docs-governance job). Suite:
+  650 oracle tests (live count in [`STATUS.md`](STATUS.md)).
 - 2026-06-18: **Docs governance — generated status, link/retired-path CI, drift reconciliation.**
   Added `tools/docs/gen_status.py` → [`docs/STATUS.md`](STATUS.md), the single source of truth for
   counts + coverage (Python tests, ODS ops, registered passes, MLIR FileCheck tests, runtime-C

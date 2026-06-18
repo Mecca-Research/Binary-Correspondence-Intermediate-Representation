@@ -1,0 +1,57 @@
+# Packaging + tooling for the BCIR oracle (the pure-Python `bcir/` rail). The MLIR/C++ law
+# (`mlir/`) and the freestanding C runtime (`runtime/c/`) build separately via CMake
+# (see mlir/CMakePresets.json) — this file governs the Python package only.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bcir"
+version = "0.2.0"
+description = "Binary Correspondence Intermediate Representation — the executable conformance oracle"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+keywords = ["compiler", "mlir", "intermediate-representation", "optimization", "bcir"]
+# The oracle is deterministic and dependency-free by design (pure-Python, integer/Q-fixed
+# hot-path math). Keep `dependencies` empty — a third-party dep on the oracle rail is a
+# regression. Heavy research organs stay import-quarantined (tools/perf/import_graph.py).
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["ruff>=0.6", "pre-commit>=3.5"]
+
+[project.scripts]
+bcir = "bcir.run:main"
+
+[project.urls]
+Homepage = "https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation"
+Documentation = "https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation/blob/main/docs/BCIR_LANGREF.md"
+
+[tool.setuptools.packages.find]
+include = ["bcir*"]
+
+# --- ruff ---------------------------------------------------------------------------
+# Calibrated to be GREEN on the existing tree so the gate catches *regressions*, not the
+# codebase's deliberate house style (compact one-liners, long descriptive strings, the
+# PEP 562 lazy-import shims). Tighten incrementally.
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["build", "llvm-training/dataset"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP"]
+ignore = [
+    "E501",   # long lines — many are intentional one-line tables / descriptive strings
+    "E701", "E702", "E703",  # compact `if x: y` / `a; b` house style
+    "E731",   # assigned lambdas (used as small local kernels)
+    "E741",   # ambiguous names (l/I/O appear in math-y code)
+    "E401", "E402",  # grouped / deferred imports (lazy-import shims, sys.path bootstraps)
+    "F401", "F841",  # re-export shims + scaffolding locals; not worth churning
+    "B007", "B008", "B011", "B027", "B905",  # deliberate defaults / asserts / zip usage
+    "UP007", "UP015", "UP031", "UP035", "UP037", "UP045",  # annotation-style noise
+]
+
+[tool.ruff.format]
+quote-style = "double"
