@@ -395,6 +395,62 @@ def test_cli_resolves_sibling_and_search_path_headers():
         assert rc == 0 and "x+1" in out.replace(" ", ""), out
 
 
+def _build_bcir_cc(d: str) -> str:
+    exe = os.path.join(d, "bcir-cc")
+    srcs = [os.path.join(_C, s) for s in ("bcir_cc.c", "bcir_cpp.c", "bcir_cfront.c", "bcir_verify.c",
+            "bcir_runtime.c", "bcir_plan.c", "bcir_hydrate.c")]
+    for std in ("c23", "c11"):
+        b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
+                           capture_output=True, text=True)
+        if b.returncode == 0:
+            return exe
+    raise AssertionError(f"bcir-cc build failed:\n{b.stderr}")
+
+
+def test_bcir_cc_driver_compiles_and_emits_artifacts():
+    """`bcir-cc` -- the production C compiler driver -- compiles a driver with sibling/`-I` headers
+    via a normal compile command (no test-harness include map), honours `-D` in a `#if`, and emits
+    the verified C / claim graph / StreamPack artifacts. The C preprocessor's `-I` + `-D` path is
+    dual-rail with the oracle (`bcir_cpp_run_ex` ~ cpp.py search_paths/defines)."""
+    if not _CC:
+        return
+    from bcir.frontends.cfront import compile_unit  # noqa: PLC0415
+    with tempfile.TemporaryDirectory() as d:
+        cc = _build_bcir_cc(d)
+        uart = os.path.join(_C, "cfront_driver_uart.c")
+        # (1) the sibling header resolves; the default output is the dual-rail structural summary.
+        p = subprocess.run([cc, uart], capture_output=True, text=True)
+        assert p.returncode == 0 and "ok=1" in p.stdout, (p.stdout, p.stderr)
+        # (2) --emit-c emits the verified C + the C.2 attestation.
+        p = subprocess.run([cc, "--emit-c", uart], capture_output=True, text=True)
+        assert "bcir_uart_configure" in p.stdout and "attestation (C.2)" in p.stdout, p.stdout
+        # (3) --emit-pack writes a valid StreamPack (the BSPK magic).
+        pack = os.path.join(d, "u.pack")
+        assert subprocess.run([cc, "--emit-pack", "-o", pack, uart]).returncode == 0
+        with open(pack, "rb") as f:
+            assert f.read(4) == b"BSPK"
+        # (4) -I <dir> + -D macro: a header outside the source dir + a -D-selected #if branch, and
+        #     the C rail agrees with the oracle given the same search path + define.
+        incd = os.path.join(d, "inc"); os.makedirs(incd)
+        with open(os.path.join(incd, "r.h"), "w") as f:
+            f.write("typedef volatile unsigned int reg32;\nstruct dev { reg32 s; };\n")
+        src = os.path.join(d, "m.c")
+        with open(src, "w") as f:
+            f.write('#include "r.h"\n#if defined(FAST)\n'
+                    'unsigned int g(volatile struct dev *p){ return p->s + 1u; }\n'
+                    '#else\nunsigned int g(volatile struct dev *p){ return p->s; }\n#endif\n')
+        c_sum = subprocess.run([cc, "-I", incd, "-D", "FAST", src],
+                               capture_output=True, text=True).stdout.strip()
+        assert "binop=1" in c_sum and "ok=1" in c_sum, c_sum     # the FAST branch (+1u) -> one binop
+        r = compile_unit(open(src, encoding="utf-8").read(), check_clang=False,
+                         search_paths=[incd], defines={"FAST": "1"})
+        entry = r.lowered.functions[next(reversed(r.lowered.functions))]
+        assert sum(1 for c in entry.claims if c.op.startswith("c.bin.")) == 1   # oracle agrees
+        # without -D FAST the other branch (no +1) is taken -> zero binops, on both rails.
+        c_sum0 = subprocess.run([cc, "-I", incd, src], capture_output=True, text=True).stdout.strip()
+        assert "binop=0" in c_sum0, c_sum0
+
+
 def test_phase_d_uart_driver_write_and_poll_path():
     """Phase D (the write + control-flow half): a vendor-style UART register-map header
     (uart_regs.h) + driver (cfront_driver_uart.c) driven END TO END through the plug-in C compiler
@@ -460,7 +516,8 @@ def test_L8_packed_layout_matches_clang():
 def test_c_frontend_builds_warning_clean():
     if not _CC:
         return
-    for unit in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_verify.c"):
+    for unit in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_verify.c",
+                 "bcir_cc.c"):
         ok = False
         for std in ("c23", "c11"):
             b = subprocess.run([_CC, f"-std={std}", "-Wall", "-Wextra", "-Werror", "-I", _C, "-c",

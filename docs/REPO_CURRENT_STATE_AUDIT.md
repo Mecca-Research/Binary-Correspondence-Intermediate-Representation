@@ -130,6 +130,23 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler — `bcir-cc`, the production compiler driver (Phase 1) + the C
+  preprocessor's `-I`/`-D` extension.** A cc-like driver binary (`runtime/c/bcir_cc.c`) over the
+  full C rail — `bcir_cpp_run_ex` (preprocess) → `bcir_cfront` (lower + R1-R18 verify + C.2 attest)
+  → `bcir_plan` → `bcir_hydrate` — so a driver with sibling headers builds via a normal compile
+  command, no Python and no test-harness include map: `bcir-cc runtime/c/cfront_driver_uart.c` →
+  `funcs=3 claims=22 … ok=1`. Flags: `-I` (multi-dir) / `-D name[=val]` / `-U` / `-std=` / `-E` /
+  `-o`, and artifact emission `--emit-c` (verified C + the C.2 attestation) / `--emit-claimgraph`
+  (summary + per-function claim dump) / `--emit-pack` (the entry's hydrated StreamPack, `BSPK`
+  magic). To feed it, the **C preprocessor gained the dual-rail twin of the oracle's
+  search-path/defines** (PR #276): `bcir_cpp_run_ex(dirs[], defines[])` resolves `#include`/`#embed`
+  across multiple `-I` dirs (the source dir first) + seeds `-D` predefines, and the include
+  recursion was refactored so **macros persist across nested includes** (matching `cpp.py`; the old
+  per-include `NM=0` reset was a latent divergence). The existing `#include` fixtures lower
+  identically (no regression); warning-clean (C11 + C23). Gated by
+  `test_bcir_cc_driver_compiles_and_emits_artifacts` (sibling + `-I`/`-D` compile, artifacts, oracle
+  parity on the `-D`-selected branch) + a `bcir-cc` section in `tools/c/check_runtime.sh`. 693 tests
+  pass.
 - 2026-06-18: **Plug-in C compiler — the road to a C23 replacement compiler (§5.9) + the CLI
   include-path fix (Phase 1).** Recorded the four-phase plan to take the frontend from a
   driver-subset to a full C23 *replacement* compiler (roadmap §5.9): Phase 1 productionizes the

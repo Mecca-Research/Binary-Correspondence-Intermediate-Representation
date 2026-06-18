@@ -627,15 +627,21 @@ We complete it **systematically, one PR-sized chunk at a time**, in four phases.
 
 **Phase 1 — Driver-subset compiler, productionized** (the near-term milestone — make the existing
 subset behave like `cc` on a small multi-file driver project):
-- ✅ **Fix the CLI include-path gap** (`python -m bcir.frontends.cfront`): the file's own directory is
-  on the search path, so a driver with sibling `#include "regs.h"` headers compiles directly — plus
-  `-I` / `-D` / `-U` / `-std=` / `-E` / `-o` (the preprocessor now resolves headers from disk via a
-  search path, not just an in-memory mount). *(this chunk)*
-- Promote `bcir_cfront` to a first-class `bcir-cc` driver binary (the production compiler is already
-  in C): `bcir-cc -std=c23 -Iinclude -DREG_BASE=… --emit-claimgraph --emit-c --emit-pack file.c`.
-- Emit verified-C / StreamPack / provenance manifests as named artifacts; precise unsupported-construct
-  diagnostics; a CI gate for the CLI path. **Exit:** a small multi-file driver project builds via a
-  normal-ish compile command and passes the behaviour check.
+- ✅ **Fix the oracle-rail CLI include-path gap** (`python -m bcir.frontends.cfront`): the file's own
+  directory is on the search path, so a driver with sibling `#include "regs.h"` headers compiles
+  directly — plus `-I` / `-D` / `-U` / `-std=` / `-E` / `-o` (the Python preprocessor resolves headers
+  from disk via a search path, not just an in-memory mount).
+- ✅ **`bcir-cc` — the production C compiler driver** (`runtime/c/bcir_cc.c`, the cc-like front over
+  the full C rail `bcir_cpp_run_ex → bcir_cfront → bcir_plan → bcir_hydrate`): `-I` (multi-dir) / `-D`
+  / `-U` / `-std=` / `-E` / `-o` + `--emit-c` (verified C + C.2 attestation) / `--emit-claimgraph` /
+  `--emit-pack` (the entry's hydrated StreamPack, `BSPK`). The C preprocessor gained the dual-rail
+  twin of the oracle's search-path/defines (`bcir_cpp_run_ex`: multi-dir `#include`, `-D` predefines,
+  **macros persist across nested includes** like `cpp.py`). A driver with sibling headers builds via
+  a normal compile command — `bcir-cc runtime/c/cfront_driver_uart.c` → `ok=1`. CI-gated
+  (`test_bcir_cc_driver_compiles_and_emits_artifacts` + `tools/c/check_runtime.sh`).
+- *Remaining Phase 1:* provenance-manifest artifact emission, precise unsupported-construct diagnostics
+  (spans/notes). **Exit:** a small multi-file driver project builds via a normal compile command and
+  passes the behaviour check — substantially met on the production rail.
 
 **Phase 2 — Freestanding C23 compiler (embedded/kernel subset).** Close the concrete language gaps real
 headers/drivers hit: **ternary `?:`**, **function pointers**, **multi-dimensional arrays**; the comma
