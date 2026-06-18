@@ -176,4 +176,22 @@ print(','.join(route_claim(Claim(id=1,opcode=Opcode.LOAD,op=o,stride_class=s),ma
   && echo "  PASS channel routing parity (Python route_claim == C bcir_channel_route: ${c_route})" \
   || { echo "  FAIL: channel routing parity (C='${c_route}' PY='${py_route}')"; exit 1; }
 
+echo "[c-runtime] bcir-cc compiler driver: compile a driver (sibling header) + emit artifacts"
+# bcir_cc.c is the cc-like driver over the full C pipeline (bcir_cpp_run_ex -I/-D -> bcir_cfront ->
+# plan -> hydrate). It must compile a driver with sibling headers via a normal compile command.
+"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${C}/bcir_cc.c" "${C}/bcir_cpp.c" "${C}/bcir_cfront.c" \
+  "${C}/bcir_verify.c" "${C}/bcir_runtime.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" -o "${tmp}/bcir-cc" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 -I "${C}" "${C}/bcir_cc.c" "${C}/bcir_cpp.c" "${C}/bcir_cfront.c" \
+       "${C}/bcir_verify.c" "${C}/bcir_runtime.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" -o "${tmp}/bcir-cc" \
+  || { echo "  FAIL: bcir-cc build"; exit 1; }
+ccsum="$("${tmp}/bcir-cc" "${C}/cfront_driver_uart.c")" || { echo "  FAIL: bcir-cc compile"; echo "${ccsum}"; exit 1; }
+case "${ccsum}" in
+  *ok=1*) echo "  PASS bcir-cc compile (${ccsum##*: })" ;;
+  *) echo "  FAIL: bcir-cc compile: ${ccsum}"; exit 1 ;;
+esac
+"${tmp}/bcir-cc" --emit-pack -o "${tmp}/uart.pack" "${C}/cfront_driver_uart.c" || { echo "  FAIL: bcir-cc --emit-pack"; exit 1; }
+[ "$(head -c4 "${tmp}/uart.pack")" = "BSPK" ] \
+  && echo "  PASS bcir-cc --emit-pack (valid StreamPack)" \
+  || { echo "  FAIL: bcir-cc --emit-pack: bad magic"; exit 1; }
+
 echo "[c-runtime] ok"

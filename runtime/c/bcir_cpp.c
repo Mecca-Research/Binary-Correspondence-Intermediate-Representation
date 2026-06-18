@@ -199,23 +199,26 @@ static void define_macro(const char *rest) {
   undef_macro(m.name); if(NM<1024) M[NM++]=m;
 }
 
-static int read_file(const char *base, const char *name, char *out, size_t cap) {
+/* Resolve `name` by trying each search dir in order (the -I path + the source dir); a quoted and an
+ * angle include share the path here (a driver MVP). Returns the byte count, or -1 if not found. */
+static int read_file_dirs(const char *const *dirs, int ndirs, const char *name, char *out, size_t cap) {
   char path[1024];
-  if(base&&base[0]) snprintf(path,sizeof path,"%s/%s",base,name); else snprintf(path,sizeof path,"%s",name);
-  FILE *f=fopen(path,"rb"); if(!f)return -1;
-  size_t n=fread(out,1,cap-1,f); out[n]=0; fclose(f); return (int)n;
+  for(int d=0; d<ndirs; d++){ const char *base=dirs[d];
+    if(base&&base[0]) snprintf(path,sizeof path,"%s/%s",base,name); else snprintf(path,sizeof path,"%s",name);
+    FILE *f=fopen(path,"rb"); if(f){ size_t n=fread(out,1,cap-1,f); out[n]=0; fclose(f); return (int)n; } }
+  if(ndirs==0){ FILE *f=fopen(name,"rb"); if(f){ size_t n=fread(out,1,cap-1,f); out[n]=0; fclose(f); return (int)n; } }
+  return -1;
 }
 
-int bcir_cpp_run(const char *src, const char *basedir, char *out, size_t outcap,
-                 char *err, size_t errcap) {
-  NM=0; if(err&&errcap)err[0]=0;
-  /* predefined */
-  define_macro("__STDC_VERSION__ 202311L"); define_macro("__STDC__ 1");
-
-  size_t w=0; out[0]=0;
+/* The main directive/text loop. Does NOT reset the macro table -- macros persist across #includes
+ * (matching cpp.py, where the same Preprocessor processes nested files); the conditional stack is
+ * per-call (a header's #if is self-contained). Recurses into included files, appending to `out` at
+ * `*w` and sharing the macro table. */
+static int g_cpp_depth;
+static int cpp_process(const char *src, const char *const *dirs, int ndirs,
+                       char *out, size_t outcap, size_t *w, char *err, size_t errcap) {
   /* a conditional stack: active flag + taken flag (parent == all enclosing frames active) */
   struct { int active, taken, parent; } cs[64]; int ncs=0;
-
   const char *p=src; char line[8192];
   while(*p){
     int L=0; while(*p&&*p!='\n'){ if(*p=='\\'&&p[1]=='\n'){p+=2;continue;} if(L<8190)line[L++]=*p; p++; }
@@ -247,24 +250,43 @@ int bcir_cpp_run(const char *src, const char *basedir, char *out, size_t outcap,
           char hd[8192]; int sys=(rest[0]=='<'); char nm[1024]; int j=0;
           while(rest[j]&&rest[j]!='>'&&rest[j]!='"'&&rest[j]!='<')j++; if(rest[j]=='<'||rest[j]=='"')j++;
           int s2=j; while(rest[j]&&rest[j]!='>'&&rest[j]!='"')j++; int nl=j-s2; if(nl>1023)nl=1023; memcpy(nm,rest+s2,(size_t)nl);nm[nl]=0;
-          if(read_file(basedir,nm,hd,sizeof hd)<0){ if(!sys){if(err)snprintf(err,errcap,"#include %s not found",nm);return 1;} }
-          else { static char exp[1<<16]; if(bcir_cpp_run(hd,basedir,exp,sizeof exp,err,errcap)) return 1;
-                 app(out,outcap,&w,exp); }
+          if(read_file_dirs(dirs,ndirs,nm,hd,sizeof hd)<0){ if(!sys){if(err)snprintf(err,errcap,"#include %s not found",nm);return 1;} }
+          else { if(g_cpp_depth>64){if(err)snprintf(err,errcap,"#include nesting too deep");return 1;}
+                 g_cpp_depth++; int rc=cpp_process(hd,dirs,ndirs,out,outcap,w,err,errcap); g_cpp_depth--;
+                 if(rc) return rc; }
         }
         else if(!strcmp(dir,"embed")){
           char nm[1024]; int j=0; while(rest[j]&&rest[j]!='>'&&rest[j]!='"'&&rest[j]!='<')j++;
           if(rest[j]=='<'||rest[j]=='"')j++; int s2=j; while(rest[j]&&rest[j]!='>'&&rest[j]!='"')j++;
           int nl=j-s2; if(nl>1023)nl=1023; memcpy(nm,rest+s2,(size_t)nl);nm[nl]=0;
-          static char blob[1<<16]; int bn=read_file(basedir,nm,blob,sizeof blob);
+          static char blob[1<<16]; int bn=read_file_dirs(dirs,ndirs,nm,blob,sizeof blob);
           if(bn<0){if(err)snprintf(err,errcap,"#embed %s not found",nm);return 1;}
-          char num[16]; for(int b=0;b<bn;b++){snprintf(num,sizeof num,"%s%u",b?", ":"",(unsigned char)blob[b]);app(out,outcap,&w,num);} }
+          char num[16]; for(int b=0;b<bn;b++){snprintf(num,sizeof num,"%s%u",b?", ":"",(unsigned char)blob[b]);app(out,outcap,w,num);} }
         /* #error/#warning/#pragma/#line ignored */
       }
       continue;
     }
     int active=1; for(int k=0;k<ncs;k++) if(!cs[k].active){active=0;break;}
-    if(active){ char ex[8192]; expand_line(line,ex,sizeof ex); app(out,outcap,&w,ex); app(out,outcap,&w,"\n"); }
+    if(active){ char ex[8192]; expand_line(line,ex,sizeof ex); app(out,outcap,w,ex); app(out,outcap,w,"\n"); }
   }
   if(ncs){if(err)snprintf(err,errcap,"unterminated #if");return 1;}
   return 0;
+}
+
+/* The extended entry point: multiple include dirs (-I) + predefined macros (-D, each "name body").
+ * Seeds the predefined + -D macros ONCE; cpp_process then keeps them across nested includes. */
+int bcir_cpp_run_ex(const char *src, const char *const *dirs, int ndirs,
+                    const char *const *defines, int ndefines,
+                    char *out, size_t outcap, char *err, size_t errcap) {
+  NM=0; if(err&&errcap)err[0]=0;
+  define_macro("__STDC_VERSION__ 202311L"); define_macro("__STDC__ 1");
+  for(int d=0; d<ndefines; d++) define_macro(defines[d]);
+  out[0]=0; size_t w=0; g_cpp_depth=0;
+  return cpp_process(src, dirs, ndirs, out, outcap, &w, err, errcap);
+}
+
+int bcir_cpp_run(const char *src, const char *basedir, char *out, size_t outcap,
+                 char *err, size_t errcap) {
+  const char *d[1]; int nd=0; if(basedir&&basedir[0]){ d[0]=basedir; nd=1; }
+  return bcir_cpp_run_ex(src, d, nd, NULL, 0, out, outcap, err, errcap);
 }
