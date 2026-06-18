@@ -22,7 +22,11 @@ from bcir.model import Domain
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
 _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
-_FIXTURES = ["cfront_regmap.c", "cfront_array.c", "cfront_callgraph.c"]
+# straight-line fixtures run the full execute loop; control-flow fixtures get parity + emit + Clang ≡
+# (control flow is not a flat StreamPack segment stream, so the loop runs the straight-line set).
+_STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_callgraph.c"]
+_CONTROL = ["cfront_branch.c", "cfront_while.c"]
+_FIXTURES = _STRAIGHTLINE + _CONTROL
 
 
 def _oracle(src: str):
@@ -159,7 +163,7 @@ def test_full_compile_execute_loop_in_c():
         return
     with tempfile.TemporaryDirectory() as d:
         loop = _build_loop(d)
-        for fx in _FIXTURES:
+        for fx in _STRAIGHTLINE:
             path = os.path.join(_C, fx)
             _summary, _r, entry = _oracle(open(path, encoding="utf-8").read())
             out = subprocess.run([loop, path], capture_output=True, text=True).stdout.strip()

@@ -130,6 +130,16 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Plug-in C compiler — L6 control flow in C (if/else/while).** Ported the L6 ladder
+  stage to `runtime/c/bcir_cfront.c`: `if`/`else` and bounded `while` lower through control-flow
+  *marker claims* (NOP-opcode `c.if`/`c.else`/`c.endif`/`c.loop`/`c.loop.test`/`c.endloop`/`c.return`)
+  that the faithful emitter renders as real C braces (with mutable named locals, so branch merges +
+  loop accumulators reproduce the source), while the realizable claims stay a flat list for
+  verify/plan/hydrate (markers are emit-only — excluded from the summary + skipped by the hydrator).
+  Early returns inside branches are preserved. Fixtures `cfront_branch.c` (clamp) + `cfront_while.c`
+  (weighted sum) match the oracle's structural summary exactly and are Clang-behaviour-equivalent
+  (`test_c_cfront.py`); the parity loop in `check_runtime.sh` covers all L1–L6 fixtures. Remaining C
+  ports: L7 preprocessor, L8 full ABI (§5.8).
 - 2026-06-18: **Plug-in C compiler — the C compile→execute loop closes (planner + StreamPack
   hydrator), no Python.** Added `runtime/c/bcir_plan.c` (a compact freestanding K_BCIR planner:
   per-claim realization width + an integer cost + the plan total) and `runtime/c/bcir_hydrate.c` (the

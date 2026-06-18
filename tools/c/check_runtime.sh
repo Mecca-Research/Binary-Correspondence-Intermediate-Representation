@@ -109,7 +109,7 @@ echo "  PASS bcir_cir.h freestanding IR (C11 + C23)"
 "${CC}" -std=c23 -O2 -Wall -Wextra "${C}/bcir_cfront.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 "${C}/bcir_cfront.c" "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c; do   # L1-L5 + L3 + L4 fixtures
+for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c cfront_branch.c cfront_while.c; do  # L1-L6
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 from bcir.frontends.cfront import compile_unit

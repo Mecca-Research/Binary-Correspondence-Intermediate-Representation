@@ -32,12 +32,16 @@ bcir_status bcir_hydrate(const bcir_func *f, const bcir_plan *plan,
                          uint8_t *buf, size_t cap, size_t *out_len) {
   W w = {buf, cap, 0, 0};
 
+  /* control-flow markers (opcode NOP) are emit-only; they are not realizable segments. */
+  uint32_t n_seg = 0;
+  for (size_t i = 0; i < f->n_claims; i++) if (f->claims[i].opcode != BCIR_OP_NOP) n_seg++;
+
   /* header (64 bytes) */
   w_bytes(&w, BCIR_STREAMPACK_MAGIC, 4);
   w_u16(&w, BCIR_STREAMPACK_VERSION);
   w_u16(&w, 0);                       /* flags */
   w_u32(&w, 0); w_u32(&w, 0); w_u32(&w, 0);          /* topo/map/data gen */
-  w_u32(&w, (uint32_t)f->n_claims);   /* n_segments */
+  w_u32(&w, n_seg);                   /* n_segments (realizable claims only) */
   w_u32(&w, 0); w_u32(&w, 0); w_u32(&w, 0);          /* n_prefetches / n_blocks / n_trace */
   w_u16(&w, 0);                       /* pipeline_depth (v1) */
   for (int i = 0; i < 26; i++) w_u8(&w, 0);          /* reserved -> 64 bytes */
@@ -46,6 +50,7 @@ bcir_status bcir_hydrate(const bcir_func *f, const bcir_plan *plan,
   w_str(&w, "");                      /* source_plan (empty) */
   for (size_t i = 0; i < f->n_claims; i++) {
     const bcir_claim *cl = &f->claims[i];
+    if (cl->opcode == BCIR_OP_NOP) continue;          /* skip a control-flow marker */
     uint32_t width = (plan && i < plan->n) ? plan->steps[i].width : (cl->count ? cl->count : 1);
     w_str(&w, cl->op);                /* name */
     w_u64(&w, cl->id);                /* claim_id */

@@ -44,8 +44,10 @@ int main(int argc, char **argv) {
   bcir_status st = bcir_sp_execute(pack, plen, scratch, 8192, phases, 256, record, NULL, &res);
   if (st != BCIR_OK) { printf("EXEC-ERR %d\n", (int)st); return 1; }
 
+  size_t real = 0;                          /* realizable claims (control-flow markers excluded) */
+  for (size_t i = 0; i < f->n_claims; i++) if (f->claims[i].opcode != BCIR_OP_NOP) real++;
   printf("loop: claims=%zu plan_cost=%llu pack_bytes=%zu executed=%zu order=",
-         f->n_claims, (unsigned long long)plan.total_cost, plen, res.executed);
+         real, (unsigned long long)plan.total_cost, plen, res.executed);
   for (size_t i = 0; i < g_n; i++) printf("%s%llu", i ? "," : "", (unsigned long long)g_order[i]);
   printf("\n");
   bcir_cfront_free(&r);
