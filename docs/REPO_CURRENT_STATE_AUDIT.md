@@ -130,6 +130,20 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Phase D — a real register-map header driven end-to-end through the plug-in C
+  compiler.** A vendor-style memory-mapped DMA-channel register map (`runtime/c/cfront_driver.h`) +
+  driver (`cfront_driver.c`) is ingested with **no hand-written claim graph**, exercising the whole
+  accumulated stack at once: `#include` + field-extract macros (L7), `typedef volatile`/enum/union/
+  bitfields (the type model), volatile MMIO loads (L5), struct pointers (L3), and a 3-function call
+  graph (L4 / R18). The full loop runs in C — `C -> bcir_cpp -> bcir_cfront -> bcir_plan ->
+  bcir_hydrate -> bcir_exec` — both rails agreeing on `funcs=3 claims=30 mmio=1 bf=3 const=5
+  binop=10 call=2 ok=1`, R9/R10-R11 clean, and the emitted verified-C (volatile MMIO load + bitfield
+  decode + the call graph) is **Clang behaviour-equivalent** on a seeded register block
+  (`test_phase_d_real_header_driver_end_to_end`; gated in `tools/c/check_runtime.sh`). **Evidence
+  surfaced:** the frontend does not yet lex the **ternary operator** `?:` (worked around with a
+  `0/1`-comparison multiply); the next type-model item remains **multi-dimensional arrays**. This is
+  the demonstration the L1-L8 + verifier/type/atomics/channel work was built toward: a real header,
+  compiled and verified, with no Python.
 - 2026-06-18: **Plug-in C compiler — §5.8 follow-ons: `cmpxchg`, type-model breadth (typedef /
   enum / union), and the multi-channel lowering decision in C.** Three dual-rail, parity-gated
   increments on the C compiler. **`cmpxchg`:** `__sync_val/bool_compare_and_swap` → the `CMPXCHG`

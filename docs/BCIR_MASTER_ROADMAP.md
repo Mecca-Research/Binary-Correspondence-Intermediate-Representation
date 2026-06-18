@@ -595,7 +595,15 @@ the existing C twins):
   `union` layout (members overlap at offset 0; size = the widest member) all lower on both rails,
   parity- + Clang-equivalence-gated (`cfront_typedef.c`, `cfront_enum.c`, `cfront_union.c`). *Still
   to port:* **multi-dimensional arrays** (a multi-index `m[i][j]` load + the pointer-to-row param
-  declarator) and **function pointers** — what remaining vendor headers need.
+  declarator), **function pointers**, and the **ternary operator** `?:` (surfaced by Phase D; not yet
+  lexed) — what remaining vendor headers need.
+- ✅ **Phase D — a real register-map header driven end-to-end** (`cfront_driver.{h,c}`): a
+  vendor-style memory-mapped DMA-channel register map + driver ingested with no hand-written claim
+  graph — `#include` + field macros, typedef/enum/union/bitfields, volatile MMIO, struct pointers,
+  and a call graph — through the full `C → bcir_cpp → bcir_cfront → verify → emit → bcir_plan →
+  bcir_hydrate → bcir_exec` loop, both rails agreeing (`claims=30 mmio=1 bf=3 call=2 ok=1`) and the
+  emit Clang-behaviour-equivalent. The demonstration the L1–L8 + verifier/type/atomics/channel work
+  was built toward.
 
 > Channels are already a real plugin boundary (`bcir/channel_plugin.py`: target-profile schema,
 > runtime signal-provider contract, codegen identity, calibration artifact, execution-capability set,
