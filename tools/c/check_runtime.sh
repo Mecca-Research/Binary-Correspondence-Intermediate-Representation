@@ -126,4 +126,26 @@ print(f'funcs={len(fns)} claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} 
     || { echo "  FAIL: parity ${fx} (C='${c_sum}' PY='${py_sum}')"; exit 1; }
 done
 
+echo "[c-runtime] full C compile->execute loop (cfront -> plan -> hydrate -> exec, no Python)"
+# bcir_plan.c + bcir_hydrate.c are freestanding (the driver-embeddable planner + StreamPack
+# writer that feed the existing bcir_exec.c) -- the loop closes with no Python.
+for f in bcir_plan.c bcir_hydrate.c; do
+  for std in c11 c23; do
+    "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -I "${C}" -c "${C}/${f}" -o /dev/null \
+      || { echo "  FAIL: ${f} not freestanding-clean under -std=${std}"; exit 1; }
+  done
+done
+"${CC}" -std=c23 -O2 -I "${C}" "${C}/bcir_cfront.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" \
+  "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/test_cfront_loop.c" -o "${tmp}/loop" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 -I "${C}" "${C}/bcir_cfront.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" \
+       "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/test_cfront_loop.c" -o "${tmp}/loop" \
+  || { echo "  FAIL: loop build"; exit 1; }
+for fx in cfront_regmap.c cfront_array.c cfront_callgraph.c; do
+  out="$("${tmp}/loop" "${C}/${fx}")" || { echo "  FAIL: loop ${fx}: ${out}"; exit 1; }
+  case "${out}" in
+    loop:*executed=*) echo "  PASS loop ${fx} (${out#loop: })" ;;
+    *) echo "  FAIL: loop ${fx}: ${out}"; exit 1 ;;
+  esac
+done
+
 echo "[c-runtime] ok"

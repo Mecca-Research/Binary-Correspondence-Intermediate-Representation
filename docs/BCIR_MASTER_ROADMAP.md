@@ -558,13 +558,14 @@ the existing C twins):
 - **Verifier R9–R17 in C** — the C verifier covers R1–R8 + R18; the plan/pack/lowering/accuracy laws
   (R9 plan legality, R10–R11 StreamPack, R12 lowering-contract, R13 provenance digest, R17 accuracy)
   must port to a C `bcir_verify.c` (twin of `bcir/verify`).
-- **K_BCIR planner in C (or an MLIR bridge)** — the cost model / min-plus / RCSP that turns the claim
-  graph into a *plan* is on the MLIR/C++ law rail, not in `runtime/c/`. A driver-embeddable compiler
-  needs either a compact C planner (`bcir_plan.c`) or a documented hand-off to `bcir-opt`. **This is
-  the biggest missing piece** — without it the C frontend produces a graph but not a *plan*.
-- **Claim-graph → StreamPack hydration in C (`bcir_hydrate.c`)** — the `gem.hydrate` step (plan →
-  StreamPack segments). With it, the C frontend's graph → a StreamPack the existing **`bcir_exec.c`
-  executes**, closing the whole loop with no Python (`bcir_encode.c` already writes the bytes).
+- ✅ **K_BCIR planner in C (`bcir_plan.c`)** — a compact, freestanding scalar planner (per-claim
+  realization width + an integer cost; total cost) lands the *plan* in `runtime/c/`. The full cost
+  model / min-plus / RCSP stays on the MLIR/C++ law rail; this is the driver-embeddable seam that
+  drives hydration. *Future:* richer cost model / a `bcir-opt` bridge for the full optimizer.
+- ✅ **Claim-graph → StreamPack hydration in C (`bcir_hydrate.c`)** — the `gem.hydrate` step (plan →
+  StreamPack segments), freestanding + bounds-checked. **The loop now closes with no Python:**
+  `C source → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` runs the compiled artifact end to
+  end (`test_cfront_loop.c`; gated in `tools/c/check_runtime.sh` + `test_c_cfront.py`).
 - **C.2 attestation in C** — stamp the emitted C with R12/R13/R17/R18 + the R13 provenance digest
   (a `bcir_attest.c`); the oracle does this in `pipeline.py`.
 - **Atomics/fences + dynamic shapes** — `cmpxchg`/`barrier` lowering (the `ATOMIC_*`/`BARRIER`

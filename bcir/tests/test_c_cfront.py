@@ -140,6 +140,38 @@ def test_python_c_parity_and_equivalence_across_fixtures():
             assert _equiv(src, c_emit, entry) == "MATCH", f"{fx}: emitted C not behaviour-equivalent"
 
 
+def _build_loop(d: str) -> str:
+    exe = os.path.join(d, "loop")
+    srcs = [os.path.join(_C, s) for s in ("bcir_cfront.c", "bcir_plan.c", "bcir_hydrate.c",
+                                          "bcir_exec.c", "bcir_runtime.c", "test_cfront_loop.c")]
+    for std in ("c23", "c11"):
+        b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
+                           capture_output=True, text=True)
+        if b.returncode == 0:
+            return exe
+    raise AssertionError(f"loop build failed:\n{b.stderr}")
+
+
+def test_full_compile_execute_loop_in_c():
+    """C source -> bcir_cfront -> bcir_plan -> bcir_hydrate -> bcir_exec, entirely in C: the
+    hydrated StreamPack is valid and the executor runs every claim in lowering order."""
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        loop = _build_loop(d)
+        for fx in _FIXTURES:
+            path = os.path.join(_C, fx)
+            _summary, _r, entry = _oracle(open(path, encoding="utf-8").read())
+            out = subprocess.run([loop, path], capture_output=True, text=True).stdout.strip()
+            assert out.startswith("loop:"), out
+            m = dict(re.findall(r"(\w+)=([0-9]+)", out))
+            # the loop executes exactly the entry's claims (parity-identical to the oracle's count)...
+            assert int(m["executed"]) == int(m["claims"]) == len(entry.claims), f"{fx}: {out}"
+            assert int(m["plan_cost"]) > 0 and int(m["pack_bytes"]) > 64                # a real plan + a real pack
+            order = out.split("order=")[1].split(",")
+            assert order == sorted(order, key=int)                       # deterministic lowering order
+
+
 def test_c_frontend_builds_warning_clean():
     if not _CC:
         return
