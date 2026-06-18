@@ -94,7 +94,9 @@ def test_counter_sampler_measures_real_deltas():
 # --- MEASURED gain #1: the zero-copy ring beats serialization --------------------
 
 def test_zero_copy_ring_is_measurably_faster_than_serializing():
-    n = 200_000
+    # The 2x-faster ratio holds at any n; a smaller default keeps the quick chain fast (and
+    # this wall-clock ratio less flaky). BCIR_THOROUGH=1 restores the larger sample.
+    n = 200_000 if os.environ.get("BCIR_THOROUGH") else 20_000
     e = DataDNA(segment_id="s", claim_id=1, cycles=123, bytes=456, misses=7)
     ring = TelemetryRing(capacity=4096)
 

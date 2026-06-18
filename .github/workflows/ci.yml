@@ -27,7 +27,7 @@ jobs:
           sudo apt-get install -y libclang-rt-18-dev || true
 
       - name: BCIR oracle (Python conformance tests)
-        run: python3 -m bcir.tests.run_all
+        run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all
 
       - name: BCIR generated Python<->MLIR differential parity (large campaign)
         run: |
@@ -184,7 +184,7 @@ jobs:
             print('host default:', default_target_name(), TargetProfile.for_host().name)"
 
       - name: BCIR oracle (Python conformance) on ARM
-        run: python3 -m bcir.tests.run_all
+        run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all
 
       - name: Python<->MLIR differential parity on ARM (smaller campaign)
         run: python3 -m bcir.kbcir.differential -n 3000 --seed 1

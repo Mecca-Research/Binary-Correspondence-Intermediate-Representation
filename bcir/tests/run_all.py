@@ -10,8 +10,32 @@ reports PASS/FAIL. Usable two ways:
 from __future__ import annotations
 
 import importlib
+import os
+import shutil
 import sys
 import traceback
+
+# --- quick chain (default) vs thorough (CI) --------------------------------------
+# Measured: the ~130 compile / native-execute tests (the C-ABI byte-identity + measured-
+# silicon tier) dominate wall-time (~77%); the pure-Python oracle / law / parity coverage
+# is ~6%. So by default run_all is the FAST quick chain (~5-6s): hide the C/LLVM toolchain
+# so those tests early-return through their existing which(...) guards. CI sets
+# BCIR_THOROUGH=1 to run the full tier + the C byte-identity / native-execute proofs.
+# Coverage preserved in the quick chain: every law R1-R18, all six targets, the StreamPack/
+# ABI *logic*, and the budget/RCSP correctness property are pure-Python and still run; only
+# the C *byte-identity* and native-*execute* checks defer to CI (which runs them anyway).
+# Patched here, before any test/bcir module is imported, so both `shutil.which(...)` and
+# `from shutil import which` bindings resolve to the gated version.
+if not os.environ.get("BCIR_THOROUGH"):
+    _TOOLCHAIN = {"clang", "clang++", "cc", "gcc", "g++", "lli", "opt", "llc", "llvm-as",
+                  "llvm-link", "wasm-ld", "ld.lld", "node", "objdump", "llvm-objdump"}
+    _orig_which = shutil.which
+
+    def _gated_which(cmd, *args, **kwargs):
+        return None if os.path.basename(str(cmd)) in _TOOLCHAIN \
+            else _orig_which(cmd, *args, **kwargs)
+
+    shutil.which = _gated_which
 
 _MODULES = [
     "bcir.tests.test_kbcir",
@@ -91,6 +115,9 @@ _MODULES = [
 
 
 def main() -> int:
+    mode = "thorough (compile + native-execute tier)" if os.environ.get("BCIR_THOROUGH") \
+        else "quick chain (compile tier deferred to CI; set BCIR_THOROUGH=1 for the full run)"
+    print(f"[run_all] {mode}\n")
     passed = 0
     failed = 0
     for modname in _MODULES:
