@@ -128,6 +128,25 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **Roadmap expanded — the dependency-ordered plug-in-compiler plan (§5.7).** Replaced
+  the "long-term frontends" stub with a sequenced, rationale-backed phased roadmap that elevates a
+  **solid C frontend + backend to the immediate next major milestone** (it gates everything below):
+  **Phase C** (C.1 a usable Clang-compatible C *frontend* → claim graph — the input seam that does
+  not exist yet; C.2 generalize the per-pattern `lower.c_kernel` into a self-verifying C
+  lowering/codegen for an arbitrary claim graph; C.3 full C — preprocessor, complete ABI, stdlib);
+  **Phase M** (selective ML ops — tensor/attention/quantization — in parallel but throttled,
+  oracle-first then ported to the MLIR law); **Phase D** (drivers + opcode tables + the Hardware
+  Description Layer — import Linux kernel tables/register maps/PCIe/ACPI once C is verifiable, build
+  BCIR-native ISA/opcode/registry, and a semi-separate `drivers/` JIT kernel generator that gives
+  each hardware **channel** its real driver, closing the heterogeneous-tower loop); **Phase F** (C++
+  deferred — templates/exceptions/RAII/STL/ABI; Python as a transpiler→full frontend); **Phase L**
+  (the ML library, a *compressed extraction* — same "take only what we need" strategy as the Linux C
+  files — from GCC/TensorFlow/PyTorch/pandas/NumPy/scikit-learn/XGBoost/JAX/Keras/XLA/SPIR-V/ONNX/
+  Cassandra/SQL-NoSQL/vector-DBs onto the claim-graph + channel model). Through-line: frontends
+  produce claim graphs, drivers populate channels, the ML library composes them — all decomposing to
+  the same K_BCIR plan + GEM execution; isel stays gated. §6 carries the C-frontend keystone as the
+  prominent next build step. Doc-only.
+
 - 2026-06-18: **Unified heterogeneous runtime — hardware channels (`bcir/channels.py`).** The
   recurring x86/ARM friction was a symptom: per-architecture rules (the `perf_event_open` syscall
   number, the energy/thermal sensor paths, the codegen triple, the realizable lane widths) were
