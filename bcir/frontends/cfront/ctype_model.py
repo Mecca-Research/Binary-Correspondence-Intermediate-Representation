@@ -38,7 +38,8 @@ class CType:
     signed: bool = False
     of: "CType | None" = None            # element type (pointer/array)
     count: int = 0                       # array length
-    fields: tuple = ()                   # ((name, CType, offset), ...) for struct/union
+    fields: tuple = ()                   # ((name, CType, byte_off, bit_off, bit_width), ...)
+    volatile: bool = False               # a volatile-qualified type -> an MMIO resource
 
     @property
     def is_integer(self) -> bool:
@@ -48,11 +49,22 @@ class CType:
     def is_aggregate(self) -> bool:
         return self.kind in ("struct", "union")
 
+    @property
+    def touches_mmio(self) -> bool:
+        """A volatile object — or a pointer/array to one — accesses an MMIO region."""
+        return self.volatile or bool(self.of and self.of.touches_mmio)
+
     def field(self, name: str):
-        for fname, ftype, off in self.fields:
-            if fname == name:
-                return ftype, off
+        """Return (CType, byte_offset, bit_offset, bit_width) for a member; bit_width 0 == plain."""
+        for entry in self.fields:
+            if entry[0] == name:
+                return entry[1], entry[2], entry[3], entry[4]
         raise KeyError(name)
+
+
+def with_volatile(ct: CType, vol: bool = True) -> CType:
+    from dataclasses import replace
+    return replace(ct, volatile=vol) if vol else ct
 
 
 def scalar(name: str) -> CType:
@@ -76,26 +88,41 @@ def array(of: CType, count: int) -> CType:
 
 @dataclass
 class AggregateBuilder:
-    """Compute a struct/union layout the way Clang does (natural alignment, no packing)."""
+    """Compute a struct/union layout the way Clang does (natural alignment, no packing). Bitfields
+    pack LSB-first into storage units of their declared type (the little-endian Clang rule the
+    behaviour-equivalence check relies on)."""
     kind: str
     name: str
-    members: list = field(default_factory=list)   # (name, CType)
+    members: list = field(default_factory=list)   # (name, CType, bit_width)  (bit_width 0 == plain)
 
     def build(self) -> CType:
         offset = 0
         align = 1
         laid: list = []
-        for mname, mtype in self.members:
+        bf_unit_off = None        # byte offset of the active bitfield storage unit
+        bf_bits = 0               # bits already used in it
+        bf_unit_size = 0
+        for mname, mtype, width in self.members:
             align = max(align, mtype.align)
-            if self.kind == "union":
-                laid.append((mname, mtype, 0))
+            if width and self.kind == "struct":
+                unit_bits = mtype.size * 8
+                if bf_unit_off is None or bf_unit_size != mtype.size or bf_bits + width > unit_bits:
+                    if offset % mtype.align:
+                        offset += mtype.align - (offset % mtype.align)
+                    bf_unit_off, bf_bits, bf_unit_size = offset, 0, mtype.size
+                    offset += mtype.size
+                laid.append((mname, mtype, bf_unit_off, bf_bits, width))
+                bf_bits += width
+            elif self.kind == "union":
+                laid.append((mname, mtype, 0, 0, width))
             else:
+                bf_unit_off, bf_bits, bf_unit_size = None, 0, 0     # a plain member flushes the unit
                 if offset % mtype.align:
-                    offset += mtype.align - (offset % mtype.align)   # pad to member alignment
-                laid.append((mname, mtype, offset))
+                    offset += mtype.align - (offset % mtype.align)
+                laid.append((mname, mtype, offset, 0, width))
                 offset += mtype.size
         size = (max((m[1].size for m in self.members), default=0) if self.kind == "union"
                 else offset)
         if align and size % align:
-            size += align - (size % align)                            # round up to aggregate align
+            size += align - (size % align)
         return CType(self.kind, name=self.name, size=size, align=max(1, align), fields=tuple(laid))

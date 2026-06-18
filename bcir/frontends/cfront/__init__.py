@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from .cparse import CParseError, parse_unit
 from .lower import lower_unit
-from .pipeline import CompileResult, compile_unit
+from .pipeline import CompileResult, compile_unit, emit_selfcheck
 
-__all__ = ["CParseError", "CompileResult", "compile_unit", "lower_unit", "parse_unit"]
+__all__ = ["CParseError", "CompileResult", "compile_unit", "emit_selfcheck", "lower_unit",
+           "parse_unit"]

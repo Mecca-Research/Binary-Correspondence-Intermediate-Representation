@@ -13,19 +13,23 @@ from .pipeline import compile_unit
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     show_explain = "--explain" in args
+    selfcheck = "--selfcheck" in args
     files = [a for a in args if not a.startswith("-")]
     if not files:
         sys.stderr.write(__doc__)
         return 2
+    from .pipeline import emit_selfcheck  # noqa: PLC0415
     rc = 0
     for path in files:
         with open(path, encoding="utf-8") as f:
             r = compile_unit(f.read())
+        if selfcheck:
+            print(emit_selfcheck(r))
+            continue
         print(f"\n=== {path} ===")
         print(f"functions: {list(r.lowered.functions)}")
         for name, lf in r.lowered.functions.items():
-            print(f"\n-- {name}: {len(lf.claims)} claims, plan cost "
-                  f"{r.plans[name].score if hasattr(r.plans[name], 'score') else '?'} --")
+            print(f"\n-- {name}: {len(lf.claims)} claims --")
             print(r.emitted[name])
             if show_explain:
                 print(r.explain[name])

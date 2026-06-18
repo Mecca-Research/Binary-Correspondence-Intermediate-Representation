@@ -76,7 +76,11 @@ class _Parser:
         while not self.at("PUNCT", "}"):
             tref = self._type_spec()
             tref, name = self._declarator(tref)
-            members.append((tref, name))
+            width = 0
+            if self.at("PUNCT", ":"):                     # bitfield:  type name : width;
+                self.nxt()
+                width = parse_int_literal(self.eat("INT").text)
+            members.append((tref, name, width))
             self.eat("PUNCT", ";")
         self.eat("PUNCT", "}")
         self.eat("PUNCT", ";")

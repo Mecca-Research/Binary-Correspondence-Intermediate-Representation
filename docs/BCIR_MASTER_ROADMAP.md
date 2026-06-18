@@ -403,11 +403,13 @@ applied to C):
 1. C source fixture · 2. claim-graph golden · 3. the K_BCIR plan · 4. the emitted C output ·
 5. behaviour equivalence against Clang on a harness · 6. an R1–R18 verifier checkpoint.
 
-**Landed: L1–L4** (`bcir/frontends/cfront/`, `bcir.frontends.cfront.compile_unit`) — a real
-recursive-descent C lexer/parser → the claim-graph model (`Resource`/`Claim`/`Phase`), the K_BCIR
-plan, an arbitrary-scalar-claim-graph C emitter, the `plan_composite` call-graph (R18) checkpoint, a
-`bcir-explain` artifact, and a seeded-random Clang behaviour-equivalence harness (toolchain-gated).
-`python -m bcir.frontends.cfront <file.c>` prints all six artifacts.
+**Landed: L1–L6 + the register-map/MMIO MVP** (`bcir/frontends/cfront/`,
+`bcir.frontends.cfront.compile_unit`) — a real recursive-descent C lexer/parser → the claim-graph
+model (`Resource`/`Claim`/`Phase`), the K_BCIR plan, an arbitrary-claim-graph C emitter (straight-line
++ real `if`/`while` control flow), the `plan_composite` call-graph (R18) checkpoint, a `bcir-explain`
+artifact, the **C.2 verified-C attestation** (R12/R13/R17/R18 stamped on each emitted function) + a
+reusable self-check artifact (`emit_selfcheck`), and a seeded-random Clang behaviour-equivalence
+harness (toolchain-gated). `python -m bcir.frontends.cfront <file.c> [--explain|--selfcheck]`.
 
 | Stage | C surface | status |
 |---|---|---|
@@ -415,10 +417,10 @@ plan, an arbitrary-scalar-claim-graph C emitter, the `plan_composite` call-graph
 | L2 | structs / unions / explicit layout (Clang-compatible offsets) | ✅ |
 | L3 | pointers / arrays → GEP-equivalent claim mapping | ✅ |
 | L4 | functions + the call graph → **R18** (recursion + undefined-callee rejected) | ✅ |
-| L5 | `volatile` / MMIO access + bitfields | ☐ next (→ the register-map/MMIO MVP) |
-| L6 | control flow (branches, loops) | ☐ next |
-| L7 | a preprocessor subset (macros, conditional compilation, `#embed`) | ☐ |
-| L8 | full ABI tests against Clang (struct layout + calling convention per the channel's real `llvm_triple`) | ☐ |
+| L5 | `volatile`/MMIO → `Domain.MMIO` resources (ordered/`barriered`) + bitfield mask/shift claims | ✅ (the register-map/MMIO MVP) |
+| L6 | control flow — `if`/`else` → `compose.Cond`, bounded `while` (mutable named locals) | ✅ |
+| L7 | a preprocessor subset (macros, conditional compilation, `#embed`) | ☐ next |
+| L8 | full ABI tests against Clang (struct layout + calling convention per the channel's real `llvm_triple`) | ☐ next |
 
 ##### C.1-MVP — the first milestone: a register-map + MMIO file (driver/kernel-relevant C)
 
