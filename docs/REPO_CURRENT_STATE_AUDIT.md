@@ -130,6 +130,17 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — `goto` + labels.** The driver error-cleanup pattern: a forward
+  `goto done;` jumps to a label at function-body scope. Both rails carry the jump and target as
+  emit-only markers (`c.goto:<label>` / `c.label:<label>` -- NOP opcode, excluded from the structural
+  summary and the flattened claim stream, like `break`/`continue` which already lower to a `goto`),
+  so the emitter renders `goto done;` / `done:;` verbatim. The mutable accumulator is a real C local,
+  so the updates a jump skips match between the original and the emitted C, keeping it
+  Clang-behaviour-equivalent. R18 is unaffected (markers are not call edges). The parser recognises
+  `goto IDENT;` and a leading `IDENT :` label (distinct from `case`/`default`, which live inside
+  `switch`). New fixture `cfront_goto.c` (two forward gotos to a shared `done:`) matches on both rails
+  (`funcs=1 claims=10 const=3 binop=4 ok=1`) and is Clang-equivalent. Wired into `_CONTROL` +
+  `tools/c/check_runtime.sh`; warning-clean; 694 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — function-pointer struct members (HAL dispatch tables).** A
   struct of function pointers called indirectly through `o->fn(args)` -- the driver-vtable /
   operations-struct pattern. The member access + call **fuse** into a single `c.call.imember:<field>`

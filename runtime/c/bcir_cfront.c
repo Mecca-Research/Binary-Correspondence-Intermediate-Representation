@@ -585,6 +585,11 @@ static void p_stmt(CC *c) {
   }
   if(is(c,"break")){ c->i++; eat(c,";"); marker(c,"c.break",0,0); return; }
   if(is(c,"continue")){ c->i++; eat(c,";"); marker(c,"c.continue",0,0); return; }
+  if(is(c,"goto")){ c->i++; tok lb=adv(c); eat(c,";");          /* goto label; -- an emit-only marker */
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.goto:%.*s",lb.n,lb.s); new_claim(c,op,BCIR_OP_NOP); return; }
+  if(isk(c,T_ID)&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==':'){  /* `name:` -- a label */
+    tok lb=adv(c); c->i++; char op[BCIR_CIR_NAME];
+    snprintf(op,sizeof op,"c.label:%.*s",lb.n,lb.s); new_claim(c,op,BCIR_OP_NOP); return; }
   if(is(c,"switch")){                  /* switch(disc){case V:..;break; default:..} -> if/else-if */
     c->i++; eat(c,"(");
     int disc_start=c->i;               /* re-lower the discriminant per case label (cheap for a var) */
@@ -744,6 +749,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");if(nls)nls--;continue;}
     if(!strcmp(cl->op,"c.break")){IND();w+=snprintf(o+w,on-w,"break;\n");continue;}
     if(!strcmp(cl->op,"c.continue")){IND();w+=snprintf(o+w,on-w,"goto __cont_%d;\n",nls?lstk[nls-1]:0);continue;}
+    if(!strncmp(cl->op,"c.goto:",7)){IND();w+=snprintf(o+w,on-w,"goto %s;\n",cl->op+7);continue;}
+    if(!strncmp(cl->op,"c.label:",8)){w+=snprintf(o+w,on-w,"%s:;\n",cl->op+8);continue;}
     if(!strcmp(cl->op,"c.return")){IND();
       if(cl->n_rd) w+=snprintf(o+w,on-w,"return %s;\n",rname(f,cl->rd[0],a));
       else w+=snprintf(o+w,on-w,"return;\n");continue;}

@@ -104,6 +104,16 @@ class ContinueNode:
     pass                                   # `continue;` -- jump to the loop's continue point (emit-only)
 
 
+@dataclass
+class GotoNode:
+    label: str                             # `goto label;` -- an unconditional jump (emit-only)
+
+
+@dataclass
+class LabelNode:
+    name: str                              # `name:` -- a jump target (emit-only)
+
+
 def _flatten_block(block: list) -> list:
     """All Claim objects in a body tree, in order (the flat single-phase view verify/plan use)."""
     out: list = []
@@ -510,6 +520,10 @@ class _FuncLowerer:
             self.block_stack[-1].append(BreakNode())
         elif isinstance(st, cast.Continue):
             self.block_stack[-1].append(ContinueNode())
+        elif isinstance(st, cast.Goto):
+            self.block_stack[-1].append(GotoNode(st.label))
+        elif isinstance(st, cast.Label):
+            self.block_stack[-1].append(LabelNode(st.name))
         else:
             raise CLowerError(f"statement {type(st).__name__} is beyond the L1–L6 subset")
         return None
@@ -572,7 +586,7 @@ def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Re
             flush_run()
             _block_region(node.cond_block, functions, calls_iter)   # cond claims (cost folded in body)
             parts.append(_block_region(node.body + node.step, functions, calls_iter))
-        elif isinstance(node, (ReturnNode, BreakNode, ContinueNode)):
+        elif isinstance(node, (ReturnNode, BreakNode, ContinueNode, GotoNode, LabelNode)):
             continue
         elif node.op.startswith("c.call:"):
             flush_run()

@@ -10,7 +10,16 @@ from __future__ import annotations
 
 from ...model import Claim
 from .ctype_model import CType
-from .lower import BreakNode, ContinueNode, IfNode, LoweredFunc, ReturnNode, WhileNode
+from .lower import (
+    BreakNode,
+    ContinueNode,
+    GotoNode,
+    IfNode,
+    LabelNode,
+    LoweredFunc,
+    ReturnNode,
+    WhileNode,
+)
 
 # op-suffix -> C operator.
 _BINOP = {"add": "+", "sub": "-", "mul": "*", "div": "/", "mod": "%", "and": "&", "or": "|",
@@ -84,6 +93,10 @@ def _walk(lf: LoweredFunc, block: list, ref, depth: int, loops: list | None = No
             out.append(f"{ind}break;")
         elif isinstance(node, ContinueNode):
             out.append(f"{ind}goto __cont_{loops[-1]};")
+        elif isinstance(node, GotoNode):
+            out.append(f"{ind}goto {node.label};")
+        elif isinstance(node, LabelNode):
+            out.append(f"{node.name}:;")               # a jump target (function-body scope)
         elif isinstance(node, Claim):
             out.append(ind + _claim_stmt(lf, node, ref))
     return out

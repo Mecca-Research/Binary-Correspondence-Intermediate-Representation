@@ -29,7 +29,7 @@ _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfron
                  "cfront_typedef.c", "cfront_enum.c", "cfront_ternary.c", "cfront_sizeof.c",
                  "cfront_cast.c", "cfront_alignof.c"]   # + 2D arrays + ?: + sizeof + casts + _Alignof
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
-            "cfront_continue.c", "cfront_switch.c"]
+            "cfront_continue.c", "cfront_switch.c", "cfront_goto.c"]
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c"]      # L7: exercise the preprocessor
 _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-value + packed layout
         "cfront_union.c",                             # + full union (members overlap at offset 0)
