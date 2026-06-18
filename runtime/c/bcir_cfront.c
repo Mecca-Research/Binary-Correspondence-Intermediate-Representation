@@ -463,6 +463,15 @@ static void p_stmt(CC *c) {
     if(step_end>step_start){ int save=c->i; c->i=step_start; p_simple(c); c->i=save; }  /* step @ iter end */
     marker(c,"c.endloop",0,0); return;
   }
+  if(is(c,"do")){                      /* do body while(cond);  == loop { body; if(!cond) break; } */
+    c->i++; marker(c,"c.loop",0,0);
+    p_block(c);                        /* body runs first */
+    eat(c,"while"); eat(c,"(");
+    uint32_t cond=p_expr(c); eat(c,")"); eat(c,";");
+    marker(c,"c.loop.test",cond,1);    /* the test is at the bottom */
+    marker(c,"c.endloop",0,0); return;
+  }
+  if(is(c,"break")){ c->i++; eat(c,";"); marker(c,"c.break",0,0); return; }
   if(is(c,"{")){p_block(c);return;}
   int looks_decl=0;
   if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
@@ -581,6 +590,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.loop")){IND();w+=snprintf(o+w,on-w,"while (1) {\n");depth++;continue;}
     if(!strcmp(cl->op,"c.loop.test")){IND();w+=snprintf(o+w,on-w,"if (!%s) break;\n",rname(f,cl->rd[0],a));continue;}
     if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");continue;}
+    if(!strcmp(cl->op,"c.break")){IND();w+=snprintf(o+w,on-w,"break;\n");continue;}
     if(!strcmp(cl->op,"c.return")){IND();
       if(cl->n_rd) w+=snprintf(o+w,on-w,"return %s;\n",rname(f,cl->rd[0],a));
       else w+=snprintf(o+w,on-w,"return;\n");continue;}

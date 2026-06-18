@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from ...model import Claim
 from .ctype_model import CType
-from .lower import IfNode, LoweredFunc, ReturnNode, WhileNode
+from .lower import BreakNode, IfNode, LoweredFunc, ReturnNode, WhileNode
 
 # op-suffix -> C operator.
 _BINOP = {"add": "+", "sub": "-", "mul": "*", "div": "/", "mod": "%", "and": "&", "or": "|",
@@ -63,12 +63,19 @@ def _walk(lf: LoweredFunc, block: list, ref, depth: int) -> list:
             out.append(f"{ind}}}")
         elif isinstance(node, WhileNode):
             out.append(f"{ind}while (1) {{")
-            out += _walk(lf, node.cond_block, ref, depth + 1)
-            out.append(f"{ind}    if (!{ref(node.cond)}) break;")
-            out += _walk(lf, node.body, ref, depth + 1)
+            if node.test_at_end:                       # do/while: body, then recompute + test
+                out += _walk(lf, node.body, ref, depth + 1)
+                out += _walk(lf, node.cond_block, ref, depth + 1)
+                out.append(f"{ind}    if (!{ref(node.cond)}) break;")
+            else:                                      # while/for: test at the top
+                out += _walk(lf, node.cond_block, ref, depth + 1)
+                out.append(f"{ind}    if (!{ref(node.cond)}) break;")
+                out += _walk(lf, node.body, ref, depth + 1)
             out.append(f"{ind}}}")
         elif isinstance(node, ReturnNode):
             out.append(f"{ind}return {ref(node.rid)};" if node.rid is not None else f"{ind}return;")
+        elif isinstance(node, BreakNode):
+            out.append(f"{ind}break;")
         elif isinstance(node, Claim):
             out.append(ind + _claim_stmt(lf, node, ref))
     return out

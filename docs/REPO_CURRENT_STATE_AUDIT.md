@@ -130,6 +130,16 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — `do/while` + `break`.** Two more control-flow forms,
+  dual-rail, reusing the loop markers (no new claim ops). `do body while(cond);` puts the cond test
+  at the loop-body *bottom* (body runs at least once): the oracle adds a `WhileNode.test_at_end` flag
+  (the flatten/region walks treat it identically; only the emitter branches), the C frontend emits
+  `c.loop → body → cond → c.loop.test → c.endloop`. `break;` is a `BreakNode` (oracle) / `c.break`
+  NOP marker (C) rendered as `break;` -- correct in every loop form (it exits the `while(1)`). New
+  fixture `cfront_dowhile.c` (a bounded do/while sum + a counter, both with an early `break`) matches
+  on both rails (`funcs=2 claims=17 const=6 binop=6 ok=1`) and is Clang-behaviour-equivalent. Wired
+  into `_CONTROL` + `tools/c/check_runtime.sh`; warning-clean; 693 tests pass. (`continue` is
+  deferred -- in a `for` it must run the step, which the `while(1)` desugar would skip.)
 - 2026-06-18: **C compiler (Phase 2) — `for` loops.** The next control-flow construct, dual-rail,
   desugared onto the existing `while` machinery: `for(init; cond; step) body` ≡
   `init; while(cond){ body; step }` (exact while there is no `break`/`continue`). The oracle adds a

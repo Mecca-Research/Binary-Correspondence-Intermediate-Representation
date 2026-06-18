@@ -344,6 +344,19 @@ class _Parser:
             return cast.While(cond, self._block() if self.at("PUNCT", "{") else (self._stmt(),))
         if self.at("IDENT", "for"):
             return self._for()
+        if self.at("IDENT", "do"):
+            self.nxt()
+            body = self._block() if self.at("PUNCT", "{") else (self._stmt(),)
+            self.eat("IDENT", "while")
+            self.eat("PUNCT", "(")
+            cond = self._expr()
+            self.eat("PUNCT", ")")
+            self.eat("PUNCT", ";")
+            return cast.DoWhile(cond, body)
+        if self.at("IDENT", "break"):
+            self.nxt()
+            self.eat("PUNCT", ";")
+            return cast.Break()
         if self._is_decl_start():
             return self._decl_stmt()
         expr = self._expr()
