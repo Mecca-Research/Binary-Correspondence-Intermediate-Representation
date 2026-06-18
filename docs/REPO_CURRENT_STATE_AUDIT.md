@@ -130,6 +130,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — multi-dimensional arrays.** A 2D array parameter
+  (`uint32_t m[4][8]`) decays to a flat element pointer with a recorded shape, and a multi-index
+  access `m[i][j]` flattens row-major to the linear index `i*8 + j` (Horner) on both rails -- so it
+  reuses the existing 1D pointer / index / `c.load` machinery entirely (no new claim shape, no
+  name-interleaved declarators): the access lowers to `const(dim)` + `c.bin.mul` + `c.bin.add` per
+  extra index level, then a 1D indexed load on the flat pointer, emitted `m[i*8 + j]`. The C rail
+  previously had no array type at all (its 1D "array" fixture used a plain pointer param, and
+  `p_func` did not parse `[N]` on parameters); this adds array-param parsing (`bcir_ctype` gains an
+  `adims[3]`/`nadims` shape) and decay on both rails. New fixture `cfront_array2d.c` (two masked 2D
+  reads + a sum) matches on both rails (`funcs=1 claims=21 const=7 binop=10 ok=1`), is
+  Clang-behaviour-equivalent, and runs the full C compile->execute loop (R9/R10-R11 clean). Wired
+  into `_STRAIGHTLINE` + `tools/c/check_runtime.sh`; warning-clean; 693 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — integer casts `(type)expr`.** A cast (the register-packing /
   field-truncation pattern) binds at the unary level on both rails -- the parser distinguishes
   `(type-name)` from a parenthesized expression by a lookahead (scalar/struct/union/enum/qualifier/

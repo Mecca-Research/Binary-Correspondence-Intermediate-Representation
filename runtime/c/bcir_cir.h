@@ -75,6 +75,8 @@ typedef struct bcir_ctype {
   uint8_t  ptr_to_struct;    /* a pointer whose pointee is a struct */
   uint8_t  is_union;         /* the aggregate is a union (emit `union` not `struct`) */
   char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1/ptr_to_struct), or funcptr alias (kind 3) */
+  int      adims[3];         /* decayed multi-dim array-param shape (outer-first), for m[i][j] */
+  int      nadims;           /* number of array dims (0 == not an array parameter) */
 } bcir_ctype;
 
 typedef struct bcir_param { char name[BCIR_CIR_NAME]; uint32_t rid; bcir_ctype type; } bcir_param;

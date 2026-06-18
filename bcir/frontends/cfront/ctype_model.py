@@ -41,6 +41,7 @@ class CType:
     fields: tuple = ()                   # ((name, CType, byte_off, bit_off, bit_width), ...)
     volatile: bool = False               # a volatile-qualified type -> an MMIO resource
     params: tuple = ()                   # parameter CTypes (funcptr only) — for faithful emit
+    shape: tuple = ()                    # array dims of a decayed multi-dim array param (m[i][j])
 
     @property
     def is_integer(self) -> bool:
