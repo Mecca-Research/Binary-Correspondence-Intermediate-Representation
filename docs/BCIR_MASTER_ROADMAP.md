@@ -727,7 +727,11 @@ typedef + enum + an MMIO register-map struct, a `switch` over an enum status, a 
 counter, a `goto` cleanup path, integer casts, a 2D bank lookup, and an inter-procedural call graph
 -- is ingested with no hand-written claim graph; the two rails agree on the entry's summary and
 *every* function is Clang-behaviour-equivalent, proving the Phase-2 features compose, not just pass
-in isolation.
+in isolation. ✅ **Register-map composition checkpoint:** `cfront_regdriver.c` -- a realistic device
+driver exercising the whole register surface together (a `switch` over a status field, a bitfield
+write, a bitfield read, a register read-modify-write, a file-scope lookup table, an `enum`, and a
+`static` counter; both rails `claims=34 mmio=5 bf=1 ok=1`, Clang-equivalent) -- proves the register-map
+chunks compose into a real driver.
 
 **Phase 3 — Hosted C23 compiler candidate.** libc-header compatibility; full preprocessor (predefined +
 `__FILE__`/`__LINE__`/feature-test macros, `#pragma`/`_Pragma`/`#line`, `__VA_OPT__`, `__has_*`, source

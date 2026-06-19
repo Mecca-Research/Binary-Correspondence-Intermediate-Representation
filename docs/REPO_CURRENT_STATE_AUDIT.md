@@ -130,6 +130,19 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — register-map composition checkpoint.** A realistic device
+  driver (`cfront_regdriver.c`) ingested with no hand-written claim graph, exercising the whole
+  register surface *together* in one function: a `switch` over a status field, a multi-bit bitfield
+  write (`dev->mode = ...`), a bitfield read (`dev->prio`), a register read-modify-write
+  (`dev->ctrl |= ...`), a file-scope lookup table, an `enum`, and a `static` persistent counter. The
+  two rails agree on the structural summary (`funcs=1 claims=34 mmio=5 bf=1 const=10 binop=9 ok=1`),
+  the emitted verified-C carries every feature (volatile MMIO accesses, the `QUANTA` table, `static
+  uint32_t halts`, the `switch`->if/else lowering, the C.2 attestation), and the emit is
+  Clang-behaviour-equivalent -- the proof the register-map features (the lookup-table /
+  compound-assignment / MMIO RMW / bitfield-write chunks) compose, not just pass in isolation. Every
+  device mutation is idempotent and the branched-on status is never written, so the generic
+  shared-buffer harness stays valid. New test `test_register_driver_composes_register_map_surface` +
+  wired into `tools/c/check_runtime.sh`; warning-clean; 696 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — MMIO bitfield write `r->field = v`.** Setting a named bitfield
   within a (volatile) register -- the multi-bit control-field driver pattern. The C rail could *read*
   bitfields (`c.bf.get`) but had no write side; a write to a bitfield member clobbered the whole
