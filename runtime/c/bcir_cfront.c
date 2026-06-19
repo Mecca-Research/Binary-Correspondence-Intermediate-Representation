@@ -76,6 +76,7 @@ static long long parse_int(const char *s, int n) {
 static void lex(CC *c, const char *src) {
   const char *p=src;
   static const char *pu[]={"<<",">>","->","==","!=","<=",">=","&&","||",
+                           "++","--",
                            "+=","-=","*=","/=","%=","&=","|=","^=",0};
   while (*p) {
     if (*p==' '||*p=='\t'||*p=='\r'||*p=='\n'){p++;continue;}
@@ -588,8 +589,26 @@ static void p_block(CC *c){            /* `{ stmts }` or a single statement */
   if(is(c,"{")){c->i++;while(!is(c,"}")&&!isk(c,T_END)&&!c->failed)p_stmt(c);eat(c,"}");}
   else p_stmt(c);
 }
+/* ++i / --i / i++ / i-- (value discarded) -> i = i ± 1 (const 1 + a bin op + a copy).  Returns 1 if
+ * it consumed an increment/decrement, 0 (consuming nothing) otherwise. */
+static int p_incdec(CC *c) {
+  venv *v=NULL; char ch=0;
+  if((is(c,"++")||is(c,"--")) && c->t[c->i+1].k==T_ID){            /* ++name / --name */
+    v=lookup(c,&c->t[c->i+1]); if(!v) return 0; ch=c->t[c->i].s[0]; c->i+=2;
+  } else if(isk(c,T_ID) && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==2 &&
+            (c->t[c->i+1].s[0]=='+'||c->t[c->i+1].s[0]=='-') && c->t[c->i+1].s[1]==c->t[c->i+1].s[0]){
+    v=lookup(c,pk(c)); if(!v) return 0; ch=c->t[c->i+1].s[0]; c->i+=2;   /* name++ / name-- */
+  } else return 0;
+  uint32_t one=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+  if(kc){kc->n_wr=1;kc->wr[0]=one;kc->n_imm=1;kc->imm[0]=1;}
+  uint32_t tmp=temp(c,4); bcir_claim *b=new_claim(c,ch=='+'?"c.bin.add":"c.bin.sub",ch=='+'?BCIR_OP_ADD:BCIR_OP_SUB);
+  if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=one;b->n_wr=1;b->wr[0]=tmp;}
+  bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
+  return 1;
+}
 /* a `name = expr` assignment or a bare expression, WITHOUT the trailing `;` (the for-loop step). */
 static void p_simple(CC *c) {
+  if(p_incdec(c)) return;
   if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id);
     if(v && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='='){
       c->i+=2; uint32_t val=p_expr(c);
@@ -750,6 +769,7 @@ static void p_stmt(CC *c) {
       bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
       bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
       eat(c,";");return;}}
+  if(p_incdec(c)){eat(c,";");return;}    /* ++i / i++ / --i / i-- as a statement */
   (void)p_expr(c);eat(c,";");
 }
 

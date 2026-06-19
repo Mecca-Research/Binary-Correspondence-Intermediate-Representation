@@ -410,7 +410,7 @@ class _Parser:
             return cast.Label(name)
         if self.at("IDENT", "static") or self._is_decl_start():
             return self._decl_stmt()
-        expr = self._expr()
+        expr = self._incdec() or self._expr()             # i++ / ++i / i-- / --i, else an expression
         self.eat("PUNCT", ";")
         return cast.ExprStmt(expr)
 
@@ -425,14 +425,27 @@ class _Parser:
         elif self._is_decl_start():
             init = self._decl_stmt()               # a declaration (consumes its `;`)
         else:
-            init = cast.ExprStmt(self._expr())
+            init = cast.ExprStmt(self._incdec() or self._expr())
             self.eat("PUNCT", ";")
         cond = cast.IntLit(1) if self.at("PUNCT", ";") else self._expr()
         self.eat("PUNCT", ";")
-        step = None if self.at("PUNCT", ")") else cast.ExprStmt(self._expr())
+        step = None if self.at("PUNCT", ")") else cast.ExprStmt(self._incdec() or self._expr())
         self.eat("PUNCT", ")")
         body = self._block() if self.at("PUNCT", "{") else (self._stmt(),)
         return cast.For(init, cond, step, body)
+
+    def _incdec(self):
+        """`i++` / `++i` / `i--` / `--i` with the value discarded (statement / for-clause) -> the
+        assignment `i = i ± 1`. Returns the Assign, or None (consuming nothing) if not an inc/dec."""
+        if self.at("OP", "++") or self.at("OP", "--"):
+            op = self.nxt().text[0]
+            name = self.eat("IDENT").text
+            return cast.Assign(cast.Name(name), cast.Binary(op, cast.Name(name), cast.IntLit(1)))
+        if self.at("IDENT") and self.peek(1).kind == "OP" and self.peek(1).text in ("++", "--"):
+            name = self.nxt().text
+            op = self.nxt().text[0]
+            return cast.Assign(cast.Name(name), cast.Binary(op, cast.Name(name), cast.IntLit(1)))
+        return None
 
     def _switch(self):
         """`switch (disc) { case C: ...; break; case A: case B: ...; break; default: ...; }` ->

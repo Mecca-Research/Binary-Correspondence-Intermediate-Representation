@@ -130,6 +130,17 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — increment / decrement `i++` / `++i` / `i--` / `--i`.** The
+  ubiquitous loop-counter / accumulator idiom -- a notable gap: it was unsupported on *both* rails
+  (`for(i=0;i<n;i++)`, `s++;` parse-errored). The value-discarded forms (a statement or a for-loop
+  clause -- the overwhelmingly common case) desugar to `i = i ± 1` (a `c.const` 1 + a `c.bin.add`/`sub`
+  + a `c.copy`) identically on both rails: the oracle parser gains an `_incdec` helper used in `_stmt`
+  + the `for` init/step, the C rail gains the `++`/`--` lexer tokens + a `p_incdec` used in `p_stmt` +
+  the for-step `p_simple`. New fixture `cfront_incdec.c` (`i++` in a for-step, `s++` + `--d` as
+  statements) matches on both rails (`funcs=1 claims=16 const=5 binop=5 ok=1`) and is
+  Clang-behaviour-equivalent. Wired into `_CONTROL` + `tools/c/check_runtime.sh`; warning-clean;
+  696 tests pass. (The expression-value form `x = i++` -- old-vs-new value -- is intentionally out of
+  scope; the discarded form covers loop counters / accumulators.)
 - 2026-06-18: **C compiler (Phase 2) — C11 `atomic_exchange`.** The atomic swap -- store a new value
   into an `_Atomic` object and return its prior value in one seq-cst step -- completing the
   value-mutating C11 atomics (`fetch_add`/`sub`/`xor` + `load` + `store` + `exchange`). It has the

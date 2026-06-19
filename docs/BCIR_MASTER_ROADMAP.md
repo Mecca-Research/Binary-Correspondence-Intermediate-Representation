@@ -683,7 +683,9 @@ a compile-time constant -- the type/operand's static size, operand not evaluated
 via the shared scalar table + struct/union layout, Clang-equivalent, `cfront_sizeof.c`) + ✅
 **`_Alignof`/`alignof`** (the type's alignment from the same layout model, type-name form only;
 `cfront_alignof.c`, both rails `claims=9 ok=1`, runs the loop); still
-`typeof`, the comma operator; the rest of control flow — ✅ **`for`** (desugared onto
+`typeof`, the comma operator; ✅ **increment / decrement** (`i++` / `++i` / `i--` / `--i` in
+statements + `for` clauses -- the value-discarded form desugars to `i = i ± 1` on both rails, the
+loop-counter idiom; `cfront_incdec.c`); the rest of control flow — ✅ **`for`** (desugared onto
 the existing `while` machinery on both rails: `init; while(cond){ body; step }`, the step lowered at
 the loop-body end; `cfront_for.c`), ✅ **`do/while`** (a `WhileNode` `test_at_end` flag / the C
 `c.loop.test` marker placed at the loop-body bottom -- body runs at least once), ✅ **`break`** (a
