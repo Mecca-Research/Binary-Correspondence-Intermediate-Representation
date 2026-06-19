@@ -127,6 +127,9 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"({_UNOP[suf]}{ref(c.rd[0])})")
     if c.op.startswith("c.cast:"):                           # (type)operand — width cast / reinterpret
         return deftmp(c.wr[0], f"({c.op.split(':', 1)[1]}){ref(c.rd[0])}")
+    if c.op == "c.addrof":                                   # &lvalue -> a pointer value (T *t = &x;)
+        rt = lf.rid_types.get(c.wr[0])
+        return deftmp(c.wr[0], f"&{ref(c.rd[0])}", _cname(rt) if rt is not None else None)
     if c.op == "c.select":                                   # ternary: cond ? then : els
         return deftmp(c.wr[0], f"({ref(c.rd[0])} ? {ref(c.rd[1])} : {ref(c.rd[2])})")
     if c.op == "c.load":
@@ -161,10 +164,17 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                                f"(({ref(c.rd[1])} & {mask}u) << {bit_off})")
     if c.op.startswith("c.call.libm:"):                      # a <math.h> call -> the real libm function
         callee = c.op.split(":", 1)[1]                       # (no bcir_ twin; the harness links -lm)
-        return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})")
+        rt = lf.rid_types.get(c.wr[0])                       # declare at the true result width: a long
+        ty = _cname(rt) if rt is not None else None          # return (lround) is not narrowed to uint32
+        return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})", ty)
+    if c.op.startswith("c.call.void:"):                      # a void callee -> a bare call statement
+        callee = c.op.split(":", 1)[1]
+        return f"bcir_{callee}({', '.join(ref(r) for r in c.rd)});"
     if c.op.startswith("c.call:"):
         callee = c.op.split(":", 1)[1]
-        return deftmp(c.wr[0], f"bcir_{callee}({', '.join(ref(r) for r in c.rd)})")
+        rt = lf.rid_types.get(c.wr[0])                       # a wide (8-byte) return declares at its true
+        ty = _cname(rt) if (rt is not None and rt.is_integer and rt.size > 4) else None   # width, not uint32
+        return deftmp(c.wr[0], f"bcir_{callee}({', '.join(ref(r) for r in c.rd)})", ty)
     if c.op == "c.call.indirect":                            # rd[0] is the function pointer; rd[1:] args
         return deftmp(c.wr[0], f"{ref(c.rd[0])}({', '.join(ref(r) for r in c.rd[1:])})")
     if c.op.startswith("c.call.imember:"):                   # o->fn(args): funcptr struct member
