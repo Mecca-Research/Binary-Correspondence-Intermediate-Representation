@@ -109,10 +109,11 @@ def pointer(of: CType, abi=None) -> CType:
     return CType("pointer", name="ptr", size=size, align=size, signed=False, of=of)
 
 
-def funcptr(name: str, ret: CType, params: tuple = ()) -> CType:
-    """A function-pointer type — pointer-sized, carrying its return + parameter types so the emitter
-    can reconstruct a call (``name`` is the typedef spelling, used verbatim in faithful emission)."""
-    return CType("funcptr", name=name, size=PTR_SIZE, align=PTR_SIZE, signed=False,
+def funcptr(name: str, ret: CType, params: tuple = (), abi=None) -> CType:
+    """A function-pointer type — pointer-sized (per the target ABI), carrying its return + parameter
+    types so the emitter can reconstruct a call (``name`` is the typedef spelling, used verbatim)."""
+    size = abi.pointer_size if abi is not None else PTR_SIZE
+    return CType("funcptr", name=name, size=size, align=size, signed=False,
                  of=ret, params=tuple(params))
 
 
