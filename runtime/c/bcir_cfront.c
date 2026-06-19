@@ -25,7 +25,7 @@ const char *bcir_opcode_name(bcir_opcode op) {
 }
 
 /* --- lexer --------------------------------------------------------------- */
-typedef enum { T_ID, T_INT, T_PUN, T_END } tkind;
+typedef enum { T_ID, T_INT, T_STR, T_PUN, T_END } tkind;
 typedef struct { tkind k; const char *s; int n; long long v; } tok;
 
 #define MAXTOK 16384
@@ -73,6 +73,22 @@ static long long parse_int(const char *s, int n) {
   return strtoll(buf,NULL,10);
 }
 
+/* Bytes in a "..."-spelled string literal *excluding* the NUL, decoding escapes (a simple \c, an
+ * octal \NNN, or a hex \xHH.. each count as one byte). s[0..n) includes the surrounding quotes. */
+static int str_bytes(const char *s, int n) {
+  int i = (n>0 && s[0]=='"') ? 1 : 0, e = (n>0 && s[n-1]=='"') ? n-1 : n, cnt=0;
+  while (i < e) {
+    if (s[i]=='\\' && i+1 < e) { char c = s[i+1];
+      if (c=='x') { i+=2;
+        while (i<e && ((s[i]>='0'&&s[i]<='9')||(s[i]>='a'&&s[i]<='f')||(s[i]>='A'&&s[i]<='F'))) i++; }
+      else if (c>='0'&&c<='7') { i++; int k=0; while (k<3 && i<e && s[i]>='0'&&s[i]<='7'){i++;k++;} }
+      else i+=2;
+    } else i++;
+    cnt++;
+  }
+  return cnt;
+}
+
 static void lex(CC *c, const char *src) {
   const char *p=src;
   static const char *pu[]={"<<",">>","->","==","!=","<=",">=","&&","||",
@@ -88,6 +104,9 @@ static void lex(CC *c, const char *src) {
     if (is_id0(*p)){t->k=T_ID;t->s=p;while(is_idc(*p))p++;t->n=(int)(p-t->s);c->nt++;continue;}
     if (*p>='0'&&*p<='9'){t->k=T_INT;t->s=p;while(is_idc(*p)||*p=='\'')p++;t->n=(int)(p-t->s);
                           t->v=parse_int(t->s,t->n);c->nt++;continue;}
+    if (*p=='"'){t->k=T_STR;t->s=p;p++;                /* string literal (escapes consumed as a unit) */
+                 while(*p&&*p!='"'){ if(*p=='\\'&&p[1]) p+=2; else p++; }
+                 if(*p=='"')p++; t->n=(int)(p-t->s); c->nt++; continue;}
     int m=0; for(int j=0;pu[j];j++) if(p[0]==pu[j][0]&&p[1]==pu[j][1]){
       t->k=T_PUN;t->s=p;t->n=2;p+=2;c->nt++;m=1;break;}
     if (m) continue;
@@ -421,7 +440,8 @@ static uint32_t p_primary(CC *c) {
     }
     if(!got){                          /* sizeof <operand>: a variable's static type size */
       int paren=0; if(is(c,"(")){c->i++;paren=1;}
-      if(isk(c,T_ID)){ tok vid=*pk(c); venv *v=lookup(c,&vid);
+      if(isk(c,T_STR)){ tok st=*pk(c); size = str_bytes(st.s,st.n) + 1; c->i++; }  /* char[N] incl. NUL */
+      else if(isk(c,T_ID)){ tok vid=*pk(c); venv *v=lookup(c,&vid);
         if(v) size = v->type.kind==2?8:(v->type.kind==1?c->s[v->sidx].size:v->type.size);
         c->i++; }
       if(paren) eat(c,")");

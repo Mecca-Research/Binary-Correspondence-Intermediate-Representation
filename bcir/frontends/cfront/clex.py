@@ -14,7 +14,7 @@ class CLexError(Exception):
 
 @dataclass(frozen=True)
 class Tok:
-    kind: str           # IDENT | INT | OP | PUNCT | EOF
+    kind: str           # IDENT | INT | STRING | OP | PUNCT | EOF
     text: str
     pos: int
 
@@ -69,6 +69,15 @@ def tokenize(src: str) -> list[Tok]:
                 j += 1
             toks.append(Tok("INT", src[i:j], i))
             i = j
+            continue
+        if c == '"':                                              # string literal
+            j = i + 1
+            while j < n and src[j] != '"':
+                j += 2 if (src[j] == "\\" and j + 1 < n) else 1   # skip an escaped char as a unit
+            if j >= n:
+                raise CLexError(f"unterminated string literal at offset {i}")
+            toks.append(Tok("STRING", src[i:j + 1], i))           # text includes the surrounding quotes
+            i = j + 1
             continue
         for op in _OPS:                                           # operators (longest match)
             if src.startswith(op, i):

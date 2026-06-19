@@ -28,6 +28,11 @@ class IntLit:
 
 
 @dataclass(frozen=True)
+class StringLit:
+    value: str          # the literal's source spelling, including the surrounding quotes
+
+
+@dataclass(frozen=True)
 class Name:
     ident: str
 

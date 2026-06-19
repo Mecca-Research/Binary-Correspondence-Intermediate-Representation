@@ -54,6 +54,23 @@ def test_L1_integer_expressions():
     assert not any(c.op.startswith("c.call") for c in claims)  # no calls at L1
 
 
+def test_L1_string_literal_sizeof():
+    """A string literal lexes as a STRING token (escapes intact) and, in `sizeof`, folds to its
+    char-array length (decoded bytes + the NUL) -- matching Clang. (The literal is not materialized
+    as a value yet; that is the next slice.)"""
+    from bcir.frontends.cfront.clex import tokenize
+    assert [t.text for t in tokenize(r'x "a\tb" y') if t.kind == "STRING"] == [r'"a\tb"']
+
+    def szof(lit: str) -> int:
+        r = compile_unit(f"uint32_t f(void){{ return sizeof {lit}; }}", check_clang=False)
+        return next(c.imm[0] for c in r.lowered.functions["f"].claims if c.op == "c.const")
+    assert szof(r'"hello"') == 6
+    assert szof('""') == 1
+    assert szof(r'"tab\there"') == 9        # \t is one byte
+    assert szof(r'"\x41\x42"') == 3         # hex escapes -> one byte each
+    assert szof(r'"\0"') == 2               # octal NUL -> one byte
+
+
 # --- L2: struct / union layout + member access ---------------------------------------------------
 
 def test_L2_struct_member_access():
