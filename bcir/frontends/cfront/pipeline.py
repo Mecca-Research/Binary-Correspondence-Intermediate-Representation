@@ -24,14 +24,19 @@ from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
 from ...verify import Diagnostic, verify, verify_plan
 from .clex import CLexError
-from .cparse import CParseError, parse_unit
+from .cparse import parse_unit, parse_with_recovery
 from .cpp import CPPError, preprocess
 from .diagnostics import DiagnosticReport, SourceDiagnostic, Span
 from .emit import emit_function
 from .lower import CLowerError, LoweredUnit, lower_unit
 
-# front-end exception type -> the translation stage it came from (machine-readable diagnostic provenance)
-_DIAG_PHASE = {CPPError: "preprocess", CLexError: "lex", CParseError: "parse", CLowerError: "lower"}
+
+def _diag_from(e: Exception, phase: str) -> SourceDiagnostic:
+    """A front-end exception -> a located source diagnostic (a caret span when the exception carries a
+    `pos`, else a file-level banner)."""
+    pos = getattr(e, "pos", None)
+    span = Span.at(pos) if pos is not None else None
+    return SourceDiagnostic("error", str(e), span=span, phase=phase)
 
 
 @dataclass
@@ -68,19 +73,24 @@ def diagnose(source: str, *, includes: dict | None = None, embeds: dict | None =
     report (`ok`) means the unit is well-formed through lowering. A front-end error is caught and
     rendered with a Clang-style caret at its source span instead of crashing the caller.
 
-    Error *recovery* — continuing past the first error to collect several diagnostics in one run — is
-    a later segment of the Clang-grade-diagnostics work; today this reports the first error it hits."""
-    pp = source
+    The parser recovers in panic mode, so a single run reports *every* syntax error it can resynchronize
+    past (not just the first). Preprocess and lex errors are still one-shot; semantic (lowering)
+    diagnostics report the first, and only run once the parse is clean."""
     try:
         pp = preprocess(source, includes=includes, embeds=embeds,
                         search_paths=search_paths, defines=defines, name=filename)
-        unit = parse_unit(pp)
-        lower_unit(unit)
-    except tuple(_DIAG_PHASE) as e:                    # any front-end error -> one located diagnostic
-        pos = getattr(e, "pos", None)
-        span = Span.at(pos) if pos is not None else None
-        diag = SourceDiagnostic("error", str(e), span=span, phase=_DIAG_PHASE[type(e)])
-        return DiagnosticReport([diag], pp, filename)
+    except CPPError as e:
+        return DiagnosticReport([_diag_from(e, "preprocess")], source, filename)
+    try:
+        unit, parse_diags = parse_with_recovery(pp)   # panic-mode recovery: collect all syntax errors
+    except CLexError as e:                            # a lexer error is not recovered (separate concern)
+        return DiagnosticReport([_diag_from(e, "lex")], pp, filename)
+    if parse_diags:                                   # syntax errors -> report them all; AST is partial
+        return DiagnosticReport(parse_diags, pp, filename)
+    try:
+        lower_unit(unit)                              # only lower a syntactically clean unit
+    except CLowerError as e:
+        return DiagnosticReport([_diag_from(e, "lower")], pp, filename)
     return DiagnosticReport([], pp, filename)
 
 
