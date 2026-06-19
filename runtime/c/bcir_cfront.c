@@ -519,6 +519,13 @@ static int bin_op(CC *c,char *suf,bcir_opcode *oc) {
   for(int i=0;B[i].t;i++) if(is(c,B[i].t)){strcpy(suf,B[i].s);*oc=B[i].o;return i;} return -1;
 }
 static int prec_of(int idx){static const int P[]={10,10,10,9,9,8,8,7,7,7,7,6,6,5,4,3};return P[idx];}
+/* the binary op of a compound assignment `OP=` (its first char): the suffix + cost-class opcode. */
+static void compound_binop(char ch,const char **suf,bcir_opcode *oc){
+  switch(ch){case '+':*suf="add";*oc=BCIR_OP_ADD;break; case '-':*suf="sub";*oc=BCIR_OP_SUB;break;
+    case '*':*suf="mul";*oc=BCIR_OP_MUL;break; case '/':*suf="div";*oc=BCIR_OP_MUL;break;
+    case '%':*suf="mod";*oc=BCIR_OP_MUL;break; case '&':*suf="and";*oc=BCIR_OP_ADD;break;
+    case '|':*suf="or";*oc=BCIR_OP_ADD;break;  default:*suf="xor";*oc=BCIR_OP_ADD;break;}  /* ^ */
+}
 static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs) {
   for(;;){
     char suf[BCIR_CIR_NAME];bcir_opcode oc;int idx=bin_op(c,suf,&oc);
@@ -693,7 +700,17 @@ static void p_stmt(CC *c) {
       c->i+=2; tok fld=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
       if(fi<0){fail(c,"unknown field");return;}
-      if(!eat(c,"="))return; uint32_t val=p_expr(c);
+      uint32_t val;
+      if(c->t[c->i].k==T_PUN&&c->t[c->i].n==2&&c->t[c->i].s[1]=='='&&strchr("+-*/%&|^",c->t[c->i].s[0])){
+        /* register read-modify-write:  d->reg OP= expr  (the set/clear-bits driver idiom). */
+        char ch=c->t[c->i].s[0]; c->i++;
+        uint32_t cur=emit_member(c,v,&S->f[fi]);    /* load the current value first (matches the oracle) */
+        uint32_t rhs=p_expr(c);
+        const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+        uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+        bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+        val=tmp;
+      } else { if(!eat(c,"="))return; val=p_expr(c); }
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=S->f[fi].byte_off;cl->imm[1]=S->f[fi].size;
         cl->bounds=BCIR_BND_ASSUMED;
@@ -707,11 +724,7 @@ static void p_stmt(CC *c) {
     if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==2&&c->t[c->i+1].s[1]=='='
        &&strchr("+-*/%&|^",c->t[c->i+1].s[0])){
       char ch=c->t[c->i+1].s[0]; c->i+=2; uint32_t rhs=p_expr(c);
-      const char *suf; bcir_opcode oc;
-      switch(ch){case '+':suf="add";oc=BCIR_OP_ADD;break; case '-':suf="sub";oc=BCIR_OP_SUB;break;
-        case '*':suf="mul";oc=BCIR_OP_MUL;break; case '/':suf="div";oc=BCIR_OP_MUL;break;
-        case '%':suf="mod";oc=BCIR_OP_MUL;break; case '&':suf="and";oc=BCIR_OP_ADD;break;
-        case '|':suf="or";oc=BCIR_OP_ADD;break;  default:suf="xor";oc=BCIR_OP_ADD;break;}  /* ^ */
+      const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
       uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
       bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
       bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
