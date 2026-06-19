@@ -299,7 +299,10 @@ class _FuncLowerer:
             ftype, byte_off, bit_off, bit_w = agg.field(node.field)
             return _LV("mem", base_rid, ftype, byte_off=byte_off, bit_off=bit_off, bit_width=bit_w)
         if isinstance(node, cast.Unary) and node.op == "*":
-            base_rid, base_ct = self._addr(node.operand)
+            operand = node.operand
+            if isinstance(operand, cast.Binary) and operand.op == "+":   # *(p + i) == p[i]
+                return self._lvalue(cast.Index(operand.lhs, operand.rhs))
+            base_rid, base_ct = self._addr(operand)
             return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"))
         raise CLowerError(f"not an lvalue: {type(node).__name__}")
 

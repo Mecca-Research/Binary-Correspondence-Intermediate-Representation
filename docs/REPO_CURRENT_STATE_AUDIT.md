@@ -130,6 +130,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — pointer dereference `*p` / `*(p + i)`.** A core gap: the C
+  rail did not support pointer dereference *at all* (`*p` was a parse error -- only the `p[i]` index
+  and `p->field` arrow forms worked), and `*(p + i)` failed on *both* rails (the oracle's `_addr`
+  rejected a `Binary` base). Now `*p` lowers to a one-read deref `c.load` (offset 0) and `*(p + i)`
+  -- the pointer-arithmetic spelling of `p[i]` -- routes through the existing two-read index/load
+  machinery, so both forms reuse the load path and stay parity-identical and Clang-behaviour-
+  equivalent (`*p` emits a `memcpy` deref, `*(p + i)` emits `p[i]`). The oracle handles it in
+  `_lvalue` (a `*(base + idx)` operand reuses `Index` lowering); the C rail adds `*` to `p_unary`
+  with a small lookahead (`*(IDENT + expr)` / `*(IDENT)` / `*IDENT`) and an `emit_deref` helper.
+  Volatile pointees stay MMIO. New fixture `cfront_deref.c` matches on both rails (`funcs=1 claims=5
+  const=0 binop=1 ok=1`) and runs the full C compile->execute loop. Wired into `_STRAIGHTLINE` +
+  `tools/c/check_runtime.sh`; warning-clean; 694 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — `static` local variables.** A function-local with static
   storage duration -- it persists across calls and is initialized once (the driver counter /
   accumulator pattern). The `static T name = init;` initializer is a constant expression baked into

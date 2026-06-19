@@ -312,6 +312,13 @@ static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;
   return t;
 }
+static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereference load */
+  uint32_t t=temp(c,pv->type.size?pv->type.size:4);
+  bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
+  cl->n_rd=1;cl->rd[0]=pv->rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;
+  if(pv->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+  return t;
+}
 static uint32_t p_call(CC *c, const tok *name) {
   c->i++; /* '(' */
   uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
@@ -463,6 +470,18 @@ static uint32_t p_unary(CC *c) {
     bcir_opcode oc=is(c,"-")?BCIR_OP_SUB:BCIR_OP_ADD;c->i++;
     uint32_t a=p_unary(c),r=temp(c,4);char op[BCIR_CIR_NAME];snprintf(op,sizeof op,"c.un.%s",suf);
     bcir_claim *cl=new_claim(c,op,oc);if(cl){cl->n_rd=1;cl->rd[0]=a;cl->n_wr=1;cl->wr[0]=r;}return r;}
+  if(is(c,"*")){                                   /* pointer dereference: *p / *(p + i) */
+    c->i++;
+    if(is(c,"(")){ int save=c->i; c->i++;          /* *(p) or *(p + i) */
+      if(isk(c,T_ID)){ tok pid=*pk(c); venv *pv=lookup(c,&pid);
+        if(pv){ c->i++;
+          if(is(c,"+")){ c->i++; uint32_t idx=p_expr(c); eat(c,")"); return emit_index(c,pv,idx); }
+          if(is(c,")")){ c->i++; return emit_deref(c,pv); } } }
+      c->i=save;
+    } else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pv=lookup(c,&pid);
+      if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p */
+    fail(c,"unsupported dereference"); return 0;
+  }
   if(is(c,"(")){                                   /* (type)operand -- a cast binds at the unary level */
     int save=c->i; c->i++;
     int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
