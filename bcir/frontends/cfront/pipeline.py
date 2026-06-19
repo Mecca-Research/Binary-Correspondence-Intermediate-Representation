@@ -15,10 +15,10 @@ import os
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ...channels import host_channel
-from ...kbcir.compose import Effect, plan_composite
+from ...kbcir.compose import Effect, plan_composite, summarize
 from ...kbcir.cost import Theta
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
@@ -56,6 +56,7 @@ class CompileResult:
     explain: dict = field(default_factory=dict)       # fn -> bcir-explain text
     attestation: dict = field(default_factory=dict)   # fn -> R12/R13/R17/R18 attestation dict
     effects: dict = field(default_factory=dict)        # fn -> Effect (global read/write footprint)
+    ipo: dict = field(default_factory=dict)            # inter-procedural plan: worst/expected/leaves/reused
     diagnostics: list = field(default_factory=list)   # R1–R18 Diagnostics (empty == clean)
     r18_ok: bool = True
     equivalence: str = "skip"                         # match | MISMATCH | skip:<reason>
@@ -163,12 +164,29 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
     for name in lowered.functions:
         res.effects[name] = Effect(*_folded(name, frozenset()))
 
-    # --- R18: the inter-procedural call graph, via the real plan_composite machinery ---
+    # --- R18 + IPO: the inter-procedural call graph via plan_composite. Each function is summarized
+    #     once (plan-once); a call whose actuals are cost-compatible with the callee's formals reuses
+    #     that summary instead of re-planning the body -- `ipo["reused"]` counts the saved plans. ---
     if lowered.entry:
         region = lowered.compose_functions[lowered.entry].region
+        summaries = {}
+        for fname, cf in lowered.compose_functions.items():
+            formal_rids = {rid for _, rid, _ in lowered.functions[fname].params}
+            formals = {rid: lowered.resources.get(rid) for rid in formal_rids}
+            try:                                          # a function we can't summarize (e.g. it is
+                s = summarize(cf, lowered.compose_functions, formals, h, theta, policy)
+                # a summary is reusable on its *formals* (the actuals that vary per call site); drop the
+                # internal-temp keys summarize folds in from the effect, else no call ever matches.
+                summaries[fname] = replace(s, formal_keys=tuple(
+                    (rid, key) for rid, key in s.formal_keys if rid in formal_rids))
+            except Exception:  # noqa: BLE001 -- recursive) is simply re-planned, never reused
+                pass
         try:
-            plan_composite(region, lowered.compose_functions, lowered.resources, h, theta, policy)
+            comp = plan_composite(region, lowered.compose_functions, lowered.resources, h, theta,
+                                  policy, summaries=summaries)
             res.r18_ok = True
+            res.ipo = {"worst": comp.worst_cost, "expected": comp.expected_cost,
+                       "leaves": comp.leaves, "reused": comp.reused}
         except Exception as e:  # noqa: BLE001 -- recursion / undefined callee == an R18 violation
             res.r18_ok = False
             res.diagnostics.append(Diagnostic("R18", f"call-graph integrity: {e}"))
