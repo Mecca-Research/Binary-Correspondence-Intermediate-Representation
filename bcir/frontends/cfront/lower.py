@@ -211,6 +211,7 @@ class _FuncLowerer:
         self.gres = gres or {}            # global rid -> Resource
         self.strctr = strctr if strctr is not None else [0]   # shared string-literal counter (unique rids)
         self.str_globals: dict[int, str] = {}          # string-literal global rid -> the source spelling
+        self.str_pool: dict[str, int] = {}             # spelling -> rid (dedup identical literals)
         self.env: dict[str, tuple[int, CType]] = {}    # name -> (storage rid, type)
         self.resources: dict[int, Resource] = {}
         self.rtypes: dict[int, CType] = {}             # rid -> CType (for emission)
@@ -341,6 +342,9 @@ class _FuncLowerer:
         """A string literal -> an anonymous read-only `char[]` global (NUL-terminated); the value is a
         pointer to it (decay). The emitter renders references to it as the inline literal, which is
         Clang-equivalent, so no synthesized global declaration is needed."""
+        existing = self.str_pool.get(spelling)                # dedup: identical literals share a global
+        if existing is not None:
+            return existing
         nbytes = _str_bytes(spelling) + 1                     # the decoded bytes + the NUL
         idx = self.strctr[0]
         self.strctr[0] += 1
@@ -349,6 +353,7 @@ class _FuncLowerer:
                                   access="ro", data_gen=1, name=f"__str{idx}")
         self.rtypes[rid] = array(scalar("char"), nbytes)
         self.str_globals[rid] = spelling                      # rid -> the literal spelling (for emit)
+        self.str_pool[spelling] = rid
         return rid
 
     def _addr(self, node):

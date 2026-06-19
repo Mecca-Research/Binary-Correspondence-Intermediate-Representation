@@ -111,6 +111,20 @@ def test_L1_character_constants():
     assert sum(1 for c in lf.claims if c.op == "c.const") == 3   # three char constants, all folded
 
 
+def test_L3_string_literal_dedup_and_table():
+    """Identical string literals in a function share one anonymous global (dedup), and a literal
+    longer than any fixed-size name buffer still materializes in full -- the spelling is held
+    out-of-band, so the emit can inline it at any length and stay Clang-equivalent."""
+    long_lit = "this string literal is definitely longer than thirty-two bytes"
+    src = ('uint32_t f(uint32_t i){ return "kv"[i & 1] + "kv"[i & 1] + "%s"[i %% 7]; }\n' % long_lit)
+    r = compile_unit(src, check_clang=False)
+    lf = r.lowered.functions["f"]
+    str_rids = [rid for rid in lf.resources if rid >= 970000]
+    assert len(str_rids) == 2                                    # "kv" used twice -> one global (dedup)
+    assert ('"%s"' % long_lit) in lf.globals_used.values()       # the long literal survives in full
+    assert max(len(s) for s in lf.globals_used.values()) > 34    # past the old 32-byte name cap
+
+
 # --- L2: struct / union layout + member access ---------------------------------------------------
 
 def test_L2_struct_member_access():
