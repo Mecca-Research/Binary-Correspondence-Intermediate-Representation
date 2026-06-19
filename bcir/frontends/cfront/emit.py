@@ -46,12 +46,16 @@ def emit_function(lf: LoweredFunc) -> str:
     nm: dict[int, str] = {rid: pname for pname, rid, _ct in lf.params}
     for rid, name, _ct in lf.locals:
         nm[rid] = name
+    for rid, name, _ct, _init in lf.statics:
+        nm[rid] = name
     nm.update(lf.globals_used)                            # file-scope globals (defined in the source)
 
     def ref(rid: int) -> str:
         return nm.get(rid, f"t{rid}")
 
     decls = [f"    {_cname(ct)} {name};" for _rid, name, ct in lf.locals]
+    decls += [f"    static {_cname(ct)} {name} = {init}u;"      # static storage: once-only const init
+              for _rid, name, ct, init in lf.statics]
     body = _walk(lf, lf.body, ref, 1)
     sig_params = ", ".join(f"{_cname(ct)} {pname}" for pname, _rid, ct in lf.params) or "void"
     ret = _cname(lf.ret_type)

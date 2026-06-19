@@ -53,6 +53,23 @@ def _cast_name(ct: CType) -> str:
     return _CAST_W.get(ct.size, "uint32_t")
 
 
+def _fold_const(node) -> int:
+    """A `static` local's initializer must be a constant expression (it is baked into the C
+    declaration). Fold the integer-constant subset; a missing init zero-initializes."""
+    if node is None:
+        return 0
+    if isinstance(node, cast.IntLit):
+        return node.value
+    if isinstance(node, cast.Unary) and node.op in ("-", "~"):
+        v = _fold_const(node.operand)
+        return -v if node.op == "-" else ~v
+    if isinstance(node, cast.Binary):
+        a, b = _fold_const(node.lhs), _fold_const(node.rhs)
+        return {"+": a + b, "-": a - b, "*": a * b, "&": a & b, "|": a | b,
+                "^": a ^ b, "<<": a << b, ">>": a >> b}.get(node.op, 0)
+    raise CLowerError("static initializer is not a constant expression")
+
+
 class CLowerError(Exception):
     pass
 
@@ -143,6 +160,7 @@ class LoweredFunc:
     region: object = None                 # compose.Region
     body: list = field(default_factory=list)        # the structured body tree (for emission)
     locals: list = field(default_factory=list)      # (rid, name, CType) mutable named locals
+    statics: list = field(default_factory=list)     # (rid, name, CType, init) static-storage locals
     globals_used: dict = field(default_factory=dict)   # rid -> name (file-scope globals referenced)
 
 
@@ -169,6 +187,7 @@ class _FuncLowerer:
         self.rtypes: dict[int, CType] = {}             # rid -> CType (for emission)
         self.params: list = []
         self.locals: list = []                         # (rid, name, CType) mutable named locals
+        self.statics: list = []                        # (rid, name, CType, init) static-storage locals
         self.calls: list = []
         self.block_stack: list = [[]]                  # claims/control nodes append to the top block
         self.loop_ctr = 0                              # unique loop ids (the `continue` label numbering)
@@ -232,6 +251,13 @@ class _FuncLowerer:
         loop accumulators work). The emitter declares it and refers to it by name."""
         rid = self._temp(ct, name)
         self.locals.append((rid, name, ct))
+        return rid
+
+    def _static_storage(self, ct: CType, name: str, init: int) -> int:
+        """A `static` local: persistent storage with a once-only constant initializer baked into the
+        declaration (so the init is NOT a per-call assignment). Reads/writes hit it like any local."""
+        rid = self._temp(ct, name)
+        self.statics.append((rid, name, ct, init))
         return rid
 
     def _temp(self, ct: CType, name: str) -> int:
@@ -471,6 +497,10 @@ class _FuncLowerer:
     def _stmt(self, st):
         if isinstance(st, cast.Decl):
             ct = self._resolve_type(st.type)
+            if st.static_storage:                             # static storage: init once, in the decl
+                rid = self._static_storage(ct, st.name, _fold_const(st.init))
+                self.env[st.name] = (rid, ct)
+                return None
             rid = self._storage(ct, st.name)                  # a mutable named local
             self.env[st.name] = (rid, ct)
             if st.init is not None:
@@ -562,7 +592,7 @@ class _FuncLowerer:
                            return_rid=self.last_return, claims=list(claims),
                            resources=dict(self.resources), rid_types=dict(self.rtypes),
                            calls=list(self.calls), region=None, body=body, locals=list(self.locals),
-                           globals_used=gnames)
+                           statics=list(self.statics), globals_used=gnames)
 
 
 def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Region":

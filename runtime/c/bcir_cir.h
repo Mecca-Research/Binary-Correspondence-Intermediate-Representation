@@ -109,6 +109,7 @@ typedef struct bcir_func {
   bcir_ctype  ret;
   uint32_t return_rid; uint8_t has_return;
   char calls[BCIR_MAX_CALLS][BCIR_CIR_NAME]; int n_calls;   /* callee names (R18 call graph) */
+  struct { char name[BCIR_CIR_NAME]; long long init; } statics[8]; int n_statics; /* static locals */
 } bcir_func;
 
 /* A translation unit: several functions sharing struct definitions + a call graph. */

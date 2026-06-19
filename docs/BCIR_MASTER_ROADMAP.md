@@ -696,9 +696,12 @@ on the C rail too -- one top-level loop with a `try_top_decl()` helper, matching
 interleaving `parse_unit`; `cfront_interleave.c`), and ✅ **`goto` + labels** (the driver
 error-cleanup pattern -- `goto done;` / `done:;` carried as emit-only markers like break/continue,
 which already lower to a goto, so they emit verbatim and stay Clang-equivalent; the mutable
-accumulator is a real C local so skipped updates match; `cfront_goto.c`); still cross-clause
+accumulator is a real C local so skipped updates match; `cfront_goto.c`), and ✅ **`static` local
+variables** (static storage duration -- persists across calls, a once-only constant initializer baked
+into the `static T name = init;` declaration so it lowers no init claim; the driver counter/accumulator
+pattern; `cfront_static.c`, both rails `claims=2 ok=1`, runs the loop); still cross-clause
 fallthrough; designated +
-compound initializers; storage classes + linkage (`static`/`extern`/`thread_local`); `restrict` +
+compound initializers; the rest of storage/linkage (`extern`/`thread_local`, file-scope `static`); `restrict` +
 alias/effect propagation; `_Atomic` + C-memory-model legality; scalable IR allocation (no fixed
 `BCIR_MAX_*`); fuller x86-64/AArch64 ABI; real object/dependency output via a resident backend. **Exit:**
 BCIR compiles a freestanding embedded C test suite + a nontrivial driver codebase with no hand-written

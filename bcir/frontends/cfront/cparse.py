@@ -408,7 +408,7 @@ class _Parser:
             name = self.nxt().text                            # `label:` — the labeled stmt follows
             self.eat("PUNCT", ":")
             return cast.Label(name)
-        if self._is_decl_start():
+        if self.at("IDENT", "static") or self._is_decl_start():
             return self._decl_stmt()
         expr = self._expr()
         self.eat("PUNCT", ";")
@@ -502,6 +502,10 @@ class _Parser:
         return cast.If(cond, then, els)
 
     def _decl_stmt(self) -> cast.Decl:
+        is_static = False
+        if self.at("IDENT", "static"):                # storage class (otherwise eaten by _type_spec)
+            is_static = True
+            self.nxt()
         tref = self._type_spec()
         tref, name = self._declarator(tref)
         init = None
@@ -509,7 +513,7 @@ class _Parser:
             self.nxt()
             init = self._expr()
         self.eat("PUNCT", ";")
-        return cast.Decl(tref, name, init)
+        return cast.Decl(tref, name, init, static_storage=is_static)
 
     # --- expressions (precedence climbing) ---
     def _expr(self):

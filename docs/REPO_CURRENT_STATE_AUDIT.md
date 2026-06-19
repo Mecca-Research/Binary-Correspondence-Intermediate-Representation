@@ -130,6 +130,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — `static` local variables.** A function-local with static
+  storage duration -- it persists across calls and is initialized once (the driver counter /
+  accumulator pattern). The `static T name = init;` initializer is a constant expression baked into
+  the declaration, so it lowers *no* init claim (unlike a regular `T x = v;`, which lowers a `c.copy`);
+  reads/writes then hit that persistent named storage exactly like any local. Both rails capture the
+  `static` storage class before the type (which would otherwise swallow it), fold the constant init,
+  and emit `static T name = init;` up front. The behaviour gate uses the generic `_equiv` harness
+  unchanged: the original and emitted functions each own a separate static, fed the same inputs in
+  lockstep, so they stay equal call for call. New fixture `cfront_static.c` (a running total) matches
+  on both rails (`funcs=1 claims=2 const=0 binop=1 ok=1`), is Clang-behaviour-equivalent, and runs the
+  full C compile->execute loop. Wired into `_STRAIGHTLINE` + `tools/c/check_runtime.sh`; warning-clean;
+  694 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — `goto` + labels.** The driver error-cleanup pattern: a forward
   `goto done;` jumps to a label at function-body scope. Both rails carry the jump and target as
   emit-only markers (`c.goto:<label>` / `c.label:<label>` -- NOP opcode, excluded from the structural
