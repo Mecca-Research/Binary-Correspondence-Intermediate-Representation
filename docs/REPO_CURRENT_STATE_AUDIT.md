@@ -130,6 +130,20 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — file-scope lookup tables.** A `static const T NAME[N] = {...}`
+  array at file scope, indexed at runtime -- the driver calibration / jump-table pattern. The C rail
+  had no file-scope global support at all (a global declaration was a parse error -- the top loop
+  only handled type defs + functions); this adds a `looks_global` lookahead (a `TYPE NAME ...` not
+  followed by `(`), a `p_global` parser (the initializer is skipped -- the claim graph needs only the
+  name + element type + length), a unit-wide global table, and `use_global`, which materializes a
+  read-only data resource for the global on first use within a function so an access `NAME[i]` lowers
+  to an indexed load. The emitter references the global by name (it is defined in the original
+  source) and does not redeclare it -- the `read_only` resource flag (previously unused) marks
+  globals so `is_named_local` skips them. This matches the oracle, which already lowered globals to a
+  `data_gen` read-only resource. New fixture `cfront_global.c` matches on both rails (`funcs=1
+  claims=5 const=2 binop=2 ok=1`), is Clang-behaviour-equivalent, and runs the full C
+  compile->execute loop. Wired into `_STRAIGHTLINE` + `tools/c/check_runtime.sh`; warning-clean;
+  695 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — composition checkpoint (integration driver).** A realistic
   multi-feature driver (`cfront_integration.c`) ingested with no hand-written claim graph, exercising
   the Phase-2 surface *together* in one translation unit: `typedef` + `enum` + an MMIO register-map

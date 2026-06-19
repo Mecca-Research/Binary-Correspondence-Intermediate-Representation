@@ -46,11 +46,14 @@ typedef struct {
   int sidx;          /* struct index for kind 1 or ptr_to_struct */
 } venv;
 
+typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int count; } gvar;  /* a file-scope global */
+
 typedef struct {
   tok t[MAXTOK]; int nt, i;
   sdef s[16]; int ns;
   tdef td[MAXTD]; int ntd;        /* typedef aliases (resolved at parse time) */
   econst ec[MAXEC]; int nec;      /* enum constants (folded to literals at parse time) */
+  gvar gv[16]; int ngv;           /* file-scope globals (lookup tables): name -> type + length */
   venv env[MAXENV]; int nenv;
   bcir_func *fn;
   uint32_t rid, cid;
@@ -120,6 +123,11 @@ static int find_enum(CC *c,const char *s,int n){
   for(int i=0;i<c->nec;i++) if((int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;
   return -1;
 }
+static int find_global(CC *c,const char *s,int n){
+  for(int i=0;i<c->ngv;i++) if((int)strlen(c->gv[i].name)==n&&!strncmp(c->gv[i].name,s,n)) return i;
+  return -1;
+}
+static venv *use_global(CC *c,const tok *id);   /* fwd: materialize a global's resource on first use */
 static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the constants */
 
 /* a parsed type: fills a bcir_ctype + the struct index (sidx, or -1). */
@@ -420,7 +428,8 @@ static uint32_t p_primary(CC *c) {
     int ec=find_enum(c,id.s,id.n);                /* an enumerator -> its folded constant */
     if(ec>=0){uint32_t r=temp(c,4);bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
       if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
-    venv *v=lookup(c,&id); if(!v){fail(c,"undefined identifier");return 0;}
+    venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a file-scope global (lookup table)? */
+    if(!v){fail(c,"undefined identifier");return 0;}
     if(is(c,".")||is(c,"->")){
       int arrow=is(c,"->"); c->i++; tok fn=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
       for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
@@ -536,6 +545,20 @@ static uint32_t p_expr(CC *c){
 static void env_add(CC *c,const tok *nm,uint32_t rid,const bcir_ctype *ty,int sidx){
   if(c->nenv>=MAXENV)return; venv *v=&c->env[c->nenv++];
   idcpy(v->name,nm);v->rid=rid;v->type=*ty;v->sidx=sidx;
+}
+/* On first use of a file-scope global within a function, materialize a read-only data resource for
+ * it (so an access `LUT[i]` lowers to a load) and bind it in the local env.  The resource is marked
+ * read-only -- the emitter references the global by name (it is defined in the original source) and
+ * does not redeclare it.  Subsequent uses in the same function resolve via the env. */
+static venv *use_global(CC *c,const tok *id){
+  int gi=find_global(c,id->s,id->n); if(gi<0) return NULL;
+  venv *ex=lookup(c,id); if(ex) return ex;
+  gvar *g=&c->gv[gi];
+  int kind = g->count>1 ? BCIR_RK_POINTER : (g->ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
+  uint32_t rid=add_res(c,BCIR_DOM_RAM,g->ty.size,g->count,0,kind,g->name);
+  if(c->fn->n_res) c->fn->res[c->fn->n_res-1].read_only=1;   /* a global, not a local */
+  env_add(c,id,rid,&g->ty,-1);
+  return lookup(c,id);
 }
 /* a control-flow marker claim (no realization; the emitter renders it as a brace). carries an
  * optional condition rid as a read so the verifier resolves it and the emitter can test it. */
@@ -744,6 +767,7 @@ static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
 }
 static int is_named_local(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid); if(!r||!r->name[0]) return 0;
+  if(r->read_only) return 0;                                          /* a global, defined in source */
   for(int i=0;i<f->n_params;i++) if(f->params[i].rid==rid) return 0;   /* a param, not a local */
   return 1;
 }
@@ -863,6 +887,29 @@ static int try_top_decl(CC *c){
   return 0;
 }
 
+/* Lookahead: does the current top-level token begin a file-scope global (a `TYPE NAME ...` that is
+ * NOT followed by `(`) rather than a function?  Restores the cursor so the caller re-parses. */
+static int looks_global(CC *c){
+  int save=c->i, sf=c->failed; bcir_ctype ty; int si; int global=0;
+  if(!p_type(c,&ty,&si) && isk(c,T_ID)){ c->i++; if(!is(c,"(")) global=1; }
+  c->i=save; c->failed=sf; c->err[0]=0;
+  return global;
+}
+/* Parse a file-scope global `[static][const] TYPE NAME [N] [= ...];` and register it.  The
+ * initializer is skipped -- the emitter references the global by name (defined in the source), so
+ * the claim graph needs only the name + element type + length. */
+static void p_global(CC *c){
+  bcir_ctype ty; int si; if(p_type(c,&ty,&si)) return; tok nm=adv(c);
+  int count=1;
+  while(is(c,"[")){ c->i++; count = isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]"); }
+  if(is(c,"=")){ c->i++;
+    if(is(c,"{")){ c->i++; int d=1; while(d>0&&!isk(c,T_END)&&!c->failed){ if(is(c,"{"))d++; else if(is(c,"}"))d--; c->i++; } }
+    else (void)ce_expr(c,0);
+  }
+  eat(c,";");
+  if(c->ngv<16){ idcpy(c->gv[c->ngv].name,&nm); c->gv[c->ngv].ty=ty; c->gv[c->ngv].count=count; c->ngv++; }
+}
+
 /* --- public entry -------------------------------------------------------- */
 int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
   static CC c; memset(&c,0,sizeof c); memset(out,0,sizeof *out);
@@ -871,6 +918,7 @@ int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
   while(!isk(&c,T_END)&&!c.failed&&out->unit.n_funcs<BCIR_MAX_FUNCS){
     if(try_top_decl(&c)) continue;       /* typedef / enum / struct|union defs, interleaved */
     if(isk(&c,T_END)||c.failed) break;
+    if(looks_global(&c)){ p_global(&c); continue; }   /* a file-scope global (lookup table) */
     bcir_func *fn=&out->unit.funcs[out->unit.n_funcs];
     fn->cap_res=256; fn->res=calloc(256,sizeof(bcir_resource));
     fn->cap_claims=4096; fn->claims=calloc(4096,sizeof(bcir_claim));
