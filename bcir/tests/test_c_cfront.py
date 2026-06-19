@@ -702,8 +702,12 @@ def test_c_preprocessor_macros_conditionals_and_embed():
         assert pp("#if defined(__FILE__) && __LINE__ == 1\nok\n#endif\n").split() == ["ok"]
         assert pp("#if __STDC_HOSTED__\nhosted\n#endif\n").split() == ["hosted"]
 
+        # #line: resets the presumed line of the next line (and __FILE__ when named).
+        assert pp("a __LINE__\n#line 100\nb __LINE__\n").split() == ["a", "1", "b", "100"]
+        assert pp('#line 50 "foo.c"\nx __LINE__ __FILE__\n').strip() == 'x 50"foo.c"'
+
         # dual-rail gate: the C twin's output is byte-identical to cpp.py over the same probes,
-        # including __LINE__ through a function macro (the invocation line) and across #include.
+        # including __LINE__ through a function macro (the invocation line), #line, and across #include.
         from bcir.frontends.cfront.cpp import preprocess as _py_pp  # noqa: PLC0415
         open(os.path.join(d, "ph.h"), "w").write("in __LINE__ __FILE__")
         probes = [
@@ -715,12 +719,20 @@ def test_c_preprocessor_macros_conditionals_and_embed():
             "#if defined __LINE__\nok\n#endif\n",
             "aa \\\nbb\n__LINE__\n",
             "__STDC__ __STDC_VERSION__ __STDC_HOSTED__\n",
+            "a __LINE__\n#line 100\nb __LINE__\nc __LINE__\n",
+            "#define N 200\n#line N\nq __LINE__\n",
+            '#line 30 "a\\"b.c"\nz __FILE__\n',                  # an escaped quote in the name
+            "p __LINE__\n#line\nq __LINE__\n",                   # malformed -> ignored
+            "#if 0\n#line 999\n#endif\nr __LINE__\n",            # inactive branch -> skipped
         ]
         for s in probes:
             assert pp(s) == _py_pp(s), f"twin divergence on {s!r}\n C: {pp(s)!r}\nPY: {_py_pp(s)!r}"
-        # the #include-boundary case (header numbered from 1, __FILE__ restored on return).
+        # the #include-boundary case (header numbered from 1, __FILE__ restored on return), and the
+        # same with a #line-set name that must survive the include and restore afterwards.
         inc = 't __LINE__ __FILE__\n#include "ph.h"\nu __LINE__ __FILE__\n'
         assert pp(inc, d) == _py_pp(inc, search_paths=[d])
+        linc = '#line 7 "a.h"\nt __LINE__ __FILE__\n#include "ph.h"\nu __LINE__ __FILE__\n'
+        assert pp(linc, d) == _py_pp(linc, search_paths=[d])
 
 
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():

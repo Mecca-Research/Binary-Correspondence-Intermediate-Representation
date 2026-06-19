@@ -243,11 +243,12 @@ static int cpp_process(const char *src, const char *curfile, const char *const *
                        char *out, size_t outcap, size_t *w, char *err, size_t errcap) {
   /* a conditional stack: active flag + taken flag (parent == all enclosing frames active) */
   struct { int active, taken, parent; } cs[64]; int ncs=0;
-  const char *p=src; char line[8192]; int lineno=0;
+  const char *p=src; char line[8192]; int presumed=1;
+  char filebuf[1024]; const char *curf=curfile;    /* #line may repoint the current file at filebuf */
   while(*p){
     int L=0; while(*p&&*p!='\n'){ if(*p=='\\'&&p[1]=='\n'){p+=2;continue;} if(L<8190)line[L++]=*p; p++; }
     if(*p=='\n')p++; line[L]=0;
-    g_cur_file=curfile; g_cur_line=++lineno;       /* __FILE__/__LINE__ for this logical line */
+    g_cur_file=curf; g_cur_line=presumed; presumed++;   /* __FILE__/__LINE__ for this logical line */
     int q=0; while(line[q]==' '||line[q]=='\t')q++;
     if(line[q]=='#'){
       q++; while(line[q]==' ')q++; int ds=q; while(idc((unsigned char)line[q]))q++;
@@ -287,7 +288,16 @@ static int cpp_process(const char *src, const char *curfile, const char *const *
           static char blob[1<<16]; int bn=read_file_dirs(dirs,ndirs,nm,blob,sizeof blob);
           if(bn<0){if(err)snprintf(err,errcap,"#embed %s not found",nm);return 1;}
           char num[16]; for(int b=0;b<bn;b++){snprintf(num,sizeof num,"%s%u",b?", ":"",(unsigned char)blob[b]);app(out,outcap,w,num);} }
-        /* #error/#warning/#pragma/#line ignored */
+        else if(!strcmp(dir,"line")){          /* #line N ["file"]: presumed line of the NEXT line
+                                                  is N (decimal); optional new __FILE__. Operands are
+                                                  macro-expanded first. */
+          char ex[8192]; expand_line(rest,ex,sizeof ex); int j=0; char t[1024];
+          if(ntok(ex,&j,t,sizeof t)=='n'){ presumed=atoi(t);
+            if(ntok(ex,&j,t,sizeof t)=='s'){  /* strip the quotes + resolve \ escapes into filebuf */
+              size_t fw=0; for(int z=1; t[z] && t[z]!='"' && fw<sizeof filebuf-1; z++){
+                if(t[z]=='\\'&&t[z+1])z++; filebuf[fw++]=t[z]; }
+              filebuf[fw]=0; curf=filebuf; } } }
+        /* #error/#warning/#pragma ignored */
       }
       continue;
     }

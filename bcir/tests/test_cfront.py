@@ -184,6 +184,25 @@ def test_L7_predefined_file_and_line():
     assert body == 't 1"<source>"\nin 1"h"\nu 3"<source>"\n'
 
 
+def test_L7_line_directive():
+    """`#line N ["file"]` resets the presumed line number of the *following* line (and __FILE__ when a
+    name is given); operands are macro-expanded; a #line-set name survives an #include and restores."""
+    from bcir.frontends.cfront.cpp import preprocess
+    # #line sets the NEXT line; numbering then counts up from there.
+    assert preprocess("a __LINE__\n#line 100\nb __LINE__\nc __LINE__").split() == \
+        ["a", "1", "b", "100", "c", "101"]
+    # a file-name operand redirects __FILE__ too, and operands are macro-expanded.
+    assert preprocess('#line 50 "foo.c"\nx __LINE__ __FILE__').strip() == 'x 50"foo.c"'
+    assert preprocess("#define N 200\n#line N\nq __LINE__").split() == ["q", "200"]
+    # a malformed #line is ignored (numbering just continues); an inactive-branch #line never fires.
+    assert preprocess("p __LINE__\n#line\nq __LINE__").split() == ["p", "1", "q", "3"]
+    assert preprocess("#if 0\n#line 999\n#endif\nr __LINE__").split() == ["r", "4"]
+    # a #line-set name persists across an #include and is restored on return.
+    body = preprocess('#line 7 "a.h"\nt __LINE__ __FILE__\n#include "i"\nu __LINE__ __FILE__\n',
+                      includes={"i": "in __LINE__ __FILE__"})
+    assert body == 't 7"a.h"\nin 1"i"\nu 9"a.h"\n'
+
+
 # --- L8: ABI — struct return-by-value, packed/aligned, calling convention vs Clang ----------------
 
 def _clang_layout(struct_src: str, tag: str, fields: list):

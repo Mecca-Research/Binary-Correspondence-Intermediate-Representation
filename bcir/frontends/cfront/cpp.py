@@ -2,7 +2,8 @@
 (with `#` stringize and `##` paste), `#undef`, conditional compilation (`#if`/`#ifdef`/`#ifndef`/
 `#elif`/`#elifdef`/`#elifndef`/`#else`/`#endif`) with a constant-expression evaluator (`defined`,
 `__has_include`, `__has_embed`), the dynamic predefined macros `__FILE__`/`__LINE__` (and the static
-`__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), `#include` of project headers, and C23 `#embed`.
+`__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), the `#line` directive, `#include` of project
+headers, and C23 `#embed`.
 
 It runs *before* the lexer/parser, producing fully-expanded source text (the lexer still skips any
 residual `#`-line, but after this pass there are none). `#include`/`#embed` resolve against an
@@ -64,7 +65,8 @@ class Preprocessor:
             self.macros[n] = Macro(n, _tokens(str(v) if v != "" else "1"))
         self._depth = 0
         self._cur_file = "<source>"               # __FILE__: the file currently being processed
-        self._cur_line = 0                         # __LINE__: its 1-based logical line number
+        self._cur_line = 0                         # __LINE__: its presumed line number
+        self._presumed = 0                         # presumed line of the *next* line (#line sets it)
 
     # --- public ---
     def process(self, text: str, name: str = "<source>") -> str:
@@ -103,13 +105,15 @@ class Preprocessor:
         def active() -> bool:
             return all(c[0] for c in cond)
 
-        # __FILE__/__LINE__ track the current file + 1-based logical line; a nested #include saves
-        # and restores them (each file is numbered from 1 in its own name).
-        saved_file, saved_line = self._cur_file, self._cur_line
-        self._cur_file = name
+        # __FILE__/__LINE__ track the current file + presumed line; the line starts at 1 and counts
+        # up, but `#line` can reset both, and a nested #include saves/restores them (each file numbers
+        # from 1 in its own name).
+        saved = (self._cur_file, self._cur_line, self._presumed)
+        self._cur_file, self._presumed = name, 1
         try:
-            for idx, raw in enumerate(lines):
-                self._cur_line = idx + 1
+            for raw in lines:
+                self._cur_line = self._presumed
+                self._presumed += 1
                 line = raw.strip()
                 if line.startswith("#"):
                     self._directive(line[1:].strip(), cond, out, name, active)
@@ -117,7 +121,7 @@ class Preprocessor:
                 if active():
                     out.append(self._expand_text(raw))
         finally:
-            self._cur_file, self._cur_line = saved_file, saved_line
+            self._cur_file, self._cur_line, self._presumed = saved
         if cond:
             raise CPPError(f"unterminated #if in {name}")
 
@@ -139,9 +143,11 @@ class Preprocessor:
             self._include(rest, out, name)
         elif op == "embed":
             out.append(self._embed(rest))
+        elif op == "line":
+            self._line(rest)
         elif op in ("error",):
             raise CPPError(f"#error {self._expand_text(rest)} (in {name})")
-        elif op in ("warning", "pragma", "line", ""):
+        elif op in ("warning", "pragma", ""):
             pass                                         # accepted, no effect on lowering
         else:
             raise CPPError(f"unknown directive #{op} in {name}")
@@ -201,6 +207,23 @@ class Preprocessor:
             self.macros[nm] = Macro(nm, _tokens(body), params, variadic)
         else:                                                 # object-like
             self.macros[nm] = Macro(nm, _tokens(rest[nameend:].strip()))
+
+    # --- #line ---
+    def _line(self, rest: str) -> None:
+        """`#line digits ["file"]` — the presumed line number of the *following* line becomes
+        `digits` (decimal), and __FILE__ becomes `"file"` if given. Operands are macro-expanded
+        first (C23 6.10.5). Malformed directives are ignored (a strict compiler would diagnose)."""
+        toks = self._expand(_tokens(rest), set())
+        if not toks:
+            return
+        m = re.match(r"\d+", toks[0])                         # a decimal digit sequence
+        if not m:
+            return
+        self._presumed = int(m.group())
+        for t in toks[1:]:                                    # an optional new file name
+            if t[:1] == '"':
+                self._cur_file = _unescape_str(t)
+                break
 
     # --- #include / #embed ---
     def _include(self, rest: str, out, name) -> None:
@@ -348,6 +371,20 @@ class Preprocessor:
                       lambda m: "1" if self._header_name(m.group(1)) in self.embeds else "0", expr)
         toks = self._expand(_tokens(expr), set())
         return _ConstEval(toks).parse()
+
+
+def _unescape_str(tok: str) -> str:
+    """The bytes of a `"..."` string-literal token (drop the quotes, resolve `\\` escapes)."""
+    body = tok[1:-1] if len(tok) >= 2 and tok[-1] == '"' else tok[1:]
+    out, i = [], 0
+    while i < len(body):
+        if body[i] == "\\" and i + 1 < len(body):
+            out.append(body[i + 1])
+            i += 2
+        else:
+            out.append(body[i])
+            i += 1
+    return "".join(out)
 
 
 def _join(toks: list[str]) -> str:
