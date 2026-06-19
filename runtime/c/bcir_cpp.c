@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* --- macro table --------------------------------------------------------- */
 typedef struct {
@@ -308,6 +309,25 @@ static int cpp_process(const char *src, const char *curfile, const char *const *
   return 0;
 }
 
+/* __DATE__ ("Mmm dd yyyy", space-padded day) + __TIME__ ("hh:mm:ss"). Frozen from SOURCE_DATE_EPOCH
+ * (the reproducible-builds convention, UTC) when it is a plain integer, else the current UTC time --
+ * the exact convention cpp.py uses, so the two rails agree byte-for-byte whenever the epoch is set. */
+static int all_digits(const char *s) {
+  if (!s || !*s) return 0;
+  for (; *s; s++) if (*s < '0' || *s > '9') return 0;
+  return 1;
+}
+static void cpp_datetime(char *datebuf, char *timebuf) {
+  static const char *mon[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                              "Jul","Aug","Sep","Oct","Nov","Dec"};
+  const char *e = getenv("SOURCE_DATE_EPOCH");
+  time_t t = all_digits(e) ? (time_t)strtoll(e, NULL, 10) : time(NULL);
+  struct tm *m = gmtime(&t);
+  if (!m) { snprintf(datebuf, 16, "Jan  1 1970"); snprintf(timebuf, 16, "00:00:00"); return; }
+  snprintf(datebuf, 16, "%s %2d %d", mon[m->tm_mon], m->tm_mday, m->tm_year + 1900);
+  snprintf(timebuf, 16, "%02d:%02d:%02d", m->tm_hour, m->tm_min, m->tm_sec);
+}
+
 /* The extended entry point: multiple include dirs (-I) + predefined macros (-D, each "name body").
  * Seeds the predefined + -D macros ONCE; cpp_process then keeps them across nested includes. */
 int bcir_cpp_run_ex(const char *src, const char *const *dirs, int ndirs,
@@ -316,6 +336,9 @@ int bcir_cpp_run_ex(const char *src, const char *const *dirs, int ndirs,
   NM=0; if(err&&errcap)err[0]=0;
   define_macro("__STDC_VERSION__ 202311L"); define_macro("__STDC__ 1");
   define_macro("__STDC_HOSTED__ 1");
+  { char db[16], tb[16]; cpp_datetime(db, tb); char def[48];
+    snprintf(def, sizeof def, "__DATE__ \"%s\"", db); define_macro(def);
+    snprintf(def, sizeof def, "__TIME__ \"%s\"", tb); define_macro(def); }
   for(int d=0; d<ndefines; d++) define_macro(defines[d]);
   out[0]=0; size_t w=0; g_cpp_depth=0;
   return cpp_process(src, "<source>", dirs, ndirs, out, outcap, &w, err, errcap);

@@ -444,7 +444,7 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 | L4 | functions + the call graph → **R18** (recursion + undefined-callee rejected) | ✅ |
 | L5 | `volatile`/MMIO → `Domain.MMIO` resources (ordered/`barriered`) + bitfield mask/shift claims | ✅ (the register-map/MMIO MVP) |
 | L6 | control flow — `if`/`else` → `compose.Cond`, bounded `while` (mutable named locals) | ✅ |
-| L7 | preprocessor — object/function `#define` (+ `#`/`##`), `#if`/`#ifdef`/`#elifdef`, predefined macros (`__FILE__`/`__LINE__` + `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), `#line`, `#include`, C23 `#embed` (→ const globals) | ✅ |
+| L7 | preprocessor — object/function `#define` (+ `#`/`##`), `#if`/`#ifdef`/`#elifdef`, predefined macros (`__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), `#line`, `#include`, C23 `#embed` (→ const globals) | ✅ |
 | L8 | ABI — struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked against Clang's `sizeof`/`offsetof` | ✅ |
 
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
@@ -748,9 +748,10 @@ write, a bitfield read, a register read-modify-write, a file-scope lookup table,
 chunks compose into a real driver.
 
 **Phase 3 — Hosted C23 compiler candidate.** libc-header compatibility; full preprocessor (predefined
-macros — `__FILE__`/`__LINE__` + `__STDC_HOSTED__` and the `#line` directive **done** (dual-rail);
-`__DATE__`/`__TIME__`, feature-test macros, `#pragma`/`_Pragma`, `__VA_OPT__`, `__has_*`, real source
-paths in `__FILE__`, the full translation phases next); floating/complex/decimal; variadic functions +
+macros — `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC_HOSTED__` and the `#line` directive
+**done** (dual-rail; `__DATE__`/`__TIME__` frozen by `SOURCE_DATE_EPOCH`); feature-test macros,
+`#pragma`/`_Pragma`, `__VA_OPT__`, `__has_*`, real source paths in `__FILE__`, the full translation
+phases next); floating/complex/decimal; variadic functions +
 varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
 Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches
 Clang or emits a clear unsupported-feature diagnostic.

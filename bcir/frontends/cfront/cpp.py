@@ -1,9 +1,9 @@
 """A C preprocessor for the frontend (ladder stage L7): object- and function-like `#define` macros
 (with `#` stringize and `##` paste), `#undef`, conditional compilation (`#if`/`#ifdef`/`#ifndef`/
 `#elif`/`#elifdef`/`#elifndef`/`#else`/`#endif`) with a constant-expression evaluator (`defined`,
-`__has_include`, `__has_embed`), the dynamic predefined macros `__FILE__`/`__LINE__` (and the static
-`__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), the `#line` directive, `#include` of project
-headers, and C23 `#embed`.
+`__has_include`, `__has_embed`), the predefined macros `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__`
+(and the static `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), the `#line` directive, `#include`
+of project headers, and C23 `#embed`.
 
 It runs *before* the lexer/parser, producing fully-expanded source text (the lexer still skips any
 residual `#`-line, but after this pass there are none). `#include`/`#embed` resolve against an
@@ -61,6 +61,9 @@ class Preprocessor:
         self._disk_cache: dict[str, str | None] = {}   # resolved header name -> text (or None)
         self.macros: dict[str, Macro] = {
             n: Macro(n, _tokens(v)) for n, v in _PREDEFINED.items()}
+        date, clock = _translation_datetime()    # __DATE__/__TIME__: object macros (string bodies)
+        self.macros["__DATE__"] = Macro("__DATE__", _tokens(f'"{date}"'))
+        self.macros["__TIME__"] = Macro("__TIME__", _tokens(f'"{clock}"'))
         for n, v in (defines or {}).items():      # -D name[=value]  (value "" -> defined as 1)
             self.macros[n] = Macro(n, _tokens(str(v) if v != "" else "1"))
         self._depth = 0
@@ -371,6 +374,20 @@ class Preprocessor:
                       lambda m: "1" if self._header_name(m.group(1)) in self.embeds else "0", expr)
         toks = self._expand(_tokens(expr), set())
         return _ConstEval(toks).parse()
+
+
+def _translation_datetime() -> tuple[str, str]:
+    """The `__DATE__` ("Mmm dd yyyy", space-padded day) and `__TIME__` ("hh:mm:ss") strings. Frozen
+    from `SOURCE_DATE_EPOCH` (the reproducible-builds convention, interpreted as UTC) when it is a
+    plain integer, else the current UTC time. The C twin shares the exact convention, so the
+    dual-rail output is byte-identical whenever the epoch is pinned."""
+    import os, time  # noqa: PLC0415,E401
+    epoch = os.environ.get("SOURCE_DATE_EPOCH", "")
+    tm = time.gmtime(int(epoch)) if epoch.isdigit() else time.gmtime()
+    mon = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[tm.tm_mon - 1]
+    return (f"{mon} {tm.tm_mday:2d} {tm.tm_year}",
+            f"{tm.tm_hour:02d}:{tm.tm_min:02d}:{tm.tm_sec:02d}")
 
 
 def _unescape_str(tok: str) -> str:
