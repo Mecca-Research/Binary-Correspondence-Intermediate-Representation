@@ -444,7 +444,7 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 | L4 | functions + the call graph → **R18** (recursion + undefined-callee rejected) | ✅ |
 | L5 | `volatile`/MMIO → `Domain.MMIO` resources (ordered/`barriered`) + bitfield mask/shift claims | ✅ (the register-map/MMIO MVP) |
 | L6 | control flow — `if`/`else` → `compose.Cond`, bounded `while` (mutable named locals) | ✅ |
-| L7 | preprocessor — object/function/variadic `#define` (+ `#`/`##`, `__VA_ARGS__`), `#if`/`#ifdef`/`#elifdef`, predefined macros (`__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), `#line`, `_Pragma`, `#include`, C23 `#embed` (→ const globals) | ✅ |
+| L7 | preprocessor — object/function/variadic `#define` (+ `#`/`##`, `__VA_ARGS__`/`__VA_OPT__`), `#if`/`#ifdef`/`#elifdef`, predefined macros (`__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), `#line`, `_Pragma`, `#include`, C23 `#embed` (→ const globals) | ✅ |
 | L8 | ABI — struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked against Clang's `sizeof`/`offsetof` | ✅ |
 
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
@@ -749,11 +749,12 @@ chunks compose into a real driver.
 
 **Phase 3 — Hosted C23 compiler candidate.** libc-header compatibility; full preprocessor (predefined
 macros — `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC_HOSTED__`, the `#line` directive, the
-`_Pragma` operator, and the `__has_include`/`__has_attribute`/`__has_builtin`/`__has_c_attribute`
-feature-test macros **done** (dual-rail; `__DATE__`/`__TIME__` frozen by `SOURCE_DATE_EPOCH`,
-`_Pragma`/`#pragma` lowering no-ops, `__FILE__` carries the driver's real source path,
-`__has_include` resolves against the search path, `__has_attribute` reports the L8 ABI attributes);
-`__VA_OPT__`, C-twin `__has_embed` eval, the full translation phases next); floating/complex/decimal;
+`_Pragma` operator, variadic macros (`__VA_ARGS__`/`__VA_OPT__`), and the
+`__has_include`/`__has_attribute`/`__has_builtin`/`__has_c_attribute` feature-test macros **done**
+(dual-rail; `__DATE__`/`__TIME__` frozen by `SOURCE_DATE_EPOCH`, `_Pragma`/`#pragma` lowering no-ops,
+`__FILE__` carries the driver's real source path, `__has_include` resolves against the search path,
+`__has_attribute` reports the L8 ABI attributes); C-twin `__has_embed` eval, the full translation
+phases next); floating/complex/decimal;
 variadic functions +
 varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
 Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches

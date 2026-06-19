@@ -765,6 +765,9 @@ def test_c_preprocessor_macros_conditionals_and_embed():
             "#define L(a, ...) g(a, __VA_ARGS__)\nL(x,1,2)\nL(z)\n",    # named + variadic, incl. empty
             "#define S(...) #__VA_ARGS__\nS(1, 2, 3)\nS()\n",           # stringize __VA_ARGS__
             "#define P(...) x ## __VA_ARGS__\nP(1,2)\nP()\n",           # paste __VA_ARGS__
+            "#define LOG(f, ...) p(f __VA_OPT__(,) __VA_ARGS__)\nLOG(z)\nLOG(z,1,2)\n",  # __VA_OPT__
+            "#define W(x, ...) [x __VA_OPT__(/ __VA_ARGS__)]\nW(p)\nW(p,q,r)\n",         # nested VA
+            "#define E(...) z __VA_OPT__(Y)\nE()\nE(,)\nE(q)\n",        # emptiness incl. a lone comma
         ]
         for s in probes:
             assert pp(s) == _py_pp(s), f"twin divergence on {s!r}\n C: {pp(s)!r}\nPY: {_py_pp(s)!r}"

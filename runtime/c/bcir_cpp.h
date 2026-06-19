@@ -1,7 +1,8 @@
 /*===- bcir_cpp.h - the BCIR C preprocessor (L7, the C twin of cfront/cpp.py) ===
  *
- * A C preprocessor for the plug-in compiler: object- and function-like #define macros
- * (with # stringize and ## paste), #undef, conditional compilation (#if / #ifdef /
+ * A C preprocessor for the plug-in compiler: object-, function- and variadic-like #define
+ * macros (with # stringize, ## paste, __VA_ARGS__ and C23 __VA_OPT__), #undef, conditional
+ * compilation (#if / #ifdef /
  * #ifndef / #elif / #elifdef / #elifndef / #else / #endif with an integer
  * constant-expression evaluator + `defined` + `__has_include` + `__has_attribute`/
  * `__has_builtin`/`__has_c_attribute`), the predefined macros __FILE__ / __LINE__ /
