@@ -266,6 +266,18 @@ def test_L7_has_feature_macros():
         == "OK"
 
 
+def test_L7_has_include():
+    """`__has_include` probes the header search path (resolved against the in-memory mount here),
+    both the quoted and angle forms; the dual-rail C twin resolves the same names from disk."""
+    from bcir.frontends.cfront.cpp import preprocess
+    inc = {"there.h": "int x;"}
+    assert preprocess('#if __has_include("there.h")\nY\n#else\nN\n#endif', includes=inc).strip() == "Y"
+    assert preprocess("#if __has_include(<there.h>)\nY\n#else\nN\n#endif", includes=inc).strip() == "Y"
+    assert preprocess('#if __has_include("gone.h")\nY\n#else\nN\n#endif', includes=inc).strip() == "N"
+    assert preprocess('#if defined(__has_include) && __has_include("there.h")\nOK\n#endif',
+                      includes=inc).strip() == "OK"
+
+
 # --- L8: ABI — struct return-by-value, packed/aligned, calling convention vs Clang ----------------
 
 def _clang_layout(struct_src: str, tag: str, fields: list):

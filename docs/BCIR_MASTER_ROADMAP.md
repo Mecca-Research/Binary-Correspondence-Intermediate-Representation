@@ -749,11 +749,12 @@ chunks compose into a real driver.
 
 **Phase 3 — Hosted C23 compiler candidate.** libc-header compatibility; full preprocessor (predefined
 macros — `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC_HOSTED__`, the `#line` directive, the
-`_Pragma` operator, and the `__has_attribute`/`__has_builtin`/`__has_c_attribute` feature-test macros
-**done** (dual-rail; `__DATE__`/`__TIME__` frozen by `SOURCE_DATE_EPOCH`, `_Pragma`/`#pragma` lowering
-no-ops, `__FILE__` carries the driver's real source path, `__has_attribute` reports the L8 ABI
-attributes); `__VA_OPT__`, C-twin `__has_include`/`__has_embed` eval, the full translation phases
-next); floating/complex/decimal; variadic functions +
+`_Pragma` operator, and the `__has_include`/`__has_attribute`/`__has_builtin`/`__has_c_attribute`
+feature-test macros **done** (dual-rail; `__DATE__`/`__TIME__` frozen by `SOURCE_DATE_EPOCH`,
+`_Pragma`/`#pragma` lowering no-ops, `__FILE__` carries the driver's real source path,
+`__has_include` resolves against the search path, `__has_attribute` reports the L8 ABI attributes);
+`__VA_OPT__`, C-twin `__has_embed` eval, the full translation phases next); floating/complex/decimal;
+variadic functions +
 varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
 Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches
 Clang or emits a clear unsupported-feature diagnostic.

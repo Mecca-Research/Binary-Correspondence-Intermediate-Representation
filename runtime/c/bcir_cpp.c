@@ -220,7 +220,28 @@ static long ce_bin(CE *c,int minp){
 }
 static long ce_expr(CE *c){return ce_bin(c,1);}
 
-static long eval_if(const char *expr) {
+/* Does header `name` resolve against the search dirs (existence only, no read)? Mirrors
+ * read_file_dirs' search so __has_include in #if agrees with #include. */
+static int header_exists(const char *const *dirs, int ndirs, const char *name) {
+  char path[1024];
+  for(int d=0; d<ndirs; d++){ const char *base=dirs[d];
+    if(base&&base[0]) snprintf(path,sizeof path,"%s/%s",base,name); else snprintf(path,sizeof path,"%s",name);
+    FILE *f=fopen(path,"rb"); if(f){ fclose(f); return 1; } }
+  if(ndirs==0){ FILE *f=fopen(name,"rb"); if(f){ fclose(f); return 1; } }
+  return 0;
+}
+
+/* Parse the header name out of a `__has_include`/`#include` argument `s[0..e)`: the text between the
+ * first <...> or "..." pair. Writes into `nm` (NUL-terminated). */
+static void header_name_of(const char *s, int e, char *nm, size_t cap) {
+  int p=0; while(p<e && s[p]!='<' && s[p]!='"') p++;
+  if(p<e && (s[p]=='<' || s[p]=='"')) p++;
+  int q=p; while(q<e && s[q]!='>' && s[q]!='"') q++;
+  int nl=q-p; if(nl<0) nl=0; if((size_t)nl>cap-1) nl=(int)cap-1;
+  memcpy(nm, s+p, (size_t)nl); nm[nl]=0;
+}
+
+static long eval_if(const char *expr, const char *const *dirs, int ndirs) {
   /* replace `defined X` / `defined(X)` and the __has_* operators first, then expand, then evaluate. */
   static char buf[8192]; size_t w=0; buf[0]=0; int i=0; char t[256];
   while(1){int k=ntok(expr,&i,t,sizeof t); if(!k)break;
@@ -241,6 +262,15 @@ static long eval_if(const char *expr) {
         i=j; }
       int yes = !strcmp(t,"__has_attribute") && has_attribute(nm);
       buf[w++]= yes?'1':'0'; buf[w]=0; continue;}
+    if(k=='i'&&!strcmp(t,"__has_include")){
+      /* resolve the header against the include search path (the raw <...>/"..." argument). */
+      int j=i; while(expr[j]&&expr[j]!='(') j++; int has=0;
+      if(expr[j]=='('){ int s=j+1, depth=1, e=s;
+        while(expr[e]&&depth){ if(expr[e]=='(')depth++; else if(expr[e]==')'){depth--; if(!depth)break;} e++; }
+        char nm[1024]; header_name_of(expr+s, e-s, nm, sizeof nm);
+        has = nm[0] ? header_exists(dirs, ndirs, nm) : 0;
+        i = (expr[e]==')') ? e+1 : e; }
+      buf[w++]= has?'1':'0'; buf[w]=0; continue;}
     size_t n=strlen(t); if(w&&needspace(buf[w-1],t[0])){buf[w++]=' ';} memcpy(buf+w,t,n);w+=n;buf[w]=0;}
   static char ex[8192]; expand_line(buf,ex,sizeof ex);
   CE c; c.n=0;c.i=0; int j=0; char tk[64];
@@ -296,7 +326,7 @@ static int cpp_process(const char *src, const char *curfile, const char *const *
       if(!strcmp(dir,"ifdef")||!strcmp(dir,"ifndef")||!strcmp(dir,"if")){
         int tk; if(!strcmp(dir,"ifdef")){char n[64];int j=0;ntok(rest,&j,n,sizeof n);tk=is_defined(n);}
         else if(!strcmp(dir,"ifndef")){char n[64];int j=0;ntok(rest,&j,n,sizeof n);tk=!is_defined(n);}
-        else tk=eval_if(rest)!=0;
+        else tk=eval_if(rest,dirs,ndirs)!=0;
         if(ncs<64){cs[ncs].active=parent&&tk;cs[ncs].taken=tk;cs[ncs].parent=parent;ncs++;}
       } else if(!strcmp(dir,"endif")){ if(ncs)ncs--; }
       else if(!strcmp(dir,"else")||!strcmp(dir,"elif")||!strcmp(dir,"elifdef")||!strcmp(dir,"elifndef")){
@@ -304,7 +334,7 @@ static int cpp_process(const char *src, const char *curfile, const char *const *
           if(!strcmp(dir,"else")) take=!cs[ncs-1].taken;
           else if(!strcmp(dir,"elifdef")){char n[64];int j=0;ntok(rest,&j,n,sizeof n);take=!cs[ncs-1].taken&&is_defined(n);}
           else if(!strcmp(dir,"elifndef")){char n[64];int j=0;ntok(rest,&j,n,sizeof n);take=!cs[ncs-1].taken&&!is_defined(n);}
-          else take=!cs[ncs-1].taken&&par&&(eval_if(rest)!=0);
+          else take=!cs[ncs-1].taken&&par&&(eval_if(rest,dirs,ndirs)!=0);
           cs[ncs-1].active=par&&take; cs[ncs-1].taken=cs[ncs-1].taken||take; }
       }
       else if(parent){                              /* parent == every enclosing frame is active */

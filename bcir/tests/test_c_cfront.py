@@ -771,6 +771,16 @@ def test_c_preprocessor_macros_conditionals_and_embed():
         linc = '#line 7 "a.h"\nt __LINE__ __FILE__\n#include "ph.h"\nu __LINE__ __FILE__\n'
         assert pp(linc, d) == _py_pp(linc, search_paths=[d])
 
+        # __has_include resolves against the search path on both rails (the C eval_if gained this);
+        # ph.h exists in `d`, so it probes true; a missing header probes false. Both <...> and "...".
+        for s in ('#if __has_include("ph.h")\nY\n#else\nN\n#endif\n',
+                  '#if __has_include(<ph.h>)\nY\n#else\nN\n#endif\n',
+                  '#if __has_include("nope.h")\nY\n#else\nN\n#endif\n',
+                  '#if defined(__has_include) && __has_include("ph.h")\nOK\n#endif\n',
+                  '#if !__has_include("nope.h")\nNEG\n#endif\n'):
+            assert pp(s, d) == _py_pp(s, search_paths=[d]), \
+                f"__has_include divergence on {s!r}\n C:{pp(s, d)!r}\nPY:{_py_pp(s, search_paths=[d])!r}"
+
         # __DATE__/__TIME__: SOURCE_DATE_EPOCH (UTC) freezes both twins to the same string.
         def ppe(src, epoch):
             env = dict(os.environ); env["SOURCE_DATE_EPOCH"] = epoch
