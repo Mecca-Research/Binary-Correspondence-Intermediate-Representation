@@ -74,6 +74,7 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 - [`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md) — the single master roadmap: positioning, current state, the MLIR/C/C++ placement map, and the next build steps.
 - [`docs/PARITY.md`](docs/PARITY.md) — the Python (`bcir/`) ↔ MLIR (`mlir/`) lockstep contract.
 - [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md) — how the repo is organized and why.
+- [`docs/CFRONT_GUIDE.md`](docs/CFRONT_GUIDE.md) — the `bcir-cfront` C-frontend user guide: the CLI, diagnostics, the target ABI matrix, the fallback contract, and the supported subset + limits.
 
 The Python package is the **executable conformance oracle**; the MLIR dialect is
 the **law** it must agree with. LLVM/Clang are backends, not the conceptual center.
