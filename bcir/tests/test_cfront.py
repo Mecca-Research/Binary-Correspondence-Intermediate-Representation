@@ -272,6 +272,36 @@ def test_math_h_library_calls():
     assert not ru.r18_ok and any(d.law == "R18" for d in ru.diagnostics)
 
 
+def test_math_h_mixed_arg_and_int_return():
+    """`<math.h>` calls with a non-floating argument (ldexp/scalbn: an int exponent; scalbln: a long;
+    nan: a tag string) still return their floating type by suffix, and ilogb returns int (exactly the
+    4-byte value model). The 8-byte-returning (lround/lrint family) and pointer-out-param
+    (frexp/modf/remquo) functions are deferred -- they fall through to a fail-loud R18, not silently
+    truncated/dropped-argument code."""
+    from bcir.frontends.cfront.lower import _libm_type
+
+    def eqok(r):
+        return r.equivalence == "match" or r.equivalence.startswith("skip")
+
+    # mixed-arg / int-return typing (the suffix types the arg, not ilogb's int result).
+    assert _libm_type("ldexp").name == "double" and _libm_type("ldexpf").name == "float"
+    assert _libm_type("scalbln").name == "double" and _libm_type("nanf").name == "float"
+    assert _libm_type("ilogb").name == _libm_type("ilogbf").name == _libm_type("ilogbl").name == "int"
+    # deferred families are not recognized -> a call falls through to the call graph (a fail-loud R18).
+    assert all(_libm_type(n) is None for n in
+               ("lround", "llround", "lrint", "llrint", "frexp", "modf", "remquo"))
+
+    r = compile_unit("double f(double x){ return ldexp(x, 3) + scalbn(x, 2) + scalbln(x, 4L); }\n")
+    assert r.is_clean and eqok(r)
+    ri = compile_unit("int g(double x){ return ilogb(x); }\n")          # int result, lossless 4-byte
+    assert ri.lowered.functions["g"].ret_type.name == "int" and ri.is_clean and eqok(ri)
+    rnan = compile_unit("double h(double x){ return x + nan(\"\"); }\n")
+    assert rnan.is_clean and eqok(rnan)                                 # tag-string arg; NaN-safe compare
+    # a deferred libm function is a fail-loud R18 (an 8-byte truncation / dropped pointer is avoided).
+    rl = compile_unit("long k(double x){ return lround(x); }\n", check_clang=False)
+    assert not rl.r18_ok and any(d.law == "R18" for d in rl.diagnostics)
+
+
 # --- L2: struct / union layout + member access ---------------------------------------------------
 
 def test_L2_struct_member_access():
