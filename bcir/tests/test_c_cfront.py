@@ -368,6 +368,36 @@ int main(void){{
         assert out == "MATCH", f"{fx}: dispatch-table emit not behaviour-equivalent ({out})"
 
 
+def test_integration_driver_composes_phase2_surface():
+    """Integration: a realistic multi-feature driver (`cfront_integration.c`) ingested with no
+    hand-written claim graph, exercising the Phase-2 surface *together* -- typedef + enum + an MMIO
+    register-map struct (L5 volatile), a `switch` over an enum status, a `static` fault counter, a
+    `goto` cleanup path, integer casts, a 2D bank lookup, and an inter-procedural call graph (L4 /
+    R18). The two rails agree on the entry's structural summary, and *every* function is
+    Clang-behaviour-equivalent -- the proof the features compose, not just pass in isolation."""
+    fx = "cfront_integration.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    assert len(r.lowered.functions) == 3                      # decode_state, bank_lookup, sensor_read
+    # the entry reads two MMIO registers (status + sample) and makes one resolved call (decode_state).
+    assert "mmio=2" in oracle_summary and "call=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        # the emit carries each composed feature in one verified-C unit.
+        for needle in ("volatile uint32_t *", "goto done", "static uint32_t faults",
+                       "(uint16_t)", "bcir_decode_state(", "BCIR verified-C attestation"):
+            assert needle in c_emit, f"{fx}: emit missing {needle!r}"
+        # every function (the switch decode, the 2D+cast lookup, the MMIO/static/goto entry) is
+        # behaviour-equivalent to the original under Clang.
+        for name, lf in r.lowered.functions.items():
+            assert _equiv(r.source, c_emit, lf) == "MATCH", f"{fx}:{name} not behaviour-equivalent"
+
+
 def test_c2_attestation_in_emitted_c():
     """C.2: the emitted verified-C carries the attestation header naming the discharged laws and
     the R13 provenance digest -- and that digest is the same one the compile->execute loop reports
