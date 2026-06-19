@@ -401,6 +401,35 @@ def test_integration_driver_composes_phase2_surface():
             assert _equiv(r.source, c_emit, lf) == "MATCH", f"{fx}:{name} not behaviour-equivalent"
 
 
+def test_register_driver_composes_register_map_surface():
+    """Register-map composition checkpoint: a realistic device driver (`cfront_regdriver.c`) ingested
+    with no hand-written claim graph, exercising the whole register surface *together* -- a `switch`
+    over a status field, a multi-bit bitfield write (`dev->mode = ...`), a bitfield read
+    (`dev->prio`), a register read-modify-write (`dev->ctrl |= ...`), a file-scope lookup table, an
+    `enum`, and a `static` persistent counter. The two rails agree on the structural summary and the
+    emit is Clang-behaviour-equivalent -- the proof the register-map features (PRs #294-#297) compose,
+    not just pass in isolation. The function mutates its device, but every mutation is idempotent (a
+    bitfield set to the same value, an `|=` of the same bit, a `static` evolving in lockstep) and the
+    branched-on status field is never written, so the generic shared-buffer harness stays valid."""
+    fx = "cfront_regdriver.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    # a real register driver: a volatile MMIO read + a bitfield read, no hand-written claim graph.
+    assert "mmio=5" in oracle_summary and "bf=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        # the emit carries each composed register feature in one verified-C unit.
+        for needle in ("volatile uint32_t *", "QUANTA[", "static uint32_t halts",
+                       "} else {", "BCIR verified-C attestation"):
+            assert needle in c_emit, f"{fx}: emit missing {needle!r}"
+        assert _equiv(r.source, c_emit, entry) == "MATCH", f"{fx}: emit not behaviour-equivalent"
+
+
 def test_c2_attestation_in_emitted_c():
     """C.2: the emitted verified-C carries the attestation header naming the discharged laws and
     the R13 provenance digest -- and that digest is the same one the compile->execute loop reports
