@@ -159,6 +159,9 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         clear = ~(mask << bit_off) & 0xFFFFFFFF
         return deftmp(c.wr[0], f"({ref(c.rd[0])} & {clear}u) | "
                                f"(({ref(c.rd[1])} & {mask}u) << {bit_off})")
+    if c.op.startswith("c.call.libm:"):                      # a <math.h> call -> the real libm function
+        callee = c.op.split(":", 1)[1]                       # (no bcir_ twin; the harness links -lm)
+        return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})")
     if c.op.startswith("c.call:"):
         callee = c.op.split(":", 1)[1]
         return deftmp(c.wr[0], f"bcir_{callee}({', '.join(ref(r) for r in c.rd)})")

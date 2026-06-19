@@ -71,6 +71,34 @@ def _float_lit_type(spelling: str) -> CType:
     return scalar("double")
 
 
+# <math.h> real-valued functions: each takes and returns a floating type fixed by the name suffix
+# (base -> double, +f -> float, +l -> long double). They lower to an opaque external library edge --
+# the emit calls the real libm function (the harness links -lm) so the IEEE-754 result is delegated
+# to the backend, and the call graph sees no callee to resolve (R18 treats it like an indirect call).
+_LIBM = frozenset({
+    "acos", "asin", "atan", "atan2", "cos", "sin", "tan",
+    "acosh", "asinh", "atanh", "cosh", "sinh", "tanh",
+    "exp", "exp2", "expm1", "log", "log10", "log1p", "log2", "logb",
+    "cbrt", "fabs", "hypot", "pow", "sqrt",
+    "ceil", "floor", "round", "trunc", "nearbyint", "rint",
+    "erf", "erfc", "lgamma", "tgamma",
+    "copysign", "fdim", "fmax", "fmin", "fmod", "remainder", "fma", "nextafter",
+})
+
+
+def _libm_type(name: str) -> CType | None:
+    """The floating result type of a `<math.h>` call by name suffix (base -> double, `f` -> float,
+    `l` -> long double), or None if `name` is not a recognized libm function. The full name is tried
+    first so a base that ends in `f` (`erf`) is not misread as the float variant of `er`."""
+    if name in _LIBM:
+        return scalar("double")
+    if name[-1:] == "f" and name[:-1] in _LIBM:
+        return scalar("float")
+    if name[-1:] == "l" and name[:-1] in _LIBM:
+        return scalar("long double")
+    return None
+
+
 def _str_bytes(spelling: str) -> int:
     """The number of bytes a (possibly concatenated) string literal's value occupies *excluding* the
     terminating NUL, decoding escape sequences (a simple `\\c`, an octal `\\NNN`, or a hex `\\xHH..`
@@ -618,6 +646,10 @@ class _FuncLowerer:
             self._emit("c.c11atom.store", Opcode.STORE, (ptr, val), (),
                        lane=Lane.A, domain=dom, hazard="atomic")
             return ptr
+        libm = _libm_type(node.callee)
+        if libm is not None:                           # a <math.h> call -> a typed external library edge
+            t = self._temp(libm, f"libm_{node.callee}")    # not added to self.calls: opaque to the call
+            return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # graph
         t = self._temp(scalar("uint32_t"), f"call_{node.callee}")
         self.calls.append((node.callee, actuals))
         return self._emit(f"c.call:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))

@@ -234,6 +234,44 @@ def test_floating_point_hex_literals():
     assert rf.lowered.functions["h"].ret_type.name == "float" and rf.is_clean and eqok(rf)
 
 
+def test_math_h_library_calls():
+    """`<math.h>` calls (sqrt/pow/fabs/...) lower to an opaque external `c.call.libm:` edge typed by
+    the name suffix (base -> double, f -> float, l -> long double). They emit the *real* libm function
+    (not a `bcir_` twin), are not added to the call graph (so R18 sees no callee to resolve), and the
+    harness links `-lm` and compares NaN-safely -- so the IEEE-754 result is Clang-equivalent. A name
+    that is not a libm function is unaffected: an undefined callee is still an R18 violation."""
+    from bcir.frontends.cfront.emit import emit_function
+    from bcir.frontends.cfront.lower import _libm_type
+
+    def eqok(r):
+        return r.equivalence == "match" or r.equivalence.startswith("skip")
+
+    # the result type follows the suffix; a base that ends in `f` (erf) is not the float variant of er.
+    assert _libm_type("sqrt").name == "double" and _libm_type("sqrtf").name == "float"
+    assert _libm_type("sqrtl").name == "long double"
+    assert _libm_type("erf").name == "double" and _libm_type("erff").name == "float"
+    assert _libm_type("not_a_libm_fn") is None
+
+    # double sqrt: one c.call.libm claim, emitted as the real `sqrt(` (no bcir_ prefix), R18 clean.
+    r = compile_unit("double f(double x){ return sqrt(x) + pow(x, 2.0); }\n")
+    lf = r.lowered.functions["f"]
+    assert [c.op for c in lf.claims if c.op.startswith("c.call.libm:")] == \
+        ["c.call.libm:sqrt", "c.call.libm:pow"]
+    assert r.is_clean and eqok(r)                                # R18 sees no undefined callee
+    em = emit_function(lf)
+    assert "sqrt(" in em and "bcir_sqrt(" not in em             # the real libm function, not a twin
+
+    # the f suffix selects float; a NaN-domain result (asin(x), x>1) still verifies as equal.
+    rf = compile_unit("float g(float x){ return sqrtf(x); }\n")
+    assert rf.lowered.functions["g"].ret_type.name == "float" and rf.is_clean and eqok(rf)
+    rn = compile_unit("double a(double x){ return asin(x); }\n")    # x in [0,1000) -> NaN for x > 1
+    assert rn.is_clean and eqok(rn)
+
+    # a genuinely undefined (non-libm) callee is still an R18 violation, not silently external.
+    ru = compile_unit("int u(int x){ return mystery(x); }\n", check_clang=False)
+    assert not ru.r18_ok and any(d.law == "R18" for d in ru.diagnostics)
+
+
 # --- L2: struct / union layout + member access ---------------------------------------------------
 
 def test_L2_struct_member_access():
