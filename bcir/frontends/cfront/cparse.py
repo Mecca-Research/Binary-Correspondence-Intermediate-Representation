@@ -563,6 +563,9 @@ class _Parser:
         return lhs
 
     def _unary(self):
+        if self.at("OP", "+"):                             # unary plus is a no-op
+            self.nxt()
+            return self._unary()
         if self.peek().kind == "OP" and self.peek().text in ("-", "~", "!", "*", "&"):
             op = self.nxt().text
             return cast.Unary(op, self._unary())

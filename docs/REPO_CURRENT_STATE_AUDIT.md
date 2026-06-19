@@ -130,6 +130,16 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — logical `&&` / `||` + unary `+`.** The condition idiom
+  (`if (a && b)`) -- a real gap: the C rail parsed only the *bitwise* `&` / `|`, so a user-written
+  `a && b` did not parse (the `switch` desugar built `||` internally but the operator itself was
+  never in `bin_op`). Added `&&` (`c.bin.land`) and `||` (`c.bin.lor`) to the C rail's operator table
+  at the correct precedence (below the bitwise ops), and unary `+` (a no-op) to both rails (neither
+  supported it). The logical ops emit `&&` / `||` verbatim (Clang short-circuits; equivalent for the
+  side-effect-free expression subset). New fixture `cfront_logic.c` matches on both rails (`funcs=1
+  claims=11 const=2 binop=7 ok=1`, the binops including `c.bin.land`/`c.bin.lor`), is
+  Clang-behaviour-equivalent, and runs the full C compile->execute loop. Wired into `_STRAIGHTLINE` +
+  `tools/c/check_runtime.sh`; warning-clean; 696 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — increment / decrement `i++` / `++i` / `i--` / `--i`.** The
   ubiquitous loop-counter / accumulator idiom -- a notable gap: it was unsupported on *both* rails
   (`for(i=0;i<n;i++)`, `s++;` parse-errored). The value-discarded forms (a statement or a for-loop
