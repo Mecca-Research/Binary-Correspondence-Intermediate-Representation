@@ -712,7 +712,10 @@ desugars to `name = name OP expr` = a binary op + a copy on both rails, the C le
 `+= -= *= /= %= &= |= ^=` tokens; `cfront_compound.c`, both rails `claims=11 ok=1`, runs the loop),
 and ✅ **MMIO register read-modify-write** (`dev->reg OP= expr` -- the set/clear-control-bits idiom,
 the most common driver operation; a compound assignment to a volatile struct member is an ordered
-MMIO load + a binary op + an ordered MMIO store; `cfront_rmw.c`, both rails `claims=8 mmio=3 ok=1`);
+MMIO load + a binary op + an ordered MMIO store; `cfront_rmw.c`, both rails `claims=8 mmio=3 ok=1`),
+and ✅ **MMIO bitfield write** (`r->field = v` for a named bitfield -- read the storage unit, insert
+the masked bits (`c.bf.set`), store back; bitfield reads (`c.bf.get`) already worked, this completes
+the write side register maps need; `cfront_bitfield.c`, both rails `claims=5 mmio=2 bf=1 ok=1`);
 still cross-clause
 fallthrough; designated +
 compound initializers; the rest of storage/linkage (`extern`/`thread_local`, scalar globals); `restrict` +

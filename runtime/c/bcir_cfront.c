@@ -700,6 +700,21 @@ static void p_stmt(CC *c) {
       c->i+=2; tok fld=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
       if(fi<0){fail(c,"unknown field");return;}
+      if(S->f[fi].bit_w&&c->t[c->i].k==T_PUN&&c->t[c->i].n==1&&c->t[c->i].s[0]=='='){
+        /* bitfield write `r->field = v`: read the storage unit, insert the bits (c.bf.set), store. */
+        c->i++; uint32_t rhs=p_expr(c);
+        uint32_t unit=temp(c,S->f[fi].size);
+        bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
+        if(ld){ld->n_rd=1;ld->rd[0]=v->rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=S->f[fi].byte_off;ld->imm[1]=S->f[fi].size;ld->bounds=BCIR_BND_ASSUMED;
+          if(v->type.is_volatile){ld->domain=BCIR_DOM_MMIO;ld->lane=BCIR_LANE_H;ld->hazard=BCIR_HZ_BARRIERED;}}
+        uint32_t nu=temp(c,S->f[fi].size);
+        bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
+        if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=rhs;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=S->f[fi].bit_off;bs->imm[1]=S->f[fi].bit_w;}
+        bcir_claim *st=new_claim(c,"c.store",BCIR_OP_STORE);
+        if(st){st->n_rd=2;st->rd[0]=v->rid;st->rd[1]=nu;st->n_imm=2;st->imm[0]=S->f[fi].byte_off;st->imm[1]=S->f[fi].size;st->bounds=BCIR_BND_ASSUMED;
+          if(v->type.is_volatile){st->domain=BCIR_DOM_MMIO;st->lane=BCIR_LANE_H;st->hazard=BCIR_HZ_BARRIERED;}}
+        eat(c,";");return;
+      }
       uint32_t val;
       if(c->t[c->i].k==T_PUN&&c->t[c->i].n==2&&c->t[c->i].s[1]=='='&&strchr("+-*/%&|^",c->t[c->i].s[0])){
         /* register read-modify-write:  d->reg OP= expr  (the set/clear-bits driver idiom). */
@@ -862,6 +877,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         w+=snprintf(o+w,on-w,"{ uint32_t _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); }
     }else if(!strcmp(cl->op,"c.bf.get"))
       w+=snprintf(o+w,on-w,"uint32_t %s = (%s >> %lld) & %lluu;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),(long long)cl->imm[0],(1ull<<cl->imm[1])-1);
+    else if(!strcmp(cl->op,"c.bf.set")){          /* (old & ~(mask<<off)) | ((v & mask) << off) */
+      long long off=cl->imm[0]; unsigned long long mask=(1ull<<cl->imm[1])-1, clear=~(mask<<off)&0xFFFFFFFFull;
+      w+=snprintf(o+w,on-w,"uint32_t %s = (%s & %lluu) | ((%s & %lluu) << %lld);\n",
+                  rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),clear,rname(f,cl->rd[1],b),mask,off); }
     else if(!strncmp(cl->op,"c.atomic.",9))      /* atomic RMW -> the matching builtin */
       w+=snprintf(o+w,on-w,"uint32_t %s = __atomic_fetch_%s(%s, %s, __ATOMIC_SEQ_CST);\n",
                   rname(f,cl->wr[0],d),cl->op+9,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));

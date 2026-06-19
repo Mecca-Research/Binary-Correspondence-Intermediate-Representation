@@ -130,6 +130,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — MMIO bitfield write `r->field = v`.** Setting a named bitfield
+  within a (volatile) register -- the multi-bit control-field driver pattern. The C rail could *read*
+  bitfields (`c.bf.get`) but had no write side; a write to a bitfield member clobbered the whole
+  storage unit. Now a bitfield write reads the storage unit, inserts the masked bits in place
+  (`c.bf.set` = `(old & ~(mask<<off)) | ((v & mask) << off)`), and stores the unit back -- for a
+  volatile pointee the read + store are ordered MMIO accesses. The C member-store path detects a
+  bitfield field and emits the load / `c.bf.set` / store sequence, and the emitter gains the
+  `c.bf.set` rendering; this matches the oracle, which already lowered bitfield writes. New fixture
+  `cfront_bitfield.c` (`r->mode = m` on a packed `en:1 / mode:3 / prio:4` register, then a bitfield
+  read) matches on both rails (`funcs=1 claims=5 mmio=2 bf=1 ok=1`) and is Clang-behaviour-equivalent
+  (a bitfield write to the same value is idempotent, so the generic shared-buffer harness is valid).
+  Wired into `_ABI` + `tools/c/check_runtime.sh`; warning-clean; 695 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — MMIO register read-modify-write `dev->reg OP= expr`.** The
   set/clear-control-bits driver idiom (`dev->enable |= bits`, `dev->mode &= ~mask`) -- the single
   most common real driver operation. A compound assignment to a (volatile) struct member lowers to a
