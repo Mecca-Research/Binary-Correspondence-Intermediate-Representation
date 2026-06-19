@@ -604,8 +604,10 @@ the existing C twins):
   execute loop), and ✅ **function-pointer struct members** (the HAL dispatch table -- `o->fn(args)`
   fuses the member access + call into one `c.call.imember:<field>` claim emitted verbatim as
   `o->fn(args)`, so no 8-byte function-pointer value rides in the 4-byte value model; R18-opaque;
-  `cfront_dispatch.c`) now lower on both rails. *Still to port:* **array-of-row pointer declarators**
-  (`uint32_t (*m)[8]`) — what remaining vendor headers need.
+  `cfront_dispatch.c`) now lower on both rails. ✅ **array-of-row pointer declarators**
+  (`uint32_t (*m)[8]` — the row pointer a 2D array decays to; modeled as the equivalent multi-dim array
+  param so `m[i][j]` flattens row-major to `i*8 + j`, reusing the 2D machinery; `cfront_widerow.c`) —
+  the vendor-header declarator form, now lowering on both rails.
 - ✅ **Phase D — real register-map headers driven end-to-end** — vendor-style headers + drivers
   ingested with no hand-written claim graph, through the full `C → bcir_cpp → bcir_cfront → verify →
   emit → bcir_plan → bcir_hydrate → bcir_exec` loop, both rails agreeing and the emit
@@ -672,8 +674,9 @@ rails `claims=21 ok=1`, runs the full execute loop) + ✅ **function-pointer str
 (the HAL dispatch table: `o->fn(args)` fuses member access + call into one `c.call.imember:<field>`
 claim emitted verbatim as `o->fn(args)` -- no 8-byte funcptr value rides in the 4-byte value model,
 so no typed temporaries needed; R18-opaque; `cfront_dispatch.c`, both rails `claims=3 call=2 ok=1`).
-*Still to port:* array-of-row pointer declarators
-(`(*m)[8]`); the comma
+✅ **array-of-row pointer declarators**
+(`(*m)[8]` — the row pointer a 2D array decays to, modeled as the equivalent multi-dim array param;
+`cfront_widerow.c`); *still to port:* the comma
 operator, `typeof`, compound literals, integer promotions + usual arithmetic
 conversions; ✅ **pointer dereference** (`*p` -- a one-read deref load, previously unsupported on the
 C rail entirely -- and `*(p + i)`, the pointer-arithmetic spelling of `p[i]`, routed through the

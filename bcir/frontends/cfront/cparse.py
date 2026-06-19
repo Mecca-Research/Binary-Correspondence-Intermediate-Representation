@@ -316,6 +316,32 @@ class _Parser:
             self.nxt()
             while self.at("IDENT", "const") or self.at("IDENT", "volatile"):
                 self.nxt()                                # pointer qualifier (ignored for layout)
+        # pointer-to-array declarator `(*name)[N]...` -- a "row pointer" (what `T m[][N]` decays to);
+        # modeled as the equivalent multi-dim array param (outer dim unspecified) so `m[i][j]` flattens
+        # row-major exactly as for `T m[A][N]`. The remaining vendor-header declarator form.
+        if ptr == 0 and self.at("PUNCT", "("):
+            save = self.i
+            self.nxt()                                    # (
+            inner = 0
+            while self.at("OP", "*"):
+                inner += 1
+                self.nxt()
+                while self.at("IDENT", "const") or self.at("IDENT", "volatile"):
+                    self.nxt()
+            if (inner == 1 and self.at("IDENT")
+                    and self.peek(1).kind == "PUNCT" and self.peek(1).text == ")"):
+                nm = self.nxt().text                      # the name
+                self.nxt()                                # )
+                if self.at("PUNCT", "["):
+                    dims = []
+                    while self.at("PUNCT", "["):
+                        self.nxt()
+                        dims.append(0 if self.at("PUNCT", "]")
+                                    else parse_int_literal(self.eat("INT").text))
+                        self.eat("PUNCT", "]")
+                    return cast.TypeRef(base=base.base, ptr=0, array=tuple([0] + dims),
+                                        aggregate=base.aggregate, quals=base.quals), nm
+            self.i = save                                 # not `(*name)[..]` -> a normal declarator
         name = self.eat("IDENT").text
         dims = []
         while self.at("PUNCT", "["):

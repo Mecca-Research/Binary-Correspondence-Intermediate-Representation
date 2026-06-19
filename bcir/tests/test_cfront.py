@@ -191,6 +191,19 @@ def test_L3_pointer_array_indexing():
     assert indexed, "L3 should lower base[i] to an indexed (base, index) c.load"
 
 
+def test_L3_array_of_row_pointer_declarator():
+    """A pointer-to-array parameter `(*m)[8]` (the row-pointer a 2D array decays to) lowers like the
+    2D array param: it decays to a flat element pointer with the inner extent recorded, and `m[i][j]`
+    flattens row-major to `i*8 + j` -- so the outer index is scaled by the inner dim (8)."""
+    src = ("uint32_t f(uint32_t (*m)[8], uint32_t i, uint32_t j){ return m[i & 7][j & 7]; }\n")
+    r = compile_unit(src)
+    lf = r.lowered.functions["f"]
+    assert r.is_clean and (r.equivalence == "match" or r.equivalence.startswith("skip"))
+    p0 = lf.params[0][2]
+    assert p0.kind == "pointer" and p0.shape[1] == 8           # decayed row pointer, inner extent 8
+    assert any(c.op == "c.const" and c.imm and c.imm[0] == 8 for c in lf.claims)   # the row stride
+
+
 # --- L4: functions + the call graph -> R18 -------------------------------------------------------
 
 def test_L4_call_graph_is_R18_clean():
