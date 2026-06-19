@@ -77,21 +77,21 @@ def diagnose(source: str, *, includes: dict | None = None, embeds: dict | None =
     past (not just the first). Preprocess and lex errors are still one-shot; semantic (lowering)
     diagnostics report the first, and only run once the parse is clean."""
     try:
-        pp = preprocess(source, includes=includes, embeds=embeds,
-                        search_paths=search_paths, defines=defines, name=filename)
+        pp, line_map = preprocess(source, includes=includes, embeds=embeds, search_paths=search_paths,
+                                  defines=defines, name=filename, return_map=True)
     except CPPError as e:
         return DiagnosticReport([_diag_from(e, "preprocess")], source, filename)
     try:
         unit, parse_diags = parse_with_recovery(pp)   # panic-mode recovery: collect all syntax errors
     except CLexError as e:                            # a lexer error is not recovered (separate concern)
-        return DiagnosticReport([_diag_from(e, "lex")], pp, filename)
+        return DiagnosticReport([_diag_from(e, "lex")], pp, filename, line_map)
     if parse_diags:                                   # syntax errors -> report them all; AST is partial
-        return DiagnosticReport(parse_diags, pp, filename)
+        return DiagnosticReport(parse_diags, pp, filename, line_map)
     try:
         lower_unit(unit)                              # only lower a syntactically clean unit
     except CLowerError as e:
-        return DiagnosticReport([_diag_from(e, "lower")], pp, filename)
-    return DiagnosticReport([], pp, filename)
+        return DiagnosticReport([_diag_from(e, "lower")], pp, filename, line_map)
+    return DiagnosticReport([], pp, filename, line_map)
 
 
 def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | None = None,

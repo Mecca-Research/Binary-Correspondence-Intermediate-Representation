@@ -1,6 +1,7 @@
 """Phase 4 — Clang-grade diagnostics. The source-location engine + caret renderer (1a), parser error
 recovery so one run reports several diagnostics (1b), AST source spans for semantic-error carets (1c),
-parser fix-its for missing punctuation (1d), and machine-readable JSON output (1e)."""
+parser fix-its for missing punctuation (1d), machine-readable JSON output (1e), and include/expansion
+-stack notes via the preprocessor line map (1c-ii)."""
 from __future__ import annotations
 
 from bcir.frontends.cfront import diagnose
@@ -228,3 +229,49 @@ def test_no_fixit_for_a_non_punctuation_error():
     # a semantic (lower) error is not a missing-punctuation case -> no suggested edit.
     rep = diagnose("int f(void){ return zzz; }\n", filename="t.c")
     assert rep.diagnostics[0].fixits == []
+
+
+# --- segment 1c-ii: include/expansion-stack notes (preprocessor line map) --------------------------
+
+def test_error_in_an_included_header_shows_the_include_frame():
+    hdr = "int g(void){\n    return undefined_var;\n}\n"
+    main = '#include "header.h"\nint mainf(void){ return g(); }\n'
+    rep = diagnose(main, includes={"header.h": hdr}, filename="main.c")
+    out = rep.render()
+    assert "In file included from main.c:1:" in out         # the include frame, Clang-style
+    assert "header.h:2:8: error: use of undeclared identifier 'undefined_var'" in out   # origin loc
+
+
+def test_include_stack_in_json():
+    import json
+    hdr = "int g(void){ return undefined_var; }\n"
+    main = '#include "header.h"\nint mainf(void){ return g(); }\n'
+    d = json.loads(diagnose(main, includes={"header.h": hdr}, filename="main.c").to_json())[0]
+    assert d["file"] == "header.h" and d["line"] == 1
+    assert d["includedFrom"] == [{"file": "main.c", "line": 1}]
+
+
+def test_line_map_corrects_the_line_after_an_inlined_include():
+    # the header inlines 1 line, but the top-level error on main.c line 2 still reports line 2
+    # (not the shifted preprocessed line) thanks to the line map.
+    main = '#include "h.h"\nint mainf(void){ return nope; }\n'
+    rep = diagnose(main, includes={"h.h": "int g(void){ return 0; }\n"}, filename="main.c")
+    ln, col = line_col(rep.source, rep.diagnostics[0].span.start)   # preprocessed line
+    out = rep.render()
+    assert "main.c:2:" in out and "In file included from" not in out   # top-level: no frame, true line
+
+
+def test_nested_includes_stack_two_frames():
+    files = {"a.h": '#include "b.h"\n', "b.h": "int g(void){ return undef; }\n"}
+    main = '#include "a.h"\nint m(void){ return 0; }\n'
+    out = diagnose(main, includes=files, filename="main.c").render()
+    assert "In file included from main.c:1:" in out
+    assert "In file included from a.h:1:" in out
+    assert "b.h:1:" in out and "undef" in out
+
+
+def test_no_include_unit_has_no_frame_or_includedfrom():
+    import json
+    rep = diagnose("int f(void){ return zzz; }\n", filename="t.c")
+    assert "In file included from" not in rep.render()
+    assert "includedFrom" not in json.loads(rep.to_json())[0]
