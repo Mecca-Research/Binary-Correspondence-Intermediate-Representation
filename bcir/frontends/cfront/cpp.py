@@ -505,5 +505,6 @@ def _apply(op: str, a: int, b: int) -> int:
 
 
 def preprocess(text: str, *, includes: dict | None = None, embeds: dict | None = None,
-               search_paths: list | None = None, defines: dict | None = None) -> str:
-    return Preprocessor(includes, embeds, search_paths, defines).process(text)
+               search_paths: list | None = None, defines: dict | None = None,
+               name: str = "<source>") -> str:
+    return Preprocessor(includes, embeds, search_paths, defines).process(text, name)

@@ -336,9 +336,10 @@ static void cpp_datetime(char *datebuf, char *timebuf) {
   snprintf(timebuf, 16, "%02d:%02d:%02d", m->tm_hour, m->tm_min, m->tm_sec);
 }
 
-/* The extended entry point: multiple include dirs (-I) + predefined macros (-D, each "name body").
- * Seeds the predefined + -D macros ONCE; cpp_process then keeps them across nested includes. */
-int bcir_cpp_run_ex(const char *src, const char *const *dirs, int ndirs,
+/* The extended entry point: the source name for __FILE__ (NULL/"" -> "<source>"), multiple include
+ * dirs (-I) + predefined macros (-D, each "name body"). Seeds the predefined + -D macros ONCE;
+ * cpp_process then keeps them across nested includes. */
+int bcir_cpp_run_ex(const char *src, const char *srcname, const char *const *dirs, int ndirs,
                     const char *const *defines, int ndefines,
                     char *out, size_t outcap, char *err, size_t errcap) {
   NM=0; if(err&&errcap)err[0]=0;
@@ -349,11 +350,12 @@ int bcir_cpp_run_ex(const char *src, const char *const *dirs, int ndirs,
     snprintf(def, sizeof def, "__TIME__ \"%s\"", tb); define_macro(def); }
   for(int d=0; d<ndefines; d++) define_macro(defines[d]);
   out[0]=0; size_t w=0; g_cpp_depth=0;
-  return cpp_process(src, "<source>", dirs, ndirs, out, outcap, &w, err, errcap);
+  return cpp_process(src, (srcname && srcname[0]) ? srcname : "<source>",
+                     dirs, ndirs, out, outcap, &w, err, errcap);
 }
 
 int bcir_cpp_run(const char *src, const char *basedir, char *out, size_t outcap,
                  char *err, size_t errcap) {
   const char *d[1]; int nd=0; if(basedir&&basedir[0]){ d[0]=basedir; nd=1; }
-  return bcir_cpp_run_ex(src, d, nd, NULL, 0, out, outcap, err, errcap);
+  return bcir_cpp_run_ex(src, "<source>", d, nd, NULL, 0, out, outcap, err, errcap);
 }

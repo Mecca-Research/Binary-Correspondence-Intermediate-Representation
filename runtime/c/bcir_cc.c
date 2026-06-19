@@ -109,7 +109,7 @@ int main(int argc, char **argv) {
     for (int d = 0; d < ndef && nalldef <= MAXD; d++) alldefs[nalldef++] = defs[d];
 
     static char src[1 << 16], cpperr[256];
-    if (bcir_cpp_run_ex(raw, dirs, ndirs, alldefs, nalldef, src, sizeof src, cpperr, sizeof cpperr)) {
+    if (bcir_cpp_run_ex(raw, path, dirs, ndirs, alldefs, nalldef, src, sizeof src, cpperr, sizeof cpperr)) {
       fprintf(stderr, "%s: preprocessor error: %s\n", path, cpperr); rc = 1; continue;
     }
     if (pp_only) { fputs(src, outf); continue; }
