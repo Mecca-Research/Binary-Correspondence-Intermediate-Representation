@@ -3,9 +3,11 @@
  * A C preprocessor for the plug-in compiler: object- and function-like #define macros
  * (with # stringize and ## paste), #undef, conditional compilation (#if / #ifdef /
  * #ifndef / #elif / #elifdef / #elifndef / #else / #endif with an integer
- * constant-expression evaluator + `defined`), #include of project headers, and C23
- * #embed. It runs before bcir_cfront's lexer, emitting fully-expanded C text -- so a real
- * vendor register-map header (with its REG #defines) ingests through the C compiler.
+ * constant-expression evaluator + `defined`), the dynamic predefined macros __FILE__ /
+ * __LINE__ (and the static __STDC__ / __STDC_VERSION__ / __STDC_HOSTED__), #include of
+ * project headers, and C23 #embed. It runs before bcir_cfront's lexer, emitting
+ * fully-expanded C text -- so a real vendor register-map header (with its REG #defines)
+ * ingests through the C compiler.
  *
  * Host tool (libc). #include / #embed resolve files relative to `basedir`. A Python<->C
  * parity test gates it against bcir/frontends/cfront/cpp.py.

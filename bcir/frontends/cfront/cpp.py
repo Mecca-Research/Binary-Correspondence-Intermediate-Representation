@@ -1,7 +1,8 @@
 """A C preprocessor for the frontend (ladder stage L7): object- and function-like `#define` macros
 (with `#` stringize and `##` paste), `#undef`, conditional compilation (`#if`/`#ifdef`/`#ifndef`/
 `#elif`/`#elifdef`/`#elifndef`/`#else`/`#endif`) with a constant-expression evaluator (`defined`,
-`__has_include`, `__has_embed`), `#include` of project headers, and C23 `#embed`.
+`__has_include`, `__has_embed`), the dynamic predefined macros `__FILE__`/`__LINE__` (and the static
+`__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), `#include` of project headers, and C23 `#embed`.
 
 It runs *before* the lexer/parser, producing fully-expanded source text (the lexer still skips any
 residual `#`-line, but after this pass there are none). `#include`/`#embed` resolve against an
@@ -15,6 +16,8 @@ import re
 from dataclasses import dataclass
 
 _PREDEFINED = {"__STDC__": "1", "__STDC_VERSION__": "202311L", "__STDC_HOSTED__": "1"}
+# dynamic predefined macros: expanded per source position, not stored as static bodies.
+_DYNAMIC = ("__FILE__", "__LINE__")
 # preprocessing tokens: identifier, number, string, char, or punctuation (multi-char first).
 _PUNCT = ["<<=", ">>=", "...", "->", "++", "--", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
           "##", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
@@ -60,6 +63,8 @@ class Preprocessor:
         for n, v in (defines or {}).items():      # -D name[=value]  (value "" -> defined as 1)
             self.macros[n] = Macro(n, _tokens(str(v) if v != "" else "1"))
         self._depth = 0
+        self._cur_file = "<source>"               # __FILE__: the file currently being processed
+        self._cur_line = 0                         # __LINE__: its 1-based logical line number
 
     # --- public ---
     def process(self, text: str, name: str = "<source>") -> str:
@@ -98,13 +103,21 @@ class Preprocessor:
         def active() -> bool:
             return all(c[0] for c in cond)
 
-        for raw in lines:
-            line = raw.strip()
-            if line.startswith("#"):
-                self._directive(line[1:].strip(), cond, out, name, active)
-                continue
-            if active():
-                out.append(self._expand_text(raw))
+        # __FILE__/__LINE__ track the current file + 1-based logical line; a nested #include saves
+        # and restores them (each file is numbered from 1 in its own name).
+        saved_file, saved_line = self._cur_file, self._cur_line
+        self._cur_file = name
+        try:
+            for idx, raw in enumerate(lines):
+                self._cur_line = idx + 1
+                line = raw.strip()
+                if line.startswith("#"):
+                    self._directive(line[1:].strip(), cond, out, name, active)
+                    continue
+                if active():
+                    out.append(self._expand_text(raw))
+        finally:
+            self._cur_file, self._cur_line = saved_file, saved_line
         if cond:
             raise CPPError(f"unterminated #if in {name}")
 
@@ -136,9 +149,9 @@ class Preprocessor:
     def _conditional(self, op, rest, cond, parent) -> None:
         if op in ("ifdef", "ifndef", "if"):
             if op == "ifdef":
-                taken = rest.split()[0] in self.macros
+                taken = self._defined(rest.split()[0])
             elif op == "ifndef":
-                taken = rest.split()[0] not in self.macros
+                taken = not self._defined(rest.split()[0])
             else:
                 taken = self._eval(rest) != 0
             cond.append([parent and taken, taken, parent])
@@ -154,9 +167,9 @@ class Preprocessor:
             if op == "else":
                 take = not top[1]
             elif op == "elifdef":
-                take = (not top[1]) and rest.split()[0] in self.macros
+                take = (not top[1]) and self._defined(rest.split()[0])
             elif op == "elifndef":
-                take = (not top[1]) and rest.split()[0] not in self.macros
+                take = (not top[1]) and not self._defined(rest.split()[0])
             else:                                        # elif
                 take = (not top[1]) and (par and self._eval(rest) != 0)
             top[0] = par and take
@@ -221,6 +234,18 @@ class Preprocessor:
         return rest
 
     # --- macro expansion ---
+    def _defined(self, name: str) -> bool:
+        """Whether `name` is a defined macro for `#ifdef`/`defined()` — the macro table plus the
+        dynamic predefined macros (`__FILE__`/`__LINE__`), which are not stored in the table."""
+        return name in self.macros or name in _DYNAMIC
+
+    def _dynamic_value(self, t: str) -> str:
+        """The expansion of a dynamic predefined macro at the current source position."""
+        if t == "__LINE__":
+            return str(self._cur_line)
+        esc = self._cur_file.replace("\\", "\\\\").replace('"', '\\"')   # __FILE__: a string literal
+        return f'"{esc}"'
+
     def _expand_text(self, text: str) -> str:
         return _join(self._expand(_tokens(text), set()))
 
@@ -242,6 +267,10 @@ class Preprocessor:
                     out += self._expand(self._substitute(mac, args), hide | {t})
                     i = j
                     continue
+            elif _is_id(t) and t in _DYNAMIC:                 # __FILE__ / __LINE__ (a #define wins)
+                out.append(self._dynamic_value(t))
+                i += 1
+                continue
             out.append(t)
             i += 1
         return out
@@ -309,9 +338,9 @@ class Preprocessor:
     def _eval(self, expr: str) -> int:
         # handle defined / __has_include / __has_embed BEFORE macro expansion, then expand.
         expr = re.sub(r"\bdefined\s*\(\s*(\w+)\s*\)",
-                      lambda m: "1" if m.group(1) in self.macros else "0", expr)
+                      lambda m: "1" if self._defined(m.group(1)) else "0", expr)
         expr = re.sub(r"\bdefined\s+(\w+)",
-                      lambda m: "1" if m.group(1) in self.macros else "0", expr)
+                      lambda m: "1" if self._defined(m.group(1)) else "0", expr)
         expr = re.sub(r"\b__has_include\s*\(([^)]*)\)",
                       lambda m: "1" if self._resolve(self._header_name(m.group(1))) is not None
                       else "0", expr)
