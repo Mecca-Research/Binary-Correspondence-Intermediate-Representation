@@ -10,14 +10,20 @@ from __future__ import annotations
 from . import cast
 from .clex import KEYWORDS, Tok, parse_char_literal, parse_int_literal, tokenize
 from .ctype_model import is_scalar_name
-from .diagnostics import SourceDiagnostic, Span
+from .diagnostics import FixIt, SourceDiagnostic, Span
 
 
 class CParseError(Exception):
-    """A parse error. `pos` is the source byte offset of the offending token (for the caret)."""
-    def __init__(self, message: str, pos: int | None = None):
+    """A parse error. `pos` is the source byte offset of the offending token (for the caret); `fixit`
+    is an optional suggested edit (e.g. inserting a missing `;`)."""
+    def __init__(self, message: str, pos: int | None = None, fixit: "FixIt | None" = None):
         super().__init__(message)
         self.pos = pos
+        self.fixit = fixit
+
+
+# punctuation whose absence is a high-confidence fix-it: suggest inserting it after the prior token.
+_FIXABLE_PUNCT = frozenset({";", ")", "}", "]"})
 
 
 # type-start keywords (a statement beginning with one of these is a declaration).
@@ -50,7 +56,8 @@ class _Parser:
     def _record(self, e: "CParseError") -> None:
         pos = getattr(e, "pos", None)
         span = Span.at(pos) if pos is not None else None
-        self.diags.append(SourceDiagnostic("error", str(e), span=span, phase="parse"))
+        fixits = [e.fixit] if getattr(e, "fixit", None) is not None else []
+        self.diags.append(SourceDiagnostic("error", str(e), span=span, fixits=fixits, phase="parse"))
 
     def _sync_toplevel(self) -> None:
         """Skip to the next top-level boundary: past a depth-0 `;` (a global/forward decl) or the
@@ -97,10 +104,22 @@ class _Parser:
         tk = self.peek()
         return tk.kind == kind and (text is None or tk.text == text)
 
+    def _prev_end(self) -> int:
+        """The source offset just past the last consumed token -- where a missing `;`/`)` belongs."""
+        if self.i == 0:
+            return self.peek().pos
+        prev = self.t[self.i - 1]
+        return prev.pos + len(prev.text)
+
     def eat(self, kind: str, text: str | None = None) -> Tok:
         if not self.at(kind, text):
             tk = self.peek()
-            raise CParseError(f"expected {text or kind!r}, got {tk.kind} {tk.text!r}", pos=tk.pos)
+            fix = None
+            if kind == "PUNCT" and text in _FIXABLE_PUNCT:    # suggest inserting the missing punctuation
+                ins = self._prev_end()                        # right after the prior token (Clang-style)
+                fix = FixIt(Span(ins, ins), text)
+            raise CParseError(f"expected {text or kind!r}, got {tk.kind} {tk.text!r}",
+                              pos=tk.pos, fixit=fix)
         return self.nxt()
 
     # --- unit ---
