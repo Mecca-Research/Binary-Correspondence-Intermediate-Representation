@@ -130,6 +130,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — MMIO register read-modify-write `dev->reg OP= expr`.** The
+  set/clear-control-bits driver idiom (`dev->enable |= bits`, `dev->mode &= ~mask`) -- the single
+  most common real driver operation. A compound assignment to a (volatile) struct member lowers to a
+  read of the member, a binary op, then a store back; for a volatile pointee the read + store are
+  ordered MMIO accesses (lane H, barriered hazard). The C rail's member-store path now detects a
+  compound-assign operator after the field and emits the load / `c.bin.<op>` / store sequence (the
+  member is loaded *first*, matching the oracle's evaluation order); the `compound_binop` op-mapping
+  is factored out and shared with the scalar compound-assignment path. This matches the oracle, which
+  already lowered member compound-assignment. New fixture `cfront_rmw.c` (`|=` / `&=` on volatile
+  register fields) matches on both rails (`funcs=1 claims=8 mmio=3 const=1 binop=2 ok=1`) and is
+  Clang-behaviour-equivalent (the `|`/`&`-mask ops are idempotent, so the generic shared-buffer
+  harness is valid). Wired into `_ABI` + `tools/c/check_runtime.sh`; warning-clean; 695 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — compound assignment `name OP= expr`.** The register /
   bit-manipulation idiom (`reg |= MASK`, `flags &= ~BIT`, `acc += step`) -- a real gap: the C rail
   parse-errored on every compound assignment (its lexer did not even tokenize `+= -= *= /= %= &= |=

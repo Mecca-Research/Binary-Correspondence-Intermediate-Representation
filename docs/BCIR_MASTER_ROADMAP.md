@@ -709,7 +709,10 @@ load emitted by name, and the global is referenced (not redeclared, defined in t
 `cfront_global.c`, both rails `claims=5 ok=1`, runs the loop), and ✅ **compound assignment**
 (`name OP= expr` -- the register / bit-manipulation idiom `reg |= MASK`, `flags &= ~BIT`; each
 desugars to `name = name OP expr` = a binary op + a copy on both rails, the C lexer gaining the
-`+= -= *= /= %= &= |= ^=` tokens; `cfront_compound.c`, both rails `claims=11 ok=1`, runs the loop);
+`+= -= *= /= %= &= |= ^=` tokens; `cfront_compound.c`, both rails `claims=11 ok=1`, runs the loop),
+and ✅ **MMIO register read-modify-write** (`dev->reg OP= expr` -- the set/clear-control-bits idiom,
+the most common driver operation; a compound assignment to a volatile struct member is an ordered
+MMIO load + a binary op + an ordered MMIO store; `cfront_rmw.c`, both rails `claims=8 mmio=3 ok=1`);
 still cross-clause
 fallthrough; designated +
 compound initializers; the rest of storage/linkage (`extern`/`thread_local`, scalar globals); `restrict` +
