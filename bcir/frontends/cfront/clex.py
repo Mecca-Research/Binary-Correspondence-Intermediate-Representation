@@ -277,14 +277,19 @@ def parse_char_literal(text: str) -> int:
 
 
 def parse_int_literal(text: str) -> int:
-    """Decode a C integer literal: strip C23 digit separators + the u/U/l/L suffix, honor 0x / 0b."""
+    """Decode a C integer literal: strip C23 digit separators + the u/U/l/L suffix, honor 0x / 0b.
+    A malformed pp-number that the lexer tokenized as INT but is not a valid integer (e.g. `9a`) is a
+    clean CLexError, not a bare ValueError -- so the diagnostics / fallback paths report, not crash."""
     t = text.replace("'", "")
     while t and t[-1] in "uUlL":
         t = t[:-1]
-    if t[:2] in ("0x", "0X"):
-        return int(t, 16)
-    if t[:2] in ("0b", "0B"):
-        return int(t[2:], 2)
-    if len(t) > 1 and t[0] == "0":
-        return int(t, 8)
-    return int(t or "0", 10)
+    try:
+        if t[:2] in ("0x", "0X"):
+            return int(t, 16)
+        if t[:2] in ("0b", "0B"):
+            return int(t[2:], 2)
+        if len(t) > 1 and t[0] == "0":
+            return int(t, 8)
+        return int(t or "0", 10)
+    except ValueError as e:
+        raise CLexError(f"invalid integer literal {text!r}") from e
