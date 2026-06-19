@@ -40,6 +40,7 @@ class StringLit:
 @dataclass(frozen=True)
 class Name:
     ident: str
+    pos: int | None = None          # source byte offset of the identifier (for semantic-error carets)
 
 
 @dataclass(frozen=True)
