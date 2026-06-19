@@ -1,7 +1,8 @@
 """A C preprocessor for the frontend (ladder stage L7): object- and function-like `#define` macros
 (with `#` stringize and `##` paste), `#undef`, conditional compilation (`#if`/`#ifdef`/`#ifndef`/
 `#elif`/`#elifdef`/`#elifndef`/`#else`/`#endif`) with a constant-expression evaluator (`defined`,
-`__has_include`, `__has_embed`), the predefined macros `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__`
+`__has_include`, `__has_embed`, `__has_attribute`, `__has_builtin`, `__has_c_attribute`), the
+predefined macros `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__`
 (and the static `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), the `#line` directive, the
 `_Pragma` operator, `#include` of project headers, and C23 `#embed`.
 
@@ -19,6 +20,9 @@ from dataclasses import dataclass
 _PREDEFINED = {"__STDC__": "1", "__STDC_VERSION__": "202311L", "__STDC_HOSTED__": "1"}
 # dynamic predefined macros: expanded per source position, not stored as static bodies.
 _DYNAMIC = ("__FILE__", "__LINE__")
+# feature-test operators usable in #if (and reported as `defined`); evaluated in _eval.
+_HAS_OPS = ("__has_include", "__has_embed", "__has_attribute", "__has_builtin", "__has_c_attribute")
+_SUPPORTED_ATTRS = frozenset({"packed", "aligned"})    # attributes the L8 ABI honours (GCC __x__ ok)
 # preprocessing tokens: identifier, number, string, char, or punctuation (multi-char first).
 _PUNCT = ["<<=", ">>=", "...", "->", "++", "--", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
           "##", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
@@ -262,8 +266,9 @@ class Preprocessor:
     # --- macro expansion ---
     def _defined(self, name: str) -> bool:
         """Whether `name` is a defined macro for `#ifdef`/`defined()` — the macro table plus the
-        dynamic predefined macros (`__FILE__`/`__LINE__`), which are not stored in the table."""
-        return name in self.macros or name in _DYNAMIC
+        dynamic predefined macros (`__FILE__`/`__LINE__`) and the `__has_*` feature-test operators,
+        none of which are stored in the table."""
+        return name in self.macros or name in _DYNAMIC or name in _HAS_OPS
 
     def _dynamic_value(self, t: str) -> str:
         """The expansion of a dynamic predefined macro at the current source position."""
@@ -365,7 +370,7 @@ class Preprocessor:
 
     # --- constant-expression evaluation (#if / #elif) ---
     def _eval(self, expr: str) -> int:
-        # handle defined / __has_include / __has_embed BEFORE macro expansion, then expand.
+        # handle defined / the __has_* operators BEFORE macro expansion, then expand.
         expr = re.sub(r"\bdefined\s*\(\s*(\w+)\s*\)",
                       lambda m: "1" if self._defined(m.group(1)) else "0", expr)
         expr = re.sub(r"\bdefined\s+(\w+)",
@@ -375,6 +380,12 @@ class Preprocessor:
                       else "0", expr)
         expr = re.sub(r"\b__has_embed\s*\(([^)]*)\)",
                       lambda m: "1" if self._header_name(m.group(1)) in self.embeds else "0", expr)
+        # feature-test macros for supported language features: only the L8 ABI attributes are
+        # honoured today (no compiler builtins, no C23 [[...]] attributes), reported conservatively.
+        expr = re.sub(r"\b__has_attribute\s*\(\s*(\w+)\s*\)",
+                      lambda m: "1" if m.group(1).strip("_") in _SUPPORTED_ATTRS else "0", expr)
+        expr = re.sub(r"\b__has_builtin\s*\([^)]*\)", "0", expr)
+        expr = re.sub(r"\b__has_c_attribute\s*\([^)]*\)", "0", expr)
         toks = self._expand(_tokens(expr), set())
         return _ConstEval(toks).parse()
 
