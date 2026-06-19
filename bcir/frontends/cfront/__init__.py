@@ -22,8 +22,8 @@ from .diagnostics import (
     render,
 )
 from .lower import lower_unit
-from .pipeline import CompileResult, compile_unit, diagnose, emit_selfcheck
+from .pipeline import CompileResult, compile_unit, compile_with_fallback, diagnose, emit_selfcheck
 
 __all__ = ["CParseError", "CompileResult", "DiagnosticReport", "SourceDiagnostic", "Span",
-           "compile_unit", "diagnose", "diagnostic_to_dict", "emit_selfcheck", "line_col",
-           "lower_unit", "parse_unit", "render"]
+           "compile_unit", "compile_with_fallback", "diagnose", "diagnostic_to_dict",
+           "emit_selfcheck", "line_col", "lower_unit", "parse_unit", "render"]

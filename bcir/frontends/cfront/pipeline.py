@@ -25,7 +25,7 @@ from ...kbcir.weights import PERF
 from ...verify import Diagnostic, verify, verify_plan
 from .abi import HOST, target as resolve_target
 from .clex import CLexError
-from .cparse import parse_unit, parse_with_recovery
+from .cparse import CParseError, parse_unit, parse_with_recovery
 from .cpp import CPPError, preprocess
 from .diagnostics import DiagnosticReport, SourceDiagnostic, Span
 from .emit import emit_function
@@ -60,10 +60,17 @@ class CompileResult:
     r18_ok: bool = True
     equivalence: str = "skip"                         # match | MISMATCH | skip:<reason>
     target: str = HOST.name                           # the target ABI the unit was laid out for
+    fallback: str = ""                                 # non-empty == BCIR can't compile this; route to LLVM
 
     @property
     def is_clean(self) -> bool:
-        return not self.diagnostics and self.r18_ok
+        return not self.diagnostics and self.r18_ok and not self.fallback
+
+    @property
+    def needs_fallback(self) -> bool:
+        """The LLVM-backend fallback signal: True iff BCIR could not compile this unit (a construct
+        outside the supported subset, or a malformed unit) and the driver should hand it to LLVM."""
+        return bool(self.fallback)
 
     @property
     def behaviour_equivalent(self) -> bool:
@@ -178,6 +185,27 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
         res.attestation[name] = _attest(res, name, h.name)
         res.emitted[name] = _attestation_comment(res.attestation[name]) + "\n" + res.emitted[name]
     return res
+
+
+# front-end exception type -> the stage that rejected the unit, for the fallback reason.
+_FALLBACK_PHASE = {CPPError: "preprocess", CLexError: "lex", CParseError: "parse",
+                   CLowerError: "lower", ValueError: "emit"}
+
+
+def compile_with_fallback(source: str, **kwargs) -> CompileResult:
+    """The LLVM-backend fallback contract: a **total** entry point. If BCIR fully compiles + verifies
+    the unit, the result's `fallback` is empty (and `is_clean` can hold). If a construct is outside the
+    supported subset -- or the unit is malformed -- it returns a result with `needs_fallback` set and
+    `fallback` carrying the rejecting stage + reason, the signal for the driver to route this unit to
+    the LLVM backend instead of crashing. (`compile_unit` itself keeps its raise-on-error contract; a
+    driver that wants graceful degradation calls this.)"""
+    try:
+        return compile_unit(source, **kwargs)
+    except tuple(_FALLBACK_PHASE) as e:               # a stage outside BCIR's supported subset
+        res = CompileResult(source=source, unit=None, lowered=None,
+                            target=(kwargs.get("target") or HOST.name))
+        res.fallback = f"{_FALLBACK_PHASE[type(e)]}: {e}"
+        return res
 
 
 def _attest(res: CompileResult, fn: str, target: str) -> dict:
