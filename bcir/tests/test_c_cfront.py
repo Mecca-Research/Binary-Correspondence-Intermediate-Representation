@@ -734,6 +734,23 @@ def test_c_preprocessor_macros_conditionals_and_embed():
         linc = '#line 7 "a.h"\nt __LINE__ __FILE__\n#include "ph.h"\nu __LINE__ __FILE__\n'
         assert pp(linc, d) == _py_pp(linc, search_paths=[d])
 
+        # __DATE__/__TIME__: SOURCE_DATE_EPOCH (UTC) freezes both twins to the same string.
+        def ppe(src, epoch):
+            env = dict(os.environ); env["SOURCE_DATE_EPOCH"] = epoch
+            return subprocess.run([exe, ""], input=src, capture_output=True, text=True, env=env).stdout
+        old_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+        try:
+            for epoch, want in (("1234567890", '"Feb 13 2009""23:31:30"'),     # 2009-02-13 23:31:30Z
+                                ("1577836800", '"Jan  1 2020""00:00:00"')):    # padded single-digit day
+                os.environ["SOURCE_DATE_EPOCH"] = epoch                        # _py_pp reads it here
+                assert ppe("__DATE__ __TIME__\n", epoch).strip() == want
+                assert ppe("__DATE__ __TIME__\n", epoch) == _py_pp("__DATE__ __TIME__\n")
+        finally:
+            if old_epoch is None:
+                os.environ.pop("SOURCE_DATE_EPOCH", None)
+            else:
+                os.environ["SOURCE_DATE_EPOCH"] = old_epoch
+
 
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
     if not _CC:

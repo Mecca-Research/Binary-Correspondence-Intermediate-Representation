@@ -203,6 +203,26 @@ def test_L7_line_directive():
     assert body == 't 7"a.h"\nin 1"i"\nu 9"a.h"\n'
 
 
+def test_L7_predefined_date_and_time():
+    """__DATE__/__TIME__ are predefined string macros, frozen by SOURCE_DATE_EPOCH (UTC) so builds
+    are reproducible (a single-digit day is space-padded), and reported as `defined`."""
+    import os
+    from bcir.frontends.cfront.cpp import preprocess
+    old = os.environ.get("SOURCE_DATE_EPOCH")
+    try:
+        os.environ["SOURCE_DATE_EPOCH"] = "1234567890"        # 2009-02-13 23:31:30 UTC
+        assert preprocess("__DATE__ __TIME__").strip() == '"Feb 13 2009""23:31:30"'
+        os.environ["SOURCE_DATE_EPOCH"] = "1577836800"        # 2020-01-01 00:00:00 UTC
+        assert preprocess("d=__DATE__").strip() == 'd="Jan  1 2020"'    # single-digit day padded
+        assert preprocess("#ifdef __TIME__\nyes\n#endif").strip() == "yes"
+        assert preprocess("#if defined(__DATE__)\nok\n#endif").strip() == "ok"
+    finally:
+        if old is None:
+            os.environ.pop("SOURCE_DATE_EPOCH", None)
+        else:
+            os.environ["SOURCE_DATE_EPOCH"] = old
+
+
 # --- L8: ABI — struct return-by-value, packed/aligned, calling convention vs Clang ----------------
 
 def _clang_layout(struct_src: str, tag: str, fields: list):
