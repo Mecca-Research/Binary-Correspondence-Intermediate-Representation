@@ -8,7 +8,7 @@ standard C precedence with `[]` / `.` / `->` / call postfixes.
 from __future__ import annotations
 
 from . import cast
-from .clex import KEYWORDS, Tok, parse_int_literal, tokenize
+from .clex import KEYWORDS, Tok, parse_char_literal, parse_int_literal, tokenize
 from .ctype_model import is_scalar_name
 
 
@@ -659,6 +659,8 @@ class _Parser:
     def _primary(self):
         if self.at("INT"):
             return cast.IntLit(parse_int_literal(self.nxt().text))
+        if self.at("CHAR"):                                   # a character constant -> its int value
+            return cast.IntLit(parse_char_literal(self.nxt().text))
         if self.at("STRING"):
             return cast.StringLit(self.nxt().text)
         if self.at("IDENT"):
