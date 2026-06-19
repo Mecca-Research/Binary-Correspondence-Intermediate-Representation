@@ -55,6 +55,20 @@ def _cast_name(ct: CType) -> str:
     return _CAST_W.get(ct.size, "uint32_t")
 
 
+_FLOAT_RANK = {"float": 0, "double": 1, "long double": 2}
+
+
+def _float_lit_type(spelling: str) -> CType:
+    """The type of a floating literal from its suffix: `f`/`F` -> float, `l`/`L` -> long double,
+    else double (the C default)."""
+    s = spelling.strip()
+    if s and s[-1] in "fF":
+        return scalar("float")
+    if s and s[-1] in "lL":
+        return scalar("long double")
+    return scalar("double")
+
+
 def _str_bytes(spelling: str) -> int:
     """The number of bytes a (possibly concatenated) string literal's value occupies *excluding* the
     terminating NUL, decoding escape sequences (a simple `\\c`, an octal `\\NNN`, or a hex `\\xHH..`
@@ -390,10 +404,25 @@ class _FuncLowerer:
         return res is not None and res.domain == Domain.MMIO
 
     # --- rvalue lowering: returns the rid holding the value ---
+    def _bin_result_type(self, op: str, a: int, b: int) -> CType:
+        """The result type of a binary op: `+ - * /` over a float operand yield the *wider* float
+        (usual arithmetic conversions — an int operand converts up); everything else (comparisons,
+        bitwise, shift, `%`, `&& ||`) is integer in this scalar model."""
+        if op not in ("+", "-", "*", "/"):
+            return scalar("uint32_t")
+        floats = [t for t in (self.rtypes.get(a), self.rtypes.get(b)) if t is not None and t.is_float]
+        if not floats:
+            return scalar("uint32_t")
+        return scalar(max(floats, key=lambda t: _FLOAT_RANK.get(t.name, 1)).name)
+
     def _rvalue(self, node) -> int:
         if isinstance(node, cast.IntLit):
             t = self._temp(scalar("uint32_t"), f"k{node.value}")
             return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(node.value,))
+        if isinstance(node, cast.FloatLit):                   # a float constant -> a typed c.fconst
+            ct = _float_lit_type(node.value)                  # f/F -> float, l/L -> long double, else double
+            t = self._temp(ct, "fk")
+            return self._emit(f"c.fconst:{node.value}", Opcode.LOAD, (), (t,))
         if isinstance(node, cast.Name):
             return self.env[node.ident][0]
         if isinstance(node, cast.StringLit):                  # a string value -> the global pointer
@@ -401,7 +430,10 @@ class _FuncLowerer:
         if isinstance(node, cast.Binary):
             a, b = self._rvalue(node.lhs), self._rvalue(node.rhs)
             opcode, suf = _BIN[node.op]
-            t = self._temp(scalar("uint32_t"), f"b_{suf}")
+            # float arithmetic propagates the (wider) float type; comparisons/bitwise stay int. The
+            # actual IEEE-754 math is delegated to the emitted C / resident backend (never computed here).
+            rt = self._bin_result_type(node.op, a, b)
+            t = self._temp(rt, f"b_{suf}")
             return self._emit(f"c.bin.{suf}", opcode, (a, b), (t,))
         if isinstance(node, cast.Unary):
             if node.op == "*":

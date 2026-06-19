@@ -25,7 +25,7 @@ const char *bcir_opcode_name(bcir_opcode op) {
 }
 
 /* --- lexer --------------------------------------------------------------- */
-typedef enum { T_ID, T_INT, T_STR, T_PUN, T_END } tkind;
+typedef enum { T_ID, T_INT, T_FLT, T_STR, T_PUN, T_END } tkind;
 typedef struct { tkind k; const char *s; int n; long long v; } tok;
 
 #define MAXTOK 16384
@@ -178,6 +178,19 @@ static void lex(CC *c, const char *src) {
         c->nt++; continue; }
     }
     if (is_id0(*p)){t->k=T_ID;t->s=p;while(is_idc(*p))p++;t->n=(int)(p-t->s);c->nt++;continue;}
+    /* a decimal float literal (digits with a '.' or exponent; .5 / 1.5 / 1e10 / 3.14f). Hex/binary
+     * stay integer; a bare integer falls through to T_INT. */
+    if ((( *p>='0'&&*p<='9') && !(p[0]=='0'&&((p[1]|0x20)=='x'||(p[1]|0x20)=='b')))
+        || (*p=='.'&&p[1]>='0'&&p[1]<='9')) {
+      const char *q=p; int hasdig=0,hasdot=0,hasexp=0;
+      while((*q>='0'&&*q<='9')||*q=='\''){q++;hasdig=1;}
+      if(*q=='.'){hasdot=1;q++; while((*q>='0'&&*q<='9')||*q=='\''){q++;hasdig=1;}}
+      if(hasdig&&((*q|0x20)=='e')){ const char *r=q+1; if(*r=='+'||*r=='-')r++;
+        if(*r>='0'&&*r<='9'){hasexp=1;q=r; while(*q>='0'&&*q<='9')q++;}}
+      if(hasdig&&(hasdot||hasexp)){
+        if(*q=='f'||*q=='F'||*q=='l'||*q=='L')q++;
+        t->k=T_FLT;t->s=p;t->n=(int)(q-p);p=q;c->nt++;continue; }
+    }
     if (*p>='0'&&*p<='9'){t->k=T_INT;t->s=p;while(is_idc(*p)||*p=='\'')p++;t->n=(int)(p-t->s);
                           t->v=parse_int(t->s,t->n);c->nt++;continue;}
     if (*p=='"'){t->k=T_STR;t->s=p;p++;                /* string literal (escapes consumed as a unit) */
@@ -207,8 +220,15 @@ static void idcpy(char *d,const tok *t){int n=t->n<BCIR_CIR_NAME-1?t->n:BCIR_CIR
 static int scalar_size(const char *s,int n) {
   struct {const char *k;int sz;} T[]={{"void",0},{"char",1},{"bool",1},{"_Bool",1},{"short",2},
     {"int",4},{"unsigned",4},{"long",8},{"uint8_t",1},{"int8_t",1},{"uint16_t",2},{"int16_t",2},
-    {"uint32_t",4},{"int32_t",4},{"uint64_t",8},{"int64_t",8},{"size_t",8},{0,0}};
+    {"uint32_t",4},{"int32_t",4},{"uint64_t",8},{"int64_t",8},{"size_t",8},
+    {"float",4},{"double",8},{0,0}};
   for(int i=0;T[i].k;i++) if((int)strlen(T[i].k)==n&&!strncmp(T[i].k,s,n)) return T[i].sz;
+  return -1;
+}
+/* The size of a floating type (float = 4, double = 8) or -1 if not a floating type. */
+static int scalar_float_size(const char *s,int n) {
+  if((int)strlen("float")==n&&!strncmp("float",s,n)) return 4;
+  if((int)strlen("double")==n&&!strncmp("double",s,n)) return 8;
   return -1;
 }
 static int find_struct(CC *c,const char *s,int n){
@@ -247,7 +267,9 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
     if(!seen&&isk(c,T_ID)){int ti=find_typedef(c,pk(c)->s,pk(c)->n);   /* a typedef alias */
       if(ti>=0){int vol=ty->is_volatile;*ty=c->td[ti].ty;if(vol)ty->is_volatile=1;*sidx=c->td[ti].sidx;c->i++;seen=1;break;}}
     if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
-      if(sz<0){if(seen)break;fail(c,"unknown type");return 1;} ty->size=sz;seen=1;c->i++;
+      if(sz<0){if(seen)break;fail(c,"unknown type");return 1;} ty->size=sz;
+      if(scalar_float_size(pk(c)->s,pk(c)->n)>=0) ty->is_float=1;     /* float / double */
+      seen=1;c->i++;
       if(is(c,"long")||is(c,"int")||is(c,"char"))continue;break;}
     break;
   }
@@ -395,6 +417,16 @@ static bcir_claim *new_claim(CC *c,const char *op,bcir_opcode opc) {
   snprintf(cl->op,sizeof cl->op,"%s",op); return cl;
 }
 static uint32_t temp(CC *c,int size){return add_res(c,BCIR_DOM_RAM,size?size:4,1,0,BCIR_RK_SCALAR,"");}
+/* A floating temporary (size 4 float / 8 double) -- the emit renders it as float/double, not uint32. */
+static uint32_t tempf(CC *c,int size){ uint32_t r=add_res(c,BCIR_DOM_RAM,size,1,0,BCIR_RK_SCALAR,"");
+  if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_float=1; return r; }
+/* The floating size of the value in rid (4 float / 8 double), or 0 if it is not floating. Drives
+ * float result typing (usual arithmetic conversions: the wider float wins) + the emit. */
+static int rid_fsize(CC *c,uint32_t rid){
+  for(size_t i=0;i<c->fn->n_res;i++)
+    if(c->fn->res[i].rid==rid) return c->fn->res[i].is_float?(int)c->fn->res[i].elem_bytes:0;
+  return 0;
+}
 /* A string literal -> an anonymous read-only char[] global (decays to a pointer). Identical spellings
  * in the same function share one global (dedup). The full spelling is kept in g_strtab so the emit can
  * inline it at any length; the resource name is just a short tag. */
@@ -530,6 +562,11 @@ static uint32_t p_primary(CC *c) {
   if(isk(c,T_INT)){tok t=adv(c);uint32_t r=temp(c,4);
     bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
     cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return r;}
+  if(isk(c,T_FLT)){tok t=adv(c);                       /* a floating constant -> a typed c.fconst */
+    int isf = t.n>0 && (t.s[t.n-1]=='f'||t.s[t.n-1]=='F');   /* f/F -> float(4), else double(8) */
+    uint32_t r=tempf(c, isf?4:8);
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.fconst:%.*s",t.n,t.s);
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_LOAD); if(cl){cl->n_wr=1;cl->wr[0]=r;} return r;}
   if(isk(c,T_STR)){     /* a string literal -> an anonymous read-only char[] global; value is a ptr */
     tok st=adv(c); uint32_t rid;
     if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn);   /* adjacent literals concatenate */
@@ -686,7 +723,11 @@ static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs) {
     int prec=prec_of(idx);c->i++;uint32_t rhs=p_unary(c);
     char s2[BCIR_CIR_NAME];bcir_opcode o2;int nx=bin_op(c,s2,&o2);
     while(nx>=0&&prec_of(nx)>prec){rhs=p_binrhs(c,prec_of(nx),rhs);nx=bin_op(c,s2,&o2);}
-    uint32_t r=temp(c,4);char op[BCIR_CIR_NAME];snprintf(op,sizeof op,"c.bin.%s",suf);
+    /* float arithmetic (+ - * /) propagates the wider float type; comparisons/bitwise stay int. */
+    int is_arith=!strcmp(suf,"add")||!strcmp(suf,"sub")||!strcmp(suf,"mul")||!strcmp(suf,"div");
+    int fa=rid_fsize(c,lhs), fb=rid_fsize(c,rhs);
+    uint32_t r=(is_arith&&(fa||fb)) ? tempf(c,(fa>fb?fa:fb)) : temp(c,4);
+    char op[BCIR_CIR_NAME];snprintf(op,sizeof op,"c.bin.%s",suf);
     bcir_claim *cl=new_claim(c,op,oc);if(cl){cl->n_rd=2;cl->rd[0]=lhs;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=r;}
     lhs=r;
   }
@@ -853,6 +894,7 @@ static void p_stmt(CC *c) {
     uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, nb);
+    if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double local */
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
     env_add(c,&nm,rid,&ty,si);
     if(is_static){            /* static storage: a once-only constant init, baked into the decl */
@@ -952,6 +994,7 @@ static int p_func(CC *c, bcir_func *fn) {
     uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, pb);
+    if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
     env_add(c,&pn,rid,&ty,si);
     if(fn->n_params<BCIR_MAX_PARAMS){bcir_param *pp=&fn->params[fn->n_params++];
@@ -982,6 +1025,7 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   int is_struct = (ty->kind==1) || ty->ptr_to_struct;
   const char *kw = ty->is_union ? "union" : "struct";
   const char *base = is_struct ? ty->tag
+                   : ty->is_float ? (ty->size==4?"float":"double")
                    : (ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t");
   const char *atm = ty->is_atomic ? "_Atomic " : "";
   if(ty->kind==2) snprintf(o,n,"%s%s%s%s%s *",atm,ty->is_volatile?"volatile ":"",
@@ -995,6 +1039,13 @@ static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
   const bcir_resource *r=res_of(f,rid);
   if(r&&r->name[0]){snprintf(buf,BCIR_CIR_NAME,"%s",r->name);return buf;}
   snprintf(buf,BCIR_CIR_NAME,"t%u",rid); return buf;
+}
+/* The C type to declare a temporary / local with: float/double for a floating value, else uint32_t
+ * (the integer scalar model). */
+static const char *tty(const bcir_func *f,uint32_t rid){
+  const bcir_resource *r=res_of(f,rid);
+  if(r&&r->is_float) return r->elem_bytes==4?"float":"double";
+  return "uint32_t";
 }
 static int is_named_local(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid); if(!r||!r->name[0]) return 0;
@@ -1016,7 +1067,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
       if(sx>=0) w+=snprintf(o+w,on-w,"  static uint32_t %s = %lluu;\n",r->name,(unsigned long long)f->statics[sx].init);
       else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s;\n",r->agg,r->name);
-      else w+=snprintf(o+w,on-w,"  uint32_t %s;\n",r->name);}}
+      else w+=snprintf(o+w,on-w,"  %s %s;\n",tty(f,r->rid),r->name);}}
   int depth=1, lstk[64], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)
   for(size_t i=0;i<f->n_claims&&w<on-160;i++){const bcir_claim *cl=&f->claims[i];
@@ -1038,7 +1089,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else w+=snprintf(o+w,on-w,"return;\n");continue;}
     IND();
     if(!strncmp(cl->op,"c.bin.",6))
-      w+=snprintf(o+w,on-w,"uint32_t %s = %s %s %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
+      w+=snprintf(o+w,on-w,"%s %s = %s %s %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
+    else if(!strncmp(cl->op,"c.fconst:",9))                /* a floating constant -> its literal spelling */
+      w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
     else if(!strncmp(cl->op,"c.un.",5))
       w+=snprintf(o+w,on-w,"uint32_t %s = (%s%s);\n",rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
     else if(!strncmp(cl->op,"c.cast:",7))                  /* (type)operand -- width cast */
@@ -1050,7 +1103,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"uint32_t %s = %lluu;\n",rname(f,cl->wr[0],d),(unsigned long long)cl->imm[0]);
     else if(!strcmp(cl->op,"c.copy")){
       if(is_named_local(f,cl->wr[0])) w+=snprintf(o+w,on-w,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
-      else w+=snprintf(o+w,on-w,"uint32_t %s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      else w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
     }else if(!strcmp(cl->op,"c.load")){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;
       if(cl->n_rd==2) w+=snprintf(o+w,on-w,"uint32_t %s = %s[%s];\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));

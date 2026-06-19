@@ -40,7 +40,9 @@ _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-val
         "cfront_rmw.c",                               # + MMIO register read-modify-write (d->reg |= bits)
         "cfront_bitfield.c",                          # + MMIO bitfield write (r->field = v, c.bf.set)
         "cfront_bfcompound.c"]                         # + bitfield compound-assign (r->field |= bits)
-_FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI
+_FLOAT = ["cfront_float.c"]                           # float/double: parity + emit + Clang ≡ (the
+#   integer StreamPack executor doesn't compute float; the math is delegated to the resident backend)
+_FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI + _FLOAT
 # §5.8 atomics/fences/CAS run their own gate: their memory side effects make the generic
 # pure-function equivalence harness invalid (it would call the original first and observe
 # the mutated cell), so they get a side-effect-aware behaviour check below.

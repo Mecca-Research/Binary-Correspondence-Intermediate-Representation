@@ -32,7 +32,7 @@ _PUNCT = ["<<=", ">>=", "...", "->", "++", "--", "<<", ">>", "<=", ">=", "==", "
 _TOKEN_RE = re.compile(
     r'"(?:\\.|[^"\\])*"'                          # string
     r"|'(?:\\.|[^'\\])*'"                         # char
-    r"|(?:0[xXbB][0-9a-fA-F']+|\d[\d.']*)[uUlL]*"  # number (C23 ' separators, with int suffix)
+    r"|\.?\d(?:[eEpP][-+]|[\w.'])*"               # pp-number (C23 ' seps; ints, hex/bin, floats w/ exp+suffix)
     r"|[A-Za-z_]\w*"                             # identifier
     r"|" + "|".join(re.escape(p) for p in _PUNCT))
 

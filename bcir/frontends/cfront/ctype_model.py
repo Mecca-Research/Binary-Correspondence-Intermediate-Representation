@@ -25,6 +25,8 @@ _SCALAR = {
     "int64_t": (8, True), "uint64_t": (8, False),
     "size_t": (8, False), "intptr_t": (8, True), "uintptr_t": (8, False),
 }
+# Floating types -> size in bytes (Linux/Clang ABI: long double is 80-bit, 16-byte-aligned).
+_FLOAT = {"float": 4, "double": 8, "long double": 16}
 PTR_SIZE = 8
 
 
@@ -46,7 +48,11 @@ class CType:
 
     @property
     def is_integer(self) -> bool:
-        return self.kind == "scalar" and self.name != "void"
+        return self.kind == "scalar" and self.name != "void" and self.name not in _FLOAT
+
+    @property
+    def is_float(self) -> bool:
+        return self.kind == "scalar" and self.name in _FLOAT
 
     @property
     def is_aggregate(self) -> bool:
@@ -76,6 +82,9 @@ def with_atomic(ct: CType, at: bool = True) -> CType:
 
 
 def scalar(name: str) -> CType:
+    if name in _FLOAT:
+        size = _FLOAT[name]
+        return CType("scalar", name=name, size=size, align=max(1, size), signed=True)
     if name not in _SCALAR:
         raise KeyError(f"unknown scalar type {name!r}")
     size, signed = _SCALAR[name]
@@ -83,7 +92,7 @@ def scalar(name: str) -> CType:
 
 
 def is_scalar_name(name: str) -> bool:
-    return name in _SCALAR
+    return name in _SCALAR or name in _FLOAT
 
 
 def pointer(of: CType) -> CType:
