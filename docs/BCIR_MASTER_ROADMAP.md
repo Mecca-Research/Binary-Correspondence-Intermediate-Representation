@@ -444,7 +444,7 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 | L4 | functions + the call graph → **R18** (recursion + undefined-callee rejected) | ✅ |
 | L5 | `volatile`/MMIO → `Domain.MMIO` resources (ordered/`barriered`) + bitfield mask/shift claims | ✅ (the register-map/MMIO MVP) |
 | L6 | control flow — `if`/`else` → `compose.Cond`, bounded `while` (mutable named locals) | ✅ |
-| L7 | preprocessor — object/function `#define` (+ `#`/`##`), `#if`/`#ifdef`/`#elifdef`, predefined macros (`__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), `#line`, `_Pragma`, `#include`, C23 `#embed` (→ const globals) | ✅ |
+| L7 | preprocessor — object/function/variadic `#define` (+ `#`/`##`, `__VA_ARGS__`), `#if`/`#ifdef`/`#elifdef`, predefined macros (`__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), `#line`, `_Pragma`, `#include`, C23 `#embed` (→ const globals) | ✅ |
 | L8 | ABI — struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked against Clang's `sizeof`/`offsetof` | ✅ |
 
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor

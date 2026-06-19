@@ -86,6 +86,11 @@ static int needspace(char a, char b) {            /* keep ident/number tokens ap
   int ai = idc((unsigned char)a), bi = idc((unsigned char)b); return ai && bi;
 }
 
+/* Append __VA_ARGS__: every trailing arg from index `first`, comma-joined (matching cpp.py). */
+static void app_va(char *out, size_t cap, size_t *w, char args[][1024], int na, int first) {
+  for (int z = first; z < na; z++) { if (z > first) app(out, cap, w, ","); app(out, cap, w, args[z]); }
+}
+
 /* substitute a function macro's args into its body; writes to out. */
 static void substitute(const Macro *m, char args[][1024], int na, char *out, size_t cap) {
   size_t w = 0; out[0] = 0;
@@ -95,16 +100,33 @@ static void substitute(const Macro *m, char args[][1024], int na, char *out, siz
     if (!strcmp(t, "#") && k == 'p') {            /* stringize next param */
       char p[256]; ntok(m->body, &i, p, sizeof p);
       int pi = -1; for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], p)) pi = q;
-      app(out, cap, &w, "\""); if (pi >= 0 && pi < na) app(out, cap, &w, args[pi]); app(out, cap, &w, "\"");
+      app(out, cap, &w, "\"");
+      if (pi >= 0 && !strcmp(m->params[pi], "__VA_ARGS__")) app_va(out, cap, &w, args, na, pi);
+      else if (pi >= 0 && pi < na) app(out, cap, &w, args[pi]);
+      app(out, cap, &w, "\"");
       strcpy(prev, "\""); continue;
     }
     if (!strcmp(t, "##") && k == 'p') {           /* paste: glue prev to next, no space */
       char r[256]; int rk = ntok(m->body, &i, r, sizeof r); (void)rk;
       int pi = -1; for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], r)) pi = q;
+      if (pi >= 0 && !strcmp(m->params[pi], "__VA_ARGS__")) {   /* glue prev to flattened __VA_ARGS__ */
+        app_va(out, cap, &w, args, na, pi);
+        if (na > pi) strncpy(prev, args[na - 1], sizeof prev - 1);
+        continue;
+      }
       const char *rt = (pi >= 0 && pi < na) ? args[pi] : r;
       app(out, cap, &w, rt); strcpy(prev, rt[0] ? rt : prev); continue;
     }
     int pi = -1; if (k == 'i') for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], t)) pi = q;
+    if (pi >= 0 && !strcmp(m->params[pi], "__VA_ARGS__")) {   /* all trailing args, comma-joined */
+      if (na > pi) {
+        if (w && needspace(prev[strlen(prev) ? strlen(prev) - 1 : 0], args[pi][0]))
+          app(out, cap, &w, " ");
+        app_va(out, cap, &w, args, na, pi);
+        strncpy(prev, args[na - 1], sizeof prev - 1);
+      }
+      continue;                                              /* empty __VA_ARGS__: emit nothing */
+    }
     const char *emit = (pi >= 0 && pi < na) ? args[pi] : t;
     if (w && needspace(prev[strlen(prev) ? strlen(prev) - 1 : 0], emit[0])) app(out, cap, &w, " ");
     app(out, cap, &w, emit);

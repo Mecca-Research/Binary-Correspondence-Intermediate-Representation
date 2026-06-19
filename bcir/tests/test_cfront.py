@@ -278,6 +278,17 @@ def test_L7_has_include():
                       includes=inc).strip() == "OK"
 
 
+def test_L7_variadic_macros():
+    """Variadic `#define M(...)` / `M(a, ...)`: __VA_ARGS__ expands to *all* trailing args
+    (comma-joined), works empty, and through `#` stringize / `##` paste."""
+    from bcir.frontends.cfront.cpp import preprocess
+    assert preprocess("#define V(...) f(__VA_ARGS__)\nV(1,2,3)").strip() == "f(1,2,3)"
+    assert preprocess("#define L(a, ...) g(a, __VA_ARGS__)\nL(x,1,2)").strip() == "g(x,1,2)"
+    assert preprocess("#define E(a, ...) k(a, __VA_ARGS__)\nE(z)").strip() == "k(z,)"   # empty
+    assert preprocess("#define S(...) #__VA_ARGS__\nS(1, 2, 3)").strip() == '"1,2,3"'   # stringize
+    assert preprocess("#define P(...) x ## __VA_ARGS__\nP(1,2)").strip() == "x1,2"      # paste
+
+
 # --- L8: ABI — struct return-by-value, packed/aligned, calling convention vs Clang ----------------
 
 def _clang_layout(struct_src: str, tag: str, fields: list):
