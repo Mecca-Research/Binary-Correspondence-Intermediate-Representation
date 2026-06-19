@@ -13,7 +13,10 @@ from .ctype_model import is_scalar_name
 
 
 class CParseError(Exception):
-    pass
+    """A parse error. `pos` is the source byte offset of the offending token (for the caret)."""
+    def __init__(self, message: str, pos: int | None = None):
+        super().__init__(message)
+        self.pos = pos
 
 
 # type-start keywords (a statement beginning with one of these is a declaration).
@@ -53,7 +56,7 @@ class _Parser:
     def eat(self, kind: str, text: str | None = None) -> Tok:
         if not self.at(kind, text):
             tk = self.peek()
-            raise CParseError(f"expected {text or kind!r}, got {tk.kind} {tk.text!r} at {tk.pos}")
+            raise CParseError(f"expected {text or kind!r}, got {tk.kind} {tk.text!r}", pos=tk.pos)
         return self.nxt()
 
     # --- unit ---
@@ -705,7 +708,7 @@ class _Parser:
             if w in ("_Alignof", "alignof"):
                 return self._alignof()
             if w in KEYWORDS and w != "sizeof":
-                raise CParseError(f"unexpected keyword {w!r} in expression at {self.peek().pos}")
+                raise CParseError(f"unexpected keyword {w!r} in expression", pos=self.peek().pos)
             return cast.Name(self.nxt().text)
         if self.at("PUNCT", "("):
             self.nxt()
@@ -713,7 +716,7 @@ class _Parser:
             self.eat("PUNCT", ")")
             return e
         tk = self.peek()
-        raise CParseError(f"unexpected {tk.kind} {tk.text!r} at {tk.pos}")
+        raise CParseError(f"unexpected {tk.kind} {tk.text!r}", pos=tk.pos)
 
 
 def parse_unit(src: str) -> cast.Unit:

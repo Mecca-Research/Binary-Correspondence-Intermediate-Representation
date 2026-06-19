@@ -42,7 +42,10 @@ _TOKEN_RE = re.compile(
 
 
 class CPPError(Exception):
-    pass
+    """A preprocessing error. `pos` is a source byte offset when known (else a file-level banner)."""
+    def __init__(self, message: str, pos: int | None = None):
+        super().__init__(message)
+        self.pos = pos
 
 
 @dataclass
