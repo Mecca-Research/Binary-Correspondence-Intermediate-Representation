@@ -2,8 +2,8 @@
 (with `#` stringize and `##` paste), `#undef`, conditional compilation (`#if`/`#ifdef`/`#ifndef`/
 `#elif`/`#elifdef`/`#elifndef`/`#else`/`#endif`) with a constant-expression evaluator (`defined`,
 `__has_include`, `__has_embed`), the predefined macros `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__`
-(and the static `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), the `#line` directive, `#include`
-of project headers, and C23 `#embed`.
+(and the static `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), the `#line` directive, the
+`_Pragma` operator, `#include` of project headers, and C23 `#embed`.
 
 It runs *before* the lexer/parser, producing fully-expanded source text (the lexer still skips any
 residual `#`-line, but after this pass there are none). `#include`/`#embed` resolve against an
@@ -297,6 +297,9 @@ class Preprocessor:
                 out.append(self._dynamic_value(t))
                 i += 1
                 continue
+            elif t == "_Pragma" and i + 1 < len(toks) and toks[i + 1] == "(":
+                _, i = self._collect_args(toks, i + 1)        # _Pragma("..."): a lowering no-op
+                continue                                      # (like #pragma) — consume, emit nothing
             out.append(t)
             i += 1
         return out

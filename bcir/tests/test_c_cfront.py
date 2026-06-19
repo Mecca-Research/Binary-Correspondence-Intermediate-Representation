@@ -724,6 +724,9 @@ def test_c_preprocessor_macros_conditionals_and_embed():
             '#line 30 "a\\"b.c"\nz __FILE__\n',                  # an escaped quote in the name
             "p __LINE__\n#line\nq __LINE__\n",                   # malformed -> ignored
             "#if 0\n#line 999\n#endif\nr __LINE__\n",            # inactive branch -> skipped
+            'int x; _Pragma("once") int y;\n',                   # _Pragma operator: a no-op
+            'p _Pragma("a(b)c") q\n',                            # balanced parens consumed
+            "#define DO(x) _Pragma(#x)\nDO(message hi)\nz\n",    # _Pragma produced by a macro
         ]
         for s in probes:
             assert pp(s) == _py_pp(s), f"twin divergence on {s!r}\n C: {pp(s)!r}\nPY: {_py_pp(s)!r}"

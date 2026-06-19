@@ -5,7 +5,8 @@
  * #ifndef / #elif / #elifdef / #elifndef / #else / #endif with an integer
  * constant-expression evaluator + `defined`), the predefined macros __FILE__ / __LINE__ /
  * __DATE__ / __TIME__ (and the static __STDC__ / __STDC_VERSION__ / __STDC_HOSTED__), the #line
- * directive, #include of project headers, and C23 #embed. It runs before bcir_cfront's lexer, emitting
+ * directive, the _Pragma operator, #include of project headers, and C23 #embed. It runs before
+ * bcir_cfront's lexer, emitting
  * fully-expanded C text -- so a real vendor register-map header (with its REG #defines)
  * ingests through the C compiler.
  *
