@@ -273,10 +273,17 @@ class LoweredUnit:
     resources: dict                       # rid -> Resource (whole unit)
 
 
+# the rid `_call` returns for a void callee -- never read as a value (a void call is a statement); the
+# Return lowering maps it back to a bare `return;`.
+_VOID_RID = -1
+
+
 class _FuncLowerer:
     def __init__(self, func: cast.Func, aggregates: dict, base_rid: int, cid: list,
-                 genv: dict | None = None, gres: dict | None = None, strctr: list | None = None):
+                 genv: dict | None = None, gres: dict | None = None, strctr: list | None = None,
+                 func_rets: dict | None = None):
         self.func = func
+        self.func_rets = func_rets or {}  # callee name -> return CType (for void / wide / float returns)
         self.aggregates = aggregates
         self.rid = base_rid
         self.cid = cid                    # shared mutable [next_claim_id]
@@ -672,8 +679,19 @@ class _FuncLowerer:
         if libm is not None:                           # a <math.h> call -> a typed external library edge
             t = self._temp(libm, f"libm_{node.callee}")    # not added to self.calls: opaque to the call
             return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # graph
-        t = self._temp(scalar("uint32_t"), f"call_{node.callee}")
-        self.calls.append((node.callee, actuals))
+        self.calls.append((node.callee, actuals))      # a defined-in-unit callee: a real R18 edge
+        ret_ct = self.func_rets.get(node.callee)
+        if ret_ct is not None and ret_ct.name == "void":   # a void callee -> a bare call statement, no
+            self._emit(f"c.call.void:{node.callee}", Opcode.GEM_DISPATCH, actuals, ())   # result temp
+            return _VOID_RID                           # the value of a void call is never read
+        # type the result temp by the callee's return type: a float return propagates (so downstream
+        # arithmetic stays float), and a wide (8-byte) integer return keeps its width instead of being
+        # narrowed to the 4-byte value unit. An ordinary int/pointer/aggregate keeps the uint32 unit.
+        if ret_ct is not None and (ret_ct.is_float or (ret_ct.is_integer and ret_ct.size > 4)):
+            rct = ret_ct
+        else:
+            rct = scalar("uint32_t")
+        t = self._temp(rct, f"call_{node.callee}")
         return self._emit(f"c.call:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
 
     # --- statements ---
@@ -700,6 +718,8 @@ class _FuncLowerer:
             self._rvalue(st.expr)
         elif isinstance(st, cast.Return):
             rid = None if st.value is None else self._rvalue(st.value)
+            if rid == _VOID_RID:                              # `return void_call();` -> the call stmt is
+                rid = None                                    # already emitted; a void function `return;`s
             self.block_stack[-1].append(ReturnNode(rid))
             if rid is not None:
                 self.last_return = rid
@@ -858,9 +878,12 @@ def lower_unit(unit: cast.Unit) -> LoweredUnit:
     resources: dict[int, Resource] = dict(gres)
     cid = [1000]
     strctr = [0]                                          # unit-wide string-literal counter (unique rids)
+    # pre-scan every function's return type (forward references resolve too), so a call can be typed
+    # by its callee: a void call emits a bare statement, a wide/float return keeps its real type.
+    func_rets = {fn.name: _resolve_member_type(fn.ret, aggregates) for fn in unit.funcs}
     for idx, fn in enumerate(unit.funcs):
         lf = _FuncLowerer(fn, aggregates, base_rid=100 + idx * 1000, cid=cid,
-                          genv=genv, gres=gres, strctr=strctr).lower()
+                          genv=genv, gres=gres, strctr=strctr, func_rets=func_rets).lower()
         functions[fn.name] = lf
         resources.update(lf.resources)
     for lf in functions.values():                          # regions need every callee's param rids

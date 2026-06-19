@@ -327,6 +327,40 @@ def test_math_h_eight_byte_returns_and_pointer_out_params():
     assert rrq.is_clean and eqok(rrq)
 
 
+def test_user_call_returns_typed_by_callee():
+    """A user-function call is typed by its callee's return type. A `void` callee emits a bare call
+    statement (`bcir_g(...);`) instead of an invalid `uint32_t t = bcir_g(...)`, so an out-param call
+    `g(&v)` builds and matches. A float return propagates (downstream arithmetic stays float) and a
+    wide (8-byte) integer return keeps its width; an ordinary int return keeps the 4-byte value unit."""
+    from bcir.frontends.cfront.emit import emit_function
+
+    def eqok(r):
+        return r.equivalence == "match" or r.equivalence.startswith("skip")
+
+    # void callee with a pointer out-param: a bare statement, not `uint32_t t = bcir_g(...)`.
+    rv = compile_unit("void g(int *p){ *p = 7; } int f(void){ int v = 0; g(&v); return v; }\n")
+    flf = rv.lowered.functions["f"]
+    assert any(c.op == "c.call.void:g" for c in flf.claims) and rv.is_clean and eqok(rv)
+    em = emit_function(flf)
+    assert "bcir_g(t" in em and "= bcir_g(" not in em            # a statement, no assignment of void
+
+    # `return g();` where g is void -> the call statement then a bare `return;` (g returns void).
+    rh = compile_unit("void g(int *p){ *p=5; } void h(int *p){ return g(p); } "
+                       "int f(int *p){ h(p); return *p; }\n")
+    hem = emit_function(rh.lowered.functions["h"])
+    assert "bcir_g(p);" in hem and "return;" in hem and rh.is_clean and eqok(rh)
+
+    # a float return propagates: the result temp is declared double (so `+ 1.5` stays float).
+    rd = compile_unit("double g(double x){ return x*2.0; } double f(double x){ return g(x) + 1.5; }\n")
+    assert "double t" in emit_function(rd.lowered.functions["f"]) and rd.is_clean and eqok(rd)
+    # a wide (8-byte) integer return keeps its width, not narrowed to uint32.
+    rl = compile_unit("long g(double x){ return lround(x); } long f(double x){ return g(x); }\n")
+    assert "long t" in emit_function(rl.lowered.functions["f"]) and rl.is_clean and eqok(rl)
+    # an ordinary int return keeps the 4-byte value unit (unchanged convention).
+    ri = compile_unit("int g(int x){ return x+1; } int f(int x){ return g(x)*2; }\n")
+    assert "uint32_t t" in emit_function(ri.lowered.functions["f"]) and ri.is_clean and eqok(ri)
+
+
 # --- L2: struct / union layout + member access ---------------------------------------------------
 
 def test_L2_struct_member_access():
