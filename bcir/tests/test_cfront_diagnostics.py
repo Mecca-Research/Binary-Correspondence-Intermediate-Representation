@@ -1,6 +1,6 @@
-"""Phase 4 — Clang-grade diagnostics, segment 1a: the source-location model + the caret renderer,
-and the `diagnose()` front-end entry that turns a lex/parse error into a located diagnostic instead
-of an uncaught exception."""
+"""Phase 4 — Clang-grade diagnostics. The source-location engine + caret renderer (1a), parser error
+recovery so one run reports several diagnostics (1b), AST source spans for semantic-error carets (1c),
+and machine-readable JSON output (1e)."""
 from __future__ import annotations
 
 from bcir.frontends.cfront import diagnose
@@ -10,6 +10,7 @@ from bcir.frontends.cfront.diagnostics import (
     Note,
     SourceDiagnostic,
     Span,
+    diagnostic_to_dict,
     line_col,
     render,
 )
@@ -164,3 +165,40 @@ def test_semantic_caret_points_at_the_assignment_target():
     ln, col = line_col(rep.source, d.span.start)
     assert d.phase == "lower" and (ln, col) == (2, 1)             # caret under `nope` on line 2
     assert "use of undeclared identifier 'nope'" in rep.render() and "^" in rep.render()
+
+
+# --- segment 1e: machine-readable (JSON) output ---------------------------------------------------
+
+def test_json_output_carries_location_and_phase():
+    import json
+    rep = diagnose("int f(void){ return 1 }\n", filename="t.c")
+    obj = json.loads(rep.to_json())                              # a valid JSON array
+    assert isinstance(obj, list) and len(obj) == 1
+    d = obj[0]
+    assert d["severity"] == "error" and d["phase"] == "parse" and d["file"] == "t.c"
+    assert d["line"] == 1 and d["column"] >= 1
+    assert d["range"]["end"] > d["range"]["start"]               # a non-empty byte range
+
+
+def test_json_semantic_range_covers_the_identifier():
+    import json
+    rep = diagnose("int f(void){ return missing; }\n", filename="t.c")
+    d = json.loads(rep.to_json())[0]
+    assert d["phase"] == "lower"
+    assert rep.source[d["range"]["start"]:d["range"]["end"]] == "m"   # span starts at the identifier
+
+
+def test_json_serializes_fixits_and_notes():
+    src = "int x\n"
+    diag = SourceDiagnostic(
+        "error", "expected ';'", span=Span.at(len("int x")),
+        fixits=[FixIt(Span.at(len("int x"), 0), ";")],
+        notes=[Note("declaration started here", Span.at(0))])
+    d = diagnostic_to_dict(diag, src, "t.c")
+    assert d["fixits"] == [{"replacement": ";", "range": {"start": 5, "end": 5}}]
+    assert d["notes"][0]["message"] == "declaration started here" and d["notes"][0]["line"] == 1
+
+
+def test_json_clean_unit_is_empty_array():
+    import json
+    assert json.loads(diagnose("int f(int x){ return x; }\n").to_json()) == []

@@ -77,6 +77,14 @@ class DiagnosticReport:
     def render(self) -> str:
         return "\n".join(render(d, self.source, self.filename) for d in self.diagnostics)
 
+    def to_json(self, *, indent: int | None = 2) -> str:
+        """The diagnostics as a JSON array of objects (a `-fdiagnostics-format=json`-style machine
+        -readable feed for editors / CI). Each object carries severity, message, originating phase,
+        the 1-based file:line:column, the byte range, and any fix-its and notes."""
+        import json
+        return json.dumps([diagnostic_to_dict(d, self.source, self.filename)
+                           for d in self.diagnostics], indent=indent)
+
 
 def line_col(source: str, offset: int) -> tuple[int, int]:
     """The 1-based `(line, column)` of a byte offset, clamped into `[0, len(source)]`. Column counts
@@ -134,3 +142,26 @@ def render(diag: SourceDiagnostic, source: str, filename: str = "<source>") -> s
     for note in diag.notes:
         banner("note", note.message, note.span)
     return "\n".join(out)
+
+
+def _loc(source: str, filename: str, span: Span | None) -> dict:
+    """The location fields for a span: file + 1-based line/column + the byte range, or just the file
+    for a spanless (file-level) diagnostic."""
+    if span is None:
+        return {"file": filename}
+    ln, col = line_col(source, span.start)
+    return {"file": filename, "line": ln, "column": col,
+            "range": {"start": span.start, "end": span.end}}
+
+
+def diagnostic_to_dict(diag: SourceDiagnostic, source: str, filename: str = "<source>") -> dict:
+    """A `SourceDiagnostic` as a JSON-serializable dict: severity, message, originating phase, the
+    file:line:column + byte range, and any fix-its / notes (each with its own location)."""
+    d = {"severity": diag.severity, "message": diag.message, "phase": diag.phase}
+    d.update(_loc(source, filename, diag.span))
+    if diag.fixits:
+        d["fixits"] = [{"replacement": fx.replacement,
+                        "range": {"start": fx.span.start, "end": fx.span.end}} for fx in diag.fixits]
+    if diag.notes:
+        d["notes"] = [{"message": n.message, **_loc(source, filename, n.span)} for n in diag.notes]
+    return d
