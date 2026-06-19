@@ -109,13 +109,18 @@ def _walk(lf: LoweredFunc, block: list, ref, depth: int, loops: list | None = No
 def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     suf = c.op.split(".", 2)[-1] if "." in c.op else c.op
 
-    def deftmp(rid: int, expr: str, ty: str = "uint32_t") -> str:
+    def deftmp(rid: int, expr: str, ty: str | None = None) -> str:
+        if ty is None:                                       # a float temp renders its real type
+            ct = lf.rid_types.get(rid)                        # (float/double); integer temps stay uint32_t
+            ty = _cname(ct) if (ct is not None and ct.is_float) else "uint32_t"
         return f"{ty} {ref(rid)} = {expr};"
 
     if c.op == "c.copy":                                     # write a mutable local (no new decl)
         return f"{ref(c.wr[0])} = {ref(c.rd[0])};"
     if c.op == "c.const":
         return deftmp(c.wr[0], f"{c.imm[0]}u")
+    if c.op.startswith("c.fconst:"):                         # a floating constant -> its literal spelling
+        return deftmp(c.wr[0], c.op.split(":", 1)[1])
     if c.op.startswith("c.bin."):
         return deftmp(c.wr[0], f"{ref(c.rd[0])} {_BINOP[suf]} {ref(c.rd[1])}")
     if c.op.startswith("c.un."):

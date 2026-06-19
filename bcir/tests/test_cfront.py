@@ -170,6 +170,41 @@ def test_L7_wide_and_utf_literal_prefixes():
     assert r.is_clean and (r.equivalence == "match" or r.equivalence.startswith("skip"))
 
 
+def test_floating_point_minimal_core():
+    """float/double types, decimal float literals (incl. exponents + the f/F suffix), arithmetic that
+    propagates the float type, comparisons that stay int, and float params/locals/returns. The actual
+    IEEE-754 math is delegated to the resident backend (the emit renders real float C), so it is
+    Clang-equivalent while the integer plan/executor core is untouched."""
+    from bcir.frontends.cfront.clex import tokenize
+    from bcir.frontends.cfront.emit import emit_function
+
+    def eqok(r):
+        return r.equivalence == "match" or r.equivalence.startswith("skip")
+
+    # a float literal lexes as one FLOAT token; member access (a.b) is NOT a float.
+    assert [t.text for t in tokenize("1.5 .5 1e10 3.14f 2.0") if t.kind == "FLOAT"] == \
+        ["1.5", ".5", "1e10", "3.14f", "2.0"]
+    assert [(t.kind, t.text) for t in tokenize("a.b") if t.kind != "EOF"] == \
+        [("IDENT", "a"), ("PUNCT", "."), ("IDENT", "b")]
+
+    r = compile_unit("float favg(float a, float b){ float s = a + b; return s * 0.5f; }\n")
+    lf = r.lowered.functions["favg"]
+    assert r.is_clean and eqok(r)
+    assert lf.ret_type.is_float and lf.ret_type.name == "float"
+    assert any(c.op.startswith("c.fconst:") for c in lf.claims)        # the 0.5f constant
+    assert "float t" in emit_function(lf)                             # temps render as float, not uint32
+
+    # double arithmetic; a comparison over floats yields int (not float).
+    rd = compile_unit("double g(double x){ return x * 2.0 + 1.0; }\n")
+    assert rd.is_clean and eqok(rd)
+    rc = compile_unit("int lt(float a, float b){ return a < b; }\n")
+    lc = rc.lowered.functions["lt"]
+    cmp = [c for c in lc.claims if c.op == "c.bin.lt"][0]
+    ct = lc.rid_types.get(cmp.wr[0])
+    assert ct is not None and not ct.is_float                        # a comparison result is int
+    assert rc.is_clean and eqok(rc)
+
+
 # --- L2: struct / union layout + member access ---------------------------------------------------
 
 def test_L2_struct_member_access():

@@ -32,6 +32,39 @@ _OPS = ["<<=", ">>=", "->", "++", "--", "<<", ">>", "<=", ">=", "==", "!=", "&&"
 _PUNCT = set("(){}[];,.:?")
 
 
+def _scan_decimal_float(src: str, i: int, n: int) -> int | None:
+    """If `src[i:]` begins a *decimal* floating literal (`1.5` / `.5` / `1.` / `1e10` / `1.5e-3` /
+    `3.14f`), return its end index, else None. A bare integer (no `.` and no exponent) returns None
+    so it lexes as an INT; hex floats (`0x1p4`) are deferred (they stay integer-hex)."""
+    j = i
+    has_digit = False
+    while j < n and (src[j].isdigit() or src[j] == "'"):
+        j += 1
+        has_digit = True
+    has_dot = False
+    if j < n and src[j] == ".":
+        has_dot = True
+        j += 1
+        while j < n and (src[j].isdigit() or src[j] == "'"):
+            j += 1
+            has_digit = True
+    has_exp = False
+    if has_digit and j < n and src[j] in "eE":                # an exponent: e[+-]?digits
+        k = j + 1
+        if k < n and src[k] in "+-":
+            k += 1
+        if k < n and src[k].isdigit():
+            has_exp = True
+            j = k
+            while j < n and src[j].isdigit():
+                j += 1
+    if not has_digit or not (has_dot or has_exp):             # no fraction/exponent -> not a float
+        return None
+    if j < n and src[j] in "fFlL":                            # f/F (float) or l/L (long double) suffix
+        j += 1
+    return j
+
+
 def tokenize(src: str) -> list[Tok]:
     toks: list[Tok] = []
     i, n = 0, len(src)
@@ -79,6 +112,13 @@ def tokenize(src: str) -> list[Tok]:
             toks.append(Tok("IDENT", src[i:j], i))
             i = j
             continue
+        if ((c.isdigit() and src[i:i + 2] not in ("0x", "0X", "0b", "0B"))   # decimal float literal
+                or (c == "." and i + 1 < n and src[i + 1].isdigit())):        # (.5 / 1.5 / 1e10 / 3.14f)
+            end = _scan_decimal_float(src, i, n)
+            if end is not None:
+                toks.append(Tok("FLOAT", src[i:end], i))
+                i = end
+                continue
         if c.isdigit():                                           # integer literal
             j = i
             if src[j:j + 2] in ("0x", "0X", "0b", "0B"):

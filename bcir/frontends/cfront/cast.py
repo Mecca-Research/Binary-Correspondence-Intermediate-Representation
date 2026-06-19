@@ -28,6 +28,11 @@ class IntLit:
 
 
 @dataclass(frozen=True)
+class FloatLit:
+    value: str          # the literal's source spelling, incl. any suffix (1.5 / 1e10 / 3.14f)
+
+
+@dataclass(frozen=True)
 class StringLit:
     value: str          # the literal's source spelling, including the surrounding quotes
 

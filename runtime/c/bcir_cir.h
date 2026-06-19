@@ -62,6 +62,7 @@ typedef struct bcir_resource {
   uint8_t  is_volatile;      /* MMIO/volatile access */
   uint8_t  read_only;
   uint8_t  kind;             /* bcir_rkind */
+  uint8_t  is_float;         /* a floating value (emit float/double, not uint32_t) */
   char     name[BCIR_CIR_NAME];
   char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
 } bcir_resource;
@@ -75,6 +76,7 @@ typedef struct bcir_ctype {
   uint8_t  is_atomic;        /* _Atomic-qualified (C11/C23 atomics) */
   uint8_t  ptr_to_struct;    /* a pointer whose pointee is a struct */
   uint8_t  is_union;         /* the aggregate is a union (emit `union` not `struct`) */
+  uint8_t  is_float;         /* a floating type (float/double) */
   char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1/ptr_to_struct), or funcptr alias (kind 3) */
   int      adims[3];         /* decayed multi-dim array-param shape (outer-first), for m[i][j] */
   int      nadims;           /* number of array dims (0 == not an array parameter) */

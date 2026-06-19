@@ -18,7 +18,8 @@ class CParseError(Exception):
 
 # type-start keywords (a statement beginning with one of these is a declaration).
 _TYPE_KW = frozenset({"void", "_Bool", "bool", "char", "short", "int", "long", "unsigned",
-                      "signed", "const", "volatile", "static", "inline", "struct", "union"})
+                      "signed", "float", "double", "const", "volatile", "static", "inline",
+                      "struct", "union"})
 # binary operators by ascending precedence groups (C order).
 _PRECEDENCE = [
     ("||",), ("&&",), ("|",), ("^",), ("&",), ("==", "!="), ("<", ">", "<=", ">="),
@@ -687,6 +688,8 @@ class _Parser:
             return cast.IntLit(parse_int_literal(self.nxt().text))
         if self.at("CHAR"):                                   # a character constant -> its int value
             return cast.IntLit(parse_char_literal(self.nxt().text))
+        if self.at("FLOAT"):                                  # a floating-point literal (1.5 / 3.14f)
+            return cast.FloatLit(self.nxt().text)
         if self.at("STRING"):
             text = self.nxt().text
             while self.at("STRING"):                          # adjacent literals concatenate (phase 6),

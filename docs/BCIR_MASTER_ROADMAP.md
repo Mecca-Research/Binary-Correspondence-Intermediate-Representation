@@ -771,7 +771,21 @@ escape never merges with the next piece's leading digit); and **wide/UTF literal
 `L`/`u`/`U`/`u8` on character + string literals (a bare prefix letter stays an identifier; a prefixed
 character constant keeps its code-point value; a prefixed string has the element width of its character
 type — `wchar_t`/`char32_t` = 4, `char16_t` = 2, `char`/`u8` = 1 — so `sizeof` scales and the prefix is
-preserved in the emit). Next: floating/complex/decimal;
+preserved in the emit). ✅ **floating-point (minimal core)** — `float`/`double` types, decimal float
+literals (`1.5`/`1e10`/`.5`/`3.14f`, with the `f`/`F`/`l`/`L` suffix), the four arithmetic operators
+(which propagate the wider float type) + comparisons (which stay int), and float params/locals/returns
+(`cfront_float.c`). The design keeps the **two-truth line intact**: a float value lowers to a
+type-annotated *scalar* claim (dataflow + an integer cost) and the emit renders **real** float C, so
+the actual IEEE-754 math is delegated to the resident backend (BCIR never computes or decides on a
+float value) — the deterministic integer/Q-fixed plan + executor core is untouched, and no float
+reassociation. The one emit change is threading each temp's real type (float/double) instead of
+assuming `uint32_t`. The pp-number lexer was also corrected to span float exponents/suffixes on both
+rails. ✅ **int↔float conversions** — explicit casts `(float)i` / `(double)i` / `(int)f` (a cast to a
+floating type yields a float temp; `(int)f` truncates) and the implicit usual-arithmetic conversions in
+mixed int/float expressions (`cfront_floatcast.c`); the equivalence harness feeds integer scalars below
+2³¹ so the unsigned value model agrees in sign with a signed int→float cast. *Next (float follow-ons):*
+hex-float literals, `long double`/`_Complex`/`_Decimal`, `<math.h>`; and (separately) preprocessor
+comment stripping (phase 3 — today a `* /` inside a comment can be glued to `*/`). Then: complex/decimal;
 variadic functions +
 varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
 Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches
