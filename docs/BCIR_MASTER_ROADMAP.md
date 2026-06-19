@@ -764,8 +764,11 @@ one byte, and a multi-character `'AB'` packs big-endian like Clang/GCC — folde
 length inlines faithfully — the old 32-byte resource-name cap is gone) with **dedup** (identical
 literals in a function share one global); and **adjacent-literal concatenation** `"a" "b"` (C
 translation phase 6 — `sizeof` folds across the pieces, which stay adjacent in the emit so a hex/octal
-escape never merges with the next piece's leading digit). Next: wide/UTF prefixes (`L`/`u`/`U`/`u8`));
-floating/complex/decimal;
+escape never merges with the next piece's leading digit); and **wide/UTF literal prefixes**
+`L`/`u`/`U`/`u8` on character + string literals (a bare prefix letter stays an identifier; a prefixed
+character constant keeps its code-point value; a prefixed string has the element width of its character
+type — `wchar_t`/`char32_t` = 4, `char16_t` = 2, `char`/`u8` = 1 — so `sizeof` scales and the prefix is
+preserved in the emit). Next: floating/complex/decimal;
 variadic functions +
 varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
 Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches

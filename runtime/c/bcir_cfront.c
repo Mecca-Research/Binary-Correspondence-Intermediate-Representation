@@ -77,7 +77,12 @@ static long long parse_int(const char *s, int n) {
  * as a (signed) char; a multi-character constant 'AB' packs big-endian (Clang/GCC: ('A'<<8)|'B'),
  * read as a 32-bit int. s[0..n) includes the surrounding quotes. */
 static long long parse_char(const char *s, int n) {
-  int i = (n>0 && s[0]=='\'') ? 1 : 0, e = (n>0 && s[n-1]=='\'') ? n-1 : n;
+  int i = 0;
+  if (i<n && (s[i]=='L'||s[i]=='u'||s[i]=='U')) {       /* skip an optional wide/UTF prefix L/u/U/u8 */
+    if (s[i]=='u' && i+1<n && s[i+1]=='8') i+=2; else i+=1;
+  }
+  int e = (n>0 && s[n-1]=='\'') ? n-1 : n;
+  if (i<n && s[i]=='\'') i++;                            /* the opening quote */
   int bytes[8], nb=0;
   while (i < e && nb < 8) {
     int b;
@@ -123,6 +128,13 @@ static int str_bytes(const char *s, int n) {
   return cnt;
 }
 
+/* The element size of a (possibly prefixed) string literal on the Linux/Clang ABI: plain/u8 = 1
+ * (char), u = 2 (char16_t), L/U = 4 (wchar_t / char32_t). s[0..n) is the spelling incl. the prefix. */
+static int str_elem_size(const char *s, int n) {
+  if (n>0) { if (s[0]=='u') return (n>1 && s[1]=='8') ? 1 : 2; if (s[0]=='L'||s[0]=='U') return 4; }
+  return 1;
+}
+
 /* String-literal table (the C twin of the oracle's per-function string globals). It stores the full,
  * NUL-terminated spelling so the emitter can render references as the inline literal regardless of
  * length -- lifting the previous BCIR_CIR_NAME (32-byte) cap of carrying the spelling in the resource
@@ -155,6 +167,16 @@ static void lex(CC *c, const char *src) {
     if (*p=='#'){while(*p&&*p!='\n')p++;continue;}   /* preprocessor: L7 */
     if (c->nt>=MAXTOK-1) break;
     tok *t=&c->t[c->nt];
+    if (p[0]=='L'||p[0]=='u'||p[0]=='U'){             /* wide/UTF literal prefix L/u/U/u8 before a quote */
+      const char *qp=0;
+      if (p[0]=='u'&&p[1]=='8'&&(p[2]=='"'||p[2]=='\'')) qp=p+2;
+      else if (p[1]=='"'||p[1]=='\'') qp=p+1;
+      if (qp){ char q=*qp; t->s=p; const char *r=qp+1;
+        while(*r&&*r!=q){ if(*r=='\\'&&r[1]) r+=2; else r++; }
+        if(*r==q) r++; t->n=(int)(r-p); p=r;
+        if (q=='"'){ t->k=T_STR; } else { t->k=T_INT; t->v=parse_char(t->s,t->n); }
+        c->nt++; continue; }
+    }
     if (is_id0(*p)){t->k=T_ID;t->s=p;while(is_idc(*p))p++;t->n=(int)(p-t->s);c->nt++;continue;}
     if (*p>='0'&&*p<='9'){t->k=T_INT;t->s=p;while(is_idc(*p)||*p=='\'')p++;t->n=(int)(p-t->s);
                           t->v=parse_int(t->s,t->n);c->nt++;continue;}
@@ -380,9 +402,10 @@ static uint32_t intern_string(CC *c, const char *s, int n) {
   for (int k=0;k<g_nstr;k++)                                  /* dedup within the current function */
     if (g_strtab[k].fn==c->fn && (int)strlen(g_strtab[k].s)==n && !memcmp(g_strtab[k].s,s,(size_t)n))
       return g_strtab[k].rid;
-  int nbytes = str_bytes(s,n)+1;                              /* char[N] incl. the NUL */
+  int elem = str_elem_size(s,n);                              /* element width (wide/UTF prefix) */
+  int nunits = str_bytes(s,n)+1;                              /* code units incl. the NUL */
   char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"__str%d",g_nstr);
-  uint32_t rid = add_res(c,BCIR_DOM_RAM,1,nbytes,0,BCIR_RK_POINTER,nm);
+  uint32_t rid = add_res(c,BCIR_DOM_RAM,elem,nunits,0,BCIR_RK_POINTER,nm);
   if (c->fn->n_res) c->fn->res[c->fn->n_res-1].read_only=1;   /* a read-only global */
   if (g_nstr<BCIR_MAX_STRLITS) { char *cp=(char*)malloc((size_t)n+1);
     if (cp){ memcpy(cp,s,(size_t)n); cp[n]=0;
@@ -537,8 +560,9 @@ static uint32_t p_primary(CC *c) {
     if(!got){                          /* sizeof <operand>: a variable's static type size */
       int paren=0; if(is(c,"(")){c->i++;paren=1;}
       if(isk(c,T_STR)){ tok st=adv(c);                          /* sizeof a (possibly concatenated) literal */
-        if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn); size=str_bytes(cb?cb:st.s,cb?cn:st.n)+1; free(cb); }
-        else size=str_bytes(st.s,st.n)+1; }                     /* char[N] incl. NUL */
+        if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn); const char *sp=cb?cb:st.s; int sn=cb?cn:st.n;
+          size=(long long)(str_bytes(sp,sn)+1)*str_elem_size(sp,sn); free(cb); }
+        else size=(long long)(str_bytes(st.s,st.n)+1)*str_elem_size(st.s,st.n); }   /* units incl. NUL × width */
       else if(isk(c,T_ID)){ tok vid=*pk(c); venv *v=lookup(c,&vid);
         if(v) size = v->type.kind==2?8:(v->type.kind==1?c->s[v->sidx].size:v->type.size);
         c->i++; }

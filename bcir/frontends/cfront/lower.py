@@ -19,6 +19,7 @@ from dataclasses import dataclass, field, replace
 from ...kbcir import compose
 from ...model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 from . import cast
+from .clex import split_lit_prefix, str_elem_size
 from .ctype_model import (
     AggregateBuilder,
     CType,
@@ -352,17 +353,20 @@ class _FuncLowerer:
     def _string_ptr(self, spelling: str) -> int:
         """A string literal -> an anonymous read-only `char[]` global (NUL-terminated); the value is a
         pointer to it (decay). The emitter renders references to it as the inline literal, which is
-        Clang-equivalent, so no synthesized global declaration is needed."""
+        Clang-equivalent, so no synthesized global declaration is needed. A wide/UTF prefix
+        (`L`/`u`/`U`/`u8`) sets the element width (`wchar_t`/`char16_t`/`char32_t`/`char`)."""
         existing = self.str_pool.get(spelling)                # dedup: identical literals share a global
         if existing is not None:
             return existing
-        nbytes = _str_bytes(spelling) + 1                     # the decoded bytes + the NUL
+        prefix, _ = split_lit_prefix(spelling)
+        elem = str_elem_size(prefix)                          # 1 (char/u8) / 2 (u) / 4 (L/U)
+        nunits = _str_bytes(spelling) + 1                     # the decoded code units + the NUL
         idx = self.strctr[0]
         self.strctr[0] += 1
         rid = 970000 + idx
-        self.gres[rid] = Resource(rid=rid, domain=Domain.RAM, elem_bytes=1, shape=(nbytes,),
+        self.gres[rid] = Resource(rid=rid, domain=Domain.RAM, elem_bytes=elem, shape=(nunits,),
                                   access="ro", data_gen=1, name=f"__str{idx}")
-        self.rtypes[rid] = array(scalar("char"), nbytes)
+        self.rtypes[rid] = array(scalar("char" if elem == 1 else f"uint{elem * 8}_t"), nunits)
         self.str_globals[rid] = spelling                      # rid -> the literal spelling (for emit)
         self.str_pool[spelling] = rid
         return rid
@@ -424,7 +428,8 @@ class _FuncLowerer:
             if node.type is not None:
                 size = self._resolve_type(node.type).size
             elif isinstance(node.expr, cast.StringLit):
-                size = _str_bytes(node.expr.value) + 1         # char[N]: the bytes + the NUL
+                prefix, _ = split_lit_prefix(node.expr.value)
+                size = (_str_bytes(node.expr.value) + 1) * str_elem_size(prefix)   # units incl. NUL × width
             elif isinstance(node.expr, cast.Name):
                 size = self.env[node.expr.ident][1].size       # the variable's declared type size
             else:
