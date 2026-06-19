@@ -1,5 +1,6 @@
 """C lexer for the frontend subset. Tokenizes identifiers/keywords, integer literals (decimal, hex
-`0x`, binary `0b`, C23 digit separators `'`, `u/U/l/L` suffixes), the operators L1–L4 need, and
+`0x`, binary `0b`, C23 digit separators `'`, `u/U/l/L` suffixes), floating literals (decimal and
+C `0x1.8p3` hex floats, with `f`/`l` suffixes), the operators L1–L4 need, and
 punctuation; skips whitespace, `//` + `/* */` comments, and (for now) preprocessor `#` lines —
 `#include <stdint.h>` is recognized but its types are built in, so the L7 preprocessor is deferred.
 """
@@ -35,7 +36,7 @@ _PUNCT = set("(){}[];,.:?")
 def _scan_decimal_float(src: str, i: int, n: int) -> int | None:
     """If `src[i:]` begins a *decimal* floating literal (`1.5` / `.5` / `1.` / `1e10` / `1.5e-3` /
     `3.14f`), return its end index, else None. A bare integer (no `.` and no exponent) returns None
-    so it lexes as an INT; hex floats (`0x1p4`) are deferred (they stay integer-hex)."""
+    so it lexes as an INT; hex floats (`0x1p4`) are handled separately by `_scan_hex_float`."""
     j = i
     has_digit = False
     while j < n and (src[j].isdigit() or src[j] == "'"):
@@ -59,6 +60,42 @@ def _scan_decimal_float(src: str, i: int, n: int) -> int | None:
             while j < n and src[j].isdigit():
                 j += 1
     if not has_digit or not (has_dot or has_exp):             # no fraction/exponent -> not a float
+        return None
+    if j < n and src[j] in "fFlL":                            # f/F (float) or l/L (long double) suffix
+        j += 1
+    return j
+
+
+_HEXD = "0123456789abcdefABCDEF'"      # hex digits (with the C23 ' separator)
+
+
+def _scan_hex_float(src: str, i: int, n: int) -> int | None:
+    """If `src[i:]` begins a C hex floating literal (`0x1p4` / `0x1.8p3` / `0x.8p1` / `0xAp-2f`),
+    return its end index, else None. A hex float needs the `0x` prefix, at least one significand hex
+    digit, and a *mandatory* binary `p`/`P` exponent (decimal digits) — the `p` is what distinguishes
+    it from a plain hex integer like `0x1f`. The significand may carry a `.` and C23 `'` separators."""
+    if src[i:i + 2] not in ("0x", "0X"):
+        return None
+    j = i + 2
+    start = j
+    while j < n and src[j] in _HEXD:                          # the integer part of the significand
+        j += 1
+    has_sig = j > start
+    if j < n and src[j] == ".":                               # an optional fractional part
+        j += 1
+        fstart = j
+        while j < n and src[j] in _HEXD:
+            j += 1
+        has_sig = has_sig or j > fstart
+    if not has_sig or j >= n or src[j] not in "pP":           # need digits AND the binary exponent
+        return None
+    j += 1
+    if j < n and src[j] in "+-":                              # an optionally-signed exponent
+        j += 1
+    estart = j
+    while j < n and (src[j].isdigit() or src[j] == "'"):
+        j += 1
+    if j == estart:                                           # the exponent needs at least one digit
         return None
     if j < n and src[j] in "fFlL":                            # f/F (float) or l/L (long double) suffix
         j += 1
@@ -115,6 +152,12 @@ def tokenize(src: str) -> list[Tok]:
         if ((c.isdigit() and src[i:i + 2] not in ("0x", "0X", "0b", "0B"))   # decimal float literal
                 or (c == "." and i + 1 < n and src[i + 1].isdigit())):        # (.5 / 1.5 / 1e10 / 3.14f)
             end = _scan_decimal_float(src, i, n)
+            if end is not None:
+                toks.append(Tok("FLOAT", src[i:end], i))
+                i = end
+                continue
+        if src[i:i + 2] in ("0x", "0X"):                          # hex float (0x1p4) vs hex int (0x1f)
+            end = _scan_hex_float(src, i, n)                      # only matches when a `p` exponent is present
             if end is not None:
                 toks.append(Tok("FLOAT", src[i:end], i))
                 i = end
