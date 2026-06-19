@@ -250,6 +250,22 @@ def test_L7_file_macro_real_path():
     compile_unit("unsigned int n(void){ return __LINE__; }\n", filename="k.c", check_clang=False)
 
 
+def test_L7_has_feature_macros():
+    """The `__has_*` feature-test operators in #if: `__has_attribute` reports the L8 ABI attributes
+    (packed/aligned, GCC `__x__` spelling too) and nothing else; `__has_builtin`/`__has_c_attribute`
+    report 0 (none supported yet). All `__has_*` operators are reported as `defined`."""
+    from bcir.frontends.cfront.cpp import preprocess
+    assert preprocess("#if __has_attribute(packed)\nY\n#else\nN\n#endif").strip() == "Y"
+    assert preprocess("#if __has_attribute(__aligned__)\nY\n#else\nN\n#endif").strip() == "Y"
+    assert preprocess("#if __has_attribute(deprecated)\nY\n#else\nN\n#endif").strip() == "N"
+    assert preprocess("#if __has_builtin(__builtin_expect)\nY\n#else\nN\n#endif").strip() == "N"
+    assert preprocess("#if __has_c_attribute(nodiscard)\nY\n#else\nN\n#endif").strip() == "N"
+    # the standard defined-guarded idiom works (the operators report as `defined`).
+    assert preprocess("#ifdef __has_attribute\nD\n#endif").strip() == "D"
+    assert preprocess("#if defined(__has_attribute) && __has_attribute(aligned)\nOK\n#endif").strip() \
+        == "OK"
+
+
 # --- L8: ABI — struct return-by-value, packed/aligned, calling convention vs Clang ----------------
 
 def _clang_layout(struct_src: str, tag: str, fields: list):

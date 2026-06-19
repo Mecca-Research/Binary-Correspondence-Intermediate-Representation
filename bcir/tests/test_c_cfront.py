@@ -754,6 +754,13 @@ def test_c_preprocessor_macros_conditionals_and_embed():
             'int x; _Pragma("once") int y;\n',                   # _Pragma operator: a no-op
             'p _Pragma("a(b)c") q\n',                            # balanced parens consumed
             "#define DO(x) _Pragma(#x)\nDO(message hi)\nz\n",    # _Pragma produced by a macro
+            "#if __has_attribute(packed)\nP\n#else\nn\n#endif\n",        # feature-test: supported
+            "#if __has_attribute(__aligned__)\nA\n#endif\n",            # GCC __x__ spelling
+            "#if __has_attribute(deprecated)\nd\n#else\nU\n#endif\n",   # unsupported attribute
+            "#if __has_builtin(__builtin_expect)\nb\n#else\nU\n#endif\n",
+            "#if __has_c_attribute(nodiscard)\nc\n#else\nU\n#endif\n",
+            "#ifdef __has_attribute\nDEF\n#endif\n",                    # reported as `defined`
+            "#if defined(__has_builtin) && !__has_builtin(x)\nG\n#endif\n",
         ]
         for s in probes:
             assert pp(s) == _py_pp(s), f"twin divergence on {s!r}\n C: {pp(s)!r}\nPY: {_py_pp(s)!r}"

@@ -30,10 +30,28 @@ static void undef_macro(const char *n) {
 static const char *g_cur_file = "<source>";
 static int g_cur_line;
 
-/* A macro is "defined" (for #ifdef / defined()) if it is in the table OR is a dynamic predefined. */
+/* The __has_* feature-test operators usable in #if (and reported as `defined`). */
+static int is_has_op(const char *n) {
+  return !strcmp(n, "__has_include") || !strcmp(n, "__has_embed") ||
+         !strcmp(n, "__has_attribute") || !strcmp(n, "__has_builtin") ||
+         !strcmp(n, "__has_c_attribute");
+}
+
+/* A macro is "defined" (for #ifdef / defined()) if it is in the table, a dynamic predefined, or a
+ * __has_* operator. */
 static int is_defined(const char *n) {
   if (find_macro(n, (int)strlen(n)) >= 0) return 1;
-  return !strcmp(n, "__FILE__") || !strcmp(n, "__LINE__");
+  return !strcmp(n, "__FILE__") || !strcmp(n, "__LINE__") || is_has_op(n);
+}
+
+/* __has_attribute(x): the L8 ABI attributes (GCC __x__ spelling accepted), conservatively. */
+static int has_attribute(const char *n) {
+  char b[64]; int j = 0;
+  for (const char *p = n; *p && j < 63; p++) b[j++] = *p;
+  b[j] = 0;
+  char *s = b; while (*s == '_') s++;                /* strip surrounding underscores */
+  size_t L = strlen(s); while (L > 0 && s[L-1] == '_') L--; s[L] = 0;
+  return !strcmp(s, "packed") || !strcmp(s, "aligned");
 }
 
 /* --- preprocessing tokenizer --------------------------------------------- */
@@ -203,7 +221,7 @@ static long ce_bin(CE *c,int minp){
 static long ce_expr(CE *c){return ce_bin(c,1);}
 
 static long eval_if(const char *expr) {
-  /* replace `defined X` / `defined(X)` first, then expand macros, then evaluate. */
+  /* replace `defined X` / `defined(X)` and the __has_* operators first, then expand, then evaluate. */
   static char buf[8192]; size_t w=0; buf[0]=0; int i=0; char t[256];
   while(1){int k=ntok(expr,&i,t,sizeof t); if(!k)break;
     if(k=='i'&&!strcmp(t,"defined")){char p[256]; int j=i; int pk=ntok(expr,&j,p,sizeof p);
@@ -212,6 +230,17 @@ static long eval_if(const char *expr) {
       else {strcpy(nm,p);i=j;}
       has = is_defined(nm);
       buf[w++]= has?'1':'0'; buf[w]=0; continue;}
+    if(k=='i'&&(!strcmp(t,"__has_attribute")||!strcmp(t,"__has_builtin")||
+                !strcmp(t,"__has_c_attribute"))){
+      /* feature-test: only the L8 ABI attributes are honoured (no builtins, no [[...]] attrs). */
+      char nm[256]=""; int j=i; char p[256]; int pk=ntok(expr,&j,p,sizeof p);
+      if(pk&&!strcmp(p,"(")){ int depth=1; char a[256]; int first=1;
+        while(depth){int ak=ntok(expr,&j,a,sizeof a); if(!ak)break;
+          if(!strcmp(a,"("))depth++; else if(!strcmp(a,")")){depth--; if(!depth)break;}
+          else if(first&&ak=='i'){strncpy(nm,a,sizeof nm-1);nm[sizeof nm-1]=0;first=0;} }
+        i=j; }
+      int yes = !strcmp(t,"__has_attribute") && has_attribute(nm);
+      buf[w++]= yes?'1':'0'; buf[w]=0; continue;}
     size_t n=strlen(t); if(w&&needspace(buf[w-1],t[0])){buf[w++]=' ';} memcpy(buf+w,t,n);w+=n;buf[w]=0;}
   static char ex[8192]; expand_line(buf,ex,sizeof ex);
   CE c; c.n=0;c.i=0; int j=0; char tk[64];
