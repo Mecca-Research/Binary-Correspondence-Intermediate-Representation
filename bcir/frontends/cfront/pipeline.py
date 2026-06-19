@@ -18,7 +18,7 @@ import tempfile
 from dataclasses import dataclass, field
 
 from ...channels import host_channel
-from ...kbcir.compose import plan_composite
+from ...kbcir.compose import Effect, plan_composite
 from ...kbcir.cost import Theta
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
@@ -29,7 +29,13 @@ from .cparse import parse_unit, parse_with_recovery
 from .cpp import CPPError, preprocess
 from .diagnostics import DiagnosticReport, SourceDiagnostic, Span
 from .emit import emit_function
-from .lower import CLowerError, LoweredUnit, lower_unit
+from .lower import CLowerError, LoweredUnit, lower_unit, own_footprint
+
+
+# module-scope resource rids (file-scope globals + string-literal globals; see lower_unit) -- the
+# only state shared *between* functions, so the alias/effect footprint is restricted to these for the
+# inter-procedural commutation analysis (per-function local temps live in disjoint rid ranges).
+_SHARED_RID = 900000
 
 
 def _diag_from(e: Exception, phase: str) -> SourceDiagnostic:
@@ -49,6 +55,7 @@ class CompileResult:
     emitted: dict = field(default_factory=dict)       # fn -> C text
     explain: dict = field(default_factory=dict)       # fn -> bcir-explain text
     attestation: dict = field(default_factory=dict)   # fn -> R12/R13/R17/R18 attestation dict
+    effects: dict = field(default_factory=dict)        # fn -> Effect (global read/write footprint)
     diagnostics: list = field(default_factory=list)   # R1–R18 Diagnostics (empty == clean)
     r18_ok: bool = True
     equivalence: str = "skip"                         # match | MISMATCH | skip:<reason>
@@ -61,6 +68,12 @@ class CompileResult:
     @property
     def behaviour_equivalent(self) -> bool:
         return self.equivalence == "match"
+
+    def commute(self, a: str, b: str) -> bool:
+        """Whether functions `a` and `b` are independent -- their alias/effect footprints over shared
+        (module-scope) state do not conflict (no RAW/WAR/WAW), so the inter-procedural scheduler may
+        reorder or overlap them. Two readers of the same global commute; a writer does not."""
+        return not self.effects[a].conflicts(self.effects[b])
 
 
 def _cc():
@@ -124,6 +137,25 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
         res.explain[name] = _explain(lf.module, h, theta, policy)
         res.diagnostics += [Diagnostic(d.law, f"{name}: {d.message}") for d in diags]
 
+    # --- alias/effect footprint per function (over shared/module-scope state) -- the basis for
+    #     commutation/independence. Each function's own footprint is folded with its callees'
+    #     (transitively, recursion-guarded) so a wrapper inherits what it calls. ---
+    _own = {name: own_footprint(lf, _SHARED_RID) for name, lf in lowered.functions.items()}
+
+    def _folded(name: str, seen: frozenset) -> tuple:
+        if name not in _own or name in seen:
+            return frozenset(), frozenset()                # external/opaque callee or a recursion guard
+        seen = seen | {name}
+        reads, writes = set(_own[name][0]), set(_own[name][1])
+        for callee, _actuals in lowered.functions[name].calls:
+            cr, cw = _folded(callee, seen)
+            reads |= cr
+            writes |= cw
+        return frozenset(reads), frozenset(writes)
+
+    for name in lowered.functions:
+        res.effects[name] = Effect(*_folded(name, frozenset()))
+
     # --- R18: the inter-procedural call graph, via the real plan_composite machinery ---
     if lowered.entry:
         region = lowered.compose_functions[lowered.entry].region
@@ -155,6 +187,12 @@ def _attest(res: CompileResult, fn: str, target: str) -> dict:
     fp = repr([(c.id, c.op, c.opcode.name, c.rd, c.wr, c.imm, c.domain.name) for c in lf.claims])
     digest = hashlib.sha256(fp.encode()).hexdigest()[:16]
     fn_diags = [d for d in res.diagnostics if d.message.startswith(f"{fn}:") or d.law == "R18"]
+    eff = res.effects.get(fn)
+
+    def _names(rids):
+        return ", ".join(sorted(res.lowered.resources[r].name for r in rids
+                                if r in res.lowered.resources)) or "-"
+
     return {
         "function": fn,
         "target": target,
@@ -165,6 +203,8 @@ def _attest(res: CompileResult, fn: str, target: str) -> dict:
         "R13_provenance_digest": digest,
         "R17_accuracy": "exact (integer / Q-fixed, 0 ULP)",
         "R18_callgraph_integrity": "clean" if res.r18_ok else "VIOLATION",
+        "effect_reads": _names(eff.reads) if eff else "-",      # alias/effect footprint (shared state)
+        "effect_writes": _names(eff.writes) if eff else "-",
         "plan_score": str(getattr(res.plans[fn], "score", "?")),
     }
 

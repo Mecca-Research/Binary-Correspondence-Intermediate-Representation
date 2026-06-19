@@ -248,6 +248,38 @@ def _flatten_block(block: list) -> list:
     return out
 
 
+def own_footprint(lf, shared_min: int = 900000) -> tuple:
+    """The function's *own* alias/effect footprint over shared (module-scope) resources -- the global
+    rids it reads and writes directly (callee effects are folded in by the caller). Writes come from
+    claim results (every store/copy of a global is a claim, so writes are exact). Reads come from
+    claim operands *plus* the rids referenced by control conditions and `return`, which name a value
+    without emitting a read claim -- so the read set stays sound for a bare `return g;` / `if (g)`."""
+    reads = {r for c in lf.claims for r in c.rd if r >= shared_min}
+    writes = {w for c in lf.claims for w in c.wr if w >= shared_min}
+    if lf.return_rid is not None and lf.return_rid >= shared_min:
+        reads.add(lf.return_rid)
+
+    def walk(nodes):
+        for n in nodes:
+            if isinstance(n, ReturnNode):
+                if n.rid is not None and n.rid >= shared_min:
+                    reads.add(n.rid)
+            elif isinstance(n, IfNode):
+                if n.cond >= shared_min:
+                    reads.add(n.cond)
+                walk(n.then)
+                walk(n.els)
+            elif isinstance(n, WhileNode):
+                if n.cond >= shared_min:
+                    reads.add(n.cond)
+                walk(n.cond_block)
+                walk(n.body)
+                walk(n.step)
+
+    walk(lf.body)
+    return frozenset(reads), frozenset(writes)
+
+
 @dataclass
 class LoweredFunc:
     """One C function lowered: its claim-graph `Module`, the value/SSA bookkeeping the emitter needs,
