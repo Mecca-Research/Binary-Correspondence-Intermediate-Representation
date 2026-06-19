@@ -130,6 +130,16 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — compound assignment `name OP= expr`.** The register /
+  bit-manipulation idiom (`reg |= MASK`, `flags &= ~BIT`, `acc += step`) -- a real gap: the C rail
+  parse-errored on every compound assignment (its lexer did not even tokenize `+= -= *= /= %= &= |=
+  ^=`, splitting `|=` into `|` then `=`). Now the lexer emits those eight two-char tokens, and the
+  statement parser desugars `name OP= expr` to `name = name OP expr` -- a `c.bin.<op>` claim plus a
+  `c.copy` into the named storage -- exactly the claim sequence the oracle already produced (its
+  parser desugars compound assignment). New fixture `cfront_compound.c` (`|=`, `&=`, `+=`, `^=` on a
+  named local) matches on both rails (`funcs=1 claims=11 const=2 binop=4 ok=1`), is Clang-behaviour-
+  equivalent, and runs the full C compile->execute loop. Wired into `_STRAIGHTLINE` +
+  `tools/c/check_runtime.sh`; warning-clean; 695 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — file-scope lookup tables.** A `static const T NAME[N] = {...}`
   array at file scope, indexed at runtime -- the driver calibration / jump-table pattern. The C rail
   had no file-scope global support at all (a global declaration was a parse error -- the top loop

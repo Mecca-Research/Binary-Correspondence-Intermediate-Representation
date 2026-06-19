@@ -706,7 +706,11 @@ pattern; `cfront_static.c`, both rails `claims=2 ok=1`, runs the loop), and ✅ 
 tables** (a `static const T NAME[N] = {...}` global indexed at runtime -- the driver calibration /
 jump-table pattern; the global lowers to a read-only data resource, an access `NAME[i]` is an indexed
 load emitted by name, and the global is referenced (not redeclared, defined in the source);
-`cfront_global.c`, both rails `claims=5 ok=1`, runs the loop); still cross-clause
+`cfront_global.c`, both rails `claims=5 ok=1`, runs the loop), and ✅ **compound assignment**
+(`name OP= expr` -- the register / bit-manipulation idiom `reg |= MASK`, `flags &= ~BIT`; each
+desugars to `name = name OP expr` = a binary op + a copy on both rails, the C lexer gaining the
+`+= -= *= /= %= &= |= ^=` tokens; `cfront_compound.c`, both rails `claims=11 ok=1`, runs the loop);
+still cross-clause
 fallthrough; designated +
 compound initializers; the rest of storage/linkage (`extern`/`thread_local`, scalar globals); `restrict` +
 alias/effect propagation; `_Atomic` + C-memory-model legality; scalable IR allocation (no fixed
