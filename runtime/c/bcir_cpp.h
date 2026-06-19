@@ -3,8 +3,8 @@
  * A C preprocessor for the plug-in compiler: object- and function-like #define macros
  * (with # stringize and ## paste), #undef, conditional compilation (#if / #ifdef /
  * #ifndef / #elif / #elifdef / #elifndef / #else / #endif with an integer
- * constant-expression evaluator + `defined` + `__has_attribute`/`__has_builtin`/
- * `__has_c_attribute`), the predefined macros __FILE__ / __LINE__ /
+ * constant-expression evaluator + `defined` + `__has_include` + `__has_attribute`/
+ * `__has_builtin`/`__has_c_attribute`), the predefined macros __FILE__ / __LINE__ /
  * __DATE__ / __TIME__ (and the static __STDC__ / __STDC_VERSION__ / __STDC_HOSTED__), the #line
  * directive, the _Pragma operator, #include of project headers, and C23 #embed. It runs before
  * bcir_cfront's lexer, emitting
