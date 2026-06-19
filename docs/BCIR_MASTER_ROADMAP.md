@@ -719,10 +719,15 @@ the write side register maps need; `cfront_bitfield.c`, both rails `claims=5 mmi
 ✅ **bitfield compound-assignment** (`r->field OP= bits` -- read the field via `c.bf.get`, op, re-insert
 via `c.bf.set`, store; one unified member-assign path now covers plain/bitfield x plain/compound;
 `cfront_bfcompound.c`, both rails `claims=15 mmio=5 bf=3 ok=1`);
+and ✅ **C11 `<stdatomic.h>` atomics** (the `_Atomic` type qualifier parses + round-trips like
+`volatile`, and the generic functions `atomic_fetch_add`/`atomic_fetch_sub`/`atomic_fetch_xor` /
+`atomic_load` / `atomic_store` on an `_Atomic` object lower to the BCIR ATOMIC opcodes on lane A with
+the atomic hazard -- emitted as the C11 functions themselves, which accept an `_Atomic*` where the
+GCC `__atomic_*` builtins do not; `cfront_atomic11.c`, both rails `claims=5 ok=1`, runs the loop);
 still cross-clause
 fallthrough; designated +
 compound initializers; the rest of storage/linkage (`extern`/`thread_local`, scalar globals); `restrict` +
-alias/effect propagation; `_Atomic` + C-memory-model legality; scalable IR allocation (no fixed
+alias/effect propagation; atomic compare-exchange + the fuller C memory model; scalable IR allocation (no fixed
 `BCIR_MAX_*`); fuller x86-64/AArch64 ABI; real object/dependency output via a resident backend. **Exit:**
 BCIR compiles a freestanding embedded C test suite + a nontrivial driver codebase with no hand-written
 claim graphs. ✅ **Composition checkpoint:** `cfront_integration.c` -- a realistic driver combining

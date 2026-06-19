@@ -27,6 +27,7 @@ from .ctype_model import (
     is_scalar_name,
     pointer,
     scalar,
+    with_atomic,
     with_volatile,
 )
 
@@ -214,6 +215,8 @@ class _FuncLowerer:
             raise CLowerError(f"unknown type {tref.base!r}")
         if "volatile" in tref.quals:                       # volatile pointee/object -> MMIO region
             base = with_volatile(base)
+        if "_Atomic" in tref.quals:                        # _Atomic-qualified object (C11/C23)
+            base = with_atomic(base)
         t = base
         for _ in range(tref.ptr):
             t = pointer(t)
@@ -450,6 +453,11 @@ class _FuncLowerer:
     # form returns the pre-swap value, the `bool` form returns whether the swap happened.
     _CMPXCHG = {"__sync_val_compare_and_swap": "c.cmpxchg.val",
                 "__sync_bool_compare_and_swap": "c.cmpxchg.bool"}
+    # C11 <stdatomic.h> generics on _Atomic objects -> the same ATOMIC opcodes, but emitted as the C11
+    # functions (which accept an _Atomic* -- the __atomic_* builtins do not).
+    _C11_RMW = {"atomic_fetch_add": ("c.c11atom.fetch_add", Opcode.ATOMIC_ADD),
+                "atomic_fetch_sub": ("c.c11atom.fetch_sub", Opcode.ATOMIC_SUB),
+                "atomic_fetch_xor": ("c.c11atom.fetch_xor", Opcode.ATOMIC_XOR)}
 
     def _call(self, node: cast.CallExpr) -> int:
         actuals = tuple(self._rvalue(a) for a in node.args)
@@ -484,6 +492,26 @@ class _FuncLowerer:
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
             return self._emit(op, Opcode.CMPXCHG, (ptr, exp, des), (t,),
                               lane=Lane.A, domain=dom, hazard="atomic")
+        if node.callee in self._C11_RMW:               # atomic_fetch_add/sub/xor(p, v) -> old value
+            op, oc = self._C11_RMW[node.callee]
+            ptr = actuals[0]
+            val = actuals[1] if len(actuals) > 1 else actuals[0]
+            t = self._temp(scalar("uint32_t"), "c11")
+            dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
+            return self._emit(op, oc, (ptr, val), (t,), lane=Lane.A, domain=dom, hazard="atomic")
+        if node.callee == "atomic_load":               # atomic_load(p) -> *p (ordered)
+            ptr = actuals[0]
+            t = self._temp(scalar("uint32_t"), "c11ld")
+            dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
+            return self._emit("c.c11atom.load", Opcode.LOAD, (ptr,), (t,),
+                              lane=Lane.A, domain=dom, hazard="atomic")
+        if node.callee == "atomic_store":              # atomic_store(p, v) (ordered, no value)
+            ptr = actuals[0]
+            val = actuals[1] if len(actuals) > 1 else actuals[0]
+            dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
+            self._emit("c.c11atom.store", Opcode.STORE, (ptr, val), (),
+                       lane=Lane.A, domain=dom, hazard="atomic")
+            return ptr
         t = self._temp(scalar("uint32_t"), f"call_{node.callee}")
         self.calls.append((node.callee, actuals))
         return self._emit(f"c.call:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))

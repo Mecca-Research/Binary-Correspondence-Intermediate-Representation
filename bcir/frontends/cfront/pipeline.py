@@ -218,6 +218,7 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
     return f"""#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdatomic.h>
 {source}
 
 {emitted}

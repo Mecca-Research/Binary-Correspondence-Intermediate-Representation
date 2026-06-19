@@ -260,7 +260,7 @@ class _Parser:
         td: cast.TypeRef | None = None
         while self.at("IDENT"):
             w = self.peek().text
-            if w in ("const", "volatile"):
+            if w in ("const", "volatile", "_Atomic"):
                 quals.append(w)
                 self.nxt()
             elif w in ("static", "inline", "signed"):
