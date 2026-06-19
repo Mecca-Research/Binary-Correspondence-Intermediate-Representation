@@ -4,6 +4,7 @@ of an uncaught exception."""
 from __future__ import annotations
 
 from bcir.frontends.cfront import diagnose
+from bcir.frontends.cfront.cparse import CParseError
 from bcir.frontends.cfront.diagnostics import (
     FixIt,
     Note,
@@ -101,3 +102,45 @@ def test_diagnose_undeclared_identifier_is_a_clean_diagnostic():
 def test_diagnose_clean_unit_reports_nothing():
     rep = diagnose("int f(int x){ return x + 1; }\n")
     assert rep.ok and rep.diagnostics == []
+
+
+# --- segment 1b: parser error recovery (several diagnostics per run) ------------------------------
+
+def test_recovery_reports_multiple_statement_errors_in_one_body():
+    # two malformed statements in the same function: panic-mode recovery resynchronizes on `;` and
+    # reports both, each located, rather than stopping at the first.
+    src = "int f(void){\n    int a = ;\n    int b = 1;\n    return b +;\n}\n"
+    rep = diagnose(src, filename="t.c")
+    assert len(rep.diagnostics) == 2 and all(d.phase == "parse" for d in rep.diagnostics)
+    lines = [line_col(rep.source, d.span.start)[0] for d in rep.diagnostics]
+    assert lines == sorted(lines)                              # reported in source order
+    rendered = rep.render()
+    assert rendered.count("error:") == 2 and rendered.count("^") == 2
+
+
+def test_recovery_resynchronizes_and_still_parses_the_good_declaration():
+    from bcir.frontends.cfront.cparse import parse_with_recovery
+    # a broken global, then a well-formed function: recovery skips the bad decl and parses `good`.
+    unit, diags = parse_with_recovery("int 3bad;\nint good(void){ return 0; }\n")
+    assert len(diags) == 1 and diags[0].phase == "parse"
+    assert any(fn.name == "good" for fn in unit.funcs)         # the later declaration survived
+
+
+def test_recovery_reports_several_top_level_errors():
+    rep = diagnose("int 1x;\nint 2y;\nint ok(void){ return 0; }\n", filename="t.c")
+    assert len(rep.diagnostics) == 2                           # both bad globals, the good fn is silent
+
+
+def test_compile_unit_still_raises_on_a_parse_error():
+    # the compile path keeps its one-shot contract (it needs a well-formed AST); only diagnose recovers.
+    from bcir.frontends.cfront import compile_unit
+    try:
+        compile_unit("int f(void){ return 1 }\n", check_clang=False)
+        raise AssertionError("compile_unit should raise CParseError on malformed input")
+    except CParseError:
+        pass
+
+
+def test_single_error_still_reported_after_recovery_added():
+    rep = diagnose("int f(void){ return 1 }\n", filename="t.c")
+    assert len(rep.diagnostics) == 1 and rep.diagnostics[0].phase == "parse"

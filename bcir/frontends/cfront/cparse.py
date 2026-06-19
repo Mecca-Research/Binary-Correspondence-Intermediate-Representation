@@ -10,6 +10,7 @@ from __future__ import annotations
 from . import cast
 from .clex import KEYWORDS, Tok, parse_char_literal, parse_int_literal, tokenize
 from .ctype_model import is_scalar_name
+from .diagnostics import SourceDiagnostic, Span
 
 
 class CParseError(Exception):
@@ -39,6 +40,49 @@ class _Parser:
         self.tags = tags                      # known struct/union tags (for type detection)
         self.typedefs: dict[str, cast.TypeRef] = {}   # typedef name -> the aliased type
         self.enums: dict[str, int] = {}               # enumerator name -> its integer value
+        self.recover = False                  # panic-mode recovery: collect diagnostics, don't raise
+        self.diags: list = []                 # list[SourceDiagnostic] accumulated when recover is on
+
+    # --- error recovery (panic mode): on a parse error, record a diagnostic and skip to the next
+    # synchronization boundary, so one run reports several independent errors instead of just the
+    # first. Each helper consumes at least one token off a non-boundary error, so progress (and
+    # therefore termination) is guaranteed.
+    def _record(self, e: "CParseError") -> None:
+        pos = getattr(e, "pos", None)
+        span = Span.at(pos) if pos is not None else None
+        self.diags.append(SourceDiagnostic("error", str(e), span=span, phase="parse"))
+
+    def _sync_toplevel(self) -> None:
+        """Skip to the next top-level boundary: past a depth-0 `;` (a global/forward decl) or the
+        `}` that closes the body we were parsing, so `parse_unit` can resume at the next declaration."""
+        depth = 0
+        while not self.at("EOF"):
+            t = self.nxt()
+            if t.kind == "PUNCT" and t.text == "{":
+                depth += 1
+            elif t.kind == "PUNCT" and t.text == "}":
+                depth -= 1
+                if depth <= 0:
+                    return
+            elif t.kind == "PUNCT" and t.text == ";" and depth == 0:
+                return
+
+    def _sync_stmt(self) -> bool:
+        """Skip to the next statement boundary inside a block: past a depth-0 `;`, returning True to
+        resume the block. Returns False at the block's own closing `}` (left for `_block` to consume)
+        or at EOF, so the block loop stops instead of spinning."""
+        depth = 0
+        while not self.at("EOF"):
+            if depth == 0 and self.at("PUNCT", "}"):
+                return False
+            t = self.nxt()
+            if t.kind == "PUNCT" and t.text == "{":
+                depth += 1
+            elif t.kind == "PUNCT" and t.text == "}":
+                depth -= 1
+            elif t.kind == "PUNCT" and t.text == ";" and depth == 0:
+                return True
+        return False
 
     # --- token helpers ---
     def peek(self, k: int = 0) -> Tok:
@@ -91,37 +135,48 @@ class _Parser:
     def parse_unit(self) -> cast.Unit:
         unit = cast.Unit()
         while not self.at("EOF"):
-            if self.at("IDENT", "typedef"):                    # a type alias (resolved at parse time)
-                self._typedef(unit)
+            if not self.recover:
+                self._toplevel_item(unit)
                 continue
-            if self.at("IDENT", "enum"):
-                save = self.i
-                self.nxt()
-                tag = self.eat("IDENT").text if self.at("IDENT") else ""
-                if self.at("PUNCT", "{"):                      # an enum definition: register the values
-                    self._enum_body(tag)
-                    self.eat("PUNCT", ";")
-                    continue
-                self.i = save                                  # `enum tag` used as a type
-            if self.at("IDENT", "struct") or self.at("IDENT", "union"):
-                save = self.i
-                kind = self.nxt().text
-                attrs = self._attributes()
-                tag = self.eat("IDENT").text if self.at("IDENT") else ""
-                if self.at("PUNCT", "{"):                      # an aggregate definition
-                    agg = self._aggregate_body(kind, tag, attrs)
-                    unit.aggregates[agg.tag] = agg
-                    self.tags.add(agg.tag)
-                    self.eat("PUNCT", ";")
-                    continue
-                self.i = save                                  # a struct *type* (func ret / global)
-            tref = self._type_spec()
-            tref, name = self._declarator(tref)
-            if self.at("PUNCT", "("):                          # a function definition
-                unit.funcs.append(self._func_body(tref, name))
-            else:                                              # a file-scope global variable
-                unit.globals.append(self._global(tref, name))
+            try:                                               # panic-mode recovery: keep going past
+                self._toplevel_item(unit)                      # a bad declaration to report the next
+            except CParseError as e:
+                self._record(e)
+                self._sync_toplevel()
         return unit
+
+    def _toplevel_item(self, unit: cast.Unit) -> None:
+        """Parse one top-level item (typedef / enum / aggregate definition / function / global)."""
+        if self.at("IDENT", "typedef"):                        # a type alias (resolved at parse time)
+            self._typedef(unit)
+            return
+        if self.at("IDENT", "enum"):
+            save = self.i
+            self.nxt()
+            tag = self.eat("IDENT").text if self.at("IDENT") else ""
+            if self.at("PUNCT", "{"):                          # an enum definition: register the values
+                self._enum_body(tag)
+                self.eat("PUNCT", ";")
+                return
+            self.i = save                                      # `enum tag` used as a type
+        if self.at("IDENT", "struct") or self.at("IDENT", "union"):
+            save = self.i
+            kind = self.nxt().text
+            attrs = self._attributes()
+            tag = self.eat("IDENT").text if self.at("IDENT") else ""
+            if self.at("PUNCT", "{"):                          # an aggregate definition
+                agg = self._aggregate_body(kind, tag, attrs)
+                unit.aggregates[agg.tag] = agg
+                self.tags.add(agg.tag)
+                self.eat("PUNCT", ";")
+                return
+            self.i = save                                      # a struct *type* (func ret / global)
+        tref = self._type_spec()
+        tref, name = self._declarator(tref)
+        if self.at("PUNCT", "("):                              # a function definition
+            unit.funcs.append(self._func_body(tref, name))
+        else:                                                  # a file-scope global variable
+            unit.globals.append(self._global(tref, name))
 
     def _typedef(self, unit: cast.Unit) -> None:
         """`typedef <type> <name>;` -- register `name` -> the aliased type (resolved at parse time,
@@ -381,7 +436,15 @@ class _Parser:
         self.eat("PUNCT", "{")
         stmts = []
         while not self.at("PUNCT", "}"):
-            stmts.append(self._stmt())
+            if not self.recover:
+                stmts.append(self._stmt())
+                continue
+            try:                                              # statement-level recovery: a bad
+                stmts.append(self._stmt())                    # statement doesn't abandon the block
+            except CParseError as e:
+                self._record(e)
+                if not self._sync_stmt():                     # hit the block's `}` / EOF -> stop
+                    break
         self.eat("PUNCT", "}")
         return tuple(stmts)
 
@@ -720,6 +783,17 @@ class _Parser:
 
 
 def parse_unit(src: str) -> cast.Unit:
-    """Parse one C translation unit (the L1–L4 subset) into the `cast` AST."""
+    """Parse one C translation unit (the L1–L4 subset) into the `cast` AST, raising on the first
+    error (the compile path needs a well-formed AST)."""
     toks = tokenize(src)
     return _Parser(toks, set()).parse_unit()
+
+
+def parse_with_recovery(src: str) -> tuple[cast.Unit, list]:
+    """Parse with panic-mode recovery, returning the (partial) AST and *every* parse diagnostic the
+    run found -- the diagnostics entry uses this so one invocation reports several errors. A CLexError
+    still propagates (lexer recovery is a separate concern)."""
+    p = _Parser(tokenize(src), set())
+    p.recover = True
+    unit = p.parse_unit()
+    return unit, p.diags
