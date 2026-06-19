@@ -715,7 +715,10 @@ the most common driver operation; a compound assignment to a volatile struct mem
 MMIO load + a binary op + an ordered MMIO store; `cfront_rmw.c`, both rails `claims=8 mmio=3 ok=1`),
 and ✅ **MMIO bitfield write** (`r->field = v` for a named bitfield -- read the storage unit, insert
 the masked bits (`c.bf.set`), store back; bitfield reads (`c.bf.get`) already worked, this completes
-the write side register maps need; `cfront_bitfield.c`, both rails `claims=5 mmio=2 bf=1 ok=1`);
+the write side register maps need; `cfront_bitfield.c`, both rails `claims=5 mmio=2 bf=1 ok=1`), and
+✅ **bitfield compound-assignment** (`r->field OP= bits` -- read the field via `c.bf.get`, op, re-insert
+via `c.bf.set`, store; one unified member-assign path now covers plain/bitfield x plain/compound;
+`cfront_bfcompound.c`, both rails `claims=15 mmio=5 bf=3 ok=1`);
 still cross-clause
 fallthrough; designated +
 compound initializers; the rest of storage/linkage (`extern`/`thread_local`, scalar globals); `restrict` +

@@ -130,6 +130,18 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — bitfield compound-assignment `r->field OP= bits`.** The
+  read-modify a multi-bit register field in place pattern -- it composes the bitfield read + write
+  paths: read the field (`c.bf.get`), apply the binary op, re-insert the masked result (`c.bf.set`),
+  and store the unit back (ordered MMIO for a volatile pointee). The C member-assign path is unified
+  so the four cases (plain / bitfield x plain / compound) share one code path -- the compound branch
+  reads the field via `emit_member` (a bitfield reads through `c.bf.get`, a plain member through a
+  plain load) and the bitfield-ness only governs the store (a unit load + `c.bf.set` + store vs. a
+  plain store). This matches the oracle, which already lowered bitfield compound-assignment. New
+  fixture `cfront_bfcompound.c` (`r->mode |= b`, `r->prio &= 3u`, then a bitfield read) matches on
+  both rails (`funcs=1 claims=15 mmio=5 bf=3 const=1 binop=2 ok=1`) and is Clang-behaviour-equivalent
+  (idempotent ops -> the generic shared-buffer harness is valid). Wired into `_ABI` +
+  `tools/c/check_runtime.sh`; warning-clean; 696 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — register-map composition checkpoint.** A realistic device
   driver (`cfront_regdriver.c`) ingested with no hand-written claim graph, exercising the whole
   register surface *together* in one function: a `switch` over a status field, a multi-bit bitfield

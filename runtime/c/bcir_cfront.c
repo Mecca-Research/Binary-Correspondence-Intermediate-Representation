@@ -700,32 +700,29 @@ static void p_stmt(CC *c) {
       c->i+=2; tok fld=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
       if(fi<0){fail(c,"unknown field");return;}
-      if(S->f[fi].bit_w&&c->t[c->i].k==T_PUN&&c->t[c->i].n==1&&c->t[c->i].s[0]=='='){
-        /* bitfield write `r->field = v`: read the storage unit, insert the bits (c.bf.set), store. */
-        c->i++; uint32_t rhs=p_expr(c);
-        uint32_t unit=temp(c,S->f[fi].size);
-        bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
-        if(ld){ld->n_rd=1;ld->rd[0]=v->rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=S->f[fi].byte_off;ld->imm[1]=S->f[fi].size;ld->bounds=BCIR_BND_ASSUMED;
-          if(v->type.is_volatile){ld->domain=BCIR_DOM_MMIO;ld->lane=BCIR_LANE_H;ld->hazard=BCIR_HZ_BARRIERED;}}
-        uint32_t nu=temp(c,S->f[fi].size);
-        bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
-        if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=rhs;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=S->f[fi].bit_off;bs->imm[1]=S->f[fi].bit_w;}
-        bcir_claim *st=new_claim(c,"c.store",BCIR_OP_STORE);
-        if(st){st->n_rd=2;st->rd[0]=v->rid;st->rd[1]=nu;st->n_imm=2;st->imm[0]=S->f[fi].byte_off;st->imm[1]=S->f[fi].size;st->bounds=BCIR_BND_ASSUMED;
-          if(v->type.is_volatile){st->domain=BCIR_DOM_MMIO;st->lane=BCIR_LANE_H;st->hazard=BCIR_HZ_BARRIERED;}}
-        eat(c,";");return;
-      }
       uint32_t val;
       if(c->t[c->i].k==T_PUN&&c->t[c->i].n==2&&c->t[c->i].s[1]=='='&&strchr("+-*/%&|^",c->t[c->i].s[0])){
-        /* register read-modify-write:  d->reg OP= expr  (the set/clear-bits driver idiom). */
+        /* compound assignment to a member:  r->field OP= expr  (the set/clear-bits driver idiom; a
+         * bitfield field reads via c.bf.get, a plain member via a plain load). */
         char ch=c->t[c->i].s[0]; c->i++;
-        uint32_t cur=emit_member(c,v,&S->f[fi]);    /* load the current value first (matches the oracle) */
+        uint32_t cur=emit_member(c,v,&S->f[fi]);    /* the current field value (loaded first) */
         uint32_t rhs=p_expr(c);
         const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
         uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
       } else { if(!eat(c,"="))return; val=p_expr(c); }
+      if(S->f[fi].bit_w){
+        /* a bitfield store: read the storage unit, insert the masked bits (c.bf.set), store the unit. */
+        uint32_t unit=temp(c,S->f[fi].size);
+        bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
+        if(ld){ld->n_rd=1;ld->rd[0]=v->rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=S->f[fi].byte_off;ld->imm[1]=S->f[fi].size;ld->bounds=BCIR_BND_ASSUMED;
+          if(v->type.is_volatile){ld->domain=BCIR_DOM_MMIO;ld->lane=BCIR_LANE_H;ld->hazard=BCIR_HZ_BARRIERED;}}
+        uint32_t nu=temp(c,S->f[fi].size);
+        bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
+        if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=val;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=S->f[fi].bit_off;bs->imm[1]=S->f[fi].bit_w;}
+        val=nu;
+      }
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=S->f[fi].byte_off;cl->imm[1]=S->f[fi].size;
         cl->bounds=BCIR_BND_ASSUMED;
