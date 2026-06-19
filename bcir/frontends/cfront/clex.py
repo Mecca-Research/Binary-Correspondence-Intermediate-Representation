@@ -54,6 +54,24 @@ def tokenize(src: str) -> list[Tok]:
             while i < n and src[i] != "\n":
                 i += 1
             continue
+        if c in "LuU":                                            # wide/UTF literal prefix L/u/U/u8
+            pfx = ""                                              # before a " or ' (else an identifier)
+            if src[i:i + 2] == "u8" and i + 2 < n and src[i + 2] in "\"'":
+                pfx = "u8"
+            elif i + 1 < n and src[i + 1] in "\"'":
+                pfx = c
+            if pfx:
+                q = i + len(pfx)
+                quote = src[q]
+                j = q + 1
+                while j < n and src[j] != quote:
+                    j += 2 if (src[j] == "\\" and j + 1 < n) else 1
+                if j >= n:
+                    raise CLexError(f"unterminated {'string' if quote == chr(34) else 'character'} "
+                                    f"literal at offset {i}")
+                toks.append(Tok("STRING" if quote == '"' else "CHAR", src[i:j + 1], i))
+                i = j + 1
+                continue
         if c.isalpha() or c == "_":                               # identifier / keyword
             j = i
             while j < n and (src[j].isalnum() or src[j] == "_"):
@@ -106,6 +124,23 @@ def tokenize(src: str) -> list[Tok]:
 _SIMPLE_ESCAPE = {"n": 10, "t": 9, "r": 13, "\\": 92, "'": 39, '"': 34,
                   "a": 7, "b": 8, "f": 12, "v": 11, "?": 63}
 
+_LIT_PREFIXES = ("u8", "L", "u", "U")           # wide/UTF string + character literal prefixes
+
+
+def split_lit_prefix(text: str) -> tuple[str, str]:
+    """Split an optional wide/UTF prefix (`L` / `u` / `U` / `u8`) off a string/character literal's
+    spelling, returning ``(prefix, rest)`` where ``rest`` begins with the opening quote."""
+    for p in _LIT_PREFIXES:
+        if text.startswith(p) and len(text) > len(p) and text[len(p)] in "\"'":
+            return p, text[len(p):]
+    return "", text
+
+
+def str_elem_size(prefix: str) -> int:
+    """The element size of a string literal with this prefix on the Linux/Clang ABI: plain/`u8` = 1
+    (`char`), `u` = 2 (`char16_t`), `L`/`U` = 4 (`wchar_t` / `char32_t`)."""
+    return {"u": 2, "L": 4, "U": 4}.get(prefix, 1)
+
 
 def decode_c_bytes(inner: str) -> list[int]:
     """Decode the *inner* text of a string/character literal (surrounding quotes already stripped)
@@ -139,7 +174,9 @@ def decode_c_bytes(inner: str) -> list[int]:
 def parse_char_literal(text: str) -> int:
     """Decode a C character constant to its `int` value. A single character is its byte value
     sign-extended as a (signed) `char`; a multi-character constant `'AB'` packs big-endian
-    (Clang/GCC: `('A'<<8)|'B'`), interpreted as a 32-bit `int`. `text` includes the quotes."""
+    (Clang/GCC: `('A'<<8)|'B'`), interpreted as a 32-bit `int`. An optional wide/UTF prefix
+    (`L`/`u`/`U`) does not change the (ASCII) code-point value. `text` includes the quotes."""
+    _pfx, text = split_lit_prefix(text)
     inner = text[1:-1] if len(text) >= 2 and text[0] == "'" else text
     bs = decode_c_bytes(inner)
     if not bs:

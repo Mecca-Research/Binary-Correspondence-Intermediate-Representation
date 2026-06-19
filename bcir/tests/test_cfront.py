@@ -147,6 +147,29 @@ def test_L7_string_literal_concatenation():
     assert '"hi " "there"' in lg.globals_used.values()                      # pieces kept adjacent
 
 
+def test_L7_wide_and_utf_literal_prefixes():
+    """Wide/UTF prefixes `L`/`u`/`U`/`u8` on character and string literals: a bare prefix letter is
+    still an identifier; a prefixed character constant keeps its (ASCII) code-point value; a prefixed
+    string literal has the element width of its character type, so `sizeof` scales."""
+    from bcir.frontends.cfront.clex import parse_char_literal, tokenize
+
+    kinds = {(t.kind, t.text) for t in tokenize('L"a" u8"b" u\'c\' U + Label')}
+    assert ("STRING", 'L"a"') in kinds and ("STRING", 'u8"b"') in kinds and ("CHAR", "u'c'") in kinds
+    assert ("IDENT", "U") in kinds and ("IDENT", "Label") in kinds          # bare prefix -> identifier
+    assert parse_char_literal(r"L'\n'") == 10 and parse_char_literal("u'A'") == 65
+
+    def szof(lit: str) -> int:
+        r = compile_unit("uint32_t f(void){ return sizeof %s; }" % lit, check_clang=False)
+        f = r.lowered.functions["f"]
+        return [c for c in f.claims if c.op == "c.const"][-1].imm[0]
+
+    assert szof('"hi"') == 3 and szof('u8"hi"') == 3       # char / char (3 units × 1 byte)
+    assert szof('u"hi"') == 6                              # char16_t (× 2)
+    assert szof('L"hi"') == 12 and szof('U"hi"') == 12     # wchar_t / char32_t (× 4)
+    r = compile_unit("uint32_t f(void){ return L'\\n' + u'A'; }\n")
+    assert r.is_clean and (r.equivalence == "match" or r.equivalence.startswith("skip"))
+
+
 # --- L2: struct / union layout + member access ---------------------------------------------------
 
 def test_L2_struct_member_access():
