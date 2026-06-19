@@ -1,0 +1,75 @@
+"""The cross-platform target-ABI matrix for the C frontend (Phase 4).
+
+`ctype_model` computed `sizeof`/`alignof`/struct layout against a single hard-coded host data model
+(LP64: `long` and pointers 8 bytes, `long double` 16). A *replacement* compiler must lay types out
+for the *selected* target, so this module factors the size-varying part of the C data model into a
+`TargetABI` and a table of the targets the roadmap names (x86-64 / AArch64 / RISC-V) plus the two that
+actually diverge in layout (Windows LLP64, 32-bit ILP32).
+
+What varies across these targets is the data model -- `sizeof(long)`, `sizeof(void *)` (and the
+pointer-tracking types `size_t`/`intptr_t`/`ptrdiff_t`), and `long double`'s size+alignment. The
+fixed-width (`<stdint.h>`) types, `int`, `short`, `char`, and `long long` are invariant. Float/double
+IEEE math and the calling convention stay delegated to the resident backend (the two-truth line);
+this models only the layout the frontend itself decides.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+# scalar names whose size tracks the pointer width (the data model's `intptr`-class types).
+_PTR_TRACKING = frozenset({"size_t", "intptr_t", "uintptr_t", "ptrdiff_t"})
+
+
+@dataclass(frozen=True)
+class TargetABI:
+    """The size-varying part of a target's C data model. `long_size`/`pointer_size`/`long_double_*`
+    are the axes that move across the matrix; everything else (`int`, fixed-width, `long long`) is
+    fixed by C / the common ABIs and lives in `ctype_model._SCALAR`."""
+    name: str                       # short id, e.g. "x86_64-linux"
+    triple: str                     # the Clang target triple (for `-target` / provenance)
+    data_model: str                 # "LP64" | "LLP64" | "ILP32"
+    long_size: int                  # sizeof(long) == sizeof(unsigned long)
+    pointer_size: int               # sizeof(void *); also size_t / intptr_t / ptrdiff_t
+    long_double_size: int
+    long_double_align: int
+    endian: str = "little"
+
+    def scalar_size(self, name: str, default: int) -> int:
+        """The size of an integer scalar under this ABI: `long` and the pointer-tracking types follow
+        the data model; every other name keeps its fixed `default`."""
+        if name in ("long", "unsigned long"):
+            return self.long_size
+        if name in _PTR_TRACKING:
+            return self.pointer_size
+        return default
+
+
+_LP64 = dict(data_model="LP64", long_size=8, pointer_size=8,
+             long_double_size=16, long_double_align=16)
+
+# The named matrix. x86-64 / AArch64 / RISC-V are all LP64, so their *layouts* coincide (they differ
+# in long-double format + calling convention, both delegated to the backend); Windows x64 is LLP64
+# (`long` is 4) and 32-bit x86 is ILP32 (pointers are 4) -- the cases that change what the frontend
+# lays out.
+TARGETS: dict[str, TargetABI] = {
+    "x86_64-linux":   TargetABI("x86_64-linux",   "x86_64-unknown-linux-gnu",   **_LP64),
+    "aarch64-linux":  TargetABI("aarch64-linux",  "aarch64-unknown-linux-gnu",  **_LP64),
+    "riscv64-linux":  TargetABI("riscv64-linux",  "riscv64-unknown-linux-gnu",  **_LP64),
+    "x86_64-windows": TargetABI("x86_64-windows", "x86_64-pc-windows-msvc",
+                                data_model="LLP64", long_size=4, pointer_size=8,
+                                long_double_size=8, long_double_align=8),
+    "i386-linux":     TargetABI("i386-linux",     "i386-unknown-linux-gnu",
+                                data_model="ILP32", long_size=4, pointer_size=4,
+                                long_double_size=12, long_double_align=4),
+}
+
+# The default target -- byte-identical to the constants ctype_model used before this module existed
+# (LP64; an x86-64 / AArch64 Linux host). `scalar(name)` with no abi resolves against it.
+HOST = TARGETS["x86_64-linux"]
+
+
+def target(name: str) -> TargetABI:
+    """Look up a target ABI by short name, with a clear error listing the matrix."""
+    if name not in TARGETS:
+        raise KeyError(f"unknown target {name!r}; choose from {', '.join(sorted(TARGETS))}")
+    return TARGETS[name]

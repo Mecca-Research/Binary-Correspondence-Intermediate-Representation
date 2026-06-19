@@ -81,13 +81,22 @@ def with_atomic(ct: CType, at: bool = True) -> CType:
     return replace(ct, atomic=at) if at else ct
 
 
-def scalar(name: str) -> CType:
+def scalar(name: str, abi=None) -> CType:
+    """A scalar `CType`. With no `abi`, sizes are the host LP64 model (unchanged). With a `TargetABI`,
+    the size-varying types follow the selected data model: `long` and the pointer-tracking integers
+    take the ABI's widths, and `long double` takes the ABI's size *and* alignment (which can differ --
+    12-byte/4-aligned on ILP32)."""
     if name in _FLOAT:
+        if name == "long double" and abi is not None:
+            return CType("scalar", name=name, size=abi.long_double_size,
+                         align=abi.long_double_align, signed=True)
         size = _FLOAT[name]
         return CType("scalar", name=name, size=size, align=max(1, size), signed=True)
     if name not in _SCALAR:
         raise KeyError(f"unknown scalar type {name!r}")
     size, signed = _SCALAR[name]
+    if abi is not None:
+        size = abi.scalar_size(name, size)
     return CType("scalar", name=name, size=size, align=max(1, size), signed=signed)
 
 
@@ -95,8 +104,9 @@ def is_scalar_name(name: str) -> bool:
     return name in _SCALAR or name in _FLOAT
 
 
-def pointer(of: CType) -> CType:
-    return CType("pointer", name="ptr", size=PTR_SIZE, align=PTR_SIZE, signed=False, of=of)
+def pointer(of: CType, abi=None) -> CType:
+    size = abi.pointer_size if abi is not None else PTR_SIZE
+    return CType("pointer", name="ptr", size=size, align=size, signed=False, of=of)
 
 
 def funcptr(name: str, ret: CType, params: tuple = ()) -> CType:

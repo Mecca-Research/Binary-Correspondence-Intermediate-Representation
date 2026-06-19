@@ -133,6 +133,7 @@ _MODULES = [
     "bcir.tests.test_frontends",
     "bcir.tests.test_cfront",
     "bcir.tests.test_cfront_diagnostics",
+    "bcir.tests.test_cfront_abi",
     "bcir.tests.test_telemetry",
     "bcir.tests.test_abi",
     "bcir.tests.test_stackify",
