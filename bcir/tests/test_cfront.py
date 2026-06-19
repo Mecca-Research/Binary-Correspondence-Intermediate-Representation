@@ -111,6 +111,42 @@ def test_L1_character_constants():
     assert sum(1 for c in lf.claims if c.op == "c.const") == 3   # three char constants, all folded
 
 
+def test_L3_string_literal_dedup_and_table():
+    """Identical string literals in a function share one anonymous global (dedup), and a literal
+    longer than any fixed-size name buffer still materializes in full -- the spelling is held
+    out-of-band, so the emit can inline it at any length and stay Clang-equivalent."""
+    long_lit = "this string literal is definitely longer than thirty-two bytes"
+    src = ('uint32_t f(uint32_t i){ return "kv"[i & 1] + "kv"[i & 1] + "%s"[i %% 7]; }\n' % long_lit)
+    r = compile_unit(src, check_clang=False)
+    lf = r.lowered.functions["f"]
+    str_rids = [rid for rid in lf.resources if rid >= 970000]
+    assert len(str_rids) == 2                                    # "kv" used twice -> one global (dedup)
+    assert ('"%s"' % long_lit) in lf.globals_used.values()       # the long literal survives in full
+    assert max(len(s) for s in lf.globals_used.values()) > 34    # past the old 32-byte name cap
+
+
+def test_L7_string_literal_concatenation():
+    """Adjacent string literals concatenate (C translation phase 6): `sizeof` folds across the pieces,
+    and the pieces stay adjacent (not merged into a decoded run), so a hex/octal escape never absorbs
+    the next piece's leading digit -- `"\\x41" "2"` is 'A' then '2', never `\\x412`."""
+    from bcir.frontends.cfront.lower import _str_bytes
+
+    def szof(lit: str) -> int:
+        r = compile_unit("uint32_t f(void){ return sizeof %s; }" % lit, check_clang=False)
+        f = r.lowered.functions["f"]
+        return [c for c in f.claims if c.op == "c.const"][-1].imm[0]
+
+    assert _str_bytes('"abc" "de"') == 5 and szof('"abc" "de"') == 6        # 5 chars + NUL
+    assert _str_bytes(r'"tab\t" "x"') == 5                                  # \t stays one byte
+    assert _str_bytes(r'"\x41" "2"') == 2                                   # escape boundary: 'A','2'
+    assert szof(r'"\x41" "2"') == 3
+    # the concatenation is one literal, so postfix `[]` indexes the joined bytes (8 chars).
+    r = compile_unit('uint32_t g(uint32_t i){ return "hi " "there"[i % 8]; }\n')
+    lg = r.lowered.functions["g"]
+    assert r.is_clean and (r.equivalence == "match" or r.equivalence.startswith("skip"))
+    assert '"hi " "there"' in lg.globals_used.values()                      # pieces kept adjacent
+
+
 # --- L2: struct / union layout + member access ---------------------------------------------------
 
 def test_L2_struct_member_access():

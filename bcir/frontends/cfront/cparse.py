@@ -662,7 +662,10 @@ class _Parser:
         if self.at("CHAR"):                                   # a character constant -> its int value
             return cast.IntLit(parse_char_literal(self.nxt().text))
         if self.at("STRING"):
-            return cast.StringLit(self.nxt().text)
+            text = self.nxt().text
+            while self.at("STRING"):                          # adjacent literals concatenate (phase 6),
+                text += " " + self.nxt().text                 # kept adjacent so escapes don't merge
+            return cast.StringLit(text)
         if self.at("IDENT"):
             w = self.peek().text
             if w in self.enums:                           # an enumerator -> its integer literal

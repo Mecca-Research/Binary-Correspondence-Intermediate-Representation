@@ -102,20 +102,45 @@ static long long parse_char(const char *s, int n) {
   return (v>=0x80000000u) ? (long long)v-(1LL<<32) : (long long)v;       /* an int32 multichar */
 }
 
-/* Bytes in a "..."-spelled string literal *excluding* the NUL, decoding escapes (a simple \c, an
- * octal \NNN, or a hex \xHH.. each count as one byte). s[0..n) includes the surrounding quotes. */
+/* Bytes in a (possibly concatenated) string literal *excluding* the NUL, decoding escapes (a simple
+ * \c, an octal \NNN, or a hex \xHH.. each count as one byte). s[0..n) is the spelling incl. quotes;
+ * adjacent literals ("a" "b") are walked quote-aware -- bytes are counted only *inside* quotes and the
+ * inter-piece whitespace is ignored, so a hex/octal escape can't merge with the next piece's digit. */
 static int str_bytes(const char *s, int n) {
-  int i = (n>0 && s[0]=='"') ? 1 : 0, e = (n>0 && s[n-1]=='"') ? n-1 : n, cnt=0;
-  while (i < e) {
-    if (s[i]=='\\' && i+1 < e) { char c = s[i+1];
+  int i=0, cnt=0, inq=0;
+  while (i < n) {
+    char ch = s[i];
+    if (!inq) { if (ch=='"') inq=1; i++; continue; }          /* between pieces: only `"` opens one */
+    if (ch=='"') { inq=0; i++; continue; }                    /* closing quote of this piece */
+    if (ch=='\\' && i+1 < n) { char c = s[i+1];
       if (c=='x') { i+=2;
-        while (i<e && ((s[i]>='0'&&s[i]<='9')||(s[i]>='a'&&s[i]<='f')||(s[i]>='A'&&s[i]<='F'))) i++; }
-      else if (c>='0'&&c<='7') { i++; int k=0; while (k<3 && i<e && s[i]>='0'&&s[i]<='7'){i++;k++;} }
+        while (i<n && ((s[i]>='0'&&s[i]<='9')||((s[i]|0x20)>='a'&&(s[i]|0x20)<='f'))) i++; }
+      else if (c>='0'&&c<='7') { i++; int k=0; while (k<3 && i<n && s[i]>='0'&&s[i]<='7'){i++;k++;} }
       else i+=2;
     } else i++;
     cnt++;
   }
   return cnt;
+}
+
+/* String-literal table (the C twin of the oracle's per-function string globals). It stores the full,
+ * NUL-terminated spelling so the emitter can render references as the inline literal regardless of
+ * length -- lifting the previous BCIR_CIR_NAME (32-byte) cap of carrying the spelling in the resource
+ * name -- and so identical literals in a function share one global (dedup). Owned copies, reset per
+ * compile. A host-tool concern only (the freestanding IR it emits never sees this). */
+#define BCIR_MAX_STRLITS 512
+typedef struct { uint32_t rid; char *s; const bcir_func *fn; } strent;
+static strent g_strtab[BCIR_MAX_STRLITS];
+static int g_nstr;
+
+static void strtab_reset(void) {
+  for (int k = 0; k < g_nstr; k++) { free(g_strtab[k].s); g_strtab[k].s = NULL; }
+  g_nstr = 0;
+}
+/* The full spelling registered for a string-literal resource (by rid), or NULL if rid is not one. */
+static const char *strtab_lookup(uint32_t rid) {
+  for (int k = 0; k < g_nstr; k++) if (g_strtab[k].rid == rid) return g_strtab[k].s;
+  return NULL;
 }
 
 static void lex(CC *c, const char *src) {
@@ -348,6 +373,22 @@ static bcir_claim *new_claim(CC *c,const char *op,bcir_opcode opc) {
   snprintf(cl->op,sizeof cl->op,"%s",op); return cl;
 }
 static uint32_t temp(CC *c,int size){return add_res(c,BCIR_DOM_RAM,size?size:4,1,0,BCIR_RK_SCALAR,"");}
+/* A string literal -> an anonymous read-only char[] global (decays to a pointer). Identical spellings
+ * in the same function share one global (dedup). The full spelling is kept in g_strtab so the emit can
+ * inline it at any length; the resource name is just a short tag. */
+static uint32_t intern_string(CC *c, const char *s, int n) {
+  for (int k=0;k<g_nstr;k++)                                  /* dedup within the current function */
+    if (g_strtab[k].fn==c->fn && (int)strlen(g_strtab[k].s)==n && !memcmp(g_strtab[k].s,s,(size_t)n))
+      return g_strtab[k].rid;
+  int nbytes = str_bytes(s,n)+1;                              /* char[N] incl. the NUL */
+  char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"__str%d",g_nstr);
+  uint32_t rid = add_res(c,BCIR_DOM_RAM,1,nbytes,0,BCIR_RK_POINTER,nm);
+  if (c->fn->n_res) c->fn->res[c->fn->n_res-1].read_only=1;   /* a read-only global */
+  if (g_nstr<BCIR_MAX_STRLITS) { char *cp=(char*)malloc((size_t)n+1);
+    if (cp){ memcpy(cp,s,(size_t)n); cp[n]=0;
+      g_strtab[g_nstr].rid=rid; g_strtab[g_nstr].s=cp; g_strtab[g_nstr].fn=c->fn; g_nstr++; } }
+  return rid;
+}
 static venv *lookup(CC *c,const tok *t){
   for(int i=c->nenv-1;i>=0;i--) if((int)strlen(c->env[i].name)==t->n&&!strncmp(c->env[i].name,t->s,t->n))
     return &c->env[i];
@@ -449,17 +490,28 @@ static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind){
   return t;
 }
 
+/* Concatenate adjacent string-literal tokens (C translation phase 6) into one spelling whose pieces
+ * stay adjacent (separated by a space), so a hex/octal escape never merges with the next piece's
+ * leading digit. Returns a malloc'd NUL-terminated buffer (caller frees); *out_n is its length. */
+static char *gather_strings(CC *c, tok first, int *out_n) {
+  int cap=first.n+16; char *buf=(char*)malloc((size_t)cap);
+  if(!buf){*out_n=0;return NULL;}
+  memcpy(buf,first.s,(size_t)first.n); int len=first.n;
+  while(isk(c,T_STR)){ tok nx=adv(c); int need=len+1+nx.n+1;
+    if(need>cap){ cap=need*2; char *nb=(char*)realloc(buf,(size_t)cap); if(!nb){free(buf);*out_n=0;return NULL;} buf=nb; }
+    buf[len++]=' '; memcpy(buf+len,nx.s,(size_t)nx.n); len+=nx.n; }
+  buf[len]=0; *out_n=len; return buf;
+}
+
 static uint32_t p_primary(CC *c) {
   if(isk(c,T_INT)){tok t=adv(c);uint32_t r=temp(c,4);
     bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
     cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return r;}
   if(isk(c,T_STR)){     /* a string literal -> an anonymous read-only char[] global; value is a ptr */
-    tok st=adv(c); int n=str_bytes(st.s,st.n)+1;       /* char[n] incl. the NUL */
-    char nm[BCIR_CIR_NAME]; int ln=st.n;               /* the resource name IS the spelling, so the */
-    if(ln>(int)sizeof nm-1) ln=(int)sizeof nm-1;       /* emitter renders references as the inline literal */
-    memcpy(nm,st.s,(size_t)ln); nm[ln]=0;
-    uint32_t rid=add_res(c,BCIR_DOM_RAM,1,n,0,BCIR_RK_POINTER,nm);
-    if(c->fn->n_res) c->fn->res[c->fn->n_res-1].read_only=1;     /* a read-only global */
+    tok st=adv(c); uint32_t rid;
+    if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn);   /* adjacent literals concatenate */
+      rid=intern_string(c, cb?cb:st.s, cb?cn:st.n); free(cb); }
+    else rid=intern_string(c,st.s,st.n);   /* full spelling kept in g_strtab; dedup; cap lifted */
     if(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]");
       venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type.size=1; sv.sidx=-1;
       return emit_index(c,&sv,ix); }
@@ -484,7 +536,9 @@ static uint32_t p_primary(CC *c) {
     }
     if(!got){                          /* sizeof <operand>: a variable's static type size */
       int paren=0; if(is(c,"(")){c->i++;paren=1;}
-      if(isk(c,T_STR)){ tok st=*pk(c); size = str_bytes(st.s,st.n) + 1; c->i++; }  /* char[N] incl. NUL */
+      if(isk(c,T_STR)){ tok st=adv(c);                          /* sizeof a (possibly concatenated) literal */
+        if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn); size=str_bytes(cb?cb:st.s,cb?cn:st.n)+1; free(cb); }
+        else size=str_bytes(st.s,st.n)+1; }                     /* char[N] incl. NUL */
       else if(isk(c,T_ID)){ tok vid=*pk(c); venv *v=lookup(c,&vid);
         if(v) size = v->type.kind==2?8:(v->type.kind==1?c->s[v->sidx].size:v->type.size);
         c->i++; }
@@ -895,6 +949,8 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   else snprintf(o,n,"%s%s",atm,base);
 }
 static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
+  const char *lit=strtab_lookup(rid);                /* a string literal -> its full spelling, inline */
+  if(lit) return lit;                                /* (returned directly, so length is not capped) */
   const bcir_resource *r=res_of(f,rid);
   if(r&&r->name[0]){snprintf(buf,BCIR_CIR_NAME,"%s",r->name);return buf;}
   snprintf(buf,BCIR_CIR_NAME,"t%u",rid); return buf;
@@ -1057,6 +1113,7 @@ static void p_global(CC *c){
 int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
   static CC c; memset(&c,0,sizeof c); memset(out,0,sizeof *out);
   c.rid=100; c.cid=1000;
+  strtab_reset();                       /* fresh string-literal table per translation unit */
   lex(&c,src);
   while(!isk(&c,T_END)&&!c.failed&&out->unit.n_funcs<BCIR_MAX_FUNCS){
     if(try_top_decl(&c)) continue;       /* typedef / enum / struct|union defs, interleaved */
