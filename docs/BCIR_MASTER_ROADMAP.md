@@ -721,9 +721,10 @@ via `c.bf.set`, store; one unified member-assign path now covers plain/bitfield 
 `cfront_bfcompound.c`, both rails `claims=15 mmio=5 bf=3 ok=1`);
 and ✅ **C11 `<stdatomic.h>` atomics** (the `_Atomic` type qualifier parses + round-trips like
 `volatile`, and the generic functions `atomic_fetch_add`/`atomic_fetch_sub`/`atomic_fetch_xor` /
-`atomic_load` / `atomic_store` on an `_Atomic` object lower to the BCIR ATOMIC opcodes on lane A with
-the atomic hazard -- emitted as the C11 functions themselves, which accept an `_Atomic*` where the
-GCC `__atomic_*` builtins do not; `cfront_atomic11.c`, both rails `claims=5 ok=1`, runs the loop);
+`atomic_load` / `atomic_store` / `atomic_exchange` on an `_Atomic` object lower to the BCIR ATOMIC
+opcodes on lane A with the atomic hazard -- emitted as the C11 functions themselves, which accept an
+`_Atomic*` where the GCC `__atomic_*` builtins do not; `cfront_atomic11.c` / `cfront_atomic_xchg.c`,
+both rails `ok=1`, run the loop; C11 compare-exchange remains -- it needs the address-of operator);
 still cross-clause
 fallthrough; designated +
 compound initializers; the rest of storage/linkage (`extern`/`thread_local`, scalar globals); `restrict` +

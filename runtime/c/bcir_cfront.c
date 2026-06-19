@@ -373,6 +373,7 @@ static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *kind){
     {"atomic_fetch_add","c.c11atom.fetch_add",BCIR_OP_ATOMIC_ADD,AK_RMW},  /* C11 <stdatomic.h> */
     {"atomic_fetch_sub","c.c11atom.fetch_sub",BCIR_OP_ATOMIC_SUB,AK_RMW},
     {"atomic_fetch_xor","c.c11atom.fetch_xor",BCIR_OP_ATOMIC_XOR,AK_RMW},
+    {"atomic_exchange","c.c11atom.exchange",BCIR_OP_ATOMIC_ADD,AK_RMW},   /* swap: set + return old */
     {"atomic_load","c.c11atom.load",BCIR_OP_LOAD,AK_LOAD},
     {"atomic_store","c.c11atom.store",BCIR_OP_STORE,AK_STORE},{0,0,0,0}};
   for(int i=0;A[i].n;i++) if((int)strlen(A[i].n)==t->n&&!strncmp(A[i].n,t->s,t->n)){*op=A[i].op;*oc=A[i].oc;*kind=A[i].k;return 1;}

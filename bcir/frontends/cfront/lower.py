@@ -457,7 +457,8 @@ class _FuncLowerer:
     # functions (which accept an _Atomic* -- the __atomic_* builtins do not).
     _C11_RMW = {"atomic_fetch_add": ("c.c11atom.fetch_add", Opcode.ATOMIC_ADD),
                 "atomic_fetch_sub": ("c.c11atom.fetch_sub", Opcode.ATOMIC_SUB),
-                "atomic_fetch_xor": ("c.c11atom.fetch_xor", Opcode.ATOMIC_XOR)}
+                "atomic_fetch_xor": ("c.c11atom.fetch_xor", Opcode.ATOMIC_XOR),
+                "atomic_exchange":  ("c.c11atom.exchange", Opcode.ATOMIC_ADD)}  # swap: set + return old
 
     def _call(self, node: cast.CallExpr) -> int:
         actuals = tuple(self._rvalue(a) for a in node.args)
