@@ -754,11 +754,18 @@ macros — `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC_HOSTED__`, the 
 (dual-rail; `__DATE__`/`__TIME__` frozen by `SOURCE_DATE_EPOCH`, `_Pragma`/`#pragma` lowering no-ops,
 `__FILE__` carries the driver's real source path, `__has_include` resolves against the search path,
 `__has_attribute` reports the L8 ABI attributes); C-twin `__has_embed` eval, the full translation
-phases next); lexer/parser breadth — **string literals** (dual-rail: the lexer tokenizes `"..."` with
-escape decoding; `sizeof "..."` folds to the char-array length; a literal materializes as an anonymous
-read-only `char[]` global that decays to `const char *` — indexing reads a byte, the bare literal is the
-pointer — Clang-equivalent via inlining the literal in the emit; wider char/multibyte/concatenation
-next); floating/complex/decimal;
+phases next); lexer/parser breadth — **string + character literals** (dual-rail: the lexer tokenizes
+`"..."` with escape decoding; `sizeof "..."` folds to the char-array length; a literal materializes as
+an anonymous read-only `char[]` global that decays to `const char *` — indexing reads a byte, the bare
+literal is the pointer — Clang-equivalent via inlining the literal in the emit. **Done since:**
+**character constants** `'c'` (a single char is its byte value as a signed char, an escape decodes to
+one byte, and a multi-character `'AB'` packs big-endian like Clang/GCC — folded to a `c.const`); a
+**string-literal table** in the C twin that holds the full spelling out-of-band (so a literal of any
+length inlines faithfully — the old 32-byte resource-name cap is gone) with **dedup** (identical
+literals in a function share one global); and **adjacent-literal concatenation** `"a" "b"` (C
+translation phase 6 — `sizeof` folds across the pieces, which stay adjacent in the emit so a hex/octal
+escape never merges with the next piece's leading digit). Next: wide/UTF prefixes (`L`/`u`/`U`/`u8`));
+floating/complex/decimal;
 variadic functions +
 varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
 Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches

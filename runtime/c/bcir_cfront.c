@@ -102,15 +102,20 @@ static long long parse_char(const char *s, int n) {
   return (v>=0x80000000u) ? (long long)v-(1LL<<32) : (long long)v;       /* an int32 multichar */
 }
 
-/* Bytes in a "..."-spelled string literal *excluding* the NUL, decoding escapes (a simple \c, an
- * octal \NNN, or a hex \xHH.. each count as one byte). s[0..n) includes the surrounding quotes. */
+/* Bytes in a (possibly concatenated) string literal *excluding* the NUL, decoding escapes (a simple
+ * \c, an octal \NNN, or a hex \xHH.. each count as one byte). s[0..n) is the spelling incl. quotes;
+ * adjacent literals ("a" "b") are walked quote-aware -- bytes are counted only *inside* quotes and the
+ * inter-piece whitespace is ignored, so a hex/octal escape can't merge with the next piece's digit. */
 static int str_bytes(const char *s, int n) {
-  int i = (n>0 && s[0]=='"') ? 1 : 0, e = (n>0 && s[n-1]=='"') ? n-1 : n, cnt=0;
-  while (i < e) {
-    if (s[i]=='\\' && i+1 < e) { char c = s[i+1];
+  int i=0, cnt=0, inq=0;
+  while (i < n) {
+    char ch = s[i];
+    if (!inq) { if (ch=='"') inq=1; i++; continue; }          /* between pieces: only `"` opens one */
+    if (ch=='"') { inq=0; i++; continue; }                    /* closing quote of this piece */
+    if (ch=='\\' && i+1 < n) { char c = s[i+1];
       if (c=='x') { i+=2;
-        while (i<e && ((s[i]>='0'&&s[i]<='9')||(s[i]>='a'&&s[i]<='f')||(s[i]>='A'&&s[i]<='F'))) i++; }
-      else if (c>='0'&&c<='7') { i++; int k=0; while (k<3 && i<e && s[i]>='0'&&s[i]<='7'){i++;k++;} }
+        while (i<n && ((s[i]>='0'&&s[i]<='9')||((s[i]|0x20)>='a'&&(s[i]|0x20)<='f'))) i++; }
+      else if (c>='0'&&c<='7') { i++; int k=0; while (k<3 && i<n && s[i]>='0'&&s[i]<='7'){i++;k++;} }
       else i+=2;
     } else i++;
     cnt++;
@@ -485,13 +490,28 @@ static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind){
   return t;
 }
 
+/* Concatenate adjacent string-literal tokens (C translation phase 6) into one spelling whose pieces
+ * stay adjacent (separated by a space), so a hex/octal escape never merges with the next piece's
+ * leading digit. Returns a malloc'd NUL-terminated buffer (caller frees); *out_n is its length. */
+static char *gather_strings(CC *c, tok first, int *out_n) {
+  int cap=first.n+16; char *buf=(char*)malloc((size_t)cap);
+  if(!buf){*out_n=0;return NULL;}
+  memcpy(buf,first.s,(size_t)first.n); int len=first.n;
+  while(isk(c,T_STR)){ tok nx=adv(c); int need=len+1+nx.n+1;
+    if(need>cap){ cap=need*2; char *nb=(char*)realloc(buf,(size_t)cap); if(!nb){free(buf);*out_n=0;return NULL;} buf=nb; }
+    buf[len++]=' '; memcpy(buf+len,nx.s,(size_t)nx.n); len+=nx.n; }
+  buf[len]=0; *out_n=len; return buf;
+}
+
 static uint32_t p_primary(CC *c) {
   if(isk(c,T_INT)){tok t=adv(c);uint32_t r=temp(c,4);
     bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
     cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return r;}
   if(isk(c,T_STR)){     /* a string literal -> an anonymous read-only char[] global; value is a ptr */
-    tok st=adv(c);
-    uint32_t rid=intern_string(c,st.s,st.n);   /* full spelling kept in g_strtab; dedup; cap lifted */
+    tok st=adv(c); uint32_t rid;
+    if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn);   /* adjacent literals concatenate */
+      rid=intern_string(c, cb?cb:st.s, cb?cn:st.n); free(cb); }
+    else rid=intern_string(c,st.s,st.n);   /* full spelling kept in g_strtab; dedup; cap lifted */
     if(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]");
       venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type.size=1; sv.sidx=-1;
       return emit_index(c,&sv,ix); }
@@ -516,7 +536,9 @@ static uint32_t p_primary(CC *c) {
     }
     if(!got){                          /* sizeof <operand>: a variable's static type size */
       int paren=0; if(is(c,"(")){c->i++;paren=1;}
-      if(isk(c,T_STR)){ tok st=*pk(c); size = str_bytes(st.s,st.n) + 1; c->i++; }  /* char[N] incl. NUL */
+      if(isk(c,T_STR)){ tok st=adv(c);                          /* sizeof a (possibly concatenated) literal */
+        if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn); size=str_bytes(cb?cb:st.s,cb?cn:st.n)+1; free(cb); }
+        else size=str_bytes(st.s,st.n)+1; }                     /* char[N] incl. NUL */
       else if(isk(c,T_ID)){ tok vid=*pk(c); venv *v=lookup(c,&vid);
         if(v) size = v->type.kind==2?8:(v->type.kind==1?c->s[v->sidx].size:v->type.size);
         c->i++; }

@@ -55,22 +55,33 @@ def _cast_name(ct: CType) -> str:
 
 
 def _str_bytes(spelling: str) -> int:
-    """The number of bytes a string literal's value occupies *excluding* the terminating NUL,
-    decoding escape sequences (a simple `\\c`, an octal `\\NNN`, or a hex `\\xHH..` each count as one
-    byte). `spelling` is the source text including the surrounding quotes."""
-    s = spelling[1:-1] if len(spelling) >= 2 and spelling[0] == '"' else spelling
-    i, n = 0, 0
-    while i < len(s):
-        if s[i] == "\\" and i + 1 < len(s):
-            c = s[i + 1]
+    """The number of bytes a (possibly concatenated) string literal's value occupies *excluding* the
+    terminating NUL, decoding escape sequences (a simple `\\c`, an octal `\\NNN`, or a hex `\\xHH..`
+    each count as one byte). `spelling` is the source text including the quotes; adjacent literals
+    (`"a" "b"`) are walked quote-aware, so bytes are counted only *inside* quotes and the inter-piece
+    whitespace is ignored -- the pieces stay separate, so a hex/octal escape can't merge with the next
+    piece's leading digit."""
+    i, n, inq = 0, 0, False
+    while i < len(spelling):
+        ch = spelling[i]
+        if not inq:                                            # between pieces: only `"` opens one
+            inq = ch == '"'
+            i += 1
+            continue
+        if ch == '"':                                          # closing quote of this piece
+            inq = False
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < len(spelling):
+            c = spelling[i + 1]
             if c == "x":                                       # \xHH.. -> consume all hex digits
                 i += 2
-                while i < len(s) and s[i] in "0123456789abcdefABCDEF":
+                while i < len(spelling) and spelling[i] in "0123456789abcdefABCDEF":
                     i += 1
             elif c in "01234567":                              # \NNN  -> up to three octal digits
                 i += 1
                 k = 0
-                while k < 3 and i < len(s) and s[i] in "01234567":
+                while k < 3 and i < len(spelling) and spelling[i] in "01234567":
                     i, k = i + 1, k + 1
             else:                                              # \n, \t, \\, \", \0, ...
                 i += 2
