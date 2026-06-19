@@ -326,6 +326,29 @@ def test_L7_preprocessor_unit():
         ["x", "1,", "2,", "3", "y"]
 
 
+def test_L7_comments_stripped_before_preprocessing():
+    """Translation phase 3 runs before directives: every `//`/`/* */` comment becomes a space, so a
+    comment in a macro body or on a directive line is gone, and a directive *inside* a comment is
+    never executed. String/char literals keep their comment-like bytes; C23 digit separators are not
+    read as char quotes; a block comment keeps its newlines so __LINE__ stays aligned."""
+    from bcir.frontends.cfront.cpp import preprocess
+    # a comment in a #define body / on the directive line is dropped (body is just the value).
+    assert preprocess("#define FOO /* c */ 1\nint x = FOO;").replace(" ", "") == "intx=1;\n"
+    assert preprocess("#define N 5 // five\nint a[N];").replace(" ", "") == "inta[5];\n"
+    # a `#define` *inside* a block comment is text, not a directive — it must not take effect.
+    out = preprocess("/* x\n#define EVIL 999\n */ int b = EVIL;")
+    assert "EVIL" in out and "999" not in out
+    assert out.count("\n") == 3                       # the comment's newlines survive (line count kept)
+    # comment markers inside string/char literals are data, copied verbatim.
+    assert preprocess('char *s = "a/*b*/c//d";') == 'char*s="a/*b*/c//d";\n'
+    assert preprocess("char q = '\"'; int z = 1 /* c */ + 2;").replace(" ", "") == "charq='\"';intz=1+2;\n"
+    # a C23 digit separator (flanked by hex digits) is not mistaken for a char-literal quote.
+    assert preprocess("int v = 1'000'000; /* c */ int w = 0xca'fe;").replace(" ", "") == \
+        "intv=1'000'000;intw=0xca'fe;\n"
+    # __LINE__ is still accurate on the line after a multi-line block comment.
+    assert preprocess("a __LINE__\n/* p\nq\nr */ b __LINE__").split() == ["a", "1", "b", "4"]
+
+
 def test_L7_predefined_file_and_line():
     """__LINE__/__FILE__ are dynamic predefined macros: __LINE__ tracks the 1-based logical line
     (reflecting the macro *invocation* site, not the definition), __FILE__ the current file name,

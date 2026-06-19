@@ -8,7 +8,11 @@ predefined macros `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__`
 `_Pragma` operator, `#include` of project headers, and C23 `#embed`.
 
 It runs *before* the lexer/parser, producing fully-expanded source text (the lexer still skips any
-residual `#`-line, but after this pass there are none). `#include`/`#embed` resolve against an
+residual `#`-line, but after this pass there are none). Translation phase 3 happens here too: line
+continuations are spliced and comments are replaced by a single space *before* directives are
+scanned, so a comment in a macro body or on a directive line is gone and a `#define` that only
+appears inside a comment never takes effect (a block comment keeps its newlines so `__LINE__` holds).
+`#include`/`#embed` resolve against an
 in-memory file map (the real driver path mounts a header search path); the resulting text is what
 both the parser and the Clang behaviour-equivalence harness consume, so the comparison validates the
 lowering of the *preprocessed* program.
@@ -104,7 +108,10 @@ class Preprocessor:
     # --- line handling ---
     @staticmethod
     def _logical_lines(text: str) -> list[str]:
-        return text.replace("\\\n", "").splitlines()
+        # phase 2 then phase 3: splice backslash-newlines, then replace every comment with a space
+        # (before directives are scanned, so a `#define` *inside* a comment is never executed and a
+        # comment in a macro body / on a directive line is gone). Runs for the source and headers.
+        return _strip_comments(text.replace("\\\n", "")).splitlines()
 
     def _run(self, lines: list[str], out: list[str], name: str) -> None:
         # conditional stack: each entry is [currently_active, any_branch_taken, parent_active]
@@ -427,6 +434,55 @@ def _balanced(toks: list, k: int) -> tuple[list, int]:
         inner.append(t)
         j += 1
     return inner, j
+
+
+_HEXD = frozenset("0123456789abcdefABCDEF")
+
+
+def _strip_comments(text: str) -> str:
+    """Translation phase 3: replace every `//` and `/* */` comment with a single space, leaving
+    string/char literals untouched. A block comment keeps the newlines it spanned, so `__LINE__`
+    and the per-line directive scan stay aligned with the source. A C23 digit separator (`1'000`,
+    `0xca'fe`) is not mistaken for a char-literal quote — a `'` flanked by hex digits is data."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"' or (c == "'" and not (i and text[i - 1] in _HEXD
+                                          and i + 1 < n and text[i + 1] in _HEXD)):
+            out.append(c)                                      # a string/char literal: copy verbatim
+            i += 1
+            while i < n:
+                ch = text[i]
+                if ch == "\\" and i + 1 < n:                   # an escape: copy the pair (incl. \" \')
+                    out.append(ch)
+                    out.append(text[i + 1])
+                    i += 2
+                    continue
+                out.append(ch)
+                i += 1
+                if ch == c:                                    # the closing quote
+                    break
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":      # line comment -> one space
+            i += 2
+            while i < n and text[i] != "\n":
+                i += 1
+            out.append(" ")
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":      # block comment -> space + kept \n's
+            i += 2
+            nl = 0
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                if text[i] == "\n":
+                    nl += 1
+                i += 1
+            i += 2                                             # consume the closing */
+            out.append(" " + "\n" * nl)
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 def _unescape_str(tok: str) -> str:
