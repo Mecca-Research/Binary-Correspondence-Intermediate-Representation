@@ -287,6 +287,12 @@ def test_L7_variadic_macros():
     assert preprocess("#define E(a, ...) k(a, __VA_ARGS__)\nE(z)").strip() == "k(z,)"   # empty
     assert preprocess("#define S(...) #__VA_ARGS__\nS(1, 2, 3)").strip() == '"1,2,3"'   # stringize
     assert preprocess("#define P(...) x ## __VA_ARGS__\nP(1,2)").strip() == "x1,2"      # paste
+    # C23 __VA_OPT__: the content appears iff __VA_ARGS__ is non-empty (the trailing-comma idiom).
+    log = "#define LOG(fmt, ...) p(fmt __VA_OPT__(,) __VA_ARGS__)\n"
+    assert preprocess(log + 'LOG("hi")').strip() == 'p("hi")'
+    assert preprocess(log + 'LOG("hi", 1, 2)').strip() == 'p("hi",1,2)'
+    assert preprocess("#define M(...) a __VA_OPT__(X) b\nM()\nM(1)").strip() == "a b\na X b"
+    assert preprocess("#define E(...) z __VA_OPT__(Y)\nE(,)").strip() == "z Y"   # a comma is a token
 
 
 # --- L8: ABI — struct return-by-value, packed/aligned, calling convention vs Clang ----------------

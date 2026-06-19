@@ -1,5 +1,6 @@
-"""A C preprocessor for the frontend (ladder stage L7): object- and function-like `#define` macros
-(with `#` stringize and `##` paste), `#undef`, conditional compilation (`#if`/`#ifdef`/`#ifndef`/
+"""A C preprocessor for the frontend (ladder stage L7): object-, function- and variadic-like `#define`
+macros (with `#` stringize, `##` paste, `__VA_ARGS__` and C23 `__VA_OPT__`), `#undef`, conditional
+compilation (`#if`/`#ifdef`/`#ifndef`/
 `#elif`/`#elifdef`/`#elifndef`/`#else`/`#endif`) with a constant-expression evaluator (`defined`,
 `__has_include`, `__has_embed`, `__has_attribute`, `__has_builtin`, `__has_c_attribute`), the
 predefined macros `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__`
@@ -347,11 +348,18 @@ class Preprocessor:
                 amap[p] = flat
             else:
                 amap[p] = args[k] if k < len(args) else []
+        return self._subst_tokens(list(mac.body), amap)
+
+    def _subst_tokens(self, body: list, amap: dict) -> list:
         out: list = []
-        body = list(mac.body)
         i = 0
         while i < len(body):
             t = body[i]
+            if t == "__VA_OPT__" and i + 1 < len(body) and body[i + 1] == "(":   # C23 __VA_OPT__
+                content, i = _balanced(body, i + 1)
+                if amap.get("__VA_ARGS__"):                # __VA_ARGS__ non-empty -> the content
+                    out += self._subst_tokens(content, amap)
+                continue
             if t == "#" and i + 1 < len(body) and body[i + 1] in amap:     # stringize
                 out.append('"' + _join(amap[body[i + 1]]).replace('"', '\\"') + '"')
                 i += 2
@@ -402,6 +410,23 @@ def _translation_datetime() -> tuple[str, str]:
            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[tm.tm_mon - 1]
     return (f"{mon} {tm.tm_mday:2d} {tm.tm_year}",
             f"{tm.tm_hour:02d}:{tm.tm_min:02d}:{tm.tm_sec:02d}")
+
+
+def _balanced(toks: list, k: int) -> tuple[list, int]:
+    """The tokens strictly inside the parenthesis at ``toks[k] == '('`` and the index just past the
+    matching ``')'`` (used for ``__VA_OPT__(...)``)."""
+    j, depth, inner = k + 1, 1, []
+    while j < len(toks):
+        t = toks[j]
+        if t == "(":
+            depth += 1
+        elif t == ")":
+            depth -= 1
+            if depth == 0:
+                return inner, j + 1
+        inner.append(t)
+        j += 1
+    return inner, j
 
 
 def _unescape_str(tok: str) -> str:

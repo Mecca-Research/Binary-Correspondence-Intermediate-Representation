@@ -91,47 +91,76 @@ static void app_va(char *out, size_t cap, size_t *w, char args[][1024], int na, 
   for (int z = first; z < na; z++) { if (z > first) app(out, cap, w, ","); app(out, cap, w, args[z]); }
 }
 
-/* substitute a function macro's args into its body; writes to out. */
-static void substitute(const Macro *m, char args[][1024], int na, char *out, size_t cap) {
-  size_t w = 0; out[0] = 0;
-  int i = 0; char t[256], prev[256] = "";
+/* Whether __VA_ARGS__ holds at least one token (controls __VA_OPT__): there are trailing args and
+ * either more than one (a comma token) or a single non-empty one. */
+static int va_nonempty_of(const Macro *m, char args[][1024], int na) {
+  if (!m->variadic) return 0;
+  int vp = -1; for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], "__VA_ARGS__")) vp = q;
+  if (vp < 0) return 0;
+  return (na - vp > 1) || (na > vp && args[vp][0] != 0);
+}
+
+/* Substitute the macro's args into body string `body`, appending to out at *w (prev = the last
+ * emitted token, for spacing). Recurses for __VA_OPT__(content); `va_ne` is va_nonempty_of(). */
+static void subst_into(const char *body, const Macro *m, char args[][1024], int na, int va_ne,
+                       char *out, size_t cap, size_t *w, char *prev) {
+  int i = 0; char t[256];
   while (1) {
-    int k = ntok(m->body, &i, t, sizeof t); if (!k) break;
+    int k = ntok(body, &i, t, sizeof t); if (!k) break;
+    if (k == 'i' && !strcmp(t, "__VA_OPT__")) {   /* C23 __VA_OPT__(content): content iff va non-empty */
+      int j = i; char nx[8]; int nk = ntok(body, &j, nx, sizeof nx);
+      if (nk && !strcmp(nx, "(")) {
+        int cstart = j, depth = 1, jj = j, cend = j; char a[256];
+        while (depth) { int ak = ntok(body, &jj, a, sizeof a); if (!ak) { cend = jj; break; }
+          if (!strcmp(a, "(")) depth++;
+          else if (!strcmp(a, ")")) { depth--; if (!depth) { cend = jj - 1; break; } } }
+        if (va_ne) { char content[1024]; int cl = cend - cstart; if (cl < 0) cl = 0; if (cl > 1023) cl = 1023;
+          memcpy(content, body + cstart, (size_t)cl); content[cl] = 0;
+          subst_into(content, m, args, na, va_ne, out, cap, w, prev); }
+        i = jj; continue;
+      }
+    }
     if (!strcmp(t, "#") && k == 'p') {            /* stringize next param */
-      char p[256]; ntok(m->body, &i, p, sizeof p);
+      char p[256]; ntok(body, &i, p, sizeof p);
       int pi = -1; for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], p)) pi = q;
-      app(out, cap, &w, "\"");
-      if (pi >= 0 && !strcmp(m->params[pi], "__VA_ARGS__")) app_va(out, cap, &w, args, na, pi);
-      else if (pi >= 0 && pi < na) app(out, cap, &w, args[pi]);
-      app(out, cap, &w, "\"");
+      app(out, cap, w, "\"");
+      if (pi >= 0 && !strcmp(m->params[pi], "__VA_ARGS__")) app_va(out, cap, w, args, na, pi);
+      else if (pi >= 0 && pi < na) app(out, cap, w, args[pi]);
+      app(out, cap, w, "\"");
       strcpy(prev, "\""); continue;
     }
     if (!strcmp(t, "##") && k == 'p') {           /* paste: glue prev to next, no space */
-      char r[256]; int rk = ntok(m->body, &i, r, sizeof r); (void)rk;
+      char r[256]; int rk = ntok(body, &i, r, sizeof r); (void)rk;
       int pi = -1; for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], r)) pi = q;
       if (pi >= 0 && !strcmp(m->params[pi], "__VA_ARGS__")) {   /* glue prev to flattened __VA_ARGS__ */
-        app_va(out, cap, &w, args, na, pi);
-        if (na > pi) strncpy(prev, args[na - 1], sizeof prev - 1);
+        app_va(out, cap, w, args, na, pi);
+        if (na > pi) { strncpy(prev, args[na - 1], 255); prev[255] = 0; }
         continue;
       }
       const char *rt = (pi >= 0 && pi < na) ? args[pi] : r;
-      app(out, cap, &w, rt); strcpy(prev, rt[0] ? rt : prev); continue;
+      app(out, cap, w, rt); strcpy(prev, rt[0] ? rt : prev); continue;
     }
     int pi = -1; if (k == 'i') for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], t)) pi = q;
     if (pi >= 0 && !strcmp(m->params[pi], "__VA_ARGS__")) {   /* all trailing args, comma-joined */
       if (na > pi) {
-        if (w && needspace(prev[strlen(prev) ? strlen(prev) - 1 : 0], args[pi][0]))
-          app(out, cap, &w, " ");
-        app_va(out, cap, &w, args, na, pi);
-        strncpy(prev, args[na - 1], sizeof prev - 1);
+        if (*w && needspace(prev[strlen(prev) ? strlen(prev) - 1 : 0], args[pi][0]))
+          app(out, cap, w, " ");
+        app_va(out, cap, w, args, na, pi);
+        strncpy(prev, args[na - 1], 255); prev[255] = 0;
       }
       continue;                                              /* empty __VA_ARGS__: emit nothing */
     }
     const char *emit = (pi >= 0 && pi < na) ? args[pi] : t;
-    if (w && needspace(prev[strlen(prev) ? strlen(prev) - 1 : 0], emit[0])) app(out, cap, &w, " ");
-    app(out, cap, &w, emit);
-    strncpy(prev, emit, sizeof prev - 1);
+    if (*w && needspace(prev[strlen(prev) ? strlen(prev) - 1 : 0], emit[0])) app(out, cap, w, " ");
+    app(out, cap, w, emit);
+    strncpy(prev, emit, 255); prev[255] = 0;
   }
+}
+
+/* substitute a function macro's args into its body; writes to out. */
+static void substitute(const Macro *m, char args[][1024], int na, char *out, size_t cap) {
+  size_t w = 0; out[0] = 0; char prev[256] = "";
+  subst_into(m->body, m, args, na, va_nonempty_of(m, args, na), out, cap, &w, prev);
 }
 
 static int expand_once(const char *line, char *out, size_t cap, int *changed) {
