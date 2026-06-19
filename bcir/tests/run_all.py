@@ -139,6 +139,7 @@ _MODULES = [
     "bcir.tests.test_cfront_ipo",
     "bcir.tests.test_cfront_fuzz",
     "bcir.tests.test_cfront_perf",
+    "bcir.tests.test_cfront_cli",
     "bcir.tests.test_telemetry",
     "bcir.tests.test_abi",
     "bcir.tests.test_stackify",

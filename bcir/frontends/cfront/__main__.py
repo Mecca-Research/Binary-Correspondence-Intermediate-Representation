@@ -12,6 +12,12 @@ Options (a cc-compatible subset):
     -U name         undefine a predefined/-D macro (repeatable)
     -std=<std>      language standard: c23/c2x (default), c17, c11  (sets __STDC_VERSION__)
     -E              preprocess only — print the expanded translation unit, then stop
+    --target <abi>  the target data model the unit is laid out for (default x86_64-linux); one of
+                    x86_64-linux, aarch64-linux, riscv64-linux, x86_64-windows, i386-linux
+    -fsyntax-only   parse + check only; print Clang-style diagnostics, emit no compiled output
+    --emit-json     print the diagnostics as a machine-readable JSON array, then stop
+    --fallback      graceful degradation: a construct outside the supported subset reports a
+                    fallback-to-LLVM signal (exit 2) instead of a hard error
     -o <file>       write output to <file> instead of stdout
     --explain       also print the per-function explain record
     --selfcheck     print the generated self-check harness
@@ -21,7 +27,8 @@ from __future__ import annotations
 import os
 import sys
 
-from .pipeline import compile_unit, emit_selfcheck
+from .abi import TARGETS
+from .pipeline import compile_unit, compile_with_fallback, diagnose, emit_selfcheck
 
 _STD_VERSION = {"c23": "202311L", "c2x": "202311L", "c17": "201710L", "c18": "201710L",
                 "c11": "201112L", "gnu23": "202311L", "gnu17": "201710L", "gnu11": "201112L"}
@@ -39,7 +46,8 @@ def main(argv: list[str] | None = None) -> int:
     undefs: list[str] = []
     files: list[str] = []
     std = "c23"
-    pp_only = show_explain = selfcheck = False
+    pp_only = show_explain = selfcheck = syntax_only = emit_json = fallback = False
+    target: str | None = None
     out_path: str | None = None
 
     i = 0
@@ -49,6 +57,16 @@ def main(argv: list[str] | None = None) -> int:
             show_explain = True
         elif a == "--selfcheck":
             selfcheck = True
+        elif a == "-fsyntax-only":
+            syntax_only = True
+        elif a == "--emit-json":
+            emit_json = True
+        elif a == "--fallback":
+            fallback = True
+        elif a == "--target":
+            i += 1; target = args[i]
+        elif a.startswith("--target="):
+            target = a[len("--target="):]
         elif a == "-E":
             pp_only = True
         elif a == "-o":
@@ -82,6 +100,10 @@ def main(argv: list[str] | None = None) -> int:
     if not files:
         sys.stderr.write(__doc__)
         return 2
+    if target is not None and target not in TARGETS:
+        sys.stderr.write(f"bcir-cfront: unknown --target {target!r}; choose from "
+                         f"{', '.join(sorted(TARGETS))}\n")
+        return 2
     if std in _STD_VERSION:
         defines.setdefault("__STDC_VERSION__", _STD_VERSION[std])
     for u in undefs:
@@ -109,11 +131,30 @@ def main(argv: list[str] | None = None) -> int:
                 rc = 1
             continue
 
+        if syntax_only or emit_json:                 # check only: Clang-style or JSON diagnostics
+            rep = diagnose(text, search_paths=search, defines=defines, filename=path)
+            if emit_json:
+                out.append(rep.to_json())
+            elif rep.diagnostics:
+                sys.stderr.write(rep.render() + "\n")
+            if not rep.ok:
+                rc = 1
+            continue
+
         try:
-            r = compile_unit(text, search_paths=search, defines=defines, check_clang=False,
-                             filename=path)
-        except Exception as e:  # noqa: BLE001 -- the CLI surfaces any frontend error as a diagnostic
-            sys.stderr.write(f"{path}: error: {e}\n")
+            if fallback:                             # the LLVM-backend fallback contract (never raises)
+                r = compile_with_fallback(text, search_paths=search, defines=defines,
+                                          check_clang=False, filename=path, target=target)
+                if r.needs_fallback:
+                    sys.stderr.write(f"{path}: fallback to LLVM backend: {r.fallback}\n")
+                    rc = 2
+                    continue
+            else:
+                r = compile_unit(text, search_paths=search, defines=defines, check_clang=False,
+                                 filename=path, target=target)
+        except Exception as e:  # noqa: BLE001 -- render the front-end error with a Clang-style caret
+            rep = diagnose(text, search_paths=search, defines=defines, filename=path)
+            sys.stderr.write((rep.render() + "\n") if rep.diagnostics else f"{path}: error: {e}\n")
             rc = 1
             continue
 
@@ -128,7 +169,8 @@ def main(argv: list[str] | None = None) -> int:
             if show_explain:
                 out.append(r.explain[name])
         status = "CLEAN" if r.is_clean else "DIRTY"
-        out.append(f"\nR1-R18: {status} (r18_ok={r.r18_ok})  |  Clang behaviour: {r.equivalence}")
+        out.append(f"\nR1-R18: {status} (r18_ok={r.r18_ok})  |  target: {r.target}  |  "
+                   f"Clang behaviour: {r.equivalence}")
         if not r.is_clean:
             for d in r.diagnostics:
                 out.append(f"  {d.law}: {d.message}")
