@@ -923,12 +923,29 @@ static int p_func(CC *c, bcir_func *fn) {
   if(!eat(c,"("))return 1;
   if(!is(c,")")) for(;;){
     if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){c->i++;break;}
-    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return 1; tok pn=adv(c);
+    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return 1;
+    tok pn; int row_ptr=0;
+    if(is(c,"(")){            /* (*name)[N]... -- a pointer-to-array "row pointer" (vendor headers); */
+      int save=c->i; c->i++; int inner=0;          /* modeled as the equivalent multi-dim array param */
+      while(is(c,"*")){inner++;c->i++;}
+      if(inner==1 && isk(c,T_ID)){ tok cand=adv(c);
+        if(is(c,")") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+          c->i++;                                  /* consume ) ; the next token is [ */
+          pn=cand; int nd=1; ty.adims[0]=0;        /* the outer (pointer) dim is unspecified */
+          while(is(c,"[")){ c->i++; long long d=isk(c,T_INT)?(long long)adv(c).v:0;
+            if(nd<3)ty.adims[nd]=(int)d; nd++; eat(c,"]"); }
+          ty.nadims=nd<3?nd:3; if(ty.kind==0) ty.kind=2; row_ptr=1;
+        } else c->i=save;
+      } else c->i=save;
+    }
+    if(!row_ptr){
+    pn=adv(c);
     if(is(c,"[")){              /* an array parameter `T name[A][B]...` decays to a flat element ptr */
       int nd=0;
       while(is(c,"[")){ c->i++; long long d=isk(c,T_INT)?(long long)adv(c).v:0;
         if(nd<3)ty.adims[nd]=(int)d; nd++; eat(c,"]"); }
       ty.nadims=nd<3?nd:3; if(ty.kind==0) ty.kind=2;     /* T[..] -> T* (element size kept in ty.size) */
+    }
     }
     char pb[BCIR_CIR_NAME]; idcpy(pb,&pn);
     int rk=ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR;

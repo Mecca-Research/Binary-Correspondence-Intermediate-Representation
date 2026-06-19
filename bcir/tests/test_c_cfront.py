@@ -25,7 +25,7 @@ _C = os.path.join(_ROOT, "runtime", "c")
 _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 # straight-line fixtures run the full execute loop; control-flow fixtures get parity + emit + Clang ≡
 # (control flow is not a flat StreamPack segment stream, so the loop runs the straight-line set).
-_STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfront_deref.c",
+_STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfront_widerow.c", "cfront_deref.c",
                  "cfront_callgraph.c", "cfront_typedef.c", "cfront_enum.c", "cfront_ternary.c",
                  "cfront_sizeof.c", "cfront_strsizeof.c", "cfront_strval.c", "cfront_charlit.c",
                  "cfront_strtab.c", "cfront_strconcat.c", "cfront_widelit.c", "cfront_cast.c", "cfront_alignof.c", "cfront_static.c",
