@@ -93,9 +93,11 @@ def test_lexer_error_carries_a_source_offset():
 
 def test_diagnose_undeclared_identifier_is_a_clean_diagnostic():
     # an undeclared name used to crash the front end with a bare KeyError; now it is a located
-    # lowering diagnostic (the AST carries no span yet, so the banner is file-level for now).
+    # lowering diagnostic that points a caret at the identifier (segment 1c: AST source spans).
     rep = diagnose("int f(void){ return zzz + 1; }\n", filename="t.c")
-    assert not rep.ok and rep.diagnostics[0].phase == "lower"
+    d = rep.diagnostics[0]
+    assert not rep.ok and d.phase == "lower" and d.span is not None
+    assert rep.source[d.span.start:d.span.start + 3] == "zzz"      # caret on the offending name
     assert "use of undeclared identifier 'zzz'" in rep.render()
 
 
@@ -144,3 +146,21 @@ def test_compile_unit_still_raises_on_a_parse_error():
 def test_single_error_still_reported_after_recovery_added():
     rep = diagnose("int f(void){ return 1 }\n", filename="t.c")
     assert len(rep.diagnostics) == 1 and rep.diagnostics[0].phase == "parse"
+
+
+# --- segment 1c: AST source spans -> semantic-error carets ----------------------------------------
+
+def test_name_node_carries_its_source_offset():
+    from bcir.frontends.cfront.cparse import parse_unit
+    src = "int f(int a){ return a; }\n"
+    unit = parse_unit(src)
+    ret = unit.funcs[0].body[0]                                   # the `return a;` statement
+    assert ret.value.ident == "a" and ret.value.pos == src.rindex("a")   # the `a` in `return a`
+
+
+def test_semantic_caret_points_at_the_assignment_target():
+    rep = diagnose("int f(void){\n    nope = 5;\n    return 0;\n}\n", filename="t.c")
+    d = rep.diagnostics[0]
+    ln, col = line_col(rep.source, d.span.start)
+    assert d.phase == "lower" and (ln, col) == (2, 1)             # caret under `nope` on line 2
+    assert "use of undeclared identifier 'nope'" in rep.render() and "^" in rep.render()

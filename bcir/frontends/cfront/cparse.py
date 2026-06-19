@@ -532,12 +532,14 @@ class _Parser:
         assignment `i = i ± 1`. Returns the Assign, or None (consuming nothing) if not an inc/dec."""
         if self.at("OP", "++") or self.at("OP", "--"):
             op = self.nxt().text[0]
-            name = self.eat("IDENT").text
-            return cast.Assign(cast.Name(name), cast.Binary(op, cast.Name(name), cast.IntLit(1)))
+            tk = self.eat("IDENT")
+            nm = cast.Name(tk.text, pos=tk.pos)
+            return cast.Assign(nm, cast.Binary(op, nm, cast.IntLit(1)))
         if self.at("IDENT") and self.peek(1).kind == "OP" and self.peek(1).text in ("++", "--"):
-            name = self.nxt().text
+            tk = self.nxt()
             op = self.nxt().text[0]
-            return cast.Assign(cast.Name(name), cast.Binary(op, cast.Name(name), cast.IntLit(1)))
+            nm = cast.Name(tk.text, pos=tk.pos)
+            return cast.Assign(nm, cast.Binary(op, nm, cast.IntLit(1)))
         return None
 
     def _switch(self):
@@ -772,7 +774,8 @@ class _Parser:
                 return self._alignof()
             if w in KEYWORDS and w != "sizeof":
                 raise CParseError(f"unexpected keyword {w!r} in expression", pos=self.peek().pos)
-            return cast.Name(self.nxt().text)
+            tk = self.nxt()
+            return cast.Name(tk.text, pos=tk.pos)
         if self.at("PUNCT", "("):
             self.nxt()
             e = self._expr()

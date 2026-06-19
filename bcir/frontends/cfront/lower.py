@@ -380,18 +380,19 @@ class _FuncLowerer:
         self._resource(rid, ct, name)
         return rid
 
-    def _lookup(self, name: str):
+    def _lookup(self, name: str, pos: int | None = None):
         """The (rid, type) of a declared name (locals + the file-scope globals merged into `env`), or
         a CLowerError naming the undeclared identifier -- so the diagnostics entry reports `use of
-        undeclared identifier 'x'` rather than crashing with a bare KeyError."""
+        undeclared identifier 'x'` rather than crashing with a bare KeyError. `pos` (the identifier's
+        source offset, carried on the Name node) anchors a caret under the offending name."""
         if name in self.env:
             return self.env[name]
-        raise CLowerError(f"use of undeclared identifier {name!r}")
+        raise CLowerError(f"use of undeclared identifier {name!r}", pos=pos)
 
     # --- lvalue resolution ---
     def _lvalue(self, node) -> "_LV":
         if isinstance(node, cast.Name):
-            rid, ct = self._lookup(node.ident)
+            rid, ct = self._lookup(node.ident, node.pos)
             return _LV("var", rid, ct)
         if isinstance(node, cast.Index):
             # collect the (possibly nested) index chain down to the ultimate base, then flatten
@@ -453,7 +454,7 @@ class _FuncLowerer:
     def _addr(self, node):
         """The (rid, type) of an aggregate/pointer base used by member/index access."""
         if isinstance(node, cast.Name):
-            return self._lookup(node.ident)
+            return self._lookup(node.ident, node.pos)
         if isinstance(node, cast.StringLit):                  # "abc"[i] -> index the anonymous global
             rid = self._string_ptr(node.value)
             return rid, self.rtypes[rid]
@@ -489,7 +490,7 @@ class _FuncLowerer:
             t = self._temp(ct, "fk")
             return self._emit(f"c.fconst:{node.value}", Opcode.LOAD, (), (t,))
         if isinstance(node, cast.Name):
-            return self._lookup(node.ident)[0]
+            return self._lookup(node.ident, node.pos)[0]
         if isinstance(node, cast.StringLit):                  # a string value -> the global pointer
             return self._string_ptr(node.value)
         if isinstance(node, cast.Binary):
@@ -534,7 +535,7 @@ class _FuncLowerer:
                 prefix, _ = split_lit_prefix(node.expr.value)
                 size = (_str_bytes(node.expr.value) + 1) * str_elem_size(prefix)   # units incl. NUL × width
             elif isinstance(node.expr, cast.Name):
-                size = self._lookup(node.expr.ident)[1].size       # the variable's declared type size
+                size = self._lookup(node.expr.ident, node.expr.pos)[1].size       # the variable's declared type size
             else:
                 size = 4                                       # an integer expression -> int
             t = self._temp(scalar("uint32_t"), "szof")
@@ -611,7 +612,7 @@ class _FuncLowerer:
     def _assign(self, node: cast.Assign) -> int:
         v = self._rvalue(node.value)
         if isinstance(node.target, cast.Name) and node.target.ident in self.env:
-            rid, _ct = self._lookup(node.target.ident)           # copy into the mutable storage
+            rid, _ct = self._lookup(node.target.ident, node.target.pos)           # copy into the mutable storage
             self._emit("c.copy", Opcode.ADD, (v,), (rid,))
             return rid
         self._write(self._lvalue(node.target), v)
