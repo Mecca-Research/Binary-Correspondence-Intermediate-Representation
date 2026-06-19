@@ -43,7 +43,7 @@ _FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI
 # §5.8 atomics/fences/CAS run their own gate: their memory side effects make the generic
 # pure-function equivalence harness invalid (it would call the original first and observe
 # the mutated cell), so they get a side-effect-aware behaviour check below.
-_ATOMIC = ["cfront_atomic.c", "cfront_cmpxchg.c"]
+_ATOMIC = ["cfront_atomic.c", "cfront_cmpxchg.c", "cfront_atomic11.c"]  # +5.8 builtins, C11 stdatomic
 
 
 def _includes_for(fx: str) -> dict:
@@ -101,7 +101,7 @@ def _cname(ct) -> str:
         return _cname(ct.of)
     if ct.is_aggregate:
         return f"{ct.kind} {ct.name}"
-    return ct.name
+    return ("_Atomic " if getattr(ct, "atomic", False) else "") + ct.name
 
 
 def _equiv(source: str, c_emitted: str, entry) -> str:
@@ -142,6 +142,7 @@ def _equiv(source: str, c_emitted: str, entry) -> str:
     harness = f"""#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdatomic.h>
 {source}
 
 {c_emitted}
@@ -179,9 +180,10 @@ def _equiv_atomic(source: str, c_emitted: str, entry) -> str:
     decls, setup, args_a, args_b, cell_cmp = [], [], [], [], []
     for i, (_pn, _rid, ct) in enumerate(entry.params):
         if ct.kind in ("pointer", "array"):
-            base = _cname(ct.of)
+            base = _cname(ct.of)                            # may be `_Atomic uint32_t` (a C11 cell)
+            plain = base.replace("_Atomic ", "")            # the seed casts to the non-atomic type
             decls += [f"  {base} ca{i};", f"  {base} cb{i};"]
-            setup.append(f"    ca{i}=cb{i}=({base})(rng()%16);")
+            setup.append(f"    ca{i}=cb{i}=({plain})(rng()%16);")
             args_a.append(f"&ca{i}")
             args_b.append(f"&cb{i}")
             cell_cmp.append(f"ca{i}!=cb{i}")
@@ -195,6 +197,7 @@ def _equiv_atomic(source: str, c_emitted: str, entry) -> str:
     harness = f"""#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdatomic.h>
 {source}
 
 {c_emitted}
@@ -277,6 +280,7 @@ def test_full_compile_execute_loop_in_c():
 _ATOMIC_EMITS = {
     "cfront_atomic.c": ["__atomic_fetch_", "__atomic_thread_fence", "__ATOMIC_SEQ_CST"],
     "cfront_cmpxchg.c": ["__sync_val_compare_and_swap", "__sync_bool_compare_and_swap"],
+    "cfront_atomic11.c": ["_Atomic uint32_t *", "atomic_fetch_add", "atomic_fetch_xor", "atomic_load"],
 }
 
 

@@ -35,7 +35,7 @@ def _cname(ct: CType) -> str:
         return _cname(ct.of)            # decays in a parameter position
     if ct.is_aggregate:
         return f"{ct.kind} {ct.name}"
-    return ct.name
+    return ("_Atomic " if ct.atomic else "") + ct.name
 
 
 def emit_function(lf: LoweredFunc) -> str:
@@ -171,6 +171,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                                f"{ref(c.rd[0])}, {ref(c.rd[1])}, {ref(c.rd[2])})")
     if c.op == "c.fence":
         return "__atomic_thread_fence(__ATOMIC_SEQ_CST);"
+    if c.op.startswith("c.c11atom."):             # C11 <stdatomic.h> generics on _Atomic objects
+        fn = c.op.split(".")[-1]                   # fetch_add / fetch_sub / fetch_xor / load / store
+        if fn == "load":
+            return deftmp(c.wr[0], f"atomic_load({ref(c.rd[0])})")
+        if fn == "store":
+            return f"atomic_store({ref(c.rd[0])}, {ref(c.rd[1])});"
+        return deftmp(c.wr[0], f"atomic_{fn}({ref(c.rd[0])}, {ref(c.rd[1])})")
     raise ValueError(f"emit: unhandled claim op {c.op!r}")
 
 

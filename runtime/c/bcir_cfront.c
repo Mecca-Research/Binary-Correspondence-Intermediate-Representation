@@ -137,6 +137,7 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
   int seen=0;
   for(;;){
     if(is(c,"volatile")){ty->is_volatile=1;c->i++;continue;}
+    if(is(c,"_Atomic")){ty->is_atomic=1;c->i++;continue;}
     if(is(c,"const")||is(c,"static")||is(c,"signed")||is(c,"inline")){c->i++;continue;}
     if(is(c,"unsigned")){ty->signd=0;ty->size=4;seen=1;c->i++;continue;}
     if(is(c,"struct")||is(c,"union")){c->i++;tok tag=adv(c);int si=find_struct(c,tag.s,tag.n);
@@ -359,7 +360,7 @@ static uint32_t p_icall(CC *c, const venv *fv) {
 
 /* §5.8: GCC/Clang atomic + fence + CAS builtins -> the BCIR ATOMIC_x / BARRIER / CMPXCHG opcodes.
  * kind: 0 = RMW (ptr,val), 1 = fence (no operands), 2 = cmpxchg (ptr,expected,desired). */
-enum { AK_RMW=0, AK_FENCE=1, AK_CAS=2 };
+enum { AK_RMW=0, AK_FENCE=1, AK_CAS=2, AK_LOAD=3, AK_STORE=4 };
 static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *kind){
   struct{const char *n,*op;bcir_opcode oc;int k;} A[]={
     {"__atomic_fetch_add","c.atomic.add",BCIR_OP_ATOMIC_ADD,AK_RMW},
@@ -368,7 +369,12 @@ static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *kind){
     {"__atomic_thread_fence","c.fence",BCIR_OP_BARRIER,AK_FENCE},
     {"__sync_synchronize","c.fence",BCIR_OP_BARRIER,AK_FENCE},
     {"__sync_val_compare_and_swap","c.cmpxchg.val",BCIR_OP_CMPXCHG,AK_CAS},
-    {"__sync_bool_compare_and_swap","c.cmpxchg.bool",BCIR_OP_CMPXCHG,AK_CAS},{0,0,0,0}};
+    {"__sync_bool_compare_and_swap","c.cmpxchg.bool",BCIR_OP_CMPXCHG,AK_CAS},
+    {"atomic_fetch_add","c.c11atom.fetch_add",BCIR_OP_ATOMIC_ADD,AK_RMW},  /* C11 <stdatomic.h> */
+    {"atomic_fetch_sub","c.c11atom.fetch_sub",BCIR_OP_ATOMIC_SUB,AK_RMW},
+    {"atomic_fetch_xor","c.c11atom.fetch_xor",BCIR_OP_ATOMIC_XOR,AK_RMW},
+    {"atomic_load","c.c11atom.load",BCIR_OP_LOAD,AK_LOAD},
+    {"atomic_store","c.c11atom.store",BCIR_OP_STORE,AK_STORE},{0,0,0,0}};
   for(int i=0;A[i].n;i++) if((int)strlen(A[i].n)==t->n&&!strncmp(A[i].n,t->s,t->n)){*op=A[i].op;*oc=A[i].oc;*kind=A[i].k;return 1;}
   return 0;
 }
@@ -380,10 +386,12 @@ static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind){
   cl->lane=BCIR_LANE_A; cl->hazard=kind==AK_FENCE?BCIR_HZ_BARRIERED:BCIR_HZ_ATOMIC;
   if(kind!=AK_FENCE&&na>=1){ bcir_domain dom=BCIR_DOM_RAM;
     for(size_t z=0;z<c->fn->n_res;z++) if(c->fn->res[z].rid==args[0]) dom=c->fn->res[z].domain;
-    cl->domain=dom; cl->n_wr=1; cl->wr[0]=t; cl->rd[0]=args[0];
-    if(kind==AK_CAS){                                  /* CMPXCHG: ptr, expected, desired */
+    cl->domain=dom; cl->rd[0]=args[0];
+    if(kind==AK_LOAD){ cl->n_rd=1; cl->n_wr=1; cl->wr[0]=t; }              /* atomic_load(p) */
+    else if(kind==AK_STORE){ cl->n_rd=2; cl->rd[1]=(na>1)?args[1]:args[0]; }   /* atomic_store(p,v) */
+    else if(kind==AK_CAS){ cl->n_wr=1; cl->wr[0]=t;                       /* CMPXCHG: ptr, exp, des */
       cl->n_rd=3; cl->rd[1]=(na>1)?args[1]:args[0]; cl->rd[2]=(na>2)?args[2]:cl->rd[1]; }
-    else { cl->n_rd=2; cl->rd[1]=(na>1)?args[1]:args[0]; }                 /* RMW: ptr, val */
+    else { cl->n_wr=1; cl->wr[0]=t; cl->n_rd=2; cl->rd[1]=(na>1)?args[1]:args[0]; }   /* RMW: ptr, val */
   }
   return t;
 }
@@ -794,10 +802,11 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   const char *kw = ty->is_union ? "union" : "struct";
   const char *base = is_struct ? ty->tag
                    : (ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t");
-  if(ty->kind==2) snprintf(o,n,"%s%s%s%s *",ty->is_volatile?"volatile ":"",
+  const char *atm = ty->is_atomic ? "_Atomic " : "";
+  if(ty->kind==2) snprintf(o,n,"%s%s%s%s%s *",atm,ty->is_volatile?"volatile ":"",
                            ty->ptr_to_struct?kw:"",ty->ptr_to_struct?" ":"",base);
   else if(ty->kind==1) snprintf(o,n,"%s %s",kw,ty->tag);
-  else snprintf(o,n,"%s",base);
+  else snprintf(o,n,"%s%s",atm,base);
 }
 static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
   const bcir_resource *r=res_of(f,rid);
@@ -886,6 +895,11 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                   rname(f,cl->wr[0],d),cl->op+10,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
     else if(!strcmp(cl->op,"c.fence"))
       w+=snprintf(o+w,on-w,"__atomic_thread_fence(__ATOMIC_SEQ_CST);\n");
+    else if(!strncmp(cl->op,"c.c11atom.",10)){   /* C11 <stdatomic.h> generics on _Atomic objects */
+      const char *fn=cl->op+10;                  /* fetch_add / fetch_sub / fetch_xor / load / store */
+      if(!strcmp(fn,"load")) w+=snprintf(o+w,on-w,"uint32_t %s = atomic_load(%s);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      else if(!strcmp(fn,"store")) w+=snprintf(o+w,on-w,"atomic_store(%s, %s);\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
+      else w+=snprintf(o+w,on-w,"uint32_t %s = atomic_%s(%s, %s);\n",rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
     else if(!strncmp(cl->op,"c.call:",7)){
       w+=snprintf(o+w,on-w,"uint32_t %s = bcir_%s(",rname(f,cl->wr[0],d),cl->op+7);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));

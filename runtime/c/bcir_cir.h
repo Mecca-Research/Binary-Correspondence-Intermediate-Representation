@@ -72,6 +72,7 @@ typedef struct bcir_ctype {
   int      size;             /* scalar size, pointee size for a pointer, or 8 for a funcptr */
   int      signd;
   uint8_t  is_volatile;      /* volatile-qualified (MMIO) */
+  uint8_t  is_atomic;        /* _Atomic-qualified (C11/C23 atomics) */
   uint8_t  ptr_to_struct;    /* a pointer whose pointee is a struct */
   uint8_t  is_union;         /* the aggregate is a union (emit `union` not `struct`) */
   char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1/ptr_to_struct), or funcptr alias (kind 3) */

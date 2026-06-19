@@ -130,6 +130,20 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — C11 `<stdatomic.h>` atomics.** The `_Atomic` type qualifier +
+  the C11 generic atomic functions on `_Atomic` objects -- the lock-free counter / flag pattern.
+  `_Atomic` parses and round-trips through the verified-C as a type-model flag mirroring `volatile`
+  (emitted `_Atomic uint32_t *`). `atomic_fetch_add`/`sub`/`xor` (seq-cst read-modify-writes returning
+  the prior value), `atomic_load` (an ordered read), and `atomic_store` (an ordered write) lower to
+  the BCIR ATOMIC opcodes (`c.c11atom.*`) on lane A with the atomic hazard (the R5/R6 contract) and
+  are *emitted as the C11 functions themselves* -- which accept an `_Atomic*`, where the GCC
+  `__atomic_*` builtins (the §5.8 path) do not. The behaviour harness gains `#include <stdatomic.h>`
+  and casts the seed to the non-atomic type (an atomic type is not a valid cast target). New fixture
+  `cfront_atomic11.c` matches on both rails (`funcs=1 claims=5 const=0 binop=1 ok=1`), is
+  behaviour-equivalent under the side-effect-aware atomic harness (independent `_Atomic` cells), and
+  runs the full C compile->execute loop (R9/R10-R11 clean). This is the chunk explored-and-reverted
+  earlier: the blocker was that `__atomic_*` rejects `_Atomic*`, resolved here by emitting the C11
+  generics. Wired into `_ATOMIC` + `tools/c/check_runtime.sh`; warning-clean; 696 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — bitfield compound-assignment `r->field OP= bits`.** The
   read-modify a multi-bit register field in place pattern -- it composes the bitfield read + write
   paths: read the field (`c.bf.get`), apply the binary op, re-insert the masked result (`c.bf.set`),

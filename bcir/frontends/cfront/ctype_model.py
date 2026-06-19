@@ -40,6 +40,7 @@ class CType:
     count: int = 0                       # array length
     fields: tuple = ()                   # ((name, CType, byte_off, bit_off, bit_width), ...)
     volatile: bool = False               # a volatile-qualified type -> an MMIO resource
+    atomic: bool = False                 # an _Atomic-qualified type (C11/C23 atomics)
     params: tuple = ()                   # parameter CTypes (funcptr only) — for faithful emit
     shape: tuple = ()                    # array dims of a decayed multi-dim array param (m[i][j])
 
@@ -67,6 +68,11 @@ class CType:
 def with_volatile(ct: CType, vol: bool = True) -> CType:
     from dataclasses import replace
     return replace(ct, volatile=vol) if vol else ct
+
+
+def with_atomic(ct: CType, at: bool = True) -> CType:
+    from dataclasses import replace
+    return replace(ct, atomic=at) if at else ct
 
 
 def scalar(name: str) -> CType:
