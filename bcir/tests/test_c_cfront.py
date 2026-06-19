@@ -544,6 +544,33 @@ def _build_bcir_cc(d: str) -> str:
     raise AssertionError(f"bcir-cc build failed:\n{b.stderr}")
 
 
+def test_file_macro_real_path_dual_rail():
+    """__FILE__ reflects the actual source path the driver was given (not the "<source>" default),
+    byte-identically on both rails: the C `bcir-cc -E` driver and the Python `-m bcir.frontends.cfront
+    -E` CLI each thread argv into the preprocessor's file name, matching `preprocess(name=path)`."""
+    if not _CC:
+        return
+    from bcir.frontends.cfront.cpp import preprocess as _py_pp  # noqa: PLC0415
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_bcir_cc(d)
+        src = os.path.join(d, "unit.c")
+        text = "a __FILE__ __LINE__\nb __FILE__\n"
+        with open(src, "w") as f:
+            f.write(text)
+        # C rail: bcir-cc -E <path> emits the raw preprocessed text.
+        cr = subprocess.run([exe, "-E", src], capture_output=True, text=True)
+        assert cr.returncode == 0, cr.stderr
+        assert f'"{src}"' in cr.stdout, cr.stdout                     # __FILE__ == the given path
+        assert cr.stdout == _py_pp(text, name=src)                   # byte-identical to the oracle
+        # Python CLI rail: -E <path> (the driver appends one trailing newline).
+        rc, pyo, err = _cli(["-E", src])
+        assert rc == 0, err
+        assert f'"{src}"' in pyo, pyo
+        assert pyo.rstrip("\n") == cr.stdout.rstrip("\n")            # same content across the rails
+        # the default (no driver-supplied name) stays "<source>".
+        assert _py_pp(text).startswith('a"<source>"')
+
+
 def test_bcir_cc_driver_compiles_and_emits_artifacts():
     """`bcir-cc` -- the production C compiler driver -- compiles a driver with sibling/`-I` headers
     via a normal compile command (no test-harness include map), honours `-D` in a `#if`, and emits

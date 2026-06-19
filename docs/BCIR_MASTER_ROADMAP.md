@@ -750,8 +750,9 @@ chunks compose into a real driver.
 **Phase 3 — Hosted C23 compiler candidate.** libc-header compatibility; full preprocessor (predefined
 macros — `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC_HOSTED__`, the `#line` directive, and
 the `_Pragma` operator **done** (dual-rail; `__DATE__`/`__TIME__` frozen by `SOURCE_DATE_EPOCH`,
-`_Pragma`/`#pragma` lowering no-ops); feature-test macros, `__VA_OPT__`, `__has_*`, real source paths
-in `__FILE__`, the full translation phases next); floating/complex/decimal; variadic functions +
+`_Pragma`/`#pragma` lowering no-ops, `__FILE__` carries the driver's real source path); feature-test
+macros, `__VA_OPT__`, `__has_*`, the full translation phases next); floating/complex/decimal;
+variadic functions +
 varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
 Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches
 Clang or emits a clear unsupported-feature diagnostic.

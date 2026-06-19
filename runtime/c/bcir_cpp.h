@@ -28,11 +28,12 @@ extern "C" {
 int bcir_cpp_run(const char *src, const char *basedir, char *out, size_t outcap,
                  char *err, size_t errcap);
 
-/* The compiler-driver entry: resolve `#include`/`#embed` against `dirs[0..ndirs)` (the source dir
- * + each -I path, tried in order) and seed `defines[0..ndefines)` predefined macros (each a
- * "name body" string, e.g. "WIDE 1" or "REG_BASE 0x4000"). Macros persist across nested includes.
- * Returns 0 on success; nonzero with a message in `err`. */
-int bcir_cpp_run_ex(const char *src, const char *const *dirs, int ndirs,
+/* The compiler-driver entry: `srcname` is the translation unit's name for __FILE__ (NULL/"" ->
+ * "<source>"); resolve `#include`/`#embed` against `dirs[0..ndirs)` (the source dir + each -I path,
+ * tried in order) and seed `defines[0..ndefines)` predefined macros (each a "name body" string, e.g.
+ * "WIDE 1" or "REG_BASE 0x4000"). Macros persist across nested includes. Returns 0 on success;
+ * nonzero with a message in `err`. */
+int bcir_cpp_run_ex(const char *src, const char *srcname, const char *const *dirs, int ndirs,
                     const char *const *defines, int ndefines,
                     char *out, size_t outcap, char *err, size_t errcap);
 

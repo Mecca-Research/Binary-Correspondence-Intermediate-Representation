@@ -237,6 +237,19 @@ def test_L7_pragma_operator():
     assert preprocess("_Pragma").strip() == "_Pragma"
 
 
+def test_L7_file_macro_real_path():
+    """__FILE__ reflects the translation unit's name when the driver supplies one; the default stays
+    "<source>". `preprocess(name=...)` / `compile_unit(filename=...)` thread it. (__FILE__ inside
+    compiled code awaits string-literal lexing; today it surfaces via the preprocessor / `-E`.)"""
+    from bcir.frontends.cfront.cpp import preprocess
+    from bcir.frontends.cfront import compile_unit
+    assert preprocess("a __FILE__\nb __FILE__", name="proj/foo.c").strip() == \
+        'a"proj/foo.c"\nb"proj/foo.c"'
+    assert preprocess("x __FILE__").strip() == 'x"<source>"'                  # default unchanged
+    # compile_unit accepts + forwards `filename` to the preprocessor (no crash; plumbing for __FILE__).
+    compile_unit("unsigned int n(void){ return __LINE__; }\n", filename="k.c", check_clang=False)
+
+
 # --- L8: ABI — struct return-by-value, packed/aligned, calling convention vs Clang ----------------
 
 def _clang_layout(struct_src: str, tag: str, fields: list):

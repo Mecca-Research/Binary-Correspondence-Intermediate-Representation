@@ -103,14 +103,15 @@ def main(argv: list[str] | None = None) -> int:
         if pp_only:                                  # -E: just the preprocessed translation unit
             from .cpp import CPPError, preprocess  # noqa: PLC0415
             try:
-                out.append(preprocess(text, search_paths=search, defines=defines))
+                out.append(preprocess(text, search_paths=search, defines=defines, name=path))
             except CPPError as e:
                 sys.stderr.write(f"{path}: preprocessor error: {e}\n")
                 rc = 1
             continue
 
         try:
-            r = compile_unit(text, search_paths=search, defines=defines, check_clang=False)
+            r = compile_unit(text, search_paths=search, defines=defines, check_clang=False,
+                             filename=path)
         except Exception as e:  # noqa: BLE001 -- the CLI surfaces any frontend error as a diagnostic
             sys.stderr.write(f"{path}: error: {e}\n")
             rc = 1
