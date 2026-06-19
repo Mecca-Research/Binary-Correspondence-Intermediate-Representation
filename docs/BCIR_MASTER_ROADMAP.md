@@ -708,7 +708,12 @@ compound initializers; the rest of storage/linkage (`extern`/`thread_local`, fil
 alias/effect propagation; `_Atomic` + C-memory-model legality; scalable IR allocation (no fixed
 `BCIR_MAX_*`); fuller x86-64/AArch64 ABI; real object/dependency output via a resident backend. **Exit:**
 BCIR compiles a freestanding embedded C test suite + a nontrivial driver codebase with no hand-written
-claim graphs.
+claim graphs. ✅ **Composition checkpoint:** `cfront_integration.c` -- a realistic driver combining
+typedef + enum + an MMIO register-map struct, a `switch` over an enum status, a `static` fault
+counter, a `goto` cleanup path, integer casts, a 2D bank lookup, and an inter-procedural call graph
+-- is ingested with no hand-written claim graph; the two rails agree on the entry's summary and
+*every* function is Clang-behaviour-equivalent, proving the Phase-2 features compose, not just pass
+in isolation.
 
 **Phase 3 — Hosted C23 compiler candidate.** libc-header compatibility; full preprocessor (predefined +
 `__FILE__`/`__LINE__`/feature-test macros, `#pragma`/`_Pragma`/`#line`, `__VA_OPT__`, `__has_*`, source

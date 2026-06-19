@@ -130,6 +130,17 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — composition checkpoint (integration driver).** A realistic
+  multi-feature driver (`cfront_integration.c`) ingested with no hand-written claim graph, exercising
+  the Phase-2 surface *together* in one translation unit: `typedef` + `enum` + an MMIO register-map
+  `struct` (L5 volatile), a `switch` over an enum status, a `static` fault counter, a `goto` cleanup
+  path, integer casts, a 2D bank lookup, and an inter-procedural call graph (L4 / R18). The two rails
+  agree on the entry's structural summary (`funcs=3 claims=16 mmio=2 const=3 binop=4 call=1 ok=1`),
+  the emitted verified-C carries every feature (volatile MMIO accesses, `goto done`, `static uint32_t
+  faults`, a `(uint16_t)` cast, the `bcir_decode_state` call, the C.2 attestation), and *every* one
+  of the three functions is Clang-behaviour-equivalent -- the proof the features compose, not just
+  pass in isolation. New test `test_integration_driver_composes_phase2_surface` + wired into
+  `tools/c/check_runtime.sh`; warning-clean; 695 tests pass.
 - 2026-06-18: **C compiler (Phase 2) — pointer dereference `*p` / `*(p + i)`.** A core gap: the C
   rail did not support pointer dereference *at all* (`*p` was a parse error -- only the `p[i]` index
   and `p->field` arrow forms worked), and `*(p + i)` failed on *both* rails (the oracle's `_addr`
