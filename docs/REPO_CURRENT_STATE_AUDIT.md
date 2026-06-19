@@ -130,6 +130,17 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-18: **C compiler (Phase 2) — C11 `atomic_exchange`.** The atomic swap -- store a new value
+  into an `_Atomic` object and return its prior value in one seq-cst step -- completing the
+  value-mutating C11 atomics (`fetch_add`/`sub`/`xor` + `load` + `store` + `exchange`). It has the
+  RMW shape (ptr, val -> old), so it slots straight into the existing C11-atomic path on both rails
+  (a `c.c11atom.exchange` op on the generic atomic-RMW cost class, emitted as `atomic_exchange(p, v)`).
+  New fixture `cfront_atomic_xchg.c` matches on both rails (`funcs=1 claims=4 const=0 binop=1 ok=1`),
+  is behaviour-equivalent under the side-effect-aware atomic harness, and runs the full C
+  compile->execute loop. Wired into `_ATOMIC` + `tools/c/check_runtime.sh`; warning-clean; 696 tests
+  pass. (C11 compare-exchange remains -- it needs the address-of operator + pointer-typed locals,
+  which the C rail does not yet have; the §5.8 `__sync_*_compare_and_swap` already covers the CAS
+  primitive.)
 - 2026-06-18: **C compiler (Phase 2) — C11 `<stdatomic.h>` atomics.** The `_Atomic` type qualifier +
   the C11 generic atomic functions on `_Atomic` objects -- the lock-free counter / flag pattern.
   `_Atomic` parses and round-trips through the verified-C as a type-model flag mirroring `volatile`

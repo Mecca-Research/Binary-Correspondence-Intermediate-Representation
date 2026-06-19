@@ -43,7 +43,7 @@ _FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI
 # §5.8 atomics/fences/CAS run their own gate: their memory side effects make the generic
 # pure-function equivalence harness invalid (it would call the original first and observe
 # the mutated cell), so they get a side-effect-aware behaviour check below.
-_ATOMIC = ["cfront_atomic.c", "cfront_cmpxchg.c", "cfront_atomic11.c"]  # +5.8 builtins, C11 stdatomic
+_ATOMIC = ["cfront_atomic.c", "cfront_cmpxchg.c", "cfront_atomic11.c", "cfront_atomic_xchg.c"]  # + C11 stdatomic + atomic_exchange
 
 
 def _includes_for(fx: str) -> dict:
@@ -281,6 +281,7 @@ _ATOMIC_EMITS = {
     "cfront_atomic.c": ["__atomic_fetch_", "__atomic_thread_fence", "__ATOMIC_SEQ_CST"],
     "cfront_cmpxchg.c": ["__sync_val_compare_and_swap", "__sync_bool_compare_and_swap"],
     "cfront_atomic11.c": ["_Atomic uint32_t *", "atomic_fetch_add", "atomic_fetch_xor", "atomic_load"],
+    "cfront_atomic_xchg.c": ["_Atomic uint32_t *", "atomic_exchange", "atomic_load"],
 }
 
 
