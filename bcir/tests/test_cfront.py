@@ -205,6 +205,35 @@ def test_floating_point_minimal_core():
     assert rc.is_clean and eqok(rc)
 
 
+def test_floating_point_hex_literals():
+    """C hex floating literals (`0x1.8p3`, `0x1p4`, `0x.8p1`, `0xAp-2f`): they lex as one FLOAT token
+    (the mandatory `p` binary exponent distinguishes them from a hex integer like `0x1f`), carry the
+    f/F/l/L suffix into the float type, and round-trip verbatim through the emit so the resident
+    backend's IEEE-754 value is byte-exact with Clang."""
+    from bcir.frontends.cfront.clex import tokenize
+    from bcir.frontends.cfront.emit import emit_function
+
+    def eqok(r):
+        return r.equivalence == "match" or r.equivalence.startswith("skip")
+
+    # a hex float lexes as one FLOAT token; a hex integer (no `p`) stays an INT and is not swallowed.
+    assert [t.text for t in tokenize("0x1p4 0x1.8p3 0x.8p1 0xAp-2f 0X1P4") if t.kind == "FLOAT"] == \
+        ["0x1p4", "0x1.8p3", "0x.8p1", "0xAp-2f", "0X1P4"]
+    assert [(t.kind, t.text) for t in tokenize("0x1f+2") if t.kind != "EOF"] == \
+        [("INT", "0x1f"), ("OP", "+"), ("INT", "2")]
+
+    # end-to-end: hex-float constants lower to typed c.fconst, emit verbatim, and match Clang.
+    r = compile_unit("double hexf(double x){ double s = 0x1.8p1; return x * s + 0x1p-2; }\n")
+    lf = r.lowered.functions["hexf"]
+    assert r.is_clean and eqok(r)
+    assert [c.op for c in lf.claims if c.op.startswith("c.fconst:")] == \
+        ["c.fconst:0x1.8p1", "c.fconst:0x1p-2"]                       # spelling carried through
+    assert "0x1.8p1" in emit_function(lf) and "0x1p-2" in emit_function(lf)
+    # the f suffix on a hex float still selects `float`.
+    rf = compile_unit("float h(float x){ return x + 0x1p-1f; }\n")
+    assert rf.lowered.functions["h"].ret_type.name == "float" and rf.is_clean and eqok(rf)
+
+
 # --- L2: struct / union layout + member access ---------------------------------------------------
 
 def test_L2_struct_member_access():
