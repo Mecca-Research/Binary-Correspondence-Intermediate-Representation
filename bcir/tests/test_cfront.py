@@ -223,6 +223,20 @@ def test_L7_predefined_date_and_time():
             os.environ["SOURCE_DATE_EPOCH"] = old
 
 
+def test_L7_pragma_operator():
+    """`_Pragma("...")` is a lowering no-op (like `#pragma`): it is recognized anywhere a token can
+    appear — including when produced by a macro via `#` stringize — and consumed, emitting nothing."""
+    from bcir.frontends.cfront.cpp import preprocess
+    assert preprocess('int x; _Pragma("once") int y;').strip() == "int x;int y;"
+    assert preprocess('a _Pragma("GCC diagnostic push") b').strip() == "a b"
+    assert preprocess('p _Pragma("a(b)c") q').strip() == "p q"        # balanced parens consumed
+    # produced by a macro (destringize) — still consumed after rescanning.
+    assert preprocess("#define DO(x) _Pragma(#x)\nDO(message hi)\nz").strip() == "z"
+    assert preprocess('#define PUSH _Pragma("pack(push,1)")\nPUSH\nint a;').strip() == "int a;"
+    # a bare _Pragma not followed by '(' is left alone (degenerate).
+    assert preprocess("_Pragma").strip() == "_Pragma"
+
+
 # --- L8: ABI — struct return-by-value, packed/aligned, calling convention vs Clang ----------------
 
 def _clang_layout(struct_src: str, tag: str, fields: list):

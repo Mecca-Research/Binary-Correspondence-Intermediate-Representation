@@ -135,6 +135,14 @@ static int expand_once(const char *line, char *out, size_t cap, int *changed) {
         fl[fw++] = '"'; fl[fw] = 0;
         if (w && needspace(prevc, fl[0])) app(out, cap, &w, " ");
         app(out, cap, &w, fl); prevc = '"'; *changed = 1; continue;
+      } else if (!strcmp(t, "_Pragma")) {          /* _Pragma("..."): a lowering no-op (like #pragma) */
+        int j = i; char nx[8]; int nk = ntok(line, &j, nx, sizeof nx);
+        if (nk && !strcmp(nx, "(")) {              /* consume the balanced (...), emit nothing */
+          int depth = 1; char a[256];
+          while (depth) { int ak = ntok(line, &j, a, sizeof a); if (!ak) break;
+            if (!strcmp(a, "(")) depth++; else if (!strcmp(a, ")")) depth--; }
+          i = j; *changed = 1; continue;
+        }
       }
     }
     (void)save;
