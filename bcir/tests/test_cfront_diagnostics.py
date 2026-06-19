@@ -1,6 +1,6 @@
 """Phase 4 — Clang-grade diagnostics. The source-location engine + caret renderer (1a), parser error
 recovery so one run reports several diagnostics (1b), AST source spans for semantic-error carets (1c),
-and machine-readable JSON output (1e)."""
+parser fix-its for missing punctuation (1d), and machine-readable JSON output (1e)."""
 from __future__ import annotations
 
 from bcir.frontends.cfront import diagnose
@@ -202,3 +202,29 @@ def test_json_serializes_fixits_and_notes():
 def test_json_clean_unit_is_empty_array():
     import json
     assert json.loads(diagnose("int f(int x){ return x; }\n").to_json()) == []
+
+
+# --- segment 1d: parser fix-its -------------------------------------------------------------------
+
+def test_missing_semicolon_fixit_repairs_the_source():
+    src = "int f(void){ return 1 }\n"
+    rep = diagnose(src, filename="t.c")
+    fx = rep.diagnostics[0].fixits[0]
+    assert fx.replacement == ";" and fx.span.start == fx.span.end     # a zero-width insertion
+    assert rep.source[fx.span.start - 1] == "1"                       # inserted right after `return 1`
+    fixed = rep.source[:fx.span.start] + fx.replacement + rep.source[fx.span.end:]
+    assert diagnose(fixed).ok                                         # applying it yields a clean parse
+
+
+def test_fixit_renders_and_serializes():
+    import json
+    rep = diagnose("int f(void){ return 1 }\n", filename="t.c")
+    assert "fix-it: insert ';'" in rep.render()
+    obj = json.loads(rep.to_json())[0]
+    assert obj["fixits"] == [{"replacement": ";", "range": {"start": 20, "end": 20}}]
+
+
+def test_no_fixit_for_a_non_punctuation_error():
+    # a semantic (lower) error is not a missing-punctuation case -> no suggested edit.
+    rep = diagnose("int f(void){ return zzz; }\n", filename="t.c")
+    assert rep.diagnostics[0].fixits == []
