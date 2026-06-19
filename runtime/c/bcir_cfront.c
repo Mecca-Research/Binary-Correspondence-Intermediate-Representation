@@ -485,6 +485,7 @@ static void cast_name(const bcir_ctype *ty,char *o,size_t n){
   if(ty->kind==2) snprintf(o,n,"c.cast:%s *",nm); else snprintf(o,n,"c.cast:%s",nm);
 }
 static uint32_t p_unary(CC *c) {
+  if(is(c,"+")){ c->i++; return p_unary(c); }    /* unary plus is a no-op */
   if(is(c,"-")||is(c,"~")||is(c,"!")){
     const char *suf=is(c,"-")?"neg":is(c,"~")?"bnot":"lnot";
     bcir_opcode oc=is(c,"-")?BCIR_OP_SUB:BCIR_OP_ADD;c->i++;
@@ -525,10 +526,10 @@ static int bin_op(CC *c,char *suf,bcir_opcode *oc) {
     {"%","mod",BCIR_OP_MUL},{"+","add",BCIR_OP_ADD},{"-","sub",BCIR_OP_SUB},{"<<","shl",BCIR_OP_ADD},
     {">>","shr",BCIR_OP_ADD},{"<","lt",BCIR_OP_SUB},{">","gt",BCIR_OP_SUB},{"<=","le",BCIR_OP_SUB},
     {">=","ge",BCIR_OP_SUB},{"==","eq",BCIR_OP_SUB},{"!=","ne",BCIR_OP_SUB},{"&","and",BCIR_OP_ADD},
-    {"^","xor",BCIR_OP_ADD},{"|","or",BCIR_OP_ADD},{0,0,0}};
+    {"^","xor",BCIR_OP_ADD},{"|","or",BCIR_OP_ADD},{"&&","land",BCIR_OP_ADD},{"||","lor",BCIR_OP_ADD},{0,0,0}};
   for(int i=0;B[i].t;i++) if(is(c,B[i].t)){strcpy(suf,B[i].s);*oc=B[i].o;return i;} return -1;
 }
-static int prec_of(int idx){static const int P[]={10,10,10,9,9,8,8,7,7,7,7,6,6,5,4,3};return P[idx];}
+static int prec_of(int idx){static const int P[]={10,10,10,9,9,8,8,7,7,7,7,6,6,5,4,3,2,1};return P[idx];}
 /* the binary op of a compound assignment `OP=` (its first char): the suffix + cost-class opcode. */
 static void compound_binop(char ch,const char **suf,bcir_opcode *oc){
   switch(ch){case '+':*suf="add";*oc=BCIR_OP_ADD;break; case '-':*suf="sub";*oc=BCIR_OP_SUB;break;
