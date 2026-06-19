@@ -675,7 +675,10 @@ so no typed temporaries needed; R18-opaque; `cfront_dispatch.c`, both rails `cla
 *Still to port:* array-of-row pointer declarators
 (`(*m)[8]`); the comma
 operator, `typeof`, compound literals, integer promotions + usual arithmetic
-conversions, pointer-arithmetic completeness; ✅ **`sizeof`** (`sizeof(type)` / `sizeof expr` folds to
+conversions; ✅ **pointer dereference** (`*p` -- a one-read deref load, previously unsupported on the
+C rail entirely -- and `*(p + i)`, the pointer-arithmetic spelling of `p[i]`, routed through the
+index/load machinery on both rails; `cfront_deref.c`); the rest of pointer-arithmetic completeness;
+✅ **`sizeof`** (`sizeof(type)` / `sizeof expr` folds to
 a compile-time constant -- the type/operand's static size, operand not evaluated; both rails agree
 via the shared scalar table + struct/union layout, Clang-equivalent, `cfront_sizeof.c`) + ✅
 **`_Alignof`/`alignof`** (the type's alignment from the same layout model, type-name form only;
