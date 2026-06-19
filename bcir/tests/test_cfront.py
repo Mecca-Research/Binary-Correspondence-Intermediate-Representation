@@ -162,6 +162,28 @@ def test_L7_preprocessor_unit():
         ["x", "1,", "2,", "3", "y"]
 
 
+def test_L7_predefined_file_and_line():
+    """__LINE__/__FILE__ are dynamic predefined macros: __LINE__ tracks the 1-based logical line
+    (reflecting the macro *invocation* site, not the definition), __FILE__ the current file name,
+    and both report as `defined` to #ifdef / defined(). __STDC_HOSTED__ is predefined too."""
+    from bcir.frontends.cfront.cpp import Preprocessor, preprocess
+    # __LINE__ counts logical lines from 1; __FILE__ is a string literal of the file name.
+    assert preprocess("a __LINE__\nb __LINE__\nc __LINE__").split() == ["a", "1", "b", "2", "c", "3"]
+    assert Preprocessor().process("x __FILE__", name="foo.c").strip() == 'x"foo.c"'
+    # __LINE__ through an object / function macro reflects the invocation line, not the #define line.
+    assert "intc=3;" in preprocess("#define L __LINE__\nq\nint c = L;").replace(" ", "")
+    assert "intb=2;" in preprocess("#define ID(x) x\nint b = ID(__LINE__);").replace(" ", "")
+    # both are `defined`, and usable in #if arithmetic.
+    assert preprocess("#ifdef __LINE__\nyes\n#endif").strip() == "yes"
+    assert preprocess("#if defined(__FILE__) && __LINE__ == 1\nok\n#endif").strip() == "ok"
+    # __STDC_HOSTED__ is predefined (the hosted-C signal).
+    assert preprocess("#if __STDC_HOSTED__\nhosted\n#endif").strip() == "hosted"
+    # across an #include boundary __FILE__/__LINE__ switch to the header and restore on return.
+    body = preprocess('t __LINE__ __FILE__\n#include "h"\nu __LINE__ __FILE__\n',
+                      includes={"h": "in __LINE__ __FILE__"})
+    assert body == 't 1"<source>"\nin 1"h"\nu 3"<source>"\n'
+
+
 # --- L8: ABI — struct return-by-value, packed/aligned, calling convention vs Clang ----------------
 
 def _clang_layout(struct_src: str, tag: str, fields: list):

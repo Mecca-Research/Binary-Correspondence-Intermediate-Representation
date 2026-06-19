@@ -695,6 +695,33 @@ def test_c_preprocessor_macros_conditionals_and_embed():
         emb = pp('x\n#embed "blob.bin"\ny\n', d)
         assert "10, 20, 30" in emb
 
+        # predefined macros: __LINE__ (per-line), __FILE__ (the "<source>" default), __STDC_HOSTED__.
+        assert pp("a __LINE__\nb __LINE__\nc __LINE__\n").split() == ["a", "1", "b", "2", "c", "3"]
+        assert pp("x __FILE__\n").strip() == 'x"<source>"'
+        assert pp("#ifdef __LINE__\nyes\n#endif\n").split() == ["yes"]
+        assert pp("#if defined(__FILE__) && __LINE__ == 1\nok\n#endif\n").split() == ["ok"]
+        assert pp("#if __STDC_HOSTED__\nhosted\n#endif\n").split() == ["hosted"]
+
+        # dual-rail gate: the C twin's output is byte-identical to cpp.py over the same probes,
+        # including __LINE__ through a function macro (the invocation line) and across #include.
+        from bcir.frontends.cfront.cpp import preprocess as _py_pp  # noqa: PLC0415
+        open(os.path.join(d, "ph.h"), "w").write("in __LINE__ __FILE__")
+        probes = [
+            "a __LINE__\nb __LINE__\nc __LINE__\n",
+            "x __FILE__\n",
+            "#define ID(x) x\nint b = ID(__LINE__);\n",
+            "#define L __LINE__\nq\nint c = L;\n",
+            "#ifndef __FILE__\nno\n#else\nyes\n#endif\n",
+            "#if defined __LINE__\nok\n#endif\n",
+            "aa \\\nbb\n__LINE__\n",
+            "__STDC__ __STDC_VERSION__ __STDC_HOSTED__\n",
+        ]
+        for s in probes:
+            assert pp(s) == _py_pp(s), f"twin divergence on {s!r}\n C: {pp(s)!r}\nPY: {_py_pp(s)!r}"
+        # the #include-boundary case (header numbered from 1, __FILE__ restored on return).
+        inc = 't __LINE__ __FILE__\n#include "ph.h"\nu __LINE__ __FILE__\n'
+        assert pp(inc, d) == _py_pp(inc, search_paths=[d])
+
 
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
     if not _CC:
