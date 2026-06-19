@@ -660,7 +660,8 @@ static uint32_t p_primary(CC *c) {
 }
 /* name a cast's target type by width, so both rails emit the same (uintN_t) spelling. */
 static void cast_name(const bcir_ctype *ty,char *o,size_t n){
-  const char *nm=ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t";
+  const char *nm=ty->is_float ? (ty->size==4?"float":"double")
+                : ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t";
   if(ty->kind==2) snprintf(o,n,"c.cast:%s *",nm); else snprintf(o,n,"c.cast:%s",nm);
 }
 static uint32_t p_unary(CC *c) {
@@ -690,7 +691,8 @@ static uint32_t p_unary(CC *c) {
       if(!p_type(c,&ty,&si) && is(c,")")){
         c->i++;                                    /* ')' */
         uint32_t v=p_unary(c);                     /* the operand (right-associative) */
-        uint32_t r=temp(c, ty.kind==2?8:(ty.size?ty.size:4));
+        uint32_t r = ty.is_float ? tempf(c, ty.size)          /* a float cast -> a float temp */
+                                 : temp(c, ty.kind==2?8:(ty.size?ty.size:4));
         char op[BCIR_CIR_NAME]; cast_name(&ty,op,sizeof op);
         bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=r;} return r;
@@ -1094,8 +1096,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
     else if(!strncmp(cl->op,"c.un.",5))
       w+=snprintf(o+w,on-w,"uint32_t %s = (%s%s);\n",rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
-    else if(!strncmp(cl->op,"c.cast:",7))                  /* (type)operand -- width cast */
-      w+=snprintf(o+w,on-w,"uint32_t %s = (%s)%s;\n",rname(f,cl->wr[0],d),cl->op+7,rname(f,cl->rd[0],a));
+    else if(!strncmp(cl->op,"c.cast:",7))                  /* (type)operand -- width / float cast */
+      w+=snprintf(o+w,on-w,"%s %s = (%s)%s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+7,rname(f,cl->rd[0],a));
     else if(!strcmp(cl->op,"c.select"))                    /* ternary: cond ? then : els */
       w+=snprintf(o+w,on-w,"uint32_t %s = (%s ? %s : %s);\n",rname(f,cl->wr[0],d),
                   rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));

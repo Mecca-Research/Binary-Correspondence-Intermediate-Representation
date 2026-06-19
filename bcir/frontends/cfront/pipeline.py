@@ -204,7 +204,11 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
             origargs.append(f"a{i}")
         else:                                              # scalar; keep small when indexing memory
             decls.append(f"    {_cname(ct)} s{i};")
-            setup.append(f"        s{i} = ({_cname(ct)})(rng() % {200 if has_ptr else 4000000000});")
+            # a float param gets an in-range value (so a float->int cast stays defined, not UB); an
+            # integer scalar stays below 2**31 so it is non-negative as `int` (the value model is
+            # unsigned -- an int->float cast must agree in sign; wrapping arithmetic is unaffected).
+            mod = 1000 if ct.is_float else (200 if has_ptr else 2000000000)
+            setup.append(f"        s{i} = ({_cname(ct)})(rng() % {mod});")
             origargs.append(f"s{i}")
     call = ", ".join(origargs)
     # struct-by-value returns (L8 ABI) can't be `!=`-compared — diff the bytes via memcmp.

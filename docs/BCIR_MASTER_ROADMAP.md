@@ -780,9 +780,12 @@ the actual IEEE-754 math is delegated to the resident backend (BCIR never comput
 float value) — the deterministic integer/Q-fixed plan + executor core is untouched, and no float
 reassociation. The one emit change is threading each temp's real type (float/double) instead of
 assuming `uint32_t`. The pp-number lexer was also corrected to span float exponents/suffixes on both
-rails. *Next (float follow-ons):* int↔float conversions + usual arithmetic conversions, hex-float
-literals, `long double`/`_Complex`/`_Decimal`, `<math.h>`; and (separately) preprocessor comment
-stripping (phase 3 — today a `* /` inside a comment can be glued to `*/`). Then: complex/decimal;
+rails. ✅ **int↔float conversions** — explicit casts `(float)i` / `(double)i` / `(int)f` (a cast to a
+floating type yields a float temp; `(int)f` truncates) and the implicit usual-arithmetic conversions in
+mixed int/float expressions (`cfront_floatcast.c`); the equivalence harness feeds integer scalars below
+2³¹ so the unsigned value model agrees in sign with a signed int→float cast. *Next (float follow-ons):*
+hex-float literals, `long double`/`_Complex`/`_Decimal`, `<math.h>`; and (separately) preprocessor
+comment stripping (phase 3 — today a `* /` inside a comment can be glued to `*/`). Then: complex/decimal;
 variadic functions +
 varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
 Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches

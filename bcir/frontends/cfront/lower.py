@@ -52,6 +52,8 @@ _CAST_W = {1: "uint8_t", 2: "uint16_t", 4: "uint32_t", 8: "uint64_t"}
 def _cast_name(ct: CType) -> str:
     if ct.kind == "pointer":
         return _cast_name(ct.of) + " *" if ct.of else "void *"
+    if ct.is_float:
+        return ct.name                                # float / double / long double
     return _CAST_W.get(ct.size, "uint32_t")
 
 
@@ -447,9 +449,10 @@ class _FuncLowerer:
         if isinstance(node, cast.Cast):
             v = self._rvalue(node.operand)
             ct = self._resolve_type(node.type)
-            # assigning the cast to a uint32 temp reproduces the integer-promotion semantics: a
-            # narrowing cast masks (zero-extends back), so downstream arithmetic matches Clang.
-            t = self._temp(ct if ct.is_integer else scalar("uint32_t"), "cast")
+            # a float cast target types the temp float (so downstream arithmetic is float, and the emit
+            # declares it float); an integer cast to a uint32 temp reproduces integer-promotion (a
+            # narrowing cast masks/zero-extends back), so either way the result matches Clang.
+            t = self._temp(ct if (ct.is_integer or ct.is_float) else scalar("uint32_t"), "cast")
             return self._emit(f"c.cast:{_cast_name(ct)}", Opcode.ADD, (v,), (t,))
         if isinstance(node, (cast.Index, cast.Member)):
             return self._read(self._lvalue(node))

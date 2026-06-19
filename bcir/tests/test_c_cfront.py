@@ -40,7 +40,7 @@ _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-val
         "cfront_rmw.c",                               # + MMIO register read-modify-write (d->reg |= bits)
         "cfront_bitfield.c",                          # + MMIO bitfield write (r->field = v, c.bf.set)
         "cfront_bfcompound.c"]                         # + bitfield compound-assign (r->field |= bits)
-_FLOAT = ["cfront_float.c"]                           # float/double: parity + emit + Clang ≡ (the
+_FLOAT = ["cfront_float.c", "cfront_floatcast.c"]                           # float/double: parity + emit + Clang ≡ (the
 #   integer StreamPack executor doesn't compute float; the math is delegated to the resident backend)
 _FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI + _FLOAT
 # §5.8 atomics/fences/CAS run their own gate: their memory side effects make the generic
@@ -132,7 +132,11 @@ def _equiv(source: str, c_emitted: str, entry) -> str:
             args.append(f"a{i}")
         else:
             decls.append(f"  {_cname(ct)} s{i};")
-            setup.append(f"    s{i}=({_cname(ct)})(rng()%{200 if has_ptr else 4000000000});")
+            # a float param gets an in-range value (so a float->int cast stays defined, not UB);
+            # an integer scalar stays below 2**31 so it is non-negative as `int` -- the value model
+            # is unsigned, so an int->float cast must agree in sign (wrapping arithmetic is unaffected).
+            mod = 1000 if ct.is_float else (200 if has_ptr else 2000000000)
+            setup.append(f"    s{i}=({_cname(ct)})(rng()%{mod});")
             args.append(f"s{i}")
     call = ", ".join(args)
     rt = _cname(entry.ret_type)
