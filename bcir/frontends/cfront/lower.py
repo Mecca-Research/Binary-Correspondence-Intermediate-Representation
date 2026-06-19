@@ -19,6 +19,7 @@ from dataclasses import dataclass, field, replace
 from ...kbcir import compose
 from ...model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 from . import cast
+from .abi import HOST
 from .clex import split_lit_prefix, str_elem_size
 from .ctype_model import (
     AggregateBuilder,
@@ -284,8 +285,9 @@ _VOID_RID = -1
 class _FuncLowerer:
     def __init__(self, func: cast.Func, aggregates: dict, base_rid: int, cid: list,
                  genv: dict | None = None, gres: dict | None = None, strctr: list | None = None,
-                 func_rets: dict | None = None):
+                 func_rets: dict | None = None, abi=None):
         self.func = func
+        self.abi = abi or HOST            # the target data model for laying out user types (long/ptr)
         self.func_rets = func_rets or {}  # callee name -> return CType (for void / wide / float returns)
         self.aggregates = aggregates
         self.rid = base_rid
@@ -318,11 +320,11 @@ class _FuncLowerer:
         if tref.funcptr:                                   # a function-pointer alias (HAL dispatch)
             ret = self._resolve_type(tref.func_ret)
             params = tuple(self._resolve_type(p) for p in tref.func_params)
-            return funcptr(tref.base, ret, params)
+            return funcptr(tref.base, ret, params, self.abi)
         if tref.aggregate:
             base = self.aggregates[tref.base]
         elif is_scalar_name(tref.base):
-            base = scalar(tref.base)
+            base = scalar(tref.base, self.abi)
         else:
             raise CLowerError(f"unknown type {tref.base!r}")
         if "volatile" in tref.quals:                       # volatile pointee/object -> MMIO region
@@ -331,7 +333,7 @@ class _FuncLowerer:
             base = with_atomic(base)
         t = base
         for _ in range(tref.ptr):
-            t = pointer(t)
+            t = pointer(t, self.abi)
         for dim in reversed(tref.array):
             t = array(t, dim)
         return t
@@ -861,20 +863,22 @@ def _region_for(lf: LoweredFunc, functions: dict) -> compose.Region:
     return _block_region(lf.body, functions, list(lf.calls))
 
 
-def lower_unit(unit: cast.Unit) -> LoweredUnit:
-    """Lower a whole translation unit. Aggregates are laid out first (Clang-compatible), then each
-    function to its claim-graph Module + compose.Function."""
+def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
+    """Lower a whole translation unit. Aggregates are laid out first (Clang-compatible for the target
+    data model `abi`, defaulting to the host), then each function to its claim-graph Module +
+    compose.Function."""
+    abi = abi or HOST
     aggregates: dict[str, CType] = {}
     for tag, agg in unit.aggregates.items():
         b = AggregateBuilder(agg.kind, tag, packed=agg.packed, force_align=agg.align)
         for tref, mname, width in agg.members:
-            b.members.append((mname, _resolve_member_type(tref, aggregates), width))
+            b.members.append((mname, _resolve_member_type(tref, aggregates, abi), width))
         aggregates[tag] = b.build()
 
     genv: dict[str, tuple] = {}                            # file-scope globals: name -> (rid, CType)
     gres: dict[int, Resource] = {}
     for gi, g in enumerate(unit.globals):
-        ct = _resolve_member_type(g.type, aggregates)
+        ct = _resolve_member_type(g.type, aggregates, abi)
         if g.init and ct.kind == "array" and ct.count == 0:
             ct = array(ct.of, len(g.init))                # `T name[] = {...}` -> sized from the init
         elif g.init and ct.kind != "array":
@@ -892,10 +896,10 @@ def lower_unit(unit: cast.Unit) -> LoweredUnit:
     strctr = [0]                                          # unit-wide string-literal counter (unique rids)
     # pre-scan every function's return type (forward references resolve too), so a call can be typed
     # by its callee: a void call emits a bare statement, a wide/float return keeps its real type.
-    func_rets = {fn.name: _resolve_member_type(fn.ret, aggregates) for fn in unit.funcs}
+    func_rets = {fn.name: _resolve_member_type(fn.ret, aggregates, abi) for fn in unit.funcs}
     for idx, fn in enumerate(unit.funcs):
         lf = _FuncLowerer(fn, aggregates, base_rid=100 + idx * 1000, cid=cid,
-                          genv=genv, gres=gres, strctr=strctr, func_rets=func_rets).lower()
+                          genv=genv, gres=gres, strctr=strctr, func_rets=func_rets, abi=abi).lower()
         functions[fn.name] = lf
         resources.update(lf.resources)
     for lf in functions.values():                          # regions need every callee's param rids
@@ -906,18 +910,19 @@ def lower_unit(unit: cast.Unit) -> LoweredUnit:
                        compose_functions=compose_functions, resources=resources)
 
 
-def _resolve_member_type(tref: cast.TypeRef, aggregates: dict) -> CType:
+def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:
+    abi = abi or HOST
     if tref.funcptr:                                       # a function-pointer member (dispatch table)
-        ret = _resolve_member_type(tref.func_ret, aggregates)
-        params = tuple(_resolve_member_type(p, aggregates) for p in tref.func_params)
-        return funcptr(tref.base, ret, params)
+        ret = _resolve_member_type(tref.func_ret, aggregates, abi)
+        params = tuple(_resolve_member_type(p, aggregates, abi) for p in tref.func_params)
+        return funcptr(tref.base, ret, params, abi)
     if tref.aggregate:
         base = aggregates[tref.base]
     else:
-        base = scalar(tref.base)
+        base = scalar(tref.base, abi)
     t = base
     for _ in range(tref.ptr):
-        t = pointer(t)
+        t = pointer(t, abi)
     for dim in reversed(tref.array):
         t = array(t, dim)
     return t

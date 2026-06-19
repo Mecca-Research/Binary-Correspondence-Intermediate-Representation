@@ -94,3 +94,42 @@ def test_host_abi_matches_clang_sizeof():
     lng, ptr, ldbl = sizes
     assert HOST.long_size == lng and HOST.pointer_size == ptr
     assert HOST.long_double_size == ldbl                      # LP64 host: 16 on x86-64 and AArch64
+
+
+# --- segment 2b: target selection threaded through compile_unit -----------------------------------
+
+_STRUCT = "struct S { long a; char b; }; unsigned f(void){ struct S s; return sizeof(s); }\n"
+
+
+def test_compile_unit_defaults_to_the_host_and_checks_equivalence():
+    from bcir.frontends.cfront import compile_unit
+    r = compile_unit(_STRUCT, check_clang=True)
+    assert r.target == "x86_64-linux" and r.is_clean
+    assert r.lowered.aggregates["S"].size == 16               # LP64 layout
+    assert r.equivalence in ("match", "skip") or r.equivalence.startswith("skip")
+
+
+def test_compile_unit_lays_out_for_a_selected_target():
+    from bcir.frontends.cfront import compile_unit
+    rw = compile_unit(_STRUCT, check_clang=True, target="x86_64-windows")
+    assert rw.target == "x86_64-windows" and rw.is_clean      # still R1-R18 clean
+    assert rw.lowered.aggregates["S"].size == 8               # LLP64: long is 4
+    assert rw.equivalence == "skip:cross-target:x86_64-windows"   # not host-clang-compatible
+    ri = compile_unit(_STRUCT, check_clang=False, target="i386-linux")
+    assert ri.lowered.aggregates["S"].size == 8 and ri.target == "i386-linux"
+
+
+def test_lp64_targets_compile_to_identical_layouts():
+    from bcir.frontends.cfront import compile_unit
+    sizes = {t: compile_unit(_STRUCT, check_clang=False, target=t).lowered.aggregates["S"].size
+             for t in ("x86_64-linux", "aarch64-linux", "riscv64-linux")}
+    assert set(sizes.values()) == {16}                        # the LP64 trio coincide
+
+
+def test_compile_unit_rejects_an_unknown_target():
+    from bcir.frontends.cfront import compile_unit
+    try:
+        compile_unit(_STRUCT, check_clang=False, target="sparc-solaris")
+        raise AssertionError("expected KeyError for an unknown target")
+    except KeyError:
+        pass

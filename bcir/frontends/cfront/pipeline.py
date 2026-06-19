@@ -23,6 +23,7 @@ from ...kbcir.cost import Theta
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
 from ...verify import Diagnostic, verify, verify_plan
+from .abi import HOST, target as resolve_target
 from .clex import CLexError
 from .cparse import parse_unit, parse_with_recovery
 from .cpp import CPPError, preprocess
@@ -51,6 +52,7 @@ class CompileResult:
     diagnostics: list = field(default_factory=list)   # R1–R18 Diagnostics (empty == clean)
     r18_ok: bool = True
     equivalence: str = "skip"                         # match | MISMATCH | skip:<reason>
+    target: str = HOST.name                           # the target ABI the unit was laid out for
 
     @property
     def is_clean(self) -> bool:
@@ -96,17 +98,21 @@ def diagnose(source: str, *, includes: dict | None = None, embeds: dict | None =
 
 def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | None = None,
                  search_paths: list | None = None, defines: dict | None = None,
-                 check_clang: bool = True, filename: str = "<source>") -> CompileResult:
+                 check_clang: bool = True, filename: str = "<source>",
+                 target: str | None = None) -> CompileResult:
     # L7: preprocess first — the expanded text is what both the parser and the Clang harness see,
     # so the equivalence check validates the lowering of the *preprocessed* program. `search_paths`
     # (the source dir + -I dirs) resolves `#include "..."` from disk; `defines` seeds -D macros;
-    # `filename` is the translation unit's name for __FILE__.
+    # `filename` is the translation unit's name for __FILE__. `target` selects the ABI the unit lays
+    # out for (defaults to the host); a non-host layout is not byte-compatible with the host clang, so
+    # its behaviour-equivalence check is skipped (the layout is conformance-checked instead).
+    abi = resolve_target(target) if target else HOST
     source = preprocess(source, includes=includes, embeds=embeds,
                         search_paths=search_paths, defines=defines, name=filename)
     unit = parse_unit(source)
-    lowered = lower_unit(unit)
+    lowered = lower_unit(unit, abi)
     h, theta, policy = host_channel().profile, Theta.cool(), PERF
-    res = CompileResult(source=source, unit=unit, lowered=lowered)
+    res = CompileResult(source=source, unit=unit, lowered=lowered, target=abi.name)
 
     # --- per-function: plan, verify (R1–R9), emit, explain ---
     for name, lf in lowered.functions.items():
@@ -128,9 +134,12 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
             res.r18_ok = False
             res.diagnostics.append(Diagnostic("R18", f"call-graph integrity: {e}"))
 
-    # --- behaviour equivalence vs Clang (clang-gated) ---
-    if check_clang:
+    # --- behaviour equivalence vs Clang (clang-gated; host ABI only -- a cross-target layout is not
+    #     byte-compatible with the host compiler, so equivalence there would be meaningless) ---
+    if check_clang and abi is HOST:
         res.equivalence = _equivalence(source, lowered)
+    elif abi is not HOST:
+        res.equivalence = f"skip:cross-target:{abi.name}"
 
     # --- C.2 attestation: stamp each emitted function with its R12/R13/R17/R18 provenance ---
     for name in lowered.functions:
