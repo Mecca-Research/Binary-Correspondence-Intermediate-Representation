@@ -71,10 +71,12 @@ def _float_lit_type(spelling: str) -> CType:
     return scalar("double")
 
 
-# <math.h> real-valued functions: each takes and returns a floating type fixed by the name suffix
-# (base -> double, +f -> float, +l -> long double). They lower to an opaque external library edge --
-# the emit calls the real libm function (the harness links -lm) so the IEEE-754 result is delegated
-# to the backend, and the call graph sees no callee to resolve (R18 treats it like an indirect call).
+# <math.h> functions whose result is a floating type fixed by the name suffix (base -> double,
+# +f -> float, +l -> long double). Most are real-valued; a few take a non-floating argument that is
+# simply passed through -- ldexp/scalbn (an int exponent), scalbln (a long), nan (a tag string). They
+# lower to an opaque external library edge: the emit calls the real libm function (the harness links
+# -lm) so the IEEE-754 result is delegated to the backend, and the call graph sees no callee to
+# resolve (R18 treats it like an indirect call).
 _LIBM = frozenset({
     "acos", "asin", "atan", "atan2", "cos", "sin", "tan",
     "acosh", "asinh", "atanh", "cosh", "sinh", "tanh",
@@ -83,13 +85,26 @@ _LIBM = frozenset({
     "ceil", "floor", "round", "trunc", "nearbyint", "rint",
     "erf", "erfc", "lgamma", "tgamma",
     "copysign", "fdim", "fmax", "fmin", "fmod", "remainder", "fma", "nextafter",
+    "ldexp", "scalbn", "scalbln", "nan",
 })
+# <math.h> functions with a fixed *integer* result (the f/l suffix types only the argument): ilogb
+# returns int, which is exactly the 4-byte value model (a lossless 2's-complement round-trip, even
+# for FP_ILOGB0 == INT_MIN). The `long`/`long long` returners (lround/llround/lrint/llrint) and the
+# pointer-out-param functions (frexp/modf/remquo) need the wider integer model / address-of-argument
+# support respectively, so they are left to fall through -- an undefined callee, a fail-loud R18.
+_LIBM_INT = {"ilogb": "int"}
 
 
 def _libm_type(name: str) -> CType | None:
-    """The floating result type of a `<math.h>` call by name suffix (base -> double, `f` -> float,
-    `l` -> long double), or None if `name` is not a recognized libm function. The full name is tried
-    first so a base that ends in `f` (`erf`) is not misread as the float variant of `er`."""
+    """The result type of a `<math.h>` call: real-valued ones are typed by the name suffix
+    (base -> double, `f` -> float, `l` -> long double); a fixed-integer one (`ilogb`) returns its
+    int type for any suffix. None if `name` is not a recognized libm function. The full name is
+    tried first so a base that ends in `f` (`erf`) is not misread as the float variant of `er`."""
+    base = name[:-1] if name[-1:] in "fl" else name
+    if name in _LIBM_INT:
+        return scalar(_LIBM_INT[name])
+    if base in _LIBM_INT:                             # a suffixed variant (ilogbf/ilogbl) -> same int
+        return scalar(_LIBM_INT[base])
     if name in _LIBM:
         return scalar("double")
     if name[-1:] == "f" and name[:-1] in _LIBM:
