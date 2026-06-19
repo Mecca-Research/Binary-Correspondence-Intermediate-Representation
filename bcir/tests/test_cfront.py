@@ -90,6 +90,27 @@ def test_L3_string_literal_value():
     assert '"hello"' in lf2.globals_used.values()
 
 
+def test_L1_character_constants():
+    """A character constant lexes as a CHAR token and folds to an `int` value: a single character is
+    its byte value (signed char), an escape decodes to one byte (simple `\\c`, octal `\\NNN`, hex
+    `\\xHH`), and a multi-character `'AB'` packs big-endian like Clang/GCC -- so it lowers to a
+    `c.const` and stays behaviour-equal to Clang."""
+    from bcir.frontends.cfront.clex import parse_char_literal, tokenize
+    assert [t.text for t in tokenize(r"x 'A' '\n'") if t.kind == "CHAR"] == ["'A'", r"'\n'"]
+    assert parse_char_literal("'A'") == 65
+    assert parse_char_literal(r"'\n'") == 10 and parse_char_literal(r"'\t'") == 9
+    assert parse_char_literal(r"'\x7a'") == 122 and parse_char_literal(r"'\101'") == 65
+    assert parse_char_literal(r"'\0'") == 0
+    assert parse_char_literal("'AB'") == 0x4142            # multi-character constant (big-endian pack)
+
+    def eqok(r):
+        return r.equivalence == "match" or r.equivalence.startswith("skip")
+    r = compile_unit("uint32_t f(void){ return 'A' + '\\n' + 'AB'; }\n")
+    lf = r.lowered.functions["f"]
+    assert r.is_clean and eqok(r)
+    assert sum(1 for c in lf.claims if c.op == "c.const") == 3   # three char constants, all folded
+
+
 # --- L2: struct / union layout + member access ---------------------------------------------------
 
 def test_L2_struct_member_access():

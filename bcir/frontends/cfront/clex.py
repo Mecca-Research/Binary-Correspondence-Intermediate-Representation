@@ -14,7 +14,7 @@ class CLexError(Exception):
 
 @dataclass(frozen=True)
 class Tok:
-    kind: str           # IDENT | INT | STRING | OP | PUNCT | EOF
+    kind: str           # IDENT | INT | CHAR | STRING | OP | PUNCT | EOF
     text: str
     pos: int
 
@@ -79,6 +79,15 @@ def tokenize(src: str) -> list[Tok]:
             toks.append(Tok("STRING", src[i:j + 1], i))           # text includes the surrounding quotes
             i = j + 1
             continue
+        if c == "'":                                              # character constant
+            j = i + 1
+            while j < n and src[j] != "'":
+                j += 2 if (src[j] == "\\" and j + 1 < n) else 1   # skip an escaped char as a unit
+            if j >= n:
+                raise CLexError(f"unterminated character constant at offset {i}")
+            toks.append(Tok("CHAR", src[i:j + 1], i))             # text includes the surrounding quotes
+            i = j + 1
+            continue
         for op in _OPS:                                           # operators (longest match)
             if src.startswith(op, i):
                 toks.append(Tok("OP", op, i))
@@ -92,6 +101,56 @@ def tokenize(src: str) -> list[Tok]:
                 raise CLexError(f"unexpected character {c!r} at offset {i}")
     toks.append(Tok("EOF", "", n))
     return toks
+
+
+_SIMPLE_ESCAPE = {"n": 10, "t": 9, "r": 13, "\\": 92, "'": 39, '"': 34,
+                  "a": 7, "b": 8, "f": 12, "v": 11, "?": 63}
+
+
+def decode_c_bytes(inner: str) -> list[int]:
+    """Decode the *inner* text of a string/character literal (surrounding quotes already stripped)
+    to its sequence of byte values, interpreting C escape sequences: the simple `\\c` escapes, an
+    octal `\\NNN` (up to three digits), and a hex `\\xHH..` (all following hex digits)."""
+    out: list[int] = []
+    i, ln = 0, len(inner)
+    while i < ln:
+        ch = inner[i]
+        if ch == "\\" and i + 1 < ln:
+            e = inner[i + 1]
+            if e == "x":                                       # \xHH.. -> all following hex digits
+                i, val = i + 2, 0
+                while i < ln and inner[i] in "0123456789abcdefABCDEF":
+                    val, i = val * 16 + int(inner[i], 16), i + 1
+                out.append(val & 0xFF)
+            elif e in "01234567":                              # \NNN -> up to three octal digits
+                i, val, k = i + 1, 0, 0
+                while k < 3 and i < ln and inner[i] in "01234567":
+                    val, i, k = val * 8 + int(inner[i], 8), i + 1, k + 1
+                out.append(val & 0xFF)
+            else:                                              # \n, \t, \\, \", \0-less simple escapes
+                out.append(_SIMPLE_ESCAPE.get(e, ord(e)) & 0xFF)
+                i += 2
+        else:
+            out.append(ord(ch) & 0xFF)
+            i += 1
+    return out
+
+
+def parse_char_literal(text: str) -> int:
+    """Decode a C character constant to its `int` value. A single character is its byte value
+    sign-extended as a (signed) `char`; a multi-character constant `'AB'` packs big-endian
+    (Clang/GCC: `('A'<<8)|'B'`), interpreted as a 32-bit `int`. `text` includes the quotes."""
+    inner = text[1:-1] if len(text) >= 2 and text[0] == "'" else text
+    bs = decode_c_bytes(inner)
+    if not bs:
+        return 0
+    if len(bs) == 1:
+        b = bs[0]
+        return b - 256 if b >= 128 else b                      # a single char is a signed char
+    v = 0
+    for b in bs:
+        v = ((v << 8) | b) & 0xFFFFFFFF
+    return v - (1 << 32) if v >= (1 << 31) else v              # an int32 multi-character constant
 
 
 def parse_int_literal(text: str) -> int:

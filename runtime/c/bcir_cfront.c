@@ -73,6 +73,35 @@ static long long parse_int(const char *s, int n) {
   return strtoll(buf,NULL,10);
 }
 
+/* Decode a C character constant 'c' to its int value: a single char is its byte value sign-extended
+ * as a (signed) char; a multi-character constant 'AB' packs big-endian (Clang/GCC: ('A'<<8)|'B'),
+ * read as a 32-bit int. s[0..n) includes the surrounding quotes. */
+static long long parse_char(const char *s, int n) {
+  int i = (n>0 && s[0]=='\'') ? 1 : 0, e = (n>0 && s[n-1]=='\'') ? n-1 : n;
+  int bytes[8], nb=0;
+  while (i < e && nb < 8) {
+    int b;
+    if (s[i]=='\\' && i+1 < e) { char c = s[i+1];
+      if (c=='x') { i+=2; int v=0;
+        while (i<e && ((s[i]>='0'&&s[i]<='9')||((s[i]|0x20)>='a'&&(s[i]|0x20)<='f'))) {
+          int d = (s[i]<='9')?s[i]-'0':((s[i]|0x20)-'a'+10); v=v*16+d; i++; }
+        b = v & 0xFF; }
+      else if (c>='0'&&c<='7') { i++; int v=0,k=0;
+        while (k<3 && i<e && s[i]>='0'&&s[i]<='7'){v=v*8+(s[i]-'0');i++;k++;} b=v&0xFF; }
+      else { int v; switch(c){case 'n':v=10;break;case 't':v=9;break;case 'r':v=13;break;
+             case '\\':v=92;break;case '\'':v=39;break;case '"':v=34;break;case 'a':v=7;break;
+             case 'b':v=8;break;case 'f':v=12;break;case 'v':v=11;break;case '?':v=63;break;
+             default:v=(unsigned char)c;} b=v; i+=2; }
+    } else { b=(unsigned char)s[i]; i++; }
+    bytes[nb++]=b;
+  }
+  if (nb==0) return 0;
+  if (nb==1) return (bytes[0]>=128) ? bytes[0]-256 : bytes[0];          /* a single signed char */
+  unsigned long long v=0;
+  for (int k=0;k<nb;k++) v = ((v<<8) | (unsigned)bytes[k]) & 0xFFFFFFFFu;
+  return (v>=0x80000000u) ? (long long)v-(1LL<<32) : (long long)v;       /* an int32 multichar */
+}
+
 /* Bytes in a "..."-spelled string literal *excluding* the NUL, decoding escapes (a simple \c, an
  * octal \NNN, or a hex \xHH.. each count as one byte). s[0..n) includes the surrounding quotes. */
 static int str_bytes(const char *s, int n) {
@@ -107,6 +136,9 @@ static void lex(CC *c, const char *src) {
     if (*p=='"'){t->k=T_STR;t->s=p;p++;                /* string literal (escapes consumed as a unit) */
                  while(*p&&*p!='"'){ if(*p=='\\'&&p[1]) p+=2; else p++; }
                  if(*p=='"')p++; t->n=(int)(p-t->s); c->nt++; continue;}
+    if (*p=='\''){t->k=T_INT;t->s=p;p++;               /* character constant -> a folded int const */
+                  while(*p&&*p!='\''){ if(*p=='\\'&&p[1]) p+=2; else p++; }
+                  if(*p=='\'')p++; t->n=(int)(p-t->s); t->v=parse_char(t->s,t->n); c->nt++; continue;}
     int m=0; for(int j=0;pu[j];j++) if(p[0]==pu[j][0]&&p[1]==pu[j][1]){
       t->k=T_PUN;t->s=p;t->n=2;p+=2;c->nt++;m=1;break;}
     if (m) continue;
