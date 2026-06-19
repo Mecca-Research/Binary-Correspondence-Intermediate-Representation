@@ -659,6 +659,8 @@ class _Parser:
     def _primary(self):
         if self.at("INT"):
             return cast.IntLit(parse_int_literal(self.nxt().text))
+        if self.at("STRING"):
+            return cast.StringLit(self.nxt().text)
         if self.at("IDENT"):
             w = self.peek().text
             if w in self.enums:                           # an enumerator -> its integer literal

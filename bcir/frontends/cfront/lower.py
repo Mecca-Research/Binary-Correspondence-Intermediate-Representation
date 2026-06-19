@@ -54,6 +54,32 @@ def _cast_name(ct: CType) -> str:
     return _CAST_W.get(ct.size, "uint32_t")
 
 
+def _str_bytes(spelling: str) -> int:
+    """The number of bytes a string literal's value occupies *excluding* the terminating NUL,
+    decoding escape sequences (a simple `\\c`, an octal `\\NNN`, or a hex `\\xHH..` each count as one
+    byte). `spelling` is the source text including the surrounding quotes."""
+    s = spelling[1:-1] if len(spelling) >= 2 and spelling[0] == '"' else spelling
+    i, n = 0, 0
+    while i < len(s):
+        if s[i] == "\\" and i + 1 < len(s):
+            c = s[i + 1]
+            if c == "x":                                       # \xHH.. -> consume all hex digits
+                i += 2
+                while i < len(s) and s[i] in "0123456789abcdefABCDEF":
+                    i += 1
+            elif c in "01234567":                              # \NNN  -> up to three octal digits
+                i += 1
+                k = 0
+                while k < 3 and i < len(s) and s[i] in "01234567":
+                    i, k = i + 1, k + 1
+            else:                                              # \n, \t, \\, \", \0, ...
+                i += 2
+        else:
+            i += 1
+        n += 1
+    return n
+
+
 def _fold_const(node) -> int:
     """A `static` local's initializer must be a constant expression (it is baked into the C
     declaration). Fold the integer-constant subset; a missing init zero-initializes."""
@@ -360,6 +386,8 @@ class _FuncLowerer:
             # sizeof folds to a compile-time constant -- the operand is NOT evaluated.
             if node.type is not None:
                 size = self._resolve_type(node.type).size
+            elif isinstance(node.expr, cast.StringLit):
+                size = _str_bytes(node.expr.value) + 1         # char[N]: the bytes + the NUL
             elif isinstance(node.expr, cast.Name):
                 size = self.env[node.expr.ident][1].size       # the variable's declared type size
             else:
