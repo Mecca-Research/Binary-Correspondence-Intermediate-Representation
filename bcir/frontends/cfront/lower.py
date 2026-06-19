@@ -86,13 +86,15 @@ _LIBM = frozenset({
     "erf", "erfc", "lgamma", "tgamma",
     "copysign", "fdim", "fmax", "fmin", "fmod", "remainder", "fma", "nextafter",
     "ldexp", "scalbn", "scalbln", "nan",
+    "frexp", "modf", "remquo",                            # a pointer out-param (rides c.addrof); double result
 })
 # <math.h> functions with a fixed *integer* result (the f/l suffix types only the argument): ilogb
-# returns int, which is exactly the 4-byte value model (a lossless 2's-complement round-trip, even
-# for FP_ILOGB0 == INT_MIN). The `long`/`long long` returners (lround/llround/lrint/llrint) and the
-# pointer-out-param functions (frexp/modf/remquo) need the wider integer model / address-of-argument
-# support respectively, so they are left to fall through -- an undefined callee, a fail-loud R18.
-_LIBM_INT = {"ilogb": "int"}
+# returns int; lround/lrint return long and llround/llrint return long long. The emitted result temp
+# is declared at the rid type's true width, so the 8-byte returns are not truncated to the 4-byte
+# value model. (frexp/modf/remquo, which take a pointer out-param, ride the address-of-argument path.)
+_LIBM_INT = {"ilogb": "int",
+             "lround": "long", "lrint": "long",
+             "llround": "long long", "llrint": "long long"}
 
 
 def _libm_type(name: str) -> CType | None:
@@ -484,7 +486,12 @@ class _FuncLowerer:
             if node.op == "*":
                 return self._read(self._lvalue(node))
             if node.op == "&":
-                return self._addr(node.operand)[0]
+                # `&x` as a *value* (a call argument, a pointer initializer): a pointer temp emitted
+                # as `&x`, so e.g. frexp(value, &exp) keeps the `&`. _addr resolves the storage
+                # location; the pointer value is delegated to the emitted C, never computed here.
+                base_rid, base_ct = self._addr(node.operand)
+                t = self._temp(pointer(base_ct), "addr")
+                return self._emit("c.addrof", Opcode.ADD, (base_rid,), (t,))
             v = self._rvalue(node.operand)
             opcode, suf = _UN[node.op]
             t = self._temp(scalar("uint32_t"), f"u_{suf}")

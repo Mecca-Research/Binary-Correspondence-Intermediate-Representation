@@ -275,9 +275,7 @@ def test_math_h_library_calls():
 def test_math_h_mixed_arg_and_int_return():
     """`<math.h>` calls with a non-floating argument (ldexp/scalbn: an int exponent; scalbln: a long;
     nan: a tag string) still return their floating type by suffix, and ilogb returns int (exactly the
-    4-byte value model). The 8-byte-returning (lround/lrint family) and pointer-out-param
-    (frexp/modf/remquo) functions are deferred -- they fall through to a fail-loud R18, not silently
-    truncated/dropped-argument code."""
+    4-byte value model)."""
     from bcir.frontends.cfront.lower import _libm_type
 
     def eqok(r):
@@ -287,9 +285,6 @@ def test_math_h_mixed_arg_and_int_return():
     assert _libm_type("ldexp").name == "double" and _libm_type("ldexpf").name == "float"
     assert _libm_type("scalbln").name == "double" and _libm_type("nanf").name == "float"
     assert _libm_type("ilogb").name == _libm_type("ilogbf").name == _libm_type("ilogbl").name == "int"
-    # deferred families are not recognized -> a call falls through to the call graph (a fail-loud R18).
-    assert all(_libm_type(n) is None for n in
-               ("lround", "llround", "lrint", "llrint", "frexp", "modf", "remquo"))
 
     r = compile_unit("double f(double x){ return ldexp(x, 3) + scalbn(x, 2) + scalbln(x, 4L); }\n")
     assert r.is_clean and eqok(r)
@@ -297,9 +292,39 @@ def test_math_h_mixed_arg_and_int_return():
     assert ri.lowered.functions["g"].ret_type.name == "int" and ri.is_clean and eqok(ri)
     rnan = compile_unit("double h(double x){ return x + nan(\"\"); }\n")
     assert rnan.is_clean and eqok(rnan)                                 # tag-string arg; NaN-safe compare
-    # a deferred libm function is a fail-loud R18 (an 8-byte truncation / dropped pointer is avoided).
-    rl = compile_unit("long k(double x){ return lround(x); }\n", check_clang=False)
-    assert not rl.r18_ok and any(d.law == "R18" for d in rl.diagnostics)
+
+
+def test_math_h_eight_byte_returns_and_pointer_out_params():
+    """The `long`/`long long`-returning rounders (lround/llround/lrint/llrint) declare their result
+    temp at its true width -- so an 8-byte return is not truncated to the 4-byte value model -- and
+    the pointer-out-param functions (frexp/modf/remquo) ride the address-of-argument path: `&local`
+    lowers to a `c.addrof` claim emitted as `&local`, not a dropped `&`. Both verify Clang-equivalent."""
+    from bcir.frontends.cfront.emit import emit_function
+    from bcir.frontends.cfront.lower import _libm_type
+
+    def eqok(r):
+        return r.equivalence == "match" or r.equivalence.startswith("skip")
+
+    # the 8-byte rounders now resolve to their wide integer result type, declared at full width.
+    assert _libm_type("lround").name == "long" and _libm_type("llround").name == "long long"
+    assert _libm_type("lrint").name == "long" and _libm_type("llrintf").name == "long long"
+    rl = compile_unit("long k(double x){ return lround(x); }\n")
+    klf = rl.lowered.functions["k"]
+    assert klf.ret_type.name == "long" and rl.is_clean and eqok(rl)
+    assert "long t" in emit_function(klf) and "uint32_t" not in \
+        [ln for ln in emit_function(klf).splitlines() if "lround" in ln][0]   # not narrowed
+    rll = compile_unit("long long k(double x){ return llround(x * 1e9); }\n")
+    assert rll.lowered.functions["k"].ret_type.name == "long long" and rll.is_clean and eqok(rll)
+
+    # frexp/modf/remquo: the `&local` out-param is a c.addrof claim emitted as `&local`.
+    rfx = compile_unit("double f(double x){ int e; double m = frexp(x, &e); return m + e; }\n")
+    flf = rfx.lowered.functions["f"]
+    assert any(c.op == "c.addrof" for c in flf.claims) and rfx.is_clean and eqok(rfx)
+    assert "&e" in emit_function(flf) and "frexp(" in emit_function(flf)
+    rmf = compile_unit("double f(double x){ double ip; double fp = modf(x, &ip); return fp + ip; }\n")
+    assert rmf.is_clean and eqok(rmf)
+    rrq = compile_unit("double f(double x, double y){ int q; return remquo(x, y, &q) + q; }\n")
+    assert rrq.is_clean and eqok(rrq)
 
 
 # --- L2: struct / union layout + member access ---------------------------------------------------
