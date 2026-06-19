@@ -63,9 +63,11 @@ def test_render_includes_notes_and_fixits():
 
 
 def test_invalid_severity_rejected():
-    import pytest
-    with pytest.raises(ValueError):
+    try:
         SourceDiagnostic("fatal", "x")         # only error/warning/note are valid severities
+        raise AssertionError("expected ValueError for an unknown severity")
+    except ValueError:
+        pass
 
 
 def test_diagnose_parse_error_is_located_not_raised():
@@ -79,13 +81,13 @@ def test_diagnose_parse_error_is_located_not_raised():
 
 
 def test_lexer_error_carries_a_source_offset():
-    import pytest
-
     from bcir.frontends.cfront.clex import CLexError, tokenize
     src = 'char *s = "unterminated'                            # no closing quote -> a lex error
-    with pytest.raises(CLexError) as ei:
+    try:
         tokenize(src)
-    assert ei.value.pos == src.index('"')                     # the offset of the opening quote
+        raise AssertionError("expected CLexError for an unterminated string")
+    except CLexError as e:
+        assert e.pos == src.index('"')                        # the offset of the opening quote
 
 
 def test_diagnose_undeclared_identifier_is_a_clean_diagnostic():
