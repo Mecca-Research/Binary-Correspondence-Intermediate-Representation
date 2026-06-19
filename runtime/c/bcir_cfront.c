@@ -75,7 +75,8 @@ static long long parse_int(const char *s, int n) {
 
 static void lex(CC *c, const char *src) {
   const char *p=src;
-  static const char *pu[]={"<<",">>","->","==","!=","<=",">=","&&","||",0};
+  static const char *pu[]={"<<",">>","->","==","!=","<=",">=","&&","||",
+                           "+=","-=","*=","/=","%=","&=","|=","^=",0};
   while (*p) {
     if (*p==' '||*p=='\t'||*p=='\r'||*p=='\n'){p++;continue;}
     if (p[0]=='/'&&p[1]=='/'){while(*p&&*p!='\n')p++;continue;}
@@ -701,6 +702,19 @@ static void p_stmt(CC *c) {
     if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]=='='){
       c->i+=2;uint32_t val=p_expr(c);
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
+      eat(c,";");return;}
+    /* compound assignment  name OP= expr  ->  name = name OP expr  (a bin op + a copy). */
+    if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==2&&c->t[c->i+1].s[1]=='='
+       &&strchr("+-*/%&|^",c->t[c->i+1].s[0])){
+      char ch=c->t[c->i+1].s[0]; c->i+=2; uint32_t rhs=p_expr(c);
+      const char *suf; bcir_opcode oc;
+      switch(ch){case '+':suf="add";oc=BCIR_OP_ADD;break; case '-':suf="sub";oc=BCIR_OP_SUB;break;
+        case '*':suf="mul";oc=BCIR_OP_MUL;break; case '/':suf="div";oc=BCIR_OP_MUL;break;
+        case '%':suf="mod";oc=BCIR_OP_MUL;break; case '&':suf="and";oc=BCIR_OP_ADD;break;
+        case '|':suf="or";oc=BCIR_OP_ADD;break;  default:suf="xor";oc=BCIR_OP_ADD;break;}  /* ^ */
+      uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+      bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+      bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
       eat(c,";");return;}}
   (void)p_expr(c);eat(c,";");
 }
