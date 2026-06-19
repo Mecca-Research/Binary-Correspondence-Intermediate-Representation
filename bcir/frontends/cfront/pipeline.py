@@ -161,7 +161,8 @@ def _equivalence(source: str, lowered: LoweredUnit) -> str:
         with open(src, "w", encoding="utf-8") as f:
             f.write(harness)
         for std in ("-std=c23", "-std=c2x", "-std=c17"):
-            b = subprocess.run([cc, std, "-O1", src, "-o", exe], capture_output=True, text=True)
+            b = subprocess.run([cc, std, "-O1", src, "-o", exe, "-lm"],   # -lm: <math.h> calls link
+                               capture_output=True, text=True)
             if b.returncode == 0:
                 break
         else:
@@ -217,6 +218,13 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
         compare = (f"        {rt} ra = {entry.name}({call}), rb = bcir_{entry.name}({call});\n"
                    f"        if (memcmp(&ra, &rb, sizeof ra) != 0) {{ printf(\"MISMATCH@%d\", "
                    f"trial); return 0; }}")
+    elif entry.ret_type.is_float:
+        # value compare, but a NaN result (e.g. asin out of domain) counts as equal to itself -- the
+        # `x != x` legs catch NaN, which `==` alone would (correctly, per IEEE) report as unequal.
+        rt = _cname(entry.ret_type)
+        compare = (f"        {rt} ra = {entry.name}({call}), rb = bcir_{entry.name}({call});\n"
+                   f"        if (!(ra == rb || (ra != ra && rb != rb))) {{ printf(\"MISMATCH@%d\", "
+                   f"trial); return 0; }}")
     else:
         compare = (f"        if ({entry.name}({call}) != bcir_{entry.name}({call})) {{\n"
                    f"            printf(\"MISMATCH@%d\", trial); return 0; }}")
@@ -224,6 +232,7 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
 #include <stdio.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <math.h>
 {source}
 
 {emitted}
