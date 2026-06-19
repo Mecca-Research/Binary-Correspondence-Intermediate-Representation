@@ -421,6 +421,18 @@ static uint32_t p_primary(CC *c) {
   if(isk(c,T_INT)){tok t=adv(c);uint32_t r=temp(c,4);
     bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
     cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return r;}
+  if(isk(c,T_STR)){     /* a string literal -> an anonymous read-only char[] global; value is a ptr */
+    tok st=adv(c); int n=str_bytes(st.s,st.n)+1;       /* char[n] incl. the NUL */
+    char nm[BCIR_CIR_NAME]; int ln=st.n;               /* the resource name IS the spelling, so the */
+    if(ln>(int)sizeof nm-1) ln=(int)sizeof nm-1;       /* emitter renders references as the inline literal */
+    memcpy(nm,st.s,(size_t)ln); nm[ln]=0;
+    uint32_t rid=add_res(c,BCIR_DOM_RAM,1,n,0,BCIR_RK_POINTER,nm);
+    if(c->fn->n_res) c->fn->res[c->fn->n_res-1].read_only=1;     /* a read-only global */
+    if(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]");
+      venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type.size=1; sv.sidx=-1;
+      return emit_index(c,&sv,ix); }
+    return rid;
+  }
   if(is(c,"_Alignof")||is(c,"alignof")){   /* _Alignof(type) -> the type's alignment, a folded const */
     c->i++; eat(c,"("); bcir_ctype ty;int si; long long al=4;
     if(!p_type(c,&ty,&si)) al = ty.kind==2?8:(ty.kind==1?c->s[si].align:(ty.size?ty.size:1));

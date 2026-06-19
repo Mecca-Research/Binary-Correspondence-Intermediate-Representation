@@ -71,6 +71,25 @@ def test_L1_string_literal_sizeof():
     assert szof(r'"\0"') == 2               # octal NUL -> one byte
 
 
+def test_L3_string_literal_value():
+    """A string literal lowers to an anonymous read-only char[] global; using it decays to a pointer
+    (indexing reads a byte; the bare literal is the pointer). The emitter renders the anonymous global
+    as the inline literal, so the emit is Clang-equivalent with no synthesized declaration."""
+    def eqok(r):                            # match when Clang is present, else cleanly skipped
+        return r.equivalence == "match" or r.equivalence.startswith("skip")
+    # indexing a string literal -> the i-th byte, via an anonymous global referenced by a load.
+    r = compile_unit('uint32_t pick(uint32_t i){ return "ABCD"[i & 3]; }\n')
+    lf = r.lowered.functions["pick"]
+    assert r.is_clean and eqok(r)
+    assert '"ABCD"' in lf.globals_used.values()                  # the anon global renders inline
+    assert any(c.op == "c.load" for c in lf.claims)
+    # the bare literal is a const char* pointer (return-only: rendered inline, no claims/decl).
+    r2 = compile_unit('const char *msg(void){ return "hello"; }\n')
+    lf2 = r2.lowered.functions["msg"]
+    assert r2.is_clean and eqok(r2) and lf2.ret_type.kind == "pointer"
+    assert '"hello"' in lf2.globals_used.values()
+
+
 # --- L2: struct / union layout + member access ---------------------------------------------------
 
 def test_L2_struct_member_access():

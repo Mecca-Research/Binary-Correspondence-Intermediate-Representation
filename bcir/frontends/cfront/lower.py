@@ -202,13 +202,15 @@ class LoweredUnit:
 
 class _FuncLowerer:
     def __init__(self, func: cast.Func, aggregates: dict, base_rid: int, cid: list,
-                 genv: dict | None = None, gres: dict | None = None):
+                 genv: dict | None = None, gres: dict | None = None, strctr: list | None = None):
         self.func = func
         self.aggregates = aggregates
         self.rid = base_rid
         self.cid = cid                    # shared mutable [next_claim_id]
         self.genv = genv or {}            # file-scope globals: name -> (rid, CType)
         self.gres = gres or {}            # global rid -> Resource
+        self.strctr = strctr if strctr is not None else [0]   # shared string-literal counter (unique rids)
+        self.str_globals: dict[int, str] = {}          # string-literal global rid -> the source spelling
         self.env: dict[str, tuple[int, CType]] = {}    # name -> (storage rid, type)
         self.resources: dict[int, Resource] = {}
         self.rtypes: dict[int, CType] = {}             # rid -> CType (for emission)
@@ -335,10 +337,27 @@ class _FuncLowerer:
             return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"))
         raise CLowerError(f"not an lvalue: {type(node).__name__}")
 
+    def _string_ptr(self, spelling: str) -> int:
+        """A string literal -> an anonymous read-only `char[]` global (NUL-terminated); the value is a
+        pointer to it (decay). The emitter renders references to it as the inline literal, which is
+        Clang-equivalent, so no synthesized global declaration is needed."""
+        nbytes = _str_bytes(spelling) + 1                     # the decoded bytes + the NUL
+        idx = self.strctr[0]
+        self.strctr[0] += 1
+        rid = 970000 + idx
+        self.gres[rid] = Resource(rid=rid, domain=Domain.RAM, elem_bytes=1, shape=(nbytes,),
+                                  access="ro", data_gen=1, name=f"__str{idx}")
+        self.rtypes[rid] = array(scalar("char"), nbytes)
+        self.str_globals[rid] = spelling                      # rid -> the literal spelling (for emit)
+        return rid
+
     def _addr(self, node):
         """The (rid, type) of an aggregate/pointer base used by member/index access."""
         if isinstance(node, cast.Name):
             return self.env[node.ident]
+        if isinstance(node, cast.StringLit):                  # "abc"[i] -> index the anonymous global
+            rid = self._string_ptr(node.value)
+            return rid, self.rtypes[rid]
         if isinstance(node, cast.Member):
             base_rid, base_ct = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
@@ -357,6 +376,8 @@ class _FuncLowerer:
             return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(node.value,))
         if isinstance(node, cast.Name):
             return self.env[node.ident][0]
+        if isinstance(node, cast.StringLit):                  # a string value -> the global pointer
+            return self._string_ptr(node.value)
         if isinstance(node, cast.Binary):
             a, b = self._rvalue(node.lhs), self._rvalue(node.rhs)
             opcode, suf = _BIN[node.op]
@@ -643,6 +664,7 @@ class _FuncLowerer:
         for rid in touched & set(self.gres):                  # pull in referenced global resources
             self.resources[rid] = self.gres[rid]
         gnames = {rid: nm for nm, (rid, _ct) in self.genv.items() if rid in touched}
+        gnames.update(self.str_globals)                       # string globals render as inline literals
         m = Module(name=self.func.name)
         for rid in sorted(self.resources):
             m.add_resource(self.resources[rid])
@@ -725,9 +747,10 @@ def lower_unit(unit: cast.Unit) -> LoweredUnit:
     compose_functions: dict[str, compose.Function] = {}
     resources: dict[int, Resource] = dict(gres)
     cid = [1000]
+    strctr = [0]                                          # unit-wide string-literal counter (unique rids)
     for idx, fn in enumerate(unit.funcs):
         lf = _FuncLowerer(fn, aggregates, base_rid=100 + idx * 1000, cid=cid,
-                          genv=genv, gres=gres).lower()
+                          genv=genv, gres=gres, strctr=strctr).lower()
         functions[fn.name] = lf
         resources.update(lf.resources)
     for lf in functions.values():                          # regions need every callee's param rids
