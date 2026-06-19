@@ -13,8 +13,10 @@ R1–R18 verifier checkpoint, the Clang behaviour-equivalence verdict, and the `
 from __future__ import annotations
 
 from .cparse import CParseError, parse_unit
+from .diagnostics import DiagnosticReport, SourceDiagnostic, Span, line_col, render
 from .lower import lower_unit
-from .pipeline import CompileResult, compile_unit, emit_selfcheck
+from .pipeline import CompileResult, compile_unit, diagnose, emit_selfcheck
 
-__all__ = ["CParseError", "CompileResult", "compile_unit", "emit_selfcheck", "lower_unit",
-           "parse_unit"]
+__all__ = ["CParseError", "CompileResult", "DiagnosticReport", "SourceDiagnostic", "Span",
+           "compile_unit", "diagnose", "emit_selfcheck", "line_col", "lower_unit", "parse_unit",
+           "render"]

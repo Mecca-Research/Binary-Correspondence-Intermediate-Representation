@@ -10,7 +10,10 @@ from dataclasses import dataclass
 
 
 class CLexError(Exception):
-    pass
+    """A lexing error. `pos` is the source byte offset of the offending character (for the caret)."""
+    def __init__(self, message: str, pos: int | None = None):
+        super().__init__(message)
+        self.pos = pos
 
 
 @dataclass(frozen=True)
@@ -138,7 +141,7 @@ def tokenize(src: str) -> list[Tok]:
                     j += 2 if (src[j] == "\\" and j + 1 < n) else 1
                 if j >= n:
                     raise CLexError(f"unterminated {'string' if quote == chr(34) else 'character'} "
-                                    f"literal at offset {i}")
+                                    f"literal", pos=i)
                 toks.append(Tok("STRING" if quote == '"' else "CHAR", src[i:j + 1], i))
                 i = j + 1
                 continue
@@ -176,7 +179,7 @@ def tokenize(src: str) -> list[Tok]:
             while j < n and src[j] != '"':
                 j += 2 if (src[j] == "\\" and j + 1 < n) else 1   # skip an escaped char as a unit
             if j >= n:
-                raise CLexError(f"unterminated string literal at offset {i}")
+                raise CLexError("unterminated string literal", pos=i)
             toks.append(Tok("STRING", src[i:j + 1], i))           # text includes the surrounding quotes
             i = j + 1
             continue
@@ -185,7 +188,7 @@ def tokenize(src: str) -> list[Tok]:
             while j < n and src[j] != "'":
                 j += 2 if (src[j] == "\\" and j + 1 < n) else 1   # skip an escaped char as a unit
             if j >= n:
-                raise CLexError(f"unterminated character constant at offset {i}")
+                raise CLexError("unterminated character constant", pos=i)
             toks.append(Tok("CHAR", src[i:j + 1], i))             # text includes the surrounding quotes
             i = j + 1
             continue
@@ -199,7 +202,7 @@ def tokenize(src: str) -> list[Tok]:
                 toks.append(Tok("PUNCT", c, i))
                 i += 1
             else:
-                raise CLexError(f"unexpected character {c!r} at offset {i}")
+                raise CLexError(f"unexpected character {c!r}", pos=i)
     toks.append(Tok("EOF", "", n))
     return toks
 

@@ -23,10 +23,15 @@ from ...kbcir.cost import Theta
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
 from ...verify import Diagnostic, verify, verify_plan
-from .cparse import parse_unit
-from .cpp import preprocess
+from .clex import CLexError
+from .cparse import CParseError, parse_unit
+from .cpp import CPPError, preprocess
+from .diagnostics import DiagnosticReport, SourceDiagnostic, Span
 from .emit import emit_function
-from .lower import LoweredUnit, lower_unit
+from .lower import CLowerError, LoweredUnit, lower_unit
+
+# front-end exception type -> the translation stage it came from (machine-readable diagnostic provenance)
+_DIAG_PHASE = {CPPError: "preprocess", CLexError: "lex", CParseError: "parse", CLowerError: "lower"}
 
 
 @dataclass
@@ -53,6 +58,30 @@ class CompileResult:
 
 def _cc():
     return shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+
+
+def diagnose(source: str, *, includes: dict | None = None, embeds: dict | None = None,
+             search_paths: list | None = None, defines: dict | None = None,
+             filename: str = "<source>") -> DiagnosticReport:
+    """Run the front end (preprocess -> parse -> lower) for diagnostics only, returning a
+    `DiagnosticReport`: the source diagnostics plus the text their caret spans index into. An empty
+    report (`ok`) means the unit is well-formed through lowering. A front-end error is caught and
+    rendered with a Clang-style caret at its source span instead of crashing the caller.
+
+    Error *recovery* — continuing past the first error to collect several diagnostics in one run — is
+    a later segment of the Clang-grade-diagnostics work; today this reports the first error it hits."""
+    pp = source
+    try:
+        pp = preprocess(source, includes=includes, embeds=embeds,
+                        search_paths=search_paths, defines=defines, name=filename)
+        unit = parse_unit(pp)
+        lower_unit(unit)
+    except tuple(_DIAG_PHASE) as e:                    # any front-end error -> one located diagnostic
+        pos = getattr(e, "pos", None)
+        span = Span.at(pos) if pos is not None else None
+        diag = SourceDiagnostic("error", str(e), span=span, phase=_DIAG_PHASE[type(e)])
+        return DiagnosticReport([diag], pp, filename)
+    return DiagnosticReport([], pp, filename)
 
 
 def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | None = None,
