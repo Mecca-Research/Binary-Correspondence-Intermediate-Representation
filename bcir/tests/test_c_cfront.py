@@ -761,6 +761,10 @@ def test_c_preprocessor_macros_conditionals_and_embed():
             "#if __has_c_attribute(nodiscard)\nc\n#else\nU\n#endif\n",
             "#ifdef __has_attribute\nDEF\n#endif\n",                    # reported as `defined`
             "#if defined(__has_builtin) && !__has_builtin(x)\nG\n#endif\n",
+            "#define V(...) f(__VA_ARGS__)\nV(1,2,3)\n",                 # __VA_ARGS__ flattens all args
+            "#define L(a, ...) g(a, __VA_ARGS__)\nL(x,1,2)\nL(z)\n",    # named + variadic, incl. empty
+            "#define S(...) #__VA_ARGS__\nS(1, 2, 3)\nS()\n",           # stringize __VA_ARGS__
+            "#define P(...) x ## __VA_ARGS__\nP(1,2)\nP()\n",           # paste __VA_ARGS__
         ]
         for s in probes:
             assert pp(s) == _py_pp(s), f"twin divergence on {s!r}\n C: {pp(s)!r}\nPY: {_py_pp(s)!r}"
