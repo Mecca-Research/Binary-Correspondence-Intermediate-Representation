@@ -82,12 +82,21 @@ class Preprocessor:
         self._cur_file = "<source>"               # __FILE__: the file currently being processed
         self._cur_line = 0                         # __LINE__: its presumed line number
         self._presumed = 0                         # presumed line of the *next* line (#line sets it)
+        self._incstack: list = []                 # active #include sites: (including_file, line), outer-first
+        self.linemap: list = []                   # per output line: (file, line, include-stack snapshot)
 
     # --- public ---
     def process(self, text: str, name: str = "<source>") -> str:
         out: list[str] = []
+        self._incstack, self.linemap = [], []
         self._run(self._logical_lines(text), out, name)
         return "\n".join(out) + "\n"
+
+    def _out(self, out: list, text: str) -> None:
+        """Append a finished output line, recording its provenance (origin file + presumed line + the
+        active #include stack) in `linemap` so a diagnostic offset maps back to where it really is."""
+        out.append(text)
+        self.linemap.append((self._cur_file, self._cur_line, tuple(self._incstack)))
 
     # --- header resolution: the in-memory mount first, then the on-disk search path ---
     def _resolve(self, target: str) -> str | None:
@@ -137,7 +146,7 @@ class Preprocessor:
                     self._directive(line[1:].strip(), cond, out, name, active)
                     continue
                 if active():
-                    out.append(self._expand_text(raw))
+                    self._out(out, self._expand_text(raw))
         finally:
             self._cur_file, self._cur_line, self._presumed = saved
         if cond:
@@ -160,7 +169,7 @@ class Preprocessor:
         elif op == "include":
             self._include(rest, out, name)
         elif op == "embed":
-            out.append(self._embed(rest))
+            self._out(out, self._embed(rest))
         elif op == "line":
             self._line(rest)
         elif op in ("error",):
@@ -258,8 +267,12 @@ class Preprocessor:
         if self._depth > 64:
             raise CPPError("#include nesting too deep")
         self._depth += 1
-        self._run(self._logical_lines(text), out, target)
-        self._depth -= 1
+        self._incstack.append((name, self._cur_line))    # the #include site, for the diagnostic frame
+        try:
+            self._run(self._logical_lines(text), out, target)
+        finally:
+            self._incstack.pop()
+            self._depth -= 1
 
     def _embed(self, rest: str) -> str:
         target = self._header_name(rest.split()[0] if rest else rest)
@@ -601,5 +614,10 @@ def _apply(op: str, a: int, b: int) -> int:
 
 def preprocess(text: str, *, includes: dict | None = None, embeds: dict | None = None,
                search_paths: list | None = None, defines: dict | None = None,
-               name: str = "<source>") -> str:
-    return Preprocessor(includes, embeds, search_paths, defines).process(text, name)
+               name: str = "<source>", return_map: bool = False):
+    """Preprocess `text` to the flat translation-unit string. With `return_map=True`, also return the
+    per-output-line provenance map (file, line, #include stack) so diagnostics resolve to their
+    origin file even across inlined includes."""
+    p = Preprocessor(includes, embeds, search_paths, defines)
+    out = p.process(text, name)
+    return (out, p.linemap) if return_map else out
