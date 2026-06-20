@@ -113,7 +113,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals)
+for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects)
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re
@@ -391,5 +391,37 @@ case "${fb_seen}" in
     *) echo "  FAIL: fallback gate never reached a DIRTY (1): ${fb_seen}"; exit 1 ;; esac ;;
   *) echo "  FAIL: fallback gate never reached a clean (0): ${fb_seen}"; exit 1 ;;
 esac
+
+# Module-scope effect / commutation analysis (#effects, the C twin of pipeline.own_footprint +
+# commute): per function the global names it reads/writes (callee effects folded in transitively),
+# then the pairwise commute matrix (two readers commute; a writer conflicts with any reader/writer of
+# the same global). bcir-cc --emit-effects must match the oracle's pipeline.effects / commute exactly,
+# spanning a positive commute (read_a <> read_b over disjoint globals) and conflicts (a writer).
+echo "[c-runtime] effect/commutation analysis (bcir-cc --emit-effects): footprints + commute == oracle (#effects)"
+for fx in cfront_effects.c cfront_global_rw.c; do
+  c_fx="$("${tmp}/bcir-cc" --emit-effects "${C}/${fx}")" || { echo "  FAIL: bcir-cc --emit-effects ${fx}"; exit 1; }
+  py_fx="$(FX="${C}/${fx}" python3 -c "
+import os
+from bcir.frontends.cfront import compile_unit
+r=compile_unit(open(os.environ['FX']).read(), check_clang=False)
+fns=list(r.lowered.functions)
+def names(rids): return sorted(r.lowered.resources[x].name for x in rids if x in r.lowered.resources)
+out=[]
+for n in fns:
+    e=r.effects[n]
+    out.append(f\"fn={n} reads={','.join(names(e.reads)) or '-'} writes={','.join(names(e.writes)) or '-'}\")
+for i,a in enumerate(fns):
+    for b in fns[i+1:]:
+        out.append(f'commute {a} {b} = {1 if r.commute(a,b) else 0}')
+print('\n'.join(out))")" || { echo "  FAIL: oracle effects ${fx}"; exit 1; }
+  [ "${c_fx}" = "${py_fx}" ] \
+    && echo "  PASS effects ${fx} (footprints + commute oracle == C)" \
+    || { echo "  FAIL: effects ${fx} (C != PY)"; printf '   C :\n%s\n   PY:\n%s\n' "${c_fx}" "${py_fx}"; exit 1; }
+done
+# the gate must show both a commuting pair (1) and a conflict (0), else it has no teeth.
+"${tmp}/bcir-cc" --emit-effects "${C}/cfront_effects.c" | grep -q "commute read_a read_b = 1" \
+  && "${tmp}/bcir-cc" --emit-effects "${C}/cfront_effects.c" | grep -q "= 0" \
+  && echo "  PASS effects analysis distinguishes commute (1) from conflict (0)" \
+  || { echo "  FAIL: effects gate did not span commute + conflict"; exit 1; }
 
 echo "[c-runtime] ok"
