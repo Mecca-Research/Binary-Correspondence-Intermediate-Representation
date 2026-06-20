@@ -762,7 +762,12 @@ its module-scope **effect/commutation analysis** (the C twin of `pipeline.own_fo
 per-function read/write global footprints, callee effects folded transitively, the pairwise commute
 matrix — `bcir-cc --emit-effects`, byte-identical to the oracle; `cfront_effects.c`). **Still to
 port** — the genuinely-remaining Phase-2 language/infra work:
-  - *language:* the comma operator, `typeof`, compound literals; ✅ **full integer promotions + the usual
+  - *language:* ✅ **the comma operator in the for-step** (`for(...; ...; i++, j--)` — two-pointer /
+    reversal loops + parallel-counter updates; each comma-separated step element, inc/dec or plain /
+    compound assignment, runs in order, on both rails; the twin's `p_simple` gained scalar/pointer
+    compound-assign to match, closing a pre-existing single-`a += b`-step gap too;
+    `#commastep`/`cfront_commastep.c`); the comma operator in general expression position (blocked on
+    the twin, which has no assignment-in-expression), `typeof`, compound literals; ✅ **full integer promotions + the usual
     arithmetic conversions** — **dual-rail** (oracle `ctype_model.promote_int`/`usual_arith_int`/
     `int_literal_type` + `lower._bin_result_type`; C twin `tempi`/`rid_int`/`uac_i`/`lit_int_type` +
     `tty`/`ctype_str` rendering the true fixed-width type, with `is_signed` threaded through the resource
@@ -806,7 +811,8 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     …)`; each declarator lowers to its own storage + copy, identical to separate decls, so the emit is
     Clang-equivalent; `#multidecl`/`cfront_multidecl.c`. The oracle types a per-declarator `*`/`[]`
     shape per declarator; the twin folds `*` into the specifier, so `int *p, q;` is rejected there
-    rather than mis-typed — a follow-on, alongside the comma *operator* in a for-step).
+    rather than mis-typed — a follow-on. The comma *operator* in a for-step (`i++, j--`) now lowers on
+    both rails — see `#commastep` above).
     *Follow-on:* **compound literals** (`(struct S){…}`);
   - *storage/linkage:* ✅ **`extern`** (recognized as a storage-class specifier on both rails -- consumed
     like `static`; an `extern T g;` global is referenced by name, defined in another TU, so the emit is

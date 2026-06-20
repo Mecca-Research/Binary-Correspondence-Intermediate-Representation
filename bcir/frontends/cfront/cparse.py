@@ -554,10 +554,20 @@ class _Parser:
             self.eat("PUNCT", ";")
         cond = cast.IntLit(1) if self.at("PUNCT", ";") else self._expr()
         self.eat("PUNCT", ";")
-        step = None if self.at("PUNCT", ")") else cast.ExprStmt(self._incdec() or self._expr())
+        step = None if self.at("PUNCT", ")") else self._for_step()
         self.eat("PUNCT", ")")
         body = self._block() if self.at("PUNCT", "{") else (self._stmt(),)
         return cast.For(init, cond, step, body)
+
+    def _for_step(self):
+        """The for-loop step: one or more comma-separated simple expressions (`i++, j--`), each an
+        inc/dec or an assignment, run in order at the end of every iteration (the comma operator in
+        its dominant position). A single element returns a bare ExprStmt; several wrap in a Seq."""
+        parts = [cast.ExprStmt(self._incdec() or self._assign())]
+        while self.at("PUNCT", ","):
+            self.nxt()
+            parts.append(cast.ExprStmt(self._incdec() or self._assign()))
+        return parts[0] if len(parts) == 1 else cast.Seq(tuple(parts))
 
     def _incdec(self):
         """`i++` / `++i` / `i--` / `--i` with the value discarded (statement / for-clause) -> the
