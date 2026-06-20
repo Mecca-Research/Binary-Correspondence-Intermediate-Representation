@@ -29,6 +29,14 @@ class IntLit:
 
 
 @dataclass(frozen=True)
+class AggInit:
+    """A braced aggregate initializer `{ ... }` for a local struct/union/array. Each entry is
+    (key, expr): key is None (positional), an int (array designator `[i]=`), or a str (member
+    designator `.field=`). Uninitialized members zero-fill (§6.7.10)."""
+    entries: tuple = ()
+
+
+@dataclass(frozen=True)
 class FloatLit:
     value: str          # the literal's source spelling, incl. any suffix (1.5 / 1e10 / 3.14f)
 

@@ -777,8 +777,13 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     `static const T NAME[N] = {[OP]=v, ...}` with enum-indexed designators and a gap that zero-fills
     (§6.7.10) — now parse on both rails (oracle `cparse._global`; the twin references the table by name,
     defined in the source, so the emit is Clang-equivalent — `#designated`/`cfront_dispatch_table.c`);
-    **local aggregate initializers** (`struct cfg c = {.baud=9600}`) + **compound literals**
-    (`(struct S){…}`) are the immediate follow-ons (both need the value lowered, not just referenced);
+    ✅ **local aggregate
+    initializers** (`struct cfg c = {.baud=9600}` / `union` / `T a[N] = {…}`, positional + `.field=` /
+    `[i]=` designators) — ✅ **prototyped in the oracle** (`cast.AggInit` + `cparse._init_value` +
+    `lower._agg_init`: a `= {0}` zero baseline + a store per initialized member/element, reusing the
+    member/array store path, so uninitialized members zero-fill; `test_local_aggregate_initializers_oracle`
+    proves Clang-equivalence across struct/union/array × positional/designated) — the **C-twin port is
+    the next segment**; **compound literals** (`(struct S){…}`) follow;
   - *storage/linkage:* `extern`, `thread_local`, tentative definitions, internal/external linkage,
     broader (aggregate / non-const-init) globals;
   - *memory model:* `restrict`, broader alias/effect propagation (the module-scope analysis above is

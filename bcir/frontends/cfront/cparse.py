@@ -647,9 +647,33 @@ class _Parser:
         init = None
         if self.at("OP", "="):
             self.nxt()
-            init = self._expr()
+            init = self._init_value()
         self.eat("PUNCT", ";")
         return cast.Decl(tref, name, init, static_storage=is_static)
+
+    def _init_value(self):
+        """A declarator initializer: a scalar expression, or a braced aggregate initializer (positional
+        + `[i]=` / `.field=` designators) for a struct/union/array local."""
+        if not self.at("PUNCT", "{"):
+            return self._expr()
+        self.nxt()
+        entries = []
+        while not self.at("PUNCT", "}"):
+            key = None
+            if self.at("PUNCT", "["):                          # array designator: [const-index] =
+                self.nxt()
+                key = self._const_eval(self._expr())
+                self.eat("PUNCT", "]")
+                self.eat("OP", "=")
+            elif self.at("PUNCT", "."):                        # member designator: .field =
+                self.nxt()
+                key = self.eat("IDENT").text
+                self.eat("OP", "=")
+            entries.append((key, self._expr()))
+            if self.at("PUNCT", ","):
+                self.nxt()
+        self.eat("PUNCT", "}")
+        return cast.AggInit(entries=tuple(entries))
 
     # --- expressions (precedence climbing) ---
     def _expr(self):

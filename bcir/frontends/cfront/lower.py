@@ -300,6 +300,7 @@ class LoweredFunc:
     locals: list = field(default_factory=list)      # (rid, name, CType) mutable named locals
     statics: list = field(default_factory=list)     # (rid, name, CType, init) static-storage locals
     globals_used: dict = field(default_factory=dict)   # rid -> name (file-scope globals referenced)
+    zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {0}`
 
 
 @dataclass
@@ -336,6 +337,7 @@ class _FuncLowerer:
         self.rtypes: dict[int, CType] = {}             # rid -> CType (for emission)
         self.params: list = []
         self.locals: list = []                         # (rid, name, CType) mutable named locals
+        self.zero_init: set = set()                    # aggregate-local rids that emit a `= {0}` baseline
         self.statics: list = []                        # (rid, name, CType, init) static-storage locals
         self.calls: list = []
         self.block_stack: list = [[]]                  # claims/control nodes append to the top block
@@ -654,6 +656,29 @@ class _FuncLowerer:
                    lane=Lane.H if mmio else Lane.U,
                    hazard="barriered" if mmio else "unique")
 
+    def _agg_init(self, rid: int, ct: CType, ag: cast.AggInit) -> None:
+        """Lower a braced aggregate initializer to a `= {0}` zero baseline (so uninitialized members
+        zero-fill, §6.7.10) + a store per initialized member/element, reusing the member/array store
+        path (`_write`). Positional entries advance a cursor; `[i]=` / `.field=` designators jump it."""
+        self.zero_init.add(rid)
+        cursor = 0
+        for key, expr in ag.entries:
+            v = self._rvalue(expr)
+            if ct.kind == "array":
+                idx = key if isinstance(key, int) else cursor
+                cursor = idx + 1
+                ti = self._temp(scalar("int", self.abi), "ai")
+                self._emit("c.const", Opcode.LOAD, (), (ti,), imm=(idx,))
+                lv = _LV("mem", rid, ct.of or scalar("uint32_t"), idx=ti)
+            else:                                             # struct / union member
+                if isinstance(key, str):
+                    ftype, boff, bo, bw = ct.field(key)
+                else:
+                    _fn, ftype, boff, bo, bw = ct.fields[cursor]
+                    cursor += 1
+                lv = _LV("mem", rid, ftype, byte_off=boff, bit_off=bo, bit_width=bw)
+            self._write(lv, v)
+
     def _assign(self, node: cast.Assign) -> int:
         v = self._rvalue(node.value)
         if isinstance(node.target, cast.Name) and node.target.ident in self.env:
@@ -769,7 +794,9 @@ class _FuncLowerer:
                 return None
             rid = self._storage(ct, st.name)                  # a mutable named local
             self.env[st.name] = (rid, ct)
-            if st.init is not None:
+            if isinstance(st.init, cast.AggInit):             # struct/union/array `= { ... }`
+                self._agg_init(rid, ct, st.init)
+            elif st.init is not None:
                 self._emit("c.copy", Opcode.ADD, (self._rvalue(st.init),), (rid,))
         elif isinstance(st, cast.ExprStmt):
             self._rvalue(st.expr)
@@ -861,7 +888,8 @@ class _FuncLowerer:
                            return_rid=self.last_return, claims=list(claims),
                            resources=dict(self.resources), rid_types=dict(self.rtypes),
                            calls=list(self.calls), region=None, body=body, locals=list(self.locals),
-                           statics=list(self.statics), globals_used=gnames)
+                           statics=list(self.statics), globals_used=gnames,
+                           zero_init_locals=set(self.zero_init))
 
 
 def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Region":
