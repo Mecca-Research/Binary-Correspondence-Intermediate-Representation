@@ -462,6 +462,15 @@ class _FuncLowerer:
                 idx_nodes.append(n.index)
                 n = n.base
             idx_nodes.reverse()
+            if isinstance(n, cast.Member):
+                # `s.arr[i]` -- indexing a struct *member* array. The rid-based address of `s.arr`
+                # cannot carry the member's byte offset into the index access, so the lowering would
+                # index the enclosing struct (`s[i]`) -- wrong in both the executor and the emit
+                # (`b[idx]`, which is not even valid C). Reject cleanly so the unit routes to the LLVM
+                # fallback instead of being silently miscompiled (a verified-compiler integrity rule:
+                # never report `is_clean` on a construct we cannot lower faithfully).
+                raise CLowerError(
+                    f"indexing a struct member array ('{n.field}[...]') is not yet supported")
             base_rid, base_ct = self._addr(n)
             idx_rids = [self._rvalue(ix) for ix in idx_nodes]
             shape = base_ct.shape
