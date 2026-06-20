@@ -398,17 +398,24 @@ static int p_struct_body(CC *c) {
   if(!eat(c,"{"))return -1;
   int off=0,maxsz=0,bf_off=-1,bf_bits=0,bf_unit=0;
   while(!is(c,"}")&&!c->failed){
-    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return -1; tok nm=adv(c);
-    int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;} eat(c,";");
-    if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
-    int sz=ty.size,al=packed?1:(sz<1?1:sz); field *f=&S->f[S->nf++];
-    idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;
-    if(al>S->align)S->align=al; if(sz>maxsz)maxsz=sz;
-    if(is_union){f->byte_off=0;f->bit_off=0;}        /* union: every member overlaps at offset 0 */
-    else if(width){int ub=sz*8;
-      if(bf_off<0||bf_unit!=sz||bf_bits+width>ub){if(off%al)off+=al-(off%al);bf_off=off;bf_bits=0;bf_unit=sz;off+=sz;}
-      f->byte_off=bf_off;f->bit_off=bf_bits;bf_bits+=width;
-    }else{bf_off=-1;bf_bits=0;bf_unit=0;if(off%al)off+=al-(off%al);f->byte_off=off;f->bit_off=0;off+=sz;}
+    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return -1;
+    for(;;){                                          /* one or more declarators off one specifier: */
+      if(!isk(c,T_ID)){ fail(c,"expected member name"); return -1; }   /* `unsigned x, y, z;` etc. */
+      tok nm=adv(c);
+      int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;}          /* per-declarator bitfield width */
+      if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
+      int sz=ty.size,al=packed?1:(sz<1?1:sz); field *f=&S->f[S->nf++];
+      idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;
+      if(al>S->align)S->align=al; if(sz>maxsz)maxsz=sz;
+      if(is_union){f->byte_off=0;f->bit_off=0;}        /* union: every member overlaps at offset 0 */
+      else if(width){int ub=sz*8;
+        if(bf_off<0||bf_unit!=sz||bf_bits+width>ub){if(off%al)off+=al-(off%al);bf_off=off;bf_bits=0;bf_unit=sz;off+=sz;}
+        f->byte_off=bf_off;f->bit_off=bf_bits;bf_bits+=width;
+      }else{bf_off=-1;bf_bits=0;bf_unit=0;if(off%al)off+=al-(off%al);f->byte_off=off;f->bit_off=0;off+=sz;}
+      if(is(c,",")){c->i++;continue;}                 /* another member off the same specifier */
+      break;
+    }
+    eat(c,";");
   }
   eat(c,"}"); attrs(c,&packed,&aligned);
   int salign = packed ? 1 : S->align; if(aligned>salign) salign=aligned; S->align=salign;

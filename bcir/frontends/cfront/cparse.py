@@ -324,13 +324,18 @@ class _Parser:
         members = []
         while not self.at("PUNCT", "}"):
             self._attributes()                            # member-leading alignas/attrs (consumed)
-            tref = self._type_spec()
-            tref, name = self._declarator(tref)
-            width = 0
-            if self.at("PUNCT", ":"):                     # bitfield:  type name : width;
-                self.nxt()
-                width = parse_int_literal(self.eat("INT").text)
-            members.append((tref, name, width))
+            base = self._type_spec()
+            while True:                                   # one or more declarators off one specifier:
+                tref, name = self._declarator(base)       #   `unsigned x, y, z;` / `unsigned a:3, b:5;`
+                width = 0
+                if self.at("PUNCT", ":"):                 # bitfield:  type name : width;
+                    self.nxt()
+                    width = parse_int_literal(self.eat("INT").text)
+                members.append((tref, name, width))
+                if self.at("PUNCT", ","):                 # another member off the same specifier
+                    self.nxt()
+                    continue
+                break
             self.eat("PUNCT", ";")
         self.eat("PUNCT", "}")
         trailing = self._attributes()                     # `} __attribute__((packed))` (caller eats `;`)

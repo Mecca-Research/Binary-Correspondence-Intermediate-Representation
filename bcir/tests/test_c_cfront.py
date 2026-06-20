@@ -43,7 +43,8 @@ _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-val
         "cfront_bfcompound.c",                         # + bitfield compound-assign (r->field |= bits)
         "cfront_restrict.c",                           # + restrict/__restrict pointer params (consumed hint)
         "cfront_shiftassign.c",                        # + <<= / >>= shift compound-assign (scalar/member/array)
-        "cfront_ptrarith.c"]                           # + pointer mutation p++ / p += n (buffer-walk cursor)
+        "cfront_ptrarith.c",                           # + pointer mutation p++ / p += n (buffer-walk cursor)
+        "cfront_structmulti.c"]                         # + multi-declarator struct members (unsigned x,y,z;)
 _FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_mathh.c",
           "cfront_mathh_mixed.c", "cfront_mathh_long.c", "cfront_mathh_ptr.c",
           "cfront_calltyped.c"]                                             # float/double: parity + emit + Clang ≡ (the
