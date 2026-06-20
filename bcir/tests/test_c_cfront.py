@@ -927,11 +927,12 @@ def _build_diag(d: str) -> str:
 
 
 def _diag_spec(primary, notes):
-    """The tab-separated spec the C harness reads (start == end == -1 -> a spanless banner)."""
+    """The tab-separated spec the C harness reads (start == end == -1 -> a spanless banner; a leading
+    "-" marks a note, since a primary's severity may itself be "note")."""
     sev, (s, e), msg = primary
     lines = [f"{sev}\t{s}\t{e}\t{msg}"]
     for (a, b), m in notes:
-        lines.append(f"note\t{a}\t{b}\t{m}")
+        lines.append(f"-\t{a}\t{b}\t{m}")
     return "\n".join(lines) + "\n"
 
 
@@ -984,6 +985,61 @@ def test_diagnostic_renderer_dual_rail():
                                    capture_output=True, text=True).stdout
             assert c_out == py_render(src, fn, primary, notes), \
                 f"diag layout diverged for {fn} {primary}\n C: {c_out!r}\nPY: {py_render(src, fn, primary, notes)!r}"
+
+
+def test_diagnostic_json_dual_rail():
+    """The machine-readable (JSON) diagnostics feed (#diag): `bcir_diag_to_json` is the C twin of
+    DiagnosticReport.to_json() (a `-fdiagnostics-format=json`-style feed). Over the same diagnostics
+    its output is byte-identical to Python's `json.dumps(indent=2)` -- the same 2-space indentation,
+    member order (severity / message / phase / file:line:column / range / notes), nested range and
+    note objects, JSON string escaping, and the spanless-vs-spanned location shape. Covers a single
+    spanned diagnostic with a note, a spanless banner, escaped characters in the message, a
+    multi-element array, and the empty array."""
+    from bcir.frontends.cfront.diagnostics import (  # noqa: PLC0415
+        SourceDiagnostic, Span, Note, DiagnosticReport)
+    src_a = "unsigned f(unsigned x){ return x + ; }\n"
+    src_b = "int main(void)\n{\n\treturn foo(1, 2);\n}\n"
+    cases = [
+        (src_a, "u.c", [("error", (34, 35), "expected ';'", [])]),
+        (src_a, "u.c", [("warning", (-1, -1), "file-level problem", [])]),
+        (src_b, "m.c", [("error", (19, 22), "implicit declaration of 'foo'",
+                         [((4, 8), "expanded from macro here")])]),
+        (src_a, "u.c", [("error", (0, 3), 'quote" and back\\slash and a\ttab', [])]),  # JSON escapes
+        (src_b, "m.c", [("warning", (-1, -1), "first", []),
+                        ("error", (19, 20), "second", [((-1, -1), "spanless note")])]),  # 2-element array
+        (src_a, "u.c", []),                                                  # the empty array -> "[]"
+    ]
+
+    def spec(diags):
+        lines = []
+        for sev, (s, e), msg, notes in diags:
+            lines.append(f"{sev}\t{s}\t{e}\t{msg}")
+            for (a, b), m in notes:
+                lines.append(f"-\t{a}\t{b}\t{m}")
+        return ("\n".join(lines) + "\n") if lines else ""
+
+    def py_json(src, fn, diags):
+        dl = []
+        for sev, (s, e), msg, notes in diags:
+            span = None if (s == -1 and e == -1) else Span(s, e)
+            nl = [Note(m, None if (a == -1 and b == -1) else Span(a, b)) for (a, b), m in notes]
+            dl.append(SourceDiagnostic(sev, msg, span=span, notes=nl, phase="parse"))
+        return DiagnosticReport(dl, src, fn).to_json()
+
+    for src, fn, diags in cases:
+        assert py_json(src, fn, diags).startswith("[")                      # oracle side always runs
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_diag(d)
+        for src, fn, diags in cases:
+            sp = os.path.join(d, "s.c")
+            with open(sp, "w") as f:
+                f.write(src)
+            c_out = subprocess.run([exe, "--json", sp, fn], input=spec(diags),
+                                   capture_output=True, text=True).stdout
+            assert c_out == py_json(src, fn, diags), \
+                f"JSON diverged for {fn}\n C: {c_out!r}\nPY: {py_json(src, fn, diags)!r}"
 
 
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():

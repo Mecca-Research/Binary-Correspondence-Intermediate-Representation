@@ -256,6 +256,27 @@ run_diag "${tmp}/da.c" u.c warning   9 10 "odd parameter name"    # a warning se
 run_diag "${tmp}/db.c" m.c error    19 22 "implicit declaration of 'foo'"  # tab-indented line: caret aligns
 run_diag "${tmp}/db.c" m.c error    34 34 "zero-width insertion point"     # zero-width span -> one caret
 echo "  PASS diagnostic renderer is byte-identical to diagnostics.render()"
+# the machine-readable (JSON) feed: bcir_diag_to_json == DiagnosticReport.to_json (json.dumps indent=2).
+run_diag_json() {  # <src-file> <filename> <severity> <start> <end> <message>
+  local src="$1" fn="$2" sev="$3" st="$4" en="$5" msg="$6"
+  local c_out py_out
+  c_out="$(printf '%s\t%s\t%s\t%s\n' "${sev}" "${st}" "${en}" "${msg}" | "${tmp}/test_diag" --json "${src}" "${fn}")"
+  py_out="$(SRCF="${src}" FN="${fn}" SEV="${sev}" ST="${st}" EN="${en}" MSG="${msg}" python3 -c "
+import os, sys
+from bcir.frontends.cfront.diagnostics import SourceDiagnostic, Span, DiagnosticReport
+src=open(os.environ['SRCF']).read()
+s,e=int(os.environ['ST']),int(os.environ['EN'])
+span=None if (s==-1 and e==-1) else Span(s,e)
+d=SourceDiagnostic(os.environ['SEV'], os.environ['MSG'], span=span, phase='parse')
+sys.stdout.write(DiagnosticReport([d], src, os.environ['FN']).to_json())")" || { echo "  FAIL: oracle json ${fn}"; exit 1; }
+  [ "${c_out}" = "${py_out}" ] \
+    && echo "  PASS diag-json ${fn} ${sev}@${st}:${en}" \
+    || { echo "  FAIL: diag-json ${fn} (C != PY)"; printf '   C : %s\n   PY: %s\n' "${c_out}" "${py_out}"; exit 1; }
+}
+run_diag_json "${tmp}/da.c" u.c error    34 35 "expected ';'"               # spanned -> full location object
+run_diag_json "${tmp}/da.c" u.c warning  -1 -1 "file-level problem"         # spanless -> just "file"
+run_diag_json "${tmp}/db.c" m.c error    19 22 "implicit declaration of 'foo'"
+echo "  PASS diagnostic JSON feed is byte-identical to DiagnosticReport.to_json()"
 
 # The total-compilation / fallback contract (#fallback, the C twin of pipeline.compile_with_fallback):
 # a unit BCIR can compile + verify exits 0 (clean); a unit that compiles but fails the verifier (e.g.

@@ -94,3 +94,112 @@ size_t bcir_diag_render(const bcir_diag *d, const char *source, const char *file
   if (cap) out[w < cap ? w : cap - 1] = 0;
   return w;
 }
+
+/* --- JSON serialization (byte-identical to Python json.dumps(indent=2)) ----------------------- */
+
+static size_t ind(char *o, size_t cap, size_t w, int depth) {       /* 2 spaces per nesting level */
+  for (int i = 0; i < depth * 2; i++) w = putc1(o, cap, w, ' ');
+  return w;
+}
+/* A JSON string literal with the standard escapes (ensure_ascii: control chars -> \u00XX). */
+static size_t jstr(char *o, size_t cap, size_t w, const char *s) {
+  w = putc1(o, cap, w, '"');
+  for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+    unsigned char ch = *p;
+    switch (ch) {
+      case '"':  w = puts1(o, cap, w, "\\\""); break;
+      case '\\': w = puts1(o, cap, w, "\\\\"); break;
+      case '\n': w = puts1(o, cap, w, "\\n"); break;
+      case '\r': w = puts1(o, cap, w, "\\r"); break;
+      case '\t': w = puts1(o, cap, w, "\\t"); break;
+      case '\b': w = puts1(o, cap, w, "\\b"); break;
+      case '\f': w = puts1(o, cap, w, "\\f"); break;
+      default:
+        if (ch < 0x20) { char b[8]; snprintf(b, sizeof b, "\\u%04x", ch); w = puts1(o, cap, w, b); }
+        else w = putc1(o, cap, w, (char)ch);
+    }
+  }
+  return putc1(o, cap, w, '"');
+}
+static size_t jint(char *o, size_t cap, size_t w, int v) {
+  char b[16]; snprintf(b, sizeof b, "%d", v); return puts1(o, cap, w, b);
+}
+/* the comma+newline+indent that precedes every object member after the first (json.dumps with an
+ * indent uses ',' as the item separator and ': ' as the key separator). */
+static size_t member(char *o, size_t cap, size_t w, int *first, int kd) {
+  if (!*first) w = putc1(o, cap, w, ',');
+  *first = 0;
+  w = putc1(o, cap, w, '\n');
+  return ind(o, cap, w, kd);
+}
+/* a nested `{ "start": N, "end": N }` range object whose closing brace sits at `depth`. */
+static size_t jrange(char *o, size_t cap, size_t w, bcir_span span, int depth) {
+  int rd = depth + 1, rf = 1;
+  w = putc1(o, cap, w, '{');
+  w = member(o, cap, w, &rf, rd); w = jstr(o, cap, w, "start"); w = puts1(o, cap, w, ": "); w = jint(o, cap, w, span.start);
+  w = member(o, cap, w, &rf, rd); w = jstr(o, cap, w, "end");   w = puts1(o, cap, w, ": "); w = jint(o, cap, w, span.end);
+  w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, depth);
+  return putc1(o, cap, w, '}');
+}
+/* the location members (the C twin of diagnostics._loc): "file" always, then line/column/range for a
+ * spanned diagnostic. `kd` is the member indent depth; `first` threads the comma state. */
+static size_t jloc(char *o, size_t cap, size_t w, const char *s, const char *filename,
+                   bcir_span span, int *first, int kd) {
+  w = member(o, cap, w, first, kd); w = jstr(o, cap, w, "file"); w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, filename);
+  if (span.has_span) {
+    int line, col; bcir_diag_line_col(s, span.start, &line, &col);
+    w = member(o, cap, w, first, kd); w = jstr(o, cap, w, "line");   w = puts1(o, cap, w, ": "); w = jint(o, cap, w, line);
+    w = member(o, cap, w, first, kd); w = jstr(o, cap, w, "column"); w = puts1(o, cap, w, ": "); w = jint(o, cap, w, col);
+    w = member(o, cap, w, first, kd); w = jstr(o, cap, w, "range");  w = puts1(o, cap, w, ": "); w = jrange(o, cap, w, span, kd);
+  }
+  return w;
+}
+/* one note object `{ "message": ..., <loc> }` whose closing brace sits at `depth`. */
+static size_t jnote(char *o, size_t cap, size_t w, const bcir_note *nt, const char *s,
+                    const char *filename, int depth) {
+  int nd = depth + 1, nf = 1;
+  w = putc1(o, cap, w, '{');
+  w = member(o, cap, w, &nf, nd); w = jstr(o, cap, w, "message"); w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, nt->message);
+  w = jloc(o, cap, w, s, filename, nt->span, &nf, nd);
+  w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, depth);
+  return putc1(o, cap, w, '}');
+}
+/* one diagnostic object whose closing brace sits at `depth` (the C twin of diagnostic_to_dict). */
+static size_t jdiag(char *o, size_t cap, size_t w, const bcir_diag *d, const char *s,
+                    const char *filename, int depth) {
+  int kd = depth + 1, f = 1;
+  w = putc1(o, cap, w, '{');
+  w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "severity"); w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, d->severity);
+  w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "message");  w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, d->message);
+  w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "phase");    w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, d->phase ? d->phase : "");
+  w = jloc(o, cap, w, s, filename, d->span, &f, kd);
+  if (d->n_notes > 0) {
+    w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "notes"); w = puts1(o, cap, w, ": [");
+    for (int i = 0; i < d->n_notes; i++) {
+      if (i) w = putc1(o, cap, w, ',');
+      w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, kd + 1);
+      w = jnote(o, cap, w, &d->notes[i], s, filename, kd + 1);
+    }
+    w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, kd); w = putc1(o, cap, w, ']');
+  }
+  w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, depth);
+  return putc1(o, cap, w, '}');
+}
+
+size_t bcir_diag_to_json(const bcir_diag *ds, int n, const char *source, const char *filename,
+                         char *out, size_t cap) {
+  size_t w;
+  if (n == 0) {
+    w = puts1(out, cap, 0, "[]");
+  } else {
+    w = putc1(out, cap, 0, '[');
+    for (int i = 0; i < n; i++) {
+      if (i) w = putc1(out, cap, w, ',');
+      w = putc1(out, cap, w, '\n'); w = ind(out, cap, w, 1);
+      w = jdiag(out, cap, w, &ds[i], source, filename, 1);
+    }
+    w = putc1(out, cap, w, '\n'); w = putc1(out, cap, w, ']');
+  }
+  if (cap) out[w < cap ? w : cap - 1] = 0;
+  return w;
+}

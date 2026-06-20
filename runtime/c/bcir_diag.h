@@ -48,6 +48,15 @@ void bcir_diag_line_col(const char *source, int offset, int *line, int *col);
 size_t bcir_diag_render(const bcir_diag *d, const char *source, const char *filename,
                         char *out, size_t cap);
 
+/* Serialize `n` diagnostics as a JSON array (a `-fdiagnostics-format=json`-style machine-readable
+ * feed), byte-identical to DiagnosticReport.to_json() (Python json.dumps(indent=2), no include-stack
+ * origin / fix-its). Each object carries severity, message, phase, the file:line:column + byte range
+ * (or just file for a spanless diagnostic), and any notes (each with its own location). Messages are
+ * assumed ASCII (the front-end's diagnostics are); the standard JSON escapes are applied. snprintf
+ * semantics. */
+size_t bcir_diag_to_json(const bcir_diag *ds, int n, const char *source, const char *filename,
+                         char *out, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif
