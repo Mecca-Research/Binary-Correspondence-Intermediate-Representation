@@ -63,6 +63,7 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 | Θ context op | `bcir.kbcir.theta` — the C++ plan matches the oracle under **hot** Θ (matmul hot 1159168), not just cool |
 | Six-target capability matrix | all six TARGETS cross-checked on the MLIR rail (`target_matrix.mlir`) — the law plans per-target from the capability seeds alone |
 | C23 in the runtime + kernels | `_BitInt(N)` exact-width Q-fixed lanes + `#embed` frozen Q8 tables (both with C11 fallbacks) |
+| **Plug-in C compiler rail** (`runtime/c/`, `bcir-cc`) | **Freestanding driver-subset C23 compiler *candidate*** — a no-Python stack (preprocessor → frontend → claim-graph IR → R1–R18 verify → plan → hydrate → execute), a cc-like driver, a data-model **ABI matrix** (`--target`), a Clang-grade **diagnostics engine**, an **`--fallback`** route-to-LLVM contract, a module-scope **effect/commutation analysis** (`--emit-effects`), and real register-map / UART / DMA driver fixtures — every stage **Python↔C parity-gated**. *Not yet* a hosted C23 / Clang-GCC replacement; the remaining hard-compiler work is **§5.9** |
 | Trust-boundary fuzz | Python (`kbcir.fuzz`) + **libFuzzer + ASan/UBSan** on the StreamPack **and** ETL-binary C decoders (500k runs in CI) |
 | Native object emission | decision gate documented (DEFERRED); the warranted slice (C → resident compiler → real eBPF/x86-64 object) is closed and ELF-verified |
 | LLVM version policy | tracks the **latest LLVM/MLIR release (22), gating** (from apt.llvm.org; toolchain auto-resolved) |
@@ -115,7 +116,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | **Allocator pool-plan** (`allocator.live_intervals`/`pool_plan`) | `-bcir-alloc-pool` | MLIR/C++ | ✅ **ported** — liveness-based pooling (disjoint live ranges share an arena, greedy left-edge); annotates per-resource pool_id + peak/naive/saved bytes (`alloc_pool.mlir`) |
 | GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
-| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ✅ **the full L1–L8 ladder ported to C + Python↔C parity-gated**: **L1** integer expr, **L2** struct/bitfield layout, **L3** pointers/arrays (GEP), **L4** functions + call graph (**R18** in C), **L5** volatile/MMIO, **L6** control flow, **L7** a real C preprocessor (`bcir_cpp.c`), **L8** ABI (struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked vs Clang). A full **R1–R18 verifier** (`bcir_verify.c`: R1–R8 incl. R6 lane↔stride, R9 plan, R10–R11 StreamPack, R12, R13 provenance digest, R17, R18), **§5.8 atomics/fences** (`ATOMIC_*`/`BARRIER` on lane A), a **C.2 attestation** stamped on the emit, a **faithful C emitter** (Clang-behaviour-equivalent), and the **closed loop** `C → bcir_cpp → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` (no Python). Remaining infra: `cmpxchg`, dynamic shapes, multi-channel, type-model breadth (§5.8) |
+| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ✅ **the full L1–L8 ladder ported to C + Python↔C parity-gated**: **L1** integer expr, **L2** struct/bitfield layout, **L3** pointers/arrays (GEP), **L4** functions + call graph (**R18** in C), **L5** volatile/MMIO, **L6** control flow, **L7** a real C preprocessor (`bcir_cpp.c`), **L8** ABI (struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked vs Clang). A full **R1–R18 verifier** (`bcir_verify.c`: R1–R8 incl. R6 lane↔stride, R9 plan, R10–R11 StreamPack, R12, R13 provenance digest, R17, R18), **§5.8 atomics/fences** (`ATOMIC_*`/`BARRIER` on lane A), a **C.2 attestation** stamped on the emit, a **faithful C emitter** (Clang-behaviour-equivalent), and the **closed loop** `C → bcir_cpp → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` (no Python). Now also a Clang-grade **diagnostics engine** (`bcir_diag.c`), a cross-platform **data-model ABI matrix** (`--target`), an **`--fallback`** route-to-LLVM contract, a module-scope **effect/commutation analysis** (`--emit-effects`), and scalar globals (read+write). The road to a full C23 *replacement* is the ordinary hard-compiler work in **§5.9** (scalable IR / no fixed `BCIR_MAX_*`, full integer promotions + usual arithmetic conversions, designated/compound initializers, object/debug/unwind emission, conformance suites) |
 | StreamPack ABI **decoder** | **C** `runtime/c/bcir_runtime.c` | **C** (frozen ABI) | ✅ CRC-gated parity + libFuzzer |
 | ETL binary-record decoder | **C** `runtime/c/bcir_binrec.c` | **C** | ✅ parity + libFuzzer |
 | Portable kernel emission (C23 + `_BitInt`/`#embed`) | Python `lower.c_kernel` | C output (emitter may become C++) | ✅ |
@@ -551,10 +552,10 @@ stages, the loop **`C input → claim graph → K_BCIR plan → verified C outpu
 needs these components that **do not yet exist in `runtime/c/`** (researched against the oracle +
 the existing C twins):
 
-- **Ladder stages still to port:** L6 control flow (`if`/`while` → structured body + `compose.Cond`),
-  L7 a preprocessor (object/function macros, conditionals, `#include`, C23 `#embed`), L8 full ABI
-  (struct return-by-value, `packed`/`aligned`, layout cross-checked vs Clang). Each with the
-  six-artifact gate + Python↔C parity.
+- ✅ **Ladder stages L6–L8 ported** — L6 control flow (`if`/`while` → structured body + `compose.Cond`),
+  L7 a real C preprocessor (`bcir_cpp.c`: object/function/variadic macros, conditionals, `#include`, C23
+  `#embed`), L8 ABI (struct return-by-value, `packed`/`aligned`, layout cross-checked vs Clang) all lower
+  on the C twin with the six-artifact gate + Python↔C parity. The full L1–L8 ladder is complete (§3 row).
 - ✅ **Verifier R1–R18 in C (`bcir_verify.c`)** — the runnable LangRef laws over the claim graph +
   plan + StreamPack, the C twin of `bcir/verify`: R1–R8 module/claim laws (incl. **R6** lane↔stride
   legality), R9 plan legality (`bcir_verify_plan`), R10–R11 StreamPack well-formedness
@@ -630,11 +631,26 @@ the existing C twins):
 
 ### 5.9 Oracle → C: the road from a driver-subset frontend to a C23 *replacement* compiler
 
-The plug-in C frontend is now far past a kernel emitter — frontend, R1–R18 verifier, C IR, planner,
-hydrator, executor, preprocessor, an ABI slice, atomics/CAS, MMIO/volatile, two real driver fixtures,
-and Python↔C parity. It is enough to begin real driver development inside BCIR. Becoming a *full C23
-replacement compiler* is now mostly the **ordinary, hard compiler parts** (not the BCIR optimizer).
-We complete it **systematically, one PR-sized chunk at a time**, in four phases.
+The plug-in C path is now a **driver-oriented, no-Python, production C rail** — far past "C lowering"
+or a kernel emitter. In the current repo it is a freestanding stack: a C **preprocessor**
+(`bcir_cpp.c`), a C **frontend** (`bcir_cfront.c`), a C **claim-graph IR** (`bcir_cir.h`), an
+**R1–R18 verifier** (`bcir_verify.c`), a **planner** (`bcir_plan.c`), **StreamPack hydration**
+(`bcir_hydrate.c`), a deterministic **executor** (`bcir_exec.c`), and the **`bcir-cc`** cc-like
+driver — plus target-ABI modeling, a wide C23/embedded-driver language surface, a full Clang-grade
+**diagnostics engine** (`bcir_diag.c`: caret renderer, JSON, fix-its, include-stack origin, recovery
+reports), an **`--fallback` route-to-LLVM contract**, a module-scope **effect/commutation analysis**
+(`--emit-effects`), real register-map / UART / DMA driver fixtures, and Python↔C parity gates on
+every stage (`docs/PARITY.md` § *Python ↔ C frontend twin*).
+
+It is best described as a **freestanding embedded/driver-subset C23 compiler *candidate*** with a
+widening language surface and a fallback contract — a *productionizing* freestanding driver/kernel-
+subset compiler with strong BCIR parity gates, real driver examples, and a cc-like front end. It has
+crossed the threshold from *prototype* to **usable compiler substrate for controlled driver
+development**. It is **not yet** a complete *hosted* C23 compiler or a general Clang/GCC replacement:
+the remaining work is the classic hard-compiler work — full C semantics, a full hosted environment,
+full ABI/object generation, conformance suites, and integration with a resident backend/linker
+toolchain — **not** the BCIR optimizer (that is already complete on the MLIR/C++ law rail). We
+complete it **systematically, one PR-sized chunk at a time**, in four phases.
 
 **Phase 1 — Driver-subset compiler, productionized** (the near-term milestone — make the existing
 subset behave like `cc` on a small multi-file driver project):
@@ -650,9 +666,15 @@ subset behave like `cc` on a small multi-file driver project):
   **macros persist across nested includes** like `cpp.py`). A driver with sibling headers builds via
   a normal compile command — `bcir-cc runtime/c/cfront_driver_uart.c` → `ok=1`. CI-gated
   (`test_bcir_cc_driver_compiles_and_emits_artifacts` + `tools/c/check_runtime.sh`).
-- *Remaining Phase 1:* provenance-manifest artifact emission, precise unsupported-construct diagnostics
-  (spans/notes). **Exit:** a small multi-file driver project builds via a normal compile command and
-  passes the behaviour check — substantially met on the production rail.
+- ✅ **Precise unsupported-construct diagnostics** (`bcir_diag.c`) — a full Clang-grade diagnostics
+  engine on the C rail: a caret/underline source renderer, machine-readable JSON, fix-it hints,
+  `In file included from …` include-stack origin, and multi-diagnostic panic-mode recovery reports,
+  each **byte-identical to the oracle's `diagnostics.py`** (the `#diag` blocks in `check_runtime.sh`;
+  `test_diagnostic_*_dual_rail`). The frontend names exactly what it can't do, with spans + notes.
+- *Remaining Phase 1:* provenance-manifest artifact emission (the R13 digest is already stamped in the
+  C.2 attestation; a standalone `--emit-manifest` is the gap). **Exit:** a small multi-file driver
+  project builds via a normal compile command and passes the behaviour check — **met on the production
+  rail** (the diagnostics engine + `bcir-cc` driver close it).
 
 **Phase 2 — Freestanding C23 compiler (embedded/kernel subset).** Close the concrete language gaps real
 headers/drivers hit. ✅ **ternary `?:`** — lexed (`?` added to the oracle punct set; the C lexer's
@@ -733,13 +755,31 @@ and ✅ **C11 `<stdatomic.h>` atomics** (the `_Atomic` type qualifier parses + r
 opcodes on lane A with the atomic hazard -- emitted as the C11 functions themselves, which accept an
 `_Atomic*` where the GCC `__atomic_*` builtins do not; `cfront_atomic11.c` / `cfront_atomic_xchg.c`,
 both rails `ok=1`, run the loop; C11 compare-exchange remains -- it needs the address-of operator);
-still cross-clause
-fallthrough; designated +
-compound initializers; the rest of storage/linkage (`extern`/`thread_local`, scalar globals); `restrict` +
-alias/effect propagation; atomic compare-exchange + the fuller C memory model; scalable IR allocation (no fixed
-`BCIR_MAX_*`); fuller x86-64/AArch64 ABI; real object/dependency output via a resident backend. **Exit:**
-BCIR compiles a freestanding embedded C test suite + a nontrivial driver codebase with no hand-written
-claim graphs. ✅ **Composition checkpoint:** `cfront_integration.c` -- a realistic driver combining
+and ✅ **scalar file-scope globals — read *and* write** (a `static`/file-scope scalar global both
+read and assigned across functions, lowered to a named read-only data resource with `c.copy`-to-global
+writes, referenced by name in the emit; `cfront_global_rw.c`, both rails parity- + Clang-gated), with
+its module-scope **effect/commutation analysis** (the C twin of `pipeline.own_footprint` + `commute`:
+per-function read/write global footprints, callee effects folded transitively, the pairwise commute
+matrix — `bcir-cc --emit-effects`, byte-identical to the oracle; `cfront_effects.c`). **Still to
+port** — the genuinely-remaining Phase-2 language/infra work:
+  - *language:* the comma operator, `typeof`, compound literals, **full integer promotions + the usual
+    arithmetic conversions** (today the 32-bit-unit value model is Clang-equivalent only in constrained
+    cases — this is the most important early gap), the rest of pointer-arithmetic completeness + an
+    object/provenance model, cross-clause `switch` fallthrough, **designated + compound initializers**
+    (essential for register tables / driver dispatch tables / kernel-style headers);
+  - *storage/linkage:* `extern`, `thread_local`, tentative definitions, internal/external linkage,
+    broader (aggregate / non-const-init) globals;
+  - *memory model:* `restrict`, broader alias/effect propagation (the module-scope analysis above is
+    the seed), atomic compare-exchange, a fuller C memory model;
+  - *infra:* **scalable IR allocation (no fixed `BCIR_MAX_*`)** — the C IR still caps
+    `BCIR_MAX_PARAMS 8` / `BCIR_MAX_CALLS 32` / `BCIR_MAX_FUNCS 16` + fixed resource/claim/static-local
+    capacities (`bcir_cir.h`); real-world translation units blow through these, so this is a hard
+    blocker for non-trivial projects. Also: a fuller per-target calling-convention/varargs/aggregate
+    ABI on top of the landed **data-model layout matrix** (`--target`, §5.8), and real
+    object/dependency output via a resident backend.
+
+  **Exit:** BCIR compiles a freestanding embedded C test suite + a nontrivial driver codebase with no
+  hand-written claim graphs. ✅ **Composition checkpoint:** `cfront_integration.c` -- a realistic driver combining
 typedef + enum + an MMIO register-map struct, a `switch` over an enum status, a `static` fault
 counter, a `goto` cleanup path, integer casts, a 2D bank lookup, and an inter-procedural call graph
 -- is ingested with no hand-written claim graph; the two rails agree on the entry's summary and
@@ -783,19 +823,30 @@ assuming `uint32_t`. The pp-number lexer was also corrected to span float expone
 rails. ✅ **int↔float conversions** — explicit casts `(float)i` / `(double)i` / `(int)f` (a cast to a
 floating type yields a float temp; `(int)f` truncates) and the implicit usual-arithmetic conversions in
 mixed int/float expressions (`cfront_floatcast.c`); the equivalence harness feeds integer scalars below
-2³¹ so the unsigned value model agrees in sign with a signed int→float cast. *Next (float follow-ons):*
-hex-float literals, `long double`/`_Complex`/`_Decimal`, `<math.h>`; and (separately) preprocessor
-comment stripping (phase 3 — today a `* /` inside a comment can be glued to `*/`). Then: complex/decimal;
-variadic functions +
+2³¹ so the unsigned value model agrees in sign with a signed int→float cast. ✅ **hex-float literals**
+(`0x1.8p3` etc. — lexed + folded on both rails; `cfront_hexfloat.c`), ✅ **`<math.h>` calls** (the
+library-call surface: a `<math.h>` function lowers to a type-annotated scalar claim emitted as the real
+call, IEEE math delegated to the resident backend — incl. 64-bit-integer *results* like `llround` and
+pointer out-params like `frexp`/`modf`; `cfront_mathh{,_long,_mixed,_ptr}.c`), and ✅ **preprocessor
+comment stripping** (translation phase 3, on both rails — a `* /` inside a comment no longer glues to
+`*/`; `cfront_comments.c`) are all landed + dual-rail-gated. *Next (float follow-ons):* `long double`,
+`_Complex`, `_Decimal`. Then: variadic functions +
 varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
 Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches
 Clang or emits a clear unsupported-feature diagnostic.
 
-**Phase 4 — General replacement compiler.** Broad cross-platform ABI matrix; Clang-grade diagnostics
-(spans, macro/include-stack notes, fix-its, error recovery, machine-readable output); the optimizer
-correctness/differential story (full cost-model bridge into the MLIR/C++ law rail, arbitrary claim-graph
-lowering, RCSP/thermal planning through C, cost-based multi-channel orchestration, IPO, alias/effect
-analysis, provenance through optimization, an LLVM-backend fallback contract); performance-regression +
+**Phase 4 — General replacement compiler.** Several Phase-4 foundations have already landed on the
+production rail: ✅ **Clang-grade diagnostics** (spans, include-stack notes, fix-its, error recovery,
+machine-readable JSON — `bcir_diag.c`, dual-rail), ✅ a **cross-platform data-model ABI matrix**
+(`--target`, six targets, layout cross-checked vs Clang — §5.8), ✅ a module-scope **alias/effect
+analysis** (`--emit-effects`), and ✅ an **LLVM-backend fallback contract** (`bcir-cc --fallback`:
+clean 0 / dirty 1 / route-to-LLVM 2, the supported subset pinned to the oracle). **Remaining Phase-4
+work:** a *broad* calling-convention/object ABI matrix (on top of the landed data-model layout); the
+optimizer correctness/differential story still owed by the C rail — a full **cost-model bridge into the
+MLIR/C++ law rail**, arbitrary claim-graph lowering, RCSP/thermal planning through C, cost-based
+multi-channel orchestration, **IPO** (the inter-procedural cost model stays oracle/backend-side today,
+by the two-truth line — see `docs/PARITY.md`), broader provenance through optimization; real
+**object/debug/unwind emission + linker/build-system integration**; performance-regression +
 security/fuzzing programs; user docs + toolchain integration. **Exit:** a usable C23 compiler
 distribution, not only a research substrate.
 
