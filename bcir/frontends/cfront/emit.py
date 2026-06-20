@@ -175,8 +175,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         et = _load_ctype(lf, c.wr[0])
         off = c.imm[0] if c.imm else 0
         t = ref(c.wr[0])
-        if len(c.rd) == 2:                                   # base[index] (typed array — aligned)
-            return deftmp(c.wr[0], f"{ref(c.rd[0])}[{ref(c.rd[1])}]", et)
+        if len(c.rd) == 2:                                   # base[index]
+            if c.imm:                                        # s.arr[i]: member offset + element-scaled
+                es = c.imm[1] if len(c.imm) > 1 else 4        # index -> &base + off + i*elem_size
+                bp = _base_ptr(lf, c.rd[0], ref)
+                return (f"{et} {t}; memcpy(&{t}, (const char *){bp} + {off} + "
+                        f"(size_t){ref(c.rd[1])} * {es}, {es});")
+            return deftmp(c.wr[0], f"{ref(c.rd[0])}[{ref(c.rd[1])}]", et)   # typed array — aligned
         ptr = _base_ptr(lf, c.rd[0], ref)
         if c.domain.name == "MMIO":                          # device register: ordered volatile load
             return deftmp(c.wr[0], f"*(volatile {et} *)((const volatile char *){ptr} + {off})", et)
@@ -184,8 +189,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return f"{et} {t}; memcpy(&{t}, (const char *){ptr} + {off}, sizeof {t});"
     if c.op == "c.store":
         off = c.imm[0] if c.imm else 0
-        if len(c.rd) == 3:                                   # base[index] = value (typed array)
-            return f"{ref(c.rd[0])}[{ref(c.rd[1])}] = {ref(c.rd[2])};"
+        if len(c.rd) == 3:                                   # base[index] = value
+            if c.imm:                                        # s.arr[i] = v: &base + off + i*elem_size
+                es = c.imm[1] if len(c.imm) > 1 else 4
+                bp = _base_ptr(lf, c.rd[0], ref)
+                return (f"memcpy((char *){bp} + {off} + (size_t){ref(c.rd[1])} * {es}, "
+                        f"&{ref(c.rd[2])}, {es});")
+            return f"{ref(c.rd[0])}[{ref(c.rd[1])}] = {ref(c.rd[2])};"   # typed array
         ptr = _base_ptr(lf, c.rd[0], ref)
         size = c.imm[1] if len(c.imm) > 1 else 4
         if c.domain.name == "MMIO":                          # device register: ordered volatile store

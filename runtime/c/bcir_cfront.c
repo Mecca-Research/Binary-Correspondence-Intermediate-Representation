@@ -31,7 +31,8 @@ typedef struct { tkind k; const char *s; int n; long long v; } tok;
 #define MAXTOK 16384
 #define MAXFLD 64        /* members per struct (f[] is embedded in sdef; generous, guarded) */
 
-typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int byte_off, bit_off, bit_w; int sidx; } field;
+typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int byte_off, bit_off, bit_w; int sidx;
+                 int arr_count; } field;   /* arr_count > 0: a member array `T arr[N]`; `size` is the element */
 typedef struct { char tag[BCIR_CIR_NAME]; field f[MAXFLD]; int nf; int size; int align; int is_union; } sdef;
 typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int sidx; } tdef;   /* a typedef alias */
 typedef struct { char name[BCIR_CIR_NAME]; long long val; } econst;           /* an enum constant */
@@ -402,17 +403,19 @@ static int p_struct_body(CC *c) {
     for(;;){                                          /* one or more declarators off one specifier: */
       if(!isk(c,T_ID)){ fail(c,"expected member name"); return -1; }   /* `unsigned x, y, z;` etc. */
       tok nm=adv(c);
+      int arr_count=0; if(is(c,"[")){c->i++;arr_count=isk(c,T_INT)?(int)adv(c).v:0;eat(c,"]");}   /* T arr[N] */
       int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;}          /* per-declarator bitfield width */
       if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
       int sz=ty.size,al=packed?1:(sz<1?1:sz); field *f=&S->f[S->nf++];
-      idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;
-      f->sidx = (ty.kind==1 && !ty.ptr_to_struct) ? si : -1;   /* a value struct/union member -> nested access */
-      if(al>S->align)S->align=al; if(sz>maxsz)maxsz=sz;
+      int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
+      idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
+      f->sidx = (ty.kind==1 && !ty.ptr_to_struct && !arr_count) ? si : -1;   /* value struct member -> nested */
+      if(al>S->align)S->align=al; if(total>maxsz)maxsz=total;
       if(is_union){f->byte_off=0;f->bit_off=0;}        /* union: every member overlaps at offset 0 */
       else if(width){int ub=sz*8;
         if(bf_off<0||bf_unit!=sz||bf_bits+width>ub){if(off%al)off+=al-(off%al);bf_off=off;bf_bits=0;bf_unit=sz;off+=sz;}
         f->byte_off=bf_off;f->bit_off=bf_bits;bf_bits+=width;
-      }else{bf_off=-1;bf_bits=0;bf_unit=0;if(off%al)off+=al-(off%al);f->byte_off=off;f->bit_off=0;off+=sz;}
+      }else{bf_off=-1;bf_bits=0;bf_unit=0;if(off%al)off+=al-(off%al);f->byte_off=off;f->bit_off=0;off+=total;}
       if(is(c,",")){c->i++;continue;}                 /* another member off the same specifier */
       break;
     }
@@ -628,6 +631,16 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld) {
   if(fld->bit_w){uint32_t u=t;t=temp(c,4);
     bcir_claim *g=new_claim(c,"c.bf.get",BCIR_OP_ADD);if(!g)return t;
     g->n_rd=1;g->rd[0]=u;g->n_wr=1;g->wr[0]=t;g->n_imm=2;g->imm[0]=fld->bit_off;g->imm[1]=fld->bit_w;}
+  return t;
+}
+/* `s.arr[idx]` -- a load from a struct member array: the element lands at `&s + member_off + idx*elem`,
+ * so the claim carries the base, the index, and (member byte offset, element size) in imm. */
+static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t idx) {
+  uint32_t t=tempi(c,fld->size,fld->signd);
+  bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
+  cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
+  cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;cl->bounds=BCIR_BND_ASSUMED;
+  if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
   return t;
 }
 static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -- GEP load */
@@ -896,6 +909,8 @@ static uint32_t p_primary(CC *c) {
         return t;
       }
       field mf=member_descend(c,S->f[fi]);        /* nested `o.in.v` -> one flattened-offset load */
+      if(mf.arr_count && is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]");   /* s.arr[i] -- load */
+        return emit_member_index(c,v,&mf,ix); }
       return emit_member(c,v,&mf);
     }
     if(is(c,"[")){                                /* L3: base[i] / m[i][j] (row-major flatten) */
@@ -1325,6 +1340,22 @@ static void p_stmt(CC *c) {
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
       if(fi<0){fail(c,"unknown field");return;}
       field f=member_descend(c,S->f[fi]);         /* nested `o.in.v` -> one flattened-offset store */
+      if(f.arr_count && is(c,"[")){               /* s.arr[i] = expr  /  s.arr[i] OP= expr */
+        c->i++; uint32_t idx=p_expr(c); eat(c,"]"); uint32_t aval;
+        if(is_compound_op(&c->t[c->i])){          /* load element, bin op, store back */
+          char ch=c->t[c->i].s[0]; c->i++;
+          uint32_t cur=emit_member_index(c,v,&f,idx); uint32_t rhs=p_expr(c);
+          const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+          uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+          bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+          aval=tmp;
+        } else { if(!eat(c,"="))return; aval=p_expr(c); }
+        bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+        if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=aval;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.size;
+          cl->bounds=BCIR_BND_ASSUMED;
+          if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
+        eat(c,";");return;
+      }
       uint32_t val;
       if(is_compound_op(&c->t[c->i])){
         /* compound assignment to a member:  r->field OP= expr  (the set/clear-bits driver idiom; a
@@ -1593,13 +1624,22 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
     }else if(!strcmp(cl->op,"c.load")){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;
-      if(cl->n_rd==2) w+=snprintf(o+w,on-w,"uint32_t %s = %s[%s];\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
+      if(cl->n_rd==2 && cl->n_imm){       /* s.arr[i]: load at &base + member_off + idx*elem_size */
+        const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long es=cl->n_imm>1?cl->imm[1]:4;
+        w+=snprintf(o+w,on-w,"uint32_t %s; { uint32_t _v=0; memcpy(&_v, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld); %s = _v; }\n",
+          rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),es,es,rname(f,cl->wr[0],d)); }
+      else if(cl->n_rd==2) w+=snprintf(o+w,on-w,"uint32_t %s = %s[%s];\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
         w+=snprintf(o+w,on-w,"uint32_t %s; { uint32_t _v=0; memcpy(&_v, (const char *)%s%s + %lld, %lld); %s = _v; }\n",rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz,rname(f,cl->wr[0],d)); }
     }else if(!strcmp(cl->op,"c.store")&&cl->n_rd==3){   /* L3: array element store  a[idx] = value */
-      if(cl->domain==BCIR_DOM_MMIO)
+      if(cl->n_imm){                      /* s.arr[i] = v: store at &base + member_off + idx*elem_size */
+        const bcir_resource *br=res_of(f,cl->rd[0]); const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
+        long long off=cl->imm[0], es=cl->n_imm>1?cl->imm[1]:4;
+        w+=snprintf(o+w,on-w,"{ uint32_t _v = %s; memcpy((char *)%s%s + %lld + (size_t)%s * %lld, &_v, %lld); }\n",
+          rname(f,cl->rd[2],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),es,es); }
+      else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"((volatile uint32_t *)%s)[%s] = %s;\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],d));
       else
         w+=snprintf(o+w,on-w,"%s[%s] = %s;\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],d));

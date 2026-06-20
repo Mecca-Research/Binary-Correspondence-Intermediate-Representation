@@ -46,7 +46,8 @@ _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-val
         "cfront_shiftassign.c",                        # + <<= / >>= shift compound-assign (scalar/member/array)
         "cfront_ptrarith.c",                           # + pointer mutation p++ / p += n (buffer-walk cursor)
         "cfront_structmulti.c",                        # + multi-declarator struct members (unsigned x,y,z;)
-        "cfront_nestmember.c"]                          # + nested member access (o.pos.lo / dev->ctrl.bf)
+        "cfront_nestmember.c",                         # + nested member access (o.pos.lo / dev->ctrl.bf)
+        "cfront_memberarray.c"]                         # + native 1-D struct member arrays (s.arr[i])
 _FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_mathh.c",
           "cfront_mathh_mixed.c", "cfront_mathh_long.c", "cfront_mathh_ptr.c",
           "cfront_calltyped.c"]                                             # float/double: parity + emit + Clang ≡ (the
@@ -888,10 +889,10 @@ _FALLBACK_PROBES = [
     ("unsigned f(unsigned n){ unsigned a[n]; return a[0]; }", "fallback"),   # VLA
     ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "fallback"),  # statement-expr
     ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "fallback"),  # computed goto
-    ("struct B{unsigned n; unsigned a[4];}; unsigned f(unsigned i){ struct B b; b.a[i&3u]=0u; return b.n; }",
-     "fallback"),   # struct member array s.arr[i]: the oracle can't carry the member offset into the
-                     # index access (it would emit `b[idx]`), so it rejects -> fallback, matching the
-                     # twin's parse reject -- never a silent miscompile (a verified-compiler integrity rule)
+    ("struct M{unsigned m[2][3];}; unsigned f(unsigned i){ struct M s; s.m[i&1u][i%3u]=1u; return s.m[i&1u][i%3u]; }",
+     "fallback"),   # a *multi-dimensional* struct member array: 1-D `s.arr[i]` is now natively lowered on
+                     # both rails (#memberarray), but the per-dim element stride for 2-D is deferred, so
+                     # both rails route it to fallback (the dual-rail subset stays pinned in agreement)
     ("unsigned f(unsigned i, unsigned j){ unsigned m[2][2]; m[0][0]=1u; return m[i&1u][j&1u]; }",
      "fallback"),   # multi-dim *local* array: the local CType kept only the outer dim, so the emit was
                      # mis-sized (`m[2]`) and `m[i][j]` collapsed to `m[i+j]` (a silent miscompile). Now
