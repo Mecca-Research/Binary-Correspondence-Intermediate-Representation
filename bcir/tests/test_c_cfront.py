@@ -1340,6 +1340,53 @@ int main(void){{
         assert subprocess.run([e], capture_output=True, text=True).stdout.strip() == "MATCH"
 
 
+_AGGINIT_SRC = (
+    "struct P { unsigned a; unsigned b; unsigned c; };\n"
+    "union U { unsigned w; unsigned h; };\n"
+    "unsigned spos(unsigned x){ struct P p = {x, x+1u, x+2u}; return p.a*100u+p.b*10u+p.c; }\n"
+    "unsigned sdes(unsigned x){ struct P p = {.c=x, .a=x+5u}; return p.a*100u+p.b*10u+p.c; }\n"   # .b gap -> 0
+    "unsigned apos(unsigned x){ unsigned a[4] = {x, x+1u, x+2u}; return a[0]+a[1]+a[2]+a[3]; }\n"  # a[3] gap -> 0
+    "unsigned ades(unsigned x){ unsigned a[4] = {[3]=x, [0]=x+9u}; return a[0]*10u+a[3]; }\n"      # gaps -> 0
+    "unsigned udes(unsigned x){ union U u = {.h=x}; return u.w; }\n"                               # overlap @0
+)
+
+
+def test_local_aggregate_initializers_oracle():
+    """Local aggregate initializers (§6.7.10), oracle prototype: a braced `struct P p = {…}` /
+    `union U u = {…}` / `T a[N] = {…}` (positional + `.field=` / `[i]=` designators) lowers to a
+    `= {0}` zero baseline plus a store per initialized member/element (reusing the member/array store
+    path), so uninitialized members zero-fill. Behaviour-equivalent to Clang across struct/union/array
+    and positional/designated. (The C-twin port is the next segment.)"""
+    r = compile_unit(_AGGINIT_SRC, check_clang=False)
+    emit = "\n".join(r.emitted.values())
+    assert "= {0}" in emit                  # the zero baseline (uninitialized members zero-fill)
+    assert "[4]" in emit                     # a local array is declared with its dimension
+    if not _CC:
+        return
+    harness = f"""#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+{_AGGINIT_SRC}
+{emit}
+int main(void){{
+  for(unsigned x=0; x<5000u; x++){{
+    if(spos(x)!=bcir_spos(x)||sdes(x)!=bcir_sdes(x)||apos(x)!=bcir_apos(x)
+     ||ades(x)!=bcir_ades(x)||udes(x)!=bcir_udes(x)){{printf("MISMATCH x=%u\\n",x);return 1;}}
+  }}
+  printf("MATCH\\n");return 0;}}"""
+    with tempfile.TemporaryDirectory() as d:
+        c, e = os.path.join(d, "e.c"), os.path.join(d, "e")
+        with open(c, "w", encoding="utf-8") as fh:
+            fh.write(harness)
+        for std in ("c23", "c2x", "c17"):
+            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e], capture_output=True, text=True)
+            if b.returncode == 0:
+                break
+        else:
+            raise AssertionError(f"harness build failed: {b.stderr[-400:]}")
+        assert subprocess.run([e], capture_output=True, text=True).stdout.strip() == "MATCH"
+
+
 def test_scalar_globals_read_write_dual_rail():
     """Scalar file-scope globals (#globals): the oracle models a scalar global as a plain resource --
     a read references it directly (no c.load), a write is a c.copy to the global rid. The C twin now

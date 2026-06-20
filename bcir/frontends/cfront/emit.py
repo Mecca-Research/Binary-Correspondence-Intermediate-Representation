@@ -53,7 +53,12 @@ def emit_function(lf: LoweredFunc) -> str:
     def ref(rid: int) -> str:
         return nm.get(rid, f"t{rid}")
 
-    decls = [f"    {_cname(ct)} {name};" for _rid, name, ct in lf.locals]
+    def _local_decl(rid, name, ct):
+        zi = " = {0}" if rid in lf.zero_init_locals else ""
+        if ct.kind == "array":                               # `T name[N]` (the dims follow the name)
+            return f"    {_cname(ct.of)} {name}[{ct.count}]{zi};"
+        return f"    {_cname(ct)} {name}{zi};"
+    decls = [_local_decl(rid, name, ct) for rid, name, ct in lf.locals]
     decls += [f"    static {_cname(ct)} {name} = {init}u;"      # static storage: once-only const init
               for _rid, name, ct, init in lf.statics]
     body = _walk(lf, lf.body, ref, 1)
