@@ -32,7 +32,7 @@ _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfron
                  "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c"]   # + char consts + str table/dedup + const LUT + ABI sizeof model
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
             "cfront_continue.c", "cfront_switch.c", "cfront_switchfall.c", "cfront_goto.c", "cfront_incdec.c",
-            "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c"]
+            "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c", "cfront_loopscope.c"]
             # + multi-declarator locals (T a=x, b, c=z), comma-operator for-step (i++, j--), empty stmts
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c", "cfront_comments.c"]      # L7: exercise the preprocessor
 _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-value + packed layout

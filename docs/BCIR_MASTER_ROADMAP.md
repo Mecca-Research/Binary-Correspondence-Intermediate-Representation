@@ -945,9 +945,13 @@ at function scope: a C **redefinition**, so the emit did not compile though the 
 emitter now assigns the second-and-later occurrence a `_N` suffix (`i`, `i_2`, ...) for both the
 declaration and every reference -- a fresh variable per scope, which is behaviour-exact for disjoint
 reuse (a naive name-merge would corrupt a shadowed value). `#loopreuse`/`cfront_loopreuse.c`, differential
-== Clang on both rails. *Follow-on:* a block local that **shadows** a still-live param/outer and is read
-after the inner scope is a separate, deeper bug -- the for-loop init is lowered into the enclosing scope
-(no push/pop), so a post-loop read resolves to the loop var; proper scope save/restore is owed.
+== Clang on both rails. ✅ **and the deeper scope fix — for-loop variable scope**: a `for(unsigned i =
+...)` declares `i` scoped to the loop, but the init was lowered into the *enclosing* scope (no push/pop),
+so a post-loop read of a shadowed name resolved to the loop var (`return s + i` reading the counter, not
+the param) -- a miscompile the `#loopreuse` emit fix had turned from a build error into a silent wrong
+answer. Both rails now save/restore the name environment around the loop (oracle: snapshot `self.env`;
+twin: an `nenv` mark), so the loop scope is popped and outer bindings are restored. `#loopscope`/
+`cfront_loopscope.c` (param-shadow + outer-shadow, differential pins the post-loop value == Clang).
 **Remaining Phase-4
 work:** a *broad* calling-convention/object ABI matrix (on top of the landed data-model layout); the
 optimizer correctness/differential story still owed by the C rail — a full **cost-model bridge into the

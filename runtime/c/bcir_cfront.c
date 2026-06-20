@@ -1187,7 +1187,8 @@ static void p_stmt(CC *c) {
   }
   if(is(c,"for")){                     /* for(init; cond; step) body == init; while(cond){body; step} */
     c->i++; eat(c,"(");
-    if(is(c,";")) c->i++;              /* empty init */
+    int env_mark=c->nenv;             /* for-init + body decls are loop-scoped (no leak past the loop) */
+    if(is(c,";")) c->i++;             /* empty init */
     else p_stmt(c);                   /* init: a decl / assignment / expr (consumes its `;`) */
     marker(c,"c.loop",0,0);
     uint32_t cond;
@@ -1205,6 +1206,7 @@ static void p_stmt(CC *c) {
       p_simple(c);                                             /* `i++, j--, k = …` -- the comma */
       while(is(c,",")&&!c->failed){ c->i++; p_simple(c); }     /* operator in its dominant position */
       c->i=save; }
+    c->nenv=env_mark;                  /* pop the loop scope -- restore outer name bindings */
     marker(c,"c.endloop",0,0); return;
   }
   if(is(c,"do")){                      /* do body while(cond);  == loop { body; if(!cond) break; } */
