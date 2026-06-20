@@ -265,6 +265,12 @@ def test_python_c_parity_and_equivalence_across_fixtures():
             assert c_summary == oracle_summary, f"{fx}: parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
             # equivalence uses the PREPROCESSED source (r.source) so Clang needs no #include.
             assert _equiv(r.source, c_emit, entry) == "MATCH", f"{fx}: emitted C not behaviour-equivalent"
+            # ALSO compile + run the ORACLE's own emitted C (the check above uses the C twin's emit, so
+            # the oracle emitter was unguarded across the corpus -- this is the general form of the
+            # #387 fix, which caught a member array at offset 0 emitting an invalid `struct[idx]`).
+            oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+            assert _equiv(r.source, oracle_emit, entry) == "MATCH", \
+                f"{fx}: oracle's own emitted C not behaviour-equivalent"
 
 
 def _build_loop(d: str) -> str:
