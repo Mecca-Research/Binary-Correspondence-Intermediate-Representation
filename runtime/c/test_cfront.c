@@ -19,19 +19,26 @@ static void dirof(const char *path, char *out, size_t cap) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 2) { fprintf(stderr, "usage: %s <c-source>\n", argv[0]); return 2; }
-  FILE *fp = fopen(argv[1], "rb");
+  /* args: [--target <abi>] <c-source>. --target selects the data model (x86_64-linux default). */
+  const char *path = NULL, *target = NULL;
+  for (int i = 1; i < argc; i++) {
+    if (!strcmp(argv[i], "--target")) { if (++i < argc) target = argv[i]; }
+    else if (!strncmp(argv[i], "--target=", 9)) target = argv[i] + 9;
+    else path = argv[i];
+  }
+  if (!path) { fprintf(stderr, "usage: %s [--target <abi>] <c-source>\n", argv[0]); return 2; }
+  FILE *fp = fopen(path, "rb");
   if (!fp) { perror("fopen"); return 2; }
   static char raw[1 << 16];
   size_t n = fread(raw, 1, sizeof raw - 1, fp); raw[n] = 0; fclose(fp);
 
   /* L7: preprocess (macros / conditionals / #include / #embed) before the frontend. */
   static char src[1 << 16], cpperr[256], base[1024];
-  dirof(argv[1], base, sizeof base);
+  dirof(path, base, sizeof base);
   if (bcir_cpp_run(raw, base, src, sizeof src, cpperr, sizeof cpperr)) { printf("CPP-ERR %s\n", cpperr); return 1; }
 
   static bcir_cfront_result r;
-  if (bcir_cfront_compile(src, &r) != 0) { printf("PARSE-ERR %s\n", r.diag); return 1; }
+  if (bcir_cfront_compile_target(src, target, &r) != 0) { printf("PARSE-ERR %s\n", r.diag); return 1; }
   char sum[200]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);
   printf("%s\n", sum);
   if (!r.ok) printf("diag: %s\n", r.diag);

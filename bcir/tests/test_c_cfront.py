@@ -29,7 +29,7 @@ _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfron
                  "cfront_callgraph.c", "cfront_typedef.c", "cfront_enum.c", "cfront_ternary.c",
                  "cfront_sizeof.c", "cfront_strsizeof.c", "cfront_strval.c", "cfront_charlit.c",
                  "cfront_strtab.c", "cfront_strconcat.c", "cfront_widelit.c", "cfront_cast.c", "cfront_alignof.c", "cfront_static.c",
-                 "cfront_global.c", "cfront_compound.c", "cfront_logic.c"]   # + char consts + str table/dedup + const LUT
+                 "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c"]   # + char consts + str table/dedup + const LUT + ABI sizeof model
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
             "cfront_continue.c", "cfront_switch.c", "cfront_goto.c", "cfront_incdec.c"]
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c", "cfront_comments.c"]      # L7: exercise the preprocessor
@@ -817,6 +817,51 @@ def test_c_preprocessor_macros_conditionals_and_embed():
                 os.environ.pop("SOURCE_DATE_EPOCH", None)
             else:
                 os.environ["SOURCE_DATE_EPOCH"] = old_epoch
+
+
+_ABI_TARGETS = ["x86_64-linux", "aarch64-linux", "riscv64-linux", "x86_64-windows", "i386-linux"]
+
+
+def _abi_const_vec_oracle(src: str, target: str):
+    """The ordered sizeof immediates the oracle folds under `target` (the data-model vector)."""
+    r = compile_unit(src, check_clang=False, target=target)
+    lf = r.lowered.functions[next(reversed(r.lowered.functions))]
+    return [c.imm[0] for c in lf.claims if c.op == "c.const"]
+
+
+def _abi_const_vec_twin(exe: str, path: str, target: str):
+    """The same vector read off the C twin's emitted C (each sizeof const is a `= Nu;` literal)."""
+    out = subprocess.run([exe, "--target", target, path], capture_output=True, text=True).stdout
+    _summary, _, emit = out.partition("----EMIT----\n")
+    return [int(m) for m in re.findall(r"=\s*(\d+)u;", emit)]
+
+
+def test_abi_target_matrix_dual_rail():
+    """The cross-platform target-ABI matrix (#abi, the C twin of frontends/cfront/abi.py): the C
+    frontend's `--target` data model lays `long` / the pointer / the `size_t`-class types out exactly
+    like the oracle's `TargetABI`, for every named target. The structural summary is target-invariant,
+    so this compares the FOLDED `sizeof` constants (which carry long_size / pointer_size): the two
+    rails agree per target, and the LP64 / LLP64 / ILP32 vectors are distinct so the gate has teeth.
+    `cfront_abi.c` folds [sizeof long, void*, size_t, int, long long]."""
+    path = os.path.join(_C, "cfront_abi.c")
+    src = open(path, encoding="utf-8").read()
+    # oracle side always runs (quick tier too): the matrix spans the three data models.
+    vecs = {t: _abi_const_vec_oracle(src, t) for t in _ABI_TARGETS}
+    assert vecs["x86_64-linux"] == [8, 8, 8, 4, 8]                       # LP64
+    assert vecs["aarch64-linux"] == vecs["riscv64-linux"] == [8, 8, 8, 4, 8]
+    assert vecs["x86_64-windows"] == [4, 8, 8, 4, 8]                     # LLP64: long is 4
+    assert vecs["i386-linux"] == [4, 4, 4, 4, 8]                         # ILP32: pointers are 4 too
+    assert len({tuple(v) for v in vecs.values()}) == 3                   # three distinct data models
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        for t in _ABI_TARGETS:
+            assert _abi_const_vec_twin(exe, path, t) == vecs[t], \
+                f"ABI {t}: twin {_abi_const_vec_twin(exe, path, t)} != oracle {vecs[t]}"
+        # an unknown target is a clean diagnostic + nonzero exit on the C rail (not a crash).
+        bad = subprocess.run([exe, "--target", "sparc-solaris", path], capture_output=True, text=True)
+        assert bad.returncode != 0 and "unknown target" in bad.stdout, bad.stdout
 
 
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():

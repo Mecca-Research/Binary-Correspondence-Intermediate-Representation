@@ -113,7 +113,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324)
+for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi)
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re
@@ -133,6 +133,35 @@ print(f'funcs={len(fns)} claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} 
     && echo "  PASS parity ${fx} (oracle == C: ${c_sum})" \
     || { echo "  FAIL: parity ${fx} (C='${c_sum}' PY='${py_sum}')"; exit 1; }
 done
+
+# Target-ABI matrix (#abi): the C twin's `--target` data model lays `long` / pointer / size_t-class
+# types out exactly like the oracle's TargetABI, for every named target. The summary counts are
+# target-invariant, so this compares the FOLDED sizeof constants (which carry the data-model widths):
+# the C twin emits them as `= Nu;` literals; the oracle exposes them as the c.const immediates. The
+# vectors must agree per target AND differ across LP64 / LLP64 / ILP32 (so the gate has teeth).
+echo "[c-runtime] target-ABI matrix (bcir_cfront --target): sizeof data model == oracle (#abi)"
+abi_seen=""
+for t in x86_64-linux aarch64-linux riscv64-linux x86_64-windows i386-linux; do
+  c_vals="$("${tmp}/test_cfront" --target "${t}" "${C}/cfront_abi.c" | sed -n '/----EMIT----/,$p' \
+            | grep -oE '= [0-9]+u;' | grep -oE '[0-9]+' | paste -sd, -)" \
+    || { echo "  FAIL: C ABI run ${t}"; exit 1; }
+  py_vals="$(python3 -c "
+from bcir.frontends.cfront import compile_unit
+src=open('${C}/cfront_abi.c').read()
+r=compile_unit(src, check_clang=False, target='${t}')
+lf=r.lowered.functions[next(reversed(r.lowered.functions))]
+print(','.join(str(c.imm[0]) for c in lf.claims if c.op=='c.const'))
+")" || { echo "  FAIL: python ABI ${t}"; exit 1; }
+  [ "${c_vals}" = "${py_vals}" ] \
+    && echo "  PASS ABI ${t} (sizeof model oracle == C: [${c_vals}])" \
+    || { echo "  FAIL: ABI ${t} (C='[${c_vals}]' PY='[${py_vals}]')"; exit 1; }
+  abi_seen="${abi_seen}${c_vals};"
+done
+# the three data models must produce distinct vectors (LP64 8/8/8, LLP64 long=4, ILP32 ptr=4 too).
+echo "${abi_seen}" | grep -q "8,8,8,4,8;" && echo "${abi_seen}" | grep -q "4,8,8,4,8;" \
+  && echo "${abi_seen}" | grep -q "4,4,4,4,8;" \
+  && echo "  PASS ABI matrix spans LP64 / LLP64 / ILP32 (distinct data models)" \
+  || { echo "  FAIL: ABI matrix did not span the three data models: ${abi_seen}"; exit 1; }
 
 echo "[c-runtime] full C compile->execute loop (cfront -> plan -> hydrate -> exec, no Python)"
 # bcir_plan.c + bcir_hydrate.c are freestanding (the driver-embeddable planner + StreamPack

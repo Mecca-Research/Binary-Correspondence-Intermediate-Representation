@@ -34,6 +34,12 @@ typedef struct bcir_cfront_result {
  * nonzero on a parse/lowering error (diag set). `ok` reflects the verifier. */
 int bcir_cfront_compile(const char *src, bcir_cfront_result *out);
 
+/* As above, but lay the unit out for `target`'s data model (the C twin of frontends/cfront/abi.py:
+ * one of x86_64-linux, aarch64-linux, riscv64-linux, x86_64-windows, i386-linux). `target` NULL
+ * selects the host (x86_64-linux LP64); an unknown name returns nonzero with diag set. `long`, the
+ * pointer, and the `size_t`-class types follow the selected model; everything else is fixed by C. */
+int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_result *out);
+
 /* Release the heap arrays the result holds. */
 void bcir_cfront_free(bcir_cfront_result *out);
 
