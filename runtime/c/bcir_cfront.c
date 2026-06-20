@@ -506,11 +506,24 @@ static const char *const g_libm[] = {
  * they need the twin's wide-integer model and are handled in the 8-byte-return slice.) */
 static const char *const g_libm_int[] = { "ilogb", 0 };
 
+/* <math.h> functions returning an 8-byte integer: lround/lrint -> long, llround/llrint -> long long.
+ * The result temp is 8 bytes (declared uint64_t in the emit -- a lossless round-trip to the function's
+ * long/long long return), so the 8-byte value is not truncated to the 4-byte model. */
+static const char *const g_libm_long[] = { "lround","llround","lrint","llrint", 0 };
+
 /* Nonzero if s[0..n) is an int-returning libm function (ilogb, ilogbf, ilogbl). */
 static int libm_is_int(const char *s, int n) {
   for(int i=0;g_libm_int[i];i++){ int L=(int)strlen(g_libm_int[i]);
     if(L==n && !strncmp(g_libm_int[i],s,(size_t)n)) return 1;
     if((n==L+1) && (s[n-1]=='f'||s[n-1]=='l') && !strncmp(g_libm_int[i],s,(size_t)L)) return 1; }
+  return 0;
+}
+
+/* Nonzero if s[0..n) is an 8-byte-integer-returning libm function (the f/l suffix types only the arg). */
+static int libm_is_long(const char *s, int n) {
+  for(int i=0;g_libm_long[i];i++){ int L=(int)strlen(g_libm_long[i]);
+    if(L==n && !strncmp(g_libm_long[i],s,(size_t)n)) return 1;
+    if((n==L+1) && (s[n-1]=='f'||s[n-1]=='l') && !strncmp(g_libm_long[i],s,(size_t)L)) return 1; }
   return 0;
 }
 
@@ -530,9 +543,10 @@ static uint32_t p_call(CC *c, const tok *name) {
   if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;
     if(is(c,",")){c->i++;continue;} break; }
   eat(c,")");
-  int lz=libm_is_int(name->s,name->n) ? -4 : libm_float_size(name->s,name->n);
+  int lz = libm_is_long(name->s,name->n) ? -8
+         : libm_is_int(name->s,name->n)  ? -4 : libm_float_size(name->s,name->n);
   if(lz){                                  /* a <math.h> call -> a typed external library edge */
-    uint32_t t = lz<0 ? temp(c,4) : tempf(c,lz);   /* ilogb -> int (uint32 model); else float/double */
+    uint32_t t = lz<0 ? temp(c,-lz) : tempf(c,lz);  /* lround -> 8-byte int, ilogb -> 4-byte int, else float */
     char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.libm:%.*s",name->n,name->s);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
