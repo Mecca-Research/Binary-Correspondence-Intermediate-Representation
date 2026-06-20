@@ -48,6 +48,41 @@ typedef struct {
 
 typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int count; } gvar;  /* a file-scope global */
 
+/* The size-varying part of a target's C data model -- the C twin of frontends/cfront/abi.py. `long`,
+ * the pointer, and the pointer-tracking `size_t`-class types move across the matrix; `int`, `short`,
+ * `char`, the fixed-width <stdint.h> types, and `long long` are fixed by C and the common ABIs.
+ * (long double is delegated to the backend -- the twin's value model has no 80/128-bit float -- so
+ * its size/align ride along for provenance but the frontend never lays one out.) */
+typedef struct {
+  const char *name;          /* short id, e.g. "x86_64-linux" */
+  const char *triple;        /* the Clang target triple (for provenance / -target) */
+  const char *data_model;    /* "LP64" | "LLP64" | "ILP32" */
+  int long_size;             /* sizeof(long) == sizeof(unsigned long) */
+  int pointer_size;          /* sizeof(void *); also size_t / intptr_t / uintptr_t */
+  int long_double_size;      /* (delegated; carried for provenance only) */
+  int long_double_align;
+} bcir_abi;
+
+/* The named matrix (mirrors abi.py TARGETS). x86-64 / AArch64 / RISC-V are all LP64, so their
+ * layouts coincide; Windows x64 is LLP64 (long is 4) and 32-bit x86 is ILP32 (pointers are 4) -- the
+ * cases that change what the frontend lays out. g_targets[0] is the default (host LP64) model, so
+ * --target-less compilation is byte-identical to the layout used before --target existed. */
+static const bcir_abi g_targets[] = {
+  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16},
+  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16},
+  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16},
+  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8},
+  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4},
+};
+#define BCIR_N_TARGETS ((int)(sizeof g_targets / sizeof g_targets[0]))
+static const bcir_abi *bcir_abi_host(void){ return &g_targets[0]; }
+/* Look up a target ABI by short name; NULL for an unknown name (the driver reports the matrix). */
+static const bcir_abi *bcir_abi_by_name(const char *name){
+  if(!name) return bcir_abi_host();
+  for(int i=0;i<BCIR_N_TARGETS;i++) if(!strcmp(g_targets[i].name,name)) return &g_targets[i];
+  return NULL;
+}
+
 typedef struct {
   tok t[MAXTOK]; int nt, i;
   sdef s[16]; int ns;
@@ -57,9 +92,12 @@ typedef struct {
   venv env[MAXENV]; int nenv;
   bcir_func *fn;
   bcir_unit *unit;   /* the whole unit, so a call can be typed by an earlier-defined callee's return */
+  const bcir_abi *abi;  /* the target data model the unit is laid out for (long/ptr widths) */
   uint32_t rid, cid;
   char err[256]; int failed;
 } CC;
+/* The active target ABI (defaults to the host LP64 model when the driver set none). */
+static const bcir_abi *cc_abi(const CC *c){ return c->abi ? c->abi : bcir_abi_host(); }
 
 static int is_idc(int c){return c=='_'||(c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9');}
 static int is_id0(int c){return c=='_'||(c>='a'&&c<='z')||(c>='A'&&c<='Z');}
@@ -234,10 +272,18 @@ static void idcpy(char *d,const tok *t){int n=t->n<BCIR_CIR_NAME-1?t->n:BCIR_CIR
 static int scalar_size(const char *s,int n) {
   struct {const char *k;int sz;} T[]={{"void",0},{"char",1},{"bool",1},{"_Bool",1},{"short",2},
     {"int",4},{"unsigned",4},{"long",8},{"uint8_t",1},{"int8_t",1},{"uint16_t",2},{"int16_t",2},
-    {"uint32_t",4},{"int32_t",4},{"uint64_t",8},{"int64_t",8},{"size_t",8},
+    {"uint32_t",4},{"int32_t",4},{"uint64_t",8},{"int64_t",8},
+    {"size_t",8},{"intptr_t",8},{"uintptr_t",8},     /* the pointer-tracking size_t-class types */
     {"float",4},{"double",8},{0,0}};
   for(int i=0;T[i].k;i++) if((int)strlen(T[i].k)==n&&!strncmp(T[i].k,s,n)) return T[i].sz;
   return -1;
+}
+/* The pointer-tracking integer scalars (size_t / intptr_t / uintptr_t): their width is the data
+ * model's pointer size. (ptrdiff_t is omitted to match the oracle, whose _SCALAR has no entry.) */
+static int is_ptr_tracking(const char *s,int n) {
+  const char *T[]={"size_t","intptr_t","uintptr_t",0};
+  for(int i=0;T[i];i++) if((int)strlen(T[i])==n&&!strncmp(T[i],s,n)) return 1;
+  return 0;
 }
 /* The size of a floating type (float = 4, double = 8) or -1 if not a floating type. */
 static int scalar_float_size(const char *s,int n) {
@@ -267,7 +313,7 @@ static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the con
 /* a parsed type: fills a bcir_ctype + the struct index (sidx, or -1). */
 static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
   memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1;
-  int seen=0;
+  int seen=0, longs=0, ptrtrk=0;   /* longs: distinguish `long` (data-model) from `long long` (fixed 8) */
   for(;;){
     if(is(c,"volatile")){ty->is_volatile=1;c->i++;continue;}
     if(is(c,"_Atomic")){ty->is_atomic=1;c->i++;continue;}
@@ -282,12 +328,18 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
       if(ti>=0){int vol=ty->is_volatile;*ty=c->td[ti].ty;if(vol)ty->is_volatile=1;*sidx=c->td[ti].sidx;c->i++;seen=1;break;}}
     if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
       if(sz<0){if(seen)break;fail(c,"unknown type");return 1;} ty->size=sz;
+      if((int)strlen("long")==pk(c)->n&&!strncmp("long",pk(c)->s,pk(c)->n)) longs++;   /* count `long`s */
+      if(is_ptr_tracking(pk(c)->s,pk(c)->n)) ptrtrk=1;
       if(scalar_float_size(pk(c)->s,pk(c)->n)>=0) ty->is_float=1;     /* float / double */
       seen=1;c->i++;
       if(is(c,"long")||is(c,"int")||is(c,"char"))continue;break;}
     break;
   }
   if(!seen){fail(c,"expected a type");return 1;}
+  /* apply the target data model: `size_t`-class -> pointer_size; a single `long` -> long_size
+   * (`long long` keeps its fixed 8). On the host LP64 model these are 8/8, so nothing moves. */
+  if(ptrtrk) ty->size=cc_abi(c)->pointer_size;
+  else if(longs==1&&!ty->is_float&&ty->kind==0) ty->size=cc_abi(c)->long_size;
   while(is(c,"*")){c->i++;while(is(c,"const")||is(c,"volatile"))c->i++;
     if(ty->kind==1){ty->ptr_to_struct=1;} ty->kind=2;}
   return 0;
@@ -669,7 +721,7 @@ static uint32_t p_primary(CC *c) {
   }
   if(is(c,"_Alignof")||is(c,"alignof")){   /* _Alignof(type) -> the type's alignment, a folded const */
     c->i++; eat(c,"("); bcir_ctype ty;int si; long long al=4;
-    if(!p_type(c,&ty,&si)) al = ty.kind==2?8:(ty.kind==1?c->s[si].align:(ty.size?ty.size:1));
+    if(!p_type(c,&ty,&si)) al = ty.kind==2?cc_abi(c)->pointer_size:(ty.kind==1?c->s[si].align:(ty.size?ty.size:1));
     eat(c,")");
     uint32_t r=temp(c,4); bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
     if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=al;} return r;
@@ -680,7 +732,7 @@ static uint32_t p_primary(CC *c) {
       int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
                     || is(c,"const")||is(c,"volatile") || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
       if(is_type){ bcir_ctype ty;int si;
-        if(!p_type(c,&ty,&si)){ size = ty.kind==2?8:(ty.kind==1?c->s[si].size:ty.size); got=1; }
+        if(!p_type(c,&ty,&si)){ size = ty.kind==2?cc_abi(c)->pointer_size:(ty.kind==1?c->s[si].size:ty.size); got=1; }
         eat(c,")"); }
       else c->i=save;                  /* not a type -> sizeof ( expr ) */
     }
@@ -691,7 +743,7 @@ static uint32_t p_primary(CC *c) {
           size=(long long)(str_bytes(sp,sn)+1)*str_elem_size(sp,sn); free(cb); }
         else size=(long long)(str_bytes(st.s,st.n)+1)*str_elem_size(st.s,st.n); }   /* units incl. NUL × width */
       else if(isk(c,T_ID)){ tok vid=*pk(c); venv *v=lookup(c,&vid);
-        if(v) size = v->type.kind==2?8:(v->type.kind==1?c->s[v->sidx].size:v->type.size);
+        if(v) size = v->type.kind==2?cc_abi(c)->pointer_size:(v->type.kind==1?c->s[v->sidx].size:v->type.size);
         c->i++; }
       if(paren) eat(c,")");
     }
@@ -788,7 +840,7 @@ static uint32_t p_unary(CC *c) {
         c->i++;                                    /* ')' */
         uint32_t v=p_unary(c);                     /* the operand (right-associative) */
         uint32_t r = ty.is_float ? tempf(c, ty.size)          /* a float cast -> a float temp */
-                                 : temp(c, ty.kind==2?8:(ty.size?ty.size:4));
+                                 : temp(c, ty.kind==2?cc_abi(c)->pointer_size:(ty.size?ty.size:4));
         char op[BCIR_CIR_NAME]; cast_name(&ty,op,sizeof op);
         bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=r;} return r;
@@ -1313,8 +1365,10 @@ static void p_global(CC *c){
 }
 
 /* --- public entry -------------------------------------------------------- */
-int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
+int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_result *out) {
   static CC c; memset(&c,0,sizeof c); memset(out,0,sizeof *out);
+  c.abi = bcir_abi_by_name(target);     /* the target data model (NULL name -> host LP64) */
+  if(!c.abi){ snprintf(out->diag,sizeof out->diag,"unknown target '%s'",target?target:""); return 1; }
   c.rid=100; c.cid=1000; c.unit=&out->unit;
   strtab_reset();                       /* fresh string-literal table per translation unit */
   lex(&c,src);
@@ -1347,6 +1401,11 @@ int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
     if(i+1<out->unit.n_funcs) w+=snprintf(out->emitted+w,sizeof out->emitted-w,"\n");
   }
   return 0;
+}
+
+/* The host-ABI entry (the default target): byte-identical to the layout before --target existed. */
+int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
+  return bcir_cfront_compile_target(src, NULL, out);
 }
 
 void bcir_cfront_free(bcir_cfront_result *out){
