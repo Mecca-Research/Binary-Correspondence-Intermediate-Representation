@@ -254,6 +254,8 @@ static void lex(CC *c, const char *src) {
     if (*p=='\''){t->k=T_INT;t->s=p;p++;               /* character constant -> a folded int const */
                   while(*p&&*p!='\''){ if(*p=='\\'&&p[1]) p+=2; else p++; }
                   if(*p=='\'')p++; t->n=(int)(p-t->s); t->v=parse_char(t->s,t->n); c->nt++; continue;}
+    if((p[0]=='<'||p[0]=='>')&&p[1]==p[0]&&p[2]=='='){   /* <<= / >>= -- 3-char shift-compound-assign */
+      t->k=T_PUN;t->s=p;t->n=3;p+=3;c->nt++;continue;}
     int m=0; for(int j=0;pu[j];j++) if(p[0]==pu[j][0]&&p[1]==pu[j][1]){
       t->k=T_PUN;t->s=p;t->n=2;p+=2;c->nt++;m=1;break;}
     if (m) continue;
@@ -955,7 +957,17 @@ static void compound_binop(char ch,const char **suf,bcir_opcode *oc){
   switch(ch){case '+':*suf="add";*oc=BCIR_OP_ADD;break; case '-':*suf="sub";*oc=BCIR_OP_SUB;break;
     case '*':*suf="mul";*oc=BCIR_OP_MUL;break; case '/':*suf="div";*oc=BCIR_OP_MUL;break;
     case '%':*suf="mod";*oc=BCIR_OP_MUL;break; case '&':*suf="and";*oc=BCIR_OP_ADD;break;
-    case '|':*suf="or";*oc=BCIR_OP_ADD;break;  default:*suf="xor";*oc=BCIR_OP_ADD;break;}  /* ^ */
+    case '|':*suf="or";*oc=BCIR_OP_ADD;break;  case '<':*suf="shl";*oc=BCIR_OP_ADD;break;  /* <<= */
+    case '>':*suf="shr";*oc=BCIR_OP_ADD;break;                                              /* >>= */
+    default:*suf="xor";*oc=BCIR_OP_ADD;break;}  /* ^ */
+}
+/* A compound-assignment operator token: a 2-char `+= -= *= /= %= &= |= ^=` or a 3-char `<<= >>=`
+ * (the op char `s[0]` drives compound_binop). Returns 1 if the token is a compound-assign, else 0. */
+static int is_compound_op(const tok *t){
+  if(t->k!=T_PUN) return 0;
+  if(t->n==2 && t->s[1]=='=' && strchr("+-*/%&|^",t->s[0])) return 1;
+  if(t->n==3 && t->s[2]=='=' && (t->s[0]=='<'||t->s[0]=='>') && t->s[0]==t->s[1]) return 1;
+  return 0;
 }
 static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs) {
   for(;;){
@@ -1231,7 +1243,7 @@ static void p_stmt(CC *c) {
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
       if(fi<0){fail(c,"unknown field");return;}
       uint32_t val;
-      if(c->t[c->i].k==T_PUN&&c->t[c->i].n==2&&c->t[c->i].s[1]=='='&&strchr("+-*/%&|^",c->t[c->i].s[0])){
+      if(is_compound_op(&c->t[c->i])){
         /* compound assignment to a member:  r->field OP= expr  (the set/clear-bits driver idiom; a
          * bitfield field reads via c.bf.get, a plain member via a plain load). */
         char ch=c->t[c->i].s[0]; c->i++;
@@ -1261,7 +1273,7 @@ static void p_stmt(CC *c) {
     /* L3: array element store  a[idx] = expr  /  a[idx] OP= expr  (driver buffer fill / scatter). */
     if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]=='['){
       c->i+=2; uint32_t idx=p_expr(c); eat(c,"]"); uint32_t val;
-      if(c->t[c->i].k==T_PUN&&c->t[c->i].n==2&&c->t[c->i].s[1]=='='&&strchr("+-*/%&|^",c->t[c->i].s[0])){
+      if(is_compound_op(&c->t[c->i])){
         char ch=c->t[c->i].s[0]; c->i++;                /* a[idx] OP= expr -> load, op, store */
         uint32_t cur=emit_index(c,v,idx); uint32_t rhs=p_expr(c);
         const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
@@ -1278,8 +1290,7 @@ static void p_stmt(CC *c) {
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
       eat(c,";");return;}
     /* compound assignment  name OP= expr  ->  name = name OP expr  (a bin op + a copy). */
-    if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==2&&c->t[c->i+1].s[1]=='='
-       &&strchr("+-*/%&|^",c->t[c->i+1].s[0])){
+    if(v&&is_compound_op(&c->t[c->i+1])){
       char ch=c->t[c->i+1].s[0]; c->i+=2; uint32_t rhs=p_expr(c);
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
       uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
