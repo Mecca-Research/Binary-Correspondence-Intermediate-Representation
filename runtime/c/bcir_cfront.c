@@ -499,7 +499,8 @@ static const char *const g_libm[] = {
   "exp","exp2","expm1","log","log10","log1p","log2","logb","cbrt","fabs","hypot","pow","sqrt",
   "ceil","floor","round","trunc","nearbyint","rint","erf","erfc","lgamma","tgamma",
   "copysign","fdim","fmax","fmin","fmod","remainder","fma","nextafter",
-  "ldexp","scalbn","scalbln","nan", 0 };          /* + mixed-arg (int/long exponent, tag string) */
+  "ldexp","scalbn","scalbln","nan",               /* + mixed-arg (int/long exponent, tag string) */
+  "frexp","modf","remquo", 0 };                   /* + a pointer out-param (rides c.addrof); double result */
 
 /* <math.h> functions with a fixed *integer* result (the f/l suffix types only the argument): ilogb
  * returns int -- exactly the 4-byte value model. (lround/llround/lrint/llrint return long/long long;
@@ -735,6 +736,12 @@ static void cast_name(const bcir_ctype *ty,char *o,size_t n){
 }
 static uint32_t p_unary(CC *c) {
   if(is(c,"+")){ c->i++; return p_unary(c); }    /* unary plus is a no-op */
+  if(is(c,"&")){ c->i++;                          /* address-of: &lvalue -> a pointer value (c.addrof) */
+    if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id);
+      if(v){ c->i++; uint32_t t=temp(c,8);        /* a pointer-sized value; emitted as `&name` */
+        bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
+        if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
+    fail(c,"unsupported address-of (only &local/&param)"); return 0; }
   if(is(c,"-")||is(c,"~")||is(c,"!")){
     const char *suf=is(c,"-")?"neg":is(c,"~")?"bnot":"lnot";
     bcir_opcode oc=is(c,"-")?BCIR_OP_SUB:BCIR_OP_ADD;c->i++;
@@ -1207,6 +1214,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(!strcmp(fn,"load")) w+=snprintf(o+w,on-w,"uint32_t %s = atomic_load(%s);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
       else if(!strcmp(fn,"store")) w+=snprintf(o+w,on-w,"atomic_store(%s, %s);\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
       else w+=snprintf(o+w,on-w,"uint32_t %s = atomic_%s(%s, %s);\n",rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
+    else if(!strcmp(cl->op,"c.addrof")){           /* &lvalue -> a pointer value (T *t = &x;) */
+      w+=snprintf(o+w,on-w,"%s *%s = &%s;\n",tty(f,cl->rd[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
     else if(!strncmp(cl->op,"c.call.libm:",12)){   /* a <math.h> call -> the real libm function */
       w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+12);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
