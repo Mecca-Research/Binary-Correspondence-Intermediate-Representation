@@ -277,6 +277,32 @@ run_diag_json "${tmp}/da.c" u.c error    34 35 "expected ';'"               # sp
 run_diag_json "${tmp}/da.c" u.c warning  -1 -1 "file-level problem"         # spanless -> just "file"
 run_diag_json "${tmp}/db.c" m.c error    19 22 "implicit declaration of 'foo'"
 echo "  PASS diagnostic JSON feed is byte-identical to DiagnosticReport.to_json()"
+# fix-it hints: the verb (replace with / insert / remove) is derived from the fix-it's span +
+# replacement, the replacement printed with Python repr() in text and JSON-escaped in the feed. A
+# primary + one fix-it must match diagnostics.render() / to_json() byte-for-byte on both rails.
+run_diag_fixit() {  # <verb-label> <mode:text|json> <fx-start> <fx-end> <replacement>
+  local label="$1" mode="$2" fs="$3" fe="$4" repl="$5" c_out py_out jflag=""
+  [ "${mode}" = json ] && jflag="--json"
+  c_out="$(printf 'error\t34\t35\texpected token\n+\t%s\t%s\t%s\n' "${fs}" "${fe}" "${repl}" \
+           | "${tmp}/test_diag" ${jflag} "${tmp}/da.c" u.c)"
+  py_out="$(SRCF="${tmp}/da.c" MODE="${mode}" FS="${fs}" FE="${fe}" REPL="${repl}" python3 -c "
+import os, sys
+from bcir.frontends.cfront.diagnostics import SourceDiagnostic, Span, FixIt, DiagnosticReport, render
+src=open(os.environ['SRCF']).read()
+d=SourceDiagnostic('error','expected token', span=Span(34,35),
+                   fixits=[FixIt(Span(int(os.environ['FS']),int(os.environ['FE'])), os.environ['REPL'])], phase='parse')
+sys.stdout.write(DiagnosticReport([d], src, 'u.c').to_json() if os.environ['MODE']=='json' else render(d, src, 'u.c'))")" \
+    || { echo "  FAIL: oracle fix-it ${label}/${mode}"; exit 1; }
+  [ "${c_out}" = "${py_out}" ] \
+    && echo "  PASS fix-it ${label}/${mode} (oracle == C)" \
+    || { echo "  FAIL: fix-it ${label}/${mode}"; printf '   C : %s\n   PY: %s\n' "${c_out}" "${py_out}"; exit 1; }
+}
+for m in text json; do
+  run_diag_fixit replace-with "${m}" 34 35 ";"     # span -> "replace with ';'"
+  run_diag_fixit insert       "${m}" 34 34 ")"     # zero-width span -> "insert ')'"
+  run_diag_fixit remove       "${m}" 34 36 ""      # empty replacement -> "remove ''"
+done
+echo "  PASS diagnostic fix-it hints are byte-identical across both rails"
 
 # The total-compilation / fallback contract (#fallback, the C twin of pipeline.compile_with_fallback):
 # a unit BCIR can compile + verify exits 0 (clean); a unit that compiles but fails the verifier (e.g.
