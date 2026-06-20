@@ -702,6 +702,18 @@ class _FuncLowerer:
             self._write(lv, v)
 
     def _assign(self, node: cast.Assign) -> int:
+        # pointer compound-assign  p += n / p -= n  (and p++/p--, which desugar to `p = p + 1`):
+        # a single pointer-arithmetic claim, so the result stays a pointer (the integer binary result
+        # would truncate the pointer). The emit renders `p += n;` and lets C scale by the element size.
+        if (isinstance(node.target, cast.Name) and node.target.ident in self.env
+                and isinstance(node.value, cast.Binary) and node.value.op in ("+", "-")
+                and isinstance(node.value.lhs, cast.Name)
+                and node.value.lhs.ident == node.target.ident):
+            rid, ct = self._lookup(node.target.ident, node.target.pos)
+            if ct.kind == "pointer":
+                n = self._rvalue(node.value.rhs)
+                self._emit("c.ptradd" if node.value.op == "+" else "c.ptrsub", Opcode.ADD, (rid, n), (rid,))
+                return rid
         v = self._rvalue(node.value)
         if isinstance(node.target, cast.Name) and node.target.ident in self.env:
             rid, _ct = self._lookup(node.target.ident, node.target.pos)           # copy into the mutable storage

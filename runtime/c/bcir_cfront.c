@@ -1107,6 +1107,11 @@ static int p_incdec(CC *c) {
   } else return 0;
   uint32_t one=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
   if(kc){kc->n_wr=1;kc->wr[0]=one;kc->n_imm=1;kc->imm[0]=1;}
+  if(v->type.kind==2){                                  /* pointer ++/-- : p += 1 / p -= 1 (verbatim) */
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.ptr%s",ch=='+'?"add":"sub");
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=one;cl->n_wr=1;cl->wr[0]=v->rid;}
+    return 1;
+  }
   uint32_t tmp=temp(c,4); bcir_claim *b=new_claim(c,ch=='+'?"c.bin.add":"c.bin.sub",ch=='+'?BCIR_OP_ADD:BCIR_OP_SUB);
   if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=one;b->n_wr=1;b->wr[0]=tmp;}
   bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
@@ -1276,7 +1281,14 @@ static void p_stmt(CC *c) {
       eat(c,";");return;}
     /* compound assignment  name OP= expr  ->  name = name OP expr  (a bin op + a copy). */
     if(v&&is_compound_op(&c->t[c->i+1])){
-      char ch=c->t[c->i+1].s[0]; c->i+=2; uint32_t rhs=p_expr(c);
+      char ch=c->t[c->i+1].s[0];
+      if(v->type.kind==2 && (ch=='+'||ch=='-')){       /* pointer arithmetic: p += n / p -= n (verbatim) */
+        c->i+=2; uint32_t rhs=p_expr(c);
+        char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.ptr%s",ch=='+'?"add":"sub");
+        bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
+        eat(c,";");return;
+      }
+      c->i+=2; uint32_t rhs=p_expr(c);
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
       uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
       bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
@@ -1428,6 +1440,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.loop.test")){IND();w+=snprintf(o+w,on-w,"if (!%s) break;\n",rname(f,cl->rd[0],a));continue;}
     if(!strcmp(cl->op,"c.cont.tgt")){IND();w+=snprintf(o+w,on-w,"__cont_%d: ;\n",nls?lstk[nls-1]:0);continue;}
     if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");if(nls)nls--;continue;}
+    if(!strcmp(cl->op,"c.ptradd")){IND();w+=snprintf(o+w,on-w,"%s += %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p += n */
+    if(!strcmp(cl->op,"c.ptrsub")){IND();w+=snprintf(o+w,on-w,"%s -= %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p -= n */
     if(!strcmp(cl->op,"c.break")){IND();w+=snprintf(o+w,on-w,"break;\n");continue;}
     if(!strcmp(cl->op,"c.switch")){IND();w+=snprintf(o+w,on-w,"switch (%s) {\n",rname(f,cl->rd[0],a));depth++;continue;}
     if(!strncmp(cl->op,"c.case:",7)){IND();w+=snprintf(o+w,on-w,"case %s:\n",cl->op+7);continue;}  /* a real case label */
