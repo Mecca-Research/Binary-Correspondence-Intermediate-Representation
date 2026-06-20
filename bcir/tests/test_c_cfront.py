@@ -32,7 +32,7 @@ _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfron
                  "cfront_global.c", "cfront_compound.c", "cfront_logic.c"]   # + char consts + str table/dedup + const LUT
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
             "cfront_continue.c", "cfront_switch.c", "cfront_goto.c", "cfront_incdec.c"]
-_PREPROC = ["cfront_macros.c", "cfront_ppinc.c"]      # L7: exercise the preprocessor
+_PREPROC = ["cfront_macros.c", "cfront_ppinc.c", "cfront_comments.c"]      # L7: exercise the preprocessor
 _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-value + packed layout
         "cfront_union.c",                             # + full union (members overlap at offset 0)
         "cfront_interleave.c",                        # + enum/struct defined *between* two functions
