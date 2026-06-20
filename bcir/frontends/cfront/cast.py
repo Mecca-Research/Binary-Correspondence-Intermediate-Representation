@@ -158,6 +158,12 @@ class ExprStmt:
 
 
 @dataclass(frozen=True)
+class Seq:
+    stmts: tuple = ()               # a flat sequence of statements lowered in order -- the comma-
+                                    # separated declarators of one declaration (`T a = x, b = y;`)
+
+
+@dataclass(frozen=True)
 class If:
     cond: object
     then: tuple

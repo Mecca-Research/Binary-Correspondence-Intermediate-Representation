@@ -1201,30 +1201,38 @@ static void p_stmt(CC *c) {
     looks_decl=sz>=0||is_static||is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"const")||is(c,"volatile")
                ||find_typedef(c,pk(c)->s,pk(c)->n)>=0;}
   if(looks_decl){
-    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return; tok nm=adv(c);   /* p_type eats `static` */
-    char nb[BCIR_CIR_NAME]; idcpy(nb,&nm);
-    int arr=0; if(is(c,"[")){ c->i++; arr = isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]"); }   /* T name[N] -- a local array */
-    int rk=arr?BCIR_RK_SCALAR:(ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
-    uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
-                         arr?ty.size:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
-                         arr?arr:(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
-    if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double (element) local */
-    else if(ty.kind==0) c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
-    if(ty.kind==1&&!arr) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
-    env_add(c,&nm,rid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
-    if(is_static){            /* static storage: a once-only constant init, baked into the decl */
-      long long init=0; if(is(c,"=")){c->i++;init=ce_expr(c,0);}
-      { bcir_func *f=c->fn;
-        if(f->n_statics>=f->cap_statics){ int nc=f->cap_statics?f->cap_statics*2:4;
-          bcir_static *ns=realloc(f->statics,(size_t)nc*sizeof *ns); if(ns){f->statics=ns;f->cap_statics=nc;} }
-        if(f->n_statics<f->cap_statics){ idcpy(f->statics[f->n_statics].name,&nm);
-          f->statics[f->n_statics].init=init; f->n_statics++; } }
-      eat(c,";");return;
+    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return;   /* p_type eats `static` + base-level `*` */
+    /* one or more comma-separated declarators sharing this specifier: `T a = x, b, c = z;`. Each
+     * reuses the base type (so `unsigned a, b;` and `int i = 0, j = n;` -- the canonical loop init --
+     * lower to the same per-declarator storage + copy as separate decls). A 2nd declarator that adds
+     * its own `*`/`(` shape is the rarer `int *p, q;` form; the twin folds `*` into the specifier, so
+     * it is rejected here rather than silently mis-typed (the oracle types it per-declarator). */
+    for(;;){
+      if(!isk(c,T_ID)){ fail(c,"expected declarator name"); return; }
+      tok nm=adv(c); char nb[BCIR_CIR_NAME]; idcpy(nb,&nm);
+      int arr=0; if(is(c,"[")){ c->i++; arr = isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]"); }   /* T name[N] -- a local array */
+      int rk=arr?BCIR_RK_SCALAR:(ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
+      uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
+                           arr?ty.size:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
+                           arr?arr:(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
+      if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double (element) local */
+      else if(ty.kind==0) c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
+      if(ty.kind==1&&!arr) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
+      env_add(c,&nm,rid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
+      if(is_static){            /* static storage: a once-only constant init, baked into the decl */
+        long long init=0; if(is(c,"=")){c->i++;init=ce_expr(c,0);}
+        { bcir_func *f=c->fn;
+          if(f->n_statics>=f->cap_statics){ int nc=f->cap_statics?f->cap_statics*2:4;
+            bcir_static *ns=realloc(f->statics,(size_t)nc*sizeof *ns); if(ns){f->statics=ns;f->cap_statics=nc;} }
+          if(f->n_statics<f->cap_statics){ idcpy(f->statics[f->n_statics].name,&nm);
+            f->statics[f->n_statics].init=init; f->n_statics++; } }
+      } else if(is(c,"=")){c->i++;
+        if(is(c,"{")){ if(arr) arr_init(c,rid); else agg_init(c,rid,si); }   /* {…} array / struct-union init */
+        else { uint32_t v=p_expr(c);
+          bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;} } }
+      if(is(c,",")){ c->i++; continue; }   /* another declarator off the same specifier */
+      break;
     }
-    if(is(c,"=")){c->i++;
-      if(is(c,"{")){ if(arr) arr_init(c,rid); else agg_init(c,rid,si); }   /* {…} array / struct-union init */
-      else { uint32_t v=p_expr(c);
-        bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;} } }
     eat(c,";");return;
   }
   if(isk(c,T_ID)){tok id=*pk(c);venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a writable file-scope global */

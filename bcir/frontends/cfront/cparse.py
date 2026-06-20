@@ -611,19 +611,29 @@ class _Parser:
             els = self._block() if self.at("PUNCT", "{") else (self._stmt(),)
         return cast.If(cond, then, els)
 
-    def _decl_stmt(self) -> cast.Decl:
+    def _decl_stmt(self):
+        """A local declaration, possibly with several comma-separated declarators sharing one
+        type-specifier: `T a = x, b, c = z;` == `T a = x; T b; T c = z;`. Each declarator re-derives
+        its own pointer/array shape from the base (so `int *p, q;` types p pointer, q int)."""
         is_static = False
         if self.at("IDENT", "static"):                # storage class (otherwise eaten by _type_spec)
             is_static = True
             self.nxt()
-        tref = self._type_spec()
-        tref, name = self._declarator(tref)
-        init = None
-        if self.at("OP", "="):
-            self.nxt()
-            init = self._init_value()
+        base = self._type_spec()
+        decls = []
+        while True:
+            tref, name = self._declarator(base)
+            init = None
+            if self.at("OP", "="):
+                self.nxt()
+                init = self._init_value()
+            decls.append(cast.Decl(tref, name, init, static_storage=is_static))
+            if self.at("PUNCT", ","):                 # another declarator off the same specifier
+                self.nxt()
+                continue
+            break
         self.eat("PUNCT", ";")
-        return cast.Decl(tref, name, init, static_storage=is_static)
+        return decls[0] if len(decls) == 1 else cast.Seq(tuple(decls))
 
     def _init_value(self):
         """A declarator initializer: a scalar expression, or a braced aggregate initializer (positional
