@@ -29,10 +29,7 @@ typedef enum { T_ID, T_INT, T_FLT, T_STR, T_PUN, T_END } tkind;
 typedef struct { tkind k; const char *s; int n; long long v; } tok;
 
 #define MAXTOK 16384
-#define MAXFLD 64
-#define MAXENV 256
-#define MAXTD 64
-#define MAXEC 256
+#define MAXFLD 64        /* members per struct (f[] is embedded in sdef; generous, guarded) */
 
 typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int byte_off, bit_off, bit_w; } field;
 typedef struct { char tag[BCIR_CIR_NAME]; field f[MAXFLD]; int nf; int size; int align; int is_union; } sdef;
@@ -85,17 +82,23 @@ static const bcir_abi *bcir_abi_by_name(const char *name){
 
 typedef struct {
   tok t[MAXTOK]; int nt, i;
-  sdef s[16]; int ns;
-  tdef td[MAXTD]; int ntd;        /* typedef aliases (resolved at parse time) */
-  econst ec[MAXEC]; int nec;      /* enum constants (folded to literals at parse time) */
-  gvar gv[16]; int ngv;           /* file-scope globals (lookup tables): name -> type + length */
-  venv env[MAXENV]; int nenv;
+  sdef *s; int ns, cap_s;         /* struct/union definitions (grown -- no fixed cap) */
+  tdef *td; int ntd, cap_td;      /* typedef aliases (resolved at parse time) */
+  econst *ec; int nec, cap_ec;    /* enum constants (folded to literals at parse time) */
+  gvar *gv; int ngv, cap_gv;      /* file-scope globals (lookup tables): name -> type + length */
+  venv *env; int nenv, cap_env;   /* in-scope local variables */
   bcir_func *fn;
   bcir_unit *unit;   /* the whole unit, so a call can be typed by an earlier-defined callee's return */
   const bcir_abi *abi;  /* the target data model the unit is laid out for (long/ptr widths) */
   uint32_t rid, cid;
   char err[256]; int failed;
 } CC;
+/* Grow a CC parser-state array geometrically (no fixed cap), zeroing the fresh slots. On OOM the cap
+ * is left unchanged, so the append guard (`n < cap`) stops -- a truncated unit the verifier catches. */
+#define CC_ENSURE(arr, n, cap) do { \
+  if((n) >= (cap)) { int _oc=(cap), _nc=(cap)?(cap)*2:8; void *_p=realloc((arr),(size_t)_nc*sizeof *(arr)); \
+    if(_p){ (arr)=_p; (cap)=_nc; \
+      memset((char *)(arr)+(size_t)_oc*sizeof *(arr), 0, (size_t)(_nc-_oc)*sizeof *(arr)); } } } while(0)
 /* The active target ABI (defaults to the host LP64 model when the driver set none). */
 static const bcir_abi *cc_abi(const CC *c){ return c->abi ? c->abi : bcir_abi_host(); }
 
@@ -382,6 +385,8 @@ static void attrs(CC *c,int *packed,int *aligned){
 static int p_struct_body(CC *c) {
   int is_union = is(c,"union");
   c->i++; int packed=0,aligned=0; attrs(c,&packed,&aligned);
+  CC_ENSURE(c->s, c->ns, c->cap_s);
+  if(c->ns>=c->cap_s){ fail(c,"too many struct definitions"); return -1; }
   sdef *S=&c->s[c->ns]; S->nf=0; S->align=1; S->is_union=is_union;
   if(isk(c,T_ID)&&!is(c,"{")){tok tag=adv(c);idcpy(S->tag,&tag);}
   else snprintf(S->tag,sizeof S->tag,"$anon%d",c->ns);   /* anonymous: synth a unique tag */
@@ -391,6 +396,7 @@ static int p_struct_body(CC *c) {
   while(!is(c,"}")&&!c->failed){
     bcir_ctype ty;int si;if(p_type(c,&ty,&si))return -1; tok nm=adv(c);
     int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;} eat(c,";");
+    if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
     int sz=ty.size,al=packed?1:(sz<1?1:sz); field *f=&S->f[S->nf++];
     idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;
     if(al>S->align)S->align=al; if(sz>maxsz)maxsz=sz;
@@ -437,7 +443,8 @@ static void p_enum_body(CC *c){
   while(!is(c,"}")&&!c->failed){
     tok nm=adv(c);
     if(is(c,"=")){c->i++;val=ce_expr(c,0);}
-    if(c->nec<MAXEC){idcpy(c->ec[c->nec].name,&nm);c->ec[c->nec].val=val;c->nec++;}
+    CC_ENSURE(c->ec,c->nec,c->cap_ec);
+    if(c->nec<c->cap_ec){idcpy(c->ec[c->nec].name,&nm);c->ec[c->nec].val=val;c->nec++;}
     val++;
     if(is(c,","))c->i++;
   }
@@ -472,14 +479,16 @@ static void p_typedef(CC *c){
       }
       eat(c,")");
       bcir_ctype fp; memset(&fp,0,sizeof fp); fp.kind=3; fp.size=8; fp.signd=0; idcpy(fp.tag,&nm);
-      if(c->ntd<MAXTD){idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=fp;c->td[c->ntd].sidx=-1;c->ntd++;}
+      CC_ENSURE(c->td,c->ntd,c->cap_td);
+      if(c->ntd<c->cap_td){idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=fp;c->td[c->ntd].sidx=-1;c->ntd++;}
       eat(c,";");
       return;
     }
     c->i=save;                                         /* not a funcptr declarator */
   }
   tok nm=adv(c);                                      /* the alias name */
-  if(c->ntd<MAXTD){idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=ty;c->td[c->ntd].sidx=sidx;c->ntd++;}
+  CC_ENSURE(c->td,c->ntd,c->cap_td);
+  if(c->ntd<c->cap_td){idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=ty;c->td[c->ntd].sidx=sidx;c->ntd++;}
   eat(c,";");
 }
 
@@ -988,7 +997,8 @@ static uint32_t p_expr(CC *c){
 
 /* --- statements + functions ---------------------------------------------- */
 static void env_add(CC *c,const tok *nm,uint32_t rid,const bcir_ctype *ty,int sidx){
-  if(c->nenv>=MAXENV)return; venv *v=&c->env[c->nenv++];
+  CC_ENSURE(c->env,c->nenv,c->cap_env);
+  if(c->nenv>=c->cap_env)return; venv *v=&c->env[c->nenv++];
   idcpy(v->name,nm);v->rid=rid;v->type=*ty;v->sidx=sidx;
 }
 /* On first use of a file-scope global within a function, materialize a read-only data resource for
@@ -1512,12 +1522,21 @@ static void p_global(CC *c){
     else (void)ce_expr(c,0);
   }
   eat(c,";");
-  if(c->ngv<16){ idcpy(c->gv[c->ngv].name,&nm); c->gv[c->ngv].ty=ty; c->gv[c->ngv].count=count; c->ngv++; }
+  CC_ENSURE(c->gv, c->ngv, c->cap_gv);
+  if(c->ngv<c->cap_gv){ idcpy(c->gv[c->ngv].name,&nm); c->gv[c->ngv].ty=ty; c->gv[c->ngv].count=count; c->ngv++; }
 }
 
 /* --- public entry -------------------------------------------------------- */
 int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_result *out) {
-  static CC c; memset(&c,0,sizeof c); memset(out,0,sizeof *out);
+  static CC c;
+  /* `c` is a reused static: preserve the grown parser-state arrays across compiles (counts reset to
+   * 0 below, the buffers are reused + grown as needed) so we neither leak per compile nor re-allocate. */
+  sdef *sv_s=c.s; int sv_cs=c.cap_s; tdef *sv_td=c.td; int sv_ctd=c.cap_td;
+  econst *sv_ec=c.ec; int sv_cec=c.cap_ec; gvar *sv_gv=c.gv; int sv_cgv=c.cap_gv;
+  venv *sv_env=c.env; int sv_cenv=c.cap_env;
+  memset(&c,0,sizeof c); memset(out,0,sizeof *out);
+  c.s=sv_s; c.cap_s=sv_cs; c.td=sv_td; c.cap_td=sv_ctd; c.ec=sv_ec; c.cap_ec=sv_cec;
+  c.gv=sv_gv; c.cap_gv=sv_cgv; c.env=sv_env; c.cap_env=sv_cenv;
   c.abi = bcir_abi_by_name(target);     /* the target data model (NULL name -> host LP64) */
   if(!c.abi){ snprintf(out->diag,sizeof out->diag,"unknown target '%s'",target?target:""); return 1; }
   c.rid=100; c.cid=1000; c.unit=&out->unit;

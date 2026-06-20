@@ -1284,6 +1284,38 @@ def test_scalable_ir_no_fixed_ceilings():
         assert m and (m.group(1), m.group(2), m.group(3)) == ("43", "7500", "1"), out.stdout[:200]
 
 
+def _pstress_unit_src() -> str:
+    """A unit busting every old *parser-state* cap: 20 struct defs (> s[16]), 25 file-scope globals
+    (> gv[16]), 20 typedefs, and a function with 300 locals (> env[256])."""
+    L = [f"struct S{k} {{ unsigned m0; unsigned m1; }};" for k in range(20)]
+    L += [f"typedef unsigned U{k};" for k in range(20)]
+    L += [f"static const unsigned G{k}[2] = {{ {k}u, {k + 1}u }};" for k in range(25)]
+    L.append("unsigned big(void){\n" + "\n".join(f"  unsigned v{i} = {i}u;" for i in range(300)) +
+             "\n  return " + "+".join(f"v{i}" for i in range(300)) + "; }")
+    L.append("unsigned useg(unsigned i){ return G0[i%2u] + G19[i%2u] + G24[i%2u]; }")
+    return "\n".join(L) + "\n"
+
+
+def test_scalable_parser_state_no_fixed_caps():
+    """Scalable parser state: the twin's parser-state record arrays (struct defs / globals / typedefs /
+    enum constants / locals) grow geometrically -- the old fixed `s[16]` / `gv[16]` / `env[256]` caps
+    are gone, so a real header (20 structs, 25 globals, 300 locals) lowers and matches the oracle, which
+    is uncapped by design."""
+    src = _pstress_unit_src()
+    r = compile_unit(src, check_clang=False)                 # oracle: Python dicts/lists, no caps
+    assert len(r.lowered.functions) == 2 and r.is_clean
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        cc = _build_bcir_cc(d)
+        p = os.path.join(d, "pstress.c")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        out = subprocess.run([cc, "--emit-claimgraph", p], capture_output=True, text=True)
+        assert out.returncode == 0, out.stderr
+        assert "ok=1" in out.stdout, out.stdout[:200]          # all structs/globals/locals resolved
+
+
 _INTPROMOTE_SRC = (
     "int sdiv(int a, int b){ return b ? a / b : 0; }\n"          # signed division (truncates toward 0)
     "int smod(int a, int b){ return b ? a % b : 0; }\n"          # signed remainder

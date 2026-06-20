@@ -797,10 +797,14 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     translation unit of any size lowers. Gated by a cap-busting unit (43 functions, a 12-param
     function, a 40-call aggregator, a 7500-claim function) that compiles clean and matches the oracle
     (`#scale` in `check_runtime.sh`; `test_scalable_ir_no_fixed_ceilings`), valgrind-clean across the
-    realloc paths. *Still:* a fuller per-target calling-convention/varargs/aggregate ABI on top of the
-    landed **data-model layout matrix** (`--target`, §5.8), real object/dependency output via a
-    resident backend, and the parser-state caps (file-scope globals / struct defs / locals — a
-    separate "broader globals" segment).
+    realloc paths. The twin's **parser-state** caps are gone too: ✅ struct defs (was `s[16]`),
+    file-scope globals (was `gv[16]`), typedefs (was `td[64]`), enum constants (was `ec[256]`) and
+    locals (was `env[256]`) all grow geometrically (reused across compiles via a save/restore around
+    the static `CC`), so a real header (20 structs / 25 globals / 300 locals) lowers and matches the
+    oracle (`#pscale`; `test_scalable_parser_state_no_fixed_caps`; valgrind-clean over multi-compile
+    reuse). *Still:* a fuller per-target calling-convention/varargs/aggregate ABI on top of the landed
+    **data-model layout matrix** (`--target`, §5.8), real object/dependency output via a resident
+    backend, and the per-struct member array (`f[64]`, embedded; guarded) + token buffer (`16384`).
 
   **Exit:** BCIR compiles a freestanding embedded C test suite + a nontrivial driver codebase with no
   hand-written claim graphs. ✅ **Composition checkpoint:** `cfront_integration.c` -- a realistic driver combining
