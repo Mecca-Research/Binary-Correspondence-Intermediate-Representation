@@ -48,6 +48,13 @@ void bcir_cfront_free(bcir_cfront_result *out);
  * the oracle). Writes "funcs=N claims=N mmio=N bf=N const=N binop=N call=N ok=1". */
 void bcir_cfront_summary(const bcir_unit *u, int ok, char *buf, size_t n);
 
+/* The module-scope effect / commutation analysis (the C twin of pipeline.own_footprint + commute):
+ * for each function a `fn=<name> reads=<globals|-> writes=<globals|->` line (its alias/effect
+ * footprint over file-scope globals, callee effects folded in transitively, names sorted), then a
+ * `commute <a> <b> = 0|1` line per function pair (1 iff their footprints don't conflict -- two
+ * readers commute, a writer conflicts with any reader/writer of the same global). */
+void bcir_cfront_effects(const bcir_unit *u, char *buf, size_t n);
+
 #ifdef __cplusplus
 }
 #endif

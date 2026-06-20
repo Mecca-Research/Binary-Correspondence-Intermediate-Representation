@@ -1432,3 +1432,73 @@ void bcir_cfront_summary(const bcir_unit *u,int ok,char *buf,size_t n){
   snprintf(buf,n,"funcs=%d claims=%zu mmio=%d bf=%d const=%d binop=%d call=%d ok=%d",
            u->n_funcs,nc,mmio,bf,kn,binop,calls,ok);
 }
+
+/* --- module-scope effect / commutation analysis (the C twin of pipeline own_footprint + commute) ---
+ * Each function's alias/effect footprint over file-scope globals: the global NAMES it reads and writes
+ * (a read references a global rid in a claim operand -- including the c.return / control-condition
+ * markers -- a write is a claim result writing a global rid). Callee effects fold into the caller
+ * transitively (R18 keeps the graph a DAG). Two functions commute iff their footprints don't conflict:
+ * two readers of the same global commute; a writer conflicts with any reader or writer of it. */
+#define BCIR_FX_MAXG 32
+
+/* the unit's distinct file-scope global names (read_only named resources), first-seen order. */
+static int fx_globals(const bcir_unit *u, char names[][BCIR_CIR_NAME]) {
+  int n=0;
+  for(int fi=0;fi<u->n_funcs;fi++){ const bcir_func *f=&u->funcs[fi];
+    for(size_t i=0;i<f->n_res;i++){ const bcir_resource *r=&f->res[i];
+      if(r->name[0] && r->read_only){
+        int seen=0; for(int k=0;k<n;k++) if(!strcmp(names[k],r->name)){seen=1;break;}
+        if(!seen && n<BCIR_FX_MAXG){ snprintf(names[n],BCIR_CIR_NAME,"%s",r->name); n++; } } } }
+  return n;
+}
+static int fx_index(char names[][BCIR_CIR_NAME], int n, const char *nm){
+  for(int k=0;k<n;k++) if(!strcmp(names[k],nm)) return k; return -1;
+}
+/* function f's OWN read/write global masks (over the names table). */
+static void fx_own(const bcir_func *f, char names[][BCIR_CIR_NAME], int ng, uint64_t *rd, uint64_t *wr){
+  *rd=0; *wr=0;
+  for(size_t i=0;i<f->n_claims;i++){ const bcir_claim *c=&f->claims[i];
+    for(int k=0;k<c->n_rd;k++){ const bcir_resource *r=res_of(f,c->rd[k]);
+      if(r&&r->name[0]&&r->read_only){ int gi=fx_index(names,ng,r->name); if(gi>=0)*rd|=1ull<<gi; } }
+    for(int k=0;k<c->n_wr;k++){ const bcir_resource *r=res_of(f,c->wr[k]);
+      if(r&&r->name[0]&&r->read_only){ int gi=fx_index(names,ng,r->name); if(gi>=0)*wr|=1ull<<gi; } } }
+}
+static int fx_find(const bcir_unit *u, const char *name){
+  for(int i=0;i<u->n_funcs;i++) if(!strcmp(u->funcs[i].name,name)) return i; return -1;
+}
+/* fold function fi's footprint with its callees' (transitively; the `seen` mask guards the DAG). */
+static void fx_fold(const bcir_unit *u, int fi, char names[][BCIR_CIR_NAME], int ng,
+                    uint64_t *rd, uint64_t *wr, uint32_t *seen){
+  if(fi<0 || (*seen & (1u<<fi))) return; *seen |= 1u<<fi;
+  uint64_t ord,owr; fx_own(&u->funcs[fi],names,ng,&ord,&owr); *rd|=ord; *wr|=owr;
+  const bcir_func *f=&u->funcs[fi];
+  for(int k=0;k<f->n_calls;k++) fx_fold(u,fx_find(u,f->calls[k]),names,ng,rd,wr,seen);
+}
+/* append the sorted, comma-joined globals selected by `mask` (or "-" if empty). */
+static size_t fx_print_names(char *o,size_t cap,size_t w, char names[][BCIR_CIR_NAME], int ng, uint64_t mask){
+  int idx[BCIR_FX_MAXG], m=0;
+  for(int k=0;k<ng;k++) if(mask&(1ull<<k)) idx[m++]=k;
+  for(int i=1;i<m;i++){ int j=i; while(j>0 && strcmp(names[idx[j-1]],names[idx[j]])>0){int t=idx[j-1];idx[j-1]=idx[j];idx[j]=t;j--;} }
+  if(m==0) return w + (size_t)snprintf(o+w, w<cap?cap-w:0, "-");
+  for(int i=0;i<m;i++) w += (size_t)snprintf(o+w, w<cap?cap-w:0, "%s%s", i?",":"", names[idx[i]]);
+  return w;
+}
+
+void bcir_cfront_effects(const bcir_unit *u, char *buf, size_t n){
+  char names[BCIR_FX_MAXG][BCIR_CIR_NAME]; int ng=fx_globals(u,names);
+  uint64_t frd[BCIR_MAX_FUNCS], fwr[BCIR_MAX_FUNCS];
+  for(int i=0;i<u->n_funcs;i++){ uint32_t seen=0; uint64_t rd=0,wr=0; fx_fold(u,i,names,ng,&rd,&wr,&seen); frd[i]=rd; fwr[i]=wr; }
+  size_t w=0;
+  for(int i=0;i<u->n_funcs;i++){
+    w+=(size_t)snprintf(buf+w,w<n?n-w:0,"fn=%s reads=",u->funcs[i].name);
+    w=fx_print_names(buf,n,w,names,ng,frd[i]);
+    w+=(size_t)snprintf(buf+w,w<n?n-w:0," writes=");
+    w=fx_print_names(buf,n,w,names,ng,fwr[i]);
+    w+=(size_t)snprintf(buf+w,w<n?n-w:0,"\n");
+  }
+  for(int i=0;i<u->n_funcs;i++) for(int j=i+1;j<u->n_funcs;j++){
+    uint64_t wa=fwr[i],wb=fwr[j],ra=frd[i],rb=frd[j];
+    int conflict = (wa & (rb|wb)) || (wb & (ra|wa));      /* a writes b's footprint, or vice versa */
+    w+=(size_t)snprintf(buf+w,w<n?n-w:0,"commute %s %s = %d\n",u->funcs[i].name,u->funcs[j].name,conflict?0:1);
+  }
+}

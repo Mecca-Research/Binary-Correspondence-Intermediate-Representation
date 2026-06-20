@@ -35,7 +35,8 @@ static const char *USAGE =
   "  --target abi   data model to lay out for: x86_64-linux (default), aarch64-linux,\n"
   "                 riscv64-linux, x86_64-windows, i386-linux\n"
   "  --fallback     total compile: a construct outside the supported subset exits 2 with\n"
-  "                 'fallback to LLVM backend: <phase>: <reason>' instead of a hard error\n";
+  "                 'fallback to LLVM backend: <phase>: <reason>' instead of a hard error\n"
+  "  --emit-effects per-function module-scope effect footprints + the commutation matrix\n";
 
 static void dirof(const char *path, char *out, size_t cap) {
   const char *s = strrchr(path, '/');
@@ -62,7 +63,7 @@ int main(int argc, char **argv) {
   const char *undefs[MAXD]; int nundef = 0;
   const char *files[256]; int nfiles = 0;
   const char *std = "c23", *out_path = NULL, *target = NULL;
-  int pp_only = 0, emit_c = 0, emit_cg = 0, emit_pack = 0, fallback = 0;
+  int pp_only = 0, emit_c = 0, emit_cg = 0, emit_pack = 0, emit_fx = 0, fallback = 0;
 
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
@@ -70,6 +71,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--target")) { if (++i < argc) target = argv[i]; }
     else if (!strncmp(a, "--target=", 9)) target = a + 9;
     else if (!strcmp(a, "--fallback")) fallback = 1;
+    else if (!strcmp(a, "--emit-effects")) emit_fx = 1;
     else if (!strcmp(a, "--emit-c")) emit_c = 1;
     else if (!strcmp(a, "--emit-claimgraph")) emit_cg = 1;
     else if (!strcmp(a, "--emit-pack")) emit_pack = 1;
@@ -133,6 +135,9 @@ int main(int argc, char **argv) {
 
     if (emit_c) {
       fputs(r.emitted, outf);
+    } else if (emit_fx) {
+      static char fx[8192]; bcir_cfront_effects(&r.unit, fx, sizeof fx);
+      fputs(fx, outf);
     } else if (emit_cg) {
       char sum[256]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);
       fprintf(outf, "%s\n", sum);

@@ -1200,6 +1200,52 @@ def test_diagnostic_error_recovery_report_dual_rail():
                 assert out == want, f"recovery report {flag} diverged for {fn}\n C: {out!r}\nPY: {want!r}"
 
 
+def _oracle_effects_report(src: str) -> str:
+    """The oracle's per-function effect footprints + commute matrix in the bcir-cc --emit-effects
+    text format (the C twin of pipeline.effects / commute)."""
+    r = compile_unit(src, check_clang=False)
+    fns = list(r.lowered.functions)
+
+    def names(rids):
+        return sorted(r.lowered.resources[x].name for x in rids if x in r.lowered.resources)
+
+    out = []
+    for n in fns:
+        e = r.effects[n]
+        out.append(f"fn={n} reads={','.join(names(e.reads)) or '-'} writes={','.join(names(e.writes)) or '-'}")
+    for i, a in enumerate(fns):
+        for b in fns[i + 1:]:
+            out.append(f"commute {a} {b} = {1 if r.commute(a, b) else 0}")
+    return "\n".join(out) + "\n"
+
+
+def test_effect_commutation_analysis_dual_rail():
+    """Module-scope effect / commutation analysis (#effects): bcir-cc --emit-effects is the C twin of
+    pipeline.own_footprint + commute. For each function it reports the file-scope globals it reads and
+    writes -- callee effects folded in transitively (the call graph is a DAG under R18) -- then the
+    pairwise commute matrix: two functions commute iff their footprints don't conflict (two readers of
+    a global commute; a writer conflicts with any reader/writer of it). The whole report is
+    byte-identical to the oracle's pipeline.effects / commute, and the gate spans a commuting pair
+    (read_a/read_b over disjoint ga/gb) and conflicts (the writer write_a, and the folded via_a)."""
+    fixtures = ["cfront_effects.c", "cfront_global_rw.c"]
+    reports = {}
+    for fx in fixtures:
+        src = open(os.path.join(_C, fx), encoding="utf-8").read()
+        reports[fx] = _oracle_effects_report(src)
+    # the analysis has teeth: cfront_effects spans a commute=1 pair and a conflict=0 pair.
+    assert "commute read_a read_b = 1" in reports["cfront_effects.c"]
+    assert "commute read_a write_a = 0" in reports["cfront_effects.c"]
+    assert "fn=via_a reads=ga writes=ga" in reports["cfront_effects.c"]      # folded callee effects
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        cc = _build_bcir_cc(d)
+        for fx in fixtures:
+            out = subprocess.run([cc, "--emit-effects", os.path.join(_C, fx)],
+                                 capture_output=True, text=True).stdout
+            assert out == reports[fx], f"{fx}: effects diverged\n C:\n{out}\nPY:\n{reports[fx]}"
+
+
 def test_scalar_globals_read_write_dual_rail():
     """Scalar file-scope globals (#globals): the oracle models a scalar global as a plain resource --
     a read references it directly (no c.load), a write is a c.copy to the global rid. The C twin now
