@@ -336,7 +336,7 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
   for(;;){
     if(is(c,"volatile")){ty->is_volatile=1;c->i++;continue;}
     if(is(c,"_Atomic")){ty->is_atomic=1;c->i++;continue;}
-    if(is(c,"const")||is(c,"static")||is(c,"inline")){c->i++;continue;}
+    if(is(c,"const")||is(c,"static")||is(c,"inline")||is(c,"extern")){c->i++;continue;}  /* storage / qualifier */
     if(is(c,"signed")){ty->signd=1;sign_explicit=1;c->i++;continue;}
     if(is(c,"unsigned")){ty->signd=0;sign_explicit=1;ty->size=4;seen=1;c->i++;continue;}
     if(is(c,"struct")||is(c,"union")){c->i++;tok tag=adv(c);int si=find_struct(c,tag.s,tag.n);
