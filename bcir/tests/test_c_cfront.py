@@ -864,6 +864,56 @@ def test_abi_target_matrix_dual_rail():
         assert bad.returncode != 0 and "unknown target" in bad.stdout, bad.stdout
 
 
+# (source, the expected total-compile outcome): "clean" compiles+verifies, "dirty" compiles but the
+# verifier rejects it (R18 recursion), "fallback" is outside the supported subset (route to LLVM).
+_FALLBACK_PROBES = [
+    ("unsigned f(unsigned x){ return x*2u + 1u; }", "clean"),
+    ("unsigned f(unsigned n){ return f(n-1u); }", "dirty"),              # R18 recursion -> DIRTY, not fallback
+    ("unsigned f(unsigned x){ return x + ; }", "fallback"),              # malformed -> parse reject
+    ("unsigned f(void){ _Complex double z; return 0u; }", "fallback"),   # _Complex: outside the subset
+    ("unsigned f(unsigned n){ unsigned a[n]; return a[0]; }", "fallback"),   # VLA
+    ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "fallback"),  # statement-expr
+    ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "fallback"),  # computed goto
+]
+_FALLBACK_RC = {"clean": 0, "dirty": 1, "fallback": 2}
+
+
+def _oracle_fallback_rc(src: str) -> int:
+    """The oracle's total-compile outcome as an exit code: needs_fallback=2 / not-clean=1 / clean=0
+    (the contract `bcir-cc --fallback` mirrors)."""
+    from bcir.frontends.cfront.pipeline import compile_with_fallback  # noqa: PLC0415
+    r = compile_with_fallback(src, check_clang=False)
+    return 2 if r.needs_fallback else (0 if r.is_clean else 1)
+
+
+def test_fallback_contract_dual_rail():
+    """The total-compilation / fallback contract (#fallback): `bcir-cc --fallback` is the C twin of
+    `pipeline.compile_with_fallback` -- a **total** entry point that never crashes on a construct
+    outside the supported subset, instead exiting 2 ("fallback to LLVM backend") so a driver can route
+    the unit to the resident backend. A unit that compiles + verifies exits 0; one that compiles but
+    the verifier rejects (R18 recursion) exits 1 (DIRTY, NOT a fallback). The three-way outcome agrees
+    with the oracle across the probe set -- which pins the two rails' supported subset to coincide
+    (a construct one rail silently accepted while the other routed away would diverge here)."""
+    # oracle side always runs (quick tier too); confirm the probe set actually spans all three.
+    oracle = {src: _oracle_fallback_rc(src) for src, _ in _FALLBACK_PROBES}
+    for src, want in _FALLBACK_PROBES:
+        assert oracle[src] == _FALLBACK_RC[want], f"oracle {oracle[src]} != {want} for {src!r}"
+    assert set(oracle.values()) == {0, 1, 2}                            # spans clean / dirty / fallback
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        cc = _build_bcir_cc(d)
+        for src, want in _FALLBACK_PROBES:
+            p = os.path.join(d, "u.c")
+            with open(p, "w") as f:
+                f.write(src + "\n")
+            got = subprocess.run([cc, "--fallback", p], capture_output=True, text=True)
+            assert got.returncode == _FALLBACK_RC[want], \
+                f"twin rc={got.returncode} != {want}({_FALLBACK_RC[want]}) for {src!r}\n{got.stderr}"
+            if want == "fallback":
+                assert "fallback to LLVM backend" in got.stderr, got.stderr
+
+
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
     if not _CC:
         return
