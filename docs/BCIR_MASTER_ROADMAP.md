@@ -932,10 +932,15 @@ carries the index AND a `(member byte offset, element size)` imm, so the element
 member_off + i*elem_size` (the emit a memcpy at that offset), distinct from a plain `base[idx]` (no imm)
 and a plain member (no index). Read, write, compound, and a narrowing `uint8` element all match Clang +
 structural parity (`#memberarray`/`cfront_memberarray.c`, differential asserts `sizeof` + access). The
-oracle `_LV` already carried both `byte_off` and `idx`; the twin's `field` gained an `arr_count`.
-*Still fallback (both rails, pinned by `_FALLBACK_PROBES`):* a **multi-dimensional** member array
-`s.m[i][j]` (needs the per-dim element stride) and a **pointer** member indexed `s.ptr[i]` (needs a
-pointer load first).
+oracle `_LV` already carried both `byte_off` and `idx`; the twin's `field` gained an `arr_count`. A
+follow-up closed an oracle-emit bug the aggregate sweep found: a member array at **offset 0** (the first
+member) had its access gated on `byte_off` *truthiness*, so it collapsed to an invalid `struct[idx]` --
+the `_LV` now carries an explicit `member` flag so the `(offset, size)` imm rides even at offset 0. It
+hid because the per-fixture differential compiles the *twin's* emit; a new test
+(`test_member_array_oracle_emit_is_clang_equivalent`) compiles the **oracle's** emit via
+`compile_unit(check_clang=True)`, pinning it directly. *Still fallback (both rails, pinned by
+`_FALLBACK_PROBES`):* a **multi-dimensional** member array `s.m[i][j]` (needs the per-dim element
+stride) and a **pointer** member indexed `s.ptr[i]` (needs a pointer load first).
 ✅ **integrity fix — multi-dimensional *local* arrays route to fallback, not a silent miscompile**: a
 `T m[A][B]` local kept only the outer dim on its CType (no flatten shape), so the emit was mis-sized
 (`m[A]`, not `m[A*B]`) and `m[i][j]` collapsed to `m[i + j]` (colliding cells -- e.g. `m[0][1]` and
