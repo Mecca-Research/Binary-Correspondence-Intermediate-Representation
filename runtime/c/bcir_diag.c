@@ -84,11 +84,41 @@ static size_t banner(char *out, size_t cap, size_t w, const char *s, int len, co
   return w;
 }
 
+/* The Python repr() of a string (the form `diagnostics.render` prints a fix-it replacement in): single
+ * quotes unless the string holds a `'` and no `"` (then double quotes), backslash + the quote char +
+ * \n/\r/\t escaped, other control bytes as \xXX. Mirrors CPython's string repr for ASCII input. */
+static size_t py_repr(char *o, size_t cap, size_t w, const char *s) {
+  int has_sq = 0, has_dq = 0;
+  for (const char *p = s; *p; p++) { if (*p == '\'') has_sq = 1; else if (*p == '"') has_dq = 1; }
+  char q = (has_sq && !has_dq) ? '"' : '\'';
+  w = putc1(o, cap, w, q);
+  for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+    unsigned char ch = *p;
+    if (ch == '\\') w = puts1(o, cap, w, "\\\\");
+    else if (ch == (unsigned char)q) { w = putc1(o, cap, w, '\\'); w = putc1(o, cap, w, q); }
+    else if (ch == '\n') w = puts1(o, cap, w, "\\n");
+    else if (ch == '\r') w = puts1(o, cap, w, "\\r");
+    else if (ch == '\t') w = puts1(o, cap, w, "\\t");
+    else if (ch < 0x20 || ch == 0x7f) { char b[8]; snprintf(b, sizeof b, "\\x%02x", ch); w = puts1(o, cap, w, b); }
+    else w = putc1(o, cap, w, (char)ch);
+  }
+  return putc1(o, cap, w, q);
+}
+
 size_t bcir_diag_render(const bcir_diag *d, const char *source, const char *filename,
                         char *out, size_t cap) {
   int len = (int)strlen(source);
   int first = 1;
   size_t w = banner(out, cap, 0, source, len, filename, d->severity, d->message, d->span, &first);
+  for (int i = 0; i < d->n_fixits; i++) {                 /* one-line suggested edits, under the caret */
+    const bcir_fixit *fx = &d->fixits[i];
+    const char *verb = fx->replacement[0] == '\0' ? "remove"
+                       : (fx->span.start == fx->span.end ? "insert" : "replace with");
+    if (!first) w = putc1(out, cap, w, '\n');
+    first = 0;
+    w = puts1(out, cap, w, "fix-it: "); w = puts1(out, cap, w, verb);
+    w = putc1(out, cap, w, ' '); w = py_repr(out, cap, w, fx->replacement);
+  }
   for (int i = 0; i < d->n_notes; i++)
     w = banner(out, cap, w, source, len, filename, "note", d->notes[i].message, d->notes[i].span, &first);
   if (cap) out[w < cap ? w : cap - 1] = 0;
@@ -164,6 +194,15 @@ static size_t jnote(char *o, size_t cap, size_t w, const bcir_note *nt, const ch
   w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, depth);
   return putc1(o, cap, w, '}');
 }
+/* one fix-it object `{ "replacement": ..., "range": {...} }` whose closing brace sits at `depth`. */
+static size_t jfixit(char *o, size_t cap, size_t w, const bcir_fixit *fx, int depth) {
+  int fd = depth + 1, ff = 1;
+  w = putc1(o, cap, w, '{');
+  w = member(o, cap, w, &ff, fd); w = jstr(o, cap, w, "replacement"); w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, fx->replacement);
+  w = member(o, cap, w, &ff, fd); w = jstr(o, cap, w, "range");       w = puts1(o, cap, w, ": "); w = jrange(o, cap, w, fx->span, fd);
+  w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, depth);
+  return putc1(o, cap, w, '}');
+}
 /* one diagnostic object whose closing brace sits at `depth` (the C twin of diagnostic_to_dict). */
 static size_t jdiag(char *o, size_t cap, size_t w, const bcir_diag *d, const char *s,
                     const char *filename, int depth) {
@@ -173,6 +212,15 @@ static size_t jdiag(char *o, size_t cap, size_t w, const bcir_diag *d, const cha
   w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "message");  w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, d->message);
   w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "phase");    w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, d->phase ? d->phase : "");
   w = jloc(o, cap, w, s, filename, d->span, &f, kd);
+  if (d->n_fixits > 0) {                                  /* fixits come before notes (dict order) */
+    w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "fixits"); w = puts1(o, cap, w, ": [");
+    for (int i = 0; i < d->n_fixits; i++) {
+      if (i) w = putc1(o, cap, w, ',');
+      w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, kd + 1);
+      w = jfixit(o, cap, w, &d->fixits[i], kd + 1);
+    }
+    w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, kd); w = putc1(o, cap, w, ']');
+  }
   if (d->n_notes > 0) {
     w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "notes"); w = puts1(o, cap, w, ": [");
     for (int i = 0; i < d->n_notes; i++) {

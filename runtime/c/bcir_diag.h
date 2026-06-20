@@ -26,6 +26,11 @@ typedef struct { int start; int end; int has_span; } bcir_span;
  * "previous definition was here" back-reference); renders as a `note:` banner under the primary. */
 typedef struct { const char *message; bcir_span span; } bcir_note;
 
+/* A suggested edit: replace the source over `span` with `replacement`. An insertion has a zero-width
+ * span; a deletion has an empty replacement. The renderer derives the verb (remove / insert /
+ * replace with) from those, exactly as diagnostics.render does. */
+typedef struct { bcir_span span; const char *replacement; } bcir_fixit;
+
 /* One rendered-ready diagnostic. `phase` records the raising stage (lex/preprocess/parse/lower) for
  * machine-readable provenance (unused by the text renderer). */
 typedef struct {
@@ -34,6 +39,8 @@ typedef struct {
   bcir_span span;
   const bcir_note *notes;     /* secondary banners (may be NULL when n_notes == 0) */
   int n_notes;
+  const bcir_fixit *fixits;   /* suggested edits (may be NULL when n_fixits == 0) */
+  int n_fixits;
   const char *phase;
 } bcir_diag;
 

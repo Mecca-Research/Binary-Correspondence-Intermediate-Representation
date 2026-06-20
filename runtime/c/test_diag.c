@@ -4,10 +4,11 @@
  * feeds the SAME spec to diagnostics.render() / DiagnosticReport.to_json() and asserts
  * the two are byte-identical (the dual-rail diagnostic-format gate). Spec lines
  * (start == end == -1 -> a spanless / file-level banner). A line whose first field is a
- * severity starts a new diagnostic; a line whose first field is "-" attaches a note to
- * the current one (a primary's severity may itself be "note", so the note sentinel is "-"):
+ * severity starts a new diagnostic; "-" attaches a note and "+" a fix-it to the current
+ * one (a primary's severity may itself be "note", so the sentinels can't be words):
  *     <severity>\t<start>\t<end>\t<message>      (a primary diagnostic)
  *     -\t<start>\t<end>\t<message>               (a note on the preceding primary)
+ *     +\t<start>\t<end>\t<replacement>           (a fix-it on the preceding primary)
  *   usage: test_diag [--json] <source> <filename>
  *===----------------------------------------------------------------------===*/
 #include <stdio.h>
@@ -17,7 +18,8 @@
 
 #define MAXDIAGS 16
 #define MAXNOTES 64
-#define MAXLINES (MAXDIAGS + MAXNOTES)
+#define MAXFIXITS 64
+#define MAXLINES (MAXDIAGS + MAXNOTES + MAXFIXITS)
 
 /* split a line into (tag, start, end, message); message is the tail after the 3rd tab. The fields
  * point into the mutable `line` buffer (tabs are overwritten with NULs). */
@@ -46,7 +48,8 @@ int main(int argc, char **argv) {
   static char lines[MAXLINES][1024];
   static bcir_diag diags[MAXDIAGS];
   static bcir_note notes[MAXNOTES];
-  int nd = 0, nnotes = 0, cur = -1;
+  static bcir_fixit fixits[MAXFIXITS];
+  int nd = 0, nnotes = 0, nfix = 0, cur = -1;
   for (int li = 0; li < MAXLINES && fgets(lines[li], sizeof lines[li], stdin); li++) {
     size_t L = strlen(lines[li]);
     while (L && (lines[li][L - 1] == '\n' || lines[li][L - 1] == '\r')) lines[li][--L] = 0;
@@ -58,6 +61,11 @@ int main(int argc, char **argv) {
       notes[nnotes].message = msg; notes[nnotes].span = sp;
       if (diags[cur].notes == NULL) diags[cur].notes = &notes[nnotes];
       diags[cur].n_notes++; nnotes++;
+    } else if (!strcmp(tag, "+")) {                          /* "+" sentinel: a fix-it */
+      if (cur < 0 || nfix >= MAXFIXITS) { fprintf(stderr, "stray fix-it\n"); return 2; }
+      fixits[nfix].replacement = msg; fixits[nfix].span = sp;
+      if (diags[cur].fixits == NULL) diags[cur].fixits = &fixits[nfix];
+      diags[cur].n_fixits++; nfix++;
     } else if (nd < MAXDIAGS) {
       cur = nd++;
       memset(&diags[cur], 0, sizeof diags[cur]);

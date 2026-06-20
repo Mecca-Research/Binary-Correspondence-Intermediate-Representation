@@ -1042,6 +1042,60 @@ def test_diagnostic_json_dual_rail():
                 f"JSON diverged for {fn}\n C: {c_out!r}\nPY: {py_json(src, fn, diags)!r}"
 
 
+def test_diagnostic_fixits_dual_rail():
+    """Fix-it hints (#diag): the C renderer derives the verb (remove / insert / replace with) from each
+    fix-it's span + replacement and prints the replacement with Python `repr()` in text and JSON-escaped
+    in the feed, byte-identical to diagnostics.render() / to_json(). The fixits object array sits
+    between the location and the notes (the diagnostic_to_dict member order). Covers all three verbs and
+    `repr`'s quote selection (a `'` in the replacement switches it to double quotes)."""
+    from bcir.frontends.cfront.diagnostics import (  # noqa: PLC0415
+        SourceDiagnostic, Span, FixIt, Note, DiagnosticReport, render)
+    src = "unsigned f(unsigned x){ return x + ; }\n"
+    # (fixit spans+replacements, notes) on a fixed primary error @34:35.
+    fixit_sets = [
+        [((34, 35), ";")],                                  # replace with ';'
+        [((34, 34), ")")],                                  # insert ')'
+        [((34, 36), "")],                                   # remove ''
+        [((10, 11), "x'y")],                                # repr -> double quotes ("x'y")
+        [((34, 35), ";"), ((34, 34), ")"), ((34, 36), "")],  # several fix-its in order
+    ]
+    note_sets = [[], [((9, 10), "macro here")]]
+
+    def spec(fixits, notes):
+        lines = ["error\t34\t35\texpected token"]
+        for (a, b), r in fixits:
+            lines.append(f"+\t{a}\t{b}\t{r}")
+        for (a, b), m in notes:
+            lines.append(f"-\t{a}\t{b}\t{m}")
+        return "\n".join(lines) + "\n"
+
+    def build(fixits, notes):
+        fx = [FixIt(Span(a, b), r) for (a, b), r in fixits]
+        nt = [Note(m, Span(a, b)) for (a, b), m in notes]
+        return SourceDiagnostic("error", "expected token", span=Span(34, 35),
+                                fixits=fx, notes=nt, phase="parse")
+
+    # the oracle side runs in the quick tier too.
+    for fixits in fixit_sets:
+        assert "fix-it:" in render(build(fixits, []), src, "u.c")
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_diag(d)
+        sp = os.path.join(d, "s.c")
+        with open(sp, "w") as f:
+            f.write(src)
+        for fixits in fixit_sets:
+            for notes in note_sets:
+                diag = build(fixits, notes)
+                for flag, want in ((None, render(diag, src, "u.c")),
+                                   ("--json", DiagnosticReport([diag], src, "u.c").to_json())):
+                    args = [exe] + ([flag] if flag else []) + [sp, "u.c"]
+                    out = subprocess.run(args, input=spec(fixits, notes),
+                                         capture_output=True, text=True).stdout
+                    assert out == want, f"fix-it {flag} diverged for {fixits}\n C: {out!r}\nPY: {want!r}"
+
+
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
     if not _CC:
         return
