@@ -813,6 +813,11 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     shape per declarator; the twin folds `*` into the specifier, so `int *p, q;` is rejected there
     rather than mis-typed — a follow-on. The comma *operator* in a for-step (`i++, j--`) now lowers on
     both rails — see `#commastep` above).
+    ✅ **multi-declarator struct/union members** (`unsigned x, y, z;` — several members off one
+    type-specifier, including multi-declarator bitfields `unsigned a:3, b:5;`; each lays out exactly as
+    if written on its own line, so offsets / `sizeof` + member access match Clang on both rails. The
+    member-declaration twin of the multi-declarator locals above — `#structmulti`/`cfront_structmulti.c`,
+    differential asserts `sizeof` + per-member round-trip == Clang).
     *Follow-on:* **compound literals** (`(struct S){…}`);
   - *storage/linkage:* ✅ **`extern`** (recognized as a storage-class specifier on both rails -- consumed
     like `static`; an `extern T g;` global is referenced by name, defined in another TU, so the emit is
