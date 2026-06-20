@@ -1467,12 +1467,39 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   else if(ty->kind==1) snprintf(o,n,"%s %s",kw,ty->tag);
   else snprintf(o,n,"%s%s",atm,base);
 }
+/* A unique C identifier for a named local. The lowering flattens scopes, so two source locals that
+ * shared a name in disjoint scopes (e.g. `i` in two separate `for` loops, or a local shadowing a param)
+ * are distinct resources with the same name; declaring both at function scope is a C redefinition. The
+ * N-th occurrence of a name (params first, then resources in order) keeps the bare name for the first
+ * and gets a `_N` suffix thereafter (`i`, `i_2`, ...) -- the same scheme as the oracle's emitter, used
+ * for both the declaration and every reference. Unnamed temps stay `t<rid>`. */
+static const char *uniq_local(const bcir_func *f,uint32_t rid,char *buf){
+  const bcir_resource *r=res_of(f,rid);
+  if(!r||!r->name[0]){ snprintf(buf,BCIR_CIR_NAME,"t%u",rid); return buf; }
+  if(r->read_only){ snprintf(buf,BCIR_CIR_NAME,"%s",r->name); return buf; }   /* a file-scope global */
+  for(int p=0;p<f->n_params;p++)                                              /* a param: keep its name */
+    if(f->params[p].rid==rid){ snprintf(buf,BCIR_CIR_NAME,"%s",r->name); return buf; }
+  int occ=0;                                            /* count earlier holders of the bare name */
+  for(int p=0;p<f->n_params;p++)
+    if(f->params[p].name[0] && !strcmp(f->params[p].name,r->name)) occ++;
+  for(size_t i=0;i<f->n_res;i++){
+    const bcir_resource *q=&f->res[i];
+    if(q->rid==rid){
+      if(occ==0) snprintf(buf,BCIR_CIR_NAME,"%s",r->name);
+      else       snprintf(buf,BCIR_CIR_NAME,"%s_%d",r->name,occ+1);
+      return buf;
+    }
+    if(q->name[0] && !strcmp(q->name,r->name)){         /* an earlier same-named resource... */
+      int isp=0; for(int p=0;p<f->n_params;p++) if(f->params[p].rid==q->rid){isp=1;break;}
+      if(!isp) occ++;                                   /* ...that is not itself a param (counted above) */
+    }
+  }
+  snprintf(buf,BCIR_CIR_NAME,"%s",r->name); return buf;
+}
 static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
   const char *lit=strtab_lookup(rid);                /* a string literal -> its full spelling, inline */
   if(lit) return lit;                                /* (returned directly, so length is not capped) */
-  const bcir_resource *r=res_of(f,rid);
-  if(r&&r->name[0]){snprintf(buf,BCIR_CIR_NAME,"%s",r->name);return buf;}
-  snprintf(buf,BCIR_CIR_NAME,"t%u",rid); return buf;
+  return uniq_local(f,rid,buf);                      /* a named local (disambiguated) / a `t<rid>` temp */
 }
 /* The C type to declare a temporary / local with: float/double for a floating value, else the integer
  * scalar's true fixed-width type from its (width, signedness) -- so the backend does signed-vs-unsigned
@@ -1512,11 +1539,12 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
   /* declare named locals up front (mutable storage -- branch merges + loop accumulators) */
   for(size_t i=0;i<f->n_res;i++){const bcir_resource *r=&f->res[i];
     if(is_named_local(f,r->rid)){
+      char un[BCIR_CIR_NAME]; const char *nm=uniq_local(f,r->rid,un);   /* unique vs same-named scopes */
       int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
-      if(sx>=0) w+=snprintf(o+w,on-w,"  static uint32_t %s = %lluu;\n",r->name,(unsigned long long)f->statics[sx].init);
-      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s%s;\n",r->agg,r->name,r->zinit?" = {0}":"");
-      else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+w,on-w,"  %s %s[%u]%s;\n",tty(f,r->rid),r->name,r->count,r->zinit?" = {0}":"");  /* a local array */
-      else w+=snprintf(o+w,on-w,"  %s %s;\n",tty(f,r->rid),r->name);}}
+      if(sx>=0) w+=snprintf(o+w,on-w,"  static uint32_t %s = %lluu;\n",nm,(unsigned long long)f->statics[sx].init);
+      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s%s;\n",r->agg,nm,r->zinit?" = {0}":"");
+      else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+w,on-w,"  %s %s[%u]%s;\n",tty(f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
+      else w+=snprintf(o+w,on-w,"  %s %s;\n",tty(f,r->rid),nm);}}
   int depth=1, lstk[64], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)
   for(size_t i=0;i<f->n_claims&&w<on-160;i++){const bcir_claim *cl=&f->claims[i];

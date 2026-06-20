@@ -47,8 +47,25 @@ def emit_function(lf: LoweredFunc) -> str:
     locals are declared up front and assigned (so branch merges + loop accumulators reproduce the
     source); intermediate expression results stay single-assignment temporaries."""
     nm: dict[int, str] = {rid: pname for pname, rid, _ct in lf.params}
+    # Each local needs a *unique* C identifier: the lowering flattens scopes, so two source locals that
+    # shared a name in disjoint scopes (e.g. `i` in two separate `for` loops, or a block local shadowing
+    # a param) become distinct rids with the same name. Declaring both at function scope is a C
+    # redefinition. Disambiguate the second-and-later occurrences (`i`, `i_2`, ...) -- a fresh variable
+    # preserves the source's separate-scope semantics; naive name-sharing would corrupt a shadowed value.
+    used: set[str] = set(nm.values())
+    used.update(name for _rid, name, _ct, _init in lf.statics)
+    used.update(lf.globals_used.values())
+    local_name: dict[int, str] = {}
     for rid, name, _ct in lf.locals:
-        nm[rid] = name
+        uniq = name
+        if uniq in used:
+            k = 2
+            while f"{name}_{k}" in used:
+                k += 1
+            uniq = f"{name}_{k}"
+        used.add(uniq)
+        local_name[rid] = uniq
+        nm[rid] = uniq
     for rid, name, _ct, _init in lf.statics:
         nm[rid] = name
     nm.update(lf.globals_used)                            # file-scope globals (defined in the source)
@@ -61,7 +78,7 @@ def emit_function(lf: LoweredFunc) -> str:
         if ct.kind == "array":                               # `T name[N]` (the dims follow the name)
             return f"    {_cname(ct.of)} {name}[{ct.count}]{zi};"
         return f"    {_cname(ct)} {name}{zi};"
-    decls = [_local_decl(rid, name, ct) for rid, name, ct in lf.locals]
+    decls = [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
     decls += [f"    static {_cname(ct)} {name} = {init}u;"      # static storage: once-only const init
               for _rid, name, ct, init in lf.statics]
     body = _walk(lf, lf.body, ref, 1)
