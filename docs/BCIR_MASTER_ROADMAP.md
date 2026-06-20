@@ -773,7 +773,12 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     against Clang on 300k full-range inputs). *Scalar* operands are covered; pointer-element signedness
     (the twin's pointer model carries pointee *width* but not yet signedness) is a follow-on. Then the
     rest of pointer-arithmetic completeness + an object/provenance model, cross-clause `switch`
-    fallthrough, **designated + compound initializers** (essential for register / driver dispatch tables);
+    fallthrough; ✅ **designated initializers** for a file-scope **dispatch / jump table** —
+    `static const T NAME[N] = {[OP]=v, ...}` with enum-indexed designators and a gap that zero-fills
+    (§6.7.10) — now parse on both rails (oracle `cparse._global`; the twin references the table by name,
+    defined in the source, so the emit is Clang-equivalent — `#designated`/`cfront_dispatch_table.c`);
+    **local aggregate initializers** (`struct cfg c = {.baud=9600}`) + **compound literals**
+    (`(struct S){…}`) are the immediate follow-ons (both need the value lowered, not just referenced);
   - *storage/linkage:* `extern`, `thread_local`, tentative definitions, internal/external linkage,
     broader (aggregate / non-const-init) globals;
   - *memory model:* `restrict`, broader alias/effect propagation (the module-scope analysis above is
