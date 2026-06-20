@@ -938,6 +938,16 @@ agree the unit routes to the LLVM backend (`_FALLBACK_PROBES` in `test_fallback_
 twin's parse-reject; a 2D array *param* (a decayed row pointer, shape carried on the type) is unaffected.
 *Follow-on:* lower member-array + multi-dim-local access faithfully (carry the member offset / full
 flatten shape into the indexed store/load on both rails) to support them natively rather than route away.
+✅ **integrity fix — unique C identifiers for reused local names (both rails emit)**: the lowering
+flattens scopes, so two source locals that shared a name in disjoint scopes -- the everyday `for(unsigned
+i = ...)` in two separate loops -- became distinct rids both named `i`. Both emitters declared `i` twice
+at function scope: a C **redefinition**, so the emit did not compile though the unit was `is_clean`. Each
+emitter now assigns the second-and-later occurrence a `_N` suffix (`i`, `i_2`, ...) for both the
+declaration and every reference -- a fresh variable per scope, which is behaviour-exact for disjoint
+reuse (a naive name-merge would corrupt a shadowed value). `#loopreuse`/`cfront_loopreuse.c`, differential
+== Clang on both rails. *Follow-on:* a block local that **shadows** a still-live param/outer and is read
+after the inner scope is a separate, deeper bug -- the for-loop init is lowered into the enclosing scope
+(no push/pop), so a post-loop read resolves to the loop var; proper scope save/restore is owed.
 **Remaining Phase-4
 work:** a *broad* calling-convention/object ABI matrix (on top of the landed data-model layout); the
 optimizer correctness/differential story still owed by the C rail — a full **cost-model bridge into the
