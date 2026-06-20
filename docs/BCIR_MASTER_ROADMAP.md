@@ -779,11 +779,13 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     defined in the source, so the emit is Clang-equivalent — `#designated`/`cfront_dispatch_table.c`);
     ✅ **local aggregate
     initializers** (`struct cfg c = {.baud=9600}` / `union` / `T a[N] = {…}`, positional + `.field=` /
-    `[i]=` designators) — ✅ **prototyped in the oracle** (`cast.AggInit` + `cparse._init_value` +
-    `lower._agg_init`: a `= {0}` zero baseline + a store per initialized member/element, reusing the
-    member/array store path, so uninitialized members zero-fill; `test_local_aggregate_initializers_oracle`
-    proves Clang-equivalence across struct/union/array × positional/designated) — the **C-twin port is
-    the next segment**; **compound literals** (`(struct S){…}`) follow;
+    `[i]=` designators) — lower to a `= {0}` zero baseline + a store per initialized member/element
+    (reusing the member/array store path, so uninitialized members zero-fill, §6.7.10): the oracle does
+    struct/union/array (`cast.AggInit`/`cparse._init_value`/`lower._agg_init`;
+    `test_local_aggregate_initializers_oracle`), and the **C twin** does **struct/union**
+    (`agg_init` + a `zinit` resource flag → `= {0}`; `#aggregate`/`cfront_agginit.c`, dual-rail
+    parity + Clang-equivalent). *Follow-ons:* a **local array declarator** (`T a[N]` locals) for the
+    twin's array case, and **compound literals** (`(struct S){…}`);
   - *storage/linkage:* `extern`, `thread_local`, tentative definitions, internal/external linkage,
     broader (aggregate / non-const-init) globals;
   - *memory model:* `restrict`, broader alias/effect propagation (the module-scope analysis above is

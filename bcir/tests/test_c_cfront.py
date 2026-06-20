@@ -44,7 +44,8 @@ _FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_m
           "cfront_mathh_mixed.c", "cfront_mathh_long.c", "cfront_mathh_ptr.c",
           "cfront_calltyped.c"]                                             # float/double: parity + emit + Clang ≡ (the
 #   integer StreamPack executor doesn't compute float; the math is delegated to the resident backend)
-_INIT = ["cfront_dispatch_table.c"]   # designated initializers ([i]=v) for a file-scope dispatch table:
+_INIT = ["cfront_dispatch_table.c",   # designated initializers ([i]=v) for a file-scope dispatch table
+         "cfront_agginit.c"]          # local struct/union aggregate init ({.field=v}) -> = {0} + stores
 #   parity + emit + Clang ≡ (the table is referenced by name, defined in the source -- not re-hydrated)
 _FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI + _FLOAT + _INIT
 # §5.8 atomics/fences/CAS run their own gate: their memory side effects make the generic
