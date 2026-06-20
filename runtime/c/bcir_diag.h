@@ -31,6 +31,10 @@ typedef struct { const char *message; bcir_span span; } bcir_note;
  * replace with) from those, exactly as diagnostics.render does. */
 typedef struct { bcir_span span; const char *replacement; } bcir_fixit;
 
+/* One `#include` chain frame -- a (file, line) the offending file was included from. The renderer
+ * prints these as Clang's "In file included from <file>:<line>:" notes (outermost first). */
+typedef struct { const char *file; int line; } bcir_incframe;
+
 /* One rendered-ready diagnostic. `phase` records the raising stage (lex/preprocess/parse/lower) for
  * machine-readable provenance (unused by the text renderer). */
 typedef struct {
@@ -42,6 +46,14 @@ typedef struct {
   const bcir_fixit *fixits;   /* suggested edits (may be NULL when n_fixits == 0) */
   int n_fixits;
   const char *phase;
+  /* the preprocessor-line-map origin: when has_origin, the primary banner is relocated to
+   * (origin_file, origin_line) and the #include chain is printed above it. The column + the source
+   * snippet still come from the (preprocessed) `source`, mirroring diagnostics.render's `origin`. */
+  int has_origin;
+  const char *origin_file;
+  int origin_line;
+  const bcir_incframe *incstack;   /* outermost first (may be NULL when n_incstack == 0) */
+  int n_incstack;
 } bcir_diag;
 
 /* The 1-based (line, column) of a byte offset, clamped into [0, len(source)]. Column counts bytes

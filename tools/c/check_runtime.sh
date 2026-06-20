@@ -303,6 +303,31 @@ for m in text json; do
   run_diag_fixit remove       "${m}" 34 36 ""      # empty replacement -> "remove ''"
 done
 echo "  PASS diagnostic fix-it hints are byte-identical across both rails"
+# include / line-map origin: a diagnostic relocated to its origin file:line, with the #include chain
+# printed as Clang "In file included from ...:" frames (text) / an "includedFrom" array (JSON). The
+# primary error sits at offset 34 (column 35) of da.c; the origin relocates it to inc/b.h:42.
+run_diag_origin() {  # <mode:text|json>
+  local mode="$1" c_out py_out jflag=""
+  [ "${mode}" = json ] && jflag="--json"
+  c_out="$(printf 'error\t34\t35\tundeclared token\n@\t42\t0\tinc/b.h\n^\t10\t0\tmain.c\n^\t3\t0\tinc/a.h\n' \
+           | "${tmp}/test_diag" ${jflag} "${tmp}/da.c" u.c)"
+  py_out="$(SRCF="${tmp}/da.c" MODE="${mode}" python3 -c "
+import os, sys, json
+from bcir.frontends.cfront.diagnostics import SourceDiagnostic, Span, render, diagnostic_to_dict
+src=open(os.environ['SRCF']).read()
+d=SourceDiagnostic('error','undeclared token', span=Span(34,35), phase='parse')
+origin=('inc/b.h', 42, [('main.c',10), ('inc/a.h',3)])
+if os.environ['MODE']=='json':
+    sys.stdout.write(json.dumps([diagnostic_to_dict(d, src, 'u.c', origin=origin)], indent=2))
+else:
+    sys.stdout.write(render(d, src, 'u.c', origin=origin))")" || { echo "  FAIL: oracle origin/${mode}"; exit 1; }
+  [ "${c_out}" = "${py_out}" ] \
+    && echo "  PASS origin/${mode} (#include chain oracle == C)" \
+    || { echo "  FAIL: origin/${mode}"; printf '   C : %s\n   PY: %s\n' "${c_out}" "${py_out}"; exit 1; }
+}
+run_diag_origin text
+run_diag_origin json
+echo "  PASS diagnostic include-stack origin is byte-identical across both rails"
 
 # The total-compilation / fallback contract (#fallback, the C twin of pipeline.compile_with_fallback):
 # a unit BCIR can compile + verify exits 0 (clean); a unit that compiles but fails the verifier (e.g.
