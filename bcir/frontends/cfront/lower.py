@@ -820,6 +820,10 @@ class _FuncLowerer:
         return block
 
     def _stmt(self, st):
+        if isinstance(st, cast.Seq):                          # several declarators of one declaration
+            for s in st.stmts:
+                self._stmt(s)
+            return None
         if isinstance(st, cast.Decl):
             ct = self._resolve_type(st.type)
             if st.static_storage:                             # static storage: init once, in the decl

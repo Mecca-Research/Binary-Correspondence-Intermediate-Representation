@@ -801,6 +801,12 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     ✅ a **local array declarator** `T a[N]` (a scalar-element resource of count N, emitted `T a[N]`,
     element access via the index load/store, `arr_init` for the positional + `[i]=` aggregate
     initializer; `#localarr`/`cfront_localarray.c`) — both dual-rail parity + Clang-equivalent.
+    ✅ **multi-declarator declarations** (`T a = x, b, c = z;` — several comma-separated declarators
+    off one type-specifier, incl. the canonical two-variable loop init `for(unsigned i = 0u, j = n;
+    …)`; each declarator lowers to its own storage + copy, identical to separate decls, so the emit is
+    Clang-equivalent; `#multidecl`/`cfront_multidecl.c`. The oracle types a per-declarator `*`/`[]`
+    shape per declarator; the twin folds `*` into the specifier, so `int *p, q;` is rejected there
+    rather than mis-typed — a follow-on, alongside the comma *operator* in a for-step).
     *Follow-on:* **compound literals** (`(struct S){…}`);
   - *storage/linkage:* ✅ **`extern`** (recognized as a storage-class specifier on both rails -- consumed
     like `static`; an `extern T g;` global is referenced by name, defined in another TU, so the emit is
