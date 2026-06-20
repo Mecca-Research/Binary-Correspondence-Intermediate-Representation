@@ -1281,6 +1281,63 @@ def test_scalable_ir_no_fixed_ceilings():
         assert m and (m.group(1), m.group(2), m.group(3)) == ("43", "7500", "1"), out.stdout[:200]
 
 
+_INTPROMOTE_SRC = (
+    "int sdiv(int a, int b){ return b ? a / b : 0; }\n"          # signed division (truncates toward 0)
+    "int smod(int a, int b){ return b ? a % b : 0; }\n"          # signed remainder
+    "int sshr(int a){ return a >> 3; }\n"                        # arithmetic right shift (sign-extends)
+    "int scmp(int a, int b){ return (a < b) + 2*(a <= b) + 4*(a > b) + 8*(a >= b); }\n"  # signed compares
+    "unsigned udiv(unsigned a, unsigned b){ return b ? a / b : 0u; }\n"   # unsigned division (control)
+    "long wide(int a, long b){ return a + b; }\n"                # int + long -> 64-bit UAC
+    "long umix(unsigned a, long b){ return a * b; }\n"          # unsigned*long -> long (mixed width/sign)
+)
+
+
+def test_integer_promotions_and_uac_oracle():
+    """Integer promotions + usual arithmetic conversions (§6.3.1.1 / §6.3.1.8), oracle prototype: the
+    lowering now types every temp by its true (width, signedness), so a signed `int` divide / remainder
+    / right-shift / comparison emits signed C (not the old flat `uint32_t`), and `int + long` widens to
+    64-bit. The emitted C is therefore behaviour-equivalent to the source over the FULL signed range
+    (negatives included) -- exactly the case the old unsigned-32 value model got wrong. (The C twin
+    port is the next segment; here the oracle prototype is validated against real Clang.)"""
+    r = compile_unit(_INTPROMOTE_SRC, check_clang=False)
+    emit = "\n".join(r.emitted.values())
+    # teeth: result temps carry their real integer types -- the old model rendered them all uint32_t.
+    assert "int32_t" in emit, emit
+    assert "int64_t" in emit, emit          # int + long widened to 64-bit
+    assert "uint32_t" in emit               # unsigned stays unsigned
+    if not _CC:
+        return
+    harness = f"""#include <stdint.h>
+#include <stdio.h>
+{_INTPROMOTE_SRC}
+{emit}
+static uint64_t S=0x9E3779B97F4A7C15u;
+static uint64_t nx(void){{S=S*6364136223846793005u+1442695040888963407u;return S>>32;}}
+int main(void){{
+  for(int i=0;i<300000;i++){{
+    int a=(int)nx(), b=(int)nx(); long lb=(long)nx()<<3 | (long)nx();
+    if(sdiv(a,b)!=bcir_sdiv(a,b)){{printf("sdiv@%d a=%d b=%d\\n",i,a,b);return 1;}}
+    if(smod(a,b)!=bcir_smod(a,b)){{printf("smod@%d\\n",i);return 1;}}
+    if(sshr(a)!=bcir_sshr(a)){{printf("sshr@%d a=%d\\n",i,a);return 1;}}
+    if(scmp(a,b)!=bcir_scmp(a,b)){{printf("scmp@%d a=%d b=%d\\n",i,a,b);return 1;}}
+    if(udiv((unsigned)a,(unsigned)b)!=bcir_udiv((unsigned)a,(unsigned)b)){{printf("udiv@%d\\n",i);return 1;}}
+    if(wide(a,lb)!=bcir_wide(a,lb)){{printf("wide@%d\\n",i);return 1;}}
+    if(umix((unsigned)a,lb)!=bcir_umix((unsigned)a,lb)){{printf("umix@%d\\n",i);return 1;}}
+  }}
+  printf("MATCH\\n");return 0;}}"""
+    with tempfile.TemporaryDirectory() as d:
+        c, e = os.path.join(d, "e.c"), os.path.join(d, "e")
+        with open(c, "w", encoding="utf-8") as fh:
+            fh.write(harness)
+        for std in ("c23", "c2x", "c17"):
+            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e], capture_output=True, text=True)
+            if b.returncode == 0:
+                break
+        else:
+            raise AssertionError(f"harness build failed: {b.stderr[-400:]}")
+        assert subprocess.run([e], capture_output=True, text=True).stdout.strip() == "MATCH"
+
+
 def test_scalar_globals_read_write_dual_rail():
     """Scalar file-scope globals (#globals): the oracle models a scalar global as a plain resource --
     a read references it directly (no c.load), a write is a c.copy to the global rid. The C twin now

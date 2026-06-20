@@ -25,6 +25,7 @@ class TypeRef:
 @dataclass(frozen=True)
 class IntLit:
     value: int
+    ctype: str = "int"          # the constant's C type name (§6.4.4.1): int / unsigned int / long / ...
 
 
 @dataclass(frozen=True)

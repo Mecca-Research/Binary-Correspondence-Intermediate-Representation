@@ -762,10 +762,14 @@ its module-scope **effect/commutation analysis** (the C twin of `pipeline.own_fo
 per-function read/write global footprints, callee effects folded transitively, the pairwise commute
 matrix — `bcir-cc --emit-effects`, byte-identical to the oracle; `cfront_effects.c`). **Still to
 port** — the genuinely-remaining Phase-2 language/infra work:
-  - *language:* the comma operator, `typeof`, compound literals, **full integer promotions + the usual
-    arithmetic conversions** (today the 32-bit-unit value model is Clang-equivalent only in constrained
-    cases — this is the most important early gap), the rest of pointer-arithmetic completeness + an
-    object/provenance model, cross-clause `switch` fallthrough, **designated + compound initializers**
+  - *language:* the comma operator, `typeof`, compound literals; **full integer promotions + the usual
+    arithmetic conversions** — ✅ **prototyped in the oracle** (`ctype_model.promote_int`/`usual_arith_int`/
+    `int_literal_type` + `lower._bin_result_type`): every temp is now typed by its true (width,
+    signedness), so a signed `int` divide / remainder / right-shift / comparison emits signed C (not the
+    old flat `uint32_t`) and `int + long` widens to 64-bit — behaviour-equivalent to Clang over the
+    *full* signed range, the case the old unsigned-32 model got wrong (`test_integer_promotions_and_uac_oracle`);
+    the **C-twin port is the immediate next segment**. Then the rest of pointer-arithmetic completeness +
+    an object/provenance model, cross-clause `switch` fallthrough, **designated + compound initializers**
     (essential for register tables / driver dispatch tables / kernel-style headers);
   - *storage/linkage:* `extern`, `thread_local`, tentative definitions, internal/external linkage,
     broader (aggregate / non-const-init) globals;

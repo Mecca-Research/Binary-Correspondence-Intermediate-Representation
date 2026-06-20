@@ -28,7 +28,9 @@ from .ctype_model import (
     funcptr,
     is_scalar_name,
     pointer,
+    promote_int,
     scalar,
+    usual_arith_int,
     with_atomic,
     with_volatile,
 )
@@ -505,19 +507,28 @@ class _FuncLowerer:
 
     # --- rvalue lowering: returns the rid holding the value ---
     def _bin_result_type(self, op: str, a: int, b: int) -> CType:
-        """The result type of a binary op: `+ - * /` over a float operand yield the *wider* float
-        (usual arithmetic conversions — an int operand converts up); everything else (comparisons,
-        bitwise, shift, `%`, `&& ||`) is integer in this scalar model."""
-        if op not in ("+", "-", "*", "/"):
-            return scalar("uint32_t")
-        floats = [t for t in (self.rtypes.get(a), self.rtypes.get(b)) if t is not None and t.is_float]
-        if not floats:
-            return scalar("uint32_t")
-        return scalar(max(floats, key=lambda t: _FLOAT_RANK.get(t.name, 1)).name)
+        """The result type of a binary op. `+ - * /` over a float operand yield the *wider* float
+        (float usual arithmetic conversions); a relational/logical op is `int`; a shift takes the
+        promoted *left* operand; everything else (`+ - * / %`, bitwise) takes the integer usual
+        arithmetic conversions over both operands. Driving the emitted temp's true C type makes the
+        backend do signed-vs-unsigned and width-correct arithmetic (the old flat uint32 model did not)."""
+        ta, tb = self.rtypes.get(a), self.rtypes.get(b)
+        if op in ("+", "-", "*", "/"):
+            floats = [t for t in (ta, tb) if t is not None and t.is_float]
+            if floats:
+                return scalar(max(floats, key=lambda t: _FLOAT_RANK.get(t.name, 1)).name)
+        if op in ("<", ">", "<=", ">=", "==", "!=", "&&", "||"):
+            return scalar("int", self.abi)                    # a relational / logical result is int
+        ia = ta if (ta is not None and ta.is_integer) else scalar("int", self.abi)
+        if op in ("<<", ">>"):
+            return promote_int(ia, self.abi)                  # the shift result carries the promoted LHS type
+        ib = tb if (tb is not None and tb.is_integer) else scalar("int", self.abi)
+        return usual_arith_int(ia, ib, self.abi)
 
     def _rvalue(self, node) -> int:
         if isinstance(node, cast.IntLit):
-            t = self._temp(scalar("uint32_t"), f"k{node.value}")
+            ct = scalar(node.ctype, self.abi) if is_scalar_name(node.ctype) else scalar("int", self.abi)
+            t = self._temp(ct, f"k{node.value}")
             return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(node.value,))
         if isinstance(node, cast.FloatLit):                   # a float constant -> a typed c.fconst
             ct = _float_lit_type(node.value)                  # f/F -> float, l/L -> long double, else double
