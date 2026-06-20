@@ -892,6 +892,10 @@ _FALLBACK_PROBES = [
      "fallback"),   # struct member array s.arr[i]: the oracle can't carry the member offset into the
                      # index access (it would emit `b[idx]`), so it rejects -> fallback, matching the
                      # twin's parse reject -- never a silent miscompile (a verified-compiler integrity rule)
+    ("unsigned f(unsigned i, unsigned j){ unsigned m[2][2]; m[0][0]=1u; return m[i&1u][j&1u]; }",
+     "fallback"),   # multi-dim *local* array: the local CType kept only the outer dim, so the emit was
+                     # mis-sized (`m[2]`) and `m[i][j]` collapsed to `m[i+j]` (a silent miscompile). Now
+                     # rejected -> fallback, matching the twin's parse reject. (2D array *params* are fine.)
 ]
 _FALLBACK_RC = {"clean": 0, "dirty": 1, "fallback": 2}
 
