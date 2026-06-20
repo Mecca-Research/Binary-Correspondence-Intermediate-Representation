@@ -1,20 +1,26 @@
 /*===- test_diag.c - host harness for the BCIR diagnostic renderer ----------------===
- * Reads a source file (argv[1]) and a tab-separated diagnostic spec on stdin, then prints
- * bcir_diag_render's Clang-layout output. bcir/tests/test_c_cfront.py feeds the SAME spec
- * to diagnostics.render() and asserts the two are byte-identical (the dual-rail diagnostic
- * format gate). Spec lines (start == end == -1 -> a spanless / file-level banner):
- *     <severity>\t<start>\t<end>\t<message>      (line 1: the primary)
- *     note\t<start>\t<end>\t<message>            (zero or more notes)
+ * Reads a source file and a tab-separated diagnostic spec on stdin, then prints the
+ * Clang-layout text (default) or the JSON feed (--json). bcir/tests/test_c_cfront.py
+ * feeds the SAME spec to diagnostics.render() / DiagnosticReport.to_json() and asserts
+ * the two are byte-identical (the dual-rail diagnostic-format gate). Spec lines
+ * (start == end == -1 -> a spanless / file-level banner). A line whose first field is a
+ * severity starts a new diagnostic; a line whose first field is "-" attaches a note to
+ * the current one (a primary's severity may itself be "note", so the note sentinel is "-"):
+ *     <severity>\t<start>\t<end>\t<message>      (a primary diagnostic)
+ *     -\t<start>\t<end>\t<message>               (a note on the preceding primary)
+ *   usage: test_diag [--json] <source> <filename>
  *===----------------------------------------------------------------------===*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "bcir_diag.h"
 
-#define MAXNOTES 16
+#define MAXDIAGS 16
+#define MAXNOTES 64
+#define MAXLINES (MAXDIAGS + MAXNOTES)
 
-/* split a line into (field0, start, end, message); message is the tail after the 3rd tab. Returns the
- * field-0 token in `tag` and fills span + msg (which point into the mutable line buffer). */
+/* split a line into (tag, start, end, message); message is the tail after the 3rd tab. The fields
+ * point into the mutable `line` buffer (tabs are overwritten with NULs). */
 static int parse_spec(char *line, char **tag, bcir_span *span, char **msg) {
   char *t1 = strchr(line, '\t'); if (!t1) return 0; *t1 = 0;
   char *t2 = strchr(t1 + 1, '\t'); if (!t2) return 0; *t2 = 0;
@@ -27,29 +33,48 @@ static int parse_spec(char *line, char **tag, bcir_span *span, char **msg) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 3) { fprintf(stderr, "usage: %s <source> <filename>\n", argv[0]); return 2; }
-  FILE *fp = fopen(argv[1], "rb");
+  int json = 0, ai = 1;
+  if (ai < argc && !strcmp(argv[ai], "--json")) { json = 1; ai++; }
+  if (argc - ai < 2) { fprintf(stderr, "usage: %s [--json] <source> <filename>\n", argv[0]); return 2; }
+  const char *path = argv[ai], *filename = argv[ai + 1];
+
+  FILE *fp = fopen(path, "rb");
   if (!fp) { perror("fopen"); return 2; }
   static char src[1 << 16];
   size_t n = fread(src, 1, sizeof src - 1, fp); src[n] = 0; fclose(fp);
 
-  static char lines[MAXNOTES + 1][1024];
+  static char lines[MAXLINES][1024];
+  static bcir_diag diags[MAXDIAGS];
   static bcir_note notes[MAXNOTES];
-  bcir_diag d; memset(&d, 0, sizeof d); d.notes = notes; d.phase = "parse";
-  int got_primary = 0, nn = 0;
-  for (int li = 0; li <= MAXNOTES && fgets(lines[li], sizeof lines[li], stdin); li++) {
-    size_t L = strlen(lines[li]); while (L && (lines[li][L - 1] == '\n' || lines[li][L - 1] == '\r')) lines[li][--L] = 0;
+  int nd = 0, nnotes = 0, cur = -1;
+  for (int li = 0; li < MAXLINES && fgets(lines[li], sizeof lines[li], stdin); li++) {
+    size_t L = strlen(lines[li]);
+    while (L && (lines[li][L - 1] == '\n' || lines[li][L - 1] == '\r')) lines[li][--L] = 0;
     if (L == 0) { li--; continue; }
     char *tag; bcir_span sp; char *msg;
     if (!parse_spec(lines[li], &tag, &sp, &msg)) { fprintf(stderr, "bad spec: %s\n", lines[li]); return 2; }
-    if (!got_primary) { d.severity = tag; d.message = msg; d.span = sp; got_primary = 1; }
-    else if (nn < MAXNOTES) { notes[nn].message = msg; notes[nn].span = sp; nn++; }
+    if (!strcmp(tag, "-")) {                                 /* "-" sentinel: a note (not a severity) */
+      if (cur < 0 || nnotes >= MAXNOTES) { fprintf(stderr, "stray note\n"); return 2; }
+      notes[nnotes].message = msg; notes[nnotes].span = sp;
+      if (diags[cur].notes == NULL) diags[cur].notes = &notes[nnotes];
+      diags[cur].n_notes++; nnotes++;
+    } else if (nd < MAXDIAGS) {
+      cur = nd++;
+      memset(&diags[cur], 0, sizeof diags[cur]);
+      diags[cur].severity = tag; diags[cur].message = msg; diags[cur].span = sp; diags[cur].phase = "parse";
+    }
   }
-  if (!got_primary) { fprintf(stderr, "no primary diagnostic\n"); return 2; }
-  d.n_notes = nn;
 
   static char out[1 << 16];
-  bcir_diag_render(&d, src, argv[2], out, sizeof out);
-  fputs(out, stdout);
+  if (json) {
+    bcir_diag_to_json(diags, nd, src, filename, out, sizeof out);
+    fputs(out, stdout);
+  } else {
+    for (int i = 0; i < nd; i++) {
+      if (i) fputc('\n', stdout);                           /* DiagnosticReport.render joins with '\n' */
+      bcir_diag_render(&diags[i], src, filename, out, sizeof out);
+      fputs(out, stdout);
+    }
+  }
   return 0;
 }
