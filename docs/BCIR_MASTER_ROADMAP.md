@@ -689,7 +689,16 @@ still resolve through the call graph, and the emit calls through the pointer ver
 (`(type)expr` — a cast binds at the unary level on both rails; in the 32-bit-unit value model a
 narrowing cast to an unsigned fixed-width type masks, exactly matching Clang's integer promotion, so
 it lowers to a `c.cast:<width>` claim and emits `(type)expr`; `cfront_cast.c`, both rails `claims=12
-ok=1`, executes the full loop). ✅ **multi-dimensional arrays** (a 2D array parameter
+ok=1`, executes the full loop). ✅ **the `signed` type specifier** (`signed char` / `signed int` /
+`signed long`, as a declarator and a cast): the C twin recognized `unsigned` but not `signed` in its
+declaration- and cast-type-start detection, so `signed char sc = (signed char)a` was rejected (routed
+to fallback) while the oracle accepted it -- a rail disagreement found by the dual-emit sweep. Fixed by
+adding `signed` to the twin's scalar-type table (a modifier; the base sets the width). `signed` alone
+(signed int with no base) stays a fallback on both rails. `#signedty`/`cfront_signed.c`. *Open (a
+separate, pre-existing twin miscompile the sweep also surfaced):* a **signed comparison against an
+integer literal** -- `x < 0` for a signed `x` -- compiles to an unsigned compare on the twin (it types
+int literals `uint32_t`, so `int32_t < uint32_t` promotes to unsigned), affecting plain `int` too.
+✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both
 rails `claims=21 ok=1`, runs the full execute loop) + ✅ **function-pointer struct members**
