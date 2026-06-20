@@ -113,7 +113,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict)
+for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore)
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re
@@ -561,5 +561,31 @@ print(f'funcs={len(fns)} claims={len(lf.claims)} mmio=0 bf=0 const={kn} binop={b
 [ -n "${c_ps}" ] && [ "${c_ps}" = "${py_ps}" ] \
   && echo "  PASS pscale: 20 structs / 25 globals / 300 locals compile clean == oracle (${c_ps})" \
   || { echo "  FAIL: pscale (C='${c_ps}' PY='${py_ps}')"; exit 1; }
+
+# Array element stores (#astore): a[i] = v / a[i] OP= v -- the driver buffer-fill / scatter idiom,
+# lowered to a 3-read c.store and emitted as a[i] = v. A proper differential drives the source fn over
+# buffer A and the twin's bcir_* over buffer B, then compares the buffers (these are void writers).
+echo "[c-runtime] array element stores (bcir-cc): a[i]=v emit == Clang (#astore)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_arraystore.c" > "${tmp}/st_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; cat "${C}/cfront_arraystore.c" "${tmp}/st_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(unsigned t=0;t<3000u;t++){
+    unsigned A[32]={0}, B[32]={0}; unsigned i=t%30u, j=(t*3u)%30u, v=t*7u+1u, base=t+5u;
+    fill(A,i,base);   bcir_fill(B,i,base);
+    scatter(A,i,j,v); bcir_scatter(B,i,j,v);
+    accum(A,i,v);     bcir_accum(B,i,v);
+    for(int k=0;k<32;k++) if(A[k]!=B[k]){printf("MISMATCH t=%u k=%d\n",t,k);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/st_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/st_harness.c" -o "${tmp}/st_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/st_harness.c" -o "${tmp}/st_h" \
+  || { echo "  FAIL: astore harness build"; exit 1; }
+str="$("${tmp}/st_h")"
+[ "${str}" = "MATCH" ] \
+  && echo "  PASS astore: a[i]=v / a[i] OP= v == Clang (source buffer == twin buffer)" \
+  || { echo "  FAIL: astore behaviour (${str})"; exit 1; }
 
 echo "[c-runtime] ok"
