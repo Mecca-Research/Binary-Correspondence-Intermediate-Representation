@@ -534,4 +534,32 @@ grep -q "= {0}" "${tmp}/ag_emit.c" \
   && echo "  PASS aggregate: emit carries the = {0} zero baseline" \
   || { echo "  FAIL: aggregate emit missing zero baseline"; exit 1; }
 
+# Scalable parser state (#pscale): segment-1 made the IR arrays grow; this removes the twin's fixed
+# *parser-state* caps too -- struct defs (was s[16]), file-scope globals (was gv[16]), typedefs (was
+# td[64]), enum constants (was ec[256]) and locals (was env[256]) all grow geometrically (reused across
+# compiles via a save/restore around the static CC). A unit that busts every old cap compiles clean on
+# the twin and matches the oracle's structure -- real headers (many globals / structs / typedefs) lower.
+echo "[c-runtime] scalable parser state (bcir-cc, no fixed gv/s/td/ec/env caps): cap-busting unit == oracle (#pscale)"
+python3 - "${tmp}/pstress.c" <<'PY'
+import sys
+L=[f"struct S{k} {{ unsigned m0; unsigned m1; }};" for k in range(20)]      # 20 struct defs (> old s[16])
+L+=[f"typedef unsigned U{k};" for k in range(20)]                            # 20 typedefs
+L+=[f"static const unsigned G{k}[2] = {{ {k}u, {k+1}u }};" for k in range(25)]  # 25 globals (> old gv[16])
+L.append("unsigned big(void){\n"+"\n".join(f"  unsigned v{i} = {i}u;" for i in range(300))+   # 300 locals (>256)
+         "\n  return "+"+".join(f"v{i}" for i in range(300))+"; }")
+L.append("unsigned useg(unsigned i){ return G0[i%2u] + G19[i%2u] + G24[i%2u]; }")
+open(sys.argv[1],"w").write("\n".join(L)+"\n")
+PY
+c_ps="$("${tmp}/bcir-cc" --emit-claimgraph "${tmp}/pstress.c" 2>&1 | grep -oE 'funcs=[0-9]+ claims=[0-9]+.*ok=[0-9]' | tail -1)"
+py_ps="$(python3 -c "
+from bcir.frontends.cfront import compile_unit
+from bcir.model import Domain
+r=compile_unit(open('${tmp}/pstress.c').read(), check_clang=False)
+fns=r.lowered.functions; lf=fns[next(reversed(fns))]
+kn=sum(1 for c in lf.claims if c.op=='c.const'); bo=sum(1 for c in lf.claims if c.op.startswith('c.bin.'))
+print(f'funcs={len(fns)} claims={len(lf.claims)} mmio=0 bf=0 const={kn} binop={bo} call=0 ok={1 if r.is_clean else 0}')")"
+[ -n "${c_ps}" ] && [ "${c_ps}" = "${py_ps}" ] \
+  && echo "  PASS pscale: 20 structs / 25 globals / 300 locals compile clean == oracle (${c_ps})" \
+  || { echo "  FAIL: pscale (C='${c_ps}' PY='${py_ps}')"; exit 1; }
+
 echo "[c-runtime] ok"
