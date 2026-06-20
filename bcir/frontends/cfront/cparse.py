@@ -401,7 +401,9 @@ class _Parser:
         while self.at("OP", "*"):
             ptr += 1
             self.nxt()
-            while self.at("IDENT", "const") or self.at("IDENT", "volatile"):
+            while (self.at("IDENT", "const") or self.at("IDENT", "volatile")
+                   or self.at("IDENT", "restrict") or self.at("IDENT", "__restrict")
+                   or self.at("IDENT", "__restrict__")):     # `restrict` is an aliasing hint -- consumed
                 self.nxt()                                # pointer qualifier (ignored for layout)
         # pointer-to-array declarator `(*name)[N]...` -- a "row pointer" (what `T m[][N]` decays to);
         # modeled as the equivalent multi-dim array param (outer dim unspecified) so `m[i][j]` flattens
@@ -413,7 +415,9 @@ class _Parser:
             while self.at("OP", "*"):
                 inner += 1
                 self.nxt()
-                while self.at("IDENT", "const") or self.at("IDENT", "volatile"):
+                while (self.at("IDENT", "const") or self.at("IDENT", "volatile")
+                       or self.at("IDENT", "restrict") or self.at("IDENT", "__restrict")
+                       or self.at("IDENT", "__restrict__")):
                     self.nxt()
             if (inner == 1 and self.at("IDENT")
                     and self.peek(1).kind == "PUNCT" and self.peek(1).text == ")"):

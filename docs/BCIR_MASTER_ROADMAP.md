@@ -788,8 +788,11 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     twin's array case, and **compound literals** (`(struct S){…}`);
   - *storage/linkage:* `extern`, `thread_local`, tentative definitions, internal/external linkage,
     broader (aggregate / non-const-init) globals;
-  - *memory model:* `restrict`, broader alias/effect propagation (the module-scope analysis above is
-    the seed), atomic compare-exchange, a fuller C memory model;
+  - *memory model:* ✅ **`restrict`** (`restrict` / `__restrict` / `__restrict__` recognized as a
+    pointer qualifier on both rails and consumed -- the value model carries no aliasing facts, so the
+    emit is behaviour-equivalent; the perf-sensitive driver/DSP idiom -- `#restrict`/`cfront_restrict.c`);
+    broader alias/effect propagation (the module-scope analysis above is the seed), atomic
+    compare-exchange, a fuller C memory model;
   - *infra:* ✅ **scalable IR allocation (no fixed `BCIR_MAX_*`)** — the C IR's per-unit function list
     and every per-function array (params, calls, static locals, resources, claims) now grow
     geometrically (`bcir_cir.h`/`bcir_cfront.c`); the old `BCIR_MAX_PARAMS 8` / `BCIR_MAX_CALLS 32` /

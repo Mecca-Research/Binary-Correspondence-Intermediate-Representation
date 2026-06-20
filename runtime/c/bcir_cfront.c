@@ -360,8 +360,9 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
    * (`long long` keeps its fixed 8). On the host LP64 model these are 8/8, so nothing moves. */
   if(ptrtrk) ty->size=cc_abi(c)->pointer_size;
   else if(longs==1&&!ty->is_float&&ty->kind==0) ty->size=cc_abi(c)->long_size;
-  while(is(c,"*")){c->i++;while(is(c,"const")||is(c,"volatile"))c->i++;
-    if(ty->kind==1){ty->ptr_to_struct=1;} ty->kind=2;}
+  while(is(c,"*")){c->i++;
+    while(is(c,"const")||is(c,"volatile")||is(c,"restrict")||is(c,"__restrict")||is(c,"__restrict__"))c->i++;
+    if(ty->kind==1){ty->ptr_to_struct=1;} ty->kind=2;}   /* `restrict` is an aliasing hint -- consumed */
   return 0;
 }
 
@@ -462,7 +463,9 @@ static void p_typedef(CC *c){
     else { c->i++; tok tag=adv(c); int si=find_struct(c,tag.s,tag.n);
       if(si<0){fail(c,"unknown struct in typedef");return;} ty.kind=1;ty.size=c->s[si].size;sidx=si;
       ty.is_union=(uint8_t)c->s[si].is_union;idcpy(ty.tag,&tag);}
-    while(is(c,"*")){c->i++;ty.ptr_to_struct=(ty.kind==1);ty.kind=2;}
+    while(is(c,"*")){c->i++;
+      while(is(c,"const")||is(c,"volatile")||is(c,"restrict")||is(c,"__restrict")||is(c,"__restrict__"))c->i++;
+      ty.ptr_to_struct=(ty.kind==1);ty.kind=2;}
   } else if(is(c,"enum")){                            /* alias an enum -> an int scalar */
     c->i++; if(isk(c,T_ID)&&!is(c,"{"))c->i++; if(is(c,"{"))p_enum_body(c);
     ty.kind=0; ty.size=4; ty.signd=1;
