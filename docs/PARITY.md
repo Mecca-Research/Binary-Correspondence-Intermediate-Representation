@@ -129,6 +129,34 @@ accuracy, contention, verification`.
 | memory model (Phase 8) | `lower.memory_model` (hazard→ordering) | `BCIR_MemOrdering` + barrier `ordering` → `llvm.fence` |
 | per-target codegen (Phase 9) | `codegen.*` (llc → ARM/RISC-V/PTX/eBPF/C) | `bcir.target.lower_contract` (one per target) |
 
+## Python ↔ C frontend twin (`runtime/c/`)
+
+The C frontend (`runtime/c/bcir_cfront.c` + the `bcir-cc` driver) is the **production twin** of the
+Python prototype in `bcir/frontends/cfront/`: once a stage is validated in the oracle, the real
+implementation lives in C and a dual-rail gate keeps the two byte/structurally identical. The gate is
+`bcir/tests/test_c_cfront.py` (structural-summary parity + Clang behaviour-equivalence) **and**
+`tools/c/check_runtime.sh` (the CI-gated fixture list + the per-feature blocks below); both run the
+*same* source through both rails and diff the result.
+
+| Oracle (`bcir/frontends/cfront/`) | C twin (`runtime/c/`) | Gate |
+|---|---|---|
+| lowering: integers, struct/union/bitfields, casts, control flow, atomics, funcptr dispatch, `<math.h>`, hex-float | `bcir_cfront.c` (claim-graph parity + faithful emit) | `check_runtime.sh` fixture loop; `test_c_cfront.py` |
+| `abi.py` `TargetABI`/`TARGETS` (`--target`) | `bcir_cfront.c` target table + `cc_abi`/`p_type` (long/ptr/`size_t` per data model) | `#abi` block; `test_abi_target_matrix_dual_rail` |
+| `pipeline.compile_with_fallback` (route-to-LLVM) | `bcir-cc --fallback` (clean 0 / dirty 1 / fallback 2) | `#fallback` block; `test_fallback_contract_dual_rail` |
+| `diagnostics.py` renderer (caret layout) | `bcir_diag.c` `bcir_diag_render` | `#diag` block; `test_diagnostic_renderer_dual_rail` |
+| `DiagnosticReport.to_json` | `bcir_diag_to_json` (matches `json.dumps(indent=2)`) | `test_diagnostic_json_dual_rail` |
+| `FixIt` hints (verb + `repr`) | `bcir_diag.c` `py_repr` + fix-it emit | `test_diagnostic_fixits_dual_rail` |
+| line-map `origin` (`In file included from …` / `includedFrom`) | `bcir_diag.c` origin path | `test_diagnostic_include_stack_origin_dual_rail` |
+| parser recovery (`DiagnosticReport.render` over N) | `bcir_diag_report_render` | `test_diagnostic_error_recovery_report_dual_rail` |
+| scalar file-scope global read + write | `bcir_cfront.c` (`c.copy` to the global rid, emitted by name) | `cfront_global_rw.c`; `test_scalar_globals_read_write_dual_rail` |
+| `pipeline.own_footprint` + `commute` | `bcir_cfront_effects` (`bcir-cc --emit-effects`) | `#effects` block; `test_effect_commutation_analysis_dual_rail` |
+
+**Delegated (the two-truth line — in the oracle only, by design):** the IPO **cost** model
+(`compose.summarize`/`plan_composite`'s `worst`/`expected`/`reused`) and all K_BCIR cost/plan/RCSP
+machinery (`Theta`/policy/`plan_composite`) — the C twin has no cost analogue; `long double` layout
+beyond the size/align axes; IEEE float *math* and the calling convention (the resident backend's
+job, as for the MLIR rail). These are the same delegations the MLIR rail makes, not gaps in the port.
+
 ## Worked-example parity
 
 `vector_add` (n=1024) on the AVX-512 profile under cool Θ selects the `vec16`
