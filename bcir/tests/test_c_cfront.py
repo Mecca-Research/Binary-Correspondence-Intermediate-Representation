@@ -937,6 +937,30 @@ def test_fallback_contract_dual_rail():
                 assert "fallback to LLVM backend" in got.stderr, got.stderr
 
 
+def test_member_array_oracle_emit_is_clang_equivalent():
+    """The *oracle's own* emitted C for a 1-D struct member array must compile and be Clang-equivalent --
+    the per-fixture differential compiles the C *twin's* emit, so the oracle emitter was unguarded here.
+    Critically includes a member array at offset 0 (the first member): the access must still carry the
+    (member offset, element size) imm, not collapse to an invalid `struct[idx]` -- the regression this
+    pins. `compile_unit(check_clang=True)` builds and diffs the oracle's emit against the source."""
+    if not _CC:
+        return
+    for src in (
+        # member array at offset 0 (the first member) -- the regression
+        "struct B{unsigned a[4]; unsigned n;}; unsigned f(unsigned i,unsigned v){ struct B b; b.n=v;"
+        " for(unsigned t=0u;t<4u;t++) b.a[t]=v+t; return b.a[i&3u]+b.n; }",
+        # a uint8 element array at offset 0 (a narrowing store, byte stride)
+        "struct C{unsigned char d[6]; unsigned k;}; unsigned f(unsigned i,unsigned v){ struct C c; c.k=v;"
+        " for(unsigned t=0u;t<6u;t++) c.d[t]=(unsigned char)(v*t); return (unsigned)c.d[i%6u]+c.k; }",
+        # a member array at a non-zero offset
+        "struct D{unsigned n; unsigned a[4];}; unsigned f(unsigned i,unsigned v){ struct D d; d.n=v;"
+        " for(unsigned t=0u;t<4u;t++) d.a[t]=v+t; return d.a[i&3u]+d.n; }",
+    ):
+        r = compile_unit(src, check_clang=True)
+        assert r.is_clean, f"oracle not clean: {src!r}"
+        assert r.equivalence == "match", f"oracle emit not Clang-equivalent ({r.equivalence}): {src!r}"
+
+
 def _build_diag(d: str) -> str:
     """Build the bcir_diag renderer harness (test_diag.c + bcir_diag.c)."""
     exe = os.path.join(d, "tdiag")

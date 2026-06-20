@@ -191,6 +191,8 @@ class _LV:
     byte_off: int = 0                      # member byte offset (in imm, not the strict-bounds field)
     bit_off: int = 0                       # bitfield bit offset within its storage unit
     bit_width: int = 0                     # bitfield width (0 == plain access)
+    member: bool = False                   # a member-array element `s.arr[i]` (carries offset+size even
+                                           # at offset 0, distinct from a plain `base[idx]`)
 
 
 # --- the structured body tree (L6): a block is a list mixing straight-line Claims with these. ---
@@ -498,7 +500,8 @@ class _FuncLowerer:
                 self._emit("c.bin.add", Opcode.ADD, (m1, idx_rids[d]), (a1,))
                 lin = a1
             elem = base_ct.of if base_ct.of else scalar("uint32_t")
-            return _LV("mem", base_rid, elem, idx=lin, byte_off=byte_off)
+            return _LV("mem", base_rid, elem, idx=lin, byte_off=byte_off,
+                       member=isinstance(n, cast.Member))
         if isinstance(node, cast.Member):
             base_rid, base_ct = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
@@ -682,7 +685,7 @@ class _FuncLowerer:
         # array `s.arr[i]` carries BOTH (member offset, element size) and an index -- so the emit lands
         # the element at `&s + member_off + i*elem_size`, distinct from a plain `base[idx]` (no imm).
         if lv.idx is not None:
-            imm = (lv.byte_off, max(1, lv.ct.size)) if lv.byte_off else ()
+            imm = (lv.byte_off, max(1, lv.ct.size)) if lv.member else ()   # member array: even off 0
         else:
             imm = (lv.byte_off,) if lv.byte_off else ()
         return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=imm,
@@ -698,7 +701,7 @@ class _FuncLowerer:
         mmio = self._mmio(lv.rid)
         if lv.idx is None:                                    # member/deref: carry (offset, size)
             rd, imm = (lv.rid, v), (lv.byte_off, max(1, lv.ct.size))
-        elif lv.byte_off:                                     # s.arr[i]: (member offset, element size)
+        elif lv.member:                                       # s.arr[i]: (member offset, element size)
             rd, imm = (lv.rid, lv.idx, v), (lv.byte_off, max(1, lv.ct.size))
         else:                                                 # base[idx]: a typed array store
             rd, imm = (lv.rid, lv.idx, v), ()
