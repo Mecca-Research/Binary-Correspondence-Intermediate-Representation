@@ -297,15 +297,23 @@ class _Parser:
         init: tuple = ()
         if self.at("OP", "="):
             self.nxt()
-            if self.at("PUNCT", "{"):                          # an initializer list { e0, e1, ... }
+            if self.at("PUNCT", "{"):                          # an initializer list (positional + [i]= designated)
                 self.nxt()
-                elems = []
+                slots: dict[int, object] = {}                  # array index -> element expr
+                cursor = 0
                 while not self.at("PUNCT", "}"):
-                    elems.append(self._expr())
+                    if self.at("PUNCT", "["):                  # an array designator: [const-index] = expr
+                        self.nxt()
+                        cursor = self._const_eval(self._expr())   # folds int literals + enumerators
+                        self.eat("PUNCT", "]")
+                        self.eat("OP", "=")
+                    slots[cursor] = self._expr()
+                    cursor += 1
                     if self.at("PUNCT", ","):
                         self.nxt()
                 self.eat("PUNCT", "}")
-                init = tuple(elems)
+                n = (max(slots) + 1) if slots else 0           # the highest index reached sizes a `T[]`
+                init = tuple(slots.get(i, cast.IntLit(0)) for i in range(n))   # gaps zero-fill (§6.7.10)
             else:
                 init = (self._expr(),)
         self.eat("PUNCT", ";")
