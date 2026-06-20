@@ -943,7 +943,7 @@ static int p_incdec(CC *c) {
 /* a `name = expr` assignment or a bare expression, WITHOUT the trailing `;` (the for-loop step). */
 static void p_simple(CC *c) {
   if(p_incdec(c)) return;
-  if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id);
+  if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a writable global */
     if(v && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='='){
       c->i+=2; uint32_t val=p_expr(c);
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
@@ -1057,7 +1057,7 @@ static void p_stmt(CC *c) {
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}}
     eat(c,";");return;
   }
-  if(isk(c,T_ID)){tok id=*pk(c);venv *v=lookup(c,&id);
+  if(isk(c,T_ID)){tok id=*pk(c);venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a writable file-scope global */
     /* L8: struct member store  v.field = expr  /  v->field = expr */
     if(v&&v->sidx>=0&&c->t[c->i+1].k==T_PUN&&(c->t[c->i+1].s[0]=='.'||(c->t[c->i+1].n==2&&c->t[c->i+1].s[0]=='-'))){
       c->i+=2; tok fld=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
@@ -1204,6 +1204,11 @@ static int is_named_local(const bcir_func *f,uint32_t rid){
   for(int i=0;i<f->n_params;i++) if(f->params[i].rid==rid) return 0;   /* a param, not a local */
   return 1;
 }
+/* a file-scope global referenced by name (defined in the source): a write to it is a bare assignment
+ * `g = v;`, never a `uint32_t g = v;` declaration (the storage is external, not a fresh temp). */
+static int is_global_ref(const bcir_func *f,uint32_t rid){
+  const bcir_resource *r=res_of(f,rid); return r && r->name[0] && r->read_only;
+}
 static size_t emit_func(const bcir_func *f,char *o,size_t on){
   size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64];
   ctype_str(&f->ret,ty,sizeof ty);
@@ -1253,7 +1258,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     else if(!strcmp(cl->op,"c.const"))
       w+=snprintf(o+w,on-w,"uint32_t %s = %lluu;\n",rname(f,cl->wr[0],d),(unsigned long long)cl->imm[0]);
     else if(!strcmp(cl->op,"c.copy")){
-      if(is_named_local(f,cl->wr[0])) w+=snprintf(o+w,on-w,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      if(is_named_local(f,cl->wr[0])||is_global_ref(f,cl->wr[0])) w+=snprintf(o+w,on-w,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
       else w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
     }else if(!strcmp(cl->op,"c.load")){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;

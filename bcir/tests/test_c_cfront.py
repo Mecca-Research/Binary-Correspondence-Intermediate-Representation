@@ -1200,6 +1200,59 @@ def test_diagnostic_error_recovery_report_dual_rail():
                 assert out == want, f"recovery report {flag} diverged for {fn}\n C: {out!r}\nPY: {want!r}"
 
 
+def test_scalar_globals_read_write_dual_rail():
+    """Scalar file-scope globals (#globals): the oracle models a scalar global as a plain resource --
+    a read references it directly (no c.load), a write is a c.copy to the global rid. The C twin now
+    lowers global writes (`acc = v`, `acc += b`) identically, and emits the global by NAME (a bare
+    `acc = t;` assignment, not a `uint32_t acc = t;` declaration -- the storage is external). The two
+    rails agree on the structural summary; behaviour-equivalence is checked with a side-effect-aware
+    harness (the functions mutate module-scope state, so the global is reset between the original and
+    the emitted twin, and both the return value AND the final global are compared)."""
+    fx = "cfront_global_rw.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, _entry = _oracle(src)
+    assert "ok=1" in oracle_summary and "binop=2" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        # the emit references the global by name: a bare `acc = ...;`, never `uint32_t acc = ...;`.
+        assert "acc = " in c_emit and "uint32_t acc" not in c_emit and "return acc;" in c_emit, c_emit
+        # side-effect-aware behaviour: reset `acc` between the original and the emitted twin per call.
+        harness = f"""#include <stdint.h>
+#include <stdio.h>
+{r.source}
+
+{c_emit}
+static uint64_t S=0x9E3779B97F4A7C15u;
+static uint32_t rng(void){{S=S*6364136223846793005u+1442695040888963407u;return (uint32_t)(S>>32);}}
+int main(void){{
+  for(int i=0;i<256;i++){{
+    unsigned a=rng(), b=rng(), sd=rng();
+    acc=sd; unsigned r1=accumulate(a,b); unsigned acc1=acc;
+    acc=sd; unsigned r2=bcir_accumulate(a,b); unsigned acc2=acc;
+    if(r1!=r2||acc1!=acc2){{printf("MISMATCH accumulate@%d\\n",i);return 1;}}
+    acc=sd; seed(a); unsigned s1=acc;
+    acc=sd; bcir_seed(a); unsigned s2=acc;
+    if(s1!=s2){{printf("MISMATCH seed@%d\\n",i);return 1;}}
+    acc=sd; unsigned p1=peek(); acc=sd; unsigned p2=bcir_peek();
+    if(p1!=p2){{printf("MISMATCH peek@%d\\n",i);return 1;}}
+  }}
+  printf("MATCH\\n");return 0;}}"""
+        cf, ef = os.path.join(d, "g.c"), os.path.join(d, "g")
+        open(cf, "w").write(harness)
+        for std in ("c23", "c2x", "c17"):
+            b = subprocess.run([_CC, f"-std={std}", "-O2", cf, "-o", ef], capture_output=True, text=True)
+            if b.returncode == 0:
+                break
+        else:
+            raise AssertionError(f"global r/w harness build failed:\n{b.stderr}")
+        out = subprocess.run([ef], capture_output=True, text=True).stdout.strip()
+        assert out == "MATCH", f"{fx}: scalar-global r/w not behaviour-equivalent ({out})"
+
+
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
     if not _CC:
         return
