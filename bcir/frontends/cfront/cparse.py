@@ -30,7 +30,7 @@ _FIXABLE_PUNCT = frozenset({";", ")", "}", "]"})
 # type-start keywords (a statement beginning with one of these is a declaration).
 _TYPE_KW = frozenset({"void", "_Bool", "bool", "char", "short", "int", "long", "unsigned",
                       "signed", "float", "double", "const", "volatile", "static", "extern", "inline",
-                      "struct", "union"})
+                      "_Thread_local", "thread_local", "struct", "union"})
 # binary operators by ascending precedence groups (C order).
 _PRECEDENCE = [
     ("||",), ("&&",), ("|",), ("^",), ("&",), ("==", "!="), ("<", ">", "<=", ">="),
@@ -350,7 +350,7 @@ class _Parser:
             if w in ("const", "volatile", "_Atomic"):
                 quals.append(w)
                 self.nxt()
-            elif w in ("static", "extern", "inline", "signed"):
+            elif w in ("static", "extern", "_Thread_local", "thread_local", "inline", "signed"):
                 self.nxt()                                # storage/inline ignored; 'signed' implied
             elif w in ("struct", "union"):
                 aggregate = w
