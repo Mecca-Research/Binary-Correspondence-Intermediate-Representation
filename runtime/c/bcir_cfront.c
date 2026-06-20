@@ -498,7 +498,21 @@ static const char *const g_libm[] = {
   "acos","asin","atan","atan2","cos","sin","tan","acosh","asinh","atanh","cosh","sinh","tanh",
   "exp","exp2","expm1","log","log10","log1p","log2","logb","cbrt","fabs","hypot","pow","sqrt",
   "ceil","floor","round","trunc","nearbyint","rint","erf","erfc","lgamma","tgamma",
-  "copysign","fdim","fmax","fmin","fmod","remainder","fma","nextafter", 0 };
+  "copysign","fdim","fmax","fmin","fmod","remainder","fma","nextafter",
+  "ldexp","scalbn","scalbln","nan", 0 };          /* + mixed-arg (int/long exponent, tag string) */
+
+/* <math.h> functions with a fixed *integer* result (the f/l suffix types only the argument): ilogb
+ * returns int -- exactly the 4-byte value model. (lround/llround/lrint/llrint return long/long long;
+ * they need the twin's wide-integer model and are handled in the 8-byte-return slice.) */
+static const char *const g_libm_int[] = { "ilogb", 0 };
+
+/* Nonzero if s[0..n) is an int-returning libm function (ilogb, ilogbf, ilogbl). */
+static int libm_is_int(const char *s, int n) {
+  for(int i=0;g_libm_int[i];i++){ int L=(int)strlen(g_libm_int[i]);
+    if(L==n && !strncmp(g_libm_int[i],s,(size_t)n)) return 1;
+    if((n==L+1) && (s[n-1]=='f'||s[n-1]=='l') && !strncmp(g_libm_int[i],s,(size_t)L)) return 1; }
+  return 0;
+}
 
 /* The result float size of a <math.h> call s[0..n): 8 (double) for a base name, 4 (float) for an
  * `f`-suffixed variant, or 0 if not a libm function. The full name is matched first so a base that
@@ -516,13 +530,13 @@ static uint32_t p_call(CC *c, const tok *name) {
   if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;
     if(is(c,",")){c->i++;continue;} break; }
   eat(c,")");
-  int lz=libm_float_size(name->s,name->n);
+  int lz=libm_is_int(name->s,name->n) ? -4 : libm_float_size(name->s,name->n);
   if(lz){                                  /* a <math.h> call -> a typed external library edge */
-    uint32_t t=tempf(c,lz);                /* float (f) / double (base) result; not in fn->calls */
+    uint32_t t = lz<0 ? temp(c,4) : tempf(c,lz);   /* ilogb -> int (uint32 model); else float/double */
     char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.libm:%.*s",name->n,name->s);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
-    return t;
+    return t;                              /* not added to fn->calls (opaque to R18) */
   }
   uint32_t t=temp(c,4);
   char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call:%.*s",name->n,name->s);
