@@ -67,6 +67,12 @@ void bcir_diag_line_col(const char *source, int offset, int *line, int *col);
 size_t bcir_diag_render(const bcir_diag *d, const char *source, const char *filename,
                         char *out, size_t cap);
 
+/* Render `n` diagnostics as one report (each in the Clang layout, joined by '\n'), the C twin of
+ * DiagnosticReport.render() -- the output shape of a panic-mode parser-recovery run that reports
+ * every error it resynchronizes past, not just the first. snprintf semantics. */
+size_t bcir_diag_report_render(const bcir_diag *ds, int n, const char *source, const char *filename,
+                               char *out, size_t cap);
+
 /* Serialize `n` diagnostics as a JSON array (a `-fdiagnostics-format=json`-style machine-readable
  * feed), byte-identical to DiagnosticReport.to_json() (Python json.dumps(indent=2), no include-stack
  * origin / fix-its). Each object carries severity, message, phase, the file:line:column + byte range

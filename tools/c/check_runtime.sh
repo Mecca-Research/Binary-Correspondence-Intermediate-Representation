@@ -328,6 +328,35 @@ else:
 run_diag_origin text
 run_diag_origin json
 echo "  PASS diagnostic include-stack origin is byte-identical across both rails"
+# parser error recovery: a panic-mode run reports EVERY error it resynchronizes past (not just the
+# first). The oracle's diagnose() produces that multi-diagnostic DiagnosticReport; the C report
+# renderer (bcir_diag_report_render / bcir_diag_to_json over the array) formats the identical report.
+printf 'unsigned f(unsigned x) { return x + ; }\nunsigned g(unsigned y) { return y 7; }\n' > "${tmp}/rec_src.c"
+RSRC="${tmp}/rec_src.c" RPP="${tmp}/rec_pp.c" RSPEC="${tmp}/rec.spec" RTXT="${tmp}/rec.txt" RJSON="${tmp}/rec.json" \
+python3 -c "
+import os
+from bcir.frontends.cfront.pipeline import diagnose
+rep=diagnose(open(os.environ['RSRC']).read(), filename='multi.c')
+open(os.environ['RPP'],'w').write(rep.source)
+lines=[]
+for d in rep.diagnostics:
+    s,e=(d.span.start,d.span.end) if d.span else (-1,-1)
+    lines.append(f'{d.severity}\t{s}\t{e}\t{d.message}')
+    for fx in d.fixits: lines.append(f'+\t{fx.span.start}\t{fx.span.end}\t{fx.replacement}')
+    for nt in d.notes:
+        ns,ne=(nt.span.start,nt.span.end) if nt.span else (-1,-1)
+        lines.append(f'-\t{ns}\t{ne}\t{nt.message}')
+open(os.environ['RSPEC'],'w').write('\n'.join(lines)+('\n' if lines else ''))
+open(os.environ['RTXT'],'w').write(rep.render())
+open(os.environ['RJSON'],'w').write(rep.to_json())
+assert len(rep.diagnostics) >= 2, f'expected >=2 recovered diagnostics, got {len(rep.diagnostics)}'
+" || { echo "  FAIL: oracle recovery report (expected >=2 diagnostics)"; exit 1; }
+[ "$("${tmp}/test_diag" "${tmp}/rec_pp.c" multi.c < "${tmp}/rec.spec")" = "$(cat "${tmp}/rec.txt")" ] \
+  && echo "  PASS recovery report text (multi-diagnostic oracle == C)" \
+  || { echo "  FAIL: recovery report text"; exit 1; }
+[ "$("${tmp}/test_diag" --json "${tmp}/rec_pp.c" multi.c < "${tmp}/rec.spec")" = "$(cat "${tmp}/rec.json")" ] \
+  && echo "  PASS recovery report JSON (multi-diagnostic oracle == C)" \
+  || { echo "  FAIL: recovery report JSON"; exit 1; }
 
 # The total-compilation / fallback contract (#fallback, the C twin of pipeline.compile_with_fallback):
 # a unit BCIR can compile + verify exits 0 (clean); a unit that compiles but fails the verifier (e.g.

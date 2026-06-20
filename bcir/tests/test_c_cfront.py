@@ -1154,6 +1154,52 @@ def test_diagnostic_include_stack_origin_dual_rail():
                 assert out == want, f"origin {flag} diverged\n C: {out!r}\nPY: {want!r}"
 
 
+def _report_spec(rep):
+    """Build the test_diag spec (one diagnostic per primary, with its fix-its and notes) from a real
+    DiagnosticReport -- the multi-diagnostic output of a panic-mode parser-recovery run."""
+    lines = []
+    for d in rep.diagnostics:
+        s, e = (d.span.start, d.span.end) if d.span else (-1, -1)
+        lines.append(f"{d.severity}\t{s}\t{e}\t{d.message}")
+        for fx in d.fixits:
+            lines.append(f"+\t{fx.span.start}\t{fx.span.end}\t{fx.replacement}")
+        for nt in d.notes:
+            ns, ne = (nt.span.start, nt.span.end) if nt.span else (-1, -1)
+            lines.append(f"-\t{ns}\t{ne}\t{nt.message}")
+    return ("\n".join(lines) + "\n") if lines else ""
+
+
+def test_diagnostic_error_recovery_report_dual_rail():
+    """Parser error recovery (#diag): a panic-mode run reports EVERY error it resynchronizes past, not
+    just the first -- a multi-diagnostic DiagnosticReport. The oracle's `diagnose()` produces that
+    report (over the preprocessed source); the C report renderer (`bcir_diag_report_render` and
+    `bcir_diag_to_json` over the array) formats the IDENTICAL report, text + JSON, byte-for-byte. This
+    drives the C engine with real recovery output (multiple errors, some carrying a fix-it) -- not a
+    synthetic battery -- and also covers the clean source (the empty report -> "" / "[]")."""
+    from bcir.frontends.cfront.pipeline import diagnose  # noqa: PLC0415
+    sources = [
+        ("unsigned f(unsigned x) { return x + ; }\n"
+         "unsigned g(unsigned y) { return y 7; }\n", "multi.c", 2),     # >=2 errors, one with a fix-it
+        ("unsigned ok(unsigned x){ return x*2u + 1u; }\n", "clean.c", 0),  # the empty report
+    ]
+    reports = [(diagnose(src, filename=fn), fn, lo) for src, fn, lo in sources]
+    for rep, _fn, lo in reports:
+        assert len(rep.diagnostics) >= lo                              # the recovery actually fired
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_diag(d)
+        for rep, fn, _lo in reports:
+            sp = os.path.join(d, "pp.c")
+            with open(sp, "w") as f:
+                f.write(rep.source)                                    # the preprocessed source the spans index
+            spec = _report_spec(rep)
+            for flag, want in ((None, rep.render()), ("--json", rep.to_json())):
+                args = [exe] + ([flag] if flag else []) + [sp, fn]
+                out = subprocess.run(args, input=spec, capture_output=True, text=True).stdout
+                assert out == want, f"recovery report {flag} diverged for {fn}\n C: {out!r}\nPY: {want!r}"
+
+
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
     if not _CC:
         return
