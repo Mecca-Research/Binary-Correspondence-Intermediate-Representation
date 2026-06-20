@@ -56,6 +56,7 @@ typedef struct {
   gvar gv[16]; int ngv;           /* file-scope globals (lookup tables): name -> type + length */
   venv env[MAXENV]; int nenv;
   bcir_func *fn;
+  bcir_unit *unit;   /* the whole unit, so a call can be typed by an earlier-defined callee's return */
   uint32_t rid, cid;
   char err[256]; int failed;
 } CC;
@@ -538,6 +539,15 @@ static int libm_float_size(const char *s, int n) {
   return 0;
 }
 
+/* The return ctype of a user function defined *earlier* in the unit (so a call can be typed by its
+ * callee), or NULL if it is not yet defined (a forward reference / external -> the uint32 default). */
+static const bcir_ctype *callee_ret(CC *c, const tok *name) {
+  if(!c->unit) return NULL;
+  for(int i=0;i<c->unit->n_funcs;i++){ const char *fn=c->unit->funcs[i].name;
+    if((int)strlen(fn)==name->n && !strncmp(fn,name->s,(size_t)name->n)) return &c->unit->funcs[i].ret; }
+  return NULL;
+}
+
 static uint32_t p_call(CC *c, const tok *name) {
   c->i++; /* '(' */
   uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
@@ -553,7 +563,17 @@ static uint32_t p_call(CC *c, const tok *name) {
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
     return t;                              /* not added to fn->calls (opaque to R18) */
   }
-  uint32_t t=temp(c,4);
+  const bcir_ctype *rt=callee_ret(c,name);   /* type the result by the callee's return (earlier defs) */
+  if(rt && rt->kind==0 && rt->size==0){      /* a void callee -> a bare call statement, no result temp */
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.void:%.*s",name->n,name->s);
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+    if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
+    if(c->fn->n_calls<BCIR_MAX_CALLS) idcpy(c->fn->calls[c->fn->n_calls++],name);
+    return temp(c,4);                        /* an unused placeholder (a void result is never read) */
+  }
+  uint32_t t = (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
+             : (rt && rt->kind==0 && rt->size==8) ? temp(c,8)        /* wide (8-byte) int return */
+             : temp(c,4);                                            /* int / unknown -> 4-byte unit */
   char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call:%.*s",name->n,name->s);
   bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
   if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
@@ -1104,6 +1124,7 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   const char *kw = ty->is_union ? "union" : "struct";
   const char *base = is_struct ? ty->tag
                    : ty->is_float ? (ty->size==4?"float":"double")
+                   : ty->size==0 ? "void"
                    : (ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t");
   const char *atm = ty->is_atomic ? "_Atomic " : "";
   if(ty->kind==2) snprintf(o,n,"%s%s%s%s%s *",atm,ty->is_volatile?"volatile ":"",
@@ -1220,8 +1241,12 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+12);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+w,on-w,");\n"); }
+    else if(!strncmp(cl->op,"c.call.void:",12)){   /* a void callee -> a bare call statement */
+      w+=snprintf(o+w,on-w,"bcir_%s(",cl->op+12);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+w,on-w,");\n"); }
     else if(!strncmp(cl->op,"c.call:",7)){
-      w+=snprintf(o+w,on-w,"uint32_t %s = bcir_%s(",rname(f,cl->wr[0],d),cl->op+7);
+      w+=snprintf(o+w,on-w,"%s %s = bcir_%s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+7);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+w,on-w,");\n"); }
     else if(!strcmp(cl->op,"c.call.indirect")){    /* rd[0] is the function pointer; rd[1..] the args */
@@ -1290,7 +1315,7 @@ static void p_global(CC *c){
 /* --- public entry -------------------------------------------------------- */
 int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
   static CC c; memset(&c,0,sizeof c); memset(out,0,sizeof *out);
-  c.rid=100; c.cid=1000;
+  c.rid=100; c.cid=1000; c.unit=&out->unit;
   strtab_reset();                       /* fresh string-literal table per translation unit */
   lex(&c,src);
   while(!isk(&c,T_END)&&!c.failed&&out->unit.n_funcs<BCIR_MAX_FUNCS){
