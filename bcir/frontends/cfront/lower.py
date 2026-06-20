@@ -871,15 +871,21 @@ class _FuncLowerer:
             return None
         if isinstance(st, cast.Decl):
             if len(st.type.array) > 1:
-                # a multi-dimensional *local* array `T m[A][B]`. The local CType keeps only the outer
-                # dim (count) and no flatten shape, so the declaration would be mis-sized (`m[A]`, not
-                # `m[A*B]`) and `m[i][j]` would collapse to `m[i + j]` -- a silent miscompile. Reject ->
-                # LLVM fallback (the same integrity rule as struct member arrays). A 2D array *param*
-                # decays to a row pointer and is handled separately (shape carried on the pointer type).
-                raise CLowerError(
-                    f"multi-dimensional local array ('{st.name}{''.join(f'[{d}]' for d in st.type.array)}')"
-                    " is not yet supported")
-            ct = self._resolve_type(st.type)
+                # a multi-dimensional local array `T m[A][B]`: a flat resource of A*B elements carrying
+                # the per-dim shape, so `m[i][j]` flattens row-major to `m[i*B + j]` (the existing Index
+                # Horner) and the emit declares `m[A*B]` (same memory layout as `m[A][B]`). Capped at 3
+                # dims (the shape / twin-adims table holds 3); deeper defers to the LLVM fallback.
+                dims = st.type.array
+                if len(dims) > 3:
+                    raise CLowerError(
+                        f"multi-dimensional local array '{st.name}' of more than 3 dims is not yet supported")
+                elem = self._resolve_type(replace(st.type, array=()))
+                total = 1
+                for d in dims:
+                    total *= d
+                ct = replace(array(elem, total), shape=tuple(dims))
+            else:
+                ct = self._resolve_type(st.type)
             if st.static_storage:                             # static storage: init once, in the decl
                 rid = self._static_storage(ct, st.name, _fold_const(st.init))
                 self.env[st.name] = (rid, ct)

@@ -673,6 +673,24 @@ static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;
   return t;
 }
+/* Parse `[i]` (or `[i][j][k]`) on an array variable and Horner-flatten via its declared dims
+ * (`v->type.adims`): `m[i][j]` on a `T m[A][B]` -> `i*B + j`. The cursor must be at the first `[`. */
+static uint32_t array_index(CC *c, venv *v) {
+  uint32_t idxs[3]; int ni=0;
+  while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]"); if(ni<3)idxs[ni++]=ix; }
+  uint32_t lin = ni?idxs[0]:0;
+  for(int d=1; d<ni; d++){
+    int dim = d<v->type.nadims ? v->type.adims[d] : 1;
+    uint32_t k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+    if(kc){kc->n_wr=1;kc->wr[0]=k;kc->n_imm=1;kc->imm[0]=dim;}
+    uint32_t m1=temp(c,4); bcir_claim *mc=new_claim(c,"c.bin.mul",BCIR_OP_MUL);
+    if(mc){mc->n_rd=2;mc->rd[0]=lin;mc->rd[1]=k;mc->n_wr=1;mc->wr[0]=m1;}
+    uint32_t a1=temp(c,4); bcir_claim *ac=new_claim(c,"c.bin.add",BCIR_OP_ADD);
+    if(ac){ac->n_rd=2;ac->rd[0]=m1;ac->rd[1]=idxs[d];ac->n_wr=1;ac->wr[0]=a1;}
+    lin=a1;
+  }
+  return lin;
+}
 static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereference load */
   uint32_t t=temp(c,pv->type.size?pv->type.size:4);
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
@@ -1296,7 +1314,11 @@ static void p_stmt(CC *c) {
     for(;;){
       if(!isk(c,T_ID)){ fail(c,"expected declarator name"); return; }
       tok nm=adv(c); char nb[BCIR_CIR_NAME]; idcpy(nb,&nm);
-      int arr=0; if(is(c,"[")){ c->i++; arr = isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]"); }   /* T name[N] -- a local array */
+      int arr=0,la_nd=0,la_dims[3]={0,0,0};            /* T name[N] / T m[A][B] -- a (multi-dim) local array */
+      while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
+        if(la_nd<3)la_dims[la_nd]=dim; la_nd++; arr = arr?arr*dim:dim; }
+      if(la_nd>3){ fail(c,"local array of more than 3 dimensions"); return; }   /* adims caps at 3 */
+      if(la_nd>1){ for(int z=0;z<3;z++) ty.adims[z]=la_dims[z]; ty.nadims=la_nd; }   /* multi-dim flatten */
       int rk=arr?BCIR_RK_SCALAR:(ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
       uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                            arr?ty.size:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
@@ -1410,7 +1432,7 @@ static void p_stmt(CC *c) {
       eat(c,";");return;}
     /* L3: array element store  a[idx] = expr  /  a[idx] OP= expr  (driver buffer fill / scatter). */
     if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]=='['){
-      c->i+=2; uint32_t idx=p_expr(c); eat(c,"]"); uint32_t val;
+      c->i++; uint32_t idx=array_index(c,v); uint32_t val;   /* a[i] / m[i][j] (Horner-flattened) */
       if(is_compound_op(&c->t[c->i])){
         char ch=c->t[c->i].s[0]; c->i++;                /* a[idx] OP= expr -> load, op, store */
         uint32_t cur=emit_index(c,v,idx); uint32_t rhs=p_expr(c);
