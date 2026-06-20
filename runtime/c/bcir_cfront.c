@@ -191,6 +191,19 @@ static void lex(CC *c, const char *src) {
         if(*q=='f'||*q=='F'||*q=='l'||*q=='L')q++;
         t->k=T_FLT;t->s=p;t->n=(int)(q-p);p=q;c->nt++;continue; }
     }
+    /* a hex float literal: 0x<hex>[.<hex>]p[+/-]<dec>[f/F/l/L] -- the binary exponent is mandatory,
+     * so a bare 0xFF (no 'p') stays an integer below (matches the oracle's _float_lit_type). */
+    if (p[0]=='0' && (p[1]|0x20)=='x') {
+      const char *q=p+2; int hd=0;
+      #define _ISHEX(ch) (((ch)>='0'&&(ch)<='9')||(((ch)|0x20)>='a'&&((ch)|0x20)<='f'))
+      while(_ISHEX(*q)||*q=='\''){q++;hd=1;}
+      if(*q=='.'){q++; while(_ISHEX(*q)||*q=='\''){q++;hd=1;}}
+      #undef _ISHEX
+      if(hd && (*q|0x20)=='p'){ const char *r=q+1; if(*r=='+'||*r=='-')r++;
+        if(*r>='0'&&*r<='9'){ q=r+1; while(*q>='0'&&*q<='9')q++;
+          if(*q=='f'||*q=='F'||*q=='l'||*q=='L')q++;
+          t->k=T_FLT;t->s=p;t->n=(int)(q-p);p=q;c->nt++;continue; } }
+    }
     if (*p>='0'&&*p<='9'){t->k=T_INT;t->s=p;while(is_idc(*p)||*p=='\'')p++;t->n=(int)(p-t->s);
                           t->v=parse_int(t->s,t->n);c->nt++;continue;}
     if (*p=='"'){t->k=T_STR;t->s=p;p++;                /* string literal (escapes consumed as a unit) */

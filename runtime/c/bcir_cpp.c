@@ -67,7 +67,15 @@ static int ntok(const char *s, int *i, char *out, int cap) {
   if (!c) return 0;
   int j = 0;
   if (id0(c)) { while (idc((unsigned char)s[*i]) && j < cap - 1) out[j++] = s[(*i)++]; out[j] = 0; return 'i'; }
-  if (c >= '0' && c <= '9') { while ((idc((unsigned char)s[*i]) || s[*i] == '.') && j < cap - 1) out[j++] = s[(*i)++]; out[j] = 0; return 'n'; }
+  if (c >= '0' && c <= '9') {                            /* a pp-number: digits, '.', idents, and an
+                                                          * e/E/p/P binary/decimal exponent's +/- sign */
+    while ((idc((unsigned char)s[*i]) || s[*i] == '.') && j < cap - 1) {
+      char d = s[*i]; out[j++] = s[(*i)++];
+      if ((d=='e'||d=='E'||d=='p'||d=='P') && (s[*i]=='+'||s[*i]=='-') && j < cap - 1)
+        out[j++] = s[(*i)++];
+    }
+    out[j] = 0; return 'n';
+  }
   if (c == '"' || c == '\'') { char q = (char)c; out[j++] = s[(*i)++];
     while (s[*i] && s[*i] != q && j < cap - 2) { if (s[*i] == '\\' && s[*i+1]) out[j++] = s[(*i)++]; out[j++] = s[(*i)++]; }
     if (s[*i] == q) out[j++] = s[(*i)++]; out[j] = 0; return 's'; }
