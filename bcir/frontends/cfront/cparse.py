@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from . import cast
 from .clex import KEYWORDS, Tok, parse_char_literal, parse_int_literal, tokenize
+from .ctype_model import int_literal_type
 from .ctype_model import is_scalar_name
 from .diagnostics import FixIt, SourceDiagnostic, Span
 
@@ -772,7 +773,8 @@ class _Parser:
 
     def _primary(self):
         if self.at("INT"):
-            return cast.IntLit(parse_int_literal(self.nxt().text))
+            text = self.nxt().text                            # type from the suffix + magnitude (§6.4.4.1)
+            return cast.IntLit(parse_int_literal(text), int_literal_type(text))
         if self.at("CHAR"):                                   # a character constant -> its int value
             return cast.IntLit(parse_char_literal(self.nxt().text))
         if self.at("FLOAT"):                                  # a floating-point literal (1.5 / 3.14f)

@@ -104,6 +104,73 @@ def is_scalar_name(name: str) -> bool:
     return name in _SCALAR or name in _FLOAT
 
 
+# --- integer promotions + usual arithmetic conversions (C23 §6.3.1.1 / §6.3.1.8) -----------------
+# The value model needs only (width, signedness): the observable result of integer arithmetic is
+# fixed by those two, so types that share a width (long / long long; int / int32_t) collapse onto one
+# canonical fixed-width type. The actual computation is delegated to the emitted C / resident backend.
+_INT_CANON = {(1, True): "int8_t", (1, False): "uint8_t", (2, True): "int16_t", (2, False): "uint16_t",
+              (4, True): "int32_t", (4, False): "uint32_t", (8, True): "int64_t", (8, False): "uint64_t"}
+
+
+def int_type(size: int, signed: bool, abi=None) -> CType:
+    """The canonical fixed-width integer CType for a (size, signedness) pair."""
+    return scalar(_INT_CANON.get((size, bool(signed)), "int32_t"), abi)
+
+
+def promote_int(t: CType, abi=None) -> CType:
+    """Integer promotion (§6.3.1.1): a type of rank lower than `int` promotes to `int` (which holds
+    every value of any sub-int type), so char/short/_Bool/bitfield operands become signed int."""
+    if not t.is_integer:
+        return t
+    return int_type(4, True, abi) if t.size < 4 else t
+
+
+def usual_arith_int(a: CType, b: CType, abi=None) -> CType:
+    """Usual arithmetic conversions (§6.3.1.8) for two integer operands -> their common type. After
+    promoting both, the wider width wins (carrying the wider operand's signedness, since a strictly
+    wider signed type represents every value of the narrower one); on equal width the result is
+    unsigned iff either operand is unsigned."""
+    pa, pb = promote_int(a, abi), promote_int(b, abi)
+    if pa.size != pb.size:
+        wider = pa if pa.size > pb.size else pb
+        return int_type(wider.size, wider.signed, abi)
+    return int_type(pa.size, pa.signed and pb.signed, abi)
+
+
+def int_literal_type(text: str) -> str:
+    """The type of an integer constant (§6.4.4.1): from its `u`/`l`/`ll` suffix and magnitude, the
+    first type in the suffix-permitted candidate list that can hold the value. Decimal literals only
+    pick an unsigned type when `u`-suffixed; hex/octal literals may at any rank. Returns a canonical
+    scalar name (`int` / `unsigned int` / `long` / ... )."""
+    s = text.replace("'", "")                                  # strip C23 digit separators
+    i = len(s)
+    while i > 0 and s[i - 1] in "uUlL":
+        i -= 1
+    body, suf = s[:i], s[i:].lower()
+    u, lrank = ("u" in suf), suf.count("l")                    # lrank: 0 none / 1 long / 2 long long
+    if body[:2] in ("0x", "0X"):
+        val, decimal = int(body, 16), False
+    elif body[:2] in ("0b", "0B"):
+        val, decimal = int(body, 2), False
+    elif len(body) > 1 and body[0] == "0":
+        val, decimal = int(body, 8), False
+    else:
+        val, decimal = int(body or "0", 10), True
+    INT, UINT = ("int", 4, True), ("unsigned int", 4, False)
+    LONG, ULONG = ("long", 8, True), ("unsigned long", 8, False)
+    LL, ULL = ("long long", 8, True), ("unsigned long long", 8, False)
+    if u:
+        cands = {0: [UINT, ULONG, ULL], 1: [ULONG, ULL], 2: [ULL]}[lrank]
+    elif decimal:
+        cands = {0: [INT, LONG, LL], 1: [LONG, LL], 2: [LL]}[lrank]
+    else:                                                      # hex/octal unsuffixed: unsigned allowed
+        cands = {0: [INT, UINT, LONG, ULONG, LL, ULL], 1: [LONG, ULONG, LL, ULL], 2: [LL, ULL]}[lrank]
+    for name, size, signed in cands:
+        if val <= (1 << (size * 8 - (1 if signed else 0))) - 1:
+            return name
+    return cands[-1][0]
+
+
 def pointer(of: CType, abi=None) -> CType:
     size = abi.pointer_size if abi is not None else PTR_SIZE
     return CType("pointer", name="ptr", size=size, align=size, signed=False, of=of)
