@@ -1117,7 +1117,9 @@ static void arr_init(CC *c, uint32_t rid) {
   eat(c,"}");
 }
 static void p_block(CC *c){            /* `{ stmts }` or a single statement */
-  if(is(c,"{")){c->i++;while(!is(c,"}")&&!isk(c,T_END)&&!c->failed)p_stmt(c);eat(c,"}");}
+  if(is(c,"{")){c->i++; int env_mark=c->nenv;   /* a block is a scope: its locals do not leak out */
+    while(!is(c,"}")&&!isk(c,T_END)&&!c->failed)p_stmt(c);
+    eat(c,"}"); c->nenv=env_mark;}              /* pop the block scope -- restore outer name bindings */
   else p_stmt(c);
 }
 /* ++i / --i / i++ / i-- (value discarded) -> i = i ± 1 (const 1 + a bin op + a copy).  Returns 1 if

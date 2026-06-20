@@ -952,6 +952,12 @@ the param) -- a miscompile the `#loopreuse` emit fix had turned from a build err
 answer. Both rails now save/restore the name environment around the loop (oracle: snapshot `self.env`;
 twin: an `nenv` mark), so the loop scope is popped and outer bindings are restored. `#loopscope`/
 `cfront_loopscope.c` (param-shadow + outer-shadow, differential pins the post-loop value == Clang).
+✅ **and the general case — bare-block scope**: a `{ unsigned x = ...; }` compound statement is a scope
+too; both rails now save/restore the name env around every `{ ... }` (oracle in `_block`, twin in
+`p_block`), so a nested block shadowing an outer `x` read after the block no longer leaks (was a silent
+miscompile, `m[0][1]`-class). The oracle also lowers a bare block **inline** now (a `Block` AST node)
+instead of wrapping it in an always-true `if(1)`, which dropped a spurious const claim and made the bare-
+block claim count match the twin -- so the case is gate-able. `#blockscope`/`cfront_blockscope.c`.
 **Remaining Phase-4
 work:** a *broad* calling-convention/object ABI matrix (on top of the landed data-model layout); the
 optimizer correctness/differential story still owed by the C rail — a full **cost-model bridge into the

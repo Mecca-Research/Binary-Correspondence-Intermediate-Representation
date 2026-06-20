@@ -497,7 +497,7 @@ class _Parser:
             self.nxt()                                        # body of `for(...);` / `while(...);`, `if(c);`)
             return cast.Seq(())
         if self.at("PUNCT", "{"):
-            return cast.If(cast.IntLit(1), self._block())     # bare block -> always-true If (rare)
+            return cast.Block(self._block())                  # bare `{ ... }` -> an inline-lowered scope
         if self.at("IDENT", "return"):
             self.nxt()
             val = None if self.at("PUNCT", ";") else self._expr()
