@@ -771,8 +771,12 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     64-bit — behaviour-equivalent to Clang over the *full* signed range, the case the old unsigned-32
     model got wrong (`test_integer_promotions_and_uac_oracle`; `#intpromote` runs the twin's `--emit-c`
     against Clang on 300k full-range inputs). *Scalar* operands are covered; pointer-element signedness
-    (the twin's pointer model carries pointee *width* but not yet signedness) is a follow-on. Then the
-    rest of pointer-arithmetic completeness + an object/provenance model, cross-clause `switch`
+    (the twin's pointer model carries pointee *width* but not yet signedness) is a follow-on. ✅
+    **array element stores** (`a[i] = v` / `a[i] OP= v` through a pointer/array param -- the driver
+    buffer-fill / scatter idiom) now lower on the C twin too (a 3-read `c.store`, emitted as `a[i] = v`;
+    the oracle already had them), dual-rail parity + a source-vs-twin buffer differential
+    (`#astore`/`cfront_arraystore.c`); the rest of pointer-arithmetic completeness (`p++`, `p - q`,
+    `<<=`/`>>=` shift-compound-assign) + an object/provenance model, cross-clause `switch`
     fallthrough; ✅ **designated initializers** for a file-scope **dispatch / jump table** —
     `static const T NAME[N] = {[OP]=v, ...}` with enum-indexed designators and a gap that zero-fills
     (§6.7.10) — now parse on both rails (oracle `cparse._global`; the twin references the table by name,
