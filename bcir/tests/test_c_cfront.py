@@ -1096,6 +1096,64 @@ def test_diagnostic_fixits_dual_rail():
                     assert out == want, f"fix-it {flag} diverged for {fixits}\n C: {out!r}\nPY: {want!r}"
 
 
+def test_diagnostic_include_stack_origin_dual_rail():
+    """Include / line-map origin (#diag): a diagnostic relocated to its origin file:line, with the
+    #include chain printed as Clang "In file included from <file>:<line>:" frames (text) and an
+    "includedFrom" array (JSON), byte-identical to diagnostics.render() / diagnostic_to_dict() given an
+    `origin`. The primary banner moves to (origin_file, origin_line) but the column + source snippet
+    still come from the (preprocessed) source; notes are NOT relocated. Covers the render-vs-JSON
+    asymmetry for a spanless diagnostic (render still shows the frames + origin file; JSON ignores the
+    origin and keeps the default file), an empty include stack, and origin alongside a fix-it + note."""
+    from bcir.frontends.cfront.diagnostics import (  # noqa: PLC0415
+        SourceDiagnostic, Span, Note, FixIt, render, diagnostic_to_dict)
+    import json as _json  # noqa: PLC0415
+    src = "line0\nline1 has the token X here\nline2\n"
+    off = src.index("X")
+
+    def build(span, msg, fixits, notes):
+        return SourceDiagnostic("error" if span else "warning", msg, span=span,
+                                fixits=[FixIt(Span(a, b), r) for (a, b), r in fixits],
+                                notes=[Note(m, Span(a, b)) for (a, b), m in notes], phase="parse")
+
+    # (diag, origin, spec) tuples.
+    span = Span(off, off + 1)
+    cases = [
+        # spanned + origin + 2 include frames
+        (build(span, "undeclared 'X'", [], []), ("inc/b.h", 42, [("main.c", 10), ("inc/a.h", 3)]),
+         f"error\t{off}\t{off + 1}\tundeclared 'X'\n@\t42\t0\tinc/b.h\n^\t10\t0\tmain.c\n^\t3\t0\tinc/a.h\n"),
+        # spanned + origin + empty include stack (no "includedFrom" in JSON)
+        (build(span, "undeclared 'X'", [], []), ("inc/b.h", 42, []),
+         f"error\t{off}\t{off + 1}\tundeclared 'X'\n@\t42\t0\tinc/b.h\n"),
+        # spanless + origin: render shows frames + origin file; JSON ignores origin (keeps default file)
+        (build(None, "no span", [], []), ("inc/b.h", 42, [("main.c", 10)]),
+         "warning\t-1\t-1\tno span\n@\t42\t0\tinc/b.h\n^\t10\t0\tmain.c\n"),
+        # origin alongside a fix-it + a note (only the primary is relocated)
+        (build(span, "bad", [((off, off + 1), "Y")], [((0, 3), "see")]), ("hdr.h", 7, [("top.c", 2)]),
+         f"error\t{off}\t{off + 1}\tbad\n@\t7\t0\thdr.h\n^\t2\t0\ttop.c\n+\t{off}\t{off + 1}\tY\n-\t0\t3\tsee\n"),
+    ]
+
+    def py_text(diag, origin):
+        return render(diag, src, "u.c", origin=origin)
+
+    def py_json(diag, origin):
+        return _json.dumps([diagnostic_to_dict(diag, src, "u.c", origin=origin)], indent=2)
+
+    for diag, origin, _spec in cases:                                      # oracle side always runs
+        assert "In file included from" in py_text(diag, origin) or origin[2] == []
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_diag(d)
+        sp = os.path.join(d, "s.c")
+        with open(sp, "w") as f:
+            f.write(src)
+        for diag, origin, spec in cases:
+            for flag, want in ((None, py_text(diag, origin)), ("--json", py_json(diag, origin))):
+                args = [exe] + ([flag] if flag else []) + [sp, "u.c"]
+                out = subprocess.run(args, input=spec, capture_output=True, text=True).stdout
+                assert out == want, f"origin {flag} diverged\n C: {out!r}\nPY: {want!r}"
+
+
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
     if not _CC:
         return

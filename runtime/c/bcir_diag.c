@@ -62,19 +62,23 @@ static size_t snippet(char *out, size_t cap, size_t w, const char *s, int len, b
   return w;
 }
 
-/* Append one banner (the primary or a note). `first` guards the leading '\n' of the join. */
-static size_t banner(char *out, size_t cap, size_t w, const char *s, int len, const char *filename,
-                     const char *severity, const char *message, bcir_span span, int *first) {
+/* Append one banner (the primary or a note). `first` guards the leading '\n' of the join. `loc_file`
+ * is the file printed in the banner; `loc_line < 0` resolves the line from the span (else it is the
+ * override -- the origin line from the preprocessor line map). */
+static size_t banner(char *out, size_t cap, size_t w, const char *s, int len, const char *loc_file,
+                     const char *severity, const char *message, bcir_span span, int *first,
+                     int loc_line) {
   char head[64];
   if (!*first) w = putc1(out, cap, w, '\n');
   *first = 0;
   if (!span.has_span) {
-    w = puts1(out, cap, w, filename); w = puts1(out, cap, w, ": ");
+    w = puts1(out, cap, w, loc_file); w = puts1(out, cap, w, ": ");
     w = puts1(out, cap, w, severity); w = puts1(out, cap, w, ": ");
     w = puts1(out, cap, w, message);
   } else {
     int line, col; bcir_diag_line_col(s, span.start, &line, &col);
-    w = puts1(out, cap, w, filename);
+    if (loc_line >= 0) line = loc_line;                          /* origin override */
+    w = puts1(out, cap, w, loc_file);
     snprintf(head, sizeof head, ":%d:%d: ", line, col); w = puts1(out, cap, w, head);
     w = puts1(out, cap, w, severity); w = puts1(out, cap, w, ": ");
     w = puts1(out, cap, w, message);
@@ -109,7 +113,22 @@ size_t bcir_diag_render(const bcir_diag *d, const char *source, const char *file
                         char *out, size_t cap) {
   int len = (int)strlen(source);
   int first = 1;
-  size_t w = banner(out, cap, 0, source, len, filename, d->severity, d->message, d->span, &first);
+  size_t w = 0;
+  /* origin: print the "In file included from <file>:<line>:" frames (outermost first), then relocate
+   * the primary banner to (origin_file, origin_line). The notes are NOT relocated (default filename). */
+  const char *pfile = d->has_origin ? d->origin_file : filename;
+  int pline = d->has_origin ? d->origin_line : -1;
+  if (d->has_origin) {
+    char head[64];
+    for (int i = 0; i < d->n_incstack; i++) {
+      if (!first) w = putc1(out, cap, w, '\n');
+      first = 0;
+      w = puts1(out, cap, w, "In file included from ");
+      w = puts1(out, cap, w, d->incstack[i].file);
+      snprintf(head, sizeof head, ":%d:", d->incstack[i].line); w = puts1(out, cap, w, head);
+    }
+  }
+  w = banner(out, cap, w, source, len, pfile, d->severity, d->message, d->span, &first, pline);
   for (int i = 0; i < d->n_fixits; i++) {                 /* one-line suggested edits, under the caret */
     const bcir_fixit *fx = &d->fixits[i];
     const char *verb = fx->replacement[0] == '\0' ? "remove"
@@ -119,8 +138,8 @@ size_t bcir_diag_render(const bcir_diag *d, const char *source, const char *file
     w = puts1(out, cap, w, "fix-it: "); w = puts1(out, cap, w, verb);
     w = putc1(out, cap, w, ' '); w = py_repr(out, cap, w, fx->replacement);
   }
-  for (int i = 0; i < d->n_notes; i++)
-    w = banner(out, cap, w, source, len, filename, "note", d->notes[i].message, d->notes[i].span, &first);
+  for (int i = 0; i < d->n_notes; i++)                    /* notes use the default filename (not origin) */
+    w = banner(out, cap, w, source, len, filename, "note", d->notes[i].message, d->notes[i].span, &first, -1);
   if (cap) out[w < cap ? w : cap - 1] = 0;
   return w;
 }
@@ -194,6 +213,15 @@ static size_t jnote(char *o, size_t cap, size_t w, const bcir_note *nt, const ch
   w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, depth);
   return putc1(o, cap, w, '}');
 }
+/* one include-chain frame `{ "file": ..., "line": N }` whose closing brace sits at `depth`. */
+static size_t jincframe(char *o, size_t cap, size_t w, const bcir_incframe *fr, int depth) {
+  int id = depth + 1, jf = 1;
+  w = putc1(o, cap, w, '{');
+  w = member(o, cap, w, &jf, id); w = jstr(o, cap, w, "file"); w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, fr->file);
+  w = member(o, cap, w, &jf, id); w = jstr(o, cap, w, "line"); w = puts1(o, cap, w, ": "); w = jint(o, cap, w, fr->line);
+  w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, depth);
+  return putc1(o, cap, w, '}');
+}
 /* one fix-it object `{ "replacement": ..., "range": {...} }` whose closing brace sits at `depth`. */
 static size_t jfixit(char *o, size_t cap, size_t w, const bcir_fixit *fx, int depth) {
   int fd = depth + 1, ff = 1;
@@ -211,7 +239,24 @@ static size_t jdiag(char *o, size_t cap, size_t w, const bcir_diag *d, const cha
   w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "severity"); w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, d->severity);
   w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "message");  w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, d->message);
   w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "phase");    w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, d->phase ? d->phase : "");
-  w = jloc(o, cap, w, s, filename, d->span, &f, kd);
+  if (d->has_origin && d->span.has_span) {                /* relocate to the origin file/line + #include chain */
+    int line, col; bcir_diag_line_col(s, d->span.start, &line, &col);   /* column from the source */
+    w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "file");   w = puts1(o, cap, w, ": "); w = jstr(o, cap, w, d->origin_file);
+    w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "line");   w = puts1(o, cap, w, ": "); w = jint(o, cap, w, d->origin_line);
+    w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "column"); w = puts1(o, cap, w, ": "); w = jint(o, cap, w, col);
+    w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "range");  w = puts1(o, cap, w, ": "); w = jrange(o, cap, w, d->span, kd);
+    if (d->n_incstack > 0) {
+      w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "includedFrom"); w = puts1(o, cap, w, ": [");
+      for (int i = 0; i < d->n_incstack; i++) {
+        if (i) w = putc1(o, cap, w, ',');
+        w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, kd + 1);
+        w = jincframe(o, cap, w, &d->incstack[i], kd + 1);
+      }
+      w = putc1(o, cap, w, '\n'); w = ind(o, cap, w, kd); w = putc1(o, cap, w, ']');
+    }
+  } else {
+    w = jloc(o, cap, w, s, filename, d->span, &f, kd);    /* default location (spanless or no origin) */
+  }
   if (d->n_fixits > 0) {                                  /* fixits come before notes (dict order) */
     w = member(o, cap, w, &f, kd); w = jstr(o, cap, w, "fixits"); w = puts1(o, cap, w, ": [");
     for (int i = 0; i < d->n_fixits; i++) {

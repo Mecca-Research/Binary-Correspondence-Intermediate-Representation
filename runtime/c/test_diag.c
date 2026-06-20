@@ -4,11 +4,15 @@
  * feeds the SAME spec to diagnostics.render() / DiagnosticReport.to_json() and asserts
  * the two are byte-identical (the dual-rail diagnostic-format gate). Spec lines
  * (start == end == -1 -> a spanless / file-level banner). A line whose first field is a
- * severity starts a new diagnostic; "-" attaches a note and "+" a fix-it to the current
- * one (a primary's severity may itself be "note", so the sentinels can't be words):
+ * severity starts a new diagnostic; "-" attaches a note, "+" a fix-it, "@" sets the
+ * preprocessor-line-map origin, and "^" appends an #include frame (a primary's severity
+ * may itself be "note", so the sentinels can't be words). For "@"/"^" the second field is
+ * the line and the message is the file:
  *     <severity>\t<start>\t<end>\t<message>      (a primary diagnostic)
  *     -\t<start>\t<end>\t<message>               (a note on the preceding primary)
  *     +\t<start>\t<end>\t<replacement>           (a fix-it on the preceding primary)
+ *     @\t<origin-line>\t0\t<origin-file>         (relocate the primary to this origin)
+ *     ^\t<inc-line>\t0\t<inc-file>               (an #include frame, outermost first)
  *   usage: test_diag [--json] <source> <filename>
  *===----------------------------------------------------------------------===*/
 #include <stdio.h>
@@ -19,7 +23,8 @@
 #define MAXDIAGS 16
 #define MAXNOTES 64
 #define MAXFIXITS 64
-#define MAXLINES (MAXDIAGS + MAXNOTES + MAXFIXITS)
+#define MAXINC 64
+#define MAXLINES (MAXDIAGS + MAXNOTES + MAXFIXITS + MAXINC)
 
 /* split a line into (tag, start, end, message); message is the tail after the 3rd tab. The fields
  * point into the mutable `line` buffer (tabs are overwritten with NULs). */
@@ -49,7 +54,8 @@ int main(int argc, char **argv) {
   static bcir_diag diags[MAXDIAGS];
   static bcir_note notes[MAXNOTES];
   static bcir_fixit fixits[MAXFIXITS];
-  int nd = 0, nnotes = 0, nfix = 0, cur = -1;
+  static bcir_incframe incs[MAXINC];
+  int nd = 0, nnotes = 0, nfix = 0, ninc = 0, cur = -1;
   for (int li = 0; li < MAXLINES && fgets(lines[li], sizeof lines[li], stdin); li++) {
     size_t L = strlen(lines[li]);
     while (L && (lines[li][L - 1] == '\n' || lines[li][L - 1] == '\r')) lines[li][--L] = 0;
@@ -66,6 +72,14 @@ int main(int argc, char **argv) {
       fixits[nfix].replacement = msg; fixits[nfix].span = sp;
       if (diags[cur].fixits == NULL) diags[cur].fixits = &fixits[nfix];
       diags[cur].n_fixits++; nfix++;
+    } else if (!strcmp(tag, "@")) {                          /* "@" sentinel: the line-map origin */
+      if (cur < 0) { fprintf(stderr, "stray origin\n"); return 2; }
+      diags[cur].has_origin = 1; diags[cur].origin_line = sp.start; diags[cur].origin_file = msg;
+    } else if (!strcmp(tag, "^")) {                          /* "^" sentinel: an #include frame */
+      if (cur < 0 || ninc >= MAXINC) { fprintf(stderr, "stray include frame\n"); return 2; }
+      incs[ninc].file = msg; incs[ninc].line = sp.start;
+      if (diags[cur].incstack == NULL) diags[cur].incstack = &incs[ninc];
+      diags[cur].n_incstack++; ninc++;
     } else if (nd < MAXDIAGS) {
       cur = nd++;
       memset(&diags[cur], 0, sizeof diags[cur]);
