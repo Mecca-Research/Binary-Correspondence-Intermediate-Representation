@@ -31,7 +31,7 @@ typedef struct { tkind k; const char *s; int n; long long v; } tok;
 #define MAXTOK 16384
 #define MAXFLD 64        /* members per struct (f[] is embedded in sdef; generous, guarded) */
 
-typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int byte_off, bit_off, bit_w; } field;
+typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int byte_off, bit_off, bit_w; int sidx; } field;
 typedef struct { char tag[BCIR_CIR_NAME]; field f[MAXFLD]; int nf; int size; int align; int is_union; } sdef;
 typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int sidx; } tdef;   /* a typedef alias */
 typedef struct { char name[BCIR_CIR_NAME]; long long val; } econst;           /* an enum constant */
@@ -406,6 +406,7 @@ static int p_struct_body(CC *c) {
       if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
       int sz=ty.size,al=packed?1:(sz<1?1:sz); field *f=&S->f[S->nf++];
       idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;
+      f->sidx = (ty.kind==1 && !ty.ptr_to_struct) ? si : -1;   /* a value struct/union member -> nested access */
       if(al>S->align)S->align=al; if(sz>maxsz)maxsz=sz;
       if(is_union){f->byte_off=0;f->bit_off=0;}        /* union: every member overlaps at offset 0 */
       else if(width){int ub=sz*8;
@@ -641,6 +642,21 @@ static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereferenc
   cl->n_rd=1;cl->rd[0]=pv->rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;
   if(pv->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
   return t;
+}
+/* Nested member access (`o.in.v` / `dev->ctrl.flags` -- a sub-register-block): given a member `f`
+ * already resolved (byte_off relative to the access base) and the cursor at a possible further
+ * `.`/`->`, descend through nested value-struct members, accumulating byte offsets. Returns the final
+ * field with byte_off set to the total offset from the base, so the load/store paths (which read
+ * f.byte_off / f.size / f.bit_*) flatten the chain to a single offset access -- matching the oracle. */
+static field member_descend(CC *c, field f) {
+  while((is(c,".")||is(c,"->")) && f.sidx>=0){
+    int base_off=f.byte_off; sdef *S=&c->s[f.sidx]; c->i++;
+    tok fn=adv(c); int fi=-1;
+    for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
+    if(fi<0){ fail(c,"unknown field"); return f; }
+    f=S->f[fi]; f.byte_off+=base_off;
+  }
+  return f;
 }
 /* <math.h> real-valued functions (mirrors the oracle's _LIBM): the result is a floating type fixed
  * by the name suffix -- base -> double, +f -> float. They lower to an opaque external library edge
@@ -879,7 +895,8 @@ static uint32_t p_primary(CC *c) {
           cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=arrow;}
         return t;
       }
-      return emit_member(c,v,&S->f[fi]);
+      field mf=member_descend(c,S->f[fi]);        /* nested `o.in.v` -> one flattened-offset load */
+      return emit_member(c,v,&mf);
     }
     if(is(c,"[")){                                /* L3: base[i] / m[i][j] (row-major flatten) */
       uint32_t idxs[3]; int ni=0;
@@ -1303,31 +1320,32 @@ static void p_stmt(CC *c) {
       c->i+=2; tok fld=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
       if(fi<0){fail(c,"unknown field");return;}
+      field f=member_descend(c,S->f[fi]);         /* nested `o.in.v` -> one flattened-offset store */
       uint32_t val;
       if(is_compound_op(&c->t[c->i])){
         /* compound assignment to a member:  r->field OP= expr  (the set/clear-bits driver idiom; a
          * bitfield field reads via c.bf.get, a plain member via a plain load). */
         char ch=c->t[c->i].s[0]; c->i++;
-        uint32_t cur=emit_member(c,v,&S->f[fi]);    /* the current field value (loaded first) */
+        uint32_t cur=emit_member(c,v,&f);          /* the current field value (loaded first) */
         uint32_t rhs=p_expr(c);
         const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
         uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
       } else { if(!eat(c,"="))return; val=p_expr(c); }
-      if(S->f[fi].bit_w){
+      if(f.bit_w){
         /* a bitfield store: read the storage unit, insert the masked bits (c.bf.set), store the unit. */
-        uint32_t unit=temp(c,S->f[fi].size);
+        uint32_t unit=temp(c,f.size);
         bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
-        if(ld){ld->n_rd=1;ld->rd[0]=v->rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=S->f[fi].byte_off;ld->imm[1]=S->f[fi].size;ld->bounds=BCIR_BND_ASSUMED;
+        if(ld){ld->n_rd=1;ld->rd[0]=v->rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=f.byte_off;ld->imm[1]=f.size;ld->bounds=BCIR_BND_ASSUMED;
           if(v->type.is_volatile){ld->domain=BCIR_DOM_MMIO;ld->lane=BCIR_LANE_H;ld->hazard=BCIR_HZ_BARRIERED;}}
-        uint32_t nu=temp(c,S->f[fi].size);
+        uint32_t nu=temp(c,f.size);
         bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
-        if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=val;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=S->f[fi].bit_off;bs->imm[1]=S->f[fi].bit_w;}
+        if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=val;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=f.bit_off;bs->imm[1]=f.bit_w;}
         val=nu;
       }
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-      if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=S->f[fi].byte_off;cl->imm[1]=S->f[fi].size;
+      if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.size;
         cl->bounds=BCIR_BND_ASSUMED;
         if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
       eat(c,";");return;}

@@ -826,6 +826,12 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     if written on its own line, so offsets / `sizeof` + member access match Clang on both rails. The
     member-declaration twin of the multi-declarator locals above — `#structmulti`/`cfront_structmulti.c`,
     differential asserts `sizeof` + per-member round-trip == Clang).
+    ✅ **nested struct member access** (`o.pos.lo` / `dev->ctrl.flags` — a struct-in-struct / sub-
+    register-block; the oracle already flattened the `.`/`->` chain to a single offset access, and the
+    C twin's `field` now carries a sub-struct index so a descent helper accumulates the byte offset
+    through each hop — read, plain / compound store, and nested bitfields all match. `#nestmember`/
+    `cfront_nestmember.c`, differential asserts `sizeof` + nested read/write == Clang. *Follow-on:*
+    pointer-member chains `o.p->v` and nested funcptr dispatch).
     *Follow-on:* **compound literals** (`(struct S){…}`);
   - *storage/linkage:* ✅ **`extern`** (recognized as a storage-class specifier on both rails -- consumed
     like `static`; an `extern T g;` global is referenced by name, defined in another TU, so the emit is
