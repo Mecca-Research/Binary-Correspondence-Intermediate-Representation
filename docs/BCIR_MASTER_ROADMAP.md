@@ -729,7 +729,10 @@ on the C rail too -- one top-level loop with a `try_top_decl()` helper, matching
 interleaving `parse_unit`; `cfront_interleave.c`), and ✅ **`goto` + labels** (the driver
 error-cleanup pattern -- `goto done;` / `done:;` carried as emit-only markers like break/continue,
 which already lower to a goto, so they emit verbatim and stay Clang-equivalent; the mutable
-accumulator is a real C local so skipped updates match; `cfront_goto.c`), and ✅ **`static` local
+accumulator is a real C local so skipped updates match; `cfront_goto.c`), and ✅ **empty statements**
+(a bare `;` -- the body of `for(...);` / `while(...);` / `if(c);` and stray `;;` between statements --
+consumed on both rails as a no-op that emits no claim, so behaviour is unchanged + Clang-equivalent;
+previously both rails rejected it (`unexpected ;`); `#emptystmt`/`cfront_emptystmt.c`), and ✅ **`static` local
 variables** (static storage duration -- persists across calls, a once-only constant initializer baked
 into the `static T name = init;` declaration so it lowers no init claim; the driver counter/accumulator
 pattern; `cfront_static.c`, both rails `claims=2 ok=1`, runs the loop), and ✅ **file-scope lookup

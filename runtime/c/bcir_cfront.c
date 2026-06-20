@@ -1151,6 +1151,7 @@ static void p_simple(CC *c) {
   (void)p_expr(c);
 }
 static void p_stmt(CC *c) {
+  if(is(c,";")){c->i++;return;}          /* empty statement -> a no-op (`for(...);`, `if(c);`, `;;`) */
   if(is(c,"return")){c->i++;
     if(!is(c,";")){uint32_t rv=p_expr(c);c->fn->return_rid=rv;c->fn->has_return=1;marker(c,"c.return",rv,1);}
     else marker(c,"c.return",0,0);

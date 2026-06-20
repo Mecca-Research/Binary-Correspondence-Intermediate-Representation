@@ -493,6 +493,9 @@ class _Parser:
                 or w in self.tags or w in self.typedefs)
 
     def _stmt(self):
+        if self.at("PUNCT", ";"):                             # empty statement -> a no-op (e.g. the
+            self.nxt()                                        # body of `for(...);` / `while(...);`, `if(c);`)
+            return cast.Seq(())
         if self.at("PUNCT", "{"):
             return cast.If(cast.IntLit(1), self._block())     # bare block -> always-true If (rare)
         if self.at("IDENT", "return"):
