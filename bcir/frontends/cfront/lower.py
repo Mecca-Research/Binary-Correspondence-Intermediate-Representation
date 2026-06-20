@@ -237,6 +237,22 @@ class LabelNode:
     name: str                              # `name:` -- a jump target (emit-only)
 
 
+@dataclass
+class SwitchNode:
+    disc: int                              # the discriminant rid (lowered once)
+    body: list                             # flat: CaseLabel | DefaultLabel | Claim | control nodes
+
+
+@dataclass
+class CaseLabel:
+    value: int                             # `case <value>:` -- a folded integer constant
+
+
+@dataclass
+class DefaultLabel:
+    pass                                   # `default:`
+
+
 def _flatten_block(block: list) -> list:
     """All Claim objects in a body tree, in order (the flat single-phase view verify/plan use)."""
     out: list = []
@@ -245,6 +261,8 @@ def _flatten_block(block: list) -> list:
             out += _flatten_block(node.then) + _flatten_block(node.els)
         elif isinstance(node, WhileNode):
             out += _flatten_block(node.cond_block) + _flatten_block(node.body) + _flatten_block(node.step)
+        elif isinstance(node, SwitchNode):
+            out += _flatten_block(node.body)
         elif isinstance(node, (Claim,)):
             out.append(node)
     return out
@@ -277,6 +295,10 @@ def own_footprint(lf, shared_min: int = 900000) -> tuple:
                 walk(n.cond_block)
                 walk(n.body)
                 walk(n.step)
+            elif isinstance(n, SwitchNode):
+                if n.disc >= shared_min:                    # the discriminant is a read
+                    reads.add(n.disc)
+                walk(n.body)
 
     walk(lf.body)
     return frozenset(reads), frozenset(writes)
@@ -818,6 +840,19 @@ class _FuncLowerer:
             self.block_stack.pop()
             self.block_stack[-1].append(
                 WhileNode(cond_block, cond, self._block(st.body), loop_id=self._next_loop_id()))
+        elif isinstance(st, cast.Switch):
+            disc = self._rvalue(st.disc)                      # the discriminant, lowered once
+            block: list = []
+            self.block_stack.append(block)
+            for item in st.body:
+                if isinstance(item, cast.Case):
+                    block.append(CaseLabel(item.value))
+                elif isinstance(item, cast.Default):
+                    block.append(DefaultLabel())
+                else:
+                    self._stmt(item)                          # body stmts (break preserved as BreakNode)
+            self.block_stack.pop()
+            self.block_stack[-1].append(SwitchNode(disc, block))
         elif isinstance(st, cast.For):
             if st.init is not None:                            # init -> the enclosing block, once
                 self._stmt(st.init)
@@ -913,7 +948,11 @@ def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Re
             flush_run()
             _block_region(node.cond_block, functions, calls_iter)   # cond claims (cost folded in body)
             parts.append(_block_region(node.body + node.step, functions, calls_iter))
-        elif isinstance(node, (ReturnNode, BreakNode, ContinueNode, GotoNode, LabelNode)):
+        elif isinstance(node, SwitchNode):
+            flush_run()
+            parts.append(_block_region(node.body, functions, calls_iter))   # the clause bodies, in order
+        elif isinstance(node, (ReturnNode, BreakNode, ContinueNode, GotoNode, LabelNode,
+                               CaseLabel, DefaultLabel)):
             continue
         elif node.op.startswith("c.call:"):
             flush_run()

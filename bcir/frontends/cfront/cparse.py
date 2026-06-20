@@ -575,59 +575,29 @@ class _Parser:
         return None
 
     def _switch(self):
-        """`switch (disc) { case C: ...; break; case A: case B: ...; break; default: ...; }` ->
-        a nested if/else-if chain. A clause's labels OR together (`disc==A || disc==B`); a top-level
-        `break;` terminates the clause; `default` is the final `else`. Cross-clause fallthrough (a
-        non-empty case without a break) is not modeled -- each clause is independent (the
-        Clang-equivalence gate catches any divergence). `disc` is re-evaluated per label (cheap +
-        idempotent for the variable/field discriminants drivers use)."""
+        """`switch (disc) { case C: ...; break; default: ...; }` -> a real C `switch`: the
+        discriminant + a flat body sequence (`Case` / `Default` labels interleaved with statements,
+        `break;` preserved as a `Break`). Cross-clause fallthrough is modeled exactly (the body runs
+        from the matched label until a break), and the case labels are folded constant expressions."""
         self.eat("IDENT", "switch")
         self.eat("PUNCT", "(")
         disc = self._expr()
         self.eat("PUNCT", ")")
         self.eat("PUNCT", "{")
-        clauses: list = []                                  # (labels, stmts, is_default)
-        labels, stmts, have, is_def = [], [], False, False
+        body: list = []
         while not self.at("PUNCT", "}"):
-            if self.at("IDENT", "case") or self.at("IDENT", "default"):
-                if have:                                    # a label after statements -> a new clause
-                    clauses.append((labels, stmts, is_def))
-                    labels, stmts, have, is_def = [], [], False, False
-                if self.at("IDENT", "case"):
-                    self.nxt()
-                    labels.append(self._expr())
-                    self.eat("PUNCT", ":")
-                else:
-                    self.nxt()
-                    self.eat("PUNCT", ":")
-                    is_def = True
-            elif self.at("IDENT", "break"):                 # the switch terminator (dropped)
+            if self.at("IDENT", "case"):
                 self.nxt()
-                self.eat("PUNCT", ";")
-                clauses.append((labels, stmts, is_def))
-                labels, stmts, have, is_def = [], [], False, False
+                body.append(cast.Case(self._const_eval(self._expr())))   # case <const>:
+                self.eat("PUNCT", ":")
+            elif self.at("IDENT", "default"):
+                self.nxt()
+                self.eat("PUNCT", ":")
+                body.append(cast.Default())
             else:
-                stmts.append(self._stmt())
-                have = True
-        if labels or stmts or is_def:
-            clauses.append((labels, stmts, is_def))
+                body.append(self._stmt())                   # a statement (incl. `break;` -> cast.Break)
         self.eat("PUNCT", "}")
-        default_stmts: tuple = ()
-        chained = []                                        # (cond_expr, stmts)
-        for labs, sts, isd in clauses:
-            if isd:
-                default_stmts = tuple(sts)
-            else:
-                cond = None
-                for v in labs:
-                    cmp = cast.Binary("==", disc, v)
-                    cond = cmp if cond is None else cast.Binary("||", cond, cmp)
-                if cond is not None:
-                    chained.append((cond, tuple(sts)))
-        els: tuple = default_stmts
-        for cond, sts in reversed(chained):
-            els = (cast.If(cond, sts, els),)
-        return els[0] if els else cast.If(cast.IntLit(0), (), ())
+        return cast.Switch(disc, tuple(body))
 
     def _if(self) -> cast.If:
         self.eat("IDENT", "if")

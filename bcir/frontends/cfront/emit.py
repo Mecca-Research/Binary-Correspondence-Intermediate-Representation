@@ -12,12 +12,15 @@ from ...model import Claim
 from .ctype_model import CType
 from .lower import (
     BreakNode,
+    CaseLabel,
     ContinueNode,
+    DefaultLabel,
     GotoNode,
     IfNode,
     LabelNode,
     LoweredFunc,
     ReturnNode,
+    SwitchNode,
     WhileNode,
 )
 
@@ -96,6 +99,16 @@ def _walk(lf: LoweredFunc, block: list, ref, depth: int, loops: list | None = No
                 out += _walk(lf, node.step, ref, depth + 1, loops)
             out.append(f"{ind}}}")
             loops.pop()
+        elif isinstance(node, SwitchNode):                 # a real C switch (fallthrough preserved)
+            out.append(f"{ind}switch ({ref(node.disc)}) {{")
+            for item in node.body:
+                if isinstance(item, CaseLabel):
+                    out.append(f"{ind}case {item.value}:")
+                elif isinstance(item, DefaultLabel):
+                    out.append(f"{ind}default:")
+                else:
+                    out += _walk(lf, [item], ref, depth + 1, loops)
+            out.append(f"{ind}}}")
         elif isinstance(node, ReturnNode):
             out.append(f"{ind}return {ref(node.rid)};" if node.rid is not None else f"{ind}return;")
         elif isinstance(node, BreakNode):
