@@ -804,8 +804,11 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     *Follow-on:* **compound literals** (`(struct S){…}`);
   - *storage/linkage:* ✅ **`extern`** (recognized as a storage-class specifier on both rails -- consumed
     like `static`; an `extern T g;` global is referenced by name, defined in another TU, so the emit is
-    Clang-equivalent once linked against the definition -- `#extern`/`cfront_extern.c`); `thread_local`,
-    tentative definitions, internal/external linkage, broader (aggregate / non-const-init) globals,
+    Clang-equivalent once linked against the definition -- `#extern`/`cfront_extern.c`); ✅
+    **`_Thread_local` / `thread_local`** (recognized + consumed like `static`; a thread-local global
+    behaves as a global under the deterministic single-thread executor -- `#threadlocal`/
+    `cfront_threadlocal.c`); tentative definitions, internal/external linkage, broader (aggregate /
+    non-const-init) globals,
     extern function prototypes;
   - *memory model:* ✅ **`restrict`** (`restrict` / `__restrict` / `__restrict__` recognized as a
     pointer qualifier on both rails and consumed -- the value model carries no aliasing facts, so the
