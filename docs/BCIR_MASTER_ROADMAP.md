@@ -924,13 +924,18 @@ production rail: ✅ **Clang-grade diagnostics** (spans, include-stack notes, fi
 machine-readable JSON — `bcir_diag.c`, dual-rail), ✅ a **cross-platform data-model ABI matrix**
 (`--target`, six targets, layout cross-checked vs Clang — §5.8), ✅ a module-scope **alias/effect
 analysis** (`--emit-effects`), and ✅ an **LLVM-backend fallback contract** (`bcir-cc --fallback`:
-clean 0 / dirty 1 / route-to-LLVM 2, the supported subset pinned to the oracle). ✅ **integrity fix —
-struct member arrays route to fallback, not a silent miscompile**: `s.arr[i]` indexes a struct *member*
-array; the oracle's rid-based address of `s.arr` could not carry the member's byte offset into the
-index access, so it lowered to `s[i]` and **emitted invalid C (`b[idx]`) while reporting `is_clean`** —
-a verified-compiler integrity violation that no gated fixture covered. The oracle now rejects it at
-lowering (a clean `CLowerError` -> `needs_fallback`), matching the twin's parse-reject, so both rails
-agree the unit routes to the LLVM backend (`_FALLBACK_PROBES` in `test_fallback_contract_dual_rail`).
+clean 0 / dirty 1 / route-to-LLVM 2, the supported subset pinned to the oracle). ✅ **native struct
+member arrays** `s.arr[i]` (a DMA buffer / FIFO / packet body -- the 1-D array member): originally a
+silent miscompile (the oracle emitted `b[idx]`, indexing the struct, while reporting `is_clean`), first
+made safe by routing to fallback (#380), and **now lowered faithfully on both rails** -- the access
+carries the index AND a `(member byte offset, element size)` imm, so the element lands at `&base +
+member_off + i*elem_size` (the emit a memcpy at that offset), distinct from a plain `base[idx]` (no imm)
+and a plain member (no index). Read, write, compound, and a narrowing `uint8` element all match Clang +
+structural parity (`#memberarray`/`cfront_memberarray.c`, differential asserts `sizeof` + access). The
+oracle `_LV` already carried both `byte_off` and `idx`; the twin's `field` gained an `arr_count`.
+*Still fallback (both rails, pinned by `_FALLBACK_PROBES`):* a **multi-dimensional** member array
+`s.m[i][j]` (needs the per-dim element stride) and a **pointer** member indexed `s.ptr[i]` (needs a
+pointer load first).
 ✅ **integrity fix — multi-dimensional *local* arrays route to fallback, not a silent miscompile**: a
 `T m[A][B]` local kept only the outer dim on its CType (no flatten shape), so the emit was mis-sized
 (`m[A]`, not `m[A*B]`) and `m[i][j]` collapsed to `m[i + j]` (colliding cells -- e.g. `m[0][1]` and

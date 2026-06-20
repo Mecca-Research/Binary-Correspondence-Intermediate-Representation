@@ -462,16 +462,29 @@ class _FuncLowerer:
                 idx_nodes.append(n.index)
                 n = n.base
             idx_nodes.reverse()
+            byte_off = 0
             if isinstance(n, cast.Member):
-                # `s.arr[i]` -- indexing a struct *member* array. The rid-based address of `s.arr`
-                # cannot carry the member's byte offset into the index access, so the lowering would
-                # index the enclosing struct (`s[i]`) -- wrong in both the executor and the emit
-                # (`b[idx]`, which is not even valid C). Reject cleanly so the unit routes to the LLVM
-                # fallback instead of being silently miscompiled (a verified-compiler integrity rule:
-                # never report `is_clean` on a construct we cannot lower faithfully).
-                raise CLowerError(
-                    f"indexing a struct member array ('{n.field}[...]') is not yet supported")
-            base_rid, base_ct = self._addr(n)
+                # `s.arr[i]` -- indexing a struct *member* array. The base is the enclosing struct; the
+                # member's byte offset rides in the access imm beside the element size, and the index is
+                # scaled by the element (in the executor and the emit), so the element lands at
+                # `&s + member_off + i*elem_size` -- never the enclosing struct's offset 0.
+                base_rid, struct_ct = self._addr(n.base)
+                agg = struct_ct.of if n.arrow else struct_ct
+                ftype, byte_off, _bo, _bw = agg.field(n.field)
+                if ftype.kind != "array":
+                    # a *pointer* member indexed (`s.ptr[i]`): needs a pointer load first, not an offset.
+                    raise CLowerError(
+                        f"indexing a non-array struct member ('{n.field}[...]') is not yet supported")
+                if (ftype.of is not None and ftype.of.of is not None) or len(idx_nodes) > 1:
+                    # a *multi-dimensional* member array `s.m[i][j]` -- the element-size / flatten model
+                    # below assumes a 1-D member array, so defer it to the LLVM fallback rather than
+                    # emit a wrong element stride (the common `uint8_t buf[N]` / `unsigned data[N]` is 1-D).
+                    raise CLowerError(
+                        f"indexing a multi-dimensional struct member array ('{n.field}[...]')"
+                        " is not yet supported")
+                base_ct = ftype                               # flatten using the member array's dims
+            else:
+                base_rid, base_ct = self._addr(n)
             idx_rids = [self._rvalue(ix) for ix in idx_nodes]
             shape = base_ct.shape
             lin = idx_rids[0]
@@ -485,7 +498,7 @@ class _FuncLowerer:
                 self._emit("c.bin.add", Opcode.ADD, (m1, idx_rids[d]), (a1,))
                 lin = a1
             elem = base_ct.of if base_ct.of else scalar("uint32_t")
-            return _LV("mem", base_rid, elem, idx=lin)
+            return _LV("mem", base_rid, elem, idx=lin, byte_off=byte_off)
         if isinstance(node, cast.Member):
             base_rid, base_ct = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
@@ -665,9 +678,14 @@ class _FuncLowerer:
         rd = (lv.rid,) if lv.idx is None else (lv.rid, lv.idx)
         mmio = self._mmio(lv.rid)
         # the byte offset rides in imm (not the strict-bounds `offset`), and the access is
-        # assumed_safe (the frontend resolved the member/index). MMIO accesses are ordered.
-        return self._emit("c.load", Opcode.LOAD, rd, (t,),
-                          imm=(lv.byte_off,) if lv.byte_off else (),
+        # assumed_safe (the frontend resolved the member/index). MMIO accesses are ordered. A member
+        # array `s.arr[i]` carries BOTH (member offset, element size) and an index -- so the emit lands
+        # the element at `&s + member_off + i*elem_size`, distinct from a plain `base[idx]` (no imm).
+        if lv.idx is not None:
+            imm = (lv.byte_off, max(1, lv.ct.size)) if lv.byte_off else ()
+        else:
+            imm = (lv.byte_off,) if lv.byte_off else ()
+        return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=imm,
                           domain=Domain.MMIO if mmio else Domain.RAM, bounds="assumed_safe",
                           lane=Lane.H if mmio else Lane.U,
                           hazard="barriered" if mmio else "unique")
@@ -680,6 +698,8 @@ class _FuncLowerer:
         mmio = self._mmio(lv.rid)
         if lv.idx is None:                                    # member/deref: carry (offset, size)
             rd, imm = (lv.rid, v), (lv.byte_off, max(1, lv.ct.size))
+        elif lv.byte_off:                                     # s.arr[i]: (member offset, element size)
+            rd, imm = (lv.rid, lv.idx, v), (lv.byte_off, max(1, lv.ct.size))
         else:                                                 # base[idx]: a typed array store
             rd, imm = (lv.rid, lv.idx, v), ()
         self._emit("c.store", Opcode.STORE, rd, (), imm=imm,
