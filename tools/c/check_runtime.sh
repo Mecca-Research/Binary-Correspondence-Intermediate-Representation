@@ -223,6 +223,40 @@ esac
   && echo "  PASS bcir-cc --emit-pack (valid StreamPack)" \
   || { echo "  FAIL: bcir-cc --emit-pack: bad magic"; exit 1; }
 
+# Clang-grade diagnostics (#diag): the C source-location model + caret renderer (bcir_diag.c, the C
+# twin of cfront/diagnostics.py). Fed the SAME synthetic diagnostic (severity / message / byte span)
+# over the same source, the C renderer's Clang-layout output (banner + source line + ^~~~ underline)
+# is byte-identical to diagnostics.render() -- so the two rails share one diagnostic format,
+# independent of which parser produced the error (messages aren't shared; the LAYOUT is).
+echo "[c-runtime] Clang-style diagnostic renderer (bcir_diag): caret layout == oracle (#diag)"
+"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${C}/bcir_diag.c" "${C}/test_diag.c" -o "${tmp}/test_diag" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 -I "${C}" "${C}/bcir_diag.c" "${C}/test_diag.c" -o "${tmp}/test_diag" \
+  || { echo "  FAIL: bcir_diag build"; exit 1; }
+printf 'unsigned f(unsigned x){ return x + ; }\n'   > "${tmp}/da.c"
+printf 'int main(void)\n{\n\treturn foo(1, 2);\n}\n' > "${tmp}/db.c"   # a tab-indented line
+run_diag() {  # <src-file> <filename> <severity> <start> <end> <message>
+  local src="$1" fn="$2" sev="$3" st="$4" en="$5" msg="$6"
+  local c_out py_out
+  c_out="$(printf '%s\t%s\t%s\t%s\n' "${sev}" "${st}" "${en}" "${msg}" | "${tmp}/test_diag" "${src}" "${fn}")"
+  py_out="$(SRCF="${src}" FN="${fn}" SEV="${sev}" ST="${st}" EN="${en}" MSG="${msg}" python3 -c "
+import os, sys
+from bcir.frontends.cfront.diagnostics import SourceDiagnostic, Span, render
+src=open(os.environ['SRCF']).read()
+s,e=int(os.environ['ST']),int(os.environ['EN'])
+span=None if (s==-1 and e==-1) else Span(s,e)
+d=SourceDiagnostic(os.environ['SEV'], os.environ['MSG'], span=span)
+sys.stdout.write(render(d, src, os.environ['FN']))")" || { echo "  FAIL: oracle render ${fn}"; exit 1; }
+  [ "${c_out}" = "${py_out}" ] \
+    && echo "  PASS diag ${fn} ${sev}@${st}:${en}" \
+    || { echo "  FAIL: diag ${fn} (C != PY)"; printf '   C : %s\n   PY: %s\n' "${c_out}" "${py_out}"; exit 1; }
+}
+run_diag "${tmp}/da.c" u.c error    34 35 "expected ';'"          # a spanned single-caret error
+run_diag "${tmp}/da.c" u.c error    -1 -1 "file-level problem"    # a spanless (no-caret) banner
+run_diag "${tmp}/da.c" u.c warning   9 10 "odd parameter name"    # a warning severity
+run_diag "${tmp}/db.c" m.c error    19 22 "implicit declaration of 'foo'"  # tab-indented line: caret aligns
+run_diag "${tmp}/db.c" m.c error    34 34 "zero-width insertion point"     # zero-width span -> one caret
+echo "  PASS diagnostic renderer is byte-identical to diagnostics.render()"
+
 # The total-compilation / fallback contract (#fallback, the C twin of pipeline.compile_with_fallback):
 # a unit BCIR can compile + verify exits 0 (clean); a unit that compiles but fails the verifier (e.g.
 # R18 recursion) exits 1 (DIRTY, NOT a fallback); a construct outside the supported subset exits 2
