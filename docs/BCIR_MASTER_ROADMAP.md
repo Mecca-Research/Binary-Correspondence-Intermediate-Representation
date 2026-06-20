@@ -931,8 +931,14 @@ index access, so it lowered to `s[i]` and **emitted invalid C (`b[idx]`) while r
 a verified-compiler integrity violation that no gated fixture covered. The oracle now rejects it at
 lowering (a clean `CLowerError` -> `needs_fallback`), matching the twin's parse-reject, so both rails
 agree the unit routes to the LLVM backend (`_FALLBACK_PROBES` in `test_fallback_contract_dual_rail`).
-*Follow-on:* lower member-array access faithfully (carry the member offset into the indexed store/load
-on both rails) to support it natively rather than route away. **Remaining Phase-4
+✅ **integrity fix — multi-dimensional *local* arrays route to fallback, not a silent miscompile**: a
+`T m[A][B]` local kept only the outer dim on its CType (no flatten shape), so the emit was mis-sized
+(`m[A]`, not `m[A*B]`) and `m[i][j]` collapsed to `m[i + j]` (colliding cells -- e.g. `m[0][1]` and
+`m[1][0]`), again while reporting `is_clean`. Rejected at lowering -> `needs_fallback`, matching the
+twin's parse-reject; a 2D array *param* (a decayed row pointer, shape carried on the type) is unaffected.
+*Follow-on:* lower member-array + multi-dim-local access faithfully (carry the member offset / full
+flatten shape into the indexed store/load on both rails) to support them natively rather than route away.
+**Remaining Phase-4
 work:** a *broad* calling-convention/object ABI matrix (on top of the landed data-model layout); the
 optimizer correctness/differential story still owed by the C rail — a full **cost-model bridge into the
 MLIR/C++ law rail**, arbitrary claim-graph lowering, RCSP/thermal planning through C, cost-based
