@@ -490,12 +490,40 @@ static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereferenc
   if(pv->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
   return t;
 }
+/* <math.h> real-valued functions (mirrors the oracle's _LIBM): the result is a floating type fixed
+ * by the name suffix -- base -> double, +f -> float. They lower to an opaque external library edge
+ * (c.call.libm), so the emit calls the real libm function (the harness links -lm) and R18 sees no
+ * callee. (The +l long-double variants need the twin's long-double support and are deferred.) */
+static const char *const g_libm[] = {
+  "acos","asin","atan","atan2","cos","sin","tan","acosh","asinh","atanh","cosh","sinh","tanh",
+  "exp","exp2","expm1","log","log10","log1p","log2","logb","cbrt","fabs","hypot","pow","sqrt",
+  "ceil","floor","round","trunc","nearbyint","rint","erf","erfc","lgamma","tgamma",
+  "copysign","fdim","fmax","fmin","fmod","remainder","fma","nextafter", 0 };
+
+/* The result float size of a <math.h> call s[0..n): 8 (double) for a base name, 4 (float) for an
+ * `f`-suffixed variant, or 0 if not a libm function. The full name is matched first so a base that
+ * ends in `f` (erf) is not misread as the float variant of `er`. */
+static int libm_float_size(const char *s, int n) {
+  for(int i=0;g_libm[i];i++){ if((int)strlen(g_libm[i])==n && !strncmp(g_libm[i],s,(size_t)n)) return 8; }
+  if(n>1 && s[n-1]=='f')
+    for(int i=0;g_libm[i];i++){ if((int)strlen(g_libm[i])==n-1 && !strncmp(g_libm[i],s,(size_t)(n-1))) return 4; }
+  return 0;
+}
+
 static uint32_t p_call(CC *c, const tok *name) {
   c->i++; /* '(' */
   uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
   if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;
     if(is(c,",")){c->i++;continue;} break; }
   eat(c,")");
+  int lz=libm_float_size(name->s,name->n);
+  if(lz){                                  /* a <math.h> call -> a typed external library edge */
+    uint32_t t=tempf(c,lz);                /* float (f) / double (base) result; not in fn->calls */
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.libm:%.*s",name->n,name->s);
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+    if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
+    return t;
+  }
   uint32_t t=temp(c,4);
   char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call:%.*s",name->n,name->s);
   bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
@@ -1151,6 +1179,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(!strcmp(fn,"load")) w+=snprintf(o+w,on-w,"uint32_t %s = atomic_load(%s);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
       else if(!strcmp(fn,"store")) w+=snprintf(o+w,on-w,"atomic_store(%s, %s);\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
       else w+=snprintf(o+w,on-w,"uint32_t %s = atomic_%s(%s, %s);\n",rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
+    else if(!strncmp(cl->op,"c.call.libm:",12)){   /* a <math.h> call -> the real libm function */
+      w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+12);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+w,on-w,");\n"); }
     else if(!strncmp(cl->op,"c.call:",7)){
       w+=snprintf(o+w,on-w,"uint32_t %s = bcir_%s(",rname(f,cl->wr[0],d),cl->op+7);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));

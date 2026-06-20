@@ -40,7 +40,7 @@ _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-val
         "cfront_rmw.c",                               # + MMIO register read-modify-write (d->reg |= bits)
         "cfront_bitfield.c",                          # + MMIO bitfield write (r->field = v, c.bf.set)
         "cfront_bfcompound.c"]                         # + bitfield compound-assign (r->field |= bits)
-_FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c"]      # float/double: parity + emit + Clang ≡ (the
+_FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_mathh.c"]  # float/double: parity + emit + Clang ≡ (the
 #   integer StreamPack executor doesn't compute float; the math is delegated to the resident backend)
 _FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI + _FLOAT
 # §5.8 atomics/fences/CAS run their own gate: their memory side effects make the generic
@@ -150,6 +150,7 @@ def _equiv(source: str, c_emitted: str, entry) -> str:
 #include <stdio.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <math.h>
 {source}
 
 {c_emitted}
@@ -167,7 +168,8 @@ int main(void){{
         c, e = os.path.join(d, "e.c"), os.path.join(d, "e")
         open(c, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e], capture_output=True, text=True)
+            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e, "-lm"],   # -lm: <math.h> links
+                               capture_output=True, text=True)
             if b.returncode == 0:
                 break
         else:
@@ -223,7 +225,8 @@ int main(void){{
         c, e = os.path.join(d, "a.c"), os.path.join(d, "a")
         open(c, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e], capture_output=True, text=True)
+            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e, "-lm"],   # -lm: <math.h> links
+                               capture_output=True, text=True)
             if b.returncode == 0:
                 break
         else:
@@ -375,7 +378,8 @@ int main(void){{
         c, e = os.path.join(d, "disp.c"), os.path.join(d, "disp")
         open(c, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e], capture_output=True, text=True)
+            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e, "-lm"],   # -lm: <math.h> links
+                               capture_output=True, text=True)
             if b.returncode == 0:
                 break
         else:
