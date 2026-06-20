@@ -1059,6 +1059,26 @@ static void agg_init(CC *c, uint32_t rid, int sidx) {
   }
   eat(c,"}");
 }
+/* A braced initializer for a local array `T a[N] = {...}` (the C twin of the oracle's array _agg_init):
+ * a `= {0}` zero baseline (emit) + a c.store per initialized element. Positional entries advance a
+ * cursor; a `[i]=` designator (a folded constant index) jumps it -- gaps zero-fill (§6.7.10). */
+static void arr_init(CC *c, uint32_t rid) {
+  eat(c,"{");
+  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }
+  int cursor=0;
+  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
+    int idx=cursor;
+    if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
+    uint32_t v=p_expr(c);
+    uint32_t ic=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+    if(kc){kc->n_wr=1;kc->wr[0]=ic;kc->n_imm=1;kc->imm[0]=idx;}
+    bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+    if(cl){cl->n_rd=3;cl->rd[0]=rid;cl->rd[1]=ic;cl->rd[2]=v;cl->bounds=BCIR_BND_ASSUMED;}
+    cursor=idx+1;
+    if(is(c,",")) c->i++;
+  }
+  eat(c,"}");
+}
 static void p_block(CC *c){            /* `{ stmts }` or a single statement */
   if(is(c,"{")){c->i++;while(!is(c,"}")&&!isk(c,T_END)&&!c->failed)p_stmt(c);eat(c,"}");}
   else p_stmt(c);
@@ -1180,14 +1200,15 @@ static void p_stmt(CC *c) {
   if(looks_decl){
     bcir_ctype ty;int si;if(p_type(c,&ty,&si))return; tok nm=adv(c);   /* p_type eats `static` */
     char nb[BCIR_CIR_NAME]; idcpy(nb,&nm);
-    int rk=ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR;
+    int arr=0; if(is(c,"[")){ c->i++; arr = isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]"); }   /* T name[N] -- a local array */
+    int rk=arr?BCIR_RK_SCALAR:(ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
     uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
-                         ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
-                         ty.kind==2?(1<<16):1, ty.is_volatile, rk, nb);
-    if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double local */
-    else if(ty.kind==0) c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
-    if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
-    env_add(c,&nm,rid,&ty,si);
+                         arr?ty.size:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
+                         arr?arr:(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
+    if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double (element) local */
+    else if(ty.kind==0) c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
+    if(ty.kind==1&&!arr) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
+    env_add(c,&nm,rid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
     if(is_static){            /* static storage: a once-only constant init, baked into the decl */
       long long init=0; if(is(c,"=")){c->i++;init=ce_expr(c,0);}
       { bcir_func *f=c->fn;
@@ -1198,7 +1219,7 @@ static void p_stmt(CC *c) {
       eat(c,";");return;
     }
     if(is(c,"=")){c->i++;
-      if(is(c,"{")) agg_init(c,rid,si);          /* struct/union local aggregate initializer */
+      if(is(c,"{")){ if(arr) arr_init(c,rid); else agg_init(c,rid,si); }   /* {…} array / struct-union init */
       else { uint32_t v=p_expr(c);
         bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;} } }
     eat(c,";");return;
@@ -1397,6 +1418,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
       if(sx>=0) w+=snprintf(o+w,on-w,"  static uint32_t %s = %lluu;\n",r->name,(unsigned long long)f->statics[sx].init);
       else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s%s;\n",r->agg,r->name,r->zinit?" = {0}":"");
+      else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+w,on-w,"  %s %s[%u]%s;\n",tty(f,r->rid),r->name,r->count,r->zinit?" = {0}":"");  /* a local array */
       else w+=snprintf(o+w,on-w,"  %s %s;\n",tty(f,r->rid),r->name);}}
   int depth=1, lstk[64], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)

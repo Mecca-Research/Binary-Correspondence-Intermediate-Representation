@@ -786,10 +786,12 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     `[i]=` designators) — lower to a `= {0}` zero baseline + a store per initialized member/element
     (reusing the member/array store path, so uninitialized members zero-fill, §6.7.10): the oracle does
     struct/union/array (`cast.AggInit`/`cparse._init_value`/`lower._agg_init`;
-    `test_local_aggregate_initializers_oracle`), and the **C twin** does **struct/union**
-    (`agg_init` + a `zinit` resource flag → `= {0}`; `#aggregate`/`cfront_agginit.c`, dual-rail
-    parity + Clang-equivalent). *Follow-ons:* a **local array declarator** (`T a[N]` locals) for the
-    twin's array case, and **compound literals** (`(struct S){…}`);
+    `test_local_aggregate_initializers_oracle`), and the **C twin** now does **struct/union**
+    (`agg_init` + a `zinit` resource flag → `= {0}`; `#aggregate`/`cfront_agginit.c`) **and arrays** —
+    ✅ a **local array declarator** `T a[N]` (a scalar-element resource of count N, emitted `T a[N]`,
+    element access via the index load/store, `arr_init` for the positional + `[i]=` aggregate
+    initializer; `#localarr`/`cfront_localarray.c`) — both dual-rail parity + Clang-equivalent.
+    *Follow-on:* **compound literals** (`(struct S){…}`);
   - *storage/linkage:* `extern`, `thread_local`, tentative definitions, internal/external linkage,
     broader (aggregate / non-const-init) globals;
   - *memory model:* ✅ **`restrict`** (`restrict` / `__restrict` / `__restrict__` recognized as a
