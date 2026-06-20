@@ -279,7 +279,7 @@ static void idcpy(char *d,const tok *t){int n=t->n<BCIR_CIR_NAME-1?t->n:BCIR_CIR
 /* --- types --------------------------------------------------------------- */
 static int scalar_size(const char *s,int n) {
   struct {const char *k;int sz;} T[]={{"void",0},{"char",1},{"bool",1},{"_Bool",1},{"short",2},
-    {"int",4},{"unsigned",4},{"long",8},{"uint8_t",1},{"int8_t",1},{"uint16_t",2},{"int16_t",2},
+    {"int",4},{"unsigned",4},{"signed",4},{"long",8},{"uint8_t",1},{"int8_t",1},{"uint16_t",2},{"int16_t",2},
     {"uint32_t",4},{"int32_t",4},{"uint64_t",8},{"int64_t",8},
     {"size_t",8},{"intptr_t",8},{"uintptr_t",8},     /* the pointer-tracking size_t-class types */
     {"float",4},{"double",8},{0,0}};
@@ -341,7 +341,7 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
     if(is(c,"_Atomic")){ty->is_atomic=1;c->i++;continue;}
     if(is(c,"const")||is(c,"static")||is(c,"inline")||is(c,"extern")
        ||is(c,"_Thread_local")||is(c,"thread_local")){c->i++;continue;}  /* storage class / qualifier */
-    if(is(c,"signed")){ty->signd=1;sign_explicit=1;c->i++;continue;}
+    if(is(c,"signed")){ty->signd=1;sign_explicit=1;c->i++;continue;}   /* a modifier; the base sets size */
     if(is(c,"unsigned")){ty->signd=0;sign_explicit=1;ty->size=4;seen=1;c->i++;continue;}
     if(is(c,"struct")||is(c,"union")){c->i++;tok tag=adv(c);int si=find_struct(c,tag.s,tag.n);
       if(si<0){fail(c,"unknown struct");return 1;} ty->kind=1;ty->size=c->s[si].size;*sidx=si;
