@@ -164,6 +164,12 @@ class Seq:
 
 
 @dataclass(frozen=True)
+class Block:
+    stmts: tuple = ()               # a bare `{ ... }` compound statement: a new scope, lowered inline
+                                    # (no `if(1)` wrapper), so its locals do not leak to the enclosing block
+
+
+@dataclass(frozen=True)
 class If:
     cond: object
     then: tuple

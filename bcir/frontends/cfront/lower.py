@@ -823,8 +823,10 @@ class _FuncLowerer:
     def _block(self, stmts) -> list:
         block: list = []
         self.block_stack.append(block)
-        for s in stmts:
-            self._stmt(s)
+        saved_env = dict(self.env)                            # a `{ ... }` is a scope: locals declared
+        for s in stmts:                                       # inside it do not leak to the enclosing
+            self._stmt(s)                                     # block (so a shadow does not clobber an
+        self.env = saved_env                                 # outer same-named var read after the block)
         self.block_stack.pop()
         return block
 
@@ -832,6 +834,9 @@ class _FuncLowerer:
         if isinstance(st, cast.Seq):                          # several declarators of one declaration
             for s in st.stmts:
                 self._stmt(s)
+            return None
+        if isinstance(st, cast.Block):                        # a bare `{ ... }` -> its scoped nodes,
+            self.block_stack[-1].extend(self._block(st.stmts))  # appended inline (no if(1) wrapper)
             return None
         if isinstance(st, cast.Decl):
             if len(st.type.array) > 1:
