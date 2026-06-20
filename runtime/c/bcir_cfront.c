@@ -1012,6 +1012,40 @@ static void marker(CC *c,const char *op,uint32_t cond,int has_cond){
   if(cl&&has_cond){cl->n_rd=1;cl->rd[0]=cond;}
 }
 static void p_stmt(CC *c);
+/* A braced aggregate initializer for a local struct/union (the C twin of lower._agg_init): the local
+ * is declared with a `= {0}` zero baseline (emit), then each initialized member is a c.store, reusing
+ * the member-store path. Positional entries advance a cursor; a `.field=` designator selects by name.
+ * (Local arrays + `[i]=` designators need a local array declarator -- a follow-on.) */
+static uint32_t p_expr(CC *c);
+static void agg_init(CC *c, uint32_t rid, int sidx) {
+  eat(c,"{");
+  sdef *S = sidx>=0 ? &c->s[sidx] : NULL;
+  if(!S){ fail(c,"aggregate initializer needs a struct/union type"); return; }
+  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }  /* = {0} */
+  int cursor=0;
+  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
+    int fi=cursor;
+    if(is(c,".")){ c->i++; tok fld=adv(c); fi=-1;
+      for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
+      if(fi<0){ fail(c,"unknown field"); return; }
+      eat(c,"="); }
+    uint32_t v=p_expr(c);
+    if(fi>=0&&fi<S->nf){ field *F=&S->f[fi]; uint32_t val=v;
+      if(F->bit_w){                                  /* a bitfield member: read unit, set bits, store */
+        uint32_t unit=temp(c,F->size);
+        bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
+        if(ld){ld->n_rd=1;ld->rd[0]=rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=F->byte_off;ld->imm[1]=F->size;ld->bounds=BCIR_BND_ASSUMED;}
+        uint32_t nu=temp(c,F->size);
+        bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
+        if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=v;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=F->bit_off;bs->imm[1]=F->bit_w;}
+        val=nu; }
+      bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+      if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=F->byte_off;cl->imm[1]=F->size;cl->bounds=BCIR_BND_ASSUMED;} }
+    cursor=fi+1;
+    if(is(c,",")) c->i++;
+  }
+  eat(c,"}");
+}
 static void p_block(CC *c){            /* `{ stmts }` or a single statement */
   if(is(c,"{")){c->i++;while(!is(c,"}")&&!isk(c,T_END)&&!c->failed)p_stmt(c);eat(c,"}");}
   else p_stmt(c);
@@ -1150,8 +1184,10 @@ static void p_stmt(CC *c) {
           f->statics[f->n_statics].init=init; f->n_statics++; } }
       eat(c,";");return;
     }
-    if(is(c,"=")){c->i++;uint32_t v=p_expr(c);
-      bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}}
+    if(is(c,"=")){c->i++;
+      if(is(c,"{")) agg_init(c,rid,si);          /* struct/union local aggregate initializer */
+      else { uint32_t v=p_expr(c);
+        bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;} } }
     eat(c,";");return;
   }
   if(isk(c,T_ID)){tok id=*pk(c);venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a writable file-scope global */
@@ -1332,7 +1368,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(is_named_local(f,r->rid)){
       int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
       if(sx>=0) w+=snprintf(o+w,on-w,"  static uint32_t %s = %lluu;\n",r->name,(unsigned long long)f->statics[sx].init);
-      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s;\n",r->agg,r->name);
+      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s%s;\n",r->agg,r->name,r->zinit?" = {0}":"");
       else w+=snprintf(o+w,on-w,"  %s %s;\n",tty(f,r->rid),r->name);}}
   int depth=1, lstk[64], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)
