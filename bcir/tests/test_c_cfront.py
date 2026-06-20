@@ -31,7 +31,7 @@ _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfron
                  "cfront_strtab.c", "cfront_strconcat.c", "cfront_widelit.c", "cfront_cast.c", "cfront_alignof.c", "cfront_static.c",
                  "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c"]   # + char consts + str table/dedup + const LUT + ABI sizeof model
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
-            "cfront_continue.c", "cfront_switch.c", "cfront_goto.c", "cfront_incdec.c"]
+            "cfront_continue.c", "cfront_switch.c", "cfront_switchfall.c", "cfront_goto.c", "cfront_incdec.c"]
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c", "cfront_comments.c"]      # L7: exercise the preprocessor
 _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-value + packed layout
         "cfront_union.c",                             # + full union (members overlap at offset 0)
@@ -441,16 +441,19 @@ def test_register_driver_composes_register_map_surface():
     oracle_summary, r, entry = _oracle(src)
     assert "ok=1" in oracle_summary, oracle_summary
     # a real register driver: a volatile MMIO read + a bitfield read, no hand-written claim graph.
-    assert "mmio=5" in oracle_summary and "bf=1" in oracle_summary, oracle_summary
+    # (mmio=4: the real `switch` lowers the MMIO status discriminant once, where the old if/else-if
+    # desugar re-read it per case label.)
+    assert "mmio=4" in oracle_summary and "bf=1" in oracle_summary, oracle_summary
     if not _CC:
         return
     with tempfile.TemporaryDirectory() as d:
         exe = _build_frontend(d)
         c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
-        # the emit carries each composed register feature in one verified-C unit.
+        # the emit carries each composed register feature in one verified-C unit (the status `switch`
+        # now renders as a real C `switch`, not an if/else-if desugar).
         for needle in ("volatile uint32_t *", "QUANTA[", "static uint32_t halts",
-                       "} else {", "BCIR verified-C attestation"):
+                       "switch (", "case ", "BCIR verified-C attestation"):
             assert needle in c_emit, f"{fx}: emit missing {needle!r}"
         assert _equiv(r.source, c_emit, entry) == "MATCH", f"{fx}: emit not behaviour-equivalent"
 

@@ -1174,34 +1174,19 @@ static void p_stmt(CC *c) {
   if(isk(c,T_ID)&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==':'){  /* `name:` -- a label */
     tok lb=adv(c); c->i++; char op[BCIR_CIR_NAME];
     snprintf(op,sizeof op,"c.label:%.*s",lb.n,lb.s); new_claim(c,op,BCIR_OP_NOP); return; }
-  if(is(c,"switch")){                  /* switch(disc){case V:..;break; default:..} -> if/else-if */
+  if(is(c,"switch")){                  /* a real C switch: case labels + fallthrough preserved */
     c->i++; eat(c,"(");
-    int disc_start=c->i;               /* re-lower the discriminant per case label (cheap for a var) */
-    { int pd=1; while(!isk(c,T_END)&&pd){ if(is(c,"("))pd++; else if(is(c,")")){pd--; if(!pd)break;} c->i++; } }
+    uint32_t disc=p_expr(c);           /* the discriminant, lowered once */
     eat(c,")"); eat(c,"{");
-    int nopen=0, first=1;
+    marker(c,"c.switch",disc,1);
     while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-      if(!first) marker(c,"c.else",0,0);             /* open this clause's scope FIRST, so its */
-      uint32_t condrid=0; int have_cond=0, is_default=0;   /* condition claims land in the else, */
-      while(is(c,"case")||is(c,"default")){          /* not the previous then-block. */
-        if(is(c,"case")){ c->i++; uint32_t valrid=p_expr(c); eat(c,":");
-          int save=c->i; c->i=disc_start; uint32_t drid=p_expr(c); c->i=save;   /* disc, re-lowered */
-          uint32_t cmp=temp(c,4); bcir_claim *e=new_claim(c,"c.bin.eq",BCIR_OP_SUB);
-          if(e){e->n_rd=2;e->rd[0]=drid;e->rd[1]=valrid;e->n_wr=1;e->wr[0]=cmp;}
-          if(have_cond){ uint32_t o=temp(c,4); bcir_claim *l=new_claim(c,"c.bin.lor",BCIR_OP_ADD);
-            if(l){l->n_rd=2;l->rd[0]=condrid;l->rd[1]=cmp;l->n_wr=1;l->wr[0]=o;} condrid=o; }
-          else { condrid=cmp; have_cond=1; }
-        } else { c->i++; eat(c,":"); is_default=1; }
-      }
-      if(!is_default){ marker(c,"c.if",condrid,1); nopen++; }
-      while(!is(c,"case")&&!is(c,"default")&&!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-        if(is(c,"break")){ c->i++; eat(c,";"); break; }   /* the switch terminator (dropped) */
-        p_stmt(c);
-      }
-      first=0;
+      if(is(c,"case")){ c->i++; long long v=ce_expr(c,0); eat(c,":");   /* case <const>: */
+        char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.case:%lld",v); marker(c,op,0,0); }
+      else if(is(c,"default")){ c->i++; eat(c,":"); marker(c,"c.default",0,0); }
+      else p_stmt(c);                  /* body statements (break -> c.break, no implicit break) */
     }
     eat(c,"}");
-    for(int k=0;k<nopen;k++) marker(c,"c.endif",0,0);     /* close the else-if nesting */
+    marker(c,"c.endswitch",0,0);
     return;
   }
   if(is(c,"{")){p_block(c);return;}
@@ -1444,6 +1429,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.cont.tgt")){IND();w+=snprintf(o+w,on-w,"__cont_%d: ;\n",nls?lstk[nls-1]:0);continue;}
     if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");if(nls)nls--;continue;}
     if(!strcmp(cl->op,"c.break")){IND();w+=snprintf(o+w,on-w,"break;\n");continue;}
+    if(!strcmp(cl->op,"c.switch")){IND();w+=snprintf(o+w,on-w,"switch (%s) {\n",rname(f,cl->rd[0],a));depth++;continue;}
+    if(!strncmp(cl->op,"c.case:",7)){IND();w+=snprintf(o+w,on-w,"case %s:\n",cl->op+7);continue;}  /* a real case label */
+    if(!strcmp(cl->op,"c.default")){IND();w+=snprintf(o+w,on-w,"default:\n");continue;}
+    if(!strcmp(cl->op,"c.endswitch")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");continue;}
     if(!strcmp(cl->op,"c.continue")){IND();w+=snprintf(o+w,on-w,"goto __cont_%d;\n",nls?lstk[nls-1]:0);continue;}
     if(!strncmp(cl->op,"c.goto:",7)){IND();w+=snprintf(o+w,on-w,"goto %s;\n",cl->op+7);continue;}
     if(!strncmp(cl->op,"c.label:",8)){w+=snprintf(o+w,on-w,"%s:;\n",cl->op+8);continue;}

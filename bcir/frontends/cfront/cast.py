@@ -37,6 +37,24 @@ class AggInit:
 
 
 @dataclass(frozen=True)
+class Switch:
+    """A real C `switch`: the discriminant + a flat body sequence (Case | Default | statement), so
+    case labels and cross-clause fallthrough are preserved exactly (not desugared to if/else)."""
+    disc: object
+    body: tuple = ()
+
+
+@dataclass(frozen=True)
+class Case:
+    value: int          # the case label -- a folded integer constant expression (§6.4.4 / enum)
+
+
+@dataclass(frozen=True)
+class Default:
+    pass
+
+
+@dataclass(frozen=True)
 class FloatLit:
     value: str          # the literal's source spelling, incl. any suffix (1.5 / 1e10 / 3.14f)
 

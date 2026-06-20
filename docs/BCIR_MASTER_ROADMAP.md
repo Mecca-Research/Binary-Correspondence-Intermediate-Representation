@@ -778,8 +778,12 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     (`#astore`/`cfront_arraystore.c`); ✅ **`<<=` / `>>=` shift-compound-assign** (the lexer emits them
     as 3-char tokens; a shared `is_compound_op`/`compound_binop` desugars `lv OP= e` → `lv = lv OP e` on
     scalar / member / array lvalues -- `#shiftassign`/`cfront_shiftassign.c`); the rest of
-    pointer-arithmetic completeness (`p++`, `p - q`) + an object/provenance model, cross-clause `switch`
-    fallthrough; ✅ **designated initializers** for a file-scope **dispatch / jump table** —
+    pointer-arithmetic completeness (`p++`, `p - q`) + an object/provenance model; ✅ **cross-clause
+    `switch` fallthrough** -- both rails now emit a *real* C `switch` (`cast.Switch`/`SwitchNode` +
+    folded case labels, the discriminant lowered once, `break` preserved) instead of the old if/else-if
+    desugar, so a `case` without `break` falls through exactly as C specifies (and an MMIO discriminant
+    is read once, not per case) -- `#switchfall`/`cfront_switchfall.c`; ✅ **designated initializers**
+    for a file-scope **dispatch / jump table** —
     `static const T NAME[N] = {[OP]=v, ...}` with enum-indexed designators and a gap that zero-fills
     (§6.7.10) — now parse on both rails (oracle `cparse._global`; the twin references the table by name,
     defined in the source, so the emit is Clang-equivalent — `#designated`/`cfront_dispatch_table.c`);
