@@ -949,13 +949,15 @@ row-major (`r*cols + c`, the same Horner the twin uses for array params), and la
 rails, pinned by `_FALLBACK_PROBES`):* a **pointer** member indexed `s.ptr[i]` (the loaded pointer is a
 4-byte temp in the value model, truncating an 8-byte pointer) and a **>3-dimensional** member array
 (the dim table holds 3).
-✅ **integrity fix — multi-dimensional *local* arrays route to fallback, not a silent miscompile**: a
-`T m[A][B]` local kept only the outer dim on its CType (no flatten shape), so the emit was mis-sized
-(`m[A]`, not `m[A*B]`) and `m[i][j]` collapsed to `m[i + j]` (colliding cells -- e.g. `m[0][1]` and
-`m[1][0]`), again while reporting `is_clean`. Rejected at lowering -> `needs_fallback`, matching the
-twin's parse-reject; a 2D array *param* (a decayed row pointer, shape carried on the type) is unaffected.
-*Follow-on:* lower member-array + multi-dim-local access faithfully (carry the member offset / full
-flatten shape into the indexed store/load on both rails) to support them natively rather than route away.
+✅ **native multi-dimensional *local* arrays** `T m[A][B]` (a small grid / matrix scratch buffer) up to
+3 dims: originally a silent miscompile (the local kept only the outer dim, so the emit was mis-sized
+`m[A]` and `m[i][j]` collapsed to `m[i + j]` -- colliding cells -- while reporting `is_clean`), first
+made safe via fallback (#381), and now lowered faithfully on both rails -- a **flat** resource of `A*B`
+elements carrying the per-dim shape, so `m[i][j]` flattens row-major to `m[i*B + j]` (declared `m[A*B]`,
+the same memory layout) using the existing index Horner and the array-access machinery the twin already
+had for params. The twin gained a multi-dim local declarator + a shared `array_index` flatten on the
+store path; `#localmd`/`cfront_localmd.c` (2-D + 3-D fill/read, differential == Clang). A **>3-D** local
+defers to fallback (the dim table holds 3); a 2-D array *param* (a decayed row pointer) was already fine.
 ✅ **integrity fix — unique C identifiers for reused local names (both rails emit)**: the lowering
 flattens scopes, so two source locals that shared a name in disjoint scopes -- the everyday `for(unsigned
 i = ...)` in two separate loops -- became distinct rids both named `i`. Both emitters declared `i` twice

@@ -32,7 +32,7 @@ _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfron
                  "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c"]   # + char consts + str table/dedup + const LUT + ABI sizeof model
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
             "cfront_continue.c", "cfront_switch.c", "cfront_switchfall.c", "cfront_goto.c", "cfront_incdec.c",
-            "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c", "cfront_loopscope.c", "cfront_blockscope.c"]
+            "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c", "cfront_loopscope.c", "cfront_blockscope.c", "cfront_localmd.c"]
             # + multi-declarator locals (T a=x, b, c=z), comma-operator for-step (i++, j--), empty stmts
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c", "cfront_comments.c"]      # L7: exercise the preprocessor
 _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-value + packed layout
@@ -899,10 +899,10 @@ _FALLBACK_PROBES = [
      "fallback"),   # a *pointer* member indexed (`s.ptr[i]`): the value model represents a loaded pointer
                      # as a 4-byte temp (truncating an 8-byte pointer, so `t[idx]` subscripts an integer),
                      # so both rails defer it. (1-D..3-D member *arrays* are now native -- #memberarray.)
-    ("unsigned f(unsigned i, unsigned j){ unsigned m[2][2]; m[0][0]=1u; return m[i&1u][j&1u]; }",
-     "fallback"),   # multi-dim *local* array: the local CType kept only the outer dim, so the emit was
-                     # mis-sized (`m[2]`) and `m[i][j]` collapsed to `m[i+j]` (a silent miscompile). Now
-                     # rejected -> fallback, matching the twin's parse reject. (2D array *params* are fine.)
+    ("unsigned f(unsigned i){ unsigned m[2][2][2][2]; m[0][0][0][0]=1u; return m[i&1u][0][0][0]; }",
+     "fallback"),   # a >3-dimensional local array: 1-D..3-D locals are now natively lowered (a flat
+                     # resource of the product of dims + the per-dim flatten shape), but the dim table
+                     # holds 3, so 4-D+ defers to fallback on both rails (the subset stays pinned).
 ]
 _FALLBACK_RC = {"clean": 0, "dirty": 1, "fallback": 2}
 
