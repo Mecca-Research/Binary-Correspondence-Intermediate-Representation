@@ -694,7 +694,7 @@ def test_c_frontend_builds_warning_clean():
     if not _CC:
         return
     for unit in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_verify.c",
-                 "bcir_cc.c"):
+                 "bcir_cc.c", "bcir_diag.c"):
         ok = False
         for std in ("c23", "c11"):
             b = subprocess.run([_CC, f"-std={std}", "-Wall", "-Wextra", "-Werror", "-I", _C, "-c",
@@ -912,6 +912,78 @@ def test_fallback_contract_dual_rail():
                 f"twin rc={got.returncode} != {want}({_FALLBACK_RC[want]}) for {src!r}\n{got.stderr}"
             if want == "fallback":
                 assert "fallback to LLVM backend" in got.stderr, got.stderr
+
+
+def _build_diag(d: str) -> str:
+    """Build the bcir_diag renderer harness (test_diag.c + bcir_diag.c)."""
+    exe = os.path.join(d, "tdiag")
+    srcs = [os.path.join(_C, s) for s in ("bcir_diag.c", "test_diag.c")]
+    for std in ("c23", "c11"):
+        b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
+                           capture_output=True, text=True)
+        if b.returncode == 0:
+            return exe
+    raise AssertionError(f"bcir_diag build failed:\n{b.stderr}")
+
+
+def _diag_spec(primary, notes):
+    """The tab-separated spec the C harness reads (start == end == -1 -> a spanless banner)."""
+    sev, (s, e), msg = primary
+    lines = [f"{sev}\t{s}\t{e}\t{msg}"]
+    for (a, b), m in notes:
+        lines.append(f"note\t{a}\t{b}\t{m}")
+    return "\n".join(lines) + "\n"
+
+
+def test_diagnostic_renderer_dual_rail():
+    """Clang-grade diagnostics (#diag): the C source-location model + caret renderer (bcir_diag.c) is
+    the C twin of cfront/diagnostics.py. Fed the SAME synthetic diagnostic (severity / message / byte
+    span, plus notes) over the same source, the C renderer's Clang-layout output -- the
+    `file:line:col: severity: message` banner, the source line, and the `^~~~` underline (leading tabs
+    reproduced so the caret aligns) -- is byte-identical to `diagnostics.render()`. The two rails thus
+    share one diagnostic format, independent of which parser produced the error (the messages are not
+    shared; the LAYOUT is). Covers spanned / spanless / zero-width / past-EOF spans, multi-line
+    sources, tab-indented lines, multi-column underlines, and attached notes."""
+    from bcir.frontends.cfront.diagnostics import (  # noqa: PLC0415
+        SourceDiagnostic, Span, Note, render)
+    src_a = "unsigned f(unsigned x){ return x + ; }\n"
+    src_b = "int main(void)\n{\n\treturn foo(1, 2);\n}\n"     # a tab-indented line
+    src_c = "a\nbb\nccc\n"
+    cases = [
+        (src_a, "u.c", ("error", (34, 35), "expected ';'"), []),
+        (src_a, "u.c", ("error", (-1, -1), "file-level problem"), []),       # spanless banner
+        (src_a, "u.c", ("warning", (9, 10), "odd parameter name"), []),
+        (src_a, "u.c", ("error", (34, 34), "zero-width insertion point"), []),
+        (src_a, "u.c", ("error", (40, 41), "past end of file"), []),
+        (src_b, "m.c", ("error", (19, 22), "implicit declaration of 'foo'"),  # tab line + a note
+         [((4, 8), "expanded from macro here")]),
+        (src_c, "t.c", ("error", (4, 7), "underline runs to end of line"), []),  # line 2, multi-col
+        (src_c, "t.c", ("note", (8, 9), "on the last line"), []),
+        (src_b, "m.c", ("error", (-1, -1), "no primary span"),               # spanless + mixed notes
+         [((19, 20), "see here"), ((-1, -1), "and a spanless note")]),
+    ]
+
+    def py_render(src, fn, primary, notes):
+        sev, (s, e), msg = primary
+        span = None if (s == -1 and e == -1) else Span(s, e)
+        nlist = [Note(m, None if (a == -1 and b == -1) else Span(a, b)) for (a, b), m in notes]
+        return render(SourceDiagnostic(sev, msg, span=span, notes=nlist), src, fn)
+
+    # the oracle side always runs (quick tier too): the renderer is pure-Python and deterministic.
+    for src, fn, primary, notes in cases:
+        assert isinstance(py_render(src, fn, primary, notes), str)
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_diag(d)
+        for src, fn, primary, notes in cases:
+            sp = os.path.join(d, "s.c")
+            with open(sp, "w") as f:
+                f.write(src)
+            c_out = subprocess.run([exe, sp, fn], input=_diag_spec(primary, notes),
+                                   capture_output=True, text=True).stdout
+            assert c_out == py_render(src, fn, primary, notes), \
+                f"diag layout diverged for {fn} {primary}\n C: {c_out!r}\nPY: {py_render(src, fn, primary, notes)!r}"
 
 
 def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
