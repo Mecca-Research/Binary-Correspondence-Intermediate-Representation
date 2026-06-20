@@ -113,7 +113,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects)
+for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote)
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re
@@ -451,5 +451,39 @@ print('funcs=%d big=%d' % (len(r.lowered.functions), len(r.lowered.functions['bi
 [ "${py_scale}" = "funcs=43 big=7500" ] \
   && echo "  PASS scale: oracle agrees (${py_scale})" \
   || { echo "  FAIL: scale oracle mismatch (${py_scale})"; exit 1; }
+
+# Integer promotions + usual arithmetic conversions (#intpromote): the C twin types each temp by its
+# true (width, signedness), so a signed int divide / remainder / right-shift / comparison emits signed
+# C (not the old flat uint32_t) and a mixed-width op widens per §6.3.1.8. The twin's --emit-c is
+# behaviour-equivalent to Clang over the FULL signed range (negatives) -- exactly what the old model
+# got wrong. Compile the emitted bcir_* beside the source + a full-range differential driver.
+echo "[c-runtime] integer promotions + UAC (bcir-cc): signed/mixed-width emit == Clang full-range (#intpromote)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_intpromote.c" > "${tmp}/ip_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; cat "${C}/cfront_intpromote.c" "${tmp}/ip_emit.c"
+  cat <<'DRV'
+static uint64_t S=0x9E3779B97F4A7C15u;
+static uint64_t nx(void){S=S*6364136223846793005u+1442695040888963407u;return S>>32;}
+int main(void){
+  for(int i=0;i<300000;i++){
+    int a=(int)nx(), b=(int)nx(); long lb=(long)nx()<<3 | (long)nx();
+    if(sdiv(a,b)!=bcir_sdiv(a,b)||smod(a,b)!=bcir_smod(a,b)||sshr(a)!=bcir_sshr(a)
+     ||scmp(a,b)!=bcir_scmp(a,b)||udiv((unsigned)a,(unsigned)b)!=bcir_udiv((unsigned)a,(unsigned)b)
+     ||wide(a,lb)!=bcir_wide(a,lb)||umix((unsigned)a,lb)!=bcir_umix((unsigned)a,lb)){
+       printf("MISMATCH@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/ip_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/ip_harness.c" -o "${tmp}/ip_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/ip_harness.c" -o "${tmp}/ip_h" \
+  || { echo "  FAIL: intpromote harness build"; exit 1; }
+ipr="$("${tmp}/ip_h")"
+[ "${ipr}" = "MATCH" ] \
+  && echo "  PASS intpromote: signed div/mod/shr/compare + mixed-width == Clang (full signed range)" \
+  || { echo "  FAIL: intpromote behaviour (${ipr})"; exit 1; }
+# teeth: the emit carries the real signed + wide integer types (the old model emitted only uint32_t).
+{ grep -q "int32_t" "${tmp}/ip_emit.c" && grep -q "int64_t" "${tmp}/ip_emit.c"; } \
+  && echo "  PASS intpromote: emit carries true signed (int32_t) + wide (int64_t) types" \
+  || { echo "  FAIL: intpromote emit missing signed/wide types"; exit 1; }
 
 echo "[c-runtime] ok"

@@ -278,6 +278,20 @@ static int scalar_size(const char *s,int n) {
   for(int i=0;T[i].k;i++) if((int)strlen(T[i].k)==n&&!strncmp(T[i].k,s,n)) return T[i].sz;
   return -1;
 }
+/* The inherent signedness of a named scalar type (1 signed / 0 unsigned / -1 none: void/float). */
+static int scalar_signed(const char *s,int n) {
+  const char *U[]={"unsigned","uint8_t","uint16_t","uint32_t","uint64_t","size_t","uintptr_t","bool","_Bool",0};
+  const char *S[]={"char","short","int","long","int8_t","int16_t","int32_t","int64_t","intptr_t","signed",0};
+  for(int i=0;U[i];i++) if((int)strlen(U[i])==n&&!strncmp(U[i],s,n)) return 0;
+  for(int i=0;S[i];i++) if((int)strlen(S[i])==n&&!strncmp(S[i],s,n)) return 1;
+  return -1;
+}
+/* The base integer types that combine with unsigned/signed (so an explicit keyword wins over them). */
+static int is_base_int(const char *s,int n) {
+  const char *B[]={"char","short","int","long",0};
+  for(int i=0;B[i];i++) if((int)strlen(B[i])==n&&!strncmp(B[i],s,n)) return 1;
+  return 0;
+}
 /* The pointer-tracking integer scalars (size_t / intptr_t / uintptr_t): their width is the data
  * model's pointer size. (ptrdiff_t is omitted to match the oracle, whose _SCALAR has no entry.) */
 static int is_ptr_tracking(const char *s,int n) {
@@ -313,12 +327,13 @@ static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the con
 /* a parsed type: fills a bcir_ctype + the struct index (sidx, or -1). */
 static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
   memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1;
-  int seen=0, longs=0, ptrtrk=0;   /* longs: distinguish `long` (data-model) from `long long` (fixed 8) */
+  int seen=0, longs=0, ptrtrk=0, sign_explicit=0;   /* longs: `long` (data-model) vs `long long` (8) */
   for(;;){
     if(is(c,"volatile")){ty->is_volatile=1;c->i++;continue;}
     if(is(c,"_Atomic")){ty->is_atomic=1;c->i++;continue;}
-    if(is(c,"const")||is(c,"static")||is(c,"signed")||is(c,"inline")){c->i++;continue;}
-    if(is(c,"unsigned")){ty->signd=0;ty->size=4;seen=1;c->i++;continue;}
+    if(is(c,"const")||is(c,"static")||is(c,"inline")){c->i++;continue;}
+    if(is(c,"signed")){ty->signd=1;sign_explicit=1;c->i++;continue;}
+    if(is(c,"unsigned")){ty->signd=0;sign_explicit=1;ty->size=4;seen=1;c->i++;continue;}
     if(is(c,"struct")||is(c,"union")){c->i++;tok tag=adv(c);int si=find_struct(c,tag.s,tag.n);
       if(si<0){fail(c,"unknown struct");return 1;} ty->kind=1;ty->size=c->s[si].size;*sidx=si;
       ty->is_union=(uint8_t)c->s[si].is_union;idcpy(ty->tag,&tag);seen=1;break;}
@@ -328,6 +343,8 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
       if(ti>=0){int vol=ty->is_volatile;*ty=c->td[ti].ty;if(vol)ty->is_volatile=1;*sidx=c->td[ti].sidx;c->i++;seen=1;break;}}
     if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
       if(sz<0){if(seen)break;fail(c,"unknown type");return 1;} ty->size=sz;
+      int inh=scalar_signed(pk(c)->s,pk(c)->n);          /* the type name's inherent signedness */
+      if(inh>=0 && (!sign_explicit || !is_base_int(pk(c)->s,pk(c)->n))) ty->signd=inh;
       if((int)strlen("long")==pk(c)->n&&!strncmp("long",pk(c)->s,pk(c)->n)) longs++;   /* count `long`s */
       if(is_ptr_tracking(pk(c)->s,pk(c)->n)) ptrtrk=1;
       if(scalar_float_size(pk(c)->s,pk(c)->n)>=0) ty->is_float=1;     /* float / double */
@@ -491,9 +508,53 @@ static bcir_claim *new_claim(CC *c,const char *op,bcir_opcode opc) {
   snprintf(cl->op,sizeof cl->op,"%s",op); return cl;
 }
 static uint32_t temp(CC *c,int size){return add_res(c,BCIR_DOM_RAM,size?size:4,1,0,BCIR_RK_SCALAR,"");}
+/* An integer temporary of a given (width, signedness) -- the emit renders the true fixed-width type
+ * and the usual arithmetic conversions read it back (the C twin of int_type). */
+static uint32_t tempi(CC *c,int size,int signd){ uint32_t r=add_res(c,BCIR_DOM_RAM,size?size:4,1,0,BCIR_RK_SCALAR,"");
+  if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(signd?1:0); return r; }
 /* A floating temporary (size 4 float / 8 double) -- the emit renders it as float/double, not uint32. */
 static uint32_t tempf(CC *c,int size){ uint32_t r=add_res(c,BCIR_DOM_RAM,size,1,0,BCIR_RK_SCALAR,"");
   if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_float=1; return r; }
+/* The integer (width, signedness) of the value in rid; returns 0 if rid is not a plain integer scalar
+ * (float / pointer / aggregate -- the usual arithmetic conversions do not apply to it). */
+static int rid_int(CC *c,uint32_t rid,int *size,int *signd){
+  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){
+    const bcir_resource *r=&c->fn->res[i];
+    if(r->is_float||r->kind!=BCIR_RK_SCALAR) return 0;
+    *size=(int)r->elem_bytes; *signd=r->is_signed; return 1; }
+  *size=4; *signd=1; return 1;                          /* unknown -> assume int */
+}
+/* integer promotion (§6.3.1.1): a sub-int rank promotes to int. */
+static void promote_i(int *size,int *signd){ if(*size<4){*size=4;*signd=1;} }
+/* usual arithmetic conversions (§6.3.1.8) in the (width, signedness) value model. */
+static void uac_i(int sa,int za,int sb,int zb,int *rs,int *rz){
+  promote_i(&sa,&za); promote_i(&sb,&zb);
+  if(sa!=sb){ if(sa>sb){*rs=sa;*rz=za;}else{*rs=sb;*rz=zb;} } else { *rs=sa; *rz=za&&zb; }
+}
+/* The integer type (width, signedness) of an integer constant from its source text (suffix + magnitude,
+ * §6.4.4.1), mirroring ctype_model.int_literal_type. A character constant ('c') has type int. */
+static void lit_int_type(const char *s,int n,int *size,int *signd){
+  *size=4; *signd=1;                                    /* default: int */
+  if(n>0 && s[0]=='\'') return;                         /* a character constant is int */
+  char buf[64]; int j=0; for(int k=0;k<n&&j<63;k++) if(s[k]!='\'') buf[j++]=s[k]; buf[j]=0;
+  int u=0,lr=0,e=j;
+  while(e>0){ char ch=buf[e-1]; if(ch=='u'||ch=='U')u=1; else if(ch=='l'||ch=='L')lr++; else break; e--; }
+  buf[e]=0;
+  unsigned long long val; int decimal=1;
+  if(e>1&&buf[0]=='0'&&(buf[1]=='x'||buf[1]=='X')){ val=strtoull(buf,NULL,16); decimal=0; }
+  else if(e>1&&buf[0]=='0'&&(buf[1]=='b'||buf[1]=='B')){ val=strtoull(buf+2,NULL,2); decimal=0; }
+  else if(e>1&&buf[0]=='0'){ val=strtoull(buf,NULL,8); decimal=0; }
+  else { val=strtoull(buf[0]?buf:"0",NULL,10); decimal=1; }
+  int cs[6],cz[6],nc=0;                                 /* candidate (size, signed) list, in order */
+  if(u){ if(lr==0){cs[nc]=4;cz[nc++]=0;} cs[nc]=8;cz[nc++]=0; }
+  else if(decimal){ if(lr==0){cs[nc]=4;cz[nc++]=1;} cs[nc]=8;cz[nc++]=1; }
+  else { if(lr==0){cs[nc]=4;cz[nc++]=1; cs[nc]=4;cz[nc++]=0;} cs[nc]=8;cz[nc++]=1; cs[nc]=8;cz[nc++]=0; }
+  for(int i=0;i<nc;i++){
+    unsigned long long hi = cz[i] ? ((1ull<<(cs[i]*8-1))-1) : (cs[i]>=8?~0ull:((1ull<<(cs[i]*8))-1));
+    if(val<=hi){ *size=cs[i]; *signd=cz[i]; return; }
+  }
+  *size=cs[nc-1]; *signd=cz[nc-1];
+}
 /* record an R18 call-graph edge (callee name), growing the per-function call list on demand. */
 static void add_call(CC *c, const tok *name) {
   bcir_func *f=c->fn;
@@ -536,7 +597,7 @@ static venv *lookup(CC *c,const tok *t){
 static uint32_t p_expr(CC *c);
 
 static uint32_t emit_member(CC *c, venv *base, const field *fld) {
-  uint32_t t=temp(c,fld->size);
+  uint32_t t=tempi(c,fld->size,fld->signd);                  /* the loaded value carries the field's type */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
@@ -717,7 +778,9 @@ static char *gather_strings(CC *c, tok first, int *out_n) {
 }
 
 static uint32_t p_primary(CC *c) {
-  if(isk(c,T_INT)){tok t=adv(c);uint32_t r=temp(c,4);
+  if(isk(c,T_INT)){tok t=adv(c);
+    int lsz,lsg; lit_int_type(t.s,t.n,&lsz,&lsg);            /* the constant's type (§6.4.4.1) */
+    uint32_t r=tempi(c,lsz,lsg);
     bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
     cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return r;}
   if(isk(c,T_FLT)){tok t=adv(c);                       /* a floating constant -> a typed c.fconst */
@@ -773,8 +836,8 @@ static uint32_t p_primary(CC *c) {
     if(is(c,"(")&&atomic_kind(&id,&aop,&aoc,&akind)) return p_atomic(c,aop,aoc,akind);  /* atomics/fences/CAS */
     if(is(c,"(")){ venv *fv=lookup(c,&id);        /* indirect call (funcptr var) vs. direct named call */
       if(fv&&fv->type.kind==3) return p_icall(c,fv); return p_call(c,&id); }
-    int ec=find_enum(c,id.s,id.n);                /* an enumerator -> its folded constant */
-    if(ec>=0){uint32_t r=temp(c,4);bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
+    int ec=find_enum(c,id.s,id.n);                /* an enumerator -> its folded constant (type int) */
+    if(ec>=0){uint32_t r=tempi(c,4,1);bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
       if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
     venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a file-scope global (lookup table)? */
     if(!v){fail(c,"undefined identifier");return 0;}
@@ -889,10 +952,24 @@ static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs) {
     int prec=prec_of(idx);c->i++;uint32_t rhs=p_unary(c);
     char s2[BCIR_CIR_NAME];bcir_opcode o2;int nx=bin_op(c,s2,&o2);
     while(nx>=0&&prec_of(nx)>prec){rhs=p_binrhs(c,prec_of(nx),rhs);nx=bin_op(c,s2,&o2);}
-    /* float arithmetic (+ - * /) propagates the wider float type; comparisons/bitwise stay int. */
+    /* the result type: a relational/logical op is int; float arithmetic propagates the wider float;
+     * everything else takes the integer usual arithmetic conversions (a shift the promoted LHS). */
     int is_arith=!strcmp(suf,"add")||!strcmp(suf,"sub")||!strcmp(suf,"mul")||!strcmp(suf,"div");
+    int is_cmp=!strcmp(suf,"lt")||!strcmp(suf,"gt")||!strcmp(suf,"le")||!strcmp(suf,"ge")
+             ||!strcmp(suf,"eq")||!strcmp(suf,"ne")||!strcmp(suf,"land")||!strcmp(suf,"lor");
+    int is_shift=!strcmp(suf,"shl")||!strcmp(suf,"shr");
     int fa=rid_fsize(c,lhs), fb=rid_fsize(c,rhs);
-    uint32_t r=(is_arith&&(fa||fb)) ? tempf(c,(fa>fb?fa:fb)) : temp(c,4);
+    uint32_t r;
+    if(is_cmp){ r=tempi(c,4,1); }                              /* relational / logical -> int */
+    else if(is_arith&&(fa||fb)){ r=tempf(c,(fa>fb?fa:fb)); }   /* float arithmetic -> wider float */
+    else {
+      int sa,za,sb,zb; int ia=rid_int(c,lhs,&sa,&za), ib=rid_int(c,rhs,&sb,&zb);
+      if(ia&&ib){ int rs,rz;
+        if(is_shift){ promote_i(&sa,&za); rs=sa; rz=za; }      /* shift result: the promoted left operand */
+        else uac_i(sa,za,sb,zb,&rs,&rz);
+        r=tempi(c,rs,rz);
+      } else r=temp(c,4);                                      /* pointer / other arithmetic: unchanged */
+    }
     char op[BCIR_CIR_NAME];snprintf(op,sizeof op,"c.bin.%s",suf);
     bcir_claim *cl=new_claim(c,op,oc);if(cl){cl->n_rd=2;cl->rd[0]=lhs;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=r;}
     lhs=r;
@@ -1061,6 +1138,7 @@ static void p_stmt(CC *c) {
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, nb);
     if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double local */
+    else if(ty.kind==0) c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
     env_add(c,&nm,rid,&ty,si);
     if(is_static){            /* static storage: a once-only constant init, baked into the decl */
@@ -1164,6 +1242,7 @@ static int p_func(CC *c, bcir_func *fn) {
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, pb);
     if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
+    else if(ty.kind==0) c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
     env_add(c,&pn,rid,&ty,si);
     if(fn->n_params>=fn->cap_params){ int nc=fn->cap_params?fn->cap_params*2:4;
@@ -1198,6 +1277,7 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   const char *base = is_struct ? ty->tag
                    : ty->is_float ? (ty->size==4?"float":"double")
                    : ty->size==0 ? "void"
+                   : ty->signd ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
                    : (ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t");
   const char *atm = ty->is_atomic ? "_Atomic " : "";
   if(ty->kind==2) snprintf(o,n,"%s%s%s%s%s *",atm,ty->is_volatile?"volatile ":"",
@@ -1212,11 +1292,20 @@ static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
   if(r&&r->name[0]){snprintf(buf,BCIR_CIR_NAME,"%s",r->name);return buf;}
   snprintf(buf,BCIR_CIR_NAME,"t%u",rid); return buf;
 }
-/* The C type to declare a temporary / local with: float/double for a floating value, else uint32_t
- * (the integer scalar model). */
+/* The C type to declare a temporary / local with: float/double for a floating value, else the integer
+ * scalar's true fixed-width type from its (width, signedness) -- so the backend does signed-vs-unsigned
+ * and width-correct arithmetic (the old flat uint32 model did not). Non-scalar temps (pointer / address
+ * paths) stay uint32 here; their declaration goes through the pointee type. */
 static const char *tty(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid);
-  if(r&&r->is_float) return r->elem_bytes==4?"float":"double";
+  if(!r) return "uint32_t";
+  if(r->is_float) return r->elem_bytes==4?"float":"double";
+  if(r->kind==BCIR_RK_SCALAR) switch(r->elem_bytes){
+    case 1: return r->is_signed?"int8_t":"uint8_t";
+    case 2: return r->is_signed?"int16_t":"uint16_t";
+    case 8: return r->is_signed?"int64_t":"uint64_t";
+    default:return r->is_signed?"int32_t":"uint32_t";
+  }
   return "uint32_t";
 }
 static int is_named_local(const bcir_func *f,uint32_t rid){

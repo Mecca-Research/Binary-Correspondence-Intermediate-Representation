@@ -63,6 +63,7 @@ typedef struct bcir_resource {
   uint8_t  read_only;
   uint8_t  kind;             /* bcir_rkind */
   uint8_t  is_float;         /* a floating value (emit float/double, not uint32_t) */
+  uint8_t  is_signed;        /* a signed integer value (drives signed C emit + the usual arith conv) */
   char     name[BCIR_CIR_NAME];
   char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
 } bcir_resource;

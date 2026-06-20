@@ -762,15 +762,18 @@ its module-scope **effect/commutation analysis** (the C twin of `pipeline.own_fo
 per-function read/write global footprints, callee effects folded transitively, the pairwise commute
 matrix — `bcir-cc --emit-effects`, byte-identical to the oracle; `cfront_effects.c`). **Still to
 port** — the genuinely-remaining Phase-2 language/infra work:
-  - *language:* the comma operator, `typeof`, compound literals; **full integer promotions + the usual
-    arithmetic conversions** — ✅ **prototyped in the oracle** (`ctype_model.promote_int`/`usual_arith_int`/
-    `int_literal_type` + `lower._bin_result_type`): every temp is now typed by its true (width,
-    signedness), so a signed `int` divide / remainder / right-shift / comparison emits signed C (not the
-    old flat `uint32_t`) and `int + long` widens to 64-bit — behaviour-equivalent to Clang over the
-    *full* signed range, the case the old unsigned-32 model got wrong (`test_integer_promotions_and_uac_oracle`);
-    the **C-twin port is the immediate next segment**. Then the rest of pointer-arithmetic completeness +
-    an object/provenance model, cross-clause `switch` fallthrough, **designated + compound initializers**
-    (essential for register tables / driver dispatch tables / kernel-style headers);
+  - *language:* the comma operator, `typeof`, compound literals; ✅ **full integer promotions + the usual
+    arithmetic conversions** — **dual-rail** (oracle `ctype_model.promote_int`/`usual_arith_int`/
+    `int_literal_type` + `lower._bin_result_type`; C twin `tempi`/`rid_int`/`uac_i`/`lit_int_type` +
+    `tty`/`ctype_str` rendering the true fixed-width type, with `is_signed` threaded through the resource
+    model): every temp is typed by its true (width, signedness), so a signed `int` divide / remainder /
+    right-shift / comparison emits signed C (not the old flat `uint32_t`) and `int + long` widens to
+    64-bit — behaviour-equivalent to Clang over the *full* signed range, the case the old unsigned-32
+    model got wrong (`test_integer_promotions_and_uac_oracle`; `#intpromote` runs the twin's `--emit-c`
+    against Clang on 300k full-range inputs). *Scalar* operands are covered; pointer-element signedness
+    (the twin's pointer model carries pointee *width* but not yet signedness) is a follow-on. Then the
+    rest of pointer-arithmetic completeness + an object/provenance model, cross-clause `switch`
+    fallthrough, **designated + compound initializers** (essential for register / driver dispatch tables);
   - *storage/linkage:* `extern`, `thread_local`, tentative definitions, internal/external linkage,
     broader (aggregate / non-const-init) globals;
   - *memory model:* `restrict`, broader alias/effect propagation (the module-scope analysis above is
