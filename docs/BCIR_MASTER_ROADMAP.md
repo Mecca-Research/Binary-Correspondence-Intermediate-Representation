@@ -702,7 +702,12 @@ so no typed temporaries needed; R18-opaque; `cfront_dispatch.c`, both rails `cla
 operator, `typeof`, compound literals, integer promotions + usual arithmetic
 conversions; ✅ **pointer dereference** (`*p` -- a one-read deref load, previously unsupported on the
 C rail entirely -- and `*(p + i)`, the pointer-arithmetic spelling of `p[i]`, routed through the
-index/load machinery on both rails; `cfront_deref.c`); the rest of pointer-arithmetic completeness;
+index/load machinery on both rails; `cfront_deref.c`); ✅ **store through a pointer** (`*p = v` / `*p
+OP= v` / `*(p + i) = v` -- the write counterpart; the C twin parsed `*p` only as a read, so a store
+through a pointer failed. Now both rails lower a deref store -- an offset-0 `imm=[0,size]` store for
+`*p` (the member-store shape), the indexed `p[i]` store for `*(p + i)`, a load+op+store for `OP=` --
+verified on independent buffers since these mutate through `p`; `#ptrstore`/`cfront_ptrstore.c`); the
+rest of pointer-arithmetic completeness;
 ✅ **`sizeof`** (`sizeof(type)` / `sizeof expr` folds to
 a compile-time constant -- the type/operand's static size, operand not evaluated; both rails agree
 via the shared scalar table + struct/union layout, Clang-equivalent, `cfront_sizeof.c`) + ✅

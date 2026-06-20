@@ -1261,6 +1261,42 @@ static void p_stmt(CC *c) {
     }
     eat(c,";");return;
   }
+  /* L3: store through a pointer  *p = expr  /  *p OP= expr  /  *(p + i) = expr  (write a pointee /
+   * output parameter / MMIO location). Mirrors the deref-load forms in p_unary: `*p` is a store at
+   * offset 0 (imm = [0, size], like a member store); `*(p + i)` is the indexed store `p[i]` (rd =
+   * [ptr, idx, val], like the array store). A compound `OP=` loads first (emit_deref / emit_index). */
+  if(is(c,"*")){
+    int save=c->i; c->i++;
+    venv *pv=NULL; uint32_t idx=0; int has_idx=0, ok=0;
+    if(is(c,"(")){ c->i++;                              /* *(p) or *(p + i) */
+      if(isk(c,T_ID)){ tok pid=*pk(c); pv=lookup(c,&pid);
+        if(pv){ c->i++;
+          if(is(c,"+")){ c->i++; idx=p_expr(c); has_idx=1; if(eat(c,")")) ok=1; }
+          else if(is(c,")")){ c->i++; ok=1; } } } }
+    else if(isk(c,T_ID)){ tok pid=*pk(c); pv=lookup(c,&pid); if(pv){ c->i++; ok=1; } }   /* *p */
+    if(ok && pv && (is_compound_op(&c->t[c->i]) ||
+                    (c->t[c->i].k==T_PUN && c->t[c->i].n==1 && c->t[c->i].s[0]=='='))){
+      int sz = pv->type.size?pv->type.size:4; uint32_t val;
+      if(is_compound_op(&c->t[c->i])){                  /* *p OP= expr  ->  load, bin op, store */
+        char ch=c->t[c->i].s[0]; c->i++;
+        uint32_t cur = has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv);
+        uint32_t rhs=p_expr(c);
+        const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+        uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+        bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+        val=tmp;
+      } else { c->i++; val=p_expr(c); }                 /* *p = expr */
+      bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+      if(cl){
+        if(has_idx){ cl->n_rd=3; cl->rd[0]=pv->rid; cl->rd[1]=idx; cl->rd[2]=val; }   /* *(p+i) == p[i] */
+        else { cl->n_rd=2; cl->rd[0]=pv->rid; cl->rd[1]=val; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz; }
+        cl->bounds=BCIR_BND_ASSUMED;
+        if(pv->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+      }
+      eat(c,";"); return;
+    }
+    c->i=save;   /* not a deref-store -- fall through (e.g. a bare `*p;` expression statement) */
+  }
   if(isk(c,T_ID)){tok id=*pk(c);venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a writable file-scope global */
     /* L8: struct member store  v.field = expr  /  v->field = expr */
     if(v&&v->sidx>=0&&c->t[c->i+1].k==T_PUN&&(c->t[c->i+1].s[0]=='.'||(c->t[c->i+1].n==2&&c->t[c->i+1].s[0]=='-'))){
