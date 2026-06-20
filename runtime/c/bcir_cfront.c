@@ -1118,13 +1118,28 @@ static int p_incdec(CC *c) {
   bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
   return 1;
 }
-/* a `name = expr` assignment or a bare expression, WITHOUT the trailing `;` (the for-loop step). */
+/* one simple expression WITHOUT a trailing `;` -- a for-loop step element (each comma-separated piece
+ * of `i++, j--, acc += d`). Mirrors the scalar/pointer assignment forms p_stmt handles (plain `=`,
+ * compound `OP=`, inc/dec) so a step matches the oracle whether it is one element or a comma list. */
 static void p_simple(CC *c) {
   if(p_incdec(c)) return;
   if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a writable global */
-    if(v && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='='){
+    if(v && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='='){      /* name = expr */
       c->i+=2; uint32_t val=p_expr(c);
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
+      return; }
+    if(v && is_compound_op(&c->t[c->i+1])){                                             /* name OP= expr */
+      char ch=c->t[c->i+1].s[0];
+      if(v->type.kind==2 && (ch=='+'||ch=='-')){       /* pointer arithmetic: p += n / p -= n (verbatim) */
+        c->i+=2; uint32_t rhs=p_expr(c);
+        char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.ptr%s",ch=='+'?"add":"sub");
+        bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
+        return; }
+      c->i+=2; uint32_t rhs=p_expr(c);                  /* scalar:  name = name OP expr  (bin op + copy) */
+      const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+      uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+      bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+      bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
       return; } }
   (void)p_expr(c);
 }
@@ -1161,7 +1176,10 @@ static void p_stmt(CC *c) {
     int step_end=c->i; eat(c,")");
     p_block(c);                        /* the loop body */
     marker(c,"c.cont.tgt",0,0);        /* continue -> run the step, then re-test */
-    if(step_end>step_start){ int save=c->i; c->i=step_start; p_simple(c); c->i=save; }  /* step @ iter end */
+    if(step_end>step_start){ int save=c->i; c->i=step_start;   /* step @ iter end */
+      p_simple(c);                                             /* `i++, j--, k = …` -- the comma */
+      while(is(c,",")&&!c->failed){ c->i++; p_simple(c); }     /* operator in its dominant position */
+      c->i=save; }
     marker(c,"c.endloop",0,0); return;
   }
   if(is(c,"do")){                      /* do body while(cond);  == loop { body; if(!cond) break; } */
