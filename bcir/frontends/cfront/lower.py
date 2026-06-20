@@ -888,9 +888,10 @@ class _FuncLowerer:
             self.block_stack.pop()
             self.block_stack[-1].append(SwitchNode(disc, block))
         elif isinstance(st, cast.For):
-            if st.init is not None:                            # init -> the enclosing block, once
-                self._stmt(st.init)
-            cond_block2: list = []
+            saved_env = dict(self.env)                         # the for-init + body declarations are
+            if st.init is not None:                            # loop-scoped: a `for(unsigned i = ...)`
+                self._stmt(st.init)                            # must not leak `i` past the loop (where it
+            cond_block2: list = []                             # would shadow a same-named param / outer)
             self.block_stack.append(cond_block2)
             cond = self._rvalue(st.cond)
             self.block_stack.pop()
@@ -902,6 +903,7 @@ class _FuncLowerer:
                 self.block_stack.pop()
             self.block_stack[-1].append(
                 WhileNode(cond_block2, cond, body, step=step, loop_id=self._next_loop_id()))
+            self.env = saved_env                               # pop the loop scope (restore outer bindings)
         elif isinstance(st, cast.DoWhile):                     # body runs, then the cond is tested
             body = self._block(st.body)
             cond_block3: list = []
