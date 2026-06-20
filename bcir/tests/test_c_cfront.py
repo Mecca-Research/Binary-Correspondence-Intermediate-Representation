@@ -1246,6 +1246,41 @@ def test_effect_commutation_analysis_dual_rail():
             assert out == reports[fx], f"{fx}: effects diverged\n C:\n{out}\nPY:\n{reports[fx]}"
 
 
+def _scale_unit_src() -> str:
+    """A translation unit that busts every *old* fixed IR ceiling: 40 leaf functions + a
+    12-parameter function + a 40-call aggregator + a 7500-claim function."""
+    fns = [f"unsigned g{k}(void){{ return {k}u; }}" for k in range(40)]          # > old BCIR_MAX_FUNCS 16
+    ps = [chr(ord("a") + i) for i in range(12)]
+    fns.append("unsigned many12(" + ",".join(f"unsigned {p}" for p in ps) +
+               "){ return " + "+".join(ps) + "; }")                              # > old BCIR_MAX_PARAMS 8
+    fns.append("unsigned agg(void){ return " + "+".join(f"g{k}()" for k in range(40)) + "; }")  # > old BCIR_MAX_CALLS 32
+    body = "\n".join("  acc = acc + 1u;" for _ in range(2500))
+    fns.append("unsigned big(unsigned acc){\n" + body + "\n  return acc;\n}")    # > old 4096-claim per-fn cap
+    return "\n".join(fns) + "\n"
+
+
+def test_scalable_ir_no_fixed_ceilings():
+    """Scalable IR (no fixed `BCIR_MAX_*`): a unit that busts every old ceiling -- 43 functions (>
+    the old `BCIR_MAX_FUNCS` 16), a 12-parameter function (> 8), a 40-call aggregator (> 32), and a
+    7500-claim function (> the old 4096 per-function cap) -- compiles clean on the C twin (the IR
+    grows geometrically) and matches the oracle's structural counts, which are uncapped by design."""
+    src = _scale_unit_src()
+    r = compile_unit(src, check_clang=False)                 # oracle: Python lists, no caps
+    assert len(r.lowered.functions) == 43
+    assert len(r.lowered.functions["big"].claims) == 7500
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        cc = _build_bcir_cc(d)
+        p = os.path.join(d, "scale.c")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        out = subprocess.run([cc, "--emit-claimgraph", p], capture_output=True, text=True)
+        assert out.returncode == 0, out.stderr
+        m = re.search(r"funcs=(\d+) claims=(\d+).*ok=(\d)", out.stdout)
+        assert m and (m.group(1), m.group(2), m.group(3)) == ("43", "7500", "1"), out.stdout[:200]
+
+
 def test_scalar_globals_read_write_dual_rail():
     """Scalar file-scope globals (#globals): the oracle models a scalar global as a plain resource --
     a read references it directly (no c.load), a write is a c.copy to the global rid. The C twin now

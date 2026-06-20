@@ -2,6 +2,7 @@
 #include "bcir_verify.h"
 
 #include <stdio.h>   /* snprintf for the diagnostic path (the verdict logic itself is pure) */
+#include <stdlib.h>  /* calloc/free for the R18 cycle-detection visited array (no fixed func cap) */
 
 static int slen(const char *s){int n=0;while(s[n])n++;return n;}
 static int seq(const char *a,const char *b){int i=0;for(;a[i]&&b[i];i++)if(a[i]!=b[i])return 0;return a[i]==b[i];}
@@ -67,8 +68,10 @@ int bcir_verify_unit(const bcir_unit *u,char *diag,size_t dn){
   for(int i=0;i<u->n_funcs;i++) if(!verify_func(&u->funcs[i],diag,dn)) return 0;
   for(int i=0;i<u->n_funcs;i++) for(int k=0;k<u->funcs[i].n_calls;k++)
     if(func_index(u,u->funcs[i].calls[k])<0){snprintf(diag,dn,"R18: call to undefined function %s",u->funcs[i].calls[k]);return 0;}
-  int state[BCIR_MAX_FUNCS]={0};
-  for(int i=0;i<u->n_funcs;i++) if(state[i]==0&&has_cycle(u,i,state)){snprintf(diag,dn,"R18: recursive call cycle");return 0;}
+  int *state=calloc((size_t)(u->n_funcs>0?u->n_funcs:1),sizeof *state);   /* visited per func (no cap) */
+  if(!state){snprintf(diag,dn,"oom");return 0;}
+  for(int i=0;i<u->n_funcs;i++) if(state[i]==0&&has_cycle(u,i,state)){snprintf(diag,dn,"R18: recursive call cycle");free(state);return 0;}
+  free(state);
   /* R14-R16 (CIM dispatch / DVFS clock / alloc placement): the scalar C subset emits no such
    * smart-lowering decisions, so these are vacuously satisfied here. */
   (void)slen;

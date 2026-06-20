@@ -116,7 +116,7 @@ The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiab
 | **Allocator pool-plan** (`allocator.live_intervals`/`pool_plan`) | `-bcir-alloc-pool` | MLIR/C++ | ✅ **ported** — liveness-based pooling (disjoint live ranges share an arena, greedy left-edge); annotates per-resource pool_id + peak/naive/saved bytes (`alloc_pool.mlir`) |
 | GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
 | GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
-| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ✅ **the full L1–L8 ladder ported to C + Python↔C parity-gated**: **L1** integer expr, **L2** struct/bitfield layout, **L3** pointers/arrays (GEP), **L4** functions + call graph (**R18** in C), **L5** volatile/MMIO, **L6** control flow, **L7** a real C preprocessor (`bcir_cpp.c`), **L8** ABI (struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked vs Clang). A full **R1–R18 verifier** (`bcir_verify.c`: R1–R8 incl. R6 lane↔stride, R9 plan, R10–R11 StreamPack, R12, R13 provenance digest, R17, R18), **§5.8 atomics/fences** (`ATOMIC_*`/`BARRIER` on lane A), a **C.2 attestation** stamped on the emit, a **faithful C emitter** (Clang-behaviour-equivalent), and the **closed loop** `C → bcir_cpp → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` (no Python). Now also a Clang-grade **diagnostics engine** (`bcir_diag.c`), a cross-platform **data-model ABI matrix** (`--target`), an **`--fallback`** route-to-LLVM contract, a module-scope **effect/commutation analysis** (`--emit-effects`), and scalar globals (read+write). The road to a full C23 *replacement* is the ordinary hard-compiler work in **§5.9** (scalable IR / no fixed `BCIR_MAX_*`, full integer promotions + usual arithmetic conversions, designated/compound initializers, object/debug/unwind emission, conformance suites) |
+| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ✅ **the full L1–L8 ladder ported to C + Python↔C parity-gated**: **L1** integer expr, **L2** struct/bitfield layout, **L3** pointers/arrays (GEP), **L4** functions + call graph (**R18** in C), **L5** volatile/MMIO, **L6** control flow, **L7** a real C preprocessor (`bcir_cpp.c`), **L8** ABI (struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked vs Clang). A full **R1–R18 verifier** (`bcir_verify.c`: R1–R8 incl. R6 lane↔stride, R9 plan, R10–R11 StreamPack, R12, R13 provenance digest, R17, R18), **§5.8 atomics/fences** (`ATOMIC_*`/`BARRIER` on lane A), a **C.2 attestation** stamped on the emit, a **faithful C emitter** (Clang-behaviour-equivalent), and the **closed loop** `C → bcir_cpp → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` (no Python). Now also a Clang-grade **diagnostics engine** (`bcir_diag.c`), a cross-platform **data-model ABI matrix** (`--target`), an **`--fallback`** route-to-LLVM contract, a module-scope **effect/commutation analysis** (`--emit-effects`), and scalar globals (read+write). The IR now grows with no fixed `BCIR_MAX_*` ceilings (any number of functions / params / calls / resources / claims). The road to a full C23 *replacement* is the ordinary hard-compiler work in **§5.9** (full integer promotions + usual arithmetic conversions, designated/compound initializers, object/debug/unwind emission, conformance suites) |
 | StreamPack ABI **decoder** | **C** `runtime/c/bcir_runtime.c` | **C** (frozen ABI) | ✅ CRC-gated parity + libFuzzer |
 | ETL binary-record decoder | **C** `runtime/c/bcir_binrec.c` | **C** | ✅ parity + libFuzzer |
 | Portable kernel emission (C23 + `_BitInt`/`#embed`) | Python `lower.c_kernel` | C output (emitter may become C++) | ✅ |
@@ -771,12 +771,17 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     broader (aggregate / non-const-init) globals;
   - *memory model:* `restrict`, broader alias/effect propagation (the module-scope analysis above is
     the seed), atomic compare-exchange, a fuller C memory model;
-  - *infra:* **scalable IR allocation (no fixed `BCIR_MAX_*`)** — the C IR still caps
-    `BCIR_MAX_PARAMS 8` / `BCIR_MAX_CALLS 32` / `BCIR_MAX_FUNCS 16` + fixed resource/claim/static-local
-    capacities (`bcir_cir.h`); real-world translation units blow through these, so this is a hard
-    blocker for non-trivial projects. Also: a fuller per-target calling-convention/varargs/aggregate
-    ABI on top of the landed **data-model layout matrix** (`--target`, §5.8), and real
-    object/dependency output via a resident backend.
+  - *infra:* ✅ **scalable IR allocation (no fixed `BCIR_MAX_*`)** — the C IR's per-unit function list
+    and every per-function array (params, calls, static locals, resources, claims) now grow
+    geometrically (`bcir_cir.h`/`bcir_cfront.c`); the old `BCIR_MAX_PARAMS 8` / `BCIR_MAX_CALLS 32` /
+    `BCIR_MAX_FUNCS 16` + the 256-resource / 4096-claim per-function caps are gone, so a real
+    translation unit of any size lowers. Gated by a cap-busting unit (43 functions, a 12-param
+    function, a 40-call aggregator, a 7500-claim function) that compiles clean and matches the oracle
+    (`#scale` in `check_runtime.sh`; `test_scalable_ir_no_fixed_ceilings`), valgrind-clean across the
+    realloc paths. *Still:* a fuller per-target calling-convention/varargs/aggregate ABI on top of the
+    landed **data-model layout matrix** (`--target`, §5.8), real object/dependency output via a
+    resident backend, and the parser-state caps (file-scope globals / struct defs / locals — a
+    separate "broader globals" segment).
 
   **Exit:** BCIR compiles a freestanding embedded C test suite + a nontrivial driver codebase with no
   hand-written claim graphs. ✅ **Composition checkpoint:** `cfront_integration.c` -- a realistic driver combining
