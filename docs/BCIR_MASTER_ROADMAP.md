@@ -924,7 +924,15 @@ production rail: ✅ **Clang-grade diagnostics** (spans, include-stack notes, fi
 machine-readable JSON — `bcir_diag.c`, dual-rail), ✅ a **cross-platform data-model ABI matrix**
 (`--target`, six targets, layout cross-checked vs Clang — §5.8), ✅ a module-scope **alias/effect
 analysis** (`--emit-effects`), and ✅ an **LLVM-backend fallback contract** (`bcir-cc --fallback`:
-clean 0 / dirty 1 / route-to-LLVM 2, the supported subset pinned to the oracle). **Remaining Phase-4
+clean 0 / dirty 1 / route-to-LLVM 2, the supported subset pinned to the oracle). ✅ **integrity fix —
+struct member arrays route to fallback, not a silent miscompile**: `s.arr[i]` indexes a struct *member*
+array; the oracle's rid-based address of `s.arr` could not carry the member's byte offset into the
+index access, so it lowered to `s[i]` and **emitted invalid C (`b[idx]`) while reporting `is_clean`** —
+a verified-compiler integrity violation that no gated fixture covered. The oracle now rejects it at
+lowering (a clean `CLowerError` -> `needs_fallback`), matching the twin's parse-reject, so both rails
+agree the unit routes to the LLVM backend (`_FALLBACK_PROBES` in `test_fallback_contract_dual_rail`).
+*Follow-on:* lower member-array access faithfully (carry the member offset into the indexed store/load
+on both rails) to support it natively rather than route away. **Remaining Phase-4
 work:** a *broad* calling-convention/object ABI matrix (on top of the landed data-model layout); the
 optimizer correctness/differential story still owed by the C rail — a full **cost-model bridge into the
 MLIR/C++ law rail**, arbitrary claim-graph lowering, RCSP/thermal planning through C, cost-based

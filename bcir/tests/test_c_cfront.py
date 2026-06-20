@@ -888,6 +888,10 @@ _FALLBACK_PROBES = [
     ("unsigned f(unsigned n){ unsigned a[n]; return a[0]; }", "fallback"),   # VLA
     ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "fallback"),  # statement-expr
     ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "fallback"),  # computed goto
+    ("struct B{unsigned n; unsigned a[4];}; unsigned f(unsigned i){ struct B b; b.a[i&3u]=0u; return b.n; }",
+     "fallback"),   # struct member array s.arr[i]: the oracle can't carry the member offset into the
+                     # index access (it would emit `b[idx]`), so it rejects -> fallback, matching the
+                     # twin's parse reject -- never a silent miscompile (a verified-compiler integrity rule)
 ]
 _FALLBACK_RC = {"clean": 0, "dirty": 1, "fallback": 2}
 
