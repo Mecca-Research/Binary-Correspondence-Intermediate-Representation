@@ -958,6 +958,15 @@ too; both rails now save/restore the name env around every `{ ... }` (oracle in 
 miscompile, `m[0][1]`-class). The oracle also lowers a bare block **inline** now (a `Block` AST node)
 instead of wrapping it in an always-true `if(1)`, which dropped a spurious const claim and made the bare-
 block claim count match the twin -- so the case is gate-able. `#blockscope`/`cfront_blockscope.c`.
+✅ **standing guard for the whole class — the Clang-equivalence fuzzer now spans control flow + scope**:
+all of the above (and the #loopreuse / member-array / multi-dim-local finds) were latent because the
+front end only validated `is_clean`, never *"does the emit compile and run like Clang?"* on programs
+with loops, blocks, or shadowing -- the random generator (`cfuzz.gen_program`) emitted only a single
+`return <expr>`. It now also builds an accumulator through random statements: `for` loops that reuse a
+counter, bare blocks, and a loop/block that shadows a parameter read after the construct. So
+`fuzz_valid(check_clang=True)` (gated, `test_cfront_fuzz`) exercises lowering, the emit, and name
+scoping every run; a regression in this class surfaces as a fallback / MISMATCH / build failure rather
+than a silent miscompile.
 **Remaining Phase-4
 work:** a *broad* calling-convention/object ABI matrix (on top of the landed data-model layout); the
 optimizer correctness/differential story still owed by the C rail — a full **cost-model bridge into the

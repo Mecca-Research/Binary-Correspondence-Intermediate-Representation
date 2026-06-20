@@ -17,9 +17,12 @@ def test_valid_programs_compile_clean():
 
 def test_valid_programs_are_clang_equivalent():
     # clang-gated: with a C compiler each generated program must be behaviour-equivalent; with none,
-    # the equivalence is "skip" and mismatch stays 0 either way.
-    s = fuzz_valid(seed=99, trials=30, check_clang=True)
-    assert s["crash"] == 0 and s["mismatch"] == 0
+    # the equivalence is "skip" and mismatch stays 0 either way. The generator now spans control flow +
+    # name scoping (loops that reuse a counter, bare blocks, and a loop/block that shadows a param read
+    # after the construct), so this campaign is a standing guard for the emit-compilation / scope-leak
+    # class of miscompiles -- a regression there surfaces here as a MISMATCH (or a build failure).
+    s = fuzz_valid(seed=99, trials=60, check_clang=True)
+    assert s["crash"] == 0 and s["mismatch"] == 0 and s["fallback"] == 0
 
 
 def test_malformed_input_never_crashes_the_frontend():
