@@ -938,7 +938,11 @@ member) had its access gated on `byte_off` *truthiness*, so it collapsed to an i
 the `_LV` now carries an explicit `member` flag so the `(offset, size)` imm rides even at offset 0. It
 hid because the per-fixture differential compiles the *twin's* emit; a new test
 (`test_member_array_oracle_emit_is_clang_equivalent`) compiles the **oracle's** emit via
-`compile_unit(check_clang=True)`, pinning it directly. *Still fallback (both rails, pinned by
+`compile_unit(check_clang=True)`, pinning it directly -- and the blind spot is now closed **corpus-wide**:
+`test_python_c_parity_and_equivalence_across_fixtures` compiles + runs *both* the twin's and the
+oracle's emitted C against the source for every fixture, so an oracle-emit regression in any fixture is
+caught (it passes today across the whole corpus, confirming every oracle emit compiles + matches Clang).
+*Still fallback (both rails, pinned by
 `_FALLBACK_PROBES`):* a **multi-dimensional** member array `s.m[i][j]` (needs the per-dim element
 stride) and a **pointer** member indexed `s.ptr[i]` (needs a pointer load first).
 ✅ **integrity fix — multi-dimensional *local* arrays route to fallback, not a silent miscompile**: a
