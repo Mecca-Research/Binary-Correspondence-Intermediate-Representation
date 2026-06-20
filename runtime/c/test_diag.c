@@ -88,15 +88,8 @@ int main(int argc, char **argv) {
   }
 
   static char out[1 << 16];
-  if (json) {
-    bcir_diag_to_json(diags, nd, src, filename, out, sizeof out);
-    fputs(out, stdout);
-  } else {
-    for (int i = 0; i < nd; i++) {
-      if (i) fputc('\n', stdout);                           /* DiagnosticReport.render joins with '\n' */
-      bcir_diag_render(&diags[i], src, filename, out, sizeof out);
-      fputs(out, stdout);
-    }
-  }
+  if (json) bcir_diag_to_json(diags, nd, src, filename, out, sizeof out);
+  else bcir_diag_report_render(diags, nd, src, filename, out, sizeof out);   /* DiagnosticReport.render */
+  fputs(out, stdout);
   return 0;
 }

@@ -109,11 +109,12 @@ static size_t py_repr(char *o, size_t cap, size_t w, const char *s) {
   return putc1(o, cap, w, q);
 }
 
-size_t bcir_diag_render(const bcir_diag *d, const char *source, const char *filename,
-                        char *out, size_t cap) {
+/* Append one diagnostic's Clang-layout render at cursor `w` (no NUL); returns the new cursor. The
+ * report renderer joins several of these with '\n', the C twin of "\n".join(render(d) for d ...). */
+static size_t render_one(char *out, size_t cap, size_t w, const char *source, const char *filename,
+                         const bcir_diag *d) {
   int len = (int)strlen(source);
   int first = 1;
-  size_t w = 0;
   /* origin: print the "In file included from <file>:<line>:" frames (outermost first), then relocate
    * the primary banner to (origin_file, origin_line). The notes are NOT relocated (default filename). */
   const char *pfile = d->has_origin ? d->origin_file : filename;
@@ -140,6 +141,23 @@ size_t bcir_diag_render(const bcir_diag *d, const char *source, const char *file
   }
   for (int i = 0; i < d->n_notes; i++)                    /* notes use the default filename (not origin) */
     w = banner(out, cap, w, source, len, filename, "note", d->notes[i].message, d->notes[i].span, &first, -1);
+  return w;
+}
+
+size_t bcir_diag_render(const bcir_diag *d, const char *source, const char *filename,
+                        char *out, size_t cap) {
+  size_t w = render_one(out, cap, 0, source, filename, d);
+  if (cap) out[w < cap ? w : cap - 1] = 0;
+  return w;
+}
+
+size_t bcir_diag_report_render(const bcir_diag *ds, int n, const char *source, const char *filename,
+                               char *out, size_t cap) {
+  size_t w = 0;
+  for (int i = 0; i < n; i++) {                           /* "\n".join(render(d) for d in diagnostics) */
+    if (i) w = putc1(out, cap, w, '\n');
+    w = render_one(out, cap, w, source, filename, &ds[i]);
+  }
   if (cap) out[w < cap ? w : cap - 1] = 0;
   return w;
 }
