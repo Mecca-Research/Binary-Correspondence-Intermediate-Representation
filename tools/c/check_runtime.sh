@@ -884,14 +884,15 @@ bsr="$("${tmp}/bs_h")"
 echo "[c-runtime] struct member arrays (bcir-cc): layout + access == Clang (#memberarray)"
 "${tmp}/bcir-cc" --emit-c "${C}/cfront_memberarray.c" > "${tmp}/mar_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
 { echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
-  sed -e 's/\bpkt_sum\b/pkt_src/' -e 's/\bbuf_pack\b/buf_src/' "${C}/cfront_memberarray.c"
+  sed -e 's/\bpkt_sum\b/pkt_src/' -e 's/\bbuf_pack\b/buf_src/' -e 's/\bgrid_pick\b/grid_src/' "${C}/cfront_memberarray.c"
   cat "${tmp}/mar_emit.c"
   cat <<'DRV'
 int main(void){
-  if(sizeof(struct Packet)!=28u||sizeof(struct Buf)!=12u){printf("LAYOUT P=%zu B=%zu\n",sizeof(struct Packet),sizeof(struct Buf));return 2;}
+  if(sizeof(struct Packet)!=28u||sizeof(struct Buf)!=12u||sizeof(struct Grid)!=52u){printf("LAYOUT bad\n");return 2;}
   for(unsigned i=0;i<6000u;i++)for(unsigned a=0;a<40u;a++){
     if(pkt_src(i,a)!=bcir_pkt_sum(i,a)){printf("pkt MISMATCH i=%u a=%u\n",i,a);return 1;}
     if(buf_src(i,a)!=bcir_buf_pack(i,a)){printf("buf MISMATCH i=%u a=%u\n",i,a);return 1;}
+    if(grid_src(i,a)!=bcir_grid_pick(i,a)){printf("grid MISMATCH i=%u a=%u\n",i,a);return 1;}
   }
   printf("MATCH\n");return 0;}
 DRV

@@ -895,10 +895,10 @@ _FALLBACK_PROBES = [
     ("unsigned f(unsigned n){ unsigned a[n]; return a[0]; }", "fallback"),   # VLA
     ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "fallback"),  # statement-expr
     ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "fallback"),  # computed goto
-    ("struct M{unsigned m[2][3];}; unsigned f(unsigned i){ struct M s; s.m[i&1u][i%3u]=1u; return s.m[i&1u][i%3u]; }",
-     "fallback"),   # a *multi-dimensional* struct member array: 1-D `s.arr[i]` is now natively lowered on
-                     # both rails (#memberarray), but the per-dim element stride for 2-D is deferred, so
-                     # both rails route it to fallback (the dual-rail subset stays pinned in agreement)
+    ("struct Q{unsigned*p; unsigned n;}; unsigned f(struct Q q,unsigned i){ return q.p[i&3u]+q.n; }",
+     "fallback"),   # a *pointer* member indexed (`s.ptr[i]`): the value model represents a loaded pointer
+                     # as a 4-byte temp (truncating an 8-byte pointer, so `t[idx]` subscripts an integer),
+                     # so both rails defer it. (1-D..3-D member *arrays* are now native -- #memberarray.)
     ("unsigned f(unsigned i, unsigned j){ unsigned m[2][2]; m[0][0]=1u; return m[i&1u][j&1u]; }",
      "fallback"),   # multi-dim *local* array: the local CType kept only the outer dim, so the emit was
                      # mis-sized (`m[2]`) and `m[i][j]` collapsed to `m[i+j]` (a silent miscompile). Now

@@ -942,9 +942,13 @@ hid because the per-fixture differential compiles the *twin's* emit; a new test
 `test_python_c_parity_and_equivalence_across_fixtures` compiles + runs *both* the twin's and the
 oracle's emitted C against the source for every fixture, so an oracle-emit regression in any fixture is
 caught (it passes today across the whole corpus, confirming every oracle emit compiles + matches Clang).
-*Still fallback (both rails, pinned by
-`_FALLBACK_PROBES`):* a **multi-dimensional** member array `s.m[i][j]` (needs the per-dim element
-stride) and a **pointer** member indexed `s.ptr[i]` (needs a pointer load first).
+✅ **multi-dimensional** member arrays too -- `s.m[i][j]` (a grid / matrix in a register block) up to
+**3 dims**: the access descends the nested array to the scalar element + the per-dim sizes, flattens
+row-major (`r*cols + c`, the same Horner the twin uses for array params), and lands the element at
+`&s + member_off + lin*elem_size`; the twin's `field` gained `nadims`/`adims`. *Still fallback (both
+rails, pinned by `_FALLBACK_PROBES`):* a **pointer** member indexed `s.ptr[i]` (the loaded pointer is a
+4-byte temp in the value model, truncating an 8-byte pointer) and a **>3-dimensional** member array
+(the dim table holds 3).
 ✅ **integrity fix — multi-dimensional *local* arrays route to fallback, not a silent miscompile**: a
 `T m[A][B]` local kept only the outer dim on its CType (no flatten shape), so the emit was mis-sized
 (`m[A]`, not `m[A*B]`) and `m[i][j]` collapsed to `m[i + j]` (colliding cells -- e.g. `m[0][1]` and
