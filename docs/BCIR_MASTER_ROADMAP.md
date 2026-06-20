@@ -778,7 +778,11 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     (`#astore`/`cfront_arraystore.c`); ✅ **`<<=` / `>>=` shift-compound-assign** (the lexer emits them
     as 3-char tokens; a shared `is_compound_op`/`compound_binop` desugars `lv OP= e` → `lv = lv OP e` on
     scalar / member / array lvalues -- `#shiftassign`/`cfront_shiftassign.c`); the rest of
-    pointer-arithmetic completeness (`p++`, `p - q`) + an object/provenance model; ✅ **cross-clause
+    pointer-arithmetic completeness — ✅ **pointer mutation** (`p++` / `++p` / `p += n` / `p -= n` on a
+    pointer lvalue lowers to a single `c.ptradd`/`c.ptrsub` claim, emitted `p += n;` so C scales by the
+    element size — the old integer-typed desugar truncated the pointer; dual-rail, `#ptrarith`/
+    `cfront_ptrarith.c`); (`p - q` pointer difference works as an integer result) + an object/provenance
+    model; ✅ **cross-clause
     `switch` fallthrough** -- both rails now emit a *real* C `switch` (`cast.Switch`/`SwitchNode` +
     folded case labels, the discriminant lowered once, `break` preserved) instead of the old if/else-if
     desugar, so a `case` without `break` falls through exactly as C specifies (and an MMIO discriminant

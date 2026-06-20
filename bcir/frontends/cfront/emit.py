@@ -135,6 +135,10 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
 
     if c.op == "c.copy":                                     # write a mutable local (no new decl)
         return f"{ref(c.wr[0])} = {ref(c.rd[0])};"
+    if c.op == "c.ptradd":                                   # pointer p += n (C scales by element size)
+        return f"{ref(c.wr[0])} += {ref(c.rd[1])};"
+    if c.op == "c.ptrsub":                                   # pointer p -= n
+        return f"{ref(c.wr[0])} -= {ref(c.rd[1])};"
     if c.op == "c.const":
         return deftmp(c.wr[0], f"{c.imm[0]}u")
     if c.op.startswith("c.fconst:"):                         # a floating constant -> its literal spelling
