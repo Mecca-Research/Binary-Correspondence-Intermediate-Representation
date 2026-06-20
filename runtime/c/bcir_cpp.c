@@ -365,6 +365,34 @@ static int read_file_dirs(const char *const *dirs, int ndirs, const char *name, 
  * (matching cpp.py, where the same Preprocessor processes nested files); the conditional stack is
  * per-call (a header's #if is self-contained). Recurses into included files, appending to `out` at
  * `*w` and sharing the macro table. */
+/* Translation phase 3: replace every // and block comment with a single space, keeping the newlines
+ * a block comment spanned (so __LINE__ and the per-line directive scan stay aligned). String/char
+ * literals are copied verbatim; a `'` flanked by hex digits is a C23 digit separator, not a quote.
+ * In-place safe (the write cursor never overtakes the read cursor). Mirrors cpp.py _strip_comments,
+ * and runs *before* directive processing so a directive inside a comment never fires and the
+ * comment's punctuation can't be re-tokenized into the output. */
+static void strip_comments(const char *s, char *o, size_t ocap) {
+  size_t i=0, w=0;
+  #define _HX(ch) (((ch)>='0'&&(ch)<='9')||(((ch)|0x20)>='a'&&((ch)|0x20)<='f'))
+  while(s[i] && w+1<ocap){
+    char c=s[i];
+    if(c=='"' || (c=='\'' && !(i>0 && _HX(s[i-1]) && s[i+1] && _HX(s[i+1])))){
+      o[w++]=c; i++;                                  /* a string/char literal: copy verbatim */
+      while(s[i] && w+2<ocap){ char ch=s[i];
+        if(ch=='\\' && s[i+1]){ o[w++]=ch; o[w++]=s[i+1]; i+=2; continue; }
+        o[w++]=ch; i++; if(ch==c) break; }
+      continue; }
+    if(c=='/' && s[i+1]=='/'){ i+=2; while(s[i] && s[i]!='\n') i++; o[w++]=' '; continue; }
+    if(c=='/' && s[i+1]=='*'){ i+=2; int nl=0;
+      while(s[i] && !(s[i]=='*'&&s[i+1]=='/')){ if(s[i]=='\n')nl++; i++; }
+      if(s[i]) i+=2;                                  /* consume the closing star-slash */
+      o[w++]=' '; while(nl>0 && w+1<ocap){ o[w++]='\n'; nl--; } continue; }
+    o[w++]=c; i++;
+  }
+  #undef _HX
+  o[w]=0;
+}
+
 static int g_cpp_depth;
 static int cpp_process(const char *src, const char *curfile, const char *const *dirs, int ndirs,
                        char *out, size_t outcap, size_t *w, char *err, size_t errcap) {
@@ -405,6 +433,7 @@ static int cpp_process(const char *src, const char *curfile, const char *const *
           int s2=j; while(rest[j]&&rest[j]!='>'&&rest[j]!='"')j++; int nl=j-s2; if(nl>1023)nl=1023; memcpy(nm,rest+s2,(size_t)nl);nm[nl]=0;
           if(read_file_dirs(dirs,ndirs,nm,hd,sizeof hd)<0){ if(!sys){if(err)snprintf(err,errcap,"#include %s not found",nm);return 1;} }
           else { if(g_cpp_depth>64){if(err)snprintf(err,errcap,"#include nesting too deep");return 1;}
+                 strip_comments(hd,hd,sizeof hd);    /* phase 3 for the header (in-place safe) */
                  g_cpp_depth++; int rc=cpp_process(hd,nm,dirs,ndirs,out,outcap,w,err,errcap); g_cpp_depth--;
                  if(rc) return rc; }
         }
@@ -468,8 +497,13 @@ int bcir_cpp_run_ex(const char *src, const char *srcname, const char *const *dir
     snprintf(def, sizeof def, "__TIME__ \"%s\"", tb); define_macro(def); }
   for(int d=0; d<ndefines; d++) define_macro(defines[d]);
   out[0]=0; size_t w=0; g_cpp_depth=0;
-  return cpp_process(src, (srcname && srcname[0]) ? srcname : "<source>",
+  size_t sl=strlen(src); char *stripped=malloc(sl+1);   /* phase 3 for the source, before directives */
+  if(!stripped){ if(err)snprintf(err,errcap,"oom"); return 1; }
+  strip_comments(src, stripped, sl+1);
+  int rc=cpp_process(stripped, (srcname && srcname[0]) ? srcname : "<source>",
                      dirs, ndirs, out, outcap, &w, err, errcap);
+  free(stripped);
+  return rc;
 }
 
 int bcir_cpp_run(const char *src, const char *basedir, char *out, size_t outcap,
