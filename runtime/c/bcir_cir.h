@@ -99,25 +99,26 @@ typedef struct bcir_claim {
   char     op[BCIR_CIR_NAME]; /* semantic label, e.g. "c.bin.add" / "c.load" / "c.bf.get" */
 } bcir_claim;
 
-#define BCIR_MAX_PARAMS 8
-#define BCIR_MAX_CALLS 32
-#define BCIR_MAX_FUNCS 16
+/* A static-local variable (static storage duration: a once-only constant init). */
+typedef struct bcir_static { char name[BCIR_CIR_NAME]; long long init; } bcir_static;
 
-/* A function lowered to a single phase of claims over its resources. */
+/* A function lowered to a single phase of claims over its resources. Every variable-length member
+ * grows on demand (geometric realloc) -- the IR has no fixed BCIR_MAX_* ceilings, so a real
+ * translation unit (any number of functions / params / calls / resources / claims) lowers. */
 typedef struct bcir_func {
   char name[BCIR_CIR_NAME];
   bcir_resource *res; size_t n_res, cap_res;
   bcir_claim    *claims; size_t n_claims, cap_claims;
-  bcir_param params[BCIR_MAX_PARAMS]; int n_params;
+  bcir_param    *params; int n_params, cap_params;
   bcir_ctype  ret;
   uint32_t return_rid; uint8_t has_return;
-  char calls[BCIR_MAX_CALLS][BCIR_CIR_NAME]; int n_calls;   /* callee names (R18 call graph) */
-  struct { char name[BCIR_CIR_NAME]; long long init; } statics[8]; int n_statics; /* static locals */
+  char (*calls)[BCIR_CIR_NAME]; int n_calls, cap_calls;   /* callee names (R18 call graph) */
+  bcir_static *statics; int n_statics, cap_statics;       /* static locals */
 } bcir_func;
 
-/* A translation unit: several functions sharing struct definitions + a call graph. */
+/* A translation unit: a growable list of functions sharing struct definitions + a call graph. */
 typedef struct bcir_unit {
-  bcir_func funcs[BCIR_MAX_FUNCS]; int n_funcs;
+  bcir_func *funcs; int n_funcs, cap_funcs;
 } bcir_unit;
 
 /* opcode name (for emission / diagnostics). */

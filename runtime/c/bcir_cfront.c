@@ -468,15 +468,23 @@ static void p_typedef(CC *c){
 
 /* --- the IR builder ------------------------------------------------------ */
 static uint32_t add_res(CC *c, bcir_domain dom, int elem, int count, int vol, int kind, const char *nm) {
-  bcir_func *f=c->fn; if(f->n_res>=f->cap_res) return 0;
-  bcir_resource *r=&f->res[f->n_res++];
+  bcir_func *f=c->fn;
+  if(f->n_res>=f->cap_res){                 /* grow geometrically -- no fixed resource ceiling */
+    size_t nc=f->cap_res?f->cap_res*2:16; bcir_resource *nr=realloc(f->res,nc*sizeof *nr);
+    if(!nr){fail(c,"oom");return 0;} f->res=nr; f->cap_res=nc;
+  }
+  bcir_resource *r=&f->res[f->n_res++]; memset(r,0,sizeof *r);   /* realloc slots are uninitialized */
   r->rid=c->rid++; r->domain=dom; r->elem_bytes=elem<1?1:elem; r->count=count<1?1:count;
-  r->is_volatile=vol; r->read_only=0; r->kind=kind; r->agg[0]=0;
+  r->is_volatile=(uint8_t)vol; r->read_only=0; r->kind=(uint8_t)kind; r->agg[0]=0;
   snprintf(r->name,sizeof r->name,"%s",nm?nm:"");
   return r->rid;
 }
 static bcir_claim *new_claim(CC *c,const char *op,bcir_opcode opc) {
-  bcir_func *f=c->fn; if(f->n_claims>=f->cap_claims){fail(c,"too many claims");return NULL;}
+  bcir_func *f=c->fn;
+  if(f->n_claims>=f->cap_claims){           /* grow geometrically -- no fixed claim ceiling */
+    size_t nc=f->cap_claims?f->cap_claims*2:32; bcir_claim *ncl=realloc(f->claims,nc*sizeof *ncl);
+    if(!ncl){fail(c,"oom");return NULL;} f->claims=ncl; f->cap_claims=nc;
+  }
   bcir_claim *cl=&f->claims[f->n_claims++]; memset(cl,0,sizeof *cl);
   cl->id=c->cid++;cl->opcode=opc;cl->lane=BCIR_LANE_U;cl->stride=BCIR_STRIDE_SCALAR;cl->count=1;
   cl->domain=BCIR_DOM_RAM;cl->hazard=BCIR_HZ_UNIQUE;cl->bounds=BCIR_BND_STRICT;
@@ -486,6 +494,14 @@ static uint32_t temp(CC *c,int size){return add_res(c,BCIR_DOM_RAM,size?size:4,1
 /* A floating temporary (size 4 float / 8 double) -- the emit renders it as float/double, not uint32. */
 static uint32_t tempf(CC *c,int size){ uint32_t r=add_res(c,BCIR_DOM_RAM,size,1,0,BCIR_RK_SCALAR,"");
   if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_float=1; return r; }
+/* record an R18 call-graph edge (callee name), growing the per-function call list on demand. */
+static void add_call(CC *c, const tok *name) {
+  bcir_func *f=c->fn;
+  if(f->n_calls>=f->cap_calls){ int nc=f->cap_calls?f->cap_calls*2:8;
+    char (*np)[BCIR_CIR_NAME]=realloc(f->calls,(size_t)nc*sizeof *np);
+    if(!np){fail(c,"oom");return;} f->calls=np; f->cap_calls=nc; }
+  idcpy(f->calls[f->n_calls++],name);
+}
 /* The floating size of the value in rid (4 float / 8 double), or 0 if it is not floating. Drives
  * float result typing (usual arithmetic conversions: the wider float wins) + the emit. */
 static int rid_fsize(CC *c,uint32_t rid){
@@ -620,7 +636,7 @@ static uint32_t p_call(CC *c, const tok *name) {
     char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.void:%.*s",name->n,name->s);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
-    if(c->fn->n_calls<BCIR_MAX_CALLS) idcpy(c->fn->calls[c->fn->n_calls++],name);
+    add_call(c,name);
     return temp(c,4);                        /* an unused placeholder (a void result is never read) */
   }
   uint32_t t = (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
@@ -629,7 +645,7 @@ static uint32_t p_call(CC *c, const tok *name) {
   char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call:%.*s",name->n,name->s);
   bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
   if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
-  if(c->fn->n_calls<BCIR_MAX_CALLS) idcpy(c->fn->calls[c->fn->n_calls++],name);
+  add_call(c,name);
   return t;
 }
 /* An indirect call through a function-pointer local/param (HAL dispatch): the target is dynamic, so
@@ -1049,8 +1065,11 @@ static void p_stmt(CC *c) {
     env_add(c,&nm,rid,&ty,si);
     if(is_static){            /* static storage: a once-only constant init, baked into the decl */
       long long init=0; if(is(c,"=")){c->i++;init=ce_expr(c,0);}
-      if(c->fn->n_statics<8){idcpy(c->fn->statics[c->fn->n_statics].name,&nm);
-        c->fn->statics[c->fn->n_statics].init=init;c->fn->n_statics++;}
+      { bcir_func *f=c->fn;
+        if(f->n_statics>=f->cap_statics){ int nc=f->cap_statics?f->cap_statics*2:4;
+          bcir_static *ns=realloc(f->statics,(size_t)nc*sizeof *ns); if(ns){f->statics=ns;f->cap_statics=nc;} }
+        if(f->n_statics<f->cap_statics){ idcpy(f->statics[f->n_statics].name,&nm);
+          f->statics[f->n_statics].init=init; f->n_statics++; } }
       eat(c,";");return;
     }
     if(is(c,"=")){c->i++;uint32_t v=p_expr(c);
@@ -1147,7 +1166,9 @@ static int p_func(CC *c, bcir_func *fn) {
     if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
     env_add(c,&pn,rid,&ty,si);
-    if(fn->n_params<BCIR_MAX_PARAMS){bcir_param *pp=&fn->params[fn->n_params++];
+    if(fn->n_params>=fn->cap_params){ int nc=fn->cap_params?fn->cap_params*2:4;
+      bcir_param *np=realloc(fn->params,(size_t)nc*sizeof *np); if(np){fn->params=np;fn->cap_params=nc;} }
+    if(fn->n_params<fn->cap_params){bcir_param *pp=&fn->params[fn->n_params++]; memset(pp,0,sizeof *pp);
       idcpy(pp->name,&pn);pp->rid=rid;pp->type=ty;}
     if(is(c,",")){c->i++;continue;} break;
   }
@@ -1377,14 +1398,18 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
   c.rid=100; c.cid=1000; c.unit=&out->unit;
   strtab_reset();                       /* fresh string-literal table per translation unit */
   lex(&c,src);
-  while(!isk(&c,T_END)&&!c.failed&&out->unit.n_funcs<BCIR_MAX_FUNCS){
+  while(!isk(&c,T_END)&&!c.failed){       /* no fixed function ceiling -- the unit list grows */
     if(try_top_decl(&c)) continue;       /* typedef / enum / struct|union defs, interleaved */
     if(isk(&c,T_END)||c.failed) break;
     if(looks_global(&c)){ p_global(&c); continue; }   /* a file-scope global (lookup table) */
-    bcir_func *fn=&out->unit.funcs[out->unit.n_funcs];
-    fn->cap_res=256; fn->res=calloc(256,sizeof(bcir_resource));
-    fn->cap_claims=4096; fn->claims=calloc(4096,sizeof(bcir_claim));
-    if(!fn->res||!fn->claims){snprintf(out->diag,sizeof out->diag,"oom");return 1;}
+    if(out->unit.n_funcs>=out->unit.cap_funcs){       /* grow the function list geometrically */
+      int nc=out->unit.cap_funcs?out->unit.cap_funcs*2:8;
+      bcir_func *nf=realloc(out->unit.funcs,(size_t)nc*sizeof *nf);
+      if(!nf){snprintf(out->diag,sizeof out->diag,"oom");return 1;}
+      memset(nf+out->unit.cap_funcs,0,(size_t)(nc-out->unit.cap_funcs)*sizeof *nf);  /* fresh slots */
+      out->unit.funcs=nf; out->unit.cap_funcs=nc;     /* NB: grow only here, never during p_func */
+    }
+    bcir_func *fn=&out->unit.funcs[out->unit.n_funcs]; /* res/claims/params/calls/statics grow lazily */
     c.rid=100+out->unit.n_funcs*1000; c.cid=1000+out->unit.n_funcs*1000;
     if(p_func(&c,fn)){snprintf(out->diag,sizeof out->diag,"%s",c.err);return 1;}
     out->unit.n_funcs++;
@@ -1414,7 +1439,10 @@ int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
 }
 
 void bcir_cfront_free(bcir_cfront_result *out){
-  for(int i=0;i<out->unit.n_funcs;i++){free(out->unit.funcs[i].res);free(out->unit.funcs[i].claims);}
+  for(int i=0;i<out->unit.n_funcs;i++){ bcir_func *f=&out->unit.funcs[i];
+    free(f->res); free(f->claims); free(f->params); free(f->calls); free(f->statics); }
+  free(out->unit.funcs);
+  out->unit.funcs=NULL; out->unit.n_funcs=0; out->unit.cap_funcs=0;
 }
 
 void bcir_cfront_summary(const bcir_unit *u,int ok,char *buf,size_t n){
@@ -1468,8 +1496,8 @@ static int fx_find(const bcir_unit *u, const char *name){
 }
 /* fold function fi's footprint with its callees' (transitively; the `seen` mask guards the DAG). */
 static void fx_fold(const bcir_unit *u, int fi, char names[][BCIR_CIR_NAME], int ng,
-                    uint64_t *rd, uint64_t *wr, uint32_t *seen){
-  if(fi<0 || (*seen & (1u<<fi))) return; *seen |= 1u<<fi;
+                    uint64_t *rd, uint64_t *wr, char *seen){      /* seen[]: a visited byte per func */
+  if(fi<0 || seen[fi]) return; seen[fi]=1;
   uint64_t ord,owr; fx_own(&u->funcs[fi],names,ng,&ord,&owr); *rd|=ord; *wr|=owr;
   const bcir_func *f=&u->funcs[fi];
   for(int k=0;k<f->n_calls;k++) fx_fold(u,fx_find(u,f->calls[k]),names,ng,rd,wr,seen);
@@ -1486,8 +1514,10 @@ static size_t fx_print_names(char *o,size_t cap,size_t w, char names[][BCIR_CIR_
 
 void bcir_cfront_effects(const bcir_unit *u, char *buf, size_t n){
   char names[BCIR_FX_MAXG][BCIR_CIR_NAME]; int ng=fx_globals(u,names);
-  uint64_t frd[BCIR_MAX_FUNCS], fwr[BCIR_MAX_FUNCS];
-  for(int i=0;i<u->n_funcs;i++){ uint32_t seen=0; uint64_t rd=0,wr=0; fx_fold(u,i,names,ng,&rd,&wr,&seen); frd[i]=rd; fwr[i]=wr; }
+  int nf=u->n_funcs; size_t af=(size_t)(nf>0?nf:1);   /* per-function footprints (any number of funcs) */
+  uint64_t *frd=calloc(af,sizeof *frd), *fwr=calloc(af,sizeof *fwr); char *seen=calloc(af,1);
+  if(!frd||!fwr||!seen){ if(n)buf[0]=0; free(frd);free(fwr);free(seen); return; }
+  for(int i=0;i<nf;i++){ memset(seen,0,af); uint64_t rd=0,wr=0; fx_fold(u,i,names,ng,&rd,&wr,seen); frd[i]=rd; fwr[i]=wr; }
   size_t w=0;
   for(int i=0;i<u->n_funcs;i++){
     w+=(size_t)snprintf(buf+w,w<n?n-w:0,"fn=%s reads=",u->funcs[i].name);
@@ -1501,4 +1531,5 @@ void bcir_cfront_effects(const bcir_unit *u, char *buf, size_t n){
     int conflict = (wa & (rb|wb)) || (wb & (ra|wa));      /* a writes b's footprint, or vice versa */
     w+=(size_t)snprintf(buf+w,w<n?n-w:0,"commute %s %s = %d\n",u->funcs[i].name,u->funcs[j].name,conflict?0:1);
   }
+  free(frd); free(fwr); free(seen);
 }
