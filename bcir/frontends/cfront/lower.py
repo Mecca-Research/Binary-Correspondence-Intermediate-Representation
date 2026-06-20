@@ -465,30 +465,38 @@ class _FuncLowerer:
                 n = n.base
             idx_nodes.reverse()
             byte_off = 0
+            mem_shape = mem_elem = None
             if isinstance(n, cast.Member):
-                # `s.arr[i]` -- indexing a struct *member* array. The base is the enclosing struct; the
-                # member's byte offset rides in the access imm beside the element size, and the index is
-                # scaled by the element (in the executor and the emit), so the element lands at
-                # `&s + member_off + i*elem_size` -- never the enclosing struct's offset 0.
+                # `s.arr[i]` / `s.m[i][j]` -- indexing a struct *member* array. The base is the enclosing
+                # struct; the member's byte offset rides in the access imm beside the element size, and
+                # the row-major flattened index is scaled by the element, so the element lands at
+                # `&s + member_off + lin*elem_size` -- never the enclosing struct's offset 0.
                 base_rid, struct_ct = self._addr(n.base)
                 agg = struct_ct.of if n.arrow else struct_ct
                 ftype, byte_off, _bo, _bw = agg.field(n.field)
                 if ftype.kind != "array":
-                    # a *pointer* member indexed (`s.ptr[i]`): needs a pointer load first, not an offset.
+                    # a *pointer* member indexed (`s.ptr[i]`): the loaded pointer would have to be a real
+                    # 8-byte C pointer, but the value model represents a loaded pointer as a 4-byte temp
+                    # (truncating it, so `t[idx]` subscripts an integer); defer to the LLVM fallback.
                     raise CLowerError(
                         f"indexing a non-array struct member ('{n.field}[...]') is not yet supported")
-                if (ftype.of is not None and ftype.of.of is not None) or len(idx_nodes) > 1:
-                    # a *multi-dimensional* member array `s.m[i][j]` -- the element-size / flatten model
-                    # below assumes a 1-D member array, so defer it to the LLVM fallback rather than
-                    # emit a wrong element stride (the common `uint8_t buf[N]` / `unsigned data[N]` is 1-D).
+                dims, t = [], ftype                           # descend the (nested) member array:
+                while t.kind == "array":                      # per-dim sizes + the ultimate scalar element
+                    dims.append(t.count)
+                    t = t.of if t.of is not None else scalar("uint32_t")
+                if len(dims) > 3:
+                    # the dim table (oracle shape / twin field.adims) holds at most 3 dims; defer deeper.
                     raise CLowerError(
-                        f"indexing a multi-dimensional struct member array ('{n.field}[...]')"
-                        " is not yet supported")
-                base_ct = ftype                               # flatten using the member array's dims
+                        f"indexing a >3-dimensional struct member array ('{n.field}') is not yet supported")
+                if len(idx_nodes) != len(dims):
+                    # partial indexing of a member array (a row pointer `s.m[i]`): defer to fallback.
+                    raise CLowerError(
+                        f"partial indexing of a struct member array ('{n.field}') is not yet supported")
+                base_ct, mem_shape, mem_elem = ftype, tuple(dims), t
             else:
                 base_rid, base_ct = self._addr(n)
             idx_rids = [self._rvalue(ix) for ix in idx_nodes]
-            shape = base_ct.shape
+            shape = mem_shape if mem_shape is not None else base_ct.shape
             lin = idx_rids[0]
             for d in range(1, len(idx_rids)):
                 dim = shape[d] if d < len(shape) else 1
@@ -499,7 +507,7 @@ class _FuncLowerer:
                 a1 = self._temp(scalar("uint32_t"), "b_add")
                 self._emit("c.bin.add", Opcode.ADD, (m1, idx_rids[d]), (a1,))
                 lin = a1
-            elem = base_ct.of if base_ct.of else scalar("uint32_t")
+            elem = mem_elem if mem_elem is not None else (base_ct.of if base_ct.of else scalar("uint32_t"))
             return _LV("mem", base_rid, elem, idx=lin, byte_off=byte_off,
                        member=isinstance(n, cast.Member))
         if isinstance(node, cast.Member):

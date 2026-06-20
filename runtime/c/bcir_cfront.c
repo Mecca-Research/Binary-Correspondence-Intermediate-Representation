@@ -32,7 +32,9 @@ typedef struct { tkind k; const char *s; int n; long long v; } tok;
 #define MAXFLD 64        /* members per struct (f[] is embedded in sdef; generous, guarded) */
 
 typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int byte_off, bit_off, bit_w; int sidx;
-                 int arr_count; } field;   /* arr_count > 0: a member array `T arr[N]`; `size` is the element */
+                 int arr_count; int nadims; int adims[3]; } field;
+                 /* arr_count > 0: a member array; `size` is the element, arr_count the total element
+                  * count, nadims/adims the per-dim sizes (`T m[A][B]` -> nadims 2, adims {A,B}) */
 typedef struct { char tag[BCIR_CIR_NAME]; field f[MAXFLD]; int nf; int size; int align; int is_union; } sdef;
 typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int sidx; } tdef;   /* a typedef alias */
 typedef struct { char name[BCIR_CIR_NAME]; long long val; } econst;           /* an enum constant */
@@ -403,12 +405,16 @@ static int p_struct_body(CC *c) {
     for(;;){                                          /* one or more declarators off one specifier: */
       if(!isk(c,T_ID)){ fail(c,"expected member name"); return -1; }   /* `unsigned x, y, z;` etc. */
       tok nm=adv(c);
-      int arr_count=0; if(is(c,"[")){c->i++;arr_count=isk(c,T_INT)?(int)adv(c).v:0;eat(c,"]");}   /* T arr[N] */
+      int arr_count=0,nadims=0,adims[3]={0,0,0};        /* T arr[N] / T m[A][B] -- one or more dims */
+      while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
+        if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
+      if(nadims>3){ fail(c,"member array of more than 3 dimensions"); return -1; }   /* adims[] caps at 3 */
       int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;}          /* per-declarator bitfield width */
       if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
       int sz=ty.size,al=packed?1:(sz<1?1:sz); field *f=&S->f[S->nf++];
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
       idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
+      f->nadims=nadims; for(int z=0;z<3;z++) f->adims[z]=adims[z];
       f->sidx = (ty.kind==1 && !ty.ptr_to_struct && !arr_count) ? si : -1;   /* value struct member -> nested */
       if(al>S->align)S->align=al; if(total>maxsz)maxsz=total;
       if(is_union){f->byte_off=0;f->bit_off=0;}        /* union: every member overlaps at offset 0 */
@@ -642,6 +648,24 @@ static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t 
   cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;cl->bounds=BCIR_BND_ASSUMED;
   if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
   return t;
+}
+/* Parse the `[i]` (or `[i][j][k]`) indices of a member-array access and flatten them row-major into a
+ * single linear index (Horner: lin = lin*adims[d] + idx[d]) -- matching the oracle, so 1-D `s.a[i]` and
+ * N-D `s.m[i][j]` both reduce to one element-scaled index into the member at its byte offset. */
+static uint32_t member_arr_index(CC *c, const field *fld) {
+  uint32_t lin=0; int d=0;
+  while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]");
+    if(d==0){ lin=ix; }
+    else { int dim = d<fld->nadims ? fld->adims[d] : 1;
+      uint32_t k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+      if(kc){kc->n_wr=1;kc->wr[0]=k;kc->n_imm=1;kc->imm[0]=dim;}
+      uint32_t m1=temp(c,4); bcir_claim *mc=new_claim(c,"c.bin.mul",BCIR_OP_MUL);
+      if(mc){mc->n_rd=2;mc->rd[0]=lin;mc->rd[1]=k;mc->n_wr=1;mc->wr[0]=m1;}
+      uint32_t a1=temp(c,4); bcir_claim *ac=new_claim(c,"c.bin.add",BCIR_OP_ADD);
+      if(ac){ac->n_rd=2;ac->rd[0]=m1;ac->rd[1]=ix;ac->n_wr=1;ac->wr[0]=a1;}
+      lin=a1; }
+    d++; }
+  return lin;
 }
 static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -- GEP load */
   uint32_t t=temp(c,base->type.size?base->type.size:4);
@@ -909,7 +933,7 @@ static uint32_t p_primary(CC *c) {
         return t;
       }
       field mf=member_descend(c,S->f[fi]);        /* nested `o.in.v` -> one flattened-offset load */
-      if(mf.arr_count && is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]");   /* s.arr[i] -- load */
+      if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);   /* s.arr[i] / s.m[i][j] load */
         return emit_member_index(c,v,&mf,ix); }
       return emit_member(c,v,&mf);
     }
@@ -1340,8 +1364,8 @@ static void p_stmt(CC *c) {
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
       if(fi<0){fail(c,"unknown field");return;}
       field f=member_descend(c,S->f[fi]);         /* nested `o.in.v` -> one flattened-offset store */
-      if(f.arr_count && is(c,"[")){               /* s.arr[i] = expr  /  s.arr[i] OP= expr */
-        c->i++; uint32_t idx=p_expr(c); eat(c,"]"); uint32_t aval;
+      if(f.arr_count && is(c,"[")){               /* s.arr[i] / s.m[i][j] = expr  /  OP= expr */
+        uint32_t idx=member_arr_index(c,&f); uint32_t aval;
         if(is_compound_op(&c->t[c->i])){          /* load element, bin op, store back */
           char ch=c->t[c->i].s[0]; c->i++;
           uint32_t cur=emit_member_index(c,v,&f,idx); uint32_t rhs=p_expr(c);

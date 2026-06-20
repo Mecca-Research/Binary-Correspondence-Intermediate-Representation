@@ -21,3 +21,14 @@ unsigned buf_pack(unsigned i, unsigned a) {
   for (unsigned t = 0u; t < 8u; t++) b.data[t] = (unsigned char)(a + t);   /* uint8 narrowing stores */
   return (unsigned)b.data[i & 7u] + b.len;
 }
+/* A 2-D member array `g.cell[r][c]` (a small grid / matrix in a register block): the row-major index
+ * flattens to `r*4 + c`, the element lands at `&g + cell_off + (r*4+c)*4`. */
+struct Grid { unsigned cell[3][4]; unsigned tag; };
+unsigned grid_pick(unsigned i, unsigned a) {
+  struct Grid g;
+  g.tag = a;
+  for (unsigned r = 0u; r < 3u; r++)
+    for (unsigned c = 0u; c < 4u; c++)
+      g.cell[r][c] = a + r * 4u + c;                              /* 2-D member-array stores */
+  return g.cell[i % 3u][i & 3u] + g.cell[(i + 1u) % 3u][0] + g.tag;   /* 2-D reads */
+}
