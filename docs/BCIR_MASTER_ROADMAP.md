@@ -765,6 +765,15 @@ twin, not a miscompile): `enum Tag` is a valid int-sized type specifier (`enum E
 a type" -- so it rejected *every* enum-as-type and fell back where the twin compiled. Fixed by keeping the
 enum's int base; both rails now lower an enum to a plain int (negative enumerators included).
 `#enumtype`/`cfront_enumtype.c`, differential == Clang on both rails.
+✅ **and pointer locals** (`T *p = &x;` -- address-of a local into a typed pointer variable, then
+read/write `*p`): the twin emitted a pointer local as a plain `uint32_t`, so `p = &x;` was an invalid
+pointer-to-integer assignment (a hard error under C23) *and* truncated the 8-byte address to 32 bits on a
+64-bit target -- a miscompile where it compiled at all. The oracle, which emits `T *p`, was correct. Fixed
+by carrying the pointee (width, signedness, struct tag) on the pointer resource and emitting the real
+`T *p`, with the deref reading exactly the pointee width (so a `signed char *` deref sign-extends and
+`p[i]` / `*(p+i)` index with the right stride). `#ptrlocal`/`cfront_ptrlocal.c`, differential == Clang on
+both rails. *(This closes the pointer-local slice of the 4-byte value model; pointer **values** carried
+across non-address contexts remain the broader model item.)*
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both

@@ -601,7 +601,7 @@ static void add_call(CC *c, const tok *name) {
  * float result typing (usual arithmetic conversions: the wider float wins) + the emit. */
 static int rid_fsize(CC *c,uint32_t rid){
   for(size_t i=0;i<c->fn->n_res;i++)
-    if(c->fn->res[i].rid==rid) return c->fn->res[i].is_float?(int)c->fn->res[i].elem_bytes:0;
+    if(c->fn->res[i].rid==rid) return (c->fn->res[i].is_float&&c->fn->res[i].kind==BCIR_RK_SCALAR)?(int)c->fn->res[i].elem_bytes:0;
   return 0;
 }
 /* A string literal -> an anonymous read-only char[] global (decays to a pointer). Identical spellings
@@ -696,9 +696,11 @@ static uint32_t array_index(CC *c, venv *v) {
   return lin;
 }
 static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereference load */
-  uint32_t t=temp(c,pv->type.size?pv->type.size:4);
+  int psz=pv->type.size?pv->type.size:4;          /* the pointee width drives the load size + temp type */
+  uint32_t t=pv->type.is_float ? tempf(c,psz) : tempi(c,psz,pv->type.signd);
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=pv->rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;
+  cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=psz;         /* read exactly the pointee width (was a fixed 4) */
   if(pv->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
   return t;
 }
@@ -1352,7 +1354,11 @@ static void p_stmt(CC *c) {
       uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                            arr?ty.size:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
                            arr?arr:(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
-      if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double (element) local */
+      if(ty.kind==2&&!arr){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer local: carry the
+        * pointee type (elem_bytes already = pointee size) so the decl emits `T *p`, not a truncating uint32 */
+        pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0);
+        if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
+      else if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double (element) local */
       else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
         if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1; }     /* a _Bool local: emit `_Bool`, store normalizes */
       if(ty.kind==1&&!arr) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
@@ -1658,6 +1664,13 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(sx>=0) w+=snprintf(o+w,on-w,"  static uint32_t %s = %lluu;\n",nm,(unsigned long long)f->statics[sx].init);
       else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s%s;\n",r->agg,nm,r->zinit?" = {0}":"");
       else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+w,on-w,"  %s %s[%u]%s;\n",tty(f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
+      else if(r->kind==BCIR_RK_POINTER){ char pb[80];   /* a pointer local: `T *p` (the pointee carries width/sign) */
+        if(r->agg[0]) snprintf(pb,sizeof pb,"%s *",r->agg);
+        else if(r->is_float) snprintf(pb,sizeof pb,"%s *",r->elem_bytes==8?"double":"float");
+        else snprintf(pb,sizeof pb,"%s *",
+          r->elem_bytes==1?(r->is_signed?"int8_t":"uint8_t"):r->elem_bytes==2?(r->is_signed?"int16_t":"uint16_t"):
+          r->elem_bytes==8?(r->is_signed?"int64_t":"uint64_t"):(r->is_signed?"int32_t":"uint32_t"));
+        w+=snprintf(o+w,on-w,"  %s%s;\n",pb,nm); }
       else w+=snprintf(o+w,on-w,"  %s %s;\n",tty(f,r->rid),nm);}}
   int depth=1, lstk[64], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)
