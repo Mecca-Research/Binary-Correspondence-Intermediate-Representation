@@ -58,9 +58,12 @@ _INIT = ["cfront_dispatch_table.c",   # designated initializers ([i]=v) for a fi
          "cfront_agginit.c",          # local struct/union aggregate init ({.field=v}) -> = {0} + stores
          "cfront_localarray.c"]       # local array decl T a[N] + array aggregate init (positional + [i]=)
 #   parity + emit + Clang ≡ (the table is referenced by name, defined in the source -- not re-hydrated)
-_PTRVALUE = ["cfront_ptrvalue.c"]   # pointer VALUES across non-address contexts (#ptrvalue): pointer
+_PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts (#ptrvalue): pointer
 #   arithmetic `p + i` as an rvalue returned by value -- the temp carries the pointee type (a real
 #   `T *t = p + i`), not a truncating uint32. Parity + emit + Clang ≡ (returns a pointer, not executed).
+             "cfront_ptrfield.c"]   # + a pointer stored into / loaded from a struct field (#ptrfield):
+#   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
+#   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
 _FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI + _FLOAT + _INIT + _PTRVALUE
 # §5.8 atomics/fences/CAS run their own gate: their memory side effects make the generic
 # pure-function equivalence harness invalid (it would call the original first and observe

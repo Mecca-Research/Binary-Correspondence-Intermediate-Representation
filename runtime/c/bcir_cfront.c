@@ -32,7 +32,10 @@ typedef struct { tkind k; const char *s; int n; long long v; } tok;
 #define MAXFLD 64        /* members per struct (f[] is embedded in sdef; generous, guarded) */
 
 typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int byte_off, bit_off, bit_w; int sidx;
-                 int arr_count; int nadims; int adims[3]; } field;
+                 int arr_count; int nadims; int adims[3];
+                 int is_ptr; int ptee_size; int ptee_float; int ptee_sidx; } field;
+                 /* is_ptr: a pointer member -- `size` is pointer_size (the ABI layout width), the pointee
+                  * (ptee_size width / signd sign / ptee_float / ptee_sidx struct) types the loaded `T *` */
                  /* arr_count > 0: a member array; `size` is the element, arr_count the total element
                   * count, nadims/adims the per-dim sizes (`T m[A][B]` -> nadims 2, adims {A,B}) */
 typedef struct { char tag[BCIR_CIR_NAME]; field f[MAXFLD]; int nf; int size; int align; int is_union; } sdef;
@@ -413,10 +416,13 @@ static int p_struct_body(CC *c) {
       if(nadims>3){ fail(c,"member array of more than 3 dimensions"); return -1; }   /* adims[] caps at 3 */
       int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;}          /* per-declarator bitfield width */
       if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
-      int sz=ty.size,al=packed?1:(sz<1?1:sz); field *f=&S->f[S->nf++];
+      int isptr=(ty.kind==2 && !arr_count);            /* a (non-array) pointer member: ABI pointer_size */
+      int sz=isptr?cc_abi(c)->pointer_size:ty.size, al=packed?1:(sz<1?1:sz); field *f=&S->f[S->nf++];
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
       idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
       f->nadims=nadims; for(int z=0;z<3;z++) f->adims[z]=adims[z];
+      f->is_ptr=isptr; f->ptee_size=isptr?ty.size:0; f->ptee_float=isptr?(ty.is_float?1:0):0;   /* pointee type */
+      f->ptee_sidx=(isptr && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
       f->sidx = (ty.kind==1 && !ty.ptr_to_struct && !arr_count) ? si : -1;   /* value struct member -> nested */
       if(al>S->align)S->align=al; if(total>maxsz)maxsz=total;
       if(is_union){f->byte_off=0;f->bit_off=0;}        /* union: every member overlaps at offset 0 */
@@ -641,9 +647,19 @@ static uint32_t tempptr(CC *c, uint32_t src){
     t->is_signed=s->is_signed; t->is_float=s->is_float; snprintf(t->agg,sizeof t->agg,"%s",s->agg); }
   return r;
 }
+/* A pointer temporary typed from a pointer struct MEMBER's pointee descriptor -- so a loaded `s->p`
+ * carries its real `T *` type (the load reads pointer_size bytes; the emit declares `T *`). */
+static uint32_t tempptr_field(CC *c, const field *fld){
+  uint32_t r=add_res(c,BCIR_DOM_RAM, fld->ptee_size?fld->ptee_size:4, 1, 0, BCIR_RK_POINTER, "");
+  if(c->fn->n_res){ bcir_resource *t=&c->fn->res[c->fn->n_res-1];
+    t->is_signed=(uint8_t)(fld->signd?1:0); t->is_float=(uint8_t)(fld->ptee_float?1:0);
+    if(fld->ptee_sidx>=0) snprintf(t->agg,sizeof t->agg,"%s %s",
+      c->s[fld->ptee_sidx].is_union?"union":"struct", c->s[fld->ptee_sidx].tag); }
+  return r;
+}
 
 static uint32_t emit_member(CC *c, venv *base, const field *fld) {
-  uint32_t t=tempi(c,fld->size,fld->signd);                  /* the loaded value carries the field's type */
+  uint32_t t=fld->is_ptr?tempptr_field(c,fld):tempi(c,fld->size,fld->signd);   /* loaded value carries the field's type */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
@@ -1766,7 +1782,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         w+=snprintf(o+w,on-w,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
         /* a plain member load: memcpy fsz bytes into the typed temp so a signed sub-int member sign-extends */
-        w+=snprintf(o+w,on-w,"%s %s; memcpy(&%s, (const char *)%s%s + %lld, %lld);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz); }
+        w+=snprintf(o+w,on-w,"%s %s; memcpy(&%s, (const char *)%s%s + %lld, %lld);\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz); }  /* decl_ty: a pointer member load is `T *t` */
     }else if(!strcmp(cl->op,"c.store")&&cl->n_rd==3){   /* L3: array element store  a[idx] = value */
       if(cl->n_imm){                      /* s.arr[i] = v: store at &base + member_off + idx*elem_size */
         const bcir_resource *br=res_of(f,cl->rd[0]); const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
@@ -1782,7 +1798,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"*(volatile uint32_t *)((volatile char *)%s + %lld) = %s;\n",rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
-        w+=snprintf(o+w,on-w,"{ uint32_t _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); }
+        /* a pointer value stored into a (pointer_size) member: `_v` carries the real `T *` type so the
+         * full pointer is copied -- a `uint32_t _v` would truncate the 8-byte pointer to 4. */
+        const bcir_resource *vr=res_of(f,cl->rd[1]); const char *vt=(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(f,cl->rd[1],tb,sizeof tb):"uint32_t";
+        w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",vt,rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); }
     }else if(!strcmp(cl->op,"c.bf.get")){
       long long off=cl->imm[0],bw=cl->imm[1]; unsigned long long mask=(1ull<<bw)-1;
       if(cl->n_imm>2&&cl->imm[2]){                       /* a signed bitfield: sign-extend from bit bw-1 */

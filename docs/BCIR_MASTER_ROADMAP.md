@@ -782,8 +782,16 @@ stays integer), cloning the pointee onto the result temp, and routing the temp d
 pointer-aware type composer on both rails (the C twin's `decl_ty`, the oracle's `deftmp`/`_bin_result_type`)
 -- so the emit is a real pointee-scaled `T *t = p + i`. Pointer **params** now also carry the pointee type
 so arithmetic on them clones it. `#ptrvalue`/`cfront_ptrvalue.c`, differential == Clang on both rails.
-*(Slice 1 of the pointer-value model; storing a pointer into a struct field and pointer-to-pointer are the
-remaining slices.)*
+✅ **and storing a pointer into a struct field** (`s->p = q;` / `return s->p;`): the C twin modeled a
+pointer struct member as **4 bytes** -- so the struct *layout itself* was wrong (an adjacent field
+overlapped the high half of the pointer on a 64-bit target) *and* a member store truncated the 8-byte
+pointer to 4. The oracle already laid pointer members out at `pointer_size` (8), matching Clang; this
+brings the twin into agreement -- a pointer member occupies `pointer_size`, the store/load moves the full
+pointer, and the loaded value carries its real `T *` type (the twin via a `field` pointee descriptor +
+`tempptr_field`, the oracle via `_load_ctype` honouring pointers). `#ptrfield`/`cfront_ptrfield.c`,
+differential == Clang on both rails (a scalar written between two pointer members survives only under the
+8-byte layout). *(Slice 2 of the pointer-value model; dereferencing/chaining a loaded pointer field --
+`*(s->p)`, `s->t->a` -- is slice 2b, and pointer-to-pointer is slice 3.)*
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both
