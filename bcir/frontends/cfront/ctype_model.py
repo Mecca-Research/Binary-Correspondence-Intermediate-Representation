@@ -176,6 +176,13 @@ def pointer(of: CType, abi=None) -> CType:
     return CType("pointer", name="ptr", size=size, align=size, signed=False, of=of)
 
 
+def valist(abi=None) -> CType:
+    """The `va_list` type (<stdarg.h> variadic cursor). A distinct opaque kind -- NOT a scalar, so it is
+    neither integer nor float (no arithmetic conversions apply); the emitter renders it `va_list`."""
+    size = abi.pointer_size if abi is not None else PTR_SIZE
+    return CType("valist", name="va_list", size=size, align=size)
+
+
 def funcptr(name: str, ret: CType, params: tuple = (), abi=None) -> CType:
     """A function-pointer type — pointer-sized (per the target ABI), carrying its return + parameter
     types so the emitter can reconstruct a call (``name`` is the typedef spelling, used verbatim)."""

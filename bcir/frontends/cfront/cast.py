@@ -94,6 +94,14 @@ class CompoundLiteral:
 
 
 @dataclass(frozen=True)
+class VaArg:
+    """`va_arg(ap, T)` — pull the next variadic argument of type T from the cursor `ap`. The 2nd
+    operand is a type-name (parsed specially, not as an expression); the result has type T."""
+    ap: object
+    type: TypeRef
+
+
+@dataclass(frozen=True)
 class SizeOf:
     type: object = None             # a TypeRef for `sizeof(type)`, else None
     expr: object = None             # the operand for `sizeof expr` (its static type's size)
@@ -240,6 +248,7 @@ class Func:
     name: str
     params: tuple
     body: tuple
+    variadic: bool = False          # a trailing `...` after the named params (variadic function)
 
 
 @dataclass(frozen=True)

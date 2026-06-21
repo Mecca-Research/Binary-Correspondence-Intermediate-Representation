@@ -82,7 +82,10 @@ def emit_function(lf: LoweredFunc) -> str:
     decls += [f"    static {_cname(ct)} {name} = {init}u;"      # static storage: once-only const init
               for _rid, name, ct, init in lf.statics]
     body = _walk(lf, lf.body, ref, 1)
-    sig_params = ", ".join(f"{_cname(ct)} {pname}" for pname, _rid, ct in lf.params) or "void"
+    parts = [f"{_cname(ct)} {pname}" for pname, _rid, ct in lf.params]
+    if lf.variadic:                                      # a trailing `...` after the named params
+        parts.append("...")
+    sig_params = ", ".join(parts) or "void"
     ret = _cname(lf.ret_type)
     return (f"static {ret} bcir_{lf.name}({sig_params})\n{{\n"
             + "\n".join(decls + body) + "\n}")
@@ -222,6 +225,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         rt = lf.rid_types.get(c.wr[0])                       # declare at the true result width: a long
         ty = _cname(rt) if rt is not None else None          # return (lround) is not narrowed to uint32
         return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})", ty)
+    if c.op == "c.call.vaarg":                               # va_arg(ap, T) -- T is the result temp's type
+        rt = lf.rid_types.get(c.wr[0])
+        ty = _cname(rt) if rt is not None else "int"
+        return deftmp(c.wr[0], f"va_arg({ref(c.rd[0])}, {ty})", ty)
+    if c.op.startswith("c.call.vabuiltin:"):                 # va_start / va_end / va_copy -- verbatim, void
+        callee = c.op.split(":", 1)[1]
+        return f"{callee}({', '.join(ref(r) for r in c.rd)});"
     if c.op.startswith("c.call.void:"):                      # a void callee -> a bare call statement
         callee = c.op.split(":", 1)[1]
         return f"bcir_{callee}({', '.join(ref(r) for r in c.rd)});"
