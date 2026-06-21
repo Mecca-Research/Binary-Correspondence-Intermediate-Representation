@@ -986,9 +986,11 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     nameless `_cl<N>` local and initialized like a braced declarator (a struct/union reuses the `= {0}`
     zero baseline + per-member store, designators in any order, the rest zero-filling; a scalar copies
     the single value); supported in rvalue position (a by-value struct argument, a scalar value, a member
-    initializer) and under `&` (a pointer to the temporary). `#complit`/`cfront_complit.c`, a value
-    differential == Clang on both rails. *Follow-on:* direct postfix on a literal (`(struct S){…}.f`)
-    and array literals `(int[]){…}`.
+    initializer), under `&` (a pointer to the temporary), and with direct postfix on the literal
+    (`(struct S){…}.field`, incl. designated/partial inits and a wide `long` field -- the parser threads
+    the literal through the postfix tail, reading a member off the materialized temporary like any struct
+    lvalue). `#complit`/`cfront_complit.c`, a value differential == Clang on both rails. *Follow-on:*
+    array literals `(int[]){…}`.
   - *storage/linkage:* ✅ **`extern`** (recognized as a storage-class specifier on both rails -- consumed
     like `static`; an `extern T g;` global is referenced by name, defined in another TU, so the emit is
     Clang-equivalent once linked against the definition -- `#extern`/`cfront_extern.c`); ✅

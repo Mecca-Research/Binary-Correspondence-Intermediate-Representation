@@ -672,8 +672,10 @@ def test_faithful_char_types_dual_rail():
 def test_compound_literals_dual_rail():
     """Compound literals (#complit): `( type-name ){ init }` is an anonymous object materialized as a
     nameless local and yielded in rvalue position (a by-value struct argument, a scalar value, a member
-    initializer) or under `&` (a pointer to the temporary) -- struct designators (any order) + partial
-    init zero-fill included. Differential == Clang on both rails; oracle/twin claim-count parity."""
+    initializer), under `&` (a pointer to the temporary), or with direct postfix on the literal
+    (`(struct P){...}.field`, incl. a designated/partial init and a wide `long` field) -- struct
+    designators (any order) + partial init zero-fill included. Differential == Clang on both rails;
+    oracle/twin claim-count parity."""
     fx = "cfront_complit.c"
     src = open(os.path.join(_C, fx), encoding="utf-8").read()
     oracle_summary, r, entry = _oracle(src)
@@ -681,7 +683,8 @@ def test_compound_literals_dual_rail():
     if not _CC:
         return
     funcs = ["cl_byval", "cl_designated", "cl_partial", "cl_scalar",
-             "cl_addr_scalar", "cl_addr_struct", "cl_nested"]
+             "cl_addr_scalar", "cl_addr_struct", "cl_nested",
+             "cl_dot", "cl_dot_desig", "cl_dot_part", "cl_dot_wide"]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -694,6 +697,10 @@ def test_compound_literals_dual_rail():
     if(cl_addr_scalar_s(a)!=bcir_cl_addr_scalar(a)){printf("as@%d\n",a);return 1;}
     if(cl_addr_struct_s(a,b)!=bcir_cl_addr_struct(a,b)){printf("ast@%d,%d\n",a,b);return 1;}
     if(cl_nested_s(a)!=bcir_cl_nested(a)){printf("nested@%d\n",a);return 1;}
+    if(cl_dot_s(a,b)!=bcir_cl_dot(a,b)){printf("dot@%d,%d\n",a,b);return 1;}
+    if(cl_dot_desig_s(a,b)!=bcir_cl_dot_desig(a,b)){printf("dotdes@%d,%d\n",a,b);return 1;}
+    if(cl_dot_part_s(a)!=bcir_cl_dot_part(a)){printf("dotpart@%d\n",a);return 1;}
+    if(cl_dot_wide_s(a)!=bcir_cl_dot_wide(a)){printf("dotwide@%d\n",a);return 1;}
   }
   printf("MATCH\n");return 0;}"""
     with tempfile.TemporaryDirectory() as d:

@@ -1046,6 +1046,53 @@ static char *gather_strings(CC *c, tok first, int *out_n) {
   buf[len]=0; *out_n=len; return buf;
 }
 
+/* Apply postfix `.field` / `->field` (incl. nested `o.in.v`, a funcptr-member call `o->fn(args)`, a
+ * deref-through a loaded pointer field, and a member array `s.arr[i]`) and `[i]` subscripts to an
+ * already-resolved lvalue base `v`. Shared by the identifier primary and the compound-literal path -- a
+ * synthesized base (rid + struct type + sidx) lets `(struct P){...}.field` read like any struct base. */
+static uint32_t postfix_lvalue(CC *c, venv *v){
+  if(is(c,".")||is(c,"->")){
+    int arrow=is(c,"->"); c->i++; tok fn=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
+    for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
+    if(fi<0){fail(c,"unknown field");return 0;}
+    if(is(c,"(")){     /* o->fnptr(args): fused indirect call via a funcptr struct member */
+      c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
+      if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a;
+        if(is(c,",")){c->i++;continue;} break; }
+      eat(c,")");
+      uint32_t t=temp(c,4);
+      char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.imember:%s",S->f[fi].name);
+      bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+      if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=v->rid;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
+        cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=arrow;}
+      return t;
+    }
+    field mf=member_descend(c,S->f[fi]);        /* nested `o.in.v` -> one flattened-offset load */
+    if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* deref-through a loaded pointer field (#fieldderef) */
+      uint32_t ptr=emit_member(c,v,&mf);        /* load the pointer field, then chain through the loaded ptr */
+      return postfix_ptr_chain(c,ptr,mf.ptee_sidx,mf); }
+    if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);   /* s.arr[i] / s.m[i][j] load */
+      return emit_member_index(c,v,&mf,ix); }
+    return emit_member(c,v,&mf);
+  }
+  if(is(c,"[")){                                /* L3: base[i] / m[i][j] (row-major flatten) */
+    uint32_t idxs[3]; int ni=0;
+    while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]"); if(ni<3)idxs[ni++]=ix; }
+    uint32_t lin=idxs[0];
+    for(int d=1; d<ni; d++){                     /* lin = lin*dim + idxs[d]  (Horner) */
+      int dim = d<v->type.nadims ? v->type.adims[d] : 1;
+      uint32_t k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+      if(kc){kc->n_wr=1;kc->wr[0]=k;kc->n_imm=1;kc->imm[0]=dim;}
+      uint32_t m1=temp(c,4); bcir_claim *mc=new_claim(c,"c.bin.mul",BCIR_OP_MUL);
+      if(mc){mc->n_rd=2;mc->rd[0]=lin;mc->rd[1]=k;mc->n_wr=1;mc->wr[0]=m1;}
+      uint32_t a1=temp(c,4); bcir_claim *ac=new_claim(c,"c.bin.add",BCIR_OP_ADD);
+      if(ac){ac->n_rd=2;ac->rd[0]=m1;ac->rd[1]=idxs[d];ac->n_wr=1;ac->wr[0]=a1;}
+      lin=a1;
+    }
+    return emit_index(c,v,lin);
+  }
+  return v->rid;
+}
 static uint32_t p_primary(CC *c) {
   if(isk(c,T_INT)){tok t=adv(c);
     int lsz,lsg; lit_int_type(t.s,t.n,&lsz,&lsg);            /* the constant's type (§6.4.4.1) */
@@ -1112,47 +1159,7 @@ static uint32_t p_primary(CC *c) {
       if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
     venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a file-scope global (lookup table)? */
     if(!v){fail(c,"undefined identifier");return 0;}
-    if(is(c,".")||is(c,"->")){
-      int arrow=is(c,"->"); c->i++; tok fn=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
-      for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
-      if(fi<0){fail(c,"unknown field");return 0;}
-      if(is(c,"(")){     /* o->fnptr(args): fused indirect call via a funcptr struct member */
-        c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
-        if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a;
-          if(is(c,",")){c->i++;continue;} break; }
-        eat(c,")");
-        uint32_t t=temp(c,4);
-        char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.imember:%s",S->f[fi].name);
-        bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
-        if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=v->rid;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
-          cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=arrow;}
-        return t;
-      }
-      field mf=member_descend(c,S->f[fi]);        /* nested `o.in.v` -> one flattened-offset load */
-      if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* deref-through a loaded pointer field (#fieldderef) */
-        uint32_t ptr=emit_member(c,v,&mf);        /* load the pointer field, then chain through the loaded ptr */
-        return postfix_ptr_chain(c,ptr,mf.ptee_sidx,mf); }
-      if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);   /* s.arr[i] / s.m[i][j] load */
-        return emit_member_index(c,v,&mf,ix); }
-      return emit_member(c,v,&mf);
-    }
-    if(is(c,"[")){                                /* L3: base[i] / m[i][j] (row-major flatten) */
-      uint32_t idxs[3]; int ni=0;
-      while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]"); if(ni<3)idxs[ni++]=ix; }
-      uint32_t lin=idxs[0];
-      for(int d=1; d<ni; d++){                     /* lin = lin*dim + idxs[d]  (Horner) */
-        int dim = d<v->type.nadims ? v->type.adims[d] : 1;
-        uint32_t k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
-        if(kc){kc->n_wr=1;kc->wr[0]=k;kc->n_imm=1;kc->imm[0]=dim;}
-        uint32_t m1=temp(c,4); bcir_claim *mc=new_claim(c,"c.bin.mul",BCIR_OP_MUL);
-        if(mc){mc->n_rd=2;mc->rd[0]=lin;mc->rd[1]=k;mc->n_wr=1;mc->wr[0]=m1;}
-        uint32_t a1=temp(c,4); bcir_claim *ac=new_claim(c,"c.bin.add",BCIR_OP_ADD);
-        if(ac){ac->n_rd=2;ac->rd[0]=m1;ac->rd[1]=idxs[d];ac->n_wr=1;ac->wr[0]=a1;}
-        lin=a1;
-      }
-      return emit_index(c,v,lin);
-    }
-    return v->rid;
+    return postfix_lvalue(c,v);
   }
   fail(c,"expected expression");return 0;
 }
@@ -1233,7 +1240,10 @@ static uint32_t p_unary(CC *c) {
     if(is_type){ bcir_ctype ty;int si;
       if(!p_type(c,&ty,&si) && is(c,")")){
         c->i++;                                    /* ')' */
-        if(is(c,"{")) return p_compound_literal(c,&ty,si);   /* `(type){init}` -- a compound literal, not a cast */
+        if(is(c,"{")){ uint32_t rid=p_compound_literal(c,&ty,si);   /* `(type){init}` -- a compound literal, not a cast */
+          if(is(c,".")||is(c,"->")||is(c,"[")){      /* direct postfix on the literal: `(struct P){...}.field` */
+            venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=si; return postfix_lvalue(c,&sv); }
+          return rid; }
         uint32_t v=p_unary(c);                     /* the operand (right-associative) */
         const bcir_resource *vr=res_of(c->fn,v);
         /* The result temp carries the target's signedness, so a signed (sub-int) target keeps its sign
