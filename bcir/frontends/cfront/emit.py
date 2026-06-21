@@ -202,9 +202,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
             return f"*(volatile uint32_t *)((volatile char *){ptr} + {off}) = {ref(c.rd[1])};"
         # plain RAM member/deref: memcpy `size` bytes (correct truncation on little-endian, packed-safe).
         return f"memcpy((char *){ptr} + {off}, &{ref(c.rd[1])}, {size});"
-    if c.op == "c.bf.get":                                   # (unit >> bit_off) & mask
-        bit_off, width = c.imm
-        return deftmp(c.wr[0], f"({ref(c.rd[0])} >> {bit_off}) & {(1 << width) - 1}u")
+    if c.op == "c.bf.get":                                   # (unit >> bit_off) & mask (sign-extended if signed)
+        bit_off, width = c.imm[0], c.imm[1]
+        mask = (1 << width) - 1
+        if len(c.imm) > 2 and c.imm[2]:                      # a signed bitfield: sign-extend from bit width-1
+            sbit = 1 << (width - 1)
+            return deftmp(c.wr[0], f"(int32_t)(((({ref(c.rd[0])} >> {bit_off}) & {mask}u) ^ {sbit}u) - {sbit}u)")
+        return deftmp(c.wr[0], f"({ref(c.rd[0])} >> {bit_off}) & {mask}u")
     if c.op == "c.bf.set":                                   # (old & ~(mask<<off)) | ((v&mask)<<off)
         bit_off, width = c.imm
         mask = (1 << width) - 1
