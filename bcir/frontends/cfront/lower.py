@@ -615,7 +615,13 @@ class _FuncLowerer:
                 return self._emit("c.addrof", Opcode.ADD, (base_rid,), (t,))
             v = self._rvalue(node.operand)
             opcode, suf = _UN[node.op]
-            t = self._temp(scalar("uint32_t"), f"u_{suf}")
+            if node.op == "!":                                # logical not -> int (0/1)
+                rt = scalar("int", self.abi)
+            else:                                             # `-` / `~`: the promoted operand type, so
+                vt = self.rtypes.get(v)                       # negating a `long` stays 64-bit (was forced
+                rt = (promote_int(vt, self.abi) if vt is not None and vt.is_integer   # to uint32 -> a -1
+                      else scalar("uint32_t"))                # long widened back to a positive long)
+            t = self._temp(rt, f"u_{suf}")
             return self._emit(f"c.un.{suf}", opcode, (v,), (t,))
         if isinstance(node, cast.Cast):
             v = self._rvalue(node.operand)

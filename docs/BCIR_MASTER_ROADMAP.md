@@ -700,7 +700,13 @@ abs / clamp / signum idiom): the twin's emitter hardcoded *every* integer consta
 comparison promoted to unsigned (`int32_t < uint32_t`) and `x < 0` was always false -- `is_clean` but
 wrong, affecting plain `int` too. Fixed by emitting each constant with its OWN recorded (width,
 signedness) -- a bare `0` is `int32_t` (`lit_int_type` already records it on the temp), so the compare
-stays signed. `#signedcmp`/`cfront_signedcmp.c`, differential == Clang on both rails.
+stays signed. `#signedcmp`/`cfront_signedcmp.c`, differential == Clang on both rails. ✅ **and a
+related wide-operand miscompile -- unary `-` / `~` on a `long` / `long long`**: the result temp was
+hardcoded to a 4-byte `uint32_t` on BOTH rails, so negating a `long` truncated to 32 bits (`-(long)1`
+-> `4294967295`, a 32-bit `-1`) which then widened back to a *positive* long -- breaking `x < 0` and
+abs on a long (for `int` it was masked, since the value reinterprets at the same width). Fixed by typing
+the `-`/`~` result as the promoted operand type (`!` stays int) -- the oracle's `_rvalue(Unary)` and the
+twin's `p_unary` + `c.un` emit. `#longunary`/`cfront_longunary.c`, differential == Clang on both rails.
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both

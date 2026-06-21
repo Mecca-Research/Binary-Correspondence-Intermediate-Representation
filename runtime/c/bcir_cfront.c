@@ -627,6 +627,7 @@ static venv *lookup(CC *c,const tok *t){
 
 /* --- expression lowering (returns rid) ----------------------------------- */
 static uint32_t p_expr(CC *c);
+static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
 
 static uint32_t emit_member(CC *c, venv *base, const field *fld) {
   uint32_t t=tempi(c,fld->size,fld->signd);                  /* the loaded value carries the field's type */
@@ -990,9 +991,16 @@ static uint32_t p_unary(CC *c) {
         if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
     fail(c,"unsupported address-of (only &local/&param)"); return 0; }
   if(is(c,"-")||is(c,"~")||is(c,"!")){
-    const char *suf=is(c,"-")?"neg":is(c,"~")?"bnot":"lnot";
+    const char *suf=is(c,"-")?"neg":is(c,"~")?"bnot":"lnot"; int is_lnot=is(c,"!");
     bcir_opcode oc=is(c,"-")?BCIR_OP_SUB:BCIR_OP_ADD;c->i++;
-    uint32_t a=p_unary(c),r=temp(c,4);char op[BCIR_CIR_NAME];snprintf(op,sizeof op,"c.un.%s",suf);
+    uint32_t a=p_unary(c);
+    /* `-`/`~` take the promoted operand type (so negating a `long` stays 64-bit, not a truncated
+     * uint32 that widens back to a positive long); `!` is int. */
+    uint32_t r;
+    if(is_lnot) r=tempi(c,4,1);
+    else { const bcir_resource *ar=res_of(c->fn,a); int sz=ar?ar->elem_bytes:4; if(sz<4)sz=4;
+           r=tempi(c,sz,ar?ar->is_signed:0); }
+    char op[BCIR_CIR_NAME];snprintf(op,sizeof op,"c.un.%s",suf);
     bcir_claim *cl=new_claim(c,op,oc);if(cl){cl->n_rd=1;cl->rd[0]=a;cl->n_wr=1;cl->wr[0]=r;}return r;}
   if(is(c,"*")){                                   /* pointer dereference: *p / *(p + i) */
     c->i++;
@@ -1656,8 +1664,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"%s %s = %s %s %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
     else if(!strncmp(cl->op,"c.fconst:",9))                /* a floating constant -> its literal spelling */
       w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
-    else if(!strncmp(cl->op,"c.un.",5))
-      w+=snprintf(o+w,on-w,"uint32_t %s = (%s%s);\n",rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
+    else if(!strncmp(cl->op,"c.un.",5))                    /* `-`/`~` keep the operand width (long stays 64) */
+      w+=snprintf(o+w,on-w,"%s %s = (%s%s);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
     else if(!strncmp(cl->op,"c.cast:",7))                  /* (type)operand -- width / float cast */
       w+=snprintf(o+w,on-w,"%s %s = (%s)%s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+7,rname(f,cl->rd[0],a));
     else if(!strcmp(cl->op,"c.select"))                    /* ternary: cond ? then : els */
