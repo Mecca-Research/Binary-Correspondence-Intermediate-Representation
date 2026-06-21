@@ -960,8 +960,11 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     through each hop — read, plain / compound store, and nested bitfields all match. `#nestmember`/
     `cfront_nestmember.c`, differential asserts `sizeof` + nested read/write == Clang. ✅ **Pointer-member
     chains** `o.p->v` are now native -- `*(s->p)`, `s->mid->k`, the two-hop `s->mid->leaf->x`, and
-    `s->p[i]` (`#fieldderef`/`cfront_fieldderef.c`, pointer-value slice 2b above). *Follow-on:* nested
-    funcptr dispatch through a loaded pointer).
+    `s->p[i]` (`#fieldderef`/`cfront_fieldderef.c`, pointer-value slice 2b above). ✅ **Funcptr dispatch
+    through a loaded pointer** too -- `d->ops->fn(args)` and the two-hop `s->dev->ops->fn(args)`: the
+    postfix pointer chain recognizes a `(` after a member as the fused `c.call.imember` indirect call on
+    the loaded pointer base (the oracle already did; the twin now agrees -- `#fnptrchain`/
+    `cfront_fnptrchain.c`, an R18-opaque dispatch == Clang on both rails).
     *Follow-on:* **compound literals** (`(struct S){…}`);
   - *storage/linkage:* ✅ **`extern`** (recognized as a storage-class specifier on both rails -- consumed
     like `static`; an `extern T g;` global is referenced by name, defined in another TU, so the emit is

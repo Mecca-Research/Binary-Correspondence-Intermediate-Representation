@@ -788,6 +788,18 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       if(fi<0){ fail(c,"unknown field"); return ptr; }
       field mf=member_descend(c,S->f[fi]);           /* flatten any nested value-struct hops */
       venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=1;   /* base = the loaded pointer */
+      if(is(c,"(")){     /* funcptr-member call through the loaded pointer: `d->ops->fn(args)` (#fnptrchain) */
+        c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
+        if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a;
+          if(is(c,",")){c->i++;continue;} break; }
+        eat(c,")");
+        uint32_t t=temp(c,4);
+        char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.imember:%s",S->f[fi].name);
+        bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+        if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=ptr;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
+          cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=1;}   /* imm0=1: base is a pointer -> `ptr->fn(args)` */
+        return t;
+      }
       if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){    /* another pointer hop: load it, recurse */
         ptr=emit_member(c,&b,&mf); psidx=mf.ptee_sidx; pfld=mf; continue;
       }

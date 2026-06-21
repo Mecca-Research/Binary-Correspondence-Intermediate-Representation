@@ -513,6 +513,57 @@ def test_pointer_element_signedness_dual_rail():
             assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
 
 
+def test_funcptr_dispatch_through_loaded_pointer_dual_rail():
+    """Funcptr dispatch through a loaded pointer (#fnptrchain): calling a function-pointer struct member
+    reached THROUGH a loaded pointer-to-struct field -- `d->ops->fn(args)` and the two-hop
+    `s->dev->ops->fn(args)`. The direct `o->fn(args)` already fused member access + call into one
+    `c.call.imember` claim; the postfix pointer chain (from #fieldderef) now recognizes a `(` after a
+    member as that fused indirect call on the loaded pointer base, emitting `ptr->fn(args)`. The oracle
+    already lowered this; this brings the C twin into agreement. Parity + a bespoke behaviour harness
+    that wires real operation tables (each call is an R18-opaque indirect dispatch)."""
+    fx = "cfront_fnptrchain.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["fc_add", "fc_combo", "fc_twohop"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""static int real_add(int a,int b){return a+b;}
+static int real_sub(int a,int b){return a-b;}
+static int real_mul(int a,int b){return a*b;}
+int main(void){
+  struct Ops ops={real_add,real_sub,real_mul};
+  struct Dev dev={&ops,42};
+  struct Sys sys={&dev,7};
+  for(int i=-200;i<200;i++){
+    int a=i*3-1,b=7-i;
+    if(fc_add_s(&dev,a,b)!=bcir_fc_add(&dev,a,b)){printf("add@%d\n",i);return 1;}
+    if(fc_combo_s(&dev,a,b)!=bcir_fc_combo(&dev,a,b)){printf("combo@%d\n",i);return 1;}
+    if(fc_twohop_s(&sys,a,b)!=bcir_fc_twohop(&sys,a,b)){printf("twohop@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+            open(cpath, "w").write(harness)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} harness build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
+
+
 def _build_loop(d: str) -> str:
     return _compile_once("loop", "loop",
                          ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c",
