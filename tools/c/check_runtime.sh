@@ -113,7 +113,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
+for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re
@@ -1344,5 +1344,43 @@ pfr="$("${tmp}/pf_h")"
 [ "${pfr}" = "MATCH" ] \
   && echo "  PASS ptrfield: 8-byte member layout + untruncated store/load == Clang" \
   || { echo "  FAIL: ptrfield behaviour (${pfr})"; exit 1; }
+
+# Pointer-to-pointer (#ptr2ptr): `int **pp`, `**pp`, `*pp = q` (out-param), `**pp = v`, `int **pp = &p`.
+# Both rails modeled `int **` as a single `int *` (no indirection depth), so `*pp` read the base width,
+# `**pp` fell back, and a store truncated. Now the type carries a pointer DEPTH. A bespoke harness (the
+# generic one would fill a pointee with random bytes, invalid to deref for a double pointer) builds real
+# x / &x / &&x chains.
+echo "[c-runtime] pointer-to-pointer -- int **pp, **pp (bcir-cc): emit == Clang (#ptr2ptr)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_ptr2ptr.c" > "${tmp}/pp_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bp2_read\b/p2_read_s/' -e 's/\bp2_get\b/p2_get_s/' -e 's/\bp2_set\b/p2_set_s/' \
+      -e 's/\bp2_store_through\b/p2_st_s/' -e 's/\bp2_rmw\b/p2_rmw_s/' -e 's/\bp2_local\b/p2_local_s/' \
+      "${C}/cfront_ptr2ptr.c"
+  sed -e 's/\bbcir_p2_store_through\b/bcir_p2_st/' "${tmp}/pp_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(int i=-50;i<3000;i+=7){
+    int x=i*3-7; int *px=&x; int **ppx=&px;
+    if(p2_read_s(ppx)!=bcir_p2_read(ppx)){printf("read@%d\n",i);return 1;}
+    if(p2_get_s(ppx)!=bcir_p2_get(ppx)){printf("get@%d\n",i);return 1;}
+    int y=i+9; int *a1=px,*a2=px; int **b1=&a1,**b2=&a2;
+    p2_set_s(b1,&y); bcir_p2_set(b2,&y);
+    if(*b1!=*b2){printf("set@%d\n",i);return 1;}
+    int s1=x,s2=x; int *p1=&s1,*p2=&s2; int **q1=&p1,**q2=&p2;
+    if(p2_st_s(q1,i)!=bcir_p2_st(q2,i)||s1!=s2){printf("store@%d\n",i);return 1;}
+    int u1=x,u2=x; int *r1=&u1,*r2=&u2; int **w1=&r1,**w2=&r2;
+    if(p2_rmw_s(w1,i)!=bcir_p2_rmw(w2,i)||u1!=u2){printf("rmw@%d\n",i);return 1;}
+    if(p2_local_s(i)!=bcir_p2_local(i)){printf("local@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/pp_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/pp_harness.c" -o "${tmp}/pp_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/pp_harness.c" -o "${tmp}/pp_h" \
+  || { echo "  FAIL: ptr2ptr harness build"; exit 1; }
+ppr="$("${tmp}/pp_h")"
+[ "${ppr}" = "MATCH" ] \
+  && echo "  PASS ptr2ptr: int **pp / **pp / *pp=q / **pp=v / &p == Clang" \
+  || { echo "  FAIL: ptr2ptr behaviour (${ppr})"; exit 1; }
 
 echo "[c-runtime] ok"

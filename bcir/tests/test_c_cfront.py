@@ -302,6 +302,59 @@ def test_python_c_parity_and_equivalence_across_fixtures():
         f"  {fx}: {msg}" for fx, msg in fails)
 
 
+def test_pointer_to_pointer_dual_rail():
+    """Pointer-to-pointer (#ptr2ptr): `int **pp`, the double dereference `**pp`, `*pp = q` (the
+    output-parameter idiom), `**pp = v` / `**pp += d`, and `int **pp = &p` built by address-of-a-pointer.
+    The type model gained a pointer indirection DEPTH on both rails -- `*pp` on a `T**` loads a `T*`
+    (pointer_size bytes), `**pp` derefs that to a `T`, and `&p` of a `T*` yields a `T**`. Both rails
+    modeled `int **` as a single `int *` before (so `*pp` read the base width, `**pp` fell back, and a
+    store truncated). Parity + a bespoke behaviour harness: the generic equivalence harness fills a
+    pointee with random bytes -- invalid to dereference for a double pointer -- so this builds real
+    x / &x / &&x chains and checks BOTH the twin's and the oracle's emit == Clang."""
+    fx = "cfront_ptr2ptr.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["p2_read", "p2_get", "p2_set", "p2_store_through", "p2_rmw", "p2_local"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int i=-50;i<3000;i+=7){
+    int x=i*3-7; int *px=&x; int **ppx=&px;
+    if(p2_read_s(ppx)!=bcir_p2_read(ppx)){printf("read@%d\n",i);return 1;}
+    if(p2_get_s(ppx)!=bcir_p2_get(ppx)){printf("get@%d\n",i);return 1;}
+    int y=i+9; int *a1=px,*a2=px; int **b1=&a1,**b2=&a2;
+    p2_set_s(b1,&y); bcir_p2_set(b2,&y);
+    if(*b1!=*b2){printf("set@%d\n",i);return 1;}
+    int s1=x,s2=x; int *p1=&s1,*p2=&s2; int **q1=&p1,**q2=&p2;
+    if(p2_store_through_s(q1,i)!=bcir_p2_store_through(q2,i)||s1!=s2){printf("store@%d\n",i);return 1;}
+    int u1=x,u2=x; int *r1=&u1,*r2=&u2; int **w1=&r1,**w2=&r2;
+    if(p2_rmw_s(w1,i)!=bcir_p2_rmw(w2,i)||u1!=u2){printf("rmw@%d\n",i);return 1;}
+    if(p2_local_s(i)!=bcir_p2_local(i)){printf("local@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+            open(cpath, "w").write(harness)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} harness build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
+
+
 def _build_loop(d: str) -> str:
     exe = os.path.join(d, "loop")
     srcs = [os.path.join(_C, s) for s in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c",

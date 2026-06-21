@@ -791,7 +791,17 @@ pointer, and the loaded value carries its real `T *` type (the twin via a `field
 `tempptr_field`, the oracle via `_load_ctype` honouring pointers). `#ptrfield`/`cfront_ptrfield.c`,
 differential == Clang on both rails (a scalar written between two pointer members survives only under the
 8-byte layout). *(Slice 2 of the pointer-value model; dereferencing/chaining a loaded pointer field --
-`*(s->p)`, `s->t->a` -- is slice 2b, and pointer-to-pointer is slice 3.)*
+`*(s->p)`, `s->t->a` -- is slice 2b.)*
+✅ **and pointer-to-pointer** (`int **pp`, the double dereference `**pp`, the output-parameter store
+`*pp = q`, `**pp = v`, and `int **pp = &p` built by address-of-a-pointer): **both** rails modeled `int **`
+as a single `int *` (no indirection depth in the type model), so `*pp` read the base width where the
+pointee is an 8-byte pointer, `**pp` fell back entirely, and a store truncated. Fixed by giving the type
+a pointer **depth** (`bcir_ctype.ptr_depth` / `bcir_resource.ptr_depth` on the twin; the oracle's `_addr`
+now accepts a `*q` base): `*pp` on a `T**` loads a `T*` (pointer_size bytes), `**pp` derefs that to a `T`,
+`&p` of a `T*` yields a `T**`, and a store through `**` moves a full pointer. The twin's deref load/store
+were generalized to a pointer **rvalue** (so `**pp` and `*(<expr>)` work, not only a named `*p`).
+`#ptr2ptr`/`cfront_ptr2ptr.c`, a bespoke valid-chain differential == Clang on both rails. *(Slice 3 --
+the last of the three pointer-value contexts; this closes the broader 4-byte-pointer value model.)*
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both

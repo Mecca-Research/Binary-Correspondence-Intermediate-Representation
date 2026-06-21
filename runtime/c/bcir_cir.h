@@ -66,6 +66,7 @@ typedef struct bcir_resource {
   uint8_t  is_signed;        /* a signed integer value (drives signed C emit + the usual arith conv) */
   uint8_t  is_bool;          /* a _Bool/bool object: emit `_Bool` so a store normalizes to 0/1 (§6.3.1.2) */
   uint8_t  zinit;            /* an aggregate local declared with a `= {0}` zero baseline (§6.7.10) */
+  uint8_t  ptr_depth;        /* pointer indirection depth (POINTER kind): 1 `T*`, 2 `T**`, ...; 0 == 1 */
   char     name[BCIR_CIR_NAME];
   char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
 } bcir_resource;
@@ -78,6 +79,7 @@ typedef struct bcir_ctype {
   uint8_t  is_volatile;      /* volatile-qualified (MMIO) */
   uint8_t  is_atomic;        /* _Atomic-qualified (C11/C23 atomics) */
   uint8_t  ptr_to_struct;    /* a pointer whose pointee is a struct */
+  uint8_t  ptr_depth;        /* pointer indirection depth: 1 `T*`, 2 `T**`, ... (kind 2); 0 == 1 */
   uint8_t  is_union;         /* the aggregate is a union (emit `union` not `struct`) */
   uint8_t  is_float;         /* a floating type (float/double) */
   uint8_t  is_bool;          /* a _Bool/bool type: emit `_Bool` so conversions normalize to 0/1 (§6.3.1.2) */
