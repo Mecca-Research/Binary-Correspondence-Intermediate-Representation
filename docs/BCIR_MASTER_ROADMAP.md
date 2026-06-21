@@ -694,10 +694,13 @@ ok=1`, executes the full loop). ✅ **the `signed` type specifier** (`signed cha
 declaration- and cast-type-start detection, so `signed char sc = (signed char)a` was rejected (routed
 to fallback) while the oracle accepted it -- a rail disagreement found by the dual-emit sweep. Fixed by
 adding `signed` to the twin's scalar-type table (a modifier; the base sets the width). `signed` alone
-(signed int with no base) stays a fallback on both rails. `#signedty`/`cfront_signed.c`. *Open (a
-separate, pre-existing twin miscompile the sweep also surfaced):* a **signed comparison against an
-integer literal** -- `x < 0` for a signed `x` -- compiles to an unsigned compare on the twin (it types
-int literals `uint32_t`, so `int32_t < uint32_t` promotes to unsigned), affecting plain `int` too.
+(signed int with no base) stays a fallback on both rails. `#signedty`/`cfront_signed.c`. ✅ **and the
+miscompile it surfaced -- signed comparison against an integer literal** (`x < 0` for a signed `x`, the
+abs / clamp / signum idiom): the twin's emitter hardcoded *every* integer constant as `uint32_t`, so the
+comparison promoted to unsigned (`int32_t < uint32_t`) and `x < 0` was always false -- `is_clean` but
+wrong, affecting plain `int` too. Fixed by emitting each constant with its OWN recorded (width,
+signedness) -- a bare `0` is `int32_t` (`lit_int_type` already records it on the temp), so the compare
+stays signed. `#signedcmp`/`cfront_signedcmp.c`, differential == Clang on both rails.
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both

@@ -1663,8 +1663,14 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     else if(!strcmp(cl->op,"c.select"))                    /* ternary: cond ? then : els */
       w+=snprintf(o+w,on-w,"uint32_t %s = (%s ? %s : %s);\n",rname(f,cl->wr[0],d),
                   rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
-    else if(!strcmp(cl->op,"c.const"))
-      w+=snprintf(o+w,on-w,"uint32_t %s = %lluu;\n",rname(f,cl->wr[0],d),(unsigned long long)cl->imm[0]);
+    else if(!strcmp(cl->op,"c.const")){
+      /* declare the constant with its OWN type, not a hardcoded uint32_t: a bare integer literal (e.g.
+       * `0` in `x < 0`) is signed (int), so emitting `uint32_t = 0u` made a signed comparison promote to
+       * unsigned (`int32_t < uint32_t` -> unsigned) -- a miscompile. The literal's (width, signedness)
+       * was already recorded on the temp (lit_int_type); render the matching type + suffix. */
+      const bcir_resource *cr=res_of(f,cl->wr[0]); int cs=cr&&cr->is_signed;
+      w+=snprintf(o+w,on-w,"%s %s = %llu%s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),
+                  (unsigned long long)cl->imm[0], cs?"":"u"); }
     else if(!strcmp(cl->op,"c.copy")){
       if(is_named_local(f,cl->wr[0])||is_global_ref(f,cl->wr[0])) w+=snprintf(o+w,on-w,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
       else w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
