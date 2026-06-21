@@ -869,6 +869,57 @@ def test_array_compound_literals_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+def test_compound_wide_dual_rail():
+    """Wide / floating compound assignment (#compoundwide): an `OP=` (or ++/--) on a long/double lvalue
+    keeps its operand width/float-ness in the result instead of truncating to a 4-byte uint32 -- across a
+    local, a struct member, an array element, and a pointer deref -- and the float/wide-int variadic
+    accumulation (`s += va_arg(ap, double)` / `va_arg(ap, long)`) it unblocks. Twin-only fix (the oracle
+    was already correct); differential == Clang on BOTH emits over values that overflow 32 bits."""
+    fx = "cfront_compoundwide.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["l_local", "d_local", "l_inc", "l_member", "l_array", "l_ptr", "d_vararg", "l_vararg", "driver"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  long V[]={0,1,-1,1000000000L,-1000000000L,5000000000L,-5000000000L,99999999999L};
+  int n=(int)(sizeof V/sizeof V[0]);
+  for(int i=0;i<n;i++) for(int j=0;j<n;j++){ long x=V[i],y=V[j];
+    if(driver_s(x,y)!=bcir_driver(x,y)){printf("driver@%ld,%ld\n",x,y);return 1;}
+    if(l_local_s(x,y)!=bcir_l_local(x,y)){printf("l_local@%ld,%ld\n",x,y);return 1;}
+    if(l_member_s(x,y)!=bcir_l_member(x,y)){printf("l_member@%ld,%ld\n",x,y);return 1;}
+    if(l_ptr_s(x,y)!=bcir_l_ptr(x,y)){printf("l_ptr@%ld,%ld\n",x,y);return 1;}
+    if(d_local_s((double)x,(double)y)!=bcir_d_local((double)x,(double)y)){printf("d_local@%ld,%ld\n",x,y);return 1;}
+    if(d_vararg_s(3,(double)x,(double)y,1.5)!=bcir_d_vararg(3,(double)x,(double)y,1.5)){printf("d_vararg@%ld,%ld\n",x,y);return 1;}
+    if(l_vararg_s(3,x,y,x+y)!=bcir_l_vararg(3,x,y,x+y)){printf("l_vararg@%ld,%ld\n",x,y);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = (f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+                       f"#include <stdarg.h>\n{renamed}\n{emit}\n{driver}")
+            cpath = os.path.join(d, f"{label}.c")
+            open(cpath, "w").write(harness)
+            epath = os.path.join(d, label)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
+                                   capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
+
+
 def test_variadic_dual_rail():
     """Variadic functions (#variadic): `f(T last, ...)` with <stdarg.h> -- a `va_list` cursor walked by
     va_start/va_arg/va_end, va_copy (two passes), a `va_list` parameter (vprintf-style forwarding), and a
