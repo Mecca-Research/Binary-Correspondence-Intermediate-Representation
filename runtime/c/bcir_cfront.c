@@ -671,6 +671,7 @@ static venv *lookup(CC *c,const tok *t){
 /* --- expression lowering (returns rid) ----------------------------------- */
 static uint32_t p_expr(CC *c);
 static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si);   /* `(type){init}` (defined w/ agg_init) */
+static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int count);    /* `(T[N]){init}` (defined w/ arr_init) */
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
 
 /* typeof( expression ) -- the operand is UNEVALUATED, so resolve its type by SPECULATIVELY lowering it,
@@ -777,7 +778,7 @@ static uint32_t member_arr_index(CC *c, const field *fld) {
 }
 static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -- GEP load */
   int es=base->type.size?base->type.size:4;
-  uint32_t t=base->type.is_float ? temp(c,es) : tempi(c,es,base->type.signd);  /* keep the element's sign */
+  uint32_t t=base->type.is_float ? tempf(c,es) : tempi(c,es,base->type.signd);  /* float -> a float temp; else keep the sign */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;
   return t;
@@ -1238,7 +1239,19 @@ static uint32_t p_unary(CC *c) {
                     || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                     || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
     if(is_type){ bcir_ctype ty;int si;
-      if(!p_type(c,&ty,&si) && is(c,")")){
+      if(!p_type(c,&ty,&si)){
+        int la_count=0,la_nd=0,la_dims[3]={0,0,0};   /* a `(T[N]...)` array type-name -> an array compound literal */
+        while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
+          if(la_nd<3)la_dims[la_nd]=dim; la_nd++; la_count=la_count?la_count*dim:dim; }
+        if(la_nd && ty.kind!=1 && la_nd<=3 && is(c,")") &&
+           c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='{'){   /* `(T[...]){...}` */
+          c->i++;                                  /* ')' -- p_array_literal/arr_init eats the following `{` */
+          uint32_t rid=p_array_literal(c,&ty,la_count);
+          if(is(c,"[")){ venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=-1;
+            if(la_nd>1){ for(int z=0;z<3;z++) sv.type.adims[z]=la_dims[z]; sv.type.nadims=la_nd; }
+            return postfix_lvalue(c,&sv); }       /* `(int[]){...}[i]` -- the inline lookup-table idiom */
+          return rid; }
+      if(!la_nd && is(c,")")){
         c->i++;                                    /* ')' */
         if(is(c,"{")){ uint32_t rid=p_compound_literal(c,&ty,si);   /* `(type){init}` -- a compound literal, not a cast */
           if(is(c,".")||is(c,"->")||is(c,"[")){      /* direct postfix on the literal: `(struct P){...}.field` */
@@ -1259,7 +1272,7 @@ static uint32_t p_unary(CC *c) {
         char op[BCIR_CIR_NAME]; cast_name(&ty,f2s,op,sizeof op);
         bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=r;} return r;
-      }
+      } }
     }
     c->i=save;                                     /* not a cast -> a parenthesized expression */
   }
@@ -1433,11 +1446,12 @@ static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si) {
 }
 /* A braced initializer for a local array `T a[N] = {...}` (the C twin of the oracle's array _agg_init):
  * a `= {0}` zero baseline (emit) + a c.store per initialized element. Positional entries advance a
- * cursor; a `[i]=` designator (a folded constant index) jumps it -- gaps zero-fill (§6.7.10). */
-static void arr_init(CC *c, uint32_t rid) {
+ * cursor; a `[i]=` designator (a folded constant index) jumps it -- gaps zero-fill (§6.7.10). Returns
+ * the element count reached (max index + 1), so an inferred-size literal `(T[]){...}` can size itself. */
+static int arr_init(CC *c, uint32_t rid) {
   eat(c,"{");
   for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }
-  int cursor=0;
+  int cursor=0, n=0;
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
     int idx=cursor;
     if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
@@ -1446,10 +1460,30 @@ static void arr_init(CC *c, uint32_t rid) {
     if(kc){kc->n_wr=1;kc->wr[0]=ic;kc->n_imm=1;kc->imm[0]=idx;}
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
     if(cl){cl->n_rd=3;cl->rd[0]=rid;cl->rd[1]=ic;cl->rd[2]=v;cl->bounds=BCIR_BND_ASSUMED;}
-    cursor=idx+1;
+    cursor=idx+1; if(cursor>n) n=cursor;
     if(is(c,",")) c->i++;
   }
   eat(c,"}");
+  return n;
+}
+/* An array compound literal `(T[N]){...}` / `(T[]){...}` -- an anonymous local array of `T`, initialized
+ * exactly like a braced local-array decl (a `= {0}` baseline + a c.store per element) and yielded as the
+ * array-object rid. The classic use is a direct subscript `(int[]){...}[i]` -- an inline lookup table.
+ * An inferred size `[]` takes its length from the initializer (the max index + 1; gaps zero-fill). The
+ * element store emits real typed `_cl[i] = v`, so any scalar element type converts correctly; a struct
+ * element (per-element aggregate init) is a deferred follow-on. */
+static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int count) {
+  char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"_cl%u",++c->cl_ctr);
+  int es = ty->size ? ty->size : 4;
+  uint32_t rid = add_res(c, BCIR_DOM_RAM, es, count>0?count:1, 0, BCIR_RK_SCALAR, nm);
+  int ari = (int)c->fn->n_res - 1;                  /* the array resource (stable index; patch count below) */
+  if(ty->is_float) c->fn->res[ari].is_float=1;      /* element type flags -> the decl emits `float`/`char`/... */
+  else if(ty->kind==0){ c->fn->res[ari].is_signed=(uint8_t)(ty->signd?1:0);
+    if(ty->is_bool) c->fn->res[ari].is_bool=1;
+    if(ty->is_plain_char) c->fn->res[ari].is_plain_char=1; }
+  int nel = arr_init(c, rid);                        /* note: temp()/new_claim may realloc res[]; re-index ari */
+  if(count<=0) c->fn->res[ari].count = (uint32_t)(nel<1?1:nel);   /* an inferred `[]` size */
+  return rid;
 }
 static void p_block(CC *c){            /* `{ stmts }` or a single statement */
   if(is(c,"{")){c->i++; int env_mark=c->nenv;   /* a block is a scope: its locals do not leak out */

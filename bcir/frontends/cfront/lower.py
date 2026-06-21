@@ -827,6 +827,13 @@ class _FuncLowerer:
         store path; a scalar `(int){v}` copies the single value in. Returns (rid, type) so the result acts
         as an lvalue (address-of / member access) and as an rvalue (a by-value struct arg / scalar read)."""
         ct = self._resolve_type(node.type)
+        if ct.kind == "array" and ct.count == 0:          # `(T[]){...}` -- infer the length from the init
+            n, cursor = 0, 0                              # (max index + 1; positional advances, `[i]=` jumps)
+            for key, _expr in node.init.entries:
+                idx = key if isinstance(key, int) else cursor
+                cursor = idx + 1
+                n = max(n, cursor)
+            ct = array(ct.of, n or 1)
         self.cl_ctr += 1
         rid = self._storage(ct, f"_cl{self.cl_ctr}")
         if ct.kind in ("struct", "union", "array"):
