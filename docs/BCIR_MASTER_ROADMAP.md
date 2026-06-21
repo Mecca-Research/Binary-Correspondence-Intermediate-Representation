@@ -774,6 +774,16 @@ by carrying the pointee (width, signedness, struct tag) on the pointer resource 
 `p[i]` / `*(p+i)` index with the right stride). `#ptrlocal`/`cfront_ptrlocal.c`, differential == Clang on
 both rails. *(This closes the pointer-local slice of the 4-byte value model; pointer **values** carried
 across non-address contexts remain the broader model item.)*
+✅ **and returning a pointer value** (`T *f(...){ return p + i; }` -- pointer arithmetic used as an
+rvalue, returned by value): **both** rails typed the `p + i` temporary as `uint32_t` -- an invalid
+pointer-from-integer return under C23 *and* an 8-byte-pointer truncation on a 64-bit target. Fixed by
+giving the additive lowering a pointer result when exactly one operand is a pointer (a `p - q` ptrdiff
+stays integer), cloning the pointee onto the result temp, and routing the temp declaration through a
+pointer-aware type composer on both rails (the C twin's `decl_ty`, the oracle's `deftmp`/`_bin_result_type`)
+-- so the emit is a real pointee-scaled `T *t = p + i`. Pointer **params** now also carry the pointee type
+so arithmetic on them clones it. `#ptrvalue`/`cfront_ptrvalue.c`, differential == Clang on both rails.
+*(Slice 1 of the pointer-value model; storing a pointer into a struct field and pointer-to-pointer are the
+remaining slices.)*
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both

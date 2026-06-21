@@ -58,7 +58,10 @@ _INIT = ["cfront_dispatch_table.c",   # designated initializers ([i]=v) for a fi
          "cfront_agginit.c",          # local struct/union aggregate init ({.field=v}) -> = {0} + stores
          "cfront_localarray.c"]       # local array decl T a[N] + array aggregate init (positional + [i]=)
 #   parity + emit + Clang ≡ (the table is referenced by name, defined in the source -- not re-hydrated)
-_FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI + _FLOAT + _INIT
+_PTRVALUE = ["cfront_ptrvalue.c"]   # pointer VALUES across non-address contexts (#ptrvalue): pointer
+#   arithmetic `p + i` as an rvalue returned by value -- the temp carries the pointee type (a real
+#   `T *t = p + i`), not a truncating uint32. Parity + emit + Clang ≡ (returns a pointer, not executed).
+_FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI + _FLOAT + _INIT + _PTRVALUE
 # §5.8 atomics/fences/CAS run their own gate: their memory side effects make the generic
 # pure-function equivalence harness invalid (it would call the original first and observe
 # the mutated cell), so they get a side-effect-aware behaviour check below.
