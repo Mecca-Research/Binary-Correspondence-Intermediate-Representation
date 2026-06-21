@@ -43,6 +43,7 @@ _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-val
         "cfront_bitfield.c",                          # + MMIO bitfield write (r->field = v, c.bf.set)
         "cfront_bfcompound.c",                         # + bitfield compound-assign (r->field |= bits)
         "cfront_signedbf.c",                           # + signed bitfield read sign-extension (int x:N)
+        "cfront_signedload.c",                         # + signed sub-int member/array read sign-extension
         "cfront_restrict.c",                           # + restrict/__restrict pointer params (consumed hint)
         "cfront_shiftassign.c",                        # + <<= / >>= shift compound-assign (scalar/member/array)
         "cfront_ptrarith.c",                           # + pointer mutation p++ / p += n (buffer-walk cursor)

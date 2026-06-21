@@ -113,7 +113,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
+for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re
@@ -1186,5 +1186,38 @@ sbr="$("${tmp}/sb_h")"
 [ "${sbr}" = "MATCH" ] \
   && echo "  PASS signedbf: signed bitfield read sign-extends == Clang" \
   || { echo "  FAIL: signedbf behaviour (${sbr})"; exit 1; }
+
+# Signed sub-int storage read sign-extension (#signedload): reading a `signed char`/`short` from a struct
+# member, a member array, or a local array must sign-extend to int. The twin loaded a member via a
+# zero-extending memcpy into a uint32 temp, and typed the array-element temp unsigned -- so a signed read
+# came back as a large positive and its `< 0` test was always false. Now the twin types each load temp with
+# the element's (width, signedness) and memcpy's the exact width. Unsigned elements unchanged.
+echo "[c-runtime] signed sub-int storage read sign-extends (bcir-cc): emit == Clang (#signedload)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_signedload.c" > "${tmp}/sl_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bm_signtest\b/sl_ms_src/' -e 's/\bm_value\b/sl_mv_src/' -e 's/\bm_arr_signtest\b/sl_ma_src/' \
+      -e 's/\bloc_signtest\b/sl_ls_src/' -e 's/\bloc_value\b/sl_lv_src/' -e 's/\buc_control\b/sl_uc_src/' \
+      "${C}/cfront_signedload.c"
+  cat "${tmp}/sl_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(unsigned a=0;a<70000u;a+=3u)for(unsigned b=0;b<300u;b++){
+    if(sl_ms_src(a,b)!=bcir_m_signtest(a,b)){printf("ms MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(sl_mv_src(a,b)!=bcir_m_value(a,b)){printf("mv MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(sl_ma_src(a,b)!=bcir_m_arr_signtest(a,b)){printf("ma MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(sl_ls_src(a,b)!=bcir_loc_signtest(a,b)){printf("ls MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(sl_lv_src(a,b)!=bcir_loc_value(a,b)){printf("lv MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(sl_uc_src(a,b)!=bcir_uc_control(a,b)){printf("uc MISMATCH a=%u b=%u\n",a,b);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/sl_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/sl_harness.c" -o "${tmp}/sl_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/sl_harness.c" -o "${tmp}/sl_h" \
+  || { echo "  FAIL: signedload harness build"; exit 1; }
+slr="$("${tmp}/sl_h")"
+[ "${slr}" = "MATCH" ] \
+  && echo "  PASS signedload: signed sub-int member/array read sign-extends == Clang" \
+  || { echo "  FAIL: signedload behaviour (${slr})"; exit 1; }
 
 echo "[c-runtime] ok"

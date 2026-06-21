@@ -671,7 +671,8 @@ static uint32_t member_arr_index(CC *c, const field *fld) {
   return lin;
 }
 static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -- GEP load */
-  uint32_t t=temp(c,base->type.size?base->type.size:4);
+  int es=base->type.size?base->type.size:4;
+  uint32_t t=base->type.is_float ? temp(c,es) : tempi(c,es,base->type.signd);  /* keep the element's sign */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;
   return t;
@@ -1710,13 +1711,16 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;
       if(cl->n_rd==2 && cl->n_imm){       /* s.arr[i]: load at &base + member_off + idx*elem_size */
         const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long es=cl->n_imm>1?cl->imm[1]:4;
-        w+=snprintf(o+w,on-w,"uint32_t %s; { uint32_t _v=0; memcpy(&_v, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld); %s = _v; }\n",
-          rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),es,es,rname(f,cl->wr[0],d)); }
-      else if(cl->n_rd==2) w+=snprintf(o+w,on-w,"uint32_t %s = %s[%s];\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
+        /* the temp carries the element's (width, signedness): memcpy es bytes into it so a signed sub-int
+         * element reads sign-extended (the zero-extending uint32 form dropped the sign). */
+        w+=snprintf(o+w,on-w,"%s %s; memcpy(&%s, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld);\n",
+          tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),es,es); }
+      else if(cl->n_rd==2) w+=snprintf(o+w,on-w,"%s %s = %s[%s];\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
-        w+=snprintf(o+w,on-w,"uint32_t %s; { uint32_t _v=0; memcpy(&_v, (const char *)%s%s + %lld, %lld); %s = _v; }\n",rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz,rname(f,cl->wr[0],d)); }
+        /* a plain member load: memcpy fsz bytes into the typed temp so a signed sub-int member sign-extends */
+        w+=snprintf(o+w,on-w,"%s %s; memcpy(&%s, (const char *)%s%s + %lld, %lld);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz); }
     }else if(!strcmp(cl->op,"c.store")&&cl->n_rd==3){   /* L3: array element store  a[idx] = value */
       if(cl->n_imm){                      /* s.arr[i] = v: store at &base + member_off + idx*elem_size */
         const bcir_resource *br=res_of(f,cl->rd[0]); const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
