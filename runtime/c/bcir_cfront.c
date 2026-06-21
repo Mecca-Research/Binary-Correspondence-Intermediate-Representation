@@ -1032,12 +1032,15 @@ static uint32_t p_unary(CC *c) {
       if(!p_type(c,&ty,&si) && is(c,")")){
         c->i++;                                    /* ')' */
         uint32_t v=p_unary(c);                     /* the operand (right-associative) */
-        const bcir_resource *vr=res_of(c->fn,v);   /* a float -> signed-int conversion needs a signed temp
-                                                    * + signed cast operator (float -> unsigned is UB). */
+        const bcir_resource *vr=res_of(c->fn,v);
+        /* The result temp carries the target's signedness, so a signed (sub-int) target keeps its sign
+         * even when the cast value is used directly -- `(signed char)(-5)` stays -5, and `(int)u` reads
+         * back signed (an arithmetic `>>`). A float -> signed-int conversion additionally needs a SIGNED
+         * cast operator (float -> unsigned is UB / target-divergent). */
         int f2s = vr && vr->is_float && !ty.is_float && ty.kind!=2 && ty.signd && ty.size>0;
-        uint32_t r = ty.is_float ? tempf(c, ty.size)          /* a float cast -> a float temp */
-                   : f2s ? tempi(c, ty.size, 1)               /* float -> signed int -> a signed temp */
-                                 : temp(c, ty.kind==2?cc_abi(c)->pointer_size:(ty.size?ty.size:4));
+        uint32_t r = ty.is_float ? tempf(c, ty.size)                  /* a float cast -> a float temp */
+                   : ty.kind==2 ? temp(c, cc_abi(c)->pointer_size)    /* a pointer cast */
+                                : tempi(c, ty.size?ty.size:4, ty.signd?1:0);   /* an integer cast */
         char op[BCIR_CIR_NAME]; cast_name(&ty,f2s,op,sizeof op);
         bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=r;} return r;
