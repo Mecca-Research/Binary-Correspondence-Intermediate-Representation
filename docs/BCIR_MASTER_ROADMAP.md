@@ -707,6 +707,13 @@ hardcoded to a 4-byte `uint32_t` on BOTH rails, so negating a `long` truncated t
 abs on a long (for `int` it was masked, since the value reinterprets at the same width). Fixed by typing
 the `-`/`~` result as the promoted operand type (`!` stays int) -- the oracle's `_rvalue(Unary)` and the
 twin's `p_unary` + `c.un` emit. `#longunary`/`cfront_longunary.c`, differential == Clang on both rails.
+✅ **and a `_Bool` / `bool` store-normalization miscompile**: C converts any nonzero to `1` when a value
+lands in a boolean object (§6.3.1.2), so `_Bool x = 2;` makes `x == 1`. The twin emitted a bool local as
+a plain `uint8_t`, so the store kept the raw value (`2`, not `1`) -- `is_clean` but wrong on a decl init,
+a compound assignment, an array element, a parameter, and the return value (the oracle, which emits
+`_Bool`, was correct). Fixed by tracking bool-ness on the resource + ctype (`is_bool`) and emitting
+`_Bool` from `tty` / `ctype_str`, so every conversion-to-bool normalizes -- exactly as the oracle does.
+`#boolnorm`/`cfront_boolnorm.c`, differential == Clang on both rails.
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both

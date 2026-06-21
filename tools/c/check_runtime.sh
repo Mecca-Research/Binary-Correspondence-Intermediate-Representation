@@ -113,7 +113,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
+for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re
@@ -1005,5 +1005,35 @@ lur="$("${tmp}/lu_h")"
 [ "${lur}" = "MATCH" ] \
   && echo "  PASS longunary: -/~ on long/long long == Clang" \
   || { echo "  FAIL: longunary behaviour (${lur})"; exit 1; }
+
+# Storing a value into a `_Bool` / `bool` object (#boolnorm): C normalizes any nonzero to 1 on the
+# conversion to bool (§6.3.1.2). The twin emitted a bool local as a plain `uint8_t`, so the store kept
+# the raw value (`_Bool x = 2` left x == 2): a silent miscompile. Now the twin emits `_Bool`, so the
+# store normalizes -- on a decl init, compound assignment, array element, parameter, and return.
+echo "[c-runtime] store into a _Bool normalizes to 0/1 (bcir-cc): emit == Clang (#boolnorm)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_boolnorm.c" > "${tmp}/bn_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'
+  sed -e 's/\bbool_norm\b/bn_src/' -e 's/\bbool_mask\b/bm_src/' -e 's/\bbool_mod\b/bd_src/' \
+      -e 's/\bbool_compound\b/bc_src/' -e 's/\bbool_array\b/ba_src/' "${C}/cfront_boolnorm.c"
+  cat "${tmp}/bn_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(unsigned a=0;a<300u;a++)for(unsigned b=0;b<260u;b++){
+    if(bn_src(a,b)!=bcir_bool_norm(a,b)){printf("bn MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(bm_src(a,b)!=bcir_bool_mask(a,b)){printf("bm MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(bd_src(a,b)!=bcir_bool_mod(a,b)){printf("bd MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(bc_src(a,b)!=bcir_bool_compound(a,b)){printf("bc MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(ba_src(a,b)!=bcir_bool_array(a,b)){printf("ba MISMATCH a=%u b=%u\n",a,b);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/bn_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/bn_harness.c" -o "${tmp}/bn_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/bn_harness.c" -o "${tmp}/bn_h" \
+  || { echo "  FAIL: boolnorm harness build"; exit 1; }
+bnr="$("${tmp}/bn_h")"
+[ "${bnr}" = "MATCH" ] \
+  && echo "  PASS boolnorm: store into _Bool normalizes to 0/1 == Clang" \
+  || { echo "  FAIL: boolnorm behaviour (${bnr})"; exit 1; }
 
 echo "[c-runtime] ok"
