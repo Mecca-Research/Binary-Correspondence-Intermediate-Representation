@@ -907,8 +907,12 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     right-shift / comparison emits signed C (not the old flat `uint32_t`) and `int + long` widens to
     64-bit — behaviour-equivalent to Clang over the *full* signed range, the case the old unsigned-32
     model got wrong (`test_integer_promotions_and_uac_oracle`; `#intpromote` runs the twin's `--emit-c`
-    against Clang on 300k full-range inputs). *Scalar* operands are covered; pointer-element signedness
-    (the twin's pointer model carries pointee *width* but not yet signedness) is a follow-on. ✅
+    against Clang on 300k full-range inputs). ✅ **Pointer-element signedness** too -- a load / store /
+    subscript through a pointer carries the pointee's *signedness* (not just its width) on every
+    pointer-resource path (param, local, struct field, pointer-arithmetic result), so a signed sub-int
+    pointee sign-extends, an unsigned one zero-extends, and the loaded value drives signed-vs-unsigned
+    divide / shift / comparison / UAC -- `#ptrsign`/`cfront_ptrsign.c`, a bespoke negative-value
+    differential == Clang on both rails. ✅
     **array element stores** (`a[i] = v` / `a[i] OP= v` through a pointer/array param -- the driver
     buffer-fill / scatter idiom) now lower on the C twin too (a 3-read `c.store`, emitted as `a[i] = v`;
     the oracle already had them), dual-rail parity + a source-vs-twin buffer differential

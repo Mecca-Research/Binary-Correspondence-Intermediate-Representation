@@ -450,6 +450,69 @@ def test_field_deref_dual_rail():
             assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
 
 
+def test_pointer_element_signedness_dual_rail():
+    """Pointer-element signedness (#ptrsign): a load / store / subscript through a pointer carries the
+    POINTEE's signedness, not just its width -- so a deref of a signed sub-int pointer sign-extends (a
+    negative byte/short reads back negative), an unsigned one zero-extends, and the loaded value drives
+    signed-vs-unsigned divide / remainder / shift / comparison / the usual arithmetic conversions. Both
+    rails thread the pointee sign through every pointer-resource path (param, local, struct field, and a
+    pointer-arithmetic result). Parity + a bespoke behaviour harness over negative + boundary pointee
+    values: a width-only model would zero-extend a negative pointee and pick the wrong arithmetic sign."""
+    fx = "cfront_ptrsign.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["ps_s8", "ps_u8", "ps_s16", "ps_u16", "ps_s8_divrem", "ps_u8_div", "ps_s8_shr", "ps_u8_shr",
+             "ps_s8_cmp", "ps_s64_div", "ps_u64_div", "ps_arith", "ps_uac", "ps_field", "ps_w8"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(long i=-400;i<400;i++){
+    signed char sb=(signed char)(i*7-3); unsigned char ub=(unsigned char)(i*5+1);
+    short ha[4]={(short)(i*3),(short)(-i),(short)(i+9),(short)(i*7)};
+    unsigned short ua[4]={(unsigned short)(i*3),(unsigned short)(i),(unsigned short)(i+9),(unsigned short)(i*7)};
+    long lv=i*1000000007L-7; unsigned long ul=(unsigned long)(i*2654435761UL+9);
+    signed char a[4]={(signed char)i,(signed char)(i-1),(signed char)(i+2),(signed char)(-i)};
+    if(ps_s8_s(&sb)!=bcir_ps_s8(&sb)){printf("s8@%ld\n",i);return 1;}
+    if(ps_u8_s(&ub)!=bcir_ps_u8(&ub)){printf("u8@%ld\n",i);return 1;}
+    if(ps_s16_s(ha,2)!=bcir_ps_s16(ha,2)){printf("s16@%ld\n",i);return 1;}
+    if(ps_u16_s(ua,2)!=bcir_ps_u16(ua,2)){printf("u16@%ld\n",i);return 1;}
+    if(ps_s8_divrem_s(&sb)!=bcir_ps_s8_divrem(&sb)){printf("divrem@%ld\n",i);return 1;}
+    if(ps_u8_div_s(&ub)!=bcir_ps_u8_div(&ub)){printf("udiv@%ld\n",i);return 1;}
+    if(ps_s8_shr_s(&sb)!=bcir_ps_s8_shr(&sb)){printf("sshr@%ld\n",i);return 1;}
+    if(ps_u8_shr_s(&ub)!=bcir_ps_u8_shr(&ub)){printf("ushr@%ld\n",i);return 1;}
+    if(ps_s8_cmp_s(&sb)!=bcir_ps_s8_cmp(&sb)){printf("cmp@%ld\n",i);return 1;}
+    if(ps_s64_div_s(&lv)!=bcir_ps_s64_div(&lv)){printf("s64@%ld\n",i);return 1;}
+    if(ps_u64_div_s(&ul)!=bcir_ps_u64_div(&ul)){printf("u64@%ld\n",i);return 1;}
+    if(ps_arith_s(a,2)!=bcir_ps_arith(a,2)){printf("arith@%ld\n",i);return 1;}
+    if(ps_uac_s(&ub,(int)i)!=bcir_ps_uac(&ub,(int)i)){printf("uac@%ld\n",i);return 1;}
+    struct Buf bb={&sb,&ub}; if(ps_field_s(&bb)!=bcir_ps_field(&bb)){printf("field@%ld\n",i);return 1;}
+    signed char w1=0,w2=0; ps_w8_s(&w1,(int)i); bcir_ps_w8(&w2,(int)i);
+    if(w1!=w2){printf("w8@%ld\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+            open(cpath, "w").write(harness)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} harness build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
+
+
 def _build_loop(d: str) -> str:
     return _compile_once("loop", "loop",
                          ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c",
