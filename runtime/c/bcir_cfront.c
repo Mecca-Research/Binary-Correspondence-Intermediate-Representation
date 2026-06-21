@@ -357,6 +357,8 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
       if((int)strlen("long")==pk(c)->n&&!strncmp("long",pk(c)->s,pk(c)->n)) longs++;   /* count `long`s */
       if(is_ptr_tracking(pk(c)->s,pk(c)->n)) ptrtrk=1;
       if(scalar_float_size(pk(c)->s,pk(c)->n)>=0) ty->is_float=1;     /* float / double */
+      if((pk(c)->n==5&&!strncmp("_Bool",pk(c)->s,5))||(pk(c)->n==4&&!strncmp("bool",pk(c)->s,4)))
+        ty->is_bool=1;                                               /* a boolean: a store normalizes to 0/1 */
       seen=1;c->i++;
       if(is(c,"long")||is(c,"int")||is(c,"char"))continue;break;}
     break;
@@ -1332,7 +1334,8 @@ static void p_stmt(CC *c) {
                            arr?ty.size:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
                            arr?arr:(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
       if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double (element) local */
-      else if(ty.kind==0) c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
+      else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
+        if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1; }     /* a _Bool local: emit `_Bool`, store normalizes */
       if(ty.kind==1&&!arr) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
       env_add(c,&nm,rid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
       if(is_static){            /* static storage: a once-only constant init, baked into the decl */
@@ -1513,7 +1516,8 @@ static int p_func(CC *c, bcir_func *fn) {
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, pb);
     if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
-    else if(ty.kind==0) c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
+    else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
+      if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1; }     /* a _Bool parameter */
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
     env_add(c,&pn,rid,&ty,si);
     if(fn->n_params>=fn->cap_params){ int nc=fn->cap_params?fn->cap_params*2:4;
@@ -1546,6 +1550,7 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   int is_struct = (ty->kind==1) || ty->ptr_to_struct;
   const char *kw = ty->is_union ? "union" : "struct";
   const char *base = is_struct ? ty->tag
+                   : ty->is_bool ? "_Bool"
                    : ty->is_float ? (ty->size==4?"float":"double")
                    : ty->size==0 ? "void"
                    : ty->signd ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
@@ -1598,6 +1603,7 @@ static const char *tty(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid);
   if(!r) return "uint32_t";
   if(r->is_float) return r->elem_bytes==4?"float":"double";
+  if(r->is_bool) return "_Bool";   /* a store into a bool object normalizes any nonzero to 1 (§6.3.1.2) */
   if(r->kind==BCIR_RK_SCALAR) switch(r->elem_bytes){
     case 1: return r->is_signed?"int8_t":"uint8_t";
     case 2: return r->is_signed?"int16_t":"uint16_t";
