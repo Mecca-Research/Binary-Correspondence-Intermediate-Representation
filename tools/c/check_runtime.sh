@@ -1646,13 +1646,17 @@ clr="$("${tmp}/cl_h")"
   && echo "  PASS complit: (struct){...} by value / designators / &(int){v} / &(struct){...} == Clang" \
   || { echo "  FAIL: complit behaviour (${clr})"; exit 1; }
 
-# typeof (#typeof): `typeof(type-name)` / `typeof(variable)` resolves to the operand's type -- each case
-# is built so the WRONG type (int vs long, signed vs unsigned, a short truncation) would diverge.
-echo "[c-runtime] typeof -- typeof(type-name) / typeof(variable) (#typeof)"
+# typeof (#typeof): `typeof(type-name)` / `typeof(variable)` / `typeof(expression)` resolves to the
+# operand's type -- each case is built so the WRONG type (int vs long, signed vs unsigned, a short
+# truncation) would diverge. The expression operand is type-inferred (oracle) / speculatively lowered
+# then rolled back (twin), as it is unevaluated.
+echo "[c-runtime] typeof -- typeof(type-name) / typeof(variable) / typeof(expr) (#typeof)"
 "${tmp}/bcir-cc" --emit-c "${C}/cfront_typeof.c" > "${tmp}/to_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
 { echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
   sed -e 's/\bto_width\b/to_width_s/' -e 's/\bto_sign\b/to_sign_s/' -e 's/\bto_typename\b/to_typename_s/' \
       -e 's/\bto_ptr\b/to_ptr_s/' -e 's/\bto_struct\b/to_struct_s/' -e 's/\bto_unqual\b/to_unqual_s/' \
+      -e 's/\bto_ebinop\b/to_ebinop_s/' -e 's/\bto_ebinsign\b/to_ebinsign_s/' -e 's/\bto_ecast\b/to_ecast_s/' \
+      -e 's/\bto_ederef\b/to_ederef_s/' -e 's/\bto_emember\b/to_emember_s/' -e 's/\bto_eindex\b/to_eindex_s/' \
       "${C}/cfront_typeof.c"
   cat "${tmp}/to_emit.c"
   cat <<'DRV'
@@ -1664,6 +1668,12 @@ int main(void){
     if(to_ptr_s((int)a)!=bcir_to_ptr((int)a)){printf("ptr@%ld\n",a);return 1;}
     if(to_struct_s((int)a)!=bcir_to_struct((int)a)){printf("struct@%ld\n",a);return 1;}
     if(to_unqual_s(a)!=bcir_to_unqual(a)){printf("unq@%ld\n",a);return 1;}
+    if(to_ebinop_s(a)!=bcir_to_ebinop(a)){printf("ebinop@%ld\n",a);return 1;}
+    if(to_ebinsign_s((unsigned)a)!=bcir_to_ebinsign((unsigned)a)){printf("ebinsign@%ld\n",a);return 1;}
+    if(to_ecast_s((int)a)!=bcir_to_ecast((int)a)){printf("ecast@%ld\n",a);return 1;}
+    if(to_ederef_s(a)!=bcir_to_ederef(a)){printf("ederef@%ld\n",a);return 1;}
+    if(to_emember_s((int)a)!=bcir_to_emember((int)a)){printf("emember@%ld\n",a);return 1;}
+    if(to_eindex_s(a)!=bcir_to_eindex(a)){printf("eindex@%ld\n",a);return 1;}
   }
   printf("MATCH\n");return 0;}
 DRV
@@ -1673,7 +1683,7 @@ DRV
   || { echo "  FAIL: typeof harness build"; exit 1; }
 tor="$("${tmp}/to_h")"
 [ "${tor}" = "MATCH" ] \
-  && echo "  PASS typeof: typeof(long)/typeof(unsigned)/typeof(short)/typeof(int*)/typeof(struct) == Clang" \
+  && echo "  PASS typeof: typeof type-name / variable / expr (a+b, (short)x, *p, s.f, arr[i]) == Clang" \
   || { echo "  FAIL: typeof behaviour (${tor})"; exit 1; }
 
 echo "[c-runtime] ok"

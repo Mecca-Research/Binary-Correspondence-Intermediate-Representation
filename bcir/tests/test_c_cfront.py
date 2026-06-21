@@ -718,17 +718,21 @@ def test_compound_literals_dual_rail():
 
 
 def test_typeof_dual_rail():
-    """typeof (#typeof): C23 `typeof(type-name)` / `typeof(variable)` (+ GNU `__typeof__`) as a
-    type-specifier, resolving to the operand's type. Both rails resolve a type-name operand (incl.
-    `typeof(int*)`) and a bare in-scope variable; each case is built so the WRONG type (int vs long,
-    signed vs unsigned, a short truncation) would diverge. Differential == Clang on both rails."""
+    """typeof (#typeof): C23 `typeof(type-name)` / `typeof(variable)` / `typeof(expression)` (+ GNU
+    `__typeof__`) as a type-specifier, resolving to the operand's type. Both rails resolve a type-name
+    operand (incl. `typeof(int*)`), a bare in-scope variable, and a general expression operand
+    (`typeof(a+b)`, `typeof((short)x)`, `typeof(*p)`, `typeof(s.f)`, `typeof(arr[i])`) -- the oracle by
+    static type inference, the twin by speculatively lowering then rolling the emission back. Each case
+    is built so the WRONG type (int vs long, signed vs unsigned, a missing short truncation) would
+    diverge. Differential == Clang on both rails."""
     fx = "cfront_typeof.c"
     src = open(os.path.join(_C, fx), encoding="utf-8").read()
     oracle_summary, r, entry = _oracle(src)
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["to_width", "to_sign", "to_typename", "to_ptr", "to_struct", "to_unqual"]
+    funcs = ["to_width", "to_sign", "to_typename", "to_ptr", "to_struct", "to_unqual",
+             "to_ebinop", "to_ebinsign", "to_ecast", "to_ederef", "to_emember", "to_eindex"]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -740,6 +744,12 @@ def test_typeof_dual_rail():
     if(to_ptr_s((int)a)!=bcir_to_ptr((int)a)){printf("ptr@%ld\n",a);return 1;}
     if(to_struct_s((int)a)!=bcir_to_struct((int)a)){printf("struct@%ld\n",a);return 1;}
     if(to_unqual_s(a)!=bcir_to_unqual(a)){printf("unq@%ld\n",a);return 1;}
+    if(to_ebinop_s(a)!=bcir_to_ebinop(a)){printf("ebinop@%ld\n",a);return 1;}
+    if(to_ebinsign_s((unsigned)a)!=bcir_to_ebinsign((unsigned)a)){printf("ebinsign@%ld\n",a);return 1;}
+    if(to_ecast_s((int)a)!=bcir_to_ecast((int)a)){printf("ecast@%ld\n",a);return 1;}
+    if(to_ederef_s(a)!=bcir_to_ederef(a)){printf("ederef@%ld\n",a);return 1;}
+    if(to_emember_s((int)a)!=bcir_to_emember((int)a)){printf("emember@%ld\n",a);return 1;}
+    if(to_eindex_s(a)!=bcir_to_eindex(a)){printf("eindex@%ld\n",a);return 1;}
   }
   printf("MATCH\n");return 0;}"""
     with tempfile.TemporaryDirectory() as d:

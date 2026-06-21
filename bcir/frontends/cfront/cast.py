@@ -20,6 +20,7 @@ class TypeRef:
     func_ret: object = None         # the return TypeRef (funcptr only)
     func_params: tuple = ()         # the parameter TypeRefs (funcptr only) — for faithful emit
     typeof_var: str = ""            # `typeof(var)` — resolved in lowering to the in-scope variable's type
+    typeof_expr: object = None      # `typeof(expr)` — the unevaluated operand; lowering infers its static type
 
 
 # --- expressions ---
