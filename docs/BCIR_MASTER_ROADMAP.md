@@ -954,8 +954,10 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     register-block; the oracle already flattened the `.`/`->` chain to a single offset access, and the
     C twin's `field` now carries a sub-struct index so a descent helper accumulates the byte offset
     through each hop — read, plain / compound store, and nested bitfields all match. `#nestmember`/
-    `cfront_nestmember.c`, differential asserts `sizeof` + nested read/write == Clang. *Follow-on:*
-    pointer-member chains `o.p->v` and nested funcptr dispatch).
+    `cfront_nestmember.c`, differential asserts `sizeof` + nested read/write == Clang. ✅ **Pointer-member
+    chains** `o.p->v` are now native -- `*(s->p)`, `s->mid->k`, the two-hop `s->mid->leaf->x`, and
+    `s->p[i]` (`#fieldderef`/`cfront_fieldderef.c`, pointer-value slice 2b above). *Follow-on:* nested
+    funcptr dispatch through a loaded pointer).
     *Follow-on:* **compound literals** (`(struct S){…}`);
   - *storage/linkage:* ✅ **`extern`** (recognized as a storage-class specifier on both rails -- consumed
     like `static`; an `extern T g;` global is referenced by name, defined in another TU, so the emit is
