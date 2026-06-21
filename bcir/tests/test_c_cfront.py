@@ -10,6 +10,7 @@ shared fixture this gate checks the C rail against the six artifacts:
 Toolchain-gated (builds `bcir_cfront.c`): self-skips in the quick tier, runs under c-runtime/thorough.
 """
 
+import atexit
 import os
 import re
 import shutil
@@ -99,18 +100,45 @@ def _oracle(src: str, includes=None):
     return summary, r, entry
 
 
-def _build_frontend(d: str) -> str:
-    exe = os.path.join(d, "tcf")
-    # bcir_cfront verifies (bcir_verify.c -> bcir_verify_unit / bcir_provenance_digest) and the
-    # pack law reaches into bcir_runtime.c (bcir_sp_validate), so both are linked in.
-    srcs = [os.path.join(_C, s) for s in ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c",
-            "bcir_runtime.c", "test_cfront.c")]
+_BUILD_DIR = None
+_BUILD_CACHE: dict = {}
+
+
+def _session_build_dir() -> str:
+    global _BUILD_DIR
+    if _BUILD_DIR is None:
+        _BUILD_DIR = tempfile.mkdtemp(prefix="bcir_cc_build_")
+        atexit.register(shutil.rmtree, _BUILD_DIR, ignore_errors=True)
+    return _BUILD_DIR
+
+
+def _compile_once(key: str, out_name: str, src_names: tuple, label: str) -> str:
+    """Compile the runtime/c `src_names` to `out_name` ONCE per session (memoized by `key`) and reuse
+    the binary across every test that needs it. These binaries (the ~2100-line `bcir_cfront.c` + its
+    siblings, at -O2) are identical from test to test, so the old per-test rebuild was the suite's
+    single dominant wall-cost -- ~20 redundant front-end/loop/driver compiles. The cache lives for the
+    process (run_all + pytest both run in one process), keyed by the source set so a different binary
+    still builds its own."""
+    cached = _BUILD_CACHE.get(key)
+    if cached:
+        return cached
+    exe = os.path.join(_session_build_dir(), out_name)
+    srcs = [os.path.join(_C, s) for s in src_names]
     for std in ("c23", "c11"):
         b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
                            capture_output=True, text=True)
         if b.returncode == 0:
+            _BUILD_CACHE[key] = exe
             return exe
-    raise AssertionError(f"C frontend build failed:\n{b.stderr}")
+    raise AssertionError(f"{label} build failed:\n{b.stderr}")
+
+
+def _build_frontend(d: str) -> str:
+    # `d` is retained for call-site compatibility; the binary is cached session-wide (see _compile_once).
+    # bcir_cfront verifies (bcir_verify.c) and the pack law reaches into bcir_runtime.c, so both link in.
+    return _compile_once("frontend", "tcf",
+                         ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c", "test_cfront.c"),
+                         "C frontend")
 
 
 def _c_run(exe: str, fixture_path: str):
@@ -422,17 +450,173 @@ def test_field_deref_dual_rail():
             assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
 
 
+def test_pointer_element_signedness_dual_rail():
+    """Pointer-element signedness (#ptrsign): a load / store / subscript through a pointer carries the
+    POINTEE's signedness, not just its width -- so a deref of a signed sub-int pointer sign-extends (a
+    negative byte/short reads back negative), an unsigned one zero-extends, and the loaded value drives
+    signed-vs-unsigned divide / remainder / shift / comparison / the usual arithmetic conversions. Both
+    rails thread the pointee sign through every pointer-resource path (param, local, struct field, and a
+    pointer-arithmetic result). Parity + a bespoke behaviour harness over negative + boundary pointee
+    values: a width-only model would zero-extend a negative pointee and pick the wrong arithmetic sign."""
+    fx = "cfront_ptrsign.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["ps_s8", "ps_u8", "ps_s16", "ps_u16", "ps_s8_divrem", "ps_u8_div", "ps_s8_shr", "ps_u8_shr",
+             "ps_s8_cmp", "ps_s64_div", "ps_u64_div", "ps_arith", "ps_uac", "ps_field", "ps_w8"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(long i=-400;i<400;i++){
+    int8_t sb=(int8_t)(i*7-3); uint8_t ub=(uint8_t)(i*5+1);
+    int16_t ha[4]={(int16_t)(i*3),(int16_t)(-i),(int16_t)(i+9),(int16_t)(i*7)};
+    uint16_t ua[4]={(uint16_t)(i*3),(uint16_t)(i),(uint16_t)(i+9),(uint16_t)(i*7)};
+    long lv=i*1000000007L-7; unsigned long ul=(unsigned long)(i*2654435761UL+9);
+    int8_t a[4]={(int8_t)i,(int8_t)(i-1),(int8_t)(i+2),(int8_t)(-i)};
+    if(ps_s8_s(&sb)!=bcir_ps_s8(&sb)){printf("s8@%ld\n",i);return 1;}
+    if(ps_u8_s(&ub)!=bcir_ps_u8(&ub)){printf("u8@%ld\n",i);return 1;}
+    if(ps_s16_s(ha,2)!=bcir_ps_s16(ha,2)){printf("s16@%ld\n",i);return 1;}
+    if(ps_u16_s(ua,2)!=bcir_ps_u16(ua,2)){printf("u16@%ld\n",i);return 1;}
+    if(ps_s8_divrem_s(&sb)!=bcir_ps_s8_divrem(&sb)){printf("divrem@%ld\n",i);return 1;}
+    if(ps_u8_div_s(&ub)!=bcir_ps_u8_div(&ub)){printf("udiv@%ld\n",i);return 1;}
+    if(ps_s8_shr_s(&sb)!=bcir_ps_s8_shr(&sb)){printf("sshr@%ld\n",i);return 1;}
+    if(ps_u8_shr_s(&ub)!=bcir_ps_u8_shr(&ub)){printf("ushr@%ld\n",i);return 1;}
+    if(ps_s8_cmp_s(&sb)!=bcir_ps_s8_cmp(&sb)){printf("cmp@%ld\n",i);return 1;}
+    if(ps_s64_div_s(&lv)!=bcir_ps_s64_div(&lv)){printf("s64@%ld\n",i);return 1;}
+    if(ps_u64_div_s(&ul)!=bcir_ps_u64_div(&ul)){printf("u64@%ld\n",i);return 1;}
+    if(ps_arith_s(a,2)!=bcir_ps_arith(a,2)){printf("arith@%ld\n",i);return 1;}
+    if(ps_uac_s(&ub,(int)i)!=bcir_ps_uac(&ub,(int)i)){printf("uac@%ld\n",i);return 1;}
+    struct Buf bb={&sb,&ub}; if(ps_field_s(&bb)!=bcir_ps_field(&bb)){printf("field@%ld\n",i);return 1;}
+    signed char w1=0,w2=0; ps_w8_s(&w1,(int)i); bcir_ps_w8(&w2,(int)i);
+    if(w1!=w2){printf("w8@%ld\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+            open(cpath, "w").write(harness)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} harness build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
+
+
+def test_funcptr_dispatch_through_loaded_pointer_dual_rail():
+    """Funcptr dispatch through a loaded pointer (#fnptrchain): calling a function-pointer struct member
+    reached THROUGH a loaded pointer-to-struct field -- `d->ops->fn(args)` and the two-hop
+    `s->dev->ops->fn(args)`. The direct `o->fn(args)` already fused member access + call into one
+    `c.call.imember` claim; the postfix pointer chain (from #fieldderef) now recognizes a `(` after a
+    member as that fused indirect call on the loaded pointer base, emitting `ptr->fn(args)`. The oracle
+    already lowered this; this brings the C twin into agreement. Parity + a bespoke behaviour harness
+    that wires real operation tables (each call is an R18-opaque indirect dispatch)."""
+    fx = "cfront_fnptrchain.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["fc_add", "fc_combo", "fc_twohop"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""static int real_add(int a,int b){return a+b;}
+static int real_sub(int a,int b){return a-b;}
+static int real_mul(int a,int b){return a*b;}
+int main(void){
+  struct Ops ops={real_add,real_sub,real_mul};
+  struct Dev dev={&ops,42};
+  struct Sys sys={&dev,7};
+  for(int i=-200;i<200;i++){
+    int a=i*3-1,b=7-i;
+    if(fc_add_s(&dev,a,b)!=bcir_fc_add(&dev,a,b)){printf("add@%d\n",i);return 1;}
+    if(fc_combo_s(&dev,a,b)!=bcir_fc_combo(&dev,a,b)){printf("combo@%d\n",i);return 1;}
+    if(fc_twohop_s(&sys,a,b)!=bcir_fc_twohop(&sys,a,b)){printf("twohop@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+            open(cpath, "w").write(harness)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} harness build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
+
+
+def test_multi_declarator_pointer_dual_rail():
+    """Per-declarator pointer/array shape in a multi-declarator declaration (#multiptr): in `int *p, q;`
+    the `*` binds to the DECLARATOR, not the type-specifier -- p is `int*`, q is `int`; `int *p, *q;`
+    types both as pointers; a per-declarator array no longer leaks dims onto the next declarator. The
+    oracle typed each declarator individually; the twin folded `*` into the shared specifier, so
+    `int *p, q;` mis-typed q as an 8-byte pointer and `int *p, *q;` was rejected. The twin now parses the
+    base specifier once and applies each declarator's own `*`/`[]` on a fresh copy (locals + struct
+    members). Parity + a bespoke differential that uses each trailing declarator AS a scalar (an 8-byte
+    store would clobber an adjacent field). Also pins a wide-scalar member store (`long m`) moving 8
+    bytes, not 4."""
+    fx = "cfront_multiptr.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["md_local_mixed", "md_local_two_ptr", "md_local_ptr_arr", "md_struct"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int i=-300;i<300;i++){
+    int a=i*3-1,b=7-i;
+    if(md_local_mixed_s(i)!=bcir_md_local_mixed(i)){printf("mixed@%d\n",i);return 1;}
+    if(md_local_two_ptr_s(a,b)!=bcir_md_local_two_ptr(a,b)){printf("twoptr@%d\n",i);return 1;}
+    if(md_local_ptr_arr_s(i)!=bcir_md_local_ptr_arr(i)){printf("ptrarr@%d\n",i);return 1;}
+    struct Mix m1,m2;
+    if(md_struct_s(&m1,i)!=bcir_md_struct(&m2,i)){printf("struct@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+            open(cpath, "w").write(harness)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} harness build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
+
+
 def _build_loop(d: str) -> str:
-    exe = os.path.join(d, "loop")
-    srcs = [os.path.join(_C, s) for s in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c",
-            "bcir_hydrate.c", "bcir_exec.c", "bcir_runtime.c", "bcir_verify.c",
-            "test_cfront_loop.c")]
-    for std in ("c23", "c11"):
-        b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
-                           capture_output=True, text=True)
-        if b.returncode == 0:
-            return exe
-    raise AssertionError(f"loop build failed:\n{b.stderr}")
+    return _compile_once("loop", "loop",
+                         ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c",
+                          "bcir_runtime.c", "bcir_verify.c", "test_cfront_loop.c"), "loop")
 
 
 def test_full_compile_execute_loop_in_c():
@@ -716,15 +900,9 @@ def test_cli_resolves_sibling_and_search_path_headers():
 
 
 def _build_bcir_cc(d: str) -> str:
-    exe = os.path.join(d, "bcir-cc")
-    srcs = [os.path.join(_C, s) for s in ("bcir_cc.c", "bcir_cpp.c", "bcir_cfront.c", "bcir_verify.c",
-            "bcir_runtime.c", "bcir_plan.c", "bcir_hydrate.c")]
-    for std in ("c23", "c11"):
-        b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
-                           capture_output=True, text=True)
-        if b.returncode == 0:
-            return exe
-    raise AssertionError(f"bcir-cc build failed:\n{b.stderr}")
+    return _compile_once("bcir_cc", "bcir-cc",
+                         ("bcir_cc.c", "bcir_cpp.c", "bcir_cfront.c", "bcir_verify.c", "bcir_runtime.c",
+                          "bcir_plan.c", "bcir_hydrate.c"), "bcir-cc")
 
 
 def test_file_macro_real_path_dual_rail():

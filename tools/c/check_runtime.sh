@@ -113,22 +113,33 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
-  c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
-  py_sum="$(python3 -c "
-import os, re
+# L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
+FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c cfront_multiptr.c"
+# Precompute EVERY oracle summary in one python process (import compile_unit once) -- the old
+# python-per-fixture loop paid ~0.3s of interpreter+import startup each (~30s over the fixture set).
+python3 - "${C}" ${FIXTURES} > "${tmp}/py_sums.txt" <<'PY' || { echo "  FAIL: python lowering (batch)"; exit 1; }
+import os, re, sys
 from bcir.frontends.cfront import compile_unit
 from bcir.model import Domain
-src=open('${C}/${fx}').read()
-inc={h: open(os.path.join('${C}',h)).read() for h in re.findall(r'#include\s+\"([^\"]+)\"', src)
-     if os.path.exists(os.path.join('${C}',h))}
-r=compile_unit(src, check_clang=False, includes=inc or None)
-fns=r.lowered.functions; lf=fns[next(reversed(fns))]
-mmio=sum(1 for c in lf.claims if c.op=='c.load' and c.domain==Domain.MMIO)
-bf=sum(1 for c in lf.claims if c.op=='c.bf.get'); kn=sum(1 for c in lf.claims if c.op=='c.const')
-bo=sum(1 for c in lf.claims if c.op.startswith('c.bin.')); ca=sum(1 for c in lf.claims if c.op.startswith('c.call'))
-print(f'funcs={len(fns)} claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} binop={bo} call={ca} ok={1 if r.is_clean else 0}')
-")" || { echo "  FAIL: python lowering ${fx}"; exit 1; }
+cdir = sys.argv[1]
+for fx in sys.argv[2:]:
+    try:
+        src = open(os.path.join(cdir, fx)).read()
+        inc = {h: open(os.path.join(cdir, h)).read() for h in re.findall(r'#include\s+"([^"]+)"', src)
+               if os.path.exists(os.path.join(cdir, h))}
+        r = compile_unit(src, check_clang=False, includes=inc or None)
+        fns = r.lowered.functions; lf = fns[next(reversed(fns))]
+        mmio = sum(1 for c in lf.claims if c.op == 'c.load' and c.domain == Domain.MMIO)
+        bf = sum(1 for c in lf.claims if c.op == 'c.bf.get'); kn = sum(1 for c in lf.claims if c.op == 'c.const')
+        bo = sum(1 for c in lf.claims if c.op.startswith('c.bin.')); ca = sum(1 for c in lf.claims if c.op.startswith('c.call'))
+        print(f"{fx}\tfuncs={len(fns)} claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} binop={bo} call={ca} ok={1 if r.is_clean else 0}")
+    except Exception as e:
+        sys.stderr.write(f"oracle lowering failed for {fx}: {e}\n"); sys.exit(1)
+PY
+for fx in ${FIXTURES}; do
+  c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
+  py_sum="$(awk -F'\t' -v f="${fx}" '$1==f{print $2; exit}' "${tmp}/py_sums.txt")"
+  [ -n "${py_sum}" ] || { echo "  FAIL: no precomputed oracle summary for ${fx}"; exit 1; }
   [ "${c_sum}" = "${py_sum}" ] \
     && echo "  PASS parity ${fx} (oracle == C: ${c_sum})" \
     || { echo "  FAIL: parity ${fx} (C='${c_sum}' PY='${py_sum}')"; exit 1; }
@@ -140,18 +151,23 @@ done
 # the C twin emits them as `= Nu;` literals; the oracle exposes them as the c.const immediates. The
 # vectors must agree per target AND differ across LP64 / LLP64 / ILP32 (so the gate has teeth).
 echo "[c-runtime] target-ABI matrix (bcir_cfront --target): sizeof data model == oracle (#abi)"
+ABI_TARGETS="x86_64-linux aarch64-linux riscv64-linux x86_64-windows i386-linux"
+# One python process for every target (was one per target): import compile_unit once.
+python3 - "${C}" ${ABI_TARGETS} > "${tmp}/abi_sums.txt" <<'PY' || { echo "  FAIL: python ABI (batch)"; exit 1; }
+import sys
+from bcir.frontends.cfront import compile_unit
+src = open(sys.argv[1] + "/cfront_abi.c").read()
+for t in sys.argv[2:]:
+    r = compile_unit(src, check_clang=False, target=t)
+    lf = r.lowered.functions[next(reversed(r.lowered.functions))]
+    print(f"{t}\t" + ','.join(str(c.imm[0]) for c in lf.claims if c.op == 'c.const'))
+PY
 abi_seen=""
-for t in x86_64-linux aarch64-linux riscv64-linux x86_64-windows i386-linux; do
+for t in ${ABI_TARGETS}; do
   c_vals="$("${tmp}/test_cfront" --target "${t}" "${C}/cfront_abi.c" | sed -n '/----EMIT----/,$p' \
             | grep -oE '= [0-9]+u;' | grep -oE '[0-9]+' | paste -sd, -)" \
     || { echo "  FAIL: C ABI run ${t}"; exit 1; }
-  py_vals="$(python3 -c "
-from bcir.frontends.cfront import compile_unit
-src=open('${C}/cfront_abi.c').read()
-r=compile_unit(src, check_clang=False, target='${t}')
-lf=r.lowered.functions[next(reversed(r.lowered.functions))]
-print(','.join(str(c.imm[0]) for c in lf.claims if c.op=='c.const'))
-")" || { echo "  FAIL: python ABI ${t}"; exit 1; }
+  py_vals="$(awk -F'\t' -v f="${t}" '$1==f{print $2; exit}' "${tmp}/abi_sums.txt")"
   [ "${c_vals}" = "${py_vals}" ] \
     && echo "  PASS ABI ${t} (sizeof model oracle == C: [${c_vals}])" \
     || { echo "  FAIL: ABI ${t} (C='[${c_vals}]' PY='[${py_vals}]')"; exit 1; }
@@ -1435,5 +1451,123 @@ fdr="$("${tmp}/fd_h")"
 [ "${fdr}" = "MATCH" ] \
   && echo "  PASS fieldderef: *(s->p) / s->mid->leaf->x / s->p[i] (read+write+rmw) == Clang" \
   || { echo "  FAIL: fieldderef behaviour (${fdr})"; exit 1; }
+
+# Pointer-element signedness (#ptrsign): a load / store / subscript through a pointer carries the
+# pointee's SIGNEDNESS, not just its width -- a signed sub-int pointee sign-extends, an unsigned one
+# zero-extends, and the loaded value drives signed-vs-unsigned divide / shift / comparison / UAC. A
+# bespoke harness sweeps negative + boundary pointee values (a width-only model would diverge here).
+echo "[c-runtime] pointer-element signedness -- signed vs unsigned pointee load/store (#ptrsign)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_ptrsign.c" > "${tmp}/psn_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bps_s8\b/ps_s8_s/' -e 's/\bps_u8\b/ps_u8_s/' -e 's/\bps_s16\b/ps_s16_s/' \
+      -e 's/\bps_u16\b/ps_u16_s/' -e 's/\bps_s8_divrem\b/ps_s8_divrem_s/' -e 's/\bps_u8_div\b/ps_u8_div_s/' \
+      -e 's/\bps_s8_shr\b/ps_s8_shr_s/' -e 's/\bps_u8_shr\b/ps_u8_shr_s/' -e 's/\bps_s8_cmp\b/ps_s8_cmp_s/' \
+      -e 's/\bps_s64_div\b/ps_s64_div_s/' -e 's/\bps_u64_div\b/ps_u64_div_s/' -e 's/\bps_arith\b/ps_arith_s/' \
+      -e 's/\bps_uac\b/ps_uac_s/' -e 's/\bps_field\b/ps_field_s/' -e 's/\bps_w8\b/ps_w8_s/' \
+      "${C}/cfront_ptrsign.c"
+  cat "${tmp}/psn_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(long i=-400;i<400;i++){
+    int8_t sb=(int8_t)(i*7-3); uint8_t ub=(uint8_t)(i*5+1);
+    int16_t ha[4]={(int16_t)(i*3),(int16_t)(-i),(int16_t)(i+9),(int16_t)(i*7)};
+    uint16_t ua[4]={(uint16_t)(i*3),(uint16_t)(i),(uint16_t)(i+9),(uint16_t)(i*7)};
+    long lv=i*1000000007L-7; unsigned long ul=(unsigned long)(i*2654435761UL+9);
+    int8_t a[4]={(int8_t)i,(int8_t)(i-1),(int8_t)(i+2),(int8_t)(-i)};
+    if(ps_s8_s(&sb)!=bcir_ps_s8(&sb)){printf("s8@%ld\n",i);return 1;}
+    if(ps_u8_s(&ub)!=bcir_ps_u8(&ub)){printf("u8@%ld\n",i);return 1;}
+    if(ps_s16_s(ha,2)!=bcir_ps_s16(ha,2)){printf("s16@%ld\n",i);return 1;}
+    if(ps_u16_s(ua,2)!=bcir_ps_u16(ua,2)){printf("u16@%ld\n",i);return 1;}
+    if(ps_s8_divrem_s(&sb)!=bcir_ps_s8_divrem(&sb)){printf("divrem@%ld\n",i);return 1;}
+    if(ps_u8_div_s(&ub)!=bcir_ps_u8_div(&ub)){printf("udiv@%ld\n",i);return 1;}
+    if(ps_s8_shr_s(&sb)!=bcir_ps_s8_shr(&sb)){printf("sshr@%ld\n",i);return 1;}
+    if(ps_u8_shr_s(&ub)!=bcir_ps_u8_shr(&ub)){printf("ushr@%ld\n",i);return 1;}
+    if(ps_s8_cmp_s(&sb)!=bcir_ps_s8_cmp(&sb)){printf("cmp@%ld\n",i);return 1;}
+    if(ps_s64_div_s(&lv)!=bcir_ps_s64_div(&lv)){printf("s64@%ld\n",i);return 1;}
+    if(ps_u64_div_s(&ul)!=bcir_ps_u64_div(&ul)){printf("u64@%ld\n",i);return 1;}
+    if(ps_arith_s(a,2)!=bcir_ps_arith(a,2)){printf("arith@%ld\n",i);return 1;}
+    if(ps_uac_s(&ub,(int)i)!=bcir_ps_uac(&ub,(int)i)){printf("uac@%ld\n",i);return 1;}
+    struct Buf bb={&sb,&ub}; if(ps_field_s(&bb)!=bcir_ps_field(&bb)){printf("field@%ld\n",i);return 1;}
+    signed char w1=0,w2=0; ps_w8_s(&w1,(int)i); bcir_ps_w8(&w2,(int)i);
+    if(w1!=w2){printf("w8@%ld\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/psn_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/psn_harness.c" -o "${tmp}/psn_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/psn_harness.c" -o "${tmp}/psn_h" \
+  || { echo "  FAIL: ptrsign harness build"; exit 1; }
+psnr="$("${tmp}/psn_h")"
+[ "${psnr}" = "MATCH" ] \
+  && echo "  PASS ptrsign: signed/unsigned pointee load/store/divide/shift/cmp == Clang" \
+  || { echo "  FAIL: ptrsign behaviour (${psnr})"; exit 1; }
+
+# Funcptr dispatch through a loaded pointer (#fnptrchain): a function-pointer struct member reached
+# THROUGH a loaded pointer-to-struct field -- `d->ops->fn(args)`, the two-hop `s->dev->ops->fn(args)`.
+# The postfix pointer chain recognizes a `(` after a member as a fused indirect call on the loaded
+# pointer base (`ptr->fn(args)`). A bespoke harness wires real operation tables (R18-opaque dispatch).
+echo "[c-runtime] funcptr dispatch through a loaded pointer -- d->ops->fn(args) (#fnptrchain)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_fnptrchain.c" > "${tmp}/fcc_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bfc_add\b/fc_add_s/' -e 's/\bfc_combo\b/fc_combo_s/' -e 's/\bfc_twohop\b/fc_twohop_s/' \
+      "${C}/cfront_fnptrchain.c"
+  cat "${tmp}/fcc_emit.c"
+  cat <<'DRV'
+static int real_add(int a,int b){return a+b;}
+static int real_sub(int a,int b){return a-b;}
+static int real_mul(int a,int b){return a*b;}
+int main(void){
+  struct Ops ops={real_add,real_sub,real_mul};
+  struct Dev dev={&ops,42};
+  struct Sys sys={&dev,7};
+  for(int i=-200;i<200;i++){
+    int a=i*3-1,b=7-i;
+    if(fc_add_s(&dev,a,b)!=bcir_fc_add(&dev,a,b)){printf("add@%d\n",i);return 1;}
+    if(fc_combo_s(&dev,a,b)!=bcir_fc_combo(&dev,a,b)){printf("combo@%d\n",i);return 1;}
+    if(fc_twohop_s(&sys,a,b)!=bcir_fc_twohop(&sys,a,b)){printf("twohop@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/fcc_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/fcc_harness.c" -o "${tmp}/fcc_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/fcc_harness.c" -o "${tmp}/fcc_h" \
+  || { echo "  FAIL: fnptrchain harness build"; exit 1; }
+fccr="$("${tmp}/fcc_h")"
+[ "${fccr}" = "MATCH" ] \
+  && echo "  PASS fnptrchain: d->ops->fn(args) / s->dev->ops->fn(args) == Clang" \
+  || { echo "  FAIL: fnptrchain behaviour (${fccr})"; exit 1; }
+
+# Per-declarator pointer/array shape in a multi-declarator declaration (#multiptr): `int *p, q;` types
+# p as `int*` and q as `int` (the `*` binds to the declarator); `int *p, *q;` types both as pointers
+# (was rejected by the twin). The twin now parses the specifier once and applies each declarator's own
+# `*`/`[]` on a fresh copy, for locals + struct members. A differential uses each trailing declarator
+# AS a scalar (a wide store would clobber); also pins a `long m` member store moving 8 bytes, not 4.
+echo "[c-runtime] per-declarator pointer/array in a multi-declarator decl -- int *p, q; (#multiptr)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_multiptr.c" > "${tmp}/mpt_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bmd_local_mixed\b/md_local_mixed_s/' -e 's/\bmd_local_two_ptr\b/md_local_two_ptr_s/' \
+      -e 's/\bmd_local_ptr_arr\b/md_local_ptr_arr_s/' -e 's/\bmd_struct\b/md_struct_s/' \
+      "${C}/cfront_multiptr.c"
+  cat "${tmp}/mpt_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(int i=-300;i<300;i++){
+    int a=i*3-1,b=7-i;
+    if(md_local_mixed_s(i)!=bcir_md_local_mixed(i)){printf("mixed@%d\n",i);return 1;}
+    if(md_local_two_ptr_s(a,b)!=bcir_md_local_two_ptr(a,b)){printf("twoptr@%d\n",i);return 1;}
+    if(md_local_ptr_arr_s(i)!=bcir_md_local_ptr_arr(i)){printf("ptrarr@%d\n",i);return 1;}
+    struct Mix m1,m2;
+    if(md_struct_s(&m1,i)!=bcir_md_struct(&m2,i)){printf("struct@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/mpt_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/mpt_harness.c" -o "${tmp}/mpt_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/mpt_harness.c" -o "${tmp}/mpt_h" \
+  || { echo "  FAIL: multiptr harness build"; exit 1; }
+mptr="$("${tmp}/mpt_h")"
+[ "${mptr}" = "MATCH" ] \
+  && echo "  PASS multiptr: int *p, q; / int *p, *q; / struct + wide member store == Clang" \
+  || { echo "  FAIL: multiptr behaviour (${mptr})"; exit 1; }
 
 echo "[c-runtime] ok"

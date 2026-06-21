@@ -336,7 +336,18 @@ static venv *use_global(CC *c,const tok *id);   /* fwd: materialize a global's r
 static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the constants */
 
 /* a parsed type: fills a bcir_ctype + the struct index (sidx, or -1). */
-static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
+/* Apply a declarator's leading `*`s to a (base) type: each `*` raises the pointer depth (a struct base
+ * becomes a pointer-to-struct), consuming any cv/restrict qualifier after it. Split out of p_type so a
+ * multi-declarator declaration applies stars PER DECLARATOR (`int *p, q;` -> p is `int*`, q is int). */
+static void apply_stars(CC *c, bcir_ctype *ty) {
+  while(is(c,"*")){c->i++;
+    while(is(c,"const")||is(c,"volatile")||is(c,"restrict")||is(c,"__restrict")||is(c,"__restrict__"))c->i++;
+    if(ty->kind==1){ty->ptr_to_struct=1;} ty->kind=2; ty->ptr_depth++;}   /* count `*`s: `T**` -> depth 2 */
+}
+/* Parse a type SPECIFIER (the base scalar/struct/union/enum/typedef + qualifiers + the data-model size
+ * fixups), WITHOUT the declarator `*`s. p_type folds the stars on top; the multi-declarator paths call
+ * this and apply_stars per declarator instead. */
+static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
   memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1;
   int seen=0, longs=0, ptrtrk=0, sign_explicit=0;   /* longs: `long` (data-model) vs `long long` (8) */
   for(;;){
@@ -371,10 +382,12 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
    * (`long long` keeps its fixed 8). On the host LP64 model these are 8/8, so nothing moves. */
   if(ptrtrk) ty->size=cc_abi(c)->pointer_size;
   else if(longs==1&&!ty->is_float&&ty->kind==0) ty->size=cc_abi(c)->long_size;
-  while(is(c,"*")){c->i++;
-    while(is(c,"const")||is(c,"volatile")||is(c,"restrict")||is(c,"__restrict")||is(c,"__restrict__"))c->i++;
-    if(ty->kind==1){ty->ptr_to_struct=1;} ty->kind=2; ty->ptr_depth++;}   /* count `*`s: `T**` -> depth 2 */
   return 0;
+}
+/* The full type: the specifier + the (first declarator's) `*`s folded in -- the single-declarator /
+ * type-name form (params, casts, sizeof/_Alignof, the first declarator of a declaration). */
+static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
+  int r=p_type_base(c,ty,sidx); if(r) return r; apply_stars(c,ty); return 0;
 }
 
 /* --- struct layout (Clang-compatible; bitfields LSB-first; packed/aligned, L8) --- */
@@ -406,8 +419,9 @@ static int p_struct_body(CC *c) {
   if(!eat(c,"{"))return -1;
   int off=0,maxsz=0,bf_off=-1,bf_bits=0,bf_unit=0;
   while(!is(c,"}")&&!c->failed){
-    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return -1;
+    bcir_ctype base;int si;if(p_type_base(c,&base,&si))return -1;
     for(;;){                                          /* one or more declarators off one specifier: */
+      bcir_ctype ty=base; apply_stars(c,&ty);   /* per-declarator `*`: `int *p, q;` -> p ptr, q scalar */
       if(!isk(c,T_ID)){ fail(c,"expected member name"); return -1; }   /* `unsigned x, y, z;` etc. */
       tok nm=adv(c);
       int arr_count=0,nadims=0,adims[3]={0,0,0};        /* T arr[N] / T m[A][B] -- one or more dims */
@@ -788,6 +802,18 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       if(fi<0){ fail(c,"unknown field"); return ptr; }
       field mf=member_descend(c,S->f[fi]);           /* flatten any nested value-struct hops */
       venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=1;   /* base = the loaded pointer */
+      if(is(c,"(")){     /* funcptr-member call through the loaded pointer: `d->ops->fn(args)` (#fnptrchain) */
+        c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
+        if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a;
+          if(is(c,",")){c->i++;continue;} break; }
+        eat(c,")");
+        uint32_t t=temp(c,4);
+        char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.imember:%s",S->f[fi].name);
+        bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+        if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=ptr;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
+          cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=1;}   /* imm0=1: base is a pointer -> `ptr->fn(args)` */
+        return t;
+      }
       if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){    /* another pointer hop: load it, recurse */
         ptr=emit_member(c,&b,&mf); psidx=mf.ptee_sidx; pfld=mf; continue;
       }
@@ -1473,13 +1499,13 @@ static void p_stmt(CC *c) {
     looks_decl=sz>=0||is_static||is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"const")||is(c,"volatile")
                ||find_typedef(c,pk(c)->s,pk(c)->n)>=0;}
   if(looks_decl){
-    bcir_ctype ty;int si;if(p_type(c,&ty,&si))return;   /* p_type eats `static` + base-level `*` */
-    /* one or more comma-separated declarators sharing this specifier: `T a = x, b, c = z;`. Each
-     * reuses the base type (so `unsigned a, b;` and `int i = 0, j = n;` -- the canonical loop init --
-     * lower to the same per-declarator storage + copy as separate decls). A 2nd declarator that adds
-     * its own `*`/`(` shape is the rarer `int *p, q;` form; the twin folds `*` into the specifier, so
-     * it is rejected here rather than silently mis-typed (the oracle types it per-declarator). */
+    bcir_ctype base;int si;if(p_type_base(c,&base,&si))return;   /* the shared specifier (eats `static`, NOT `*`) */
+    /* one or more comma-separated declarators sharing this specifier: `T a = x, b, c = z;`. Each gets
+     * its OWN declarator `*`/`[]` shape off a fresh copy of the base, so `int *p, q;` types p as `int*`
+     * and q as int (per-declarator, matching the oracle), `int *p, *q;` types both as pointers, and a
+     * per-declarator array (`int a[2], b;`) no longer leaks its dims onto the next declarator. */
     for(;;){
+      bcir_ctype ty=base; apply_stars(c,&ty);   /* this declarator's own leading `*`s (none -> base type) */
       if(!isk(c,T_ID)){ fail(c,"expected declarator name"); return; }
       tok nm=adv(c); char nb[BCIR_CIR_NAME]; idcpy(nb,&nm);
       int arr=0,la_nd=0,la_dims[3]={0,0,0};            /* T name[N] / T m[A][B] -- a (multi-dim) local array */
@@ -1930,7 +1956,13 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
         /* a pointer value stored into a (pointer_size) member: `_v` carries the real `T *` type so the
          * full pointer is copied -- a `uint32_t _v` would truncate the 8-byte pointer to 4. */
-        const bcir_resource *vr=res_of(f,cl->rd[1]); const char *vt=(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(f,cl->rd[1],tb,sizeof tb):"uint32_t";
+        /* `_v` is sized to the MEMBER width `sz` (not a flat uint32) so a wide scalar member store
+         * (`s->m = v` with `long m`) moves all 8 bytes and the value widens/truncates to the member,
+         * not over-reads a 4-byte temp; a float member keeps its float type; a pointer its `T *`. */
+        const bcir_resource *vr=res_of(f,cl->rd[1]);
+        const char *vt=(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(f,cl->rd[1],tb,sizeof tb)
+                      :(vr&&vr->is_float)?(sz==4?"float":"double")
+                      :(sz==1?"uint8_t":sz==2?"uint16_t":sz==8?"uint64_t":"uint32_t");
         w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",vt,rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); }
     }else if(!strcmp(cl->op,"c.bf.get")){
       long long off=cl->imm[0],bw=cl->imm[1]; unsigned long long mask=(1ull<<bw)-1;

@@ -907,8 +907,12 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     right-shift / comparison emits signed C (not the old flat `uint32_t`) and `int + long` widens to
     64-bit — behaviour-equivalent to Clang over the *full* signed range, the case the old unsigned-32
     model got wrong (`test_integer_promotions_and_uac_oracle`; `#intpromote` runs the twin's `--emit-c`
-    against Clang on 300k full-range inputs). *Scalar* operands are covered; pointer-element signedness
-    (the twin's pointer model carries pointee *width* but not yet signedness) is a follow-on. ✅
+    against Clang on 300k full-range inputs). ✅ **Pointer-element signedness** too -- a load / store /
+    subscript through a pointer carries the pointee's *signedness* (not just its width) on every
+    pointer-resource path (param, local, struct field, pointer-arithmetic result), so a signed sub-int
+    pointee sign-extends, an unsigned one zero-extends, and the loaded value drives signed-vs-unsigned
+    divide / shift / comparison / UAC -- `#ptrsign`/`cfront_ptrsign.c`, a bespoke negative-value
+    differential == Clang on both rails. ✅
     **array element stores** (`a[i] = v` / `a[i] OP= v` through a pointer/array param -- the driver
     buffer-fill / scatter idiom) now lower on the C twin too (a 3-read `c.store`, emitted as `a[i] = v`;
     the oracle already had them), dual-rail parity + a source-vs-twin buffer differential
@@ -941,10 +945,13 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     ✅ **multi-declarator declarations** (`T a = x, b, c = z;` — several comma-separated declarators
     off one type-specifier, incl. the canonical two-variable loop init `for(unsigned i = 0u, j = n;
     …)`; each declarator lowers to its own storage + copy, identical to separate decls, so the emit is
-    Clang-equivalent; `#multidecl`/`cfront_multidecl.c`. The oracle types a per-declarator `*`/`[]`
-    shape per declarator; the twin folds `*` into the specifier, so `int *p, q;` is rejected there
-    rather than mis-typed — a follow-on. The comma *operator* in a for-step (`i++, j--`) now lowers on
-    both rails — see `#commastep` above).
+    Clang-equivalent; `#multidecl`/`cfront_multidecl.c`. ✅ The twin now types a **per-declarator
+    `*`/`[]` shape** too -- it parses the type specifier once (`p_type_base`) and applies each
+    declarator's own leading `*`s on a fresh copy (`apply_stars`), so `int *p, q;` types p as `int*` and
+    q as `int`, `int *p, *q;` types both as pointers (was rejected), and a per-declarator array no longer
+    leaks its dims; for locals **and** struct members. `#multiptr`/`cfront_multiptr.c` (which also pins a
+    wide-scalar member store -- `long m` -- moving its full 8 bytes, not a truncating 4). The comma
+    *operator* in a for-step (`i++, j--`) now lowers on both rails — see `#commastep` above).
     ✅ **multi-declarator struct/union members** (`unsigned x, y, z;` — several members off one
     type-specifier, including multi-declarator bitfields `unsigned a:3, b:5;`; each lays out exactly as
     if written on its own line, so offsets / `sizeof` + member access match Clang on both rails. The
@@ -956,8 +963,11 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     through each hop — read, plain / compound store, and nested bitfields all match. `#nestmember`/
     `cfront_nestmember.c`, differential asserts `sizeof` + nested read/write == Clang. ✅ **Pointer-member
     chains** `o.p->v` are now native -- `*(s->p)`, `s->mid->k`, the two-hop `s->mid->leaf->x`, and
-    `s->p[i]` (`#fieldderef`/`cfront_fieldderef.c`, pointer-value slice 2b above). *Follow-on:* nested
-    funcptr dispatch through a loaded pointer).
+    `s->p[i]` (`#fieldderef`/`cfront_fieldderef.c`, pointer-value slice 2b above). ✅ **Funcptr dispatch
+    through a loaded pointer** too -- `d->ops->fn(args)` and the two-hop `s->dev->ops->fn(args)`: the
+    postfix pointer chain recognizes a `(` after a member as the fused `c.call.imember` indirect call on
+    the loaded pointer base (the oracle already did; the twin now agrees -- `#fnptrchain`/
+    `cfront_fnptrchain.c`, an R18-opaque dispatch == Clang on both rails).
     *Follow-on:* **compound literals** (`(struct S){…}`);
   - *storage/linkage:* ✅ **`extern`** (recognized as a storage-class specifier on both rails -- consumed
     like `static`; an `extern T g;` global is referenced by name, defined in another TU, so the emit is
