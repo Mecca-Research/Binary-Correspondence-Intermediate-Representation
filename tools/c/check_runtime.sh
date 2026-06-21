@@ -114,7 +114,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
 # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
-FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c"
+FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c cfront_multiptr.c"
 # Precompute EVERY oracle summary in one python process (import compile_unit once) -- the old
 # python-per-fixture loop paid ~0.3s of interpreter+import startup each (~30s over the fixture set).
 python3 - "${C}" ${FIXTURES} > "${tmp}/py_sums.txt" <<'PY' || { echo "  FAIL: python lowering (batch)"; exit 1; }
@@ -1536,5 +1536,38 @@ fccr="$("${tmp}/fcc_h")"
 [ "${fccr}" = "MATCH" ] \
   && echo "  PASS fnptrchain: d->ops->fn(args) / s->dev->ops->fn(args) == Clang" \
   || { echo "  FAIL: fnptrchain behaviour (${fccr})"; exit 1; }
+
+# Per-declarator pointer/array shape in a multi-declarator declaration (#multiptr): `int *p, q;` types
+# p as `int*` and q as `int` (the `*` binds to the declarator); `int *p, *q;` types both as pointers
+# (was rejected by the twin). The twin now parses the specifier once and applies each declarator's own
+# `*`/`[]` on a fresh copy, for locals + struct members. A differential uses each trailing declarator
+# AS a scalar (a wide store would clobber); also pins a `long m` member store moving 8 bytes, not 4.
+echo "[c-runtime] per-declarator pointer/array in a multi-declarator decl -- int *p, q; (#multiptr)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_multiptr.c" > "${tmp}/mpt_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bmd_local_mixed\b/md_local_mixed_s/' -e 's/\bmd_local_two_ptr\b/md_local_two_ptr_s/' \
+      -e 's/\bmd_local_ptr_arr\b/md_local_ptr_arr_s/' -e 's/\bmd_struct\b/md_struct_s/' \
+      "${C}/cfront_multiptr.c"
+  cat "${tmp}/mpt_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(int i=-300;i<300;i++){
+    int a=i*3-1,b=7-i;
+    if(md_local_mixed_s(i)!=bcir_md_local_mixed(i)){printf("mixed@%d\n",i);return 1;}
+    if(md_local_two_ptr_s(a,b)!=bcir_md_local_two_ptr(a,b)){printf("twoptr@%d\n",i);return 1;}
+    if(md_local_ptr_arr_s(i)!=bcir_md_local_ptr_arr(i)){printf("ptrarr@%d\n",i);return 1;}
+    struct Mix m1,m2;
+    if(md_struct_s(&m1,i)!=bcir_md_struct(&m2,i)){printf("struct@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/mpt_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/mpt_harness.c" -o "${tmp}/mpt_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/mpt_harness.c" -o "${tmp}/mpt_h" \
+  || { echo "  FAIL: multiptr harness build"; exit 1; }
+mptr="$("${tmp}/mpt_h")"
+[ "${mptr}" = "MATCH" ] \
+  && echo "  PASS multiptr: int *p, q; / int *p, *q; / struct + wide member store == Clang" \
+  || { echo "  FAIL: multiptr behaviour (${mptr})"; exit 1; }
 
 echo "[c-runtime] ok"

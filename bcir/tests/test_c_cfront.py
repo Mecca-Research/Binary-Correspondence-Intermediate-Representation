@@ -564,6 +564,55 @@ int main(void){
             assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
 
 
+def test_multi_declarator_pointer_dual_rail():
+    """Per-declarator pointer/array shape in a multi-declarator declaration (#multiptr): in `int *p, q;`
+    the `*` binds to the DECLARATOR, not the type-specifier -- p is `int*`, q is `int`; `int *p, *q;`
+    types both as pointers; a per-declarator array no longer leaks dims onto the next declarator. The
+    oracle typed each declarator individually; the twin folded `*` into the shared specifier, so
+    `int *p, q;` mis-typed q as an 8-byte pointer and `int *p, *q;` was rejected. The twin now parses the
+    base specifier once and applies each declarator's own `*`/`[]` on a fresh copy (locals + struct
+    members). Parity + a bespoke differential that uses each trailing declarator AS a scalar (an 8-byte
+    store would clobber an adjacent field). Also pins a wide-scalar member store (`long m`) moving 8
+    bytes, not 4."""
+    fx = "cfront_multiptr.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["md_local_mixed", "md_local_two_ptr", "md_local_ptr_arr", "md_struct"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int i=-300;i<300;i++){
+    int a=i*3-1,b=7-i;
+    if(md_local_mixed_s(i)!=bcir_md_local_mixed(i)){printf("mixed@%d\n",i);return 1;}
+    if(md_local_two_ptr_s(a,b)!=bcir_md_local_two_ptr(a,b)){printf("twoptr@%d\n",i);return 1;}
+    if(md_local_ptr_arr_s(i)!=bcir_md_local_ptr_arr(i)){printf("ptrarr@%d\n",i);return 1;}
+    struct Mix m1,m2;
+    if(md_struct_s(&m1,i)!=bcir_md_struct(&m2,i)){printf("struct@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+            open(cpath, "w").write(harness)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} harness build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
+
+
 def _build_loop(d: str) -> str:
     return _compile_once("loop", "loop",
                          ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c",

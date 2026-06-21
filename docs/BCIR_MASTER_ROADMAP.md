@@ -945,10 +945,13 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     ✅ **multi-declarator declarations** (`T a = x, b, c = z;` — several comma-separated declarators
     off one type-specifier, incl. the canonical two-variable loop init `for(unsigned i = 0u, j = n;
     …)`; each declarator lowers to its own storage + copy, identical to separate decls, so the emit is
-    Clang-equivalent; `#multidecl`/`cfront_multidecl.c`. The oracle types a per-declarator `*`/`[]`
-    shape per declarator; the twin folds `*` into the specifier, so `int *p, q;` is rejected there
-    rather than mis-typed — a follow-on. The comma *operator* in a for-step (`i++, j--`) now lowers on
-    both rails — see `#commastep` above).
+    Clang-equivalent; `#multidecl`/`cfront_multidecl.c`. ✅ The twin now types a **per-declarator
+    `*`/`[]` shape** too -- it parses the type specifier once (`p_type_base`) and applies each
+    declarator's own leading `*`s on a fresh copy (`apply_stars`), so `int *p, q;` types p as `int*` and
+    q as `int`, `int *p, *q;` types both as pointers (was rejected), and a per-declarator array no longer
+    leaks its dims; for locals **and** struct members. `#multiptr`/`cfront_multiptr.c` (which also pins a
+    wide-scalar member store -- `long m` -- moving its full 8 bytes, not a truncating 4). The comma
+    *operator* in a for-step (`i++, j--`) now lowers on both rails — see `#commastep` above).
     ✅ **multi-declarator struct/union members** (`unsigned x, y, z;` — several members off one
     type-specifier, including multi-declarator bitfields `unsigned a:3, b:5;`; each lays out exactly as
     if written on its own line, so offsets / `sizeof` + member access match Clang on both rails. The
