@@ -263,6 +263,8 @@ static void lex(CC *c, const char *src) {
                   if(*p=='\'')p++; t->n=(int)(p-t->s); t->v=parse_char(t->s,t->n); c->nt++; continue;}
     if((p[0]=='<'||p[0]=='>')&&p[1]==p[0]&&p[2]=='='){   /* <<= / >>= -- 3-char shift-compound-assign */
       t->k=T_PUN;t->s=p;t->n=3;p+=3;c->nt++;continue;}
+    if(p[0]=='.'&&p[1]=='.'&&p[2]=='.'){             /* `...` -- the variadic ellipsis (one 3-char token) */
+      t->k=T_PUN;t->s=p;t->n=3;p+=3;c->nt++;continue;}
     int m=0; for(int j=0;pu[j];j++) if(p[0]==pu[j][0]&&p[1]==pu[j][1]){
       t->k=T_PUN;t->s=p;t->n=2;p+=2;c->nt++;m=1;break;}
     if (m) continue;
@@ -381,6 +383,8 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
       ty->is_union=(uint8_t)c->s[si].is_union;idcpy(ty->tag,&tag);seen=1;break;}
     if(is(c,"enum")){c->i++;if(isk(c,T_ID)&&!is(c,"{"))c->i++;   /* `enum [tag] [{...}]` -> int */
       if(is(c,"{"))p_enum_body(c); ty->kind=0;ty->size=4;ty->signd=1;seen=1;break;}
+    if(is(c,"va_list")||is(c,"__builtin_va_list")){              /* the variadic cursor type (<stdarg.h>) -- */
+      ty->kind=0;ty->is_valist=1;ty->size=cc_abi(c)->pointer_size;ty->signd=0;c->i++;seen=1;break;}  /* opaque, emit `va_list` */
     if(!seen&&isk(c,T_ID)){int ti=find_typedef(c,pk(c)->s,pk(c)->n);   /* a typedef alias */
       if(ti>=0){int vol=ty->is_volatile;*ty=c->td[ti].ty;if(vol)ty->is_volatile=1;*sidx=c->td[ti].sidx;c->i++;seen=1;break;}}
     if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
@@ -948,11 +952,36 @@ static const bcir_ctype *callee_ret(CC *c, const tok *name) {
 }
 
 static uint32_t p_call(CC *c, const tok *name) {
+  if(tok_is(name,"va_arg")){          /* va_arg(ap, TYPE) -- the 2nd arg is a type-name, parsed specially */
+    c->i++; /* '(' */
+    uint32_t ap=p_expr(c); eat(c,",");
+    const char *t0=pk(c)->s; bcir_ctype ty; int si; if(p_type(c,&ty,&si)) return 0;
+    const char *t1=c->t[c->i-1].s + c->t[c->i-1].n; eat(c,")");
+    uint32_t t;                        /* type the result by T so downstream arithmetic/loads are correct */
+    if(ty.is_float) t=tempf(c,ty.size);
+    else if(ty.kind==2){ t=temp(c,cc_abi(c)->pointer_size); bcir_resource *pr=&c->fn->res[c->fn->n_res-1];
+      pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0);
+      pr->ptr_depth=ty.ptr_depth?ty.ptr_depth:1; pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);
+      if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
+    else t=tempi(c,ty.size?ty.size:4, ty.signd?1:0);
+    char op[BCIR_CIR_NAME]; int tn=(int)(t1-t0);   /* carry T's exact source spelling for a faithful emit */
+    if(tn>(int)sizeof op-16) tn=(int)sizeof op-16; if(tn<0) tn=0;
+    snprintf(op,sizeof op,"c.call.vaarg:%.*s",tn,t0);
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+    if(cl){cl->n_rd=1;cl->rd[0]=ap;cl->n_wr=1;cl->wr[0]=t;}
+    return t;
+  }
   c->i++; /* '(' */
   uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
   if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;
     if(is(c,",")){c->i++;continue;} break; }
   eat(c,")");
+  if(tok_is(name,"va_start")||tok_is(name,"va_end")||tok_is(name,"va_copy")){   /* opaque void variadic builtins */
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.vabuiltin:%.*s",name->n,name->s);
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+    if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
+    return temp(c,4);                  /* a void result -- never read */
+  }
   int lz = libm_is_long(name->s,name->n) ? -8
          : libm_is_int(name->s,name->n)  ? -4 : libm_float_size(name->s,name->n);
   if(lz){                                  /* a <math.h> call -> a typed external library edge */
@@ -1658,6 +1687,7 @@ static void p_stmt(CC *c) {
   int looks_decl=0, is_static=is(c,"static");
   if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
     looks_decl=sz>=0||is_static||is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"const")||is(c,"volatile")
+               ||is(c,"va_list")||is(c,"__builtin_va_list")              /* `va_list ap;` -- a variadic cursor local */
                ||is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                ||find_typedef(c,pk(c)->s,pk(c)->n)>=0;}
   if(looks_decl){
@@ -1684,6 +1714,7 @@ static void p_stmt(CC *c) {
         pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0); pr->ptr_depth=ty.ptr_depth;
         pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);   /* a `char *` pointee: the deref load emits `char` */
         if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
+      else if(ty.is_valist) c->fn->res[c->fn->n_res-1].is_valist=1;     /* a `va_list ap;` local -> emit `va_list` */
       else if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double (element) local */
       else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
         if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1;       /* a _Bool local: emit `_Bool`, store normalizes */
@@ -1862,6 +1893,7 @@ static int p_func(CC *c, bcir_func *fn) {
   if(!eat(c,"("))return 1;
   if(!is(c,")")) for(;;){
     if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){c->i++;break;}
+    if(is(c,"...")){fn->variadic=1;c->i++;break;}   /* a trailing `...` -- the function is variadic */
     bcir_ctype ty;int si;if(p_type(c,&ty,&si))return 1;
     tok pn; int row_ptr=0;
     if(is(c,"(")){            /* (*name)[N]... -- a pointer-to-array "row pointer" (vendor headers); */
@@ -1929,6 +1961,7 @@ static const char *binop_c(const char *suf){
 static const char *unop_c(const char *suf){return !strcmp(suf,"neg")?"-":!strcmp(suf,"bnot")?"~":"!";}
 static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   if(ty->kind==3){ snprintf(o,n,"%s",ty->tag); return; }   /* funcptr: the typedef spelling */
+  if(ty->is_valist){ snprintf(o,n,"va_list"); return; }    /* a `va_list` param (vprintf-style helpers) */
   int is_struct = (ty->kind==1) || ty->ptr_to_struct;
   const char *kw = ty->is_union ? "union" : "struct";
   const char *base = is_struct ? ty->tag
@@ -1987,6 +2020,7 @@ static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
 static const char *tty(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid);
   if(!r) return "uint32_t";
+  if(r->is_valist) return "va_list";   /* a variadic cursor object -- opaque, declared `va_list ap;` */
   if(r->is_float) return r->elem_bytes==4?"float":"double";
   if(r->is_bool) return "_Bool";   /* a store into a bool object normalizes any nonzero to 1 (§6.3.1.2) */
   if(r->is_plain_char) return "char";   /* plain `char`: impl-defined sign (not int8_t -> wrong on ARM) */
@@ -2030,9 +2064,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
   size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64],tb[80];
   ctype_str(&f->ret,ty,sizeof ty);
   w+=snprintf(o+w,on-w,"static %s bcir_%s(",ty,f->name);
-  if(f->n_params==0) w+=snprintf(o+w,on-w,"void");
+  if(f->n_params==0&&!f->variadic) w+=snprintf(o+w,on-w,"void");
   for(int i=0;i<f->n_params;i++){char pt[64];ctype_str(&f->params[i].type,pt,sizeof pt);
     w+=snprintf(o+w,on-w,"%s%s %s",i?", ":"",pt,f->params[i].name);}
+  if(f->variadic) w+=snprintf(o+w,on-w,"%s...",f->n_params?", ":"");   /* a trailing variadic ellipsis */
   w+=snprintf(o+w,on-w,")\n{\n");
   /* declare named locals up front (mutable storage -- branch merges + loop accumulators) */
   for(size_t i=0;i<f->n_res;i++){const bcir_resource *r=&f->res[i];
@@ -2168,6 +2203,13 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"%s%s = &%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
     else if(!strncmp(cl->op,"c.call.libm:",12)){   /* a <math.h> call -> the real libm function */
       w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+12);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+w,on-w,");\n"); }
+    else if(!strncmp(cl->op,"c.call.vaarg:",13)){   /* va_arg(ap, T) -- pull the next variadic argument */
+      w+=snprintf(o+w,on-w,"%s %s = va_arg(%s, %s);\n",
+        decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),cl->op+13); }
+    else if(!strncmp(cl->op,"c.call.vabuiltin:",17)){   /* va_start / va_end / va_copy -- emitted verbatim, void */
+      w+=snprintf(o+w,on-w,"%s(",cl->op+17);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+w,on-w,");\n"); }
     else if(!strncmp(cl->op,"c.call.void:",12)){   /* a void callee -> a bare call statement */

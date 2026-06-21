@@ -115,7 +115,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
   || { echo "  FAIL: C frontend build"; exit 1; }
 # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
 FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c cfront_multiptr.c cfront_chartypes.c \
-cfront_complit.c cfront_typeof.c cfront_structinit.c cfront_arraylit.c"
+cfront_complit.c cfront_typeof.c cfront_structinit.c cfront_arraylit.c cfront_variadic.c"
 # Precompute EVERY oracle summary in one python process (import compile_unit once) -- the old
 # python-per-fixture loop paid ~0.3s of interpreter+import startup each (~30s over the fixture set).
 python3 - "${C}" ${FIXTURES} > "${tmp}/py_sums.txt" <<'PY' || { echo "  FAIL: python lowering (batch)"; exit 1; }
@@ -1693,5 +1693,37 @@ tor="$("${tmp}/to_h")"
 [ "${tor}" = "MATCH" ] \
   && echo "  PASS typeof: typeof type-name / variable / expr (a+b, (short)x, *p, s.f, arr[i]) == Clang" \
   || { echo "  FAIL: typeof behaviour (${tor})"; exit 1; }
+
+# Variadic functions (#variadic): `f(T last, ...)` with <stdarg.h> -- a va_list cursor (va_start/va_arg/
+# va_end), va_copy, a va_list parameter (vprintf-style forwarding), and a same-unit variadic call passing
+# args past the fixed params (default promotions ride the real call). va_start/va_arg/va_end/va_copy lower
+# as opaque builtins emitted verbatim; va_arg(ap, T) carries type T. Differential drives the int / float /
+# va_copy / forwarding paths; a wrong emit (a truncated va_arg load, a dropped `...`) would diverge.
+echo "[c-runtime] variadic functions -- va_list / va_start / va_arg / va_end / va_copy (#variadic)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_variadic.c" > "${tmp}/va_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'; echo '#include <stdarg.h>'
+  sed -e 's/\bisum\b/isum_s/g' -e 's/\btwice\b/twice_s/g' -e 's/\bvsumv\b/vsumv_s/g' \
+      -e 's/\bforward\b/forward_s/g' -e 's/\bnth\b/nth_s/g' -e 's/\bcaller\b/caller_s/g' \
+      "${C}/cfront_variadic.c"
+  cat "${tmp}/va_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(int a=-40;a<40;a++) for(int b=-40;b<40;b++){ int c=a-2*b;
+    if(caller_s(a,b,c)!=bcir_caller(a,b,c)){printf("caller@%d,%d\n",a,b);return 1;}
+    if(isum_s(4,a,b,c,a+b)!=bcir_isum(4,a,b,c,a+b)){printf("isum@%d,%d\n",a,b);return 1;}
+    if(twice_s(3,a,b,c)!=bcir_twice(3,a,b,c)){printf("twice@%d,%d\n",a,b);return 1;}
+    if(forward_s(3,a,b,c)!=bcir_forward(3,a,b,c)){printf("forward@%d,%d\n",a,b);return 1;}
+    if(nth_s(2,(double)a,(double)b,(double)c)!=bcir_nth(2,(double)a,(double)b,(double)c)){printf("nth@%d,%d\n",a,b);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/va_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/va_harness.c" -o "${tmp}/va_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/va_harness.c" -o "${tmp}/va_h" \
+  || { echo "  FAIL: variadic harness build"; exit 1; }
+var="$("${tmp}/va_h")"
+[ "${var}" = "MATCH" ] \
+  && echo "  PASS variadic: va_list/va_start/va_arg/va_end/va_copy + va_list param + same-unit call == Clang" \
+  || { echo "  FAIL: variadic behaviour (${var})"; exit 1; }
 
 echo "[c-runtime] ok"

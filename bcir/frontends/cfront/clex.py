@@ -192,6 +192,10 @@ def tokenize(src: str) -> list[Tok]:
             toks.append(Tok("CHAR", src[i:j + 1], i))             # text includes the surrounding quotes
             i = j + 1
             continue
+        if src.startswith("...", i):                              # the variadic ellipsis (one 3-char token)
+            toks.append(Tok("PUNCT", "...", i))
+            i += 3
+            continue
         for op in _OPS:                                           # operators (longest match)
             if src.startswith(op, i):
                 toks.append(Tok("OP", op, i))

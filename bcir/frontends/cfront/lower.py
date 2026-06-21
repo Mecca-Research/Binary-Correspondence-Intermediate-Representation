@@ -31,6 +31,7 @@ from .ctype_model import (
     promote_int,
     scalar,
     usual_arith_int,
+    valist,
     with_atomic,
     with_volatile,
 )
@@ -330,6 +331,7 @@ class LoweredFunc:
     statics: list = field(default_factory=list)     # (rid, name, CType, init) static-storage locals
     globals_used: dict = field(default_factory=dict)   # rid -> name (file-scope globals referenced)
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {0}`
+    variadic: bool = False                # a trailing `...` after the named params (variadic function)
 
 
 @dataclass
@@ -395,6 +397,8 @@ class _FuncLowerer:
             base = self._type_of(tref.typeof_expr)
         elif tref.aggregate:
             base = self.aggregates[tref.base]
+        elif tref.base == "va_list":                       # the <stdarg.h> variadic cursor (opaque)
+            base = valist(self.abi)
         elif is_scalar_name(tref.base):
             base = scalar(tref.base, self.abi)
         else:
@@ -729,6 +733,11 @@ class _FuncLowerer:
             return self._read(self._lvalue(node))
         if isinstance(node, cast.CompoundLiteral):        # `(struct P){a,b}` by value / `(int){v}` as a value
             return self._compound_literal(node)[0]
+        if isinstance(node, cast.VaArg):                  # va_arg(ap, T) -> the next variadic argument (type T)
+            ap = self._rvalue(node.ap)                    # the va_list cursor (by name)
+            vt = self._resolve_type(node.type)            # the result has type T (drives the temp + emit)
+            t = self._temp(vt, "vaarg")
+            return self._emit("c.call.vaarg", Opcode.GEM_DISPATCH, (ap,), (t,))
         if isinstance(node, cast.Assign):
             return self._assign(node)
         if isinstance(node, cast.SizeOf):
@@ -960,6 +969,9 @@ class _FuncLowerer:
             self._emit("c.c11atom.store", Opcode.STORE, (ptr, val), (),
                        lane=Lane.A, domain=dom, hazard="atomic")
             return ptr
+        if node.callee in ("va_start", "va_end", "va_copy"):   # opaque void variadic builtins (verbatim emit)
+            self._emit(f"c.call.vabuiltin:{node.callee}", Opcode.GEM_DISPATCH, actuals, ())
+            return _VOID_RID                           # not added to self.calls: opaque to the R18 call graph
         libm = _libm_type(node.callee)
         if libm is not None:                           # a <math.h> call -> a typed external library edge
             t = self._temp(libm, f"libm_{node.callee}")    # not added to self.calls: opaque to the call
@@ -1131,7 +1143,7 @@ class _FuncLowerer:
                            resources=dict(self.resources), rid_types=dict(self.rtypes),
                            calls=list(self.calls), region=None, body=body, locals=list(self.locals),
                            statics=list(self.statics), globals_used=gnames,
-                           zero_init_locals=set(self.zero_init))
+                           zero_init_locals=set(self.zero_init), variadic=self.func.variadic)
 
 
 def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Region":

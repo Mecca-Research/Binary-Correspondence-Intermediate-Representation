@@ -69,6 +69,7 @@ typedef struct bcir_resource {
                               * is implementation-defined -- NOT int8_t (always signed -> wrong on ARM) */
   uint8_t  zinit;            /* an aggregate local declared with a `= {0}` zero baseline (§6.7.10) */
   uint8_t  ptr_depth;        /* pointer indirection depth (POINTER kind): 1 `T*`, 2 `T**`, ...; 0 == 1 */
+  uint8_t  is_valist;        /* a `va_list` object (variadic): emit `va_list`, opaque to load/store */
   char     name[BCIR_CIR_NAME];
   char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
 } bcir_resource;
@@ -86,6 +87,7 @@ typedef struct bcir_ctype {
   uint8_t  is_float;         /* a floating type (float/double) */
   uint8_t  is_bool;          /* a _Bool/bool type: emit `_Bool` so conversions normalize to 0/1 (§6.3.1.2) */
   uint8_t  is_plain_char;    /* a plain `char` (vs signed/unsigned char): emit `char` (impl-defined sign) */
+  uint8_t  is_valist;        /* the `va_list` type (variadic argument cursor) -- emit `va_list` */
   char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1/ptr_to_struct), or funcptr alias (kind 3) */
   int      adims[3];         /* decayed multi-dim array-param shape (outer-first), for m[i][j] */
   int      nadims;           /* number of array dims (0 == not an array parameter) */
@@ -120,6 +122,7 @@ typedef struct bcir_func {
   bcir_claim    *claims; size_t n_claims, cap_claims;
   bcir_param    *params; int n_params, cap_params;
   bcir_ctype  ret;
+  uint8_t  variadic;          /* the function is variadic: a trailing `...` after its named params */
   uint32_t return_rid; uint8_t has_return;
   char (*calls)[BCIR_CIR_NAME]; int n_calls, cap_calls;   /* callee names (R18 call graph) */
   bcir_static *statics; int n_statics, cap_statics;       /* static locals */

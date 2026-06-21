@@ -390,6 +390,10 @@ class _Parser:
                 if isinstance(expr, cast.Name):            # a bare in-scope variable keeps the fast path
                     return cast.TypeRef(base="", typeof_var=expr.ident, quals=tuple(quals))
                 return cast.TypeRef(base="", typeof_expr=expr, quals=tuple(quals))
+            elif w in ("va_list", "__builtin_va_list") and not words and not aggregate:   # variadic cursor type
+                self.nxt()
+                base = "va_list"
+                break
             elif not words and w in self.typedefs:        # a typedef name -> expand the alias
                 td = self.typedefs[w]
                 self.nxt()
@@ -484,8 +488,13 @@ class _Parser:
     def _func_body(self, ret: cast.TypeRef, name: str) -> cast.Func:
         self.eat("PUNCT", "(")
         params = []
+        variadic = False
         if not (self.at("PUNCT", ")") or self.at("IDENT", "void") and self.peek(1).text == ")"):
             while True:
+                if self.at("PUNCT", "..."):            # a trailing `...` -- the function is variadic
+                    self.nxt()
+                    variadic = True
+                    break
                 ptype = self._type_spec()
                 ptype, pname = self._declarator(ptype)
                 params.append(cast.Param(ptype, pname))
@@ -497,7 +506,7 @@ class _Parser:
             self.nxt()
         self.eat("PUNCT", ")")
         body = self._block()
-        return cast.Func(ret=ret, name=name, params=tuple(params), body=body)
+        return cast.Func(ret=ret, name=name, params=tuple(params), body=body, variadic=variadic)
 
     # --- statements ---
     def _block(self) -> tuple:
@@ -521,6 +530,7 @@ class _Parser:
             return False
         w = self.peek().text
         return (w in _TYPE_KW or w in _TYPEOF_KW or w == "enum" or is_scalar_name(w)
+                or w in ("va_list", "__builtin_va_list")
                 or w in self.tags or w in self.typedefs)
 
     def _stmt(self):
@@ -801,6 +811,19 @@ class _Parser:
             elif self.at("OP", "->"):
                 self.nxt()
                 node = cast.Member(node, self.eat("IDENT").text, arrow=True)
+            elif (self.at("PUNCT", "(") and isinstance(node, cast.Name)
+                  and node.ident == "va_arg"):                # va_arg(ap, T) -- 2nd operand is a type-name
+                self.nxt()
+                ap = self._expr()
+                self.eat("PUNCT", ",")
+                tref = self._type_spec()
+                ptr = 0
+                while self.at("OP", "*"):
+                    ptr += 1
+                    self.nxt()
+                tref = cast.TypeRef(base=tref.base, ptr=ptr, aggregate=tref.aggregate, quals=tref.quals)
+                self.eat("PUNCT", ")")
+                node = cast.VaArg(ap, tref)
             elif self.at("PUNCT", "(") and isinstance(node, (cast.Name, cast.Member)):
                 self.nxt()
                 args = []
