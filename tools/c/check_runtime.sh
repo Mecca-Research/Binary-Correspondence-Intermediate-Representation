@@ -114,7 +114,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
 # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
-FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c cfront_multiptr.c"
+FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c cfront_multiptr.c cfront_chartypes.c"
 # Precompute EVERY oracle summary in one python process (import compile_unit once) -- the old
 # python-per-fixture loop paid ~0.3s of interpreter+import startup each (~30s over the fixture set).
 python3 - "${C}" ${FIXTURES} > "${tmp}/py_sums.txt" <<'PY' || { echo "  FAIL: python lowering (batch)"; exit 1; }
@@ -1569,5 +1569,48 @@ mptr="$("${tmp}/mpt_h")"
 [ "${mptr}" = "MATCH" ] \
   && echo "  PASS multiptr: int *p, q; / int *p, *q; / struct + wide member store == Clang" \
   || { echo "  FAIL: multiptr behaviour (${mptr})"; exit 1; }
+
+# Faithful char types (#chartypes): the three distinct one-byte char types emit faithfully -- plain
+# `char` -> `char` (impl-defined sign), `signed char` -> always signed, `unsigned char` -> always
+# unsigned. Built under BOTH -fsigned-char AND -funsigned-char so plain char's platform sign is
+# exercised both ways (the old emit collapsed `signed char` -> `char` / plain `char` -> int8_t, wrong
+# on one of the two).
+echo "[c-runtime] faithful char types -- char / signed char / unsigned char (#chartypes)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_chartypes.c" > "${tmp}/cht_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bct_plain_deref\b/ct_plain_deref_s/' -e 's/\bct_signed_deref\b/ct_signed_deref_s/' \
+      -e 's/\bct_unsigned_deref\b/ct_unsigned_deref_s/' -e 's/\bct_plain_cmp\b/ct_plain_cmp_s/' \
+      -e 's/\bct_signed_cmp\b/ct_signed_cmp_s/' -e 's/\bct_plain_div\b/ct_plain_div_s/' \
+      -e 's/\bct_signed_div\b/ct_signed_div_s/' -e 's/\bct_unsigned_div\b/ct_unsigned_div_s/' \
+      -e 's/\bct_roundtrip\b/ct_roundtrip_s/' -e 's/\bct_plain_widen\b/ct_plain_widen_s/' \
+      "${C}/cfront_chartypes.c"
+  cat "${tmp}/cht_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(int i=-200;i<200;i++){
+    char pc=(char)(i*7-3); signed char sc=(signed char)(i*5+1); unsigned char uc=(unsigned char)(i*3+2);
+    if(ct_plain_deref_s(&pc)!=bcir_ct_plain_deref(&pc)){printf("pd@%d\n",i);return 1;}
+    if(ct_signed_deref_s(&sc)!=bcir_ct_signed_deref(&sc)){printf("sd@%d\n",i);return 1;}
+    if(ct_unsigned_deref_s(&uc)!=bcir_ct_unsigned_deref(&uc)){printf("ud@%d\n",i);return 1;}
+    if(ct_plain_cmp_s(pc)!=bcir_ct_plain_cmp(pc)){printf("pc@%d\n",i);return 1;}
+    if(ct_signed_cmp_s(sc)!=bcir_ct_signed_cmp(sc)){printf("sc@%d\n",i);return 1;}
+    if(ct_plain_div_s(&pc)!=bcir_ct_plain_div(&pc)){printf("pdv@%d\n",i);return 1;}
+    if(ct_signed_div_s(&sc)!=bcir_ct_signed_div(&sc)){printf("sdv@%d\n",i);return 1;}
+    if(ct_unsigned_div_s(&uc)!=bcir_ct_unsigned_div(&uc)){printf("udv@%d\n",i);return 1;}
+    if(ct_roundtrip_s(&pc)!=bcir_ct_roundtrip(&pc)){printf("rt@%d\n",i);return 1;}
+    if(ct_plain_widen_s(&pc)!=bcir_ct_plain_widen(&pc)){printf("pw@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/cht_harness.c"
+for cm in -fsigned-char -funsigned-char; do
+  "${CC}" -std=c23 -O2 "${cm}" "${tmp}/cht_harness.c" -o "${tmp}/cht_h" 2>/dev/null \
+    || "${CC}" -std=c2x -O2 "${cm}" "${tmp}/cht_harness.c" -o "${tmp}/cht_h" \
+    || { echo "  FAIL: chartypes harness build (${cm})"; exit 1; }
+  chtr="$("${tmp}/cht_h")"
+  [ "${chtr}" = "MATCH" ] \
+    && echo "  PASS chartypes (${cm}): char / signed char / unsigned char == Clang" \
+    || { echo "  FAIL: chartypes behaviour (${cm}: ${chtr})"; exit 1; }
+done
 
 echo "[c-runtime] ok"

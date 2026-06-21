@@ -355,8 +355,8 @@ class _Parser:
             if w in ("const", "volatile", "_Atomic"):
                 quals.append(w)
                 self.nxt()
-            elif w in ("static", "extern", "_Thread_local", "thread_local", "inline", "signed"):
-                self.nxt()                                # storage/inline ignored; 'signed' implied
+            elif w in ("static", "extern", "_Thread_local", "thread_local", "inline"):
+                self.nxt()                                # storage/inline ignored
             elif w in ("struct", "union"):
                 aggregate = w
                 self.nxt()
@@ -392,12 +392,20 @@ class _Parser:
     def _canon_scalar(words: list[str]) -> str:
         if not words:
             raise CParseError("expected a type")
+        # `signed char` is a DISTINCT type from plain `char`: it is signed on every target, whereas
+        # plain `char`'s signedness is implementation-defined (signed on x86, unsigned on ARM). Keep it
+        # so the emit spells it faithfully. For every OTHER integer, `signed` is the default -- drop it.
+        if set(words) == {"signed", "char"}:
+            return "signed char"
+        words = [w for w in words if w != "signed"]
+        if not words:
+            return "int"                                  # a bare `signed` == int
         joined = " ".join(words)
         # canonicalize the legal multi-word combos; otherwise it's a single fixed-width name.
         table = {"unsigned": "unsigned int", "unsigned int": "unsigned int",
                  "long long": "long long", "unsigned long": "unsigned long",
                  "unsigned long long": "unsigned long long", "unsigned char": "unsigned char",
-                 "unsigned short": "unsigned short", "signed char": "char"}
+                 "unsigned short": "unsigned short"}
         return table.get(joined, words[-1] if len(words) == 1 else joined)
 
     def _declarator(self, base: cast.TypeRef):
