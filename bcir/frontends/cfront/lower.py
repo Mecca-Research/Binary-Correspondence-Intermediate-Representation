@@ -702,9 +702,10 @@ class _FuncLowerer:
             return lv.rid
         unit = self._load_unit(lv)
         if lv.bit_width:                                     # bitfield extract: (unit >> off) & mask
-            t = self._temp(scalar("uint32_t"), "bf")
+            signed = lv.ct.is_integer and lv.ct.signed       # a signed bitfield read sign-extends from bit w-1
+            t = self._temp(scalar("int" if signed else "uint32_t"), "bf")
             return self._emit("c.bf.get", Opcode.ADD, (unit,), (t,),
-                              imm=(lv.bit_off, lv.bit_width))
+                              imm=(lv.bit_off, lv.bit_width, int(signed)))
         return unit
 
     def _load_unit(self, lv: "_LV") -> int:

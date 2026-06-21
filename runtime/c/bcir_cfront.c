@@ -637,9 +637,9 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld) {
   cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
   if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
-  if(fld->bit_w){uint32_t u=t;t=temp(c,4);
+  if(fld->bit_w){uint32_t u=t;t=tempi(c,4,fld->signd);   /* the extracted value carries the field's sign */
     bcir_claim *g=new_claim(c,"c.bf.get",BCIR_OP_ADD);if(!g)return t;
-    g->n_rd=1;g->rd[0]=u;g->n_wr=1;g->wr[0]=t;g->n_imm=2;g->imm[0]=fld->bit_off;g->imm[1]=fld->bit_w;}
+    g->n_rd=1;g->rd[0]=u;g->n_wr=1;g->wr[0]=t;g->n_imm=3;g->imm[0]=fld->bit_off;g->imm[1]=fld->bit_w;g->imm[2]=fld->signd;}
   return t;
 }
 /* `s.arr[idx]` -- a load from a struct member array: the element lands at `&s + member_off + idx*elem`,
@@ -1733,8 +1733,15 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         w+=snprintf(o+w,on-w,"*(volatile uint32_t *)((volatile char *)%s + %lld) = %s;\n",rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
         w+=snprintf(o+w,on-w,"{ uint32_t _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); }
-    }else if(!strcmp(cl->op,"c.bf.get"))
-      w+=snprintf(o+w,on-w,"uint32_t %s = (%s >> %lld) & %lluu;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),(long long)cl->imm[0],(1ull<<cl->imm[1])-1);
+    }else if(!strcmp(cl->op,"c.bf.get")){
+      long long off=cl->imm[0],bw=cl->imm[1]; unsigned long long mask=(1ull<<bw)-1;
+      if(cl->n_imm>2&&cl->imm[2]){                       /* a signed bitfield: sign-extend from bit bw-1 */
+        unsigned long long sbit=1ull<<(bw-1);
+        w+=snprintf(o+w,on-w,"%s %s = (int32_t)((((%s >> %lld) & %lluu) ^ %lluu) - %lluu);\n",
+                    tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off,mask,sbit,sbit);
+      } else
+        w+=snprintf(o+w,on-w,"%s %s = (%s >> %lld) & %lluu;\n",
+                    tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off,mask); }
     else if(!strcmp(cl->op,"c.bf.set")){          /* (old & ~(mask<<off)) | ((v & mask) << off) */
       long long off=cl->imm[0]; unsigned long long mask=(1ull<<cl->imm[1])-1, clear=~(mask<<off)&0xFFFFFFFFull;
       w+=snprintf(o+w,on-w,"uint32_t %s = (%s & %lluu) | ((%s & %lluu) << %lld);\n",

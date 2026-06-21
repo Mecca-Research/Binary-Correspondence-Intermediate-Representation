@@ -744,6 +744,13 @@ bool test (`(_Bool)256` -> 0, `(_Bool)0.5f` -> 0), and the twin did not normaliz
 -- a separate path from the `#boolnorm` *store* normalization. Fixed by emitting a real `_Bool` cast
 operator into a `_Bool` temp on both rails. `#boolcast`/`cfront_boolcast.c`, differential == Clang on both
 rails.
+✅ **and a signed-bitfield read sign-extension miscompile**: an `int`/`signed` bitfield of width N holds an
+N-bit two's-complement value, so a read must sign-extend from bit N-1 -- `int x:4` holding `1111` is `-1`,
+not `15`, and `(int x:8) < 0` can be true. Both rails extracted `(unit >> off) & mask` and stopped,
+zero-extending every read (so a signed field's sign test was always false and its value came back as a
+large positive). Unsigned bitfields, which DO zero-extend, were already correct. Fixed by carrying the
+field's signedness on the `c.bf.get` claim and emitting `(value ^ sign_bit) - sign_bit` into a signed temp
+for a signed field, on both rails. `#signedbf`/`cfront_signedbf.c`, differential == Clang on both rails.
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both
