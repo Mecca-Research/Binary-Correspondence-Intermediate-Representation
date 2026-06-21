@@ -256,7 +256,9 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
 
 def _load_ctype(lf: LoweredFunc, rid: int) -> str:
     ct = lf.rid_types.get(rid)
-    return _cname(ct) if ct and ct.is_integer else "uint32_t"
+    # a pointer member/deref load carries its real `T *` type, so `sizeof t` reads pointer_size bytes
+    # (not 4) and the loaded value is a usable pointer -- a uint32 would truncate it.
+    return _cname(ct) if ct and (ct.is_integer or ct.kind == "pointer") else "uint32_t"
 
 
 def _base_ptr(lf: LoweredFunc, rid: int, ref) -> str:
