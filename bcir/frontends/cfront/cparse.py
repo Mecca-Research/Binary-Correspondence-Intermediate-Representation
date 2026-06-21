@@ -759,9 +759,10 @@ class _Parser:
             self.eat("PUNCT", ")")
             tref = cast.TypeRef(base=tref.base, ptr=ptr, aggregate=tref.aggregate, quals=tref.quals)
             if self.at("PUNCT", "{"):                   # `(type){ init }` — a C99 compound literal, not a cast
-                # supported in rvalue position (`f((struct P){...})`, `x = (struct P){...}`) and under `&`
-                # (`&(int){v}`); direct postfix on a literal (`(struct P){...}.f`) is a deferred follow-on.
-                return cast.CompoundLiteral(tref, self._init_value())
+                # supported in rvalue position (`f((struct P){...})`, `x = (struct P){...}`), under `&`
+                # (`&(int){v}`), and now with direct postfix on the literal (`(struct P){...}.field`,
+                # including nested `.a.b` -- the literal is an lvalue, so it reads like any struct base).
+                return self._postfix_tail(cast.CompoundLiteral(tref, self._init_value()))
             return cast.Cast(tref, self._unary())
         return self._postfix()
 
@@ -777,7 +778,11 @@ class _Parser:
                 or is_scalar_name(w) or w in self.typedefs)
 
     def _postfix(self):
-        node = self._primary()
+        return self._postfix_tail(self._primary())
+
+    def _postfix_tail(self, node):
+        """Apply the postfix operators (`[i]`, `.f`, `->f`, `(args)`) to an already-parsed base — shared
+        by `_postfix` (after a primary) and `_unary` (a compound literal, so `(struct P){...}.f` works)."""
         while True:
             if self.at("PUNCT", "["):
                 self.nxt()

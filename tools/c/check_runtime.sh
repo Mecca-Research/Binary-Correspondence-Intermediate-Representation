@@ -1615,14 +1615,18 @@ for cm in -fsigned-char -funsigned-char; do
 done
 
 # Compound literals (#complit): `(type){init}` materialized as a nameless local, in rvalue position
-# (by-value struct arg / scalar value / member init) and under `&` (pointer to the temporary).
-echo "[c-runtime] compound literals -- (type){init} by value / scalar / &(literal) (#complit)"
+# (by-value struct arg / scalar value / member init), under `&` (pointer to the temporary), and with
+# direct postfix on the literal (`(struct P){...}.field`).
+echo "[c-runtime] compound literals -- (type){init} by value / scalar / &(literal) / .field (#complit)"
 "${tmp}/bcir-cc" --emit-c "${C}/cfront_complit.c" > "${tmp}/cl_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
 { echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
   sed -e 's/\bcl_byval\b/cl_byval_s/' -e 's/\bcl_designated\b/cl_designated_s/' \
       -e 's/\bcl_partial\b/cl_partial_s/' -e 's/\bcl_scalar\b/cl_scalar_s/' \
       -e 's/\bcl_addr_scalar\b/cl_addr_scalar_s/' -e 's/\bcl_addr_struct\b/cl_addr_struct_s/' \
-      -e 's/\bcl_nested\b/cl_nested_s/' "${C}/cfront_complit.c"
+      -e 's/\bcl_nested\b/cl_nested_s/' \
+      -e 's/\bcl_dot\b/cl_dot_s/' -e 's/\bcl_dot_desig\b/cl_dot_desig_s/' \
+      -e 's/\bcl_dot_part\b/cl_dot_part_s/' -e 's/\bcl_dot_wide\b/cl_dot_wide_s/' \
+      "${C}/cfront_complit.c"
   cat "${tmp}/cl_emit.c"
   cat <<'DRV'
 int main(void){
@@ -1634,6 +1638,10 @@ int main(void){
     if(cl_addr_scalar_s(a)!=bcir_cl_addr_scalar(a)){printf("as@%d\n",a);return 1;}
     if(cl_addr_struct_s(a,b)!=bcir_cl_addr_struct(a,b)){printf("ast@%d,%d\n",a,b);return 1;}
     if(cl_nested_s(a)!=bcir_cl_nested(a)){printf("nested@%d\n",a);return 1;}
+    if(cl_dot_s(a,b)!=bcir_cl_dot(a,b)){printf("dot@%d,%d\n",a,b);return 1;}
+    if(cl_dot_desig_s(a,b)!=bcir_cl_dot_desig(a,b)){printf("dotdes@%d,%d\n",a,b);return 1;}
+    if(cl_dot_part_s(a)!=bcir_cl_dot_part(a)){printf("dotpart@%d\n",a);return 1;}
+    if(cl_dot_wide_s(a)!=bcir_cl_dot_wide(a)){printf("dotwide@%d\n",a);return 1;}
   }
   printf("MATCH\n");return 0;}
 DRV
@@ -1643,7 +1651,7 @@ DRV
   || { echo "  FAIL: complit harness build"; exit 1; }
 clr="$("${tmp}/cl_h")"
 [ "${clr}" = "MATCH" ] \
-  && echo "  PASS complit: (struct){...} by value / designators / &(int){v} / &(struct){...} == Clang" \
+  && echo "  PASS complit: by value / designators / &(int){v} / &(struct){...} / (struct){...}.field == Clang" \
   || { echo "  FAIL: complit behaviour (${clr})"; exit 1; }
 
 # typeof (#typeof): `typeof(type-name)` / `typeof(variable)` / `typeof(expression)` resolves to the
