@@ -27,12 +27,12 @@ unsigned ushortshift(unsigned a, unsigned b) {
   return (unsigned)((~s) >> 4);
 }
 unsigned fnegate(unsigned a, unsigned b) {
-  float x = (float)(a % 1000u);
-  int r = (int)(-x - (float)(b % 1000u));          /* -x stays float; truncating it would blow up r */
-  return (unsigned)r;
+  float x = (float)(a % 1000u) + 0.5f;             /* positive, non-integer */
+  (void)b;
+  return (-x) < 0.0f ? (a % 1000u) : 7777u;         /* -x must stay a (negative) float */
 }
 unsigned dnegate(unsigned a, unsigned b) {
-  double x = (double)(a % 100000u);
-  long r = (long)(-x + (double)(b % 100000u));     /* -x stays double (8-byte), not a uint32 */
-  return (unsigned)(r & 0xFFFFFFu);
+  double x = (double)(a % 100000u) + 0.25;          /* positive, non-integer */
+  (void)b;
+  return (-x) < 0.0 ? (a % 100000u) : 8888u;        /* -x must stay a (negative) double, not a uint32 */
 }
