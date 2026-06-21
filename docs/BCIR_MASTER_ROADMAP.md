@@ -738,6 +738,12 @@ so `(signed char)(-5)` came out `251`, and `(int)u` read back unsigned -- turnin
 logical one. Fixed by typing the integer cast temp with the target's signedness (matching the oracle), so a
 signed sub-int target keeps its sign and `(int)u` reads back signed. `#intsigncast`/`cfront_intsigncast.c`,
 differential == Clang on both rails.
+✅ **and a cast to `_Bool` / `bool`**: `(_Bool)x` is `x != 0` on the FULL value (§6.3.1.2), so `(_Bool)256`
+is 1 and `(_Bool)0.5` is 1. Both rails rendered the cast as `(uint8_t)x`, truncating to 8 bits *before* the
+bool test (`(_Bool)256` -> 0, `(_Bool)0.5f` -> 0), and the twin did not normalize at all (`(_Bool)2` -> 2)
+-- a separate path from the `#boolnorm` *store* normalization. Fixed by emitting a real `_Bool` cast
+operator into a `_Bool` temp on both rails. `#boolcast`/`cfront_boolcast.c`, differential == Clang on both
+rails.
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both

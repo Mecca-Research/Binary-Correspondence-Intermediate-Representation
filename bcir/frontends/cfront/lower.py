@@ -58,6 +58,10 @@ def _cast_name(ct: CType) -> str:
         return _cast_name(ct.of) + " *" if ct.of else "void *"
     if ct.is_float:
         return ct.name                                # float / double / long double
+    if ct.name in ("_Bool", "bool"):
+        return "_Bool"                                # a bool cast normalizes any nonzero to 1 on the
+                                                      # FULL value -- (uint8_t) would truncate first
+                                                      # (so (_Bool)256 must be 1, not 0; (_Bool)0.5 is 1)
     return _CAST_W.get(ct.size, "uint32_t")
 
 

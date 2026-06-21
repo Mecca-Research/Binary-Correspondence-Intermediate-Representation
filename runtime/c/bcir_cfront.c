@@ -982,7 +982,8 @@ static uint32_t p_primary(CC *c) {
  * set, a width-named integer uses the SIGNED fixed-width spelling -- needed for a float -> signed-int
  * conversion, which is UB/target-divergent if rendered as float -> unsigned. */
 static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
-  const char *nm=ty->is_float ? (ty->size==4?"float":"double")
+  const char *nm=ty->is_bool ? "_Bool"           /* a bool cast normalizes any nonzero (full value) to 1 */
+                : ty->is_float ? (ty->size==4?"float":"double")
                 : signed_int ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
                 : ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t";
   if(ty->kind==2) snprintf(o,n,"c.cast:%s *",nm); else snprintf(o,n,"c.cast:%s",nm);
@@ -1041,6 +1042,8 @@ static uint32_t p_unary(CC *c) {
         uint32_t r = ty.is_float ? tempf(c, ty.size)                  /* a float cast -> a float temp */
                    : ty.kind==2 ? temp(c, cc_abi(c)->pointer_size)    /* a pointer cast */
                                 : tempi(c, ty.size?ty.size:4, ty.signd?1:0);   /* an integer cast */
+        if(ty.is_bool && !ty.is_float && ty.kind!=2 && c->fn->n_res)
+          c->fn->res[c->fn->n_res-1].is_bool=1;    /* a bool cast -> a _Bool temp (normalizes to 0/1) */
         char op[BCIR_CIR_NAME]; cast_name(&ty,f2s,op,sizeof op);
         bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=r;} return r;
