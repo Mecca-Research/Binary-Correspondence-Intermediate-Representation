@@ -113,7 +113,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
+for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re
@@ -1065,5 +1065,35 @@ upr="$("${tmp}/up_h")"
 [ "${upr}" = "MATCH" ] \
   && echo "  PASS unarypromote: sub-int -> signed int + float -/~ == Clang" \
   || { echo "  FAIL: unarypromote behaviour (${upr})"; exit 1; }
+
+# float / double -> SIGNED integer cast (#floatsigncast): a floating value converted to a signed integer
+# must use a signed cast operator. Both rails canonicalized integer casts to the unsigned spelling, making
+# it a float -> unsigned conversion -- UB for a negative value, target-divergent (the #395 aarch64 32-bit
+# failure), and even on x86 a sub-int signed target lost the sign. Now emit a signed temp + signed operator.
+echo "[c-runtime] float -> signed-int cast (bcir-cc): emit == Clang (#floatsigncast)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_floatsigncast.c" > "${tmp}/fs_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'
+  sed -e 's/\bf2int\b/f2i_src/' -e 's/\bf2short\b/f2s_src/' -e 's/\bf2schar\b/f2c_src/' \
+      -e 's/\bd2long\b/d2l_src/' -e 's/\bf2uint\b/f2u_src/' "${C}/cfront_floatsigncast.c"
+  cat "${tmp}/fs_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(unsigned a=0;a<4000u;a++)for(unsigned b=0;b<90u;b++){
+    if(f2i_src(a,b)!=bcir_f2int(a,b)){printf("f2i MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(f2s_src(a,b)!=bcir_f2short(a,b)){printf("f2s MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(f2c_src(a,b)!=bcir_f2schar(a,b)){printf("f2c MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(d2l_src(a,b)!=bcir_d2long(a,b)){printf("d2l MISMATCH a=%u b=%u\n",a,b);return 1;}
+    if(f2u_src(a,b)!=bcir_f2uint(a,b)){printf("f2u MISMATCH a=%u b=%u\n",a,b);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/fs_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/fs_harness.c" -o "${tmp}/fs_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/fs_harness.c" -o "${tmp}/fs_h" \
+  || { echo "  FAIL: floatsigncast harness build"; exit 1; }
+fsr="$("${tmp}/fs_h")"
+[ "${fsr}" = "MATCH" ] \
+  && echo "  PASS floatsigncast: float/double -> signed int == Clang" \
+  || { echo "  FAIL: floatsigncast behaviour (${fsr})"; exit 1; }
 
 echo "[c-runtime] ok"
