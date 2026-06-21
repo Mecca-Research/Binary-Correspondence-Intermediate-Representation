@@ -618,9 +618,13 @@ class _FuncLowerer:
             if node.op == "!":                                # logical not -> int (0/1)
                 rt = scalar("int", self.abi)
             else:                                             # `-` / `~`: the promoted operand type, so
-                vt = self.rtypes.get(v)                       # negating a `long` stays 64-bit (was forced
-                rt = (promote_int(vt, self.abi) if vt is not None and vt.is_integer   # to uint32 -> a -1
-                      else scalar("uint32_t"))                # long widened back to a positive long)
+                vt = self.rtypes.get(v)                       # negating a `long` stays 64-bit, and `-x` on
+                if vt is not None and vt.is_float:            # a float stays float (floats don't promote --
+                    rt = vt                                   # was forced to uint32, truncating -2.5 -> 4.29e9)
+                elif vt is not None and vt.is_integer:        # integer promotion: a sub-int operand (e.g.
+                    rt = promote_int(vt, self.abi)            # `unsigned char`) becomes signed int -> ~c is -1
+                else:
+                    rt = scalar("uint32_t")
             t = self._temp(rt, f"u_{suf}")
             return self._emit(f"c.un.{suf}", opcode, (v,), (t,))
         if isinstance(node, cast.Cast):

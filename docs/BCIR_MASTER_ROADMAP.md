@@ -714,6 +714,16 @@ a compound assignment, an array element, a parameter, and the return value (the 
 `_Bool`, was correct). Fixed by tracking bool-ness on the resource + ctype (`is_bool`) and emitting
 `_Bool` from `tty` / `ctype_str`, so every conversion-to-bool normalizes -- exactly as the oracle does.
 `#boolnorm`/`cfront_boolnorm.c`, differential == Clang on both rails.
+✅ **and two follow-on unary-operator miscompiles** (after `#longunary` fixed the *width*): integer
+*promotion* and *float* on `-` / `~`. **(1)** A sub-int unsigned operand promotes to *signed* int
+(§6.3.1.1), so `~(unsigned char)0` is `-1`, not `4294967295`, and `-(unsigned char)1 < 0` is true -- the
+twin kept the operand's unsignedness on the result temp, flipping the sign test / arithmetic-shift of the
+complement (twin-only; the oracle's `promote_int` was correct). **(2)** `-x` on a `float`/`double` stays
+floating -- BOTH rails forced a `uint32_t` temp, truncating `-2.5` to `4.29e9` (a both-rail miscompile the
+dual-rail check could not see; only the Clang differential did, and the `float`/`double` spellings even
+disagreed). Fixed by taking the promoted operand type on both rails (`promote_i` for the integer
+signedness, a float temp for a float operand). `#unarypromote`/`cfront_unarypromote.c`, differential ==
+Clang on both rails.
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both
