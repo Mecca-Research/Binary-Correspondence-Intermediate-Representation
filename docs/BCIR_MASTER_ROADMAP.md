@@ -751,6 +751,13 @@ zero-extending every read (so a signed field's sign test was always false and it
 large positive). Unsigned bitfields, which DO zero-extend, were already correct. Fixed by carrying the
 field's signedness on the `c.bf.get` claim and emitting `(value ^ sign_bit) - sign_bit` into a signed temp
 for a signed field, on both rails. `#signedbf`/`cfront_signedbf.c`, differential == Clang on both rails.
+✅ **and the same sign drop on a signed sub-int *storage* read** (`signed char`/`short` member, member
+array, or local array): the twin loaded a member via a zero-extending `memcpy` into a `uint32_t` temp and
+typed the array-element temp unsigned, so `s.c = -5` read back as `251` and `s.c < 0` was always false (a
+plain `return arr[i]` matched by modular luck; a sign test or sign-dependent result did not). The oracle,
+which carries the element's signedness on the load temp, was correct. Fixed by typing each load temp with
+the element's (width, signedness) and memcpy-ing the exact width, so a signed sub-int read sign-extends;
+unsigned elements are unchanged. `#signedload`/`cfront_signedload.c`, differential == Clang on both rails.
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both
