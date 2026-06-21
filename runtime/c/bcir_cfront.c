@@ -274,6 +274,7 @@ static void lex(CC *c, const char *src) {
 /* --- token helpers ------------------------------------------------------- */
 static tok *pk(CC *c){return &c->t[c->i];}
 static int is(CC *c,const char *s){tok *t=pk(c);return (int)strlen(s)==t->n&&!strncmp(t->s,s,t->n);}
+static int tok_is(const tok *t,const char *s){return (int)strlen(s)==t->n&&!strncmp(t->s,s,t->n);}
 static int isk(CC *c,tkind k){return pk(c)->k==k;}
 static tok adv(CC *c){return c->t[c->i++];}
 static void fail(CC *c,const char *m){if(!c->failed){snprintf(c->err,sizeof c->err,"%s",m);c->failed=1;}}
@@ -350,6 +351,7 @@ static void apply_stars(CC *c, bcir_ctype *ty) {
  * this and apply_stars per declarator instead. */
 static int p_type(CC *c, bcir_ctype *ty, int *sidx);          /* fwd: typeof(type-name) parses recursively */
 static venv *lookup(CC *c, const tok *t);                     /* fwd: typeof(variable) resolves its type */
+static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx);   /* fwd: typeof(expression) -- speculative lower */
 static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
   memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1;
   int seen=0, longs=0, ptrtrk=0, sign_explicit=0;   /* longs: `long` (data-model) vs `long long` (8) */
@@ -366,10 +368,10 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
                     || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
       if(is_type){ bcir_ctype inner; int isi;                            /* typeof( type-name ), incl. typeof(int*) */
         if(p_type(c,&inner,&isi)) return 1; *ty=inner; *sidx=isi; }
-      else { tok id=adv(c); venv *v=lookup(c,&id);                       /* typeof( variable ) -- bare in-scope var */
-        if(!v){ fail(c,"typeof of unknown variable"); return 1; }
-        *ty=v->type; *sidx=v->sidx;
-        if(!is(c,")")){ fail(c,"typeof of a non-trivial expression is not yet supported"); return 1; } }
+      else {                                                            /* typeof( expression ) operand */
+        venv *v = (isk(c,T_ID) && tok_is(&c->t[c->i+1],")")) ? lookup(c,pk(c)) : NULL;
+        if(v){ c->i++; *ty=v->type; *sidx=v->sidx; }                    /* a bare in-scope variable -- exact type */
+        else if(p_typeof_expr(c,ty,sidx)) return 1; }                   /* any other operand -- speculative lower */
       if(!eat(c,")")) return 1;
       seen=1; break; }
     if(is(c,"signed")){ty->signd=1;sign_explicit=1;c->i++;continue;}   /* a modifier; the base sets size */
@@ -670,6 +672,48 @@ static venv *lookup(CC *c,const tok *t){
 static uint32_t p_expr(CC *c);
 static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si);   /* `(type){init}` (defined w/ agg_init) */
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
+
+/* typeof( expression ) -- the operand is UNEVALUATED, so resolve its type by SPECULATIVELY lowering it,
+ * reading the produced value's type off its resource, then rolling the whole emission back: the resource
+ * and claim arrays, the rid/cid/compound-literal counters, and any call-graph / string-literal / local-env
+ * side effects the operand triggered. The twin has no separate AST, so reusing the real lowering -- which
+ * already types every value faithfully (fixed-width int + signedness, float, pointer pointee/depth, plain
+ * char, _Bool) -- is exactly Clang-equivalent for the supported forms (binary, unary, cast, member, index,
+ * deref). Calls / address-of are a deferred follow-on (a wide call return loses signedness on its temp).
+ * On entry the cursor is at the operand's first token; on return it is just before the closing `)`. */
+static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx){
+  size_t s_nres=c->fn->n_res, s_ncl=c->fn->n_claims;
+  uint32_t s_rid=c->rid, s_cid=c->cid, s_clctr=c->cl_ctr;
+  int s_ncalls=c->fn->n_calls, s_nenv=c->nenv, s_nstr=g_nstr;
+  uint32_t v=p_expr(c);                                  /* parse + speculatively lower the operand */
+  const bcir_resource *r=res_of(c->fn,v);                /* the produced value's type lives on its resource */
+  memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1;
+  if(r){
+    if(r->kind==BCIR_RK_POINTER){                        /* a pointer value: pointee width/sign/float + depth */
+      ty->kind=2; ty->size=r->elem_bytes?(int)r->elem_bytes:4; ty->signd=r->is_signed;
+      ty->is_float=r->is_float; ty->ptr_depth=(uint8_t)(r->ptr_depth?r->ptr_depth:1);
+      ty->is_plain_char=r->is_plain_char;
+      if(r->agg[0]){ ty->ptr_to_struct=1;               /* a pointer-to-struct: recover the tag + struct index */
+        const char *sp=strchr(r->agg,' '); const char *tg=sp?sp+1:r->agg;
+        snprintf(ty->tag,sizeof ty->tag,"%s",tg);
+        int si=find_struct(c,tg,(int)strlen(tg)); if(si>=0){ *sidx=si; ty->is_union=(uint8_t)c->s[si].is_union; } }
+    } else if(r->kind==BCIR_RK_AGGREGATE){              /* a struct/union by value */
+      ty->kind=1; ty->size=(int)r->elem_bytes;
+      const char *sp=strchr(r->agg,' '); const char *tg=sp?sp+1:r->agg;
+      snprintf(ty->tag,sizeof ty->tag,"%s",tg);
+      int si=find_struct(c,tg,(int)strlen(tg)); if(si>=0){ *sidx=si; ty->size=c->s[si].size;
+        ty->is_union=(uint8_t)c->s[si].is_union; }
+    } else {                                             /* a scalar (integer / float / _Bool / plain char) */
+      ty->kind=0; ty->size=r->elem_bytes?(int)r->elem_bytes:4; ty->signd=r->is_signed;
+      ty->is_float=r->is_float; ty->is_bool=r->is_bool; ty->is_plain_char=r->is_plain_char;
+    }
+  }
+  c->fn->n_res=s_nres; c->fn->n_claims=s_ncl;            /* roll the speculative emission fully back */
+  c->rid=s_rid; c->cid=s_cid; c->cl_ctr=s_clctr;
+  c->fn->n_calls=s_ncalls; c->nenv=s_nenv;
+  while(g_nstr>s_nstr){ g_nstr--; free(g_strtab[g_nstr].s); g_strtab[g_nstr].s=NULL; }
+  return c->failed;
+}
 
 /* A pointer temporary cloned from an existing pointer value -- same pointee (width, signedness, float,
  * struct tag). The result of pointer arithmetic `p + i` carries p's type, so the emit declares a real

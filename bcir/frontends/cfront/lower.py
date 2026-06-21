@@ -391,6 +391,8 @@ class _FuncLowerer:
             if tref.typeof_var not in self.env:
                 raise CLowerError(f"typeof of unknown variable {tref.typeof_var!r}")
             base = self.env[tref.typeof_var][1]
+        elif tref.typeof_expr is not None:                 # `typeof(expr)` -> the operand's static type
+            base = self._type_of(tref.typeof_expr)
         elif tref.aggregate:
             base = self.aggregates[tref.base]
         elif is_scalar_name(tref.base):
@@ -593,12 +595,16 @@ class _FuncLowerer:
 
     # --- rvalue lowering: returns the rid holding the value ---
     def _bin_result_type(self, op: str, a: int, b: int) -> CType:
-        """The result type of a binary op. `+ - * /` over a float operand yield the *wider* float
-        (float usual arithmetic conversions); a relational/logical op is `int`; a shift takes the
-        promoted *left* operand; everything else (`+ - * / %`, bitwise) takes the integer usual
-        arithmetic conversions over both operands. Driving the emitted temp's true C type makes the
-        backend do signed-vs-unsigned and width-correct arithmetic (the old flat uint32 model did not)."""
-        ta, tb = self.rtypes.get(a), self.rtypes.get(b)
+        """The result type of a binary op over the values in rids `a`, `b` (their types read from
+        `rtypes`). Driving the emitted temp's true C type makes the backend do signed-vs-unsigned and
+        width-correct arithmetic (the old flat uint32 model did not)."""
+        return self._bin_result_type_ct(op, self.rtypes.get(a), self.rtypes.get(b))
+
+    def _bin_result_type_ct(self, op: str, ta: CType | None, tb: CType | None) -> CType:
+        """The result type of a binary op from its operand *types*. `+ - * /` over a float operand yield
+        the *wider* float (float usual arithmetic conversions); a relational/logical op is `int`; a shift
+        takes the promoted *left* operand; everything else (`+ - * / %`, bitwise) takes the integer usual
+        arithmetic conversions over both operands. Shared by `_rvalue` (emitting) and `_type_of` (typeof)."""
         if op in ("+", "-", "*", "/"):
             floats = [t for t in (ta, tb) if t is not None and t.is_float]
             if floats:
@@ -615,6 +621,48 @@ class _FuncLowerer:
             return promote_int(ia, self.abi)                  # the shift result carries the promoted LHS type
         ib = tb if (tb is not None and tb.is_integer) else scalar("int", self.abi)
         return usual_arith_int(ia, ib, self.abi)
+
+    def _type_of(self, node) -> CType:
+        """The static C type of an expression, computed WITHOUT evaluating or emitting it -- the operand
+        of `typeof` is unevaluated (like `sizeof`). Mirrors the result types `_rvalue` assigns its temps,
+        so `typeof(expr)` resolves to exactly the type Clang gives the expression. Scoped to the forms
+        whose type both rails infer identically (the twin reads it off a speculatively-lowered value);
+        calls / address-of / ternary are a deferred follow-on (raised here rather than silently mistyped)."""
+        if isinstance(node, cast.IntLit):
+            return scalar(node.ctype, self.abi) if is_scalar_name(node.ctype) else scalar("int", self.abi)
+        if isinstance(node, cast.FloatLit):
+            return _float_lit_type(node.value)
+        if isinstance(node, cast.Name):
+            return self._lookup(node.ident, node.pos)[1]
+        if isinstance(node, cast.StringLit):                  # a string literal has type `char[N]` (not char*)
+            prefix, _ = split_lit_prefix(node.value)
+            elem = str_elem_size(prefix)
+            n = _str_bytes(node.value) + 1                    # decoded code units + the NUL
+            return array(scalar("char" if elem == 1 else f"uint{elem * 8}_t"), n)
+        if isinstance(node, cast.Binary):
+            return self._bin_result_type_ct(node.op, self._type_of(node.lhs), self._type_of(node.rhs))
+        if isinstance(node, cast.Unary):
+            if node.op == "*":                                # deref -> the pointee / element type
+                t = self._type_of(node.operand)
+                return t.of if t.of is not None else scalar("uint32_t")
+            if node.op == "!":                                # logical not -> int (0/1)
+                return scalar("int", self.abi)
+            t = self._type_of(node.operand)                   # `-` / `~`: the integer-promoted operand
+            if t.is_float:                                    # (a float stays float -- floats don't promote)
+                return t
+            if t.is_integer:
+                return promote_int(t, self.abi)
+            return scalar("uint32_t")
+        if isinstance(node, (cast.Cast, cast.CompoundLiteral)):
+            return self._resolve_type(node.type)
+        if isinstance(node, cast.Member):                     # `s.f` / `p->f` -> the field's type
+            base_t = self._type_of(node.base)
+            agg = base_t.of if node.arrow else base_t
+            return agg.field(node.field)[0]
+        if isinstance(node, cast.Index):                      # `a[i]` -> the element (pointee) type
+            base_t = self._type_of(node.base)
+            return base_t.of if base_t.of is not None else scalar("uint32_t")
+        raise CLowerError(f"typeof of this expression form ({type(node).__name__}) is not yet supported")
 
     def _rvalue(self, node) -> int:
         if isinstance(node, cast.IntLit):

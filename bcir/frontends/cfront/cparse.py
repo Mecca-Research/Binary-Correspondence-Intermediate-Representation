@@ -385,11 +385,11 @@ class _Parser:
                     self.eat("PUNCT", ")")
                     return cast.TypeRef(base=inner.base, ptr=ip, array=inner.array,
                                         aggregate=inner.aggregate, quals=tuple(quals) + inner.quals)
-                name = self.eat("IDENT").text              # typeof ( variable ) -- a bare in-scope variable
-                if not self.at("PUNCT", ")"):              # a general expression operand is a follow-on
-                    raise CParseError("typeof of a non-trivial expression is not yet supported")
+                expr = self._expr()                        # typeof ( expression ) -- a general operand
                 self.eat("PUNCT", ")")
-                return cast.TypeRef(base="", typeof_var=name, quals=tuple(quals))
+                if isinstance(expr, cast.Name):            # a bare in-scope variable keeps the fast path
+                    return cast.TypeRef(base="", typeof_var=expr.ident, quals=tuple(quals))
+                return cast.TypeRef(base="", typeof_expr=expr, quals=tuple(quals))
             elif not words and w in self.typedefs:        # a typedef name -> expand the alias
                 td = self.typedefs[w]
                 self.nxt()
@@ -465,7 +465,7 @@ class _Parser:
                         self.eat("PUNCT", "]")
                     return cast.TypeRef(base=base.base, ptr=0, array=tuple([0] + dims),
                                         aggregate=base.aggregate, quals=base.quals,
-                                        typeof_var=base.typeof_var), nm
+                                        typeof_var=base.typeof_var, typeof_expr=base.typeof_expr), nm
             self.i = save                                 # not `(*name)[..]` -> a normal declarator
         name = self.eat("IDENT").text
         dims = []
@@ -478,7 +478,7 @@ class _Parser:
         return cast.TypeRef(base=base.base, ptr=ptr + base.ptr,         # base.ptr != 0 only for typeof(T*)
                             array=tuple(base.array) + tuple(dims),
                             aggregate=base.aggregate, quals=base.quals,
-                            typeof_var=base.typeof_var), name
+                            typeof_var=base.typeof_var, typeof_expr=base.typeof_expr), name
 
     # --- functions ---
     def _func_body(self, ret: cast.TypeRef, name: str) -> cast.Func:
