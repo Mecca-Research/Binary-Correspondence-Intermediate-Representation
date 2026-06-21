@@ -780,6 +780,51 @@ def test_typeof_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+def test_struct_member_init_dual_rail():
+    """Struct-valued member set (#structinit): a struct/union-typed member assigned a whole struct value
+    -- in an aggregate initializer (`{ inner, ... }` / `{ (struct Pt){...}, ... }`) or by a direct
+    member assignment (`o.p = q`). The member store copies the whole object (a memcpy of the member's
+    size); a scalar `uintN _v = <struct>` is a type error and under-reads a wide member (the twin's emit
+    previously failed to compile here). Differential == Clang on both rails; oracle/twin claim parity."""
+    fx = "cfront_structinit.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["si_var", "si_lit", "si_wide", "si_assign"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int a=-40;a<40;a++) for(int b=-40;b<40;b++){
+    if(si_var_s(a,b)!=bcir_si_var(a,b)){printf("var@%d,%d\n",a,b);return 1;}
+    if(si_lit_s(a,b)!=bcir_si_lit(a,b)){printf("lit@%d,%d\n",a,b);return 1;}
+    if(si_wide_s(a,b)!=bcir_si_wide(a,b)){printf("wide@%d,%d\n",a,b);return 1;}
+    if(si_assign_s(a,b)!=bcir_si_assign(a,b)){printf("assign@%d,%d\n",a,b);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath = os.path.join(d, f"{label}.c")
+            open(cpath, "w").write(harness)
+            epath = os.path.join(d, label)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
+                                   capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
+
+
 def _build_loop(d: str) -> str:
     return _compile_once("loop", "loop",
                          ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c",

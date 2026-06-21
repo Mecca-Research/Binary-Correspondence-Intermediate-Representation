@@ -2094,10 +2094,16 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
          * (`s->m = v` with `long m`) moves all 8 bytes and the value widens/truncates to the member,
          * not over-reads a 4-byte temp; a float member keeps its float type; a pointer its `T *`. */
         const bcir_resource *vr=res_of(f,cl->rd[1]);
+        if(vr && vr->kind==BCIR_RK_AGGREGATE){     /* a struct/union member set from a struct VALUE (a nested
+          * `{ ... }` member, `o.p = q`): copy the whole object -- a scalar `uintN _v = <struct>` is a type
+          * error, and a too-narrow `_v` would under-read it. memcpy `sz` bytes straight from the source. */
+          w+=snprintf(o+w,on-w,"memcpy((char *)%s%s + %lld, &%s, %lld);\n",
+                      amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),sz);
+        } else {
         const char *vt=(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(f,cl->rd[1],tb,sizeof tb)
                       :(vr&&vr->is_float)?(sz==4?"float":"double")
                       :(sz==1?"uint8_t":sz==2?"uint16_t":sz==8?"uint64_t":"uint32_t");
-        w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",vt,rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); }
+        w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",vt,rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); } }
     }else if(!strcmp(cl->op,"c.bf.get")){
       long long off=cl->imm[0],bw=cl->imm[1]; unsigned long long mask=(1ull<<bw)-1;
       if(cl->n_imm>2&&cl->imm[2]){                       /* a signed bitfield: sign-extend from bit bw-1 */
