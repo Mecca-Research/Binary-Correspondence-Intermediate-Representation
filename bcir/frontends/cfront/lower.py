@@ -579,6 +579,11 @@ class _FuncLowerer:
             floats = [t for t in (ta, tb) if t is not None and t.is_float]
             if floats:
                 return scalar(max(floats, key=lambda t: _FLOAT_RANK.get(t.name, 1)).name)
+        if op in ("+", "-"):                                  # pointer arithmetic: p + i / i + p / p - i ->
+            pa = ta if (ta is not None and ta.kind == "pointer") else None   # a pointer carrying the pointee.
+            pb = tb if (tb is not None and tb.kind == "pointer") else None   # (p - q, both pointers, is a
+            if (pa is None) != (pb is None):                                 # ptrdiff and stays integer below.)
+                return pa or pb
         if op in ("<", ">", "<=", ">=", "==", "!=", "&&", "||"):
             return scalar("int", self.abi)                    # a relational / logical result is int
         ia = ta if (ta is not None and ta.is_integer) else scalar("int", self.abi)

@@ -146,8 +146,10 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
 
     def deftmp(rid: int, expr: str, ty: str | None = None) -> str:
         if ty is None:                                       # a temp renders its true C type: float/double
-            ct = lf.rid_types.get(rid)                        # for a float, the (width, signedness) integer
-            ty = _cname(ct) if (ct is not None and (ct.is_float or ct.is_integer)) else "uint32_t"
+            ct = lf.rid_types.get(rid)                        # for a float, the (width, signedness) integer;
+            ty = _cname(ct) if (ct is not None and (ct.is_float or ct.is_integer                # a pointer
+                                                    or ct.kind == "pointer")) else "uint32_t"   # value -> `T *`
+
         return f"{ty} {ref(rid)} = {expr};"
 
     if c.op == "c.copy":                                     # write a mutable local (no new decl)

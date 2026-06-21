@@ -631,6 +631,17 @@ static venv *lookup(CC *c,const tok *t){
 static uint32_t p_expr(CC *c);
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
 
+/* A pointer temporary cloned from an existing pointer value -- same pointee (width, signedness, float,
+ * struct tag). The result of pointer arithmetic `p + i` carries p's type, so the emit declares a real
+ * `T *t = p + i` (a pointee-scaled pointer) instead of a width-truncating uint32. */
+static uint32_t tempptr(CC *c, uint32_t src){
+  const bcir_resource *s=res_of(c->fn,src);
+  uint32_t r=add_res(c,BCIR_DOM_RAM, s?(int)s->elem_bytes:4, 1, 0, BCIR_RK_POINTER, "");
+  if(c->fn->n_res && s){ bcir_resource *t=&c->fn->res[c->fn->n_res-1];
+    t->is_signed=s->is_signed; t->is_float=s->is_float; snprintf(t->agg,sizeof t->agg,"%s",s->agg); }
+  return r;
+}
+
 static uint32_t emit_member(CC *c, venv *base, const field *fld) {
   uint32_t t=tempi(c,fld->size,fld->signd);                  /* the loaded value carries the field's type */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
@@ -1105,7 +1116,15 @@ static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs) {
         if(is_shift){ promote_i(&sa,&za); rs=sa; rz=za; }      /* shift result: the promoted left operand */
         else uac_i(sa,za,sb,zb,&rs,&rz);
         r=tempi(c,rs,rz);
-      } else r=temp(c,4);                                      /* pointer / other arithmetic: unchanged */
+      } else {
+        const bcir_resource *lr=res_of(c->fn,lhs), *rr=res_of(c->fn,rhs);
+        int lp=lr&&lr->kind==BCIR_RK_POINTER, rp=rr&&rr->kind==BCIR_RK_POINTER;
+        /* pointer + int / int + pointer / pointer - int -> a pointer (carries the pointee type so the
+         * emit is a real pointee-scaled `T *t = p + i`). `p - q` (both pointers, a ptrdiff) and other
+         * non-integer arithmetic stay the prior 4-byte temp. */
+        if((lp^rp) && (!strcmp(suf,"add")||!strcmp(suf,"sub"))) r=tempptr(c, lp?lhs:rhs);
+        else r=temp(c,4);
+      }
     }
     char op[BCIR_CIR_NAME];snprintf(op,sizeof op,"c.bin.%s",suf);
     bcir_claim *cl=new_claim(c,op,oc);if(cl){cl->n_rd=2;cl->rd[0]=lhs;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=r;}
@@ -1540,7 +1559,11 @@ static int p_func(CC *c, bcir_func *fn) {
     uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, pb);
-    if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
+    if(ty.kind==2){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer param: carry the pointee
+      * (width/sign/tag) so pointer arithmetic on it (`p + i`) clones the real `T *` type, not uint32 */
+      pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0);
+      if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
+    else if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
     else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
       if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1; }     /* a _Bool parameter */
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
@@ -1637,6 +1660,21 @@ static const char *tty(const bcir_func *f,uint32_t rid){
   }
   return "uint32_t";
 }
+/* The C type to DECLARE rid with at an emit site. For a pointer resource this composes the real
+ * `<pointee> *` (the pointee width/sign/float/tag ride on the resource); for everything else it is the
+ * scalar `tty`. Pointer types must be composed (not static strings), so it writes into a caller buffer
+ * and returns it -- byte-identical to `tty` for non-pointers, so scalar emit is unchanged. */
+static const char *decl_ty(const bcir_func *f,uint32_t rid,char *buf,size_t n){
+  const bcir_resource *r=res_of(f,rid);
+  if(r && r->kind==BCIR_RK_POINTER){
+    if(r->agg[0]) snprintf(buf,n,"%s *",r->agg);
+    else if(r->is_float) snprintf(buf,n,"%s *",r->elem_bytes==8?"double":"float");
+    else snprintf(buf,n,"%s *",
+      r->elem_bytes==1?(r->is_signed?"int8_t":"uint8_t"):r->elem_bytes==2?(r->is_signed?"int16_t":"uint16_t"):
+      r->elem_bytes==8?(r->is_signed?"int64_t":"uint64_t"):(r->is_signed?"int32_t":"uint32_t"));
+  } else snprintf(buf,n,"%s",tty(f,rid));
+  return buf;
+}
 static int is_named_local(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid); if(!r||!r->name[0]) return 0;
   if(r->read_only) return 0;                                          /* a global, defined in source */
@@ -1649,7 +1687,7 @@ static int is_global_ref(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid); return r && r->name[0] && r->read_only;
 }
 static size_t emit_func(const bcir_func *f,char *o,size_t on){
-  size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64];
+  size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64],tb[80];
   ctype_str(&f->ret,ty,sizeof ty);
   w+=snprintf(o+w,on-w,"static %s bcir_%s(",ty,f->name);
   if(f->n_params==0) w+=snprintf(o+w,on-w,"void");
@@ -1664,13 +1702,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(sx>=0) w+=snprintf(o+w,on-w,"  static uint32_t %s = %lluu;\n",nm,(unsigned long long)f->statics[sx].init);
       else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s%s;\n",r->agg,nm,r->zinit?" = {0}":"");
       else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+w,on-w,"  %s %s[%u]%s;\n",tty(f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
-      else if(r->kind==BCIR_RK_POINTER){ char pb[80];   /* a pointer local: `T *p` (the pointee carries width/sign) */
-        if(r->agg[0]) snprintf(pb,sizeof pb,"%s *",r->agg);
-        else if(r->is_float) snprintf(pb,sizeof pb,"%s *",r->elem_bytes==8?"double":"float");
-        else snprintf(pb,sizeof pb,"%s *",
-          r->elem_bytes==1?(r->is_signed?"int8_t":"uint8_t"):r->elem_bytes==2?(r->is_signed?"int16_t":"uint16_t"):
-          r->elem_bytes==8?(r->is_signed?"int64_t":"uint64_t"):(r->is_signed?"int32_t":"uint32_t"));
-        w+=snprintf(o+w,on-w,"  %s%s;\n",pb,nm); }
+      else if(r->kind==BCIR_RK_POINTER)               /* a pointer local: `T *p` (the pointee carries width/sign) */
+        w+=snprintf(o+w,on-w,"  %s%s;\n",decl_ty(f,r->rid,tb,sizeof tb),nm);
       else w+=snprintf(o+w,on-w,"  %s %s;\n",tty(f,r->rid),nm);}}
   int depth=1, lstk[64], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)
@@ -1698,8 +1731,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(cl->n_rd) w+=snprintf(o+w,on-w,"return %s;\n",rname(f,cl->rd[0],a));
       else w+=snprintf(o+w,on-w,"return;\n");continue;}
     IND();
-    if(!strncmp(cl->op,"c.bin.",6))
-      w+=snprintf(o+w,on-w,"%s %s = %s %s %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
+    if(!strncmp(cl->op,"c.bin.",6))                       /* decl_ty: a pointer result (`p + i`) declares `T *t` */
+      w+=snprintf(o+w,on-w,"%s %s = %s %s %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
     else if(!strncmp(cl->op,"c.fconst:",9))                /* a floating constant -> its literal spelling */
       w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
     else if(!strncmp(cl->op,"c.un.",5))                    /* `-`/`~` keep the operand width (long stays 64) */
@@ -1719,7 +1752,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                   (unsigned long long)cl->imm[0], cs?"":"u"); }
     else if(!strcmp(cl->op,"c.copy")){
       if(is_named_local(f,cl->wr[0])||is_global_ref(f,cl->wr[0])) w+=snprintf(o+w,on-w,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
-      else w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      else w+=snprintf(o+w,on-w,"%s %s = %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));   /* decl_ty: a copied pointer temp keeps `T *` */
     }else if(!strcmp(cl->op,"c.load")){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;
       if(cl->n_rd==2 && cl->n_imm){       /* s.arr[i]: load at &base + member_off + idx*elem_size */
