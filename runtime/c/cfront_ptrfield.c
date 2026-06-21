@@ -8,8 +8,8 @@
  * The harness fills the pointee struct with random bytes then the function overwrites the fields, so no
  * garbage pointer is dereferenced -- each function stores and reads back, comparing the returned pointer
  * (an offset into a buffer) or the adjacent scalar (which a 4-byte pointer model would clobber). (Slice 2
- * of the pointer-value model: deref-through and chaining a loaded pointer field -- `*(s->p)`, `s->t->a`
- * -- are slice 2b.) */
+ * of the pointer-value model; deref-through and chaining a loaded pointer field -- `*(s->p)`, `s->t->a`,
+ * `s->p[i]` -- are slice 2b, in cfront_fieldderef.c.) */
 struct Node { int *p; int n; long *q; };          /* two pointers + a scalar: stresses the 8-byte offsets */
 
 int *pf_store_return(struct Node *s, int *v) {

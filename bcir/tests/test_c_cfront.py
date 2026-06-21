@@ -355,6 +355,73 @@ def test_pointer_to_pointer_dual_rail():
             assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
 
 
+def test_field_deref_dual_rail():
+    """Deref-through a loaded pointer field (#fieldderef): `*(s->p)`, the chain `s->mid->k` (member
+    access through a loaded pointer-to-struct field, and the two-hop `s->mid->leaf->x`), and the
+    subscript `s->p[i]` -- reads, writes, and compound RMW. Both rails resolved a member used as a base
+    to the enclosing struct's address + the field type (so a deref read the struct's own bytes); now a
+    pointer-valued field used as a base is loaded and the loaded pointer becomes the new base. Slice 2b
+    of the pointer-value model. Parity + a bespoke behaviour harness (the generic one fills a pointee
+    with random bytes -- an invalid deref target -- so this builds real Box->Mid->Leaf chains and checks
+    BOTH the twin's and the oracle's emit == Clang."""
+    fx = "cfront_fieldderef.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["fd_read", "fd_write", "fd_qread", "fd_index", "fd_index_set", "fd_rmw", "fd_chain1",
+             "fd_chain1_set", "fd_chain1_rmw", "fd_chain2", "fd_chain2_long", "fd_chain2_set"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int i=-40;i<2000;i+=7){
+    int buf[8]; for(int k=0;k<8;k++) buf[k]=i*k-3;
+    long lq=(long)i*1000003L-7;
+    struct Box b={0,&buf[0],i,&lq};
+    if(fd_read_s(&b)!=bcir_fd_read(&b)){printf("read@%d\n",i);return 1;}
+    if(fd_qread_s(&b)!=bcir_fd_qread(&b)){printf("qread@%d\n",i);return 1;}
+    if(fd_index_s(&b,5)!=bcir_fd_index(&b,5)){printf("index@%d\n",i);return 1;}
+    int w1[4]={0},w2[4]={0};
+    struct Box c1={0,&w1[0],0,&lq},c2={0,&w2[0],0,&lq};
+    fd_write_s(&c1,i); bcir_fd_write(&c2,i);
+    if(w1[0]!=w2[0]){printf("write@%d\n",i);return 1;}
+    fd_index_set_s(&c1,3,i); bcir_fd_index_set(&c2,3,i);
+    if(w1[3]!=w2[3]){printf("iset@%d\n",i);return 1;}
+    if(fd_rmw_s(&c1,i)!=bcir_fd_rmw(&c2,i)||w1[0]!=w2[0]){printf("rmw@%d\n",i);return 1;}
+    struct Leaf lf1={i+1,(long)i*7+2},lf2={i+1,(long)i*7+2};
+    struct Mid m1={&lf1,i+5},m2={&lf2,i+5};
+    struct Box d1={&m1,&buf[0],0,&lq},d2={&m2,&buf[0],0,&lq};
+    if(fd_chain1_s(&d1)!=bcir_fd_chain1(&d2)){printf("chain1@%d\n",i);return 1;}
+    if(fd_chain2_s(&d1)!=bcir_fd_chain2(&d2)){printf("chain2@%d\n",i);return 1;}
+    if(fd_chain2_long_s(&d1)!=bcir_fd_chain2_long(&d2)){printf("chain2l@%d\n",i);return 1;}
+    fd_chain1_set_s(&d1,i*3); bcir_fd_chain1_set(&d2,i*3);
+    if(m1.k!=m2.k){printf("c1set@%d\n",i);return 1;}
+    if(fd_chain1_rmw_s(&d1,i)!=bcir_fd_chain1_rmw(&d2,i)||m1.k!=m2.k){printf("c1rmw@%d\n",i);return 1;}
+    fd_chain2_set_s(&d1,i*2); bcir_fd_chain2_set(&d2,i*2);
+    if(lf1.x!=lf2.x){printf("c2set@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+            open(cpath, "w").write(harness)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} harness build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
+
+
 def _build_loop(d: str) -> str:
     exe = os.path.join(d, "loop")
     srcs = [os.path.join(_C, s) for s in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c",
@@ -978,9 +1045,9 @@ _FALLBACK_PROBES = [
     ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "fallback"),  # statement-expr
     ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "fallback"),  # computed goto
     ("struct Q{unsigned*p; unsigned n;}; unsigned f(struct Q q,unsigned i){ return q.p[i&3u]+q.n; }",
-     "fallback"),   # a *pointer* member indexed (`s.ptr[i]`): the value model represents a loaded pointer
-                     # as a 4-byte temp (truncating an 8-byte pointer, so `t[idx]` subscripts an integer),
-                     # so both rails defer it. (1-D..3-D member *arrays* are now native -- #memberarray.)
+     "clean"),      # a *pointer* member indexed (`q.p[i]` == `*(q.p + i)`): both rails now load the full
+                     # pointer field and subscript the loaded pointer (#fieldderef, pointer-value slice 2b).
+                     # (1-D..3-D member *arrays* are native -- #memberarray; deref-through is now native too.)
     ("unsigned f(unsigned i){ unsigned m[2][2][2][2]; m[0][0][0][0]=1u; return m[i&1u][0][0][0]; }",
      "fallback"),   # a >3-dimensional local array: 1-D..3-D locals are now natively lowered (a flat
                      # resource of the product of dims + the per-dim flatten shape), but the dim table

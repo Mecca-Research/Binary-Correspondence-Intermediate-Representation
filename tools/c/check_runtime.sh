@@ -113,7 +113,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
+for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c; do  # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
   c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
   py_sum="$(python3 -c "
 import os, re
@@ -1382,5 +1382,58 @@ ppr="$("${tmp}/pp_h")"
 [ "${ppr}" = "MATCH" ] \
   && echo "  PASS ptr2ptr: int **pp / **pp / *pp=q / **pp=v / &p == Clang" \
   || { echo "  FAIL: ptr2ptr behaviour (${ppr})"; exit 1; }
+
+# Deref-through a loaded pointer field (#fieldderef): `*(s->p)`, the chain `s->mid->k` / two-hop
+# `s->mid->leaf->x`, and the subscript `s->p[i]` -- reads, writes, RMW. A member used as a base was
+# resolved to the struct's address + the field type (so a deref read the struct's own bytes); now a
+# pointer-valued field used as a base is loaded and the loaded pointer becomes the new base. A bespoke
+# harness builds real Box->Mid->Leaf chains (the generic one would fill a pointee with random bytes).
+echo "[c-runtime] deref-through a loaded pointer field -- *(s->p) / s->mid->leaf->x / s->p[i] (#fieldderef)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_fieldderef.c" > "${tmp}/fd_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bfd_read\b/fd_read_s/' -e 's/\bfd_write\b/fd_write_s/' -e 's/\bfd_qread\b/fd_qread_s/' \
+      -e 's/\bfd_index\b/fd_index_s/' -e 's/\bfd_index_set\b/fd_index_set_s/' -e 's/\bfd_rmw\b/fd_rmw_s/' \
+      -e 's/\bfd_chain1\b/fd_chain1_s/' -e 's/\bfd_chain1_set\b/fd_chain1_set_s/' -e 's/\bfd_chain1_rmw\b/fd_chain1_rmw_s/' \
+      -e 's/\bfd_chain2\b/fd_chain2_s/' -e 's/\bfd_chain2_long\b/fd_chain2_long_s/' -e 's/\bfd_chain2_set\b/fd_chain2_set_s/' \
+      "${C}/cfront_fieldderef.c"
+  cat "${tmp}/fd_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(int i=-40;i<2000;i+=7){
+    int buf[8]; for(int k=0;k<8;k++) buf[k]=i*k-3;
+    long lq=(long)i*1000003L-7;
+    struct Box b={0,&buf[0],i,&lq};
+    if(fd_read_s(&b)!=bcir_fd_read(&b)){printf("read@%d\n",i);return 1;}
+    if(fd_qread_s(&b)!=bcir_fd_qread(&b)){printf("qread@%d\n",i);return 1;}
+    if(fd_index_s(&b,5)!=bcir_fd_index(&b,5)){printf("index@%d\n",i);return 1;}
+    int w1[4]={0},w2[4]={0};
+    struct Box c1={0,&w1[0],0,&lq},c2={0,&w2[0],0,&lq};
+    fd_write_s(&c1,i); bcir_fd_write(&c2,i);
+    if(w1[0]!=w2[0]){printf("write@%d\n",i);return 1;}
+    fd_index_set_s(&c1,3,i); bcir_fd_index_set(&c2,3,i);
+    if(w1[3]!=w2[3]){printf("iset@%d\n",i);return 1;}
+    if(fd_rmw_s(&c1,i)!=bcir_fd_rmw(&c2,i)||w1[0]!=w2[0]){printf("rmw@%d\n",i);return 1;}
+    struct Leaf lf1={i+1,(long)i*7+2},lf2={i+1,(long)i*7+2};
+    struct Mid m1={&lf1,i+5},m2={&lf2,i+5};
+    struct Box d1={&m1,&buf[0],0,&lq},d2={&m2,&buf[0],0,&lq};
+    if(fd_chain1_s(&d1)!=bcir_fd_chain1(&d2)){printf("chain1@%d\n",i);return 1;}
+    if(fd_chain2_s(&d1)!=bcir_fd_chain2(&d2)){printf("chain2@%d\n",i);return 1;}
+    if(fd_chain2_long_s(&d1)!=bcir_fd_chain2_long(&d2)){printf("chain2l@%d\n",i);return 1;}
+    fd_chain1_set_s(&d1,i*3); bcir_fd_chain1_set(&d2,i*3);
+    if(m1.k!=m2.k){printf("c1set@%d\n",i);return 1;}
+    if(fd_chain1_rmw_s(&d1,i)!=bcir_fd_chain1_rmw(&d2,i)||m1.k!=m2.k){printf("c1rmw@%d\n",i);return 1;}
+    fd_chain2_set_s(&d1,i*2); bcir_fd_chain2_set(&d2,i*2);
+    if(lf1.x!=lf2.x){printf("c2set@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/fd_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/fd_harness.c" -o "${tmp}/fd_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/fd_harness.c" -o "${tmp}/fd_h" \
+  || { echo "  FAIL: fieldderef harness build"; exit 1; }
+fdr="$("${tmp}/fd_h")"
+[ "${fdr}" = "MATCH" ] \
+  && echo "  PASS fieldderef: *(s->p) / s->mid->leaf->x / s->p[i] (read+write+rmw) == Clang" \
+  || { echo "  FAIL: fieldderef behaviour (${fdr})"; exit 1; }
 
 echo "[c-runtime] ok"
