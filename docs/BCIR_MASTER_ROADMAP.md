@@ -912,7 +912,14 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     pointer-resource path (param, local, struct field, pointer-arithmetic result), so a signed sub-int
     pointee sign-extends, an unsigned one zero-extends, and the loaded value drives signed-vs-unsigned
     divide / shift / comparison / UAC -- `#ptrsign`/`cfront_ptrsign.c`, a bespoke negative-value
-    differential == Clang on both rails. ✅
+    differential == Clang on both rails. ✅ **Faithful char types** -- C's three distinct one-byte
+    char types now emit faithfully, so the output is behaviour-equivalent on *every* target, not just
+    where plain `char` is signed: plain `char` -> `char` (implementation-defined sign), `signed char`
+    -> always signed (the oracle kept it distinct from `char` instead of collapsing it; the twin int8_t),
+    `unsigned char` -> always unsigned. Before, the oracle emitted `char` for `signed char` (zero-
+    extending a negative on ARM) and the twin emitted int8_t for plain `char` (sign-extending on ARM) --
+    the rails disagreed with the source, and each other, on ARM. `#chartypes`/`cfront_chartypes.c`, a
+    differential run under BOTH `-fsigned-char` and `-funsigned-char`. ✅
     **array element stores** (`a[i] = v` / `a[i] OP= v` through a pointer/array param -- the driver
     buffer-fill / scatter idiom) now lower on the C twin too (a 3-read `c.store`, emitted as `a[i] = v`;
     the oracle already had them), dual-rail parity + a source-vs-twin buffer differential

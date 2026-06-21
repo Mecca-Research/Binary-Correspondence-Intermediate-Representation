@@ -65,6 +65,8 @@ typedef struct bcir_resource {
   uint8_t  is_float;         /* a floating value (emit float/double, not uint32_t) */
   uint8_t  is_signed;        /* a signed integer value (drives signed C emit + the usual arith conv) */
   uint8_t  is_bool;          /* a _Bool/bool object: emit `_Bool` so a store normalizes to 0/1 (§6.3.1.2) */
+  uint8_t  is_plain_char;    /* a plain `char` (not signed/unsigned char): emit `char`, whose signedness
+                              * is implementation-defined -- NOT int8_t (always signed -> wrong on ARM) */
   uint8_t  zinit;            /* an aggregate local declared with a `= {0}` zero baseline (§6.7.10) */
   uint8_t  ptr_depth;        /* pointer indirection depth (POINTER kind): 1 `T*`, 2 `T**`, ...; 0 == 1 */
   char     name[BCIR_CIR_NAME];
@@ -83,6 +85,7 @@ typedef struct bcir_ctype {
   uint8_t  is_union;         /* the aggregate is a union (emit `union` not `struct`) */
   uint8_t  is_float;         /* a floating type (float/double) */
   uint8_t  is_bool;          /* a _Bool/bool type: emit `_Bool` so conversions normalize to 0/1 (§6.3.1.2) */
+  uint8_t  is_plain_char;    /* a plain `char` (vs signed/unsigned char): emit `char` (impl-defined sign) */
   char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1/ptr_to_struct), or funcptr alias (kind 3) */
   int      adims[3];         /* decayed multi-dim array-param shape (outer-first), for m[i][j] */
   int      nadims;           /* number of array dims (0 == not an array parameter) */

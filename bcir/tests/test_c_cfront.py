@@ -613,6 +613,62 @@ def test_multi_declarator_pointer_dual_rail():
             assert out == "MATCH", f"{fx}: {label} emit not behaviour-equivalent ({out})"
 
 
+def test_faithful_char_types_dual_rail():
+    """Faithful char types (#chartypes): C's three distinct one-byte char types are emitted faithfully,
+    so the output is behaviour-equivalent on every target -- plain `char` -> `char` (implementation-
+    defined signedness), `signed char` -> always signed, `unsigned char` -> always unsigned. The oracle
+    collapsed `signed char` -> `char` (zero-extending a negative on ARM); the twin emitted int8_t for
+    plain `char` (sign-extending on ARM). The harness is built under BOTH -fsigned-char AND
+    -funsigned-char, so plain char's platform sign is exercised both ways -- the case the old emit got
+    wrong (it would pass under one and fail the other)."""
+    fx = "cfront_chartypes.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["ct_plain_deref", "ct_signed_deref", "ct_unsigned_deref", "ct_plain_cmp", "ct_signed_cmp",
+             "ct_plain_div", "ct_signed_div", "ct_unsigned_div", "ct_roundtrip", "ct_plain_widen"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int i=-200;i<200;i++){
+    char pc=(char)(i*7-3); signed char sc=(signed char)(i*5+1); unsigned char uc=(unsigned char)(i*3+2);
+    if(ct_plain_deref_s(&pc)!=bcir_ct_plain_deref(&pc)){printf("pd@%d\n",i);return 1;}
+    if(ct_signed_deref_s(&sc)!=bcir_ct_signed_deref(&sc)){printf("sd@%d\n",i);return 1;}
+    if(ct_unsigned_deref_s(&uc)!=bcir_ct_unsigned_deref(&uc)){printf("ud@%d\n",i);return 1;}
+    if(ct_plain_cmp_s(pc)!=bcir_ct_plain_cmp(pc)){printf("pc@%d\n",i);return 1;}
+    if(ct_signed_cmp_s(sc)!=bcir_ct_signed_cmp(sc)){printf("sc@%d\n",i);return 1;}
+    if(ct_plain_div_s(&pc)!=bcir_ct_plain_div(&pc)){printf("pdv@%d\n",i);return 1;}
+    if(ct_signed_div_s(&sc)!=bcir_ct_signed_div(&sc)){printf("sdv@%d\n",i);return 1;}
+    if(ct_unsigned_div_s(&uc)!=bcir_ct_unsigned_div(&uc)){printf("udv@%d\n",i);return 1;}
+    if(ct_roundtrip_s(&pc)!=bcir_ct_roundtrip(&pc)){printf("rt@%d\n",i);return 1;}
+    if(ct_plain_widen_s(&pc)!=bcir_ct_plain_widen(&pc)){printf("pw@%d\n",i);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath = os.path.join(d, f"{label}.c")
+            open(cpath, "w").write(harness)
+            for charmode in ("-fsigned-char", "-funsigned-char"):       # exercise plain char both ways
+                epath = os.path.join(d, f"{label}{charmode}")
+                for std in ("c23", "c2x", "c17"):
+                    b = subprocess.run([_CC, f"-std={std}", "-O2", charmode, cpath, "-o", epath],
+                                       capture_output=True, text=True)
+                    if b.returncode == 0:
+                        break
+                else:
+                    raise AssertionError(f"{fx}: {label} {charmode} build failed:\n{b.stderr}")
+                out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+                assert out == "MATCH", f"{fx}: {label} {charmode} not behaviour-equivalent ({out})"
+
+
 def _build_loop(d: str) -> str:
     return _compile_once("loop", "loop",
                          ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c",

@@ -373,6 +373,8 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
       if(scalar_float_size(pk(c)->s,pk(c)->n)>=0) ty->is_float=1;     /* float / double */
       if((pk(c)->n==5&&!strncmp("_Bool",pk(c)->s,5))||(pk(c)->n==4&&!strncmp("bool",pk(c)->s,4)))
         ty->is_bool=1;                                               /* a boolean: a store normalizes to 0/1 */
+      if(pk(c)->n==4&&!strncmp("char",pk(c)->s,4)&&!sign_explicit)
+        ty->is_plain_char=1;        /* plain `char` (no signed/unsigned): emit `char`, NOT int8_t (ARM) */
       seen=1;c->i++;
       if(is(c,"long")||is(c,"int")||is(c,"char"))continue;break;}
     break;
@@ -749,7 +751,9 @@ static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
     if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
       tr->is_signed=r->is_signed; tr->is_float=r->is_float; tr->ptr_depth=(uint8_t)(depth-1);
       snprintf(tr->agg,sizeof tr->agg,"%s",r->agg); }
-  } else t = r->is_float ? tempf(c,base) : tempi(c,base,r->is_signed);
+  } else { t = r->is_float ? tempf(c,base) : tempi(c,base,r->is_signed);
+    if(depth==1 && r->is_plain_char && c->fn->n_res)   /* a `char *` deref loads a plain `char` value */
+      c->fn->res[c->fn->n_res-1].is_plain_char=1; }
   int rd_sz = depth>1 ? cc_abi(c)->pointer_size : base;
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=rd_sz;
@@ -1520,10 +1524,12 @@ static void p_stmt(CC *c) {
       if(ty.kind==2&&!arr){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer local: carry the
         * pointee type (elem_bytes already = pointee size) so the decl emits `T *p`, not a truncating uint32 */
         pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0); pr->ptr_depth=ty.ptr_depth;
+        pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);   /* a `char *` pointee: the deref load emits `char` */
         if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
       else if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double (element) local */
       else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
-        if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1; }     /* a _Bool local: emit `_Bool`, store normalizes */
+        if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1;       /* a _Bool local: emit `_Bool`, store normalizes */
+        if(ty.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1; }   /* a plain `char` local: emit `char` */
       if(ty.kind==1&&!arr) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
       env_add(c,&nm,rid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
       if(is_static){            /* static storage: a once-only constant init, baked into the decl */
@@ -1730,10 +1736,12 @@ static int p_func(CC *c, bcir_func *fn) {
     if(ty.kind==2){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer param: carry the pointee
       * (width/sign/tag/depth) so pointer arithmetic on it (`p + i`) clones the real `T *` type, not uint32 */
       pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0); pr->ptr_depth=ty.ptr_depth;
+      pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);   /* a `char *` pointee: the deref load emits `char` */
       if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
     else if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
     else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
-      if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1; }     /* a _Bool parameter */
+      if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1;       /* a _Bool parameter */
+      if(ty.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1; }   /* a plain `char` parameter */
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
     env_add(c,&pn,rid,&ty,si);
     if(fn->n_params>=fn->cap_params){ int nc=fn->cap_params?fn->cap_params*2:4;
@@ -1767,6 +1775,7 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   const char *kw = ty->is_union ? "union" : "struct";
   const char *base = is_struct ? ty->tag
                    : ty->is_bool ? "_Bool"
+                   : ty->is_plain_char ? "char"   /* plain `char`: impl-defined sign (not int8_t -> ARM) */
                    : ty->is_float ? (ty->size==4?"float":"double")
                    : ty->size==0 ? "void"
                    : ty->signd ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
@@ -1822,6 +1831,7 @@ static const char *tty(const bcir_func *f,uint32_t rid){
   if(!r) return "uint32_t";
   if(r->is_float) return r->elem_bytes==4?"float":"double";
   if(r->is_bool) return "_Bool";   /* a store into a bool object normalizes any nonzero to 1 (§6.3.1.2) */
+  if(r->is_plain_char) return "char";   /* plain `char`: impl-defined sign (not int8_t -> wrong on ARM) */
   if(r->kind==BCIR_RK_SCALAR) switch(r->elem_bytes){
     case 1: return r->is_signed?"int8_t":"uint8_t";
     case 2: return r->is_signed?"int16_t":"uint16_t";
