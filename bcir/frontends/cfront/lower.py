@@ -371,6 +371,7 @@ class _FuncLowerer:
         self.calls: list = []
         self.block_stack: list = [[]]                  # claims/control nodes append to the top block
         self.loop_ctr = 0                              # unique loop ids (the `continue` label numbering)
+        self.cl_ctr = 0                                # unique compound-literal ids (anonymous `_cl<N>` locals)
 
     def _next_loop_id(self) -> int:
         self.loop_ctr += 1
@@ -460,6 +461,9 @@ class _FuncLowerer:
     def _lvalue(self, node) -> "_LV":
         if isinstance(node, cast.Name):
             rid, ct = self._lookup(node.ident, node.pos)
+            return _LV("var", rid, ct)
+        if isinstance(node, cast.CompoundLiteral):        # `&(int){v}`, `(struct P){...}.field` -- an lvalue
+            rid, ct = self._compound_literal(node)
             return _LV("var", rid, ct)
         if isinstance(node, cast.Index):
             # collect the (possibly nested) index chain down to the ultimate base, then flatten
@@ -558,6 +562,8 @@ class _FuncLowerer:
         """The (rid, type) of an aggregate/pointer base used by member/index access."""
         if isinstance(node, cast.Name):
             return self._lookup(node.ident, node.pos)
+        if isinstance(node, cast.CompoundLiteral):        # `(struct P){...}.field` / indexing the literal
+            return self._compound_literal(node)
         if isinstance(node, cast.StringLit):                  # "abc"[i] -> index the anonymous global
             rid = self._string_ptr(node.value)
             return rid, self.rtypes[rid]
@@ -669,6 +675,8 @@ class _FuncLowerer:
             return self._emit(f"c.cast:{cname}", Opcode.ADD, (v,), (t,))
         if isinstance(node, (cast.Index, cast.Member)):
             return self._read(self._lvalue(node))
+        if isinstance(node, cast.CompoundLiteral):        # `(struct P){a,b}` by value / `(int){v}` as a value
+            return self._compound_literal(node)[0]
         if isinstance(node, cast.Assign):
             return self._assign(node)
         if isinstance(node, cast.SizeOf):
@@ -760,6 +768,25 @@ class _FuncLowerer:
                    domain=Domain.MMIO if mmio else Domain.RAM, bounds="assumed_safe",
                    lane=Lane.H if mmio else Lane.U,
                    hazard="barriered" if mmio else "unique")
+
+    def _compound_literal(self, node: "cast.CompoundLiteral") -> tuple[int, CType]:
+        """Materialize a compound literal `(type){init}` as an anonymous local and initialize it, exactly
+        like a braced local decl -- a struct/union/array reuses the `_agg_init` zero-baseline + per-member
+        store path; a scalar `(int){v}` copies the single value in. Returns (rid, type) so the result acts
+        as an lvalue (address-of / member access) and as an rvalue (a by-value struct arg / scalar read)."""
+        ct = self._resolve_type(node.type)
+        self.cl_ctr += 1
+        rid = self._storage(ct, f"_cl{self.cl_ctr}")
+        if ct.kind in ("struct", "union", "array"):
+            self._agg_init(rid, ct, node.init)
+        else:                                             # a scalar compound literal: one positional value
+            if node.init.entries:
+                v = self._rvalue(node.init.entries[0][1])
+            else:                                         # `(int){}` (C23 empty init) -> zero
+                v = self._temp(scalar("int", self.abi), "clz")
+                self._emit("c.const", Opcode.LOAD, (), (v,), imm=(0,))
+            self._emit("c.copy", Opcode.ADD, (v,), (rid,))
+        return rid, ct
 
     def _agg_init(self, rid: int, ct: CType, ag: cast.AggInit) -> None:
         """Lower a braced aggregate initializer to a `= {0}` zero baseline (so uninitialized members

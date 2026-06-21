@@ -97,6 +97,7 @@ typedef struct {
   bcir_unit *unit;   /* the whole unit, so a call can be typed by an earlier-defined callee's return */
   const bcir_abi *abi;  /* the target data model the unit is laid out for (long/ptr widths) */
   uint32_t rid, cid;
+  uint32_t cl_ctr;   /* unique anonymous compound-literal locals (`_cl<N>`) */
   char err[256]; int failed;
 } CC;
 /* Grow a CC parser-state array geometrically (no fixed cap), zeroing the fresh slots. On OOM the cap
@@ -651,6 +652,7 @@ static venv *lookup(CC *c,const tok *t){
 
 /* --- expression lowering (returns rid) ----------------------------------- */
 static uint32_t p_expr(CC *c);
+static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si);   /* `(type){init}` (defined w/ agg_init) */
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
 
 /* A pointer temporary cloned from an existing pointer value -- same pointee (width, signedness, float,
@@ -1114,7 +1116,21 @@ static uint32_t p_unary(CC *c) {
           if(v->type.kind==1||v->type.ptr_to_struct) snprintf(tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag); }
         bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
-    fail(c,"unsupported address-of (only &local/&param)"); return 0; }
+    if(is(c,"(")){ int save=c->i; c->i++;             /* `&(type){...}` -- address of a compound literal */
+      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
+                    || is(c,"const")||is(c,"volatile") || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+      bcir_ctype ty; int si;
+      if(is_type && !p_type(c,&ty,&si) && is(c,")")){ c->i++;
+        if(is(c,"{")){ uint32_t rid=p_compound_literal(c,&ty,si);   /* materialize the anonymous object */
+          uint32_t t=add_res(c,BCIR_DOM_RAM, ty.size?ty.size:4, 1,0,BCIR_RK_POINTER,"");   /* a `T *` to it */
+          if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+            tr->is_signed=(uint8_t)(ty.signd?1:0); tr->is_float=(uint8_t)(ty.is_float?1:0); tr->ptr_depth=1;
+            tr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);
+            if(ty.kind==1) snprintf(tr->agg,sizeof tr->agg,"%s %s",ty.is_union?"union":"struct",ty.tag); }
+          bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
+          if(cl){cl->n_rd=1;cl->rd[0]=rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
+      c->i=save; }
+    fail(c,"unsupported address-of (only &local/&param/&(compound literal))"); return 0; }
   if(is(c,"-")||is(c,"~")||is(c,"!")){
     const char *suf=is(c,"-")?"neg":is(c,"~")?"bnot":"lnot"; int is_lnot=is(c,"!");
     bcir_opcode oc=is(c,"-")?BCIR_OP_SUB:BCIR_OP_ADD;c->i++;
@@ -1151,6 +1167,7 @@ static uint32_t p_unary(CC *c) {
     if(is_type){ bcir_ctype ty;int si;
       if(!p_type(c,&ty,&si) && is(c,")")){
         c->i++;                                    /* ')' */
+        if(is(c,"{")) return p_compound_literal(c,&ty,si);   /* `(type){init}` -- a compound literal, not a cast */
         uint32_t v=p_unary(c);                     /* the operand (right-associative) */
         const bcir_resource *vr=res_of(c->fn,v);
         /* The result temp carries the target's signedness, so a signed (sub-int) target keeps its sign
@@ -1307,6 +1324,36 @@ static void agg_init(CC *c, uint32_t rid, int sidx) {
     if(is(c,",")) c->i++;
   }
   eat(c,"}");
+}
+/* A C99 compound literal `(type){init}` -- an anonymous local of `type`, initialized exactly like a
+ * braced local decl and yielded as an rvalue rid (a by-value struct arg, an assignment RHS, a scalar
+ * value), or addressed under `&`. A struct/union reuses agg_init (the `= {0}` zero baseline + a c.store
+ * per initialized member); a scalar `(int){v}` copies the single value in. (Direct postfix on a literal
+ * `(struct P){...}.f` and array literals `(int[]){...}` are deferred follow-ons.) */
+static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si) {
+  char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"_cl%u",++c->cl_ctr);
+  if(ty->kind==1){                                   /* a struct/union compound literal */
+    uint32_t rid=add_res(c,BCIR_DOM_RAM, si>=0?c->s[si].size:ty->size, 1, 0, BCIR_RK_AGGREGATE, nm);
+    if(c->fn->n_res) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",
+                              ty->is_union?"union":"struct", ty->tag);
+    agg_init(c, rid, si);                            /* parses the `{...}`: zinit + a c.store per member */
+    return rid;
+  }
+  /* a scalar compound literal `(int){v}` -- a named scalar local + a c.copy of the single value */
+  uint32_t rid=add_res(c,BCIR_DOM_RAM, ty->size?ty->size:4, 1, 0, BCIR_RK_SCALAR, nm);
+  if(c->fn->n_res){ bcir_resource *rr=&c->fn->res[c->fn->n_res-1];
+    rr->is_signed=(uint8_t)(ty->signd?1:0); rr->is_float=(uint8_t)(ty->is_float?1:0);
+    rr->is_bool=(uint8_t)(ty->is_bool?1:0); rr->is_plain_char=(uint8_t)(ty->is_plain_char?1:0); }
+  eat(c,"{");
+  uint32_t v;
+  if(is(c,"}")){ v=temp(c, ty->size?ty->size:4);     /* `(int){}` (C23 empty) -> 0 */
+    bcir_claim *k=new_claim(c,"c.const",BCIR_OP_LOAD); if(k){k->n_wr=1;k->wr[0]=v;k->n_imm=1;k->imm[0]=0;} }
+  else v=p_expr(c);
+  if(is(c,",")) c->i++;                              /* a tolerated trailing comma */
+  eat(c,"}");
+  bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);
+  if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}
+  return rid;
 }
 /* A braced initializer for a local array `T a[N] = {...}` (the C twin of the oracle's array _agg_init):
  * a `= {0}` zero baseline (emit) + a c.store per initialized element. Positional entries advance a

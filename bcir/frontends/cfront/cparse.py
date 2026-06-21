@@ -734,8 +734,12 @@ class _Parser:
                 ptr += 1
                 self.nxt()
             self.eat("PUNCT", ")")
-            return cast.Cast(cast.TypeRef(base=tref.base, ptr=ptr, aggregate=tref.aggregate,
-                                          quals=tref.quals), self._unary())
+            tref = cast.TypeRef(base=tref.base, ptr=ptr, aggregate=tref.aggregate, quals=tref.quals)
+            if self.at("PUNCT", "{"):                   # `(type){ init }` — a C99 compound literal, not a cast
+                # supported in rvalue position (`f((struct P){...})`, `x = (struct P){...}`) and under `&`
+                # (`&(int){v}`); direct postfix on a literal (`(struct P){...}.f`) is a deferred follow-on.
+                return cast.CompoundLiteral(tref, self._init_value())
+            return cast.Cast(tref, self._unary())
         return self._postfix()
 
     def _is_cast(self) -> bool:

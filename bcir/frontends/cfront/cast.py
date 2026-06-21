@@ -83,6 +83,15 @@ class Cast:
 
 
 @dataclass(frozen=True)
+class CompoundLiteral:
+    """A C99 compound literal `( type-name ) { initializer-list }` — an anonymous object of `type`
+    with automatic storage, materialized as a nameless local and yielded as an lvalue (so `&(int){x}`,
+    `f((struct P){a,b})`, and `(struct P){...}.field` all work). `init` is the braced AggInit."""
+    type: TypeRef
+    init: AggInit
+
+
+@dataclass(frozen=True)
 class SizeOf:
     type: object = None             # a TypeRef for `sizeof(type)`, else None
     expr: object = None             # the operand for `sizeof expr` (its static type's size)

@@ -899,7 +899,7 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     compound assignment, runs in order, on both rails; the twin's `p_simple` gained scalar/pointer
     compound-assign to match, closing a pre-existing single-`a += b`-step gap too;
     `#commastep`/`cfront_commastep.c`); the comma operator in general expression position (blocked on
-    the twin, which has no assignment-in-expression), `typeof`, compound literals; ✅ **full integer promotions + the usual
+    the twin, which has no assignment-in-expression), `typeof`; ✅ **full integer promotions + the usual
     arithmetic conversions** — **dual-rail** (oracle `ctype_model.promote_int`/`usual_arith_int`/
     `int_literal_type` + `lower._bin_result_type`; C twin `tempi`/`rid_int`/`uac_i`/`lit_int_type` +
     `tty`/`ctype_str` rendering the true fixed-width type, with `is_signed` threaded through the resource
@@ -975,7 +975,13 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     postfix pointer chain recognizes a `(` after a member as the fused `c.call.imember` indirect call on
     the loaded pointer base (the oracle already did; the twin now agrees -- `#fnptrchain`/
     `cfront_fnptrchain.c`, an R18-opaque dispatch == Clang on both rails).
-    *Follow-on:* **compound literals** (`(struct S){…}`);
+    ✅ **compound literals** (`(struct S){…}` / `(int){v}`) -- an anonymous object materialized as a
+    nameless `_cl<N>` local and initialized like a braced declarator (a struct/union reuses the `= {0}`
+    zero baseline + per-member store, designators in any order, the rest zero-filling; a scalar copies
+    the single value); supported in rvalue position (a by-value struct argument, a scalar value, a member
+    initializer) and under `&` (a pointer to the temporary). `#complit`/`cfront_complit.c`, a value
+    differential == Clang on both rails. *Follow-on:* direct postfix on a literal (`(struct S){…}.f`)
+    and array literals `(int[]){…}`.
   - *storage/linkage:* ✅ **`extern`** (recognized as a storage-class specifier on both rails -- consumed
     like `static`; an `extern T g;` global is referenced by name, defined in another TU, so the emit is
     Clang-equivalent once linked against the definition -- `#extern`/`cfront_extern.c`); ✅
