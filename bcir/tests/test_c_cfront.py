@@ -253,6 +253,31 @@ int main(void){{
         return subprocess.run([e], capture_output=True, text=True).stdout.strip()
 
 
+def _parity_check_fixture(args):
+    """Parity + dual-emit behaviour-equivalence for ONE fixture. Returns (fx, None) on pass or (fx, msg)
+    on failure. Module-level + (exe, fx) string args so it is dispatchable to a process pool: the ~90
+    fixtures each run two Clang compile+run cycles (the twin's emit AND the oracle's own emit), which
+    dominate this module's wall time and are independent (each its own tempdir), so they fan out across
+    the runner's cores. (Threads do not help -- the oracle lowering + harness build are GIL-bound.)"""
+    exe, fx = args
+    path = os.path.join(_C, fx)
+    src = open(path, encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src, _includes_for(fx))
+    c_summary, c_emit = _c_run(exe, path)
+    if c_summary != oracle_summary:
+        return (fx, f"parity diverged\n C: {c_summary}\nPY: {oracle_summary}")
+    # equivalence uses the PREPROCESSED source (r.source) so Clang needs no #include.
+    if _equiv(r.source, c_emit, entry) != "MATCH":
+        return (fx, "emitted C not behaviour-equivalent")
+    # ALSO compile + run the ORACLE's own emitted C (the check above uses the C twin's emit, so the oracle
+    # emitter was unguarded across the corpus -- the general form of the #387 fix, which caught a member
+    # array at offset 0 emitting an invalid `struct[idx]`).
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    if _equiv(r.source, oracle_emit, entry) != "MATCH":
+        return (fx, "oracle's own emitted C not behaviour-equivalent")
+    return (fx, None)
+
+
 def test_python_c_parity_and_equivalence_across_fixtures():
     if not _CC:
         # quick tier: still validate the oracle side computes the summaries.
@@ -262,20 +287,16 @@ def test_python_c_parity_and_equivalence_across_fixtures():
         return
     with tempfile.TemporaryDirectory() as d:
         exe = _build_frontend(d)
-        for fx in _FIXTURES:
-            path = os.path.join(_C, fx)
-            src = open(path, encoding="utf-8").read()
-            oracle_summary, r, entry = _oracle(src, _includes_for(fx))
-            c_summary, c_emit = _c_run(exe, path)
-            assert c_summary == oracle_summary, f"{fx}: parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
-            # equivalence uses the PREPROCESSED source (r.source) so Clang needs no #include.
-            assert _equiv(r.source, c_emit, entry) == "MATCH", f"{fx}: emitted C not behaviour-equivalent"
-            # ALSO compile + run the ORACLE's own emitted C (the check above uses the C twin's emit, so
-            # the oracle emitter was unguarded across the corpus -- this is the general form of the
-            # #387 fix, which caught a member array at offset 0 emitting an invalid `struct[idx]`).
-            oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
-            assert _equiv(r.source, oracle_emit, entry) == "MATCH", \
-                f"{fx}: oracle's own emitted C not behaviour-equivalent"
+        workers = min(len(_FIXTURES), os.cpu_count() or 1)
+        if workers > 1:
+            import concurrent.futures  # noqa: PLC0415 -- only when the toolchain tier actually runs
+            with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as ex:
+                results = list(ex.map(_parity_check_fixture, [(exe, fx) for fx in _FIXTURES]))
+        else:
+            results = [_parity_check_fixture((exe, fx)) for fx in _FIXTURES]
+    fails = [(fx, msg) for fx, msg in results if msg]
+    assert not fails, "C-frontend parity/equivalence failures:\n" + "\n".join(
+        f"  {fx}: {msg}" for fx, msg in fails)
 
 
 def _build_loop(d: str) -> str:
