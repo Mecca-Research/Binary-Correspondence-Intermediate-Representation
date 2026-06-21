@@ -31,6 +31,9 @@ _FIXABLE_PUNCT = frozenset({";", ")", "}", "]"})
 _TYPE_KW = frozenset({"void", "_Bool", "bool", "char", "short", "int", "long", "unsigned",
                       "signed", "float", "double", "const", "volatile", "static", "extern", "inline",
                       "_Thread_local", "thread_local", "struct", "union"})
+# `typeof` / `typeof_unqual` (C23) / `__typeof__` (GNU): a type-specifier whose type is the operand's
+# -- supported for a type-name operand `typeof(int*)` and a bare in-scope variable `typeof(x)`.
+_TYPEOF_KW = frozenset({"typeof", "typeof_unqual", "__typeof__"})
 # binary operators by ascending precedence groups (C order).
 _PRECEDENCE = [
     ("||",), ("&&",), ("|",), ("^",), ("&",), ("==", "!="), ("<", ">", "<=", ">="),
@@ -370,6 +373,23 @@ class _Parser:
                     self._enum_body("")
                 base = "int"
                 break
+            elif w in _TYPEOF_KW and not words and not aggregate:   # typeof(type-name) / typeof(variable)
+                self.nxt()
+                self.eat("PUNCT", "(")
+                if self._is_decl_start():                  # typeof ( type-name ), incl. `typeof(int*)`
+                    inner = self._type_spec()
+                    ip = 0
+                    while self.at("OP", "*"):
+                        ip += 1
+                        self.nxt()
+                    self.eat("PUNCT", ")")
+                    return cast.TypeRef(base=inner.base, ptr=ip, array=inner.array,
+                                        aggregate=inner.aggregate, quals=tuple(quals) + inner.quals)
+                name = self.eat("IDENT").text              # typeof ( variable ) -- a bare in-scope variable
+                if not self.at("PUNCT", ")"):              # a general expression operand is a follow-on
+                    raise CParseError("typeof of a non-trivial expression is not yet supported")
+                self.eat("PUNCT", ")")
+                return cast.TypeRef(base="", typeof_var=name, quals=tuple(quals))
             elif not words and w in self.typedefs:        # a typedef name -> expand the alias
                 td = self.typedefs[w]
                 self.nxt()
@@ -444,7 +464,8 @@ class _Parser:
                                     else parse_int_literal(self.eat("INT").text))
                         self.eat("PUNCT", "]")
                     return cast.TypeRef(base=base.base, ptr=0, array=tuple([0] + dims),
-                                        aggregate=base.aggregate, quals=base.quals), nm
+                                        aggregate=base.aggregate, quals=base.quals,
+                                        typeof_var=base.typeof_var), nm
             self.i = save                                 # not `(*name)[..]` -> a normal declarator
         name = self.eat("IDENT").text
         dims = []
@@ -454,8 +475,10 @@ class _Parser:
             self.eat("PUNCT", "]")
         if base.funcptr and ptr == 0 and not dims:        # `binop_fn fn` — keep the funcptr shape
             return base, name
-        return cast.TypeRef(base=base.base, ptr=ptr, array=tuple(dims),
-                            aggregate=base.aggregate, quals=base.quals), name
+        return cast.TypeRef(base=base.base, ptr=ptr + base.ptr,         # base.ptr != 0 only for typeof(T*)
+                            array=tuple(base.array) + tuple(dims),
+                            aggregate=base.aggregate, quals=base.quals,
+                            typeof_var=base.typeof_var), name
 
     # --- functions ---
     def _func_body(self, ret: cast.TypeRef, name: str) -> cast.Func:
@@ -497,7 +520,7 @@ class _Parser:
         if not self.at("IDENT"):
             return False
         w = self.peek().text
-        return (w in _TYPE_KW or w == "enum" or is_scalar_name(w)
+        return (w in _TYPE_KW or w in _TYPEOF_KW or w == "enum" or is_scalar_name(w)
                 or w in self.tags or w in self.typedefs)
 
     def _stmt(self):
@@ -750,7 +773,7 @@ class _Parser:
         if nxt.kind != "IDENT":
             return False
         w = nxt.text
-        return (w in _TYPE_KW or w in ("struct", "union", "enum", "const", "volatile")
+        return (w in _TYPE_KW or w in _TYPEOF_KW or w in ("struct", "union", "enum", "const", "volatile")
                 or is_scalar_name(w) or w in self.typedefs)
 
     def _postfix(self):

@@ -115,7 +115,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
   || { echo "  FAIL: C frontend build"; exit 1; }
 # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
 FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c cfront_multiptr.c cfront_chartypes.c \
-cfront_complit.c"
+cfront_complit.c cfront_typeof.c"
 # Precompute EVERY oracle summary in one python process (import compile_unit once) -- the old
 # python-per-fixture loop paid ~0.3s of interpreter+import startup each (~30s over the fixture set).
 python3 - "${C}" ${FIXTURES} > "${tmp}/py_sums.txt" <<'PY' || { echo "  FAIL: python lowering (batch)"; exit 1; }
@@ -1645,5 +1645,35 @@ clr="$("${tmp}/cl_h")"
 [ "${clr}" = "MATCH" ] \
   && echo "  PASS complit: (struct){...} by value / designators / &(int){v} / &(struct){...} == Clang" \
   || { echo "  FAIL: complit behaviour (${clr})"; exit 1; }
+
+# typeof (#typeof): `typeof(type-name)` / `typeof(variable)` resolves to the operand's type -- each case
+# is built so the WRONG type (int vs long, signed vs unsigned, a short truncation) would diverge.
+echo "[c-runtime] typeof -- typeof(type-name) / typeof(variable) (#typeof)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_typeof.c" > "${tmp}/to_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bto_width\b/to_width_s/' -e 's/\bto_sign\b/to_sign_s/' -e 's/\bto_typename\b/to_typename_s/' \
+      -e 's/\bto_ptr\b/to_ptr_s/' -e 's/\bto_struct\b/to_struct_s/' -e 's/\bto_unqual\b/to_unqual_s/' \
+      "${C}/cfront_typeof.c"
+  cat "${tmp}/to_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(long a=-50;a<50;a++){
+    if(to_width_s(a)!=bcir_to_width(a)){printf("width@%ld\n",a);return 1;}
+    if(to_sign_s((unsigned)a)!=bcir_to_sign((unsigned)a)){printf("sign@%ld\n",a);return 1;}
+    if(to_typename_s((int)a)!=bcir_to_typename((int)a)){printf("tn@%ld\n",a);return 1;}
+    if(to_ptr_s((int)a)!=bcir_to_ptr((int)a)){printf("ptr@%ld\n",a);return 1;}
+    if(to_struct_s((int)a)!=bcir_to_struct((int)a)){printf("struct@%ld\n",a);return 1;}
+    if(to_unqual_s(a)!=bcir_to_unqual(a)){printf("unq@%ld\n",a);return 1;}
+  }
+  printf("MATCH\n");return 0;}
+DRV
+} > "${tmp}/to_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/to_harness.c" -o "${tmp}/to_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/to_harness.c" -o "${tmp}/to_h" \
+  || { echo "  FAIL: typeof harness build"; exit 1; }
+tor="$("${tmp}/to_h")"
+[ "${tor}" = "MATCH" ] \
+  && echo "  PASS typeof: typeof(long)/typeof(unsigned)/typeof(short)/typeof(int*)/typeof(struct) == Clang" \
+  || { echo "  FAIL: typeof behaviour (${tor})"; exit 1; }
 
 echo "[c-runtime] ok"

@@ -387,7 +387,11 @@ class _FuncLowerer:
             ret = self._resolve_type(tref.func_ret)
             params = tuple(self._resolve_type(p) for p in tref.func_params)
             return funcptr(tref.base, ret, params, self.abi)
-        if tref.aggregate:
+        if tref.typeof_var:                                # `typeof(var)` -> the in-scope variable's type
+            if tref.typeof_var not in self.env:
+                raise CLowerError(f"typeof of unknown variable {tref.typeof_var!r}")
+            base = self.env[tref.typeof_var][1]
+        elif tref.aggregate:
             base = self.aggregates[tref.base]
         elif is_scalar_name(tref.base):
             base = scalar(tref.base, self.abi)
