@@ -899,7 +899,11 @@ port** — the genuinely-remaining Phase-2 language/infra work:
     compound assignment, runs in order, on both rails; the twin's `p_simple` gained scalar/pointer
     compound-assign to match, closing a pre-existing single-`a += b`-step gap too;
     `#commastep`/`cfront_commastep.c`); the comma operator in general expression position (blocked on
-    the twin, which has no assignment-in-expression), `typeof`; ✅ **full integer promotions + the usual
+    the twin, which has no assignment-in-expression); ✅ **`typeof`** (C23 `typeof(type-name)` /
+    `typeof(variable)` + GNU `__typeof__` / C23 `typeof_unqual` as a type-specifier resolving to the
+    operand's type -- a type-name operand incl. `typeof(int*)`, and a bare in-scope variable; a general
+    expression operand `typeof(a+b)` is a follow-on. `#typeof`/`cfront_typeof.c`, a value differential
+    == Clang on both rails); ✅ **full integer promotions + the usual
     arithmetic conversions** — **dual-rail** (oracle `ctype_model.promote_int`/`usual_arith_int`/
     `int_literal_type` + `lower._bin_result_type`; C twin `tempi`/`rid_int`/`uac_i`/`lit_int_type` +
     `tty`/`ctype_str` rendering the true fixed-width type, with `is_signed` threaded through the resource

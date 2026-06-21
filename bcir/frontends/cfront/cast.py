@@ -19,6 +19,7 @@ class TypeRef:
     funcptr: bool = False           # a function-pointer alias (RET (*name)(PARAMS)) — base is its name
     func_ret: object = None         # the return TypeRef (funcptr only)
     func_params: tuple = ()         # the parameter TypeRefs (funcptr only) — for faithful emit
+    typeof_var: str = ""            # `typeof(var)` — resolved in lowering to the in-scope variable's type
 
 
 # --- expressions ---

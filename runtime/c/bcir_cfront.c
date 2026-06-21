@@ -348,6 +348,8 @@ static void apply_stars(CC *c, bcir_ctype *ty) {
 /* Parse a type SPECIFIER (the base scalar/struct/union/enum/typedef + qualifiers + the data-model size
  * fixups), WITHOUT the declarator `*`s. p_type folds the stars on top; the multi-declarator paths call
  * this and apply_stars per declarator instead. */
+static int p_type(CC *c, bcir_ctype *ty, int *sidx);          /* fwd: typeof(type-name) parses recursively */
+static venv *lookup(CC *c, const tok *t);                     /* fwd: typeof(variable) resolves its type */
 static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
   memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1;
   int seen=0, longs=0, ptrtrk=0, sign_explicit=0;   /* longs: `long` (data-model) vs `long long` (8) */
@@ -356,6 +358,20 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
     if(is(c,"_Atomic")){ty->is_atomic=1;c->i++;continue;}
     if(is(c,"const")||is(c,"static")||is(c,"inline")||is(c,"extern")
        ||is(c,"_Thread_local")||is(c,"thread_local")){c->i++;continue;}  /* storage class / qualifier */
+    if(is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")){       /* typeof(type-name) / typeof(var) */
+      c->i++; if(!eat(c,"(")) return 1;
+      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
+                    || is(c,"const")||is(c,"volatile")
+                    || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
+                    || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+      if(is_type){ bcir_ctype inner; int isi;                            /* typeof( type-name ), incl. typeof(int*) */
+        if(p_type(c,&inner,&isi)) return 1; *ty=inner; *sidx=isi; }
+      else { tok id=adv(c); venv *v=lookup(c,&id);                       /* typeof( variable ) -- bare in-scope var */
+        if(!v){ fail(c,"typeof of unknown variable"); return 1; }
+        *ty=v->type; *sidx=v->sidx;
+        if(!is(c,")")){ fail(c,"typeof of a non-trivial expression is not yet supported"); return 1; } }
+      if(!eat(c,")")) return 1;
+      seen=1; break; }
     if(is(c,"signed")){ty->signd=1;sign_explicit=1;c->i++;continue;}   /* a modifier; the base sets size */
     if(is(c,"unsigned")){ty->signd=0;sign_explicit=1;ty->size=4;seen=1;c->i++;continue;}
     if(is(c,"struct")||is(c,"union")){c->i++;tok tag=adv(c);int si=find_struct(c,tag.s,tag.n);
@@ -1018,7 +1034,9 @@ static uint32_t p_primary(CC *c) {
     c->i++; long long size=4; int got=0;
     if(is(c,"(")){ int save=c->i; c->i++;
       int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
-                    || is(c,"const")||is(c,"volatile") || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+                    || is(c,"const")||is(c,"volatile")
+                    || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
+                    || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
       if(is_type){ bcir_ctype ty;int si;
         if(!p_type(c,&ty,&si)){ size = ty.kind==2?cc_abi(c)->pointer_size:(ty.kind==1?c->s[si].size:ty.size); got=1; }
         eat(c,")"); }
@@ -1118,7 +1136,9 @@ static uint32_t p_unary(CC *c) {
         if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
     if(is(c,"(")){ int save=c->i; c->i++;             /* `&(type){...}` -- address of a compound literal */
       int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
-                    || is(c,"const")||is(c,"volatile") || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+                    || is(c,"const")||is(c,"volatile")
+                    || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
+                    || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
       bcir_ctype ty; int si;
       if(is_type && !p_type(c,&ty,&si) && is(c,")")){ c->i++;
         if(is(c,"{")){ uint32_t rid=p_compound_literal(c,&ty,si);   /* materialize the anonymous object */
@@ -1163,7 +1183,9 @@ static uint32_t p_unary(CC *c) {
   if(is(c,"(")){                                   /* (type)operand -- a cast binds at the unary level */
     int save=c->i; c->i++;
     int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
-                  || is(c,"const")||is(c,"volatile") || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+                  || is(c,"const")||is(c,"volatile")
+                    || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
+                    || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
     if(is_type){ bcir_ctype ty;int si;
       if(!p_type(c,&ty,&si) && is(c,")")){
         c->i++;                                    /* ')' */
@@ -1548,6 +1570,7 @@ static void p_stmt(CC *c) {
   int looks_decl=0, is_static=is(c,"static");
   if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
     looks_decl=sz>=0||is_static||is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"const")||is(c,"volatile")
+               ||is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                ||find_typedef(c,pk(c)->s,pk(c)->n)>=0;}
   if(looks_decl){
     bcir_ctype base;int si;if(p_type_base(c,&base,&si))return;   /* the shared specifier (eats `static`, NOT `*`) */
