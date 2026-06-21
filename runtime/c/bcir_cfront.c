@@ -978,9 +978,12 @@ static uint32_t p_primary(CC *c) {
   }
   fail(c,"expected expression");return 0;
 }
-/* name a cast's target type by width, so both rails emit the same (uintN_t) spelling. */
-static void cast_name(const bcir_ctype *ty,char *o,size_t n){
+/* name a cast's target type by width, so both rails emit the same (uintN_t) spelling. With signed_int
+ * set, a width-named integer uses the SIGNED fixed-width spelling -- needed for a float -> signed-int
+ * conversion, which is UB/target-divergent if rendered as float -> unsigned. */
+static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
   const char *nm=ty->is_float ? (ty->size==4?"float":"double")
+                : signed_int ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
                 : ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t";
   if(ty->kind==2) snprintf(o,n,"c.cast:%s *",nm); else snprintf(o,n,"c.cast:%s",nm);
 }
@@ -1029,9 +1032,13 @@ static uint32_t p_unary(CC *c) {
       if(!p_type(c,&ty,&si) && is(c,")")){
         c->i++;                                    /* ')' */
         uint32_t v=p_unary(c);                     /* the operand (right-associative) */
+        const bcir_resource *vr=res_of(c->fn,v);   /* a float -> signed-int conversion needs a signed temp
+                                                    * + signed cast operator (float -> unsigned is UB). */
+        int f2s = vr && vr->is_float && !ty.is_float && ty.kind!=2 && ty.signd && ty.size>0;
         uint32_t r = ty.is_float ? tempf(c, ty.size)          /* a float cast -> a float temp */
+                   : f2s ? tempi(c, ty.size, 1)               /* float -> signed int -> a signed temp */
                                  : temp(c, ty.kind==2?cc_abi(c)->pointer_size:(ty.size?ty.size:4));
-        char op[BCIR_CIR_NAME]; cast_name(&ty,op,sizeof op);
+        char op[BCIR_CIR_NAME]; cast_name(&ty,f2s,op,sizeof op);
         bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=r;} return r;
       }

@@ -724,6 +724,16 @@ dual-rail check could not see; only the Clang differential did, and the `float`/
 disagreed). Fixed by taking the promoted operand type on both rails (`promote_i` for the integer
 signedness, a float temp for a float operand). `#unarypromote`/`cfront_unarypromote.c`, differential ==
 Clang on both rails.
+✅ **and the float -> signed-integer cast it exposed** (the `#395` aarch64 failure): both rails
+canonicalized *every* integer cast to the unsigned fixed-width spelling -- `(uint32_t)x` / `(uint8_t)x` --
+which turns a float -> *signed* conversion into a float -> *unsigned* one: UB for a negative value and
+target-divergent (x86 wraps, aarch64 saturates to 0), and even on x86 a sub-int signed target lost the
+sign (`(signed char)(-5.0f)` came out `251`, not `-5`). Fixed by emitting a SIGNED fixed-width operator
+into a signed temp when a floating operand is cast to a signed integer (the unsigned spelling is kept for
+unsigned targets and pure integer casts). `#floatsigncast`/`cfront_floatsigncast.c`, differential == Clang
+on both rails. *(Still open, found alongside: a pure-integer narrowing cast to a signed sub-int type used
+directly -- e.g. `return (signed char)x` for a negative `int x` -- mistypes on the twin for the same
+unsigned-temp reason; queued as the next fix.)*
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both

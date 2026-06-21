@@ -50,6 +50,7 @@ _UN = {"-": (Opcode.SUB, "neg"), "~": (Opcode.ADD, "bnot"), "!": (Opcode.SUB, "l
 # A cast's target type, named by width so both rails emit the same (uintN_t) spelling. The C value
 # model tracks everything as a 32-bit unit, so a cast renders by size (a pointer cast keeps its `*`).
 _CAST_W = {1: "uint8_t", 2: "uint16_t", 4: "uint32_t", 8: "uint64_t"}
+_CAST_W_SIGNED = {1: "int8_t", 2: "int16_t", 4: "int32_t", 8: "int64_t"}
 
 
 def _cast_name(ct: CType) -> str:
@@ -634,7 +635,15 @@ class _FuncLowerer:
             # declares it float); an integer cast to a uint32 temp reproduces integer-promotion (a
             # narrowing cast masks/zero-extends back), so either way the result matches Clang.
             t = self._temp(ct if (ct.is_integer or ct.is_float) else scalar("uint32_t"), "cast")
-            return self._emit(f"c.cast:{_cast_name(ct)}", Opcode.ADD, (v,), (t,))
+            # A float -> signed-integer conversion needs a SIGNED cast operator: the canonical unsigned
+            # name (uint32_t / uint8_t) makes it float -> unsigned, which is UB for a negative value and
+            # diverges by target (x86 wraps, aarch64 saturates to 0) -- and even on x86 a sub-int signed
+            # target loses the sign. Emit the signed fixed-width operator so `(int)(-5.0f)` is -5.
+            vt = self.rtypes.get(v)
+            cname = (_CAST_W_SIGNED.get(ct.size, "int32_t")
+                     if (vt is not None and vt.is_float and ct.is_integer and ct.signed)
+                     else _cast_name(ct))
+            return self._emit(f"c.cast:{cname}", Opcode.ADD, (v,), (t,))
         if isinstance(node, (cast.Index, cast.Member)):
             return self._read(self._lvalue(node))
         if isinstance(node, cast.Assign):
