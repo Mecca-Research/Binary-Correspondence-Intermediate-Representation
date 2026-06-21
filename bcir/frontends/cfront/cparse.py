@@ -384,8 +384,8 @@ class _Parser:
                 return td
             return cast.TypeRef(base=td.base, ptr=td.ptr, array=td.array,
                                 aggregate=td.aggregate, quals=tuple(quals) + td.quals)
-        if not aggregate:
-            base = self._canon_scalar(words)
+        if not aggregate and not base:                    # `enum [tag]` already set base="int"; only
+            base = self._canon_scalar(words)              # canonicalize a scalar keyword run otherwise
         return cast.TypeRef(base=base, aggregate=aggregate, quals=tuple(quals))
 
     @staticmethod
