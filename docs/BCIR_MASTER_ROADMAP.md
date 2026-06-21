@@ -791,7 +791,7 @@ pointer, and the loaded value carries its real `T *` type (the twin via a `field
 `tempptr_field`, the oracle via `_load_ctype` honouring pointers). `#ptrfield`/`cfront_ptrfield.c`,
 differential == Clang on both rails (a scalar written between two pointer members survives only under the
 8-byte layout). *(Slice 2 of the pointer-value model; dereferencing/chaining a loaded pointer field --
-`*(s->p)`, `s->t->a` -- is slice 2b.)*
+`*(s->p)`, `s->t->a` -- is slice 2b, below.)*
 ✅ **and pointer-to-pointer** (`int **pp`, the double dereference `**pp`, the output-parameter store
 `*pp = q`, `**pp = v`, and `int **pp = &p` built by address-of-a-pointer): **both** rails modeled `int **`
 as a single `int *` (no indirection depth in the type model), so `*pp` read the base width where the
@@ -802,6 +802,17 @@ now accepts a `*q` base): `*pp` on a `T**` loads a `T*` (pointer_size bytes), `*
 were generalized to a pointer **rvalue** (so `**pp` and `*(<expr>)` work, not only a named `*p`).
 `#ptr2ptr`/`cfront_ptr2ptr.c`, a bespoke valid-chain differential == Clang on both rails. *(Slice 3 --
 the last of the three pointer-value contexts; this closes the broader 4-byte-pointer value model.)*
+✅ **and dereferencing / chaining a loaded pointer field** (`*(s->p)`, the chain `s->mid->k` and the
+two-hop `s->mid->leaf->x`, and the subscript `s->p[i]` -- reads, writes, and compound RMW): both rails
+resolved a member used as a *base* to the enclosing struct's address + the field type, so a deref read
+the struct's *own* bytes instead of loading the pointer first; `s->mid->k` and `s->p[i]` fell back. Fixed
+by loading a pointer-valued field used as a base (a full `pointer_size` load at the field's offset) and
+making the loaded pointer the new base -- the same move as `*q` on a `T**` (the oracle's `_addr` +
+`_lvalue` index branch; the twin's `postfix_ptr_chain` read helper + `store_through_ptr` store helper,
+hooked into `p_primary` and the member-store path). `#fieldderef`/`cfront_fieldderef.c`, a bespoke
+valid-chain differential == Clang on both rails (a two-hop `Box -> Mid -> Leaf` chain + a `long*` field at
+a padded offset). *(Slice 2b -- this completes the pointer-value model: a pointer in a struct field can now
+be stored, loaded, **and** dereferenced/chained.)*
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both

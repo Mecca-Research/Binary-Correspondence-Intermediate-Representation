@@ -471,6 +471,7 @@ class _FuncLowerer:
             idx_nodes.reverse()
             byte_off = 0
             mem_shape = mem_elem = None
+            ptr_member = False
             if isinstance(n, cast.Member):
                 # `s.arr[i]` / `s.m[i][j]` -- indexing a struct *member* array. The base is the enclosing
                 # struct; the member's byte offset rides in the access imm beside the element size, and
@@ -479,25 +480,29 @@ class _FuncLowerer:
                 base_rid, struct_ct = self._addr(n.base)
                 agg = struct_ct.of if n.arrow else struct_ct
                 ftype, byte_off, _bo, _bw = agg.field(n.field)
-                if ftype.kind != "array":
-                    # a *pointer* member indexed (`s.ptr[i]`): the loaded pointer would have to be a real
-                    # 8-byte C pointer, but the value model represents a loaded pointer as a 4-byte temp
-                    # (truncating it, so `t[idx]` subscripts an integer); defer to the LLVM fallback.
+                if ftype.kind == "pointer":
+                    # a *pointer* member subscripted (`s->p[i]` == `*(s->p + i)`): load the full pointer
+                    # field, then index the loaded pointer like a plain `base[idx]` (no member offset).
+                    # (Pointer-value slice 2b -- the load is an 8-byte pointer, not a truncating uint32.)
+                    base_rid = self._read(_LV("mem", base_rid, ftype, byte_off=byte_off))
+                    base_ct, byte_off, ptr_member = ftype, 0, True
+                elif ftype.kind == "array":
+                    dims, t = [], ftype                       # descend the (nested) member array:
+                    while t.kind == "array":                  # per-dim sizes + the ultimate scalar element
+                        dims.append(t.count)
+                        t = t.of if t.of is not None else scalar("uint32_t")
+                    if len(dims) > 3:
+                        # the dim table (oracle shape / twin field.adims) holds at most 3 dims; defer deeper.
+                        raise CLowerError(
+                            f"indexing a >3-dimensional struct member array ('{n.field}') is not yet supported")
+                    if len(idx_nodes) != len(dims):
+                        # partial indexing of a member array (a row pointer `s.m[i]`): defer to fallback.
+                        raise CLowerError(
+                            f"partial indexing of a struct member array ('{n.field}') is not yet supported")
+                    base_ct, mem_shape, mem_elem = ftype, tuple(dims), t
+                else:
                     raise CLowerError(
                         f"indexing a non-array struct member ('{n.field}[...]') is not yet supported")
-                dims, t = [], ftype                           # descend the (nested) member array:
-                while t.kind == "array":                      # per-dim sizes + the ultimate scalar element
-                    dims.append(t.count)
-                    t = t.of if t.of is not None else scalar("uint32_t")
-                if len(dims) > 3:
-                    # the dim table (oracle shape / twin field.adims) holds at most 3 dims; defer deeper.
-                    raise CLowerError(
-                        f"indexing a >3-dimensional struct member array ('{n.field}') is not yet supported")
-                if len(idx_nodes) != len(dims):
-                    # partial indexing of a member array (a row pointer `s.m[i]`): defer to fallback.
-                    raise CLowerError(
-                        f"partial indexing of a struct member array ('{n.field}') is not yet supported")
-                base_ct, mem_shape, mem_elem = ftype, tuple(dims), t
             else:
                 base_rid, base_ct = self._addr(n)
             idx_rids = [self._rvalue(ix) for ix in idx_nodes]
@@ -514,7 +519,7 @@ class _FuncLowerer:
                 lin = a1
             elem = mem_elem if mem_elem is not None else (base_ct.of if base_ct.of else scalar("uint32_t"))
             return _LV("mem", base_rid, elem, idx=lin, byte_off=byte_off,
-                       member=isinstance(n, cast.Member))
+                       member=isinstance(n, cast.Member) and not ptr_member)
         if isinstance(node, cast.Member):
             base_rid, base_ct = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
@@ -559,7 +564,13 @@ class _FuncLowerer:
         if isinstance(node, cast.Member):
             base_rid, base_ct = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
-            ftype, _bo, _bf, _bw = agg.field(node.field)
+            ftype, byte_off, bit_off, bit_w = agg.field(node.field)
+            if ftype.kind == "pointer":                       # a pointer-valued field used as a *base*
+                # (`*(s->p)`, `s->t->a`): load the full pointer (at its field offset) and use the loaded
+                # pointer as the new base -- the same move as `*q` below. Returning (struct_rid, T*) would
+                # instead deref the struct's own address as if it held the pointee. (Pointer-value 2b.)
+                lv = _LV("mem", base_rid, ftype, byte_off=byte_off, bit_off=bit_off, bit_width=bit_w)
+                return self._read(lv), ftype
             return base_rid, ftype
         if isinstance(node, cast.Unary) and node.op == "*":   # `*q` as a base (`**pp`): load the pointer it
             rid = self._read(self._lvalue(node))              # holds, and use that loaded pointer as the base

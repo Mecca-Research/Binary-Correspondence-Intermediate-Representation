@@ -768,6 +768,35 @@ static field member_descend(CC *c, field f) {
   }
   return f;
 }
+/* Continue a postfix read chain through a loaded POINTER value (#fieldderef): `s->mid->k`, the two-hop
+ * `s->mid->leaf->x`, and the subscript `s->p[i]`. `ptr` is the loaded pointer rid (kind POINTER), `psidx`
+ * its pointee struct index (-1 for a pointer-to-scalar), `pfld` the field it came from (its pointee
+ * width/sign/float types a scalar deref). Mirrors the oracle: a pointer field used as a base is loaded,
+ * then the loaded pointer is the new base for the next `->`/`[` -- the same move as `*q` on a `T**`. */
+static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
+  for(;;){
+    if(is(c,"[")){                                   /* `...->p[i]`: index the loaded pointer (base[idx]) */
+      c->i++; uint32_t ix=p_expr(c); eat(c,"]");
+      venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=-1;
+      b.type.size=pfld.ptee_size?pfld.ptee_size:4; b.type.signd=pfld.signd; b.type.is_float=(uint8_t)pfld.ptee_float;
+      return emit_index(c,&b,ix);
+    }
+    if(is(c,"->")||is(c,".")){
+      if(psidx<0){ fail(c,"member access through a pointer to a non-struct"); return ptr; }
+      c->i++; tok fn=adv(c); sdef *S=&c->s[psidx]; int fi=-1;
+      for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
+      if(fi<0){ fail(c,"unknown field"); return ptr; }
+      field mf=member_descend(c,S->f[fi]);           /* flatten any nested value-struct hops */
+      venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=1;   /* base = the loaded pointer */
+      if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){    /* another pointer hop: load it, recurse */
+        ptr=emit_member(c,&b,&mf); psidx=mf.ptee_sidx; pfld=mf; continue;
+      }
+      if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf); return emit_member_index(c,&b,&mf,ix); }
+      return emit_member(c,&b,&mf);                   /* terminal member load through the loaded pointer */
+    }
+    return ptr;                                       /* no further postfix: the pointer value itself */
+  }
+}
 /* <math.h> real-valued functions (mirrors the oracle's _LIBM): the result is a floating type fixed
  * by the name suffix -- base -> double, +f -> float. They lower to an opaque external library edge
  * (c.call.libm), so the emit calls the real libm function (the harness links -lm) and R18 sees no
@@ -1006,6 +1035,9 @@ static uint32_t p_primary(CC *c) {
         return t;
       }
       field mf=member_descend(c,S->f[fi]);        /* nested `o.in.v` -> one flattened-offset load */
+      if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* deref-through a loaded pointer field (#fieldderef) */
+        uint32_t ptr=emit_member(c,v,&mf);        /* load the pointer field, then chain through the loaded ptr */
+        return postfix_ptr_chain(c,ptr,mf.ptee_sidx,mf); }
       if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);   /* s.arr[i] / s.m[i][j] load */
         return emit_member_index(c,v,&mf,ix); }
       return emit_member(c,v,&mf);
@@ -1319,6 +1351,49 @@ static void p_simple(CC *c) {
       return; } }
   (void)p_expr(c);
 }
+/* Store through a loaded POINTER chain (#fieldderef): `s->mid->k = v`, the two-hop `s->mid->leaf->x = v`,
+ * the subscript `s->p[i] = v`, and their `OP=` compound forms. `ptr` is the loaded pointer rid, `psidx`
+ * its pointee struct (-1 for a pointer-to-scalar), `pfld` the field it came from. Mirrors the member /
+ * indexed store path but with the loaded pointer as the base; a further pointer hop loads and recurses.
+ * (Bitfields through a pointer chain are not modelled here -- not part of the slice.) */
+static void store_through_ptr(CC *c, uint32_t ptr, int psidx, field pfld) {
+  if(is(c,"[")){                                        /* `...->p[i] = v` -- indexed store via the pointer */
+    c->i++; uint32_t idx=p_expr(c); eat(c,"]");
+    venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=-1;
+    b.type.size=pfld.ptee_size?pfld.ptee_size:4; b.type.signd=pfld.signd; b.type.is_float=(uint8_t)pfld.ptee_float;
+    uint32_t val;
+    if(is_compound_op(&c->t[c->i])){ char ch=c->t[c->i].s[0]; c->i++;
+      uint32_t cur=emit_index(c,&b,idx); uint32_t rhs=p_expr(c);
+      const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+      uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+      bcir_claim *bb=new_claim(c,op,oc); if(bb){bb->n_rd=2;bb->rd[0]=cur;bb->rd[1]=rhs;bb->n_wr=1;bb->wr[0]=tmp;}
+      val=tmp;
+    } else { if(!eat(c,"="))return; val=p_expr(c); }
+    bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+    if(cl){cl->n_rd=3;cl->rd[0]=ptr;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=BCIR_BND_ASSUMED;}
+    return;
+  }
+  if(!(is(c,"->")||is(c,"."))){ fail(c,"expected ->/./[ after a pointer field"); return; }
+  if(psidx<0){ fail(c,"member store through a pointer to a non-struct"); return; }
+  c->i++; tok fn=adv(c); sdef *S=&c->s[psidx]; int fi=-1;
+  for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
+  if(fi<0){ fail(c,"unknown field"); return; }
+  field f=member_descend(c,S->f[fi]);
+  venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=1;   /* base = the loaded pointer */
+  if(f.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){  /* another pointer hop: load it, recurse */
+    uint32_t nptr=emit_member(c,&b,&f); store_through_ptr(c,nptr,f.ptee_sidx,f); return;
+  }
+  uint32_t val;                                        /* terminal member store through the loaded pointer */
+  if(is_compound_op(&c->t[c->i])){ char ch=c->t[c->i].s[0]; c->i++;
+    uint32_t cur=emit_member(c,&b,&f); uint32_t rhs=p_expr(c);
+    const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+    uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+    bcir_claim *bb=new_claim(c,op,oc); if(bb){bb->n_rd=2;bb->rd[0]=cur;bb->rd[1]=rhs;bb->n_wr=1;bb->wr[0]=tmp;}
+    val=tmp;
+  } else { if(!eat(c,"="))return; val=p_expr(c); }
+  bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+  if(cl){cl->n_rd=2;cl->rd[0]=b.rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.size;cl->bounds=BCIR_BND_ASSUMED;}
+}
 static void p_stmt(CC *c) {
   if(is(c,";")){c->i++;return;}          /* empty statement -> a no-op (`for(...);`, `if(c);`, `;;`) */
   if(is(c,"return")){c->i++;
@@ -1505,6 +1580,9 @@ static void p_stmt(CC *c) {
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
       if(fi<0){fail(c,"unknown field");return;}
       field f=member_descend(c,S->f[fi]);         /* nested `o.in.v` -> one flattened-offset store */
+      if(f.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* store deref-through a loaded pointer field (#fieldderef) */
+        uint32_t ptr=emit_member(c,v,&f);         /* load the pointer field, then store through the loaded ptr */
+        store_through_ptr(c,ptr,f.ptee_sidx,f); eat(c,";"); return; }
       if(f.arr_count && is(c,"[")){               /* s.arr[i] / s.m[i][j] = expr  /  OP= expr */
         uint32_t idx=member_arr_index(c,&f); uint32_t aval;
         if(is_compound_op(&c->t[c->i])){          /* load element, bin op, store back */
