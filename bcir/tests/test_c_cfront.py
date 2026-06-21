@@ -10,6 +10,7 @@ shared fixture this gate checks the C rail against the six artifacts:
 Toolchain-gated (builds `bcir_cfront.c`): self-skips in the quick tier, runs under c-runtime/thorough.
 """
 
+import atexit
 import os
 import re
 import shutil
@@ -99,18 +100,45 @@ def _oracle(src: str, includes=None):
     return summary, r, entry
 
 
-def _build_frontend(d: str) -> str:
-    exe = os.path.join(d, "tcf")
-    # bcir_cfront verifies (bcir_verify.c -> bcir_verify_unit / bcir_provenance_digest) and the
-    # pack law reaches into bcir_runtime.c (bcir_sp_validate), so both are linked in.
-    srcs = [os.path.join(_C, s) for s in ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c",
-            "bcir_runtime.c", "test_cfront.c")]
+_BUILD_DIR = None
+_BUILD_CACHE: dict = {}
+
+
+def _session_build_dir() -> str:
+    global _BUILD_DIR
+    if _BUILD_DIR is None:
+        _BUILD_DIR = tempfile.mkdtemp(prefix="bcir_cc_build_")
+        atexit.register(shutil.rmtree, _BUILD_DIR, ignore_errors=True)
+    return _BUILD_DIR
+
+
+def _compile_once(key: str, out_name: str, src_names: tuple, label: str) -> str:
+    """Compile the runtime/c `src_names` to `out_name` ONCE per session (memoized by `key`) and reuse
+    the binary across every test that needs it. These binaries (the ~2100-line `bcir_cfront.c` + its
+    siblings, at -O2) are identical from test to test, so the old per-test rebuild was the suite's
+    single dominant wall-cost -- ~20 redundant front-end/loop/driver compiles. The cache lives for the
+    process (run_all + pytest both run in one process), keyed by the source set so a different binary
+    still builds its own."""
+    cached = _BUILD_CACHE.get(key)
+    if cached:
+        return cached
+    exe = os.path.join(_session_build_dir(), out_name)
+    srcs = [os.path.join(_C, s) for s in src_names]
     for std in ("c23", "c11"):
         b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
                            capture_output=True, text=True)
         if b.returncode == 0:
+            _BUILD_CACHE[key] = exe
             return exe
-    raise AssertionError(f"C frontend build failed:\n{b.stderr}")
+    raise AssertionError(f"{label} build failed:\n{b.stderr}")
+
+
+def _build_frontend(d: str) -> str:
+    # `d` is retained for call-site compatibility; the binary is cached session-wide (see _compile_once).
+    # bcir_cfront verifies (bcir_verify.c) and the pack law reaches into bcir_runtime.c, so both link in.
+    return _compile_once("frontend", "tcf",
+                         ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c", "test_cfront.c"),
+                         "C frontend")
 
 
 def _c_run(exe: str, fixture_path: str):
@@ -423,16 +451,9 @@ def test_field_deref_dual_rail():
 
 
 def _build_loop(d: str) -> str:
-    exe = os.path.join(d, "loop")
-    srcs = [os.path.join(_C, s) for s in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c",
-            "bcir_hydrate.c", "bcir_exec.c", "bcir_runtime.c", "bcir_verify.c",
-            "test_cfront_loop.c")]
-    for std in ("c23", "c11"):
-        b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
-                           capture_output=True, text=True)
-        if b.returncode == 0:
-            return exe
-    raise AssertionError(f"loop build failed:\n{b.stderr}")
+    return _compile_once("loop", "loop",
+                         ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c",
+                          "bcir_runtime.c", "bcir_verify.c", "test_cfront_loop.c"), "loop")
 
 
 def test_full_compile_execute_loop_in_c():
@@ -716,15 +737,9 @@ def test_cli_resolves_sibling_and_search_path_headers():
 
 
 def _build_bcir_cc(d: str) -> str:
-    exe = os.path.join(d, "bcir-cc")
-    srcs = [os.path.join(_C, s) for s in ("bcir_cc.c", "bcir_cpp.c", "bcir_cfront.c", "bcir_verify.c",
-            "bcir_runtime.c", "bcir_plan.c", "bcir_hydrate.c")]
-    for std in ("c23", "c11"):
-        b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
-                           capture_output=True, text=True)
-        if b.returncode == 0:
-            return exe
-    raise AssertionError(f"bcir-cc build failed:\n{b.stderr}")
+    return _compile_once("bcir_cc", "bcir-cc",
+                         ("bcir_cc.c", "bcir_cpp.c", "bcir_cfront.c", "bcir_verify.c", "bcir_runtime.c",
+                          "bcir_plan.c", "bcir_hydrate.c"), "bcir-cc")
 
 
 def test_file_macro_real_path_dual_rail():
