@@ -10,7 +10,11 @@ unsigned blend(unsigned n) {
 }
 unsigned windowed(unsigned n) {
   unsigned acc = 0u, scratch;                   /* one initialized, one left uninitialized */
-  for (unsigned i = 0u, j = n + 1u; i < j; i++) /* two-variable for-init off one specifier */
+  for (unsigned i = 0u, j = (n & 63u) + 1u; i < j; i++) /* two-variable for-init off one specifier;
+                                                 * j is windowed to [1,64] so the differential harness
+                                                 * (which fuzzes n up to ~2e9) doesn't run this loop a
+                                                 * billion times per input -- the lowering under test is
+                                                 * trip-count-independent, so the bound costs no coverage */
     acc += i & j;
   scratch = acc & 255u;
   return scratch;
