@@ -1333,6 +1333,28 @@ static int is_compound_op(const tok *t){
   if(t->n==3 && t->s[2]=='=' && (t->s[0]=='<'||t->s[0]=='>') && t->s[0]==t->s[1]) return 1;
   return 0;
 }
+/* The result temp of a binary op `lhs <suf> rhs` -- the usual arithmetic conversions in the (width,
+ * signedness) value model: float arithmetic propagates the wider float; a shift keeps the promoted left
+ * operand; an integer op the UAC width/sign; a (pointer ± int) stays a pointer (pointee-scaled). Shared
+ * by p_binrhs AND the compound-assignment / ++/-- sites, so `long s; s += x` / `double s; s += x` keep
+ * their width instead of truncating to a 4-byte uint32. (A relational/logical result -- always int -- is
+ * handled at the p_binrhs call site, not here; no compound assignment ever yields one.) */
+static uint32_t binop_result(CC *c, const char *suf, uint32_t lhs, uint32_t rhs){
+  int is_arith=!strcmp(suf,"add")||!strcmp(suf,"sub")||!strcmp(suf,"mul")||!strcmp(suf,"div");
+  int is_shift=!strcmp(suf,"shl")||!strcmp(suf,"shr");
+  int fa=rid_fsize(c,lhs), fb=rid_fsize(c,rhs);
+  if(is_arith&&(fa||fb)) return tempf(c,(fa>fb?fa:fb));        /* float arithmetic -> the wider float */
+  int sa,za,sb,zb; int ia=rid_int(c,lhs,&sa,&za), ib=rid_int(c,rhs,&sb,&zb);
+  if(ia&&ib){ int rs,rz;
+    if(is_shift){ promote_i(&sa,&za); rs=sa; rz=za; }          /* a shift result: the promoted left operand */
+    else uac_i(sa,za,sb,zb,&rs,&rz);
+    return tempi(c,rs,rz);
+  }
+  const bcir_resource *lr=res_of(c->fn,lhs), *rr=res_of(c->fn,rhs);
+  int lp=lr&&lr->kind==BCIR_RK_POINTER, rp=rr&&rr->kind==BCIR_RK_POINTER;
+  if((lp^rp) && (!strcmp(suf,"add")||!strcmp(suf,"sub"))) return tempptr(c, lp?lhs:rhs);  /* pointer ± int */
+  return temp(c,4);
+}
 static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs) {
   for(;;){
     char suf[BCIR_CIR_NAME];bcir_opcode oc;int idx=bin_op(c,suf,&oc);
@@ -1340,32 +1362,12 @@ static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs) {
     int prec=prec_of(idx);c->i++;uint32_t rhs=p_unary(c);
     char s2[BCIR_CIR_NAME];bcir_opcode o2;int nx=bin_op(c,s2,&o2);
     while(nx>=0&&prec_of(nx)>prec){rhs=p_binrhs(c,prec_of(nx),rhs);nx=bin_op(c,s2,&o2);}
-    /* the result type: a relational/logical op is int; float arithmetic propagates the wider float;
-     * everything else takes the integer usual arithmetic conversions (a shift the promoted LHS). */
-    int is_arith=!strcmp(suf,"add")||!strcmp(suf,"sub")||!strcmp(suf,"mul")||!strcmp(suf,"div");
+    /* the result type: a relational/logical op is int; otherwise the usual arithmetic conversions
+     * (float propagates the wider float; a shift the promoted LHS; else the integer UAC) -- shared. */
     int is_cmp=!strcmp(suf,"lt")||!strcmp(suf,"gt")||!strcmp(suf,"le")||!strcmp(suf,"ge")
              ||!strcmp(suf,"eq")||!strcmp(suf,"ne")||!strcmp(suf,"land")||!strcmp(suf,"lor");
-    int is_shift=!strcmp(suf,"shl")||!strcmp(suf,"shr");
-    int fa=rid_fsize(c,lhs), fb=rid_fsize(c,rhs);
-    uint32_t r;
-    if(is_cmp){ r=tempi(c,4,1); }                              /* relational / logical -> int */
-    else if(is_arith&&(fa||fb)){ r=tempf(c,(fa>fb?fa:fb)); }   /* float arithmetic -> wider float */
-    else {
-      int sa,za,sb,zb; int ia=rid_int(c,lhs,&sa,&za), ib=rid_int(c,rhs,&sb,&zb);
-      if(ia&&ib){ int rs,rz;
-        if(is_shift){ promote_i(&sa,&za); rs=sa; rz=za; }      /* shift result: the promoted left operand */
-        else uac_i(sa,za,sb,zb,&rs,&rz);
-        r=tempi(c,rs,rz);
-      } else {
-        const bcir_resource *lr=res_of(c->fn,lhs), *rr=res_of(c->fn,rhs);
-        int lp=lr&&lr->kind==BCIR_RK_POINTER, rp=rr&&rr->kind==BCIR_RK_POINTER;
-        /* pointer + int / int + pointer / pointer - int -> a pointer (carries the pointee type so the
-         * emit is a real pointee-scaled `T *t = p + i`). `p - q` (both pointers, a ptrdiff) and other
-         * non-integer arithmetic stay the prior 4-byte temp. */
-        if((lp^rp) && (!strcmp(suf,"add")||!strcmp(suf,"sub"))) r=tempptr(c, lp?lhs:rhs);
-        else r=temp(c,4);
-      }
-    }
+    uint32_t r = is_cmp ? tempi(c,4,1)              /* relational / logical -> int */
+                        : binop_result(c,suf,lhs,rhs);   /* the usual arithmetic conversions (shared) */
     char op[BCIR_CIR_NAME];snprintf(op,sizeof op,"c.bin.%s",suf);
     bcir_claim *cl=new_claim(c,op,oc);if(cl){cl->n_rd=2;cl->rd[0]=lhs;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=r;}
     lhs=r;
@@ -1537,7 +1539,8 @@ static int p_incdec(CC *c) {
     bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=one;cl->n_wr=1;cl->wr[0]=v->rid;}
     return 1;
   }
-  uint32_t tmp=temp(c,4); bcir_claim *b=new_claim(c,ch=='+'?"c.bin.add":"c.bin.sub",ch=='+'?BCIR_OP_ADD:BCIR_OP_SUB);
+  uint32_t tmp=binop_result(c,ch=='+'?"add":"sub",v->rid,one);   /* keep the operand width (long ++ -> int64) */
+  bcir_claim *b=new_claim(c,ch=='+'?"c.bin.add":"c.bin.sub",ch=='+'?BCIR_OP_ADD:BCIR_OP_SUB);
   if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=one;b->n_wr=1;b->wr[0]=tmp;}
   bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
   return 1;
@@ -1561,7 +1564,7 @@ static void p_simple(CC *c) {
         return; }
       c->i+=2; uint32_t rhs=p_expr(c);                  /* scalar:  name = name OP expr  (bin op + copy) */
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-      uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+      uint32_t tmp=binop_result(c,suf,v->rid,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
       bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
       bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
       return; } }
@@ -1581,7 +1584,7 @@ static void store_through_ptr(CC *c, uint32_t ptr, int psidx, field pfld) {
     if(is_compound_op(&c->t[c->i])){ char ch=c->t[c->i].s[0]; c->i++;
       uint32_t cur=emit_index(c,&b,idx); uint32_t rhs=p_expr(c);
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-      uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+      uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
       bcir_claim *bb=new_claim(c,op,oc); if(bb){bb->n_rd=2;bb->rd[0]=cur;bb->rd[1]=rhs;bb->n_wr=1;bb->wr[0]=tmp;}
       val=tmp;
     } else { if(!eat(c,"="))return; val=p_expr(c); }
@@ -1603,7 +1606,7 @@ static void store_through_ptr(CC *c, uint32_t ptr, int psidx, field pfld) {
   if(is_compound_op(&c->t[c->i])){ char ch=c->t[c->i].s[0]; c->i++;
     uint32_t cur=emit_member(c,&b,&f); uint32_t rhs=p_expr(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-    uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+    uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
     bcir_claim *bb=new_claim(c,op,oc); if(bb){bb->n_rd=2;bb->rd[0]=cur;bb->rd[1]=rhs;bb->n_wr=1;bb->wr[0]=tmp;}
     val=tmp;
   } else { if(!eat(c,"="))return; val=p_expr(c); }
@@ -1759,7 +1762,7 @@ static void p_stmt(CC *c) {
         uint32_t cur = has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv);
         uint32_t rhs=p_expr(c);
         const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-        uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+        uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
       } else { c->i++; val=p_expr(c); }                 /* *p = expr */
@@ -1784,7 +1787,7 @@ static void p_stmt(CC *c) {
         char ch=c->t[c->i].s[0]; c->i++;
         uint32_t cur=emit_deref_rid(c,base); uint32_t rhs=p_expr(c);
         const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-        uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+        uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
       } else { c->i++; val=p_expr(c); }                /* **pp = expr */
@@ -1810,7 +1813,7 @@ static void p_stmt(CC *c) {
           char ch=c->t[c->i].s[0]; c->i++;
           uint32_t cur=emit_member_index(c,v,&f,idx); uint32_t rhs=p_expr(c);
           const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-          uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+          uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
           bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
           aval=tmp;
         } else { if(!eat(c,"="))return; aval=p_expr(c); }
@@ -1828,7 +1831,7 @@ static void p_stmt(CC *c) {
         uint32_t cur=emit_member(c,v,&f);          /* the current field value (loaded first) */
         uint32_t rhs=p_expr(c);
         const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-        uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+        uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
       } else { if(!eat(c,"="))return; val=p_expr(c); }
@@ -1855,7 +1858,7 @@ static void p_stmt(CC *c) {
         char ch=c->t[c->i].s[0]; c->i++;                /* a[idx] OP= expr -> load, op, store */
         uint32_t cur=emit_index(c,v,idx); uint32_t rhs=p_expr(c);
         const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-        uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+        uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
       } else { if(!eat(c,"="))return; val=p_expr(c); }
@@ -1878,7 +1881,7 @@ static void p_stmt(CC *c) {
       }
       c->i+=2; uint32_t rhs=p_expr(c);
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-      uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+      uint32_t tmp=binop_result(c,suf,v->rid,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
       bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
       bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
       eat(c,";");return;}}
