@@ -373,7 +373,7 @@ static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
   else if(longs==1&&!ty->is_float&&ty->kind==0) ty->size=cc_abi(c)->long_size;
   while(is(c,"*")){c->i++;
     while(is(c,"const")||is(c,"volatile")||is(c,"restrict")||is(c,"__restrict")||is(c,"__restrict__"))c->i++;
-    if(ty->kind==1){ty->ptr_to_struct=1;} ty->kind=2;}   /* `restrict` is an aliasing hint -- consumed */
+    if(ty->kind==1){ty->ptr_to_struct=1;} ty->kind=2; ty->ptr_depth++;}   /* count `*`s: `T**` -> depth 2 */
   return 0;
 }
 
@@ -722,14 +722,36 @@ static uint32_t array_index(CC *c, venv *v) {
   }
   return lin;
 }
-static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereference load */
-  int psz=pv->type.size?pv->type.size:4;          /* the pointee width drives the load size + temp type */
-  uint32_t t=pv->type.is_float ? tempf(c,psz) : tempi(c,psz,pv->type.signd);
+/* Dereference a pointer RVALUE (rid). Depth-aware: `*pp` where pp is `T**` (depth 2) loads a pointer
+ * (pointer_size bytes) into a `T*` temp (depth 1); `*p` where p is `T*` loads the base scalar. The
+ * general form powers `**pp` (deref the result of `*pp`) and `*(<expr>)`. */
+static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
+  const bcir_resource *r=res_of(c->fn,rid);
+  if(!r || r->kind!=BCIR_RK_POINTER){ fail(c,"dereference of a non-pointer"); return rid; }
+  int depth=r->ptr_depth?r->ptr_depth:1, base=r->elem_bytes?(int)r->elem_bytes:4;
+  uint32_t t;
+  if(depth>1){                                     /* the pointee is itself a pointer (read pointer_size) */
+    t=add_res(c,BCIR_DOM_RAM,base,1,0,BCIR_RK_POINTER,"");
+    if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+      tr->is_signed=r->is_signed; tr->is_float=r->is_float; tr->ptr_depth=(uint8_t)(depth-1);
+      snprintf(tr->agg,sizeof tr->agg,"%s",r->agg); }
+  } else t = r->is_float ? tempf(c,base) : tempi(c,base,r->is_signed);
+  int rd_sz = depth>1 ? cc_abi(c)->pointer_size : base;
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
-  cl->n_rd=1;cl->rd[0]=pv->rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;
-  cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=psz;         /* read exactly the pointee width (was a fixed 4) */
-  if(pv->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+  cl->n_rd=1;cl->rd[0]=rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=rd_sz;
   return t;
+}
+static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereference load (named pointer) */
+  if(pv->type.is_volatile){                        /* MMIO: an ordered volatile load (unchanged) */
+    int psz=pv->type.size?pv->type.size:4;
+    uint32_t t=tempi(c,psz,pv->type.signd);
+    bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
+    cl->n_rd=1;cl->rd[0]=pv->rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;
+    cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=psz;
+    cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;
+    return t;
+  }
+  return emit_deref_rid(c,pv->rid);                /* depth-aware (the resource carries width + ptr_depth) */
 }
 /* Nested member access (`o.in.v` / `dev->ctrl.flags` -- a sub-register-block): given a member `f`
  * already resolved (byte_off relative to the access base) and the cursor at a possible further
@@ -1022,7 +1044,12 @@ static uint32_t p_unary(CC *c) {
   if(is(c,"+")){ c->i++; return p_unary(c); }    /* unary plus is a no-op */
   if(is(c,"&")){ c->i++;                          /* address-of: &lvalue -> a pointer value (c.addrof) */
     if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id);
-      if(v){ c->i++; uint32_t t=temp(c,8);        /* a pointer-sized value; emitted as `&name` */
+      if(v){ c->i++;                              /* a pointer one level deeper than the addressed object: */
+        uint32_t t=add_res(c,BCIR_DOM_RAM, v->type.size?v->type.size:4, 1,0,BCIR_RK_POINTER,"");  /* &p (T*) -> T** */
+        if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+          tr->is_signed=(uint8_t)(v->type.signd?1:0); tr->is_float=(uint8_t)(v->type.is_float?1:0);
+          tr->ptr_depth=(uint8_t)((v->type.kind==2?(v->type.ptr_depth?v->type.ptr_depth:1):0)+1);
+          if(v->type.kind==1||v->type.ptr_to_struct) snprintf(tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag); }
         bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
     fail(c,"unsupported address-of (only &local/&param)"); return 0; }
@@ -1053,7 +1080,7 @@ static uint32_t p_unary(CC *c) {
       c->i=save;
     } else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pv=lookup(c,&pid);
       if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p */
-    fail(c,"unsupported dereference"); return 0;
+    return emit_deref_rid(c, p_unary(c));            /* general: `**pp`, `*(<expr>)` -- deref a ptr rvalue */
   }
   if(is(c,"(")){                                   /* (type)operand -- a cast binds at the unary level */
     int save=c->i; c->i++;
@@ -1391,7 +1418,7 @@ static void p_stmt(CC *c) {
                            arr?arr:(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
       if(ty.kind==2&&!arr){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer local: carry the
         * pointee type (elem_bytes already = pointee size) so the decl emits `T *p`, not a truncating uint32 */
-        pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0);
+        pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0); pr->ptr_depth=ty.ptr_depth;
         if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
       else if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double (element) local */
       else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
@@ -1429,7 +1456,8 @@ static void p_stmt(CC *c) {
     else if(isk(c,T_ID)){ tok pid=*pk(c); pv=lookup(c,&pid); if(pv){ c->i++; ok=1; } }   /* *p */
     if(ok && pv && (is_compound_op(&c->t[c->i]) ||
                     (c->t[c->i].k==T_PUN && c->t[c->i].n==1 && c->t[c->i].s[0]=='='))){
-      int sz = pv->type.size?pv->type.size:4; uint32_t val;
+      int sz = (pv->type.ptr_depth>1) ? cc_abi(c)->pointer_size : (pv->type.size?pv->type.size:4); uint32_t val;
+      /* `*pp = q` through a `T**` stores a full pointer (pointer_size), not the base scalar width */
       if(is_compound_op(&c->t[c->i])){                  /* *p OP= expr  ->  load, bin op, store */
         char ch=c->t[c->i].s[0]; c->i++;
         uint32_t cur = has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv);
@@ -1446,6 +1474,26 @@ static void p_stmt(CC *c) {
         cl->bounds=BCIR_BND_ASSUMED;
         if(pv->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
       }
+      eat(c,";"); return;
+    }
+    /* general deref-store: `**pp = v` / `**pp OP= v` / `*(<expr>) = v` -- store through a pointer RVALUE
+     * (not a simple named `*p`). Mirrors the general deref-load: parse the operand, then store at *base. */
+    c->i=save+1;                                       /* re-parse from just after the leading `*` */
+    uint32_t base=p_unary(c); const bcir_resource *br=res_of(c->fn,base);
+    if(br && br->kind==BCIR_RK_POINTER && (is_compound_op(&c->t[c->i]) ||
+        (c->t[c->i].k==T_PUN && c->t[c->i].n==1 && c->t[c->i].s[0]=='='))){
+      int depth=br->ptr_depth?br->ptr_depth:1;
+      int sz=(depth>1)?cc_abi(c)->pointer_size:(br->elem_bytes?(int)br->elem_bytes:4); uint32_t val;
+      if(is_compound_op(&c->t[c->i])){                 /* **pp OP= expr -> load through base, bin, store */
+        char ch=c->t[c->i].s[0]; c->i++;
+        uint32_t cur=emit_deref_rid(c,base); uint32_t rhs=p_expr(c);
+        const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+        uint32_t tmp=temp(c,4); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+        bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+        val=tmp;
+      } else { c->i++; val=p_expr(c); }                /* **pp = expr */
+      bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+      if(cl){ cl->n_rd=2; cl->rd[0]=base; cl->rd[1]=val; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz; cl->bounds=BCIR_BND_ASSUMED; }
       eat(c,";"); return;
     }
     c->i=save;   /* not a deref-store -- fall through (e.g. a bare `*p;` expression statement) */
@@ -1576,8 +1624,8 @@ static int p_func(CC *c, bcir_func *fn) {
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, pb);
     if(ty.kind==2){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer param: carry the pointee
-      * (width/sign/tag) so pointer arithmetic on it (`p + i`) clones the real `T *` type, not uint32 */
-      pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0);
+      * (width/sign/tag/depth) so pointer arithmetic on it (`p + i`) clones the real `T *` type, not uint32 */
+      pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0); pr->ptr_depth=ty.ptr_depth;
       if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
     else if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
     else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
@@ -1620,8 +1668,10 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
                    : ty->signd ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
                    : (ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t");
   const char *atm = ty->is_atomic ? "_Atomic " : "";
-  if(ty->kind==2) snprintf(o,n,"%s%s%s%s%s *",atm,ty->is_volatile?"volatile ":"",
-                           ty->ptr_to_struct?kw:"",ty->ptr_to_struct?" ":"",base);
+  if(ty->kind==2){ char stars[10]; int d=ty->ptr_depth?ty->ptr_depth:1, si=0;   /* depth `*`s: `T**` -> ` **` */
+    stars[si++]=' '; for(int k=0;k<d&&si<9;k++) stars[si++]='*'; stars[si]=0;
+    snprintf(o,n,"%s%s%s%s%s%s",atm,ty->is_volatile?"volatile ":"",
+             ty->ptr_to_struct?kw:"",ty->ptr_to_struct?" ":"",base,stars); }
   else if(ty->kind==1) snprintf(o,n,"%s %s",kw,ty->tag);
   else snprintf(o,n,"%s%s",atm,base);
 }
@@ -1683,11 +1733,13 @@ static const char *tty(const bcir_func *f,uint32_t rid){
 static const char *decl_ty(const bcir_func *f,uint32_t rid,char *buf,size_t n){
   const bcir_resource *r=res_of(f,rid);
   if(r && r->kind==BCIR_RK_POINTER){
-    if(r->agg[0]) snprintf(buf,n,"%s *",r->agg);
-    else if(r->is_float) snprintf(buf,n,"%s *",r->elem_bytes==8?"double":"float");
-    else snprintf(buf,n,"%s *",
-      r->elem_bytes==1?(r->is_signed?"int8_t":"uint8_t"):r->elem_bytes==2?(r->is_signed?"int16_t":"uint16_t"):
-      r->elem_bytes==8?(r->is_signed?"int64_t":"uint64_t"):(r->is_signed?"int32_t":"uint32_t"));
+    const char *base = r->agg[0] ? r->agg
+      : r->is_float ? (r->elem_bytes==8?"double":"float")
+      : r->elem_bytes==1?(r->is_signed?"int8_t":"uint8_t") : r->elem_bytes==2?(r->is_signed?"int16_t":"uint16_t")
+      : r->elem_bytes==8?(r->is_signed?"int64_t":"uint64_t") : (r->is_signed?"int32_t":"uint32_t");
+    char stars[10]; int d=r->ptr_depth?r->ptr_depth:1, si=0;   /* depth `*`s: `T**` at depth 2 */
+    stars[si++]=' '; for(int k=0;k<d&&si<9;k++) stars[si++]='*'; stars[si]=0;
+    snprintf(buf,n,"%s%s",base,stars);
   } else snprintf(buf,n,"%s",tty(f,rid));
   return buf;
 }
@@ -1828,8 +1880,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(!strcmp(fn,"load")) w+=snprintf(o+w,on-w,"uint32_t %s = atomic_load(%s);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
       else if(!strcmp(fn,"store")) w+=snprintf(o+w,on-w,"atomic_store(%s, %s);\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
       else w+=snprintf(o+w,on-w,"uint32_t %s = atomic_%s(%s, %s);\n",rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
-    else if(!strcmp(cl->op,"c.addrof")){           /* &lvalue -> a pointer value (T *t = &x;) */
-      w+=snprintf(o+w,on-w,"%s *%s = &%s;\n",tty(f,cl->rd[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
+    else if(!strcmp(cl->op,"c.addrof")){           /* &lvalue -> a pointer value (decl_ty: `T *`, `T **`, ...) */
+      w+=snprintf(o+w,on-w,"%s%s = &%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
     else if(!strncmp(cl->op,"c.call.libm:",12)){   /* a <math.h> call -> the real libm function */
       w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+12);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));

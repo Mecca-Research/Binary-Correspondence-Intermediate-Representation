@@ -561,6 +561,9 @@ class _FuncLowerer:
             agg = base_ct.of if node.arrow else base_ct
             ftype, _bo, _bf, _bw = agg.field(node.field)
             return base_rid, ftype
+        if isinstance(node, cast.Unary) and node.op == "*":   # `*q` as a base (`**pp`): load the pointer it
+            rid = self._read(self._lvalue(node))              # holds, and use that loaded pointer as the base
+            return rid, self.rtypes.get(rid, pointer(scalar("uint32_t")))
         raise CLowerError(f"unsupported base expression {type(node).__name__}")
 
     def _mmio(self, base_rid: int) -> bool:
