@@ -758,6 +758,13 @@ plain `return arr[i]` matched by modular luck; a sign test or sign-dependent res
 which carries the element's signedness on the load temp, was correct. Fixed by typing each load temp with
 the element's (width, signedness) and memcpy-ing the exact width, so a signed sub-int read sign-extends;
 unsigned elements are unchanged. `#signedload`/`cfront_signedload.c`, differential == Clang on both rails.
+✅ **and an `enum`-as-a-type rail disagreement** (a different class -- the oracle was *stricter* than the
+twin, not a miscompile): `enum Tag` is a valid int-sized type specifier (`enum E e;`, `(enum E)x`, an
+`enum E` parameter), all of which the twin accepted. The oracle's type parser set `base = "int"` for
+`enum [tag]` but then unconditionally recomputed the base from the (empty) keyword run, raising "expected
+a type" -- so it rejected *every* enum-as-type and fell back where the twin compiled. Fixed by keeping the
+enum's int base; both rails now lower an enum to a plain int (negative enumerators included).
+`#enumtype`/`cfront_enumtype.c`, differential == Clang on both rails.
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both
