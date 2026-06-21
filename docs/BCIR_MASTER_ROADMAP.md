@@ -731,9 +731,13 @@ target-divergent (x86 wraps, aarch64 saturates to 0), and even on x86 a sub-int 
 sign (`(signed char)(-5.0f)` came out `251`, not `-5`). Fixed by emitting a SIGNED fixed-width operator
 into a signed temp when a floating operand is cast to a signed integer (the unsigned spelling is kept for
 unsigned targets and pure integer casts). `#floatsigncast`/`cfront_floatsigncast.c`, differential == Clang
-on both rails. *(Still open, found alongside: a pure-integer narrowing cast to a signed sub-int type used
-directly -- e.g. `return (signed char)x` for a negative `int x` -- mistypes on the twin for the same
-unsigned-temp reason; queued as the next fix.)*
+on both rails.
+✅ **and the pure-integer half of the same vein**: a narrowing cast to a SIGNED integer whose result is
+used *directly* (no signed named local to launder it). The twin typed every integer cast temp as unsigned,
+so `(signed char)(-5)` came out `251`, and `(int)u` read back unsigned -- turning an arithmetic `>>` into a
+logical one. Fixed by typing the integer cast temp with the target's signedness (matching the oracle), so a
+signed sub-int target keeps its sign and `(int)u` reads back signed. `#intsigncast`/`cfront_intsigncast.c`,
+differential == Clang on both rails.
 ✅ **multi-dimensional arrays** (a 2D array parameter
 `uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
 to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both
