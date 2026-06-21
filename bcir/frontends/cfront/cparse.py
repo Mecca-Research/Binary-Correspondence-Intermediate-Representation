@@ -756,8 +756,14 @@ class _Parser:
             while self.at("OP", "*"):                   # `(uint32_t *)p` — a pointer cast
                 ptr += 1
                 self.nxt()
+            dims = []
+            while self.at("PUNCT", "["):                # `(int[N]){...}` / `(int[]){...}` — an array type-name
+                self.nxt()
+                dims.append(0 if self.at("PUNCT", "]") else parse_int_literal(self.eat("INT").text))
+                self.eat("PUNCT", "]")
             self.eat("PUNCT", ")")
-            tref = cast.TypeRef(base=tref.base, ptr=ptr, aggregate=tref.aggregate, quals=tref.quals)
+            tref = cast.TypeRef(base=tref.base, ptr=ptr, array=tuple(dims),
+                                aggregate=tref.aggregate, quals=tref.quals)
             if self.at("PUNCT", "{"):                   # `(type){ init }` — a C99 compound literal, not a cast
                 # supported in rvalue position (`f((struct P){...})`, `x = (struct P){...}`), under `&`
                 # (`&(int){v}`), and now with direct postfix on the literal (`(struct P){...}.field`,
