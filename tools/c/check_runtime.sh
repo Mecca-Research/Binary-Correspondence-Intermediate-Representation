@@ -1469,11 +1469,11 @@ echo "[c-runtime] pointer-element signedness -- signed vs unsigned pointee load/
   cat <<'DRV'
 int main(void){
   for(long i=-400;i<400;i++){
-    signed char sb=(signed char)(i*7-3); unsigned char ub=(unsigned char)(i*5+1);
-    short ha[4]={(short)(i*3),(short)(-i),(short)(i+9),(short)(i*7)};
-    unsigned short ua[4]={(unsigned short)(i*3),(unsigned short)(i),(unsigned short)(i+9),(unsigned short)(i*7)};
+    int8_t sb=(int8_t)(i*7-3); uint8_t ub=(uint8_t)(i*5+1);
+    int16_t ha[4]={(int16_t)(i*3),(int16_t)(-i),(int16_t)(i+9),(int16_t)(i*7)};
+    uint16_t ua[4]={(uint16_t)(i*3),(uint16_t)(i),(uint16_t)(i+9),(uint16_t)(i*7)};
     long lv=i*1000000007L-7; unsigned long ul=(unsigned long)(i*2654435761UL+9);
-    signed char a[4]={(signed char)i,(signed char)(i-1),(signed char)(i+2),(signed char)(-i)};
+    int8_t a[4]={(int8_t)i,(int8_t)(i-1),(int8_t)(i+2),(int8_t)(-i)};
     if(ps_s8_s(&sb)!=bcir_ps_s8(&sb)){printf("s8@%ld\n",i);return 1;}
     if(ps_u8_s(&ub)!=bcir_ps_u8(&ub)){printf("u8@%ld\n",i);return 1;}
     if(ps_s16_s(ha,2)!=bcir_ps_s16(ha,2)){printf("s16@%ld\n",i);return 1;}
