@@ -792,9 +792,10 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld) {
   cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
   if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
-  if(fld->bit_w){uint32_t u=t;t=tempi(c,4,(fld->signd||fld->bit_w<32)?1:0);   /* integer promotion (6.3.1.1):
-    * a bitfield narrower than int promotes to int, so an UNSIGNED sub-int bitfield reads as a SIGNED int
-    * (e.g. `bf < x` is a signed compare); only a full-width unsigned bitfield stays unsigned. */
+  if(fld->bit_w){uint32_t u=t;t=tempi(c,fld->bit_w>32?fld->size:4,(fld->signd||fld->bit_w<32)?1:0);   /* integer
+    * promotion (6.3.1.1): a bitfield narrower than int promotes to int, so an UNSIGNED sub-int bitfield reads
+    * as a SIGNED int (`bf < x` is a signed compare); a full-width (==32) unsigned bitfield stays unsigned; a
+    * WIDE bitfield (>32 bits, long-long unit) keeps its declared 64-bit type -- int/unsigned can't hold it. */
     bcir_claim *g=new_claim(c,"c.bf.get",BCIR_OP_ADD);if(!g)return t;
     g->n_rd=1;g->rd[0]=u;g->n_wr=1;g->wr[0]=t;g->n_imm=3;g->imm[0]=fld->bit_off;g->imm[1]=fld->bit_w;g->imm[2]=fld->signd;}
   return t;
@@ -2477,18 +2478,21 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                       :(sz==1?"uint8_t":sz==2?"uint16_t":sz==8?"uint64_t":"uint32_t");
         w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",vt,rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); } }
     }else if(!strcmp(cl->op,"c.bf.get")){
-      long long off=cl->imm[0],bw=cl->imm[1]; unsigned long long mask=(1ull<<bw)-1;
+      long long off=cl->imm[0],bw=cl->imm[1]; int wide=bw>32;      /* a WIDE bitfield needs 64-bit literals/cast */
+      unsigned long long mask=bw>=64?~0ull:(1ull<<bw)-1; const char *sfx=wide?"ull":"u";
       if(cl->n_imm>2&&cl->imm[2]){                       /* a signed bitfield: sign-extend from bit bw-1 */
-        unsigned long long sbit=1ull<<(bw-1);
-        w+=snprintf(o+w,on-w,"%s %s = (int32_t)((((%s >> %lld) & %lluu) ^ %lluu) - %lluu);\n",
-                    tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off,mask,sbit,sbit);
+        unsigned long long sbit=1ull<<(bw-1); const char *cast=wide?"int64_t":"int32_t";
+        w+=snprintf(o+w,on-w,"%s %s = (%s)((((%s >> %lld) & %llu%s) ^ %llu%s) - %llu%s);\n",
+                    tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cast,rname(f,cl->rd[0],a),off,mask,sfx,sbit,sfx,sbit,sfx);
       } else
-        w+=snprintf(o+w,on-w,"%s %s = (%s >> %lld) & %lluu;\n",
-                    tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off,mask); }
+        w+=snprintf(o+w,on-w,"%s %s = (%s >> %lld) & %llu%s;\n",
+                    tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off,mask,sfx); }
     else if(!strcmp(cl->op,"c.bf.set")){          /* (old & ~(mask<<off)) | ((v & mask) << off) */
-      long long off=cl->imm[0]; unsigned long long mask=(1ull<<cl->imm[1])-1, clear=~(mask<<off)&0xFFFFFFFFull;
-      w+=snprintf(o+w,on-w,"uint32_t %s = (%s & %lluu) | ((%s & %lluu) << %lld);\n",
-                  rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),clear,rname(f,cl->rd[1],b),mask,off); }
+      long long off=cl->imm[0]; const bcir_resource *ur=res_of(f,cl->rd[0]); int wide=ur&&ur->elem_bytes>4;
+      unsigned long long mask=cl->imm[1]>=64?~0ull:(1ull<<cl->imm[1])-1;
+      unsigned long long clear=~(mask<<off)&(wide?~0ull:0xFFFFFFFFull); const char *sfx=wide?"ull":"u";
+      w+=snprintf(o+w,on-w,"%s %s = (%s & %llu%s) | ((%s & %llu%s) << %lld);\n",wide?"uint64_t":"uint32_t",
+                  rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),clear,sfx,rname(f,cl->rd[1],b),mask,sfx,off); }
     else if(!strncmp(cl->op,"c.atomic.",9))      /* atomic RMW -> the matching builtin */
       w+=snprintf(o+w,on-w,"uint32_t %s = __atomic_fetch_%s(%s, %s, __ATOMIC_SEQ_CST);\n",
                   rname(f,cl->wr[0],d),cl->op+9,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
