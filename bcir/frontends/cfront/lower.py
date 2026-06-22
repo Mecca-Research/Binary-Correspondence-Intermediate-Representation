@@ -701,6 +701,10 @@ class _FuncLowerer:
             return base_t.of if base_t.of is not None else scalar("uint32_t")
         if isinstance(node, cast.Generic):                    # _Generic -> the selected association's type
             return self._type_of(self._generic_select(node))
+        if isinstance(node, cast.StmtExpr):                   # `({ ...; e; })` -> the type of the last expr
+            if node.stmts and isinstance(node.stmts[-1], cast.ExprStmt):
+                return self._type_of(node.stmts[-1].expr)
+            return scalar("void")
         raise CLowerError(f"typeof of this expression form ({type(node).__name__}) is not yet supported")
 
     def _type_key(self, t: CType):
@@ -817,6 +821,20 @@ class _FuncLowerer:
             return self._emit("c.call.vaarg", Opcode.GEM_DISPATCH, (ap,), (t,))
         if isinstance(node, cast.Generic):                # _Generic(ctrl, T: e, ..., default: e) -- select on
             return self._rvalue(self._generic_select(node))   # ctrl's static type; only the chosen e is lowered
+        if isinstance(node, cast.StmtExpr):               # `({ s1; ...; e; })` -> lower the prefix stmts inline
+            if not node.stmts:                            # (its own scope), then yield the last expr's value
+                raise CLowerError("empty statement expression")
+            saved_env = dict(self.env)
+            for s in node.stmts[:-1]:
+                self._stmt(s)
+            last = node.stmts[-1]
+            if isinstance(last, cast.ExprStmt):
+                val = self._rvalue(last.expr)
+            else:                                         # a non-expression last stmt -> void (rarely used)
+                self._stmt(last)
+                val = _VOID_RID
+            self.env = saved_env
+            return val
         if isinstance(node, cast.Assign):
             return self._assign(node)
         if isinstance(node, cast.SizeOf):

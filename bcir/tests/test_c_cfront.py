@@ -920,6 +920,55 @@ def test_compound_wide_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+def test_stmtexpr_dual_rail():
+    """GCC statement expressions (#stmtexpr): `({ s1; ...; e; })` -- a compound statement in its own scope
+    whose value is the last (expression) statement. The prefix statements lower inline; the result is the
+    last expression's value. The twin (no AST) lowers the prefix in place, then rolls the last statement
+    back (the typeof speculative undo) and re-parses it as the value. Covers the temporary idiom, the
+    safe-max macro, embedding in a larger expression, a loop inside, nesting, and scope shadowing.
+    Differential == Clang on BOTH emits."""
+    fx = "cfront_stmtexpr.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["se_simple", "se_max", "se_embed", "se_loop", "se_nest", "se_scope", "se_void"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int a=-60;a<60;a++) for(int b=-25;b<25;b++){
+    if(se_simple_s(a)!=bcir_se_simple(a)){puts("simple");return 1;}
+    if(se_max_s(a,b)!=bcir_se_max(a,b)){puts("max");return 1;}
+    if(se_embed_s(a)!=bcir_se_embed(a)){puts("embed");return 1;}
+    if(se_loop_s(b)!=bcir_se_loop(b)){puts("loop");return 1;}
+    if(se_nest_s(a)!=bcir_se_nest(a)){puts("nest");return 1;}
+    if(se_scope_s(a)!=bcir_se_scope(a)){puts("scope");return 1;}
+    if(se_void_s(a)!=bcir_se_void(a)){puts("void");return 1;}
+  }
+  puts("MATCH");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath = os.path.join(d, f"{label}.c")
+            open(cpath, "w").write(harness)
+            epath = os.path.join(d, label)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
+                                   capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
+
+
 def test_builtins_dual_rail():
     """GCC/Clang integer builtins (#builtins): __builtin_popcount/clz/ctz/ffs/parity/bswap/abs and their
     l/ll variants -- emitted verbatim (the libm-call mold: opaque to R18, no bcir_ twin) with a fixed
@@ -1953,7 +2002,7 @@ _FALLBACK_PROBES = [
     ("unsigned f(unsigned x){ return x + ; }", "fallback"),              # malformed -> parse reject
     ("unsigned f(void){ _Complex double z; return 0u; }", "fallback"),   # _Complex: outside the subset
     ("unsigned f(unsigned n){ unsigned a[n]; return a[0]; }", "fallback"),   # VLA
-    ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "fallback"),  # statement-expr
+    ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "clean"),  # statement-expr (#stmtexpr): now native
     ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "fallback"),  # computed goto
     ("struct Q{unsigned*p; unsigned n;}; unsigned f(struct Q q,unsigned i){ return q.p[i&3u]+q.n; }",
      "clean"),      # a *pointer* member indexed (`q.p[i]` == `*(q.p + i)`): both rails now load the full
