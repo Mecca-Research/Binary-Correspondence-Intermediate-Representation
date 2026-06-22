@@ -676,12 +676,12 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > an inner array member + a `_Bool` inner member still lower correctly) — `cfront_neststruct.c`, both rails
 > == Clang. **Open follow-ons (next-context work):**
 > 1. ✅ **Fuzzer-generates nested structs** — a struct may carry a nested struct member `struct S0 in;` (one
->    level, an all-scalar inner struct), exercised as a **by-value parameter**: its `s.in.x` leaves are
->    registered (via `_leaves`) and read/written across the full expression/mutation space, and the driver
->    builds the nested-brace by-value literal. Still **by-value-param only** — a nest-containing struct is
->    excluded from pointer/return/local use, where the write/compare recursion is deeper (the follow-on:
->    flatten every member-iterating driver/return site so nested structs compose everywhere). Plus enums and
->    `_Bool` as a local/param/return (member-level done; both probed Clang-equivalent already, so guards).
+>    level, an all-scalar inner struct), read/written as `s.in.x` across the full expression/mutation space
+>    and now exercised as a **by-value parameter, a LOCAL (nested-brace init), AND a by-value RETURN**
+>    (the return value compared `r.in.x` leaf-by-leaf via a flattened walk). Still **not through a POINTER**
+>    — a `struct T *` with a nested member needs the driver's per-cell backing-struct setup to recurse into
+>    the inner leaves (the one remaining member-iterating site); that + multi-level nesting are the follow-on.
+>    Plus enums and `_Bool` as a local/param/return (member-level done; both probed Clang-equivalent, guards).
 > 2. ✅ **Union-of-bitfields** is now exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`, behaviour-validated — unions lay every member at offset 0
 >    on both rails). **Still deferred — `__attribute__((packed))` + bitfields LAYOUT bug:** for a packed
