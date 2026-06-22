@@ -383,14 +383,14 @@ class Gen:
         return self._decl_scalar(depth)
 
     def _leaves(self, members: list) -> list:
-        """Flatten a struct's members to scalar/bitfield LEAVES with their access suffix, recursing one level
-        into a nested struct member (`(in, S0)` -> `in.x`, `in.y`). A nestable inner struct is scalar-only
-        (no arrays / no further nesting), so one level suffices. Used to register `s.in.x` lvalues and to
-        compare a nested aggregate leaf-by-leaf."""
+        """Flatten a struct's members to scalar/bitfield LEAVES with their access suffix, recursing through a
+        nested struct member to any depth (`(in, S1)` where `S1` has `(deep, S0)` -> `in.deep.x`, ...). A
+        nestable inner struct has no arrays. Used to register `s.in...x` lvalues and to compare a nested
+        aggregate leaf-by-leaf."""
         out = []
         for mn, c in members:
-            if c in self.aggdefs:                                # a by-value nested struct member
-                out += [(f"{mn}.{imn}", ic) for imn, ic in self.aggdefs[c][1]]
+            if c in self.aggdefs:                                # a by-value nested struct member (recurse)
+                out += [(f"{mn}.{acc}", ic) for acc, ic in self._leaves(self.aggdefs[c][1])]
             else:
                 out.append((mn, c))
         return out
@@ -623,10 +623,9 @@ class Gen:
             pool = _MEMBER_TYPES if kind == "struct" else (_ALL + list(_BF))
             members = [(f"m{j}", r.choice(pool)) for j in range(r.randint(2, 4))]
             # a NESTED struct member `struct S0 in;` (one level): an earlier all-scalar struct (no arrays, no
-            # nesting itself). Read as `s.in.x` -- exercised as a by-value PARAMETER only (a nest-containing
-            # struct is excluded from locals/returns/pointers below, where the recursion would be deeper).
-            nestable = [t for t, v in self.aggdefs.items() if v[0] == "struct" and not v[3]
-                        and not any(ic in self.aggdefs for _, ic in v[1])]
+            # nesting). A nestable inner struct just has no arrays; it MAY itself nest (an earlier struct),
+            # so `S2{ S1{ S0 } }` multi-level nesting forms -- read as `s.in.deep.x`, all leaves flattened.
+            nestable = [t for t, v in self.aggdefs.items() if v[0] == "struct" and not v[3]]
             nested = kind == "struct" and nestable and not members[0][1] in self.aggdefs and r.random() < 0.3
             if nested:
                 members.append((f"n{len(members)}", r.choice(nestable)))
@@ -757,11 +756,11 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
             return f"if(!{'feqf' if code == 'f32' else 'feqd'}({lhs},{rhs})) return 1;"
         return f"if({lhs}!={rhs}) return 1;"
 
-    def _flat(members):                                        # scalar leaves with access suffix (nested -> in.x)
+    def _flat(members):                                        # scalar leaves with access suffix (nested -> in...x)
         out = []
         for mn, c in members:
-            if c in prog.aggdefs:
-                out += [(f"{mn}.{imn}", ic) for imn, ic in prog.aggdefs[c][1]]
+            if c in prog.aggdefs:                              # recurse through any depth of nesting
+                out += [(f"{mn}.{acc}", ic) for acc, ic in _flat(prog.aggdefs[c][1])]
             else:
                 out.append((mn, c))
         return out
