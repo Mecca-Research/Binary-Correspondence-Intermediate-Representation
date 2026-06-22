@@ -1618,6 +1618,25 @@ static int designator_chain(CC *c, sdef *S, int *off, int *size, int *bit_w, int
   if(!started){ fail(c,"empty designator"); return 1; }
   return 0;
 }
+/* A NESTED braced initializer for an array member inside a struct/union init -- `struct S s = { {e0,e1,
+ * ..}, n };` (the C twin of lower._init_subagg). Stores each element with an OFFSET-based member c.store
+ * at `base_off + idx*es` (so it composes through the enclosing struct's `= {0}` baseline); positional
+ * entries advance a cursor, `[i]=` jumps it, gaps zero-fill. Element float-ness/width is carried by the
+ * stored value's resource (the member-store emit), exactly like a `s.arr[i] = v` element write. */
+static void subagg_init(CC *c, uint32_t rid, int base_off, int es) {
+  eat(c,"{");
+  int cursor=0;
+  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
+    int idx=cursor;
+    if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
+    uint32_t v=p_expr(c);
+    bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+    if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=v;cl->n_imm=2;cl->imm[0]=base_off+idx*es;cl->imm[1]=es;cl->bounds=BCIR_BND_ASSUMED;}
+    cursor=idx+1;
+    if(is(c,",")) c->i++;
+  }
+  eat(c,"}");
+}
 static void agg_init(CC *c, uint32_t rid, int sidx) {
   eat(c,"{");
   sdef *S = sidx>=0 ? &c->s[sidx] : NULL;
@@ -1632,6 +1651,11 @@ static void agg_init(CC *c, uint32_t rid, int sidx) {
     } else if(cursor<S->nf){ field *F=&S->f[cursor];    /* positional: the cursor-th member */
       off=F->byte_off; size=F->size; bit_w=F->bit_w; bit_off=F->bit_off;
     } else skip=1;                                      /* past the last member -> parse but do not store */
+    if(!skip && is(c,"{")){                             /* a NESTED brace: an aggregate (array) member */
+      field *AF = (top_fi>=0 && top_fi<S->nf) ? &S->f[top_fi] : NULL;
+      if(AF && AF->arr_count>0){ subagg_init(c, rid, off, AF->size); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
+      fail(c,"nested initializer for a non-array member"); return;   /* nested struct member: a follow-on */
+    }
     uint32_t v=p_expr(c); uint32_t val=v;
     if(skip){ cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
     if(bit_w){                                          /* a bitfield member: read unit, set bits, store */

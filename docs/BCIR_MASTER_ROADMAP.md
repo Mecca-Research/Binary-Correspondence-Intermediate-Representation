@@ -660,19 +660,23 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > width/signedness matrix + the usual arithmetic conversions, `float`/`double`, loop-aware mutable locals,
 > same-unit calls, pointer read/write + aliasing, **structs/unions** by value + struct pointers (read+write)
 > + struct return by value + **mixed scalar+bitfield** structs (a bitfield may follow a sub-word member)
-> + **array members** `s.arr[e & 3u]` (params-only, read+written, element-compared after the call). It has
+> + **array members** `s.arr[e & 3u]` — now read+written as a by-value/pointer param AND as a **local** /
+> **return** via a **nested-brace init** `{ m, {e0,e1,..}, n }` (element-compared after the call). It has
 > flushed **~17 real frontend bugs** (parameter-write redeclaration; assignment/`i++`-as-stmt-expr-value;
 > ternary & call result types losing sign/float type; subscript- and member-as-value parse gaps;
 > compound-store index double-eval; narrow/float store-conversion; float-member-read-as-int; unsigned
 > sub-int bitfield not promoted to int; float member-array element stored as a uint reinterpret;
 > **bitfield-after-sub-word-member laid out in a fresh type-aligned unit instead of packed at the bit
 > cursor** — a wrong struct size/offset vs Clang) plus the `signed char` (aarch64) portability gap.
-> **Open follow-ons (next-context work):**
-> 1. **Struct-local array init** — `struct S s = { {a0,a1,a2,a3}, n };` (a nested-brace local) currently
->    routes to fallback on both rails; array-bearing structs are therefore params-only in the fuzzer. Native
->    nested-brace local/return aggregate init is the next aggregate-init step.
-> 2. Then: nested structs (a struct member that is a struct), `_Bool`, enums, and wider driver-subset surface.
->    Union-of-bitfields and packed+bitfield layout are also still off (the natural-layout bitfield fix kept
+> ✅ **Nested-brace local/return aggregate init landed** (`cfront_nestinit.c`): a struct's array member
+> initialised with a nested brace in a local decl, a compound literal, or a by-value return -- offset-based
+> element stores composing through the nesting, on both rails (was an LLVM fallback). **Open follow-ons
+> (next-context work):**
+> 1. **Nested structs** (a struct member that is a struct, init'd by a nested brace) — the offset-based
+>    `_init_subagg` / `subagg_init` already recurse through struct nesting; the remaining work is the
+>    member-access read/write path for `s.inner.x` chains in the fuzzer, plus `_Bool`, enums, and a wider
+>    driver-subset surface.
+> 2. Union-of-bitfields and packed+bitfield layout are also still off (the natural-layout bitfield fix kept
 >    the legacy packed unit model untouched, since no packed-bitfield fixture pins it).
 
 **Phase 1 — Driver-subset compiler, productionized** (the near-term milestone — make the existing

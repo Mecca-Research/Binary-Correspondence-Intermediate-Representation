@@ -981,6 +981,26 @@ class _FuncLowerer:
         self.zero_init.add(rid)
         cursor = 0
         for key, expr in ag.entries:
+            # a member/element that is itself an aggregate can take a NESTED brace `{ {e0,e1,..}, n }`
+            # (a struct's array member, a nested struct/array): initialize the sub-object in place rather
+            # than treating the brace as an rvalue.
+            if isinstance(expr, cast.AggInit):
+                if isinstance(key, tuple):
+                    tlv = self._designate(rid, ct, key)
+                    self._init_subagg(rid, tlv.ct, tlv.byte_off, expr)
+                elif ct.kind == "array":
+                    idx = key if isinstance(key, int) else cursor
+                    cursor = idx + 1
+                    elem = ct.of or scalar("uint32_t")
+                    self._init_subagg(rid, elem, idx * elem.size, expr)
+                else:
+                    if isinstance(key, str):
+                        ftype, boff, _bo, _bw = ct.field(key)
+                    else:
+                        _fn, ftype, boff, _bo, _bw = ct.fields[cursor]
+                        cursor += 1
+                    self._init_subagg(rid, ftype, boff, expr)
+                continue
             v = self._rvalue(expr)
             if isinstance(key, tuple):                        # a nested designator chain (.a.b / .v[i] / .m[i][j])
                 self._write(self._designate(rid, ct, key), v)
@@ -999,6 +1019,31 @@ class _FuncLowerer:
                     cursor += 1
                 lv = _LV("mem", rid, ftype, byte_off=boff, bit_off=bo, bit_width=bw)
             self._write(lv, v)
+
+    def _init_subagg(self, rid: int, ct: CType, base_off: int, ag: "cast.AggInit") -> None:
+        """Initialize a nested aggregate sub-object (an array member or a nested struct/union) at byte
+        offset `base_off` within `rid` from a braced initializer -- one OFFSET-based store per element /
+        member at its absolute offset (so the stores compose through any depth of nesting), riding the
+        `= {0}` baseline already emitted for the whole object. Positional + `[i]=` / `.field=` keys."""
+        cursor = 0
+        for key, expr in ag.entries:
+            if ct.kind == "array":
+                idx = key if isinstance(key, int) else cursor
+                cursor = idx + 1
+                ftype = ct.of or scalar("uint32_t")
+                off, bo, bw = base_off + idx * ftype.size, 0, 0
+            else:                                             # struct / union member
+                if isinstance(key, str):
+                    ftype, mboff, bo, bw = ct.field(key)
+                else:
+                    _fn, ftype, mboff, bo, bw = ct.fields[cursor]
+                    cursor += 1
+                off = base_off + mboff
+            if isinstance(expr, cast.AggInit):                # deeper nesting
+                self._init_subagg(rid, ftype, off, expr)
+            else:
+                self._write(_LV("mem", rid, ftype, byte_off=off, bit_off=bo, bit_width=bw),
+                            self._rvalue(expr))
 
     def _designate(self, rid: int, ct: CType, steps: tuple) -> "_LV":
         """Resolve a nested designator chain to an lvalue: walk the aggregate type accumulating a byte
