@@ -359,7 +359,13 @@ class Gen:
         self.scopes.append([])
         parts = [self.stmt(depth - 1, allow_block=False) for _ in range(self.rng.randint(0, 2))]
         val = self.fexpr(depth) if float_val else self.iexpr(depth)
-        parts.append(f"{val.text};")
+        # a GCC statement expression takes the type of its LAST expression -- and a bare BITFIELD read there
+        # decays to its DECLARED type (`unsigned`), NOT the promoted `int` it has in any other context
+        # (`-({ u5; })` is unsigned, but `-(u5)` and `-({ (int)u5; })` are `int`). The fuzzer models a bitfield
+        # read as the promoted int, so force that promotion on the terminal with an explicit cast to its own
+        # arithmetic type (a no-op for every non-bitfield value) so the stmt-expr's type matches Clang + model.
+        term = val.text if float_val else f"{_ACAST[val.aty]}({val.text})"
+        parts.append(f"{term};")
         self.scopes.pop()
         self.locked, self.pure = saved_lock, saved_pure
         return E("({ " + " ".join(parts) + " })", val.aty, val.bound)
@@ -582,8 +588,9 @@ class Gen:
             # struct members mix scalars + bitfields freely (a bitfield may follow a sub-word member, e.g.
             # `short m0; unsigned m1:1;`): the Itanium/Clang bit-cursor layout packs the bitfield into the
             # current storage unit (NOT a fresh type-aligned unit), which both rails now reproduce. Unions
-            # stay scalar-only (union-of-bitfields is a niche left for later).
-            pool = _MEMBER_TYPES if kind == "struct" else _ALL
+            # carry scalars + bitfields too (the ONE active member -- a bitfield active member round-trips
+            # `u.bf` through bf.get/bf.set, behaviour-validated; layout is all-at-offset-0 on both rails).
+            pool = _MEMBER_TYPES if kind == "struct" else (_ALL + list(_BF))
             members = [(f"m{j}", r.choice(pool)) for j in range(r.randint(2, 4))]
             # array members `T arr[4]` come LAST (struct-only; a struct with arrays is params-only -- a local
             # of it would need a nested-brace init, which falls back). Dynamic-indexed `s.arr[e & 3u]`.
