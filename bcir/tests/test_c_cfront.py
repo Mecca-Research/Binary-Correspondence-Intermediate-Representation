@@ -57,7 +57,9 @@ _FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_m
 #   integer StreamPack executor doesn't compute float; the math is delegated to the resident backend)
 _INIT = ["cfront_dispatch_table.c",   # designated initializers ([i]=v) for a file-scope dispatch table
          "cfront_agginit.c",          # local struct/union aggregate init ({.field=v}) -> = {0} + stores
-         "cfront_localarray.c"]       # local array decl T a[N] + array aggregate init (positional + [i]=)
+         "cfront_localarray.c",       # local array decl T a[N] + array aggregate init (positional + [i]=)
+         "cfront_nestinit.c"]         # NESTED-brace init `{ m, {e0..}, n }` for a struct's array member
+#   (a local decl, a compound literal, and a struct return BY VALUE) -- offset-based element stores
 #   parity + emit + Clang ≡ (the table is referenced by name, defined in the source -- not re-hydrated)
 _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts (#ptrvalue): pointer
 #   arithmetic `p + i` as an rvalue returned by value -- the temp carries the pointee type (a real
@@ -2659,7 +2661,8 @@ def test_cfront_differential_fuzz():
     with `char`/`short`/`int`/`long`/`unsigned`/`unsigned long`/`float`/`double` and mixed
     scalar+bitfield struct / union-by-value parameters/locals, a struct-BY-VALUE return, AND `struct T *`
     parameters read+written through the pointer (members `s.m` / `s->m`, a union's single active member, a
-    bitfield `m:W`, a dynamic-indexed array member `s.arr[e & 3u]`; a struct return / a struct-pointer's
+    bitfield `m:W`, a dynamic-indexed array member `s.arr[e & 3u]` -- an array-bearing struct now also as a
+    LOCAL and a RETURN via a NESTED-brace init `{ m, {e0,e1,..}, n }`; a struct return / a struct-pointer's
     backing struct is compared member-and-element-by-value after the call), plus up to two possibly-aliasing
     writable `unsigned *`, drawing from the mixed-width usual arithmetic conversions / floating-point
     arithmetic / bitwise / bounded shifts / comparisons / ternary / if / bounded for / statement expressions /

@@ -727,7 +727,9 @@ class _Parser:
                 self.eat("OP", "=")
                 # one designator keeps the scalar key (int index / str field); a chain is a tuple of steps
                 key = steps[0][1] if len(steps) == 1 else tuple(steps)
-            entries.append((key, self._expr()))
+            # the value may itself be a braced initializer (a nested aggregate: a struct's array member
+            # `{ {e0,e1,..}, n }`, or a nested struct/array) -- recurse through `_init_value`.
+            entries.append((key, self._init_value()))
             if self.at("PUNCT", ","):
                 self.nxt()
         self.eat("PUNCT", "}")

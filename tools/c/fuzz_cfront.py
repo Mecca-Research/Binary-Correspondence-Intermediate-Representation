@@ -372,20 +372,29 @@ class Gen:
 
     def _agg_decl(self, depth: int) -> str:
         """A struct/union LOCAL `struct S0 vN = { ... };` -- its members are registered as scoped lvalues.
-        A union only ever exposes ONE active member (no type-punning, so behaviour stays well-defined)."""
+        A union only ever exposes ONE active member (no type-punning, so behaviour stays well-defined).
+        An array-bearing struct is initialised with a NESTED brace `{ m0, { e0,e1,.. }, m1 }` and its array
+        members are registered for later reads/writes -- but only at FUNCTION TOP-LEVEL scope, where the
+        flat `self.arrs` list stays in scope for the rest of the body (an inner-block local would leak)."""
         r = self.rng
-        plain = [n for n in self.aggdefs if not self.aggdefs[n][3]]   # array-bearing structs are params-only
-        if not plain:
+        top = len(self.scopes) == 1                                  # function top-level: array-bearing OK
+        cands = [n for n in self.aggdefs if top or not self.aggdefs[n][3]]
+        if not cands:
             return self._decl_scalar(depth)
-        agg = r.choice(plain)
-        kind, members, active, _arrs = self.aggdefs[agg]
+        agg = r.choice(cands)
+        kind, members, active, arrs = self.aggdefs[agg]
         self.counter += 1
         vn = f"s{self.counter}"
         if kind == "struct":                                    # init exprs generated BEFORE the members are
             inits = [self._val(depth, c) for _, c in members]   # in scope (so they can't read themselves)
+            arr_inits = [[self._val(max(0, depth - 1), c) for _ in range(_ARRSZ // 2)] for _, c in arrs]
             for (mn, c), e in zip(members, inits):
                 self._add_member(f"{vn}.{mn}", c, self._store_bound(e, c))
-            return f"struct {agg} {vn} = {{ {', '.join(e.text for e in inits)} }};"
+            parts = [e.text for e in inits]
+            for (an, c), elems in zip(arrs, arr_inits):         # a nested brace per array member, then register
+                parts.append("{ " + ", ".join(e.text for e in elems) + " }")
+                self.arrs.append((f"{vn}.", an, c))
+            return f"struct {agg} {vn} = {{ {', '.join(parts)} }};"
         mn, c = members[active]
         e = self._val(depth, c)
         self._add_member(f"{vn}.{mn}", c, self._store_bound(e, c))
@@ -541,8 +550,11 @@ class Gen:
         self.allow_calls = allow_calls
         body = [self.stmt(2) for _ in range(self.rng.randint(2, 5))]
         if ret in self.aggdefs:                            # a struct return BY VALUE: a member-init compound
-            _kind, members, _active, _arrs = self.aggdefs[ret]    # literal (struct only, no array members)
-            body.append(f"return (struct {ret}){{ {', '.join(self._val(3, c).text for _, c in members)} }};")
+            _kind, members, _active, ret_arrs = self.aggdefs[ret]   # literal, with NESTED braces for any array
+            parts = [self._val(3, c).text for _, c in members]      # members (the compound-literal init path)
+            parts += ["{ " + ", ".join(self._val(2, c).text for _ in range(_ARRSZ // 2)) + " }"
+                      for _, c in ret_arrs]
+            body.append(f"return (struct {ret}){{ {', '.join(parts)} }};")
             ret_c = f"struct {ret}"
         else:
             rv = self._val(3, ret)
@@ -593,8 +605,7 @@ class Gen:
                 return r.choice(aggnames)                       # an aggregate by value
             return r.choice(_ALL)
         fparams = [(chr(97 + k), _fparam_type()) for k in range(r.randint(2, 4))]
-        ret_structs = [n for n in structs if not self.aggdefs[n][3]]   # array-bearing structs: params-only
-        fret = r.choice(ret_structs) if (ret_structs and r.random() < 0.15) else r.choice(_ALL)
+        fret = r.choice(structs) if (structs and r.random() < 0.15) else r.choice(_ALL)   # array members OK
         nptr = r.choice([0, 0, 1, 1, 2])
         alias = nptr == 2 and r.random() < 0.5
         fsrc = self._function("f", fparams, fret, nptr=nptr, allow_calls=True)
@@ -695,8 +706,10 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
         return f"if({lhs}!={rhs}) return 1;"
 
     if struct_ret:
-        members = prog.aggdefs[prog.ret][1]
+        members, ret_arrs = prog.aggdefs[prog.ret][1], prog.aggdefs[prog.ret][3]
         chk = " ".join(_mcmp(f"r1.{mn}", f"r2.{mn}", c) for mn, c in members)
+        chk += " " + " ".join(_mcmp(f"r1.{an}[{e}]", f"r2.{an}[{e}]", c)   # array members element-by-element
+                              for an, c in ret_arrs for e in range(_ARRSZ // 2))
     else:
         chk = f"if(!{cmp}(r1,r2)) return 1;" if cmp else "if(r1!=r2) return 1;"
     # the float-equality helpers are needed for a float compare anywhere (return, struct-return member, or a
@@ -705,7 +718,7 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
         _k, mems, _a, arrs = prog.aggdefs[tag]
         return any(c in _FLOATS for _, c in mems) or any(c in _FLOATS for _, c in arrs)
     need_feq = (cmp is not None
-                or (struct_ret and any(c in _FLOATS for _, c in prog.aggdefs[prog.ret][1]))
+                or (struct_ret and _has_float_agg(prog.ret))
                 or any(t.startswith("*") and _has_float_agg(t[1:]) for _, t in prog.ptypes))
     init = "{3u,140u,7u,0u,99u,1234567u,255u,42u}"
     np, alias = prog.nptr, prog.alias
