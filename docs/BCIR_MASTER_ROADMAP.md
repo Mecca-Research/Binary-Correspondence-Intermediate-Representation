@@ -685,7 +685,10 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    Clang-equivalent, so guards).
 > 2. ✅ **Union-of-bitfields** is now exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`, behaviour-validated — unions lay every member at offset 0
->    on both rails). **Still deferred — `__attribute__((packed))` + bitfields LAYOUT bug:** for a packed
+>    on both rails). ✅ **`__attribute__((packed))` scalar structs** are now generated too (no-padding layout,
+>    member read/write behaviour + the `sizeof`/`offsetof` differential both == Clang) — restricted to
+>    bitfield/array/nested-free structs so the packed+bitfield gap below stays out. **Still deferred —
+>    `__attribute__((packed))` + bitfields LAYOUT bug:** for a packed
 >    struct with a bitfield the legacy path reserves a full `sizeof(T)`-byte storage unit per bitfield group
 >    instead of packing bit-by-bit, so e.g. `packed { unsigned char tag; unsigned a:5; unsigned b:9;
 >    unsigned char z; }` is laid out as **6 bytes** by both rails vs Clang's **4** (a/b should pack into

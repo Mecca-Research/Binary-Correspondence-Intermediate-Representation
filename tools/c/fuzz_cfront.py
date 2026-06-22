@@ -611,7 +611,7 @@ class Gen:
 
     def program(self) -> "Program":
         r = self.rng
-        self.aggdefs, agg_src = {}, []
+        self.aggdefs, agg_src, self.packed = {}, [], set()
         for i in range(r.randint(1, 3)):                        # struct / union type definitions
             kind = r.choice(["struct", "struct", "union"])
             nm = ("S" if kind == "struct" else "U") + str(i)
@@ -625,7 +625,8 @@ class Gen:
             # a NESTED struct member `struct S0 in;` (one level): an earlier all-scalar struct (no arrays, no
             # nesting). A nestable inner struct just has no arrays; it MAY itself nest (an earlier struct),
             # so `S2{ S1{ S0 } }` multi-level nesting forms -- read as `s.in.deep.x`, all leaves flattened.
-            nestable = [t for t, v in self.aggdefs.items() if v[0] == "struct" and not v[3]]
+            nestable = [t for t, v in self.aggdefs.items() if v[0] == "struct" and not v[3]
+                        and t not in self.packed]
             nested = kind == "struct" and nestable and not members[0][1] in self.aggdefs and r.random() < 0.3
             if nested:
                 members.append((f"n{len(members)}", r.choice(nestable)))
@@ -633,11 +634,19 @@ class Gen:
             arrs = ([(f"a{j}", r.choice(_AELEM)) for j in range(r.randint(1, 2))]
                     if (kind == "struct" and not nested and r.random() < 0.25)
                     else [])
+            # a `__attribute__((packed))` (no-padding) struct -- ONLY when all members are plain scalars (no
+            # bitfields / arrays / nested): packed+bitfield LAYOUT is a deferred frontend bug, so keep it out.
+            # Packed scalar layout is correct (cf. test_L8_packed_layout_matches_clang) and the LAYOUT
+            # differential validates each generated packed `sizeof`/`offsetof` against Clang.
+            packed = (kind == "struct" and not arrs and not nested
+                      and all(c in _ALL or c == "bool" for _, c in members) and r.random() < 0.45)
+            if packed:
+                self.packed.add(nm)
             self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None, arrs)
             body = " ".join(f"struct {c} {mn};" if c in self.aggdefs
                             else f"{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};" for mn, c in members)
             body += "".join(f" {_ST[c][0]} {an}[{_ARRSZ // 2}];" for an, c in arrs)
-            agg_src.append(f"{kind} {nm} {{ {body} }};")
+            agg_src.append(f"{kind}{' __attribute__((packed))' if packed else ''} {nm} {{ {body} }};")
         self.helpers, helper_src = [], []
         for hi in range(r.randint(0, 3)):                       # leaf helpers (scalar params, no calls, no ptr)
             hp = [(chr(97 + k), r.choice(_ALL)) for k in range(r.randint(1, 3))]
