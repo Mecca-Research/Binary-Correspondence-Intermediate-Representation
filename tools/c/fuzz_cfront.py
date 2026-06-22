@@ -570,8 +570,8 @@ class Gen:
         for pname, ptype in params:
             if ptype.startswith("*"):                          # a `struct T *` parameter: members via `->`
                 _kind, members, _active, arrs = self.aggdefs[ptype[1:]]
-                for mn, c in members:
-                    self._add_member(f"{pname}->{mn}", c, _ST[c][3] if _ST[c][2] else 0)
+                for acc, c in self._leaves(members):           # a nested member: `p->in.x` lvalues
+                    self._add_member(f"{pname}->{acc}", c, _ST[c][3] if _ST[c][2] else 0)
                 self.arrs += [(f"{pname}->", an, c) for an, c in arrs]
             elif ptype in self.aggdefs:
                 kind, members, active, arrs = self.aggdefs[ptype]
@@ -647,15 +647,11 @@ class Gen:
             self.helpers.append((f"g{hi}", [t for _, t in hp], ret))
         aggnames = list(self.aggdefs)
         structs = [n for n in aggnames if self.aggdefs[n][0] == "struct"]
-        # a struct that HAS a nested struct member is a by-value parameter ONLY (its `s.in.x` reads compose
-        # to the function output) -- not a pointer/return/local (those would need the deeper write/compare
-        # recursion, a follow-on). `flat` structs are usable everywhere.
-        flat = [n for n in structs if not any(c in self.aggdefs for _, c in self.aggdefs[n][1])]
 
         def _fparam_type():
             roll = r.random()
-            if flat and roll < 0.15:
-                return "*" + r.choice(flat)                    # a `struct T *` (read+written through the ptr)
+            if structs and roll < 0.15:
+                return "*" + r.choice(structs)                 # a `struct T *` (read+written through the ptr)
             if aggnames and roll < 0.4:
                 return r.choice(aggnames)                       # an aggregate by value (may be nest-containing)
             return r.choice(_ALL)
@@ -797,7 +793,7 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
                 _kind, members, _active, arrs = prog.aggdefs[agg]   # VALUE after the call (per member/element:
                 va, vb = f"S{k}A", f"S{k}B"                     # feqf/feqd for a float -- nan/-0.0 aware -- else exact)
                 decls.append(f"struct {agg} {va},{vb}; memset(&{va},0,sizeof {va}); memset(&{vb},0,sizeof {vb});")
-                cells = [(f"{{v}}.{mn}", c, k + mi) for mi, (mn, c) in enumerate(members)]
+                cells = [(f"{{v}}.{acc}", c, k + mi) for mi, (acc, c) in enumerate(_flat(members))]   # nested -> v.in.x
                 cells += [(f"{{v}}.{an}[{e}]", c, k + ai + e)
                           for ai, (an, c) in enumerate(arrs) for e in range(_ARRSZ // 2)]
                 for ref, c, key in cells:
