@@ -2656,18 +2656,20 @@ def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
 def test_cfront_differential_fuzz():
     """A seeded differential fuzzer over the shared cfront subset (`tools/c/fuzz_cfront.py`): random but
     well-defined programs -- an optional helper prelude then an entry `f`, with `char`/`short`/`int`/`long`/
-    `unsigned`/`unsigned long` (and a writable `unsigned *`) parameters/locals/returns, drawing from the
-    mixed-width usual arithmetic conversions / bitwise / bounded shifts / comparisons / ternary / if /
-    bounded for / statement expressions / inc-dec / mutable-local assignment / same-unit calls / pointer
-    reads AND writes -- are run through BOTH rails and Clang. The two rails must agree on the total-compile
-    OUTCOME (clean/dirty/fallback); a mutually-clean unit must additionally have an identical structural
-    claim SUMMARY (parity) and emitted C that is behaviour-equivalent to Clang on both rails (the pointer's
-    backing array is compared after each call, so a store divergence is caught too). This is the regression
-    guard for the dual-rail bugs this fuzzer flushed -- the twin's parameter-write redeclaration, the
-    oracle's assignment/`i++`-as-stmt-expr-value, the ternary / call result types losing their sign (a
-    logical shift on a signed select / a signed char/short/int/long call result), the twin rejecting a
-    pointer subscript as a statement-expression value, the oracle re-evaluating a compound store's index,
-    and the oracle memcpy'ing a slot width from a narrower integer source. The seeds are fixed (deterministic)."""
+    `unsigned`/`unsigned long`/`float`/`double` (and up to two possibly-aliasing writable `unsigned *`)
+    parameters/locals/returns, drawing from the mixed-width usual arithmetic conversions / floating-point
+    arithmetic / bitwise / bounded shifts / comparisons / ternary / if / bounded for / statement expressions /
+    inc-dec / mutable-local assignment / same-unit calls / pointer reads AND writes -- are run through BOTH
+    rails and Clang. The two rails must agree on the total-compile OUTCOME (clean/dirty/fallback); a
+    mutually-clean unit must additionally have an identical structural claim SUMMARY (parity) and emitted C
+    that is behaviour-equivalent to Clang on both rails -- integer results compared exactly, float results
+    ULP-tolerantly (nan/inf-aware), and every pointer's backing array compared after the call (with the same
+    alias pattern). This is the regression guard for the dual-rail bugs this fuzzer flushed -- the twin's
+    parameter-write redeclaration, the oracle's assignment/`i++`-as-stmt-expr-value, the ternary / call
+    result types losing their sign OR float type (a logical shift on a signed select / a signed
+    char/short/int/long call result / a `double` select truncated to int), the twin rejecting a pointer
+    subscript as a statement-expression value, the oracle re-evaluating a compound store's index, and the
+    oracle memcpy'ing a slot width from a narrower integer source. The seeds are fixed (deterministic)."""
     import random as _random
     import sys as _sys
     tools_c = os.path.join(_ROOT, "tools", "c")

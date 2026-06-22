@@ -613,6 +613,13 @@ static int rid_int(CC *c,uint32_t rid,int *size,int *signd){
     *size=(int)r->elem_bytes; *signd=r->is_signed; return 1; }
   *size=4; *signd=1; return 1;                          /* unknown -> assume int */
 }
+/* if rid holds a float/double, returns 1 and its width (else 0) -- a float arm of a select / the usual
+ * arithmetic conversions makes the result the wider float. */
+static int rid_float(CC *c,uint32_t rid,int *size){
+  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){
+    if(!c->fn->res[i].is_float) return 0; *size=(int)c->fn->res[i].elem_bytes; return 1; }
+  return 0;
+}
 /* integer promotion (§6.3.1.1): a sub-int rank promotes to int. */
 static void promote_i(int *size,int *signd){ if(*size<4){*size=4;*signd=1;} }
 /* usual arithmetic conversions (§6.3.1.8) in the (width, signedness) value model. */
@@ -1511,11 +1518,13 @@ static uint32_t p_binexpr(CC *c){return p_binrhs(c,1,p_unary(c));}
 static uint32_t p_expr(CC *c){
   uint32_t cond=p_binexpr(c);
   if(is(c,"?")){ c->i++; uint32_t a=p_expr(c); eat(c,":"); uint32_t b=p_expr(c);
-    /* an integer select carries the arms' common (width, signedness) -- the usual arithmetic conversions --
-     * NOT a blanket unsigned: a signed arm must keep its sign so a downstream `>>` / compare on the select
-     * stays signed (else `(c?x:y) >> k` would lower to a logical shift). */
-    int sa,za,sb,zb; uint32_t t;
-    if(rid_int(c,a,&sa,&za) && rid_int(c,b,&sb,&zb)){ int rs,rz; uac_i(sa,za,sb,zb,&rs,&rz); t=tempi(c,rs,rz); }
+    /* a select over ARITHMETIC arms carries their common type (usual arithmetic conversions), NOT a blanket
+     * unsigned: a signed arm must keep its sign (else a downstream `>>` / compare goes unsigned) and a FLOAT
+     * arm makes the result the wider float (else the double is truncated to int / a nan mis-converts). */
+    int sa,za,sb,zb,fa,fb; uint32_t t;
+    fa=rid_float(c,a,&sa); fb=rid_float(c,b,&sb);
+    if(fa||fb){ int w=(fa?sa:0)>(fb?sb:0)?(fa?sa:0):(fb?sb:0); t=tempf(c,w); }   /* the wider float */
+    else if(rid_int(c,a,&sa,&za) && rid_int(c,b,&sb,&zb)){ int rs,rz; uac_i(sa,za,sb,zb,&rs,&rz); t=tempi(c,rs,rz); }
     else t=temp(c,4);
     bcir_claim *cl=new_claim(c,"c.select",BCIR_OP_ADD);
     if(cl){cl->n_rd=3;cl->rd[0]=cond;cl->rd[1]=a;cl->rd[2]=b;cl->n_wr=1;cl->wr[0]=t;} return t; }

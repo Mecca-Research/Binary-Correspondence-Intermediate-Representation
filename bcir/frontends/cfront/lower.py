@@ -866,12 +866,13 @@ class _FuncLowerer:
             c = self._rvalue(node.cond)
             a = self._rvalue(node.then)
             b = self._rvalue(node.els)
-            # an integer select carries the arms' common type (usual arithmetic conversions), NOT a blanket
-            # uint32_t -- otherwise a signed arm loses its sign and a downstream `>>` / compare on the select
-            # goes unsigned (e.g. `(c?x:y) >> k` becomes a logical shift). (float / pointer arms keep the
-            # prior typing, in lockstep with the twin -- not the bug under repair here.)
+            # a select over ARITHMETIC arms carries their common type (usual arithmetic conversions), NOT a
+            # blanket uint32_t -- otherwise a signed arm loses its sign (a downstream `>>`/compare on the
+            # select goes unsigned) and a FLOAT arm is truncated to int (`(c?x:y)` of doubles becomes an
+            # int, dropping the value / mis-converting a nan). (pointer arms keep the 4-byte unit.)
             ta, tb = self.rtypes.get(a), self.rtypes.get(b)
-            if ta is not None and tb is not None and ta.is_integer and tb.is_integer:
+            if (ta is not None and tb is not None and (ta.is_integer or ta.is_float)
+                    and (tb.is_integer or tb.is_float)):
                 rt = self._bin_result_type_ct("+", ta, tb)
             else:
                 rt = scalar("uint32_t")
