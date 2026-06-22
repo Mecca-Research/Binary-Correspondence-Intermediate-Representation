@@ -694,7 +694,19 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    Clang-matching packed-bitfield ACCESS — a field may span bytes (e.g. `b:9` over bytes 1–2), so the
 >    `bf.get`/`bf.set` storage unit becomes a variable `ceil((bit_off+w)/8)`-byte read-modify-write (a
 >    non-power-of-2 load width the emit doesn't yet model). Packed structs WITHOUT bitfields are correct
->    (`test_L8_packed_layout_matches_clang`).
+>    (`test_L8_packed_layout_matches_clang`). **Implementation notes (next context):** (a) LAYOUT — in the
+>    `packed` branch of both `p_struct_body` (twin) and `AggregateBuilder.build` (oracle), place each packed
+>    bitfield at the running bit cursor with NO unit reservation: `byte_off = P/8`, `bit_off = P%8`,
+>    `size = ceil((bit_off+w)/8)`, advance `P += w`; struct align stays 1. (b) ACCESS — the bitfield unit
+>    load/store + `c.bf.get`/`c.bf.set` are currently **32-bit-hardcoded** (`bcir_cfront.c` ~2490:
+>    `clear = ~(mask<<off) & 0xFFFFFFFFull`, a `uint32_t` result; the unit `c.load` reads `fld->size` into a
+>    `tempi` sized to the storage type). A packed field can span up to ~39 bits, so the access unit must
+>    widen to **`uint64`** (read/write `size` ∈ 1–5 bytes via `memcpy` into a zeroed `uint64`, 64-bit clear
+>    mask), in both rails' emit. (c) GUARD — ✅ **the `sizeof`/`offsetof` differential is now in the fuzzer**
+>    (`_layout_ok`: the oracle's layout vs Clang `_Static_assert`s, since the behaviour check is size-blind);
+>    it currently passes for every generated struct (the fuzzer excludes packed+bitfield). Once the layout +
+>    access above land, re-enable `__attribute__((packed))` + bitfield structs in the generator and the guard
+>    will pin them.
 > 3. **Statement-expression + bitfield-terminal type (deferred frontend gap).** A GCC statement expression
 >    takes the type of its LAST expression, and a BARE bitfield read there keeps its *declared* type
 >    (`unsigned`) rather than the promoted `int` it has in every other context: `-({ u5; })` is unsigned

@@ -861,6 +861,39 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
     return run.returncode == 0, f"{label} behaviour != Clang (rc={run.returncode})"
 
 
+def _layout_ok(prog: "Program", cc: str, d: str, label: str) -> tuple[bool, str]:
+    """Compare the frontend's computed struct/union LAYOUT (`sizeof` + each member's `offsetof`) against
+    Clang, via `_Static_assert`s Clang must accept. The behaviour differential cannot see a wrong `sizeof`
+    (a write-then-read of one member is self-consistent regardless of the object's size / trailing padding),
+    so this is the guard for struct-size + offset bugs (e.g. the deferred packed+bitfield layout). The two
+    rails share one layout algorithm (parity-gated), so the oracle's layout stands in for both."""
+    from bcir.frontends.cfront.pipeline import compile_unit
+    try:
+        aggs = compile_unit(prog.source, check_clang=False).lowered.aggregates
+    except Exception:
+        return True, ""                                  # un-lowerable: the outcome check already owns it
+    defs = [ln for ln in prog.source.splitlines()
+            if (ln.startswith("struct ") or ln.startswith("union ")) and ln.rstrip().endswith("};")]
+    asserts = []
+    for tag, ct in aggs.items():
+        kw = "union" if ct.kind == "union" else "struct"
+        asserts.append(f'_Static_assert(sizeof({kw} {tag})=={ct.size},"sz {tag}");')
+        for fn, _fty, boff, _bo, bw in ct.fields:
+            if not bw:                                   # a bitfield has no offsetof
+                asserts.append(f'_Static_assert(__builtin_offsetof({kw} {tag},{fn})=={boff},"off {tag}.{fn}");')
+    if not asserts:
+        return True, ""
+    src = "#include <stddef.h>\n" + "\n".join(defs) + "\n" + "\n".join(asserts) + "\nint main(void){return 0;}\n"
+    cp = os.path.join(d, f"L{label}.c")
+    with open(cp, "w") as fh:
+        fh.write(src)
+    b = subprocess.run([cc, "-std=c2x", "-c", cp, "-o", cp + ".o"], capture_output=True, text=True)
+    if b.returncode == 0:
+        return True, ""
+    fails = [l for l in b.stderr.splitlines() if "static" in l.lower() and "assert" in l.lower()]
+    return False, "layout != Clang: " + (fails[0].strip() if fails else (b.stderr.strip().splitlines() or [""])[-1])
+
+
 def run_seed(twin: str, cc, count: int, seed: int, d: str, verbose: bool = False):
     """Generate+check `count` programs. Returns (divergence_message_or_None, stats). `cc` may be None to
     skip the behaviour differential (outcome + parity are still checked). The first divergence short-circuits."""
@@ -887,6 +920,9 @@ def run_seed(twin: str, cc, count: int, seed: int, d: str, verbose: bool = False
             return (f"PARITY DIVERGENCE on program #{i} (seed {seed}):\n{src}\n"
                     f"oracle: {o_summ}\ntwin  : {t_first}", stats)
         if cc:
+            lok, lmsg = _layout_ok(prog, cc, d, str(i))          # struct sizeof/offsetof == Clang (size-blind otherwise)
+            if not lok:
+                return f"LAYOUT DIVERGENCE on program #{i} (seed {seed}): {lmsg}\n{src}", stats
             for tag, emit in (("twin", t_emit), ("oracle", o_emit)):
                 ok, msg = _behaviour_ok(cc, prog, emit, d, f"{tag}{i}")
                 if not ok:
