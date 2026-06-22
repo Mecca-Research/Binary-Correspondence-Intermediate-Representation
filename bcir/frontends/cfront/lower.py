@@ -866,7 +866,16 @@ class _FuncLowerer:
             c = self._rvalue(node.cond)
             a = self._rvalue(node.then)
             b = self._rvalue(node.els)
-            t = self._temp(scalar("uint32_t"), "sel")
+            # an integer select carries the arms' common type (usual arithmetic conversions), NOT a blanket
+            # uint32_t -- otherwise a signed arm loses its sign and a downstream `>>` / compare on the select
+            # goes unsigned (e.g. `(c?x:y) >> k` becomes a logical shift). (float / pointer arms keep the
+            # prior typing, in lockstep with the twin -- not the bug under repair here.)
+            ta, tb = self.rtypes.get(a), self.rtypes.get(b)
+            if ta is not None and tb is not None and ta.is_integer and tb.is_integer:
+                rt = self._bin_result_type_ct("+", ta, tb)
+            else:
+                rt = scalar("uint32_t")
+            t = self._temp(rt, "sel")
             return self._emit("c.select", Opcode.ADD, (c, a, b), (t,))
         if isinstance(node, cast.CallExpr):
             return self._call(node)
@@ -1114,9 +1123,12 @@ class _FuncLowerer:
             self._emit(f"c.call.void:{node.callee}", Opcode.GEM_DISPATCH, actuals, ())   # result temp
             return _VOID_RID                           # the value of a void call is never read
         # type the result temp by the callee's return type: a float return propagates (so downstream
-        # arithmetic stays float), and a wide (8-byte) integer return keeps its width instead of being
-        # narrowed to the 4-byte value unit. An ordinary int/pointer/aggregate keeps the uint32 unit.
+        # arithmetic stays float), a wide (8-byte) integer return keeps its width, and a signed `int` return
+        # keeps its SIGN -- else a downstream `>>` / comparison on the call result would go unsigned (a
+        # logical shift / unsigned compare). A pointer / aggregate keeps the 4-byte uint32 value unit.
         if ret_ct is not None and (ret_ct.is_float or (ret_ct.is_integer and ret_ct.size > 4)):
+            rct = ret_ct
+        elif ret_ct is not None and ret_ct.is_integer and ret_ct.size == 4 and ret_ct.signed:
             rct = ret_ct
         else:
             rct = scalar("uint32_t")
