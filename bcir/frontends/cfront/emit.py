@@ -203,21 +203,22 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                 es = c.imm[1] if len(c.imm) > 1 else 4
                 bp = _base_ptr(lf, c.rd[0], ref)
                 dst = f"(char *){bp} + {off} + (size_t){ref(c.rd[1])} * {es}"
-                vt = lf.rid_types.get(c.rd[2])               # a narrower int source must be widened to the
-                if vt is not None and vt.is_integer and vt.size < es:   # element width first -- memcpy'ing
-                    return f"{{ uint{es * 8}_t _sv = {ref(c.rd[2])}; memcpy({dst}, &_sv, {es}); }}"  # `es`
-                return f"memcpy({dst}, &{ref(c.rd[2])}, {es});"        # bytes from a smaller object reads past it
+                conv = _store_conv(lf.rid_types.get(c.rd[2]), es)
+                if conv:                                     # convert the source to the element type first --
+                    return f"{{ {conv} _sv = {ref(c.rd[2])}; memcpy({dst}, &_sv, {es}); }}"   # else memcpy'ing
+                return f"memcpy({dst}, &{ref(c.rd[2])}, {es});"   # `es` bytes of a narrower/float source corrupts it
             return f"{ref(c.rd[0])}[{ref(c.rd[1])}] = {ref(c.rd[2])};"   # typed array
         ptr = _base_ptr(lf, c.rd[0], ref)
         size = c.imm[1] if len(c.imm) > 1 else 4
         if c.domain.name == "MMIO":                          # device register: ordered volatile store
             return f"*(volatile uint32_t *)((volatile char *){ptr} + {off}) = {ref(c.rd[1])};"
         # plain RAM member/deref: memcpy `size` bytes (correct truncation on little-endian, packed-safe). A
-        # narrower int source is widened/converted to the slot width first -- memcpy'ing `size` bytes from a
-        # smaller object (e.g. `*p = (short)b` into a 4-byte slot) would read past it (garbage + UB).
-        vt = lf.rid_types.get(c.rd[1])
-        if vt is not None and vt.is_integer and vt.size < size:
-            return f"{{ uint{size * 8}_t _sv = {ref(c.rd[1])}; memcpy((char *){ptr} + {off}, &_sv, {size}); }}"
+        # source whose type does not match the slot is CONVERTED through a slot-typed temp first -- a narrower
+        # int (`*p = (short)b`) must widen, and a `float` stored into a `double` member must convert (not
+        # memcpy 4 bytes into 8, nor copy float bits into a double slot).
+        conv = _store_conv(lf.rid_types.get(c.rd[1]), size)
+        if conv:
+            return f"{{ {conv} _sv = {ref(c.rd[1])}; memcpy((char *){ptr} + {off}, &_sv, {size}); }}"
         return f"memcpy((char *){ptr} + {off}, &{ref(c.rd[1])}, {size});"
     if c.op == "c.bf.get":                                   # (unit >> bit_off) & mask (sign-extended if signed)
         bit_off, width = c.imm[0], c.imm[1]
@@ -282,6 +283,18 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
             return f"atomic_store({ref(c.rd[0])}, {ref(c.rd[1])});"
         return deftmp(c.wr[0], f"atomic_{fn}({ref(c.rd[0])}, {ref(c.rd[1])})")
     raise ValueError(f"emit: unhandled claim op {c.op!r}")
+
+
+def _store_conv(vt, size: int):
+    """The C type to convert a store source through (a slot-typed temp) before memcpy'ing `size` bytes into
+    the slot -- or None when the source already matches the slot width/kind (a direct memcpy is correct). A
+    `float`/`double` source of a different width must convert (float<->double, not a byte copy); a narrower
+    integer source must widen/sign-extend to the slot width."""
+    if vt is not None and vt.is_float and vt.size != size:
+        return "float" if size == 4 else ("long double" if size > 8 else "double")
+    if vt is not None and vt.is_integer and vt.size < size:
+        return f"uint{size * 8}_t"
+    return None
 
 
 def _load_ctype(lf: LoweredFunc, rid: int) -> str:

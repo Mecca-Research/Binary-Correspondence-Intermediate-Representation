@@ -9,10 +9,12 @@ Generates random but *well-defined* C programs over the subset the two rails sha
   2. for a mutually-clean unit, compares the structural claim SUMMARY (parity) and, if a C compiler is
      present, that BOTH rails' emitted C is behaviour-equivalent to Clang compiling the source.
 
-GRAMMAR.  An optional prelude of helper functions, then an entry `f`. Parameters / locals / returns are any
-of `char` `short` `int` `long` `unsigned` `unsigned long` `float` `double`; `f` may additionally take up to
-two `unsigned *` parameters it reads AND writes (which MAY alias). Bodies draw from arithmetic / bitwise /
-bounded shifts / comparisons / ternary / if / bounded for / statement expressions / inc-dec / mutable-local
+GRAMMAR.  Struct/union type definitions, an optional prelude of helper functions, then an entry `f`. Scalar
+parameters / locals / returns are any of `char` `short` `int` `long` `unsigned` `unsigned long` `float`
+`double`; `f` may also take struct/union parameters BY VALUE and declare struct/union locals (members are
+accessed `s.m`), and up to two `unsigned *` parameters it reads AND writes (which MAY alias). A union only
+ever exposes one active member (no type-punning). Bodies draw from arithmetic / bitwise / bounded shifts /
+comparisons / ternary / if / bounded for / statement expressions / inc-dec / mutable-local-and-member
 assignment / same-unit calls / pointer reads+writes, with the integer types mixed (the usual arithmetic
 conversions) and floating-point arithmetic kept in its own lane.
 
@@ -61,7 +63,7 @@ _CMP = ["<", ">", "<=", ">=", "==", "!=", "&&", "||"]
 # storage type code -> (C spelling, width bytes, signed-int, |value| cap (signed-int only), arithmetic type
 # after integer promotion). char/short promote to int; the rest keep their arithmetic type.
 _ST = {
-    "i8":  ("char",          1, True,  127,            "i32"),
+    "i8":  ("signed char",   1, True,  127,            "i32"),   # `signed char`, NOT plain `char` (which is
     "i16": ("short",         2, True,  32767,          "i32"),
     "i32": ("int",           4, True,  (1 << 31) - 1,  "i32"),
     "i64": ("long",          8, True,  (1 << 63) - 1,  "i64"),
@@ -146,6 +148,7 @@ class Gen:
         self.rng = rng
         self.counter = 0
         self.helpers: list = []          # (name, [param storage codes], ret storage code) for same-unit calls
+        self.aggdefs: dict = {}          # tag -> ("struct"/"union", [(member, code)], union active-member index)
         # per-function state (reset by _enter_function):
         self.scopes: list = [[]]
         self.styp: dict = {}             # name -> storage code
@@ -178,6 +181,13 @@ class Gen:
         self.scopes[-1].append(n)
         self.styp[n], self.bound[n] = code, bound
         return n
+
+    def _add_member(self, access: str, code: str, bound: int):
+        # an aggregate member is a scoped lvalue-name (e.g. `s.m0`); every read/write/bound/loop rule that
+        # applies to a scalar local applies to it verbatim (its name just happens to be a member access).
+        self.scopes[-1].append(access)
+        self.styp[access] = code
+        self.bound[access] = bound
 
     def _store_bound(self, e: E, code: str) -> int:
         # the |value| bound after storing `e` into a local of type `code`: a signed narrow type caps at its
@@ -328,10 +338,31 @@ class Gen:
 
     # -- statements ------------------------------------------------------------------------------------
     def _decl(self, depth: int) -> str:
-        code = self.rng.choice(_ALL)
+        r = self.rng
+        if self.aggdefs and r.random() < 0.28:
+            return self._agg_decl(depth)
+        code = r.choice(_ALL)
         e = self._val(depth, code)
         n = self._fresh(code, self._store_bound(e, code))
         return f"{_ST[code][0]} {n} = {e.text};"
+
+    def _agg_decl(self, depth: int) -> str:
+        """A struct/union LOCAL `struct S0 vN = { ... };` -- its members are registered as scoped lvalues.
+        A union only ever exposes ONE active member (no type-punning, so behaviour stays well-defined)."""
+        r = self.rng
+        agg = r.choice(list(self.aggdefs))
+        kind, members, active = self.aggdefs[agg]
+        self.counter += 1
+        vn = f"s{self.counter}"
+        if kind == "struct":                                    # init exprs generated BEFORE the members are
+            inits = [self._val(depth, c) for _, c in members]   # in scope (so they can't read themselves)
+            for (mn, c), e in zip(members, inits):
+                self._add_member(f"{vn}.{mn}", c, self._store_bound(e, c))
+            return f"struct {agg} {vn} = {{ {', '.join(e.text for e in inits)} }};"
+        mn, c = members[active]
+        e = self._val(depth, c)
+        self._add_member(f"{vn}.{mn}", c, self._store_bound(e, c))
+        return f"union {agg} {vn} = {{ .{mn} = {e.text} }};"
 
     def _assign_to(self, n: str, depth: int) -> str:
         code = self.styp[n]
@@ -446,48 +477,67 @@ class Gen:
         return f"for (unsigned {iv} = 0u; {iv} < {r.randint(1, 8)}u; {iv}++) {{ {body} }}"
 
     # -- whole functions / program ---------------------------------------------------------------------
-    def _enter_function(self, ptypes: list, nptr: int):
-        names = ["a", "b", "c", "d"][:len(ptypes)]
-        self.scopes = [list(names)]
-        self.styp = {n: t for n, t in zip(names, ptypes)}
-        self.bound = {n: (_ST[t][3] if _ST[t][2] else 0) for n, t in zip(names, ptypes)}
+    def _enter_function(self, params: list, nptr: int):
+        # params is a list of (name, type-token); a token is a scalar code or an aggregate tag. An aggregate
+        # parameter contributes its member lvalues to scope (its members are bounded like scalar parameters).
+        self.scopes = [[]]
+        self.styp, self.bound = {}, {}
+        for pname, ptype in params:
+            if ptype in self.aggdefs:
+                kind, members, active = self.aggdefs[ptype]
+                for mn, c in (members if kind == "struct" else [members[active]]):
+                    self._add_member(f"{pname}.{mn}", c, _ST[c][3] if _ST[c][2] else 0)
+            else:
+                self.scopes[0].append(pname)
+                self.styp[pname] = ptype
+                self.bound[pname] = _ST[ptype][3] if _ST[ptype][2] else 0
         self.loopvars, self.locked, self.pure, self.loopdepth = set(), set(), False, 0
-        self.params = list(names)
+        self.params = params
         self.ptrs = ["p", "q"][:nptr]
 
-    def _function(self, name: str, ptypes: list, ret: str, nptr: int, allow_calls: bool) -> str:
-        self._enter_function(ptypes, nptr)
+    def _function(self, name: str, params: list, ret: str, nptr: int, allow_calls: bool) -> str:
+        self._enter_function(params, nptr)
         self.allow_calls = allow_calls
         body = [self.stmt(2) for _ in range(self.rng.randint(2, 5))]
         rv = self._val(3, ret)
         body.append(f"return {_coerce(rv, _ST[ret][4]) if _ST[ret][4] != rv.aty else rv.text};")
-        decl = ", ".join(f"{_ST[t][0]} {n}" for n, t in zip(self.params, ptypes))
-        for pn in self.ptrs:
-            decl += f", unsigned *{pn}"
-        src = f"{_ST[ret][0]} {name}({decl})\n{{\n  " + "\n  ".join(body) + "\n}\n"
+        parts = [(f"{self.aggdefs[t][0]} {t} {n}" if t in self.aggdefs else f"{_ST[t][0]} {n}")
+                 for n, t in params]
+        parts += [f"unsigned *{pn}" for pn in self.ptrs]
+        src = f"{_ST[ret][0]} {name}({', '.join(parts)})\n{{\n  " + "\n  ".join(body) + "\n}\n"
         return src
 
     def program(self) -> "Program":
         r = self.rng
+        self.aggdefs, agg_src = {}, []
+        for i in range(r.randint(1, 3)):                        # struct / union type definitions
+            kind = r.choice(["struct", "struct", "union"])
+            nm = ("S" if kind == "struct" else "U") + str(i)
+            members = [(f"m{j}", r.choice(_ALL)) for j in range(r.randint(2, 4))]
+            self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None)
+            agg_src.append(f"{kind} {nm} {{ " + " ".join(f"{_ST[c][0]} {mn};" for mn, c in members) + " };")
         self.helpers, helper_src = [], []
-        for hi in range(r.randint(0, 3)):                       # a prelude of leaf helpers (no calls, no ptr)
-            ptypes = [r.choice(_ALL) for _ in range(r.randint(1, 3))]
+        for hi in range(r.randint(0, 3)):                       # leaf helpers (scalar params, no calls, no ptr)
+            hp = [(chr(97 + k), r.choice(_ALL)) for k in range(r.randint(1, 3))]
             ret = r.choice(_ALL)
-            helper_src.append(self._function(f"g{hi}", ptypes, ret, nptr=0, allow_calls=False))
-            self.helpers.append((f"g{hi}", ptypes, ret))
-        fptypes = [r.choice(_ALL) for _ in range(r.randint(2, 4))]
+            helper_src.append(self._function(f"g{hi}", hp, ret, nptr=0, allow_calls=False))
+            self.helpers.append((f"g{hi}", [t for _, t in hp], ret))
+        aggnames = list(self.aggdefs)
+        fparams = [(chr(97 + k), r.choice(aggnames) if (aggnames and r.random() < 0.3) else r.choice(_ALL))
+                   for k in range(r.randint(2, 4))]
         fret = r.choice(_ALL)
         nptr = r.choice([0, 0, 1, 1, 2])
         alias = nptr == 2 and r.random() < 0.5
-        fsrc = self._function("f", fptypes, fret, nptr=nptr, allow_calls=True)
-        return Program("\n".join(helper_src + [fsrc]), fptypes, fret, nptr, alias)
+        fsrc = self._function("f", fparams, fret, nptr=nptr, allow_calls=True)
+        return Program("\n".join(agg_src + helper_src + [fsrc]), fparams, fret, nptr, alias, dict(self.aggdefs))
 
 
 class Program:
-    __slots__ = ("source", "ptypes", "ret", "nptr", "alias")
+    __slots__ = ("source", "ptypes", "ret", "nptr", "alias", "aggdefs")
 
-    def __init__(self, source: str, ptypes: list, ret: str, nptr: int, alias: bool):
-        self.source, self.ptypes, self.ret, self.nptr, self.alias = source, ptypes, ret, nptr, alias
+    def __init__(self, source: str, ptypes: list, ret: str, nptr: int, alias: bool, aggdefs: dict):
+        self.source, self.ptypes, self.ret = source, ptypes, ret
+        self.nptr, self.alias, self.aggdefs = nptr, alias, aggdefs
 
 
 def _oracle_outcome(src: str):
@@ -541,16 +591,29 @@ _POOL = {
 _FPOOL = [0.0, 1.0, -1.0, 0.5, -0.5, 3.14159, -2.71828, 100.25, -0.001, 1234.5, -99999.0, 1e-7]
 
 
+def _lit(code: str, j: int, k: int) -> str:
+    if code in _FLOATS:
+        return _fconst(_FPOOL[(j + 3 * k) % len(_FPOOL)], code)
+    return _const_text(_POOL[code][(j + 3 * k) % len(_POOL[code])], _ST[code][4])
+
+
 def _arg_vectors(prog: Program) -> list:
-    """A deterministic set of type-correct scalar argument vectors (one C literal per scalar parameter)."""
+    """A deterministic set of type-correct argument vectors (one C literal per parameter -- a scalar literal,
+    or a `(struct/union T){...}` compound literal for an aggregate-by-value parameter)."""
     vecs = []
     for j in range(16):
         args = []
-        for k, t in enumerate(prog.ptypes):
-            if t in _FLOATS:
-                args.append(_fconst(_FPOOL[(j + 3 * k) % len(_FPOOL)], t))
+        for k, (_pn, t) in enumerate(prog.ptypes):
+            if t in prog.aggdefs:
+                kind, members, active = prog.aggdefs[t]
+                if kind == "struct":
+                    inits = ", ".join(_lit(c, j, k + mi) for mi, (_, c) in enumerate(members))
+                    args.append(f"({kind} {t}){{ {inits} }}")
+                else:
+                    mn, c = members[active]
+                    args.append(f"({kind} {t}){{ .{mn} = {_lit(c, j, k)} }}")
             else:
-                args.append(_const_text(_POOL[t][(j + 3 * k) % len(_POOL[t])], _ST[t][4]))
+                args.append(_lit(t, j, k))
         vecs.append(args)
     return vecs
 

@@ -31,7 +31,7 @@ typedef struct { tkind k; const char *s; int n; long long v; } tok;
 #define MAXTOK 16384
 #define MAXFLD 64        /* members per struct (f[] is embedded in sdef; generous, guarded) */
 
-typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int byte_off, bit_off, bit_w; int sidx;
+typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; int byte_off, bit_off, bit_w; int sidx;
                  int arr_count; int nadims; int adims[3];
                  int is_ptr; int ptee_size; int ptee_float; int ptee_sidx; } field;
                  /* is_ptr: a pointer member -- `size` is pointer_size (the ABI layout width), the pointee
@@ -469,6 +469,7 @@ static int p_struct_body(CC *c) {
       field *f=&S->f[S->nf++];
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
       idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
+      f->is_float=(!isptr && ty.is_float)?1:0;          /* a float/double member loads/stores as itself */
       f->nadims=nadims; for(int z=0;z<3;z++) f->adims[z]=adims[z];
       f->is_ptr=isptr; f->ptee_size=isptr?ty.size:0; f->ptee_float=isptr?(ty.is_float?1:0):0;   /* pointee type */
       f->ptee_sidx=(isptr && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
@@ -779,7 +780,7 @@ static uint32_t tempptr_field(CC *c, const field *fld){
 }
 
 static uint32_t emit_member(CC *c, venv *base, const field *fld) {
-  uint32_t t=fld->is_ptr?tempptr_field(c,fld):tempi(c,fld->size,fld->signd);   /* loaded value carries the field's type */
+  uint32_t t=fld->is_ptr?tempptr_field(c,fld):fld->is_float?tempf(c,fld->size):tempi(c,fld->size,fld->signd);   /* loaded value carries the field's type */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
@@ -792,7 +793,7 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld) {
 /* `s.arr[idx]` -- a load from a struct member array: the element lands at `&s + member_off + idx*elem`,
  * so the claim carries the base, the index, and (member byte offset, element size) in imm. */
 static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t idx) {
-  uint32_t t=tempi(c,fld->size,fld->signd);
+  uint32_t t=fld->is_float?tempf(c,fld->size):tempi(c,fld->size,fld->signd);
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
   cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;cl->bounds=BCIR_BND_ASSUMED;
@@ -1472,6 +1473,21 @@ static int is_compound_op(const tok *t){
   if(t->n==3 && t->s[2]=='=' && (t->s[0]=='<'||t->s[0]=='>') && t->s[0]==t->s[1]) return 1;
   return 0;
 }
+/* lookahead from token `j` (a `.`/`->`/`[` chain following an lvalue): is an `=`/OP= at the end -- i.e. is
+ * this a member/element STORE, or a member access used as a VALUE (e.g. `({ s.m; })`)? Skips the whole
+ * chain (`.field`, `->field`, balanced `[...]`) without consuming. */
+static int member_is_store(CC *c,int j){
+  for(;;){
+    const tok *t=&c->t[j];
+    if(t->k==T_END) return 0;
+    if(t->k==T_PUN && t->n==1 && t->s[0]=='.'){ j+=2; continue; }              /* .field */
+    if(t->k==T_PUN && t->n==2 && t->s[0]=='-' && t->s[1]=='>'){ j+=2; continue; }  /* ->field */
+    if(t->k==T_PUN && t->n==1 && t->s[0]=='['){ int d=1; j++;                  /* balanced [...] */
+      while(c->t[j].k!=T_END && d){ char ch=c->t[j].s[0]; if(ch=='[')d++; else if(ch==']')d--; j++; } continue; }
+    break;
+  }
+  return c->t[j].k==T_PUN && ((c->t[j].n==1 && c->t[j].s[0]=='=') || is_compound_op(&c->t[j]));
+}
 /* The result temp of a binary op `lhs <suf> rhs` -- the usual arithmetic conversions in the (width,
  * signedness) value model: float arithmetic propagates the wider float; a shift keeps the promoted left
  * operand; an integer op the UAC width/sign; a (pointer ± int) stays a pointer (pointee-scaled). Shared
@@ -1979,8 +1995,11 @@ static void p_stmt(CC *c) {
     c->i=save;   /* not a deref-store -- fall through (e.g. a bare `*p;` expression statement) */
   }
   if(isk(c,T_ID)){tok id=*pk(c);venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a writable file-scope global */
-    /* L8: struct member store  v.field = expr  /  v->field = expr */
-    if(v&&v->sidx>=0&&c->t[c->i+1].k==T_PUN&&(c->t[c->i+1].s[0]=='.'||(c->t[c->i+1].n==2&&c->t[c->i+1].s[0]=='-'))){
+    /* L8: struct member store  v.field = expr  /  v->field = expr  (only when an `=`/OP= actually follows
+     * the access chain -- else `s.m` is a VALUE, e.g. the last item of a `({...})`, and falls through to the
+     * expression-statement path below, exactly like a bare `a[i];` subscript). */
+    if(v&&v->sidx>=0&&c->t[c->i+1].k==T_PUN&&(c->t[c->i+1].s[0]=='.'||(c->t[c->i+1].n==2&&c->t[c->i+1].s[0]=='-'))
+        && member_is_store(c,c->i+1)){
       c->i+=2; tok fld=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
       if(fi<0){fail(c,"unknown field");return;}
