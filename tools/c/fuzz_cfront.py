@@ -504,13 +504,19 @@ class Gen:
         self._enter_function(params, nptr)
         self.allow_calls = allow_calls
         body = [self.stmt(2) for _ in range(self.rng.randint(2, 5))]
-        rv = self._val(3, ret)
-        body.append(f"return {_coerce(rv, _ST[ret][4]) if _ST[ret][4] != rv.aty else rv.text};")
+        if ret in self.aggdefs:                            # a struct return BY VALUE: a member-init compound
+            _kind, members, _active = self.aggdefs[ret]    # literal (struct only -- not union)
+            body.append(f"return (struct {ret}){{ {', '.join(self._val(3, c).text for _, c in members)} }};")
+            ret_c = f"struct {ret}"
+        else:
+            rv = self._val(3, ret)
+            body.append(f"return {_coerce(rv, _ST[ret][4]) if _ST[ret][4] != rv.aty else rv.text};")
+            ret_c = _ST[ret][0]
         parts = [(f"{self.aggdefs[t[1:]][0]} {t[1:]} *{n}" if t.startswith("*")
                   else f"{self.aggdefs[t][0]} {t} {n}" if t in self.aggdefs else f"{_ST[t][0]} {n}")
                  for n, t in params]
         parts += [f"unsigned *{pn}" for pn in self.ptrs]
-        src = f"{_ST[ret][0]} {name}({', '.join(parts)})\n{{\n  " + "\n  ".join(body) + "\n}\n"
+        src = f"{ret_c} {name}({', '.join(parts)})\n{{\n  " + "\n  ".join(body) + "\n}\n"
         return src
 
     def program(self) -> "Program":
@@ -539,7 +545,7 @@ class Gen:
                 return r.choice(aggnames)                       # an aggregate by value
             return r.choice(_ALL)
         fparams = [(chr(97 + k), _fparam_type()) for k in range(r.randint(2, 4))]
-        fret = r.choice(_ALL)
+        fret = r.choice(structs) if (structs and r.random() < 0.15) else r.choice(_ALL)   # struct return by value
         nptr = r.choice([0, 0, 1, 1, 2])
         alias = nptr == 2 and r.random() < 0.5
         fsrc = self._function("f", fparams, fret, nptr=nptr, allow_calls=True)
@@ -622,11 +628,26 @@ _FEQ = (
 
 def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tuple[bool, str]:
     renamed = re.sub(r"\bf\b", "f_s", prog.source)              # the entry `f` -> `f_s`; helpers untouched
-    rtype = _ST[prog.ret][0]
-    cmp = {"f32": "feqf", "f64": "feqd"}.get(prog.ret)          # None -> exact integer compare
-    # the float-equality helpers are needed for a float RETURN or any float struct-pointer member compare.
-    need_feq = cmp is not None or any(t.startswith("*") and any(c in _FLOATS for _, c in prog.aggdefs[t[1:]][1])
-                                      for _, t in prog.ptypes)
+    struct_ret = prog.ret in prog.aggdefs                       # f returns a struct BY VALUE
+    rtype = f"struct {prog.ret}" if struct_ret else _ST[prog.ret][0]
+    cmp = None if struct_ret else {"f32": "feqf", "f64": "feqd"}.get(prog.ret)   # None -> exact integer compare
+
+    def _mcmp(lhs: str, rhs: str, code: str) -> str:           # one member's value comparison (float-aware)
+        if code in _FLOATS:
+            return f"if(!{'feqf' if code == 'f32' else 'feqd'}({lhs},{rhs})) return 1;"
+        return f"if({lhs}!={rhs}) return 1;"
+
+    if struct_ret:
+        members = prog.aggdefs[prog.ret][1]
+        chk = " ".join(_mcmp(f"r1.{mn}", f"r2.{mn}", c) for mn, c in members)
+    else:
+        chk = f"if(!{cmp}(r1,r2)) return 1;" if cmp else "if(r1!=r2) return 1;"
+    # the float-equality helpers are needed for a float compare anywhere (return, struct-return member, or a
+    # struct-pointer member).
+    need_feq = (cmp is not None
+                or (struct_ret and any(c in _FLOATS for _, c in prog.aggdefs[prog.ret][1]))
+                or any(t.startswith("*") and any(c in _FLOATS for _, c in prog.aggdefs[t[1:]][1])
+                       for _, t in prog.ptypes))
     init = "{3u,140u,7u,0u,99u,1234567u,255u,42u}"
     np, alias = prog.nptr, prog.alias
     lines = ["int main(void){"]
@@ -674,7 +695,6 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
                     a2.append("Q2")
                     post.append("for(int kk=0;kk<8;kk++) if(Q1[kk]!=Q2[kk]) return 3;")
         c1, c2 = f"bcir_f({', '.join(a1)})", f"f_s({', '.join(a2)})"
-        chk = f"if(!{cmp}(r1,r2)) return 1;" if cmp else "if(r1!=r2) return 1;"
         lines.append(f"  {{ {' '.join(decls)} {rtype} r1={c1}; {rtype} r2={c2}; {chk} {' '.join(post)} }}")
     lines.append("  return 0;}")
     harness = ("#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <math.h>\n"
