@@ -203,9 +203,9 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                 es = c.imm[1] if len(c.imm) > 1 else 4
                 bp = _base_ptr(lf, c.rd[0], ref)
                 dst = f"(char *){bp} + {off} + (size_t){ref(c.rd[1])} * {es}"
-                conv = _store_conv(lf.rid_types.get(c.rd[2]), es)
-                if conv:                                     # convert the source to the element type first --
-                    return f"{{ {conv} _sv = {ref(c.rd[2])}; memcpy({dst}, &_sv, {es}); }}"   # else memcpy'ing
+                conv = "_Bool" if (len(c.imm) > 2 and c.imm[2]) else _store_conv(lf.rid_types.get(c.rd[2]), es)
+                if conv:                                     # convert the source to the element type first (a
+                    return f"{{ {conv} _sv = {ref(c.rd[2])}; memcpy({dst}, &_sv, {es}); }}"   # _Bool normalizes), else
                 return f"memcpy({dst}, &{ref(c.rd[2])}, {es});"   # `es` bytes of a narrower/float source corrupts it
             return f"{ref(c.rd[0])}[{ref(c.rd[1])}] = {ref(c.rd[2])};"   # typed array
         ptr = _base_ptr(lf, c.rd[0], ref)
@@ -216,8 +216,8 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         # source whose type does not match the slot is CONVERTED through a slot-typed temp first -- a narrower
         # int (`*p = (short)b`) must widen, and a `float` stored into a `double` member must convert (not
         # memcpy 4 bytes into 8, nor copy float bits into a double slot).
-        conv = _store_conv(lf.rid_types.get(c.rd[1]), size)
-        if conv:
+        conv = "_Bool" if (len(c.imm) > 2 and c.imm[2]) else _store_conv(lf.rid_types.get(c.rd[1]), size)
+        if conv:                                             # a _Bool slot normalizes the stored value to 0/1
             return f"{{ {conv} _sv = {ref(c.rd[1])}; memcpy((char *){ptr} + {off}, &_sv, {size}); }}"
         return f"memcpy((char *){ptr} + {off}, &{ref(c.rd[1])}, {size});"
     if c.op == "c.bf.get":                                   # (unit >> bit_off) & mask (sign-extended if signed)
