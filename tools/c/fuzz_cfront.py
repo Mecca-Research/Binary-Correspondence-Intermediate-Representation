@@ -382,6 +382,19 @@ class Gen:
             return self._agg_decl(depth)
         return self._decl_scalar(depth)
 
+    def _leaves(self, members: list) -> list:
+        """Flatten a struct's members to scalar/bitfield LEAVES with their access suffix, recursing one level
+        into a nested struct member (`(in, S0)` -> `in.x`, `in.y`). A nestable inner struct is scalar-only
+        (no arrays / no further nesting), so one level suffices. Used to register `s.in.x` lvalues and to
+        compare a nested aggregate leaf-by-leaf."""
+        out = []
+        for mn, c in members:
+            if c in self.aggdefs:                                # a by-value nested struct member
+                out += [(f"{mn}.{imn}", ic) for imn, ic in self.aggdefs[c][1]]
+            else:
+                out.append((mn, c))
+        return out
+
     def _agg_decl(self, depth: int) -> str:
         """A struct/union LOCAL `struct S0 vN = { ... };` -- its members are registered as scoped lvalues.
         A union only ever exposes ONE active member (no type-punning, so behaviour stays well-defined).
@@ -390,7 +403,8 @@ class Gen:
         flat `self.arrs` list stays in scope for the rest of the body (an inner-block local would leak)."""
         r = self.rng
         top = len(self.scopes) == 1                                  # function top-level: array-bearing OK
-        cands = [n for n in self.aggdefs if top or not self.aggdefs[n][3]]
+        cands = [n for n in self.aggdefs if (top or not self.aggdefs[n][3])   # nest-containing: by-value param only
+                 and not any(c in self.aggdefs for _, c in self.aggdefs[n][1])]
         if not cands:
             return self._decl_scalar(depth)
         agg = r.choice(cands)
@@ -546,8 +560,9 @@ class Gen:
                 self.arrs += [(f"{pname}->", an, c) for an, c in arrs]
             elif ptype in self.aggdefs:
                 kind, members, active, arrs = self.aggdefs[ptype]
-                for mn, c in (members if kind == "struct" else [members[active]]):
-                    self._add_member(f"{pname}.{mn}", c, _ST[c][3] if _ST[c][2] else 0)
+                leaves = self._leaves(members) if kind == "struct" else self._leaves([members[active]])
+                for acc, c in leaves:                          # a nested struct member contributes `s.in.x` lvalues
+                    self._add_member(f"{pname}.{acc}", c, _ST[c][3] if _ST[c][2] else 0)
                 self.arrs += [(f"{pname}.", an, c) for an, c in arrs]
             else:
                 self.scopes[0].append(pname)
@@ -592,13 +607,21 @@ class Gen:
             # `u.bf` through bf.get/bf.set, behaviour-validated; layout is all-at-offset-0 on both rails).
             pool = _MEMBER_TYPES if kind == "struct" else (_ALL + list(_BF))
             members = [(f"m{j}", r.choice(pool)) for j in range(r.randint(2, 4))]
-            # array members `T arr[4]` come LAST (struct-only; a struct with arrays is params-only -- a local
-            # of it would need a nested-brace init, which falls back). Dynamic-indexed `s.arr[e & 3u]`.
+            # a NESTED struct member `struct S0 in;` (one level): an earlier all-scalar struct (no arrays, no
+            # nesting itself). Read as `s.in.x` -- exercised as a by-value PARAMETER only (a nest-containing
+            # struct is excluded from locals/returns/pointers below, where the recursion would be deeper).
+            nestable = [t for t, v in self.aggdefs.items() if v[0] == "struct" and not v[3]
+                        and not any(ic in self.aggdefs for _, ic in v[1])]
+            nested = kind == "struct" and nestable and not members[0][1] in self.aggdefs and r.random() < 0.3
+            if nested:
+                members.append((f"n{len(members)}", r.choice(nestable)))
+            # array members `T arr[4]` come LAST (struct-only, mutually exclusive with a nested member here).
             arrs = ([(f"a{j}", r.choice(_AELEM)) for j in range(r.randint(1, 2))]
-                    if (kind == "struct" and r.random() < 0.25)
+                    if (kind == "struct" and not nested and r.random() < 0.25)
                     else [])
             self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None, arrs)
-            body = " ".join(f"{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};" for mn, c in members)
+            body = " ".join(f"struct {c} {mn};" if c in self.aggdefs
+                            else f"{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};" for mn, c in members)
             body += "".join(f" {_ST[c][0]} {an}[{_ARRSZ // 2}];" for an, c in arrs)
             agg_src.append(f"{kind} {nm} {{ {body} }};")
         self.helpers, helper_src = [], []
@@ -609,16 +632,20 @@ class Gen:
             self.helpers.append((f"g{hi}", [t for _, t in hp], ret))
         aggnames = list(self.aggdefs)
         structs = [n for n in aggnames if self.aggdefs[n][0] == "struct"]
+        # a struct that HAS a nested struct member is a by-value parameter ONLY (its `s.in.x` reads compose
+        # to the function output) -- not a pointer/return/local (those would need the deeper write/compare
+        # recursion, a follow-on). `flat` structs are usable everywhere.
+        flat = [n for n in structs if not any(c in self.aggdefs for _, c in self.aggdefs[n][1])]
 
         def _fparam_type():
             roll = r.random()
-            if structs and roll < 0.15:
-                return "*" + r.choice(structs)                 # a `struct T *` (read+written through the ptr)
+            if flat and roll < 0.15:
+                return "*" + r.choice(flat)                    # a `struct T *` (read+written through the ptr)
             if aggnames and roll < 0.4:
-                return r.choice(aggnames)                       # an aggregate by value
+                return r.choice(aggnames)                       # an aggregate by value (may be nest-containing)
             return r.choice(_ALL)
         fparams = [(chr(97 + k), _fparam_type()) for k in range(r.randint(2, 4))]
-        fret = r.choice(structs) if (structs and r.random() < 0.15) else r.choice(_ALL)   # array members OK
+        fret = r.choice(flat) if (flat and r.random() < 0.15) else r.choice(_ALL)   # array members OK
         nptr = r.choice([0, 0, 1, 1, 2])
         alias = nptr == 2 and r.random() < 0.5
         fsrc = self._function("f", fparams, fret, nptr=nptr, allow_calls=True)
@@ -760,7 +787,12 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
             elif t in prog.aggdefs:
                 kind, members, active, arrs = prog.aggdefs[t]
                 if kind == "struct":
-                    parts = [_lit(c, j, k + mi) for mi, (_, c) in enumerate(members)]
+                    def _memlit(c, key):                       # a nested struct member -> a braced sub-literal
+                        if c in prog.aggdefs:
+                            return ("{ " + ", ".join(_memlit(ic, key + ii)
+                                    for ii, (_, ic) in enumerate(prog.aggdefs[c][1])) + " }")
+                        return _lit(c, j, key)
+                    parts = [_memlit(c, k + mi) for mi, (_, c) in enumerate(members)]
                     parts += ["{ " + ", ".join(_lit(c, j, k + ai + e) for e in range(_ARRSZ // 2)) + " }"
                               for ai, (_, c) in enumerate(arrs)]
                     lit = f"(struct {t}){{ {', '.join(parts)} }}"
