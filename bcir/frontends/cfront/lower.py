@@ -828,6 +828,11 @@ class _FuncLowerer:
             for s in node.stmts[:-1]:
                 self._stmt(s)
             last = node.stmts[-1]
+            if isinstance(last, cast.ExprStmt) and isinstance(last.expr, cast.Assign):
+                # the last item being an assignment (incl. the `i++`/`++i` desugar) is outside the subset
+                # as a *value*: the twin's value-expression grammar has no assignment, and a trailing `i++`
+                # discarded its post/pre distinction. Defer to the backend rather than diverge / guess wrong.
+                raise CLowerError("assignment as a statement-expression value")
             if isinstance(last, cast.ExprStmt):
                 val = self._rvalue(last.expr)
             else:                                         # a non-expression last stmt -> void (rarely used)
