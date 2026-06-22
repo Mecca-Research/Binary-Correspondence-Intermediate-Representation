@@ -658,20 +658,23 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > identical structural **claim summary** (parity), and **behaviour**-equivalence (integers exact, floats
 > ULP-tolerant, struct/pointer outputs compared member-by-member). Coverage to date: the full integer
 > width/signedness matrix + the usual arithmetic conversions, `float`/`double`, loop-aware mutable locals,
-> same-unit calls, pointer read/write + aliasing, and **structs/unions** by value + struct pointers
-> (read+write) + struct return by value + **all-bitfield** structs. It has flushed **~15 real frontend
-> bugs** (parameter-write redeclaration; assignment/`i++`-as-stmt-expr-value; ternary & call result types
-> losing sign/float type; subscript- and member-as-value parse gaps; compound-store index double-eval;
-> narrow/float store-conversion; float-member-read-as-int; **unsigned sub-int bitfield not promoted to
-> int**) plus the `signed char` (aarch64) portability gap. **Open follow-ons (next-context work):**
+> same-unit calls, pointer read/write + aliasing, **structs/unions** by value + struct pointers (read+write)
+> + struct return by value + **all-bitfield** structs + **array members** `s.arr[e & 3u]` (params-only,
+> read+written, element-compared after the call). It has flushed **~16 real frontend bugs**
+> (parameter-write redeclaration; assignment/`i++`-as-stmt-expr-value; ternary & call result types losing
+> sign/float type; subscript- and member-as-value parse gaps; compound-store index double-eval;
+> narrow/float store-conversion; float-member-read-as-int; unsigned sub-int bitfield not promoted to int;
+> **float member-array element stored as a uint reinterpret**) plus the `signed char` (aarch64) portability
+> gap. **Open follow-ons (next-context work):**
 > 1. **Bitfield struct LAYOUT bug** — a bitfield that *follows* a sub-word member (`short m0; unsigned m1:1;`)
 >    is placed in a different storage unit by the two rails than by Clang (the rails 4-align the unit; Clang
->    packs it after the short → a 4-byte vs 8-byte struct). The fuzzer is currently restricted to *all-scalar
->    or all-bitfield* structs to avoid it; a dedicated fix to the bitfield allocation in `bcir_cfront.c` +
+>    packs it after the short → a 4-byte vs 8-byte struct). The fuzzer is restricted to *all-scalar or
+>    all-bitfield* structs to avoid it; a dedicated fix to the bitfield allocation in `bcir_cfront.c` +
 >    `frontends/cfront` (match Clang's storage-unit packing) is needed before mixing is re-enabled.
-> 2. **Member arrays** (`T arr[N]`) — needs a dynamic-indexed access path (`s.arr[e & (N-1)]`) and
->    nested-brace `{...}` array init in the literals; element bound = the type cap (conservative/sound).
-> 3. Then: nested structs, `_Bool`, enums, and wider driver-subset surface.
+> 2. **Struct-local array init** — `struct S s = { {a0,a1,a2,a3}, n };` (a nested-brace local) currently
+>    routes to fallback on both rails; array-bearing structs are therefore params-only in the fuzzer. Native
+>    nested-brace local/return aggregate init is the next aggregate-init step.
+> 3. Then: nested structs (a struct member that is a struct), `_Bool`, enums, and wider driver-subset surface.
 
 **Phase 1 — Driver-subset compiler, productionized** (the near-term milestone — make the existing
 subset behave like `cc` on a small multi-file driver project):

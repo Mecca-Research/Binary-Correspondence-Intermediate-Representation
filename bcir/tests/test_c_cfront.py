@@ -2659,9 +2659,9 @@ def test_cfront_differential_fuzz():
     with `char`/`short`/`int`/`long`/`unsigned`/`unsigned long`/`float`/`double` and (all-scalar OR
     all-bitfield) struct / union-by-value parameters/locals, a struct-BY-VALUE return, AND `struct T *`
     parameters read+written through the pointer (members `s.m` / `s->m`, a union's single active member, a
-    bitfield `m:W`; a struct return / a struct-pointer's backing struct is compared member-by-member by value
-    after the call), plus up to two possibly-aliasing writable `unsigned *`, drawing from the mixed-width
-    usual arithmetic conversions / floating-point
+    bitfield `m:W`, a dynamic-indexed array member `s.arr[e & 3u]`; a struct return / a struct-pointer's
+    backing struct is compared member-and-element-by-value after the call), plus up to two possibly-aliasing
+    writable `unsigned *`, drawing from the mixed-width usual arithmetic conversions / floating-point
     arithmetic / bitwise / bounded shifts / comparisons / ternary / if / bounded for / statement expressions /
     inc-dec / mutable-local-and-member assignment / same-unit calls / pointer reads AND writes -- are run
     through BOTH rails and Clang. The two rails must agree on the total-compile OUTCOME (clean/dirty/fallback);
@@ -2674,8 +2674,9 @@ def test_cfront_differential_fuzz():
     char/short/int/long call result / a `double` select truncated to int), the twin rejecting a pointer
     subscript OR a struct member as a statement-expression value, the oracle re-evaluating a compound store's
     index, the twin loading a `float`/`double` struct member as integer bits, the oracle memcpy'ing a
-    mismatched-width / narrower-integer / float store source into a slot, and BOTH rails reading an unsigned
-    sub-int bitfield as `unsigned` instead of promoting it to `int` (a wrongly-unsigned compare). The seeds
+    mismatched-width / narrower-integer / float store source into a slot, BOTH rails reading an unsigned
+    sub-int bitfield as `unsigned` instead of promoting it to `int` (a wrongly-unsigned compare), and the
+    twin storing a `float` member-array element as a `uint32_t` reinterpret instead of converting. The seeds
     are fixed (deterministic)."""
     import random as _random
     import sys as _sys

@@ -2404,8 +2404,12 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(cl->n_imm){                      /* s.arr[i] = v: store at &base + member_off + idx*elem_size */
         const bcir_resource *br=res_of(f,cl->rd[0]); const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
         long long off=cl->imm[0], es=cl->n_imm>1?cl->imm[1]:4;
-        w+=snprintf(o+w,on-w,"{ uint32_t _v = %s; memcpy((char *)%s%s + %lld + (size_t)%s * %lld, &_v, %lld); }\n",
-          rname(f,cl->rd[2],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),es,es); }
+        const bcir_resource *vr=res_of(f,cl->rd[2]);   /* a float element converts (double->float), not a uint
+                                                        * reinterpret; a narrower int widens to the element. */
+        const char *vt=(vr&&vr->is_float)?(es==4?"float":es>8?"long double":"double")
+                      :(es==1?"uint8_t":es==2?"uint16_t":es==8?"uint64_t":"uint32_t");
+        w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld + (size_t)%s * %lld, &_v, %lld); }\n",
+          vt,rname(f,cl->rd[2],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),es,es); }
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"((volatile uint32_t *)%s)[%s] = %s;\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],d));
       else

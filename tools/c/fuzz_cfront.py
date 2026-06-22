@@ -169,6 +169,7 @@ class Gen:
         self.loopdepth = 0               # loop nesting: wide-signed locals are immutable while > 0
         self.params: list = []           # this function's scalar parameter names
         self.ptrs: list = []             # the `unsigned *` parameter names (0..2), which may alias
+        self.arrs: list = []             # (access-prefix, member, elem-code) for struct array members `s.arr[i]`
         self.allow_calls = False
 
     # -- scope / mutability ----------------------------------------------------------------------------
@@ -260,6 +261,12 @@ class Gen:
             if r.random() < 0.5:
                 return E(f"{p}[({_coerce(self.iexpr(depth - 1), 'u32')}) & {_ARRSZ - 1}u]", "u32")
             return E(f"(*{p})", "u32")
+        ia = [a for a in self.arrs if a[2] not in _FLOATS]              # a bounded struct array-member read
+        if ia and depth > 0 and r.random() < 0.18:
+            pfx, an, c = r.choice(ia)
+            aty = _ST[c][4]
+            return E(f"{pfx}{an}[({_coerce(self.iexpr(depth - 1), 'u32')}) & {_ARRSZ // 2 - 1}u]",
+                     aty, _ST[c][3] if _sgn(aty) else 0)
         live = [n for n in self._live() if n not in self.ptrs and self.styp.get(n) not in _FLOATS]
         if live and r.random() < 0.6:
             n = r.choice(live)
@@ -291,6 +298,10 @@ class Gen:
 
     def _fleaf(self) -> E:
         r = self.rng
+        fa = [a for a in self.arrs if a[2] in _FLOATS]                  # a float struct array-member read
+        if fa and r.random() < 0.3:
+            pfx, an, c = r.choice(fa)
+            return E(f"{pfx}{an}[({_coerce(self._ileaf(0), 'u32')}) & {_ARRSZ // 2 - 1}u]", c, 0)
         fvars = [n for n in self._live() if self.styp.get(n) in _FLOATS]
         if fvars and r.random() < 0.5:
             n = fvars[r.randrange(len(fvars))]
@@ -348,21 +359,26 @@ class Gen:
         return E("({ " + " ".join(parts) + " })", val.aty, val.bound)
 
     # -- statements ------------------------------------------------------------------------------------
-    def _decl(self, depth: int) -> str:
-        r = self.rng
-        if self.aggdefs and r.random() < 0.28:
-            return self._agg_decl(depth)
-        code = r.choice(_ALL)
+    def _decl_scalar(self, depth: int) -> str:
+        code = self.rng.choice(_ALL)
         e = self._val(depth, code)
         n = self._fresh(code, self._store_bound(e, code))
         return f"{_ST[code][0]} {n} = {e.text};"
+
+    def _decl(self, depth: int) -> str:
+        if self.aggdefs and self.rng.random() < 0.28:
+            return self._agg_decl(depth)
+        return self._decl_scalar(depth)
 
     def _agg_decl(self, depth: int) -> str:
         """A struct/union LOCAL `struct S0 vN = { ... };` -- its members are registered as scoped lvalues.
         A union only ever exposes ONE active member (no type-punning, so behaviour stays well-defined)."""
         r = self.rng
-        agg = r.choice(list(self.aggdefs))
-        kind, members, active = self.aggdefs[agg]
+        plain = [n for n in self.aggdefs if not self.aggdefs[n][3]]   # array-bearing structs are params-only
+        if not plain:
+            return self._decl_scalar(depth)
+        agg = r.choice(plain)
+        kind, members, active, _arrs = self.aggdefs[agg]
         self.counter += 1
         vn = f"s{self.counter}"
         if kind == "struct":                                    # init exprs generated BEFORE the members are
@@ -401,6 +417,12 @@ class Gen:
             return self._assign_to(r.choice(self._targets()), depth)
         if self.ptrs and not self.pure and k < 0.74:            # a pointer write (sequenced statement)
             return self._ptr_write(depth)
+        if self.arrs and not self.pure and k < 0.78:            # a struct array-member write (sequenced)
+            r2 = self.rng
+            pfx, an, c = r2.choice(self.arrs)
+            idx = _coerce(self.iexpr(depth - 1) if depth > 0 else self._ileaf(0), "u32")
+            rhs = (self.fexpr(depth) if c in _FLOATS else self.iexpr(depth)).text
+            return f"{pfx}{an}[({idx}) & {_ARRSZ // 2 - 1}u] = {rhs};"   # plain store (element conversion, no overflow)
         if depth <= 0:                                          # base case: no more nesting
             return self._assign_to(r.choice(self._targets()), 0)
         if k < 0.82:                                            # a statement expression used as a statement
@@ -494,15 +516,18 @@ class Gen:
         # call). An aggregate / aggregate-pointer parameter contributes its member lvalues to scope.
         self.scopes = [[]]
         self.styp, self.bound = {}, {}
+        self.arrs = []                                         # (access-prefix, member, elem-code) array members
         for pname, ptype in params:
             if ptype.startswith("*"):                          # a `struct T *` parameter: members via `->`
-                _kind, members, _active = self.aggdefs[ptype[1:]]
+                _kind, members, _active, arrs = self.aggdefs[ptype[1:]]
                 for mn, c in members:
                     self._add_member(f"{pname}->{mn}", c, _ST[c][3] if _ST[c][2] else 0)
+                self.arrs += [(f"{pname}->", an, c) for an, c in arrs]
             elif ptype in self.aggdefs:
-                kind, members, active = self.aggdefs[ptype]
+                kind, members, active, arrs = self.aggdefs[ptype]
                 for mn, c in (members if kind == "struct" else [members[active]]):
                     self._add_member(f"{pname}.{mn}", c, _ST[c][3] if _ST[c][2] else 0)
+                self.arrs += [(f"{pname}.", an, c) for an, c in arrs]
             else:
                 self.scopes[0].append(pname)
                 self.styp[pname] = ptype
@@ -516,7 +541,7 @@ class Gen:
         self.allow_calls = allow_calls
         body = [self.stmt(2) for _ in range(self.rng.randint(2, 5))]
         if ret in self.aggdefs:                            # a struct return BY VALUE: a member-init compound
-            _kind, members, _active = self.aggdefs[ret]    # literal (struct only -- not union)
+            _kind, members, _active, _arrs = self.aggdefs[ret]    # literal (struct only, no array members)
             body.append(f"return (struct {ret}){{ {', '.join(self._val(3, c).text for _, c in members)} }};")
             ret_c = f"struct {ret}"
         else:
@@ -543,9 +568,15 @@ class Gen:
             # scalar only.
             pool = list(_BF) if (kind == "struct" and r.random() < 0.3) else _ALL
             members = [(f"m{j}", r.choice(pool)) for j in range(r.randint(2, 4))]
-            self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None)
-            agg_src.append(f"{kind} {nm} {{ " + " ".join(
-                f"{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};" for mn, c in members) + " };")
+            # array members `T arr[4]` come LAST (struct-only; a struct with arrays is params-only -- a local
+            # of it would need a nested-brace init, which falls back). Dynamic-indexed `s.arr[e & 3u]`.
+            arrs = ([(f"a{j}", r.choice(_ALL)) for j in range(r.randint(1, 2))]
+                    if (kind == "struct" and not any(c in _BF for _, c in members) and r.random() < 0.25)
+                    else [])
+            self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None, arrs)
+            body = " ".join(f"{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};" for mn, c in members)
+            body += "".join(f" {_ST[c][0]} {an}[{_ARRSZ // 2}];" for an, c in arrs)
+            agg_src.append(f"{kind} {nm} {{ {body} }};")
         self.helpers, helper_src = [], []
         for hi in range(r.randint(0, 3)):                       # leaf helpers (scalar params, no calls, no ptr)
             hp = [(chr(97 + k), r.choice(_ALL)) for k in range(r.randint(1, 3))]
@@ -563,7 +594,8 @@ class Gen:
                 return r.choice(aggnames)                       # an aggregate by value
             return r.choice(_ALL)
         fparams = [(chr(97 + k), _fparam_type()) for k in range(r.randint(2, 4))]
-        fret = r.choice(structs) if (structs and r.random() < 0.15) else r.choice(_ALL)   # struct return by value
+        ret_structs = [n for n in structs if not self.aggdefs[n][3]]   # array-bearing structs: params-only
+        fret = r.choice(ret_structs) if (ret_structs and r.random() < 0.15) else r.choice(_ALL)
         nptr = r.choice([0, 0, 1, 1, 2])
         alias = nptr == 2 and r.random() < 0.5
         fsrc = self._function("f", fparams, fret, nptr=nptr, allow_calls=True)
@@ -670,10 +702,12 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
         chk = f"if(!{cmp}(r1,r2)) return 1;" if cmp else "if(r1!=r2) return 1;"
     # the float-equality helpers are needed for a float compare anywhere (return, struct-return member, or a
     # struct-pointer member).
+    def _has_float_agg(tag):                                    # a float scalar member OR float array element
+        _k, mems, _a, arrs = prog.aggdefs[tag]
+        return any(c in _FLOATS for _, c in mems) or any(c in _FLOATS for _, c in arrs)
     need_feq = (cmp is not None
                 or (struct_ret and any(c in _FLOATS for _, c in prog.aggdefs[prog.ret][1]))
-                or any(t.startswith("*") and any(c in _FLOATS for _, c in prog.aggdefs[t[1:]][1])
-                       for _, t in prog.ptypes))
+                or any(t.startswith("*") and _has_float_agg(t[1:]) for _, t in prog.ptypes))
     init = "{3u,140u,7u,0u,99u,1234567u,255u,42u}"
     np, alias = prog.nptr, prog.alias
     lines = ["int main(void){"]
@@ -681,23 +715,29 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
         decls, post, a1, a2 = [], [], [], []
         for k, (_pn, t) in enumerate(prog.ptypes):
             if t.startswith("*"):                               # struct pointer: a backing struct per rail,
-                agg = t[1:]                                     # member-initialised, then compared BY VALUE
-                _kind, members, _active = prog.aggdefs[agg]     # after the call (per member: feqf/feqd for a
-                va, vb = f"S{k}A", f"S{k}B"                     # float -- nan / -0.0 aware -- else exact)
+                agg = t[1:]                                     # member/element-initialised, then compared BY
+                _kind, members, _active, arrs = prog.aggdefs[agg]   # VALUE after the call (per member/element:
+                va, vb = f"S{k}A", f"S{k}B"                     # feqf/feqd for a float -- nan/-0.0 aware -- else exact)
                 decls.append(f"struct {agg} {va},{vb}; memset(&{va},0,sizeof {va}); memset(&{vb},0,sizeof {vb});")
-                for mi, (mn, c) in enumerate(members):
-                    lit = _lit(c, j, k + mi)
-                    decls.append(f"{va}.{mn}={lit}; {vb}.{mn}={lit};")
+                cells = [(f"{{v}}.{mn}", c, k + mi) for mi, (mn, c) in enumerate(members)]
+                cells += [(f"{{v}}.{an}[{e}]", c, k + ai + e)
+                          for ai, (an, c) in enumerate(arrs) for e in range(_ARRSZ // 2)]
+                for ref, c, key in cells:
+                    lit = _lit(c, j, key)
+                    decls.append(f"{ref.format(v=va)}={lit}; {ref.format(v=vb)}={lit};")
                     if c in _FLOATS:
-                        post.append(f"if(!{'feqf' if c == 'f32' else 'feqd'}({va}.{mn},{vb}.{mn})) return {5 + k};")
+                        post.append(f"if(!{'feqf' if c == 'f32' else 'feqd'}({ref.format(v=va)},{ref.format(v=vb)})) return {5 + k};")
                     else:
-                        post.append(f"if({va}.{mn}!={vb}.{mn}) return {5 + k};")
+                        post.append(f"if({ref.format(v=va)}!={ref.format(v=vb)}) return {5 + k};")
                 a1.append(f"&{va}")
                 a2.append(f"&{vb}")
             elif t in prog.aggdefs:
-                kind, members, active = prog.aggdefs[t]
+                kind, members, active, arrs = prog.aggdefs[t]
                 if kind == "struct":
-                    lit = f"(struct {t}){{ {', '.join(_lit(c, j, k + mi) for mi, (_, c) in enumerate(members))} }}"
+                    parts = [_lit(c, j, k + mi) for mi, (_, c) in enumerate(members)]
+                    parts += ["{ " + ", ".join(_lit(c, j, k + ai + e) for e in range(_ARRSZ // 2)) + " }"
+                              for ai, (_, c) in enumerate(arrs)]
+                    lit = f"(struct {t}){{ {', '.join(parts)} }}"
                 else:
                     mn, c = members[active]
                     lit = f"(union {t}){{ .{mn} = {_lit(c, j, k)} }}"
