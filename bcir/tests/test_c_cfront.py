@@ -2656,8 +2656,8 @@ def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
 def test_cfront_differential_fuzz():
     """A seeded differential fuzzer over the shared cfront subset (`tools/c/fuzz_cfront.py`): random but
     well-defined programs -- struct/union type definitions, an optional helper prelude, then an entry `f`,
-    with `char`/`short`/`int`/`long`/`unsigned`/`unsigned long`/`float`/`double` and (all-scalar OR
-    all-bitfield) struct / union-by-value parameters/locals, a struct-BY-VALUE return, AND `struct T *`
+    with `char`/`short`/`int`/`long`/`unsigned`/`unsigned long`/`float`/`double` and mixed
+    scalar+bitfield struct / union-by-value parameters/locals, a struct-BY-VALUE return, AND `struct T *`
     parameters read+written through the pointer (members `s.m` / `s->m`, a union's single active member, a
     bitfield `m:W`, a dynamic-indexed array member `s.arr[e & 3u]`; a struct return / a struct-pointer's
     backing struct is compared member-and-element-by-value after the call), plus up to two possibly-aliasing
@@ -2675,9 +2675,11 @@ def test_cfront_differential_fuzz():
     subscript OR a struct member as a statement-expression value, the oracle re-evaluating a compound store's
     index, the twin loading a `float`/`double` struct member as integer bits, the oracle memcpy'ing a
     mismatched-width / narrower-integer / float store source into a slot, BOTH rails reading an unsigned
-    sub-int bitfield as `unsigned` instead of promoting it to `int` (a wrongly-unsigned compare), and the
-    twin storing a `float` member-array element as a `uint32_t` reinterpret instead of converting. The seeds
-    are fixed (deterministic)."""
+    sub-int bitfield as `unsigned` instead of promoting it to `int` (a wrongly-unsigned compare), the
+    twin storing a `float` member-array element as a `uint32_t` reinterpret instead of converting, and BOTH
+    rails laying out a bitfield that FOLLOWS a sub-word member (`short m0; unsigned m1:1;`) in a fresh
+    type-aligned storage unit instead of packing it into the current bit cursor (the Itanium/Clang rule),
+    giving a wrong struct size + member offsets vs Clang. The seeds are fixed (deterministic)."""
     import random as _random
     import sys as _sys
     tools_c = os.path.join(_ROOT, "tools", "c")

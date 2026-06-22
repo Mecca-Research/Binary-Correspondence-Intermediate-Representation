@@ -208,10 +208,15 @@ class AggregateBuilder:
     force_align: int = 0
 
     def build(self) -> CType:
-        offset = 0
+        # A bit cursor (`dbits` = data size in bits) drives layout so a bitfield can pack at the
+        # current position the way Clang/Itanium do: a bitfield following a sub-word member (e.g.
+        # `short m0; unsigned m1:1;`) lands in the SAME storage unit as long as it does not cross an
+        # `alignof(T)` boundary -- it is NOT bumped to a fresh, type-aligned unit. Packed structs keep
+        # the older byte-granular unit model (no packed-bitfield fixtures exercise the difference).
+        dbits = 0
         align = 1
         laid: list = []
-        bf_unit_off = None        # byte offset of the active bitfield storage unit
+        bf_unit_off = None        # byte offset of the active bitfield storage unit (packed path)
         bf_bits = 0               # bits already used in it
         bf_unit_size = 0
 
@@ -222,24 +227,30 @@ class AggregateBuilder:
             align = max(align, malign(mtype))
             if width and self.kind == "struct":
                 unit_bits = mtype.size * 8
-                if bf_unit_off is None or bf_unit_size != mtype.size or bf_bits + width > unit_bits:
-                    if offset % malign(mtype):
-                        offset += malign(mtype) - (offset % malign(mtype))
-                    bf_unit_off, bf_bits, bf_unit_size = offset, 0, mtype.size
-                    offset += mtype.size
-                laid.append((mname, mtype, bf_unit_off, bf_bits, width))
-                bf_bits += width
+                if self.packed:                                   # packed: byte-granular sz-byte units
+                    if bf_unit_off is None or bf_unit_size != mtype.size or bf_bits + width > unit_bits:
+                        bf_unit_off, bf_bits, bf_unit_size = dbits // 8, 0, mtype.size
+                        dbits += mtype.size * 8
+                    laid.append((mname, mtype, bf_unit_off, bf_bits, width))
+                    bf_bits += width
+                else:                                             # natural: pack at the bit cursor
+                    if (dbits % unit_bits) + width > unit_bits:   # would cross a storage-unit boundary
+                        dbits += unit_bits - (dbits % unit_bits)  # -> bump to the next one
+                    unit_off = (dbits // unit_bits) * mtype.size
+                    laid.append((mname, mtype, unit_off, dbits - unit_off * 8, width))
+                    dbits += width
             elif self.kind == "union":
                 laid.append((mname, mtype, 0, 0, width))
             else:
                 bf_unit_off, bf_bits, bf_unit_size = None, 0, 0     # a plain member flushes the unit
-                if offset % malign(mtype):
-                    offset += malign(mtype) - (offset % malign(mtype))
-                laid.append((mname, mtype, offset, 0, width))
-                offset += mtype.size
+                a8 = malign(mtype) * 8
+                if dbits % a8:
+                    dbits += a8 - (dbits % a8)
+                laid.append((mname, mtype, dbits // 8, 0, width))
+                dbits += mtype.size * 8
         align = max(align, self.force_align)
         size = (max((m[1].size for m in self.members), default=0) if self.kind == "union"
-                else offset)
+                else (dbits + 7) // 8)
         if align and size % align:
             size += align - (size % align)
         return CType(self.kind, name=self.name, size=size, align=max(1, align), fields=tuple(laid))
