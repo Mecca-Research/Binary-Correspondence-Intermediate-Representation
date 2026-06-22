@@ -10,25 +10,28 @@ Generates random but *well-defined* C programs over the subset the two rails sha
      present, that BOTH rails' emitted C is behaviour-equivalent to Clang compiling the source.
 
 GRAMMAR.  An optional prelude of helper functions, then an entry `f`. Parameters / locals / returns are any
-of `char` `short` `int` `long` `unsigned` `unsigned long`; `f` may additionally take one `unsigned *`
-parameter it reads AND writes. Bodies draw from arithmetic / bitwise / bounded shifts / comparisons /
-ternary / if / bounded for / statement expressions / inc-dec / mutable-local assignment / same-unit calls,
-with the integer types mixed (the usual arithmetic conversions), and pointer reads/writes `q[e & 7u]` / `*q`.
+of `char` `short` `int` `long` `unsigned` `unsigned long` `float` `double`; `f` may additionally take up to
+two `unsigned *` parameters it reads AND writes (which MAY alias). Bodies draw from arithmetic / bitwise /
+bounded shifts / comparisons / ternary / if / bounded for / statement expressions / inc-dec / mutable-local
+assignment / same-unit calls / pointer reads+writes, with the integer types mixed (the usual arithmetic
+conversions) and floating-point arithmetic kept in its own lane.
 
 WELL-DEFINEDNESS (so Clang is a sound oracle -- every program is UB-free by construction):
-  * unsigned arithmetic wraps; the only overflow hazard is SIGNED `+ - *`, so the generator tracks a static
-    |value| BOUND for every signed (`int`/`long`) expression and forms a signed op only when the result
+  * unsigned arithmetic wraps; the only integer overflow hazard is SIGNED `+ - *`, so the generator tracks a
+    static |value| BOUND for every signed (`int`/`long`) expression and forms a signed op only when it
     provably stays in range, else launders through the unsigned of that width. Sub-int types promote to int.
-  * MUTABLE signed locals: narrow `char`/`short` locals self-cap to their type range on every store, so they
-    are loop-safe (the promoted-int operation has vast headroom and the stored value is re-bounded each
-    iteration); at loop entry their bound is inflated to the type cap so a read on a later iteration is
-    covered. Wide `int`/`long` locals would accumulate across iterations, so they are mutated only OUTSIDE
-    loops (precise additive tracking); they stay read-only inside loops.
-  * signed `<<` (UB) is never formed (only the arithmetic `>>`); shift amounts are masked to the operand
-    width; there is no `/` or `%`; every local is initialised; loops are bounded with an unmutated counter.
-  * an embedded value statement-expression mutates only locals it declares and performs no pointer write
-    (no unsequenced side effect leaks into the enclosing expression); pointer indices are masked into the
-    fixed backing array, and a fresh array copy is given to each rail so a store divergence is observable.
+  * FLOATING-POINT is its own lane: `float`/`double` `+ - * /` and comparisons are all defined (a `/0` gives
+    inf/nan, not UB), so float values never overflow into UB. Crucially a float NEVER converts back to int
+    (`(int)f` is UB when out of range) -- integers flow INTO floats (`(double)i`, always defined) but not
+    back; floats only meet integers in a comparison (which yields int). So float results are compared with a
+    ULP-tolerant (+ nan/inf-aware) check; integer results are compared exactly.
+  * MUTABLE signed locals: narrow `char`/`short` self-cap to their range each store (loop-safe, with
+    loop-entry bound inflation); wide `int`/`long` are mutated only outside loops; float locals never trap,
+    so they are mutable anywhere. signed `<<` is never formed; shifts are masked to the operand width; there
+    is no integer `/`%`; every local is initialised; loops are bounded with an unmutated counter.
+  * an embedded value statement-expression mutates only locals it declares and performs no pointer write;
+    pointer indices are masked into the fixed backing array(s), and each rail gets fresh array copies (with
+    the same alias pattern) so a store divergence is observed by comparing the arrays after the call.
   * calls are a 2-level DAG (only `f` calls helpers) so there is no recursion; an argument to a wide-signed
     parameter is a leaf bounded by the type cap, so each callee's bound assumption holds.
 
@@ -52,11 +55,11 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 _PMAX = 1 << 14                 # the max |value| the driver feeds a wide-signed (int/long) parameter
-_ARRSZ = 8                      # the backing array length for the pointer parameter (accesses masked `& 7u`)
+_ARRSZ = 8                      # the backing array length for a pointer parameter (accesses masked `& 7u`)
 _CMP = ["<", ">", "<=", ">=", "==", "!=", "&&", "||"]
 
-# storage type code -> (C spelling, width bytes, signed, |value| cap (signed only), arithmetic type after
-# integer promotion). char/short promote to int; int/long/unsigned/unsigned-long keep their arithmetic type.
+# storage type code -> (C spelling, width bytes, signed-int, |value| cap (signed-int only), arithmetic type
+# after integer promotion). char/short promote to int; the rest keep their arithmetic type.
 _ST = {
     "i8":  ("char",          1, True,  127,            "i32"),
     "i16": ("short",         2, True,  32767,          "i32"),
@@ -64,16 +67,24 @@ _ST = {
     "i64": ("long",          8, True,  (1 << 63) - 1,  "i64"),
     "u32": ("unsigned",      4, False, 0,              "u32"),
     "u64": ("unsigned long", 8, False, 0,              "u64"),
+    "f32": ("float",         4, False, 0,              "f32"),
+    "f64": ("double",        8, False, 0,              "f64"),
 }
-_TYPES = list(_ST)
-# arithmetic-type facts (the type model after promotion): width, signedness, signed cap, cast spelling, suffix.
-_AW = {"i32": 4, "u32": 4, "i64": 8, "u64": 8}
-_ACAST = {"i32": "(int)", "i64": "(long)", "u32": "(unsigned)", "u64": "(unsigned long)"}
+_TYPES = ["i8", "i16", "i32", "i64", "u32", "u64"]          # integer storage types
+_ALL = _TYPES + ["f32", "f64"]                             # all storage types (params / locals / returns)
+_FLOATS = ("f32", "f64")
+_AW = {"i32": 4, "u32": 4, "i64": 8, "u64": 8, "f32": 4, "f64": 8}
+_ACAST = {"i32": "(int)", "i64": "(long)", "u32": "(unsigned)", "u64": "(unsigned long)",
+          "f32": "(float)", "f64": "(double)"}
 _ASUF = {"i32": "", "i64": "L", "u32": "u", "u64": "uL"}
 
 
-def _sgn(aty: str) -> bool:
+def _sgn(aty: str) -> bool:                     # a signed-integer arithmetic type
     return aty[0] == "i"
+
+
+def _isf(aty: str) -> bool:
+    return aty[0] == "f"
 
 
 def _tmax(aty: str) -> int:
@@ -84,7 +95,11 @@ def _uw(aty: str) -> str:                       # the unsigned type of the same 
     return "u32" if _AW[aty] == 4 else "u64"
 
 
-def _uac(a: str, b: str) -> str:                # usual arithmetic conversions over the four arithmetic types
+def _uac(a: str, b: str) -> str:                # usual arithmetic conversions (floats outrank integers)
+    if "f64" in (a, b):
+        return "f64"
+    if "f32" in (a, b):
+        return "f32"
     if "u64" in (a, b):
         return "u64"
     if "i64" in (a, b):
@@ -99,9 +114,14 @@ def _const_text(c: int, aty: str) -> str:
     return s if c >= 0 else f"({s})"
 
 
+def _fconst(v: float, aty: str) -> str:
+    s = repr(v) + ("f" if aty == "f32" else "")
+    return s if v >= 0 else f"({s})"
+
+
 class E:
-    """A generated expression: its C text, arithmetic type ("i32"/"i64"/"u32"/"u64" after promotion), and a
-    static bound on |value| (meaningful for signed types; 0 for unsigned, which wraps)."""
+    """A generated expression: its C text, arithmetic type (i32/i64/u32/u64/f32/f64 after promotion), and a
+    static bound on |value| (meaningful for signed integers; 0 for unsigned/float, which never trap)."""
     __slots__ = ("text", "aty", "bound")
 
     def __init__(self, text: str, aty: str, bound: int = 0):
@@ -109,8 +129,8 @@ class E:
 
 
 def _vbound(e: E) -> int:
-    # the operand's |value| bound when it feeds a SIGNED result: a signed operand carries its tracked bound;
-    # an unsigned operand can be up to its full width (it converts to the wider signed type by value).
+    # the operand's |value| bound when it feeds a SIGNED result (only integers reach here): a signed operand
+    # carries its tracked bound; an unsigned operand can be up to its full width (it converts by value).
     return e.bound if _sgn(e.aty) else (1 << (8 * _AW[e.aty])) - 1
 
 
@@ -119,8 +139,8 @@ def _coerce(e: E, aty: str) -> str:
 
 
 class Gen:
-    """A recursive, type-tracking generator with lexical-scope tracking and signed-overflow-avoiding bound
-    tracking that is aware of loop nesting. One instance emits one whole program."""
+    """A recursive, type-tracking generator with lexical-scope tracking, signed-overflow-avoiding bound
+    tracking aware of loop nesting, and a separate floating-point lane. One instance emits one program."""
 
     def __init__(self, rng: random.Random):
         self.rng = rng
@@ -129,13 +149,13 @@ class Gen:
         # per-function state (reset by _enter_function):
         self.scopes: list = [[]]
         self.styp: dict = {}             # name -> storage code
-        self.bound: dict = {}            # name -> |value| bound (signed names)
+        self.bound: dict = {}            # name -> |value| bound (signed-int names)
         self.loopvars: set = set()       # `for` counters: readable, never a mutation target
         self.locked: set = set()         # names an embedded value stmt-expr must not mutate
         self.pure = False                # inside a value stmt-expr (no pointer write -- unsequenced)
         self.loopdepth = 0               # loop nesting: wide-signed locals are immutable while > 0
-        self.params: list = []           # this function's parameter names
-        self.ptr = None                  # the `unsigned *` parameter name, or None
+        self.params: list = []           # this function's scalar parameter names
+        self.ptrs: list = []             # the `unsigned *` parameter names (0..2), which may alias
         self.allow_calls = False
 
     # -- scope / mutability ----------------------------------------------------------------------------
@@ -143,13 +163,13 @@ class Gen:
         return [n for s in self.scopes for n in s]
 
     def _mutable(self, code: str) -> bool:
-        # unsigned (wraps) and narrow-signed (self-cap to type range) are mutable anywhere; wide-signed
+        # unsigned (wraps), narrow-signed (self-cap), and float (never traps) are mutable anywhere; wide
         # int/long would accumulate across loop iterations, so they are mutable only outside loops.
-        return code in ("u32", "u64", "i8", "i16") or (code in ("i32", "i64") and self.loopdepth == 0)
+        return code not in ("i32", "i64") or self.loopdepth == 0
 
     def _targets(self) -> list:
         return [n for s in self.scopes for n in s
-                if n not in self.loopvars and n not in self.locked and n != self.ptr
+                if n not in self.loopvars and n not in self.locked and n not in self.ptrs
                 and n in self.styp and self._mutable(self.styp[n])]
 
     def _fresh(self, code: str, bound: int) -> str:
@@ -160,22 +180,20 @@ class Gen:
         return n
 
     def _store_bound(self, e: E, code: str) -> int:
-        # the |value| bound of `e` after storing it into a local of type `code`: a signed narrow type caps
-        # at its range; otherwise the value's own bound (the conversion to a narrower signed type is
-        # implementation-defined, not UB, and identical across the Clang-compiled rails + source).
-        _cs, _w, signed, cap, _a = _ST[code]
-        if not signed:
+        # the |value| bound after storing `e` into a local of type `code`: a signed narrow type caps at its
+        # range; otherwise the value's own bound (a narrowing conversion is impl-defined, not UB).
+        if not _ST[code][2]:                                # unsigned / float: no signed bound
             return 0
-        return min(_vbound(e), cap)
+        return min(_vbound(e), _ST[code][3])
 
-    # -- expressions -----------------------------------------------------------------------------------
-    def expr(self, depth: int) -> E:
+    # -- integer expressions (the `int` lane: never produces a float) ----------------------------------
+    def iexpr(self, depth: int) -> E:
         r = self.rng
         if depth <= 0 or r.random() < 0.34:
-            return self.leaf(depth)
+            return self._ileaf(depth)
         k = r.random()
         if k < 0.28:                                    # binary arithmetic + - *
-            a, b = self.expr(depth - 1), self.expr(depth - 1)
+            a, b = self.iexpr(depth - 1), self.iexpr(depth - 1)
             op = r.choice("+-*")
             ra = _uac(a.aty, b.aty)
             if _sgn(ra):
@@ -185,42 +203,43 @@ class Gen:
                 uw = _uw(ra)
                 return E(f"({_coerce(a, uw)} {op} {_coerce(b, uw)})", uw, 0)
             return E(f"({a.text} {op} {b.text})", ra, 0)
-        if k < 0.40:                                    # bitwise & | ^ -> unsigned (avoids signed-bitwise bounds)
-            a, b = self.expr(depth - 1), self.expr(depth - 1)
+        if k < 0.40:                                    # bitwise & | ^ -> unsigned
+            a, b = self.iexpr(depth - 1), self.iexpr(depth - 1)
             uw = _uw(_uac(a.aty, b.aty))
             return E(f"({_coerce(a, uw)} {r.choice('&|^')} {_coerce(b, uw)})", uw, 0)
         if k < 0.50:                                    # shift
-            a = self.expr(depth - 1)
+            a = self.iexpr(depth - 1)
             amt = f"({r.randint(0, 255)}u & {8 * _AW[a.aty] - 1}u)"
             if r.random() < 0.5:                        # `>>`: arithmetic on signed (keeps type + bound)
                 return E(f"(({a.text}) >> {amt})", a.aty, a.bound if _sgn(a.aty) else 0)
             uw = _uw(a.aty)                             # `<<`: unsigned only (signed << can be UB)
             return E(f"(({_coerce(a, uw)}) << {amt})", uw, 0)
-        if k < 0.62:                                    # comparison / logical -> int 0/1
-            a, b = self.expr(depth - 1), self.expr(depth - 1)
+        if k < 0.62:                                    # comparison / logical -> int 0/1 (operands may be float)
+            a, b = self._num(depth - 1), self._num(depth - 1)
             return E(f"({a.text} {r.choice(_CMP)} {b.text})", "i32", 1)
-        if k < 0.74:                                    # ternary -> common type (a pure select, no overflow)
-            a, b, c = self.expr(depth - 1), self.expr(depth - 1), self.expr(depth - 1)
+        if k < 0.74:                                    # ternary -> common int type (a pure select)
+            a, b, c = self.iexpr(depth - 1), self.iexpr(depth - 1), self.iexpr(depth - 1)
             ra = _uac(a.aty, b.aty)
             return E(f"({c.text} ? {a.text} : {b.text})", ra, max(_vbound(a), _vbound(b)) if _sgn(ra) else 0)
         if k < 0.82:                                    # unary
-            a = self.expr(depth - 1)
+            a = self.iexpr(depth - 1)
             if r.random() < 0.5 and _sgn(a.aty):
-                return E(f"(-{a.text})", a.aty, a.bound)         # negate (bound <= cap, so not INT_MIN)
+                return E(f"(-{a.text})", a.aty, a.bound)
             uw = _uw(a.aty)
             return E(f"({r.choice(['-', '~'])}{_coerce(a, uw)})", uw, 0)
         if k < 0.90:
-            return self.value_stmt_expr(depth - 1)
-        call = self._call(depth)
-        return call if call is not None else self.leaf(depth)
+            return self._stmt_expr(depth - 1, float_val=False)
+        call = self._call(depth, want_float=False)
+        return call if call is not None else self._ileaf(depth)
 
-    def leaf(self, depth: int) -> E:
+    def _ileaf(self, depth: int) -> E:
         r = self.rng
-        if self.ptr is not None and depth > 0 and r.random() < 0.18:     # a bounded pointer read
+        if self.ptrs and depth > 0 and r.random() < 0.18:               # a bounded pointer read
+            p = r.choice(self.ptrs)
             if r.random() < 0.5:
-                return E(f"{self.ptr}[({_coerce(self.expr(depth - 1), 'u32')}) & {_ARRSZ - 1}u]", "u32")
-            return E(f"(*{self.ptr})", "u32")
-        live = [n for n in self._live() if n != self.ptr]
+                return E(f"{p}[({_coerce(self.iexpr(depth - 1), 'u32')}) & {_ARRSZ - 1}u]", "u32")
+            return E(f"(*{p})", "u32")
+        live = [n for n in self._live() if n not in self.ptrs and self.styp.get(n) not in _FLOATS]
         if live and r.random() < 0.6:
             n = r.choice(live)
             aty = _ST[self.styp[n]][4]
@@ -229,32 +248,79 @@ class Gen:
         c = r.randint(-1000, 1000) if _sgn(aty) else r.randint(0, 1000)
         return E(_const_text(c, aty), aty, abs(c) if _sgn(aty) else 0)
 
+    # -- floating-point expressions (the float lane: always produces a float) --------------------------
+    def fexpr(self, depth: int) -> E:
+        r = self.rng
+        if depth <= 0 or r.random() < 0.4:
+            return self._fleaf()
+        k = r.random()
+        if k < 0.5:                                     # float arithmetic + - * /  (all defined)
+            a, b = self.fexpr(depth - 1), self.fexpr(depth - 1)
+            return E(f"({a.text} {r.choice('+-*/')} {b.text})", _uac(a.aty, b.aty), 0)
+        if k < 0.68:                                    # ternary
+            a, b = self.fexpr(depth - 1), self.fexpr(depth - 1)
+            return E(f"({self.iexpr(depth - 1).text} ? {a.text} : {b.text})", _uac(a.aty, b.aty), 0)
+        if k < 0.82:                                    # int -> float (always defined)
+            ft = r.choice(_FLOATS)
+            return E(f"{_ACAST[ft]}({self.iexpr(depth - 1).text})", ft, 0)
+        if k < 0.90:
+            return self._stmt_expr(depth - 1, float_val=True)
+        call = self._call(depth, want_float=True)
+        return call if call is not None else self._fleaf()
+
+    def _fleaf(self) -> E:
+        r = self.rng
+        fvars = [n for n in self._live() if self.styp.get(n) in _FLOATS]
+        if fvars and r.random() < 0.5:
+            n = fvars[r.randrange(len(fvars))]
+            return E(n, self.styp[n], 0)
+        if r.random() < 0.4:                            # an integer widened to float
+            ft = r.choice(_FLOATS)
+            return E(f"{_ACAST[ft]}({self._ileaf(0).text})", ft, 0)
+        ft = r.choice(_FLOATS)
+        return E(_fconst(round(r.uniform(-1000, 1000), 3), ft), ft, 0)
+
+    def _num(self, depth: int) -> E:                    # a comparison operand: either lane
+        return self.fexpr(depth) if self.rng.random() < 0.35 else self.iexpr(depth)
+
+    def _val(self, depth: int, code: str) -> E:         # a value of the storage type `code`
+        return self.fexpr(depth) if code in _FLOATS else self.iexpr(depth)
+
+    # -- calls / statement expressions -----------------------------------------------------------------
     def _wide_arg(self, ptype: str) -> str:
         # an argument to a wide-signed (int/long) parameter must respect the callee's PMAX bound assumption:
         # a narrow-signed leaf (always <= 32767) or a small constant -- never a (possibly-mutated) wide one.
-        narrows = [n for n in self._live() if n != self.ptr and self.styp.get(n) in ("i8", "i16")]
+        narrows = [n for n in self._live() if n not in self.ptrs and self.styp.get(n) in ("i8", "i16")]
         if narrows and self.rng.random() < 0.5:
             return self.rng.choice(narrows)
         return _const_text(self.rng.randint(-1000, 1000), ptype)
 
-    def _call(self, depth: int):
-        if not self.allow_calls or not self.helpers:
+    def _call(self, depth: int, want_float: bool):
+        if not self.allow_calls:
             return None
-        name, ptypes, rty = self.rng.choice(self.helpers)
+        cands = [h for h in self.helpers if (h[2] in _FLOATS) == want_float]
+        if not cands:
+            return None
+        name, ptypes, rty = self.rng.choice(cands)
         args = []
         for pt in ptypes:
-            args.append(self._wide_arg(pt) if pt in ("i32", "i64") else self.expr(depth - 1).text)
+            if pt in _FLOATS:
+                args.append(self.fexpr(depth - 1).text)
+            elif pt in ("i32", "i64"):
+                args.append(self._wide_arg(pt))
+            else:
+                args.append(self.iexpr(depth - 1).text)
         return E(f"{name}({', '.join(args)})", _ST[rty][4], _ST[rty][3] if _sgn(_ST[rty][4]) else 0)
 
-    def value_stmt_expr(self, depth: int) -> E:
+    def _stmt_expr(self, depth: int, float_val: bool) -> E:
         """`({ <stmts>; <value-expr>; })` -- its own scope; an operand of a larger expression, so it mutates
-        only locals it declares (outer names locked) and performs no pointer write (no unsequenced effect)."""
+        only locals it declares (outer names locked) and performs no pointer write."""
         saved_lock, saved_pure = self.locked, self.pure
         self.locked = saved_lock | set(self._live())
         self.pure = True
         self.scopes.append([])
         parts = [self.stmt(depth - 1, allow_block=False) for _ in range(self.rng.randint(0, 2))]
-        val = self.expr(depth)
+        val = self.fexpr(depth) if float_val else self.iexpr(depth)
         parts.append(f"{val.text};")
         self.scopes.pop()
         self.locked, self.pure = saved_lock, saved_pure
@@ -262,10 +328,16 @@ class Gen:
 
     # -- statements ------------------------------------------------------------------------------------
     def _decl(self, depth: int) -> str:
-        code = self.rng.choice(_TYPES)
-        e = self.expr(depth)
+        code = self.rng.choice(_ALL)
+        e = self._val(depth, code)
         n = self._fresh(code, self._store_bound(e, code))
         return f"{_ST[code][0]} {n} = {e.text};"
+
+    def _assign_to(self, n: str, depth: int) -> str:
+        code = self.styp[n]
+        e = self._val(depth, code)
+        self.bound[n] = self._store_bound(e, code)
+        return f"{n} = {e.text};"
 
     def stmt(self, depth: int, allow_block: bool = True) -> str:
         r = self.rng
@@ -274,37 +346,31 @@ class Gen:
         k = r.random()
         if k < 0.22:                                            # a fresh initialised local
             return self._decl(depth)
-        if k < 0.42:                                            # plain assignment (a conversion -- never overflows)
-            n = r.choice(self._targets())
-            e = self.expr(depth)
-            self.bound[n] = self._store_bound(e, self.styp[n])
-            return f"{n} = {e.text};"
+        if k < 0.42:                                            # plain assignment
+            return self._assign_to(r.choice(self._targets()), depth)
         if k < 0.56:                                            # compound assignment
             return self._compound(depth)
-        if k < 0.66:                                            # inc / dec (value discarded)
-            n = r.choice(self._targets())
-            self._bump(n, 1)
-            return f"{n}{r.choice(['++', '--'])};"
-        if self.ptr is not None and not self.pure and k < 0.74:  # a pointer write (sequenced statement)
+        if k < 0.66:                                            # inc / dec on an integer target (value discarded)
+            ints = [n for n in self._targets() if self.styp[n] not in _FLOATS]
+            if ints:
+                n = r.choice(ints)
+                self._bump(n)
+                return f"{n}{r.choice(['++', '--'])};"
+            return self._assign_to(r.choice(self._targets()), depth)
+        if self.ptrs and not self.pure and k < 0.74:            # a pointer write (sequenced statement)
             return self._ptr_write(depth)
         if depth <= 0:                                          # base case: no more nesting
-            n = r.choice(self._targets())
-            e = self.expr(0)
-            self.bound[n] = self._store_bound(e, self.styp[n])
-            return f"{n} = {e.text};"
-        if k < 0.82:                                            # a statement expression used as a statement: a
-            self.scopes.append([])                              # side-effecting prefix (sequenced -- may mutate
-            pre = self.stmt(depth - 1, allow_block=False)       # outer locals) then a trailing value, discarded.
-            val = self.expr(depth - 1).text                     # (ending in a value, not an assignment, keeps
-            self.scopes.pop()                                   #  it out of the assignment-as-value fallback)
+            return self._assign_to(r.choice(self._targets()), 0)
+        if k < 0.82:                                            # a statement expression used as a statement
+            self.scopes.append([])
+            pre = self.stmt(depth - 1, allow_block=False)
+            val = self.iexpr(depth - 1).text
+            self.scopes.pop()
             return f"({{ {pre} {val}; }});"
         if not allow_block:                                     # inside a value stmt-expr: no blocks
-            n = r.choice(self._targets())
-            e = self.expr(depth)
-            self.bound[n] = self._store_bound(e, self.styp[n])
-            return f"{n} = {e.text};"
+            return self._assign_to(r.choice(self._targets()), depth)
         if k < 0.91:                                            # if / else
-            cond = self.expr(depth - 1).text
+            cond = self.iexpr(depth - 1).text
             self.scopes.append([])
             then = " ".join(self.stmt(depth - 1) for _ in range(r.randint(1, 2)))
             self.scopes.pop()
@@ -321,8 +387,10 @@ class Gen:
         r = self.rng
         n = r.choice(self._targets())
         code = self.styp[n]
+        if code in _FLOATS:                                     # float compound: +-*/ (never traps)
+            return f"{n} {r.choice(['+', '-', '*', '/'])}= {self.fexpr(depth).text};"
         op = r.choice(["+", "-", "*", "&", "|", "^"])
-        e = self.expr(depth)
+        e = self.iexpr(depth)
         if op in "&|^":                                         # bitwise: no overflow; result re-bounded by type
             self.bound[n] = _ST[code][3] if _ST[code][2] else 0
             return f"{n} {op}= {e.text};"
@@ -335,31 +403,30 @@ class Gen:
                 e = E(_const_text(r.randint(-100, 100), nat), nat, 100)
                 bd = cur * 100 if op == "*" else cur + 100
                 if bd > _tmax(ra):                              # still tight (a near-max wide local) -> plain store
-                    e0 = self.expr(0)
-                    self.bound[n] = self._store_bound(e0, code)
-                    return f"{n} = {e0.text};"
+                    return self._assign_to(n, 0)
             self.bound[n] = self._store_bound(E("", ra, bd), code)
         else:
             self.bound[n] = 0
         return f"{n} {op}= {e.text};"
 
-    def _bump(self, n: str, by: int):
+    def _bump(self, n: str):
         code = self.styp[n]
         if not _ST[code][2]:                                   # unsigned wraps
             self.bound[n] = 0
         elif code in ("i8", "i16"):                            # narrow: re-caps to type range
             self.bound[n] = _ST[code][3]
         else:                                                  # wide (outside loops): +1, capped at the type max
-            self.bound[n] = min(self.bound.get(n, 0) + by, _ST[code][3])
+            self.bound[n] = min(self.bound.get(n, 0) + 1, _ST[code][3])
 
     def _ptr_write(self, depth: int) -> str:
         r = self.rng
-        rhs = self.expr(depth).text
+        p = r.choice(self.ptrs)
+        rhs = _coerce(self.iexpr(depth), "u32")
         if r.random() < 0.35:
-            return f"*{self.ptr} = {rhs};"               # `*p = x` (canonical); `(*p) = x` is a twin parse gap
-        idx = _coerce(self.expr(depth - 1) if depth > 0 else self.leaf(0), "u32")
+            return f"*{p} = {rhs};"                       # `*p = x` (canonical); `(*p) = x` is a twin parse gap
+        idx = _coerce(self.iexpr(depth - 1) if depth > 0 else self._ileaf(0), "u32")
         op = r.choice(["=", "+=", "-=", "*=", "|=", "&=", "^="])
-        return f"{self.ptr}[({idx}) & {_ARRSZ - 1}u] {op} {rhs};"
+        return f"{p}[({idx}) & {_ARRSZ - 1}u] {op} {rhs};"
 
     def _for(self, depth: int) -> str:
         r = self.rng
@@ -379,24 +446,24 @@ class Gen:
         return f"for (unsigned {iv} = 0u; {iv} < {r.randint(1, 8)}u; {iv}++) {{ {body} }}"
 
     # -- whole functions / program ---------------------------------------------------------------------
-    def _enter_function(self, ptypes: list, has_ptr: bool):
+    def _enter_function(self, ptypes: list, nptr: int):
         names = ["a", "b", "c", "d"][:len(ptypes)]
         self.scopes = [list(names)]
         self.styp = {n: t for n, t in zip(names, ptypes)}
         self.bound = {n: (_ST[t][3] if _ST[t][2] else 0) for n, t in zip(names, ptypes)}
         self.loopvars, self.locked, self.pure, self.loopdepth = set(), set(), False, 0
         self.params = list(names)
-        self.ptr = "p" if has_ptr else None
+        self.ptrs = ["p", "q"][:nptr]
 
-    def _function(self, name: str, ptypes: list, ret: str, has_ptr: bool, allow_calls: bool) -> str:
-        self._enter_function(ptypes, has_ptr)
+    def _function(self, name: str, ptypes: list, ret: str, nptr: int, allow_calls: bool) -> str:
+        self._enter_function(ptypes, nptr)
         self.allow_calls = allow_calls
         body = [self.stmt(2) for _ in range(self.rng.randint(2, 5))]
-        rv = self.expr(3)
+        rv = self._val(3, ret)
         body.append(f"return {_coerce(rv, _ST[ret][4]) if _ST[ret][4] != rv.aty else rv.text};")
         decl = ", ".join(f"{_ST[t][0]} {n}" for n, t in zip(self.params, ptypes))
-        if has_ptr:
-            decl += ", unsigned *p"
+        for pn in self.ptrs:
+            decl += f", unsigned *{pn}"
         src = f"{_ST[ret][0]} {name}({decl})\n{{\n  " + "\n  ".join(body) + "\n}\n"
         return src
 
@@ -404,22 +471,23 @@ class Gen:
         r = self.rng
         self.helpers, helper_src = [], []
         for hi in range(r.randint(0, 3)):                       # a prelude of leaf helpers (no calls, no ptr)
-            ptypes = [r.choice(_TYPES) for _ in range(r.randint(1, 3))]
-            ret = r.choice(_TYPES)
-            helper_src.append(self._function(f"g{hi}", ptypes, ret, has_ptr=False, allow_calls=False))
+            ptypes = [r.choice(_ALL) for _ in range(r.randint(1, 3))]
+            ret = r.choice(_ALL)
+            helper_src.append(self._function(f"g{hi}", ptypes, ret, nptr=0, allow_calls=False))
             self.helpers.append((f"g{hi}", ptypes, ret))
-        fptypes = [r.choice(_TYPES) for _ in range(r.randint(2, 4))]
-        fret = r.choice(_TYPES)
-        has_ptr = r.random() < 0.4
-        fsrc = self._function("f", fptypes, fret, has_ptr=has_ptr, allow_calls=True)
-        return Program("\n".join(helper_src + [fsrc]), fptypes, fret, has_ptr)
+        fptypes = [r.choice(_ALL) for _ in range(r.randint(2, 4))]
+        fret = r.choice(_ALL)
+        nptr = r.choice([0, 0, 1, 1, 2])
+        alias = nptr == 2 and r.random() < 0.5
+        fsrc = self._function("f", fptypes, fret, nptr=nptr, allow_calls=True)
+        return Program("\n".join(helper_src + [fsrc]), fptypes, fret, nptr, alias)
 
 
 class Program:
-    __slots__ = ("source", "ptypes", "ret", "has_ptr")
+    __slots__ = ("source", "ptypes", "ret", "nptr", "alias")
 
-    def __init__(self, source: str, ptypes: list, ret: str, has_ptr: bool):
-        self.source, self.ptypes, self.ret, self.has_ptr = source, ptypes, ret, has_ptr
+    def __init__(self, source: str, ptypes: list, ret: str, nptr: int, alias: bool):
+        self.source, self.ptypes, self.ret, self.nptr, self.alias = source, ptypes, ret, nptr, alias
 
 
 def _oracle_outcome(src: str):
@@ -470,6 +538,7 @@ _POOL = {
     "u32": [0, 1, 255, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 123456789, 3],
     "u64": [0, 1, 0xFFFFFFFF, 0x100000000, 0xFFFFFFFFFFFFFFFF, 7, 1000000, 42],
 }
+_FPOOL = [0.0, 1.0, -1.0, 0.5, -0.5, 3.14159, -2.71828, 100.25, -0.001, 1234.5, -99999.0, 1e-7]
 
 
 def _arg_vectors(prog: Program) -> list:
@@ -478,33 +547,63 @@ def _arg_vectors(prog: Program) -> list:
     for j in range(16):
         args = []
         for k, t in enumerate(prog.ptypes):
-            args.append(_const_text(_POOL[t][(j + 3 * k) % len(_POOL[t])], _ST[t][4]))
+            if t in _FLOATS:
+                args.append(_fconst(_FPOOL[(j + 3 * k) % len(_FPOOL)], t))
+            else:
+                args.append(_const_text(_POOL[t][(j + 3 * k) % len(_POOL[t])], _ST[t][4]))
         vecs.append(args)
     return vecs
+
+
+_FEQ = (
+    "static int feqf(float a,float b){ if(isnan(a)&&isnan(b))return 1; if(isnan(a)||isnan(b))return 0;\n"
+    "  if(a==b)return 1; int32_t x,y; memcpy(&x,&a,4); memcpy(&y,&b,4);\n"
+    "  if((x<0)!=(y<0))return 0; int32_t d=x>y?x-y:y-x; return d<=4; }\n"
+    "static int feqd(double a,double b){ if(isnan(a)&&isnan(b))return 1; if(isnan(a)||isnan(b))return 0;\n"
+    "  if(a==b)return 1; int64_t x,y; memcpy(&x,&a,8); memcpy(&y,&b,8);\n"
+    "  if((x<0)!=(y<0))return 0; int64_t d=x>y?x-y:y-x; return d<=4; }\n")
 
 
 def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tuple[bool, str]:
     renamed = re.sub(r"\bf\b", "f_s", prog.source)              # the entry `f` -> `f_s`; helpers untouched
     rtype = _ST[prog.ret][0]
+    cmp = {"f32": "feqf", "f64": "feqd"}.get(prog.ret)          # None -> exact integer compare
     init = "{3u,140u,7u,0u,99u,1234567u,255u,42u}"
-    drv = ["int main(void){"]
+    np, alias = prog.nptr, prog.alias
+    lines = ["int main(void){"]
     for vec in _arg_vectors(prog):
         a = ", ".join(vec)
-        if prog.has_ptr:
-            drv.append(f"  {{ unsigned A[8]={init}, B[8]={init}; {rtype} r1=bcir_f({a}{',' if a else ''} A);"
-                       f" {rtype} r2=f_s({a}{',' if a else ''} B); if(r1!=r2) return 1;"
-                       " for(int k=0;k<8;k++) if(A[k]!=B[k]) return 2; }")
+        sep = ", " if a else ""
+        decls, post = [], []
+        if np >= 1:
+            decls.append(f"unsigned P1[8]={init},P2[8]={init};")
+            post.append("for(int k=0;k<8;k++) if(P1[k]!=P2[k]) return 2;")
+            a1 = [*vec, "P1"]
+            a2 = [*vec, "P2"]
+            if np == 2:
+                if alias:
+                    a1.append("P1")
+                    a2.append("P2")
+                else:
+                    decls.append(f"unsigned Q1[8]={init},Q2[8]={init};")
+                    a1.append("Q1")
+                    a2.append("Q2")
+                    post.append("for(int k=0;k<8;k++) if(Q1[k]!=Q2[k]) return 3;")
+            c1, c2 = f"bcir_f({', '.join(a1)})", f"f_s({', '.join(a2)})"
         else:
-            drv.append(f"  if(bcir_f({a}) != f_s({a})) return 1;")
-    drv.append("  return 0;}")
-    harness = ("#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
-               + renamed + "\n" + emit + "\n" + "\n".join(drv))
+            c1, c2 = f"bcir_f({a})", f"f_s({a})"
+        chk = f"if(!{cmp}(r1,r2)) return 1;" if cmp else "if(r1!=r2) return 1;"
+        lines.append(f"  {{ {' '.join(decls)} {rtype} r1={c1}; {rtype} r2={c2}; {chk} {' '.join(post)} }}")
+    lines.append("  return 0;}")
+    harness = ("#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <math.h>\n"
+               + (_FEQ if cmp else "") + renamed + "\n" + emit + "\n" + "\n".join(lines))
     cpath = os.path.join(d, f"{label}.c")
     epath = os.path.join(d, label)
     with open(cpath, "w") as fh:
         fh.write(harness)
-    for std in ("c23", "c2x", "c17"):
-        b = subprocess.run([cc, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+    for std in ("c23", "c2x", "c17"):                           # -ffp-contract=off: no FMA, so float is exact
+        b = subprocess.run([cc, f"-std={std}", "-O2", "-ffp-contract=off", cpath, "-o", epath, "-lm"],
+                           capture_output=True, text=True)
         if b.returncode == 0:
             break
     else:
