@@ -920,6 +920,53 @@ def test_compound_wide_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+def test_atomic_local_dual_rail():
+    """_Atomic local objects (#atomiclocal): `_Atomic int a;` (qualifier) and `_Atomic(int) a;` (type
+    specifier), `const _Atomic`, and a pointer-to-atomic. A LOCAL was rejected (the statement-level
+    decl detector omitted `_Atomic`, and the `_Atomic(T)` paren spelling was unparsed); the global form
+    already worked. An automatic-storage _Atomic local is unshared, so its single-threaded semantics equal
+    the plain type -- both rails lower the arithmetic identically; differential == Clang on BOTH emits."""
+    fx = "cfront_atomiclocal.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["a_qual", "a_paren", "a_long", "a_const", "a_ptr"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int x=-300;x<300;x++){ long b=(long)x*100000;
+    if(a_qual_s(x)!=bcir_a_qual(x)){puts("qual");return 1;}
+    if(a_paren_s(x)!=bcir_a_paren(x)){puts("paren");return 1;}
+    if(a_long_s(b)!=bcir_a_long(b)){puts("long");return 1;}
+    if(a_const_s(x)!=bcir_a_const(x)){puts("const");return 1;}
+    if(a_ptr_s(x)!=bcir_a_ptr(x)){puts("ptr");return 1;}
+  }
+  puts("MATCH");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = (f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+                       f"#include <stdatomic.h>\n{renamed}\n{emit}\n{driver}")
+            cpath = os.path.join(d, f"{label}.c")
+            open(cpath, "w").write(harness)
+            epath = os.path.join(d, label)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
+                                   capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
+
+
 def test_addrmember_dual_rail():
     """Address-of a (nested) struct member (#addrmember): `&s.field`, `&t.q.a`, `&t.q`. The twin couldn't
     parse `&member` at all; the oracle emitted the enclosing struct's address (right only for a first

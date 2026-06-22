@@ -359,7 +359,11 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
   int seen=0, longs=0, ptrtrk=0, sign_explicit=0;   /* longs: `long` (data-model) vs `long long` (8) */
   for(;;){
     if(is(c,"volatile")){ty->is_volatile=1;c->i++;continue;}
-    if(is(c,"_Atomic")){ty->is_atomic=1;c->i++;continue;}
+    if(is(c,"_Atomic")){ c->i++;
+      if(is(c,"(")){ c->i++; bcir_ctype inner; int isi;    /* `_Atomic ( type-name )` -- atomic type specifier */
+        if(p_type(c,&inner,&isi)) return 1; if(!eat(c,")")) return 1;
+        int vol=ty->is_volatile; *ty=inner; ty->is_atomic=1; if(vol)ty->is_volatile=1; *sidx=isi; seen=1; break; }
+      ty->is_atomic=1; continue; }
     if(is(c,"const")||is(c,"static")||is(c,"inline")||is(c,"extern")
        ||is(c,"_Thread_local")||is(c,"thread_local")){c->i++;continue;}  /* storage class / qualifier */
     if(is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")){       /* typeof(type-name) / typeof(var) */
@@ -1819,6 +1823,7 @@ static void p_stmt(CC *c) {
   int looks_decl=0, is_static=is(c,"static");
   if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
     looks_decl=sz>=0||is_static||is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"const")||is(c,"volatile")
+               ||is(c,"_Atomic")                                        /* `_Atomic int a;` -- an atomic local */
                ||is(c,"va_list")||is(c,"__builtin_va_list")              /* `va_list ap;` -- a variadic cursor local */
                ||is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                ||find_typedef(c,pk(c)->s,pk(c)->n)>=0;}
