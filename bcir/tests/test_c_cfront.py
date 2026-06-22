@@ -920,6 +920,53 @@ def test_compound_wide_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+def test_nestoffset_dual_rail():
+    """Nested member access at a NON-FIRST offset (#nestoffset): `t.q.a` where the enclosing member `q`
+    is not the struct's first member -- two bugs the #designate follow-on surfaced. The oracle's `_addr`
+    dropped the enclosing member's byte offset (so `t.p`/`t.q` aliased at 0 on read AND write); the twin
+    over-aligned a nested value-struct member to its SIZE (`struct{int;struct Big t;}` placed t at
+    sizeof(Big), not its alignment), shifting every later offset. cfront_nestmember only nested through a
+    first member, hiding both. Differential == Clang on BOTH emits over read/write, a member array, a
+    deeper chain, and a non-first designated initializer (the #designate read-back)."""
+    fx = "cfront_nestoffset.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["no_rw", "no_memarr", "no_deep", "no_desig"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int x=-300;x<300;x++){
+    if(no_rw_s(x)!=bcir_no_rw(x)){printf("rw@%d\n",x);return 1;}
+    if(no_memarr_s(x)!=bcir_no_memarr(x)){printf("memarr@%d\n",x);return 1;}
+    if(no_deep_s(x)!=bcir_no_deep(x)){printf("deep@%d\n",x);return 1;}
+    if(no_desig_s(x)!=bcir_no_desig(x)){printf("desig@%d\n",x);return 1;}
+  }
+  puts("MATCH");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath = os.path.join(d, f"{label}.c")
+            open(cpath, "w").write(harness)
+            epath = os.path.join(d, label)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
+                                   capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
+
+
 def test_designate_dual_rail():
     """Nested / chained designated initializers (#designate): a designator LIST `.a.b`, `.v[i]`,
     `.m[i][j]` (and deeper) in an aggregate initializer, resolving to a cumulative byte offset -- `.field`

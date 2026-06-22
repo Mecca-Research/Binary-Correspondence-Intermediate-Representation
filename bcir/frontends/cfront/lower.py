@@ -497,9 +497,10 @@ class _FuncLowerer:
                 # struct; the member's byte offset rides in the access imm beside the element size, and
                 # the row-major flattened index is scaled by the element, so the element lands at
                 # `&s + member_off + lin*elem_size` -- never the enclosing struct's offset 0.
-                base_rid, struct_ct = self._addr(n.base)
+                base_rid, struct_ct, base_off = self._addr(n.base)
                 agg = struct_ct.of if n.arrow else struct_ct
                 ftype, byte_off, _bo, _bw = agg.field(n.field)
+                byte_off += 0 if n.arrow else base_off    # ride the enclosing offset (a non-first member array)
                 if ftype.kind == "pointer":
                     # a *pointer* member subscripted (`s->p[i]` == `*(s->p + i)`): load the full pointer
                     # field, then index the loaded pointer like a plain `base[idx]` (no member offset).
@@ -524,7 +525,7 @@ class _FuncLowerer:
                     raise CLowerError(
                         f"indexing a non-array struct member ('{n.field}[...]') is not yet supported")
             else:
-                base_rid, base_ct = self._addr(n)
+                base_rid, base_ct, byte_off = self._addr(n)   # a non-Member base: its accumulated offset
             idx_rids = [self._rvalue(ix) for ix in idx_nodes]
             shape = mem_shape if mem_shape is not None else base_ct.shape
             lin = idx_rids[0]
@@ -541,16 +542,17 @@ class _FuncLowerer:
             return _LV("mem", base_rid, elem, idx=lin, byte_off=byte_off,
                        member=isinstance(n, cast.Member) and not ptr_member)
         if isinstance(node, cast.Member):
-            base_rid, base_ct = self._addr(node.base)
+            base_rid, base_ct, base_off = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
             ftype, byte_off, bit_off, bit_w = agg.field(node.field)
-            return _LV("mem", base_rid, ftype, byte_off=byte_off, bit_off=bit_off, bit_width=bit_w)
+            off = byte_off if node.arrow else base_off + byte_off   # `->` resets to *base; `.` accumulates
+            return _LV("mem", base_rid, ftype, byte_off=off, bit_off=bit_off, bit_width=bit_w)
         if isinstance(node, cast.Unary) and node.op == "*":
             operand = node.operand
             if isinstance(operand, cast.Binary) and operand.op == "+":   # *(p + i) == p[i]
                 return self._lvalue(cast.Index(operand.lhs, operand.rhs))
-            base_rid, base_ct = self._addr(operand)
-            return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"))
+            base_rid, base_ct, base_off = self._addr(operand)
+            return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"), byte_off=base_off)
         raise CLowerError(f"not an lvalue: {type(node).__name__}")
 
     def _string_ptr(self, spelling: str) -> int:
@@ -575,28 +577,35 @@ class _FuncLowerer:
         return rid
 
     def _addr(self, node):
-        """The (rid, type) of an aggregate/pointer base used by member/index access."""
+        """The (rid, type, byte_offset) of an aggregate/pointer base used by member/index access. The
+        offset ACCUMULATES through nested value-struct/union members (`t.q.a` -- q's byte offset must ride
+        into a's access); `cfront_nestmember` only ever nested through a *first* member, so the drop went
+        unseen. A `->` resets to the pointee (the access goes through the pointer base), and a
+        pointer-valued field used as a base is loaded (offset reset to 0)."""
         if isinstance(node, cast.Name):
-            return self._lookup(node.ident, node.pos)
+            rid, ct = self._lookup(node.ident, node.pos)
+            return rid, ct, 0
         if isinstance(node, cast.CompoundLiteral):        # `(struct P){...}.field` / indexing the literal
-            return self._compound_literal(node)
+            rid, ct = self._compound_literal(node)
+            return rid, ct, 0
         if isinstance(node, cast.StringLit):                  # "abc"[i] -> index the anonymous global
             rid = self._string_ptr(node.value)
-            return rid, self.rtypes[rid]
+            return rid, self.rtypes[rid], 0
         if isinstance(node, cast.Member):
-            base_rid, base_ct = self._addr(node.base)
+            base_rid, base_ct, base_off = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
             ftype, byte_off, bit_off, bit_w = agg.field(node.field)
+            off = byte_off if node.arrow else base_off + byte_off   # `->` resets to *base; `.` accumulates
             if ftype.kind == "pointer":                       # a pointer-valued field used as a *base*
                 # (`*(s->p)`, `s->t->a`): load the full pointer (at its field offset) and use the loaded
                 # pointer as the new base -- the same move as `*q` below. Returning (struct_rid, T*) would
                 # instead deref the struct's own address as if it held the pointee. (Pointer-value 2b.)
-                lv = _LV("mem", base_rid, ftype, byte_off=byte_off, bit_off=bit_off, bit_width=bit_w)
-                return self._read(lv), ftype
-            return base_rid, ftype
+                lv = _LV("mem", base_rid, ftype, byte_off=off, bit_off=bit_off, bit_width=bit_w)
+                return self._read(lv), ftype, 0
+            return base_rid, ftype, off
         if isinstance(node, cast.Unary) and node.op == "*":   # `*q` as a base (`**pp`): load the pointer it
             rid = self._read(self._lvalue(node))              # holds, and use that loaded pointer as the base
-            return rid, self.rtypes.get(rid, pointer(scalar("uint32_t")))
+            return rid, self.rtypes.get(rid, pointer(scalar("uint32_t"))), 0
         raise CLowerError(f"unsupported base expression {type(node).__name__}")
 
     def _mmio(self, base_rid: int) -> bool:
@@ -741,8 +750,10 @@ class _FuncLowerer:
                 # `&x` as a *value* (a call argument, a pointer initializer): a pointer temp emitted
                 # as `&x`, so e.g. frexp(value, &exp) keeps the `&`. _addr resolves the storage
                 # location; the pointer value is delegated to the emitted C, never computed here.
-                base_rid, base_ct = self._addr(node.operand)
+                base_rid, base_ct, _base_off = self._addr(node.operand)
                 t = self._temp(pointer(base_ct), "addr")
+                # (address-of a non-first NESTED member -- `&t.q.a` -- needs the offset folded in here AND
+                # twin support for `&member`; both rails handle `&local`/`&first-member`, a follow-on.)
                 return self._emit("c.addrof", Opcode.ADD, (base_rid,), (t,))
             v = self._rvalue(node.operand)
             opcode, suf = _UN[node.op]
@@ -825,7 +836,7 @@ class _FuncLowerer:
         base, then the actuals) emitted as `o->fn(args)`, so no 8-byte function-pointer value has to
         ride in the 4-byte value model. Not added to the call graph (R18: an opaque external edge)."""
         m = node.callee
-        base_rid, _base_ct = self._addr(m.base)
+        base_rid, _base_ct, _base_off = self._addr(m.base)   # a dispatch base is a pointer (offset 0)
         actuals = tuple(self._rvalue(a) for a in node.args)
         t = self._temp(scalar("uint32_t"), f"icall_{m.field}")
         return self._emit(f"c.call.imember:{m.field}", Opcode.GEM_DISPATCH,
