@@ -54,15 +54,15 @@ typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int count; } gvar;  /*
 /* The size-varying part of a target's C data model -- the C twin of frontends/cfront/abi.py. `long`,
  * the pointer, and the pointer-tracking `size_t`-class types move across the matrix; `int`, `short`,
  * `char`, the fixed-width <stdint.h> types, and `long long` are fixed by C and the common ABIs.
- * (long double is delegated to the backend -- the twin's value model has no 80/128-bit float -- so
- * its size/align ride along for provenance but the frontend never lays one out.) */
+ * (`long double` takes the ABI's size/align: the twin emits real `long double` C and lets the backend /
+ * Clang do the 80/128-bit arithmetic, exactly as it does for float/double -- it never models the bits.) */
 typedef struct {
   const char *name;          /* short id, e.g. "x86_64-linux" */
   const char *triple;        /* the Clang target triple (for provenance / -target) */
   const char *data_model;    /* "LP64" | "LLP64" | "ILP32" */
   int long_size;             /* sizeof(long) == sizeof(unsigned long) */
   int pointer_size;          /* sizeof(void *); also size_t / intptr_t / uintptr_t */
-  int long_double_size;      /* (delegated; carried for provenance only) */
+  int long_double_size;      /* sizeof(long double): 16 (x86-64), 12 (ILP32), or 8 where it aliases double */
   int long_double_align;
 } bcir_abi;
 
@@ -399,13 +399,14 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
       if(pk(c)->n==4&&!strncmp("char",pk(c)->s,4)&&!sign_explicit)
         ty->is_plain_char=1;        /* plain `char` (no signed/unsigned): emit `char`, NOT int8_t (ARM) */
       seen=1;c->i++;
-      if(is(c,"long")||is(c,"int")||is(c,"char"))continue;break;}
+      if(is(c,"long")||is(c,"int")||is(c,"char")||is(c,"double"))continue;break;}   /* `long double` continues */
     break;
   }
   if(!seen){fail(c,"expected a type");return 1;}
-  /* apply the target data model: `size_t`-class -> pointer_size; a single `long` -> long_size
-   * (`long long` keeps its fixed 8). On the host LP64 model these are 8/8, so nothing moves. */
+  /* apply the target data model: `size_t`-class -> pointer_size; `long double` -> long_double_size; a
+   * single `long` -> long_size (`long long` keeps its fixed 8). On the host LP64 model long/ptr are 8. */
   if(ptrtrk) ty->size=cc_abi(c)->pointer_size;
+  else if(longs>=1&&ty->is_float) ty->size=cc_abi(c)->long_double_size;   /* `long double` (80/128-bit) */
   else if(longs==1&&!ty->is_float&&ty->kind==0) ty->size=cc_abi(c)->long_size;
   return 0;
 }
@@ -941,6 +942,13 @@ static int libm_float_size(const char *s, int n) {
     for(int i=0;g_libm[i];i++){ if((int)strlen(g_libm[i])==n-1 && !strncmp(g_libm[i],s,(size_t)(n-1))) return 4; }
   return 0;
 }
+/* a `long double` libm variant -- a base name with an `l` suffix (`sinl`, `sqrtl`, `fabsl`): the result
+ * is `long double`, sized by the target ABI (resolved at the call site, where the ABI is in scope). */
+static int libm_is_ld(const char *s, int n) {
+  if(n<=1 || s[n-1]!='l') return 0;
+  for(int i=0;g_libm[i];i++){ if((int)strlen(g_libm[i])==n-1 && !strncmp(g_libm[i],s,(size_t)(n-1))) return 1; }
+  return 0;
+}
 /* The printf / scanf family of external variadic <stdio.h> functions -- not defined in the unit and not
  * lowered, they emit verbatim (like a libm call, opaque to R18) and return int. (The format string is a
  * read-only char[] literal, already passed through as an argument.) */
@@ -992,7 +1000,9 @@ static uint32_t p_call(CC *c, const tok *name) {
     return temp(c,4);                  /* a void result -- never read */
   }
   int lz = libm_is_long(name->s,name->n) ? -8
-         : libm_is_int(name->s,name->n)  ? -4 : libm_float_size(name->s,name->n);
+         : libm_is_int(name->s,name->n)  ? -4
+         : libm_is_ld(name->s,name->n)   ? cc_abi(c)->long_double_size   /* sinl/sqrtl/... -> long double */
+         : libm_float_size(name->s,name->n);
   if(lz){                                  /* a <math.h> call -> a typed external library edge */
     uint32_t t = lz<0 ? temp(c,-lz) : tempf(c,lz);  /* lround -> 8-byte int, ilogb -> 4-byte int, else float */
     char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.libm:%.*s",name->n,name->s);
@@ -1146,8 +1156,9 @@ static uint32_t p_primary(CC *c) {
     bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
     cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return r;}
   if(isk(c,T_FLT)){tok t=adv(c);                       /* a floating constant -> a typed c.fconst */
-    int isf = t.n>0 && (t.s[t.n-1]=='f'||t.s[t.n-1]=='F');   /* f/F -> float(4), else double(8) */
-    uint32_t r=tempf(c, isf?4:8);
+    int isf = t.n>0 && (t.s[t.n-1]=='f'||t.s[t.n-1]=='F');   /* f/F -> float(4) */
+    int isl = t.n>0 && (t.s[t.n-1]=='l'||t.s[t.n-1]=='L');   /* l/L -> long double, else double(8) */
+    uint32_t r=tempf(c, isf?4:isl?cc_abi(c)->long_double_size:8);
     char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.fconst:%.*s",t.n,t.s);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_LOAD); if(cl){cl->n_wr=1;cl->wr[0]=r;} return r;}
   if(isk(c,T_STR)){     /* a string literal -> an anonymous read-only char[] global; value is a ptr */
@@ -1986,7 +1997,7 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   const char *base = is_struct ? ty->tag
                    : ty->is_bool ? "_Bool"
                    : ty->is_plain_char ? "char"   /* plain `char`: impl-defined sign (not int8_t -> ARM) */
-                   : ty->is_float ? (ty->size==4?"float":"double")
+                   : ty->is_float ? (ty->size==4?"float":ty->size>8?"long double":"double")
                    : ty->size==0 ? "void"
                    : ty->signd ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
                    : (ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t");
@@ -2040,7 +2051,7 @@ static const char *tty(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid);
   if(!r) return "uint32_t";
   if(r->is_valist) return "va_list";   /* a variadic cursor object -- opaque, declared `va_list ap;` */
-  if(r->is_float) return r->elem_bytes==4?"float":"double";
+  if(r->is_float) return r->elem_bytes==4?"float":r->elem_bytes>8?"long double":"double";   /* 16/12 -> long double */
   if(r->is_bool) return "_Bool";   /* a store into a bool object normalizes any nonzero to 1 (§6.3.1.2) */
   if(r->is_plain_char) return "char";   /* plain `char`: impl-defined sign (not int8_t -> wrong on ARM) */
   if(r->kind==BCIR_RK_SCALAR) switch(r->elem_bytes){
@@ -2059,7 +2070,7 @@ static const char *decl_ty(const bcir_func *f,uint32_t rid,char *buf,size_t n){
   const bcir_resource *r=res_of(f,rid);
   if(r && r->kind==BCIR_RK_POINTER){
     const char *base = r->agg[0] ? r->agg
-      : r->is_float ? (r->elem_bytes==8?"double":"float")
+      : r->is_float ? (r->elem_bytes==4?"float":r->elem_bytes>8?"long double":"double")
       : r->elem_bytes==1?(r->is_signed?"int8_t":"uint8_t") : r->elem_bytes==2?(r->is_signed?"int16_t":"uint16_t")
       : r->elem_bytes==8?(r->is_signed?"int64_t":"uint64_t") : (r->is_signed?"int32_t":"uint32_t");
     char stars[10]; int d=r->ptr_depth?r->ptr_depth:1, si=0;   /* depth `*`s: `T**` at depth 2 */
@@ -2189,7 +2200,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                       amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),sz);
         } else {
         const char *vt=(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(f,cl->rd[1],tb,sizeof tb)
-                      :(vr&&vr->is_float)?(sz==4?"float":"double")
+                      :(vr&&vr->is_float)?(sz==4?"float":sz>8?"long double":"double")
                       :(sz==1?"uint8_t":sz==2?"uint16_t":sz==8?"uint64_t":"uint32_t");
         w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",vt,rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); } }
     }else if(!strcmp(cl->op,"c.bf.get")){
