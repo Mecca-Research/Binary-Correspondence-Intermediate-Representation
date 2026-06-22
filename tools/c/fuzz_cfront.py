@@ -9,24 +9,28 @@ Generates random but *well-defined* C programs over the subset the two rails sha
   2. for a mutually-clean unit, compares the structural claim SUMMARY (parity) and, if a C compiler is
      present, that BOTH rails' emitted C is behaviour-equivalent to Clang compiling the source.
 
-GRAMMAR.  An optional prelude of helper functions, then an entry `f`. Both have 2-4 scalar parameters that
-are each `unsigned` or `int`; `f` may additionally take one read-only `const unsigned *` parameter. Bodies
-draw from arithmetic / bitwise / bounded shifts / comparisons / ternary / `if` / bounded `for` / statement
-expressions / inc-dec, with `int` and `unsigned` mixed, same-unit calls into the helpers, and (for `f`)
-bounded pointer reads `p[e & 7u]` / `*p`.
+GRAMMAR.  An optional prelude of helper functions, then an entry `f`. Parameters / locals / returns are any
+of `char` `short` `int` `long` `unsigned` `unsigned long`; `f` may additionally take one `unsigned *`
+parameter it reads AND writes. Bodies draw from arithmetic / bitwise / bounded shifts / comparisons /
+ternary / if / bounded for / statement expressions / inc-dec / mutable-local assignment / same-unit calls,
+with the integer types mixed (the usual arithmetic conversions), and pointer reads/writes `q[e & 7u]` / `*q`.
 
-WELL-DEFINEDNESS (so Clang is a sound oracle -- every generated program is UB-free by construction):
-  * `unsigned` arithmetic wraps, so `+ - * & | ^ << >>` are always defined (shifts are masked `& 31u`);
-  * `int` arithmetic is the only overflow hazard, so the generator tracks a static absolute-value BOUND for
-    every `int` expression (params are bounded by ±PMAX, which the driver respects) and forms a signed
-    `+ - *` / `-x` / `~x` only when the result provably stays within INT range -- otherwise the operands are
-    laundered through `unsigned` (defined). `int` locals are immutable after initialisation, so their bound
-    is preserved; signed `<<` (UB on overflow/negative) is never formed, only the arithmetic `>>`;
-  * there is no `/` or `%`; every local is initialised at its declaration; loops are bounded and never mutate
-    their counter; an embedded value statement-expression mutates only locals it declares (no unsequenced
-    side effect leaks into the enclosing expression); pointer reads are masked into a fixed backing array;
-  * calls form a 2-level DAG (only `f` calls helpers; helpers call nothing) so there is no recursion, and
-    `int` arguments are leaves bounded by ±PMAX so each callee's bound assumption holds.
+WELL-DEFINEDNESS (so Clang is a sound oracle -- every program is UB-free by construction):
+  * unsigned arithmetic wraps; the only overflow hazard is SIGNED `+ - *`, so the generator tracks a static
+    |value| BOUND for every signed (`int`/`long`) expression and forms a signed op only when the result
+    provably stays in range, else launders through the unsigned of that width. Sub-int types promote to int.
+  * MUTABLE signed locals: narrow `char`/`short` locals self-cap to their type range on every store, so they
+    are loop-safe (the promoted-int operation has vast headroom and the stored value is re-bounded each
+    iteration); at loop entry their bound is inflated to the type cap so a read on a later iteration is
+    covered. Wide `int`/`long` locals would accumulate across iterations, so they are mutated only OUTSIDE
+    loops (precise additive tracking); they stay read-only inside loops.
+  * signed `<<` (UB) is never formed (only the arithmetic `>>`); shift amounts are masked to the operand
+    width; there is no `/` or `%`; every local is initialised; loops are bounded with an unmutated counter.
+  * an embedded value statement-expression mutates only locals it declares and performs no pointer write
+    (no unsequenced side effect leaks into the enclosing expression); pointer indices are masked into the
+    fixed backing array, and a fresh array copy is given to each rail so a store divergence is observable.
+  * calls are a 2-level DAG (only `f` calls helpers) so there is no recursion; an argument to a wide-signed
+    parameter is a leaf bounded by the type cap, so each callee's bound assumption holds.
 
 Usage:  python tools/c/fuzz_cfront.py --count 400 --seed 0 [--verbose]
 Exit status is nonzero on the first divergence (the offending source is printed)."""
@@ -47,230 +51,329 @@ _C = os.path.join(_ROOT, "runtime", "c")
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-_SAFE = (1 << 31) - 1           # INT_MAX: a signed result is only formed when its bound stays <= this
-_PMAX = 1 << 14                 # the max |value| the driver feeds an `int` parameter (and an `int` leaf)
-_ARRSZ = 8                      # the backing array length for a pointer parameter (reads masked `& 7u`)
+_PMAX = 1 << 14                 # the max |value| the driver feeds a wide-signed (int/long) parameter
+_ARRSZ = 8                      # the backing array length for the pointer parameter (accesses masked `& 7u`)
 _CMP = ["<", ">", "<=", ">=", "==", "!=", "&&", "||"]
+
+# storage type code -> (C spelling, width bytes, signed, |value| cap (signed only), arithmetic type after
+# integer promotion). char/short promote to int; int/long/unsigned/unsigned-long keep their arithmetic type.
+_ST = {
+    "i8":  ("char",          1, True,  127,            "i32"),
+    "i16": ("short",         2, True,  32767,          "i32"),
+    "i32": ("int",           4, True,  (1 << 31) - 1,  "i32"),
+    "i64": ("long",          8, True,  (1 << 63) - 1,  "i64"),
+    "u32": ("unsigned",      4, False, 0,              "u32"),
+    "u64": ("unsigned long", 8, False, 0,              "u64"),
+}
+_TYPES = list(_ST)
+# arithmetic-type facts (the type model after promotion): width, signedness, signed cap, cast spelling, suffix.
+_AW = {"i32": 4, "u32": 4, "i64": 8, "u64": 8}
+_ACAST = {"i32": "(int)", "i64": "(long)", "u32": "(unsigned)", "u64": "(unsigned long)"}
+_ASUF = {"i32": "", "i64": "L", "u32": "u", "u64": "uL"}
+
+
+def _sgn(aty: str) -> bool:
+    return aty[0] == "i"
+
+
+def _tmax(aty: str) -> int:
+    return (1 << (8 * _AW[aty] - 1)) - 1
+
+
+def _uw(aty: str) -> str:                       # the unsigned type of the same width (a launder target)
+    return "u32" if _AW[aty] == 4 else "u64"
+
+
+def _uac(a: str, b: str) -> str:                # usual arithmetic conversions over the four arithmetic types
+    if "u64" in (a, b):
+        return "u64"
+    if "i64" in (a, b):
+        return "i64"
+    if "u32" in (a, b):
+        return "u32"
+    return "i32"
+
+
+def _const_text(c: int, aty: str) -> str:
+    s = f"{c}{_ASUF[aty]}"
+    return s if c >= 0 else f"({s})"
 
 
 class E:
-    """A generated expression: its C text, its type ("u" unsigned / "i" int), and -- for `int` -- a static
-    bound on |value| at runtime (0 for unsigned, which never overflows)."""
-    __slots__ = ("text", "ty", "bound")
+    """A generated expression: its C text, arithmetic type ("i32"/"i64"/"u32"/"u64" after promotion), and a
+    static bound on |value| (meaningful for signed types; 0 for unsigned, which wraps)."""
+    __slots__ = ("text", "aty", "bound")
 
-    def __init__(self, text: str, ty: str, bound: int = 0):
-        self.text, self.ty, self.bound = text, ty, bound
+    def __init__(self, text: str, aty: str, bound: int = 0):
+        self.text, self.aty, self.bound = text, aty, bound
 
 
-def _iconst(c: int) -> str:
-    return str(c) if c >= 0 else f"({c})"
+def _vbound(e: E) -> int:
+    # the operand's |value| bound when it feeds a SIGNED result: a signed operand carries its tracked bound;
+    # an unsigned operand can be up to its full width (it converts to the wider signed type by value).
+    return e.bound if _sgn(e.aty) else (1 << (8 * _AW[e.aty])) - 1
+
+
+def _coerce(e: E, aty: str) -> str:
+    return e.text if e.aty == aty else f"{_ACAST[aty]}({e.text})"
 
 
 class Gen:
-    """A recursive, type-tracking generator with lexical-scope tracking (a name is only referenced where it
-    is live) and signed-overflow-avoiding bound tracking. One instance emits one whole program."""
+    """A recursive, type-tracking generator with lexical-scope tracking and signed-overflow-avoiding bound
+    tracking that is aware of loop nesting. One instance emits one whole program."""
 
     def __init__(self, rng: random.Random):
         self.rng = rng
         self.counter = 0
-        self.helpers: list = []          # (name, [param-types], ret-type, ret-bound) for same-unit calls
+        self.helpers: list = []          # (name, [param storage codes], ret storage code) for same-unit calls
         # per-function state (reset by _enter_function):
         self.scopes: list = [[]]
-        self.ty: dict = {}               # name -> "u" | "i"
-        self.bound: dict = {}            # name -> |value| bound (for "i" names)
+        self.styp: dict = {}             # name -> storage code
+        self.bound: dict = {}            # name -> |value| bound (signed names)
         self.loopvars: set = set()       # `for` counters: readable, never a mutation target
         self.locked: set = set()         # names an embedded value stmt-expr must not mutate
-        self.params: list = []           # this function's parameter names (int args must be leaves <= PMAX)
-        self.ptr = None                  # the `const unsigned *` parameter name, or None
+        self.pure = False                # inside a value stmt-expr (no pointer write -- unsequenced)
+        self.loopdepth = 0               # loop nesting: wide-signed locals are immutable while > 0
+        self.params: list = []           # this function's parameter names
+        self.ptr = None                  # the `unsigned *` parameter name, or None
         self.allow_calls = False
 
-    # -- scope / leaf helpers --------------------------------------------------------------------------
+    # -- scope / mutability ----------------------------------------------------------------------------
     def _live(self) -> list:
         return [n for s in self.scopes for n in s]
 
-    def _live_ty(self, ty: str) -> list:
-        return [n for s in self.scopes for n in s if self.ty.get(n) == ty and n != self.ptr]
+    def _mutable(self, code: str) -> bool:
+        # unsigned (wraps) and narrow-signed (self-cap to type range) are mutable anywhere; wide-signed
+        # int/long would accumulate across loop iterations, so they are mutable only outside loops.
+        return code in ("u32", "u64", "i8", "i16") or (code in ("i32", "i64") and self.loopdepth == 0)
 
     def _targets(self) -> list:
-        # an assignable name: a LIVE, UNSIGNED, non-counter, non-locked, non-pointer name. `int` names are
-        # immutable (so their static bound is preserved); loop counters stay monotone (so loops terminate);
-        # locked names belong to an enclosing expression (mutating them would be an unsequenced side effect).
         return [n for s in self.scopes for n in s
-                if self.ty.get(n) == "u" and n not in self.loopvars and n not in self.locked and n != self.ptr]
+                if n not in self.loopvars and n not in self.locked and n != self.ptr
+                and n in self.styp and self._mutable(self.styp[n])]
 
-    def _fresh(self, ty: str, bound: int = 0) -> str:
+    def _fresh(self, code: str, bound: int) -> str:
         self.counter += 1
         n = f"v{self.counter}"
         self.scopes[-1].append(n)
-        self.ty[n], self.bound[n] = ty, bound
+        self.styp[n], self.bound[n] = code, bound
         return n
 
-    def _u(self, e: E) -> str:
-        return e.text if e.ty == "u" else f"(unsigned)({e.text})"
+    def _store_bound(self, e: E, code: str) -> int:
+        # the |value| bound of `e` after storing it into a local of type `code`: a signed narrow type caps
+        # at its range; otherwise the value's own bound (the conversion to a narrower signed type is
+        # implementation-defined, not UB, and identical across the Clang-compiled rails + source).
+        _cs, _w, signed, cap, _a = _ST[code]
+        if not signed:
+            return 0
+        return min(_vbound(e), cap)
 
-    # -- expressions: PURE (no mutation outside an embedded stmt-expr's own locals) --------------------
-    def aexpr(self, depth: int) -> E:
-        return self.iexpr(depth) if self.rng.random() < 0.45 else self.uexpr(depth)
-
-    def uexpr(self, depth: int) -> E:
-        """An expression whose type is `unsigned` -- always defined (wraparound)."""
+    # -- expressions -----------------------------------------------------------------------------------
+    def expr(self, depth: int) -> E:
         r = self.rng
         if depth <= 0 or r.random() < 0.34:
-            return self._uleaf(depth)
+            return self.leaf(depth)
         k = r.random()
-        if k < 0.34:
-            return E(f"({self._u(self.aexpr(depth - 1))} {r.choice(['+', '-', '*', '&', '|', '^'])} "
-                     f"{self._u(self.aexpr(depth - 1))})", "u")
-        if k < 0.48:
-            return E(f"(({self._u(self.aexpr(depth - 1))}) {r.choice(['<<', '>>'])} "
-                     f"({r.randint(0, 255)}u & 31u))", "u")
-        if k < 0.62:
-            return E(f"((unsigned)({self.aexpr(depth - 1).text} {r.choice(_CMP)} {self.aexpr(depth - 1).text}))", "u")
-        if k < 0.74:
-            return E(f"({self.aexpr(depth - 1).text} ? {self._u(self.aexpr(depth - 1))} : "
-                     f"{self._u(self.aexpr(depth - 1))})", "u")
-        if k < 0.84:
-            return E(f"({r.choice(['-', '~'])}{self._u(self.aexpr(depth - 1))})", "u")
+        if k < 0.28:                                    # binary arithmetic + - *
+            a, b = self.expr(depth - 1), self.expr(depth - 1)
+            op = r.choice("+-*")
+            ra = _uac(a.aty, b.aty)
+            if _sgn(ra):
+                bd = _vbound(a) * _vbound(b) if op == "*" else _vbound(a) + _vbound(b)
+                if bd <= _tmax(ra):
+                    return E(f"({a.text} {op} {b.text})", ra, bd)
+                uw = _uw(ra)
+                return E(f"({_coerce(a, uw)} {op} {_coerce(b, uw)})", uw, 0)
+            return E(f"({a.text} {op} {b.text})", ra, 0)
+        if k < 0.40:                                    # bitwise & | ^ -> unsigned (avoids signed-bitwise bounds)
+            a, b = self.expr(depth - 1), self.expr(depth - 1)
+            uw = _uw(_uac(a.aty, b.aty))
+            return E(f"({_coerce(a, uw)} {r.choice('&|^')} {_coerce(b, uw)})", uw, 0)
+        if k < 0.50:                                    # shift
+            a = self.expr(depth - 1)
+            amt = f"({r.randint(0, 255)}u & {8 * _AW[a.aty] - 1}u)"
+            if r.random() < 0.5:                        # `>>`: arithmetic on signed (keeps type + bound)
+                return E(f"(({a.text}) >> {amt})", a.aty, a.bound if _sgn(a.aty) else 0)
+            uw = _uw(a.aty)                             # `<<`: unsigned only (signed << can be UB)
+            return E(f"(({_coerce(a, uw)}) << {amt})", uw, 0)
+        if k < 0.62:                                    # comparison / logical -> int 0/1
+            a, b = self.expr(depth - 1), self.expr(depth - 1)
+            return E(f"({a.text} {r.choice(_CMP)} {b.text})", "i32", 1)
+        if k < 0.74:                                    # ternary -> common type (a pure select, no overflow)
+            a, b, c = self.expr(depth - 1), self.expr(depth - 1), self.expr(depth - 1)
+            ra = _uac(a.aty, b.aty)
+            return E(f"({c.text} ? {a.text} : {b.text})", ra, max(_vbound(a), _vbound(b)) if _sgn(ra) else 0)
+        if k < 0.82:                                    # unary
+            a = self.expr(depth - 1)
+            if r.random() < 0.5 and _sgn(a.aty):
+                return E(f"(-{a.text})", a.aty, a.bound)         # negate (bound <= cap, so not INT_MIN)
+            uw = _uw(a.aty)
+            return E(f"({r.choice(['-', '~'])}{_coerce(a, uw)})", uw, 0)
         if k < 0.90:
-            return self.value_stmt_expr(depth - 1, "u")
-        call = self._call(depth, "u")
-        return call if call is not None else self._uleaf(depth)
+            return self.value_stmt_expr(depth - 1)
+        call = self._call(depth)
+        return call if call is not None else self.leaf(depth)
 
-    def iexpr(self, depth: int) -> E:
-        """An expression whose type is `int`, carrying a static |value| bound. A signed `+ - * - ~` is only
-        formed when its bound stays within INT range; otherwise it falls back to a (safe) sub-expression."""
+    def leaf(self, depth: int) -> E:
         r = self.rng
-        if depth <= 0 or r.random() < 0.40:
-            return self._ileaf()
-        k = r.random()
-        if k < 0.34:
-            a, b = self.iexpr(depth - 1), self.iexpr(depth - 1)
-            op = r.choice(["+", "-", "*"])
-            rb = a.bound * b.bound if op == "*" else a.bound + b.bound
-            if rb <= _SAFE:
-                return E(f"({a.text} {op} {b.text})", "i", rb)
-            return a
-        if k < 0.46:
-            a = self.iexpr(depth - 1)
+        if self.ptr is not None and depth > 0 and r.random() < 0.18:     # a bounded pointer read
             if r.random() < 0.5:
-                return E(f"(-{a.text})", "i", a.bound)            # |-a| == |a| (a != INT_MIN since bound<=SAFE)
-            return E(f"(~{a.text})", "i", a.bound + 1) if a.bound + 1 <= _SAFE else a
-        if k < 0.58:
-            a = self.iexpr(depth - 1)
-            return E(f"({a.text} >> {r.randint(0, 31)})", "i", a.bound)   # arithmetic shift, |result| <= |a|
-        if k < 0.72:
-            return E(f"({self.aexpr(depth - 1).text} {r.choice(_CMP)} {self.aexpr(depth - 1).text})", "i", 1)
-        if k < 0.84:
-            a, b = self.iexpr(depth - 1), self.iexpr(depth - 1)
-            return E(f"({self.aexpr(depth - 1).text} ? {a.text} : {b.text})", "i", max(a.bound, b.bound))
-        if k < 0.90:
-            return self.value_stmt_expr(depth - 1, "i")
-        call = self._call(depth, "i")
-        return call if call is not None else self._ileaf()
-
-    def _uleaf(self, depth: int) -> E:
-        r = self.rng
-        if self.ptr is not None and depth > 0 and r.random() < 0.35:     # a bounded read of the pointer arg
-            if r.random() < 0.5:
-                return E(f"{self.ptr}[({self.uexpr(depth - 1).text}) & {_ARRSZ - 1}u]", "u")
-            return E(f"(*{self.ptr})", "u")
-        live = self._live_ty("u")
-        if live and r.random() < 0.6:
-            return E(r.choice(live), "u")
-        return E(f"{r.randint(0, 255)}u", "u")
-
-    def _ileaf(self) -> E:
-        r = self.rng
-        live = self._live_ty("i")
+                return E(f"{self.ptr}[({_coerce(self.expr(depth - 1), 'u32')}) & {_ARRSZ - 1}u]", "u32")
+            return E(f"(*{self.ptr})", "u32")
+        live = [n for n in self._live() if n != self.ptr]
         if live and r.random() < 0.6:
             n = r.choice(live)
-            return E(n, "i", self.bound.get(n, _PMAX))
-        c = r.randint(-1000, 1000)
-        return E(_iconst(c), "i", abs(c))
+            aty = _ST[self.styp[n]][4]
+            return E(n, aty, self.bound.get(n, 0) if _sgn(aty) else 0)
+        aty = r.choice(["i32", "i32", "i64", "u32", "u64"])
+        c = r.randint(-1000, 1000) if _sgn(aty) else r.randint(0, 1000)
+        return E(_const_text(c, aty), aty, abs(c) if _sgn(aty) else 0)
 
-    def _int_arg(self) -> str:
-        # a call's `int` argument must be bounded by PMAX (so the callee's bound assumption holds): use only
-        # an `int` PARAMETER (bounded by the driver) or a small constant -- never a local or a call result.
-        r = self.rng
-        ipar = [n for n in self.params if self.ty.get(n) == "i"]
-        if ipar and r.random() < 0.6:
-            return r.choice(ipar)
-        return _iconst(r.randint(-1000, 1000))
+    def _wide_arg(self, ptype: str) -> str:
+        # an argument to a wide-signed (int/long) parameter must respect the callee's PMAX bound assumption:
+        # a narrow-signed leaf (always <= 32767) or a small constant -- never a (possibly-mutated) wide one.
+        narrows = [n for n in self._live() if n != self.ptr and self.styp.get(n) in ("i8", "i16")]
+        if narrows and self.rng.random() < 0.5:
+            return self.rng.choice(narrows)
+        return _const_text(self.rng.randint(-1000, 1000), ptype)
 
-    def _call(self, depth: int, want: str):
-        if not self.allow_calls:
+    def _call(self, depth: int):
+        if not self.allow_calls or not self.helpers:
             return None
-        cands = [h for h in self.helpers if h[2] == want]
-        if not cands:
-            return None
-        name, ptys, rty, rb = self.rng.choice(cands)
-        args = [self.uexpr(depth - 1).text if pt == "u" else self._int_arg() for pt in ptys]
-        return E(f"{name}({', '.join(args)})", rty, rb)
+        name, ptypes, rty = self.rng.choice(self.helpers)
+        args = []
+        for pt in ptypes:
+            args.append(self._wide_arg(pt) if pt in ("i32", "i64") else self.expr(depth - 1).text)
+        return E(f"{name}({', '.join(args)})", _ST[rty][4], _ST[rty][3] if _sgn(_ST[rty][4]) else 0)
 
-    def value_stmt_expr(self, depth: int, ty: str) -> E:
-        """`({ <decls/stmts>; <value-expr>; })` -- its own scope; the last item is a pure expression of type
-        `ty`. As an operand of a larger expression it may only mutate locals it declares itself (every outer
-        name is locked), so it introduces no unsequenced side effect into the enclosing expression."""
-        saved = self.locked
-        self.locked = saved | set(self._live())
+    def value_stmt_expr(self, depth: int) -> E:
+        """`({ <stmts>; <value-expr>; })` -- its own scope; an operand of a larger expression, so it mutates
+        only locals it declares (outer names locked) and performs no pointer write (no unsequenced effect)."""
+        saved_lock, saved_pure = self.locked, self.pure
+        self.locked = saved_lock | set(self._live())
+        self.pure = True
         self.scopes.append([])
         parts = [self.stmt(depth - 1, allow_block=False) for _ in range(self.rng.randint(0, 2))]
-        val = self.uexpr(depth) if ty == "u" else self.iexpr(depth)
+        val = self.expr(depth)
         parts.append(f"{val.text};")
         self.scopes.pop()
-        self.locked = saved
-        return E("({ " + " ".join(parts) + " })", ty, val.bound)
+        self.locked, self.pure = saved_lock, saved_pure
+        return E("({ " + " ".join(parts) + " })", val.aty, val.bound)
 
-    # -- statements: the only mutation sites; each mutates at most one UNSIGNED local. Every recursive call
-    # -- decrements `depth`, and `depth <= 0` precedes any nesting -- so generation always terminates.
+    # -- statements ------------------------------------------------------------------------------------
+    def _decl(self, depth: int) -> str:
+        code = self.rng.choice(_TYPES)
+        e = self.expr(depth)
+        n = self._fresh(code, self._store_bound(e, code))
+        return f"{_ST[code][0]} {n} = {e.text};"
+
     def stmt(self, depth: int, allow_block: bool = True) -> str:
         r = self.rng
-        if not self._targets():                                 # nothing mutable in scope yet -> declare one
-            e = self.uexpr(depth)                               # (initialiser BEFORE the name is in scope)
-            n = self._fresh("u")
-            return f"unsigned {n} = {e.text};"
+        if not self._targets():                                 # nothing mutable yet -> declare a local
+            return self._decl(depth)
         k = r.random()
-        if k < 0.24:                                            # a fresh initialised local (`int` or unsigned)
-            if r.random() < 0.4:                                # (initialiser generated BEFORE the name is in
-                e = self.iexpr(depth)                           #  scope, so it can't read itself)
-                n = self._fresh("i", e.bound)
-                return f"int {n} = {e.text};"
-            e = self.uexpr(depth)
-            n = self._fresh("u")
-            return f"unsigned {n} = {e.text};"
-        if k < 0.46:                                            # plain assignment (to an unsigned target)
-            return f"{r.choice(self._targets())} = {self.aexpr(depth).text};"
-        if k < 0.60:                                            # compound assignment
-            return f"{r.choice(self._targets())} {r.choice(['+', '-', '*', '&', '|', '^'])}= {self.aexpr(depth).text};"
-        if k < 0.72:                                            # inc / dec (value discarded -- well defined)
-            return f"{r.choice(self._targets())}{r.choice(['++', '--'])};"
+        if k < 0.22:                                            # a fresh initialised local
+            return self._decl(depth)
+        if k < 0.42:                                            # plain assignment (a conversion -- never overflows)
+            n = r.choice(self._targets())
+            e = self.expr(depth)
+            self.bound[n] = self._store_bound(e, self.styp[n])
+            return f"{n} = {e.text};"
+        if k < 0.56:                                            # compound assignment
+            return self._compound(depth)
+        if k < 0.66:                                            # inc / dec (value discarded)
+            n = r.choice(self._targets())
+            self._bump(n, 1)
+            return f"{n}{r.choice(['++', '--'])};"
+        if self.ptr is not None and not self.pure and k < 0.74:  # a pointer write (sequenced statement)
+            return self._ptr_write(depth)
         if depth <= 0:                                          # base case: no more nesting
-            return f"{r.choice(self._targets())} = {self.aexpr(0).text};"
-        if k < 0.80:                                            # a void statement expression
-            self.scopes.append([])
-            inner = self.stmt(depth - 1, allow_block=False) if r.random() < 0.5 else \
-                f"if ({self.aexpr(depth - 1).text}) {{ {r.choice(self._targets())} = {self.aexpr(depth - 1).text}; }}"
-            self.scopes.pop()
-            return f"({{ {inner} }});"
+            n = r.choice(self._targets())
+            e = self.expr(0)
+            self.bound[n] = self._store_bound(e, self.styp[n])
+            return f"{n} = {e.text};"
+        if k < 0.82:                                            # a statement expression used as a statement: a
+            self.scopes.append([])                              # side-effecting prefix (sequenced -- may mutate
+            pre = self.stmt(depth - 1, allow_block=False)       # outer locals) then a trailing value, discarded.
+            val = self.expr(depth - 1).text                     # (ending in a value, not an assignment, keeps
+            self.scopes.pop()                                   #  it out of the assignment-as-value fallback)
+            return f"({{ {pre} {val}; }});"
         if not allow_block:                                     # inside a value stmt-expr: no blocks
-            return f"{r.choice(self._targets())} = {self.aexpr(depth).text};"
-        if k < 0.90:                                            # if / else
+            n = r.choice(self._targets())
+            e = self.expr(depth)
+            self.bound[n] = self._store_bound(e, self.styp[n])
+            return f"{n} = {e.text};"
+        if k < 0.91:                                            # if / else
+            cond = self.expr(depth - 1).text
             self.scopes.append([])
             then = " ".join(self.stmt(depth - 1) for _ in range(r.randint(1, 2)))
             self.scopes.pop()
-            out = f"if ({self.aexpr(depth - 1).text}) {{ {then} }}"
+            out = f"if ({cond}) {{ {then} }}"
             if r.random() < 0.5:
                 self.scopes.append([])
                 els = " ".join(self.stmt(depth - 1) for _ in range(r.randint(1, 2)))
                 self.scopes.pop()
                 out += f" else {{ {els} }}"
             return out
-        iv = f"i{self.counter}"                                 # a bounded for loop (counter never mutated
-        self.counter += 1                                       #  in the body, so it always terminates)
+        return self._for(depth)                                # a bounded for loop
+
+    def _compound(self, depth: int) -> str:
+        r = self.rng
+        n = r.choice(self._targets())
+        code = self.styp[n]
+        op = r.choice(["+", "-", "*", "&", "|", "^"])
+        e = self.expr(depth)
+        if op in "&|^":                                         # bitwise: no overflow; result re-bounded by type
+            self.bound[n] = _ST[code][3] if _ST[code][2] else 0
+            return f"{n} {op}= {e.text};"
+        nat = _ST[code][4]                                      # additive/mult: the promoted op must not overflow
+        ra = _uac(nat, e.aty)
+        cur = self.bound.get(n, 0) if _sgn(nat) else (1 << (8 * _AW[nat])) - 1
+        if _sgn(ra):
+            bd = cur * _vbound(e) if op == "*" else cur + _vbound(e)
+            if bd > _tmax(ra):                                  # would overflow -> shrink the RHS to a constant
+                e = E(_const_text(r.randint(-100, 100), nat), nat, 100)
+                bd = cur * 100 if op == "*" else cur + 100
+                if bd > _tmax(ra):                              # still tight (a near-max wide local) -> plain store
+                    e0 = self.expr(0)
+                    self.bound[n] = self._store_bound(e0, code)
+                    return f"{n} = {e0.text};"
+            self.bound[n] = self._store_bound(E("", ra, bd), code)
+        else:
+            self.bound[n] = 0
+        return f"{n} {op}= {e.text};"
+
+    def _bump(self, n: str, by: int):
+        code = self.styp[n]
+        if not _ST[code][2]:                                   # unsigned wraps
+            self.bound[n] = 0
+        elif code in ("i8", "i16"):                            # narrow: re-caps to type range
+            self.bound[n] = _ST[code][3]
+        else:                                                  # wide (outside loops): +1, capped at the type max
+            self.bound[n] = min(self.bound.get(n, 0) + by, _ST[code][3])
+
+    def _ptr_write(self, depth: int) -> str:
+        r = self.rng
+        rhs = self.expr(depth).text
+        if r.random() < 0.35:
+            return f"*{self.ptr} = {rhs};"               # `*p = x` (canonical); `(*p) = x` is a twin parse gap
+        idx = _coerce(self.expr(depth - 1) if depth > 0 else self.leaf(0), "u32")
+        op = r.choice(["=", "+=", "-=", "*=", "|=", "&=", "^="])
+        return f"{self.ptr}[({idx}) & {_ARRSZ - 1}u] {op} {rhs};"
+
+    def _for(self, depth: int) -> str:
+        r = self.rng
+        iv = f"i{self.counter}"
+        self.counter += 1
+        for n in self._live():                                 # loop-entry inflation: a narrow-signed local may
+            if self.styp.get(n) in ("i8", "i16"):              # be mutated to anywhere in its range on a later
+                self.bound[n] = _ST[self.styp[n]][3]           # iteration, so a read must use the type cap.
         self.scopes.append([iv])
-        self.ty[iv] = "u"
+        self.styp[iv] = "u32"
         self.loopvars.add(iv)
+        self.loopdepth += 1
         body = " ".join(self.stmt(depth - 1) for _ in range(r.randint(1, 2)))
+        self.loopdepth -= 1
         self.loopvars.discard(iv)
         self.scopes.pop()
         return f"for (unsigned {iv} = 0u; {iv} < {r.randint(1, 8)}u; {iv}++) {{ {body} }}"
@@ -279,39 +382,36 @@ class Gen:
     def _enter_function(self, ptypes: list, has_ptr: bool):
         names = ["a", "b", "c", "d"][:len(ptypes)]
         self.scopes = [list(names)]
-        self.ty = {n: t for n, t in zip(names, ptypes)}
-        self.bound = {n: (_PMAX if t == "i" else 0) for n, t in zip(names, ptypes)}
-        self.loopvars, self.locked = set(), set()
+        self.styp = {n: t for n, t in zip(names, ptypes)}
+        self.bound = {n: (_ST[t][3] if _ST[t][2] else 0) for n, t in zip(names, ptypes)}
+        self.loopvars, self.locked, self.pure, self.loopdepth = set(), set(), False, 0
         self.params = list(names)
         self.ptr = "p" if has_ptr else None
 
-    def _function(self, name: str, ptypes: list, ret: str, has_ptr: bool, allow_calls: bool):
+    def _function(self, name: str, ptypes: list, ret: str, has_ptr: bool, allow_calls: bool) -> str:
         self._enter_function(ptypes, has_ptr)
         self.allow_calls = allow_calls
-        names = list(self.scopes[0])
         body = [self.stmt(2) for _ in range(self.rng.randint(2, 5))]
-        rv = self.uexpr(3) if ret == "u" else self.iexpr(3)
-        body.append(f"return {rv.text};")
-        decl = ", ".join(("int " if t == "i" else "unsigned ") + n for n, t in zip(names, ptypes))
+        rv = self.expr(3)
+        body.append(f"return {_coerce(rv, _ST[ret][4]) if _ST[ret][4] != rv.aty else rv.text};")
+        decl = ", ".join(f"{_ST[t][0]} {n}" for n, t in zip(self.params, ptypes))
         if has_ptr:
-            decl += ", const unsigned *p"
-        ret_c = "int" if ret == "i" else "unsigned"
-        src = f"{ret_c} {name}({decl})\n{{\n  " + "\n  ".join(body) + "\n}\n"
-        return src, rv.bound
+            decl += ", unsigned *p"
+        src = f"{_ST[ret][0]} {name}({decl})\n{{\n  " + "\n  ".join(body) + "\n}\n"
+        return src
 
     def program(self) -> "Program":
         r = self.rng
         self.helpers, helper_src = [], []
-        for hi in range(r.randint(0, 3)):                       # a prelude of leaf helpers (no calls)
-            ptypes = [r.choice(["u", "i"]) for _ in range(r.randint(1, 3))]
-            ret = r.choice(["u", "i"])
-            src, rb = self._function(f"g{hi}", ptypes, ret, has_ptr=False, allow_calls=False)
-            helper_src.append(src)
-            self.helpers.append((f"g{hi}", ptypes, ret, rb))
-        fptypes = [r.choice(["u", "i"]) for _ in range(r.randint(2, 4))]
-        fret = r.choice(["u", "i"])
+        for hi in range(r.randint(0, 3)):                       # a prelude of leaf helpers (no calls, no ptr)
+            ptypes = [r.choice(_TYPES) for _ in range(r.randint(1, 3))]
+            ret = r.choice(_TYPES)
+            helper_src.append(self._function(f"g{hi}", ptypes, ret, has_ptr=False, allow_calls=False))
+            self.helpers.append((f"g{hi}", ptypes, ret))
+        fptypes = [r.choice(_TYPES) for _ in range(r.randint(2, 4))]
+        fret = r.choice(_TYPES)
         has_ptr = r.random() < 0.4
-        fsrc, _ = self._function("f", fptypes, fret, has_ptr=has_ptr, allow_calls=True)
+        fsrc = self._function("f", fptypes, fret, has_ptr=has_ptr, allow_calls=True)
         return Program("\n".join(helper_src + [fsrc]), fptypes, fret, has_ptr)
 
 
@@ -362,38 +462,43 @@ def _twin(exe: str, src: str):
     return 1, first, emit
 
 
-_U_CANDS = [0, 1, 2, 7, 255, 256, 65535, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 123456789, 0xDEADBEEF, 3, 1000000]
-_I_CANDS = [0, 1, -1, 2, -2, 7, -7, 100, -100, _PMAX, -_PMAX, 12345, -12345, 9999]
+_POOL = {
+    "i8":  [0, 1, -1, 127, -128, 50, -50, 99],
+    "i16": [0, 1, -1, 32767, -32768, 1000, -1000, 12345],
+    "i32": [0, 1, -1, _PMAX, -_PMAX, 12345, -12345, 100],
+    "i64": [0, 1, -1, _PMAX, -_PMAX, 9999, -9999, 5000],
+    "u32": [0, 1, 255, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 123456789, 3],
+    "u64": [0, 1, 0xFFFFFFFF, 0x100000000, 0xFFFFFFFFFFFFFFFF, 7, 1000000, 42],
+}
 
 
-def _arg_vectors(prog: Program, nptr: int) -> list:
-    """A deterministic set of type-correct argument vectors (one C literal per scalar parameter; the pointer
-    parameter cycles through the backing arrays). `int` values stay within +-PMAX so the program is UB-free."""
+def _arg_vectors(prog: Program) -> list:
+    """A deterministic set of type-correct scalar argument vectors (one C literal per scalar parameter)."""
     vecs = []
     for j in range(16):
         args = []
         for k, t in enumerate(prog.ptypes):
-            if t == "u":
-                args.append(f"{_U_CANDS[(j + 3 * k) % len(_U_CANDS)]}u")
-            else:
-                args.append(_iconst(_I_CANDS[(j + 2 * k) % len(_I_CANDS)]))
-        if prog.has_ptr:
-            args.append(f"ARR{j % nptr}")
-        vecs.append(", ".join(args))
+            args.append(_const_text(_POOL[t][(j + 3 * k) % len(_POOL[t])], _ST[t][4]))
+        vecs.append(args)
     return vecs
 
 
 def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tuple[bool, str]:
     renamed = re.sub(r"\bf\b", "f_s", prog.source)              # the entry `f` -> `f_s`; helpers untouched
-    arrays = ("static const unsigned ARR0[8] = {3u,140u,7u,0u,99u,1234567u,255u,42u};\n"
-              "static const unsigned ARR1[8] = {0u,4294967295u,1u,77u,8u,65535u,256u,9u};\n")
-    nptr = 2
+    rtype = _ST[prog.ret][0]
+    init = "{3u,140u,7u,0u,99u,1234567u,255u,42u}"
     drv = ["int main(void){"]
-    for vec in _arg_vectors(prog, nptr):
-        drv.append(f"  if(bcir_f({vec}) != f_s({vec})) return 1;")
+    for vec in _arg_vectors(prog):
+        a = ", ".join(vec)
+        if prog.has_ptr:
+            drv.append(f"  {{ unsigned A[8]={init}, B[8]={init}; {rtype} r1=bcir_f({a}{',' if a else ''} A);"
+                       f" {rtype} r2=f_s({a}{',' if a else ''} B); if(r1!=r2) return 1;"
+                       " for(int k=0;k<8;k++) if(A[k]!=B[k]) return 2; }")
+        else:
+            drv.append(f"  if(bcir_f({a}) != f_s({a})) return 1;")
     drv.append("  return 0;}")
-    harness = ("#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"   # string.h: emits use memcpy
-               + (arrays if prog.has_ptr else "") + renamed + "\n" + emit + "\n" + "\n".join(drv))
+    harness = ("#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+               + renamed + "\n" + emit + "\n" + "\n".join(drv))
     cpath = os.path.join(d, f"{label}.c")
     epath = os.path.join(d, label)
     with open(cpath, "w") as fh:
@@ -413,8 +518,7 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
 
 def run_seed(twin: str, cc, count: int, seed: int, d: str, verbose: bool = False):
     """Generate+check `count` programs. Returns (divergence_message_or_None, stats). `cc` may be None to
-    skip the behaviour differential (outcome + parity are still checked). `twin` is the test_cfront binary,
-    `d` a scratch directory. The first divergence (outcome / parity / behaviour) short-circuits."""
+    skip the behaviour differential (outcome + parity are still checked). The first divergence short-circuits."""
     rng = random.Random(seed)
     stats = {"clean": 0, "fallback": 0, "dirty": 0, "checked": 0}
     names = {0: "clean", 1: "dirty", 2: "fallback"}

@@ -1025,6 +1025,21 @@ class _FuncLowerer:
                 n = self._rvalue(node.value.rhs)
                 self._emit("c.ptradd" if node.value.op == "+" else "c.ptrsub", Opcode.ADD, (rid, n), (rid,))
                 return rid
+        # compound assignment to a MEMORY lvalue (`a[i] OP= e`, `s.m OP= e`, `*p OP= e`): the parser desugars
+        # `lhs OP= e` to `lhs = lhs OP e` REUSING the same target node, so resolve the lvalue ONCE (C
+        # evaluates `lhs` once) -- one index/address, read + stored through it -- instead of recomputing it
+        # for the read and again for the store (which both diverges from the twin and would double-run a
+        # side-effecting index). The node-IDENTITY test distinguishes this from an explicit `a[i]=a[i]*e`.
+        if (isinstance(node.value, cast.Binary) and node.value.lhs is node.target
+                and not isinstance(node.target, cast.Name)):
+            lv = self._lvalue(node.target)
+            cur = self._read(lv)
+            b = self._rvalue(node.value.rhs)
+            opcode, suf = _BIN[node.value.op]
+            t = self._temp(self._bin_result_type(node.value.op, cur, b), f"b_{suf}")
+            res = self._emit(f"c.bin.{suf}", opcode, (cur, b), (t,))
+            self._write(lv, res)
+            return res
         v = self._rvalue(node.value)
         if isinstance(node.target, cast.Name) and node.target.ident in self.env:
             rid, _ct = self._lookup(node.target.ident, node.target.pos)           # copy into the mutable storage
@@ -1128,9 +1143,9 @@ class _FuncLowerer:
         # logical shift / unsigned compare). A pointer / aggregate keeps the 4-byte uint32 value unit.
         if ret_ct is not None and (ret_ct.is_float or (ret_ct.is_integer and ret_ct.size > 4)):
             rct = ret_ct
-        elif ret_ct is not None and ret_ct.is_integer and ret_ct.size == 4 and ret_ct.signed:
-            rct = ret_ct
-        else:
+        elif ret_ct is not None and ret_ct.is_integer and ret_ct.signed and ret_ct.size <= 4:
+            rct = scalar("int", self.abi)              # a signed char/short/int return promotes to int and
+        else:                                          # sign-extends downstream (a `(long)` widen, a compare)
             rct = scalar("uint32_t")
         t = self._temp(rct, f"call_{node.callee}")
         return self._emit(f"c.call:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
