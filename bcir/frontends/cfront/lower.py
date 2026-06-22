@@ -111,6 +111,24 @@ _EXTERN_VARIADIC = frozenset({
     "snprintf", "vsnprintf", "sprintf", "vsprintf", "printf", "fprintf", "vprintf",
     "vfprintf", "sscanf", "vsscanf", "scanf", "fscanf", "dprintf"})
 
+# GCC/Clang integer builtins -- emitted verbatim (no bcir_ twin, opaque to R18) with a fixed result type.
+_BUILTIN_INT = frozenset({                            # the bit-count family + abs -> int
+    "__builtin_popcount", "__builtin_popcountl", "__builtin_popcountll",
+    "__builtin_clz", "__builtin_clzl", "__builtin_clzll", "__builtin_ctz", "__builtin_ctzl", "__builtin_ctzll",
+    "__builtin_ffs", "__builtin_ffsl", "__builtin_ffsll", "__builtin_parity", "__builtin_parityl",
+    "__builtin_parityll", "__builtin_clrsb", "__builtin_clrsbl", "__builtin_clrsbll", "__builtin_abs"})
+_BUILTIN_OTHER = {"__builtin_labs": "long", "__builtin_llabs": "long long",
+                  "__builtin_bswap16": "uint16_t", "__builtin_bswap32": "uint32_t",
+                  "__builtin_bswap64": "uint64_t"}
+
+
+def _builtin_type(name: str, abi) -> "CType | None":
+    if name in _BUILTIN_INT:
+        return scalar("int", abi)
+    if name in _BUILTIN_OTHER:
+        return scalar(_BUILTIN_OTHER[name], abi)
+    return None
+
 
 def _libm_type(name: str) -> CType | None:
     """The result type of a `<math.h>` call: real-valued ones are typed by the name suffix
@@ -1062,6 +1080,11 @@ class _FuncLowerer:
         if node.callee in _EXTERN_VARIADIC and node.callee not in self.func_rets:
             t = self._temp(scalar("int", self.abi), f"ext_{node.callee}")   # a printf/scanf-family external
             return self._emit(f"c.call.extern:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # variadic
+        bt = _builtin_type(node.callee, self.abi)
+        if bt is not None:                             # a GCC/Clang integer builtin -> verbatim, typed, opaque
+            t = self._temp(bt, "blt")                  # the op carries the suffix (the `__builtin_` is re-added
+            return self._emit(f"c.call.builtin:{node.callee[len('__builtin_'):]}",  # in emit; the op buffer is small)
+                              Opcode.GEM_DISPATCH, actuals, (t,))
         self.calls.append((node.callee, actuals))      # a defined-in-unit callee: a real R18 edge
         ret_ct = self.func_rets.get(node.callee)
         if ret_ct is not None and ret_ct.name == "void":   # a void callee -> a bare call statement, no

@@ -232,6 +232,11 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     if c.op.startswith("c.call.extern:"):                    # a printf/scanf-family external variadic call
         callee = c.op.split(":", 1)[1]                       # emitted verbatim against <stdio.h>, returns int
         return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})", "int")
+    if c.op.startswith("c.call.builtin:"):                   # a GCC/Clang integer builtin -> verbatim
+        callee = "__builtin_" + c.op.split(":", 1)[1]        # the op stores the suffix; re-add the prefix
+        rt = lf.rid_types.get(c.wr[0])
+        return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})",
+                      _cname(rt) if rt is not None else None)
     if c.op == "c.call.vaarg":                               # va_arg(ap, T) -- T is the result temp's type
         rt = lf.rid_types.get(c.wr[0])
         ty = _cname(rt) if rt is not None else "int"
