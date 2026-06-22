@@ -886,7 +886,10 @@ class _FuncLowerer:
         if ct.kind == "array" and ct.count == 0:          # `(T[]){...}` -- infer the length from the init
             n, cursor = 0, 0                              # (max index + 1; positional advances, `[i]=` jumps)
             for key, _expr in node.init.entries:
-                idx = key if isinstance(key, int) else cursor
+                if isinstance(key, tuple):               # a nested chain `[i]...` -> its outer array index
+                    idx = key[0][1] if key and key[0][0] == "a" else cursor
+                else:
+                    idx = key if isinstance(key, int) else cursor
                 cursor = idx + 1
                 n = max(n, cursor)
             ct = array(ct.of, n or 1)
@@ -911,6 +914,9 @@ class _FuncLowerer:
         cursor = 0
         for key, expr in ag.entries:
             v = self._rvalue(expr)
+            if isinstance(key, tuple):                        # a nested designator chain (.a.b / .v[i] / .m[i][j])
+                self._write(self._designate(rid, ct, key), v)
+                continue
             if ct.kind == "array":
                 idx = key if isinstance(key, int) else cursor
                 cursor = idx + 1
@@ -925,6 +931,22 @@ class _FuncLowerer:
                     cursor += 1
                 lv = _LV("mem", rid, ftype, byte_off=boff, bit_off=bo, bit_width=bw)
             self._write(lv, v)
+
+    def _designate(self, rid: int, ct: CType, steps: tuple) -> "_LV":
+        """Resolve a nested designator chain to an lvalue: walk the aggregate type accumulating a byte
+        offset -- a `("m", field)` step descends a struct/union member (carrying its bitfield position), an
+        `("a", i)` step folds a constant array index into the offset. The leaf type sizes the store."""
+        off, cur, bit_off, bit_w = 0, ct, 0, 0
+        for kind, val in steps:
+            if kind == "m":
+                ftype, boff, bo, bw = cur.field(val)
+                off += boff
+                cur, bit_off, bit_w = ftype, bo, bw
+            else:                                             # an array element: fold the constant index
+                elem = cur.of if cur.of is not None else scalar("uint32_t")
+                off += val * elem.size
+                cur, bit_off, bit_w = elem, 0, 0
+        return _LV("mem", rid, cur, byte_off=off, bit_off=bit_off, bit_width=bit_w)
 
     def _assign(self, node: cast.Assign) -> int:
         # pointer compound-assign  p += n / p -= n  (and p++/p--, which desugar to `p = p + 1`):

@@ -1492,6 +1492,37 @@ static void p_stmt(CC *c);
  * the member-store path. Positional entries advance a cursor; a `.field=` designator selects by name.
  * (Local arrays + `[i]=` designators need a local array declarator -- a follow-on.) */
 static uint32_t p_expr(CC *c);
+/* Parse a struct/union designator chain `.field (.field | [const-index] ...)*` -- the C twin of a nested
+ * designator list (#designate). `.field` selects a member (descending into a nested value-struct/union),
+ * `[i]` folds a constant index into a member array (Horner over its declared dims). Fills the cumulative
+ * byte offset, the leaf store size + bitfield position (bit_w 0 if not a bitfield), and the TOP-LEVEL
+ * field index (for the positional cursor). The cursor is left at the `=`. (An array-of-struct element --
+ * nesting past `[i]` -- is a follow-on: the field model drops the element's struct index.) */
+static int designator_chain(CC *c, sdef *S, int *off, int *size, int *bit_w, int *bit_off, int *top_fi){
+  *off=0; *size=4; *bit_w=0; *bit_off=0; *top_fi=0;
+  sdef *cur=S; field *F=NULL; int started=0;
+  for(;;){
+    if(is(c,".")){
+      if(!cur){ fail(c,"member designator into a non-aggregate"); return 1; }
+      c->i++; tok fld=adv(c); int fi=-1;
+      for(int k=0;k<cur->nf;k++) if((int)strlen(cur->f[k].name)==fld.n&&!strncmp(cur->f[k].name,fld.s,fld.n)) fi=k;
+      if(fi<0){ fail(c,"unknown field in designator"); return 1; }
+      F=&cur->f[fi]; *off+=F->byte_off; *size=F->size; *bit_w=F->bit_w; *bit_off=F->bit_off;
+      if(!started){ *top_fi=fi; started=1; }
+      cur = (F->sidx>=0) ? &c->s[F->sidx] : NULL;      /* descend a nested value-struct/union */
+    } else if(is(c,"[")){
+      if(!F || F->arr_count<=0){ fail(c,"array designator into a non-array member"); return 1; }
+      int idxs[3], ni=0;                               /* one or more `[i]` -> Horner-flatten via the dims */
+      while(is(c,"[")){ c->i++; long long ix=ce_expr(c,0); eat(c,"]"); if(ni<3) idxs[ni++]=(int)ix; }
+      int lin=ni?idxs[0]:0;
+      for(int d=1; d<ni; d++){ int dim=d<F->nadims?F->adims[d]:1; lin=lin*dim+idxs[d]; }
+      *off += lin*F->size; *size=F->size; *bit_w=0; *bit_off=0;   /* an element: never a bitfield */
+      cur=NULL;
+    } else break;
+  }
+  if(!started){ fail(c,"empty designator"); return 1; }
+  return 0;
+}
 static void agg_init(CC *c, uint32_t rid, int sidx) {
   eat(c,"{");
   sdef *S = sidx>=0 ? &c->s[sidx] : NULL;
@@ -1499,24 +1530,26 @@ static void agg_init(CC *c, uint32_t rid, int sidx) {
   for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }  /* = {0} */
   int cursor=0;
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-    int fi=cursor;
-    if(is(c,".")){ c->i++; tok fld=adv(c); fi=-1;
-      for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
-      if(fi<0){ fail(c,"unknown field"); return; }
-      eat(c,"="); }
-    uint32_t v=p_expr(c);
-    if(fi>=0&&fi<S->nf){ field *F=&S->f[fi]; uint32_t val=v;
-      if(F->bit_w){                                  /* a bitfield member: read unit, set bits, store */
-        uint32_t unit=temp(c,F->size);
-        bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
-        if(ld){ld->n_rd=1;ld->rd[0]=rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=F->byte_off;ld->imm[1]=F->size;ld->bounds=BCIR_BND_ASSUMED;}
-        uint32_t nu=temp(c,F->size);
-        bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
-        if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=v;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=F->bit_off;bs->imm[1]=F->bit_w;}
-        val=nu; }
-      bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-      if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=F->byte_off;cl->imm[1]=F->size;cl->bounds=BCIR_BND_ASSUMED;} }
-    cursor=fi+1;
+    int off=0, size=4, bit_w=0, bit_off=0, top_fi=cursor, skip=0;   /* the store target (chain / positional) */
+    if(is(c,".")||is(c,"[")){                           /* a (possibly nested) designator */
+      if(designator_chain(c,S,&off,&size,&bit_w,&bit_off,&top_fi)) return;
+      eat(c,"=");
+    } else if(cursor<S->nf){ field *F=&S->f[cursor];    /* positional: the cursor-th member */
+      off=F->byte_off; size=F->size; bit_w=F->bit_w; bit_off=F->bit_off;
+    } else skip=1;                                      /* past the last member -> parse but do not store */
+    uint32_t v=p_expr(c); uint32_t val=v;
+    if(skip){ cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
+    if(bit_w){                                          /* a bitfield member: read unit, set bits, store */
+      uint32_t unit=temp(c,size);
+      bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
+      if(ld){ld->n_rd=1;ld->rd[0]=rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=off;ld->imm[1]=size;ld->bounds=BCIR_BND_ASSUMED;}
+      uint32_t nu=temp(c,size);
+      bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
+      if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=v;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=bit_off;bs->imm[1]=bit_w;}
+      val=nu; }
+    bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+    if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=off;cl->imm[1]=size;cl->bounds=BCIR_BND_ASSUMED;}
+    cursor=top_fi+1;
     if(is(c,",")) c->i++;
   }
   eat(c,"}");

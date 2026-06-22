@@ -703,15 +703,19 @@ class _Parser:
         entries = []
         while not self.at("PUNCT", "}"):
             key = None
-            if self.at("PUNCT", "["):                          # array designator: [const-index] =
-                self.nxt()
-                key = self._const_eval(self._expr())
-                self.eat("PUNCT", "]")
+            if self.at("PUNCT", "[") or self.at("PUNCT", "."):   # a designator (possibly a nested chain)
+                steps = []                                       # .a.b / .v[i] / [i][j] -> a step list
+                while self.at("PUNCT", "[") or self.at("PUNCT", "."):
+                    if self.at("PUNCT", "["):
+                        self.nxt()
+                        steps.append(("a", self._const_eval(self._expr())))
+                        self.eat("PUNCT", "]")
+                    else:
+                        self.nxt()
+                        steps.append(("m", self.eat("IDENT").text))
                 self.eat("OP", "=")
-            elif self.at("PUNCT", "."):                        # member designator: .field =
-                self.nxt()
-                key = self.eat("IDENT").text
-                self.eat("OP", "=")
+                # one designator keeps the scalar key (int index / str field); a chain is a tuple of steps
+                key = steps[0][1] if len(steps) == 1 else tuple(steps)
             entries.append((key, self._expr()))
             if self.at("PUNCT", ","):
                 self.nxt()

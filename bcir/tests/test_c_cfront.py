@@ -920,6 +920,52 @@ def test_compound_wide_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+def test_designate_dual_rail():
+    """Nested / chained designated initializers (#designate): a designator LIST `.a.b`, `.v[i]`,
+    `.m[i][j]` (and deeper) in an aggregate initializer, resolving to a cumulative byte offset -- `.field`
+    descends a (nested value-)struct/union member, `[i]` folds a constant index into a member array.
+    Both rails walk the layout identically; differential == Clang on BOTH emits (read-back here uses only
+    first-member nesting -- a non-first nested read needs the member-access offset fix, a follow-on)."""
+    fx = "cfront_designate.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["desig_chain", "desig_memarr", "desig_md", "desig_mix", "desig_deep"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int x=-300;x<300;x++){
+    if(desig_chain_s(x)!=bcir_desig_chain(x)){printf("chain@%d\n",x);return 1;}
+    if(desig_memarr_s(x)!=bcir_desig_memarr(x)){printf("memarr@%d\n",x);return 1;}
+    if(desig_md_s(x)!=bcir_desig_md(x)){printf("md@%d\n",x);return 1;}
+    if(desig_mix_s(x)!=bcir_desig_mix(x)){printf("mix@%d\n",x);return 1;}
+    if(desig_deep_s(x)!=bcir_desig_deep(x)){printf("deep@%d\n",x);return 1;}
+  }
+  puts("MATCH");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath = os.path.join(d, f"{label}.c")
+            open(cpath, "w").write(harness)
+            epath = os.path.join(d, label)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
+                                   capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
+
+
 def test_generic_dual_rail():
     """_Generic (#generic): C11 generic selection on the static type of the UNEVALUATED controlling
     expression -- the first matching type-name (int/int32_t collapse by width+sign; plain char distinct

@@ -115,7 +115,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
   || { echo "  FAIL: C frontend build"; exit 1; }
 # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
 FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c cfront_multiptr.c cfront_chartypes.c \
-cfront_complit.c cfront_typeof.c cfront_structinit.c cfront_arraylit.c cfront_variadic.c cfront_compoundwide.c cfront_extvariadic.c cfront_longdouble.c cfront_generic.c"
+cfront_complit.c cfront_typeof.c cfront_structinit.c cfront_arraylit.c cfront_variadic.c cfront_compoundwide.c cfront_extvariadic.c cfront_longdouble.c cfront_generic.c cfront_designate.c"
 # Precompute EVERY oracle summary in one python process (import compile_unit once) -- the old
 # python-per-fixture loop paid ~0.3s of interpreter+import startup each (~30s over the fixture set).
 python3 - "${C}" ${FIXTURES} > "${tmp}/py_sums.txt" <<'PY' || { echo "  FAIL: python lowering (batch)"; exit 1; }
@@ -1862,5 +1862,35 @@ gnr="$("${tmp}/gn_h")"
 [ "${gnr}" = "MATCH" ] \
   && echo "  PASS generic: _Generic selection (int/long/uint/double/float/char/ptr/default) == Clang" \
   || { echo "  FAIL: generic behaviour (${gnr})"; exit 1; }
+
+# Nested / chained designated initializers (#designate): a designator list `.a.b` / `.v[i]` / `.m[i][j]`
+# resolving to a cumulative byte offset. The differential drives nested struct chains, 1-D/2-D member
+# arrays, out-of-order mixes and a 3-level chain -- a wrong offset would store to the wrong slot.
+echo "[c-runtime] nested designated initializers -- .a.b / .v[i] / .m[i][j] (#designate)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_designate.c" > "${tmp}/de_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bdesig_chain\b/desig_chain_s/g' -e 's/\bdesig_memarr\b/desig_memarr_s/g' \
+      -e 's/\bdesig_md\b/desig_md_s/g' -e 's/\bdesig_mix\b/desig_mix_s/g' -e 's/\bdesig_deep\b/desig_deep_s/g' \
+      "${C}/cfront_designate.c"
+  cat "${tmp}/de_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(int x=-300;x<300;x++){
+    if(desig_chain_s(x)!=bcir_desig_chain(x)){printf("chain@%d\n",x);return 1;}
+    if(desig_memarr_s(x)!=bcir_desig_memarr(x)){printf("memarr@%d\n",x);return 1;}
+    if(desig_md_s(x)!=bcir_desig_md(x)){printf("md@%d\n",x);return 1;}
+    if(desig_mix_s(x)!=bcir_desig_mix(x)){printf("mix@%d\n",x);return 1;}
+    if(desig_deep_s(x)!=bcir_desig_deep(x)){printf("deep@%d\n",x);return 1;}
+  }
+  puts("MATCH");return 0;}
+DRV
+} > "${tmp}/de_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/de_harness.c" -o "${tmp}/de_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/de_harness.c" -o "${tmp}/de_h" \
+  || { echo "  FAIL: designate harness build"; exit 1; }
+der="$("${tmp}/de_h")"
+[ "${der}" = "MATCH" ] \
+  && echo "  PASS designate: .a.b / .v[i] / .m[i][j] / 3-level chain == Clang" \
+  || { echo "  FAIL: designate behaviour (${der})"; exit 1; }
 
 echo "[c-runtime] ok"
