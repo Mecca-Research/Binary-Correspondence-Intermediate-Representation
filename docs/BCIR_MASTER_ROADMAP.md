@@ -675,14 +675,14 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > twin's `agg_init` now recurses through struct nesting at an offset, mirroring the oracle's `_init_subagg`;
 > an inner array member + a `_Bool` inner member still lower correctly) — `cfront_neststruct.c`, both rails
 > == Clang. **Open follow-ons (next-context work):**
-> 1. ✅ **Fuzzer-generates nested structs in every context** — a struct may carry a nested struct member
->    `struct S0 in;` (one level, an all-scalar inner struct), read/written as `s.in.x` / `s->in.x` across the
->    full expression/mutation space as a **by-value parameter, a LOCAL (nested-brace init), a by-value RETURN**
->    (compared `r.in.x` leaf-by-leaf), AND a **`struct T *` POINTER parameter** (the driver sets + compares the
->    backing struct's inner leaves, written through `p->in.x`). All member-iterating sites flatten via
->    `_leaves` / `_flat`. Remaining follow-on: **multi-level** nesting (a nested struct that itself nests) and
->    a nested member that is an ARRAY or bitfield. Plus enums and `_Bool` as a local/param/return (member-level
->    done; both probed Clang-equivalent, so guards).
+> 1. ✅ **Fuzzer-generates nested structs in every context, to any depth** — a struct may carry a nested
+>    struct member `struct S0 in;`, read/written as `s.in.x` / `s->in.x` / `s.in.deep.x` across the full
+>    expression/mutation space as a **by-value parameter, a LOCAL (nested-brace init), a by-value RETURN**
+>    (compared leaf-by-leaf), AND a **`struct T *` POINTER parameter** (written through `p->in.x`). An inner
+>    struct may **itself nest** (`S2{ S1{ S0 } }`, multi-level, validated == Clang); all member-iterating sites
+>    flatten recursively via `_leaves` / `_flat`. Remaining follow-on: a nested member that is itself an ARRAY
+>    or has bitfields. Plus enums and `_Bool` as a local/param/return (member-level done; both probed
+>    Clang-equivalent, so guards).
 > 2. ✅ **Union-of-bitfields** is now exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`, behaviour-validated — unions lay every member at offset 0
 >    on both rails). **Still deferred — `__attribute__((packed))` + bitfields LAYOUT bug:** for a packed
