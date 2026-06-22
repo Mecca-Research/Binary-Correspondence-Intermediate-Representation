@@ -395,6 +395,14 @@ class Gen:
                 out.append((mn, c))
         return out
 
+    def _member_init(self, depth: int, c: str) -> str:
+        """The initializer TEXT for a struct member of type code `c`: a scalar/bitfield value, or -- for a
+        NESTED struct member -- a positional brace `{ inner inits }` (recursing). Used for a local decl and a
+        by-value RETURN compound literal."""
+        if c in self.aggdefs:
+            return "{ " + ", ".join(self._member_init(depth, ic) for _, ic in self.aggdefs[c][1]) + " }"
+        return self._val(depth, c).text
+
     def _agg_decl(self, depth: int) -> str:
         """A struct/union LOCAL `struct S0 vN = { ... };` -- its members are registered as scoped lvalues.
         A union only ever exposes ONE active member (no type-punning, so behaviour stays well-defined).
@@ -403,8 +411,7 @@ class Gen:
         flat `self.arrs` list stays in scope for the rest of the body (an inner-block local would leak)."""
         r = self.rng
         top = len(self.scopes) == 1                                  # function top-level: array-bearing OK
-        cands = [n for n in self.aggdefs if (top or not self.aggdefs[n][3])   # nest-containing: by-value param only
-                 and not any(c in self.aggdefs for _, c in self.aggdefs[n][1])]
+        cands = [n for n in self.aggdefs if top or not self.aggdefs[n][3]]
         if not cands:
             return self._decl_scalar(depth)
         agg = r.choice(cands)
@@ -412,11 +419,19 @@ class Gen:
         self.counter += 1
         vn = f"s{self.counter}"
         if kind == "struct":                                    # init exprs generated BEFORE the members are
-            inits = [self._val(depth, c) for _, c in members]   # in scope (so they can't read themselves)
+            parts, scal = [], []                                # in scope (so they can't read themselves)
+            for mn, c in members:
+                if c in self.aggdefs:                           # a nested struct member -> a nested brace
+                    parts.append(self._member_init(depth, c))
+                else:
+                    e = self._val(depth, c); parts.append(e.text); scal.append((mn, c, e))
             arr_inits = [[self._val(max(0, depth - 1), c) for _ in range(_ARRSZ // 2)] for _, c in arrs]
-            for (mn, c), e in zip(members, inits):
+            for mn, c in members:                               # register the nested member's `s.in.x` leaves
+                if c in self.aggdefs:
+                    for acc, ic in self._leaves([(mn, c)]):
+                        self._add_member(f"{vn}.{acc}", ic, _ST[ic][3] if _ST[ic][2] else 0)
+            for mn, c, e in scal:
                 self._add_member(f"{vn}.{mn}", c, self._store_bound(e, c))
-            parts = [e.text for e in inits]
             for (an, c), elems in zip(arrs, arr_inits):         # a nested brace per array member, then register
                 parts.append("{ " + ", ".join(e.text for e in elems) + " }")
                 self.arrs.append((f"{vn}.", an, c))
@@ -577,8 +592,8 @@ class Gen:
         self.allow_calls = allow_calls
         body = [self.stmt(2) for _ in range(self.rng.randint(2, 5))]
         if ret in self.aggdefs:                            # a struct return BY VALUE: a member-init compound
-            _kind, members, _active, ret_arrs = self.aggdefs[ret]   # literal, with NESTED braces for any array
-            parts = [self._val(3, c).text for _, c in members]      # members (the compound-literal init path)
+            _kind, members, _active, ret_arrs = self.aggdefs[ret]   # literal, with NESTED braces for an array
+            parts = [self._member_init(3, c) for _, c in members]   # member (or a nested struct member's brace)
             parts += ["{ " + ", ".join(self._val(2, c).text for _ in range(_ARRSZ // 2)) + " }"
                       for _, c in ret_arrs]
             body.append(f"return (struct {ret}){{ {', '.join(parts)} }};")
@@ -645,7 +660,7 @@ class Gen:
                 return r.choice(aggnames)                       # an aggregate by value (may be nest-containing)
             return r.choice(_ALL)
         fparams = [(chr(97 + k), _fparam_type()) for k in range(r.randint(2, 4))]
-        fret = r.choice(flat) if (flat and r.random() < 0.15) else r.choice(_ALL)   # array members OK
+        fret = r.choice(structs) if (structs and r.random() < 0.15) else r.choice(_ALL)   # array/nested members OK
         nptr = r.choice([0, 0, 1, 1, 2])
         alias = nptr == 2 and r.random() < 0.5
         fsrc = self._function("f", fparams, fret, nptr=nptr, allow_calls=True)
@@ -746,18 +761,28 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
             return f"if(!{'feqf' if code == 'f32' else 'feqd'}({lhs},{rhs})) return 1;"
         return f"if({lhs}!={rhs}) return 1;"
 
+    def _flat(members):                                        # scalar leaves with access suffix (nested -> in.x)
+        out = []
+        for mn, c in members:
+            if c in prog.aggdefs:
+                out += [(f"{mn}.{imn}", ic) for imn, ic in prog.aggdefs[c][1]]
+            else:
+                out.append((mn, c))
+        return out
+
     if struct_ret:
         members, ret_arrs = prog.aggdefs[prog.ret][1], prog.aggdefs[prog.ret][3]
-        chk = " ".join(_mcmp(f"r1.{mn}", f"r2.{mn}", c) for mn, c in members)
+        chk = " ".join(_mcmp(f"r1.{acc}", f"r2.{acc}", c) for acc, c in _flat(members))   # nested -> r1.in.x
         chk += " " + " ".join(_mcmp(f"r1.{an}[{e}]", f"r2.{an}[{e}]", c)   # array members element-by-element
                               for an, c in ret_arrs for e in range(_ARRSZ // 2))
     else:
         chk = f"if(!{cmp}(r1,r2)) return 1;" if cmp else "if(r1!=r2) return 1;"
     # the float-equality helpers are needed for a float compare anywhere (return, struct-return member, or a
     # struct-pointer member).
-    def _has_float_agg(tag):                                    # a float scalar member OR float array element
+    def _has_float_agg(tag):                                    # a float scalar/array element, incl. a nested member
         _k, mems, _a, arrs = prog.aggdefs[tag]
-        return any(c in _FLOATS for _, c in mems) or any(c in _FLOATS for _, c in arrs)
+        return (any(c in _FLOATS for _, c in mems) or any(c in _FLOATS for _, c in arrs)
+                or any(c in prog.aggdefs and _has_float_agg(c) for _, c in mems))
     need_feq = (cmp is not None
                 or (struct_ret and _has_float_agg(prog.ret))
                 or any(t.startswith("*") and _has_float_agg(t[1:]) for _, t in prog.ptypes))
