@@ -667,8 +667,11 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > gaps; compound-store index double-eval; narrow/float store-conversion; float-member-read-as-int; unsigned
 > sub-int bitfield not promoted to int; float member-array element stored as a uint reinterpret;
 > bitfield-after-sub-word-member laid out in a fresh type-aligned unit instead of packed at the bit cursor;
-> **a `_Bool` member / `_Bool[]` element store copying the raw byte instead of NORMALIZING any nonzero to 1**
-> — `s.flag = 2` read back as 2) plus the `signed char` (aarch64) portability gap.
+> a `_Bool` member / `_Bool[]` element store copying the raw byte instead of NORMALIZING any nonzero to 1
+> (`s.flag = 2` read back as 2); **a WIDE bitfield (`unsigned long long:40`) in a 64-bit unit accessed with
+> 32-bit-hardcoded read/write — the store zeroed bits 32–63 and clobbered an adjacent field**) plus the
+> `signed char` (aarch64) portability gap. (~19 bugs; the last two found by targeted probing, not the
+> generator — the layout differential + `cfront_widebf.c` now guard them.)
 > ✅ **Nested-brace local/return aggregate init landed** (`cfront_nestinit.c`); ✅ **`_Bool` member/element
 > store-normalization** (`cfront_boolmember.c`); ✅ **nested structs** — a struct member that is a struct,
 > read/written via `o.in.x` / `o->in.x` chains AND initialised by a nested brace `{ {inner..}, .. }` (the
@@ -700,11 +703,13 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    (`test_L8_packed_layout_matches_clang`). **Implementation notes (next context):** (a) LAYOUT — in the
 >    `packed` branch of both `p_struct_body` (twin) and `AggregateBuilder.build` (oracle), place each packed
 >    bitfield at the running bit cursor with NO unit reservation: `byte_off = P/8`, `bit_off = P%8`,
->    `size = ceil((bit_off+w)/8)`, advance `P += w`; struct align stays 1. (b) ACCESS — the bitfield unit
->    load/store + `c.bf.get`/`c.bf.set` are currently **32-bit-hardcoded** (`bcir_cfront.c` ~2490:
->    `clear = ~(mask<<off) & 0xFFFFFFFFull`, a `uint32_t` result; the unit `c.load` reads `fld->size` into a
->    `tempi` sized to the storage type). A packed field can span up to ~39 bits, so the access unit must
->    widen to **`uint64`** (read/write `size` ∈ 1–5 bytes via `memcpy` into a zeroed `uint64`, 64-bit clear
+>    `size = ceil((bit_off+w)/8)`, advance `P += w`; struct align stays 1. (b) ACCESS — ✅ **the `c.bf.get`/
+>    `c.bf.set` + the unit load/result temp are now WIDTH-AWARE** (no longer 32-bit-hardcoded): a `> 32`-bit
+>    bitfield in a 64-bit unit reads/writes through a `uint64` with 64-bit literals/clear-mask and keeps its
+>    promoted declared type — this fixed the **wide-bitfield miscompile** (`unsigned long long mid:40`: the
+>    store zeroed bits 32–63 and clobbered an adjacent `tail:4`; `cfront_widebf.c`, both rails == Clang). The
+>    *packed* remainder is the BYTE-SPANNING case — a packed field can sit at an arbitrary bit offset and span
+>    up to ~39 bits, so the unit `memcpy` becomes a variable `size` ∈ 1–5 bytes into a zeroed `uint64` (64-bit clear
 >    mask), in both rails' emit. (c) GUARD — ✅ **the `sizeof`/`offsetof` differential is now in the fuzzer**
 >    (`_layout_ok`: the oracle's layout vs Clang `_Static_assert`s, since the behaviour check is size-blind);
 >    it currently passes for every generated struct (the fuzzer excludes packed+bitfield). Once the layout +

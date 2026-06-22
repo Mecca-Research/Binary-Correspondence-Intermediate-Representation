@@ -222,17 +222,23 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return f"memcpy((char *){ptr} + {off}, &{ref(c.rd[1])}, {size});"
     if c.op == "c.bf.get":                                   # (unit >> bit_off) & mask (sign-extended if signed)
         bit_off, width = c.imm[0], c.imm[1]
+        rt = lf.rid_types.get(c.wr[0])                       # a WIDE bitfield (> 32b) needs 64-bit literals/cast
+        wide = rt is not None and rt.size > 4
+        sfx = "ull" if wide else "u"
         mask = (1 << width) - 1
         if len(c.imm) > 2 and c.imm[2]:                      # a signed bitfield: sign-extend from bit width-1
-            sbit = 1 << (width - 1)
-            return deftmp(c.wr[0], f"(int32_t)(((({ref(c.rd[0])} >> {bit_off}) & {mask}u) ^ {sbit}u) - {sbit}u)")
-        return deftmp(c.wr[0], f"({ref(c.rd[0])} >> {bit_off}) & {mask}u")
+            sbit, cast = 1 << (width - 1), ("int64_t" if wide else "int32_t")
+            return deftmp(c.wr[0], f"({cast})(((({ref(c.rd[0])} >> {bit_off}) & {mask}{sfx}) ^ {sbit}{sfx}) - {sbit}{sfx})")
+        return deftmp(c.wr[0], f"({ref(c.rd[0])} >> {bit_off}) & {mask}{sfx}")
     if c.op == "c.bf.set":                                   # (old & ~(mask<<off)) | ((v&mask)<<off)
         bit_off, width = c.imm
+        rt = lf.rid_types.get(c.wr[0])
+        wide = rt is not None and rt.size > 4                # 64-bit unit: a 64-bit clear mask, not a 32-bit one
+        sfx = "ull" if wide else "u"
         mask = (1 << width) - 1
-        clear = ~(mask << bit_off) & 0xFFFFFFFF
-        return deftmp(c.wr[0], f"({ref(c.rd[0])} & {clear}u) | "
-                               f"(({ref(c.rd[1])} & {mask}u) << {bit_off})")
+        clear = ~(mask << bit_off) & ((1 << 64) - 1 if wide else 0xFFFFFFFF)
+        return deftmp(c.wr[0], f"({ref(c.rd[0])} & {clear}{sfx}) | "
+                               f"(({ref(c.rd[1])} & {mask}{sfx}) << {bit_off})")
     if c.op.startswith("c.call.libm:"):                      # a <math.h> call -> the real libm function
         callee = c.op.split(":", 1)[1]                       # (no bcir_ twin; the harness links -lm)
         rt = lf.rid_types.get(c.wr[0])                       # declare at the true result width: a long

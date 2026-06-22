@@ -905,14 +905,20 @@ class _FuncLowerer:
             signed = lv.ct.is_integer and lv.ct.signed       # a signed bitfield read sign-extends from bit w-1
             # integer promotion (6.3.1.1): a bitfield narrower than int promotes to int (int holds all its
             # values), so an UNSIGNED sub-int bitfield reads as a SIGNED int -- `bf < x` is a signed compare,
-            # not an unsigned one. Only a full-width (>= 32) unsigned bitfield stays unsigned.
-            t = self._temp(scalar("int" if (signed or lv.bit_width < 32) else "uint32_t"), "bf")
+            # not an unsigned one. A full-width (== 32) unsigned bitfield stays unsigned; a WIDE bitfield
+            # (> 32 bits, in a long-long unit) keeps its declared 64-bit type -- int/unsigned can't hold it.
+            rt = (lv.ct if lv.bit_width > 32
+                  else scalar("int" if (signed or lv.bit_width < 32) else "uint32_t", self.abi))
+            t = self._temp(rt, "bf")
             return self._emit("c.bf.get", Opcode.ADD, (unit,), (t,),
                               imm=(lv.bit_off, lv.bit_width, int(signed)))
         return unit
 
     def _load_unit(self, lv: "_LV") -> int:
-        t = self._temp(lv.ct if not lv.bit_width else scalar("uint32_t"), "ld")
+        # a bitfield's storage unit is read as an unsigned of the DECLARED type width (4 or 8 bytes) -- a
+        # `long long` bitfield (or any field straddling into bits >= 32) needs a 64-bit unit, not a uint32.
+        unit_ct = lv.ct if not lv.bit_width else scalar("uint32_t" if lv.ct.size <= 4 else "uint64_t", self.abi)
+        t = self._temp(unit_ct, "ld")
         rd = (lv.rid,) if lv.idx is None else (lv.rid, lv.idx)
         mmio = self._mmio(lv.rid)
         # the byte offset rides in imm (not the strict-bounds `offset`), and the access is
@@ -931,7 +937,7 @@ class _FuncLowerer:
     def _write(self, lv: "_LV", v: int) -> None:
         if lv.bit_width:                                     # read-modify-write the storage unit
             old = self._load_unit(lv)
-            t = self._temp(scalar("uint32_t"), "bf")
+            t = self._temp(scalar("uint32_t" if lv.ct.size <= 4 else "uint64_t", self.abi), "bf")
             v = self._emit("c.bf.set", Opcode.ADD, (old, v), (t,), imm=(lv.bit_off, lv.bit_width))
         mmio = self._mmio(lv.rid)
         if lv.idx is None:                                    # member/deref: carry (offset, size)
