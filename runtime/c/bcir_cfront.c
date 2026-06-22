@@ -2068,10 +2068,20 @@ static uint32_t p_stmt_expr(CC *c){
     snap_ncalls=c->fn->n_calls; snap_nenv=c->nenv; snap_nstr=g_nstr;
     p_stmt(c);
   }
+  /* is the LAST statement a VALUE expression statement (so the `({...})` yields it), or a statement-form
+   * (an `if`/loop/`{`/label/declaration) -> a VOID statement expression (used in a discarded context)? */
+  int is_value = last_save>=0;
+  if(last_save>=0){ const tok *lt=&c->t[last_save];
+    if(tok_is(lt,"if")||tok_is(lt,"for")||tok_is(lt,"while")||tok_is(lt,"do")||tok_is(lt,"switch")
+       ||tok_is(lt,"return")||tok_is(lt,"break")||tok_is(lt,"continue")||tok_is(lt,"goto")||tok_is(lt,"{")) is_value=0;
+    else if(lt->k==T_ID && c->t[last_save+1].k==T_PUN && c->t[last_save+1].n==1 && c->t[last_save+1].s[0]==':') is_value=0;
+    else if(lt->k==T_ID && (scalar_size(lt->s,lt->n)>=0||tok_is(lt,"struct")||tok_is(lt,"union")||tok_is(lt,"enum")
+            ||tok_is(lt,"const")||tok_is(lt,"volatile")||tok_is(lt,"_Atomic")||tok_is(lt,"static")
+            ||find_typedef(c,lt->s,lt->n)>=0)) is_value=0; }
   uint32_t result;
-  if(last_save<0){ result=temp(c,4);     /* `({ })` (empty) -> an unused placeholder */
-    bcir_claim *k=new_claim(c,"c.const",BCIR_OP_LOAD); if(k){k->n_wr=1;k->wr[0]=result;k->n_imm=1;k->imm[0]=0;} }
-  else {                                 /* roll the LAST statement back and re-parse it as the value expr */
+  if(!is_value){ result=temp(c,4); }      /* a void / empty statement expression: the last stmt (if any) is
+                                           * already lowered; the value is unused (an unreferenced placeholder) */
+  else {                                  /* a value: roll the LAST statement back and re-parse it as the expr */
     c->fn->n_res=snap_res; c->fn->n_claims=snap_cl; c->rid=snap_rid; c->cid=snap_cid; c->cl_ctr=snap_clctr;
     c->fn->n_calls=snap_ncalls; c->nenv=snap_nenv;
     while(g_nstr>snap_nstr){ g_nstr--; free(g_strtab[g_nstr].s); g_strtab[g_nstr].s=NULL; }

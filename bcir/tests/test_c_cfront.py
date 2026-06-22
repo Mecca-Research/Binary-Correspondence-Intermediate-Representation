@@ -933,7 +933,7 @@ def test_stmtexpr_dual_rail():
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["se_simple", "se_max", "se_embed", "se_loop", "se_nest", "se_scope"]
+    funcs = ["se_simple", "se_max", "se_embed", "se_loop", "se_nest", "se_scope", "se_void"]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -945,6 +945,7 @@ def test_stmtexpr_dual_rail():
     if(se_loop_s(b)!=bcir_se_loop(b)){puts("loop");return 1;}
     if(se_nest_s(a)!=bcir_se_nest(a)){puts("nest");return 1;}
     if(se_scope_s(a)!=bcir_se_scope(a)){puts("scope");return 1;}
+    if(se_void_s(a)!=bcir_se_void(a)){puts("void");return 1;}
   }
   puts("MATCH");return 0;}"""
     with tempfile.TemporaryDirectory() as d:

@@ -2022,6 +2022,7 @@ echo "[c-runtime] GCC statement expressions -- ({ ...; e; }) (#stmtexpr)"
 { echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
   sed -e 's/\bse_simple\b/se_simple_s/g' -e 's/\bse_max\b/se_max_s/g' -e 's/\bse_embed\b/se_embed_s/g' \
       -e 's/\bse_loop\b/se_loop_s/g' -e 's/\bse_nest\b/se_nest_s/g' -e 's/\bse_scope\b/se_scope_s/g' \
+      -e 's/\bse_void\b/se_void_s/g' \
       "${C}/cfront_stmtexpr.c"
   cat "${tmp}/sx_emit.c"
   cat <<'DRV'
@@ -2033,6 +2034,7 @@ int main(void){
     if(se_loop_s(b)!=bcir_se_loop(b)){puts("loop");return 1;}
     if(se_nest_s(a)!=bcir_se_nest(a)){puts("nest");return 1;}
     if(se_scope_s(a)!=bcir_se_scope(a)){puts("scope");return 1;}
+    if(se_void_s(a)!=bcir_se_void(a)){puts("void");return 1;}
   }
   puts("MATCH");return 0;}
 DRV
@@ -2042,7 +2044,7 @@ DRV
   || { echo "  FAIL: stmtexpr harness build"; exit 1; }
 sxr="$("${tmp}/sx_h")"
 [ "${sxr}" = "MATCH" ] \
-  && echo "  PASS stmtexpr: temporary / max / embedded / loop / nested / scope == Clang" \
+  && echo "  PASS stmtexpr: temporary / max / embedded / loop / nested / scope / void == Clang" \
   || { echo "  FAIL: stmtexpr behaviour (${sxr})"; exit 1; }
 
 echo "[c-runtime] ok"

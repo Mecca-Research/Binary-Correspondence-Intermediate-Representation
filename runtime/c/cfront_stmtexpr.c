@@ -17,3 +17,5 @@ int se_loop(int x)     { return ({ int s = 0; for (int i = 1; i <= x; i++) s += 
 int se_nest(int x)     { return ({ int a = ({ int b = x; b + 1; }); a * 2; }); }
 /* the statement expression is its own scope: the inner `y` shadows, then the outer `y` is restored */
 int se_scope(int x)    { int y = 100; int r = ({ int y = x; y * 2; }); return r + y; }
+/* a VOID statement expression: the last item is a control-flow statement, so the value is discarded */
+int se_void(int x)     { int n = 0; ({ if (x & 1) n = x * 2; else { n = x + 1; } }); return n; }
