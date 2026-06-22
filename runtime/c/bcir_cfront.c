@@ -1081,7 +1081,9 @@ static uint32_t p_call(CC *c, const tok *name) {
   }
   uint32_t t = (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
              : (rt && rt->kind==0 && rt->size==8) ? temp(c,8)        /* wide (8-byte) int return */
-             : temp(c,4);                                            /* int / unknown -> 4-byte unit */
+             : (rt && rt->kind==0 && rt->size==4 && rt->signd) ? tempi(c,4,1)  /* signed `int` return keeps its
+                                                            * sign, else a downstream `>>`/compare goes unsigned */
+             : temp(c,4);                                            /* unsigned int / pointer / unknown -> 4-byte unit */
   char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call:%.*s",name->n,name->s);
   bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
   if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
@@ -1507,7 +1509,13 @@ static uint32_t p_binexpr(CC *c){return p_binrhs(c,1,p_unary(c));}
 static uint32_t p_expr(CC *c){
   uint32_t cond=p_binexpr(c);
   if(is(c,"?")){ c->i++; uint32_t a=p_expr(c); eat(c,":"); uint32_t b=p_expr(c);
-    uint32_t t=temp(c,4); bcir_claim *cl=new_claim(c,"c.select",BCIR_OP_ADD);
+    /* an integer select carries the arms' common (width, signedness) -- the usual arithmetic conversions --
+     * NOT a blanket unsigned: a signed arm must keep its sign so a downstream `>>` / compare on the select
+     * stays signed (else `(c?x:y) >> k` would lower to a logical shift). */
+    int sa,za,sb,zb; uint32_t t;
+    if(rid_int(c,a,&sa,&za) && rid_int(c,b,&sb,&zb)){ int rs,rz; uac_i(sa,za,sb,zb,&rs,&rz); t=tempi(c,rs,rz); }
+    else t=temp(c,4);
+    bcir_claim *cl=new_claim(c,"c.select",BCIR_OP_ADD);
     if(cl){cl->n_rd=3;cl->rd[0]=cond;cl->rd[1]=a;cl->rd[2]=b;cl->n_wr=1;cl->wr[0]=t;} return t; }
   return cond;
 }
@@ -2015,6 +2023,8 @@ static void p_stmt(CC *c) {
       eat(c,";");return;}
     /* L3: array element store  a[idx] = expr  /  a[idx] OP= expr  (driver buffer fill / scatter). */
     if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]=='['){
+      int as_start=c->i;                                /* roll-back point: `a[i]` may be a VALUE, not a store */
+      size_t as_res=c->fn->n_res,as_cl=c->fn->n_claims; uint32_t as_rid=c->rid,as_cid=c->cid,as_clc=c->cl_ctr;
       c->i++; uint32_t idx=array_index(c,v); uint32_t val;   /* a[i] / m[i][j] (Horner-flattened) */
       if(is_compound_op(&c->t[c->i])){
         char ch=c->t[c->i].s[0]; c->i++;                /* a[idx] OP= expr -> load, op, store */
@@ -2023,7 +2033,11 @@ static void p_stmt(CC *c) {
         uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
-      } else { if(!eat(c,"="))return; val=p_expr(c); }
+      } else if(c->t[c->i].k==T_PUN&&c->t[c->i].n==1&&c->t[c->i].s[0]=='='){ c->i++; val=p_expr(c); }
+      else {        /* `a[i]` with no `=`/OP= is a VALUE (e.g. the last item of a `({...})`), not a store: undo
+                     * the speculative index lowering and re-parse the whole thing as an expression statement. */
+        c->fn->n_res=as_res; c->fn->n_claims=as_cl; c->rid=as_rid; c->cid=as_cid; c->cl_ctr=as_clc;
+        c->i=as_start; (void)p_expr(c); eat(c,";"); return; }
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=BCIR_BND_ASSUMED;
         if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
@@ -2324,8 +2338,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"%s %s = (%s%s);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
     else if(!strncmp(cl->op,"c.cast:",7))                  /* (type)operand -- width / float cast */
       w+=snprintf(o+w,on-w,"%s %s = (%s)%s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+7,rname(f,cl->rd[0],a));
-    else if(!strcmp(cl->op,"c.select"))                    /* ternary: cond ? then : els */
-      w+=snprintf(o+w,on-w,"uint32_t %s = (%s ? %s : %s);\n",rname(f,cl->wr[0],d),
+    else if(!strcmp(cl->op,"c.select"))                    /* ternary: cond ? then : els -- the select's own
+                                                            * (signed/unsigned) type, not a hardcoded
+                                                            * uint32_t (see the c.const note below). */
+      w+=snprintf(o+w,on-w,"%s %s = (%s ? %s : %s);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),
                   rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
     else if(!strcmp(cl->op,"c.const")){
       /* declare the constant with its OWN type, not a hardcoded uint32_t: a bare integer literal (e.g.

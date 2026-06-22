@@ -356,9 +356,15 @@ def test_user_call_returns_typed_by_callee():
     # a wide (8-byte) integer return keeps its width, not narrowed to uint32.
     rl = compile_unit("long g(double x){ return lround(x); } long f(double x){ return g(x); }\n")
     assert "long t" in emit_function(rl.lowered.functions["f"]) and rl.is_clean and eqok(rl)
-    # an ordinary int return keeps the 4-byte value unit (unchanged convention).
-    ri = compile_unit("int g(int x){ return x+1; } int f(int x){ return g(x)*2; }\n")
-    assert "uint32_t t" in emit_function(ri.lowered.functions["f"]) and ri.is_clean and eqok(ri)
+    # a signed `int` return keeps its SIGN on the result temp -- else a downstream `>>` / comparison on the
+    # call result would go unsigned (a logical shift / unsigned compare). `(g(x) >> k)` must stay arithmetic.
+    ri = compile_unit("int g(int x){ return x*100000; } int f(int x){ return g(x) >> 4; }\n")
+    iem = emit_function(ri.lowered.functions["f"])
+    callln = next(l for l in iem.splitlines() if "bcir_g(x)" in l)
+    assert callln.strip().startswith("int ") and ">> " in iem and ri.is_clean and eqok(ri)
+    # an UNSIGNED int return keeps the 4-byte uint32 value unit (the sign fix is signed-only).
+    ru = compile_unit("unsigned g(unsigned x){ return x+1u; } unsigned f(unsigned x){ return g(x)*2u; }\n")
+    assert "uint32_t t" in emit_function(ru.lowered.functions["f"]) and ru.is_clean and eqok(ru)
 
 
 # --- L2: struct / union layout + member access ---------------------------------------------------

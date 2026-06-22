@@ -2655,14 +2655,16 @@ def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
 
 def test_cfront_differential_fuzz():
     """A seeded differential fuzzer over the shared cfront subset (`tools/c/fuzz_cfront.py`): random but
-    well-defined `unsigned f(unsigned,unsigned,unsigned)` programs (arithmetic / bitwise / bounded shifts /
-    comparisons / ternary / if / bounded for / statement expressions / inc-dec) are run through BOTH rails
-    and Clang. For each program the two rails must agree on the total-compile OUTCOME (clean/dirty/fallback);
-    a mutually-clean unit must additionally have an identical structural claim SUMMARY (parity) and emitted
-    C that is behaviour-equivalent to Clang on both rails. This is the regression guard for the bugs this
-    suite was extended to cover -- the twin emitting a redeclaration `uint32_t a=..;` when a *parameter* is
-    assigned, and the oracle accepting (and miscomputing) an assignment / `i++` as a statement-expression
-    value where the twin routes away. The seeds are fixed, so the run is deterministic."""
+    well-defined programs -- an optional helper prelude then an entry `f`, with `int`/`unsigned` (and a
+    read-only `const unsigned *`) parameters, drawing from arithmetic / bitwise / bounded shifts /
+    comparisons / ternary / if / bounded for / statement expressions / inc-dec / same-unit calls / pointer
+    reads -- are run through BOTH rails and Clang. For each program the two rails must agree on the
+    total-compile OUTCOME (clean/dirty/fallback); a mutually-clean unit must additionally have an identical
+    structural claim SUMMARY (parity) and emitted C that is behaviour-equivalent to Clang on both rails.
+    This is the regression guard for the dual-rail bugs this fuzzer flushed -- the twin's parameter-write
+    redeclaration, the oracle's assignment/`i++`-as-stmt-expr-value, the ternary/call result types losing
+    their sign (a logical shift on a signed select / call result), and the twin rejecting a pointer
+    subscript as a statement-expression value. The seeds are fixed, so the run is deterministic."""
     import random as _random
     import sys as _sys
     tools_c = os.path.join(_ROOT, "tools", "c")
@@ -2673,7 +2675,7 @@ def test_cfront_differential_fuzz():
     if not _CC:                                         # no compiler -> can't build the twin; at least pin
         rng = _random.Random(1234)                     # that generation terminates and the oracle never
         for _ in range(60):                            # crashes on an in-subset program.
-            fuzz_cfront._oracle_outcome(fuzz_cfront.Gen(rng).function("f"))
+            fuzz_cfront._oracle_outcome(fuzz_cfront.Gen(rng).program().source)
         return
     with tempfile.TemporaryDirectory() as d:
         twin = _build_frontend(d)
