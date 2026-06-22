@@ -2265,6 +2265,11 @@ static int is_named_local(const bcir_func *f,uint32_t rid){
 static int is_global_ref(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid); return r && r->name[0] && r->read_only;
 }
+/* a parameter, already declared in the signature: a write to it (`a = v;`) is a bare assignment too,
+ * never a `uint32_t a = v;` declaration -- that would redeclare the parameter (invalid C). */
+static int is_param_ref(const bcir_func *f,uint32_t rid){
+  for(int i=0;i<f->n_params;i++) if(f->params[i].rid==rid) return 1; return 0;
+}
 static size_t emit_func(const bcir_func *f,char *o,size_t on){
   size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64],tb[80];
   ctype_str(&f->ret,ty,sizeof ty);
@@ -2331,7 +2336,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"%s %s = %llu%s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),
                   (unsigned long long)cl->imm[0], cs?"":"u"); }
     else if(!strcmp(cl->op,"c.copy")){
-      if(is_named_local(f,cl->wr[0])||is_global_ref(f,cl->wr[0])) w+=snprintf(o+w,on-w,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      if(is_named_local(f,cl->wr[0])||is_global_ref(f,cl->wr[0])||is_param_ref(f,cl->wr[0])) w+=snprintf(o+w,on-w,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
       else w+=snprintf(o+w,on-w,"%s %s = %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));   /* decl_ty: a copied pointer temp keeps `T *` */
     }else if(!strcmp(cl->op,"c.load")){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;

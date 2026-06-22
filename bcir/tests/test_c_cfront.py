@@ -2003,6 +2003,12 @@ _FALLBACK_PROBES = [
     ("unsigned f(void){ _Complex double z; return 0u; }", "fallback"),   # _Complex: outside the subset
     ("unsigned f(unsigned n){ unsigned a[n]; return a[0]; }", "fallback"),   # VLA
     ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "clean"),  # statement-expr (#stmtexpr): now native
+    ("unsigned f(unsigned a){ a = a*3u + 1u; return a; }", "clean"),       # assigning a PARAMETER: a bare
+                     # `a = ..;` in the emit, never a `uint32_t a = ..;` redeclaration (twin-emit regression).
+    ("unsigned f(unsigned a){ return ({ a++; }); }", "fallback"),          # `i++` as a stmt-expr VALUE: the
+                     # post/pre distinction was discarded in the desugar, so it routes away on both rails.
+    ("unsigned f(unsigned a){ return ({ a = a+1u; }); }", "fallback"),     # an assignment as a stmt-expr value
+                     # (the twin's value-expression grammar has none) -> fallback on both rails, in lockstep.
     ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "fallback"),  # computed goto
     ("struct Q{unsigned*p; unsigned n;}; unsigned f(struct Q q,unsigned i){ return q.p[i&3u]+q.n; }",
      "clean"),      # a *pointer* member indexed (`q.p[i]` == `*(q.p + i)`): both rails now load the full
@@ -2645,3 +2651,33 @@ def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
             open(fx, "w").write(src)
             out = subprocess.run([exe, fx], capture_output=True, text=True).stdout
             assert "ok=0" in out and "R18" in out and needle in out, out
+
+
+def test_cfront_differential_fuzz():
+    """A seeded differential fuzzer over the shared cfront subset (`tools/c/fuzz_cfront.py`): random but
+    well-defined `unsigned f(unsigned,unsigned,unsigned)` programs (arithmetic / bitwise / bounded shifts /
+    comparisons / ternary / if / bounded for / statement expressions / inc-dec) are run through BOTH rails
+    and Clang. For each program the two rails must agree on the total-compile OUTCOME (clean/dirty/fallback);
+    a mutually-clean unit must additionally have an identical structural claim SUMMARY (parity) and emitted
+    C that is behaviour-equivalent to Clang on both rails. This is the regression guard for the bugs this
+    suite was extended to cover -- the twin emitting a redeclaration `uint32_t a=..;` when a *parameter* is
+    assigned, and the oracle accepting (and miscomputing) an assignment / `i++` as a statement-expression
+    value where the twin routes away. The seeds are fixed, so the run is deterministic."""
+    import random as _random
+    import sys as _sys
+    tools_c = os.path.join(_ROOT, "tools", "c")
+    if tools_c not in _sys.path:
+        _sys.path.insert(0, tools_c)
+    import fuzz_cfront
+
+    if not _CC:                                         # no compiler -> can't build the twin; at least pin
+        rng = _random.Random(1234)                     # that generation terminates and the oracle never
+        for _ in range(60):                            # crashes on an in-subset program.
+            fuzz_cfront._oracle_outcome(fuzz_cfront.Gen(rng).function("f"))
+        return
+    with tempfile.TemporaryDirectory() as d:
+        twin = _build_frontend(d)
+        for seed in (1234, 5678, 4242):
+            divergence, stats = fuzz_cfront.run_seed(twin, _CC, count=40, seed=seed, d=d)
+            assert divergence is None, divergence
+            assert stats["clean"] >= 1 and stats["checked"] == stats["clean"], stats
