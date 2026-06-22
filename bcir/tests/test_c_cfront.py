@@ -50,7 +50,8 @@ _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-val
         "cfront_ptrarith.c",                           # + pointer mutation p++ / p += n (buffer-walk cursor)
         "cfront_structmulti.c",                        # + multi-declarator struct members (unsigned x,y,z;)
         "cfront_nestmember.c",                         # + nested member access (o.pos.lo / dev->ctrl.bf)
-        "cfront_memberarray.c"]                         # + native 1-D struct member arrays (s.arr[i])
+        "cfront_memberarray.c",                        # + native 1-D struct member arrays (s.arr[i])
+        "cfront_neststruct.c"]                          # + nested struct members + nested-brace init `{ {..}, .. }`
 _FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_mathh.c",
           "cfront_mathh_mixed.c", "cfront_mathh_long.c", "cfront_mathh_ptr.c",
           "cfront_calltyped.c"]                                             # float/double: parity + emit + Clang ≡ (the
