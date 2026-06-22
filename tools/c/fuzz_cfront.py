@@ -478,12 +478,17 @@ class Gen:
 
     # -- whole functions / program ---------------------------------------------------------------------
     def _enter_function(self, params: list, nptr: int):
-        # params is a list of (name, type-token); a token is a scalar code or an aggregate tag. An aggregate
-        # parameter contributes its member lvalues to scope (its members are bounded like scalar parameters).
+        # params is a list of (name, type-token); a token is a scalar code, an aggregate tag, or `*<tag>` (a
+        # pointer to a struct, whose members `p->m` are mutable through the pointer -- compared after the
+        # call). An aggregate / aggregate-pointer parameter contributes its member lvalues to scope.
         self.scopes = [[]]
         self.styp, self.bound = {}, {}
         for pname, ptype in params:
-            if ptype in self.aggdefs:
+            if ptype.startswith("*"):                          # a `struct T *` parameter: members via `->`
+                _kind, members, _active = self.aggdefs[ptype[1:]]
+                for mn, c in members:
+                    self._add_member(f"{pname}->{mn}", c, _ST[c][3] if _ST[c][2] else 0)
+            elif ptype in self.aggdefs:
                 kind, members, active = self.aggdefs[ptype]
                 for mn, c in (members if kind == "struct" else [members[active]]):
                     self._add_member(f"{pname}.{mn}", c, _ST[c][3] if _ST[c][2] else 0)
@@ -501,7 +506,8 @@ class Gen:
         body = [self.stmt(2) for _ in range(self.rng.randint(2, 5))]
         rv = self._val(3, ret)
         body.append(f"return {_coerce(rv, _ST[ret][4]) if _ST[ret][4] != rv.aty else rv.text};")
-        parts = [(f"{self.aggdefs[t][0]} {t} {n}" if t in self.aggdefs else f"{_ST[t][0]} {n}")
+        parts = [(f"{self.aggdefs[t[1:]][0]} {t[1:]} *{n}" if t.startswith("*")
+                  else f"{self.aggdefs[t][0]} {t} {n}" if t in self.aggdefs else f"{_ST[t][0]} {n}")
                  for n, t in params]
         parts += [f"unsigned *{pn}" for pn in self.ptrs]
         src = f"{_ST[ret][0]} {name}({', '.join(parts)})\n{{\n  " + "\n  ".join(body) + "\n}\n"
@@ -523,8 +529,16 @@ class Gen:
             helper_src.append(self._function(f"g{hi}", hp, ret, nptr=0, allow_calls=False))
             self.helpers.append((f"g{hi}", [t for _, t in hp], ret))
         aggnames = list(self.aggdefs)
-        fparams = [(chr(97 + k), r.choice(aggnames) if (aggnames and r.random() < 0.3) else r.choice(_ALL))
-                   for k in range(r.randint(2, 4))]
+        structs = [n for n in aggnames if self.aggdefs[n][0] == "struct"]
+
+        def _fparam_type():
+            roll = r.random()
+            if structs and roll < 0.15:
+                return "*" + r.choice(structs)                 # a `struct T *` (read+written through the ptr)
+            if aggnames and roll < 0.4:
+                return r.choice(aggnames)                       # an aggregate by value
+            return r.choice(_ALL)
+        fparams = [(chr(97 + k), _fparam_type()) for k in range(r.randint(2, 4))]
         fret = r.choice(_ALL)
         nptr = r.choice([0, 0, 1, 1, 2])
         alias = nptr == 2 and r.random() < 0.5
@@ -597,27 +611,6 @@ def _lit(code: str, j: int, k: int) -> str:
     return _const_text(_POOL[code][(j + 3 * k) % len(_POOL[code])], _ST[code][4])
 
 
-def _arg_vectors(prog: Program) -> list:
-    """A deterministic set of type-correct argument vectors (one C literal per parameter -- a scalar literal,
-    or a `(struct/union T){...}` compound literal for an aggregate-by-value parameter)."""
-    vecs = []
-    for j in range(16):
-        args = []
-        for k, (_pn, t) in enumerate(prog.ptypes):
-            if t in prog.aggdefs:
-                kind, members, active = prog.aggdefs[t]
-                if kind == "struct":
-                    inits = ", ".join(_lit(c, j, k + mi) for mi, (_, c) in enumerate(members))
-                    args.append(f"({kind} {t}){{ {inits} }}")
-                else:
-                    mn, c = members[active]
-                    args.append(f"({kind} {t}){{ .{mn} = {_lit(c, j, k)} }}")
-            else:
-                args.append(_lit(t, j, k))
-        vecs.append(args)
-    return vecs
-
-
 _FEQ = (
     "static int feqf(float a,float b){ if(isnan(a)&&isnan(b))return 1; if(isnan(a)||isnan(b))return 0;\n"
     "  if(a==b)return 1; int32_t x,y; memcpy(&x,&a,4); memcpy(&y,&b,4);\n"
@@ -631,18 +624,46 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
     renamed = re.sub(r"\bf\b", "f_s", prog.source)              # the entry `f` -> `f_s`; helpers untouched
     rtype = _ST[prog.ret][0]
     cmp = {"f32": "feqf", "f64": "feqd"}.get(prog.ret)          # None -> exact integer compare
+    # the float-equality helpers are needed for a float RETURN or any float struct-pointer member compare.
+    need_feq = cmp is not None or any(t.startswith("*") and any(c in _FLOATS for _, c in prog.aggdefs[t[1:]][1])
+                                      for _, t in prog.ptypes)
     init = "{3u,140u,7u,0u,99u,1234567u,255u,42u}"
     np, alias = prog.nptr, prog.alias
     lines = ["int main(void){"]
-    for vec in _arg_vectors(prog):
-        a = ", ".join(vec)
-        sep = ", " if a else ""
-        decls, post = [], []
+    for j in range(16):
+        decls, post, a1, a2 = [], [], [], []
+        for k, (_pn, t) in enumerate(prog.ptypes):
+            if t.startswith("*"):                               # struct pointer: a backing struct per rail,
+                agg = t[1:]                                     # member-initialised, then compared BY VALUE
+                _kind, members, _active = prog.aggdefs[agg]     # after the call (per member: feqf/feqd for a
+                va, vb = f"S{k}A", f"S{k}B"                     # float -- nan / -0.0 aware -- else exact)
+                decls.append(f"struct {agg} {va},{vb}; memset(&{va},0,sizeof {va}); memset(&{vb},0,sizeof {vb});")
+                for mi, (mn, c) in enumerate(members):
+                    lit = _lit(c, j, k + mi)
+                    decls.append(f"{va}.{mn}={lit}; {vb}.{mn}={lit};")
+                    if c in _FLOATS:
+                        post.append(f"if(!{'feqf' if c == 'f32' else 'feqd'}({va}.{mn},{vb}.{mn})) return {5 + k};")
+                    else:
+                        post.append(f"if({va}.{mn}!={vb}.{mn}) return {5 + k};")
+                a1.append(f"&{va}")
+                a2.append(f"&{vb}")
+            elif t in prog.aggdefs:
+                kind, members, active = prog.aggdefs[t]
+                if kind == "struct":
+                    lit = f"(struct {t}){{ {', '.join(_lit(c, j, k + mi) for mi, (_, c) in enumerate(members))} }}"
+                else:
+                    mn, c = members[active]
+                    lit = f"(union {t}){{ .{mn} = {_lit(c, j, k)} }}"
+                a1.append(lit)
+                a2.append(lit)
+            else:
+                a1.append(_lit(t, j, k))
+                a2.append(_lit(t, j, k))
         if np >= 1:
             decls.append(f"unsigned P1[8]={init},P2[8]={init};")
-            post.append("for(int k=0;k<8;k++) if(P1[k]!=P2[k]) return 2;")
-            a1 = [*vec, "P1"]
-            a2 = [*vec, "P2"]
+            post.append("for(int kk=0;kk<8;kk++) if(P1[kk]!=P2[kk]) return 2;")
+            a1.append("P1")
+            a2.append("P2")
             if np == 2:
                 if alias:
                     a1.append("P1")
@@ -651,15 +672,13 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
                     decls.append(f"unsigned Q1[8]={init},Q2[8]={init};")
                     a1.append("Q1")
                     a2.append("Q2")
-                    post.append("for(int k=0;k<8;k++) if(Q1[k]!=Q2[k]) return 3;")
-            c1, c2 = f"bcir_f({', '.join(a1)})", f"f_s({', '.join(a2)})"
-        else:
-            c1, c2 = f"bcir_f({a})", f"f_s({a})"
+                    post.append("for(int kk=0;kk<8;kk++) if(Q1[kk]!=Q2[kk]) return 3;")
+        c1, c2 = f"bcir_f({', '.join(a1)})", f"f_s({', '.join(a2)})"
         chk = f"if(!{cmp}(r1,r2)) return 1;" if cmp else "if(r1!=r2) return 1;"
         lines.append(f"  {{ {' '.join(decls)} {rtype} r1={c1}; {rtype} r2={c2}; {chk} {' '.join(post)} }}")
     lines.append("  return 0;}")
     harness = ("#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <math.h>\n"
-               + (_FEQ if cmp else "") + renamed + "\n" + emit + "\n" + "\n".join(lines))
+               + (_FEQ if need_feq else "") + renamed + "\n" + emit + "\n" + "\n".join(lines))
     cpath = os.path.join(d, f"{label}.c")
     epath = os.path.join(d, label)
     with open(cpath, "w") as fh:
