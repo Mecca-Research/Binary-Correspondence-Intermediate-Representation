@@ -675,11 +675,13 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > twin's `agg_init` now recurses through struct nesting at an offset, mirroring the oracle's `_init_subagg`;
 > an inner array member + a `_Bool` inner member still lower correctly) — `cfront_neststruct.c`, both rails
 > == Clang. **Open follow-ons (next-context work):**
-> 1. **Fuzzer-generate nested structs** — the capability + a fixture have landed (read/write/init all
->    Clang-equivalent); the remaining work is teaching the generator to emit a struct-typed member and
->    register its `s.inner.x` lvalues so nested structs are exercised across the full expression/mutation
->    space (every member-iterating site recurses into the inner members). Plus enums and `_Bool` as a
->    local/param/return (member-level done; both probed Clang-equivalent already, so these are guards).
+> 1. ✅ **Fuzzer-generates nested structs** — a struct may carry a nested struct member `struct S0 in;` (one
+>    level, an all-scalar inner struct), exercised as a **by-value parameter**: its `s.in.x` leaves are
+>    registered (via `_leaves`) and read/written across the full expression/mutation space, and the driver
+>    builds the nested-brace by-value literal. Still **by-value-param only** — a nest-containing struct is
+>    excluded from pointer/return/local use, where the write/compare recursion is deeper (the follow-on:
+>    flatten every member-iterating driver/return site so nested structs compose everywhere). Plus enums and
+>    `_Bool` as a local/param/return (member-level done; both probed Clang-equivalent already, so guards).
 > 2. ✅ **Union-of-bitfields** is now exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`, behaviour-validated — unions lay every member at offset 0
 >    on both rails). **Still deferred — `__attribute__((packed))` + bitfields LAYOUT bug:** for a packed
