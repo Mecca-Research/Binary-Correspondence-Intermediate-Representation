@@ -355,6 +355,17 @@ class _Parser:
         td: cast.TypeRef | None = None
         while self.at("IDENT"):
             w = self.peek().text
+            if w == "_Atomic" and self.peek(1).text == "(":   # `_Atomic ( type-name )` -- atomic type specifier
+                self.nxt()
+                self.eat("PUNCT", "(")
+                inner = self._type_spec()
+                ip = 0
+                while self.at("OP", "*"):
+                    ip += 1
+                    self.nxt()
+                self.eat("PUNCT", ")")
+                return cast.TypeRef(base=inner.base, ptr=ip, array=inner.array, aggregate=inner.aggregate,
+                                    quals=tuple(quals) + ("_Atomic",) + inner.quals)
             if w in ("const", "volatile", "_Atomic"):
                 quals.append(w)
                 self.nxt()
@@ -530,7 +541,7 @@ class _Parser:
             return False
         w = self.peek().text
         return (w in _TYPE_KW or w in _TYPEOF_KW or w == "enum" or is_scalar_name(w)
-                or w in ("va_list", "__builtin_va_list")
+                or w in ("va_list", "__builtin_va_list", "_Atomic")
                 or w in self.tags or w in self.typedefs)
 
     def _stmt(self):

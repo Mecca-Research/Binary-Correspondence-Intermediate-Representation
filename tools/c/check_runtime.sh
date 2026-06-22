@@ -115,7 +115,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
   || { echo "  FAIL: C frontend build"; exit 1; }
 # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
 FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c cfront_multiptr.c cfront_chartypes.c \
-cfront_complit.c cfront_typeof.c cfront_structinit.c cfront_arraylit.c cfront_variadic.c cfront_compoundwide.c cfront_extvariadic.c cfront_longdouble.c cfront_generic.c cfront_designate.c cfront_nestoffset.c cfront_addrmember.c"
+cfront_complit.c cfront_typeof.c cfront_structinit.c cfront_arraylit.c cfront_variadic.c cfront_compoundwide.c cfront_extvariadic.c cfront_longdouble.c cfront_generic.c cfront_designate.c cfront_nestoffset.c cfront_addrmember.c cfront_atomiclocal.c"
 # Precompute EVERY oracle summary in one python process (import compile_unit once) -- the old
 # python-per-fixture loop paid ~0.3s of interpreter+import startup each (~30s over the fixture set).
 python3 - "${C}" ${FIXTURES} > "${tmp}/py_sums.txt" <<'PY' || { echo "  FAIL: python lowering (batch)"; exit 1; }
@@ -1951,5 +1951,35 @@ amr="$("${tmp}/am_h")"
 [ "${amr}" = "MATCH" ] \
   && echo "  PASS addrmember: &s.f / &t.q.a / &t.q (read/write/struct-ptr/arg) == Clang" \
   || { echo "  FAIL: addrmember behaviour (${amr})"; exit 1; }
+
+# _Atomic local objects (#atomiclocal): `_Atomic int a;` / `_Atomic(int) a;` / const _Atomic / a
+# pointer-to-atomic, as function locals (previously only the global form parsed). An unshared atomic local
+# equals its plain type single-threaded; the differential drives compound-assign / shift / deref.
+echo "[c-runtime] _Atomic local objects -- _Atomic int / _Atomic(int) (#atomiclocal)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_atomiclocal.c" > "${tmp}/at_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'; echo '#include <stdatomic.h>'
+  sed -e 's/\ba_qual\b/a_qual_s/g' -e 's/\ba_paren\b/a_paren_s/g' -e 's/\ba_long\b/a_long_s/g' \
+      -e 's/\ba_const\b/a_const_s/g' -e 's/\ba_ptr\b/a_ptr_s/g' \
+      "${C}/cfront_atomiclocal.c"
+  cat "${tmp}/at_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(int x=-300;x<300;x++){ long b=(long)x*100000;
+    if(a_qual_s(x)!=bcir_a_qual(x)){puts("qual");return 1;}
+    if(a_paren_s(x)!=bcir_a_paren(x)){puts("paren");return 1;}
+    if(a_long_s(b)!=bcir_a_long(b)){puts("long");return 1;}
+    if(a_const_s(x)!=bcir_a_const(x)){puts("const");return 1;}
+    if(a_ptr_s(x)!=bcir_a_ptr(x)){puts("ptr");return 1;}
+  }
+  puts("MATCH");return 0;}
+DRV
+} > "${tmp}/at_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/at_harness.c" -o "${tmp}/at_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/at_harness.c" -o "${tmp}/at_h" \
+  || { echo "  FAIL: atomiclocal harness build"; exit 1; }
+atr="$("${tmp}/at_h")"
+[ "${atr}" = "MATCH" ] \
+  && echo "  PASS atomiclocal: _Atomic int / _Atomic(int) / const _Atomic / _Atomic(int)* == Clang" \
+  || { echo "  FAIL: atomiclocal behaviour (${atr})"; exit 1; }
 
 echo "[c-runtime] ok"
