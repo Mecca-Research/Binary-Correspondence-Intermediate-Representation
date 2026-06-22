@@ -115,7 +115,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
   || { echo "  FAIL: C frontend build"; exit 1; }
 # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
 FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c cfront_multiptr.c cfront_chartypes.c \
-cfront_complit.c cfront_typeof.c cfront_structinit.c cfront_arraylit.c cfront_variadic.c cfront_compoundwide.c cfront_extvariadic.c cfront_longdouble.c cfront_generic.c cfront_designate.c cfront_nestoffset.c cfront_addrmember.c cfront_atomiclocal.c"
+cfront_complit.c cfront_typeof.c cfront_structinit.c cfront_arraylit.c cfront_variadic.c cfront_compoundwide.c cfront_extvariadic.c cfront_longdouble.c cfront_generic.c cfront_designate.c cfront_nestoffset.c cfront_addrmember.c cfront_atomiclocal.c cfront_builtins.c"
 # Precompute EVERY oracle summary in one python process (import compile_unit once) -- the old
 # python-per-fixture loop paid ~0.3s of interpreter+import startup each (~30s over the fixture set).
 python3 - "${C}" ${FIXTURES} > "${tmp}/py_sums.txt" <<'PY' || { echo "  FAIL: python lowering (batch)"; exit 1; }
@@ -1981,5 +1981,37 @@ atr="$("${tmp}/at_h")"
 [ "${atr}" = "MATCH" ] \
   && echo "  PASS atomiclocal: _Atomic int / _Atomic(int) / const _Atomic / _Atomic(int)* == Clang" \
   || { echo "  FAIL: atomiclocal behaviour (${atr})"; exit 1; }
+
+# GCC/Clang integer builtins (#builtins): __builtin_popcount/clz/ctz/ffs/parity/bswap/abs (+ l/ll), emitted
+# verbatim (opaque to R18). The differential drives the bit-manip family; a wrong result type / a synthesized
+# bcir_ twin would diverge or fail to link.
+echo "[c-runtime] GCC/Clang integer builtins -- popcount/clz/ctz/bswap/abs (#builtins)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_builtins.c" > "${tmp}/bi_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bbi_pop\b/bi_pop_s/g' -e 's/\bbi_clz\b/bi_clz_s/g' -e 's/\bbi_ffs\b/bi_ffs_s/g' \
+      -e 's/\bbi_bswap\b/bi_bswap_s/g' -e 's/\bbi_bswap64\b/bi_bswap64_s/g' -e 's/\bbi_abs\b/bi_abs_s/g' \
+      "${C}/cfront_builtins.c"
+  cat "${tmp}/bi_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(long i=-40000;i<40000;i+=3){ unsigned x=(unsigned)(i*131071); int xi=(int)i;
+    unsigned long long w=(unsigned long long)x * 2654435761ULL + (unsigned)xi;
+    if(bi_pop_s(x)!=bcir_bi_pop(x)){puts("pop");return 1;}
+    if(bi_clz_s(x)!=bcir_bi_clz(x)){puts("clz");return 1;}
+    if(bi_ffs_s(xi)!=bcir_bi_ffs(xi)){puts("ffs");return 1;}
+    if(bi_bswap_s(x)!=bcir_bi_bswap(x)){puts("bswap");return 1;}
+    if(bi_bswap64_s(w)!=bcir_bi_bswap64(w)){puts("bswap64");return 1;}
+    if(bi_abs_s(xi)!=bcir_bi_abs(xi)){puts("abs");return 1;}
+  }
+  puts("MATCH");return 0;}
+DRV
+} > "${tmp}/bi_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/bi_harness.c" -o "${tmp}/bi_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/bi_harness.c" -o "${tmp}/bi_h" \
+  || { echo "  FAIL: builtins harness build"; exit 1; }
+bir="$("${tmp}/bi_h")"
+[ "${bir}" = "MATCH" ] \
+  && echo "  PASS builtins: popcount/clz/ctz/ffs/parity/bswap16-32-64/abs/labs/llabs == Clang" \
+  || { echo "  FAIL: builtins behaviour (${bir})"; exit 1; }
 
 echo "[c-runtime] ok"

@@ -986,6 +986,23 @@ static int is_extern_variadic(const char *s, int n) {
   for(int i=0;F[i];i++) if((int)strlen(F[i])==n && !strncmp(F[i],s,(size_t)n)) return 1;
   return 0;
 }
+/* GCC/Clang integer builtins -- emitted verbatim (no bcir_ twin, opaque to R18) with a fixed result type.
+ * Returns the result's SIGNED size: -4 a signed int (the bit-count family + abs), -8 a signed long
+ * (labs/llabs), or a POSITIVE unsigned size for byte-swap (2/4/8). 0 == not a recognized builtin. */
+static int builtin_result(const char *s, int n) {
+  static const char *I[]={"__builtin_popcount","__builtin_popcountl","__builtin_popcountll",
+    "__builtin_clz","__builtin_clzl","__builtin_clzll","__builtin_ctz","__builtin_ctzl","__builtin_ctzll",
+    "__builtin_ffs","__builtin_ffsl","__builtin_ffsll","__builtin_parity","__builtin_parityl",
+    "__builtin_parityll","__builtin_clrsb","__builtin_clrsbl","__builtin_clrsbll","__builtin_abs",0};
+  for(int i=0;I[i];i++) if((int)strlen(I[i])==n && !strncmp(I[i],s,(size_t)n)) return -4;   /* -> signed int */
+  #define _BLT(L) ((int)(sizeof(L)-1)==n && !strncmp(L,s,(size_t)n))
+  if(_BLT("__builtin_labs")||_BLT("__builtin_llabs")) return -8;   /* -> signed long / long long */
+  if(_BLT("__builtin_bswap16")) return 2;          /* -> unsigned 16 */
+  if(_BLT("__builtin_bswap32")) return 4;          /* -> unsigned 32 */
+  if(_BLT("__builtin_bswap64")) return 8;          /* -> unsigned 64 */
+  #undef _BLT
+  return 0;
+}
 
 /* The return ctype of a user function defined *earlier* in the unit (so a call can be typed by its
  * callee), or NULL if it is not yet defined (a forward reference / external -> the uint32 default). */
@@ -1026,6 +1043,14 @@ static uint32_t p_call(CC *c, const tok *name) {
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
     return temp(c,4);                  /* a void result -- never read */
+  }
+  int bz = builtin_result(name->s,name->n);
+  if(bz){                              /* a GCC/Clang integer builtin -> verbatim, typed, opaque to R18 */
+    uint32_t t = bz<0 ? tempi(c,-bz,1) : tempi(c,bz,0);
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.builtin:%.*s",name->n-10,name->s+10);  /* drop `__builtin_` (op cap) */
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+    if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
+    return t;                          /* not added to fn->calls (opaque to R18) */
   }
   int lz = libm_is_long(name->s,name->n) ? -8
          : libm_is_int(name->s,name->n)  ? -4
@@ -2348,6 +2373,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,");\n"); }
     else if(!strncmp(cl->op,"c.call.extern:",14)){  /* a printf/scanf-family external variadic -> verbatim */
       w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+14);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+w,on-w,");\n"); }
+    else if(!strncmp(cl->op,"c.call.builtin:",15)){  /* a GCC/Clang integer builtin -> emitted verbatim */
+      w+=snprintf(o+w,on-w,"%s %s = __builtin_%s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+15);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+w,on-w,");\n"); }
     else if(!strncmp(cl->op,"c.call.vaarg:",13)){   /* va_arg(ap, T) -- pull the next variadic argument */

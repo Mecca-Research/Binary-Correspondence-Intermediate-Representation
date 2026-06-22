@@ -920,6 +920,53 @@ def test_compound_wide_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+def test_builtins_dual_rail():
+    """GCC/Clang integer builtins (#builtins): __builtin_popcount/clz/ctz/ffs/parity/bswap/abs and their
+    l/ll variants -- emitted verbatim (the libm-call mold: opaque to R18, no bcir_ twin) with a fixed
+    result type, instead of a synthesized `bcir___builtin_popcount` that tripped R18. Both rails emit the
+    same builtin; differential == Clang on BOTH emits (clz/ctz operands forced non-zero; abs avoids INT_MIN)."""
+    fx = "cfront_builtins.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["bi_pop", "bi_clz", "bi_ffs", "bi_bswap", "bi_bswap64", "bi_abs"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(long i=-40000;i<40000;i+=3){ unsigned x=(unsigned)(i*131071); int xi=(int)i;
+    unsigned long long w=(unsigned long long)x * 2654435761ULL + (unsigned)xi;
+    if(bi_pop_s(x)!=bcir_bi_pop(x)){puts("pop");return 1;}
+    if(bi_clz_s(x)!=bcir_bi_clz(x)){puts("clz");return 1;}
+    if(bi_ffs_s(xi)!=bcir_bi_ffs(xi)){puts("ffs");return 1;}
+    if(bi_bswap_s(x)!=bcir_bi_bswap(x)){puts("bswap");return 1;}
+    if(bi_bswap64_s(w)!=bcir_bi_bswap64(w)){puts("bswap64");return 1;}
+    if(bi_abs_s(xi)!=bcir_bi_abs(xi)){puts("abs");return 1;}
+  }
+  puts("MATCH");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath = os.path.join(d, f"{label}.c")
+            open(cpath, "w").write(harness)
+            epath = os.path.join(d, label)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
+                                   capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
+
+
 def test_atomic_local_dual_rail():
     """_Atomic local objects (#atomiclocal): `_Atomic int a;` (qualifier) and `_Atomic(int) a;` (type
     specifier), `const _Atomic`, and a pointer-to-atomic. A LOCAL was rejected (the statement-level
