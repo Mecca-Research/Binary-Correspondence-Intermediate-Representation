@@ -192,8 +192,10 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                         f"(size_t){ref(c.rd[1])} * {es}, {es});")
             return deftmp(c.wr[0], f"{ref(c.rd[0])}[{ref(c.rd[1])}]", et)   # typed array — aligned
         ptr = _base_ptr(lf, c.rd[0], ref)
-        if c.domain.name == "MMIO":                          # device register: ordered volatile load
-            return deftmp(c.wr[0], f"*(volatile {et} *)((const volatile char *){ptr} + {off})", et)
+        if c.domain.name == "MMIO":                          # device register: ordered volatile load (its
+            return deftmp(c.wr[0], f"*(volatile {et} *)((const volatile char *){ptr} + {off})", et)  # natural width)
+        if len(c.imm) > 1:                                    # a (non-MMIO) BITFIELD unit: read only `imm[1]`
+            return f"{et} {t} = 0; memcpy(&{t}, (const char *){ptr} + {off}, {c.imm[1]});"   # spanned bytes (zeroed)
         # plain RAM member/deref: memcpy is alignment-safe (handles packed) — Clang folds it to a load.
         return f"{et} {t}; memcpy(&{t}, (const char *){ptr} + {off}, sizeof {t});"
     if c.op == "c.store":

@@ -223,6 +223,16 @@ class _LV:
     bit_width: int = 0                     # bitfield width (0 == plain access)
     member: bool = False                   # a member-array element `s.arr[i]` (carries offset+size even
                                            # at offset 0, distinct from a plain `base[idx]`)
+    packed: bool = False                   # a bitfield in a PACKED struct: its storage unit spans only
+                                           # ceil((bit_off+bit_width)/8) bytes, possibly straddling words
+
+    def unit_bytes(self) -> int:
+        """The bitfield storage-unit byte span: a PACKED field covers only the bytes it straddles; otherwise
+        the declared type width (an MMIO register must be accessed at its natural width, so non-packed is
+        unchanged)."""
+        if self.packed and self.bit_width:
+            return (self.bit_off + self.bit_width + 7) // 8
+        return max(1, self.ct.size)
 
 
 # --- the structured body tree (L6): a block is a list mixing straight-line Claims with these. ---
@@ -564,7 +574,7 @@ class _FuncLowerer:
             agg = base_ct.of if node.arrow else base_ct
             ftype, byte_off, bit_off, bit_w = agg.field(node.field)
             off = byte_off if node.arrow else base_off + byte_off   # `->` resets to *base; `.` accumulates
-            return _LV("mem", base_rid, ftype, byte_off=off, bit_off=bit_off, bit_width=bit_w)
+            return _LV("mem", base_rid, ftype, byte_off=off, bit_off=bit_off, bit_width=bit_w, packed=agg.packed)
         if isinstance(node, cast.Unary) and node.op == "*":
             operand = node.operand
             if isinstance(operand, cast.Binary) and operand.op == "+":   # *(p + i) == p[i]
@@ -618,7 +628,7 @@ class _FuncLowerer:
                 # (`*(s->p)`, `s->t->a`): load the full pointer (at its field offset) and use the loaded
                 # pointer as the new base -- the same move as `*q` below. Returning (struct_rid, T*) would
                 # instead deref the struct's own address as if it held the pointee. (Pointer-value 2b.)
-                lv = _LV("mem", base_rid, ftype, byte_off=off, bit_off=bit_off, bit_width=bit_w)
+                lv = _LV("mem", base_rid, ftype, byte_off=off, bit_off=bit_off, bit_width=bit_w, packed=agg.packed)
                 return self._read(lv), ftype, 0
             return base_rid, ftype, off
         if isinstance(node, cast.Unary) and node.op == "*":   # `*q` as a base (`**pp`): load the pointer it
@@ -915,9 +925,19 @@ class _FuncLowerer:
         return unit
 
     def _load_unit(self, lv: "_LV") -> int:
-        # a bitfield's storage unit is read as an unsigned of the DECLARED type width (4 or 8 bytes) -- a
-        # `long long` bitfield (or any field straddling into bits >= 32) needs a 64-bit unit, not a uint32.
-        unit_ct = lv.ct if not lv.bit_width else scalar("uint32_t" if lv.ct.size <= 4 else "uint64_t", self.abi)
+        if lv.bit_width:
+            # a bitfield's storage unit is read as an unsigned wide enough to hold it (a `long long` field, or
+            # a packed field straddling into bits >= 32, needs 64 bits, not a uint32); only the `unit_bytes()`
+            # spanned bytes are read (a PACKED field's unit may not fill the whole declared type / may straddle
+            # words), into a zeroed temp so the unread high bytes are 0.
+            ub = lv.unit_bytes()
+            t = self._temp(scalar("uint32_t" if ub <= 4 else "uint64_t", self.abi), "ld")
+            rd = (lv.rid,) if lv.idx is None else (lv.rid, lv.idx)
+            mmio = self._mmio(lv.rid)
+            return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=(lv.byte_off, ub),
+                              domain=Domain.MMIO if mmio else Domain.RAM, bounds="assumed_safe",
+                              lane=Lane.H if mmio else Lane.U, hazard="barriered" if mmio else "unique")
+        unit_ct = lv.ct
         t = self._temp(unit_ct, "ld")
         rd = (lv.rid,) if lv.idx is None else (lv.rid, lv.idx)
         mmio = self._mmio(lv.rid)
@@ -937,11 +957,11 @@ class _FuncLowerer:
     def _write(self, lv: "_LV", v: int) -> None:
         if lv.bit_width:                                     # read-modify-write the storage unit
             old = self._load_unit(lv)
-            t = self._temp(scalar("uint32_t" if lv.ct.size <= 4 else "uint64_t", self.abi), "bf")
+            t = self._temp(scalar("uint32_t" if lv.unit_bytes() <= 4 else "uint64_t", self.abi), "bf")
             v = self._emit("c.bf.set", Opcode.ADD, (old, v), (t,), imm=(lv.bit_off, lv.bit_width))
         mmio = self._mmio(lv.rid)
-        if lv.idx is None:                                    # member/deref: carry (offset, size)
-            rd, imm = (lv.rid, v), (lv.byte_off, max(1, lv.ct.size))
+        if lv.idx is None:                                    # member/deref: carry (offset, size) -- a packed
+            rd, imm = (lv.rid, v), (lv.byte_off, lv.unit_bytes())   # bitfield writes only its spanned bytes back
         elif lv.member:                                       # s.arr[i]: (member offset, element size)
             rd, imm = (lv.rid, lv.idx, v), (lv.byte_off, max(1, lv.ct.size))
         else:                                                 # base[idx]: a typed array store
@@ -1025,7 +1045,7 @@ class _FuncLowerer:
                 else:
                     _fn, ftype, boff, bo, bw = ct.fields[cursor]
                     cursor += 1
-                lv = _LV("mem", rid, ftype, byte_off=boff, bit_off=bo, bit_width=bw)
+                lv = _LV("mem", rid, ftype, byte_off=boff, bit_off=bo, bit_width=bw, packed=ct.packed)
             self._write(lv, v)
 
     def _init_subagg(self, rid: int, ct: CType, base_off: int, ag: "cast.AggInit") -> None:
@@ -1050,16 +1070,17 @@ class _FuncLowerer:
             if isinstance(expr, cast.AggInit):                # deeper nesting
                 self._init_subagg(rid, ftype, off, expr)
             else:
-                self._write(_LV("mem", rid, ftype, byte_off=off, bit_off=bo, bit_width=bw),
+                self._write(_LV("mem", rid, ftype, byte_off=off, bit_off=bo, bit_width=bw, packed=ct.packed),
                             self._rvalue(expr))
 
     def _designate(self, rid: int, ct: CType, steps: tuple) -> "_LV":
         """Resolve a nested designator chain to an lvalue: walk the aggregate type accumulating a byte
         offset -- a `("m", field)` step descends a struct/union member (carrying its bitfield position), an
         `("a", i)` step folds a constant array index into the offset. The leaf type sizes the store."""
-        off, cur, bit_off, bit_w = 0, ct, 0, 0
+        off, cur, bit_off, bit_w, parent_packed = 0, ct, 0, 0, False
         for kind, val in steps:
             if kind == "m":
+                parent_packed = cur.packed                    # the struct that DECLARES this (maybe bitfield) member
                 ftype, boff, bo, bw = cur.field(val)
                 off += boff
                 cur, bit_off, bit_w = ftype, bo, bw
@@ -1067,7 +1088,7 @@ class _FuncLowerer:
                 elem = cur.of if cur.of is not None else scalar("uint32_t")
                 off += val * elem.size
                 cur, bit_off, bit_w = elem, 0, 0
-        return _LV("mem", rid, cur, byte_off=off, bit_off=bit_off, bit_width=bit_w)
+        return _LV("mem", rid, cur, byte_off=off, bit_off=bit_off, bit_width=bit_w, packed=parent_packed)
 
     def _assign(self, node: cast.Assign) -> int:
         # pointer compound-assign  p += n / p -= n  (and p++/p--, which desugar to `p = p + 1`):

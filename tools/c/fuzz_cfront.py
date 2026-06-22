@@ -634,12 +634,12 @@ class Gen:
             arrs = ([(f"a{j}", r.choice(_AELEM)) for j in range(r.randint(1, 2))]
                     if (kind == "struct" and not nested and r.random() < 0.25)
                     else [])
-            # a `__attribute__((packed))` (no-padding) struct -- ONLY when all members are plain scalars (no
-            # bitfields / arrays / nested): packed+bitfield LAYOUT is a deferred frontend bug, so keep it out.
-            # Packed scalar layout is correct (cf. test_L8_packed_layout_matches_clang) and the LAYOUT
-            # differential validates each generated packed `sizeof`/`offsetof` against Clang.
-            packed = (kind == "struct" and not arrs and not nested
-                      and all(c in _ALL or c == "bool" for _, c in members) and r.random() < 0.45)
+            # a `__attribute__((packed))` (no-padding) struct: scalars + BITFIELDS pack bit-by-bit with no
+            # storage-unit reservation (a field may straddle byte/word boundaries) -- both rails now lay this
+            # out + access it like Clang (the LAYOUT differential validates each packed `sizeof`/`offsetof`,
+            # the behaviour check the byte-spanning read-modify-writes). Arrays/nested members stay out of a
+            # packed struct for now (a separate packed-aggregate layout step).
+            packed = (kind == "struct" and not arrs and not nested and r.random() < 0.45)
             if packed:
                 self.packed.add(nm)
             self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None, arrs)

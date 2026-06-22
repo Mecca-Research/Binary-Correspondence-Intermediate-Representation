@@ -32,6 +32,9 @@ typedef struct { tkind k; const char *s; int n; long long v; } tok;
 #define MAXFLD 64        /* members per struct (f[] is embedded in sdef; generous, guarded) */
 
 typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; int is_bool; int byte_off, bit_off, bit_w; int sidx;
+                 int access_bytes;   /* a bitfield's storage-unit byte span (== size, except a PACKED bitfield
+                                      * spans only ceil((bit_off+bit_w)/8) bytes -- it may straddle byte/word
+                                      * boundaries; `size` stays the DECLARED type width, for read promotion) */
                  int arr_count; int nadims; int adims[3];
                  int is_ptr; int ptee_size; int ptee_float; int ptee_sidx; } field;
                  /* is_ptr: a pointer member -- `size` is pointer_size (the ABI layout width), the pointee
@@ -447,7 +450,7 @@ static int p_struct_body(CC *c) {
   else snprintf(S->tag,sizeof S->tag,"$anon%d",c->ns);   /* anonymous: synth a unique tag */
   attrs(c,&packed,&aligned);
   if(!eat(c,"{"))return -1;
-  long long dbits=0;int maxsz=0,bf_off=-1,bf_bits=0,bf_unit=0;   /* dbits: a bit cursor (Itanium layout) */
+  long long dbits=0;int maxsz=0;   /* dbits: a bit cursor (Itanium/packed layout) */
   while(!is(c,"}")&&!c->failed){
     bcir_ctype base;int si;if(p_type_base(c,&base,&si))return -1;
     for(;;){                                          /* one or more declarators off one specifier: */
@@ -468,7 +471,7 @@ static int p_struct_body(CC *c) {
                         : (sz<1?1:sz);
       field *f=&S->f[S->nf++];
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
-      idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
+      idcpy(f->name,&nm);f->size=sz;f->access_bytes=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
       f->is_float=(!isptr && ty.is_float)?1:0;          /* a float/double member loads/stores as itself */
       f->is_bool=(!isptr && ty.is_bool)?1:0;            /* a _Bool member: a store normalizes any nonzero to 1 */
       f->nadims=nadims; for(int z=0;z<3;z++) f->adims[z]=adims[z];
@@ -478,14 +481,16 @@ static int p_struct_body(CC *c) {
       if(al>S->align)S->align=al; if(total>maxsz)maxsz=total;
       if(is_union){f->byte_off=0;f->bit_off=0;}        /* union: every member overlaps at offset 0 */
       else if(width){int ub=sz*8;
-        if(packed){                                     /* packed: byte-granular sz-byte units (legacy) */
-          if(bf_off<0||bf_unit!=sz||bf_bits+width>ub){bf_off=(int)(dbits/8);bf_bits=0;bf_unit=sz;dbits+=(long long)sz*8;}
-          f->byte_off=bf_off;f->bit_off=bf_bits;bf_bits+=width;
+        if(packed){                                     /* packed: pack bit-by-bit, NO storage-unit reservation
+          * (Clang/GCC) -- the field sits at the running bit cursor and its access unit is just the bytes it
+          * spans (`access_bytes`), which may straddle byte/word boundaries; the struct stays align 1. */
+          int P=(int)dbits; f->byte_off=P/8; f->bit_off=P%8;
+          f->access_bytes=(f->bit_off+width+7)/8; dbits+=width;
         }else{                                          /* natural: pack at the bit cursor, NOT a fresh unit */
           if((int)(dbits%ub)+width>ub)dbits+=ub-(dbits%ub);   /* would cross a storage-unit boundary -> bump */
           int uoff=(int)(dbits/ub)*sz; f->byte_off=uoff;f->bit_off=(int)(dbits-(long long)uoff*8);dbits+=width;
         }
-      }else{bf_off=-1;bf_bits=0;bf_unit=0;long long a8=(long long)al*8;if(dbits%a8)dbits+=a8-(dbits%a8);
+      }else{long long a8=(long long)al*8;if(dbits%a8)dbits+=a8-(dbits%a8);
         f->byte_off=(int)(dbits/8);f->bit_off=0;dbits+=(long long)total*8;}
       if(is(c,",")){c->i++;continue;}                 /* another member off the same specifier */
       break;
@@ -787,9 +792,12 @@ static uint32_t tempptr_field(CC *c, const field *fld){
 }
 
 static uint32_t emit_member(CC *c, venv *base, const field *fld) {
-  uint32_t t=fld->is_ptr?tempptr_field(c,fld):fld->is_float?tempf(c,fld->size):tempi(c,fld->size,fld->signd);   /* loaded value carries the field's type */
+  /* the BITFIELD unit temp is sized to a power of 2 >= its byte span (a packed field that straddles into
+   * bits >= 32 needs a 64-bit unit); the load reads only `access_bytes` (the spanned bytes). */
+  int usz = fld->bit_w ? (fld->access_bytes<=4?4:8) : fld->size;
+  uint32_t t=fld->is_ptr?tempptr_field(c,fld):fld->is_float?tempf(c,fld->size):tempi(c,usz,fld->signd);   /* loaded value carries the field's type */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
-  cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;
+  cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->bit_w?fld->access_bytes:fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
   if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
   if(fld->bit_w){uint32_t u=t;t=tempi(c,fld->bit_w>32?fld->size:4,(fld->signd||fld->bit_w<32)?1:0);   /* integer
@@ -1647,13 +1655,13 @@ static void agg_init_at(CC *c, uint32_t rid, int sidx, int base_off, int do_zini
   if(do_zinit) for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }  /* = {0} */
   int cursor=0;
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-    int off=0, size=4, bit_w=0, bit_off=0, top_fi=cursor, skip=0, fbool=0;   /* the store target (chain/positional) */
+    int off=0, size=4, bit_w=0, bit_off=0, top_fi=cursor, skip=0, fbool=0, abytes=4;   /* store target (chain/positional) */
     if(is(c,".")||is(c,"[")){                           /* a (possibly nested) designator */
       if(designator_chain(c,S,&off,&size,&bit_w,&bit_off,&top_fi)) return;
-      if(top_fi>=0&&top_fi<S->nf) fbool=S->f[top_fi].is_bool;
+      if(top_fi>=0&&top_fi<S->nf){ fbool=S->f[top_fi].is_bool; abytes=S->f[top_fi].access_bytes; }
       eat(c,"=");
     } else if(cursor<S->nf){ field *F=&S->f[cursor];    /* positional: the cursor-th member */
-      off=F->byte_off; size=F->size; bit_w=F->bit_w; bit_off=F->bit_off; fbool=F->is_bool;
+      off=F->byte_off; size=F->size; bit_w=F->bit_w; bit_off=F->bit_off; fbool=F->is_bool; abytes=F->access_bytes;
     } else skip=1;                                      /* past the last member -> parse but do not store */
     off += base_off;                                   /* shift into the enclosing object (nested aggregate) */
     if(!skip && is(c,"{")){                             /* a NESTED brace: an aggregate (array OR struct) member */
@@ -1665,16 +1673,18 @@ static void agg_init_at(CC *c, uint32_t rid, int sidx, int base_off, int do_zini
     uint32_t v=p_expr(c); uint32_t val=v;
     if(skip){ cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
     if(bit_w){                                          /* a bitfield member: read unit, set bits, store */
-      uint32_t unit=temp(c,size);
+      int absz=abytes<=4?4:8;
+      uint32_t unit=temp(c,absz);
       bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
-      if(ld){ld->n_rd=1;ld->rd[0]=rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=off;ld->imm[1]=size;ld->bounds=BCIR_BND_ASSUMED;}
-      uint32_t nu=temp(c,size);
+      if(ld){ld->n_rd=1;ld->rd[0]=rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=off;ld->imm[1]=abytes;ld->bounds=BCIR_BND_ASSUMED;}
+      uint32_t nu=temp(c,absz);
       bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
       if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=v;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=bit_off;bs->imm[1]=bit_w;}
       val=nu; }
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-    if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=off;cl->imm[1]=size;cl->bounds=BCIR_BND_ASSUMED;
-      if(fbool){cl->imm[2]=1;cl->n_imm=3;}}            /* a _Bool member init normalizes the value */
+    if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=off;cl->imm[1]=bit_w?abytes:size;cl->bounds=BCIR_BND_ASSUMED;
+      if(bit_w){cl->imm[2]=2;cl->n_imm=3;}             /* a bitfield UNIT store: `_v` takes the unit's full type */
+      else if(fbool){cl->imm[2]=1;cl->n_imm=3;}}       /* a _Bool member init normalizes the value */
     cursor=top_fi+1;
     if(is(c,",")) c->i++;
   }
@@ -2077,20 +2087,23 @@ static void p_stmt(CC *c) {
         val=tmp;
       } else { if(!eat(c,"="))return; val=p_expr(c); }
       if(f.bit_w){
-        /* a bitfield store: read the storage unit, insert the masked bits (c.bf.set), store the unit. */
-        uint32_t unit=temp(c,f.size);
+        /* a bitfield store: read the storage unit (`access_bytes` spanned bytes, into a pow2 temp), insert
+         * the masked bits (c.bf.set), store the unit's spanned bytes back. */
+        int absz=f.access_bytes<=4?4:8;
+        uint32_t unit=temp(c,absz);
         bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
-        if(ld){ld->n_rd=1;ld->rd[0]=v->rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=f.byte_off;ld->imm[1]=f.size;ld->bounds=BCIR_BND_ASSUMED;
+        if(ld){ld->n_rd=1;ld->rd[0]=v->rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=f.byte_off;ld->imm[1]=f.access_bytes;ld->bounds=BCIR_BND_ASSUMED;
           if(v->type.is_volatile){ld->domain=BCIR_DOM_MMIO;ld->lane=BCIR_LANE_H;ld->hazard=BCIR_HZ_BARRIERED;}}
-        uint32_t nu=temp(c,f.size);
+        uint32_t nu=temp(c,absz);
         bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
         if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=val;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=f.bit_off;bs->imm[1]=f.bit_w;}
         val=nu;
       }
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-      if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.size;
+      if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.bit_w?f.access_bytes:f.size;
         cl->bounds=BCIR_BND_ASSUMED;
-        if(f.is_bool){cl->imm[2]=1;cl->n_imm=3;}    /* a _Bool member: emit `_Bool _v` so the store normalizes */
+        if(f.bit_w){cl->imm[2]=2;cl->n_imm=3;}      /* a bitfield UNIT store: `_v` takes the unit's full type */
+        else if(f.is_bool){cl->imm[2]=1;cl->n_imm=3;}    /* a _Bool member: emit `_Bool _v` so the store normalizes */
         if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
       eat(c,";");return;}
     /* L3: array element store  a[idx] = expr  /  a[idx] OP= expr  (driver buffer fill / scatter). */
@@ -2472,7 +2485,11 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
           w+=snprintf(o+w,on-w,"memcpy((char *)%s%s + %lld, &%s, %lld);\n",
                       amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),sz);
         } else {
-        const char *vt=(cl->n_imm>2&&cl->imm[2])?"_Bool"   /* a _Bool member: `_Bool _v = x` normalizes to 0/1 */
+        int flag=cl->n_imm>2?cl->imm[2]:0;
+        const char *vt=flag==1?"_Bool"                     /* a _Bool member: `_Bool _v = x` normalizes to 0/1 */
+                      :flag==2?(vr&&vr->elem_bytes>4?"uint64_t":"uint32_t")   /* a bitfield UNIT: `_v` is the full
+                       * unit type (may be wider than the `sz` bytes written -- a packed field spans <= 8 bytes
+                       * into a uint64 unit but only its `sz` spanned bytes are memcpy'd back) */
                       :(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(f,cl->rd[1],tb,sizeof tb)
                       :(vr&&vr->is_float)?(sz==4?"float":sz>8?"long double":"double")
                       :(sz==1?"uint8_t":sz==2?"uint16_t":sz==8?"uint64_t":"uint32_t");
