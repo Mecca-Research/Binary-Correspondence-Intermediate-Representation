@@ -920,6 +920,50 @@ def test_compound_wide_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+def test_addrmember_dual_rail():
+    """Address-of a (nested) struct member (#addrmember): `&s.field`, `&t.q.a`, `&t.q`. The twin couldn't
+    parse `&member` at all; the oracle emitted the enclosing struct's address (right only for a first
+    member at offset 0). Now `&member` resolves to a typed `(T *)((char *)&base + off)` -- used through a
+    pointer (read/write/compound-assign) and passed to a helper. Differential == Clang on BOTH emits."""
+    fx = "cfront_addrmember.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["addone", "am_first", "am_nested", "am_struct", "am_arg"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int x=-200;x<200;x++){
+    if(am_first_s(x)!=bcir_am_first(x)){puts("first");return 1;}
+    if(am_nested_s(x)!=bcir_am_nested(x)){puts("nested");return 1;}
+    if(am_struct_s(x)!=bcir_am_struct(x)){puts("struct");return 1;}
+    if(am_arg_s(x)!=bcir_am_arg(x)){puts("arg");return 1;}
+  }
+  puts("MATCH");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath = os.path.join(d, f"{label}.c")
+            open(cpath, "w").write(harness)
+            epath = os.path.join(d, label)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
+                                   capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
+
+
 def test_nestoffset_dual_rail():
     """Nested member access at a NON-FIRST offset (#nestoffset): `t.q.a` where the enclosing member `q`
     is not the struct's first member -- two bugs the #designate follow-on surfaced. The oracle's `_addr`

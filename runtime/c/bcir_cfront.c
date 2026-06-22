@@ -1288,7 +1288,22 @@ static uint32_t p_unary(CC *c) {
   if(is(c,"+")){ c->i++; return p_unary(c); }    /* unary plus is a no-op */
   if(is(c,"&")){ c->i++;                          /* address-of: &lvalue -> a pointer value (c.addrof) */
     if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id);
-      if(v){ c->i++;                              /* a pointer one level deeper than the addressed object: */
+      if(v){ c->i++;
+        if((is(c,".")||is(c,"->")) && v->type.kind==1 && v->sidx>=0){   /* &member / &nested.member */
+          sdef *S=&c->s[v->sidx]; c->i++; tok fn=adv(c); int fi=-1;
+          for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
+          if(fi<0){ fail(c,"unknown field"); return 0; }
+          field mf=member_descend(c,S->f[fi]);     /* accumulate the chain's byte offset + the leaf field */
+          if(mf.is_ptr||mf.arr_count){ fail(c,"address-of a pointer/array member is a follow-on"); return 0; }
+          uint32_t t=add_res(c,BCIR_DOM_RAM, mf.size?mf.size:4, 1,0,BCIR_RK_POINTER,"");   /* a `leaf *` */
+          if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+            tr->is_signed=(uint8_t)(mf.signd?1:0); tr->ptr_depth=1;
+            if(mf.sidx>=0) snprintf(tr->agg,sizeof tr->agg,"%s %s",c->s[mf.sidx].is_union?"union":"struct",c->s[mf.sidx].tag); }
+          bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
+          if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=mf.byte_off;}
+          return t;
+        }
+        /* a pointer one level deeper than the addressed object: */
         uint32_t t=add_res(c,BCIR_DOM_RAM, v->type.size?v->type.size:4, 1,0,BCIR_RK_POINTER,"");  /* &p (T*) -> T** */
         if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
           tr->is_signed=(uint8_t)(v->type.signd?1:0); tr->is_float=(uint8_t)(v->type.is_float?1:0);
@@ -2317,7 +2332,11 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else if(!strcmp(fn,"store")) w+=snprintf(o+w,on-w,"atomic_store(%s, %s);\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
       else w+=snprintf(o+w,on-w,"uint32_t %s = atomic_%s(%s, %s);\n",rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
     else if(!strcmp(cl->op,"c.addrof")){           /* &lvalue -> a pointer value (decl_ty: `T *`, `T **`, ...) */
-      w+=snprintf(o+w,on-w,"%s%s = &%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
+      const char *pt=decl_ty(f,cl->wr[0],tb,sizeof tb);
+      if(cl->n_imm)                                /* &member -> a typed `(T *)((char *)&base + off)` */
+        w+=snprintf(o+w,on-w,"%s%s = (%s)((char *)&%s + %lld);\n",pt,rname(f,cl->wr[0],d),pt,rname(f,cl->rd[0],a),(long long)cl->imm[0]);
+      else
+        w+=snprintf(o+w,on-w,"%s%s = &%s;\n",pt,rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
     else if(!strncmp(cl->op,"c.call.libm:",12)){   /* a <math.h> call -> the real libm function */
       w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+12);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
