@@ -447,7 +447,7 @@ static int p_struct_body(CC *c) {
   else snprintf(S->tag,sizeof S->tag,"$anon%d",c->ns);   /* anonymous: synth a unique tag */
   attrs(c,&packed,&aligned);
   if(!eat(c,"{"))return -1;
-  int off=0,maxsz=0,bf_off=-1,bf_bits=0,bf_unit=0;
+  long long dbits=0;int maxsz=0,bf_off=-1,bf_bits=0,bf_unit=0;   /* dbits: a bit cursor (Itanium layout) */
   while(!is(c,"}")&&!c->failed){
     bcir_ctype base;int si;if(p_type_base(c,&base,&si))return -1;
     for(;;){                                          /* one or more declarators off one specifier: */
@@ -477,9 +477,15 @@ static int p_struct_body(CC *c) {
       if(al>S->align)S->align=al; if(total>maxsz)maxsz=total;
       if(is_union){f->byte_off=0;f->bit_off=0;}        /* union: every member overlaps at offset 0 */
       else if(width){int ub=sz*8;
-        if(bf_off<0||bf_unit!=sz||bf_bits+width>ub){if(off%al)off+=al-(off%al);bf_off=off;bf_bits=0;bf_unit=sz;off+=sz;}
-        f->byte_off=bf_off;f->bit_off=bf_bits;bf_bits+=width;
-      }else{bf_off=-1;bf_bits=0;bf_unit=0;if(off%al)off+=al-(off%al);f->byte_off=off;f->bit_off=0;off+=total;}
+        if(packed){                                     /* packed: byte-granular sz-byte units (legacy) */
+          if(bf_off<0||bf_unit!=sz||bf_bits+width>ub){bf_off=(int)(dbits/8);bf_bits=0;bf_unit=sz;dbits+=(long long)sz*8;}
+          f->byte_off=bf_off;f->bit_off=bf_bits;bf_bits+=width;
+        }else{                                          /* natural: pack at the bit cursor, NOT a fresh unit */
+          if((int)(dbits%ub)+width>ub)dbits+=ub-(dbits%ub);   /* would cross a storage-unit boundary -> bump */
+          int uoff=(int)(dbits/ub)*sz; f->byte_off=uoff;f->bit_off=(int)(dbits-(long long)uoff*8);dbits+=width;
+        }
+      }else{bf_off=-1;bf_bits=0;bf_unit=0;long long a8=(long long)al*8;if(dbits%a8)dbits+=a8-(dbits%a8);
+        f->byte_off=(int)(dbits/8);f->bit_off=0;dbits+=(long long)total*8;}
       if(is(c,",")){c->i++;continue;}                 /* another member off the same specifier */
       break;
     }
@@ -487,7 +493,7 @@ static int p_struct_body(CC *c) {
   }
   eat(c,"}"); attrs(c,&packed,&aligned);
   int salign = packed ? 1 : S->align; if(aligned>salign) salign=aligned; S->align=salign;
-  int total = is_union ? maxsz : off;              /* union size = the widest member */
+  int total = is_union ? maxsz : (int)((dbits+7)/8);   /* union size = the widest member; struct: bits->bytes */
   if(total%salign)total+=salign-(total%salign); S->size=total;
   return c->ns++;
 }

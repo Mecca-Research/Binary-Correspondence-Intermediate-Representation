@@ -561,17 +561,16 @@ class Gen:
         for i in range(r.randint(1, 3)):                        # struct / union type definitions
             kind = r.choice(["struct", "struct", "union"])
             nm = ("S" if kind == "struct" else "U") + str(i)
-            # a struct is EITHER all-scalar or all-bitfield (never mixed): the frontend's bitfield layout only
-            # matches Clang's when a bitfield does not follow a sub-word member -- a mixed `short m0; unsigned
-            # m1:1;` packs the bitfield unit at a different offset on the two sides (a separate layout bug to
-            # fix). All-bitfield (4-byte int/unsigned bases, <=32 total bits) packs identically. Unions:
-            # scalar only.
-            pool = list(_BF) if (kind == "struct" and r.random() < 0.3) else _ALL
+            # struct members mix scalars + bitfields freely (a bitfield may follow a sub-word member, e.g.
+            # `short m0; unsigned m1:1;`): the Itanium/Clang bit-cursor layout packs the bitfield into the
+            # current storage unit (NOT a fresh type-aligned unit), which both rails now reproduce. Unions
+            # stay scalar-only (union-of-bitfields is a niche left for later).
+            pool = _MEMBER_TYPES if kind == "struct" else _ALL
             members = [(f"m{j}", r.choice(pool)) for j in range(r.randint(2, 4))]
             # array members `T arr[4]` come LAST (struct-only; a struct with arrays is params-only -- a local
             # of it would need a nested-brace init, which falls back). Dynamic-indexed `s.arr[e & 3u]`.
             arrs = ([(f"a{j}", r.choice(_ALL)) for j in range(r.randint(1, 2))]
-                    if (kind == "struct" and not any(c in _BF for _, c in members) and r.random() < 0.25)
+                    if (kind == "struct" and r.random() < 0.25)
                     else [])
             self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None, arrs)
             body = " ".join(f"{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};" for mn, c in members)
