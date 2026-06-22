@@ -71,9 +71,15 @@ _ST = {
     "u64": ("unsigned long", 8, False, 0,              "u64"),
     "f32": ("float",         4, False, 0,              "f32"),
     "f64": ("double",        8, False, 0,              "f64"),
+    # `_Bool`: a 1-byte object that store-NORMALIZES any nonzero to 1 (§6.3.1.2). It reads as 0/1 (an `int`
+    # after promotion, |value| bound 1), so it slots into the signed-int bound model with cap 1; a write of
+    # ANY value lands 0/1 (the bound stays <= 1, the value is normalized by both rails + Clang). Member /
+    # member-array element only for now (a local's normalization is already covered by cfront_boolnorm).
+    "bool": ("_Bool",        1, True,  1,              "i32"),
 }
 _TYPES = ["i8", "i16", "i32", "i64", "u32", "u64"]          # integer storage types
 _ALL = _TYPES + ["f32", "f64"]                             # all storage types (params / locals / returns)
+_AELEM = _ALL + ["bool"]                                   # struct ARRAY-member element types (+ _Bool)
 _FLOATS = ("f32", "f64")
 # bitfield member types `unsigned a:W` / `int b:W` (struct members only -- never a standalone local/param, so
 # they stay out of _ALL). They read as int (integer promotion) with a |value| bound of 2^W-1 (unsigned) /
@@ -84,7 +90,7 @@ for _W in range(1, 9):
     _ST[f"bfu{_W}"] = ("unsigned", 4, True, (1 << _W) - 1, "i32")
     _ST[f"bfs{_W}"] = ("int", 4, True, 1 << (_W - 1), "i32")
     _BF[f"bfu{_W}"], _BF[f"bfs{_W}"] = _W, _W
-_MEMBER_TYPES = _ALL + list(_BF)                           # what a STRUCT member may be (scalar or bitfield)
+_MEMBER_TYPES = _ALL + ["bool"] + list(_BF)                # what a STRUCT member may be (scalar / _Bool / bitfield)
 _AW = {"i32": 4, "u32": 4, "i64": 8, "u64": 8, "f32": 4, "f64": 8}
 _ACAST = {"i32": "(int)", "i64": "(long)", "u32": "(unsigned)", "u64": "(unsigned long)",
           "f32": "(float)", "f64": "(double)"}
@@ -581,7 +587,7 @@ class Gen:
             members = [(f"m{j}", r.choice(pool)) for j in range(r.randint(2, 4))]
             # array members `T arr[4]` come LAST (struct-only; a struct with arrays is params-only -- a local
             # of it would need a nested-brace init, which falls back). Dynamic-indexed `s.arr[e & 3u]`.
-            arrs = ([(f"a{j}", r.choice(_ALL)) for j in range(r.randint(1, 2))]
+            arrs = ([(f"a{j}", r.choice(_AELEM)) for j in range(r.randint(1, 2))]
                     if (kind == "struct" and r.random() < 0.25)
                     else [])
             self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None, arrs)
@@ -667,6 +673,7 @@ _POOL = {
     "i64": [0, 1, -1, _PMAX, -_PMAX, 9999, -9999, 5000],
     "u32": [0, 1, 255, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 123456789, 3],
     "u64": [0, 1, 0xFFFFFFFF, 0x100000000, 0xFFFFFFFFFFFFFFFF, 7, 1000000, 42],
+    "bool": [0, 1, 2, 255, 0, 1, 256, 7],                  # non-0/1 values exercise store-normalization to 0/1
 }
 _FPOOL = [0.0, 1.0, -1.0, 0.5, -0.5, 3.14159, -2.71828, 100.25, -0.001, 1234.5, -99999.0, 1e-7]
 

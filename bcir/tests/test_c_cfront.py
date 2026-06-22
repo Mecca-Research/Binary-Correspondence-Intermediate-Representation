@@ -30,7 +30,7 @@ _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfron
                  "cfront_callgraph.c", "cfront_typedef.c", "cfront_enum.c", "cfront_enumtype.c", "cfront_ternary.c",
                  "cfront_sizeof.c", "cfront_strsizeof.c", "cfront_strval.c", "cfront_charlit.c",
                  "cfront_strtab.c", "cfront_strconcat.c", "cfront_widelit.c", "cfront_cast.c", "cfront_alignof.c", "cfront_static.c",
-                 "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c", "cfront_signed.c", "cfront_signedcmp.c", "cfront_longunary.c", "cfront_boolnorm.c", "cfront_unarypromote.c", "cfront_floatsigncast.c", "cfront_intsigncast.c", "cfront_boolcast.c"]   # + char consts + str table/dedup + const LUT + ABI sizeof model + bool normalization + unary integer-promotion/float + float->signed + int->signed cast + bool cast
+                 "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c", "cfront_signed.c", "cfront_signedcmp.c", "cfront_longunary.c", "cfront_boolnorm.c", "cfront_unarypromote.c", "cfront_floatsigncast.c", "cfront_intsigncast.c", "cfront_boolcast.c", "cfront_boolmember.c"]   # + char consts + str table/dedup + const LUT + ABI sizeof model + bool normalization + unary integer-promotion/float + float->signed + int->signed cast + bool cast + _Bool member/element store-normalization
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
             "cfront_continue.c", "cfront_switch.c", "cfront_switchfall.c", "cfront_goto.c", "cfront_incdec.c",
             "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c", "cfront_loopscope.c", "cfront_blockscope.c", "cfront_localmd.c", "cfront_ptrlocal.c"]
@@ -2659,7 +2659,7 @@ def test_cfront_differential_fuzz():
     """A seeded differential fuzzer over the shared cfront subset (`tools/c/fuzz_cfront.py`): random but
     well-defined programs -- struct/union type definitions, an optional helper prelude, then an entry `f`,
     with `char`/`short`/`int`/`long`/`unsigned`/`unsigned long`/`float`/`double` and mixed
-    scalar+bitfield struct / union-by-value parameters/locals, a struct-BY-VALUE return, AND `struct T *`
+    scalar + `_Bool` + bitfield struct / union-by-value parameters/locals, a struct-BY-VALUE return, AND `struct T *`
     parameters read+written through the pointer (members `s.m` / `s->m`, a union's single active member, a
     bitfield `m:W`, a dynamic-indexed array member `s.arr[e & 3u]` -- an array-bearing struct now also as a
     LOCAL and a RETURN via a NESTED-brace init `{ m, {e0,e1,..}, n }`; a struct return / a struct-pointer's
@@ -2682,7 +2682,9 @@ def test_cfront_differential_fuzz():
     twin storing a `float` member-array element as a `uint32_t` reinterpret instead of converting, and BOTH
     rails laying out a bitfield that FOLLOWS a sub-word member (`short m0; unsigned m1:1;`) in a fresh
     type-aligned storage unit instead of packing it into the current bit cursor (the Itanium/Clang rule),
-    giving a wrong struct size + member offsets vs Clang. The seeds are fixed (deterministic)."""
+    giving a wrong struct size + member offsets vs Clang, and BOTH rails storing into a `_Bool` MEMBER /
+    `_Bool[]` element as a raw byte copy instead of NORMALIZING any nonzero to 1 (§6.3.1.2) -- `s.flag = 2`
+    read back as 2. The seeds are fixed (deterministic)."""
     import random as _random
     import sys as _sys
     tools_c = os.path.join(_ROOT, "tools", "c")

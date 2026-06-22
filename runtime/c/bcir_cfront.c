@@ -31,7 +31,7 @@ typedef struct { tkind k; const char *s; int n; long long v; } tok;
 #define MAXTOK 16384
 #define MAXFLD 64        /* members per struct (f[] is embedded in sdef; generous, guarded) */
 
-typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; int byte_off, bit_off, bit_w; int sidx;
+typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; int is_bool; int byte_off, bit_off, bit_w; int sidx;
                  int arr_count; int nadims; int adims[3];
                  int is_ptr; int ptee_size; int ptee_float; int ptee_sidx; } field;
                  /* is_ptr: a pointer member -- `size` is pointer_size (the ABI layout width), the pointee
@@ -470,6 +470,7 @@ static int p_struct_body(CC *c) {
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
       idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
       f->is_float=(!isptr && ty.is_float)?1:0;          /* a float/double member loads/stores as itself */
+      f->is_bool=(!isptr && ty.is_bool)?1:0;            /* a _Bool member: a store normalizes any nonzero to 1 */
       f->nadims=nadims; for(int z=0;z<3;z++) f->adims[z]=adims[z];
       f->is_ptr=isptr; f->ptee_size=isptr?ty.size:0; f->ptee_float=isptr?(ty.is_float?1:0):0;   /* pointee type */
       f->ptee_sidx=(isptr && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
@@ -1623,7 +1624,7 @@ static int designator_chain(CC *c, sdef *S, int *off, int *size, int *bit_w, int
  * at `base_off + idx*es` (so it composes through the enclosing struct's `= {0}` baseline); positional
  * entries advance a cursor, `[i]=` jumps it, gaps zero-fill. Element float-ness/width is carried by the
  * stored value's resource (the member-store emit), exactly like a `s.arr[i] = v` element write. */
-static void subagg_init(CC *c, uint32_t rid, int base_off, int es) {
+static void subagg_init(CC *c, uint32_t rid, int base_off, int es, int is_bool) {
   eat(c,"{");
   int cursor=0;
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
@@ -1631,7 +1632,8 @@ static void subagg_init(CC *c, uint32_t rid, int base_off, int es) {
     if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
     uint32_t v=p_expr(c);
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-    if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=v;cl->n_imm=2;cl->imm[0]=base_off+idx*es;cl->imm[1]=es;cl->bounds=BCIR_BND_ASSUMED;}
+    if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=v;cl->n_imm=2;cl->imm[0]=base_off+idx*es;cl->imm[1]=es;cl->bounds=BCIR_BND_ASSUMED;
+      if(is_bool){cl->imm[2]=1;cl->n_imm=3;}}          /* a _Bool[] element init normalizes the value */
     cursor=idx+1;
     if(is(c,",")) c->i++;
   }
@@ -1644,16 +1646,17 @@ static void agg_init(CC *c, uint32_t rid, int sidx) {
   for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }  /* = {0} */
   int cursor=0;
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-    int off=0, size=4, bit_w=0, bit_off=0, top_fi=cursor, skip=0;   /* the store target (chain / positional) */
+    int off=0, size=4, bit_w=0, bit_off=0, top_fi=cursor, skip=0, fbool=0;   /* the store target (chain/positional) */
     if(is(c,".")||is(c,"[")){                           /* a (possibly nested) designator */
       if(designator_chain(c,S,&off,&size,&bit_w,&bit_off,&top_fi)) return;
+      if(top_fi>=0&&top_fi<S->nf) fbool=S->f[top_fi].is_bool;
       eat(c,"=");
     } else if(cursor<S->nf){ field *F=&S->f[cursor];    /* positional: the cursor-th member */
-      off=F->byte_off; size=F->size; bit_w=F->bit_w; bit_off=F->bit_off;
+      off=F->byte_off; size=F->size; bit_w=F->bit_w; bit_off=F->bit_off; fbool=F->is_bool;
     } else skip=1;                                      /* past the last member -> parse but do not store */
     if(!skip && is(c,"{")){                             /* a NESTED brace: an aggregate (array) member */
       field *AF = (top_fi>=0 && top_fi<S->nf) ? &S->f[top_fi] : NULL;
-      if(AF && AF->arr_count>0){ subagg_init(c, rid, off, AF->size); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
+      if(AF && AF->arr_count>0){ subagg_init(c, rid, off, AF->size, AF->is_bool); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
       fail(c,"nested initializer for a non-array member"); return;   /* nested struct member: a follow-on */
     }
     uint32_t v=p_expr(c); uint32_t val=v;
@@ -1667,7 +1670,8 @@ static void agg_init(CC *c, uint32_t rid, int sidx) {
       if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=v;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=bit_off;bs->imm[1]=bit_w;}
       val=nu; }
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-    if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=off;cl->imm[1]=size;cl->bounds=BCIR_BND_ASSUMED;}
+    if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=off;cl->imm[1]=size;cl->bounds=BCIR_BND_ASSUMED;
+      if(fbool){cl->imm[2]=1;cl->n_imm=3;}}            /* a _Bool member init normalizes the value */
     cursor=top_fi+1;
     if(is(c,",")) c->i++;
   }
@@ -2052,6 +2056,7 @@ static void p_stmt(CC *c) {
         bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
         if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=aval;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.size;
           cl->bounds=BCIR_BND_ASSUMED;
+          if(f.is_bool){cl->imm[2]=1;cl->n_imm=3;}   /* a _Bool[] element: normalize on store */
           if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
         eat(c,";");return;
       }
@@ -2081,6 +2086,7 @@ static void p_stmt(CC *c) {
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.size;
         cl->bounds=BCIR_BND_ASSUMED;
+        if(f.is_bool){cl->imm[2]=1;cl->n_imm=3;}    /* a _Bool member: emit `_Bool _v` so the store normalizes */
         if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
       eat(c,";");return;}
     /* L3: array element store  a[idx] = expr  /  a[idx] OP= expr  (driver buffer fill / scatter). */
@@ -2436,7 +2442,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         long long off=cl->imm[0], es=cl->n_imm>1?cl->imm[1]:4;
         const bcir_resource *vr=res_of(f,cl->rd[2]);   /* a float element converts (double->float), not a uint
                                                         * reinterpret; a narrower int widens to the element. */
-        const char *vt=(vr&&vr->is_float)?(es==4?"float":es>8?"long double":"double")
+        const char *vt=(cl->n_imm>2&&cl->imm[2])?"_Bool"   /* a _Bool element: `_Bool _v = x` normalizes to 0/1 */
+                      :(vr&&vr->is_float)?(es==4?"float":es>8?"long double":"double")
                       :(es==1?"uint8_t":es==2?"uint16_t":es==8?"uint64_t":"uint32_t");
         w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld + (size_t)%s * %lld, &_v, %lld); }\n",
           vt,rname(f,cl->rd[2],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),es,es); }
@@ -2461,7 +2468,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
           w+=snprintf(o+w,on-w,"memcpy((char *)%s%s + %lld, &%s, %lld);\n",
                       amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),sz);
         } else {
-        const char *vt=(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(f,cl->rd[1],tb,sizeof tb)
+        const char *vt=(cl->n_imm>2&&cl->imm[2])?"_Bool"   /* a _Bool member: `_Bool _v = x` normalizes to 0/1 */
+                      :(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(f,cl->rd[1],tb,sizeof tb)
                       :(vr&&vr->is_float)?(sz==4?"float":sz>8?"long double":"double")
                       :(sz==1?"uint8_t":sz==2?"uint16_t":sz==8?"uint64_t":"uint32_t");
         w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",vt,rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); } }

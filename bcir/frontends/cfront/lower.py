@@ -940,6 +940,8 @@ class _FuncLowerer:
             rd, imm = (lv.rid, lv.idx, v), (lv.byte_off, max(1, lv.ct.size))
         else:                                                 # base[idx]: a typed array store
             rd, imm = (lv.rid, lv.idx, v), ()
+        if imm and lv.ct.name in ("_Bool", "bool"):           # a _Bool slot: flag it so the emit normalizes
+            imm = imm + (1,)                                  # the stored value (any nonzero -> 1, §6.3.1.2)
         self._emit("c.store", Opcode.STORE, rd, (), imm=imm,
                    domain=Domain.MMIO if mmio else Domain.RAM, bounds="assumed_safe",
                    lane=Lane.H if mmio else Lane.U,
