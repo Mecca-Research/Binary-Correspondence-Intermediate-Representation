@@ -43,6 +43,8 @@ class CType:
     fields: tuple = ()                   # ((name, CType, byte_off, bit_off, bit_width), ...)
     volatile: bool = False               # a volatile-qualified type -> an MMIO resource
     atomic: bool = False                 # an _Atomic-qualified type (C11/C23 atomics)
+    packed: bool = False                 # an __attribute__((packed)) struct/union (no padding; a bitfield
+                                         #   packs bit-by-bit and its access unit spans only the bytes it covers)
     params: tuple = ()                   # parameter CTypes (funcptr only) — for faithful emit
     shape: tuple = ()                    # array dims of a decayed multi-dim array param (m[i][j])
 
@@ -227,12 +229,9 @@ class AggregateBuilder:
             align = max(align, malign(mtype))
             if width and self.kind == "struct":
                 unit_bits = mtype.size * 8
-                if self.packed:                                   # packed: byte-granular sz-byte units
-                    if bf_unit_off is None or bf_unit_size != mtype.size or bf_bits + width > unit_bits:
-                        bf_unit_off, bf_bits, bf_unit_size = dbits // 8, 0, mtype.size
-                        dbits += mtype.size * 8
-                    laid.append((mname, mtype, bf_unit_off, bf_bits, width))
-                    bf_bits += width
+                if self.packed:                                   # packed: pack bit-by-bit, NO unit reservation
+                    laid.append((mname, mtype, dbits // 8, dbits % 8, width))   # field at the running bit cursor
+                    dbits += width                                # its access unit spans only the bytes it covers
                 else:                                             # natural: pack at the bit cursor
                     if (dbits % unit_bits) + width > unit_bits:   # would cross a storage-unit boundary
                         dbits += unit_bits - (dbits % unit_bits)  # -> bump to the next one
@@ -253,4 +252,5 @@ class AggregateBuilder:
                 else (dbits + 7) // 8)
         if align and size % align:
             size += align - (size % align)
-        return CType(self.kind, name=self.name, size=size, align=max(1, align), fields=tuple(laid))
+        return CType(self.kind, name=self.name, size=size, align=max(1, align), fields=tuple(laid),
+                     packed=self.packed)

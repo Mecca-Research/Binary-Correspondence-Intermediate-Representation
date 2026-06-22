@@ -45,6 +45,7 @@ _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-val
         "cfront_bfcompound.c",                         # + bitfield compound-assign (r->field |= bits)
         "cfront_signedbf.c",                           # + signed bitfield read sign-extension (int x:N)
         "cfront_widebf.c",                             # + WIDE bitfields in a 64-bit unit (long long x:N, N>32)
+        "cfront_packedbf.c",                           # + PACKED bitfields (bit-by-bit, byte/word-straddling)
         "cfront_signedload.c",                         # + signed sub-int member/array read sign-extension
         "cfront_restrict.c",                           # + restrict/__restrict pointer params (consumed hint)
         "cfront_shiftassign.c",                        # + <<= / >>= shift compound-assign (scalar/member/array)
@@ -2666,7 +2667,9 @@ def test_cfront_differential_fuzz():
     OR a pointer param), a struct-BY-VALUE return, AND `struct T *`
     parameters read+written through the pointer (members `s.m` / `s->m`, a union's single active member --
     which may itself be a bitfield (union-of-bitfields) -- a
-    bitfield `m:W`, a dynamic-indexed array member `s.arr[e & 3u]` -- an array-bearing struct now also as a
+    bitfield `m:W` (incl. in an `__attribute__((packed))` struct, where bitfields pack bit-by-bit and may
+    straddle byte/word boundaries -- the `sizeof`/`offsetof` LAYOUT differential validates it), a
+    dynamic-indexed array member `s.arr[e & 3u]` -- an array-bearing struct now also as a
     LOCAL and a RETURN via a NESTED-brace init `{ m, {e0,e1,..}, n }`; a struct return / a struct-pointer's
     backing struct is compared member-and-element-by-value after the call), plus up to two possibly-aliasing
     writable `unsigned *`, drawing from the mixed-width usual arithmetic conversions / floating-point

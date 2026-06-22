@@ -670,8 +670,12 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > a `_Bool` member / `_Bool[]` element store copying the raw byte instead of NORMALIZING any nonzero to 1
 > (`s.flag = 2` read back as 2); **a WIDE bitfield (`unsigned long long:40`) in a 64-bit unit accessed with
 > 32-bit-hardcoded read/write — the store zeroed bits 32–63 and clobbered an adjacent field**) plus the
-> `signed char` (aarch64) portability gap. (~19 bugs; the last two found by targeted probing, not the
-> generator — the layout differential + `cfront_widebf.c` now guard them.)
+> `signed char` (aarch64) portability gap; **and the `__attribute__((packed))` + bitfield LAYOUT/access bug
+> -- packed bitfields reserved a full `sizeof(T)` unit per group instead of packing bit-by-bit, so `packed{
+> char; unsigned a:5; unsigned b:9; char }` was 6 bytes vs Clang's 4, and a byte-straddling field's RMW could
+> clobber a neighbour** (`cfront_packedbf.c`). (~20 bugs; the last three found by targeted probing + the
+> layout differential, not the generator — `cfront_widebf.c` / `cfront_packedbf.c` now guard them, and the
+> fuzzer generates packed+bitfield structs.)
 > ✅ **Nested-brace local/return aggregate init landed** (`cfront_nestinit.c`); ✅ **`_Bool` member/element
 > store-normalization** (`cfront_boolmember.c`); ✅ **nested structs** — a struct member that is a struct,
 > read/written via `o.in.x` / `o->in.x` chains AND initialised by a nested brace `{ {inner..}, .. }` (the
@@ -686,35 +690,23 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    flatten recursively via `_leaves` / `_flat`. Remaining follow-on: a nested member that is itself an ARRAY
 >    or has bitfields. Plus enums and `_Bool` as a local/param/return (member-level done; both probed
 >    Clang-equivalent, so guards).
-> 2. ✅ **Union-of-bitfields** is now exercised by the fuzzer (a union's ONE active member may be a bitfield;
->    `u.bf` round-trips through `bf.get`/`bf.set`, behaviour-validated — unions lay every member at offset 0
->    on both rails). ✅ **`__attribute__((packed))` scalar structs** are now generated too (no-padding layout,
->    member read/write behaviour + the `sizeof`/`offsetof` differential both == Clang) — restricted to
->    bitfield/array/nested-free structs so the packed+bitfield gap below stays out. **Still deferred —
->    `__attribute__((packed))` + bitfields LAYOUT bug:** for a packed
->    struct with a bitfield the legacy path reserves a full `sizeof(T)`-byte storage unit per bitfield group
->    instead of packing bit-by-bit, so e.g. `packed { unsigned char tag; unsigned a:5; unsigned b:9;
->    unsigned char z; }` is laid out as **6 bytes** by both rails vs Clang's **4** (a/b should pack into
->    bits 8–21, `z` at byte 3). The behaviour fuzzer can't see it (a write-then-read of one member is
->    self-consistent regardless of layout); a `sizeof`/`offsetof` differential would pin it. The fix needs
->    Clang-matching packed-bitfield ACCESS — a field may span bytes (e.g. `b:9` over bytes 1–2), so the
->    `bf.get`/`bf.set` storage unit becomes a variable `ceil((bit_off+w)/8)`-byte read-modify-write (a
->    non-power-of-2 load width the emit doesn't yet model). Packed structs WITHOUT bitfields are correct
->    (`test_L8_packed_layout_matches_clang`). **Implementation notes (next context):** (a) LAYOUT — in the
->    `packed` branch of both `p_struct_body` (twin) and `AggregateBuilder.build` (oracle), place each packed
->    bitfield at the running bit cursor with NO unit reservation: `byte_off = P/8`, `bit_off = P%8`,
->    `size = ceil((bit_off+w)/8)`, advance `P += w`; struct align stays 1. (b) ACCESS — ✅ **the `c.bf.get`/
->    `c.bf.set` + the unit load/result temp are now WIDTH-AWARE** (no longer 32-bit-hardcoded): a `> 32`-bit
->    bitfield in a 64-bit unit reads/writes through a `uint64` with 64-bit literals/clear-mask and keeps its
->    promoted declared type — this fixed the **wide-bitfield miscompile** (`unsigned long long mid:40`: the
->    store zeroed bits 32–63 and clobbered an adjacent `tail:4`; `cfront_widebf.c`, both rails == Clang). The
->    *packed* remainder is the BYTE-SPANNING case — a packed field can sit at an arbitrary bit offset and span
->    up to ~39 bits, so the unit `memcpy` becomes a variable `size` ∈ 1–5 bytes into a zeroed `uint64` (64-bit clear
->    mask), in both rails' emit. (c) GUARD — ✅ **the `sizeof`/`offsetof` differential is now in the fuzzer**
->    (`_layout_ok`: the oracle's layout vs Clang `_Static_assert`s, since the behaviour check is size-blind);
->    it currently passes for every generated struct (the fuzzer excludes packed+bitfield). Once the layout +
->    access above land, re-enable `__attribute__((packed))` + bitfield structs in the generator and the guard
->    will pin them.
+> 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
+>    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
+>    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit
+>    reservation (the field sits at the running bit cursor and may STRADDLE byte/word boundaries), so e.g.
+>    `packed { unsigned char tag; unsigned a:5; unsigned b:9; unsigned char z; }` is **4 bytes** like Clang
+>    (a/b in bits 8–21, `z` at byte 3) -- was wrongly 6 (a full `sizeof(T)`-unit per bitfield group). The fix,
+>    on **both rails**: (a) LAYOUT — the `packed` branch of `p_struct_body` (twin) / `AggregateBuilder.build`
+>    (oracle) places each bitfield at `byte_off=P/8`, `bit_off=P%8` and records its byte span
+>    `access_bytes = ceil((bit_off+w)/8)` (a separate field; `size` stays the declared type, for read
+>    promotion). (b) ACCESS — the unit is read into a uint wide enough to hold it (a field straddling into
+>    bits ≥ 32 → a `uint64`), `memcpy`-ing only the `access_bytes` spanned bytes (zeroed temp), masked/inserted
+>    via the now-64-bit `c.bf.get`/`c.bf.set` (#wide-bitfield fix), and written back over only those spanned
+>    bytes -- so a RMW preserves a neighbour sharing the straddled bytes. Non-packed (incl. MMIO, whose
+>    register width must not change) is byte-identical. (c) GUARD — the fuzzer now generates packed+bitfield
+>    structs, validated by BOTH the behaviour check and the `sizeof`/`offsetof` LAYOUT differential
+>    (`_layout_ok`); `cfront_packedbf.c` pins a signed/wide/straddling case. (`test_L8_packed_layout_matches_clang`
+>    covers packed without bitfields.)
 > 3. **Statement-expression + bitfield-terminal type (deferred frontend gap).** A GCC statement expression
 >    takes the type of its LAST expression, and a BARE bitfield read there keeps its *declared* type
 >    (`unsigned`) rather than the promoted `int` it has in every other context: `-({ u5; })` is unsigned
