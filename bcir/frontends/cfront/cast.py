@@ -102,6 +102,15 @@ class VaArg:
 
 
 @dataclass(frozen=True)
+class Generic:
+    """`_Generic(ctrl, T1: e1, ..., default: eN)` (C11 §6.5.1.1) — a compile-time selection on the static
+    type of the (UNEVALUATED) controlling expression. `assocs` is a tuple of (TypeRef | None, expr); a
+    None type-name is the `default`. Exactly the selected association's expression is evaluated."""
+    controlling: object
+    assocs: tuple
+
+
+@dataclass(frozen=True)
 class SizeOf:
     type: object = None             # a TypeRef for `sizeof(type)`, else None
     expr: object = None             # the operand for `sizeof expr` (its static type's size)

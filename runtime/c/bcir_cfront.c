@@ -720,6 +720,25 @@ static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx){
   while(g_nstr>s_nstr){ g_nstr--; free(g_strtab[g_nstr].s); g_strtab[g_nstr].s=NULL; }
   return c->failed;
 }
+/* The `_Generic` type identity (C11 §6.5.1.1, after lvalue/array decay; qualifiers ignored): int / int32_t
+ * collapse (same width + signedness), plain `char` stays a distinct type from signed/unsigned char, `_Bool`
+ * is its own type, floats key on width, a pointer on its pointee, a struct/union on its tag. Two ctypes
+ * match iff their identities are equal. Mirrors the oracle's `_type_key`, so both rails pick the same arm. */
+static int ctype_generic_eq(const bcir_ctype *a, const bcir_ctype *b){
+  if(a->kind!=b->kind) return 0;
+  if(a->kind==1) return a->is_union==b->is_union && !strcmp(a->tag,b->tag);   /* struct/union by tag */
+  if(a->kind==2){                                  /* pointer: same depth, then the pointee identity below */
+    if((a->ptr_depth?a->ptr_depth:1)!=(b->ptr_depth?b->ptr_depth:1)) return 0;
+    if(a->ptr_to_struct||b->ptr_to_struct)
+      return a->ptr_to_struct==b->ptr_to_struct && (!a->ptr_to_struct||!strcmp(a->tag,b->tag));
+  }
+  /* a leaf (a scalar, or a pointer's pointee whose width/sign/float/plain-char ride on the ctype): plain
+   * `char` and `_Bool` are their own types; a float keys on width (no sign); an integer on width + sign. */
+  if(a->is_plain_char||b->is_plain_char) return a->is_plain_char==b->is_plain_char;
+  if(a->is_bool||b->is_bool) return a->is_bool==b->is_bool;
+  if(a->is_float||b->is_float) return a->is_float==b->is_float && a->size==b->size;
+  return a->size==b->size && a->signd==b->signd;
+}
 
 /* A pointer temporary cloned from an existing pointer value -- same pointee (width, signedness, float,
  * struct tag). The result of pointer arithmetic `p + i` carries p's type, so the emit declares a real
@@ -1149,7 +1168,37 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
   }
   return v->rid;
 }
+/* `_Generic(ctrl, T1: e1, ..., default: eN)` (C11 §6.5.1.1): the controlling expr is UNEVALUATED -- its
+ * static type (read via the speculative typeof machinery, then rolled back) selects the association. The
+ * first type-name whose type matches wins, else `default`; only the chosen association's expression is
+ * lowered. The two-pass shape (scan all arms to find the chosen token offset, then lower just that one)
+ * fits the twin's no-AST, lower-while-parsing model -- each scanned expr is parsed then rolled back. */
+static uint32_t p_generic(CC *c){
+  c->i++;                                              /* _Generic */
+  if(!eat(c,"("))return 0;
+  bcir_ctype ctrl; int cs; if(p_typeof_expr(c,&ctrl,&cs)) return 0;   /* the controlling type (rolled back) */
+  if(!eat(c,","))return 0;
+  int sel_at=-1, def_at=-1;
+  while(!is(c,")")&&!isk(c,T_END)&&!c->failed){
+    int is_def=0; bcir_ctype lty; int lsi=-1;
+    if(is(c,"default")){ c->i++; is_def=1; }
+    else if(p_type(c,&lty,&lsi)) return 0;             /* a type-name label */
+    if(!eat(c,":"))return 0;
+    int expr_at=c->i;                                  /* this association's expression starts here */
+    bcir_ctype dump; int ds; if(p_typeof_expr(c,&dump,&ds)) return 0;   /* consume + roll back (not lowered) */
+    if(is_def) def_at=expr_at;
+    else if(sel_at<0 && ctype_generic_eq(&ctrl,&lty)) sel_at=expr_at;
+    if(is(c,",")) c->i++;
+  }
+  if(!eat(c,")"))return 0;
+  int after=c->i;
+  if(sel_at<0) sel_at=def_at;
+  if(sel_at<0){ fail(c,"no _Generic association matches the controlling type"); return 0; }
+  c->i=sel_at; uint32_t r=p_expr(c); c->i=after;       /* lower ONLY the chosen association, for real */
+  return r;
+}
 static uint32_t p_primary(CC *c) {
+  if(is(c,"_Generic")) return p_generic(c);
   if(isk(c,T_INT)){tok t=adv(c);
     int lsz,lsg; lit_int_type(t.s,t.n,&lsz,&lsg);            /* the constant's type (§6.4.4.1) */
     uint32_t r=tempi(c,lsz,lsg);

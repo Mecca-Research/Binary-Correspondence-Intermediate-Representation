@@ -874,6 +874,35 @@ class _Parser:
         return cast.AlignOf(cast.TypeRef(base=tref.base, ptr=ptr, aggregate=tref.aggregate,
                                          quals=tref.quals))
 
+    def _generic(self):
+        """`_Generic ( assignment-expr , (type-name : assignment-expr | default : assignment-expr)+ )`
+        (C11 §6.5.1.1) -- a type-name label / `default` per association; lowering selects on the
+        controlling expression's static type and evaluates only the chosen association's expression."""
+        self.nxt()                                 # _Generic
+        self.eat("PUNCT", "(")
+        controlling = self._expr()                 # the controlling expression (unevaluated)
+        self.eat("PUNCT", ",")
+        assocs = []
+        while True:
+            if self.at("IDENT", "default"):
+                self.nxt()
+                tref = None
+            else:
+                tref = self._type_spec()
+                ptr = 0
+                while self.at("OP", "*"):           # a pointer type-name label, e.g. `int *`
+                    ptr += 1
+                    self.nxt()
+                tref = cast.TypeRef(base=tref.base, ptr=ptr, aggregate=tref.aggregate, quals=tref.quals)
+            self.eat("PUNCT", ":")
+            assocs.append((tref, self._expr()))
+            if self.at("PUNCT", ","):
+                self.nxt()
+                continue
+            break
+        self.eat("PUNCT", ")")
+        return cast.Generic(controlling, tuple(assocs))
+
     def _primary(self):
         if self.at("INT"):
             text = self.nxt().text                            # type from the suffix + magnitude (§6.4.4.1)
@@ -896,6 +925,8 @@ class _Parser:
                 return self._sizeof()
             if w in ("_Alignof", "alignof"):
                 return self._alignof()
+            if w == "_Generic":
+                return self._generic()
             if w in KEYWORDS and w != "sizeof":
                 raise CParseError(f"unexpected keyword {w!r} in expression", pos=self.peek().pos)
             tk = self.nxt()

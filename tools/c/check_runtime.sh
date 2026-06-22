@@ -115,7 +115,7 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
   || { echo "  FAIL: C frontend build"; exit 1; }
 # L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
 FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c cfront_multiptr.c cfront_chartypes.c \
-cfront_complit.c cfront_typeof.c cfront_structinit.c cfront_arraylit.c cfront_variadic.c cfront_compoundwide.c cfront_extvariadic.c cfront_longdouble.c"
+cfront_complit.c cfront_typeof.c cfront_structinit.c cfront_arraylit.c cfront_variadic.c cfront_compoundwide.c cfront_extvariadic.c cfront_longdouble.c cfront_generic.c"
 # Precompute EVERY oracle summary in one python process (import compile_unit once) -- the old
 # python-per-fixture loop paid ~0.3s of interpreter+import startup each (~30s over the fixture set).
 python3 - "${C}" ${FIXTURES} > "${tmp}/py_sums.txt" <<'PY' || { echo "  FAIL: python lowering (batch)"; exit 1; }
@@ -1824,5 +1824,43 @@ ldr="$("${tmp}/ld_h")"
 [ "${ldr}" = "MATCH" ] \
   && echo "  PASS longdouble: arith / L-const / conversions / long double * / sqrtl / += == Clang" \
   || { echo "  FAIL: longdouble behaviour (${ldr})"; exit 1; }
+
+# _Generic (#generic): C11 generic selection on the controlling expression's static type. The differential
+# drives int / long / unsigned / double / float / char / pointer controls -- a wrong type-match would pick
+# the wrong arm and diverge. Both rails read the controlling type the same way (the twin off a
+# speculatively-lowered value) so they select the same association.
+echo "[c-runtime] _Generic -- C11 type-generic selection (#generic)"
+"${tmp}/bcir-cc" --emit-c "${C}/cfront_generic.c" > "${tmp}/gn_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+  sed -e 's/\bg_int\b/g_int_s/g' -e 's/\bg_long\b/g_long_s/g' -e 's/\bg_uint\b/g_uint_s/g' \
+      -e 's/\bg_double\b/g_double_s/g' -e 's/\bg_float\b/g_float_s/g' -e 's/\bg_char\b/g_char_s/g' \
+      -e 's/\bg_ptr\b/g_ptr_s/g' -e 's/\bg_exprtype\b/g_exprtype_s/g' -e 's/\bg_default\b/g_default_s/g' \
+      -e 's/\bg_compute\b/g_compute_s/g' \
+      "${C}/cfront_generic.c"
+  cat "${tmp}/gn_emit.c"
+  cat <<'DRV'
+int main(void){
+  for(int i=-200;i<200;i++){ long b=(long)i*7777; int x=i;
+    if(g_int_s(i)!=bcir_g_int(i)){puts("g_int");return 1;}
+    if(g_long_s(b)!=bcir_g_long(b)){puts("g_long");return 1;}
+    if(g_uint_s((unsigned)i)!=bcir_g_uint((unsigned)i)){puts("g_uint");return 1;}
+    if(g_double_s((double)i)!=bcir_g_double((double)i)){puts("g_double");return 1;}
+    if(g_float_s((float)i)!=bcir_g_float((float)i)){puts("g_float");return 1;}
+    if(g_char_s((char)i)!=bcir_g_char((char)i)){puts("g_char");return 1;}
+    if(g_ptr_s(&x)!=bcir_g_ptr(&x)){puts("g_ptr");return 1;}
+    if(g_exprtype_s(i,b)!=bcir_g_exprtype(i,b)){puts("g_exprtype");return 1;}
+    if(g_default_s((double)i)!=bcir_g_default((double)i)){puts("g_default");return 1;}
+    if(g_compute_s(b)!=bcir_g_compute(b)){puts("g_compute");return 1;}
+  }
+  puts("MATCH");return 0;}
+DRV
+} > "${tmp}/gn_harness.c"
+"${CC}" -std=c23 -O2 "${tmp}/gn_harness.c" -o "${tmp}/gn_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 "${tmp}/gn_harness.c" -o "${tmp}/gn_h" \
+  || { echo "  FAIL: generic harness build"; exit 1; }
+gnr="$("${tmp}/gn_h")"
+[ "${gnr}" = "MATCH" ] \
+  && echo "  PASS generic: _Generic selection (int/long/uint/double/float/char/ptr/default) == Clang" \
+  || { echo "  FAIL: generic behaviour (${gnr})"; exit 1; }
 
 echo "[c-runtime] ok"

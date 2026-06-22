@@ -672,7 +672,46 @@ class _FuncLowerer:
         if isinstance(node, cast.Index):                      # `a[i]` -> the element (pointee) type
             base_t = self._type_of(node.base)
             return base_t.of if base_t.of is not None else scalar("uint32_t")
+        if isinstance(node, cast.Generic):                    # _Generic -> the selected association's type
+            return self._type_of(self._generic_select(node))
         raise CLowerError(f"typeof of this expression form ({type(node).__name__}) is not yet supported")
+
+    def _type_key(self, t: CType):
+        """A canonical, comparable identity for a type used by `_Generic` matching (C11 §6.5.1.1, after
+        lvalue/array decay; qualifiers do not affect the key). int / int32_t collapse (same width + sign);
+        plain `char` stays distinct from signed/unsigned char; floats key on width; aggregates on tag."""
+        if t.kind == "array":
+            t = pointer(t.of, self.abi) if t.of is not None else pointer(scalar("uint32_t"), self.abi)
+        if t.kind in ("struct", "union"):
+            return (t.kind, t.name)
+        if t.kind == "pointer":
+            return ("ptr", self._type_key(t.of) if t.of is not None else ("void",))
+        if t.kind == "valist":
+            return ("valist",)
+        if t.name == "void":
+            return ("void",)
+        if t.name in ("_Bool", "bool"):
+            return ("bool",)
+        if t.name == "char":                              # plain char -- a distinct type from signed/unsigned char
+            return ("char",)
+        if t.is_float:
+            return ("float", t.size)
+        return ("int", t.size, t.signed)
+
+    def _generic_select(self, node: "cast.Generic"):
+        """The chosen association's expression for a `_Generic` selection: the first type-name whose type
+        matches the controlling expression's static type, else `default`. The controlling expression and
+        the unselected associations are NOT lowered (only the controlling type is inspected)."""
+        key = self._type_key(self._type_of(node.controlling))
+        default = None
+        for tref, expr in node.assocs:
+            if tref is None:
+                default = expr
+            elif self._type_key(self._resolve_type(tref)) == key:
+                return expr
+        if default is not None:
+            return default
+        raise CLowerError("no _Generic association matches the controlling expression's type")
 
     def _rvalue(self, node) -> int:
         if isinstance(node, cast.IntLit):
@@ -744,6 +783,8 @@ class _FuncLowerer:
             vt = self._resolve_type(node.type)            # the result has type T (drives the temp + emit)
             t = self._temp(vt, "vaarg")
             return self._emit("c.call.vaarg", Opcode.GEM_DISPATCH, (ap,), (t,))
+        if isinstance(node, cast.Generic):                # _Generic(ctrl, T: e, ..., default: e) -- select on
+            return self._rvalue(self._generic_select(node))   # ctrl's static type; only the chosen e is lowered
         if isinstance(node, cast.Assign):
             return self._assign(node)
         if isinstance(node, cast.SizeOf):
