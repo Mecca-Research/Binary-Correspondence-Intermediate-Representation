@@ -903,7 +903,10 @@ class _FuncLowerer:
         unit = self._load_unit(lv)
         if lv.bit_width:                                     # bitfield extract: (unit >> off) & mask
             signed = lv.ct.is_integer and lv.ct.signed       # a signed bitfield read sign-extends from bit w-1
-            t = self._temp(scalar("int" if signed else "uint32_t"), "bf")
+            # integer promotion (6.3.1.1): a bitfield narrower than int promotes to int (int holds all its
+            # values), so an UNSIGNED sub-int bitfield reads as a SIGNED int -- `bf < x` is a signed compare,
+            # not an unsigned one. Only a full-width (>= 32) unsigned bitfield stays unsigned.
+            t = self._temp(scalar("int" if (signed or lv.bit_width < 32) else "uint32_t"), "bf")
             return self._emit("c.bf.get", Opcode.ADD, (unit,), (t,),
                               imm=(lv.bit_off, lv.bit_width, int(signed)))
         return unit

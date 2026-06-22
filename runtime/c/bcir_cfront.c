@@ -785,7 +785,9 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld) {
   cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
   if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
-  if(fld->bit_w){uint32_t u=t;t=tempi(c,4,fld->signd);   /* the extracted value carries the field's sign */
+  if(fld->bit_w){uint32_t u=t;t=tempi(c,4,(fld->signd||fld->bit_w<32)?1:0);   /* integer promotion (6.3.1.1):
+    * a bitfield narrower than int promotes to int, so an UNSIGNED sub-int bitfield reads as a SIGNED int
+    * (e.g. `bf < x` is a signed compare); only a full-width unsigned bitfield stays unsigned. */
     bcir_claim *g=new_claim(c,"c.bf.get",BCIR_OP_ADD);if(!g)return t;
     g->n_rd=1;g->rd[0]=u;g->n_wr=1;g->wr[0]=t;g->n_imm=3;g->imm[0]=fld->bit_off;g->imm[1]=fld->bit_w;g->imm[2]=fld->signd;}
   return t;
