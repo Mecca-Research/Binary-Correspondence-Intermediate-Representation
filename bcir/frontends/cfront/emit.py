@@ -225,6 +225,9 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         rt = lf.rid_types.get(c.wr[0])                       # declare at the true result width: a long
         ty = _cname(rt) if rt is not None else None          # return (lround) is not narrowed to uint32
         return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})", ty)
+    if c.op.startswith("c.call.extern:"):                    # a printf/scanf-family external variadic call
+        callee = c.op.split(":", 1)[1]                       # emitted verbatim against <stdio.h>, returns int
+        return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})", "int")
     if c.op == "c.call.vaarg":                               # va_arg(ap, T) -- T is the result temp's type
         rt = lf.rid_types.get(c.wr[0])
         ty = _cname(rt) if rt is not None else "int"
