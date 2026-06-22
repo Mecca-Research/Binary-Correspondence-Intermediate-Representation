@@ -75,6 +75,16 @@ _ST = {
 _TYPES = ["i8", "i16", "i32", "i64", "u32", "u64"]          # integer storage types
 _ALL = _TYPES + ["f32", "f64"]                             # all storage types (params / locals / returns)
 _FLOATS = ("f32", "f64")
+# bitfield member types `unsigned a:W` / `int b:W` (struct members only -- never a standalone local/param, so
+# they stay out of _ALL). They read as int (integer promotion) with a |value| bound of 2^W-1 (unsigned) /
+# 2^(W-1) (signed); a write truncates to W bits (self-capping). Registered into _ST so reads/writes/bounds
+# are automatic; `_BF[code]` carries the bit width for the struct definition.
+_BF: dict = {}
+for _W in range(1, 9):
+    _ST[f"bfu{_W}"] = ("unsigned", 4, True, (1 << _W) - 1, "i32")
+    _ST[f"bfs{_W}"] = ("int", 4, True, 1 << (_W - 1), "i32")
+    _BF[f"bfu{_W}"], _BF[f"bfs{_W}"] = _W, _W
+_MEMBER_TYPES = _ALL + list(_BF)                           # what a STRUCT member may be (scalar or bitfield)
 _AW = {"i32": 4, "u32": 4, "i64": 8, "u64": 8, "f32": 4, "f64": 8}
 _ACAST = {"i32": "(int)", "i64": "(long)", "u32": "(unsigned)", "u64": "(unsigned long)",
           "f32": "(float)", "f64": "(double)"}
@@ -167,8 +177,9 @@ class Gen:
 
     def _mutable(self, code: str) -> bool:
         # unsigned (wraps), narrow-signed (self-cap), and float (never traps) are mutable anywhere; wide
-        # int/long would accumulate across loop iterations, so they are mutable only outside loops.
-        return code not in ("i32", "i64") or self.loopdepth == 0
+        # int/long accumulate across loop iterations, and a bitfield mutation in a loop routes to fallback on
+        # both rails, so those two classes are mutable only outside loops.
+        return (code not in ("i32", "i64") and code not in _BF) or self.loopdepth == 0
 
     def _targets(self) -> list:
         return [n for s in self.scopes for n in s
@@ -525,9 +536,16 @@ class Gen:
         for i in range(r.randint(1, 3)):                        # struct / union type definitions
             kind = r.choice(["struct", "struct", "union"])
             nm = ("S" if kind == "struct" else "U") + str(i)
-            members = [(f"m{j}", r.choice(_ALL)) for j in range(r.randint(2, 4))]
+            # a struct is EITHER all-scalar or all-bitfield (never mixed): the frontend's bitfield layout only
+            # matches Clang's when a bitfield does not follow a sub-word member -- a mixed `short m0; unsigned
+            # m1:1;` packs the bitfield unit at a different offset on the two sides (a separate layout bug to
+            # fix). All-bitfield (4-byte int/unsigned bases, <=32 total bits) packs identically. Unions:
+            # scalar only.
+            pool = list(_BF) if (kind == "struct" and r.random() < 0.3) else _ALL
+            members = [(f"m{j}", r.choice(pool)) for j in range(r.randint(2, 4))]
             self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None)
-            agg_src.append(f"{kind} {nm} {{ " + " ".join(f"{_ST[c][0]} {mn};" for mn, c in members) + " };")
+            agg_src.append(f"{kind} {nm} {{ " + " ".join(
+                f"{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};" for mn, c in members) + " };")
         self.helpers, helper_src = [], []
         for hi in range(r.randint(0, 3)):                       # leaf helpers (scalar params, no calls, no ptr)
             hp = [(chr(97 + k), r.choice(_ALL)) for k in range(r.randint(1, 3))]
@@ -612,6 +630,14 @@ _FPOOL = [0.0, 1.0, -1.0, 0.5, -0.5, 3.14159, -2.71828, 100.25, -0.001, 1234.5, 
 
 
 def _lit(code: str, j: int, k: int) -> str:
+    if code in _BF:                                            # a bitfield member: a small in-range int literal
+        w = _BF[code]
+        if code[2] == "u":
+            pool = [0, 1, (1 << w) - 1, (1 << w) >> 1]
+        else:
+            h = 1 << (w - 1)
+            pool = [0, -h, h - 1, -(h >> 1)]
+        return _const_text(pool[(j + 3 * k) % len(pool)], "i32")
     if code in _FLOATS:
         return _fconst(_FPOOL[(j + 3 * k) % len(_FPOOL)], code)
     return _const_text(_POOL[code][(j + 3 * k) % len(_POOL[code])], _ST[code][4])
