@@ -685,6 +685,7 @@ static venv *lookup(CC *c,const tok *t){
 /* --- expression lowering (returns rid) ----------------------------------- */
 static uint32_t p_expr(CC *c);
 static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si);   /* `(type){init}` (defined w/ agg_init) */
+static uint32_t p_stmt_expr(CC *c);   /* `({ ... })` -- a GCC statement expression (defined after p_stmt) */
 static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int count);    /* `(T[N]){init}` (defined w/ arr_init) */
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
 
@@ -1386,6 +1387,8 @@ static uint32_t p_unary(CC *c) {
       if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p */
     return emit_deref_rid(c, p_unary(c));            /* general: `**pp`, `*(<expr>)` -- deref a ptr rvalue */
   }
+  if(is(c,"(") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='{')
+    return p_stmt_expr(c);                          /* `({ ... })` -- a GCC statement expression */
   if(is(c,"(")){                                   /* (type)operand -- a cast binds at the unary level */
     int save=c->i; c->i++;
     int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
@@ -2046,6 +2049,36 @@ static void p_stmt(CC *c) {
       eat(c,";");return;}}
   if(p_incdec(c)){eat(c,";");return;}    /* ++i / i++ / --i / i-- as a statement */
   (void)p_expr(c);eat(c,";");
+}
+/* `({ s1; ...; e; })` -- a GCC statement expression (the C twin of cast.StmtExpr): a compound statement
+ * in its own scope whose VALUE is the last statement (an expression statement). No AST, so the prefix
+ * statements lower in place (p_stmt) and the LAST statement is then rolled back -- the speculative
+ * undo p_typeof_expr uses (the resource/claim arrays + the rid/cid/cl_ctr/call/env/string counters) --
+ * and re-parsed as an expression to capture its value. The cursor is at the opening `(`. */
+static uint32_t p_stmt_expr(CC *c){
+  c->i++; c->i++;                        /* consume `(` then `{` */
+  int env_mark=c->nenv;                  /* a statement expression is a scope: its locals do not leak */
+  int last_save=-1;
+  size_t snap_res=c->fn->n_res, snap_cl=c->fn->n_claims;
+  uint32_t snap_rid=c->rid, snap_cid=c->cid, snap_clctr=c->cl_ctr;
+  int snap_ncalls=c->fn->n_calls, snap_nenv=c->nenv, snap_nstr=g_nstr;
+  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
+    last_save=c->i;                      /* remember the start + the lowering state before each statement */
+    snap_res=c->fn->n_res; snap_cl=c->fn->n_claims; snap_rid=c->rid; snap_cid=c->cid; snap_clctr=c->cl_ctr;
+    snap_ncalls=c->fn->n_calls; snap_nenv=c->nenv; snap_nstr=g_nstr;
+    p_stmt(c);
+  }
+  uint32_t result;
+  if(last_save<0){ result=temp(c,4);     /* `({ })` (empty) -> an unused placeholder */
+    bcir_claim *k=new_claim(c,"c.const",BCIR_OP_LOAD); if(k){k->n_wr=1;k->wr[0]=result;k->n_imm=1;k->imm[0]=0;} }
+  else {                                 /* roll the LAST statement back and re-parse it as the value expr */
+    c->fn->n_res=snap_res; c->fn->n_claims=snap_cl; c->rid=snap_rid; c->cid=snap_cid; c->cl_ctr=snap_clctr;
+    c->fn->n_calls=snap_ncalls; c->nenv=snap_nenv;
+    while(g_nstr>snap_nstr){ g_nstr--; free(g_strtab[g_nstr].s); g_strtab[g_nstr].s=NULL; }
+    c->i=last_save; result=p_expr(c); if(is(c,";")) c->i++;
+  }
+  eat(c,"}"); c->nenv=env_mark; eat(c,")");   /* pop the scope, close `)` */
+  return result;
 }
 
 static int p_func(CC *c, bcir_func *fn) {

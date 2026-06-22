@@ -947,6 +947,11 @@ class _Parser:
             tk = self.nxt()
             return cast.Name(tk.text, pos=tk.pos)
         if self.at("PUNCT", "("):
+            if self.peek(1).text == "{":                      # `({ ... })` -- a GCC statement expression
+                self.nxt()
+                stmts = self._block()
+                self.eat("PUNCT", ")")
+                return cast.StmtExpr(stmts)
             self.nxt()
             e = self._expr()
             self.eat("PUNCT", ")")

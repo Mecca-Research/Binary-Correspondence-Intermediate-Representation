@@ -198,6 +198,14 @@ class Block:
 
 
 @dataclass(frozen=True)
+class StmtExpr:
+    """A GCC statement expression `({ s1; ...; expr; })` -- a compound statement, in its own scope, whose
+    value is the last statement's (an expression statement). The prefix statements lower inline before the
+    use site; `stmts` is the block's statement tuple (the last is the value-yielding ExprStmt)."""
+    stmts: tuple = ()
+
+
+@dataclass(frozen=True)
 class If:
     cond: object
     then: tuple
