@@ -457,7 +457,12 @@ static int p_struct_body(CC *c) {
       int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;}          /* per-declarator bitfield width */
       if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
       int isptr=(ty.kind==2 && !arr_count);            /* a (non-array) pointer member: ABI pointer_size */
-      int sz=isptr?cc_abi(c)->pointer_size:ty.size, al=packed?1:(sz<1?1:sz); field *f=&S->f[S->nf++];
+      int sz=isptr?cc_abi(c)->pointer_size:ty.size;
+      /* a (array of) value-struct/union member aligns to the NESTED type's alignment, not its size --
+       * `struct{int;struct Big t;}` puts t at the struct's align, not at sizeof(Big) (which over-pads). */
+      int al = packed?1 : (ty.kind==1 && !ty.ptr_to_struct && si>=0) ? (c->s[si].align<1?1:c->s[si].align)
+                        : (sz<1?1:sz);
+      field *f=&S->f[S->nf++];
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
       idcpy(f->name,&nm);f->size=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
       f->nadims=nadims; for(int z=0;z<3;z++) f->adims[z]=adims[z];
