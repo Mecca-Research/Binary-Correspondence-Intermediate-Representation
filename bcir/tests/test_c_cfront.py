@@ -2672,10 +2672,11 @@ def test_cfront_differential_fuzz():
     arithmetic / bitwise / bounded shifts / comparisons / ternary / if / bounded for / statement expressions /
     inc-dec / mutable-local-and-member assignment / same-unit calls / pointer reads AND writes -- are run
     through BOTH rails and Clang. The two rails must agree on the total-compile OUTCOME (clean/dirty/fallback);
-    a mutually-clean unit must additionally have an identical structural claim SUMMARY (parity) and emitted C
-    that is behaviour-equivalent to Clang on both rails -- integer results compared exactly, float results
-    ULP-tolerantly (nan/inf-aware), and every pointer's backing array compared after the call (same alias
-    pattern). This is the regression guard for the dual-rail bugs this fuzzer flushed -- the twin's
+    a mutually-clean unit must additionally have an identical structural claim SUMMARY (parity), a struct/union
+    LAYOUT (`sizeof` + each member's `offsetof`) equal to Clang's (a `_Static_assert` differential -- the
+    behaviour check is size-blind), and emitted C that is behaviour-equivalent to Clang on both rails --
+    integer results compared exactly, float results ULP-tolerantly (nan/inf-aware), and every pointer's
+    backing array compared after the call (same alias pattern). This is the regression guard for the dual-rail bugs this fuzzer flushed -- the twin's
     parameter-write redeclaration, the oracle's assignment/`i++`-as-stmt-expr-value, the ternary / call
     result types losing their sign OR float type (a logical shift on a signed select / a signed
     char/short/int/long call result / a `double` select truncated to int), the twin rejecting a pointer
