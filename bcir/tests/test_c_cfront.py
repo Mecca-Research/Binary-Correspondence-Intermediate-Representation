@@ -920,6 +920,58 @@ def test_compound_wide_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+def test_generic_dual_rail():
+    """_Generic (#generic): C11 generic selection on the static type of the UNEVALUATED controlling
+    expression -- the first matching type-name (int/int32_t collapse by width+sign; plain char distinct
+    from signed/unsigned char; floats key on width; pointer on pointee) wins, else `default`, and only the
+    chosen arm is lowered. Both rails read the controlling type the same way and pick the same arm;
+    differential == Clang on BOTH emits over int/long/unsigned/double/float/char/pointer controls."""
+    fx = "cfront_generic.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["g_int", "g_long", "g_uint", "g_double", "g_float", "g_char", "g_ptr",
+             "g_exprtype", "g_default", "g_compute"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int i=-200;i<200;i++){ long b=(long)i*7777; int x=i;
+    if(g_int_s(i)!=bcir_g_int(i)){puts("g_int");return 1;}
+    if(g_long_s(b)!=bcir_g_long(b)){puts("g_long");return 1;}
+    if(g_uint_s((unsigned)i)!=bcir_g_uint((unsigned)i)){puts("g_uint");return 1;}
+    if(g_double_s((double)i)!=bcir_g_double((double)i)){puts("g_double");return 1;}
+    if(g_float_s((float)i)!=bcir_g_float((float)i)){puts("g_float");return 1;}
+    if(g_char_s((char)i)!=bcir_g_char((char)i)){puts("g_char");return 1;}
+    if(g_ptr_s(&x)!=bcir_g_ptr(&x)){puts("g_ptr");return 1;}
+    if(g_exprtype_s(i,b)!=bcir_g_exprtype(i,b)){puts("g_exprtype");return 1;}
+    if(g_default_s((double)i)!=bcir_g_default((double)i)){puts("g_default");return 1;}
+    if(g_compute_s(b)!=bcir_g_compute(b)){puts("g_compute");return 1;}
+  }
+  puts("MATCH");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            cpath = os.path.join(d, f"{label}.c")
+            open(cpath, "w").write(harness)
+            epath = os.path.join(d, label)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
+                                   capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
+
+
 def test_long_double_dual_rail():
     """long double (#longdouble): the extended floating type (80-bit / ABI-sized). The twin emits real
     `long double` C -- like float/double, it lets the backend do the arithmetic -- closing a parity gap
