@@ -2661,7 +2661,8 @@ def test_cfront_differential_fuzz():
     well-defined programs -- struct/union type definitions, an optional helper prelude, then an entry `f`,
     with `char`/`short`/`int`/`long`/`unsigned`/`unsigned long`/`float`/`double` and mixed
     scalar + `_Bool` + bitfield struct / union-by-value parameters/locals, a struct-BY-VALUE return, AND `struct T *`
-    parameters read+written through the pointer (members `s.m` / `s->m`, a union's single active member, a
+    parameters read+written through the pointer (members `s.m` / `s->m`, a union's single active member --
+    which may itself be a bitfield (union-of-bitfields) -- a
     bitfield `m:W`, a dynamic-indexed array member `s.arr[e & 3u]` -- an array-bearing struct now also as a
     LOCAL and a RETURN via a NESTED-brace init `{ m, {e0,e1,..}, n }`; a struct return / a struct-pointer's
     backing struct is compared member-and-element-by-value after the call), plus up to two possibly-aliasing

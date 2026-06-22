@@ -680,8 +680,27 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    register its `s.inner.x` lvalues so nested structs are exercised across the full expression/mutation
 >    space (every member-iterating site recurses into the inner members). Plus enums and `_Bool` as a
 >    local/param/return (member-level done; both probed Clang-equivalent already, so these are guards).
-> 2. Union-of-bitfields and packed+bitfield layout are also still off (the natural-layout bitfield fix kept
->    the legacy packed unit model untouched, since no packed-bitfield fixture pins it).
+> 2. ✅ **Union-of-bitfields** is now exercised by the fuzzer (a union's ONE active member may be a bitfield;
+>    `u.bf` round-trips through `bf.get`/`bf.set`, behaviour-validated — unions lay every member at offset 0
+>    on both rails). **Still deferred — `__attribute__((packed))` + bitfields LAYOUT bug:** for a packed
+>    struct with a bitfield the legacy path reserves a full `sizeof(T)`-byte storage unit per bitfield group
+>    instead of packing bit-by-bit, so e.g. `packed { unsigned char tag; unsigned a:5; unsigned b:9;
+>    unsigned char z; }` is laid out as **6 bytes** by both rails vs Clang's **4** (a/b should pack into
+>    bits 8–21, `z` at byte 3). The behaviour fuzzer can't see it (a write-then-read of one member is
+>    self-consistent regardless of layout); a `sizeof`/`offsetof` differential would pin it. The fix needs
+>    Clang-matching packed-bitfield ACCESS — a field may span bytes (e.g. `b:9` over bytes 1–2), so the
+>    `bf.get`/`bf.set` storage unit becomes a variable `ceil((bit_off+w)/8)`-byte read-modify-write (a
+>    non-power-of-2 load width the emit doesn't yet model). Packed structs WITHOUT bitfields are correct
+>    (`test_L8_packed_layout_matches_clang`).
+> 3. **Statement-expression + bitfield-terminal type (deferred frontend gap).** A GCC statement expression
+>    takes the type of its LAST expression, and a BARE bitfield read there keeps its *declared* type
+>    (`unsigned`) rather than the promoted `int` it has in every other context: `-({ u5; })` is unsigned
+>    (`4294967291`) but `-(u5)` / `-({ (int)u5; })` are `int` (`-5`). The frontend's `bf.get` always promotes
+>    to `int`, so it computes `-5` for `-({...; u5; })` -- a both-rail miscompile vs Clang in an ultra-rare
+>    pattern (found when union-of-bitfields shifted the fuzzer RNG onto it). The fuzzer now forces the
+>    promotion on its stmt-expr terminals (an explicit cast to the value's arithmetic type, a no-op for
+>    non-bitfields) so it stays sound; modelling the stmt-expr-decays-the-bitfield type in the frontend is a
+>    deferred follow-on.
 
 **Phase 1 — Driver-subset compiler, productionized** (the near-term milestone — make the existing
 subset behave like `cc` on a small multi-file driver project):
