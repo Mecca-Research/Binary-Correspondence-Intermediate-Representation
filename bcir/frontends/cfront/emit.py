@@ -202,14 +202,22 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
             if c.imm:                                        # s.arr[i] = v: &base + off + i*elem_size
                 es = c.imm[1] if len(c.imm) > 1 else 4
                 bp = _base_ptr(lf, c.rd[0], ref)
-                return (f"memcpy((char *){bp} + {off} + (size_t){ref(c.rd[1])} * {es}, "
-                        f"&{ref(c.rd[2])}, {es});")
+                dst = f"(char *){bp} + {off} + (size_t){ref(c.rd[1])} * {es}"
+                vt = lf.rid_types.get(c.rd[2])               # a narrower int source must be widened to the
+                if vt is not None and vt.is_integer and vt.size < es:   # element width first -- memcpy'ing
+                    return f"{{ uint{es * 8}_t _sv = {ref(c.rd[2])}; memcpy({dst}, &_sv, {es}); }}"  # `es`
+                return f"memcpy({dst}, &{ref(c.rd[2])}, {es});"        # bytes from a smaller object reads past it
             return f"{ref(c.rd[0])}[{ref(c.rd[1])}] = {ref(c.rd[2])};"   # typed array
         ptr = _base_ptr(lf, c.rd[0], ref)
         size = c.imm[1] if len(c.imm) > 1 else 4
         if c.domain.name == "MMIO":                          # device register: ordered volatile store
             return f"*(volatile uint32_t *)((volatile char *){ptr} + {off}) = {ref(c.rd[1])};"
-        # plain RAM member/deref: memcpy `size` bytes (correct truncation on little-endian, packed-safe).
+        # plain RAM member/deref: memcpy `size` bytes (correct truncation on little-endian, packed-safe). A
+        # narrower int source is widened/converted to the slot width first -- memcpy'ing `size` bytes from a
+        # smaller object (e.g. `*p = (short)b` into a 4-byte slot) would read past it (garbage + UB).
+        vt = lf.rid_types.get(c.rd[1])
+        if vt is not None and vt.is_integer and vt.size < size:
+            return f"{{ uint{size * 8}_t _sv = {ref(c.rd[1])}; memcpy((char *){ptr} + {off}, &_sv, {size}); }}"
         return f"memcpy((char *){ptr} + {off}, &{ref(c.rd[1])}, {size});"
     if c.op == "c.bf.get":                                   # (unit >> bit_off) & mask (sign-extended if signed)
         bit_off, width = c.imm[0], c.imm[1]

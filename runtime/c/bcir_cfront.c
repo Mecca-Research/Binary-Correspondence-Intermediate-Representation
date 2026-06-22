@@ -1080,9 +1080,11 @@ static uint32_t p_call(CC *c, const tok *name) {
     return t;                                         /* not added to fn->calls (opaque to R18) */
   }
   uint32_t t = (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
-             : (rt && rt->kind==0 && rt->size==8) ? temp(c,8)        /* wide (8-byte) int return */
-             : (rt && rt->kind==0 && rt->size==4 && rt->signd) ? tempi(c,4,1)  /* signed `int` return keeps its
-                                                            * sign, else a downstream `>>`/compare goes unsigned */
+             : (rt && rt->kind==0 && rt->size==8) ? tempi(c,8,rt->signd)  /* wide (8-byte) int return: keep its
+                                                            * sign so a `>>` on a `long` result stays arithmetic */
+             : (rt && rt->kind==0 && rt->size<=4 && rt->signd) ? tempi(c,4,1)  /* a signed char/short/int return
+                                                            * promotes to int and sign-extends downstream (a
+                                                            * `(long)` widen / compare); else it would go unsigned */
              : temp(c,4);                                            /* unsigned int / pointer / unknown -> 4-byte unit */
   char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call:%.*s",name->n,name->s);
   bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
