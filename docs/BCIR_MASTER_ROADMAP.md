@@ -670,11 +670,16 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > **a `_Bool` member / `_Bool[]` element store copying the raw byte instead of NORMALIZING any nonzero to 1**
 > — `s.flag = 2` read back as 2) plus the `signed char` (aarch64) portability gap.
 > ✅ **Nested-brace local/return aggregate init landed** (`cfront_nestinit.c`); ✅ **`_Bool` member/element
-> store-normalization** (`cfront_boolmember.c`). **Open follow-ons (next-context work):**
-> 1. **Nested structs** (a struct member that is a struct, init'd by a nested brace) — the offset-based
->    `_init_subagg` / `subagg_init` already recurse through struct nesting; the remaining work is the
->    member-access read/write path for `s.inner.x` chains in the fuzzer, plus enums, `_Bool` as a
->    local/param/return (member-level is done), and a wider driver-subset surface.
+> store-normalization** (`cfront_boolmember.c`); ✅ **nested structs** — a struct member that is a struct,
+> read/written via `o.in.x` / `o->in.x` chains AND initialised by a nested brace `{ {inner..}, .. }` (the
+> twin's `agg_init` now recurses through struct nesting at an offset, mirroring the oracle's `_init_subagg`;
+> an inner array member + a `_Bool` inner member still lower correctly) — `cfront_neststruct.c`, both rails
+> == Clang. **Open follow-ons (next-context work):**
+> 1. **Fuzzer-generate nested structs** — the capability + a fixture have landed (read/write/init all
+>    Clang-equivalent); the remaining work is teaching the generator to emit a struct-typed member and
+>    register its `s.inner.x` lvalues so nested structs are exercised across the full expression/mutation
+>    space (every member-iterating site recurses into the inner members). Plus enums and `_Bool` as a
+>    local/param/return (member-level done; both probed Clang-equivalent already, so these are guards).
 > 2. Union-of-bitfields and packed+bitfield layout are also still off (the natural-layout bitfield fix kept
 >    the legacy packed unit model untouched, since no packed-bitfield fixture pins it).
 

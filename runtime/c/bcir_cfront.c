@@ -1639,11 +1639,11 @@ static void subagg_init(CC *c, uint32_t rid, int base_off, int es, int is_bool) 
   }
   eat(c,"}");
 }
-static void agg_init(CC *c, uint32_t rid, int sidx) {
+static void agg_init_at(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit) {
   eat(c,"{");
   sdef *S = sidx>=0 ? &c->s[sidx] : NULL;
   if(!S){ fail(c,"aggregate initializer needs a struct/union type"); return; }
-  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }  /* = {0} */
+  if(do_zinit) for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }  /* = {0} */
   int cursor=0;
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
     int off=0, size=4, bit_w=0, bit_off=0, top_fi=cursor, skip=0, fbool=0;   /* the store target (chain/positional) */
@@ -1654,10 +1654,12 @@ static void agg_init(CC *c, uint32_t rid, int sidx) {
     } else if(cursor<S->nf){ field *F=&S->f[cursor];    /* positional: the cursor-th member */
       off=F->byte_off; size=F->size; bit_w=F->bit_w; bit_off=F->bit_off; fbool=F->is_bool;
     } else skip=1;                                      /* past the last member -> parse but do not store */
-    if(!skip && is(c,"{")){                             /* a NESTED brace: an aggregate (array) member */
+    off += base_off;                                   /* shift into the enclosing object (nested aggregate) */
+    if(!skip && is(c,"{")){                             /* a NESTED brace: an aggregate (array OR struct) member */
       field *AF = (top_fi>=0 && top_fi<S->nf) ? &S->f[top_fi] : NULL;
       if(AF && AF->arr_count>0){ subagg_init(c, rid, off, AF->size, AF->is_bool); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
-      fail(c,"nested initializer for a non-array member"); return;   /* nested struct member: a follow-on */
+      if(AF && AF->sidx>=0){ agg_init_at(c, rid, AF->sidx, off, 0); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
+      fail(c,"nested initializer for a non-aggregate member"); return;
     }
     uint32_t v=p_expr(c); uint32_t val=v;
     if(skip){ cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
@@ -1677,6 +1679,7 @@ static void agg_init(CC *c, uint32_t rid, int sidx) {
   }
   eat(c,"}");
 }
+static void agg_init(CC *c, uint32_t rid, int sidx) { agg_init_at(c, rid, sidx, 0, 1); }
 /* A C99 compound literal `(type){init}` -- an anonymous local of `type`, initialized exactly like a
  * braced local decl and yielded as an rvalue rid (a by-value struct arg, an assignment RHS, a scalar
  * value), or addressed under `&`. A struct/union reuses agg_init (the `= {0}` zero baseline + a c.store
