@@ -173,7 +173,11 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"({c.op.split(':', 1)[1]}){ref(c.rd[0])}")
     if c.op == "c.addrof":                                   # &lvalue -> a pointer value (T *t = &x;)
         rt = lf.rid_types.get(c.wr[0])
-        return deftmp(c.wr[0], f"&{ref(c.rd[0])}", _cname(rt) if rt is not None else None)
+        ty = _cname(rt) if rt is not None else None
+        if c.imm:                                            # &member -> a typed `(T *)((char *)&base + off)`
+            castp = f"({ty})" if ty else ""
+            return deftmp(c.wr[0], f"{castp}((char *)&{ref(c.rd[0])} + {c.imm[0]})", ty)
+        return deftmp(c.wr[0], f"&{ref(c.rd[0])}", ty)
     if c.op == "c.select":                                   # ternary: cond ? then : els
         return deftmp(c.wr[0], f"({ref(c.rd[0])} ? {ref(c.rd[1])} : {ref(c.rd[2])})")
     if c.op == "c.load":

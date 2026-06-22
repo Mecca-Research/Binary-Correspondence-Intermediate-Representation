@@ -750,11 +750,14 @@ class _FuncLowerer:
                 # `&x` as a *value* (a call argument, a pointer initializer): a pointer temp emitted
                 # as `&x`, so e.g. frexp(value, &exp) keeps the `&`. _addr resolves the storage
                 # location; the pointer value is delegated to the emitted C, never computed here.
-                base_rid, base_ct, _base_off = self._addr(node.operand)
+                base_rid, base_ct, base_off = self._addr(node.operand)
                 t = self._temp(pointer(base_ct), "addr")
-                # (address-of a non-first NESTED member -- `&t.q.a` -- needs the offset folded in here AND
-                # twin support for `&member`; both rails handle `&local`/`&first-member`, a follow-on.)
-                return self._emit("c.addrof", Opcode.ADD, (base_rid,), (t,))
+                # &member -> `(T *)((char *)&base + off)` (the typed cast keeps the result a `T *`, not the
+                # enclosing struct's pointer, and carries the accumulated nested offset); `&local` / `&p`
+                # stays the plain `&base`.
+                mem = isinstance(node.operand, cast.Member)
+                return self._emit("c.addrof", Opcode.ADD, (base_rid,), (t,),
+                                  imm=(base_off,) if mem else ())
             v = self._rvalue(node.operand)
             opcode, suf = _UN[node.op]
             if node.op == "!":                                # logical not -> int (0/1)
