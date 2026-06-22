@@ -920,6 +920,53 @@ def test_compound_wide_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+def test_extern_variadic_dual_rail():
+    """External variadic calls (#extvariadic): the printf/scanf-family <stdio.h> variadics (snprintf /
+    vsnprintf) emit verbatim and stay opaque to the R18 call graph (no bcir_ twin), returning int; the
+    read-only format string passes through as an argument; a vsnprintf-forwarding wrapper hands its own
+    va_list cursor to the external. The differential compares the formatted BUFFER and the returned count
+    == Clang on BOTH the twin's and the oracle's emit (the real libc produces identical bytes)."""
+    fx = "cfront_extvariadic.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    oracle_summary, r, entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    if not _CC:
+        return
+    funcs = ["ev_int", "ev_mix", "ev_width", "ev_fwd", "ev_call"]
+    renamed = src
+    for f in funcs:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""int main(void){
+  for(int x=-3000;x<3000;x++){ long y=(long)x*1234567L; char b1[64],b2[64]; int r1,r2;
+    r1=ev_int_s(b1,x);   r2=bcir_ev_int(b2,x);   if(r1!=r2||strcmp(b1,b2)){printf("int@%d\n",x);return 1;}
+    r1=ev_mix_s(b1,x,y); r2=bcir_ev_mix(b2,x,y); if(r1!=r2||strcmp(b1,b2)){printf("mix@%d\n",x);return 1;}
+    r1=ev_width_s(b1,x); r2=bcir_ev_width(b2,x); if(r1!=r2||strcmp(b1,b2)){printf("width@%d\n",x);return 1;}
+    r1=ev_call_s(b1,x,(int)(y&0xff)); r2=bcir_ev_call(b2,x,(int)(y&0xff));
+    if(r1!=r2||strcmp(b1,b2)){printf("call@%d\n",x);return 1;}
+  }
+  printf("MATCH\n");return 0;}"""
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
+        assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+        oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            harness = (f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+                       f"#include <stdarg.h>\n{renamed}\n{emit}\n{driver}")
+            cpath = os.path.join(d, f"{label}.c")
+            open(cpath, "w").write(harness)
+            epath = os.path.join(d, label)
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
+                                   capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                raise AssertionError(f"{fx}: {label} build failed:\n{b.stderr}")
+            out = subprocess.run([epath], capture_output=True, text=True).stdout.strip()
+            assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
+
+
 def test_variadic_dual_rail():
     """Variadic functions (#variadic): `f(T last, ...)` with <stdarg.h> -- a `va_list` cursor walked by
     va_start/va_arg/va_end, va_copy (two passes), a `va_list` parameter (vprintf-style forwarding), and a

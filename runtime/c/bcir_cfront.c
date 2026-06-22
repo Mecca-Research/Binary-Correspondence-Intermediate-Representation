@@ -941,6 +941,15 @@ static int libm_float_size(const char *s, int n) {
     for(int i=0;g_libm[i];i++){ if((int)strlen(g_libm[i])==n-1 && !strncmp(g_libm[i],s,(size_t)(n-1))) return 4; }
   return 0;
 }
+/* The printf / scanf family of external variadic <stdio.h> functions -- not defined in the unit and not
+ * lowered, they emit verbatim (like a libm call, opaque to R18) and return int. (The format string is a
+ * read-only char[] literal, already passed through as an argument.) */
+static int is_extern_variadic(const char *s, int n) {
+  static const char *F[]={"snprintf","vsnprintf","sprintf","vsprintf","printf","fprintf","vprintf",
+    "vfprintf","sscanf","vsscanf","scanf","fscanf","dprintf",0};
+  for(int i=0;F[i];i++) if((int)strlen(F[i])==n && !strncmp(F[i],s,(size_t)n)) return 1;
+  return 0;
+}
 
 /* The return ctype of a user function defined *earlier* in the unit (so a call can be typed by its
  * callee), or NULL if it is not yet defined (a forward reference / external -> the uint32 default). */
@@ -998,6 +1007,13 @@ static uint32_t p_call(CC *c, const tok *name) {
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
     add_call(c,name);
     return temp(c,4);                        /* an unused placeholder (a void result is never read) */
+  }
+  if(!rt && is_extern_variadic(name->s,name->n)){   /* a printf/scanf-family external variadic -> opaque */
+    uint32_t t=tempi(c,4,1);                          /* returns int; emitted verbatim against <stdio.h> */
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.extern:%.*s",name->n,name->s);
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+    if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
+    return t;                                         /* not added to fn->calls (opaque to R18) */
   }
   uint32_t t = (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
              : (rt && rt->kind==0 && rt->size==8) ? temp(c,8)        /* wide (8-byte) int return */
@@ -2206,6 +2222,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"%s%s = &%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
     else if(!strncmp(cl->op,"c.call.libm:",12)){   /* a <math.h> call -> the real libm function */
       w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+12);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+w,on-w,");\n"); }
+    else if(!strncmp(cl->op,"c.call.extern:",14)){  /* a printf/scanf-family external variadic -> verbatim */
+      w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+14);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+w,on-w,");\n"); }
     else if(!strncmp(cl->op,"c.call.vaarg:",13)){   /* va_arg(ap, T) -- pull the next variadic argument */

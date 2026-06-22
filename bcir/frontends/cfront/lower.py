@@ -105,6 +105,12 @@ _LIBM_INT = {"ilogb": "int",
              "lround": "long", "lrint": "long",
              "llround": "long long", "llrint": "long long"}
 
+# the printf / scanf family of external variadic <stdio.h> functions -- not defined in the unit and not
+# lowered, they emit verbatim (like a libm call, opaque to R18) and return int.
+_EXTERN_VARIADIC = frozenset({
+    "snprintf", "vsnprintf", "sprintf", "vsprintf", "printf", "fprintf", "vprintf",
+    "vfprintf", "sscanf", "vsscanf", "scanf", "fscanf", "dprintf"})
+
 
 def _libm_type(name: str) -> CType | None:
     """The result type of a `<math.h>` call: real-valued ones are typed by the name suffix
@@ -976,6 +982,9 @@ class _FuncLowerer:
         if libm is not None:                           # a <math.h> call -> a typed external library edge
             t = self._temp(libm, f"libm_{node.callee}")    # not added to self.calls: opaque to the call
             return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # graph
+        if node.callee in _EXTERN_VARIADIC and node.callee not in self.func_rets:
+            t = self._temp(scalar("int", self.abi), f"ext_{node.callee}")   # a printf/scanf-family external
+            return self._emit(f"c.call.extern:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # variadic
         self.calls.append((node.callee, actuals))      # a defined-in-unit callee: a real R18 edge
         ret_ct = self.func_rets.get(node.callee)
         if ret_ct is not None and ret_ct.name == "void":   # a void callee -> a bare call statement, no
