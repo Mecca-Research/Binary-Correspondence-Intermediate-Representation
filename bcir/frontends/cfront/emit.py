@@ -214,7 +214,7 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                 bp = _base_ptr(lf, c.rd[0], ref)              # != the field copy size `es`
                 return (f"{et} {t}; memcpy(&{t}, (const char *){bp} + {off} + "
                         f"(size_t){ref(c.rd[1])} * {stride}, {es});")
-            return deftmp(c.wr[0], f"{ref(c.rd[0])}[{ref(c.rd[1])}]", et)   # typed array — aligned
+            return deftmp(c.wr[0], f"{ref(c.rd[0])}[{_idx(lf, c, ref)}]", et)   # typed array (masked -> guarded)
         ptr = _base_ptr(lf, c.rd[0], ref)
         if c.domain.name == "MMIO":                          # device register: ordered volatile load (its
             return deftmp(c.wr[0], f"*(volatile {et} *)((const volatile char *){ptr} + {off})", et)  # natural width)
@@ -234,7 +234,7 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                 if conv:                                     # convert the source to the element type first (a
                     return f"{{ {conv} _sv = {ref(c.rd[2])}; memcpy({dst}, &_sv, {es}); }}"   # _Bool normalizes), else
                 return f"memcpy({dst}, &{ref(c.rd[2])}, {es});"   # `es` bytes of a narrower/float source corrupts it
-            return f"{ref(c.rd[0])}[{ref(c.rd[1])}] = {ref(c.rd[2])};"   # typed array
+            return f"{ref(c.rd[0])}[{_idx(lf, c, ref)}] = {ref(c.rd[2])};"   # typed array (masked -> guarded)
         ptr = _base_ptr(lf, c.rd[0], ref)
         size = c.imm[1] if len(c.imm) > 1 else 4
         if c.domain.name == "MMIO":                          # device register: ordered volatile store
@@ -359,3 +359,17 @@ def _base_ptr(lf: LoweredFunc, rid: int, ref) -> str:
     if ct and ct.kind in ("pointer", "array"):
         return name
     return f"&{name}"
+
+
+def _idx(lf: LoweredFunc, c, ref) -> str:
+    """The index expression for a `base[idx]` access. A `masked` access (§5.12 bounds-promotion) into a
+    known-extent local/static array is wrapped in `BCIR_CHK(rid, idx, N)`: in-bounds returns idx
+    (transparent -> behaviour-identical to the raw `a[i]`), out-of-bounds calls the bounds-quarantine
+    handler. The numeric `rid` is the access provenance for the debugger. Any other access -> the bare index."""
+    idx = ref(c.rd[1])
+    if c.bounds == "masked":
+        rt = lf.rid_types.get(c.rd[0])
+        n = getattr(rt, "count", 0) if rt is not None else 0
+        if n:
+            return f"BCIR_CHK({c.rd[0]}, {idx}, {n}u)"
+    return idx

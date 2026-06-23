@@ -905,6 +905,12 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
         lines.append(f"  {{ {' '.join(decls)} {rtype} r1={c1}; {rtype} r2={c2}; {chk} {' '.join(post)} }}")
     lines.append("  return 0;}")
     harness = ("#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <math.h>\n"
+               "#include <stdlib.h>\n#include <stddef.h>\n"
+               # §5.12 bounds-quarantine: a `masked` local-array access emits BCIR_CHK(rid,idx,N); the stub
+               # handler is never reached for an in-bounds index (the generator's are), so it is transparent.
+               "static void bcir_bounds_quarantine(uint64_t r,uint64_t i,uint64_t e){(void)r;(void)i;(void)e;abort();}\n"
+               "#define BCIR_CHK(rid,idx,n) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
+               "(bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n)),(size_t)0))\n"
                + (_FEQ if need_feq else "") + renamed + "\n" + emit + "\n" + "\n".join(lines))
     cpath = os.path.join(d, f"{label}.c")
     epath = os.path.join(d, label)

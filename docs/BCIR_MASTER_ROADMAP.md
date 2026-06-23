@@ -1603,10 +1603,17 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    (extent unknown), a struct MEMBER array, and an MMIO register stay `assumed_safe`. **Purely additive:**
    metadata only, no emit/behaviour change -- every cfront fixture still passes + is Clang-equivalent, the
    differential fuzzer is clean (the twin promotes identically, so the digest/parity hold), `verify` already
-   defaults to `bounds`. **Next ➡ (per the chosen plan: metadata first, then the handler):** the **quarantine
-   handler** that discharges the `masked` contract -- an out-of-bounds index routed to a runtime handler hook
-   (an ML-layer + debugger integration) rather than trapping or clamping -- plus extending recoverable
-   extents to an array param with a sibling count and a `malloc(n)` paired with its size.
+   defaults to `bounds`. ✅ **Quarantine handler -- weak-symbol seam DONE** (`runtime/c/bcir_quarantine.{h,c}`,
+   `test_bounds_quarantine_traps_out_of_bounds`): both rails now EMIT the guard for a `masked` access --
+   `a[BCIR_CHK(rid, i, N)]`, where `BCIR_CHK` returns `i` in-bounds (transparent: behaviour-identical to the
+   raw `a[i]` for any defined input, so every fixture + the differential fuzzer stay clean) and, out-of-bounds,
+   calls `bcir_bounds_quarantine(rid, index, extent)`. The WEAK default records the provenance into a ring
+   (the debugger reads it) and aborts (fail-fast); the in-bounds path never calls it. Validated end-to-end:
+   in-bounds returns the value, OOB SIGABRTs with the provenance record, byte-exact in-bounds vs Clang on
+   x86-64 + aarch64. **Next ➡** the ML-layer / debugger OVERRIDES the weak symbol (consult the graded-truth
+   quarantine + recover/policy through a recorded `decide` -- the only sanctioned two-truth crossing), the
+   `bcir-cc` driver links the runtime, and recoverable extents extend to an array param with a sibling count
+   and a `malloc(n)` paired with its size.
 2. ✅ **Lifetime law R21 DONE (oracle prototype)** (`bcir/model/graph.py::Lifetime` +
    `bcir/verify::verify_lifetime`, `test_lifetime_laws.py`): an OPTIONAL `Claim.lifetime` (`event ∈
    {use, alloc, free}` + `epoch`, `None` default, excluded from the R13 digest allow-list) + the **R21
