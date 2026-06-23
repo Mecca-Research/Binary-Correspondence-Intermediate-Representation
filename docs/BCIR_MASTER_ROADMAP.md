@@ -673,9 +673,13 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > `signed char` (aarch64) portability gap; **and the `__attribute__((packed))` + bitfield LAYOUT/access bug
 > -- packed bitfields reserved a full `sizeof(T)` unit per group instead of packing bit-by-bit, so `packed{
 > char; unsigned a:5; unsigned b:9; char }` was 6 bytes vs Clang's 4, and a byte-straddling field's RMW could
-> clobber a neighbour** (`cfront_packedbf.c`). (~20 bugs; the last three found by targeted probing + the
-> layout differential, not the generator — `cfront_widebf.c` / `cfront_packedbf.c` now guard them, and the
-> fuzzer generates packed+bitfield structs.)
+> clobber a neighbour** (`cfront_packedbf.c`); **and an OVER-ALIGNED member (`_Alignas(N)`/`alignas(N)`/
+> `__attribute__((aligned(N)))`) silently mis-laid out — the oracle parsed the specifier and then DROPPED it
+> (so `char a; _Alignas(16) int b; char c` was sized 12/align 4 instead of Clang's 32/align 16, with `b` at
+> offset 4 not 16), while the twin couldn't parse it at all and diverged to fallback** (`cfront_alignasmember.c`).
+> (~21 bugs; the last four found by targeted probing + the layout differential, not the generator —
+> `cfront_widebf.c` / `cfront_packedbf.c` / `cfront_alignasmember.c` now guard them, and the fuzzer generates
+> packed+bitfield structs and over-aligned members.)
 > ✅ **Nested-brace local/return aggregate init landed** (`cfront_nestinit.c`); ✅ **`_Bool` member/element
 > store-normalization** (`cfront_boolmember.c`); ✅ **nested structs** — a struct member that is a struct,
 > read/written via `o.in.x` / `o->in.x` chains AND initialised by a nested brace `{ {inner..}, .. }` (the
@@ -687,9 +691,19 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    expression/mutation space as a **by-value parameter, a LOCAL (nested-brace init), a by-value RETURN**
 >    (compared leaf-by-leaf), AND a **`struct T *` POINTER parameter** (written through `p->in.x`). An inner
 >    struct may **itself nest** (`S2{ S1{ S0 } }`, multi-level, validated == Clang); all member-iterating sites
->    flatten recursively via `_leaves` / `_flat`. Remaining follow-on: a nested member that is itself an ARRAY
->    or has bitfields. Plus enums and `_Bool` as a local/param/return (member-level done; both probed
->    Clang-equivalent, so guards).
+>    flatten recursively via `_leaves` / `_flat`. ✅ A nested member that is itself an ARRAY (`s.in.arr[i]`) or
+>    has BITFIELDS, and a `packed`/`alignas` struct containing an array or nested struct, were all probed
+>    byte-exact vs Clang (layout + RMW) on both rails — already supported, generator-guard follow-on remains.
+>    Plus enums and `_Bool` as a local/param/return (member-level done; both probed Clang-equivalent, so guards).
+> 1b. ✅ **Over-aligned struct members** — `_Alignas(N)` / C23 `alignas(N)` / `__attribute__((aligned(N)))` on a
+>    member raises that member's offset (rounded up to N) AND the aggregate's own alignment (so `sizeof` grows),
+>    on **both rails** like Clang. The oracle's parser was DISCARDING a member-leading alignment specifier
+>    (`cparse._aggregate_body`) and `AggregateBuilder.build` ignored it; the twin's `p_struct_body` never even
+>    consumed member-leading attributes. Now the requested alignment threads through the member tuple into the
+>    layout (`max(req, packed?1:natural)`, so it survives `packed`), the integer-constant form is supported on
+>    both rails, and `_Alignas(type-name)` consistently routes to fallback (not a silent mis-align). The fuzzer
+>    emits `_Alignas(N)` on scalar members and `cfront_alignasmember.c` pins it; the LAYOUT differential
+>    (`_layout_ok`) validates each `sizeof`/`offsetof`.
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit

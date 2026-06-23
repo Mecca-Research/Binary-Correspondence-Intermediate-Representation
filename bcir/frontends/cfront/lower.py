@@ -1437,8 +1437,8 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     aggregates: dict[str, CType] = {}
     for tag, agg in unit.aggregates.items():
         b = AggregateBuilder(agg.kind, tag, packed=agg.packed, force_align=agg.align)
-        for tref, mname, width in agg.members:
-            b.members.append((mname, _resolve_member_type(tref, aggregates, abi), width))
+        for tref, mname, width, malign in agg.members:
+            b.members.append((mname, _resolve_member_type(tref, aggregates, abi), width, malign))
         aggregates[tag] = b.build()
 
     genv: dict[str, tuple] = {}                            # file-scope globals: name -> (rid, CType)

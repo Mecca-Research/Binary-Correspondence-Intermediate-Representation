@@ -205,8 +205,8 @@ class AggregateBuilder:
     ``force_align`` raises the aggregate alignment (`aligned(N)`/`alignas`)."""
     kind: str
     name: str
-    members: list = field(default_factory=list)   # (name, CType, bit_width)  (bit_width 0 == plain)
-    packed: bool = False
+    members: list = field(default_factory=list)   # (name, CType, bit_width, req_align)  bit_width 0 == plain;
+    packed: bool = False                           # req_align 0 == natural (else over-aligns the member)
     force_align: int = 0
 
     def build(self) -> CType:
@@ -222,11 +222,14 @@ class AggregateBuilder:
         bf_bits = 0               # bits already used in it
         bf_unit_size = 0
 
-        def malign(mtype: CType) -> int:
-            return 1 if self.packed else mtype.align
+        def malign(mtype: CType, req: int) -> int:
+            # `_Alignas(N)`/`aligned(N)` over-aligns a member (and survives `packed`); otherwise the
+            # member takes its natural alignment, which `packed` drops to 1.
+            return max(req, 1 if self.packed else mtype.align)
 
-        for mname, mtype, width in self.members:
-            align = max(align, malign(mtype))
+        for mname, mtype, width, req in self.members:
+            ma = malign(mtype, req)
+            align = max(align, ma)
             if width and self.kind == "struct":
                 unit_bits = mtype.size * 8
                 if self.packed:                                   # packed: pack bit-by-bit, NO unit reservation
@@ -242,7 +245,7 @@ class AggregateBuilder:
                 laid.append((mname, mtype, 0, 0, width))
             else:
                 bf_unit_off, bf_bits, bf_unit_size = None, 0, 0     # a plain member flushes the unit
-                a8 = malign(mtype) * 8
+                a8 = ma * 8
                 if dbits % a8:
                     dbits += a8 - (dbits % a8)
                 laid.append((mname, mtype, dbits // 8, 0, width))

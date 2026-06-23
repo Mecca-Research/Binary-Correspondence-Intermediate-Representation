@@ -429,11 +429,15 @@ static void attrs(CC *c,int *packed,int *aligned){
     if(is(c,"__attribute__")){c->i++;eat(c,"(");eat(c,"(");
       while(!is(c,")")&&!isk(c,T_END)&&!c->failed){
         if(is(c,"packed")||is(c,"__packed__")){*packed=1;c->i++;}
-        else if(is(c,"aligned")||is(c,"__aligned__")){c->i++;eat(c,"(");*aligned=(int)adv(c).v;eat(c,")");}
+        else if(is(c,"aligned")||is(c,"__aligned__")){c->i++;eat(c,"(");
+          if(!isk(c,T_INT)){fail(c,"aligned() needs an integer");return;} *aligned=(int)adv(c).v;eat(c,")");}
         else c->i++;
         if(is(c,","))c->i++;}
       eat(c,")");eat(c,")");
-    } else if(is(c,"alignas")||is(c,"_Alignas")){c->i++;eat(c,"(");*aligned=(int)adv(c).v;eat(c,")");}
+    } else if(is(c,"alignas")||is(c,"_Alignas")){c->i++;eat(c,"(");
+      /* only the integer-constant form `alignas(N)` is supported; `alignas(type)` routes to fallback
+       * (matching the oracle, which also rejects a non-integer operand) rather than silently mis-aligning. */
+      if(!isk(c,T_INT)){fail(c,"alignas() needs an integer");return;} *aligned=(int)adv(c).v;eat(c,")");}
     else break;
   }
 }
@@ -452,6 +456,8 @@ static int p_struct_body(CC *c) {
   if(!eat(c,"{"))return -1;
   long long dbits=0;int maxsz=0;   /* dbits: a bit cursor (Itanium/packed layout) */
   while(!is(c,"}")&&!c->failed){
+    int mpk=0,maln=0; attrs(c,&mpk,&maln);            /* member-leading `_Alignas(N)`/`aligned(N)`: over-aligns
+                                                       * every declarator off this specifier (mpk ignored) */
     bcir_ctype base;int si;if(p_type_base(c,&base,&si))return -1;
     for(;;){                                          /* one or more declarators off one specifier: */
       bcir_ctype ty=base; apply_stars(c,&ty);   /* per-declarator `*`: `int *p, q;` -> p ptr, q scalar */
@@ -469,6 +475,7 @@ static int p_struct_body(CC *c) {
        * `struct{int;struct Big t;}` puts t at the struct's align, not at sizeof(Big) (which over-pads). */
       int al = packed?1 : (ty.kind==1 && !ty.ptr_to_struct && si>=0) ? (c->s[si].align<1?1:c->s[si].align)
                         : (sz<1?1:sz);
+      if(maln>al) al=maln;                            /* `_Alignas(N)`/`aligned(N)` over-aligns (survives packed) */
       field *f=&S->f[S->nf++];
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
       idcpy(f->name,&nm);f->size=sz;f->access_bytes=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;

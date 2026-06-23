@@ -326,7 +326,8 @@ class _Parser:
         self.eat("PUNCT", "{")
         members = []
         while not self.at("PUNCT", "}"):
-            self._attributes()                            # member-leading alignas/attrs (consumed)
+            matt = self._attributes()                     # member-leading `_Alignas(N)`/`alignas(N)`/
+            malign = matt.get("aligned", 0)               # `__attribute__((aligned(N)))` -- over-aligns this member
             base = self._type_spec()
             while True:                                   # one or more declarators off one specifier:
                 tref, name = self._declarator(base)       #   `unsigned x, y, z;` / `unsigned a:3, b:5;`
@@ -334,7 +335,7 @@ class _Parser:
                 if self.at("PUNCT", ":"):                 # bitfield:  type name : width;
                     self.nxt()
                     width = parse_int_literal(self.eat("INT").text)
-                members.append((tref, name, width))
+                members.append((tref, name, width, malign))   # `malign` applies to every declarator here
                 if self.at("PUNCT", ","):                 # another member off the same specifier
                     self.nxt()
                     continue
