@@ -824,8 +824,7 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    float); and `creal`/`cimag` (real result) + `conj` (complex result) lower like a libm call
 >    (`c.call.libm:`, one `call`). `cfront_complex.c` pins `+ - *`, mixed-real promotion, a complex-returning
 >    in-unit call, a complex return, `__real__`/`__imag__`, and `creal`/`cimag`/`conj` — byte-exact vs Clang on
->    x86-64 AND aarch64 (qemu). Long-double complex, `_Imaginary`, and complex struct members are
->    follow-ons that both rails defer.
+>    x86-64 AND aarch64 (qemu). `_Imaginary` and complex struct members are follow-ons that both rails defer.
 >    - ✅ **Complex division `/`** (`cfront_complexdiv.c`) — `/` already rode the same `c.bin.div` claim and
 >      emitted native `a / b` (Clang's `__divdc3`, identical in the original AND the bcir_*); it only waited on
 >      the equivalence harness, which compared a complex result with `!=` (`nan != nan` is spuriously true when
@@ -847,6 +846,14 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >      when `I` is undeclared (defensive: any `<complex.h>` TU already makes `I` a macro, so a variable named
 >      `I` is not expressible). `re + im*I`, `z*I` (rotation), and the `_Complex_I` spelling -- byte-exact vs
 >      Clang on x86-64 AND aarch64 (qemu).
+>    - ✅ **Long-double complex** (`cfront_complexlong.c`) — `long double _Complex`, the widest complex (32
+>      bytes: a pair of the target's long double, 80-bit x87 on x86-64 / 128-bit quad on aarch64). Arithmetic
+>      `+ - * /`, the `l`-suffixed `<complex.h>` calls (`cabsl` real-valued; `cexpl`/`conjl` complex), and the
+>      imaginary unit all compose -- both rails emit identical `long double _Complex` source. Exposing it
+>      required hardening the equivalence harness: a `_Complex` result is now compared ELEMENT-wise with a
+>      nan-aware equality (`creall`/`cimagl`) instead of `memcmp`, which is immune to x87's indeterminate
+>      padding bytes (memcmp wrongly flagged them) while staying nan-safe. Byte-exact vs Clang on x86-64 AND
+>      aarch64 (qemu).
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit
