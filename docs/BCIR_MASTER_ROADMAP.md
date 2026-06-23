@@ -1310,8 +1310,10 @@ library-call surface: a `<math.h>` function lowers to a type-annotated scalar cl
 call, IEEE math delegated to the resident backend — incl. 64-bit-integer *results* like `llround` and
 pointer out-params like `frexp`/`modf`; `cfront_mathh{,_long,_mixed,_ptr}.c`), and ✅ **preprocessor
 comment stripping** (translation phase 3, on both rails — a `* /` inside a comment no longer glues to
-`*/`; `cfront_comments.c`) are all landed + dual-rail-gated. *Next (float follow-ons):* `long double`,
-`_Complex`, `_Decimal`. Then: variadic functions +
+`*/`; `cfront_comments.c`) are all landed + dual-rail-gated. *Float follow-ons:* ✅ **`long double`**
+(`cfront_longdouble.c`) and ✅ **`_Complex`** (now FEATURE-COMPLETE — division, transcendentals, the `I`
+literal, long-double complex, and complex struct members; §5.9 item 1k) are done; **`_Decimal`**
+(`_Decimal32/64/128`) is the remaining float type. Then: variadic functions +
 varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
 Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches
 Clang or emits a clear unsupported-feature diagnostic.
@@ -1397,6 +1399,73 @@ distribution, not only a research substrate.
 > Conformance scales with the phases: Csmith-style random differential, a GCC-torture / LLVM-C subset,
 > WG14/C23 feature tests, preprocessor torture, an ABI matrix (x86-64 / AArch64 / RISC-V), sanitizer
 > builds, lexer/parser/preprocessor fuzzers, real-world project builds, and miscompile-reduction tooling.
+
+### 5.10 C frontend — consolidated remaining-work inventory (the forks not yet taken)
+
+A single prioritized backlog of what stands between the current freestanding-driver-subset rail and a
+complete C23 compiler, distilled from a both-rail audit (oracle `frontends/cfront` + twin
+`bcir_cfront.c`) against the C23 grammar. Every (A) item below is a *consistent both-rails fallback*
+today — no silent miscompile, the `--fallback` contract holds and the oracle/twin agree on routing away —
+so each is purely additive. Grouped: (A) PR-sized language gaps, in rough leverage order; (B) the classic
+hard-compiler infrastructure (Phases 3–4); (C) hard caps.
+
+**(A) Language gaps — concrete, both-rail, PR-sized**
+
+1. **General address-of (`&` of an arbitrary lvalue)** — the highest-leverage gap. Only `&local` /
+   `&param` / `&(compound literal)` lower today; `&obj.member`, `&p->member`, `&arr[i]`, `&global`, `&*p`
+   route to fallback (oracle `lower._addr` "unsupported base expression"; twin "unsupported address-of
+   (only &local/&param/&(compound literal))", and "address-of a pointer/array member is a follow-on").
+   Unblocks C11 `atomic_compare_exchange` (the roadmap notes "C11 compare-exchange remains -- it needs the
+   address-of operator"), `&`-out-params (`scanf("%d", &x)`, `frexp`-style), and `&arr[i]` slicing.
+2. **Pointer values as fully first-class 8-byte objects** — finishing the 32-bit value-model legacy. Most
+   pointer paths are native (#ptrvalue/#ptrfield/#fieldderef), but a loaded function-pointer *value* and a
+   pointer carried through some non-address contexts still hit the 4-byte seam; this and item 1 are two
+   halves of the same model item.
+3. **Variadic *function definitions* + the varargs ABI** — `va_arg` works as a local, but *defining*
+   `int f(int n, ...)` and the platform varargs calling convention are unported (Phase 3) — the
+   printf-shim / HAL surface.
+4. **Aggregate-init / element-access completeness** — array compound literals `(int[]){…}` (struct/scalar
+   literals done — #complit); array-of-structs **non-scalar element fields** `arr[i].sub.x` /
+   `arr[i].bf` / `arr[i].arr[j]` (scalar element fields done — #aostruct); >3-D partial/over indexing.
+5. **Expression-context completeness** — a **member-lvalue-as-value** for a *non-scalar* target
+   (`(a.bf=v)+1`, an array-element / nested-member / deref / array-of-structs target; single-level scalar
+   done — #1g'); the **comma operator in general expression position** (the for-step form is done —
+   #commastep); **`typeof` of a call / address-of / ternary** operand; a bare assignment or `i++` as a
+   statement-expression *value*; and the stmt-expr **bitfield-terminal type decay** (§5.9 item 3,
+   fuzzer-guarded).
+6. **Type/declaration breadth** — `signed` as a *bare* type (`signed` == `signed int`, no base keyword;
+   both rails fall back); non-integer `alignas`/`aligned` (`alignas(type-name)`, `aligned(expr)`);
+   non-constant `enum` / `static` initializers (need a real constant-expression evaluator); VLAs
+   (`T a[n]`); computed `goto *p` (label-as-value `&&L`). Each pinned in `_FALLBACK_PROBES`.
+7. **Remaining float types** — `_Decimal32/64/128` (the last float follow-on). `_Imaginary` is out of
+   scope by parity (Clang doesn't implement it).
+
+**(B) Infrastructure — the classic hard-compiler work (Phases 3–4)**
+
+- **Full ABI matrix** — a broad calling-convention / aggregate-passing / varargs ABI on top of the landed
+  data-model layout (`--target`), cross-checked vs Clang on x86-64 / AArch64 / RISC-V.
+- **Native object/debug/unwind emission + linker/build-system integration** — today the rail emits
+  *verified C* and delegates codegen to a resident backend; real `.o` / DWARF / `.eh_frame` output and a
+  `bcir-cc`-as-`cc` link step are the gap (the gated native backend, §5.5).
+- **Hosted environment** — system-header / libc compatibility, the full compiler-builtin surface, and the
+  remaining preprocessor translation phases (twin `__has_embed` eval, `#embed`).
+- **Optimizer correctness bridge, C rail → MLIR/C++ law rail** — a cost-model bridge, arbitrary
+  claim-graph lowering, RCSP/thermal planning and cost-based multi-channel orchestration through C, IPO,
+  broader provenance through optimization. (The optimizer itself is COMPLETE on the law rail by the
+  two-truth line; only the C-rail bridge is owed.)
+- **Conformance + release** — Csmith / GCC-torture / WG14-C23 / preprocessor-torture differentials,
+  sanitizer builds, lexer/parser/pp fuzzers, real-project builds, miscompile reduction; `--emit-manifest`
+  (the last Phase-1 remnant); user docs + toolchain integration.
+
+**(C) Hard caps still present** — the twin's `MAXTOK` 16384-token source buffer and the per-struct `f[64]`
+member array (embedded, guarded), plus the 3-dimension array cap. The per-unit / per-function caps are
+already gone (#scale / #pscale, geometric growth).
+
+> **Not on this list (already complete):** the BCIR optimizer / verifier (R1–R18) / planner / hydration /
+> executor, the L1–L8 ladder, Clang-grade diagnostics, the data-model layout matrix, the `--fallback`
+> contract, and the full C99 `_Complex` set (§5.9 item 1k). The remaining work is conventional compiler
+> engineering — full semantics, a hosted environment, object/ABI generation, and conformance — **not** BCIR
+> research, and **not** the optimizer.
 
 ---
 
