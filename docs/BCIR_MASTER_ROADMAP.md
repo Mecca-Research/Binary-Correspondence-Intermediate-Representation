@@ -737,6 +737,20 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    on x86-64 AND aarch64 (qemu) for a direct member, a member-array element, and a nested-struct member;
 >    `cfront_charmember.c` pins it. (The x86-only differential fuzzer can't see this -- plain `char` is signed
 >    there -- so the cross-target conformance fixture is the guard.)
+> 1f. ✅ **Array-of-structs members** — a struct member that is an ARRAY of structs (`struct In arr[N];`),
+>    accessed element-then-field as `p->arr[i].field` (read + write, plain + compound `OP=`, runtime index,
+>    by-value local). The decisive layout fact: the element STRIDE is `sizeof(In)` but the access copies a
+>    FIELD-sized value at `member_off + i*sizeof(In) + offsetof(field)` -- stride != copy size, which the old
+>    single-element-size member-array claim couldn't express (both rails fell back at `arr[i].field`). Fix:
+>    the member-array `c.load`/`c.store` gains an optional element-STRIDE imm (load `imm[2]`, store `imm[3]`;
+>    `BCIR_CLAIM_MAX_IMM` 3->4) distinct from the field copy size, so ONE strided load/store lands the access
+>    (oracle `_lvalue` resolves `Member(Index(...))` via the new `_LV.stride`; the twin records the element
+>    struct in `field.elem_sidx` and descends via `elem_field`/`emit_member_index_field`). The nested-brace
+>    initializer `{ { {a,b},{c,d} }, z }` builds each element struct in place (twin `subagg_init_struct`,
+>    oracle `_init_subagg`). A bitfield/array/nested/pointer element field stays a consistent follow-on (both
+>    rails fall back). `cfront_aostruct.c` pins read/write/compound/runtime-index/float/signed-char/`_Bool`/init,
+>    verified byte-exact vs Clang on x86-64 AND aarch64 (qemu). Generator coverage is a follow-on (the access
+>    pattern `arr[i].field` needs a new lvalue list); the cross-target fixture is the guard for now.
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit

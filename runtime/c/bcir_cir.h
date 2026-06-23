@@ -48,7 +48,7 @@ typedef enum bcir_bounds { BCIR_BND_STRICT = 0, BCIR_BND_MASKED = 1, BCIR_BND_AS
 
 #define BCIR_CLAIM_MAX_RD 6
 #define BCIR_CLAIM_MAX_WR 2
-#define BCIR_CLAIM_MAX_IMM 3
+#define BCIR_CLAIM_MAX_IMM 4   /* off, size, flag, stride -- the array-of-structs `arr[i].field` store */
 #define BCIR_CIR_NAME 32
 
 /* shape kind of a resource (drives how the emitter takes its address). */

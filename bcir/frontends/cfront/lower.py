@@ -223,6 +223,9 @@ class _LV:
     bit_width: int = 0                     # bitfield width (0 == plain access)
     member: bool = False                   # a member-array element `s.arr[i]` (carries offset+size even
                                            # at offset 0, distinct from a plain `base[idx]`)
+    stride: int = 0                        # array-of-structs element stride (`s.arr[i].field`): the access
+                                           # lands at &base + byte_off + idx*stride but copies ct.size bytes
+                                           # (stride sizeof(element) != the field copy size). 0 == stride is ct.size.
     packed: bool = False                   # a bitfield in a PACKED struct: its storage unit spans only
                                            # ceil((bit_off+bit_width)/8) bytes, possibly straddling words
 
@@ -570,6 +573,16 @@ class _FuncLowerer:
             return _LV("mem", base_rid, elem, idx=lin, byte_off=byte_off,
                        member=isinstance(n, cast.Member) and not ptr_member)
         if isinstance(node, cast.Member):
+            if isinstance(node.base, cast.Index):                 # `arr[i].field` -- index into an ARRAY-OF-STRUCTS
+                el = self._lvalue(node.base)                      # member, then descend into the struct element.
+                if el.kind == "mem" and el.idx is not None and el.ct.kind in ("struct", "union"):
+                    agg = el.ct                                   # the element struct: add the field offset, keep
+                    ftype, foff, fbo, fbw = agg.field(node.field) # the runtime index, and stride by the element size
+                    if fbw or ftype.kind != "scalar":             # a bitfield / nested / array / pointer element
+                        raise CLowerError(                        # field is a follow-on -- both rails fall back
+                            f"array-of-structs non-scalar element field ('.{node.field}') is not yet supported")
+                    return _LV("mem", el.rid, ftype, idx=el.idx, byte_off=el.byte_off + foff,
+                               bit_off=fbo, bit_width=fbw, member=True, stride=agg.size, packed=agg.packed)
             base_rid, base_ct, base_off = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
             ftype, byte_off, bit_off, bit_w = agg.field(node.field)
@@ -946,7 +959,8 @@ class _FuncLowerer:
         # array `s.arr[i]` carries BOTH (member offset, element size) and an index -- so the emit lands
         # the element at `&s + member_off + i*elem_size`, distinct from a plain `base[idx]` (no imm).
         if lv.idx is not None:
-            imm = (lv.byte_off, max(1, lv.ct.size)) if lv.member else ()   # member array: even off 0
+            imm = ((lv.byte_off, max(1, lv.ct.size)) + ((lv.stride,) if lv.stride else ())   # member array: even
+                   if lv.member else ())                # off 0; array-of-structs adds the element stride (imm[2])
         else:
             imm = (lv.byte_off,) if lv.byte_off else ()
         return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=imm,
@@ -968,6 +982,10 @@ class _FuncLowerer:
             rd, imm = (lv.rid, lv.idx, v), ()
         if imm and lv.ct.name in ("_Bool", "bool"):           # a _Bool slot: flag it so the emit normalizes
             imm = imm + (1,)                                  # the stored value (any nonzero -> 1, §6.3.1.2)
+        if lv.stride:                                         # array-of-structs element store: land at
+            if len(imm) == 2:                                 # &base + off + idx*stride but copy ct.size bytes --
+                imm = imm + (0,)                              # keep (off,size,bool_flag,stride): pad the flag slot
+            imm = imm + (lv.stride,)                          # (0 == not a _Bool field) so stride is always imm[3]
         self._emit("c.store", Opcode.STORE, rd, (), imm=imm,
                    domain=Domain.MMIO if mmio else Domain.RAM, bounds="assumed_safe",
                    lane=Lane.H if mmio else Lane.U,
