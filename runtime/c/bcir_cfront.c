@@ -1154,6 +1154,15 @@ static int is_extern_variadic(const char *s, int n) {
   for(int i=0;F[i];i++) if((int)strlen(F[i])==n && !strncmp(F[i],s,(size_t)n)) return 1;
   return 0;
 }
+/* <stdlib.h> memory management -- external libc edges (emitted VERBATIM, opaque to R18, NOT bcir_-renamed),
+ * the seam the naked-pointer safety track (§5.12) hangs lifetime annotations on. Returns 1 for an allocator
+ * (malloc/calloc/realloc/aligned_alloc -> `void *`), 2 for `free` (-> void), 0 otherwise. */
+static int is_stdlib_alloc(const char *s, int n) {
+  static const char *A[]={"malloc","calloc","realloc","aligned_alloc",0};
+  for(int i=0;A[i];i++) if((int)strlen(A[i])==n && !strncmp(A[i],s,(size_t)n)) return 1;
+  if(n==4 && !strncmp("free",s,4)) return 2;
+  return 0;
+}
 /* GCC/Clang integer builtins -- emitted verbatim (no bcir_ twin, opaque to R18) with a fixed result type.
  * Returns the result's SIGNED size: -4 a signed int (the bit-count family + abs), -8 a signed long
  * (labs/llabs), or a POSITIVE unsigned size for byte-swap (2/4/8). 0 == not a recognized builtin. */
@@ -1238,6 +1247,21 @@ static uint32_t p_call(CC *c, const tok *name) {
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
     return t;                              /* not added to fn->calls (opaque to R18) */
+  }
+  int sal=is_stdlib_alloc(name->s,name->n);  /* <stdlib.h> malloc/calloc/realloc/free -- external libc edge */
+  if(sal){
+    if(sal==2){                              /* free(p) -> a void external call statement (opaque to R18) */
+      char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.libm.void:%.*s",name->n,name->s);
+      bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+      if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
+      return temp(c,4);                      /* a void result -- never read */
+    }
+    uint32_t t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_POINTER,"");  /* a `void *` result */
+    if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1]; tr->ptr_depth=1; }  /* no agg -> `void *` */
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.libm:%.*s",name->n,name->s);
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+    if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
+    return t;                                /* not added to fn->calls (opaque to R18) */
   }
   const bcir_ctype *rt=callee_ret(c,name);   /* type the result by the callee's return (earlier defs) */
   if(rt && rt->kind==0 && rt->size==0){      /* a void callee -> a bare call statement, no result temp */
@@ -2945,8 +2969,14 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         w+=snprintf(o+w,on-w,"%s%s = (%s)((char *)%s%s + %lld);\n",pt,rname(f,cl->wr[0],d),pt,amp,rname(f,cl->rd[0],a),(long long)cl->imm[0]);
       else
         w+=snprintf(o+w,on-w,"%s%s = &%s;\n",pt,rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
-    else if(!strncmp(cl->op,"c.call.libm:",12)){   /* a <math.h> call -> the real libm function */
-      w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+12);
+    else if(!strncmp(cl->op,"c.call.libm:",12)){   /* a <math.h> / <stdlib.h> call -> the real libc function */
+      const bcir_resource *wr=res_of(f,cl->wr[0]);            /* an allocator returns `void *`, not a scalar */
+      const char *rty=(wr&&wr->kind==BCIR_RK_POINTER)?"void *":tty(f,cl->wr[0]);
+      w+=snprintf(o+w,on-w,"%s %s = %s(",rty,rname(f,cl->wr[0],d),cl->op+12);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+w,on-w,");\n"); }
+    else if(!strncmp(cl->op,"c.call.libm.void:",17)){   /* a void external (free) -> a verbatim call statement */
+      w+=snprintf(o+w,on-w,"%s(",cl->op+17);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+w,on-w,");\n"); }
     else if(!strncmp(cl->op,"c.call.extern:",14)){  /* a printf/scanf-family external variadic -> verbatim */

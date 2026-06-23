@@ -272,11 +272,14 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         clear = ~(mask << bit_off) & ((1 << 64) - 1 if wide else 0xFFFFFFFF)
         return deftmp(c.wr[0], f"({ref(c.rd[0])} & {clear}{sfx}) | "
                                f"(({ref(c.rd[1])} & {mask}{sfx}) << {bit_off})")
-    if c.op.startswith("c.call.libm:"):                      # a <math.h> call -> the real libm function
-        callee = c.op.split(":", 1)[1]                       # (no bcir_ twin; the harness links -lm)
+    if c.op.startswith("c.call.libm:"):                      # a <math.h> / <stdlib.h> call -> the real function
+        callee = c.op.split(":", 1)[1]                       # (no bcir_ twin; the harness links -lm/libc)
         rt = lf.rid_types.get(c.wr[0])                       # declare at the true result width: a long
         ty = _cname(rt) if rt is not None else None          # return (lround) is not narrowed to uint32
         return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})", ty)
+    if c.op.startswith("c.call.libm.void:"):                 # a void external (free) -- verbatim statement, opaque
+        callee = c.op.split(":", 1)[1]
+        return f"{callee}({', '.join(ref(r) for r in c.rd)});"
     if c.op.startswith("c.call.extern:"):                    # a printf/scanf-family external variadic call
         callee = c.op.split(":", 1)[1]                       # emitted verbatim against <stdio.h>, returns int
         return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})", "int")

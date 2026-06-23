@@ -150,6 +150,11 @@ _EXTERN_VARIADIC = frozenset({
     "snprintf", "vsnprintf", "sprintf", "vsprintf", "printf", "fprintf", "vprintf",
     "vfprintf", "sscanf", "vsscanf", "scanf", "fscanf", "dprintf"})
 
+# <stdlib.h> memory management -- external libc edges (emitted VERBATIM, opaque to R18, NOT bcir_-renamed),
+# the seam the naked-pointer safety track (§5.12) hangs lifetime annotations on. The allocators return a
+# `void *` (assignable to any object pointer); `free` returns void.
+_STDLIB_ALLOC = frozenset({"malloc", "calloc", "realloc", "aligned_alloc"})
+
 # GCC/Clang integer builtins -- emitted verbatim (no bcir_ twin, opaque to R18) with a fixed result type.
 _BUILTIN_INT = frozenset({                            # the bit-count family + abs -> int
     "__builtin_popcount", "__builtin_popcountl", "__builtin_popcountll",
@@ -1364,6 +1369,12 @@ class _FuncLowerer:
         if node.callee in _EXTERN_VARIADIC and node.callee not in self.func_rets:
             t = self._temp(scalar("int", self.abi), f"ext_{node.callee}")   # a printf/scanf-family external
             return self._emit(f"c.call.extern:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # variadic
+        if node.callee in _STDLIB_ALLOC and node.callee not in self.func_rets:
+            t = self._temp(pointer(scalar("void")), f"mem_{node.callee}")   # malloc/calloc/realloc -> void *
+            return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # verbatim, opaque
+        if node.callee == "free" and node.callee not in self.func_rets:
+            self._emit("c.call.libm.void:free", Opcode.GEM_DISPATCH, actuals, ())   # void external (verbatim, opaque)
+            return _VOID_RID
         bt = _builtin_type(node.callee, self.abi)
         if bt is not None:                             # a GCC/Clang integer builtin -> verbatim, typed, opaque
             t = self._temp(bt, "blt")                  # the op carries the suffix (the `__builtin_` is re-added

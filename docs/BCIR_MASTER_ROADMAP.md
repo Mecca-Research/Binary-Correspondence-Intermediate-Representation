@@ -1611,6 +1611,11 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    keep the `--fallback`/quarantine contract (the existing route-to-LLVM, §5.9).
 3. **Frontend opt-in** — a "naked-looking" pointer syntax (plain C, or a `#pragma bcir bounds/lifetime`)
    that flips the rewrite from `assumed_safe` to `checked` under the hood, preserving programmer intent.
+   ✅ **Prerequisite DONE** (`cfront_stdlibmem.c`, #stdlibmem): `malloc`/`calloc`/`realloc`/`free` now lower
+   on both rails as external libc edges (emitted VERBATIM, opaque to R18, NOT bcir_-renamed) -- they were a
+   silent R18-dirty undefined-in-unit call before. The allocators return a `void *`, `free` returns void;
+   byte-exact vs Clang on x86-64 AND aarch64 (deterministic values, never an address). This is the seam the
+   lifetime annotation (the R21 `alloc`/`free` events) attaches to next.
 4. Extend **R1–R12 coverage** to the promoted-pointer paths (the laws already apply to the claim; the gap
    is the new `verify=bounds`/lifetime metadata, which the laws must learn to check) + the runtime guards
    the C backend emits (`verify_c_lowering`).
