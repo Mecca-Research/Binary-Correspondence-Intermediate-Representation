@@ -235,6 +235,20 @@ case "${ccsum}" in
   *ok=1*) echo "  PASS bcir-cc compile (${ccsum##*: })" ;;
   *) echo "  FAIL: bcir-cc compile: ${ccsum}"; exit 1 ;;
 esac
+
+# §5.12 bounds-quarantine guard, mirrored from runtime/c/bcir_quarantine.h. A masked (bounds-promoted)
+# array access emits `a[BCIR_CHK(rid,i,N)]`; emit a self-contained definition into any differential
+# harness that compiles the twin's --emit-c so it links standalone -- transparent in-bounds (so a
+# provably-bounded access is byte-identical to `a[i]`), with a non-aborting stub that is never reached.
+bounds_guard() {
+  cat <<'GUARD'
+#include <stddef.h>
+static void bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent)
+{ (void)rid; (void)index; (void)extent; }
+#define BCIR_CHK(rid, i, n) ((uint64_t)(i) < (uint64_t)(n) ? (size_t)(i) \
+    : (bcir_bounds_quarantine((uint64_t)(rid), (uint64_t)(i), (uint64_t)(n)), (size_t)0))
+GUARD
+}
 "${tmp}/bcir-cc" --emit-pack -o "${tmp}/uart.pack" "${C}/cfront_driver_uart.c" || { echo "  FAIL: bcir-cc --emit-pack"; exit 1; }
 [ "$(head -c4 "${tmp}/uart.pack")" = "BSPK" ] \
   && echo "  PASS bcir-cc --emit-pack (valid StreamPack)" \
@@ -927,7 +941,7 @@ marr="$("${tmp}/mar_h")"
 # flattened `m[lin]`; a wrong stride or size would diverge. Differential checks 2-D + 3-D fill/read.
 echo "[c-runtime] multi-dimensional local arrays (bcir-cc): emit == Clang (#localmd)"
 "${tmp}/bcir-cc" --emit-c "${C}/cfront_localmd.c" > "${tmp}/lmd_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
-{ echo '#include <stdint.h>'; echo '#include <stdio.h>'
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; bounds_guard
   sed -e 's/\bgrid_diag\b/grid_src/' -e 's/\bcube_sum\b/cube_src/' "${C}/cfront_localmd.c"
   cat "${tmp}/lmd_emit.c"
   cat <<'DRV'
@@ -1029,7 +1043,7 @@ lur="$("${tmp}/lu_h")"
 # store normalizes -- on a decl init, compound assignment, array element, parameter, and return.
 echo "[c-runtime] store into a _Bool normalizes to 0/1 (bcir-cc): emit == Clang (#boolnorm)"
 "${tmp}/bcir-cc" --emit-c "${C}/cfront_boolnorm.c" > "${tmp}/bn_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
-{ echo '#include <stdint.h>'; echo '#include <stdio.h>'
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; bounds_guard
   sed -e 's/\bbool_norm\b/bn_src/' -e 's/\bbool_mask\b/bm_src/' -e 's/\bbool_mod\b/bd_src/' \
       -e 's/\bbool_compound\b/bc_src/' -e 's/\bbool_array\b/ba_src/' "${C}/cfront_boolnorm.c"
   cat "${tmp}/bn_emit.c"
@@ -1211,7 +1225,7 @@ sbr="$("${tmp}/sb_h")"
 # the element's (width, signedness) and memcpy's the exact width. Unsigned elements unchanged.
 echo "[c-runtime] signed sub-int storage read sign-extends (bcir-cc): emit == Clang (#signedload)"
 "${tmp}/bcir-cc" --emit-c "${C}/cfront_signedload.c" > "${tmp}/sl_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
-{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'; bounds_guard
   sed -e 's/\bm_signtest\b/sl_ms_src/' -e 's/\bm_value\b/sl_mv_src/' -e 's/\bm_arr_signtest\b/sl_ma_src/' \
       -e 's/\bloc_signtest\b/sl_ls_src/' -e 's/\bloc_value\b/sl_lv_src/' -e 's/\buc_control\b/sl_uc_src/' \
       "${C}/cfront_signedload.c"
@@ -1545,7 +1559,7 @@ fccr="$("${tmp}/fcc_h")"
 # AS a scalar (a wide store would clobber); also pins a `long m` member store moving 8 bytes, not 4.
 echo "[c-runtime] per-declarator pointer/array in a multi-declarator decl -- int *p, q; (#multiptr)"
 "${tmp}/bcir-cc" --emit-c "${C}/cfront_multiptr.c" > "${tmp}/mpt_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
-{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'; bounds_guard
   sed -e 's/\bmd_local_mixed\b/md_local_mixed_s/' -e 's/\bmd_local_two_ptr\b/md_local_two_ptr_s/' \
       -e 's/\bmd_local_ptr_arr\b/md_local_ptr_arr_s/' -e 's/\bmd_struct\b/md_struct_s/' \
       "${C}/cfront_multiptr.c"
@@ -1660,7 +1674,7 @@ clr="$("${tmp}/cl_h")"
 # then rolled back (twin), as it is unevaluated.
 echo "[c-runtime] typeof -- typeof(type-name) / typeof(variable) / typeof(expr) (#typeof)"
 "${tmp}/bcir-cc" --emit-c "${C}/cfront_typeof.c" > "${tmp}/to_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
-{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'; bounds_guard
   sed -e 's/\bto_width\b/to_width_s/' -e 's/\bto_sign\b/to_sign_s/' -e 's/\bto_typename\b/to_typename_s/' \
       -e 's/\bto_ptr\b/to_ptr_s/' -e 's/\bto_struct\b/to_struct_s/' -e 's/\bto_unqual\b/to_unqual_s/' \
       -e 's/\bto_ebinop\b/to_ebinop_s/' -e 's/\bto_ebinsign\b/to_ebinsign_s/' -e 's/\bto_ecast\b/to_ecast_s/' \
@@ -1732,7 +1746,7 @@ var="$("${tmp}/va_h")"
 # accumulation it unblocks. The driver spans values that overflow 32 bits, so a truncating result diverges.
 echo "[c-runtime] wide/float compound assignment -- OP= / ++ / -- keeps width (#compoundwide)"
 "${tmp}/bcir-cc" --emit-c "${C}/cfront_compoundwide.c" > "${tmp}/cw_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
-{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'; echo '#include <stdarg.h>'
+{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'; echo '#include <stdarg.h>'; bounds_guard
   sed -e 's/\bl_local\b/l_local_s/g' -e 's/\bd_local\b/d_local_s/g' -e 's/\bl_inc\b/l_inc_s/g' \
       -e 's/\bl_member\b/l_member_s/g' -e 's/\bl_array\b/l_array_s/g' -e 's/\bl_ptr\b/l_ptr_s/g' \
       -e 's/\bd_vararg\b/d_vararg_s/g' -e 's/\bl_vararg\b/l_vararg_s/g' -e 's/\bdriver\b/driver_s/g' \
