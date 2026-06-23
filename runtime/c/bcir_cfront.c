@@ -1633,7 +1633,8 @@ static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs) {
 static uint32_t p_binexpr(CC *c){return p_binrhs(c,1,p_unary(c));}
 /* p_expr layers the ternary `cond ? then : els` over the binary expression: a scalar select claim
  * (both arms lowered, then chosen; the emitter renders the real `(cond ? a : b)`). */
-static uint32_t p_expr(CC *c){
+/* the conditional-expression level (binary + ternary). p_expr wraps this with the assignment level below. */
+static uint32_t p_cond(CC *c){
   uint32_t cond=p_binexpr(c);
   if(is(c,"?")){ c->i++; uint32_t a=p_expr(c); eat(c,":"); uint32_t b=p_expr(c);
     /* a select over ARITHMETIC arms carries their common type (usual arithmetic conversions), NOT a blanket
@@ -1669,6 +1670,45 @@ static venv *use_global(CC *c,const tok *id){
   env_add(c,id,rid,&g->ty,-1);
   return lookup(c,id);
 }
+/* Is the cursor at a NAMED-variable assignment `name = ...` / `name OP= ...`? Only a bare name -- a member /
+ * array / deref lvalue assignment used as a VALUE is a follow-on (both rails fall back). A single `=` is
+ * distinguished from `==` (a 2-char token); a compound `+= ... >>=` is an is_compound_op. */
+static int name_assign_ahead(CC *c){
+  return c->t[c->i].k==T_ID &&
+         ((c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='=') || is_compound_op(&c->t[c->i+1]));
+}
+/* The assignment-expression level (lowest precedence, RIGHT-associative): `name = assign` / `name OP= assign`
+ * evaluates to the assigned value (the named variable's storage), mirroring the statement forms in p_stmt and
+ * the oracle's _assign. Only a NAMED variable target (local/param/global) is handled as a value; anything else
+ * falls through to the conditional grammar (so a member/array-lvalue assignment used as a value falls back). */
+static uint32_t p_assign(CC *c){
+  if(name_assign_ahead(c)){
+    venv *v=lookup(c,&c->t[c->i]); if(!v) v=use_global(c,&c->t[c->i]);
+    if(v){
+      const tok *op=&c->t[c->i+1];
+      if(op->n==1 && op->s[0]=='='){                 /* name = rhs  (right-recursive: a = b = c) */
+        c->i+=2; uint32_t rhs=p_assign(c);
+        bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
+        return v->rid;
+      }
+      char ch=op->s[0];                              /* name OP= rhs */
+      if(v->type.kind==2 && (ch=='+'||ch=='-')){     /* pointer += / -= : a single pointer-arith claim */
+        c->i+=2; uint32_t rhs=p_assign(c);
+        char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.ptr%s",ch=='+'?"add":"sub");
+        bcir_claim *cl=new_claim(c,o,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
+        return v->rid;
+      }
+      c->i+=2; uint32_t rhs=p_assign(c);
+      const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+      uint32_t tmp=binop_result(c,suf,v->rid,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+      bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+      bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
+      return v->rid;
+    }
+  }
+  return p_cond(c);
+}
+static uint32_t p_expr(CC *c){ return p_assign(c); }
 /* a control-flow marker claim (no realization; the emitter renders it as a brace). carries an
  * optional condition rid as a read so the verifier resolves it and the emitter can test it. */
 static void marker(CC *c,const char *op,uint32_t cond,int has_cond){
@@ -2293,7 +2333,12 @@ static uint32_t p_stmt_expr(CC *c){
     c->fn->n_res=snap_res; c->fn->n_claims=snap_cl; c->rid=snap_rid; c->cid=snap_cid; c->cl_ctr=snap_clctr;
     c->fn->n_calls=snap_ncalls; c->nenv=snap_nenv;
     while(g_nstr>snap_nstr){ g_nstr--; free(g_strtab[g_nstr].s); g_strtab[g_nstr].s=NULL; }
-    c->i=last_save; result=p_expr(c); if(is(c,";")) c->i++;
+    c->i=last_save;
+    if(name_assign_ahead(c)){ fail(c,"assignment as a statement-expression value"); return temp(c,4); }
+    /* ^ a BARE assignment terminal `({ a=b; })` falls back (matches the oracle): the `i++`/`++i` desugar
+     *   shares the assignment AST, so its post/pre value would be guessed wrong. (A nested `({ (a=b)+1; })`
+     *   is NOT a bare assignment and re-parses fine.) */
+    result=p_expr(c); if(is(c,";")) c->i++;
   }
   eat(c,"}"); c->nenv=env_mark; eat(c,")");   /* pop the scope, close `)` */
   return result;
