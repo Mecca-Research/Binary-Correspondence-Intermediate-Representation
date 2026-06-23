@@ -1437,10 +1437,12 @@ hard-compiler infrastructure (Phases 3–4); (C) hard caps.
    #commastep); **`typeof` of a call / address-of / ternary** operand; a bare assignment or `i++` as a
    statement-expression *value*; and the stmt-expr **bitfield-terminal type decay** (§5.9 item 3,
    fuzzer-guarded).
-6. **Type/declaration breadth** — `signed` as a *bare* type (`signed` == `signed int`, no base keyword;
-   both rails fall back); non-integer `alignas`/`aligned` (`alignas(type-name)`, `aligned(expr)`);
-   non-constant `enum` / `static` initializers (need a real constant-expression evaluator); VLAs
-   (`T a[n]`); computed `goto *p` (label-as-value `&&L`). Each pinned in `_FALLBACK_PROBES`.
+6. **Type/declaration breadth** — ✅ **`signed` as a *bare* type** DONE (`cfront_signedbare.c`, #signedbare:
+   `signed` == `signed int`, no base keyword -- was an oracle/twin divergence, the twin treated `signed` as
+   a pure modifier and fell back; it now finalizes as `signed int` like `unsigned`, a following base still
+   overriding the width; byte-exact vs Clang on x86-64 + aarch64). *Remaining:* non-integer
+   `alignas`/`aligned` (`alignas(type-name)`, `aligned(expr)`); non-constant `enum` / `static` initializers
+   (need a real constant-expression evaluator); VLAs (`T a[n]`); computed `goto *p` (label-as-value `&&L`).
 7. **Remaining float types** — `_Decimal32/64/128` (the last float follow-on). `_Imaginary` is out of
    scope by parity (Clang doesn't implement it).
 
