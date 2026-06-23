@@ -49,8 +49,8 @@ def test_the_named_lp64_targets_have_identical_layouts():
 
 def _struct_long_char(abi) -> int:
     b = AggregateBuilder("struct", "S")
-    b.members.append(("a", scalar("long", abi), 0))
-    b.members.append(("b", scalar("char", abi), 0))
+    b.members.append(("a", scalar("long", abi), 0, 0))   # (name, CType, bit_width, req_align)
+    b.members.append(("b", scalar("char", abi), 0, 0))
     return b.build().size
 
 
