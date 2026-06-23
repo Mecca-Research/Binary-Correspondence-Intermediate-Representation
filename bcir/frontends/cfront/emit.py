@@ -363,13 +363,14 @@ def _base_ptr(lf: LoweredFunc, rid: int, ref) -> str:
 
 def _idx(lf: LoweredFunc, c, ref) -> str:
     """The index expression for a `base[idx]` access. A `masked` access (§5.12 bounds-promotion) into a
-    known-extent local/static array is wrapped in `BCIR_CHK(rid, idx, N)`: in-bounds returns idx
+    known-extent local/static array is wrapped in `BCIR_CHK(rid, idx, N, "site")`: in-bounds returns idx
     (transparent -> behaviour-identical to the raw `a[i]`), out-of-bounds calls the bounds-quarantine
-    handler. The numeric `rid` is the access provenance for the debugger. Any other access -> the bare index."""
+    handler. The numeric `rid` is the access provenance and `"<func>:<array>"` is the source-site handle
+    the debugger / ML-layer reads (a site->source table realized inline). Any other access -> the bare index."""
     idx = ref(c.rd[1])
     if c.bounds == "masked":
         rt = lf.rid_types.get(c.rd[0])
         n = getattr(rt, "count", 0) if rt is not None else 0
         if n:
-            return f"BCIR_CHK({c.rd[0]}, {idx}, {n}u)"
+            return f'BCIR_CHK({c.rd[0]}, {idx}, {n}u, "{lf.name}:{ref(c.rd[0])}")'
     return idx

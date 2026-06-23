@@ -1064,8 +1064,11 @@ class _FuncLowerer:
         promoted from `assumed_safe` (trusted) to `masked` (runtime-bounds-checked): the access declares that
         its index is checked against the known extent, the contract the quarantine handler discharges. A
         pointer/MMIO base (extent unknown / a device register) and a non-indexed access stay `assumed_safe`.
-        This is metadata only -- no emit/behaviour change; `verify` already defaults to `bounds`."""
-        if lv.kind == "mem" and lv.idx is not None and not lv.member and not self._mmio(lv.rid):
+        A string-LITERAL base stays `assumed_safe` too: it is anonymous read-only data (no named object the
+        debugger/ML-layer would surface), and the twin does not promote it -- so excluding it keeps the rails
+        in lockstep. This is metadata only -- no emit/behaviour change; `verify` already defaults to `bounds`."""
+        if (lv.kind == "mem" and lv.idx is not None and not lv.member
+                and not self._mmio(lv.rid) and lv.rid not in self.str_globals):
             rt = self.rtypes.get(lv.rid)
             if rt is not None and rt.kind == "array" and rt.count:
                 return "masked"                       # a known-extent local/static array -> runtime-bounds-checked

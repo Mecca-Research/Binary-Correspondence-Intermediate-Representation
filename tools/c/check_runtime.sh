@@ -243,10 +243,10 @@ esac
 bounds_guard() {
   cat <<'GUARD'
 #include <stddef.h>
-static void bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent)
-{ (void)rid; (void)index; (void)extent; }
-#define BCIR_CHK(rid, i, n) ((uint64_t)(i) < (uint64_t)(n) ? (size_t)(i) \
-    : (bcir_bounds_quarantine((uint64_t)(rid), (uint64_t)(i), (uint64_t)(n)), (size_t)0))
+static void bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent, const char *site)
+{ (void)rid; (void)index; (void)extent; (void)site; }
+#define BCIR_CHK(rid, i, n, site) ((uint64_t)(i) < (uint64_t)(n) ? (size_t)(i) \
+    : (bcir_bounds_quarantine((uint64_t)(rid), (uint64_t)(i), (uint64_t)(n), (site)), (size_t)0))
 GUARD
 }
 "${tmp}/bcir-cc" --emit-pack -o "${tmp}/uart.pack" "${C}/cfront_driver_uart.c" || { echo "  FAIL: bcir-cc --emit-pack"; exit 1; }
