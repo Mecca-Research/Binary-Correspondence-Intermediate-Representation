@@ -810,6 +810,59 @@ def verify_accuracy(module: Module) -> list[Diagnostic]:
     return diags
 
 
+_SYNC_TYPES = {"", "synchronous", "asynchronous", "mixed"}
+
+
+def verify_timing(module: Module) -> list[Diagnostic]:
+    """R19 (synchronous-timing legality) + R20 (clock-domain-crossing) over the OPTIONAL `claim.timing`
+    metadata -- the RTL / synchronous-timing track (§5.11). Claims that carry NO timing (the default,
+    `claim.timing is None`) are entirely unconstrained, so the whole scalar / C-frontend subset verifies
+    identically with these laws present (the non-disturbance invariant -- the additive seam, exactly like
+    R14/R15/R16 are vacuous for the scalar subset and R17 is vacuous without a declared tolerance).
+
+    R19: a declared timing block is internally consistent -- a valid `sync_type`; non-negative
+    `latency_cycles` / `setup_hold_margin` / `clock_frequency_mhz`; a synchronous claim carries a positive
+    clock; and the setup/hold margin fits within the stage's own latency budget (a window can't exceed it).
+    R20: a RAW dependency that crosses clock domains -- the producer that last WROTE a read RID declared a
+    different `clock_domain` than this consumer -- must be SYNCHRONIZED, i.e. the consumer declares
+    `sync_type='mixed'` OR a `barriered` hazard (the synchronizer / handshake, modeled on the existing
+    `!bcir.token` fork/await + barrier machinery). An unguarded crossing is a metastability risk."""
+    diags: list[Diagnostic] = []
+    writer_domain: dict[int, str] = {}          # rid -> clock_domain of the last claim that WROTE it
+    for ph in module.phases:
+        for claim in ph.claims:
+            tm = getattr(claim, "timing", None)
+            if tm is not None:
+                if tm.sync_type not in _SYNC_TYPES:
+                    diags.append(Diagnostic("R19", f"claim {claim.id}: unknown sync_type {tm.sync_type!r}"))
+                if tm.latency_cycles < 0:
+                    diags.append(Diagnostic("R19", f"claim {claim.id}: negative latency_cycles {tm.latency_cycles}"))
+                if tm.setup_hold_margin < 0:
+                    diags.append(Diagnostic("R19", f"claim {claim.id}: negative setup_hold_margin {tm.setup_hold_margin}"))
+                if tm.clock_frequency_mhz < 0:
+                    diags.append(Diagnostic("R19", f"claim {claim.id}: negative clock_frequency_mhz {tm.clock_frequency_mhz}"))
+                if tm.sync_type == "synchronous" and tm.clock_frequency_mhz <= 0:
+                    diags.append(Diagnostic("R19", f"claim {claim.id}: a synchronous claim needs a positive clock_frequency_mhz"))
+                if tm.latency_cycles > 0 and tm.setup_hold_margin > tm.latency_cycles:
+                    diags.append(Diagnostic(
+                        "R19", f"claim {claim.id}: setup_hold_margin {tm.setup_hold_margin} exceeds the "
+                        f"stage latency_cycles {tm.latency_cycles}"))
+                synchronized = (tm.sync_type == "mixed") or (claim.hazard == "barriered")
+                if tm.clock_domain and not synchronized:
+                    for rid in claim.rd:
+                        pdom = writer_domain.get(rid)
+                        if pdom and pdom != tm.clock_domain:
+                            diags.append(Diagnostic(
+                                "R20",
+                                f"claim {claim.id}: reads RID {rid} from clock domain {pdom!r} into "
+                                f"{tm.clock_domain!r} without a synchronizer (declare sync_type='mixed' or "
+                                f"a barriered hazard) -- an unguarded clock-domain crossing"))
+            dom = tm.clock_domain if tm is not None else ""
+            for rid in claim.wr:
+                writer_domain[rid] = dom
+    return diags
+
+
 def verify_smart_lowering(module: Module, pack=None, dvfs_plan=None,
                           placement=None) -> list[Diagnostic]:
     """Run the smart-lowering laws R14-R17 over whichever artifacts are provided
@@ -824,6 +877,7 @@ def verify_smart_lowering(module: Module, pack=None, dvfs_plan=None,
     if placement is not None:
         diags += verify_allocator(module, placement)
     diags += verify_accuracy(module)
+    diags += verify_timing(module)          # R19/R20 over optional claim.timing -- vacuous without it
     return diags
 
 
