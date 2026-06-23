@@ -69,7 +69,8 @@ _FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_m
           "cfront_calltyped.c", "cfront_complex.c", "cfront_complexdiv.c",   # + C99 _Complex (#complex) + complex `/`
           "cfront_complextrans.c",                                           # + complex transcendentals (#complextrans)
           "cfront_imagunit.c",                                               # + <complex.h> imaginary unit `I` (#imagunit)
-          "cfront_complexlong.c"]                                            # + long-double complex (#complexlong)
+          "cfront_complexlong.c",                                           # + long-double complex (#complexlong)
+          "cfront_complexmember.c"]                                          # + complex struct members (#complexmember)
 #   float/double: parity + emit + Clang ≡ (the
 #   integer StreamPack executor doesn't compute float; the math is delegated to the resident backend)
 _INIT = ["cfront_dispatch_table.c",   # designated initializers ([i]=v) for a file-scope dispatch table
