@@ -810,7 +810,9 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    scalar return + scalar params (the `_equiv` harness synthesizes a real `_fpN` target from those). The oracle
 >    also parses a direct funcptr LOCAL `int (*g)(int)`; `cfront_fnptrparam.c` pins the param form, byte-exact vs
 >    Clang on x86-64 AND aarch64 (qemu).
-> 1k. ✅ **C99 `_Complex` numbers** — `float`/`double _Complex` params, locals, and returns (either keyword
+> 1k. ✅ **C99 `_Complex` numbers** (FEATURE-COMPLETE: division, transcendentals, the `I` literal, long-double
+>    complex, and complex struct members all landed as the follow-ons below; only `_Imaginary`, which Clang
+>    doesn't implement, is out of scope) — `float`/`double _Complex` params, locals, and returns (either keyword
 >    order; the `complex` <complex.h> spelling; a bare `_Complex` == `double`). A complex value is modeled as a
 >    float SCALAR carrying an `is_complex` flag (NOT a 2-float aggregate, NOT a new kind): it rides every
 >    existing float path (binop result typing, no truncation, value delegated to the backend) and the emitter
@@ -824,7 +826,7 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    float); and `creal`/`cimag` (real result) + `conj` (complex result) lower like a libm call
 >    (`c.call.libm:`, one `call`). `cfront_complex.c` pins `+ - *`, mixed-real promotion, a complex-returning
 >    in-unit call, a complex return, `__real__`/`__imag__`, and `creal`/`cimag`/`conj` — byte-exact vs Clang on
->    x86-64 AND aarch64 (qemu). `_Imaginary` and complex struct members are follow-ons that both rails defer.
+>    x86-64 AND aarch64 (qemu). `_Imaginary` (which Clang doesn't implement) is the only remaining gap.
 >    - ✅ **Complex division `/`** (`cfront_complexdiv.c`) — `/` already rode the same `c.bin.div` claim and
 >      emitted native `a / b` (Clang's `__divdc3`, identical in the original AND the bcir_*); it only waited on
 >      the equivalence harness, which compared a complex result with `!=` (`nan != nan` is spuriously true when
@@ -854,6 +856,14 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >      nan-aware equality (`creall`/`cimagl`) instead of `memcmp`, which is immune to x87's indeterminate
 >      padding bytes (memcmp wrongly flagged them) while staying nan-safe. Byte-exact vs Clang on x86-64 AND
 >      aarch64 (qemu).
+>    - ✅ **Complex struct members** (`cfront_complexmember.c`) — a struct field of `_Complex` type, and a
+>      TWIN BUGFIX: the C twin previously typed a member load/store by SIZE, so a 16-byte `double _Complex`
+>      field was read into a 16-byte `long double` REAL temp (and stored by staging through `long double`) --
+>      a silent miscompile (the real part survived, the imaginary part was dropped), because the twin's
+>      `field` record carried `is_float` but no `is_complex`. The record now carries `is_complex`, so a member
+>      loads into a complex temp and stores as the complex pair, matching the oracle. Member read, native
+>      complex arithmetic on members, a member store (struct build), a `<complex.h>` call on a member, and a
+>      complex member round-tripped through a by-value struct -- byte-exact vs Clang on x86-64 AND aarch64.
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit
