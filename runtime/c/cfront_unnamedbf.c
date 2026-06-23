@@ -16,9 +16,10 @@ struct Reg {
 };
 
 struct Split {
-    char     c;               /* offset 0 */
-    int      : 0;             /* zero-width int: bumps the cursor to the next int boundary, NOT the struct align */
-    char     d;               /* offset 4 (struct stays align 1, sizeof 5) */
+    signed char c;            /* offset 0 (explicitly signed -> int8_t on every target) */
+    int      : 0;             /* zero-width int: bumps the cursor to the next int boundary */
+    signed char d;            /* offset 4 (x86-64: struct align 1, sizeof 5; the zero-width's int alignment is
+                               * x86-64 vs AArch64 ABI-divergent but BENIGN -- the field offsets coincide) */
 };
 
 int64_t unnamed_rmw(struct Reg *p, struct Split *q, int v)
