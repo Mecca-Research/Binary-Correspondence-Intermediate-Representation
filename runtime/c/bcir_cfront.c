@@ -449,16 +449,44 @@ static int p_struct_body(CC *c) {
   c->i++; int packed=0,aligned=0; attrs(c,&packed,&aligned);
   CC_ENSURE(c->s, c->ns, c->cap_s);
   if(c->ns>=c->cap_s){ fail(c,"too many struct definitions"); return -1; }
-  sdef *S=&c->s[c->ns]; S->nf=0; S->align=1; S->is_union=is_union;
+  int my=c->ns++;                       /* claim our slot NOW: an inline aggregate member recurses into
+                                         * p_struct_body and must take a LATER slot (and may realloc c->s). */
+  sdef *S=&c->s[my]; S->nf=0; S->align=1; S->is_union=is_union;
   if(isk(c,T_ID)&&!is(c,"{")){tok tag=adv(c);idcpy(S->tag,&tag);}
-  else snprintf(S->tag,sizeof S->tag,"$anon%d",c->ns);   /* anonymous: synth a unique tag */
+  else snprintf(S->tag,sizeof S->tag,"$anon%d",my);   /* anonymous: synth a unique tag */
   attrs(c,&packed,&aligned);
   if(!eat(c,"{"))return -1;
   long long dbits=0;int maxsz=0;   /* dbits: a bit cursor (Itanium/packed layout) */
   while(!is(c,"}")&&!c->failed){
     int mpk=0,maln=0; attrs(c,&mpk,&maln);            /* member-leading `_Alignas(N)`/`aligned(N)`: over-aligns
                                                        * every declarator off this specifier (mpk ignored) */
-    bcir_ctype base;int si;if(p_type_base(c,&base,&si))return -1;
+    /* an INLINE aggregate member `struct {...}` / `union {...}`: parse + register its body, then either PROMOTE
+     * its leaves into S (ANONYMOUS: no declarator) or use it as a value-struct type for a named member. */
+    bcir_ctype base; int si=-1; int inl=0;
+    if(is(c,"struct")||is(c,"union")){
+      int save=c->i,pk_=0,al_=0; c->i++; attrs(c,&pk_,&al_);
+      if(isk(c,T_ID)&&!is(c,"{"))c->i++; attrs(c,&pk_,&al_);
+      int isdef=is(c,"{"); c->i=save;
+      if(isdef){ si=p_struct_body(c); if(si<0)return -1; S=&c->s[my];   /* re-fetch: c->s may have realloced */
+        memset(&base,0,sizeof base); base.kind=1; base.size=c->s[si].size; base.signd=1;
+        base.is_union=(uint8_t)c->s[si].is_union; snprintf(base.tag,sizeof base.tag,"%s",c->s[si].tag); inl=1; }
+    }
+    if(inl && is(c,";")){                             /* ANONYMOUS member: promote A's leaves at the anon offset */
+      sdef *A=&c->s[si];
+      int al = mpk?1:(A->align<1?1:A->align); if(maln>al)al=maln;
+      if(al>S->align)S->align=al;
+      int anon_off=0;
+      if(!is_union){ long long a8=(long long)al*8; if(dbits%a8)dbits+=a8-(dbits%a8);
+                     anon_off=(int)(dbits/8); dbits+=(long long)A->size*8; }
+      if(A->size>maxsz)maxsz=A->size;
+      for(int k=0;k<A->nf;k++){
+        if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }
+        field nf=A->f[k]; nf.byte_off+=anon_off; S->f[S->nf++]=nf;   /* shift each leaf's offset into S */
+      }
+      eat(c,";");
+      continue;
+    }
+    if(!inl && p_type_base(c,&base,&si))return -1;
     for(;;){                                          /* one or more declarators off one specifier: */
       bcir_ctype ty=base; apply_stars(c,&ty);   /* per-declarator `*`: `int *p, q;` -> p ptr, q scalar */
       if(!isk(c,T_ID)){ fail(c,"expected member name"); return -1; }   /* `unsigned x, y, z;` etc. */
@@ -508,7 +536,7 @@ static int p_struct_body(CC *c) {
   int salign = packed ? 1 : S->align; if(aligned>salign) salign=aligned; S->align=salign;
   int total = is_union ? maxsz : (int)((dbits+7)/8);   /* union size = the widest member; struct: bits->bytes */
   if(total%salign)total+=salign-(total%salign); S->size=total;
-  return c->ns++;
+  return my;
 }
 
 /* --- enum + typedef (resolved at parse time so the claim graph carries the folded result) --- */

@@ -230,6 +230,18 @@ class AggregateBuilder:
         for mname, mtype, width, req in self.members:
             ma = malign(mtype, req)
             align = max(align, ma)
+            if mname == "":                                       # an ANONYMOUS struct/union member: it occupies
+                if self.kind == "union":                          # space as a unit, but its leaf fields PROMOTE
+                    off = 0                                        # into this aggregate's namespace at shifted
+                else:                                             # offsets (so `p->x` resolves directly).
+                    a8 = ma * 8
+                    if dbits % a8:
+                        dbits += a8 - (dbits % a8)
+                    off = dbits // 8
+                    dbits += mtype.size * 8
+                for fn, fty, fbo, fbit, fbw in mtype.fields:
+                    laid.append((fn, fty, off + fbo, fbit, fbw))
+                continue
             if width and self.kind == "struct":
                 unit_bits = mtype.size * 8
                 if self.packed:                                   # packed: pack bit-by-bit, NO unit reservation

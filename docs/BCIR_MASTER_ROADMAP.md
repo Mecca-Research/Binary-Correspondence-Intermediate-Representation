@@ -704,6 +704,20 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    both rails, and `_Alignas(type-name)` consistently routes to fallback (not a silent mis-align). The fuzzer
 >    emits `_Alignas(N)` on scalar members and `cfront_alignasmember.c` pins it; the LAYOUT differential
 >    (`_layout_ok`) validates each `sizeof`/`offsetof`.
+> 1c. ✅ **Anonymous struct/union members** (C11 6.7.2.1) — a `struct {...};` / `union {...};` with no member
+>    name inside a struct: its members PROMOTE into the enclosing struct's namespace, read/written directly as
+>    `p->x` (an anonymous union's members alias at the union's offset; an anonymous struct's lay out in place;
+>    they may nest). Both rails were route-to-fallback (parse error). Now both **flatten** the anonymous
+>    aggregate's leaf fields into the parent's field table at shifted offsets while the parent's size/alignment
+>    reserves the aggregate as a unit, so member lookup, layout (`sizeof`/`offsetof`) and RMW all match Clang;
+>    a NAMED inline aggregate (`struct {...} sub;`) stays a normal nested member. Oracle: `cparse._aggregate_body`
+>    parses an inline aggregate member (registering a synthesized `$anonN` tag via the unit ref) and marks an
+>    anonymous one with an empty name; `AggregateBuilder.build` splices its leaves. Twin: `p_struct_body` claims
+>    its sdef slot up-front (so a recursive inline-body parse takes a later slot + survives a realloc), parses
+>    the inline body, and copies the anonymous aggregate's fields into the parent at the shifted offset.
+>    `cfront_anonmember.c` pins an aliasing-union + nested-anon + named-inline case; the fuzzer emits anonymous
+>    **struct** members (independent leaves; the union-aliasing case stays in the fixture). `_layout_ok` skips
+>    the non-nameable `$anon` tags (the parent's `offsetof` asserts validate the promoted leaves).
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit
