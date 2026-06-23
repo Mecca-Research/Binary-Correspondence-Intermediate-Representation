@@ -1058,6 +1058,19 @@ class _FuncLowerer:
                               imm=(lv.bit_off, lv.bit_width, int(signed)))
         return unit
 
+    def _access_bounds(self, lv: "_LV") -> str:
+        """The bounds contract for a load/store (§5.12 bounds-promotion). An INDEXED access into a
+        LOCAL/STATIC array OBJECT -- whose extent is statically RECOVERABLE from the resource shape -- is
+        promoted from `assumed_safe` (trusted) to `masked` (runtime-bounds-checked): the access declares that
+        its index is checked against the known extent, the contract the quarantine handler discharges. A
+        pointer/MMIO base (extent unknown / a device register) and a non-indexed access stay `assumed_safe`.
+        This is metadata only -- no emit/behaviour change; `verify` already defaults to `bounds`."""
+        if lv.kind == "mem" and lv.idx is not None and not lv.member and not self._mmio(lv.rid):
+            rt = self.rtypes.get(lv.rid)
+            if rt is not None and rt.kind == "array" and rt.count:
+                return "masked"                       # a known-extent local/static array -> runtime-bounds-checked
+        return "assumed_safe"
+
     def _load_unit(self, lv: "_LV") -> int:
         if lv.bit_width:
             # a bitfield's storage unit is read as an unsigned wide enough to hold it (a `long long` field, or
@@ -1069,7 +1082,7 @@ class _FuncLowerer:
             rd = (lv.rid,) if lv.idx is None else (lv.rid, lv.idx)
             mmio = self._mmio(lv.rid)
             return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=(lv.byte_off, ub),
-                              domain=Domain.MMIO if mmio else Domain.RAM, bounds="assumed_safe",
+                              domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv),
                               lane=Lane.H if mmio else Lane.U, hazard="barriered" if mmio else "unique")
         unit_ct = lv.ct
         t = self._temp(unit_ct, "ld")
@@ -1085,7 +1098,7 @@ class _FuncLowerer:
         else:
             imm = (lv.byte_off,) if lv.byte_off else ()
         return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=imm,
-                          domain=Domain.MMIO if mmio else Domain.RAM, bounds="assumed_safe",
+                          domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv),
                           lane=Lane.H if mmio else Lane.U,
                           hazard="barriered" if mmio else "unique")
 
@@ -1108,7 +1121,7 @@ class _FuncLowerer:
                 imm = imm + (0,)                              # keep (off,size,bool_flag,stride): pad the flag slot
             imm = imm + (lv.stride,)                          # (0 == not a _Bool field) so stride is always imm[3]
         self._emit("c.store", Opcode.STORE, rd, (), imm=imm,
-                   domain=Domain.MMIO if mmio else Domain.RAM, bounds="assumed_safe",
+                   domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv),
                    lane=Lane.H if mmio else Lane.U,
                    hazard="barriered" if mmio else "unique")
 
