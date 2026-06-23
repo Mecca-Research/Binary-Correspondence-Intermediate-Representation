@@ -1411,12 +1411,16 @@ hard-compiler infrastructure (Phases 3–4); (C) hard caps.
 
 **(A) Language gaps — concrete, both-rail, PR-sized**
 
-1. **General address-of (`&` of an arbitrary lvalue)** — the highest-leverage gap. Only `&local` /
-   `&param` / `&(compound literal)` lower today; `&obj.member`, `&p->member`, `&arr[i]`, `&global`, `&*p`
-   route to fallback (oracle `lower._addr` "unsupported base expression"; twin "unsupported address-of
-   (only &local/&param/&(compound literal))", and "address-of a pointer/array member is a follow-on").
-   Unblocks C11 `atomic_compare_exchange` (the roadmap notes "C11 compare-exchange remains -- it needs the
-   address-of operator"), `&`-out-params (`scanf("%d", &x)`, `frexp`-style), and `&arr[i]` slicing.
+1. ✅ **General address-of (`&` of an arbitrary lvalue)** (`cfront_addrof.c`, #addrof) — DONE for the
+   common forms, and a TWIN+ORACLE BUGFIX. `&var`, `&s.member`, `&s->member`, `&*p`, and `&arr[i]` now
+   lower on both rails through the same base-pointer logic loads/stores use (`_base_ptr`: a POINTER base
+   decays to `(char *)s`, a VALUE base is addressed as `(char *)&s`). This FIXED two silent oracle
+   miscompiles -- `&s->member` was emitting `&s + off` (the address of the pointer VARIABLE, not
+   `(char *)s + off`), and `&*q` took the address of a loaded COPY -- while the twin had fallen back on
+   both, and `&arr[i]` failed on both. `&bit-field` is correctly rejected (illegal in C). Parity-exact,
+   byte-exact vs Clang on x86-64 AND aarch64 (qemu), fuzzer-clean. Unblocks C11 `atomic_compare_exchange`
+   and `&`-out-params. *Follow-on (still both-rails fallback):* a member-array / array-of-structs element
+   address (`&s.arr[i]`, `&arr[i].field`) and a pointer/array member (`&s->ptr`).
 2. **Pointer values as fully first-class 8-byte objects** — finishing the 32-bit value-model legacy. Most
    pointer paths are native (#ptrvalue/#ptrfield/#fieldderef), but a loaded function-pointer *value* and a
    pointer carried through some non-address contexts still hit the 4-byte seam; this and item 1 are two
@@ -1659,11 +1663,12 @@ In recommended order — each is gated by the generated differential harness + F
     generator that gives each hardware **channel** its real driver), **Phase F** (C++, then a
     Python transpiler→frontend), and **Phase L** (the ML library, *compressed* from the
     GCC/PyTorch/TF/NumPy/… ecosystem onto the claim-graph + channel model).
-13. **➡ C-frontend completeness — general address-of `&` (§5.10 A1).** The highest-leverage *language*
-    gap and the keystone for the pointer model: `&obj.member` / `&arr[i]` / `&global` / `&p->member`
-    lower today only as `&local`/`&param`/`&(compound literal)`. Unblocks **C11 `atomic_compare_exchange`**
-    and `&`-out-params. Prototype in the oracle, parity-gate, port to the twin — byte-exact vs Clang on
-    x86-64 + aarch64, the discipline every §5.9 item already follows.
+13. ✅ **C-frontend completeness — general address-of `&` (§5.10 A1).** DONE (`cfront_addrof.c`, #addrof):
+    `&var` / `&s.member` / `&s->member` / `&*p` / `&arr[i]` lower on both rails (and fixed two silent
+    oracle miscompiles of `&s->member` / `&*p`), byte-exact vs Clang on x86-64 + aarch64, fuzzer-clean.
+    Unblocks **C11 `atomic_compare_exchange`** and `&`-out-params. (Member-array / array-of-structs element
+    address + a pointer/array member remain a both-rails follow-on.) **Next ➡** C11 compare-exchange now
+    that `&` is available.
 14. **➡ Naked-pointer safety promotion (§5.12).** Land the **bounds-promotion pass** (`assumed_safe →
     masked` with an emitted `verify=bounds` guard where an extent is recoverable; cost already modeled by
     the 12th axis) and a **lifetime law (candidate R21)** over generation tags + `-bcir-alloc-pool`
