@@ -38,6 +38,24 @@ class Resource:
         return n
 
 
+@dataclass(frozen=True)
+class Timing:
+    """OPTIONAL RTL / synchronous-timing metadata on a claim (§5.11). Every field defaults to the
+    'unspecified' value, so a claim with no timing concern carries none (`Claim.timing is None`) and the
+    timing laws (R19/R20) are vacuous over it -- the whole scalar / C-frontend subset is unaffected (the
+    non-disturbance invariant). The fields are architecture-AGNOSTIC; the channel / lowering layer
+    interprets them per target (CPU microarchitectural cost vs FPGA/ASIC register-transfer)."""
+
+    clock_domain: str = ""               # the clock net / frequency domain ("" = the implicit default)
+    latency_cycles: int = 0              # expected stage latency in cycles (0 = unspecified)
+    min_throughput_q16: int = 0          # items per cycle, Q16 fixed point (0 = unspecified)
+    critical_path: bool = False          # is this claim on the longest timing path?
+    power_domain: str = ""               # the power / voltage domain ("" = the implicit default)
+    sync_type: str = ""                  # "" | "synchronous" | "asynchronous" | "mixed"
+    clock_frequency_mhz: int = 0         # target clock (0 = unspecified)
+    setup_hold_margin: int = 0           # extra setup/hold safety margin in cycles
+
+
 @dataclass
 class Claim:
     """The primitive object of BCIR (LangRef Sec. 5): op + resources + contract."""
@@ -63,6 +81,8 @@ class Claim:
     tolerance_ulp: int = 0           # accuracy contract: 0 = none; >0 = max Q8-ULP error (R17)
     dynamic: bool = False            # True: `count` is a static UPPER BOUND (dynamic shape);
                                      # the plan is valid + worst-case-priced for any actual <= count
+    timing: Optional["Timing"] = None  # OPTIONAL RTL/synchronous-timing metadata (§5.11); None = the
+                                     # vacuous default (no R19/R20 constraint -- the whole scalar subset)
 
     def io_rids(self) -> tuple[int, ...]:
         return tuple(self.rd) + tuple(self.wr)

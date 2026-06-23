@@ -1537,8 +1537,17 @@ architecture-specific rules in the lowering/driver layer":
   (the same seam that ingests measured Θ), feeding back measured critical paths as `#bcir.timing` values.
 
 **Phased build (each gated by Python↔production parity, the prototype-then-port discipline §3):**
-1. `#bcir.timing` attribute + R19/R20 as **vacuous** laws (oracle first, parity gate, then
-   `BCIRVerifyPass.cpp`) — provably a no-op on the whole existing corpus (the C compiler unchanged).
+1. ✅ **Oracle prototype DONE** (`bcir/model/graph.py::Timing` + `bcir/verify::verify_timing`,
+   `test_timing_laws.py`): an OPTIONAL `Claim.timing` (`Timing` dataclass, `None` default — modelled on the
+   R17 `precision`/`tolerance_ulp` optional fields, and EXCLUDED from the R13 provenance allow-list so it
+   cannot perturb a digest) + the vacuous laws **R19** (synchronous-timing legality: a valid `sync_type`,
+   non-negative latency / margin / clock, a synchronous claim needs a clock, the setup/hold margin fits the
+   stage latency) and **R20** (clock-domain-crossing: a RAW dependency whose producer declared a different
+   `clock_domain` must be synchronized via `sync_type='mixed'` or a `barriered` hazard). **Non-disturbance
+   PROVEN:** the whole thorough corpus (834 tests, incl. the provenance digest + every optimizer/verify law)
+   passes byte-identically with R19/R20 wired into `verify_smart_lowering` — the C compiler and every plan/
+   score/verdict are unaffected, since no existing claim carries timing. *Next:* port `Timing` + R19/R20 to
+   the MLIR dialect (`#bcir.timing` `OptionalAttr`) + `BCIRVerifyPass.cpp` under the parity gate.
 2. The critical-path **context factor** + the **`sync`-axis CDC cost** (reuse `couple()`), with an RCSP
    cap on the (sync, power) pair so a clock/power budget can make a plan infeasible — the verify-cost-axis
    precedent (§5.1 item 2).
@@ -1674,13 +1683,13 @@ In recommended order — each is gated by the generated differential harness + F
     the 12th axis) and a **lifetime law (candidate R21)** over generation tags + `-bcir-alloc-pool`
     liveness. Purely additive — every access is `verify=none` (cost 0) today, so existing scores are
     unchanged; dual-rail + `--fallback`/quarantine for the unprovable.
-15. **➡ RTL/synchronous-timing track, step 1 (§5.11).** The `#bcir.timing` `OptionalAttr` + the
-    **vacuous** laws R19 (synchronous-timing legality) / R20 (clock-domain-crossing), oracle-first then
-    `BCIRVerifyPass.cpp`. The exit criterion is a *proof of non-disturbance*: the whole existing corpus
-    (esp. the C-compiler fixtures) plans and verifies **byte-identically** with the laws present but no
-    claim opting in — establishing the additive seam before any cost-coupling or scheduling lands. Then
-    steps 2–5 of §5.11 (critical-path context factor + `sync`-axis CDC, `-bcir-schedule-clocked`, CDC over
-    `!bcir.token`, the x86/aarch64 then FPGA/ASIC channel interpretation).
+15. ◑ **RTL/synchronous-timing track, step 1 (§5.11).** **Oracle prototype DONE** (`Timing` +
+    `verify_timing` R19/R20, `test_timing_laws.py`): the **non-disturbance proof holds** — the whole
+    thorough corpus (834 tests, incl. the C-compiler fixtures + the provenance digest) verifies
+    byte-identically with R19/R20 wired in, since no existing claim opts into timing, establishing the
+    additive seam. **Next ➡** port `Timing`/R19/R20 to the MLIR `#bcir.timing` `OptionalAttr` +
+    `BCIRVerifyPass.cpp` (parity-gated), then steps 2–5 of §5.11 (critical-path context factor + `sync`-axis
+    CDC, `-bcir-schedule-clocked`, CDC over `!bcir.token`, the x86/aarch64 then FPGA/ASIC channel interp).
 
 ---
 
