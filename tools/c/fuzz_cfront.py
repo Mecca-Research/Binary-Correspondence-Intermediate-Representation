@@ -670,7 +670,17 @@ class Gen:
                 return f"{pre}{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};"
             members = members + anon                          # promoted leaves are direct members for ACCESS
             self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None, arrs)
-            body = " ".join(_mdef(mn, c) for mn, c in members if mn not in anon_names)
+            frags = [_mdef(mn, c) for mn, c in members if mn not in anon_names]
+            # inject UNNAMED / ZERO-WIDTH bitfields `T : N;` / `T : 0;`: layout-only padding with NO declarator --
+            # a non-zero one reserves N bits (shifting later fields), a zero-width one bumps the next bitfield to
+            # the next storage-unit boundary, and neither raises the struct's alignment. Not accessible, so
+            # source-only (not in `members`); the sizeof/offsetof LAYOUT differential validates the shift. Width
+            # <= 8 stays valid for every chosen unit type. Non-packed structs only.
+            if kind == "struct" and not packed and r.random() < 0.3:
+                for _ in range(r.randint(1, 2)):
+                    ut = r.choice(["unsigned", "unsigned short", "unsigned char"])
+                    frags.insert(r.randint(0, len(frags)), f"{ut} : {r.choice([0, 1, 2, 3, 5])};")
+            body = " ".join(frags)
             if anon:                                          # wrap the promoted leaves in an anonymous struct
                 body += " struct { " + " ".join(f"{_ST[c][0]} {mn};" for mn, c in anon) + " };"
             body += "".join(f" {_ST[c][0]} {an}[{_ARRSZ // 2}];" for an, c in arrs)

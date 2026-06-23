@@ -229,6 +229,19 @@ class AggregateBuilder:
 
         for mname, mtype, width, req in self.members:
             ma = malign(mtype, req)
+            if mname == "" and mtype.kind == "scalar":            # an UNNAMED (`int :3`) or ZERO-WIDTH (`int :0`)
+                if self.kind == "struct":                         # bitfield: positions the cursor but is NOT a
+                    unit_bits = mtype.size * 8                     # field and does NOT raise the struct's alignment.
+                    if width == 0:                                # zero-width -> bump to the next unit boundary
+                        if dbits % unit_bits:
+                            dbits += unit_bits - (dbits % unit_bits)
+                    elif self.packed:
+                        dbits += width
+                    else:
+                        if (dbits % unit_bits) + width > unit_bits:
+                            dbits += unit_bits - (dbits % unit_bits)
+                        dbits += width
+                continue
             align = max(align, ma)
             if mname == "":                                       # an ANONYMOUS struct/union member: it occupies
                 if self.kind == "union":                          # space as a unit, but its leaf fields PROMOTE
