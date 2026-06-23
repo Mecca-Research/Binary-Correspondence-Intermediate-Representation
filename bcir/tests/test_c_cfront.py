@@ -54,6 +54,7 @@ _ABI = ["cfront_structret.c", "cfront_structcall.c",  # L8: struct return-by-val
         "cfront_aostruct.c",                            # + ARRAY-OF-STRUCTS members p->arr[i].field (strided)
         "cfront_fnptrmember.c",                         # + funcptr members set from NAMED functions (dispatch)
         "cfront_assignexpr.c",                          # + assignment as an EXPRESSION (a=b=c, if((x=f()))...)
+        "cfront_memassignexpr.c",                       # + member-lvalue assignment as a value ((p->x=v)+1)
         "cfront_signedload.c",                         # + signed sub-int member/array read sign-extension
         "cfront_restrict.c",                           # + restrict/__restrict pointer params (consumed hint)
         "cfront_shiftassign.c",                        # + <<= / >>= shift compound-assign (scalar/member/array)
