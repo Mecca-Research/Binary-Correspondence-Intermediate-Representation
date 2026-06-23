@@ -653,14 +653,26 @@ class Gen:
                 for mn, c in members:
                     if c in _ST and c not in _BF and r.random() < 0.22:
                         malign[mn] = r.choice([8, 16, 32])
+            # an ANONYMOUS struct member `struct { T a; T b; };` (C11 6.7.2.1): its scalar leaves are PROMOTED
+            # into the parent's namespace -- accessed directly as `s.a` (no wrapper name) and laid out in place.
+            # Both rails FLATTEN the leaves into the parent's field table (validated by the sizeof/offsetof LAYOUT
+            # differential) while reserving the anonymous struct as a unit. Scalars only (independent -- an
+            # anonymous UNION's aliasing would break the value-safety model; the fixture pins that case) and not
+            # alongside a nested member (keeps the flat brace-init via elision unambiguous).
+            anon = ([(f"an{j}", r.choice(_ALL)) for j in range(r.randint(2, 3))]
+                    if (kind == "struct" and not nested and not packed and r.random() < 0.3) else [])
+            anon_names = {mn for mn, _ in anon}
 
             def _mdef(mn, c):
                 pre = f"_Alignas({malign[mn]}) " if mn in malign else ""
                 if c in self.aggdefs:
                     return f"{pre}struct {c} {mn};"
                 return f"{pre}{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};"
+            members = members + anon                          # promoted leaves are direct members for ACCESS
             self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None, arrs)
-            body = " ".join(_mdef(mn, c) for mn, c in members)
+            body = " ".join(_mdef(mn, c) for mn, c in members if mn not in anon_names)
+            if anon:                                          # wrap the promoted leaves in an anonymous struct
+                body += " struct { " + " ".join(f"{_ST[c][0]} {mn};" for mn, c in anon) + " };"
             body += "".join(f" {_ST[c][0]} {an}[{_ARRSZ // 2}];" for an, c in arrs)
             agg_src.append(f"{kind}{' __attribute__((packed))' if packed else ''} {nm} {{ {body} }};")
         self.helpers, helper_src = [], []
@@ -901,8 +913,10 @@ def _layout_ok(prog: "Program", cc: str, d: str, label: str) -> tuple[bool, str]
             if (ln.startswith("struct ") or ln.startswith("union ")) and ln.rstrip().endswith("};")]
     asserts = []
     for tag, ct in aggs.items():
-        kw = "union" if ct.kind == "union" else "struct"
-        asserts.append(f'_Static_assert(sizeof({kw} {tag})=={ct.size},"sz {tag}");')
+        if tag.startswith("$"):                          # a synthesized tag for an ANONYMOUS aggregate -- it is
+            continue                                      # not nameable in C (`sizeof(struct $anon0)` won't compile);
+        kw = "union" if ct.kind == "union" else "struct"  # its promoted leaves are validated via the PARENT's
+        asserts.append(f'_Static_assert(sizeof({kw} {tag})=={ct.size},"sz {tag}");')   # offsetof asserts instead.
         for fn, _fty, boff, _bo, bw in ct.fields:
             if not bw:                                   # a bitfield has no offsetof
                 asserts.append(f'_Static_assert(__builtin_offsetof({kw} {tag},{fn})=={boff},"off {tag}.{fn}");')

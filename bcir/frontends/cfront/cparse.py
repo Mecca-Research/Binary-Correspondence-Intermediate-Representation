@@ -52,6 +52,8 @@ class _Parser:
         self.enums: dict[str, int] = {}               # enumerator name -> its integer value
         self.recover = False                  # panic-mode recovery: collect diagnostics, don't raise
         self.diags: list = []                 # list[SourceDiagnostic] accumulated when recover is on
+        self.unit: cast.Unit | None = None    # the unit being built (so a nested inline aggregate registers)
+        self._anon_ctr = 0                    # synthesizes unique tags for tagless inline aggregates
 
     # --- error recovery (panic mode): on a parse error, record a diagnostic and skip to the next
     # synchronization boundary, so one run reports several independent errors instead of just the
@@ -157,6 +159,7 @@ class _Parser:
 
     def parse_unit(self) -> cast.Unit:
         unit = cast.Unit()
+        self.unit = unit
         while not self.at("EOF"):
             if not self.recover:
                 self._toplevel_item(unit)
@@ -328,7 +331,29 @@ class _Parser:
         while not self.at("PUNCT", "}"):
             matt = self._attributes()                     # member-leading `_Alignas(N)`/`alignas(N)`/
             malign = matt.get("aligned", 0)               # `__attribute__((aligned(N)))` -- over-aligns this member
-            base = self._type_spec()
+            inline_agg = False                            # `struct {...}` / `union {...}` defined inline as a member
+            if self.at("IDENT", "struct") or self.at("IDENT", "union"):
+                save = self.i
+                ikind = self.nxt().text
+                iattrs = self._attributes()
+                itag = self.eat("IDENT").text if (self.at("IDENT") and not self.at("PUNCT", "{")) else ""
+                if self.at("PUNCT", "{"):                 # an INLINE aggregate definition (anonymous or tagged)
+                    if not itag:
+                        itag = f"$anon{self._anon_ctr}"
+                        self._anon_ctr += 1
+                    iagg = self._aggregate_body(ikind, itag, {**iattrs, **matt})
+                    self.unit.aggregates[iagg.tag] = iagg
+                    self.tags.add(iagg.tag)
+                    base = cast.TypeRef(base=iagg.tag, aggregate=ikind)
+                    inline_agg = True
+                else:
+                    self.i = save                         # `struct Tag member;` -- not an inline definition
+            if inline_agg and self.at("PUNCT", ";"):      # ANONYMOUS member: an inline aggregate, no declarator --
+                self.nxt()                                # its leaves promote into THIS aggregate (name "" marks it)
+                members.append((base, "", 0, malign))
+                continue
+            if not inline_agg:
+                base = self._type_spec()
             while True:                                   # one or more declarators off one specifier:
                 tref, name = self._declarator(base)       #   `unsigned x, y, z;` / `unsigned a:3, b:5;`
                 width = 0
