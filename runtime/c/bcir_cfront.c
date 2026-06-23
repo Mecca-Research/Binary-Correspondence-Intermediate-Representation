@@ -31,7 +31,7 @@ typedef struct { tkind k; const char *s; int n; long long v; } tok;
 #define MAXTOK 16384
 #define MAXFLD 64        /* members per struct (f[] is embedded in sdef; generous, guarded) */
 
-typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; int is_bool; int byte_off, bit_off, bit_w; int sidx;
+typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; int is_bool; int is_plain_char; int byte_off, bit_off, bit_w; int sidx;
                  int access_bytes;   /* a bitfield's storage-unit byte span (== size, except a PACKED bitfield
                                       * spans only ceil((bit_off+bit_w)/8) bytes -- it may straddle byte/word
                                       * boundaries; `size` stays the DECLARED type width, for read promotion) */
@@ -519,6 +519,8 @@ static int p_struct_body(CC *c) {
       idcpy(f->name,&nm);f->size=sz;f->access_bytes=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
       f->is_float=(!isptr && ty.is_float)?1:0;          /* a float/double member loads/stores as itself */
       f->is_bool=(!isptr && ty.is_bool)?1:0;            /* a _Bool member: a store normalizes any nonzero to 1 */
+      f->is_plain_char=(!isptr && ty.is_plain_char)?1:0;/* a plain `char` member: read as `char` (impl-defined
+                                                         * sign), NOT int8_t -- `char` is UNSIGNED on AArch64 */
       f->nadims=nadims; for(int z=0;z<3;z++) f->adims[z]=adims[z];
       f->is_ptr=isptr; f->ptee_size=isptr?ty.size:0; f->ptee_float=isptr?(ty.is_float?1:0):0;   /* pointee type */
       f->ptee_sidx=(isptr && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
@@ -841,6 +843,7 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld) {
    * bits >= 32 needs a 64-bit unit); the load reads only `access_bytes` (the spanned bytes). */
   int usz = fld->bit_w ? (fld->access_bytes<=4?4:8) : fld->size;
   uint32_t t=fld->is_ptr?tempptr_field(c,fld):fld->is_float?tempf(c,fld->size):tempi(c,usz,fld->signd);   /* loaded value carries the field's type */
+  if(fld->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;   /* read as `char`, not int8_t */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->bit_w?fld->access_bytes:fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
@@ -857,6 +860,7 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld) {
  * so the claim carries the base, the index, and (member byte offset, element size) in imm. */
 static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t idx) {
   uint32_t t=fld->is_float?tempf(c,fld->size):tempi(c,fld->size,fld->signd);
+  if(fld->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;   /* `char[]` element: `char` */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
   cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;cl->bounds=BCIR_BND_ASSUMED;
