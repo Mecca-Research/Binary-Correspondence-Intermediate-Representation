@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 from ...kbcir import compose
-from ...model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
+from ...model import Claim, Domain, Lane, Lifetime, Module, Opcode, Phase, Resource, StrideClass
 from . import cast
 from .abi import HOST
 from .clex import split_lit_prefix, str_elem_size
@@ -525,12 +525,12 @@ class _FuncLowerer:
 
     def _emit(self, op: str, opcode: Opcode, rd: tuple, wr: tuple, *, imm: tuple = (),
               lane=Lane.U, stride=StrideClass.SCALAR, count: int = 1, domain=Domain.RAM,
-              bounds: str = "strict", hazard: str = "unique") -> int:
+              bounds: str = "strict", hazard: str = "unique", lifetime=None) -> int:
         self.cid[0] += 1
         self.block_stack[-1].append(Claim(
             id=self.cid[0], opcode=opcode, lane=lane, stride_class=stride, count=count,
             rd=tuple(rd), wr=tuple(wr), imm=tuple(imm), domain=domain, op=op, bounds=bounds,
-            hazard=hazard))
+            hazard=hazard, lifetime=lifetime))
         return wr[0] if wr else -1
 
     def _storage(self, ct: CType, name: str) -> int:
@@ -1373,7 +1373,11 @@ class _FuncLowerer:
             t = self._temp(pointer(scalar("void")), f"mem_{node.callee}")   # malloc/calloc/realloc -> void *
             return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # verbatim, opaque
         if node.callee == "free" and node.callee not in self.func_rets:
-            self._emit("c.call.libm.void:free", Opcode.GEM_DISPATCH, actuals, ())   # void external (verbatim, opaque)
+            # void external (verbatim, opaque) + a R21 lifetime FREE event: the freed pointer (the actual it
+            # reads) dies after this claim, so a later dereference of it is a use-after-free (§5.12). Vacuous
+            # unless the smart-lowering verifier runs R21 -- the frontend pass/fail is unchanged.
+            self._emit("c.call.libm.void:free", Opcode.GEM_DISPATCH, actuals, (),
+                       lifetime=Lifetime("free"))
             return _VOID_RID
         bt = _builtin_type(node.callee, self.abi)
         if bt is not None:                             # a GCC/Clang integer builtin -> verbatim, typed, opaque

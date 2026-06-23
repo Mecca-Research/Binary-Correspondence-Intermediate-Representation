@@ -82,3 +82,44 @@ def test_r21_realloc_after_free_revalidates():
 def test_r21_rejects_an_unknown_lifetime_event():
     claims = [Claim(id=0, opcode=Opcode.LOAD, rd=(9,), wr=(1,), lifetime=Lifetime("bogus"))]
     assert [x.law for x in verify_lifetime(_mod(claims))] == ["R21"]
+
+
+# --- frontend integration: malloc/free annotation makes R21 load-bearing for the C compiler -----------
+
+def _r21_over_unit(src: str):
+    """Lower C via the oracle frontend and run R21 over every function's claim module. `compile_unit`'s
+    own pass/fail is R1-R8 (R21 is a smart-lowering law run separately), so this never changes the
+    frontend verdict -- it shows R21 CAN now catch the dangling access the annotated free() exposes."""
+    from bcir.frontends.cfront import compile_unit
+    r = compile_unit(src, check_clang=False)
+    diags = []
+    for name in r.lowered.functions:
+        diags += verify_lifetime(r.lowered.functions[name].module)
+    return r.is_clean, [d.law for d in diags]
+
+
+def test_r21_catches_c_use_after_free():
+    clean, laws = _r21_over_unit(
+        "unsigned f(unsigned n){ unsigned *p = malloc(n * 4u); free(p); return p[0]; }")
+    assert clean and laws == ["R21"]              # frontend stays clean (R1-R8); R21 flags the deref
+
+
+def test_r21_catches_c_double_free():
+    clean, laws = _r21_over_unit(
+        "void f(unsigned n){ unsigned *p = malloc(n * 4u); free(p); free(p); }")
+    assert clean and laws == ["R21"]
+
+
+def test_r21_is_clean_on_a_well_formed_malloc_use_free():
+    clean, laws = _r21_over_unit(
+        "unsigned f(unsigned n){ unsigned *p = malloc(n * 4u); unsigned s = 0u;"
+        " for(unsigned i=0u;i<(n&7u);i++){ p[i]=i; s+=p[i]; } free(p); return s; }")
+    assert clean and laws == []                   # malloc -> use -> free at the end: no dangling access
+
+
+def test_r21_allows_reassignment_after_free():
+    """`free(p); p = malloc(...); use *p` is legal -- the WRITE re-validates the pointer."""
+    clean, laws = _r21_over_unit(
+        "unsigned f(void){ unsigned *p = malloc(4u); free(p); p = malloc(8u);"
+        " p[0] = 1u; unsigned r = p[0]; free(p); return r; }")
+    assert clean and laws == []
