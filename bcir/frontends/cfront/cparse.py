@@ -29,8 +29,8 @@ _FIXABLE_PUNCT = frozenset({";", ")", "}", "]"})
 
 # type-start keywords (a statement beginning with one of these is a declaration).
 _TYPE_KW = frozenset({"void", "_Bool", "bool", "char", "short", "int", "long", "unsigned",
-                      "signed", "float", "double", "const", "volatile", "static", "extern", "inline",
-                      "_Thread_local", "thread_local", "struct", "union"})
+                      "signed", "float", "double", "_Complex", "complex", "const", "volatile",
+                      "static", "extern", "inline", "_Thread_local", "thread_local", "struct", "union"})
 # `typeof` / `typeof_unqual` (C23) / `__typeof__` (GNU): a type-specifier whose type is the operand's
 # -- supported for a type-name operand `typeof(int*)` and a bare in-scope variable `typeof(x)`.
 _TYPEOF_KW = frozenset({"typeof", "typeof_unqual", "__typeof__"})
@@ -484,6 +484,14 @@ class _Parser:
         # so the emit spells it faithfully. For every OTHER integer, `signed` is the default -- drop it.
         if set(words) == {"signed", "char"}:
             return "signed char"
+        # C99 `_Complex` (the <complex.h> spelling is `complex`): `<float> _Complex` in either keyword
+        # order; a bare `_Complex` with no float keyword means `double _Complex`.
+        if "_Complex" in words or "complex" in words:
+            rest = [w for w in words if w not in ("_Complex", "complex", "signed")]
+            flt = " ".join(rest) if rest else "double"
+            if flt not in ("float", "double", "long double"):
+                raise CParseError(f"unsupported _Complex element type {flt!r}")
+            return f"{flt} _Complex"
         words = [w for w in words if w != "signed"]
         if not words:
             return "int"                                  # a bare `signed` == int
@@ -825,6 +833,9 @@ class _Parser:
         if self.at("OP", "+"):                             # unary plus is a no-op
             self.nxt()
             return self._unary()
+        if self.at("IDENT", "__real__") or self.at("IDENT", "__imag__"):   # GNU complex part extraction
+            op = self.nxt().text
+            return cast.Unary(op, self._unary())
         if self.peek().kind == "OP" and self.peek().text in ("-", "~", "!", "*", "&"):
             op = self.nxt().text
             return cast.Unary(op, self._unary())

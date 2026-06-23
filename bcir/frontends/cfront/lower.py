@@ -67,6 +67,13 @@ def _cast_name(ct: CType) -> str:
 
 
 _FLOAT_RANK = {"float": 0, "double": 1, "long double": 2}
+_RANK_FLOAT = {0: "float", 1: "double", 2: "long double"}
+
+
+def _elem_float_name(t) -> str:
+    """The element float spelling of a (possibly complex) float type: `double _Complex` -> `double`,
+    a plain `double` -> `double`. Used to promote complex arithmetic by element rank."""
+    return t.name[:-len(" _Complex")] if t.is_complex else t.name
 
 
 def _float_lit_type(spelling: str) -> CType:
@@ -105,6 +112,27 @@ _LIBM_INT = {"ilogb": "int",
              "lround": "long", "lrint": "long",
              "llround": "long long", "llrint": "long long"}
 
+# <complex.h> functions, lowered like a libm call (opaque external edge, emitted verbatim against
+# <complex.h>). The result type differs by function: creal/cimag/cabs/carg return the *real* element
+# float; conj/cproj return the *complex* type. The f/l suffix picks float / long double (base -> double).
+_CPLX_REAL = frozenset({"creal", "cimag", "cabs", "carg"})    # -> real element float
+_CPLX_CPLX = frozenset({"conj", "cproj"})                     # -> the complex type (same width)
+
+
+def _complex_libm_type(name: str) -> "CType | None":
+    """The result type of a <complex.h> call, or None. The FULL name is tested first so creal/cimag
+    (which themselves end in l/g) are not misread as the long-double `*l` variant of a shorter base."""
+    if name in _CPLX_REAL:
+        return scalar("double")
+    if name in _CPLX_CPLX:
+        return scalar("double _Complex")
+    base, suf = name[:-1], name[-1:]
+    if suf in "fl" and base in _CPLX_REAL:
+        return scalar("float" if suf == "f" else "long double")
+    if suf in "fl" and base in _CPLX_CPLX:
+        return scalar(f"{'float' if suf == 'f' else 'long double'} _Complex")
+    return None
+
 # the printf / scanf family of external variadic <stdio.h> functions -- not defined in the unit and not
 # lowered, they emit verbatim (like a libm call, opaque to R18) and return int.
 _EXTERN_VARIADIC = frozenset({
@@ -135,6 +163,9 @@ def _libm_type(name: str) -> CType | None:
     (base -> double, `f` -> float, `l` -> long double); a fixed-integer one (`ilogb`) returns its
     int type for any suffix. None if `name` is not a recognized libm function. The full name is
     tried first so a base that ends in `f` (`erf`) is not misread as the float variant of `er`."""
+    cx = _complex_libm_type(name)                     # <complex.h> creal/cimag/conj/... (typed first)
+    if cx is not None:
+        return cx
     base = name[:-1] if name[-1:] in "fl" else name
     if name in _LIBM_INT:
         return scalar(_LIBM_INT[name])
@@ -699,6 +730,12 @@ class _FuncLowerer:
         if op in ("+", "-", "*", "/"):
             floats = [t for t in (ta, tb) if t is not None and t.is_float]
             if floats:
+                # complex usual arithmetic conversions: if ANY operand is complex the result is complex with
+                # the wider ELEMENT float (`float _Complex + double` -> `double _Complex`); otherwise the
+                # wider real float. Comparing element ranks makes this order-independent.
+                if any(t.is_complex for t in floats):
+                    er = max(_FLOAT_RANK.get(_elem_float_name(t), 1) for t in floats)
+                    return scalar(f"{_RANK_FLOAT[er]} _Complex")
                 return scalar(max(floats, key=lambda t: _FLOAT_RANK.get(t.name, 1)).name)
         if op in ("+", "-"):                                  # pointer arithmetic: p + i / i + p / p - i ->
             pa = ta if (ta is not None and ta.kind == "pointer") else None   # a pointer carrying the pointee.
@@ -822,6 +859,18 @@ class _FuncLowerer:
             t = self._temp(rt, f"b_{suf}")
             return self._emit(f"c.bin.{suf}", opcode, (a, b), (t,))
         if isinstance(node, cast.Unary):
+            if node.op in ("__real__", "__imag__"):       # GNU complex part -> the real element float
+                v = self._rvalue(node.operand)
+                vt = self.rtypes.get(v)
+                if vt is not None and vt.is_complex:
+                    rt = scalar({4: "float", 8: "double", 16: "long double"}.get(vt.size // 2, "double"))
+                elif vt is not None and vt.is_float:       # __real__ of a real float is the value itself
+                    rt = vt
+                else:
+                    rt = scalar("double")
+                suf = "creal" if node.op == "__real__" else "cimag"
+                t = self._temp(rt, f"u_{suf}")             # emitted `__real__ x` -- not integer-computed
+                return self._emit(f"c.un.{suf}", Opcode.GEM_DISPATCH, (v,), (t,))
             if node.op == "*":
                 return self._read(self._lvalue(node))
             if node.op == "&":

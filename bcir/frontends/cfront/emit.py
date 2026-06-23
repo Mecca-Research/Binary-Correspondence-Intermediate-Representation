@@ -179,6 +179,10 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], c.op.split(":", 1)[1])
     if c.op.startswith("c.bin."):
         return deftmp(c.wr[0], f"{ref(c.rd[0])} {_BINOP[suf]} {ref(c.rd[1])}")
+    if c.op == "c.un.creal":                                 # GNU __real__ z (complex part extraction)
+        return deftmp(c.wr[0], f"__real__ {ref(c.rd[0])}")
+    if c.op == "c.un.cimag":
+        return deftmp(c.wr[0], f"__imag__ {ref(c.rd[0])}")
     if c.op.startswith("c.un."):
         return deftmp(c.wr[0], f"({_UNOP[suf]}{ref(c.rd[0])})")
     if c.op.startswith("c.cast:"):                           # (type)operand — width cast / reinterpret

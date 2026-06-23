@@ -62,7 +62,9 @@ typedef struct bcir_resource {
   uint8_t  is_volatile;      /* MMIO/volatile access */
   uint8_t  read_only;
   uint8_t  kind;             /* bcir_rkind */
-  uint8_t  is_float;         /* a floating value (emit float/double, not uint32_t) */
+  uint8_t  is_float;         /* a floating value (emit float/double, not uint32_t) -- complex sets this too */
+  uint8_t  is_complex;       /* a C99 `_Complex` value (a pair of floats): emit `<elem> _Complex`, native
+                              * operators; the element float width is elem_bytes/2 (so 16-byte = double) */
   uint8_t  is_signed;        /* a signed integer value (drives signed C emit + the usual arith conv) */
   uint8_t  is_bool;          /* a _Bool/bool object: emit `_Bool` so a store normalizes to 0/1 (§6.3.1.2) */
   uint8_t  is_plain_char;    /* a plain `char` (not signed/unsigned char): emit `char`, whose signedness
@@ -87,7 +89,8 @@ typedef struct bcir_ctype {
   uint8_t  ptr_to_struct;    /* a pointer whose pointee is a struct */
   uint8_t  ptr_depth;        /* pointer indirection depth: 1 `T*`, 2 `T**`, ... (kind 2); 0 == 1 */
   uint8_t  is_union;         /* the aggregate is a union (emit `union` not `struct`) */
-  uint8_t  is_float;         /* a floating type (float/double) */
+  uint8_t  is_float;         /* a floating type (float/double) -- a _Complex type sets this too */
+  uint8_t  is_complex;       /* a C99 `_Complex` type (size is 2x the element float; element-aligned) */
   uint8_t  is_bool;          /* a _Bool/bool type: emit `_Bool` so conversions normalize to 0/1 (§6.3.1.2) */
   uint8_t  is_plain_char;    /* a plain `char` (vs signed/unsigned char): emit `char` (impl-defined sign) */
   uint8_t  is_valist;        /* the `va_list` type (variadic argument cursor) -- emit `va_list` */

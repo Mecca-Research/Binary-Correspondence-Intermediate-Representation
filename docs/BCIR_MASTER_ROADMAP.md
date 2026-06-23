@@ -810,6 +810,23 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    scalar return + scalar params (the `_equiv` harness synthesizes a real `_fpN` target from those). The oracle
 >    also parses a direct funcptr LOCAL `int (*g)(int)`; `cfront_fnptrparam.c` pins the param form, byte-exact vs
 >    Clang on x86-64 AND aarch64 (qemu).
+> 1k. ✅ **C99 `_Complex` numbers** — `float`/`double _Complex` params, locals, and returns (either keyword
+>    order; the `complex` <complex.h> spelling; a bare `_Complex` == `double`). A complex value is modeled as a
+>    float SCALAR carrying an `is_complex` flag (NOT a 2-float aggregate, NOT a new kind): it rides every
+>    existing float path (binop result typing, no truncation, value delegated to the backend) and the emitter
+>    prints the `<elem> _Complex` spelling with NATIVE operators, so Clang lowers `+`/`-`/`*` (and `__mul`)
+>    identically in the original AND the re-emitted `bcir_*` — behaviour-equivalent by construction, with ZERO
+>    new claim kinds (`+ - *` are the same `c.bin.*`, so parity is the same `binop=` count). Both rails: a new
+>    `is_complex` flag on the CType / `bcir_ctype` + `bcir_resource`; `_Complex` parsed as a float-base modifier
+>    (size = 2x the element, element-aligned); a `tempc` / `rid_complex` for complex-typed temps; complex
+>    arithmetic promotes by ELEMENT width (so `float _Complex * double` → `double _Complex`); the GNU
+>    `__real__`/`__imag__` operators lower to a parity-neutral `c.un.creal`/`c.un.cimag` (the real element
+>    float); and `creal`/`cimag` (real result) + `conj` (complex result) lower like a libm call
+>    (`c.call.libm:`, one `call`). `cfront_complex.c` pins `+ - *`, mixed-real promotion, a complex-returning
+>    in-unit call, a complex return, `__real__`/`__imag__`, and `creal`/`cimag`/`conj` — byte-exact vs Clang on
+>    x86-64 AND aarch64 (qemu). Division (a seeded-`nan != nan` harness artifact, not a feature gap), the `I`
+>    literal, long-double complex, the complex transcendentals (`cexp`/`csqrt`/...), `_Imaginary`, and complex
+>    struct members are follow-ons that both rails defer consistently.
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit

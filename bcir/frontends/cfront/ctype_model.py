@@ -27,6 +27,12 @@ _SCALAR = {
 }
 # Floating types -> size in bytes (Linux/Clang ABI: long double is 80-bit, 16-byte-aligned).
 _FLOAT = {"float": 4, "double": 8, "long double": 16}
+# Complex types (C99 _Complex) -> size in bytes (a pair of the element float; element-aligned, so the
+# alignment is size/2). Modeled as a float *scalar* carrying the `is_complex` flag: it rides every
+# existing float code path (binop result typing, load/store-as-itself, no truncation) and the emitter
+# prints the `<elem> _Complex` spelling + native operators, so Clang lowers `*`/`/` (__mul/__div) the
+# same way in the original and the re-emitted bcir_*.
+_COMPLEX = {"float _Complex": 8, "double _Complex": 16, "long double _Complex": 32}
 PTR_SIZE = 8
 
 
@@ -50,11 +56,16 @@ class CType:
 
     @property
     def is_integer(self) -> bool:
-        return self.kind == "scalar" and self.name != "void" and self.name not in _FLOAT
+        return (self.kind == "scalar" and self.name != "void"
+                and self.name not in _FLOAT and self.name not in _COMPLEX)
 
     @property
-    def is_float(self) -> bool:
-        return self.kind == "scalar" and self.name in _FLOAT
+    def is_float(self) -> bool:                        # complex rides the float paths (so is_float == True)
+        return self.kind == "scalar" and (self.name in _FLOAT or self.name in _COMPLEX)
+
+    @property
+    def is_complex(self) -> bool:
+        return self.kind == "scalar" and self.name in _COMPLEX
 
     @property
     def is_aggregate(self) -> bool:
@@ -94,6 +105,12 @@ def scalar(name: str, abi=None) -> CType:
                          align=abi.long_double_align, signed=True)
         size = _FLOAT[name]
         return CType("scalar", name=name, size=size, align=max(1, size), signed=True)
+    if name in _COMPLEX:                                # a _Complex pair: element-aligned (align == size/2)
+        if name == "long double _Complex" and abi is not None:
+            return CType("scalar", name=name, size=abi.long_double_size * 2,
+                         align=abi.long_double_align, signed=True)
+        size = _COMPLEX[name]
+        return CType("scalar", name=name, size=size, align=max(1, size // 2), signed=True)
     if name not in _SCALAR:
         raise KeyError(f"unknown scalar type {name!r}")
     size, signed = _SCALAR[name]
@@ -103,7 +120,7 @@ def scalar(name: str, abi=None) -> CType:
 
 
 def is_scalar_name(name: str) -> bool:
-    return name in _SCALAR or name in _FLOAT
+    return name in _SCALAR or name in _FLOAT or name in _COMPLEX
 
 
 # --- integer promotions + usual arithmetic conversions (C23 §6.3.1.1 / §6.3.1.8) -----------------
