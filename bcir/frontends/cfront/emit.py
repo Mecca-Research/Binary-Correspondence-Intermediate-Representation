@@ -220,6 +220,12 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         # source whose type does not match the slot is CONVERTED through a slot-typed temp first -- a narrower
         # int (`*p = (short)b`) must widen, and a `float` stored into a `double` member must convert (not
         # memcpy 4 bytes into 8, nor copy float bits into a double slot).
+        vt = lf.rid_types.get(c.rd[1])
+        if vt is not None and vt.kind == "funcptr":          # a funcptr member set from a funcptr value / a
+            # function NAME: store through a GENERIC funcptr lvalue so the name decays to its address (a plain
+            # `memcpy(&g_func,8)` copies the function's CODE; `void *` can't hold a funcptr). The call site reads
+            # the member's real type, and function pointers round-trip through the cast.
+            return f"*(void (**)(void))((char *){ptr} + {off}) = (void (*)(void)){ref(c.rd[1])};"
         conv = "_Bool" if (len(c.imm) > 2 and c.imm[2]) else _store_conv(lf.rid_types.get(c.rd[1]), size)
         if conv:                                             # a _Bool slot normalizes the stored value to 0/1
             return f"{{ {conv} _sv = {ref(c.rd[1])}; memcpy((char *){ptr} + {off}, &_sv, {size}); }}"
