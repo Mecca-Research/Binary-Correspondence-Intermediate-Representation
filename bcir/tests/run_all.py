@@ -184,6 +184,7 @@ _MODULES = [
     "bcir.tests.test_verify_differential",
     "bcir.tests.test_smart_laws",
     "bcir.tests.test_timing_laws",
+    "bcir.tests.test_lifetime_laws",
     "bcir.tests.test_fuzz",
     "bcir.tests.test_measured_silicon",
     "bcir.tests.test_silicon_runbook",

@@ -1590,9 +1590,16 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    count, a `static`/local array, a `malloc(n)` paired with its size), promote `assumed_safe → masked`
    with an emitted `verify=bounds` guard; else stay `assumed_safe` or route to fallback. Cost is already
    modeled; this is a static-analysis + emit pass, dual-railed.
-2. A **lifetime / provenance law (candidate R21)** over generation tags + alloc-pool liveness, catching
-   use-after-free / double-free where the allocation is in-unit; unprovable cases keep the `--fallback`
-   /quarantine contract (the existing route-to-LLVM, §5.9).
+2. ✅ **Lifetime law R21 DONE (oracle prototype)** (`bcir/model/graph.py::Lifetime` +
+   `bcir/verify::verify_lifetime`, `test_lifetime_laws.py`): an OPTIONAL `Claim.lifetime` (`event ∈
+   {use, alloc, free}` + `epoch`, `None` default, excluded from the R13 digest allow-list) + the **R21
+   use-after-free / double-free law** -- walking the claim order with the set of currently-freed resources,
+   a read/write of a freed-and-not-reallocated resource is a use-after-free, a `free` of an already-freed
+   resource a double-free, an `alloc` re-validates a fresh epoch. **Non-disturbance PROVEN** (the thorough
+   corpus, now 841 tests, verifies byte-identically -- with no `free` annotation anywhere, nothing is ever
+   freed, so the law is vacuous over the whole scalar / C-frontend subset). It becomes load-bearing once a
+   frontend annotates its malloc/free. *Next:* the frontend opt-in (3) + the MLIR port. Unprovable cases
+   keep the `--fallback`/quarantine contract (the existing route-to-LLVM, §5.9).
 3. **Frontend opt-in** — a "naked-looking" pointer syntax (plain C, or a `#pragma bcir bounds/lifetime`)
    that flips the rewrite from `assumed_safe` to `checked` under the hood, preserving programmer intent.
 4. Extend **R1–R12 coverage** to the promoted-pointer paths (the laws already apply to the claim; the gap
@@ -1678,11 +1685,13 @@ In recommended order — each is gated by the generated differential harness + F
     Unblocks **C11 `atomic_compare_exchange`** and `&`-out-params. (Member-array / array-of-structs element
     address + a pointer/array member remain a both-rails follow-on.) **Next ➡** C11 compare-exchange now
     that `&` is available.
-14. **➡ Naked-pointer safety promotion (§5.12).** Land the **bounds-promotion pass** (`assumed_safe →
-    masked` with an emitted `verify=bounds` guard where an extent is recoverable; cost already modeled by
-    the 12th axis) and a **lifetime law (candidate R21)** over generation tags + `-bcir-alloc-pool`
-    liveness. Purely additive — every access is `verify=none` (cost 0) today, so existing scores are
-    unchanged; dual-rail + `--fallback`/quarantine for the unprovable.
+14. ◑ **Naked-pointer safety promotion (§5.12).** ✅ The **lifetime law R21** (use-after-free / double-free
+    over an optional `Claim.lifetime`, oracle prototype) landed -- vacuous/additive, non-disturbance proven
+    over the 841-test corpus (`test_lifetime_laws.py`). **Next ➡** the **bounds-promotion pass**
+    (`assumed_safe → strict`/`masked` where an extent is recoverable -- a local/static array's known shape,
+    or an array param with a sibling count -- so R7 statically proves it or a `verify=bounds` guard is
+    emitted; cost already modeled by the 12th axis), the **frontend opt-in** that annotates malloc/free, and
+    the MLIR port. `--fallback`/quarantine for the unprovable.
 15. ◑ **RTL/synchronous-timing track, step 1 (§5.11).** **Oracle prototype DONE** (`Timing` +
     `verify_timing` R19/R20, `test_timing_laws.py`): the **non-disturbance proof holds** — the whole
     thorough corpus (834 tests, incl. the C-compiler fixtures + the provenance digest) verifies
