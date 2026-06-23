@@ -392,7 +392,8 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
         else if(p_typeof_expr(c,ty,sidx)) return 1; }                   /* any other operand -- speculative lower */
       if(!eat(c,")")) return 1;
       seen=1; break; }
-    if(is(c,"signed")){ty->signd=1;sign_explicit=1;c->i++;continue;}   /* a modifier; the base sets size */
+    if(is(c,"signed")){ty->signd=1;sign_explicit=1;ty->size=4;seen=1;c->i++;continue;}   /* `signed` alone ==
+                                                          * `signed int`; a following base (char/long/...) overrides */
     if(is(c,"unsigned")){ty->signd=0;sign_explicit=1;ty->size=4;seen=1;c->i++;continue;}
     if(is(c,"_Complex")||is(c,"complex")){ty->is_complex=1;ty->is_float=1;seen=1;c->i++;continue;}  /* C99 _Complex
                                                        * (a modifier on a float base; bare _Complex == double) */
