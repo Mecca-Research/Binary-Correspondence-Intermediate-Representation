@@ -863,6 +863,47 @@ def verify_timing(module: Module) -> list[Diagnostic]:
     return diags
 
 
+_LIFETIME_EVENTS = {"use", "alloc", "free"}
+
+
+def verify_lifetime(module: Module) -> list[Diagnostic]:
+    """R21 (pointer-lifetime legality: use-after-free / double-free) over the OPTIONAL `claim.lifetime`
+    annotation -- the naked-pointer safety track (§5.12). A claim may ALLOCATE the resources it writes
+    (`event='alloc'`) or FREE the resources it reads (`event='free'`, the `free(p)` shape); every other
+    claim is an implicit use. Walking the phase/claim order with the set of currently-FREED resources:
+
+      * a read/write of a freed-and-not-reallocated resource is a USE-AFTER-FREE;
+      * a `free` of an already-freed resource is a DOUBLE-FREE;
+      * an `alloc` re-validates the resources it writes (a fresh epoch).
+
+    Vacuous by construction: with no `free` annotation anywhere (the entire scalar / C-frontend subset
+    today, where every claim has `lifetime is None`), nothing is ever freed, so the law emits nothing --
+    the non-disturbance invariant, exactly like R19/R20 are vacuous without timing and R17 without a
+    tolerance. It becomes load-bearing once a frontend annotates its malloc/free (the lifetime rewrite of
+    naked pointers), catching the dangling access the C program would have left UB."""
+    diags: list[Diagnostic] = []
+    freed: set[int] = set()                       # resources freed and not yet re-allocated
+    for ph in module.phases:
+        for claim in ph.claims:
+            lt = getattr(claim, "lifetime", None)
+            event = lt.event if lt is not None else "use"
+            if lt is not None and event not in _LIFETIME_EVENTS:
+                diags.append(Diagnostic("R21", f"claim {claim.id}: unknown lifetime event {event!r}"))
+                event = "use"
+            if event == "alloc":                  # (re-)allocation re-validates the written resources
+                for rid in claim.wr:
+                    freed.discard(rid)
+            for rid in claim.io_rids():           # any access to a freed resource is illegal
+                if rid in freed:
+                    kind = "double-free" if event == "free" else "use-after-free"
+                    diags.append(Diagnostic(
+                        "R21", f"claim {claim.id}: {kind} of RID {rid} (freed and not re-allocated)"))
+            if event == "free":                   # the read resources die after this claim
+                for rid in claim.rd:
+                    freed.add(rid)
+    return diags
+
+
 def verify_smart_lowering(module: Module, pack=None, dvfs_plan=None,
                           placement=None) -> list[Diagnostic]:
     """Run the smart-lowering laws R14-R17 over whichever artifacts are provided
@@ -878,6 +919,7 @@ def verify_smart_lowering(module: Module, pack=None, dvfs_plan=None,
         diags += verify_allocator(module, placement)
     diags += verify_accuracy(module)
     diags += verify_timing(module)          # R19/R20 over optional claim.timing -- vacuous without it
+    diags += verify_lifetime(module)        # R21 over optional claim.lifetime -- vacuous without it
     return diags
 
 

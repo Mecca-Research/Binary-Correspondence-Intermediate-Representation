@@ -39,6 +39,20 @@ class Resource:
 
 
 @dataclass(frozen=True)
+class Lifetime:
+    """OPTIONAL pointer-lifetime annotation on a claim (§5.12, the naked-pointer safety track). A claim may
+    mark itself as ALLOCATING the resources it writes (`event='alloc'`) or FREEING the resources it reads
+    (`event='free'`, the `free(p)` shape); any other claim is an implicit `use`. `epoch` distinguishes a
+    re-allocation from the original. Every field defaults to the inert value, so a claim with no lifetime
+    annotation (`Claim.lifetime is None` -- the entire scalar / C-frontend subset today) places no R21
+    constraint: the use-after-free / double-free law is a complete no-op until a frontend opts in by
+    annotating its malloc/free calls."""
+
+    event: str = "use"                   # "use" | "alloc" | "free"
+    epoch: int = 0                       # the allocation generation (a re-alloc after free is a new epoch)
+
+
+@dataclass(frozen=True)
 class Timing:
     """OPTIONAL RTL / synchronous-timing metadata on a claim (§5.11). Every field defaults to the
     'unspecified' value, so a claim with no timing concern carries none (`Claim.timing is None`) and the
@@ -83,6 +97,8 @@ class Claim:
                                      # the plan is valid + worst-case-priced for any actual <= count
     timing: Optional["Timing"] = None  # OPTIONAL RTL/synchronous-timing metadata (§5.11); None = the
                                      # vacuous default (no R19/R20 constraint -- the whole scalar subset)
+    lifetime: Optional["Lifetime"] = None  # OPTIONAL pointer-lifetime annotation (§5.12); None = the vacuous
+                                     # default (no R21 use-after-free / double-free constraint)
 
     def io_rids(self) -> tuple[int, ...]:
         return tuple(self.rd) + tuple(self.wr)
