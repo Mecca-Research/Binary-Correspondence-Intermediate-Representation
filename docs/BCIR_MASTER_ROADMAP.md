@@ -1617,10 +1617,16 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    the handler (the ML-layer / debugger seam) records via `bcir_oob_record_event` WITHOUT aborting, and
    `bcir_quarantine_report(FILE*)` reads the ring back -- the running total plus each retained event with its
    site/index/extent. Pure observation: reading the ring never crosses the two-truth line into a verdict.
-   **Next ➡** the ML-layer / debugger OVERRIDES the weak symbol to consult the graded-truth quarantine +
-   recover/policy through a recorded `decide` (the only sanctioned two-truth crossing), the `bcir-cc` driver
-   links the runtime, and recoverable extents extend to an array param with a sibling count and a `malloc(n)`
-   paired with its size.
+   ✅ **The bcir-cc driver links the runtime DONE** (`bcir_cc.c` `--emit-c`, `#emitlink` in `check_runtime.sh`):
+   a masked access references the runtime ABI, so the driver's `--emit-c` output now pulls in
+   `bcir_quarantine.h` whenever the unit has a masked access -- a SELF-CONTAINED translation unit that
+   `cc -I runtime/c - runtime/c/bcir_quarantine.c` compiles AND links on its own (proven end-to-end:
+   in-bounds returns the value, OOB quarantines through the linked weak handler, naming the site). A unit
+   with no masked access pulls in nothing. The differential harnesses that compile `--emit-c` now link the
+   real `bcir_quarantine.c` (the inline test stub is retired). **Next ➡** the ML-layer / debugger OVERRIDES
+   the weak symbol to consult the graded-truth quarantine + recover/policy through a recorded `decide` (the
+   only sanctioned two-truth crossing), and recoverable extents extend to an array param with a sibling count
+   and a `malloc(n)` paired with its size.
 2. ✅ **Lifetime law R21 DONE (oracle prototype)** (`bcir/model/graph.py::Lifetime` +
    `bcir/verify::verify_lifetime`, `test_lifetime_laws.py`): an OPTIONAL `Claim.lifetime` (`event ∈
    {use, alloc, free}` + `epoch`, `None` default, excluded from the R13 digest allow-list) + the **R21
