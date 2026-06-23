@@ -667,6 +667,9 @@ class _FuncLowerer:
         if isinstance(node, cast.Unary) and node.op == "*":   # `*q` as a base (`**pp`): load the pointer it
             rid = self._read(self._lvalue(node))              # holds, and use that loaded pointer as the base
             return rid, self.rtypes.get(rid, pointer(scalar("uint32_t"))), 0
+        if isinstance(node, cast.CallExpr):                   # `mk(x).field` -- a struct-returning call's result is
+            rid = self._call(node)                            # a by-value struct temp; address it for member access
+            return rid, self.rtypes.get(rid, scalar("uint32_t")), 0
         raise CLowerError(f"unsupported base expression {type(node).__name__}")
 
     def _mmio(self, base_rid: int) -> bool:
@@ -1265,8 +1268,12 @@ class _FuncLowerer:
         # type the result temp by the callee's return type: a float return propagates (so downstream
         # arithmetic stays float), a wide (8-byte) integer return keeps its width, and a signed `int` return
         # keeps its SIGN -- else a downstream `>>` / comparison on the call result would go unsigned (a
-        # logical shift / unsigned compare). A pointer / aggregate keeps the 4-byte uint32 value unit.
-        if ret_ct is not None and (ret_ct.is_float or (ret_ct.is_integer and ret_ct.size > 4)):
+        # logical shift / unsigned compare). A struct/union RETURN keeps the aggregate CType (the result is a
+        # by-value struct temp -- `struct P t = mk(x);` -- so it can be copied into a local, passed by value, or
+        # member-accessed; typing it uint32 emitted invalid C `uint32_t t = mk(x)`).
+        if ret_ct is not None and ret_ct.is_aggregate:
+            rct = ret_ct
+        elif ret_ct is not None and (ret_ct.is_float or (ret_ct.is_integer and ret_ct.size > 4)):
             rct = ret_ct
         elif ret_ct is not None and ret_ct.is_integer and ret_ct.signed and ret_ct.size <= 4:
             rct = scalar("int", self.abi)              # a signed char/short/int return promotes to int and

@@ -1200,13 +1200,21 @@ static uint32_t p_call(CC *c, const tok *name) {
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
     return t;                                         /* not added to fn->calls (opaque to R18) */
   }
-  uint32_t t = (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
-             : (rt && rt->kind==0 && rt->size==8) ? tempi(c,8,rt->signd)  /* wide (8-byte) int return: keep its
+  uint32_t t;
+  if(rt && rt->kind==1){                              /* a struct/union RETURN: a by-value aggregate temp
+                                                       * (`struct P t = mk(x);`) so it copies/passes/member-accesses
+                                                       * -- a uint32 temp emitted invalid C `uint32_t t = mk(x)`. */
+    t=add_res(c,BCIR_DOM_RAM,rt->size,1,0,BCIR_RK_AGGREGATE,"");
+    if(c->fn->n_res) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",
+                              rt->is_union?"union":"struct", rt->tag);
+  } else
+    t = (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
+      : (rt && rt->kind==0 && rt->size==8) ? tempi(c,8,rt->signd)  /* wide (8-byte) int return: keep its
                                                             * sign so a `>>` on a `long` result stays arithmetic */
-             : (rt && rt->kind==0 && rt->size<=4 && rt->signd) ? tempi(c,4,1)  /* a signed char/short/int return
+      : (rt && rt->kind==0 && rt->size<=4 && rt->signd) ? tempi(c,4,1)  /* a signed char/short/int return
                                                             * promotes to int and sign-extends downstream (a
                                                             * `(long)` widen / compare); else it would go unsigned */
-             : temp(c,4);                                            /* unsigned int / pointer / unknown -> 4-byte unit */
+      : temp(c,4);                                            /* unsigned int / pointer / unknown -> 4-byte unit */
   char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call:%.*s",name->n,name->s);
   bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
   if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
@@ -1421,7 +1429,15 @@ static uint32_t p_primary(CC *c) {
     const char *aop;bcir_opcode aoc;int akind;
     if(is(c,"(")&&atomic_kind(&id,&aop,&aoc,&akind)) return p_atomic(c,aop,aoc,akind);  /* atomics/fences/CAS */
     if(is(c,"(")){ venv *fv=lookup(c,&id);        /* indirect call (funcptr var) vs. direct named call */
-      if(fv&&fv->type.kind==3) return p_icall(c,fv); return p_call(c,&id); }
+      if(fv&&fv->type.kind==3) return p_icall(c,fv);
+      const bcir_ctype *rt=callee_ret(c,&id);     /* a struct-returning call: `mk(x).field` postfixes the result */
+      uint32_t r=p_call(c,&id);
+      if(rt && rt->kind==1 && (is(c,".")||is(c,"->")||is(c,"["))){   /* the by-value struct result is addressable */
+        venv sv; memset(&sv,0,sizeof sv); sv.rid=r; sv.type=*rt;
+        sv.sidx=find_struct(c,rt->tag,(int)strlen(rt->tag));
+        if(sv.sidx>=0) return postfix_lvalue(c,&sv);
+      }
+      return r; }
     int ec=find_enum(c,id.s,id.n);                /* an enumerator -> its folded constant (type int) */
     if(ec>=0){uint32_t r=tempi(c,4,1);bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
       if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
@@ -2739,7 +2755,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+w,on-w,");\n"); }
     else if(!strncmp(cl->op,"c.call:",7)){
-      w+=snprintf(o+w,on-w,"%s %s = bcir_%s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+7);
+      const bcir_resource *rr=res_of(f,cl->wr[0]);   /* a struct/union RETURN declares `struct P t = bcir_..` */
+      const char *dty=(rr&&rr->kind==BCIR_RK_AGGREGATE&&rr->agg[0])?rr->agg:tty(f,cl->wr[0]);
+      w+=snprintf(o+w,on-w,"%s %s = bcir_%s(",dty,rname(f,cl->wr[0],d),cl->op+7);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+w,on-w,");\n"); }
     else if(!strcmp(cl->op,"c.call.indirect")){    /* rd[0] is the function pointer; rd[1..] the args */

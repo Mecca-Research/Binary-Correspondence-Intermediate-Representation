@@ -776,6 +776,17 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    it, byte-exact vs Clang on x86-64 AND aarch64 (qemu). The members return `unsigned` (the `c.call.imember`
 >    result is uint-typed on both rails -- a SIGNED funcptr return is a both-rails follow-on, like the existing
 >    `cfront_dispatch.c`).
+> 1i. ✅ **Struct-returning call RESULT used by value** (a real both-rails MISCOMPILE, not just a gap) — calling
+>    an in-unit struct-returning function and using the result (`struct P p = mk(x);`, `g(mk(x))`, `mk(x).field`,
+>    a passthrough `return mk(x);`) emitted INVALID C `uint32_t t = mk(x);` (a struct assigned to an int) and
+>    build-failed -- the `c.call` result was typed as a flat `uint32_t`. (`cfront_structret.c` only DEFINED a
+>    struct-returning function, so it went unnoticed.) Now the call result keeps the aggregate CType, so it is
+>    declared `struct P t = mk(x);` and copies / passes-by-value / member-accesses correctly. Both rails: the
+>    result temp is an AGGREGATE resource (oracle `_call` `rct=ret_ct`; twin `p_call` `rt->kind==1` branch), the
+>    `c.call:` emit declares it with the struct type, and `mk(x).field` postfixes the addressable result temp
+>    (oracle `_addr` `CallExpr` case; twin `p_call`-result `postfix_lvalue` wiring). The claim graph is unchanged
+>    (only a result temp's TYPE), so parity is trivially clean. `cfront_structcall.c` pins all four uses,
+>    byte-exact vs Clang on x86-64 AND aarch64 (qemu).
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit
