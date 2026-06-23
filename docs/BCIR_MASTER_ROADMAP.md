@@ -1419,8 +1419,11 @@ hard-compiler infrastructure (Phases 3–4); (C) hard caps.
    `(char *)s + off`), and `&*q` took the address of a loaded COPY -- while the twin had fallen back on
    both, and `&arr[i]` failed on both. `&bit-field` is correctly rejected (illegal in C). Parity-exact,
    byte-exact vs Clang on x86-64 AND aarch64 (qemu), fuzzer-clean. Unblocks C11 `atomic_compare_exchange`
-   and `&`-out-params. *Follow-on (still both-rails fallback):* a member-array / array-of-structs element
-   address (`&s.arr[i]`, `&arr[i].field`) and a pointer/array member (`&s->ptr`).
+   and `&`-out-params. ✅ **Member-array element address** (`cfront_addrofarr.c`, #addrofarr): `&s.arr[i]`,
+   `&s->arr[i]`, and the multi-dim `&s.m[i][j]` now lower on both rails (the element at `&base + member_off +
+   lin*elem_size`, reusing the member-array LOAD flatten) -- byte-exact vs Clang on x86-64 AND aarch64.
+   *Follow-on (still both-rails fallback):* an array-of-structs element FIELD address (`&arr[i].field`,
+   `&s.arr[i].field` -- distinct struct stride) and a pointer/array member (`&s->ptr`).
 2. **Pointer values as fully first-class 8-byte objects** — finishing the 32-bit value-model legacy. Most
    pointer paths are native (#ptrvalue/#ptrfield/#fieldderef), but a loaded function-pointer *value* and a
    pointer carried through some non-address contexts still hit the 4-byte seam; this and item 1 are two

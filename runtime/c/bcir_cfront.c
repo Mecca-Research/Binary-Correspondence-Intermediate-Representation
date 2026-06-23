@@ -1553,7 +1553,21 @@ static uint32_t p_unary(CC *c) {
           if(fi<0){ fail(c,"unknown field"); return 0; }
           field mf=member_descend(c,S->f[fi]);     /* accumulate the chain's byte offset + the leaf field */
           if(mf.bit_w){ fail(c,"cannot take the address of a bit-field"); return 0; }   /* illegal in C */
-          if(mf.is_ptr||mf.arr_count){ fail(c,"address-of a pointer/array member is a follow-on"); return 0; }
+          if(mf.is_ptr){ fail(c,"address-of a pointer member is a follow-on"); return 0; }
+          if(mf.arr_count){                        /* &s.arr[i] / &s->arr[i] / &s.m[i][j] -- a member-array element */
+            if(!is(c,"[")){ fail(c,"address-of an array member is a follow-on"); return 0; }
+            uint32_t ix=member_arr_index(c,&mf);   /* the row-major flattened element index */
+            if(is(c,".")||is(c,"->")||is(c,"[")){  /* a further descent (&s.arr[i].field / nested) is a follow-on */
+              fail(c,"address-of a nested member-array element is a follow-on"); return 0; }
+            int es = mf.size?mf.size:4;
+            uint32_t t=add_res(c,BCIR_DOM_RAM, es, 1,0,BCIR_RK_POINTER,"");   /* an `element *` */
+            if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+              tr->is_signed=(uint8_t)(mf.signd?1:0); tr->is_float=(uint8_t)(mf.is_float?1:0); tr->ptr_depth=1;
+              if(mf.elem_sidx>=0) snprintf(tr->agg,sizeof tr->agg,"%s %s",c->s[mf.elem_sidx].is_union?"union":"struct",c->s[mf.elem_sidx].tag); }
+            bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
+            if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=ix;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=mf.byte_off;cl->imm[1]=es;}
+            return t;
+          }
           uint32_t t=add_res(c,BCIR_DOM_RAM, mf.size?mf.size:4, 1,0,BCIR_RK_POINTER,"");   /* a `leaf *` */
           if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
             tr->is_signed=(uint8_t)(mf.signd?1:0); tr->ptr_depth=1;
