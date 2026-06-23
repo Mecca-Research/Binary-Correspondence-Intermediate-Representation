@@ -889,17 +889,32 @@ class _FuncLowerer:
             if node.op == "*":
                 return self._read(self._lvalue(node))
             if node.op == "&":
-                # `&x` as a *value* (a call argument, a pointer initializer): a pointer temp emitted
-                # as `&x`, so e.g. frexp(value, &exp) keeps the `&`. _addr resolves the storage
-                # location; the pointer value is delegated to the emitted C, never computed here.
-                base_rid, base_ct, base_off = self._addr(node.operand)
-                t = self._temp(pointer(base_ct), "addr")
-                # &member -> `(T *)((char *)&base + off)` (the typed cast keeps the result a `T *`, not the
-                # enclosing struct's pointer, and carries the accumulated nested offset); `&local` / `&p`
-                # stays the plain `&base`.
-                mem = isinstance(node.operand, cast.Member)
-                return self._emit("c.addrof", Opcode.ADD, (base_rid,), (t,),
-                                  imm=(base_off,) if mem else ())
+                # `&lvalue` as a *value* (a call argument, a pointer initializer, an out-param): a pointer
+                # temp whose address is delegated to the emitted C, never computed here. Resolving through
+                # `_lvalue` (the same path loads/stores use) makes it general AND correct for a base reached
+                # THROUGH a pointer: `&s->m` takes the pointer's address (`(char*)s + off`), not `&s` -- the
+                # bug the old `_addr`-with-hardcoded-`&` emit had (it computed `&s + off`, the address of the
+                # pointer VARIABLE). The emit uses `_base_ptr` (decays a pointer/array base, addresses a value
+                # base), so every form lands the right byte address.
+                operand = node.operand
+                if isinstance(operand, cast.Unary) and operand.op == "*":  # &*p == p (the pointer itself;
+                    return self._rvalue(operand.operand)                   # &*(p+i) == p+i) -- 0 claims, both rails
+                lv = self._lvalue(operand)
+                if lv.bit_width:                              # &bitfield is illegal in C (no addressable unit)
+                    raise CLowerError("cannot take the address of a bit-field")
+                if lv.kind == "mem" and lv.member:            # &s.arr[i] / &arr[i].field: a struct-member-array
+                    raise CLowerError(                        # element address is a follow-on (both rails defer)
+                        "address-of a struct-member-array element is not yet supported")
+                if lv.kind == "mem" and lv.idx is None and lv.ct.kind in ("pointer", "array"):
+                    raise CLowerError(                        # &s.ptr / &s.arr -- a pointer/array member is a
+                        "address-of a pointer/array member is not yet supported")  # follow-on
+                t = self._temp(pointer(lv.ct), "addr")
+                if lv.kind == "var":                          # &name / &(compound literal) -> the object's address
+                    return self._emit("c.addrof", Opcode.ADD, (lv.rid,), (t,))
+                if lv.idx is not None:                        # &arr[i] / &p[i] (plain element; member-array deferred)
+                    return self._emit("c.addrof", Opcode.ADD, (lv.rid, lv.idx), (t,),
+                                      imm=(lv.byte_off, lv.ct.size or 4))
+                return self._emit("c.addrof", Opcode.ADD, (lv.rid,), (t,), imm=(lv.byte_off,))  # &base.member
             v = self._rvalue(node.operand)
             opcode, suf = _UN[node.op]
             if node.op == "!":                                # logical not -> int (0/1)
@@ -1300,6 +1315,18 @@ class _FuncLowerer:
             exp = actuals[1] if len(actuals) > 1 else ptr
             des = actuals[2] if len(actuals) > 2 else exp
             t = self._temp(scalar("uint32_t"), "cas")
+            dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
+            return self._emit(op, Opcode.CMPXCHG, (ptr, exp, des), (t,),
+                              lane=Lane.A, domain=dom, hazard="atomic")
+        if node.callee in ("atomic_compare_exchange_strong", "atomic_compare_exchange_weak"):
+            # C11 bool atomic_compare_exchange_strong/weak(A *obj, C *expected, C desired): if *obj ==
+            # *expected set *obj = desired (true), else load *obj into *expected (false). `expected` is a
+            # POINTER -- the headline use of address-of (`&exp`), which is why this waited on `&`. Emitted
+            # verbatim; the atomic semantics are delegated to the resident backend / Clang.
+            op = ("c.c11atom.cas_strong" if node.callee.endswith("strong") else "c.c11atom.cas_weak")
+            ptr, exp = actuals[0], (actuals[1] if len(actuals) > 1 else actuals[0])
+            des = actuals[2] if len(actuals) > 2 else exp
+            t = self._temp(scalar("_Bool"), "c11cas")                 # the comparison result is _Bool
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
             return self._emit(op, Opcode.CMPXCHG, (ptr, exp, des), (t,),
                               lane=Lane.A, domain=dom, hazard="atomic")

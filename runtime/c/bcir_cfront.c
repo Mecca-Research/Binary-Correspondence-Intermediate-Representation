@@ -1308,7 +1308,9 @@ static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *kind){
     {"atomic_fetch_xor","c.c11atom.fetch_xor",BCIR_OP_ATOMIC_XOR,AK_RMW},
     {"atomic_exchange","c.c11atom.exchange",BCIR_OP_ATOMIC_ADD,AK_RMW},   /* swap: set + return old */
     {"atomic_load","c.c11atom.load",BCIR_OP_LOAD,AK_LOAD},
-    {"atomic_store","c.c11atom.store",BCIR_OP_STORE,AK_STORE},{0,0,0,0}};
+    {"atomic_store","c.c11atom.store",BCIR_OP_STORE,AK_STORE},
+    {"atomic_compare_exchange_strong","c.c11atom.cas_strong",BCIR_OP_CMPXCHG,AK_CAS},  /* (obj,&exp,des)->_Bool */
+    {"atomic_compare_exchange_weak","c.c11atom.cas_weak",BCIR_OP_CMPXCHG,AK_CAS},{0,0,0,0}};
   for(int i=0;A[i].n;i++) if((int)strlen(A[i].n)==t->n&&!strncmp(A[i].n,t->s,t->n)){*op=A[i].op;*oc=A[i].oc;*kind=A[i].k;return 1;}
   return 0;
 }
@@ -1316,7 +1318,9 @@ static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind){
   c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
   if(!is(c,")")) for(;;){uint32_t a=p_expr(c);if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;if(is(c,",")){c->i++;continue;}break;}
   eat(c,")");
-  uint32_t t=temp(c,4); bcir_claim *cl=new_claim(c,op,oc); if(!cl)return t;
+  uint32_t t=temp(c,4);
+  if(!strncmp(op,"c.c11atom.cas",13) && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;  /* compare_exchange -> _Bool */
+  bcir_claim *cl=new_claim(c,op,oc); if(!cl)return t;
   cl->lane=BCIR_LANE_A; cl->hazard=kind==AK_FENCE?BCIR_HZ_BARRIERED:BCIR_HZ_ATOMIC;
   if(kind!=AK_FENCE&&na>=1){ bcir_domain dom=BCIR_DOM_RAM;
     for(size_t z=0;z<c->fn->n_res;z++) if(c->fn->res[z].rid==args[0]) dom=c->fn->res[z].domain;
@@ -1539,13 +1543,15 @@ static uint32_t p_unary(CC *c) {
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);if(cl){cl->n_rd=1;cl->rd[0]=a;cl->n_wr=1;cl->wr[0]=r;}
     return r; }
   if(is(c,"&")){ c->i++;                          /* address-of: &lvalue -> a pointer value (c.addrof) */
-    if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id);
+    if(is(c,"*")){ c->i++; return p_unary(c); }    /* &*p == p (the pointer itself; &*(p+i) == p+i) */
+    if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);
       if(v){ c->i++;
-        if((is(c,".")||is(c,"->")) && v->type.kind==1 && v->sidx>=0){   /* &member / &nested.member */
+        if((is(c,".")||is(c,"->")) && v->sidx>=0){   /* &s.m / &s->m (scalar/struct member; value OR ptr base) */
           sdef *S=&c->s[v->sidx]; c->i++; tok fn=adv(c); int fi=-1;
           for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
           if(fi<0){ fail(c,"unknown field"); return 0; }
           field mf=member_descend(c,S->f[fi]);     /* accumulate the chain's byte offset + the leaf field */
+          if(mf.bit_w){ fail(c,"cannot take the address of a bit-field"); return 0; }   /* illegal in C */
           if(mf.is_ptr||mf.arr_count){ fail(c,"address-of a pointer/array member is a follow-on"); return 0; }
           uint32_t t=add_res(c,BCIR_DOM_RAM, mf.size?mf.size:4, 1,0,BCIR_RK_POINTER,"");   /* a `leaf *` */
           if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
@@ -1553,6 +1559,17 @@ static uint32_t p_unary(CC *c) {
             if(mf.sidx>=0) snprintf(tr->agg,sizeof tr->agg,"%s %s",c->s[mf.sidx].is_union?"union":"struct",c->s[mf.sidx].tag); }
           bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
           if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=mf.byte_off;}
+          return t;
+        }
+        if(is(c,"[")){                             /* &arr[i] / &p[i] -- a plain element address `(char*)base + i*es` */
+          c->i++; uint32_t ix=p_expr(c); eat(c,"]");
+          int es = v->type.size?v->type.size:4;    /* the pointee / element byte size */
+          uint32_t t=add_res(c,BCIR_DOM_RAM, es, 1,0,BCIR_RK_POINTER,"");
+          if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+            tr->is_signed=(uint8_t)(v->type.signd?1:0); tr->is_float=(uint8_t)(v->type.is_float?1:0); tr->ptr_depth=1;
+            if(v->type.ptr_to_struct) snprintf(tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag); }
+          bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
+          if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=ix;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=es;}
           return t;
         }
         /* a pointer one level deeper than the addressed object: */
@@ -2884,11 +2901,20 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       const char *fn=cl->op+10;                  /* fetch_add / fetch_sub / fetch_xor / load / store */
       if(!strcmp(fn,"load")) w+=snprintf(o+w,on-w,"uint32_t %s = atomic_load(%s);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
       else if(!strcmp(fn,"store")) w+=snprintf(o+w,on-w,"atomic_store(%s, %s);\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
+      else if(!strncmp(fn,"cas_",4))             /* cas_strong/weak -> _Bool atomic_compare_exchange_<...>(obj,&exp,des) */
+        w+=snprintf(o+w,on-w,"_Bool %s = atomic_compare_exchange_%s(%s, %s, %s);\n",
+                    rname(f,cl->wr[0],d),fn+4,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
       else w+=snprintf(o+w,on-w,"uint32_t %s = atomic_%s(%s, %s);\n",rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
     else if(!strcmp(cl->op,"c.addrof")){           /* &lvalue -> a pointer value (decl_ty: `T *`, `T **`, ...) */
       const char *pt=decl_ty(f,cl->wr[0],tb,sizeof tb);
-      if(cl->n_imm)                                /* &member -> a typed `(T *)((char *)&base + off)` */
-        w+=snprintf(o+w,on-w,"%s%s = (%s)((char *)&%s + %lld);\n",pt,rname(f,cl->wr[0],d),pt,rname(f,cl->rd[0],a),(long long)cl->imm[0]);
+      const bcir_resource *br=res_of(f,cl->rd[0]);
+      const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";   /* a pointer base decays (`(char*)s`), a value
+                                                                 * / array base is addressed (`(char*)&s`) */
+      if(cl->n_rd==2)                              /* &base[idx] -> (T *)((char *)base + off + idx*es) */
+        w+=snprintf(o+w,on-w,"%s%s = (%s)((char *)%s%s + %lld + (size_t)%s * %lld);\n",
+          pt,rname(f,cl->wr[0],d),pt,amp,rname(f,cl->rd[0],a),(long long)cl->imm[0],rname(f,cl->rd[1],b),(long long)cl->imm[1]);
+      else if(cl->n_imm)                           /* &member -> a typed `(T *)((char *)<amp>base + off)` */
+        w+=snprintf(o+w,on-w,"%s%s = (%s)((char *)%s%s + %lld);\n",pt,rname(f,cl->wr[0],d),pt,amp,rname(f,cl->rd[0],a),(long long)cl->imm[0]);
       else
         w+=snprintf(o+w,on-w,"%s%s = &%s;\n",pt,rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
     else if(!strncmp(cl->op,"c.call.libm:",12)){   /* a <math.h> call -> the real libm function */

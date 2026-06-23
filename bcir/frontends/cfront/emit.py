@@ -192,10 +192,15 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     if c.op == "c.addrof":                                   # &lvalue -> a pointer value (T *t = &x;)
         rt = lf.rid_types.get(c.wr[0])
         ty = _cname(rt) if rt is not None else None
-        if c.imm:                                            # &member -> a typed `(T *)((char *)&base + off)`
-            castp = f"({ty})" if ty else ""
-            return deftmp(c.wr[0], f"{castp}((char *)&{ref(c.rd[0])} + {c.imm[0]})", ty)
-        return deftmp(c.wr[0], f"&{ref(c.rd[0])}", ty)
+        castp = f"({ty})" if ty else ""
+        if len(c.rd) == 2:                                   # &base[idx] -> (T *)((char *)bp + off + idx*stride)
+            bp = _base_ptr(lf, c.rd[0], ref)                 # bp decays a pointer/array base, addresses a value
+            return deftmp(c.wr[0], f"{castp}((char *){bp} + {c.imm[0]} + "
+                                   f"(size_t){ref(c.rd[1])} * {c.imm[1]})", ty)
+        if c.imm:                                            # &base.member -> (T *)((char *)bp + off); bp is
+            bp = _base_ptr(lf, c.rd[0], ref)                 # `s` for `s->m` (pointer), `&s` for `s.m` (value)
+            return deftmp(c.wr[0], f"{castp}((char *){bp} + {c.imm[0]})", ty)
+        return deftmp(c.wr[0], f"&{ref(c.rd[0])}", ty)       # &name / &(compound literal)
     if c.op == "c.select":                                   # ternary: cond ? then : els
         return deftmp(c.wr[0], f"({ref(c.rd[0])} ? {ref(c.rd[1])} : {ref(c.rd[2])})")
     if c.op == "c.load":
@@ -316,6 +321,9 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
             return deftmp(c.wr[0], f"atomic_load({ref(c.rd[0])})")
         if fn == "store":
             return f"atomic_store({ref(c.rd[0])}, {ref(c.rd[1])});"
+        if fn.startswith("cas_"):                 # cas_strong/weak -> bool compare_exchange (obj, &exp, des)
+            return deftmp(c.wr[0], f"atomic_compare_exchange_{fn[4:]}("
+                                   f"{ref(c.rd[0])}, {ref(c.rd[1])}, {ref(c.rd[2])})")
         return deftmp(c.wr[0], f"atomic_{fn}({ref(c.rd[0])}, {ref(c.rd[1])})")
     raise ValueError(f"emit: unhandled claim op {c.op!r}")
 
