@@ -105,6 +105,10 @@ typedef struct {
   const bcir_abi *abi;  /* the target data model the unit is laid out for (long/ptr widths) */
   uint32_t rid, cid;
   uint32_t cl_ctr;   /* unique anonymous compound-literal locals (`_cl<N>`) */
+  char fpdefs[4096]; size_t fpdefs_w; int n_fpdef;   /* synthesized `typedef RET (*__bcir_fpN)(PARAMS);`
+                                                      * lines for direct funcptr-param declarators (which
+                                                      * have no source typedef to print), emitted as a
+                                                      * prelude before the function bodies */
   char err[256]; int failed;
 } CC;
 /* Grow a CC parser-state array geometrically (no fixed cap), zeroing the fresh slots. On OOM the cap
@@ -2428,6 +2432,7 @@ static uint32_t p_stmt_expr(CC *c){
   return result;
 }
 
+static void ctype_str(const bcir_ctype *ty,char *o,size_t n);   /* used to spell a captured funcptr signature */
 static int p_func(CC *c, bcir_func *fn) {
   c->fn=fn; c->nenv=0;
   bcir_ctype rt;int rsi;if(p_type(c,&rt,&rsi))return 1; fn->ret=rt;
@@ -2438,7 +2443,34 @@ static int p_func(CC *c, bcir_func *fn) {
     if(is(c,"...")){fn->variadic=1;c->i++;break;}   /* a trailing `...` -- the function is variadic */
     bcir_ctype ty;int si;if(p_type(c,&ty,&si))return 1;
     tok pn; int row_ptr=0;
-    if(is(c,"(")){            /* (*name)[N]... -- a pointer-to-array "row pointer" (vendor headers); */
+    /* a direct function-pointer parameter `RET (*name)(PARAMS)`: unlike a typedef'd funcptr param there
+     * is no alias to print, so capture the full signature as a synthesized prelude typedef `__bcir_fpN`
+     * and type the param kind-3 with that tag. The indirect-call dispatch (p_icall) + the param/emit path
+     * then reuse the typedef-funcptr machinery verbatim (ctype_str prints the tag). Scalar ret + params. */
+    if(is(c,"(") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='*'
+       && c->t[c->i+2].k==T_ID
+       && c->t[c->i+3].k==T_PUN && c->t[c->i+3].n==1 && c->t[c->i+3].s[0]==')'
+       && c->t[c->i+4].k==T_PUN && c->t[c->i+4].n==1 && c->t[c->i+4].s[0]=='('){
+      bcir_ctype ret=ty;                            /* the already-parsed return type */
+      c->i+=2; pn=adv(c);                            /* `( *` then the parameter NAME */
+      if(!eat(c,")")||!eat(c,"("))return 1;          /* `) (` -- into the parameter-type list */
+      char rets[64]; ctype_str(&ret,rets,sizeof rets);
+      char sig[512]; size_t sw=0; int np=0;
+      sw+=snprintf(sig+sw,sizeof sig-sw,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
+      if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){ c->i++; }   /* `(void)` */
+      else if(!is(c,")")) for(;;){ bcir_ctype pt; int psi; if(p_type(c,&pt,&psi))return 1;
+        if(isk(c,T_ID)) c->i++;                      /* an optional parameter name (ignored) */
+        char ps[64]; ctype_str(&pt,ps,sizeof ps);
+        sw+=snprintf(sig+sw,sizeof sig-sw,"%s%s",np?", ":"",ps); np++;
+        if(is(c,",")){c->i++;continue;} break; }
+      sw+=snprintf(sig+sw,sizeof sig-sw,"%s);\n",np?"":"void");
+      if(c->fpdefs_w+sw<sizeof c->fpdefs){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
+      if(!eat(c,")"))return 1;                        /* past the parameter-type list */
+      memset(&ty,0,sizeof ty); ty.kind=3; ty.size=8; ty.signd=0;
+      snprintf(ty.tag,sizeof ty.tag,"__bcir_fp%d",c->n_fpdef); c->n_fpdef++;
+      row_ptr=1;                                      /* skip the row-ptr + array-suffix handling below */
+    }
+    if(!row_ptr && is(c,"(")){    /* (*name)[N]... -- a pointer-to-array "row pointer" (vendor headers); */
       int save=c->i; c->i++; int inner=0;          /* modeled as the equivalent multi-dim array param */
       while(is(c,"*")){inner++;c->i++;}
       if(inner==1 && isk(c,T_ID)){ tok cand=adv(c);
@@ -2913,6 +2945,8 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
     " *   R13 provenance digest  %016llx\n"
     " *   R17 accuracy  exact (integer / Q-fixed, 0 ULP)\n */\n",
     out->ok?"clean":"DIRTY", entry?(unsigned long long)bcir_provenance_digest(entry):0ull);
+  if(c.fpdefs_w && w<sizeof out->emitted-c.fpdefs_w-1)   /* synthesized funcptr-param typedefs (prelude) */
+    w+=snprintf(out->emitted+w,sizeof out->emitted-w,"%.*s",(int)c.fpdefs_w,c.fpdefs);
   for(int i=0;i<out->unit.n_funcs && w<sizeof out->emitted-256;i++){
     w+=emit_func(&out->unit.funcs[i],out->emitted+w,sizeof out->emitted-w);
     if(i+1<out->unit.n_funcs) w+=snprintf(out->emitted+w,sizeof out->emitted-w,"\n");
