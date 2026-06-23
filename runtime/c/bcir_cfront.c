@@ -36,7 +36,11 @@ typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; in
                                       * spans only ceil((bit_off+bit_w)/8) bytes -- it may straddle byte/word
                                       * boundaries; `size` stays the DECLARED type width, for read promotion) */
                  int arr_count; int nadims; int adims[3];
-                 int is_ptr; int ptee_size; int ptee_float; int ptee_sidx; } field;
+                 int is_ptr; int ptee_size; int ptee_float; int ptee_sidx;
+                 int elem_sidx;     /* arr_count>0 AND element is a value struct: its sdef index (array-of-structs,
+                                     * for `arr[i].field`); -1 otherwise. Distinct from `sidx` so member_descend
+                                     * (which descends a `.` only when sidx>=0) never walks an un-indexed array. */
+                 } field;
                  /* is_ptr: a pointer member -- `size` is pointer_size (the ABI layout width), the pointee
                   * (ptee_size width / signd sign / ptee_float / ptee_sidx struct) types the loaded `T *` */
                  /* arr_count > 0: a member array; `size` is the element, arr_count the total element
@@ -525,6 +529,7 @@ static int p_struct_body(CC *c) {
       f->is_ptr=isptr; f->ptee_size=isptr?ty.size:0; f->ptee_float=isptr?(ty.is_float?1:0):0;   /* pointee type */
       f->ptee_sidx=(isptr && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
       f->sidx = (ty.kind==1 && !ty.ptr_to_struct && !arr_count) ? si : -1;   /* value struct member -> nested */
+      f->elem_sidx = (ty.kind==1 && !ty.ptr_to_struct && arr_count) ? si : -1;   /* array-of-structs element struct */
       if(al>S->align)S->align=al; if(total>maxsz)maxsz=total;
       if(is_union){f->byte_off=0;f->bit_off=0;}        /* union: every member overlaps at offset 0 */
       else if(width){int ub=sz*8;
@@ -867,6 +872,31 @@ static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t 
   if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
   return t;
 }
+/* After `arr[i]` on an ARRAY-OF-STRUCTS member (`arr->elem_sidx>=0`) with a trailing `.`/`->`, parse the
+ * element field name and look it up in the element struct. Only a PLAIN SCALAR element field is handled
+ * (a bitfield/array/nested/pointer element field is a consistent follow-on -- both rails route to fallback).
+ * Returns 1 with *sub filled, else 0 (and may have raised via fail()). The leading `.`/`->` must be present. */
+static int elem_field(CC *c, const field *arr, field *sub) {
+  if(arr->elem_sidx<0 || !(is(c,".")||is(c,"->"))) return 0;
+  c->i++; tok fn=adv(c); sdef *ES=&c->s[arr->elem_sidx]; int fi=-1;
+  for(int i=0;i<ES->nf;i++) if((int)strlen(ES->f[i].name)==fn.n&&!strncmp(ES->f[i].name,fn.s,fn.n)) fi=i;
+  if(fi<0){ fail(c,"unknown field"); return 0; }
+  field s=ES->f[fi];
+  if(s.bit_w||s.arr_count||s.sidx>=0||s.is_ptr){ fail(c,"array-of-structs non-scalar element field"); return 0; }
+  *sub=s; return 1;
+}
+/* `arr[i].field` (array-of-structs): load `sub->size` bytes at member_off(arr)+offsetof(sub), STRIDING by the
+ * element size `arr->size` (imm[2]) -- decoupled from the field copy size (imm[1]). */
+static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uint32_t idx, const field *sub) {
+  uint32_t t=sub->is_float?tempf(c,sub->size):tempi(c,sub->size,sub->signd);
+  if(sub->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;
+  bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
+  cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
+  cl->n_imm=3;cl->imm[0]=arr->byte_off+sub->byte_off;cl->imm[1]=sub->size;cl->imm[2]=arr->size;
+  cl->bounds=BCIR_BND_ASSUMED;
+  if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+  return t;
+}
 /* Parse the `[i]` (or `[i][j][k]`) indices of a member-array access and flatten them row-major into a
  * single linear index (Horner: lin = lin*adims[d] + idx[d]) -- matching the oracle, so 1-D `s.a[i]` and
  * N-D `s.m[i][j]` both reduce to one element-scaled index into the member at its byte offset. */
@@ -993,7 +1023,10 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){    /* another pointer hop: load it, recurse */
         ptr=emit_member(c,&b,&mf); psidx=mf.ptee_sidx; pfld=mf; continue;
       }
-      if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf); return emit_member_index(c,&b,&mf,ix); }
+      if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);
+        field sub; if(elem_field(c,&mf,&sub)) return emit_member_index_field(c,&b,&mf,ix,&sub);
+        if(c->failed) return 0;
+        return emit_member_index(c,&b,&mf,ix); }
       return emit_member(c,&b,&mf);                   /* terminal member load through the loaded pointer */
     }
     return ptr;                                       /* no further postfix: the pointer value itself */
@@ -1261,6 +1294,8 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
       uint32_t ptr=emit_member(c,v,&mf);        /* load the pointer field, then chain through the loaded ptr */
       return postfix_ptr_chain(c,ptr,mf.ptee_sidx,mf); }
     if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);   /* s.arr[i] / s.m[i][j] load */
+      field sub; if(elem_field(c,&mf,&sub)) return emit_member_index_field(c,v,&mf,ix,&sub);   /* arr[i].field */
+      if(c->failed) return 0;
       return emit_member_index(c,v,&mf,ix); }
     return emit_member(c,v,&mf);
   }
@@ -1677,6 +1712,7 @@ static int designator_chain(CC *c, sdef *S, int *off, int *size, int *bit_w, int
   if(!started){ fail(c,"empty designator"); return 1; }
   return 0;
 }
+static void agg_init_at(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit);   /* fwd: mutual recursion */
 /* A NESTED braced initializer for an array member inside a struct/union init -- `struct S s = { {e0,e1,
  * ..}, n };` (the C twin of lower._init_subagg). Stores each element with an OFFSET-based member c.store
  * at `base_off + idx*es` (so it composes through the enclosing struct's `= {0}` baseline); positional
@@ -1692,6 +1728,22 @@ static void subagg_init(CC *c, uint32_t rid, int base_off, int es, int is_bool) 
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
     if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=v;cl->n_imm=2;cl->imm[0]=base_off+idx*es;cl->imm[1]=es;cl->bounds=BCIR_BND_ASSUMED;
       if(is_bool){cl->imm[2]=1;cl->n_imm=3;}}          /* a _Bool[] element init normalizes the value */
+    cursor=idx+1;
+    if(is(c,",")) c->i++;
+  }
+  eat(c,"}");
+}
+/* A nested braced initializer for an ARRAY-OF-STRUCTS member -- `{ {a,b}, {c,d}, ... }`: each element brace
+ * recurses into the element struct's init at `base_off + idx*stride` (the C twin of the oracle's _init_subagg
+ * array-of-struct branch). Composes through the enclosing `= {0}` baseline; `[i]=` jumps, gaps zero-fill. */
+static void subagg_init_struct(CC *c, uint32_t rid, int base_off, int elem_sidx, int stride) {
+  eat(c,"{");
+  int cursor=0;
+  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
+    int idx=cursor;
+    if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
+    if(!is(c,"{")){ fail(c,"array-of-structs element needs a brace initializer"); return; }
+    agg_init_at(c, rid, elem_sidx, base_off+idx*stride, 0);                   /* {a,b} -> the element struct */
     cursor=idx+1;
     if(is(c,",")) c->i++;
   }
@@ -1715,6 +1767,8 @@ static void agg_init_at(CC *c, uint32_t rid, int sidx, int base_off, int do_zini
     off += base_off;                                   /* shift into the enclosing object (nested aggregate) */
     if(!skip && is(c,"{")){                             /* a NESTED brace: an aggregate (array OR struct) member */
       field *AF = (top_fi>=0 && top_fi<S->nf) ? &S->f[top_fi] : NULL;
+      if(AF && AF->arr_count>0 && AF->elem_sidx>=0){      /* an ARRAY-OF-STRUCTS member: `{ {a,b}, {c,d} }` */
+        subagg_init_struct(c, rid, off, AF->elem_sidx, AF->size); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
       if(AF && AF->arr_count>0){ subagg_init(c, rid, off, AF->size, AF->is_bool); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
       if(AF && AF->sidx>=0){ agg_init_at(c, rid, AF->sidx, off, 0); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
       fail(c,"nested initializer for a non-aggregate member"); return;
@@ -2108,18 +2162,24 @@ static void p_stmt(CC *c) {
         store_through_ptr(c,ptr,f.ptee_sidx,f); eat(c,";"); return; }
       if(f.arr_count && is(c,"[")){               /* s.arr[i] / s.m[i][j] = expr  /  OP= expr */
         uint32_t idx=member_arr_index(c,&f); uint32_t aval;
+        field sub; int soa=elem_field(c,&f,&sub);   /* arr[i].field on an array-of-structs (strided store) */
+        if(c->failed) return;
+        const field *sf = soa ? &sub : &f;          /* the stored slot: the element FIELD, or the array element */
         if(is_compound_op(&c->t[c->i])){          /* load element, bin op, store back */
           char ch=c->t[c->i].s[0]; c->i++;
-          uint32_t cur=emit_member_index(c,v,&f,idx); uint32_t rhs=p_expr(c);
+          uint32_t cur=soa?emit_member_index_field(c,v,&f,idx,&sub):emit_member_index(c,v,&f,idx);
+          uint32_t rhs=p_expr(c);
           const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
           uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
           bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
           aval=tmp;
         } else { if(!eat(c,"="))return; aval=p_expr(c); }
         bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-        if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=aval;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.size;
+        if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=aval;cl->n_imm=2;
+          cl->imm[0]= soa ? f.byte_off+sub.byte_off : f.byte_off; cl->imm[1]=sf->size;
           cl->bounds=BCIR_BND_ASSUMED;
-          if(f.is_bool){cl->imm[2]=1;cl->n_imm=3;}   /* a _Bool[] element: normalize on store */
+          if(sf->is_bool){cl->imm[2]=1;cl->n_imm=3;}   /* a _Bool element/field: normalize on store */
+          if(soa){ if(cl->n_imm<3){cl->imm[2]=0;cl->n_imm=3;} cl->imm[3]=f.size; cl->n_imm=4; }   /* stride imm[3] */
           if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
         eat(c,";");return;
       }
@@ -2490,12 +2550,13 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else w+=snprintf(o+w,on-w,"%s %s = %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));   /* decl_ty: a copied pointer temp keeps `T *` */
     }else if(!strcmp(cl->op,"c.load")){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;
-      if(cl->n_rd==2 && cl->n_imm){       /* s.arr[i]: load at &base + member_off + idx*elem_size */
+      if(cl->n_rd==2 && cl->n_imm){       /* s.arr[i]: load at &base + member_off + idx*stride, copy `es` bytes */
         const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long es=cl->n_imm>1?cl->imm[1]:4;
+        long long stride=cl->n_imm>2?cl->imm[2]:es;   /* array-of-structs `arr[i].field`: stride sizeof(elem) != es */
         /* the temp carries the element's (width, signedness): memcpy es bytes into it so a signed sub-int
          * element reads sign-extended (the zero-extending uint32 form dropped the sign). */
         w+=snprintf(o+w,on-w,"%s %s; memcpy(&%s, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld);\n",
-          tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),es,es); }
+          tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
       else if(cl->n_rd==2) w+=snprintf(o+w,on-w,"%s %s = %s[%s];\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
@@ -2506,13 +2567,14 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(cl->n_imm){                      /* s.arr[i] = v: store at &base + member_off + idx*elem_size */
         const bcir_resource *br=res_of(f,cl->rd[0]); const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
         long long off=cl->imm[0], es=cl->n_imm>1?cl->imm[1]:4;
+        long long stride=cl->n_imm>3?cl->imm[3]:es;    /* array-of-structs `arr[i].field=v`: stride sizeof(elem) */
         const bcir_resource *vr=res_of(f,cl->rd[2]);   /* a float element converts (double->float), not a uint
                                                         * reinterpret; a narrower int widens to the element. */
         const char *vt=(cl->n_imm>2&&cl->imm[2])?"_Bool"   /* a _Bool element: `_Bool _v = x` normalizes to 0/1 */
                       :(vr&&vr->is_float)?(es==4?"float":es>8?"long double":"double")
                       :(es==1?"uint8_t":es==2?"uint16_t":es==8?"uint64_t":"uint32_t");
         w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld + (size_t)%s * %lld, &_v, %lld); }\n",
-          vt,rname(f,cl->rd[2],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),es,es); }
+          vt,rname(f,cl->rd[2],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"((volatile uint32_t *)%s)[%s] = %s;\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],d));
       else

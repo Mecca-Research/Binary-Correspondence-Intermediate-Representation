@@ -186,10 +186,11 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         t = ref(c.wr[0])
         if len(c.rd) == 2:                                   # base[index]
             if c.imm:                                        # s.arr[i]: member offset + element-scaled
-                es = c.imm[1] if len(c.imm) > 1 else 4        # index -> &base + off + i*elem_size
-                bp = _base_ptr(lf, c.rd[0], ref)
+                es = c.imm[1] if len(c.imm) > 1 else 4        # index -> &base + off + i*stride, copy `es` bytes
+                stride = c.imm[2] if len(c.imm) > 2 else es   # array-of-structs `arr[i].field`: stride sizeof(elem)
+                bp = _base_ptr(lf, c.rd[0], ref)              # != the field copy size `es`
                 return (f"{et} {t}; memcpy(&{t}, (const char *){bp} + {off} + "
-                        f"(size_t){ref(c.rd[1])} * {es}, {es});")
+                        f"(size_t){ref(c.rd[1])} * {stride}, {es});")
             return deftmp(c.wr[0], f"{ref(c.rd[0])}[{ref(c.rd[1])}]", et)   # typed array — aligned
         ptr = _base_ptr(lf, c.rd[0], ref)
         if c.domain.name == "MMIO":                          # device register: ordered volatile load (its
@@ -201,10 +202,11 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     if c.op == "c.store":
         off = c.imm[0] if c.imm else 0
         if len(c.rd) == 3:                                   # base[index] = value
-            if c.imm:                                        # s.arr[i] = v: &base + off + i*elem_size
+            if c.imm:                                        # s.arr[i] = v: &base + off + i*stride, copy `es` bytes
                 es = c.imm[1] if len(c.imm) > 1 else 4
+                stride = c.imm[3] if len(c.imm) > 3 else es   # array-of-structs `arr[i].field=v`: stride sizeof(elem)
                 bp = _base_ptr(lf, c.rd[0], ref)
-                dst = f"(char *){bp} + {off} + (size_t){ref(c.rd[1])} * {es}"
+                dst = f"(char *){bp} + {off} + (size_t){ref(c.rd[1])} * {stride}"
                 conv = "_Bool" if (len(c.imm) > 2 and c.imm[2]) else _store_conv(lf.rid_types.get(c.rd[2]), es)
                 if conv:                                     # convert the source to the element type first (a
                     return f"{{ {conv} _sv = {ref(c.rd[2])}; memcpy({dst}, &_sv, {es}); }}"   # _Bool normalizes), else
