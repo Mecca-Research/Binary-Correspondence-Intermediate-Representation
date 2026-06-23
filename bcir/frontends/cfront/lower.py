@@ -899,21 +899,25 @@ class _FuncLowerer:
                 operand = node.operand
                 if isinstance(operand, cast.Unary) and operand.op == "*":  # &*p == p (the pointer itself;
                     return self._rvalue(operand.operand)                   # &*(p+i) == p+i) -- 0 claims, both rails
+                if (isinstance(operand, cast.Member) and isinstance(operand.base, cast.Index)
+                        and not isinstance(operand.base.base, cast.Member)):
+                    # &arr[i].field on a PLAIN array/pointer base -- the twin's bare-array-param model can't
+                    # reach it (even `a[i].field` loads fall back there). The MEMBER form &s.arr[i].field
+                    # (operand.base.base is a Member) IS supported; defer only the plain-base case, both rails.
+                    raise CLowerError("address-of a plain-base array-of-structs element field is not yet supported")
                 lv = self._lvalue(operand)
                 if lv.bit_width:                              # &bitfield is illegal in C (no addressable unit)
                     raise CLowerError("cannot take the address of a bit-field")
-                if lv.kind == "mem" and lv.member and lv.stride:  # &arr[i].field: an array-of-structs element
-                    raise CLowerError(                        # field address (struct stride) is a follow-on
-                        "address-of an array-of-structs element field is not yet supported")
                 if lv.kind == "mem" and lv.idx is None and lv.ct.kind in ("pointer", "array"):
                     raise CLowerError(                        # &s.ptr / &s.arr -- a pointer/array member is a
                         "address-of a pointer/array member is not yet supported")  # follow-on
                 t = self._temp(pointer(lv.ct), "addr")
                 if lv.kind == "var":                          # &name / &(compound literal) -> the object's address
                     return self._emit("c.addrof", Opcode.ADD, (lv.rid,), (t,))
-                if lv.idx is not None:                        # &arr[i] / &p[i] (plain element; member-array deferred)
+                if lv.idx is not None:                        # &arr[i] / &s.arr[i] / &arr[i].field
+                    stride = lv.stride or (lv.ct.size or 4)   # array-of-structs strides by the STRUCT, else the elem
                     return self._emit("c.addrof", Opcode.ADD, (lv.rid, lv.idx), (t,),
-                                      imm=(lv.byte_off, lv.ct.size or 4))
+                                      imm=(lv.byte_off, stride))
                 return self._emit("c.addrof", Opcode.ADD, (lv.rid,), (t,), imm=(lv.byte_off,))  # &base.member
             v = self._rvalue(node.operand)
             opcode, suf = _UN[node.op]
