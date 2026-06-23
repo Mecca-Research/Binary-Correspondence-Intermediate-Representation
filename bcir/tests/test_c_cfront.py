@@ -24,6 +24,17 @@ from bcir.model import Domain
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
 _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+
+# Bounds-quarantine support (§5.12): the emit of a `masked` array access uses BCIR_CHK(rid, idx, N), which
+# calls bcir_bounds_quarantine on an out-of-bounds index. Inlined here (matching runtime/c/bcir_quarantine.h)
+# so the equivalence harness is self-contained; for the in-bounds seeds the handler is never reached, so a
+# guarded access is behaviour-identical to the raw `a[i]`.
+_BOUNDS_GUARD = (
+    "#include <stdlib.h>\n#include <stddef.h>\n"
+    "static void bcir_bounds_quarantine(uint64_t r,uint64_t i,uint64_t e)"
+    "{(void)r;(void)i;(void)e;abort();}\n"
+    "#define BCIR_CHK(rid,idx,n) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
+    "(bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n)),(size_t)0))")
 # straight-line fixtures run the full execute loop; control-flow fixtures get parity + emit + Clang ≡
 # (control flow is not a flat StreamPack segment stream, so the loop runs the straight-line set).
 _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfront_widerow.c", "cfront_deref.c",
@@ -243,6 +254,7 @@ def _equiv(source: str, c_emitted: str, entry) -> str:
 #include <stdatomic.h>
 #include <math.h>
 #include <complex.h>
+{_BOUNDS_GUARD}
 {source}
 
 {c_emitted}
@@ -299,6 +311,7 @@ def _equiv_atomic(source: str, c_emitted: str, entry) -> str:
 #include <stdio.h>
 #include <string.h>
 #include <stdatomic.h>
+{_BOUNDS_GUARD}
 {source}
 
 {c_emitted}
@@ -412,7 +425,7 @@ def test_pointer_to_pointer_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
             open(cpath, "w").write(harness)
             for std in ("c23", "c2x", "c17"):
@@ -479,7 +492,7 @@ def test_field_deref_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
             open(cpath, "w").write(harness)
             for std in ("c23", "c2x", "c17"):
@@ -542,7 +555,7 @@ def test_pointer_element_signedness_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
             open(cpath, "w").write(harness)
             for std in ("c23", "c2x", "c17"):
@@ -593,7 +606,7 @@ int main(void){
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
             open(cpath, "w").write(harness)
             for std in ("c23", "c2x", "c17"):
@@ -642,7 +655,7 @@ def test_multi_declarator_pointer_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
             open(cpath, "w").write(harness)
             for std in ("c23", "c2x", "c17"):
@@ -695,7 +708,7 @@ def test_faithful_char_types_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             for charmode in ("-fsigned-char", "-funsigned-char"):       # exercise plain char both ways
@@ -751,7 +764,7 @@ def test_compound_literals_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -807,7 +820,7 @@ def test_typeof_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -852,7 +865,7 @@ def test_struct_member_init_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -896,7 +909,7 @@ def test_array_compound_literals_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -947,7 +960,7 @@ def test_compound_wide_dual_rail():
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
             harness = (f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
-                       f"#include <stdarg.h>\n{renamed}\n{emit}\n{driver}")
+                       f"#include <stdarg.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}")
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -996,7 +1009,7 @@ def test_stmtexpr_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -1043,7 +1056,7 @@ def test_builtins_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -1134,7 +1147,7 @@ def test_addrmember_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -1181,7 +1194,7 @@ def test_nestoffset_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -1227,7 +1240,7 @@ def test_designate_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -1279,7 +1292,7 @@ def test_generic_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{renamed}\n{emit}\n{driver}"
+            harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -1375,7 +1388,7 @@ def test_extern_variadic_dual_rail():
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
             harness = (f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
-                       f"#include <stdarg.h>\n{renamed}\n{emit}\n{driver}")
+                       f"#include <stdarg.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}")
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -1422,7 +1435,7 @@ def test_variadic_dual_rail():
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
             harness = (f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
-                       f"#include <stdarg.h>\n{renamed}\n{emit}\n{driver}")
+                       f"#include <stdarg.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}")
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
@@ -1539,6 +1552,7 @@ def test_funcptr_member_dispatch_table():
         call = ", ".join(["&obj", *scalars])
         harness = f"""#include <stdint.h>
 #include <stdio.h>
+{_BOUNDS_GUARD}
 {r.source}
 
 {c_emit}
@@ -2553,6 +2567,7 @@ def test_integer_promotions_and_uac_oracle():
         return
     harness = f"""#include <stdint.h>
 #include <stdio.h>
+{_BOUNDS_GUARD}
 {_INTPROMOTE_SRC}
 {emit}
 static uint64_t S=0x9E3779B97F4A7C15u;
@@ -2608,6 +2623,7 @@ def test_local_aggregate_initializers_oracle():
     harness = f"""#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+{_BOUNDS_GUARD}
 {_AGGINIT_SRC}
 {emit}
 int main(void){{
@@ -2652,6 +2668,7 @@ def test_scalar_globals_read_write_dual_rail():
         # side-effect-aware behaviour: reset `acc` between the original and the emitted twin per call.
         harness = f"""#include <stdint.h>
 #include <stdio.h>
+{_BOUNDS_GUARD}
 {r.source}
 
 {c_emit}
@@ -2778,3 +2795,30 @@ def test_bounds_promotion_local_static_arrays_to_masked():
     assert clean and b == {"masked"}                                  # a static array -> runtime-checked
     clean, b = bounds_of("unsigned f(unsigned *p,unsigned i){ p[i&7u]=3u; return p[i&7u]; }")
     assert clean and b == {"assumed_safe"}                            # a pointer (extent unknown) stays trusted
+
+
+def test_bounds_quarantine_traps_out_of_bounds():
+    """§5.12 quarantine handler: the emitted guard on a `masked` local-array access is transparent for an
+    in-bounds index (behaviour-identical to the raw `a[i]`) and, on an out-of-bounds index, calls the WEAK
+    `bcir_bounds_quarantine` runtime handler -- which records the provenance and aborts (fail-fast). Linked
+    against the real runtime/c/bcir_quarantine.c."""
+    if not _CC:
+        return
+    src = "unsigned g(unsigned i){ unsigned a[8]; for(unsigned k=0u;k<8u;k++) a[k]=k*2u; return a[i]; }"
+    from bcir.frontends.cfront import compile_unit
+    r = compile_unit(src, check_clang=False)
+    name = next(reversed(r.lowered.functions))
+    body = r.emitted[name].split("*/\n", 1)[-1]
+    with tempfile.TemporaryDirectory() as d:
+        prog = (f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
+                f'{r.source}\n\n{body}\n'
+                f'int main(int c, char **v){{ (void)c; printf("%u\\n", bcir_g((unsigned)atoi(v[1]))); return 0; }}\n')
+        cpath, epath = os.path.join(d, "e.c"), os.path.join(d, "e")
+        open(cpath, "w").write(prog)
+        b = subprocess.run([_CC, "-std=c23", "-O2", "-I", _C, cpath,
+                            os.path.join(_C, "bcir_quarantine.c"), "-o", epath], capture_output=True, text=True)
+        assert b.returncode == 0, b.stderr
+        inb = subprocess.run([epath, "3"], capture_output=True, text=True)   # in-bounds: a[3] = 6, exits 0
+        assert inb.returncode == 0 and inb.stdout.strip() == "6", (inb.returncode, inb.stdout)
+        oob = subprocess.run([epath, "99"], capture_output=True, text=True)  # OOB: the handler aborts
+        assert oob.returncode != 0 and "bounds-quarantine" in oob.stderr, (oob.returncode, oob.stderr)

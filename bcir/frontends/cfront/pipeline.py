@@ -306,12 +306,29 @@ def _equivalence(source: str, lowered: LoweredUnit) -> str:
         return "match" if out == "MATCH" else f"MISMATCH:{out}"
 
 
+_BOUNDS_GUARD = (
+    "/* §5.12 bounds-quarantine guard, mirrored from runtime/c/bcir_quarantine.h for the in-process\n"
+    "   equivalence build: in-bounds -> the raw index (transparent); the handler is a non-aborting stub\n"
+    "   (a masked access is provably bounded, so it is never reached). */\n"
+    "static void bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent)\n"
+    "{ (void)rid; (void)index; (void)extent; }\n"
+    "#define BCIR_CHK(rid, i, n) \\\n"
+    "    ((uint64_t)(i) < (uint64_t)(n) ? (size_t)(i) \\\n"
+    "     : (bcir_bounds_quarantine((uint64_t)(rid), (uint64_t)(i), (uint64_t)(n)), (size_t)0))\n"
+)
+
+
 def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
     """A self-contained C program: the original source + the emitted bcir_* functions + a main that
     runs both on the same seeded-random inputs and prints MATCH iff every trial agrees."""
     from .emit import _cname  # noqa: PLC0415
 
     emitted = "\n\n".join(emit_function(lf) for lf in lowered.functions.values())
+    # §5.12: a masked (bounds-promoted) array access is emitted as `a[BCIR_CHK(rid, i, n)]`. Mirror the
+    # runtime ABI here so the emitted unit compiles+links standalone: BCIR_CHK is transparent in-bounds
+    # (so a provably-bounded `masked` access is byte-identical to the raw `a[i]`), and the handler is a
+    # non-aborting stub -- a masked access never goes out of bounds, so it is never called in a trial.
+    guard = _BOUNDS_GUARD if "BCIR_CHK" in emitted else ""
     has_ptr = any(ct.kind in ("pointer", "array") for _n, _r, ct in entry.params)
     decls, origargs, setup, prelude = [], [], [], []
     for i, (pname, _rid, ct) in enumerate(entry.params):
@@ -367,7 +384,7 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
 #include <string.h>
 #include <stdatomic.h>
 #include <math.h>
-{source}
+{guard}{source}
 
 {emitted}
 

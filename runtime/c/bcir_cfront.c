@@ -2792,8 +2792,21 @@ static int is_global_ref(const bcir_func *f,uint32_t rid){
 static int is_param_ref(const bcir_func *f,uint32_t rid){
   for(int i=0;i<f->n_params;i++) if(f->params[i].rid==rid) return 1; return 0;
 }
+/* The index expression for `base[idx]`: a MASKED (runtime-bounds-checked, §5.12) access into a known-extent
+ * array is wrapped in `BCIR_CHK(rid, idx, N)` -- in-bounds returns idx (behaviour-identical to the raw
+ * `a[i]`), out-of-bounds calls the bounds-quarantine handler; the numeric `rid` is the access provenance.
+ * Any other access -> the bare index. Result written into `buf`. */
+static const char *guard_idx(const bcir_func *f, const bcir_claim *cl, char *buf, size_t bn){
+  const bcir_resource *br=res_of(f,cl->rd[0]);
+  if(cl->bounds==BCIR_BND_MASKED && br && br->count>1){
+    char ib[BCIR_CIR_NAME];
+    snprintf(buf,bn,"BCIR_CHK(%u, %s, %lluu)",(unsigned)cl->rd[0],rname(f,cl->rd[1],ib),(unsigned long long)br->count);
+    return buf;
+  }
+  return rname(f,cl->rd[1],buf);
+}
 static size_t emit_func(const bcir_func *f,char *o,size_t on){
-  size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64],tb[80];
+  size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64],tb[80],gb[96];
   ctype_str(&f->ret,ty,sizeof ty);
   w+=snprintf(o+w,on-w,"static %s bcir_%s(",ty,f->name);
   if(f->n_params==0&&!f->variadic) w+=snprintf(o+w,on-w,"void");
@@ -2877,7 +2890,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
          * element reads sign-extended (the zero-extending uint32 form dropped the sign). */
         w+=snprintf(o+w,on-w,"%s %s; memcpy(&%s, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld);\n",
           tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
-      else if(cl->n_rd==2) w+=snprintf(o+w,on-w,"%s %s = %s[%s];\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
+      else if(cl->n_rd==2) w+=snprintf(o+w,on-w,"%s %s = %s[%s];\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb));
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
@@ -2899,7 +2912,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"((volatile uint32_t *)%s)[%s] = %s;\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],d));
       else
-        w+=snprintf(o+w,on-w,"%s[%s] = %s;\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],d));
+        w+=snprintf(o+w,on-w,"%s[%s] = %s;\n",rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb),rname(f,cl->rd[2],d));
     }else if(!strcmp(cl->op,"c.store")){          /* L8: member store -> memcpy `size` bytes */
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->imm[0]; long long sz=cl->n_imm>1?cl->imm[1]:4;
       if(cl->domain==BCIR_DOM_MMIO)
