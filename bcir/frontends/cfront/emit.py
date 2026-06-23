@@ -41,6 +41,15 @@ def _cname(ct: CType) -> str:
     return ("_Atomic " if ct.atomic else "") + ct.name
 
 
+def _funcptr_decl(ct: CType, name: str) -> str:
+    """Render an inline function-pointer declarator `RET (*name)(PARAMS)`. Used in param + local
+    position, where (unlike a typedef alias) there is no spelling to print and the full signature
+    must be reconstructed from the carried return + parameter types — `int (*g)(int)`."""
+    ret = _cname(ct.of) if ct.of is not None else "void"
+    plist = ", ".join(_cname(p) for p in ct.params) or "void"
+    return f"{ret} (*{name})({plist})"
+
+
 def emit_function(lf: LoweredFunc) -> str:
     """The lowered function as standalone C, named `bcir_<name>` (so it can sit beside the original).
     Walks the structured body tree, so `if`/`while`/`return` emit real C control flow; mutable named
@@ -75,6 +84,8 @@ def emit_function(lf: LoweredFunc) -> str:
 
     def _local_decl(rid, name, ct):
         zi = " = {0}" if rid in lf.zero_init_locals else ""
+        if ct.kind == "funcptr":                             # `RET (*name)(PARAMS)` (no typedef alias)
+            return f"    {_funcptr_decl(ct, name)}{zi};"
         if ct.kind == "array":                               # `T name[N]` (the dims follow the name)
             return f"    {_cname(ct.of)} {name}[{ct.count}]{zi};"
         return f"    {_cname(ct)} {name}{zi};"
@@ -82,7 +93,8 @@ def emit_function(lf: LoweredFunc) -> str:
     decls += [f"    static {_cname(ct)} {name} = {init}u;"      # static storage: once-only const init
               for _rid, name, ct, init in lf.statics]
     body = _walk(lf, lf.body, ref, 1)
-    parts = [f"{_cname(ct)} {pname}" for pname, _rid, ct in lf.params]
+    parts = [_funcptr_decl(ct, pname) if ct.kind == "funcptr" else f"{_cname(ct)} {pname}"
+             for pname, _rid, ct in lf.params]
     if lf.variadic:                                      # a trailing `...` after the named params
         parts.append("...")
     sig_params = ", ".join(parts) or "void"

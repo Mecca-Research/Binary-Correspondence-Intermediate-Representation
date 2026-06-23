@@ -264,6 +264,21 @@ class _Parser:
         self.eat("PUNCT", ")")
         return (cast.TypeRef(base=name, funcptr=True, func_ret=ret, func_params=tuple(params)), name)
 
+    def _is_funcptr_declarator(self) -> bool:
+        """True if the cursor is at `( * NAME ) (` — a function-pointer declarator (`int (*g)(int)`),
+        as opposed to the row-pointer `( * NAME ) [` form that `_declarator` handles."""
+        return (self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*"
+                and self.peek(2).kind == "IDENT"
+                and self.peek(3).kind == "PUNCT" and self.peek(3).text == ")"
+                and self.peek(4).kind == "PUNCT" and self.peek(4).text == "(")
+
+    def _declarator_or_funcptr(self, base: cast.TypeRef):
+        """A declarator (param or local position) that may be an inline function-pointer
+        `RET (*NAME)(PARAMS)` — for which there is no typedef name, so the full signature is captured."""
+        if self._is_funcptr_declarator():
+            return self._funcptr_declarator(base)
+        return self._declarator(base)
+
     def _enum_body(self, tag: str) -> None:
         """Parse `{ A, B = expr, C }` -- assign each enumerator its C value (prev+1, or the given
         constant) and register it so a later use resolves to that integer literal."""
@@ -544,7 +559,7 @@ class _Parser:
                     variadic = True
                     break
                 ptype = self._type_spec()
-                ptype, pname = self._declarator(ptype)
+                ptype, pname = self._declarator_or_funcptr(ptype)
                 params.append(cast.Param(ptype, pname))
                 if self.at("PUNCT", ","):
                     self.nxt()
@@ -729,7 +744,7 @@ class _Parser:
         base = self._type_spec()
         decls = []
         while True:
-            tref, name = self._declarator(base)
+            tref, name = self._declarator_or_funcptr(base)
             init = None
             if self.at("OP", "="):
                 self.nxt()

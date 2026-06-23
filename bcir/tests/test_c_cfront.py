@@ -41,6 +41,7 @@ _ABI = ["cfront_structret.c", "cfront_structcall.c",  # L8: struct return-by-val
         "cfront_union.c",                             # + full union (members overlap at offset 0)
         "cfront_interleave.c",                        # + enum/struct defined *between* two functions
         "cfront_funcptr.c",                           # + funcptr param + indirect call (HAL dispatch)
+        "cfront_fnptrparam.c",                         # + DIRECT inline funcptr params int (*g)(int) (no typedef)
         "cfront_rmw.c",                               # + MMIO register read-modify-write (d->reg |= bits)
         "cfront_bitfield.c",                          # + MMIO bitfield write (r->field = v, c.bf.set)
         "cfront_bfcompound.c",                         # + bitfield compound-assign (r->field |= bits)

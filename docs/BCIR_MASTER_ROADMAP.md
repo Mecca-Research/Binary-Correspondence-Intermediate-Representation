@@ -797,6 +797,19 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    (oracle `_addr` `CallExpr` case; twin `p_call`-result `postfix_lvalue` wiring). The claim graph is unchanged
 >    (only a result temp's TYPE), so parity is trivially clean. `cfront_structcall.c` pins all four uses,
 >    byte-exact vs Clang on x86-64 AND aarch64 (qemu).
+> 1j. ✅ **Direct (inline) function-pointer PARAMETERS** `RET (*name)(PARAMS)` (the #1h member analogue for
+>    params) — the callback / dispatch signature WITHOUT a typedef alias (`cfront_funcptr.c` covered only the
+>    typedef'd form). Each lowers + is called IDENTICALLY to the typedef'd shape (a `c.call.indirect` claim,
+>    an opaque R18 edge), so the claim graph and parity are unchanged. The work is purely PARSE + EMIT: both
+>    rails parse the `(*name)(params)` declarator in param position (oracle `_declarator_or_funcptr` routing to
+>    the existing `_funcptr_declarator`; twin a funcptr-param branch in `p_func` mirroring the #1h member
+>    detection), then reconstruct the full inline signature since there is no alias to print -- the oracle emits
+>    the `RET (*name)(PARAMS)` declarator directly (`emit._funcptr_decl`, also covering typedef'd params, which
+>    it now EXPANDS), while the twin synthesizes a `typedef RET (*__bcir_fpN)(PARAMS);` prelude line and types
+>    the param kind-3 with that tag (so `ctype_str` + the param-emit reuse the typedef path verbatim). Scoped to
+>    scalar return + scalar params (the `_equiv` harness synthesizes a real `_fpN` target from those). The oracle
+>    also parses a direct funcptr LOCAL `int (*g)(int)`; `cfront_fnptrparam.c` pins the param form, byte-exact vs
+>    Clang on x86-64 AND aarch64 (qemu).
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit
