@@ -902,9 +902,9 @@ class _FuncLowerer:
                 lv = self._lvalue(operand)
                 if lv.bit_width:                              # &bitfield is illegal in C (no addressable unit)
                     raise CLowerError("cannot take the address of a bit-field")
-                if lv.kind == "mem" and lv.member:            # &s.arr[i] / &arr[i].field: a struct-member-array
-                    raise CLowerError(                        # element address is a follow-on (both rails defer)
-                        "address-of a struct-member-array element is not yet supported")
+                if lv.kind == "mem" and lv.member and lv.stride:  # &arr[i].field: an array-of-structs element
+                    raise CLowerError(                        # field address (struct stride) is a follow-on
+                        "address-of an array-of-structs element field is not yet supported")
                 if lv.kind == "mem" and lv.idx is None and lv.ct.kind in ("pointer", "array"):
                     raise CLowerError(                        # &s.ptr / &s.arr -- a pointer/array member is a
                         "address-of a pointer/array member is not yet supported")  # follow-on
