@@ -310,11 +310,11 @@ _BOUNDS_GUARD = (
     "/* §5.12 bounds-quarantine guard, mirrored from runtime/c/bcir_quarantine.h for the in-process\n"
     "   equivalence build: in-bounds -> the raw index (transparent); the handler is a non-aborting stub\n"
     "   (a masked access is provably bounded, so it is never reached). */\n"
-    "static void bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent)\n"
-    "{ (void)rid; (void)index; (void)extent; }\n"
-    "#define BCIR_CHK(rid, i, n) \\\n"
+    "static void bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent, const char *site)\n"
+    "{ (void)rid; (void)index; (void)extent; (void)site; }\n"
+    "#define BCIR_CHK(rid, i, n, site) \\\n"
     "    ((uint64_t)(i) < (uint64_t)(n) ? (size_t)(i) \\\n"
-    "     : (bcir_bounds_quarantine((uint64_t)(rid), (uint64_t)(i), (uint64_t)(n)), (size_t)0))\n"
+    "     : (bcir_bounds_quarantine((uint64_t)(rid), (uint64_t)(i), (uint64_t)(n), (site)), (size_t)0))\n"
 )
 
 

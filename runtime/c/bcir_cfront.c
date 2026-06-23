@@ -2793,20 +2793,22 @@ static int is_param_ref(const bcir_func *f,uint32_t rid){
   for(int i=0;i<f->n_params;i++) if(f->params[i].rid==rid) return 1; return 0;
 }
 /* The index expression for `base[idx]`: a MASKED (runtime-bounds-checked, §5.12) access into a known-extent
- * array is wrapped in `BCIR_CHK(rid, idx, N)` -- in-bounds returns idx (behaviour-identical to the raw
- * `a[i]`), out-of-bounds calls the bounds-quarantine handler; the numeric `rid` is the access provenance.
- * Any other access -> the bare index. Result written into `buf`. */
+ * array is wrapped in `BCIR_CHK(rid, idx, N, "site")` -- in-bounds returns idx (behaviour-identical to the
+ * raw `a[i]`), out-of-bounds calls the bounds-quarantine handler; the numeric `rid` is the access provenance
+ * and `"<func>:<array>"` is the source-site handle the debugger / ML-layer reads (a site->source table
+ * realized inline). Any other access -> the bare index. Result written into `buf`. */
 static const char *guard_idx(const bcir_func *f, const bcir_claim *cl, char *buf, size_t bn){
   const bcir_resource *br=res_of(f,cl->rd[0]);
   if(cl->bounds==BCIR_BND_MASKED && br && br->count>1){
-    char ib[BCIR_CIR_NAME];
-    snprintf(buf,bn,"BCIR_CHK(%u, %s, %lluu)",(unsigned)cl->rd[0],rname(f,cl->rd[1],ib),(unsigned long long)br->count);
+    char ib[BCIR_CIR_NAME], nb[BCIR_CIR_NAME];
+    snprintf(buf,bn,"BCIR_CHK(%u, %s, %lluu, \"%s:%s\")",(unsigned)cl->rd[0],rname(f,cl->rd[1],ib),
+             (unsigned long long)br->count,f->name,rname(f,cl->rd[0],nb));
     return buf;
   }
   return rname(f,cl->rd[1],buf);
 }
 static size_t emit_func(const bcir_func *f,char *o,size_t on){
-  size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64],tb[80],gb[96];
+  size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64],tb[80],gb[192];
   ctype_str(&f->ret,ty,sizeof ty);
   w+=snprintf(o+w,on-w,"static %s bcir_%s(",ty,f->name);
   if(f->n_params==0&&!f->variadic) w+=snprintf(o+w,on-w,"void");

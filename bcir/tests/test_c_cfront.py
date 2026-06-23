@@ -25,16 +25,16 @@ _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
 _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 
-# Bounds-quarantine support (§5.12): the emit of a `masked` array access uses BCIR_CHK(rid, idx, N), which
-# calls bcir_bounds_quarantine on an out-of-bounds index. Inlined here (matching runtime/c/bcir_quarantine.h)
-# so the equivalence harness is self-contained; for the in-bounds seeds the handler is never reached, so a
-# guarded access is behaviour-identical to the raw `a[i]`.
+# Bounds-quarantine support (§5.12): the emit of a `masked` array access uses BCIR_CHK(rid, idx, N, "site"),
+# which calls bcir_bounds_quarantine on an out-of-bounds index. Inlined here (matching the ABI in
+# runtime/c/bcir_quarantine.h) so the equivalence harness is self-contained; for the in-bounds seeds the
+# handler is never reached, so a guarded access is behaviour-identical to the raw `a[i]`.
 _BOUNDS_GUARD = (
     "#include <stdlib.h>\n#include <stddef.h>\n"
-    "static void bcir_bounds_quarantine(uint64_t r,uint64_t i,uint64_t e)"
-    "{(void)r;(void)i;(void)e;abort();}\n"
-    "#define BCIR_CHK(rid,idx,n) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
-    "(bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n)),(size_t)0))")
+    "static void bcir_bounds_quarantine(uint64_t r,uint64_t i,uint64_t e,const char*s)"
+    "{(void)r;(void)i;(void)e;(void)s;abort();}\n"
+    "#define BCIR_CHK(rid,idx,n,site) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
+    "(bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)),(size_t)0))")
 # straight-line fixtures run the full execute loop; control-flow fixtures get parity + emit + Clang ≡
 # (control flow is not a flat StreamPack segment stream, so the loop runs the straight-line set).
 _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfront_widerow.c", "cfront_deref.c",
@@ -2800,8 +2800,8 @@ def test_bounds_promotion_local_static_arrays_to_masked():
 def test_bounds_quarantine_traps_out_of_bounds():
     """§5.12 quarantine handler: the emitted guard on a `masked` local-array access is transparent for an
     in-bounds index (behaviour-identical to the raw `a[i]`) and, on an out-of-bounds index, calls the WEAK
-    `bcir_bounds_quarantine` runtime handler -- which records the provenance and aborts (fail-fast). Linked
-    against the real runtime/c/bcir_quarantine.c."""
+    `bcir_bounds_quarantine` runtime handler -- which records the provenance (including the `<func>:<array>`
+    source site) and aborts (fail-fast). Linked against the real runtime/c/bcir_quarantine.c."""
     if not _CC:
         return
     src = "unsigned g(unsigned i){ unsigned a[8]; for(unsigned k=0u;k<8u;k++) a[k]=k*2u; return a[i]; }"
@@ -2809,6 +2809,7 @@ def test_bounds_quarantine_traps_out_of_bounds():
     r = compile_unit(src, check_clang=False)
     name = next(reversed(r.lowered.functions))
     body = r.emitted[name].split("*/\n", 1)[-1]
+    assert 'BCIR_CHK(' in body and '"g:a"' in body, body          # the guard threads the <func>:<array> site
     with tempfile.TemporaryDirectory() as d:
         prog = (f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
                 f'{r.source}\n\n{body}\n'
@@ -2822,3 +2823,37 @@ def test_bounds_quarantine_traps_out_of_bounds():
         assert inb.returncode == 0 and inb.stdout.strip() == "6", (inb.returncode, inb.stdout)
         oob = subprocess.run([epath, "99"], capture_output=True, text=True)  # OOB: the handler aborts
         assert oob.returncode != 0 and "bounds-quarantine" in oob.stderr, (oob.returncode, oob.stderr)
+        assert "g:a" in oob.stderr, oob.stderr                    # the source site is in the fail-fast message
+
+
+def test_quarantine_report_is_the_debugger_trace_surface():
+    """§5.12 debugger trace surface: a STRONG override of `bcir_bounds_quarantine` (the ML-layer / debugger
+    seam) records each OOB event into the ring without aborting, and `bcir_quarantine_report` reads the ring
+    back -- the running total plus each retained event with its `<func>:<array>` site, index, and extent.
+    The override path is the only way the program survives multiple OOB accesses; the reader is pure
+    observation (it never decides legality). Linked against the real runtime/c/bcir_quarantine.c."""
+    if not _CC:
+        return
+    src = "unsigned g(unsigned i){ unsigned a[8]; for(unsigned k=0u;k<8u;k++) a[k]=k*2u; return a[i]; }"
+    from bcir.frontends.cfront import compile_unit
+    r = compile_unit(src, check_clang=False)
+    name = next(reversed(r.lowered.functions))
+    body = r.emitted[name].split("*/\n", 1)[-1]
+    with tempfile.TemporaryDirectory() as d:
+        # A strong (non-weak) override records the event but does NOT abort, so several OOB accesses survive.
+        prog = (f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
+                f'{r.source}\n\n{body}\n'
+                f'void bcir_bounds_quarantine(uint64_t rid,uint64_t index,uint64_t extent,const char *site)\n'
+                f'{{ bcir_oob_record_event(rid,index,extent,site); }}\n'
+                f'int main(void){{ (void)bcir_g(8u); (void)bcir_g(40u); bcir_quarantine_report(stdout); return 0; }}\n')
+        cpath, epath = os.path.join(d, "e.c"), os.path.join(d, "e")
+        open(cpath, "w").write(prog)
+        b = subprocess.run([_CC, "-std=c23", "-O2", "-I", _C, cpath,
+                            os.path.join(_C, "bcir_quarantine.c"), "-o", epath], capture_output=True, text=True)
+        assert b.returncode == 0, b.stderr
+        run = subprocess.run([epath], capture_output=True, text=True)
+        assert run.returncode == 0, (run.returncode, run.stderr)         # survived: the override did not abort
+        out = run.stdout
+        assert "2 out-of-bounds event(s)" in out, out                    # the running total
+        assert "g:a" in out and "index 8" in out and "index 40" in out, out   # both sites + indices, in order
+        assert "out of [0, 8)" in out, out                               # the extent the report resolves

@@ -1605,15 +1605,22 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    differential fuzzer is clean (the twin promotes identically, so the digest/parity hold), `verify` already
    defaults to `bounds`. ✅ **Quarantine handler -- weak-symbol seam DONE** (`runtime/c/bcir_quarantine.{h,c}`,
    `test_bounds_quarantine_traps_out_of_bounds`): both rails now EMIT the guard for a `masked` access --
-   `a[BCIR_CHK(rid, i, N)]`, where `BCIR_CHK` returns `i` in-bounds (transparent: behaviour-identical to the
-   raw `a[i]` for any defined input, so every fixture + the differential fuzzer stay clean) and, out-of-bounds,
-   calls `bcir_bounds_quarantine(rid, index, extent)`. The WEAK default records the provenance into a ring
-   (the debugger reads it) and aborts (fail-fast); the in-bounds path never calls it. Validated end-to-end:
-   in-bounds returns the value, OOB SIGABRTs with the provenance record, byte-exact in-bounds vs Clang on
-   x86-64 + aarch64. **Next ➡** the ML-layer / debugger OVERRIDES the weak symbol (consult the graded-truth
-   quarantine + recover/policy through a recorded `decide` -- the only sanctioned two-truth crossing), the
-   `bcir-cc` driver links the runtime, and recoverable extents extend to an array param with a sibling count
-   and a `malloc(n)` paired with its size.
+   `a[BCIR_CHK(rid, i, N, "<func>:<array>")]`, where `BCIR_CHK` returns `i` in-bounds (transparent:
+   behaviour-identical to the raw `a[i]` for any defined input, so every fixture + the differential fuzzer
+   stay clean) and, out-of-bounds, calls `bcir_bounds_quarantine(rid, index, extent, site)`. The WEAK default
+   records the provenance into a ring (the debugger reads it) and aborts (fail-fast); the in-bounds path never
+   calls it. Validated end-to-end: in-bounds returns the value, OOB SIGABRTs with the provenance record,
+   byte-exact in-bounds vs Clang on x86-64 + aarch64. ✅ **Debugger trace surface DONE**
+   (`bcir_quarantine_report`, `bcir_oob_record_event`, `test_quarantine_report_is_the_debugger_trace_surface`):
+   the guard threads a `"<func>:<array>"` **source-site handle** (a site→source table realized inline as a
+   string literal both rails emit identically) into the record (`bcir_oob_record.site`); a strong override of
+   the handler (the ML-layer / debugger seam) records via `bcir_oob_record_event` WITHOUT aborting, and
+   `bcir_quarantine_report(FILE*)` reads the ring back -- the running total plus each retained event with its
+   site/index/extent. Pure observation: reading the ring never crosses the two-truth line into a verdict.
+   **Next ➡** the ML-layer / debugger OVERRIDES the weak symbol to consult the graded-truth quarantine +
+   recover/policy through a recorded `decide` (the only sanctioned two-truth crossing), the `bcir-cc` driver
+   links the runtime, and recoverable extents extend to an array param with a sibling count and a `malloc(n)`
+   paired with its size.
 2. ✅ **Lifetime law R21 DONE (oracle prototype)** (`bcir/model/graph.py::Lifetime` +
    `bcir/verify::verify_lifetime`, `test_lifetime_laws.py`): an OPTIONAL `Claim.lifetime` (`event ∈
    {use, alloc, free}` + `epoch`, `None` default, excluded from the R13 digest allow-list) + the **R21
