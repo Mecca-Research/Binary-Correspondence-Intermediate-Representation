@@ -36,7 +36,8 @@ _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile
             "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c", "cfront_loopscope.c", "cfront_blockscope.c", "cfront_localmd.c", "cfront_ptrlocal.c"]
             # + multi-declarator locals (T a=x, b, c=z), comma-operator for-step (i++, j--), empty stmts
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c", "cfront_comments.c"]      # L7: exercise the preprocessor
-_ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-value + packed layout
+_ABI = ["cfront_structret.c", "cfront_structcall.c",  # L8: struct return-by-value (+ using a call RESULT)
+        "cfront_packed.c",                            # + packed layout
         "cfront_union.c",                             # + full union (members overlap at offset 0)
         "cfront_interleave.c",                        # + enum/struct defined *between* two functions
         "cfront_funcptr.c",                           # + funcptr param + indirect call (HAL dispatch)
