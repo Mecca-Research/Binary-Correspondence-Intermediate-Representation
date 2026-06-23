@@ -1467,6 +1467,142 @@ already gone (#scale / #pscale, geometric growth).
 > engineering — full semantics, a hosted environment, object/ABI generation, and conformance — **not** BCIR
 > research, and **not** the optimizer.
 
+### 5.11 RTL / synchronous-timing semantics — clock domains, registers, sync/async (PROPOSED track)
+
+**Status: forward research track, not yet built.** This adds register-transfer-level (RTL) timing — clock
+domains, flip-flop setup/hold, synchronous/asynchronous semantics, clock-domain crossing (CDC), critical
+path — to the optimizer. The design is **additive and vacuous-by-default**, so it cannot perturb the C
+compiler or any existing score (see the invariant below).
+
+**Where we already are (the substrate is real, at WAVE/PHASE granularity).** BCIR is *not* starting from
+zero on timing/power; the existing law rail already models a coarse, accelerator-scheduling notion of it:
+**R15 (DVFS clock)** legalizes a per-phase Q8 clock in [0.25×, 2×] and forbids overclocking a memory-bound
+phase; **`-bcir-schedule-eft`** places phase-barriered earliest-finish-time waves; **`-bcir-async` /
+`gem.async_tokens`** already pipelines a *fork/await* schedule over the existing **`!bcir.token`** type (the
+async-dependency token the proposal asks for — it exists); **`-bcir-power-rail`** overlays per-slot DVFS on
+the placed timeline; the **`sync` (axis 3)**, **`thermal` (5)** and **`power` (6)** cost axes and the
+thermal **Θ** coupling already price synchronization, heat, and current. The new track pushes this from
+phase granularity down to **register-transfer granularity**.
+
+**The non-negotiable invariant — how this does NOT break the C compiler.** Timing is *optional metadata*
+that is *vacuous when absent*, exactly like R14 (PIM dispatch), R15 (DVFS), R16 (placement) and R17
+(`#bcir.precision`) already are "vacuous for the scalar subset." Concretely: (1) the C frontend
+(`bcir_cfront.c`) emits claims with **no `#bcir.timing` attribute**, so every new law early-returns
+(`if (!timing) return;` — the R17 `std::optional<PrecisionAttr>` pattern in `BCIRVerifyPass.cpp`) and the
+timing cost-coupling is the **identity factor (256 in Q8)** — the Θ-cool precedent. (2) The 12-axis cost
+vector is **parity-locked** (`#bcir.costvec`, PARITY.md) and is **NOT extended** — there is no 13th axis;
+timing rides existing axes plus a context factor (below). Net: the C compiler's claim graphs, emitted C,
+pinned scores, and Python↔C parity are **byte-identical**, gated by the existing
+`test_python_c_parity_and_equivalence_across_fixtures`. Timing only ever activates for a frontend that
+*opts in* (an HLS/HDL frontend, or `__attribute__((bcir_timing(...)))` annotations on a CPU kernel).
+
+**The additive design.**
+- *Dialect (`mlir/include/BCIR/BCIRAttrs.td`):* a new `OptionalAttr<#bcir.timing>` on claims (mirroring
+  `#bcir.precision`), carrying `clock_domain`, `latency_cycles`, `min_throughput` (Q16), `critical_path`,
+  `power_domain`, `sync_type ∈ {synchronous, asynchronous, mixed}`, `clock_frequency_mhz`,
+  `setup_hold_margin`. Reuse the existing **`!bcir.token`** type for the async/sync handshake; an optional
+  `bcir.reg_stage` marker models a flip-flop / pipeline register (extends `-bcir-alloc-pool`'s
+  register-pressure/liveness).
+- *Cost (NO new axis):* clock-domain-crossing / synchronizer overhead → the existing **`sync` axis (3)**;
+  power/thermal derating → the existing **`power` (6)** / **`thermal` (5)** axes + Θ coupling;
+  critical-path / `latency_cycles` pressure → a **multiplicative Q8 context factor** folded in before
+  `couple()` (the thermal-coupling mechanism in `realize.py`), identity when no `#bcir.timing` is present.
+- *Laws (vacuous unless opted in):* **R19 (synchronous-timing legality)** — `setup_hold_margin ≥ 0`, the
+  selected realization's `latency_cycles ≤ critical_path` budget, clock in the R15 range (an RTL extension
+  of R15); **R20 (clock-domain-crossing)** — a value flowing `clock_domain` X→Y must pass through a
+  declared synchronizer / `!bcir.token` handshake (the metastability guard). Both follow the R14–R17
+  early-return-if-absent shape, dual-railed (oracle `bcir/verify` → MLIR `BCIRVerifyPass.cpp`).
+- *Scheduling:* a cycle-accurate **`-bcir-schedule-clocked`** that specializes `-bcir-schedule-eft` to
+  clocked waves (a "wave" = one clock cycle) for `sync_type=synchronous` regions, leaving
+  `asynchronous` regions on the existing token-dataflow path — the proposal's "clocked execution waves vs
+  async dataflow regions" maps onto the EFT/async split that already exists.
+
+**x86 / aarch64 vs FPGA/ASIC — the channel interpretation.** RTL primitives (a real clock net, a physical
+flip-flop, a metastability synchronizer) apply *literally* only to **FPGA/ASIC channels**; x86 and aarch64
+are fixed-pipeline CPUs you don't clock at RTL granularity. So the **architecture-agnostic `#bcir.timing`
+metadata is interpreted per channel** (the `channel.json` / target-profile / capability seam in
+`bcir/channels` + `bcir_channel.c`), exactly the user's "keep core attributes architecture-agnostic; apply
+architecture-specific rules in the lowering/driver layer":
+- *CPU channels (x86, aarch64):* `latency_cycles` → instruction-latency tables / port pressure;
+  `min_throughput` → issue-width / AVX-512 throughput; `clock_frequency`/`power_domain` → DVFS + big.LITTLE
+  / RAPL (the measured-Θ loop, §5.4); `clock_domain` crossing → cross-core / cross-socket sync cost. x86
+  leans on cache-hierarchy + OoO penalties; ARM on power domains + heterogeneous-core frequency scaling.
+- *FPGA/ASIC channels (new):* the same attributes map to real RTL — `clock_domain` is a clock net,
+  `reg_stage` a register, CDC a synchronizer, `critical_path` static-timing-analysis. External-tool
+  integration (Vivado / Synopsys / OpenSTA / OpenROAD) attaches at the channel **calibration artifact**
+  (the same seam that ingests measured Θ), feeding back measured critical paths as `#bcir.timing` values.
+
+**Phased build (each gated by Python↔production parity, the prototype-then-port discipline §3):**
+1. `#bcir.timing` attribute + R19/R20 as **vacuous** laws (oracle first, parity gate, then
+   `BCIRVerifyPass.cpp`) — provably a no-op on the whole existing corpus (the C compiler unchanged).
+2. The critical-path **context factor** + the **`sync`-axis CDC cost** (reuse `couple()`), with an RCSP
+   cap on the (sync, power) pair so a clock/power budget can make a plan infeasible — the verify-cost-axis
+   precedent (§5.1 item 2).
+3. `-bcir-schedule-clocked` (clocked EFT waves) + `bcir.reg_stage` register-pressure modeling.
+4. R20 CDC over `!bcir.token` handshakes (sync/async boundary analysis).
+5. CPU-channel interpretation (x86 microarch cost; aarch64 power/heterogeneous), then the FPGA/ASIC
+   channel + external STA ingestion.
+
+### 5.12 Naked-pointer rewriting → managed claims (assessment + remaining work)
+
+**How close are we? Structurally ~most of the way — and by construction, not aspiration.** BCIR's
+**Registry-First Memory Law** (`BCIR_LANGREF.md`: *"Raw pointers are outlawed at the core level.
+Address = (RID, layout, domain, offset, generation)"*) means there are **no raw pointers in the claim
+graph at all** — and the C frontend (`bcir_cfront.c` / oracle `lower.py`) **already performs the rewrite**:
+every C pointer becomes a `BCIR_RK_POINTER` *registry resource* (RID, pointee width/sign, depth), and every
+`*p` / `p[i]` / `p->f` lowers to a `LOAD`/`STORE` **claim** carrying a `domain` (R3), a `lane`/`stride_class`
+(R6), `provenance` (R10/R13), and `generation` tags (R11). So the "detect naked pointers and rewrite into
+`bcir.claim`/`bcir.lane`/StreamPack references" pass the proposal asks for is, at the IR level, **already
+the front end's output**.
+
+**The real gap is the *strength of the bounds/lifetime guarantee*, not the rewrite.** Today the frontend
+emits `bounds = assumed_safe` (`#bcir.bounds<assumed_safe>`): the access is *trusted* to land in its
+allocation (the frontend resolved an affine index or a static field offset), but it is **not statically
+proven nor runtime-checked by default**, and there is **no lifetime / use-after-free / double-free
+tracking**. The infrastructure to close this already exists and is unused-by-default:
+- *Bounds:* the per-claim `verify ∈ {none, bounds, exact, hash}` contract + the **12th cost axis**
+  (`verification`, §5.1 item 2) already price a runtime guard — so upgrading `assumed_safe → masked/strict`
+  with a `verify=bounds` guard is a *tradeable plan resource* (RCSP-cappable), already costed, purely
+  additive (today every access is `verify=none`, cost 0).
+- *Lifetime:* the **generation tags (R11)** + **`-bcir-alloc-pool` live-intervals** (liveness-based arena
+  pooling) are the seeds of a use-after-free law — a load whose resource generation has advanced is a
+  dangling access.
+- *Layout / prefetch / arena:* the **`#bcir.layout<soa|aos|aosoa|blocked>`** attr + the cost model already
+  *choose* a layout; **StreamPack v2 prefetches** (distance/pattern) already turn pointer chasing into
+  prefetch-friendly streams; **`-bcir-alloc-pool` pool_plan** already builds graph-aware arenas. These are
+  the "cache-aware placement / custom allocator / pointer-chasing → stream" wins the proposal wants.
+
+**Remaining work (mostly *extending* the above, not greenfield):**
+1. A **bounds-promotion pass** — where a length/extent is recoverable (an array param with a sibling
+   count, a `static`/local array, a `malloc(n)` paired with its size), promote `assumed_safe → masked`
+   with an emitted `verify=bounds` guard; else stay `assumed_safe` or route to fallback. Cost is already
+   modeled; this is a static-analysis + emit pass, dual-railed.
+2. A **lifetime / provenance law (candidate R21)** over generation tags + alloc-pool liveness, catching
+   use-after-free / double-free where the allocation is in-unit; unprovable cases keep the `--fallback`
+   /quarantine contract (the existing route-to-LLVM, §5.9).
+3. **Frontend opt-in** — a "naked-looking" pointer syntax (plain C, or a `#pragma bcir bounds/lifetime`)
+   that flips the rewrite from `assumed_safe` to `checked` under the hood, preserving programmer intent.
+4. Extend **R1–R12 coverage** to the promoted-pointer paths (the laws already apply to the claim; the gap
+   is the new `verify=bounds`/lifetime metadata, which the laws must learn to check) + the runtime guards
+   the C backend emits (`verify_c_lowering`).
+
+### 5.13 C as a substrate — memory wins and paradigm reach (vision, grounded)
+
+The memory pain points the proposal raises map onto **existing BCIR mechanisms** (this is *why* the C-rail
+is positioned to solve them, not a new build): use-after-free / double-free / dangling → §5.12 (generation
+tags + the lifetime law); buffer overflow → the `verify=bounds/exact/hash` discharge + the 12th cost axis;
+cache / NUMA / HBM unawareness → the `domain`/`mem_tier` model (R3) + the layout-choosing cost model;
+allocator overhead / fragmentation → `-bcir-alloc-pool` graph-aware arenas + StreamPack pre-planned memory;
+pointer chasing → lookahead/prefetch (StreamPack v2) + mixed-stride lanes (`UX`/`GGG`). The **paradigm
+reach** is likewise grounded: imperative C → dataflow is *already* the claim graph (the front end turns a
+function body into a phase-DAG of claims); automatic parallelization is `-bcir-schedule-eft` + `-bcir-async`;
+"languages as flavors over one graph+memory+execution substrate" is the §5.7 frontend roadmap (C, then C++,
+then a Python transpiler, all → the same claim graph). The honest boundary: BCIR makes C *safer and faster
+within its semantics* and *adds* opt-in capabilities (dataflow execution, managed memory, persistence) — it
+does **not** silently change C's observable behavior (the `--fallback` contract + Clang-equivalence gate
+forbid it). The "thinner OS / ABI fortress" framing is a long-horizon consequence, not a near-term build
+item; it stays vision until the native backend (§5.5) and a hosted environment (§5.9 Phase 3) land.
+
 ---
 
 ## 6. Next build steps (concrete, prioritized)
@@ -1523,6 +1659,23 @@ In recommended order — each is gated by the generated differential harness + F
     generator that gives each hardware **channel** its real driver), **Phase F** (C++, then a
     Python transpiler→frontend), and **Phase L** (the ML library, *compressed* from the
     GCC/PyTorch/TF/NumPy/… ecosystem onto the claim-graph + channel model).
+13. **➡ C-frontend completeness — general address-of `&` (§5.10 A1).** The highest-leverage *language*
+    gap and the keystone for the pointer model: `&obj.member` / `&arr[i]` / `&global` / `&p->member`
+    lower today only as `&local`/`&param`/`&(compound literal)`. Unblocks **C11 `atomic_compare_exchange`**
+    and `&`-out-params. Prototype in the oracle, parity-gate, port to the twin — byte-exact vs Clang on
+    x86-64 + aarch64, the discipline every §5.9 item already follows.
+14. **➡ Naked-pointer safety promotion (§5.12).** Land the **bounds-promotion pass** (`assumed_safe →
+    masked` with an emitted `verify=bounds` guard where an extent is recoverable; cost already modeled by
+    the 12th axis) and a **lifetime law (candidate R21)** over generation tags + `-bcir-alloc-pool`
+    liveness. Purely additive — every access is `verify=none` (cost 0) today, so existing scores are
+    unchanged; dual-rail + `--fallback`/quarantine for the unprovable.
+15. **➡ RTL/synchronous-timing track, step 1 (§5.11).** The `#bcir.timing` `OptionalAttr` + the
+    **vacuous** laws R19 (synchronous-timing legality) / R20 (clock-domain-crossing), oracle-first then
+    `BCIRVerifyPass.cpp`. The exit criterion is a *proof of non-disturbance*: the whole existing corpus
+    (esp. the C-compiler fixtures) plans and verifies **byte-identically** with the laws present but no
+    claim opting in — establishing the additive seam before any cost-coupling or scheduling lands. Then
+    steps 2–5 of §5.11 (critical-path context factor + `sync`-axis CDC, `-bcir-schedule-clocked`, CDC over
+    `!bcir.token`, the x86/aarch64 then FPGA/ASIC channel interpretation).
 
 ---
 
