@@ -66,7 +66,7 @@ _ABI = ["cfront_structret.c", "cfront_structcall.c",  # L8: struct return-by-val
         "cfront_neststruct.c"]                          # + nested struct members + nested-brace init `{ {..}, .. }`
 _FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_mathh.c",
           "cfront_mathh_mixed.c", "cfront_mathh_long.c", "cfront_mathh_ptr.c",
-          "cfront_calltyped.c", "cfront_complex.c"]                         # + C99 _Complex (#complex)
+          "cfront_calltyped.c", "cfront_complex.c", "cfront_complexdiv.c"]   # + C99 _Complex (#complex) + complex `/`
 #   float/double: parity + emit + Clang ≡ (the
 #   integer StreamPack executor doesn't compute float; the math is delegated to the resident backend)
 _INIT = ["cfront_dispatch_table.c",   # designated initializers ([i]=v) for a file-scope dispatch table
@@ -211,7 +211,10 @@ def _equiv(source: str, c_emitted: str, entry) -> str:
             args.append(f"s{i}")
     call = ", ".join(args)
     rt = _cname(entry.ret_type)
-    if entry.ret_type.is_aggregate:
+    if entry.ret_type.is_aggregate or entry.ret_type.is_complex:
+        # an aggregate OR a _Complex result is compared BIT-exactly (memcmp): both rails run the
+        # identical native operation, so the results are bit-identical -- and memcmp (unlike `!=`) is
+        # nan-safe, which a complex division by a near-zero divisor needs (`nan != nan` is spuriously true).
         cmp = (f"    {rt} ra={entry.name}({call}), rb=bcir_{entry.name}({call});\n"
                f"    if(memcmp(&ra,&rb,sizeof ra)){{printf(\"MISMATCH@%d\\n\",i);return 1;}}")
     else:

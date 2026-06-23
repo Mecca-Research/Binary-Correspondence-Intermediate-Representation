@@ -824,9 +824,14 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    float); and `creal`/`cimag` (real result) + `conj` (complex result) lower like a libm call
 >    (`c.call.libm:`, one `call`). `cfront_complex.c` pins `+ - *`, mixed-real promotion, a complex-returning
 >    in-unit call, a complex return, `__real__`/`__imag__`, and `creal`/`cimag`/`conj` — byte-exact vs Clang on
->    x86-64 AND aarch64 (qemu). Division (a seeded-`nan != nan` harness artifact, not a feature gap), the `I`
->    literal, long-double complex, the complex transcendentals (`cexp`/`csqrt`/...), `_Imaginary`, and complex
->    struct members are follow-ons that both rails defer consistently.
+>    x86-64 AND aarch64 (qemu). The `I` literal, long-double complex, the complex transcendentals
+>    (`cexp`/`csqrt`/...), `_Imaginary`, and complex struct members are follow-ons that both rails defer.
+>    - ✅ **Complex division `/`** (`cfront_complexdiv.c`) — `/` already rode the same `c.bin.div` claim and
+>      emitted native `a / b` (Clang's `__divdc3`, identical in the original AND the bcir_*); it only waited on
+>      the equivalence harness, which compared a complex result with `!=` (`nan != nan` is spuriously true when
+>      a near-zero divisor yields nan/inf). The harness now memcmp's a complex result BIT-exactly (both rails
+>      run the identical op, so inf/nan/signed-zero compare equal). complex/complex, complex/real, and
+>      real/complex (element promotion) -- byte-exact vs Clang on x86-64 AND aarch64 (qemu).
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit
