@@ -272,9 +272,9 @@ class Func:
 class Aggregate:
     kind: str                       # struct | union
     tag: str
-    members: tuple                  # (TypeRef, name, bit_width)
+    members: tuple                  # (TypeRef, name, bit_width, member_align)  member_align 0 == natural
     packed: bool = False            # __attribute__((packed)) — no inter-member padding
-    align: int = 0                  # __attribute__((aligned(N))) / alignas(N) — forced alignment
+    align: int = 0                  # __attribute__((aligned(N))) / alignas(N) — forced aggregate alignment
 
 
 @dataclass(frozen=True)

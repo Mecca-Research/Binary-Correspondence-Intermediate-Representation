@@ -642,9 +642,25 @@ class Gen:
             packed = (kind == "struct" and not arrs and not nested and r.random() < 0.45)
             if packed:
                 self.packed.add(nm)
+            # over-align some plain scalar members `_Alignas(N) T m;`: raises that member's offset AND the
+            # struct's own alignment (so sizeof grows) -- both rails now compute this like Clang and the LAYOUT
+            # differential validates each sizeof/offsetof. Only on a non-packed struct, only a plain scalar (no
+            # bitfield/nested), and N in {8,16,32} is always >= a subset scalar's natural align (<= 8) so it is
+            # always valid C and always increases alignment. (`_Alignas(type-name)` stays out -- both rails
+            # consistently route it to fallback rather than mis-align, so it would not be a useful differential.)
+            malign = {}
+            if kind == "struct" and not packed:
+                for mn, c in members:
+                    if c in _ST and c not in _BF and r.random() < 0.22:
+                        malign[mn] = r.choice([8, 16, 32])
+
+            def _mdef(mn, c):
+                pre = f"_Alignas({malign[mn]}) " if mn in malign else ""
+                if c in self.aggdefs:
+                    return f"{pre}struct {c} {mn};"
+                return f"{pre}{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};"
             self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None, arrs)
-            body = " ".join(f"struct {c} {mn};" if c in self.aggdefs
-                            else f"{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};" for mn, c in members)
+            body = " ".join(_mdef(mn, c) for mn, c in members)
             body += "".join(f" {_ST[c][0]} {an}[{_ARRSZ // 2}];" for an, c in arrs)
             agg_src.append(f"{kind}{' __attribute__((packed))' if packed else ''} {nm} {{ {body} }};")
         self.helpers, helper_src = [], []

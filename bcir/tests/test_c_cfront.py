@@ -46,6 +46,7 @@ _ABI = ["cfront_structret.c", "cfront_packed.c",      # L8: struct return-by-val
         "cfront_signedbf.c",                           # + signed bitfield read sign-extension (int x:N)
         "cfront_widebf.c",                             # + WIDE bitfields in a 64-bit unit (long long x:N, N>32)
         "cfront_packedbf.c",                           # + PACKED bitfields (bit-by-bit, byte/word-straddling)
+        "cfront_alignasmember.c",                      # + over-aligned members (_Alignas/alignas/aligned(N))
         "cfront_signedload.c",                         # + signed sub-int member/array read sign-extension
         "cfront_restrict.c",                           # + restrict/__restrict pointer params (consumed hint)
         "cfront_shiftassign.c",                        # + <<= / >>= shift compound-assign (scalar/member/array)
