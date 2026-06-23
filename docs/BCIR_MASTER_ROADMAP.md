@@ -751,6 +751,18 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    rails fall back). `cfront_aostruct.c` pins read/write/compound/runtime-index/float/signed-char/`_Bool`/init,
 >    verified byte-exact vs Clang on x86-64 AND aarch64 (qemu). Generator coverage is a follow-on (the access
 >    pattern `arr[i].field` needs a new lvalue list); the cross-target fixture is the guard for now.
+> 1g. ✅ **Assignment as an EXPRESSION** — an assignment yields a value, so it appears as a sub-expression:
+>    chained `a = b = c`, in a condition `if ((x = f()) > 0)` / `while ((n = n-1))`, parenthesized `(a = v)+1`,
+>    compound `(a += 3)*2`. The C twin's value grammar had NO assignment (only a statement form), so it
+>    PARSE-errored on all of these -- a systematic both-rails divergence (the oracle handled them). Now both
+>    support a NAMED-VARIABLE target as an assignment-expression: the twin gains an `p_assign` level on top of
+>    `p_cond` (the old `p_expr`) -- right-associative, yielding the variable's storage; the oracle threads a
+>    `stmt` flag through `_assign` (a statement form allows any lvalue; a VALUE form requires a named local).
+>    A member/array-lvalue assignment used as a VALUE (`(p->x=v)+1`) and a bare assignment as a statement-expr
+>    TERMINAL (`({ a=b; })` -- the `i++`/`++i` desugar shares the AST, so its post/pre value can't be guessed)
+>    stay consistent both-rails fallbacks. The fuzzer emits chained `n1 = n2 = expr;` (the inner is an
+>    assignment-expression; fully sequenced, no UB); `cfront_assignexpr.c` pins the forms, verified byte-exact
+>    vs Clang on x86-64 AND aarch64 (qemu).
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit

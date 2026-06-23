@@ -1108,7 +1108,14 @@ class _FuncLowerer:
                 cur, bit_off, bit_w = elem, 0, 0
         return _LV("mem", rid, cur, byte_off=off, bit_off=bit_off, bit_width=bit_w, packed=parent_packed)
 
-    def _assign(self, node: cast.Assign) -> int:
+    def _assign(self, node: cast.Assign, stmt: bool = False) -> int:
+        # An assignment as a VALUE (a sub-expression: `a = b = c`, `if ((x = f()))`, `(a += 3) + 1`) yields
+        # the assigned value. Only a NAMED-LOCAL target is supported as a value (the twin's expression-grammar
+        # assignment handles a bare name); a memory-lvalue assignment used as a value (`(p->x = v) + 1`) stays
+        # a follow-on -- both rails fall back. As a STATEMENT (`stmt`) every lvalue form is fine (value unused).
+        named_local = isinstance(node.target, cast.Name) and node.target.ident in self.env
+        if not stmt and not named_local:
+            raise CLowerError("assignment to a non-local lvalue used as a value is not yet supported")
         # pointer compound-assign  p += n / p -= n  (and p++/p--, which desugar to `p = p + 1`):
         # a single pointer-arithmetic claim, so the result stays a pointer (the integer binary result
         # would truncate the pointer). The emit renders `p += n;` and lets C scale by the element size.
@@ -1293,7 +1300,10 @@ class _FuncLowerer:
             elif st.init is not None:
                 self._emit("c.copy", Opcode.ADD, (self._rvalue(st.init),), (rid,))
         elif isinstance(st, cast.ExprStmt):
-            self._rvalue(st.expr)
+            if isinstance(st.expr, cast.Assign):              # a statement assignment: any lvalue form is fine
+                self._assign(st.expr, stmt=True)              # (the value is unused -- no named-local restriction)
+            else:
+                self._rvalue(st.expr)
         elif isinstance(st, cast.Return):
             rid = None if st.value is None else self._rvalue(st.value)
             if rid == _VOID_RID:                              # `return void_call();` -> the call stmt is

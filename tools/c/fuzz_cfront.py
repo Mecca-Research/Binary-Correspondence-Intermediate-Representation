@@ -455,7 +455,21 @@ class Gen:
         if k < 0.22:                                            # a fresh initialised local
             return self._decl(depth)
         if k < 0.42:                                            # plain assignment
-            return self._assign_to(r.choice(self._targets()), depth)
+            tgts = self._targets()
+            # a CHAINED assignment `n1 = n2 = expr;` -- the inner `n2 = expr` is an assignment EXPRESSION whose
+            # value flows into n1 (right-associative, fully sequenced, so no unsequenced read/write UB). n2 must
+            # be a NAMED LOCAL (a `v..` name, not a `s.m` member): a member assignment used as a VALUE falls back
+            # on both rails, so chaining through one would diverge.
+            locals_int = [n for n in tgts if self.styp[n] not in _FLOATS and "." not in n and "[" not in n]
+            if len(locals_int) >= 1 and r.random() < 0.3:
+                n2 = r.choice(locals_int)
+                n1 = r.choice([n for n in tgts if self.styp[n] not in _FLOATS] or [n2])
+                e = self._val(depth, self.styp[n2])
+                self.bound[n2] = self._store_bound(e, self.styp[n2])
+                chained = E(n2, _ST[self.styp[n2]][4], self.bound[n2])   # the inner assignment's value (n2's slot)
+                self.bound[n1] = self._store_bound(chained, self.styp[n1])
+                return f"{n1} = {n2} = {e.text};"
+            return self._assign_to(r.choice(tgts), depth)
         if k < 0.56:                                            # compound assignment
             return self._compound(depth)
         if k < 0.66:                                            # inc / dec on an integer target (value discarded)
