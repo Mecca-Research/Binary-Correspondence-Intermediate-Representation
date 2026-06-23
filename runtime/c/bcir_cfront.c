@@ -946,11 +946,19 @@ static uint32_t member_arr_index(CC *c, const field *fld) {
     d++; }
   return lin;
 }
+/* The bounds contract for an indexed access (§5.12 bounds-promotion). A LOCAL/STATIC array OBJECT -- whose
+ * extent is statically RECOVERABLE from the resource's element `count` -- is promoted from `assumed` to
+ * `masked` (runtime-bounds-checked, the contract the quarantine handler discharges); a pointer base (extent
+ * unknown) stays `assumed`. Metadata only -- no emit/behaviour change; `verify` already defaults to bounds. */
+static bcir_bounds access_bnd(CC *c, uint32_t rid) {
+  const bcir_resource *r = res_of(c->fn, rid);
+  return (r && r->kind != BCIR_RK_POINTER && r->count > 1) ? BCIR_BND_MASKED : BCIR_BND_ASSUMED;
+}
 static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -- GEP load */
   int es=base->type.size?base->type.size:4;
   uint32_t t=base->type.is_float ? tempf(c,es) : tempi(c,es,base->type.signd);  /* float -> a float temp; else keep the sign */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
-  cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;
+  cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;cl->bounds=access_bnd(c,base->rid);
   return t;
 }
 /* Parse `[i]` (or `[i][j][k]`) on an array variable and Horner-flatten via its declared dims
@@ -2502,7 +2510,7 @@ static void p_stmt(CC *c) {
         c->fn->n_res=as_res; c->fn->n_claims=as_cl; c->rid=as_rid; c->cid=as_cid; c->cl_ctr=as_clc;
         c->i=as_start; (void)p_expr(c); eat(c,";"); return; }
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-      if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=BCIR_BND_ASSUMED;
+      if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=access_bnd(c,v->rid);  /* §5.12 promote */
         if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
       eat(c,";");return;}
     if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]=='='){

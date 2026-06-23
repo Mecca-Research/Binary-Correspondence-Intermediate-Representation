@@ -1595,10 +1595,18 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
   the "cache-aware placement / custom allocator / pointer-chasing → stream" wins the proposal wants.
 
 **Remaining work (mostly *extending* the above, not greenfield):**
-1. A **bounds-promotion pass** — where a length/extent is recoverable (an array param with a sibling
-   count, a `static`/local array, a `malloc(n)` paired with its size), promote `assumed_safe → masked`
-   with an emitted `verify=bounds` guard; else stay `assumed_safe` or route to fallback. Cost is already
-   modeled; this is a static-analysis + emit pass, dual-railed.
+1. **Bounds-promotion pass** — where a length/extent is recoverable, promote `assumed_safe → masked`.
+   ✅ **Metadata step DONE** (`test_bounds_promotion_local_static_arrays_to_masked`): on BOTH rails, an
+   indexed access into a known-extent LOCAL/STATIC array OBJECT (its element `count` recoverable from the
+   resource shape) is promoted from `assumed_safe` (trusted) to `masked` (runtime-bounds-checked, the
+   contract the quarantine handler discharges) -- oracle `_access_bounds`, twin `access_bnd`. A POINTER base
+   (extent unknown), a struct MEMBER array, and an MMIO register stay `assumed_safe`. **Purely additive:**
+   metadata only, no emit/behaviour change -- every cfront fixture still passes + is Clang-equivalent, the
+   differential fuzzer is clean (the twin promotes identically, so the digest/parity hold), `verify` already
+   defaults to `bounds`. **Next ➡ (per the chosen plan: metadata first, then the handler):** the **quarantine
+   handler** that discharges the `masked` contract -- an out-of-bounds index routed to a runtime handler hook
+   (an ML-layer + debugger integration) rather than trapping or clamping -- plus extending recoverable
+   extents to an array param with a sibling count and a `malloc(n)` paired with its size.
 2. ✅ **Lifetime law R21 DONE (oracle prototype)** (`bcir/model/graph.py::Lifetime` +
    `bcir/verify::verify_lifetime`, `test_lifetime_laws.py`): an OPTIONAL `Claim.lifetime` (`event ∈
    {use, alloc, free}` + `epoch`, `None` default, excluded from the R13 digest allow-list) + the **R21

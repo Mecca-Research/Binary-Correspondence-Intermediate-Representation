@@ -2751,3 +2751,30 @@ def test_cfront_differential_fuzz():
             divergence, stats = fuzz_cfront.run_seed(twin, _CC, count=40, seed=seed, d=d)
             assert divergence is None, divergence
             assert stats["clean"] >= 1 and stats["checked"] == stats["clean"], stats
+
+
+def test_bounds_promotion_local_static_arrays_to_masked():
+    """§5.12 bounds-promotion: an indexed access into a known-extent LOCAL/STATIC array OBJECT promotes
+    from `assumed_safe` (trusted) to `masked` (runtime-bounds-checked -- the extent is recoverable from
+    the resource shape, the contract the quarantine handler discharges). A POINTER base (extent unknown),
+    a struct MEMBER array (a follow-on), and an MMIO register stay `assumed_safe`. Metadata only -- no
+    emit/behaviour change (every cfront fixture still passes + is Clang-equivalent), and the twin promotes
+    identically (the differential fuzzer is clean), so parity holds."""
+    from bcir.frontends.cfront import compile_unit
+
+    def bounds_of(src):
+        r = compile_unit(src, check_clang=False)
+        b = set()
+        for n in r.lowered.functions:
+            for ph in r.lowered.functions[n].module.phases:
+                for c in ph.claims:
+                    if c.op in ("c.load", "c.store"):
+                        b.add(c.bounds)
+        return r.is_clean, b
+
+    clean, b = bounds_of("unsigned f(unsigned i){ unsigned a[8]; a[i&7u]=3u; return a[i&7u]; }")
+    assert clean and b == {"masked"}                                  # a local array -> runtime-checked
+    clean, b = bounds_of("unsigned f(unsigned i){ static unsigned a[4]; a[i&3u]=2u; return a[i&3u]; }")
+    assert clean and b == {"masked"}                                  # a static array -> runtime-checked
+    clean, b = bounds_of("unsigned f(unsigned *p,unsigned i){ p[i&7u]=3u; return p[i&7u]; }")
+    assert clean and b == {"assumed_safe"}                            # a pointer (extent unknown) stays trusted
