@@ -824,8 +824,8 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    float); and `creal`/`cimag` (real result) + `conj` (complex result) lower like a libm call
 >    (`c.call.libm:`, one `call`). `cfront_complex.c` pins `+ - *`, mixed-real promotion, a complex-returning
 >    in-unit call, a complex return, `__real__`/`__imag__`, and `creal`/`cimag`/`conj` — byte-exact vs Clang on
->    x86-64 AND aarch64 (qemu). The `I` literal, long-double complex, `_Imaginary`, and complex struct
->    members are follow-ons that both rails defer.
+>    x86-64 AND aarch64 (qemu). Long-double complex, `_Imaginary`, and complex struct members are
+>    follow-ons that both rails defer.
 >    - ✅ **Complex division `/`** (`cfront_complexdiv.c`) — `/` already rode the same `c.bin.div` claim and
 >      emitted native `a / b` (Clang's `__divdc3`, identical in the original AND the bcir_*); it only waited on
 >      the equivalence harness, which compared a complex result with `!=` (`nan != nan` is spuriously true when
@@ -839,6 +839,14 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >      symbol and are equivalent by construction; the bit-exact harness handles the inf/nan landing points
 >      (`clog(0)`, `csqrt` of a negative). `f`-suffixed forms (`cexpf`/...) exercise the `float _Complex`
 >      typing path. Byte-exact vs Clang on x86-64 AND aarch64 (qemu).
+>    - ✅ **Imaginary unit `I`** (`cfront_imagunit.c`) — `<complex.h>`'s `I` (the macro `_Complex_I`, a
+>      `const float _Complex` of value i). The frontend doesn't preprocess `<complex.h>`, so `I` reaches the
+>      lowerer as a bare identifier; it (and the canonical `_Complex_I`) lowers to a new `c.cconst` that emits
+>      the token VERBATIM, so the re-emitted twin resolves it against `<complex.h>` exactly as the original.
+>      `float _Complex * double` promotes to `double _Complex` (usual arithmetic conversions). Recognized only
+>      when `I` is undeclared (defensive: any `<complex.h>` TU already makes `I` a macro, so a variable named
+>      `I` is not expressible). `re + im*I`, `z*I` (rotation), and the `_Complex_I` spelling -- byte-exact vs
+>      Clang on x86-64 AND aarch64 (qemu).
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit

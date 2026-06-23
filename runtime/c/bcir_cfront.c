@@ -1136,6 +1136,12 @@ static int cplx_libm(CC *c,const char *s,int n,int *is_cplx){
     if(cplx_name_in(g_cplx_cplx,s,b)){ *is_cplx=1; return es; } }
   return 0;
 }
+/* The <complex.h> imaginary unit: `I` is the macro `_Complex_I`, a `const float _Complex` of value i.
+ * (Clang doesn't implement `_Imaginary`, so `_Imaginary_I` is intentionally not recognized.) Recognized
+ * only when the name is NOT a declared variable/global/enum (a user `I` shadows it) and emitted VERBATIM,
+ * so the re-emitted twin resolves it against <complex.h> exactly as the original does. */
+static int is_imag_unit(const tok *id){
+  return (id->n==1 && id->s[0]=='I') || (id->n==10 && !strncmp(id->s,"_Complex_I",10)); }
 /* The printf / scanf family of external variadic <stdio.h> functions -- not defined in the unit and not
  * lowered, they emit verbatim (like a libm call, opaque to R18) and return int. (The format string is a
  * read-only char[] literal, already passed through as an argument.) */
@@ -1495,6 +1501,12 @@ static uint32_t p_primary(CC *c) {
         char fnm[BCIR_CIR_NAME]; idcpy(fnm,&id);
         uint32_t r=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_SCALAR,fnm);
         if(c->fn->n_res){ bcir_resource *rr=&c->fn->res[c->fn->n_res-1]; rr->read_only=1; rr->is_funcptr=1; }
+        return r;
+      }
+      if(is_imag_unit(&id)){                            /* <complex.h> imaginary unit (unless shadowed) */
+        uint32_t r=tempc(c,8);                          /* `float _Complex` (value i), emitted verbatim */
+        char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.cconst:%.*s",id.n,id.s);
+        bcir_claim *cl=new_claim(c,op,BCIR_OP_LOAD); if(cl){cl->n_wr=1;cl->wr[0]=r;}
         return r;
       }
       fail(c,"undefined identifier");return 0;
@@ -2750,6 +2762,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strncmp(cl->op,"c.bin.",6))                       /* decl_ty: a pointer result (`p + i`) declares `T *t` */
       w+=snprintf(o+w,on-w,"%s %s = %s %s %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
     else if(!strncmp(cl->op,"c.fconst:",9))                /* a floating constant -> its literal spelling */
+      w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
+    else if(!strncmp(cl->op,"c.cconst:",9))                /* <complex.h> imaginary unit -> verbatim token */
       w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
     else if(!strcmp(cl->op,"c.un.creal"))                  /* GNU __real__ z -- the real part (an element float) */
       w+=snprintf(o+w,on-w,"%s %s = __real__ %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
