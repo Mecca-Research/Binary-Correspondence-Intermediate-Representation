@@ -355,6 +355,14 @@ class _Parser:
             if not inline_agg:
                 base = self._type_spec()
             while True:                                   # one or more declarators off one specifier:
+                if self.at("PUNCT", ":"):                 # an UNNAMED/zero-width bitfield `type : width;` (no
+                    self.nxt()                            # declarator): it positions the layout cursor but is not
+                    w = parse_int_literal(self.eat("INT").text)   # accessible -- name "" + a scalar base marks it
+                    members.append((base, "", w, malign))
+                    if self.at("PUNCT", ","):
+                        self.nxt()
+                        continue
+                    break
                 tref, name = self._declarator(base)       #   `unsigned x, y, z;` / `unsigned a:3, b:5;`
                 width = 0
                 if self.at("PUNCT", ":"):                 # bitfield:  type name : width;

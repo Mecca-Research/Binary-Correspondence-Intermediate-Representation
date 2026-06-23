@@ -718,6 +718,15 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    `cfront_anonmember.c` pins an aliasing-union + nested-anon + named-inline case; the fuzzer emits anonymous
 >    **struct** members (independent leaves; the union-aliasing case stays in the fixture). `_layout_ok` skips
 >    the non-nameable `$anon` tags (the parent's `offsetof` asserts validate the promoted leaves).
+> 1d. ✅ **Unnamed & zero-width bitfields** — `T : N;` (no declarator) reserves N padding bits and `T : 0;` forces
+>    the next bitfield to the next storage-unit boundary; an UNNAMED bitfield (padding or zero-width) positions
+>    the cursor but is NOT a field and does NOT raise the struct's alignment (only a NAMED bitfield's type does --
+>    Itanium/Clang), so `struct{char c; int :0; char d;}` is align 1 / size 5 / `d`@4. Both rails were
+>    route-to-fallback (parse error). The parser (`cparse._aggregate_body` / twin `p_struct_body`) now accepts a
+>    declarator-less `: width`; the layout (`AggregateBuilder.build` / twin) advances the bit cursor (zero-width
+>    -> next unit, else the straddle-aware reserve) WITHOUT a field or an alignment bump. `cfront_unnamedbf.c`
+>    pins padding + zero-width + the align-1 `int :0` case; the fuzzer injects `unsigned[ short|char] : N;` /
+>    `: 0;` padding between members, validated by the sizeof/offsetof LAYOUT differential.
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit

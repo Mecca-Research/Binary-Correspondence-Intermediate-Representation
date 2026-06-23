@@ -489,6 +489,16 @@ static int p_struct_body(CC *c) {
     if(!inl && p_type_base(c,&base,&si))return -1;
     for(;;){                                          /* one or more declarators off one specifier: */
       bcir_ctype ty=base; apply_stars(c,&ty);   /* per-declarator `*`: `int *p, q;` -> p ptr, q scalar */
+      if(is(c,":")){                                  /* an UNNAMED `int :3` / ZERO-WIDTH `int :0` bitfield (no
+                                                       * name): positions the cursor, NOT a field, no align bump. */
+        c->i++; int w=(int)adv(c).v;
+        if(!is_union){ int ub=ty.size*8;
+          if(w==0){ if(dbits%ub)dbits+=ub-(dbits%ub); }       /* zero-width -> next storage-unit boundary */
+          else if(packed){ dbits+=w; }                        /* packed: pack bit-by-bit */
+          else { if((int)(dbits%ub)+w>ub)dbits+=ub-(dbits%ub); dbits+=w; }
+        }
+        if(is(c,",")){c->i++;continue;} break;
+      }
       if(!isk(c,T_ID)){ fail(c,"expected member name"); return -1; }   /* `unsigned x, y, z;` etc. */
       tok nm=adv(c);
       int arr_count=0,nadims=0,adims[3]={0,0,0};        /* T arr[N] / T m[A][B] -- one or more dims */
