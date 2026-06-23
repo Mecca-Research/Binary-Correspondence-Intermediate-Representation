@@ -66,7 +66,8 @@ _ABI = ["cfront_structret.c", "cfront_structcall.c",  # L8: struct return-by-val
         "cfront_neststruct.c"]                          # + nested struct members + nested-brace init `{ {..}, .. }`
 _FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_mathh.c",
           "cfront_mathh_mixed.c", "cfront_mathh_long.c", "cfront_mathh_ptr.c",
-          "cfront_calltyped.c"]                                             # float/double: parity + emit + Clang ≡ (the
+          "cfront_calltyped.c", "cfront_complex.c"]                         # + C99 _Complex (#complex)
+#   float/double: parity + emit + Clang ≡ (the
 #   integer StreamPack executor doesn't compute float; the math is delegated to the resident backend)
 _INIT = ["cfront_dispatch_table.c",   # designated initializers ([i]=v) for a file-scope dispatch table
          "cfront_agginit.c",          # local struct/union aggregate init ({.field=v}) -> = {0} + stores
@@ -195,6 +196,11 @@ def _equiv(source: str, c_emitted: str, entry) -> str:
                             for fn, ft, _bo, _bf, bw in ct.fields)
             setup.append(inits.rstrip("\n"))
             args.append(f"a{i}")
+        elif ct.is_complex:                          # a _Complex param: seed BOTH axes (finite, in range)
+            decls.append(f"  {_cname(ct)} s{i};")
+            el = "float" if ct.size == 8 else ("long double" if ct.size > 16 else "double")
+            setup.append(f"    s{i}=({el})(rng()%1000) + ({el})(rng()%1000)*I;")
+            args.append(f"s{i}")
         else:
             decls.append(f"  {_cname(ct)} s{i};")
             # a float param gets an in-range value (so a float->int cast stays defined, not UB);
@@ -216,6 +222,7 @@ def _equiv(source: str, c_emitted: str, entry) -> str:
 #include <string.h>
 #include <stdatomic.h>
 #include <math.h>
+#include <complex.h>
 {source}
 
 {c_emitted}
@@ -2015,7 +2022,8 @@ _FALLBACK_PROBES = [
     ("unsigned f(unsigned x){ return x*2u + 1u; }", "clean"),
     ("unsigned f(unsigned n){ return f(n-1u); }", "dirty"),              # R18 recursion -> DIRTY, not fallback
     ("unsigned f(unsigned x){ return x + ; }", "fallback"),              # malformed -> parse reject
-    ("unsigned f(void){ _Complex double z; return 0u; }", "fallback"),   # _Complex: outside the subset
+    ("unsigned f(void){ _Complex double z; (void)z; return 0u; }", "clean"),  # _Complex: now in the subset
+    ("unsigned f(void){ _Imaginary double z; return 0u; }", "fallback"),  # _Imaginary: still outside the subset
     ("unsigned f(unsigned n){ unsigned a[n]; return a[0]; }", "fallback"),   # VLA
     ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "clean"),  # statement-expr (#stmtexpr): now native
     ("unsigned f(unsigned a){ a = a*3u + 1u; return a; }", "clean"),       # assigning a PARAMETER: a bare

@@ -367,7 +367,8 @@ static venv *lookup(CC *c, const tok *t);                     /* fwd: typeof(var
 static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx);   /* fwd: typeof(expression) -- speculative lower */
 static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
   memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1;
-  int seen=0, longs=0, ptrtrk=0, sign_explicit=0;   /* longs: `long` (data-model) vs `long long` (8) */
+  int seen=0, longs=0, ptrtrk=0, sign_explicit=0, floatkw=0;   /* longs: `long` (data-model) vs `long long` (8);
+                                                               * floatkw: a float/double keyword was scanned */
   for(;;){
     if(is(c,"volatile")){ty->is_volatile=1;c->i++;continue;}
     if(is(c,"_Atomic")){ c->i++;
@@ -379,7 +380,7 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
        ||is(c,"_Thread_local")||is(c,"thread_local")){c->i++;continue;}  /* storage class / qualifier */
     if(is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")){       /* typeof(type-name) / typeof(var) */
       c->i++; if(!eat(c,"(")) return 1;
-      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
+      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")
                     || is(c,"const")||is(c,"volatile")
                     || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                     || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
@@ -393,6 +394,8 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
       seen=1; break; }
     if(is(c,"signed")){ty->signd=1;sign_explicit=1;c->i++;continue;}   /* a modifier; the base sets size */
     if(is(c,"unsigned")){ty->signd=0;sign_explicit=1;ty->size=4;seen=1;c->i++;continue;}
+    if(is(c,"_Complex")||is(c,"complex")){ty->is_complex=1;ty->is_float=1;seen=1;c->i++;continue;}  /* C99 _Complex
+                                                       * (a modifier on a float base; bare _Complex == double) */
     if(is(c,"struct")||is(c,"union")){c->i++;tok tag=adv(c);int si=find_struct(c,tag.s,tag.n);
       if(si<0){fail(c,"unknown struct");return 1;} ty->kind=1;ty->size=c->s[si].size;*sidx=si;
       ty->is_union=(uint8_t)c->s[si].is_union;idcpy(ty->tag,&tag);seen=1;break;}
@@ -408,13 +411,13 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
       if(inh>=0 && (!sign_explicit || !is_base_int(pk(c)->s,pk(c)->n))) ty->signd=inh;
       if((int)strlen("long")==pk(c)->n&&!strncmp("long",pk(c)->s,pk(c)->n)) longs++;   /* count `long`s */
       if(is_ptr_tracking(pk(c)->s,pk(c)->n)) ptrtrk=1;
-      if(scalar_float_size(pk(c)->s,pk(c)->n)>=0) ty->is_float=1;     /* float / double */
+      if(scalar_float_size(pk(c)->s,pk(c)->n)>=0){ty->is_float=1;floatkw=1;}     /* float / double */
       if((pk(c)->n==5&&!strncmp("_Bool",pk(c)->s,5))||(pk(c)->n==4&&!strncmp("bool",pk(c)->s,4)))
         ty->is_bool=1;                                               /* a boolean: a store normalizes to 0/1 */
       if(pk(c)->n==4&&!strncmp("char",pk(c)->s,4)&&!sign_explicit)
         ty->is_plain_char=1;        /* plain `char` (no signed/unsigned): emit `char`, NOT int8_t (ARM) */
-      seen=1;c->i++;
-      if(is(c,"long")||is(c,"int")||is(c,"char")||is(c,"double"))continue;break;}   /* `long double` continues */
+      seen=1;c->i++;   /* `long double` / `double _Complex` keep scanning the run */
+      if(is(c,"long")||is(c,"int")||is(c,"char")||is(c,"double")||is(c,"_Complex")||is(c,"complex"))continue;break;}
     break;
   }
   if(!seen){fail(c,"expected a type");return 1;}
@@ -423,6 +426,8 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
   if(ptrtrk) ty->size=cc_abi(c)->pointer_size;
   else if(longs>=1&&ty->is_float) ty->size=cc_abi(c)->long_double_size;   /* `long double` (80/128-bit) */
   else if(longs==1&&!ty->is_float&&ty->kind==0) ty->size=cc_abi(c)->long_size;
+  if(ty->is_complex) ty->size = (floatkw ? ty->size : 8) * 2;   /* a complex is a pair of the element float;
+                                                                 * a bare `_Complex` (no float kw) is double */
   return 0;
 }
 /* The full type: the specifier + the (first declarator's) `*`s folded in -- the single-declarator /
@@ -686,6 +691,12 @@ static uint32_t tempi(CC *c,int size,int signd){ uint32_t r=add_res(c,BCIR_DOM_R
 /* A floating temporary (size 4 float / 8 double) -- the emit renders it as float/double, not uint32. */
 static uint32_t tempf(CC *c,int size){ uint32_t r=add_res(c,BCIR_DOM_RAM,size,1,0,BCIR_RK_SCALAR,"");
   if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_float=1; return r; }
+/* a `_Complex` temp (size = the full 2x-element bytes): is_float AND is_complex, so the emit spells
+ * `<elem> _Complex` (elem width = size/2) and the value is delegated to the backend like any float. */
+static uint32_t tempc(CC *c,int size){ uint32_t r=add_res(c,BCIR_DOM_RAM,size,1,0,BCIR_RK_SCALAR,"");
+  if(c->fn->n_res){ c->fn->res[c->fn->n_res-1].is_float=1; c->fn->res[c->fn->n_res-1].is_complex=1; } return r; }
+static int rid_complex(CC *c,uint32_t rid){
+  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid) return c->fn->res[i].is_complex; return 0; }
 /* The integer (width, signedness) of the value in rid; returns 0 if rid is not a plain integer scalar
  * (float / pointer / aggregate -- the usual arithmetic conversions do not apply to it). */
 static int rid_int(CC *c,uint32_t rid,int *size,int *signd){
@@ -1103,6 +1114,24 @@ static int libm_is_ld(const char *s, int n) {
   for(int i=0;g_libm[i];i++){ if((int)strlen(g_libm[i])==n-1 && !strncmp(g_libm[i],s,(size_t)(n-1))) return 1; }
   return 0;
 }
+/* <complex.h> functions, lowered like libm (c.call.libm, opaque to R18). The result is the *real*
+ * element float for creal/cimag/cabs/carg, or the *complex* type for conj/cproj. The full name is
+ * matched first so creal/cimag (which themselves end in l/g) aren't misread as an `l`-suffixed variant. */
+static const char *const g_cplx_real[] = { "creal","cimag","cabs","carg", 0 };
+static const char *const g_cplx_cplx[] = { "conj","cproj", 0 };
+static int cplx_name_in(const char *const*set,const char *s,int n){
+  for(int i=0;set[i];i++) if((int)strlen(set[i])==n && !strncmp(set[i],s,(size_t)n)) return 1; return 0; }
+/* The ELEMENT float size of a <complex.h> call (8/double, 4/+f, long_double/+l), or 0 if not one;
+ * *is_cplx is set 1 when the RESULT is itself complex (conj/cproj) vs a real element (creal/cimag/...). */
+static int cplx_libm(CC *c,const char *s,int n,int *is_cplx){
+  if(cplx_name_in(g_cplx_real,s,n)){ *is_cplx=0; return 8; }
+  if(cplx_name_in(g_cplx_cplx,s,n)){ *is_cplx=1; return 8; }
+  if(n>1 && (s[n-1]=='f'||s[n-1]=='l')){ int b=n-1, ld=s[n-1]=='l';
+    int es = ld ? cc_abi(c)->long_double_size : 4;
+    if(cplx_name_in(g_cplx_real,s,b)){ *is_cplx=0; return es; }
+    if(cplx_name_in(g_cplx_cplx,s,b)){ *is_cplx=1; return es; } }
+  return 0;
+}
 /* The printf / scanf family of external variadic <stdio.h> functions -- not defined in the unit and not
  * lowered, they emit verbatim (like a libm call, opaque to R18) and return int. (The format string is a
  * read-only char[] literal, already passed through as an argument.) */
@@ -1178,6 +1207,14 @@ static uint32_t p_call(CC *c, const tok *name) {
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
     return t;                          /* not added to fn->calls (opaque to R18) */
   }
+  int cx_is; int cz = cplx_libm(c,name->s,name->n,&cx_is);   /* <complex.h> creal/cimag/conj/... */
+  if(cz){                                  /* a typed external complex-library edge (counts as one call) */
+    uint32_t t = cx_is ? tempc(c,cz*2) : tempf(c,cz);        /* conj -> complex (2x elem); creal -> real */
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.libm:%.*s",name->n,name->s);
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+    if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
+    return t;
+  }
   int lz = libm_is_long(name->s,name->n) ? -8
          : libm_is_int(name->s,name->n)  ? -4
          : libm_is_ld(name->s,name->n)   ? cc_abi(c)->long_double_size   /* sinl/sqrtl/... -> long double */
@@ -1212,7 +1249,8 @@ static uint32_t p_call(CC *c, const tok *name) {
     if(c->fn->n_res) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",
                               rt->is_union?"union":"struct", rt->tag);
   } else
-    t = (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
+    t = (rt && rt->is_complex)          ? tempc(c,rt->size)   /* _Complex user return (a float pair) */
+      : (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
       : (rt && rt->kind==0 && rt->size==8) ? tempi(c,8,rt->signd)  /* wide (8-byte) int return: keep its
                                                             * sign so a `>>` on a `long` result stays arithmetic */
       : (rt && rt->kind==0 && rt->size<=4 && rt->signd) ? tempi(c,4,1)  /* a signed char/short/int return
@@ -1404,7 +1442,7 @@ static uint32_t p_primary(CC *c) {
   if(is(c,"sizeof")){                  /* sizeof(type) / sizeof expr -> a folded constant (no eval) */
     c->i++; long long size=4; int got=0;
     if(is(c,"(")){ int save=c->i; c->i++;
-      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
+      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")
                     || is(c,"const")||is(c,"volatile")
                     || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                     || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
@@ -1465,7 +1503,8 @@ static uint32_t p_primary(CC *c) {
  * set, a width-named integer uses the SIGNED fixed-width spelling -- needed for a float -> signed-int
  * conversion, which is UB/target-divergent if rendered as float -> unsigned. */
 static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
-  const char *nm=ty->is_bool ? "_Bool"           /* a bool cast normalizes any nonzero (full value) to 1 */
+  const char *nm=ty->is_complex ? (ty->size==8?"float _Complex":ty->size>16?"long double _Complex":"double _Complex")
+                : ty->is_bool ? "_Bool"           /* a bool cast normalizes any nonzero (full value) to 1 */
                 : ty->is_float ? (ty->size==4?"float":"double")
                 : signed_int ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
                 : ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t";
@@ -1473,6 +1512,14 @@ static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
 }
 static uint32_t p_unary(CC *c) {
   if(is(c,"+")){ c->i++; return p_unary(c); }    /* unary plus is a no-op */
+  if(is(c,"__real__")||is(c,"__imag__")){        /* GNU complex part -> the real element float */
+    const char *suf=is(c,"__real__")?"creal":"cimag"; c->i++;
+    uint32_t a=p_unary(c); const bcir_resource *ar=res_of(c->fn,a);
+    int es = (ar&&ar->is_complex)?(int)ar->elem_bytes/2 : (ar&&ar->is_float)?(int)ar->elem_bytes : 8;
+    uint32_t r=tempf(c,es);                       /* not integer-computed; emitted `__real__ x` */
+    char op[BCIR_CIR_NAME];snprintf(op,sizeof op,"c.un.%s",suf);
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);if(cl){cl->n_rd=1;cl->rd[0]=a;cl->n_wr=1;cl->wr[0]=r;}
+    return r; }
   if(is(c,"&")){ c->i++;                          /* address-of: &lvalue -> a pointer value (c.addrof) */
     if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id);
       if(v){ c->i++;
@@ -1499,7 +1546,7 @@ static uint32_t p_unary(CC *c) {
         bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
     if(is(c,"(")){ int save=c->i; c->i++;             /* `&(type){...}` -- address of a compound literal */
-      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
+      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")
                     || is(c,"const")||is(c,"volatile")
                     || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                     || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
@@ -1548,7 +1595,7 @@ static uint32_t p_unary(CC *c) {
     return p_stmt_expr(c);                          /* `({ ... })` -- a GCC statement expression */
   if(is(c,"(")){                                   /* (type)operand -- a cast binds at the unary level */
     int save=c->i; c->i++;
-    int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
+    int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")
                   || is(c,"const")||is(c,"volatile")
                     || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                     || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
@@ -1578,7 +1625,8 @@ static uint32_t p_unary(CC *c) {
          * back signed (an arithmetic `>>`). A float -> signed-int conversion additionally needs a SIGNED
          * cast operator (float -> unsigned is UB / target-divergent). */
         int f2s = vr && vr->is_float && !ty.is_float && ty.kind!=2 && ty.signd && ty.size>0;
-        uint32_t r = ty.is_float ? tempf(c, ty.size)                  /* a float cast -> a float temp */
+        uint32_t r = ty.is_complex ? tempc(c, ty.size)                /* a _Complex cast -> a complex temp */
+                   : ty.is_float ? tempf(c, ty.size)                  /* a float cast -> a float temp */
                    : ty.kind==2 ? temp(c, cc_abi(c)->pointer_size)    /* a pointer cast */
                                 : tempi(c, ty.size?ty.size:4, ty.signd?1:0);   /* an integer cast */
         if(ty.is_bool && !ty.is_float && ty.kind!=2 && c->fn->n_res)
@@ -1643,7 +1691,11 @@ static uint32_t binop_result(CC *c, const char *suf, uint32_t lhs, uint32_t rhs)
   int is_arith=!strcmp(suf,"add")||!strcmp(suf,"sub")||!strcmp(suf,"mul")||!strcmp(suf,"div");
   int is_shift=!strcmp(suf,"shl")||!strcmp(suf,"shr");
   int fa=rid_fsize(c,lhs), fb=rid_fsize(c,rhs);
-  if(is_arith&&(fa||fb)) return tempf(c,(fa>fb?fa:fb));        /* float arithmetic -> the wider float */
+  if(is_arith&&(fa||fb)){                                      /* float/complex arithmetic */
+    int ca=rid_complex(c,lhs), cb=rid_complex(c,rhs);
+    if(ca||cb){ int ea=ca?fa/2:fa, eb=cb?fb/2:fb;             /* compare ELEMENT widths (a complex's */
+      int ew=ea>eb?ea:eb; return tempc(c,ew*2); }             /* elem_bytes is the full 2x pair) */
+    return tempf(c,(fa>fb?fa:fb)); }                          /* real float -> the wider float */
   int sa,za,sb,zb; int ia=rid_int(c,lhs,&sa,&za), ib=rid_int(c,rhs,&sb,&zb);
   if(ia&&ib){ int rs,rz;
     if(is_shift){ promote_i(&sa,&za); rs=sa; rz=za; }          /* a shift result: the promoted left operand */
@@ -2167,6 +2219,7 @@ static void p_stmt(CC *c) {
   int looks_decl=0, is_static=is(c,"static");
   if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
     looks_decl=sz>=0||is_static||is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"const")||is(c,"volatile")
+               ||is(c,"_Complex")||is(c,"complex")                      /* `double _Complex z;` -- a complex local */
                ||is(c,"_Atomic")                                        /* `_Atomic int a;` -- an atomic local */
                ||is(c,"va_list")||is(c,"__builtin_va_list")              /* `va_list ap;` -- a variadic cursor local */
                ||is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
@@ -2196,7 +2249,8 @@ static void p_stmt(CC *c) {
         pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);   /* a `char *` pointee: the deref load emits `char` */
         if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
       else if(ty.is_valist) c->fn->res[c->fn->n_res-1].is_valist=1;     /* a `va_list ap;` local -> emit `va_list` */
-      else if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double (element) local */
+      else if(ty.is_float){ c->fn->res[c->fn->n_res-1].is_float=1;      /* a float/double (element) local */
+        if(ty.is_complex) c->fn->res[c->fn->n_res-1].is_complex=1; }    /* a _Complex local (a float pair) */
       else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
         if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1;       /* a _Bool local: emit `_Bool`, store normalizes */
         if(ty.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1; }   /* a plain `char` local: emit `char` */
@@ -2502,7 +2556,8 @@ static int p_func(CC *c, bcir_func *fn) {
       pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0); pr->ptr_depth=ty.ptr_depth;
       pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);   /* a `char *` pointee: the deref load emits `char` */
       if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
-    else if(ty.is_float) c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
+    else if(ty.is_float){ c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
+      if(ty.is_complex) c->fn->res[c->fn->n_res-1].is_complex=1; }     /* a _Complex parameter (a float pair) */
     else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
       if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1;       /* a _Bool parameter */
       if(ty.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1; }   /* a plain `char` parameter */
@@ -2542,6 +2597,7 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   const char *base = is_struct ? ty->tag
                    : ty->is_bool ? "_Bool"
                    : ty->is_plain_char ? "char"   /* plain `char`: impl-defined sign (not int8_t -> ARM) */
+                   : ty->is_complex ? (ty->size==8?"float _Complex":ty->size>16?"long double _Complex":"double _Complex")
                    : ty->is_float ? (ty->size==4?"float":ty->size>8?"long double":"double")
                    : ty->size==0 ? "void"
                    : ty->signd ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
@@ -2596,6 +2652,7 @@ static const char *tty(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid);
   if(!r) return "uint32_t";
   if(r->is_valist) return "va_list";   /* a variadic cursor object -- opaque, declared `va_list ap;` */
+  if(r->is_complex) return r->elem_bytes==8?"float _Complex":r->elem_bytes>16?"long double _Complex":"double _Complex";
   if(r->is_float) return r->elem_bytes==4?"float":r->elem_bytes>8?"long double":"double";   /* 16/12 -> long double */
   if(r->is_bool) return "_Bool";   /* a store into a bool object normalizes any nonzero to 1 (§6.3.1.2) */
   if(r->is_plain_char) return "char";   /* plain `char`: impl-defined sign (not int8_t -> wrong on ARM) */
@@ -2690,6 +2747,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"%s %s = %s %s %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
     else if(!strncmp(cl->op,"c.fconst:",9))                /* a floating constant -> its literal spelling */
       w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
+    else if(!strcmp(cl->op,"c.un.creal"))                  /* GNU __real__ z -- the real part (an element float) */
+      w+=snprintf(o+w,on-w,"%s %s = __real__ %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+    else if(!strcmp(cl->op,"c.un.cimag"))                  /* GNU __imag__ z -- the imaginary part */
+      w+=snprintf(o+w,on-w,"%s %s = __imag__ %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
     else if(!strncmp(cl->op,"c.un.",5))                    /* `-`/`~` keep the operand width (long stays 64) */
       w+=snprintf(o+w,on-w,"%s %s = (%s%s);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
     else if(!strncmp(cl->op,"c.cast:",7))                  /* (type)operand -- width / float cast */
