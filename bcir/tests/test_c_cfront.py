@@ -68,7 +68,8 @@ _FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_m
           "cfront_mathh_mixed.c", "cfront_mathh_long.c", "cfront_mathh_ptr.c",
           "cfront_calltyped.c", "cfront_complex.c", "cfront_complexdiv.c",   # + C99 _Complex (#complex) + complex `/`
           "cfront_complextrans.c",                                           # + complex transcendentals (#complextrans)
-          "cfront_imagunit.c"]                                               # + <complex.h> imaginary unit `I` (#imagunit)
+          "cfront_imagunit.c",                                               # + <complex.h> imaginary unit `I` (#imagunit)
+          "cfront_complexlong.c"]                                            # + long-double complex (#complexlong)
 #   float/double: parity + emit + Clang ≡ (the
 #   integer StreamPack executor doesn't compute float; the math is delegated to the resident backend)
 _INIT = ["cfront_dispatch_table.c",   # designated initializers ([i]=v) for a file-scope dispatch table
@@ -213,10 +214,18 @@ def _equiv(source: str, c_emitted: str, entry) -> str:
             args.append(f"s{i}")
     call = ", ".join(args)
     rt = _cname(entry.ret_type)
-    if entry.ret_type.is_aggregate or entry.ret_type.is_complex:
-        # an aggregate OR a _Complex result is compared BIT-exactly (memcmp): both rails run the
-        # identical native operation, so the results are bit-identical -- and memcmp (unlike `!=`) is
-        # nan-safe, which a complex division by a near-zero divisor needs (`nan != nan` is spuriously true).
+    if entry.ret_type.is_complex:
+        # a _Complex result is compared element-wise with a nan-aware equality: value-based (creall/cimagl,
+        # narrower complex widening exactly), so it is immune to `long double _Complex`'s indeterminate x87
+        # padding bytes -- which memcmp would wrongly flag -- AND nan-safe, which a complex division by a
+        # near-zero divisor needs (`==` is false for a nan, so the isnan&&isnan arm catches it). Both rails
+        # run the identical native op, so equal-value already implies bit-equal (incl. signed zero / inf).
+        cmp = (f"    {rt} ra={entry.name}({call}), rb=bcir_{entry.name}({call});\n"
+               f"    if(!((creall(ra)==creall(rb)||(isnan(creall(ra))&&isnan(creall(rb))))"
+               f"&&(cimagl(ra)==cimagl(rb)||(isnan(cimagl(ra))&&isnan(cimagl(rb))))))"
+               f"{{printf(\"MISMATCH@%d\\n\",i);return 1;}}")
+    elif entry.ret_type.is_aggregate:
+        # an aggregate result is compared BIT-exactly (memcmp): both rails run the identical stores.
         cmp = (f"    {rt} ra={entry.name}({call}), rb=bcir_{entry.name}({call});\n"
                f"    if(memcmp(&ra,&rb,sizeof ra)){{printf(\"MISMATCH@%d\\n\",i);return 1;}}")
     else:
