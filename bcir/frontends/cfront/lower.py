@@ -238,6 +238,14 @@ class _LV:
         return max(1, self.ct.size)
 
 
+def _is_scalar_member_lv(target, lv: "_LV") -> bool:
+    """A memory lvalue the twin handles as an assignment-EXPRESSION value: a SINGLE-LEVEL, plain SCALAR struct
+    member `name.field` / `name->field` (not a bitfield). An array/nested-member/deref/array-of-structs/bitfield
+    target stays a both-rails follow-on (the twin's value grammar only stores+reloads a direct member)."""
+    return (isinstance(target, cast.Member) and isinstance(target.base, cast.Name)
+            and not lv.bit_width and lv.stride == 0 and lv.idx is None and lv.ct.kind == "scalar")
+
+
 # --- the structured body tree (L6): a block is a list mixing straight-line Claims with these. ---
 @dataclass
 class IfNode:
@@ -1134,13 +1142,14 @@ class _FuncLowerer:
         return _LV("mem", rid, cur, byte_off=off, bit_off=bit_off, bit_width=bit_w, packed=parent_packed)
 
     def _assign(self, node: cast.Assign, stmt: bool = False) -> int:
-        # An assignment as a VALUE (a sub-expression: `a = b = c`, `if ((x = f()))`, `(a += 3) + 1`) yields
-        # the assigned value. Only a NAMED-LOCAL target is supported as a value (the twin's expression-grammar
-        # assignment handles a bare name); a memory-lvalue assignment used as a value (`(p->x = v) + 1`) stays
-        # a follow-on -- both rails fall back. As a STATEMENT (`stmt`) every lvalue form is fine (value unused).
+        # An assignment as a VALUE (a sub-expression: `a = b = c`, `if ((x = f()))`, `(p->x = v) + 1`) yields
+        # the assigned value. A NAMED LOCAL returns its storage (a later read sees the converted value); a MEMORY
+        # lvalue is written then RE-READ, so the value is the stored/converted value (`(char_m = 300)` -> the
+        # (char) value), matching Clang -- exactly the named-local semantics. A bitfield or array-of-structs
+        # element target as a VALUE stays a follow-on (it would double the bf.get/strided read surface); both
+        # rails fall back. As a STATEMENT (`stmt`) the value is unused, so every lvalue form is fine and there is
+        # no re-read.
         named_local = isinstance(node.target, cast.Name) and node.target.ident in self.env
-        if not stmt and not named_local:
-            raise CLowerError("assignment to a non-local lvalue used as a value is not yet supported")
         # pointer compound-assign  p += n / p -= n  (and p++/p--, which desugar to `p = p + 1`):
         # a single pointer-arithmetic claim, so the result stays a pointer (the integer binary result
         # would truncate the pointer). The emit renders `p += n;` and lets C scale by the element size.
@@ -1161,20 +1170,25 @@ class _FuncLowerer:
         if (isinstance(node.value, cast.Binary) and node.value.lhs is node.target
                 and not isinstance(node.target, cast.Name)):
             lv = self._lvalue(node.target)
+            if not stmt and not _is_scalar_member_lv(node.target, lv):   # a VALUE: only a plain scalar member
+                raise CLowerError("this lvalue form's compound assignment as a value is a follow-on")
             cur = self._read(lv)
             b = self._rvalue(node.value.rhs)
             opcode, suf = _BIN[node.value.op]
             t = self._temp(self._bin_result_type(node.value.op, cur, b), f"b_{suf}")
             res = self._emit(f"c.bin.{suf}", opcode, (cur, b), (t,))
             self._write(lv, res)
-            return res
+            return res                                         # the value of a compound is the binop result
         v = self._rvalue(node.value)
-        if isinstance(node.target, cast.Name) and node.target.ident in self.env:
+        if named_local:
             rid, _ct = self._lookup(node.target.ident, node.target.pos)           # copy into the mutable storage
             self._emit("c.copy", Opcode.ADD, (v,), (rid,))
             return rid
-        self._write(self._lvalue(node.target), v)
-        return v
+        lv = self._lvalue(node.target)
+        if not stmt and not _is_scalar_member_lv(node.target, lv):   # a VALUE: only a plain scalar member lvalue
+            raise CLowerError("this lvalue form's assignment as a value is a follow-on")  # (`p->x`/`s.x`)
+        self._write(lv, v)
+        return v if stmt else self._read(lv)                   # value context: the stored/converted value (re-read)
 
     # GCC/Clang atomic + fence builtins -> the BCIR ATOMIC_*/BARRIER opcodes (§5.8).
     _ATOMIC = {"__atomic_fetch_add": ("c.atomic.add", Opcode.ATOMIC_ADD),

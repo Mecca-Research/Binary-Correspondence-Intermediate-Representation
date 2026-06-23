@@ -1716,6 +1716,33 @@ static int name_assign_ahead(CC *c){
   return c->t[c->i].k==T_ID &&
          ((c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='=') || is_compound_op(&c->t[c->i+1]));
 }
+/* Lookahead (side-effect-free): is the cursor at a SINGLE-LEVEL plain-SCALAR member assignment-expression
+ * `name.field = ...` / `name->field OP= ...`? Fills *out (the field) + *base (the struct base venv). A
+ * bitfield/pointer/array/nested-struct field, a nested/array/deref chain, or a non-local base returns 0 (those
+ * stay a both-rails follow-on -- the value grammar only store+reloads a direct member). */
+static int member_assign_ahead(CC *c, field *out, venv **base){
+  if(!isk(c,T_ID)) return 0;
+  venv *v=lookup(c,&c->t[c->i]); if(!v || v->sidx<0) return 0;        /* a local/param struct (value or pointer) */
+  const tok *op=&c->t[c->i+1];
+  if(!(op->k==T_PUN && ((op->n==1 && op->s[0]=='.') || (op->n==2 && op->s[0]=='-' && op->s[1]=='>')))) return 0;
+  const tok *fn=&c->t[c->i+2]; if(fn->k!=T_ID) return 0;
+  sdef *S=&c->s[v->sidx]; int fi=-1;
+  for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn->n && !strncmp(S->f[i].name,fn->s,fn->n)) fi=i;
+  if(fi<0) return 0;
+  field f=S->f[fi];
+  if(f.bit_w || f.is_ptr || f.arr_count || f.sidx>=0) return 0;       /* a plain scalar member only */
+  const tok *as=&c->t[c->i+3];
+  if(!(as->k==T_PUN && ((as->n==1 && as->s[0]=='=') || is_compound_op(as)))) return 0;
+  *out=f; *base=v; return 1;
+}
+/* Emit the member store `base.field = val` (the C twin of the oracle's _write for a plain member). */
+static void store_member(CC *c, venv *base, const field *f, uint32_t val){
+  bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+  if(cl){cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f->byte_off;cl->imm[1]=f->size;
+    cl->bounds=BCIR_BND_ASSUMED;
+    if(f->is_bool){cl->imm[2]=1;cl->n_imm=3;}                         /* a _Bool member normalizes on store */
+    if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
+}
 /* The assignment-expression level (lowest precedence, RIGHT-associative): `name = assign` / `name OP= assign`
  * evaluates to the assigned value (the named variable's storage), mirroring the statement forms in p_stmt and
  * the oracle's _assign. Only a NAMED variable target (local/param/global) is handled as a value; anything else
@@ -1744,6 +1771,24 @@ static uint32_t p_assign(CC *c){
       bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
       return v->rid;
     }
+  }
+  field mf; venv *mbase;
+  if(member_assign_ahead(c,&mf,&mbase)){            /* `p->x = rhs` / `s.x OP= rhs` as a VALUE (store + reload) */
+    c->i+=3;                                        /* consume `name . field` (or `name -> field`) */
+    const tok *op=&c->t[c->i];
+    if(op->n==1 && op->s[0]=='='){                  /* plain: store rhs, then RE-READ -> the converted value */
+      c->i++; uint32_t rhs=p_assign(c);             /* right-associative: p->x = s.y = v */
+      store_member(c,mbase,&mf,rhs);
+      return emit_member(c,mbase,&mf);
+    }
+    char ch=op->s[0]; c->i++;                       /* compound `OP=`: read-once, binop, store, value = result */
+    uint32_t cur=emit_member(c,mbase,&mf);          /* read FIRST (matches the oracle's claim order) */
+    uint32_t rhs=p_assign(c);
+    const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+    uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+    bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+    store_member(c,mbase,&mf,tmp);
+    return tmp;
   }
   return p_cond(c);
 }

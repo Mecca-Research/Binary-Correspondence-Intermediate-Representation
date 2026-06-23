@@ -763,6 +763,16 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    stay consistent both-rails fallbacks. The fuzzer emits chained `n1 = n2 = expr;` (the inner is an
 >    assignment-expression; fully sequenced, no UB); `cfront_assignexpr.c` pins the forms, verified byte-exact
 >    vs Clang on x86-64 AND aarch64 (qemu).
+> 1g'. ✅ **Member-lvalue assignment as a value** (the #455 follow-on) — `(p->x = v) + 1`, chained
+>    `p->x = p->y = v`, `if ((p->flag = check()))`, compound `(p->x += 5) * 2` for a SINGLE-LEVEL plain SCALAR
+>    member. The value is the STORED/CONVERTED member value (`(char_m = 300)` -> the (char) value), so the twin
+>    STORES then RE-READS the member (`store_member` + `emit_member`), matching the oracle's named-local
+>    semantics and Clang -- plain = store+reload (2 claims), compound = read+binop+store (3). The oracle relaxes
+>    the #455 guard via `_is_scalar_member_lv` (re-read on the value path: `return v if stmt else _read(lv)`);
+>    the twin gains a `member_assign_ahead` lookahead + branch in `p_assign`. An array element / nested member /
+>    deref / bitfield / array-of-structs target as a value stays a follow-on (both rails fall back). The fuzzer
+>    chains through a single-level scalar member; `cfront_memassignexpr.c` pins it, byte-exact vs Clang on
+>    x86-64 AND aarch64 (qemu).
 > 1h. ✅ **Function-pointer members set from named functions** — the canonical dispatch / vtable / ops-struct
 >    pattern: `struct Ops{ unsigned (*add)(unsigned,unsigned); }; o->add = op_add; o->add(x,y);`. Beyond the
 >    prior typedef-member-CALL support, three pieces landed on both rails: (a) the DIRECT declarator member
