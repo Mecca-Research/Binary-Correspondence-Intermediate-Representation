@@ -116,6 +116,12 @@ _LIBM_INT = {"ilogb": "int",
 # <complex.h>). The result type differs by function: creal/cimag/cabs/carg return the *real* element
 # float; conj/cproj AND the C99 complex transcendentals return the *complex* type. The f/l suffix picks
 # float / long double (base -> double).
+# <complex.h> imaginary unit: `I` is the macro `_Complex_I`, a `const float _Complex` of value i (0+1i).
+# (Clang doesn't implement `_Imaginary`, so `_Imaginary_I` is intentionally not recognized.) Lowered to a
+# `c.cconst` that emits the token VERBATIM -- the re-emitted twin compiles against <complex.h> just like the
+# original, so it resolves to the same imaginary unit. Honored only when NOT shadowed by a declared name.
+_IMAG_UNIT = frozenset({"I", "_Complex_I"})
+
 _CPLX_REAL = frozenset({"creal", "cimag", "cabs", "carg"})    # -> real element float
 _CPLX_CPLX = frozenset({                                      # -> the complex type (same width)
     "conj", "cproj",                                          #   algebraic
@@ -850,8 +856,12 @@ class _FuncLowerer:
             t = self._temp(ct, "fk")
             return self._emit(f"c.fconst:{node.value}", Opcode.LOAD, (), (t,))
         if isinstance(node, cast.Name):
-            if node.ident not in self.env and node.ident in self.func_rets:
-                return self._func_ptr_value(node.ident)       # a function NAME as a value -> its funcptr
+            if node.ident not in self.env:
+                if node.ident in self.func_rets:
+                    return self._func_ptr_value(node.ident)   # a function NAME as a value -> its funcptr
+                if node.ident in _IMAG_UNIT:                  # <complex.h> imaginary unit (unless shadowed)
+                    t = self._temp(scalar("float _Complex"), "imag_unit")
+                    return self._emit(f"c.cconst:{node.ident}", Opcode.LOAD, (), (t,))
             return self._lookup(node.ident, node.pos)[0]
         if isinstance(node, cast.StringLit):                  # a string value -> the global pointer
             return self._string_ptr(node.value)

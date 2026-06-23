@@ -177,6 +177,8 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"{c.imm[0]}u")
     if c.op.startswith("c.fconst:"):                         # a floating constant -> its literal spelling
         return deftmp(c.wr[0], c.op.split(":", 1)[1])
+    if c.op.startswith("c.cconst:"):                         # <complex.h> imaginary unit -> verbatim token
+        return deftmp(c.wr[0], c.op.split(":", 1)[1])
     if c.op.startswith("c.bin."):
         return deftmp(c.wr[0], f"{ref(c.rd[0])} {_BINOP[suf]} {ref(c.rd[1])}")
     if c.op == "c.un.creal":                                 # GNU __real__ z (complex part extraction)
