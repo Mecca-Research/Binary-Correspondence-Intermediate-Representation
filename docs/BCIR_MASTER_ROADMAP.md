@@ -727,6 +727,16 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    -> next unit, else the straddle-aware reserve) WITHOUT a field or an alignment bump. `cfront_unnamedbf.c`
 >    pins padding + zero-width + the align-1 `int :0` case; the fuzzer injects `unsigned[ short|char] : N;` /
 >    `: 0;` padding between members, validated by the sizeof/offsetof LAYOUT differential.
+> 1e. ✅ **Plain `char` struct members read as `char`, not `int8_t` (AArch64)** — a member declared plain `char`
+>    (no signed/unsigned) has implementation-defined signedness: signed on x86-64, UNSIGNED on AArch64. The C
+>    twin's `field` table didn't carry `is_plain_char` (it was tracked for scalars/locals/pointers/`char *`
+>    derefs but LOST at a struct member), so a member/element load emitted `int8_t` -- sign-extending a high-bit
+>    value on AArch64 where the source zero-extends, diverging from Clang on the ARM runner (caught by the
+>    aarch64 conformance job, surfaced by `cfront_unnamedbf.c`'s `char` members). Fix: the field carries
+>    `is_plain_char`, and `emit_member` / `emit_member_index` tag the load result so it emits `char`. Verified
+>    on x86-64 AND aarch64 (qemu) for a direct member, a member-array element, and a nested-struct member;
+>    `cfront_charmember.c` pins it. (The x86-only differential fuzzer can't see this -- plain `char` is signed
+>    there -- so the cross-target conformance fixture is the guard.)
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit
