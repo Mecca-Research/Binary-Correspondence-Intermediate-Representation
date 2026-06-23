@@ -872,9 +872,11 @@ def verify_lifetime(module: Module) -> list[Diagnostic]:
     (`event='alloc'`) or FREE the resources it reads (`event='free'`, the `free(p)` shape); every other
     claim is an implicit use. Walking the phase/claim order with the set of currently-FREED resources:
 
-      * a read/write of a freed-and-not-reallocated resource is a USE-AFTER-FREE;
+      * a READ of a freed-and-not-reallocated resource is a USE-AFTER-FREE (a dangling dereference: `*p` /
+        `p[i]` / `*p = x` all read the pointer to get the address);
       * a `free` of an already-freed resource is a DOUBLE-FREE;
-      * an `alloc` re-validates the resources it writes (a fresh epoch).
+      * a WRITE to a resource RE-VALIDATES it -- `p = malloc(...)` after `free(p)` is legal (reassigning the
+        pointer), whereas dereferencing it is not; an explicit `alloc` is the same re-validation.
 
     Vacuous by construction: with no `free` annotation anywhere (the entire scalar / C-frontend subset
     today, where every claim has `lifetime is None`), nothing is ever freed, so the law emits nothing --
@@ -890,10 +892,7 @@ def verify_lifetime(module: Module) -> list[Diagnostic]:
             if lt is not None and event not in _LIFETIME_EVENTS:
                 diags.append(Diagnostic("R21", f"claim {claim.id}: unknown lifetime event {event!r}"))
                 event = "use"
-            if event == "alloc":                  # (re-)allocation re-validates the written resources
-                for rid in claim.wr:
-                    freed.discard(rid)
-            for rid in claim.io_rids():           # any access to a freed resource is illegal
+            for rid in claim.rd:                  # a READ of a freed resource is the dangling dereference
                 if rid in freed:
                     kind = "double-free" if event == "free" else "use-after-free"
                     diags.append(Diagnostic(
@@ -901,6 +900,8 @@ def verify_lifetime(module: Module) -> list[Diagnostic]:
             if event == "free":                   # the read resources die after this claim
                 for rid in claim.rd:
                     freed.add(rid)
+            for rid in claim.wr:                  # a WRITE (reassignment / alloc) re-validates the resource
+                freed.discard(rid)
     return diags
 
 

@@ -1614,8 +1614,16 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    ✅ **Prerequisite DONE** (`cfront_stdlibmem.c`, #stdlibmem): `malloc`/`calloc`/`realloc`/`free` now lower
    on both rails as external libc edges (emitted VERBATIM, opaque to R18, NOT bcir_-renamed) -- they were a
    silent R18-dirty undefined-in-unit call before. The allocators return a `void *`, `free` returns void;
-   byte-exact vs Clang on x86-64 AND aarch64 (deterministic values, never an address). This is the seam the
-   lifetime annotation (the R21 `alloc`/`free` events) attaches to next.
+   byte-exact vs Clang on x86-64 AND aarch64 (deterministic values, never an address). ✅ **Lifetime
+   annotation DONE** (`test_lifetime_laws.py` frontend-integration cases): the oracle now stamps a R21 `free`
+   event on each `free(p)` claim, making the use-after-free / double-free law **load-bearing for the C
+   compiler** -- `free(p); *p` / `free(p); p[i]` and a double `free(p); free(p)` are flagged by R21, while
+   `free(p); p = malloc(...); *p` is legal (a WRITE re-validates the pointer; R21 was refined so a READ of a
+   freed resource is the dangling dereference, a write is re-validation). This is purely additive: the
+   annotation is excluded from the R13 digest, and R21 is a smart-lowering law run SEPARATELY from the
+   frontend's R1–R8 pass/fail -- so `compile_unit` is unchanged (no twin divergence; the whole thorough
+   corpus, 845 tests, still passes byte-identically). *Next:* wire R21 into the closed-loop verify so a UAF
+   unit routes to fallback/quarantine, and the dual-rail twin annotation.
 4. Extend **R1–R12 coverage** to the promoted-pointer paths (the laws already apply to the claim; the gap
    is the new `verify=bounds`/lifetime metadata, which the laws must learn to check) + the runtime guards
    the C backend emits (`verify_c_lowering`).
