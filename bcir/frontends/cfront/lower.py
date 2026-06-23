@@ -400,6 +400,8 @@ class _FuncLowerer:
         self.strctr = strctr if strctr is not None else [0]   # shared string-literal counter (unique rids)
         self.str_globals: dict[int, str] = {}          # string-literal global rid -> the source spelling
         self.str_pool: dict[str, int] = {}             # spelling -> rid (dedup identical literals)
+        self.func_globals: dict[int, str] = {}         # function-as-value rid -> the function name (emit verbatim)
+        self.func_pool: dict[str, int] = {}            # function name -> rid (dedup)
         self.env: dict[str, tuple[int, CType]] = {}    # name -> (storage rid, type)
         self.resources: dict[int, Resource] = {}
         self.rtypes: dict[int, CType] = {}             # rid -> CType (for emission)
@@ -617,6 +619,24 @@ class _FuncLowerer:
         self.str_pool[spelling] = rid
         return rid
 
+    def _func_ptr_value(self, name: str) -> int:
+        """A defined function used as a VALUE (function-to-pointer decay, `o->fn = g`): an anonymous funcptr
+        'global' whose value is the function's address. The emitter renders the rid as the bare function name
+        (C decays it to a pointer), so -- like a string literal -- no claim is emitted (parity-critical: the
+        bare name must cost 0 claims on both rails)."""
+        existing = self.func_pool.get(name)
+        if existing is not None:
+            return existing
+        idx = self.strctr[0]                              # share the literal-global rid space (unique rids)
+        self.strctr[0] += 1
+        rid = 970000 + idx
+        self.gres[rid] = Resource(rid=rid, domain=Domain.RAM, elem_bytes=self.abi.pointer_size, shape=(1,),
+                                  access="ro", data_gen=1, name=name)
+        self.rtypes[rid] = funcptr(name, self.func_rets[name], (), self.abi)
+        self.func_globals[rid] = name                     # rid -> the function name (rendered verbatim by emit)
+        self.func_pool[name] = rid
+        return rid
+
     def _addr(self, node):
         """The (rid, type, byte_offset) of an aggregate/pointer base used by member/index access. The
         offset ACCUMULATES through nested value-struct/union members (`t.q.a` -- q's byte offset must ride
@@ -777,6 +797,8 @@ class _FuncLowerer:
             t = self._temp(ct, "fk")
             return self._emit(f"c.fconst:{node.value}", Opcode.LOAD, (), (t,))
         if isinstance(node, cast.Name):
+            if node.ident not in self.env and node.ident in self.func_rets:
+                return self._func_ptr_value(node.ident)       # a function NAME as a value -> its funcptr
             return self._lookup(node.ident, node.pos)[0]
         if isinstance(node, cast.StringLit):                  # a string value -> the global pointer
             return self._string_ptr(node.value)
@@ -1398,6 +1420,7 @@ class _FuncLowerer:
             self.resources[rid] = self.gres[rid]
         gnames = {rid: nm for nm, (rid, _ct) in self.genv.items() if rid in touched}
         gnames.update(self.str_globals)                       # string globals render as inline literals
+        gnames.update(self.func_globals)                      # function-as-value globals render as the bare name
         m = Module(name=self.func.name)
         for rid in sorted(self.resources):
             m.add_resource(self.resources[rid])

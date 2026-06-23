@@ -363,7 +363,10 @@ class _Parser:
                         self.nxt()
                         continue
                     break
-                tref, name = self._declarator(base)       #   `unsigned x, y, z;` / `unsigned a:3, b:5;`
+                if self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*":
+                    tref, name = self._funcptr_declarator(base)   # `RET (*name)(params)` -- a funcptr member
+                else:                                             # (8-byte; set from a funcptr value, called
+                    tref, name = self._declarator(base)   #   `unsigned x, y, z;` / `unsigned a:3, b:5;`  `o->fn(a)`)
                 width = 0
                 if self.at("PUNCT", ":"):                 # bitfield:  type name : width;
                     self.nxt()

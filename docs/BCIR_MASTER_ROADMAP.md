@@ -763,6 +763,19 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 >    stay consistent both-rails fallbacks. The fuzzer emits chained `n1 = n2 = expr;` (the inner is an
 >    assignment-expression; fully sequenced, no UB); `cfront_assignexpr.c` pins the forms, verified byte-exact
 >    vs Clang on x86-64 AND aarch64 (qemu).
+> 1h. ✅ **Function-pointer members set from named functions** — the canonical dispatch / vtable / ops-struct
+>    pattern: `struct Ops{ unsigned (*add)(unsigned,unsigned); }; o->add = op_add; o->add(x,y);`. Beyond the
+>    prior typedef-member-CALL support, three pieces landed on both rails: (a) the DIRECT declarator member
+>    `RET (*name)(params)` (no typedef) -> an 8-byte kind-3 field (twin `p_struct_body` / oracle
+>    `cparse._funcptr_declarator`); (b) FUNCTION-NAME-AS-VALUE -- a bare function name yields a funcptr value
+>    emitted as the name, with ZERO claims (twin: a `read_only`+`is_funcptr` resource via `callee_ret`; oracle:
+>    a `_func_ptr_value` modeled on `_string_ptr`, merged into `gnames`); (c) the funcptr-member STORE goes
+>    through a GENERIC funcptr lvalue `*(void(**)(void))slot = (void(*)(void))g` -- a plain `memcpy(&g,8)` would
+>    copy the function's CODE (since `&g` IS the function's address) and `void*` can't hold a funcptr; function
+>    pointers round-trip through the cast, the call reads the member's real type. `cfront_fnptrmember.c` pins
+>    it, byte-exact vs Clang on x86-64 AND aarch64 (qemu). The members return `unsigned` (the `c.call.imember`
+>    result is uint-typed on both rails -- a SIGNED funcptr return is a both-rails follow-on, like the existing
+>    `cfront_dispatch.c`).
 > 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
 >    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
 >    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit

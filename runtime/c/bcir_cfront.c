@@ -503,8 +503,21 @@ static int p_struct_body(CC *c) {
         }
         if(is(c,",")){c->i++;continue;} break;
       }
-      if(!isk(c,T_ID)){ fail(c,"expected member name"); return -1; }   /* `unsigned x, y, z;` etc. */
-      tok nm=adv(c);
+      tok nm;
+      if(is(c,"(") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='*'
+         && c->t[c->i+2].k==T_ID){       /* a function-pointer member `RET (*name)(params)` -> a kind-3 (8-byte)
+                                          * field. The struct definition comes from the source (not emitted), so
+                                          * no signature is captured; set via a funcptr value + called via
+                                          * `o->fn(args)` (the existing c.call.imember machinery). */
+        c->i+=2; nm=adv(c);                                  /* `( *` then the name */
+        if(!eat(c,")")||!eat(c,"("))return -1;
+        for(int dd=1; dd>0 && !isk(c,T_END) && !c->failed;){ if(is(c,"("))dd++; else if(is(c,")"))dd--; if(dd>0)c->i++; }
+        eat(c,")");                                          /* past the parameter-type list */
+        memset(&ty,0,sizeof ty); ty.kind=3; ty.size=8; ty.signd=0;
+      } else {
+        if(!isk(c,T_ID)){ fail(c,"expected member name"); return -1; }   /* `unsigned x, y, z;` etc. */
+        nm=adv(c);
+      }
       int arr_count=0,nadims=0,adims[3]={0,0,0};        /* T arr[N] / T m[A][B] -- one or more dims */
       while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
         if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
@@ -1413,7 +1426,17 @@ static uint32_t p_primary(CC *c) {
     if(ec>=0){uint32_t r=tempi(c,4,1);bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
       if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
     venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a file-scope global (lookup table)? */
-    if(!v){fail(c,"undefined identifier");return 0;}
+    if(!v){
+      if(callee_ret(c,&id)){                             /* a defined FUNCTION used as a VALUE (function-to-pointer
+                                                          * decay, e.g. `o->fn = g`): a funcptr value emitted as the
+                                                          * bare function name (C decays it). No claim. */
+        char fnm[BCIR_CIR_NAME]; idcpy(fnm,&id);
+        uint32_t r=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_SCALAR,fnm);
+        if(c->fn->n_res){ bcir_resource *rr=&c->fn->res[c->fn->n_res-1]; rr->read_only=1; rr->is_funcptr=1; }
+        return r;
+      }
+      fail(c,"undefined identifier");return 0;
+    }
     return postfix_lvalue(c,v);
   }
   fail(c,"expected expression");return 0;
@@ -2390,6 +2413,7 @@ static int p_func(CC *c, bcir_func *fn) {
     else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
       if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1;       /* a _Bool parameter */
       if(ty.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1; }   /* a plain `char` parameter */
+    else if(ty.kind==3) c->fn->res[c->fn->n_res-1].is_funcptr=1;   /* a funcptr param: stored to a member directly */
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
     env_add(c,&pn,rid,&ty,si);
     if(fn->n_params>=fn->cap_params){ int nc=fn->cap_params?fn->cap_params*2:4;
@@ -2635,7 +2659,13 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
          * (`s->m = v` with `long m`) moves all 8 bytes and the value widens/truncates to the member,
          * not over-reads a 4-byte temp; a float member keeps its float type; a pointer its `T *`. */
         const bcir_resource *vr=res_of(f,cl->rd[1]);
-        if(vr && vr->kind==BCIR_RK_AGGREGATE){     /* a struct/union member set from a struct VALUE (a nested
+        if(vr && vr->is_funcptr){   /* a FUNCTION-POINTER member set from a funcptr value (`o->fn = g` /
+          * `o->fn = g_func`): store through a GENERIC funcptr lvalue so a function NAME decays to its address
+          * (a plain `memcpy(&g_func,8)` would copy the function's CODE; `void *` cannot hold a funcptr). The
+          * call site reads the member's real type, and function pointers round-trip through the cast. */
+          w+=snprintf(o+w,on-w,"*(void (**)(void))((char *)%s%s + %lld) = (void (*)(void))%s;\n",
+                      amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
+        } else if(vr && vr->kind==BCIR_RK_AGGREGATE){   /* a struct/union member set from a struct VALUE (a nested
           * `{ ... }` member, `o.p = q`): copy the whole object -- a scalar `uintN _v = <struct>` is a type
           * error, and a too-narrow `_v` would under-read it. memcpy `sz` bytes straight from the source. */
           w+=snprintf(o+w,on-w,"memcpy((char *)%s%s + %lld, &%s, %lld);\n",

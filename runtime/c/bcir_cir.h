@@ -70,6 +70,9 @@ typedef struct bcir_resource {
   uint8_t  zinit;            /* an aggregate local declared with a `= {0}` zero baseline (§6.7.10) */
   uint8_t  ptr_depth;        /* pointer indirection depth (POINTER kind): 1 `T*`, 2 `T**`, ...; 0 == 1 */
   uint8_t  is_valist;        /* a `va_list` object (variadic): emit `va_list`, opaque to load/store */
+  uint8_t  is_funcptr;       /* a function-pointer value (a named function decayed, or a funcptr param):
+                              * stored to a member by a DIRECT `memcpy(&fn, ...)`, not via a `uintN _v` temp
+                              * (which would be an invalid pointer->integer conversion) */
   char     name[BCIR_CIR_NAME];
   char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
 } bcir_resource;
