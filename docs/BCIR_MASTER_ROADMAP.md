@@ -1422,8 +1422,12 @@ hard-compiler infrastructure (Phases 3–4); (C) hard caps.
    and `&`-out-params. ✅ **Member-array element address** (`cfront_addrofarr.c`, #addrofarr): `&s.arr[i]`,
    `&s->arr[i]`, and the multi-dim `&s.m[i][j]` now lower on both rails (the element at `&base + member_off +
    lin*elem_size`, reusing the member-array LOAD flatten) -- byte-exact vs Clang on x86-64 AND aarch64.
-   *Follow-on (still both-rails fallback):* an array-of-structs element FIELD address (`&arr[i].field`,
-   `&s.arr[i].field` -- distinct struct stride) and a pointer/array member (`&s->ptr`).
+   ✅ **Member array-of-structs element field address** (`cfront_addrofaos.c`, #addrofaos): `&s.arr[i].field`
+   / `&s->arr[i].field` (the field at `member_off + i*sizeof(elem) + field_off`, the stride being the element
+   STRUCT) -- byte-exact vs Clang on x86-64 AND aarch64.
+   *Follow-on (still both-rails fallback):* a PLAIN-base array-of-structs element field (`&arr[i].field`,
+   where the indexed base is a bare array/pointer param, not a struct member -- the twin's bare-array-param
+   model doesn't reach it) and a pointer/array member (`&s->ptr`).
 2. **Pointer values as fully first-class 8-byte objects** — finishing the 32-bit value-model legacy. Most
    pointer paths are native (#ptrvalue/#ptrfield/#fieldderef), but a loaded function-pointer *value* and a
    pointer carried through some non-address contexts still hit the 4-byte seam; this and item 1 are two
