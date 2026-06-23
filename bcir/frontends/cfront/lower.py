@@ -114,9 +114,14 @@ _LIBM_INT = {"ilogb": "int",
 
 # <complex.h> functions, lowered like a libm call (opaque external edge, emitted verbatim against
 # <complex.h>). The result type differs by function: creal/cimag/cabs/carg return the *real* element
-# float; conj/cproj return the *complex* type. The f/l suffix picks float / long double (base -> double).
+# float; conj/cproj AND the C99 complex transcendentals return the *complex* type. The f/l suffix picks
+# float / long double (base -> double).
 _CPLX_REAL = frozenset({"creal", "cimag", "cabs", "carg"})    # -> real element float
-_CPLX_CPLX = frozenset({"conj", "cproj"})                     # -> the complex type (same width)
+_CPLX_CPLX = frozenset({                                      # -> the complex type (same width)
+    "conj", "cproj",                                          #   algebraic
+    "cexp", "clog", "csqrt", "cpow",                          #   exp / log / sqrt / power
+    "csin", "ccos", "ctan", "casin", "cacos", "catan",        #   circular + inverse
+    "csinh", "ccosh", "ctanh", "casinh", "cacosh", "catanh"}) #   hyperbolic + inverse
 
 
 def _complex_libm_type(name: str) -> "CType | None":

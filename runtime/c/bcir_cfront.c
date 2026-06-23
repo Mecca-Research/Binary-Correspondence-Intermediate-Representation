@@ -1115,10 +1115,14 @@ static int libm_is_ld(const char *s, int n) {
   return 0;
 }
 /* <complex.h> functions, lowered like libm (c.call.libm, opaque to R18). The result is the *real*
- * element float for creal/cimag/cabs/carg, or the *complex* type for conj/cproj. The full name is
- * matched first so creal/cimag (which themselves end in l/g) aren't misread as an `l`-suffixed variant. */
+ * element float for creal/cimag/cabs/carg, or the *complex* type for conj/cproj AND the C99 complex
+ * transcendentals (cexp/csqrt/...). The full name is matched first so creal/cimag (which themselves end
+ * in l/g) aren't misread as an `l`-suffixed variant. */
 static const char *const g_cplx_real[] = { "creal","cimag","cabs","carg", 0 };
-static const char *const g_cplx_cplx[] = { "conj","cproj", 0 };
+static const char *const g_cplx_cplx[] = { "conj","cproj",                            /* algebraic */
+  "cexp","clog","csqrt","cpow",                                                       /* exp/log/sqrt/pow */
+  "csin","ccos","ctan","casin","cacos","catan",                                       /* circular + inverse */
+  "csinh","ccosh","ctanh","casinh","cacosh","catanh", 0 };                            /* hyperbolic + inverse */
 static int cplx_name_in(const char *const*set,const char *s,int n){
   for(int i=0;set[i];i++) if((int)strlen(set[i])==n && !strncmp(set[i],s,(size_t)n)) return 1; return 0; }
 /* The ELEMENT float size of a <complex.h> call (8/double, 4/+f, long_double/+l), or 0 if not one;
