@@ -1308,7 +1308,9 @@ static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *kind){
     {"atomic_fetch_xor","c.c11atom.fetch_xor",BCIR_OP_ATOMIC_XOR,AK_RMW},
     {"atomic_exchange","c.c11atom.exchange",BCIR_OP_ATOMIC_ADD,AK_RMW},   /* swap: set + return old */
     {"atomic_load","c.c11atom.load",BCIR_OP_LOAD,AK_LOAD},
-    {"atomic_store","c.c11atom.store",BCIR_OP_STORE,AK_STORE},{0,0,0,0}};
+    {"atomic_store","c.c11atom.store",BCIR_OP_STORE,AK_STORE},
+    {"atomic_compare_exchange_strong","c.c11atom.cas_strong",BCIR_OP_CMPXCHG,AK_CAS},  /* (obj,&exp,des)->_Bool */
+    {"atomic_compare_exchange_weak","c.c11atom.cas_weak",BCIR_OP_CMPXCHG,AK_CAS},{0,0,0,0}};
   for(int i=0;A[i].n;i++) if((int)strlen(A[i].n)==t->n&&!strncmp(A[i].n,t->s,t->n)){*op=A[i].op;*oc=A[i].oc;*kind=A[i].k;return 1;}
   return 0;
 }
@@ -1316,7 +1318,9 @@ static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind){
   c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
   if(!is(c,")")) for(;;){uint32_t a=p_expr(c);if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;if(is(c,",")){c->i++;continue;}break;}
   eat(c,")");
-  uint32_t t=temp(c,4); bcir_claim *cl=new_claim(c,op,oc); if(!cl)return t;
+  uint32_t t=temp(c,4);
+  if(!strncmp(op,"c.c11atom.cas",13) && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;  /* compare_exchange -> _Bool */
+  bcir_claim *cl=new_claim(c,op,oc); if(!cl)return t;
   cl->lane=BCIR_LANE_A; cl->hazard=kind==AK_FENCE?BCIR_HZ_BARRIERED:BCIR_HZ_ATOMIC;
   if(kind!=AK_FENCE&&na>=1){ bcir_domain dom=BCIR_DOM_RAM;
     for(size_t z=0;z<c->fn->n_res;z++) if(c->fn->res[z].rid==args[0]) dom=c->fn->res[z].domain;
@@ -2897,6 +2901,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       const char *fn=cl->op+10;                  /* fetch_add / fetch_sub / fetch_xor / load / store */
       if(!strcmp(fn,"load")) w+=snprintf(o+w,on-w,"uint32_t %s = atomic_load(%s);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
       else if(!strcmp(fn,"store")) w+=snprintf(o+w,on-w,"atomic_store(%s, %s);\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
+      else if(!strncmp(fn,"cas_",4))             /* cas_strong/weak -> _Bool atomic_compare_exchange_<...>(obj,&exp,des) */
+        w+=snprintf(o+w,on-w,"_Bool %s = atomic_compare_exchange_%s(%s, %s, %s);\n",
+                    rname(f,cl->wr[0],d),fn+4,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
       else w+=snprintf(o+w,on-w,"uint32_t %s = atomic_%s(%s, %s);\n",rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
     else if(!strcmp(cl->op,"c.addrof")){           /* &lvalue -> a pointer value (decl_ty: `T *`, `T **`, ...) */
       const char *pt=decl_ty(f,cl->wr[0],tb,sizeof tb);

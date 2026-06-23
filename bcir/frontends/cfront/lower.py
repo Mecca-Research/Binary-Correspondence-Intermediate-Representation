@@ -1318,6 +1318,18 @@ class _FuncLowerer:
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
             return self._emit(op, Opcode.CMPXCHG, (ptr, exp, des), (t,),
                               lane=Lane.A, domain=dom, hazard="atomic")
+        if node.callee in ("atomic_compare_exchange_strong", "atomic_compare_exchange_weak"):
+            # C11 bool atomic_compare_exchange_strong/weak(A *obj, C *expected, C desired): if *obj ==
+            # *expected set *obj = desired (true), else load *obj into *expected (false). `expected` is a
+            # POINTER -- the headline use of address-of (`&exp`), which is why this waited on `&`. Emitted
+            # verbatim; the atomic semantics are delegated to the resident backend / Clang.
+            op = ("c.c11atom.cas_strong" if node.callee.endswith("strong") else "c.c11atom.cas_weak")
+            ptr, exp = actuals[0], (actuals[1] if len(actuals) > 1 else actuals[0])
+            des = actuals[2] if len(actuals) > 2 else exp
+            t = self._temp(scalar("_Bool"), "c11cas")                 # the comparison result is _Bool
+            dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
+            return self._emit(op, Opcode.CMPXCHG, (ptr, exp, des), (t,),
+                              lane=Lane.A, domain=dom, hazard="atomic")
         if node.callee in self._C11_RMW:               # atomic_fetch_add/sub/xor(p, v) -> old value
             op, oc = self._C11_RMW[node.callee]
             ptr = actuals[0]

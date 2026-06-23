@@ -321,6 +321,9 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
             return deftmp(c.wr[0], f"atomic_load({ref(c.rd[0])})")
         if fn == "store":
             return f"atomic_store({ref(c.rd[0])}, {ref(c.rd[1])});"
+        if fn.startswith("cas_"):                 # cas_strong/weak -> bool compare_exchange (obj, &exp, des)
+            return deftmp(c.wr[0], f"atomic_compare_exchange_{fn[4:]}("
+                                   f"{ref(c.rd[0])}, {ref(c.rd[1])}, {ref(c.rd[2])})")
         return deftmp(c.wr[0], f"atomic_{fn}({ref(c.rd[0])}, {ref(c.rd[1])})")
     raise ValueError(f"emit: unhandled claim op {c.op!r}")
 
