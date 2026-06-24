@@ -1696,7 +1696,18 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    MLIR port of the lifetime attribute.
 4. Extend **R1–R12 coverage** to the promoted-pointer paths (the laws already apply to the claim; the gap
    is the new `verify=bounds`/lifetime metadata, which the laws must learn to check) + the runtime guards
-   the C backend emits (`verify_c_lowering`).
+   the C backend emits. ✅ **Bounds metadata now VALIDATED** (`verify` R7 masked check,
+   `test_masked_without_bounds_verify_is_R7` / `test_masked_with_bounds_verify_is_legal`,
+   `test_masked_claims_are_discharged_by_a_runtime_guard`): R7 no longer SKIPS `masked` -- a masked
+   (runtime-bounds-checked) access must declare the `bounds` verify contract, so a promotion the backend
+   would emit without a guard is now a legality diagnostic. ✅ **Lowering faithfulness is a SELF-CHECK LAW**
+   (`pipeline.verify_cfront_lowering` -> `CompileResult.lowering_diagnostics`,
+   `test_cfront_lowering_faithfulness_is_a_self_check`): the cfront analog of `verify.verify_c_lowering` for
+   the K_BCIR kernel -- every masked load/store claim must be discharged by exactly one `BCIR_CHK` guard in
+   the emit (104 masked claims, 1:1 across the corpus). It runs on EVERY compile (user + fuzzer code, not just
+   the corpus), ADVISORY (out of `is_clean`, like the lifetime/timing laws, so no cross-rail `ok` coupling),
+   so a backend that silently drops -- or invents -- a bounds check is caught by a law. Lifetime is validated
+   by R21 (item 3). *Next:* the same faithfulness check for the K_BCIR/MLIR backend guards.
 
 ### 5.13 C as a substrate — memory wins and paradigm reach (vision, grounded)
 

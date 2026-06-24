@@ -61,6 +61,8 @@ class CompileResult:
     lifetime_diagnostics: list = field(default_factory=list)  # R21 use-after-free / double-free (§5.12) --
     #     ADVISORY: a smart-lowering law over the optional `claim.lifetime` (malloc/free), NOT part of the
     #     frontend pass/fail (`is_clean`), exactly as R19/R20 timing are advisory. Empty == no dangling access.
+    lowering_diagnostics: list = field(default_factory=list)  # §5.12 item 4: cfront-emit lowering faithfulness
+    #     (every masked claim discharged by a runtime guard). ADVISORY, like lifetime_diagnostics. Empty == ok.
     r18_ok: bool = True
     equivalence: str = "skip"                         # match | MISMATCH | skip:<reason>
     target: str = HOST.name                           # the target ABI the unit was laid out for
@@ -120,6 +122,22 @@ def diagnose(source: str, *, includes: dict | None = None, embeds: dict | None =
     return DiagnosticReport([], pp, filename, line_map)
 
 
+def verify_cfront_lowering(lf, emit_text: str) -> list:
+    """Lowering faithfulness for the cfront C backend -- the §5.12 analog of `verify.verify_c_lowering` for
+    the K_BCIR kernel. The emitted C must HONOR the `masked` bounds metadata: every masked load/store claim
+    is discharged by exactly one `BCIR_CHK(...)` runtime guard. A mismatch is the backend silently dropping
+    a bounds check (masked > guards) -- or inventing one with no claim behind it (guards > masked). Returns
+    R12 (lowering) `Diagnostic`s; empty when the emit faithfully realizes the contract. Vacuous for a unit
+    with no masked access (no claim promoted, no guard emitted)."""
+    masked = sum(1 for c in lf.claims if c.op in ("c.load", "c.store") and c.bounds == "masked")
+    guards = emit_text.count("BCIR_CHK")
+    if masked != guards:
+        return [Diagnostic(
+            "R12", f"{lf.name}: {masked} masked claim(s) but {guards} runtime guard(s) -- the emit does not "
+                   f"faithfully discharge the bounds contract")]
+    return []
+
+
 def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | None = None,
                  search_paths: list | None = None, defines: dict | None = None,
                  check_clang: bool = True, filename: str = "<source>",
@@ -152,6 +170,12 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
         # (and thus `is_clean`): like the R19/R20 timing laws, it never changes the frontend verdict.
         res.lifetime_diagnostics += [Diagnostic(d.law, f"{name}: {d.message}")
                                      for d in verify_lifetime(lf.module)]
+        # §5.12 item 4: lowering faithfulness for the cfront C backend (the analog of verify_c_lowering for
+        # the K_BCIR kernel) -- the emit must HONOR the masked bounds metadata. ADVISORY (out of is_clean),
+        # so it cannot couple to the cross-rail `ok` parity; it runs on EVERY compile (user + fuzzer code),
+        # surfacing a masked claim the backend emitted without its runtime guard.
+        res.lowering_diagnostics += [Diagnostic(d.law, f"{name}: {d.message}")
+                                     for d in verify_cfront_lowering(lf, res.emitted[name])]
 
     # --- alias/effect footprint per function (over shared/module-scope state) -- the basis for
     #     commutation/independence. Each function's own footprint is folded with its callees'
