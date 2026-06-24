@@ -104,6 +104,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_vlaparam.c",    # VLA function parameters `T a[n]` -> masked param bounds vs n (#vlaparam)
              "cfront_vlamd.c",       # multi-dimensional VLAs `T a[m][n]` -> flat m*n extent + Horner (#vlamd)
              "cfront_lvassignexpr.c",# array/deref/nested lvalue assignment used as a value (#lvassignexpr)
+             "cfront_narrowcompound.c", # a narrow-target compound assignment AS A VALUE re-reads (#narrowcompound)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -3162,6 +3163,28 @@ def test_lvalue_assignment_as_value_extended_forms():
         assert False, "a volatile lvalue-as-value should fall back"
     except CLowerError:
         pass
+
+
+def test_narrow_compound_assignment_as_value_is_the_stored_value():
+    """§5.9 (#narrowcompound): the value of a COMPOUND assignment `lv OP= rhs` used as a value is the STORED
+    (narrowed) value, not the raw binop result. For a sub-int target (`unsigned char`/`unsigned short` member,
+    array element, deref) the store truncates, so the value must be a re-read -- returning the un-narrowed sum
+    was a both-rails SILENT MISCOMPILE (clean, wrong, untriggered by the fuzzer). A full-width target needs no
+    re-read and is byte-unchanged."""
+    from bcir.frontends.cfront import compile_unit
+    for src in ("struct N{unsigned char c;}; unsigned f(unsigned v){ struct N s; s.c=200u; return (s.c += v)*3u + s.c; }",
+                "unsigned f(unsigned i, unsigned v){ unsigned short a[4]={0}; a[i&3u]=60000u; return (a[i&3u] += v)+7u + a[i&3u]; }",
+                "unsigned f(unsigned v){ unsigned char y=250u; unsigned char *p=&y; return (*p += v)*2u + y; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
+    # the NARROW target adds exactly ONE re-read vs the otherwise-identical FULL-width target (which is
+    # unchanged -- its value is the binop result, no spurious re-read)
+    from bcir.frontends.cfront import cparse, lower, emit
+    def _chk(src):
+        return emit.emit_function(lower.lower_unit(cparse.parse_unit(src), None).functions["f"]).count("BCIR_CHK")
+    full = _chk("unsigned f(unsigned i, unsigned v){ unsigned a[4]={0}; a[i&3u]=1000u; return (a[i&3u] += v)*2u; }")
+    narrow = _chk("unsigned f(unsigned i, unsigned v){ unsigned short a[4]={0}; a[i&3u]=1000u; return (a[i&3u] += v)*2u; }")
+    assert narrow == full + 1, (full, narrow)         # the narrow target re-reads the stored (truncated) value
 
 
 def test_quarantine_report_is_the_debugger_trace_surface():
