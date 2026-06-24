@@ -1337,6 +1337,22 @@ class _FuncLowerer:
             self._emit("c.copy", Opcode.ADD, (v,), (rid,))
         return rid, ct
 
+    def _array_row(self, ct: CType) -> "tuple[CType, int]":
+        """For a FLAT multi-dim array object `T a[d0][d1]...` (the `array(leaf, total)` + `shape=(d0,d1,..)`
+        representation), the *element* of the outermost dim is a ROW sub-array `T row[d1]...`, NOT the scalar
+        leaf `ct.of`. Synthesize that row sub-type (carrying `shape[1:]`) and its byte stride (product of the
+        inner dims * leaf size) so a nested brace `{...}` descends by row. A 1-D array (or no `shape`) keeps
+        the scalar element + leaf-sized stride."""
+        leaf = ct.of or scalar("uint32_t")
+        if len(ct.shape) <= 1:                                # 1-D: element IS the scalar leaf
+            return leaf, leaf.size
+        inner = ct.shape[1:]
+        stride = leaf.size
+        for d in inner:
+            stride *= d
+        row = replace(array(leaf, stride // leaf.size), shape=tuple(inner))   # `T row[d1*..]`, carrying shape[1:]
+        return row, stride
+
     def _agg_init(self, rid: int, ct: CType, ag: cast.AggInit) -> None:
         """Lower a braced aggregate initializer to a `= {0}` zero baseline (so uninitialized members
         zero-fill, §6.7.10) + a store per initialized member/element, reusing the member/array store
@@ -1354,8 +1370,8 @@ class _FuncLowerer:
                 elif ct.kind == "array":
                     idx = key if isinstance(key, int) else cursor
                     cursor = idx + 1
-                    elem = ct.of or scalar("uint32_t")
-                    self._init_subagg(rid, elem, idx * elem.size, expr)
+                    elem, stride = self._array_row(ct)        # multi-dim: the element is a ROW sub-array, not the leaf
+                    self._init_subagg(rid, elem, idx * stride, expr)
                 else:
                     if isinstance(key, str):
                         ftype, boff, _bo, _bw = ct.field(key)
@@ -1393,8 +1409,8 @@ class _FuncLowerer:
             if ct.kind == "array":
                 idx = key if isinstance(key, int) else cursor
                 cursor = idx + 1
-                ftype = ct.of or scalar("uint32_t")
-                off, bo, bw = base_off + idx * ftype.size, 0, 0
+                ftype, stride = self._array_row(ct)           # multi-dim row sub-array (or the scalar leaf, 1-D)
+                off, bo, bw = base_off + idx * stride, 0, 0
             else:                                             # struct / union member
                 if isinstance(key, str):
                     ftype, mboff, bo, bw = ct.field(key)
