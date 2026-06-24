@@ -2659,8 +2659,40 @@ static void p_stmt(CC *c) {
       if(!isk(c,T_ID)){ fail(c,"expected declarator name"); return; }
       tok nm=adv(c); char nb[BCIR_CIR_NAME]; idcpy(nb,&nm);
       int arr=0,la_nd=0,la_dims[3]={0,0,0};            /* T name[N] / T m[A][B] -- a (multi-dim) local array */
-      while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
+      int is_vla=0; uint32_t vla_n=0;                  /* T a[n] -- a 1-D stack VLA: a RUNTIME-sized dim */
+      while(is(c,"[")){ c->i++;
+        if(!isk(c,T_INT) && !is(c,"]")){               /* a non-constant dim -> a VLA: lower it ONCE (C order) */
+          if(la_nd){ fail(c,"a multi-dimensional VLA is not supported"); return; }   /* 1-D only (else fallback) */
+          vla_n=p_expr(c); is_vla=1; eat(c,"]");
+          if(is(c,"[")){ fail(c,"a multi-dimensional VLA is not supported"); return; }
+          break; }
+        int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
         if(la_nd<3)la_dims[la_nd]=dim; la_nd++; arr = arr?arr*dim:dim; }
+      if(is_vla){
+        /* a 1-D stack VLA `T a[n]` (the C twin of the oracle's Decl VLA branch). The runtime size in `vla_n`
+         * was evaluated ONCE; snapshot it into an immutable hidden extent `__bcir_extK`, register the array
+         * NAMED but with is_vla (so it is declared IN-BODY by `c.vladecl`, not up front -- its size isn't
+         * known until execution reaches the decl), and bind ptr_extent so `a[i]` masks against the snapshot.
+         * A VLA cannot be static / initialized (C) -> those route to the fallback via fail. */
+        if(ty.kind!=0 || ty.is_float){ fail(c,"only an integer-element VLA is supported"); return; }
+        if(is_static || is(c,"=")){ fail(c,"a VLA cannot have static storage or an initializer"); return; }
+        const bcir_resource *nr=res_of(c->fn,vla_n);    /* the size must be an integer scalar */
+        if(!nr || nr->kind!=BCIR_RK_SCALAR || nr->is_float){ fail(c,"a VLA size must be an integer expression"); return; }
+        int nbytes=(int)nr->elem_bytes, nsgn=nr->is_signed;   /* capture before add_res may realloc res[] */
+        char en[BCIR_CIR_NAME]; snprintf(en,sizeof en,"__bcir_ext%d",c->ext_ctr++);
+        uint32_t ext=add_res(c,BCIR_DOM_RAM,nbytes,1,0,BCIR_RK_SCALAR,en);   /* the snapshot: immutable extent */
+        if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)nsgn;
+        { bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=vla_n;cp->n_wr=1;cp->wr[0]=ext;} }
+        uint32_t arid=add_res(c,BCIR_DOM_RAM,ty.size,1,0,BCIR_RK_SCALAR,nb);   /* the array (element type, count 0->1) */
+        { bcir_resource *ar=&c->fn->res[c->fn->n_res-1];
+          ar->is_signed=(uint8_t)(ty.signd?1:0); ar->is_vla=1; ar->ext_var=ext;
+          if(ty.is_bool) ar->is_bool=1; if(ty.is_plain_char) ar->is_plain_char=1; }
+        { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext;vd->n_wr=1;vd->wr[0]=arid;} }
+        env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
+        ptrext_set(c->fn,arid,ext);   /* §5.12 mask `a[i]` against the recovered runtime extent */
+        if(is(c,",")){ c->i++; continue; }
+        break;
+      }
       if(la_nd>3){ fail(c,"local array of more than 3 dimensions"); return; }   /* adims caps at 3 */
       if(la_nd>1){ for(int z=0;z<3;z++) ty.adims[z]=la_dims[z]; ty.nadims=la_nd; }   /* multi-dim flatten */
       int rk=arr?BCIR_RK_SCALAR:(ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
@@ -3158,6 +3190,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
   w+=snprintf(o+w,on-w,")\n{\n");
   /* declare named locals up front (mutable storage -- branch merges + loop accumulators) */
   for(size_t i=0;i<f->n_res;i++){const bcir_resource *r=&f->res[i];
+    if(r->is_vla) continue;   /* a stack VLA: declared IN-BODY by c.vladecl (size unknown until then), not up front */
     if(is_named_local(f,r->rid)){
       char un[BCIR_CIR_NAME]; const char *nm=uniq_local(f,r->rid,un);   /* unique vs same-named scopes */
       int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
@@ -3179,6 +3212,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.loop.test")){IND();w+=snprintf(o+w,on-w,"if (!%s) break;\n",rname(f,cl->rd[0],a));continue;}
     if(!strcmp(cl->op,"c.cont.tgt")){IND();w+=snprintf(o+w,on-w,"__cont_%d: ;\n",nls?lstk[nls-1]:0);continue;}
     if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");if(nls)nls--;continue;}
+    if(!strcmp(cl->op,"c.vladecl")){IND();   /* a 1-D stack VLA, declared IN-BODY: `<elem> a[__bcir_extK];` */
+      w+=snprintf(o+w,on-w,"%s %s[%s];\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],a),rname(f,cl->rd[0],b));continue;}
     if(!strcmp(cl->op,"c.ptradd")){IND();w+=snprintf(o+w,on-w,"%s += %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p += n */
     if(!strcmp(cl->op,"c.ptrsub")){IND();w+=snprintf(o+w,on-w,"%s -= %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p -= n */
     if(!strcmp(cl->op,"c.break")){IND();w+=snprintf(o+w,on-w,"break;\n");continue;}

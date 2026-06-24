@@ -75,6 +75,10 @@ typedef struct bcir_resource {
   uint8_t  is_funcptr;       /* a function-pointer value (a named function decayed, or a funcptr param):
                               * stored to a member by a DIRECT `memcpy(&fn, ...)`, not via a `uintN _v` temp
                               * (which would be an invalid pointer->integer conversion) */
+  uint8_t  is_vla;           /* a 1-D stack VLA `T a[n]`: NAMED but NOT declared up front (its runtime size
+                              * isn't known until execution reaches the decl) -- the `c.vladecl` claim emits
+                              * `<elem> a[<ext_var>];` IN-BODY; `a[i]` masks against ext_var via ptr_extent */
+  uint32_t ext_var;          /* the snapshot extent rid (`__bcir_extK`) sizing a VLA (is_vla); else 0 */
   char     name[BCIR_CIR_NAME];
   char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
 } bcir_resource;

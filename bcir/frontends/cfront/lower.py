@@ -470,6 +470,7 @@ class LoweredFunc:
     region: object = None                 # compose.Region
     body: list = field(default_factory=list)        # the structured body tree (for emission)
     locals: list = field(default_factory=list)      # (rid, name, CType) mutable named locals
+    vla_locals: list = field(default_factory=list)  # (rid, name, CType) 1-D stack VLAs -- declared IN-BODY
     statics: list = field(default_factory=list)     # (rid, name, CType, init) static-storage locals
     globals_used: dict = field(default_factory=dict)   # rid -> name (file-scope globals referenced)
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {0}`
@@ -513,6 +514,8 @@ class _FuncLowerer:
         self.rtypes: dict[int, CType] = {}             # rid -> CType (for emission)
         self.params: list = []
         self.locals: list = []                         # (rid, name, CType) mutable named locals
+        self.vla_locals: list = []                     # (rid, name, CType) 1-D stack VLAs -- declared IN-BODY
+                                                       #   (`T a[__ext];`) at the source decl, NOT up front
         self.zero_init: set = set()                    # aggregate-local rids that emit a `= {0}` baseline
         self.statics: list = []                        # (rid, name, CType, init) static-storage locals
         self.calls: list = []
@@ -599,6 +602,18 @@ class _FuncLowerer:
         loop accumulators work). The emitter declares it and refers to it by name."""
         rid = self._temp(ct, name)
         self.locals.append((rid, name, ct))
+        return rid
+
+    def _vla_storage(self, ct: CType, name: str, ext_rid: int) -> int:
+        """A 1-D stack VLA `T a[n]`. Unlike a normal local it CANNOT be declared up front — its size is the
+        runtime value already captured in `ext_rid` (`__bcir_extK`), known only once execution reaches the
+        declaration. So it is registered in `self.vla_locals` (named, but NOT in the up-front decls) and a
+        `c.vladecl` claim is emitted at THIS point in the body, which the emitter renders as the in-body
+        `T a[__bcir_extK];` (a faithful stack VLA — no heap, no leak). Its `a[i]` bounds are masked against
+        `ext_rid` via `ptr_extent` (§5.12), exactly like a recovered-extent pointer."""
+        rid = self._temp(ct, name)
+        self.vla_locals.append((rid, name, ct))
+        self._emit("c.vladecl", Opcode.ADD, (ext_rid,), (rid,))
         return rid
 
     def _static_storage(self, ct: CType, name: str, init: int) -> int:
@@ -1577,6 +1592,27 @@ class _FuncLowerer:
             self.block_stack[-1].extend(self._block(st.stmts))  # appended inline (no if(1) wrapper)
             return None
         if isinstance(st, cast.Decl):
+            if st.type.vla is not None:
+                # a 1-D stack VLA `T a[n]`: evaluate the runtime size ONCE (C semantics), snapshot it into an
+                # immutable hidden extent, declare the array IN-BODY (`T a[__ext];`) and mask `a[i]` against the
+                # snapshot. A VLA cannot be static or initialized in C -> those route to fallback.
+                if st.static_storage or st.init is not None:
+                    raise CLowerError("a VLA cannot have static storage or an initializer")
+                elem = self._resolve_type(replace(st.type, vla=None, array=()))
+                if elem.size <= 0 or elem.kind == "array":
+                    raise CLowerError("VLA of an incomplete / void / array element is not supported")
+                nval = self._rvalue(st.type.vla)              # the size expression, evaluated exactly once
+                nct = self.rtypes.get(nval)
+                if nct is None or nct.kind != "scalar" or nct.is_float:
+                    raise CLowerError("a VLA size must be an integer expression")
+                ext = self._storage(nct, f"__bcir_ext{self._ext_ctr}")     # the snapshot: immutable extent
+                self._ext_ctr += 1
+                self._emit("c.copy", Opcode.ADD, (nval,), (ext,))
+                ct = array(elem, 0)                           # count 0 -> a runtime extent; bounds via ptr_extent
+                rid = self._vla_storage(ct, st.name, ext)     # declared in-body; masked `a[i]` vs the snapshot
+                self.env[st.name] = (rid, ct)
+                self.ptr_extent[rid] = ext
+                return None
             if len(st.type.array) > 1:
                 # a multi-dimensional local array `T m[A][B]`: a flat resource of A*B elements carrying
                 # the per-dim shape, so `m[i][j]` flattens row-major to `m[i*B + j]` (the existing Index
@@ -1714,6 +1750,7 @@ class _FuncLowerer:
                            return_rid=self.last_return, claims=list(claims),
                            resources=dict(self.resources), rid_types=dict(self.rtypes),
                            calls=list(self.calls), region=None, body=body, locals=list(self.locals),
+                           vla_locals=list(self.vla_locals),
                            statics=list(self.statics), globals_used=gnames,
                            zero_init_locals=set(self.zero_init), variadic=self.func.variadic,
                            ptr_extent=dict(self.ptr_extent))
