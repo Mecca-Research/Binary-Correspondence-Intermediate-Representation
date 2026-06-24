@@ -337,13 +337,12 @@ class _LV:
 
 def _is_scalar_member_lv(target, lv: "_LV") -> bool:
     """A memory lvalue safe to store+reload as an assignment-EXPRESSION value: a plain SCALAR lvalue -- a
-    direct/nested struct member `s.x` / `s.a.b`, an array element `a[i]`, or a pointer deref `*p` -- that is
-    NOT a bitfield and NOT an array-of-structs strided element. The lvalue is resolved ONCE (its index/address
-    captured), so the re-read returns the stored/converted value without re-running a side-effecting index. A
-    bitfield or array-of-structs element target as a value stays a follow-on (the doubled bf.get / strided
-    read surface)."""
-    return (lv.kind == "mem" and lv.ct.kind == "scalar" and not lv.bit_width and lv.stride == 0
-            and not lv.member)
+    direct/nested struct member `s.x` / `s.a.b`, an array element `a[i]`, a pointer deref `*p`, or a BITFIELD
+    member `s.bits` -- that is NOT an array-of-structs strided element and NOT a member-array. The lvalue is
+    resolved ONCE (its index/address captured), so the re-read returns the stored/converted value without
+    re-running a side-effecting index. (A bitfield's value is the masked/sign-extended stored field -- the
+    plain `=` path re-reads via bf.get, and the compound path re-reads too; see `_assign`.)"""
+    return (lv.kind == "mem" and lv.ct.kind == "scalar" and lv.stride == 0 and not lv.member)
 
 
 # --- the structured body tree (L6): a block is a list mixing straight-line Claims with these. ---
@@ -1445,10 +1444,12 @@ class _FuncLowerer:
             res = self._emit(f"c.bin.{suf}", opcode, (cur, b), (t,))
             self._write(lv, res)
             # the value of a compound assignment is the STORED (narrowed) value, not the raw binop result --
-            # when the target is NARROWER than the promoted result (`unsigned char c; (c += v)`) the store
-            # truncates, so re-read it (like the plain `=` path); `res` would be the un-narrowed sum (a
-            # both-rails miscompile). A full-width target needs no re-read (res == the stored value).
-            return res if (stmt or lv.ct.size >= rt.size) else self._read(lv)
+            # when the target is NARROWER than the promoted result the store truncates, so re-read it (like
+            # the plain `=` path); `res` would be the un-narrowed sum (a both-rails miscompile). A BITFIELD
+            # narrows to its BIT width (its ct.size is the full underlying type, so the size test misses it) --
+            # re-read it too. A full-width non-bitfield target needs no re-read (res == the stored value).
+            narrows = lv.bit_width or lv.ct.size < rt.size
+            return res if (stmt or not narrows) else self._read(lv)
         v = self._rvalue(node.value)
         if named_local:
             rid, _ct = self._lookup(node.target.ident, node.target.pos)           # copy into the mutable storage

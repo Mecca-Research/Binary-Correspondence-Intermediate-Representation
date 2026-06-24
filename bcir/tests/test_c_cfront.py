@@ -105,6 +105,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_vlamd.c",       # multi-dimensional VLAs `T a[m][n]` -> flat m*n extent + Horner (#vlamd)
              "cfront_lvassignexpr.c",# array/deref/nested lvalue assignment used as a value (#lvassignexpr)
              "cfront_narrowcompound.c", # a narrow-target compound assignment AS A VALUE re-reads (#narrowcompound)
+             "cfront_bfassignexpr.c",# a BITFIELD member assignment used as a value (#bfassignexpr)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -3185,6 +3186,19 @@ def test_narrow_compound_assignment_as_value_is_the_stored_value():
     full = _chk("unsigned f(unsigned i, unsigned v){ unsigned a[4]={0}; a[i&3u]=1000u; return (a[i&3u] += v)*2u; }")
     narrow = _chk("unsigned f(unsigned i, unsigned v){ unsigned short a[4]={0}; a[i&3u]=1000u; return (a[i&3u] += v)*2u; }")
     assert narrow == full + 1, (full, narrow)         # the narrow target re-reads the stored (truncated) value
+
+
+def test_bitfield_assignment_as_value():
+    """§5.9 (#bfassignexpr): a BITFIELD member assignment used as a VALUE -- `(s.bits = v) + 1`, compound
+    `(s.bits += v) * 2`, signed `(s.c = v)` -- yields the masked / sign-extended STORED field (a re-read via
+    bf.get; the compound path re-reads because a bitfield narrows to its bit width). Extends the lvalue-as-value
+    forms to bitfield targets. Behaviour-equivalent to Clang on both rails."""
+    from bcir.frontends.cfront import compile_unit
+    for src in ("struct B{unsigned f:5;}; unsigned g(unsigned v){ struct B s; s.f=0u; return (s.f=v)+1u + s.f; }",
+                "struct B{unsigned f:5;}; unsigned g(unsigned v){ struct B s; s.f=10u; return (s.f+=v)*2u + s.f; }",
+                "struct B{int c:6;}; int g(int v){ struct B s; s.c=0; return (s.c=v)-1 + s.c; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
 def test_quarantine_report_is_the_debugger_trace_surface():
