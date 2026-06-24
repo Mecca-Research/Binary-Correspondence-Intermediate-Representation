@@ -1635,10 +1635,18 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    `bounds`) makes any one-rail split a hard test failure, and it also caught + fixed two PRE-EXISTING twin
    under-masking gaps (file-scope static/const array globals, aggregate-initializer array stores). ✅ **R21
    lifetime now load-bearing for C, DUAL-RAIL** (see (3) below -- malloc/free use-after-free / double-free
-   surfaced through the closed-loop verify on both rails). **Next ➡** the ML-layer / debugger OVERRIDES the
-   weak symbol to consult the graded-truth quarantine + recover/policy through a recorded `decide` (the only
-   sanctioned two-truth crossing); and extents extend to `realloc` rebind, a snapshot for mutated counts, and
-   an array param with a sibling count (under a dominating-bound proof).
+   surfaced through the closed-loop verify on both rails). ✅ **ML-layer / debugger RECOVERY OVERRIDE DONE --
+   the two-truth crossing made runtime** (`bcir_quarantine.{h,c}` decide-audit ring + `bcir_quarantine_recover.c`
+   reference override, `test_quarantine_recover_is_the_two_truth_crossing`): `bcir_bounds_quarantine` now
+   RETURNS the index (the weak default still aborts, byte-identically -- the emit is unchanged), so a STRONG
+   override can RECOVER. The reference override consults a FROZEN per-site policy (a table lookup, L1 -- no
+   learned inference on the path, the L0 prohibition), proposes a graded `(action, confidence)`, collapses it
+   at a FROZEN threshold into a CLASSICAL action (abort / clamp-to-valid), and RECORDS the crossing in a
+   decide-audit ring -- the C twin of `kbcir.twotruth.Decision`, so the graded->classical crossing is the only
+   sanctioned one and is never silent (LANGREF §14 / R13). An admitted clamp survives on a valid element; an
+   under-confident proposal fail-fasts -- the frozen threshold dictates. **Next ➡** extents extend to `realloc`
+   rebind, a snapshot for mutated counts, and an array param with a sibling count (under a dominating-bound
+   proof); and the policy table baked by the L2/L3 ML-layer offline (this ships the seam + reference).
 2. ✅ **Lifetime law R21 DONE (oracle prototype)** (`bcir/model/graph.py::Lifetime` +
    `bcir/verify::verify_lifetime`, `test_lifetime_laws.py`): an OPTIONAL `Claim.lifetime` (`event ∈
    {use, alloc, free}` + `epoch`, `None` default, excluded from the R13 digest allow-list) + the **R21

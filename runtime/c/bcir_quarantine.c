@@ -22,12 +22,50 @@ void bcir_oob_record_event(uint64_t rid, uint64_t index, uint64_t extent, const 
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((weak))
 #endif
-void bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent, const char *site) {
+size_t bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent, const char *site) {
     bcir_oob_record_event(rid, index, extent, site);
     fprintf(stderr, "BCIR bounds-quarantine: %s resource %llu index %llu out of [0, %llu)\n",
             site ? site : "?", (unsigned long long)rid,
             (unsigned long long)index, (unsigned long long)extent);
     abort();
+    return 0;                                       /* unreachable (abort is noreturn); satisfies the return type */
+}
+
+/* --- the decide-audit ring: the recorded two-truth crossings (§5.12 + LANGREF §14) --- */
+bcir_decision bcir_decide_ring[BCIR_DECIDE_RING];
+volatile unsigned long bcir_decide_count;           /* total crossings; ring slot is count % BCIR_DECIDE_RING */
+
+/* Record one recovery `decide` -- a graded->classical collapse an override applied. Keeping it auditable is
+ * the whole point: the crossing is never silent. (The weak default never calls this; it aborts outright.) */
+void bcir_decide_record_event(uint64_t rid, uint64_t index, uint64_t extent, const char *site,
+                              uint32_t confidence_milli, uint32_t threshold_milli,
+                              int admitted, int action, size_t recovered_index) {
+    unsigned slot = (unsigned)(bcir_decide_count++ % BCIR_DECIDE_RING);
+    bcir_decision *d = &bcir_decide_ring[slot];
+    d->rid = rid; d->index = index; d->extent = extent; d->site = site;
+    d->confidence_milli = confidence_milli; d->threshold_milli = threshold_milli;
+    d->admitted = admitted; d->action = action; d->recovered_index = recovered_index;
+}
+
+/* Audit reader: print the retained recovery decisions (oldest-first in the ring window). Each line names the
+ * graded confidence, the frozen threshold, whether it was admitted, and the classical action taken -- the
+ * trail that witnesses every graded->classical crossing. Pure observation; never decides legality. */
+void bcir_decide_report(FILE *f) {
+    unsigned long total = bcir_decide_count;
+    unsigned long shown = total < BCIR_DECIDE_RING ? total : BCIR_DECIDE_RING;
+    unsigned long start = total < BCIR_DECIDE_RING ? 0UL : total % BCIR_DECIDE_RING;
+    fprintf(f, "BCIR decide report: %lu recovery crossing(s)\n", total);
+    for (unsigned long k = 0; k < shown; k++) {
+        const bcir_decision *d = &bcir_decide_ring[(start + k) % BCIR_DECIDE_RING];
+        fprintf(f, "  [%lu] %s index %llu of [0, %llu): confidence %u/1000 vs threshold %u/1000 -> %s, %s",
+                total - shown + k, d->site ? d->site : "?", (unsigned long long)d->index,
+                (unsigned long long)d->extent, d->confidence_milli, d->threshold_milli,
+                d->admitted ? "admitted" : "rejected",
+                d->action == BCIR_RECOVER_CLAMP ? "clamp" : "abort");
+        if (d->action == BCIR_RECOVER_CLAMP)
+            fprintf(f, " to index %llu", (unsigned long long)d->recovered_index);
+        fprintf(f, "\n");
+    }
 }
 
 /* Debugger trace reader: print the retained OOB events (oldest-first within the ring window) to `f`. The

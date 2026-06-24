@@ -31,10 +31,10 @@ _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 # handler is never reached, so a guarded access is behaviour-identical to the raw `a[i]`.
 _BOUNDS_GUARD = (
     "#include <stdlib.h>\n#include <stddef.h>\n"
-    "static void bcir_bounds_quarantine(uint64_t r,uint64_t i,uint64_t e,const char*s)"
-    "{(void)r;(void)i;(void)e;(void)s;abort();}\n"
+    "static size_t bcir_bounds_quarantine(uint64_t r,uint64_t i,uint64_t e,const char*s)"
+    "{(void)r;(void)i;(void)e;(void)s;abort();return 0;}\n"
     "#define BCIR_CHK(rid,idx,n,site) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
-    "(bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)),(size_t)0))")
+    "bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)))")
 # straight-line fixtures run the full execute loop; control-flow fixtures get parity + emit + Clang ≡
 # (control flow is not a flat StreamPack segment stream, so the loop runs the straight-line set).
 _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfront_widerow.c", "cfront_deref.c",
@@ -2967,8 +2967,8 @@ def test_quarantine_report_is_the_debugger_trace_surface():
         # A strong (non-weak) override records the event but does NOT abort, so several OOB accesses survive.
         prog = (f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
                 f'{r.source}\n\n{body}\n'
-                f'void bcir_bounds_quarantine(uint64_t rid,uint64_t index,uint64_t extent,const char *site)\n'
-                f'{{ bcir_oob_record_event(rid,index,extent,site); }}\n'
+                f'size_t bcir_bounds_quarantine(uint64_t rid,uint64_t index,uint64_t extent,const char *site)\n'
+                f'{{ bcir_oob_record_event(rid,index,extent,site); return 0; }}\n'
                 f'int main(void){{ (void)bcir_g(8u); (void)bcir_g(40u); bcir_quarantine_report(stdout); return 0; }}\n')
         cpath, epath = os.path.join(d, "e.c"), os.path.join(d, "e")
         open(cpath, "w").write(prog)
@@ -2981,3 +2981,49 @@ def test_quarantine_report_is_the_debugger_trace_surface():
         assert "2 out-of-bounds event(s)" in out, out                    # the running total
         assert "g:a" in out and "index 8" in out and "index 40" in out, out   # both sites + indices, in order
         assert "out of [0, 8)" in out, out                               # the extent the report resolves
+
+
+def test_quarantine_recover_is_the_two_truth_crossing():
+    """§5.12 the ML-layer / debugger recovery override (the two-truth crossing). The reference override
+    (`bcir_quarantine_recover.c`) turns an out-of-bounds access into a CLASSICAL action -- abort or clamp --
+    through a RECORDED `decide`: a frozen per-site policy proposes `(action, confidence)`, the crossing
+    collapses it at a frozen threshold, and the decision is appended to the audit ring (LANGREF §14: graded
+    truth may inform but never silently BECOME the access). A clamp lets the program survive on a valid
+    element; an under-confident proposal is rejected and fail-fasts -- exactly as the frozen threshold dictates."""
+    if not _CC:
+        return
+    src = "unsigned g(unsigned i){ unsigned a[8]; for(unsigned k=0u;k<8u;k++) a[k]=k*2u; return a[i]; }"
+    from bcir.frontends.cfront import compile_unit
+    r = compile_unit(src, check_clang=False)
+    name = next(reversed(r.lowered.functions))
+    body = r.emitted[name].split("*/\n", 1)[-1]
+    with tempfile.TemporaryDirectory() as d:
+        prog = (
+            '#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine_recover.h"\n'
+            f'{r.source}\n\n{body}\n'
+            'int main(int argc, char **argv){\n'
+            '  static const bcir_recover_rule confident[] = {{"g:a", BCIR_RECOVER_CLAMP, 900}};\n'
+            '  static const bcir_recover_rule underconf[] = {{"g:a", BCIR_RECOVER_CLAMP, 300}};\n'
+            '  int abort_mode = argc > 1 && argv[1][0] == \'1\';\n'
+            '  if (abort_mode) bcir_recover_set_policy(underconf, 1, 500);  /* 300 < 500 -> rejected */\n'
+            '  else            bcir_recover_set_policy(confident, 1, 500);  /* 900 >= 500 -> admitted clamp */\n'
+            '  unsigned v = bcir_g(40u);                 /* index 40 is out of [0,8) -> the handler decides */\n'
+            '  printf("recovered=%u\\n", v);\n'
+            '  bcir_decide_report(stdout);\n'
+            '  return 0;\n}\n')
+        cpath, epath = os.path.join(d, "e.c"), os.path.join(d, "e")
+        open(cpath, "w").write(prog)
+        b = subprocess.run([_CC, "-std=c23", "-O2", "-I", _C, cpath,
+                            os.path.join(_C, "bcir_quarantine.c"), os.path.join(_C, "bcir_quarantine_recover.c"),
+                            "-o", epath], capture_output=True, text=True)
+        assert b.returncode == 0, b.stderr
+        # admitted clamp: confidence 900 >= threshold 500 -> the access lands on a[7] (= 14), program survives,
+        # and the recorded decide witnesses the crossing.
+        ok = subprocess.run([epath, "0"], capture_output=True, text=True)
+        assert ok.returncode == 0 and "recovered=14" in ok.stdout, (ok.returncode, ok.stdout, ok.stderr)
+        assert "1 recovery crossing(s)" in ok.stdout, ok.stdout
+        assert "g:a" in ok.stdout and "confidence 900/1000 vs threshold 500/1000" in ok.stdout, ok.stdout
+        assert "admitted, clamp to index 7" in ok.stdout, ok.stdout
+        # rejected: confidence 300 < threshold 500 -> not confident enough to recover -> fail-fast.
+        no = subprocess.run([epath, "1"], capture_output=True, text=True)
+        assert no.returncode != 0 and "recovery rejected" in no.stderr, (no.returncode, no.stderr)

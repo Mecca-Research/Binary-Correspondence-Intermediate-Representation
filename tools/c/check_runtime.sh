@@ -269,6 +269,38 @@ elr_oob="$("${tmp}/el_h" 99 2>&1 1>/dev/null)"; elr_rc=$?     # out-of-bounds: t
   && echo "  PASS emitlink: --emit-c links the runtime; in-bounds value + OOB quarantine (site el_pick:a)" \
   || { echo "  FAIL: OOB did not quarantine via the linked runtime (rc=${elr_rc}: ${elr_oob})"; exit 1; }
 
+# The ML-layer / debugger RECOVERY override (#recover, §5.12): the same masked emit, linked against the
+# reference strong override (bcir_quarantine_recover.c) instead of relying on the weak abort default. A
+# frozen per-site policy proposes (action, confidence); the crossing collapses it at a frozen threshold into
+# a CLASSICAL action (clamp / abort) and RECORDS the decide -- the only sanctioned two-truth crossing. An
+# admitted clamp survives on a valid element (el_pick fills a[k]=k*3, so a[7]=21); an under-confident
+# proposal fail-fasts.
+echo "[c-runtime] bcir-cc masked emit + recovery override: the recorded two-truth crossing (#recover)"
+{ echo '#include <stdio.h>'; echo '#include <stdlib.h>'; echo '#include "bcir_quarantine_recover.h"'
+  cat "${tmp}/el_emit.c"
+  cat <<'DRV'
+int main(int c, char **v){
+  static const bcir_recover_rule confident[] = {{"el_pick:a", BCIR_RECOVER_CLAMP, 900}};
+  static const bcir_recover_rule underconf[] = {{"el_pick:a", BCIR_RECOVER_CLAMP, 300}};
+  int abort_mode = c > 1 && v[1][0] == '1';
+  bcir_recover_set_policy(abort_mode ? underconf : confident, 1, 500);  /* threshold 500 */
+  printf("%u\n", bcir_el_pick(99u));            /* index 99 out of [0,8): the handler decides */
+  bcir_decide_report(stdout);
+  return 0; }
+DRV
+} > "${tmp}/rec_main.c"
+"${CC}" -std=c23 -O2 -I "${C}" "${tmp}/rec_main.c" "${C}/bcir_quarantine.c" "${C}/bcir_quarantine_recover.c" -o "${tmp}/rec_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 -I "${C}" "${tmp}/rec_main.c" "${C}/bcir_quarantine.c" "${C}/bcir_quarantine_recover.c" -o "${tmp}/rec_h" \
+  || { echo "  FAIL: recovery override build"; exit 1; }
+rec_clamp="$("${tmp}/rec_h" 0)"                                # admitted: confidence 900 >= threshold 500
+{ printf '%s' "${rec_clamp}" | grep -q "^21$" \
+  && printf '%s' "${rec_clamp}" | grep -q "admitted, clamp to index 7"; } \
+  || { echo "  FAIL: admitted clamp recovery (got '${rec_clamp}')"; exit 1; }
+rec_abrt="$("${tmp}/rec_h" 1 2>&1 1>/dev/null)"; rec_rc=$?     # rejected: confidence 300 < threshold 500
+{ [ "${rec_rc}" != "0" ] && printf '%s' "${rec_abrt}" | grep -q "recovery rejected"; } \
+  && echo "  PASS recover: frozen-policy decide -> admitted clamp (a[7]=21) / under-confident abort (#recover)" \
+  || { echo "  FAIL: rejected path did not fail-fast (rc=${rec_rc}: ${rec_abrt})"; exit 1; }
+
 # Clang-grade diagnostics (#diag): the C source-location model + caret renderer (bcir_diag.c, the C
 # twin of cfront/diagnostics.py). Fed the SAME synthetic diagnostic (severity / message / byte span)
 # over the same source, the C renderer's Clang-layout output (banner + source line + ^~~~ underline)
