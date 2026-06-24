@@ -383,6 +383,7 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
 #include <stdio.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <math.h>
 {guard}{source}
 

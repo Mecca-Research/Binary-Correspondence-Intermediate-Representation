@@ -14,6 +14,7 @@ Mapping:
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field, replace
 
 from ...kbcir import compose
@@ -250,6 +251,32 @@ def _fold_const(node) -> int:
     raise CLowerError("static initializer is not a constant expression")
 
 
+def _scan_mutations(node, assigned: dict, addr: set) -> None:
+    """Walk a function-body AST collecting, per name: the number of assignments to it (a decl-init,
+    `x = e`, compound `x OP= e`, and `x++`/`x--` -- which the parser desugars to an assign) and whether
+    its address is ever taken (`&x`). Drives §5.12 recoverable-extent soundness: a recovered count / a
+    bound pointer is only trusted when it is STABLE -- assigned at most its single binding and never
+    aliased through `&` -- so the runtime extent at a `p[i]` access equals the allocation's, never a
+    false trap. Order-independent and conservative: it never has to be exact, only an over-approximation
+    of mutation (more mutation seen -> fewer promotions, never an unsound one)."""
+    if isinstance(node, (list, tuple)):
+        for x in node:
+            _scan_mutations(x, assigned, addr)
+        return
+    if not dataclasses.is_dataclass(node):
+        return
+    if isinstance(node, cast.Assign):
+        if isinstance(node.target, cast.Name):
+            assigned[node.target.ident] = assigned.get(node.target.ident, 0) + 1
+    elif isinstance(node, cast.Decl):
+        if node.init is not None:
+            assigned[node.name] = assigned.get(node.name, 0) + 1
+    elif isinstance(node, cast.Unary) and node.op == "&" and isinstance(node.operand, cast.Name):
+        addr.add(node.operand.ident)
+    for f in dataclasses.fields(node):
+        _scan_mutations(getattr(node, f.name), assigned, addr)
+
+
 class CLowerError(Exception):
     """A lowering error (an unsupported construct). `pos` is a source byte offset when known."""
     def __init__(self, message: str, pos: int | None = None):
@@ -424,6 +451,7 @@ class LoweredFunc:
     globals_used: dict = field(default_factory=dict)   # rid -> name (file-scope globals referenced)
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {0}`
     variadic: bool = False                # a trailing `...` after the named params (variadic function)
+    ptr_extent: dict = field(default_factory=dict)      # §5.12: pointer rid -> recovered extent (count) variable rid
 
 
 @dataclass
@@ -468,6 +496,11 @@ class _FuncLowerer:
         self.block_stack: list = [[]]                  # claims/control nodes append to the top block
         self.loop_ctr = 0                              # unique loop ids (the `continue` label numbering)
         self.cl_ctr = 0                                # unique compound-literal ids (anonymous `_cl<N>` locals)
+        # §5.12 recoverable extents: a pointer local bound to malloc(N*sizeof(T)) / calloc(N, sizeof(T)) carries
+        # a RECOVERED element-count -> its `p[i]` accesses promote to `masked` (runtime-bounds-checked against N).
+        self.ptr_extent: dict[int, int] = {}           # pointer rid -> the count VARIABLE's rid (re-emitted by name)
+        self._mut_assigned: dict[str, int] = {}        # name -> # of assignments in the body (mutation pre-pass)
+        self._mut_addr: set[str] = set()               # names whose address is taken anywhere (`&x`)
 
     def _next_loop_id(self) -> int:
         self.loop_ctr += 1
@@ -1066,13 +1099,70 @@ class _FuncLowerer:
         pointer/MMIO base (extent unknown / a device register) and a non-indexed access stay `assumed_safe`.
         A string-LITERAL base stays `assumed_safe` too: it is anonymous read-only data (no named object the
         debugger/ML-layer would surface), and the twin does not promote it -- so excluding it keeps the rails
-        in lockstep. This is metadata only -- no emit/behaviour change; `verify` already defaults to `bounds`."""
+        in lockstep. A naked POINTER with a RECOVERED extent (malloc/calloc'd, `self.ptr_extent`) also promotes
+        -- the runtime-checked extent is the allocation's element count. This is metadata only -- no
+        emit/behaviour change; `verify` already defaults to `bounds`."""
         if (lv.kind == "mem" and lv.idx is not None and not lv.member
                 and not self._mmio(lv.rid) and lv.rid not in self.str_globals):
             rt = self.rtypes.get(lv.rid)
             if rt is not None and rt.kind == "array" and rt.count:
                 return "masked"                       # a known-extent local/static array -> runtime-bounds-checked
+            if lv.rid in self.ptr_extent:
+                return "masked"                       # a malloc/calloc pointer with a recovered element count
         return "assumed_safe"
+
+    def _recoverable_alloc(self, call, pointee_size: int) -> int | None:
+        """If `call` is `malloc(N*sizeof(T))` / `malloc(sizeof(T)*N)` / `calloc(N, sizeof(T))` (T the pointee,
+        so N is the element COUNT), or `malloc(N)` for a 1-byte pointee, with N a STABLE integer Name (assigned
+        at most once, never address-taken), return N's variable rid -- the recovered extent. Else None.
+        Conservative by construction: any uncertainty -> None (no guard, never a false trap). (§5.12)"""
+        if not isinstance(call, cast.CallExpr) or pointee_size <= 0:
+            return None
+
+        def size_bytes(e):                                   # a per-element size operand -> its byte width
+            if isinstance(e, cast.SizeOf) and e.type is not None and e.expr is None:
+                try:
+                    return self._resolve_type(e.type).size
+                except CLowerError:
+                    return None
+            return e.value if isinstance(e, cast.IntLit) else None
+
+        def count_rid(e):                                    # a stable integer-count Name -> its variable rid
+            if not isinstance(e, cast.Name) or e.ident not in self.env:
+                return None
+            rid, ct = self.env[e.ident]
+            if ct.kind != "scalar" or getattr(ct, "is_float", False):
+                return None                                  # an integer count only
+            if self._mut_assigned.get(e.ident, 0) > 1 or e.ident in self._mut_addr:
+                return None                                  # not stable: re-assigned / aliased
+            return rid
+
+        if call.callee == "calloc" and len(call.args) == 2:
+            return count_rid(call.args[0]) if size_bytes(call.args[1]) == pointee_size else None
+        if call.callee == "malloc" and len(call.args) == 1:
+            a = call.args[0]
+            if isinstance(a, cast.Binary) and a.op == "*":
+                if size_bytes(a.rhs) == pointee_size:
+                    return count_rid(a.lhs)
+                if size_bytes(a.lhs) == pointee_size:
+                    return count_rid(a.rhs)
+                return None
+            if pointee_size == 1:                            # a byte buffer: malloc(N) bytes == N elements
+                return count_rid(a)
+        return None
+
+    def _bind_extent(self, p_rid: int, p_ct: "CType", p_name: str, init) -> None:
+        """Bind a recovered element-count to a malloc/calloc'd pointer local, so its `p[i]` accesses promote
+        to `masked`. Only when the POINTER itself is stable -- assigned exactly once (this binding) and never
+        address-taken -- so it still points at that allocation at every access (a `p = realloc(...)` reassigns
+        it, count 2, and is correctly left unmanaged). (§5.12)"""
+        if p_ct.kind != "pointer" or p_ct.of is None:
+            return
+        if self._mut_assigned.get(p_name, 0) != 1 or p_name in self._mut_addr:
+            return
+        n_rid = self._recoverable_alloc(init, p_ct.of.size)
+        if n_rid is not None:
+            self.ptr_extent[p_rid] = n_rid
 
     def _load_unit(self, lv: "_LV") -> int:
         if lv.bit_width:
@@ -1287,6 +1377,7 @@ class _FuncLowerer:
         if named_local:
             rid, _ct = self._lookup(node.target.ident, node.target.pos)           # copy into the mutable storage
             self._emit("c.copy", Opcode.ADD, (v,), (rid,))
+            self._bind_extent(rid, _ct, node.target.ident, node.value)            # §5.12: `p = malloc(N*…)` -> N
             return rid
         lv = self._lvalue(node.target)
         if not stmt and not _is_scalar_member_lv(node.target, lv):   # a VALUE: only a plain scalar member lvalue
@@ -1468,6 +1559,7 @@ class _FuncLowerer:
                 self._agg_init(rid, ct, st.init)
             elif st.init is not None:
                 self._emit("c.copy", Opcode.ADD, (self._rvalue(st.init),), (rid,))
+                self._bind_extent(rid, ct, st.name, st.init)  # §5.12: `T *p = malloc(N*sizeof(T))` -> extent N
         elif isinstance(st, cast.ExprStmt):
             if isinstance(st.expr, cast.Assign):              # a statement assignment: any lvalue form is fine
                 self._assign(st.expr, stmt=True)              # (the value is unused -- no named-local restriction)
@@ -1543,6 +1635,7 @@ class _FuncLowerer:
 
     def lower(self) -> LoweredFunc:
         self.last_return = None
+        _scan_mutations(self.func.body, self._mut_assigned, self._mut_addr)   # §5.12 extent-stability pre-pass
         self.env.update(self.genv)                            # file-scope globals are in scope
         for rid, ct in self.genv.values():
             self.rtypes.setdefault(rid, ct)
@@ -1578,7 +1671,8 @@ class _FuncLowerer:
                            resources=dict(self.resources), rid_types=dict(self.rtypes),
                            calls=list(self.calls), region=None, body=body, locals=list(self.locals),
                            statics=list(self.statics), globals_used=gnames,
-                           zero_init_locals=set(self.zero_init), variadic=self.func.variadic)
+                           zero_init_locals=set(self.zero_init), variadic=self.func.variadic,
+                           ptr_extent=dict(self.ptr_extent))
 
 
 def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Region":

@@ -1623,10 +1623,21 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    `cc -I runtime/c - runtime/c/bcir_quarantine.c` compiles AND links on its own (proven end-to-end:
    in-bounds returns the value, OOB quarantines through the linked weak handler, naming the site). A unit
    with no masked access pulls in nothing. The differential harnesses that compile `--emit-c` now link the
-   real `bcir_quarantine.c` (the inline test stub is retired). **Next ➡** the ML-layer / debugger OVERRIDES
-   the weak symbol to consult the graded-truth quarantine + recover/policy through a recorded `decide` (the
-   only sanctioned two-truth crossing), and recoverable extents extend to an array param with a sibling count
-   and a `malloc(n)` paired with its size.
+   real `bcir_quarantine.c` (the inline test stub is retired). ✅ **Recoverable extents DONE -- naked POINTERS
+   under bounds management** (`lower._scan_mutations`/`_recoverable_alloc`/`_bind_extent`/`ptr_extent`, twin
+   `scan_mutations`/`recoverable_alloc`/`bind_extent`/`g_ptrext`, `test_recovered_extent_quarantines_out_of_bounds`):
+   a pointer from `malloc(N*sizeof(T))` / `calloc(N, sizeof(T))` recovers its element COUNT and promotes its
+   `p[i]` accesses to `masked` with a RUNTIME extent -- `p[BCIR_CHK(rid, i, N, "func:ptr")]`, N the count
+   variable re-emitted by name. Sound by construction: a per-function mutation pre-pass gates promotion on the
+   pointer AND the count being stable (assigned at most their single binding, never address-taken), so a stale
+   extent (a false trap) cannot occur; `p = realloc(...)` reassigns the pointer and is left unmanaged. Both
+   rails promote IDENTICALLY -- a new cross-rail bounds-guard PARITY assertion (the R13 digest includes
+   `bounds`) makes any one-rail split a hard test failure, and it also caught + fixed two PRE-EXISTING twin
+   under-masking gaps (file-scope static/const array globals, aggregate-initializer array stores). **Next ➡**
+   the ML-layer / debugger OVERRIDES the weak symbol to consult the graded-truth quarantine + recover/policy
+   through a recorded `decide` (the only sanctioned two-truth crossing); R21 lifetime becomes load-bearing for
+   C (malloc/free use-after-free, reusing this pointer provenance); and extents extend to `realloc` rebind, a
+   snapshot for mutated counts, and an array param with a sibling count (under a dominating-bound proof).
 2. ✅ **Lifetime law R21 DONE (oracle prototype)** (`bcir/model/graph.py::Lifetime` +
    `bcir/verify::verify_lifetime`, `test_lifetime_laws.py`): an OPTIONAL `Claim.lifetime` (`event ∈
    {use, alloc, free}` + `epoch`, `None` default, excluded from the R13 digest allow-list) + the **R21

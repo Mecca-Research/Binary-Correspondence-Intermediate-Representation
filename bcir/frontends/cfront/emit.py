@@ -369,8 +369,11 @@ def _idx(lf: LoweredFunc, c, ref) -> str:
     the debugger / ML-layer reads (a site->source table realized inline). Any other access -> the bare index."""
     idx = ref(c.rd[1])
     if c.bounds == "masked":
+        ext = lf.ptr_extent.get(c.rd[0])
+        if ext is not None:                                  # a naked pointer with a RECOVERED runtime extent
+            return f'BCIR_CHK({c.rd[0]}, {idx}, {ref(ext)}, "{lf.name}:{ref(c.rd[0])}")'
         rt = lf.rid_types.get(c.rd[0])
         n = getattr(rt, "count", 0) if rt is not None else 0
-        if n:
+        if n:                                                # a known-extent local/static array (constant N)
             return f'BCIR_CHK({c.rd[0]}, {idx}, {n}u, "{lf.name}:{ref(c.rd[0])}")'
     return idx
