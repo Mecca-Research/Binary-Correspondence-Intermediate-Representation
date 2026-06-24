@@ -14,7 +14,8 @@
  *     -std=<std>       c23 (default) / c17 / c11   (sets __STDC_VERSION__)
  *     -E               preprocess only -> the expanded translation unit
  *     -o <file>        write output to <file> (binary for --emit-pack) instead of stdout
- *     --emit-c         emit the verified C (the C.2 output seam)
+ *     --emit-c         emit the verified C (the C.2 output seam); a unit with a bounds-promoted
+ *                      (masked) access pulls in "bcir_quarantine.h" -- link runtime/c/bcir_quarantine.c
  *     --emit-claimgraph  emit the structural summary + the per-function claim graph
  *     --emit-pack      emit the entry function's hydrated StreamPack (binary; use -o)
  *===----------------------------------------------------------------------===*/
@@ -134,6 +135,12 @@ int main(int argc, char **argv) {
     if (!r.ok) { fprintf(stderr, "%s: verify error: %s\n", path, r.diag); rc = 1; bcir_cfront_free(&r); continue; }
 
     if (emit_c) {
+      /* §5.12: a masked (bounds-promoted) access emits `a[BCIR_CHK(...)]`, which references the
+       * bounds-quarantine runtime ABI. Make the driver's output a self-contained translation unit by
+       * pulling in the runtime header -- the user links runtime/c/bcir_quarantine.c (or overrides the
+       * weak handler). A unit with no masked access needs nothing, so the include is conditional. */
+      if (strstr(r.emitted, "BCIR_CHK"))
+        fputs("#include \"bcir_quarantine.h\"\n", outf);
       fputs(r.emitted, outf);
     } else if (emit_fx) {
       static char fx[8192]; bcir_cfront_effects(&r.unit, fx, sizeof fx);
