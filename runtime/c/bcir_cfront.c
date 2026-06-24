@@ -2033,7 +2033,15 @@ static uint32_t p_unary(CC *c) {
           if(fi<0){ fail(c,"unknown field"); return 0; }
           field mf=member_descend(c,S->f[fi]);     /* accumulate the chain's byte offset + the leaf field */
           if(mf.bit_w){ fail(c,"cannot take the address of a bit-field"); return 0; }   /* illegal in C */
-          if(mf.is_ptr){ fail(c,"address-of a pointer member is a follow-on"); return 0; }
+          if(mf.is_ptr && !mf.arr_count){          /* &s.ptr / &s->ptr -- address of a POINTER member -> a `T **` */
+            uint32_t t=add_res(c,BCIR_DOM_RAM, mf.ptee_size?mf.ptee_size:4, 1,0,BCIR_RK_POINTER,"");
+            if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];   /* pointee = the member's pointee */
+              tr->is_signed=(uint8_t)(mf.signd?1:0); tr->is_float=(uint8_t)(mf.ptee_float?1:0); tr->ptr_depth=2;
+              if(mf.ptee_sidx>=0) snprintf(tr->agg,sizeof tr->agg,"%s %s",c->s[mf.ptee_sidx].is_union?"union":"struct",c->s[mf.ptee_sidx].tag); }
+            bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
+            if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=mf.byte_off;}
+            return t;
+          }
           if(mf.arr_count){                        /* &s.arr[i] / &s->arr[i] / &s.m[i][j] -- a member-array element */
             if(!is(c,"[")){ fail(c,"address-of an array member is a follow-on"); return 0; }
             uint32_t ix=member_arr_index(c,&mf);   /* the row-major flattened element index */
@@ -2069,7 +2077,23 @@ static uint32_t p_unary(CC *c) {
         }
         if(is(c,"[")){                             /* &arr[i] / &p[i] -- a plain element address `(char*)base + i*es` */
           c->i++; uint32_t ix=p_expr(c); eat(c,"]");
-          if(is(c,".")||is(c,"->")||is(c,"[")){    /* &arr[i].field (plain-base array-of-structs) / nested: a follow-on */
+          if((is(c,".")||is(c,"->")) && v->sidx>=0){ /* &arr[i].field on a PLAIN array-of-structs base (#495 sibling):
+                                                      * the element-field address `(char*)base + i*sizeof(elem) + field_off`,
+                                                      * a `field *`. The element struct is v->sidx, the stride v->type.size. */
+            field sub; if(!aos_elem_field(c,v,&sub)){ if(c->failed) return 0;
+              fail(c,"address-of a plain-base array-of-structs element field is a follow-on"); return 0; }
+            if(is(c,".")||is(c,"->")||is(c,"[")){  /* a further descent (nested field / subscript) is a follow-on */
+              fail(c,"address-of a nested plain-base array-of-structs element field is a follow-on"); return 0; }
+            int strd = v->type.size?v->type.size:4, fz = sub.size?sub.size:4;
+            uint32_t t=add_res(c,BCIR_DOM_RAM, fz, 1,0,BCIR_RK_POINTER,"");   /* a `field *` */
+            if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+              tr->is_signed=(uint8_t)(sub.signd?1:0); tr->is_float=(uint8_t)(sub.is_float?1:0); tr->ptr_depth=1;
+              if(sub.sidx>=0) snprintf(tr->agg,sizeof tr->agg,"%s %s",c->s[sub.sidx].is_union?"union":"struct",c->s[sub.sidx].tag); }
+            bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
+            if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=ix;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=sub.byte_off;cl->imm[1]=strd;}
+            return t;
+          }
+          if(is(c,".")||is(c,"->")||is(c,"[")){    /* &arr[i].field on a non-struct base / nested: a follow-on */
             fail(c,"address-of a plain-base array-of-structs element field is a follow-on"); return 0; }
           int es = v->type.size?v->type.size:4;    /* the pointee / element byte size */
           uint32_t t=add_res(c,BCIR_DOM_RAM, es, 1,0,BCIR_RK_POINTER,"");
