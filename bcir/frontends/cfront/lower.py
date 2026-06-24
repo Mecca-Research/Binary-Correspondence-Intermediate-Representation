@@ -1297,6 +1297,15 @@ class _FuncLowerer:
         store path; a scalar `(int){v}` copies the single value in. Returns (rid, type) so the result acts
         as an lvalue (address-of / member access) and as an rvalue (a by-value struct arg / scalar read)."""
         ct = self._resolve_type(node.type)
+        if ct.kind == "array" and (len(node.type.array or ()) > 1 or (ct.of is not None and ct.of.is_aggregate)):
+            # The array-compound-literal parity boundary is a 1-D SCALAR-element literal (`(unsigned[]){...}`,
+            # `(int[N]){...}`), which both rails lower. Fall back on BOTH rails for:
+            #  * a MULTI-DIM `(T[a][b]){...}` -- `_resolve_type` keeps only the OUTER dim, so the storage would
+            #    be under-sized and the `[i][j]` stride wrong (a silent miscompile); and
+            #  * an AGGREGATE-element `(struct P[]){...}` -- which the twin's compound-literal type parser does
+            #    not accept (a pre-existing oracle-only path, realigned here to keep the rails consistent).
+            # Full nested/aggregate-element support is a follow-on.
+            raise CLowerError("only a 1-D scalar-element array compound literal is supported")
         if ct.kind == "array" and ct.count == 0:          # `(T[]){...}` -- infer the length from the init
             n, cursor = 0, 0                              # (max index + 1; positional advances, `[i]=` jumps)
             for key, _expr in node.init.entries:

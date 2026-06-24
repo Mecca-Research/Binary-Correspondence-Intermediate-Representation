@@ -3271,6 +3271,33 @@ def test_incdec_as_expression_value():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+def test_multidim_array_complit_falls_back():
+    """§5.10 item 4 (#arrcomplit): the array-compound-literal parity boundary is a 1-D SCALAR-element literal
+    (both rails lower it -- see cfront_arrcomplit.c). Two forms must FALL BACK on BOTH rails: a MULTI-DIM
+    `(T[a][b]){...}` (the type resolution keeps only the outer dim -> under-sized storage + wrong stride, a
+    silent miscompile) and an AGGREGATE-element `(struct P[]){...}` (an oracle-only parse the twin rejects).
+    The fuzzer does not generate these, so the rails are pinned in agreement here explicitly."""
+    from bcir.frontends.cfront import compile_unit
+    from bcir.frontends.cfront.lower import CLowerError
+    forms = ("unsigned f(unsigned i, unsigned j){ return (unsigned[2][2]){{1u,2u},{3u,4u}}[i&1u][j&1u]; }",
+             "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[]){{1u,2u},{3u,4u}}[i&1u].x; }")
+    for md in forms:                                      # ORACLE: refuses (miscompile / oracle-only parse)
+        try:
+            compile_unit(md, check_clang=False)
+            assert False, f"oracle should fall back: {md}"
+        except CLowerError:
+            pass
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:              # TWIN: also refuses -- both rails route away
+        exe = _build_frontend(d)
+        for md in forms:
+            p = os.path.join(d, "md.c")
+            open(p, "w").write(md)
+            summ, _ = _c_run(exe, p)
+            assert "ok=1" not in summ, f"twin should fall back, got {summ}: {md}"
+
+
 def test_quarantine_report_is_the_debugger_trace_surface():
     """§5.12 debugger trace surface: a STRONG override of `bcir_bounds_quarantine` (the ML-layer / debugger
     seam) records each OOB event into the ring without aborting, and `bcir_quarantine_report` reads the ring
