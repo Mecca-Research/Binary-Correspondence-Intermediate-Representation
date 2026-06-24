@@ -119,6 +119,7 @@ typedef struct {
    * at most its single binding and never aliased). Conservative: an over-approximation never promotes
    * unsoundly. Reset (mut_n=0) per function. */
   mutent mut[512]; int mut_n;
+  int ext_ctr;       /* §5.12 unique hidden extent-snapshot locals (`__bcir_extK`); reset per function */
   char err[256]; int failed;
 } CC;
 /* Grow a CC parser-state array geometrically (no fixed cap), zeroing the fresh slots. On OOM the cap
@@ -1028,6 +1029,7 @@ static int is_value_ender(const tok *t) {
 }
 static void scan_mutations(CC *c, int start) {
   c->mut_n = 0;
+  c->ext_ctr = 0;                                         /* §5.12 reset the per-function snapshot counter */
   int depth = 1;                                           /* `start` is just past the opening `{` */
   for (int i = start; c->t[i].k != T_END && depth > 0; i++) {
     const tok *t = &c->t[i];
@@ -1094,6 +1096,21 @@ static int rec_size_bytes(CC *c, int i) {
   }
   return -1;
 }
+/* The token index just past the per-element SIZE operand at `i` -- a `sizeof(...)` balanced group or a single
+ * integer literal -- or `i` itself if it is neither (an empty span the caller rejects). Used to confirm the
+ * size operand fills its whole side of the `N * sizeof(T)` product (so the OTHER side is the full count). */
+static int size_operand_span(CC *c, int i) {
+  const tok *t = &c->t[i];
+  if (t->k == T_INT) return i + 1;
+  if (t->k == T_ID && t->n == 6 && !strncmp(t->s, "sizeof", 6)
+      && c->t[i + 1].k == T_PUN && c->t[i + 1].n == 1 && c->t[i + 1].s[0] == '(') {
+    int j = i + 1, d = 0;                                   /* walk the balanced `(...)` after sizeof */
+    for (; c->t[j].k != T_END; j++) { const tok *u = &c->t[j];
+      if (u->k == T_PUN && u->n == 1 && u->s[0] == '(') d++;
+      else if (u->k == T_PUN && u->n == 1 && u->s[0] == ')') { d--; if (d == 0) return j + 1; } }
+  }
+  return i;
+}
 /* A stable integer-count NAME at token `i` -> its variable rid, else 0. The name must be a bare in-scope
  * integer scalar that is STABLE: assigned at most once and never address-taken (the C twin of
  * _recoverable_alloc.count_rid). */
@@ -1106,11 +1123,53 @@ static uint32_t rec_count_rid(CC *c, int i) {
   if (mut_body(c, t) > 0 || mut_addr(c, t)) return 0;       /* not stable: an ordinary (post-alloc) write, or aliased */
   return v->rid;
 }
+/* §5.12 token-level purity check (the C twin of lower._is_pure): is the value of the expression in the
+ * token range [s, e) side-effect-FREE -- so it is safe to RE-EVALUATE for the extent snapshot? Pure iff it
+ * is only arithmetic over names / literals / sizeof: no call (`identifier (`, except sizeof/_Alignof/alignof),
+ * no assignment / comparison / logical op, no `++`/`--`, and no `*`/`&` used as a deref / address-of. The
+ * allowed punctuators are the arithmetic operators (`+ - * / % & | ^ ~ << >>`) and grouping `( )`; a `*`/`&`
+ * is binary (allowed) only when the previous token is a value-ender (else it is a unary deref/address-of ->
+ * impure). Conservative: anything unrecognized -> impure (stays unmanaged rather than double-run). */
+static int is_sizeof_kw(const tok *t) {
+  return t->k == T_ID && ((t->n == 6 && !strncmp(t->s, "sizeof", 6))
+    || (t->n == 8 && !strncmp(t->s, "_Alignof", 8)) || (t->n == 7 && !strncmp(t->s, "alignof", 7))
+    || (t->n == 13 && !strncmp(t->s, "__alignof__", 13)));
+}
+static int is_pure_range(CC *c, int s, int e) {
+  if (e <= s) return 0;
+  for (int i = s; i < e; i++) {
+    const tok *t = &c->t[i];
+    if (t->k == T_INT || t->k == T_FLT || t->k == T_ID) {
+      if (t->k == T_ID && !is_sizeof_kw(t)                 /* a call `name (` (sizeof/alignof excepted) */
+          && c->t[i + 1].k == T_PUN && c->t[i + 1].n == 1 && c->t[i + 1].s[0] == '(' && i + 1 < e)
+        return 0;
+      continue;
+    }
+    if (t->k != T_PUN) return 0;                           /* a string literal etc. -> impure */
+    if (t->n == 1) {
+      char ch = t->s[0];
+      if (ch == '(' || ch == ')' || ch == '+' || ch == '-' || ch == '/' || ch == '%'
+          || ch == '|' || ch == '^' || ch == '~') continue;
+      if (ch == '*' || ch == '&') {                        /* binary mul/and only when after a value-ender */
+        const tok *pv = (i > s) ? &c->t[i - 1] : NULL;
+        if (pv && is_value_ender(pv)) continue;
+        return 0;                                          /* a unary deref / address-of -> impure */
+      }
+      return 0;                                            /* `=` `<` `>` `?` `:` `,` ... -> impure */
+    }
+    if (t->n == 2 && (t->s[0] == '<' || t->s[0] == '>') && t->s[1] == t->s[0]) continue;   /* << >> shifts */
+    return 0;                                              /* `==` `&&` `++` `+=` ... -> impure */
+  }
+  return 1;
+}
 /* §5.12 _recoverable_alloc: if the call in the token range [start,end) is `calloc(N, sizeof(T))`,
  * `malloc(N*sizeof(T))` / `malloc(sizeof(T)*N)`, or `malloc(N)` for a 1-byte pointee (T the pointee, so
- * N the element COUNT), with N a stable integer Name, return N's rid (the recovered extent), else 0.
- * Conservative: any uncertainty -> 0 (no guard, never a false trap). */
-static uint32_t recoverable_alloc(CC *c, int start, int end, int pointee_size) {
+ * N the element COUNT), set the COUNT's token range [*cstart, *cend) and return N's rid when N is a stable
+ * integer Name (the fast path), else 0 (the count is an expression the caller may SNAPSHOT, or N is not
+ * stable). `*cstart` is set to -1 if the call is not a recoverable alloc form at all. Conservative: any
+ * uncertainty about the FORM -> not recognized (no guard, never a false trap). */
+static uint32_t recoverable_alloc(CC *c, int start, int end, int pointee_size, int *cstart, int *cend) {
+  *cstart = -1; *cend = -1;
   if (pointee_size <= 0) return 0;
   const tok *cal = &c->t[start];
   if (cal->k != T_ID || !(c->t[start + 1].k == T_PUN && c->t[start + 1].n == 1 && c->t[start + 1].s[0] == '('))
@@ -1119,40 +1178,65 @@ static uint32_t recoverable_alloc(CC *c, int start, int end, int pointee_size) {
   int is_calloc = cal->n == 6 && !strncmp(cal->s, "calloc", 6);
   if (!is_malloc && !is_calloc) return 0;
   int a0 = start + 2;                                      /* first argument token */
-  if (is_calloc) {                                         /* calloc(N, sizeof(T)) -- N, comma, size, ) */
-    /* the first arg must be a bare Name immediately followed by `,` (a complex first arg -> not recovered) */
-    if (c->t[a0].k != T_ID || !(c->t[a0 + 1].k == T_PUN && c->t[a0 + 1].n == 1 && c->t[a0 + 1].s[0] == ','))
-      return 0;
-    int a1 = a0 + 2;
-    if (rec_size_bytes(c, a1) != pointee_size) return 0;
-    return rec_count_rid(c, a0);
+  int close = end - 1;                                     /* end-1 is the call's closing `)` */
+  if (is_calloc) {                                         /* calloc(N, sizeof(T)) -- N runs [a0, comma) */
+    int j = a0, d = 0, comma = -1;                         /* find the TOP-LEVEL comma separating the two args */
+    for (; j < close; j++) { const tok *t = &c->t[j];
+      if (t->k == T_PUN && t->n == 1 && (t->s[0] == '(' || t->s[0] == '[')) d++;
+      else if (t->k == T_PUN && t->n == 1 && (t->s[0] == ')' || t->s[0] == ']')) d--;
+      else if (d == 0 && t->k == T_PUN && t->n == 1 && t->s[0] == ',') { comma = j; break; } }
+    if (comma < 0 || comma == a0) return 0;                /* no separator / an empty first arg */
+    if (rec_size_bytes(c, comma + 1) != pointee_size) return 0;   /* the second arg must be sizeof(T) / its byte width */
+    *cstart = a0; *cend = comma;                           /* the count is the first arg */
+    if (comma == a0 + 1 && c->t[a0].k == T_ID) return rec_count_rid(c, a0);   /* a single bare Name -> fast path */
+    return 0;                                              /* an expression count -> the caller snapshots */
   }
-  /* malloc: the single argument runs [a0, end-1) (end-1 is the closing `)`). Forms: N*S / S*N / N. */
-  int close = end - 1;
-  /* N * sizeof(T)  or  sizeof(T) * N : a single top-level `*` splitting two operands. Detect the `*`
-   * one token after a bare Name (N *) or after a sizeof-type group ( ) * ). */
-  if (c->t[a0].k == T_ID && c->t[a0 + 1].k == T_PUN && c->t[a0 + 1].n == 1 && c->t[a0 + 1].s[0] == '*') {
-    /* N * sizeof(T) : N is at a0, the size operand starts at a0+2 and must reach the close */
-    if (rec_size_bytes(c, a0 + 2) == pointee_size) return rec_count_rid(c, a0);
+  /* malloc: the single argument runs [a0, close). Forms: N*S / S*N / N. Find a TOP-LEVEL `*` (depth 0). */
+  int j = a0, d = 0, star = -1;
+  for (; j < close; j++) { const tok *t = &c->t[j];
+    if (t->k == T_PUN && t->n == 1 && (t->s[0] == '(' || t->s[0] == '[')) d++;
+    else if (t->k == T_PUN && t->n == 1 && (t->s[0] == ')' || t->s[0] == ']')) d--;
+    else if (d == 0 && t->k == T_PUN && t->n == 1 && t->s[0] == '*') { star = j; break; } }
+  if (star >= 0) {                                         /* N * S  or  S * N : the `*` splits two operands */
+    int lstart = a0, lend = star, rstart = star + 1, rend = close;
+    /* exactly ONE side must be the per-element size operand -- `sizeof(T)` (the whole balanced group) or a
+     * byte literal -- filling its whole side; the OTHER side is the count (N), which may be an expression. */
+    if (rec_size_bytes(c, rstart) == pointee_size && size_operand_span(c, rstart) == rend && lend > lstart) {
+      *cstart = lstart; *cend = lend;                      /* N * sizeof(T) : count on the LHS */
+    } else if (rec_size_bytes(c, lstart) == pointee_size && size_operand_span(c, lstart) == lend && rend > rstart) {
+      *cstart = rstart; *cend = rend;                      /* sizeof(T) * N : count on the RHS */
+    } else return 0;                                       /* neither side is the per-element size */
+    if (*cend == *cstart + 1 && c->t[*cstart].k == T_ID) return rec_count_rid(c, *cstart);   /* bare Name */
+    return 0;                                              /* an expression count -> the caller snapshots */
+  }
+  /* malloc(N) for a 1-byte pointee: N fills the whole single argument */
+  if (pointee_size == 1 && close > a0) {
+    *cstart = a0; *cend = close;
+    if (close == a0 + 1 && c->t[a0].k == T_ID) return rec_count_rid(c, a0);
     return 0;
   }
-  /* sizeof(T) * N : the size operand is a sizeof-group; find its closing `)` then a `*` then N at close-1 */
-  if (c->t[a0].k == T_ID && c->t[a0].n == 6 && !strncmp(c->t[a0].s, "sizeof", 6)
-      && c->t[a0 + 1].k == T_PUN && c->t[a0 + 1].s[0] == '(') {
-    int j = a0 + 1, d = 0;                                 /* walk the balanced sizeof `(...)` */
-    for (; j < close; j++) { char ch = c->t[j].s[0];
-      if (c->t[j].k == T_PUN && c->t[j].n == 1 && ch == '(') d++;
-      else if (c->t[j].k == T_PUN && c->t[j].n == 1 && ch == ')') { d--; if (d == 0) { j++; break; } } }
-    if (j < close && c->t[j].k == T_PUN && c->t[j].n == 1 && c->t[j].s[0] == '*'
-        && j + 1 == close - 1 && c->t[close - 1].k == T_ID
-        && rec_size_bytes(c, a0) == pointee_size)
-      return rec_count_rid(c, close - 1);
-    return 0;
-  }
-  /* malloc(N) for a 1-byte pointee: N is a bare Name filling the whole single argument */
-  if (pointee_size == 1 && c->t[a0].k == T_ID && a0 + 1 == close)
-    return rec_count_rid(c, a0);
   return 0;
+}
+/* §5.12 snapshot a pure expression COUNT in the token range [cstart, cend): re-lower it (a SECOND
+ * evaluation, separate from the malloc arg -- sound because it is pure), copy the value into a fresh hidden
+ * IMMUTABLE local `__bcir_extK` (K per-function), and return that snapshot local's rid (the recovered
+ * extent), or 0 if the value is not an integer scalar. Mirrors the oracle's _bind_extent snapshot branch. */
+static uint32_t snapshot_extent(CC *c, int cstart, int cend) {
+  int save = c->i;
+  tok stash = c->t[cend];                                  /* terminate the re-lowering exactly at cend */
+  c->t[cend].k = T_END; c->t[cend].s = ""; c->t[cend].n = 0;
+  c->i = cstart;
+  uint32_t v = p_expr(c);                                  /* re-evaluate the count (a SECOND lowering) */
+  c->t[cend] = stash; c->i = save;                         /* restore the token + the real cursor */
+  const bcir_resource *vr = res_of(c->fn, v);
+  if (!vr || vr->kind != BCIR_RK_SCALAR || vr->is_float) return 0;   /* an integer scalar only */
+  int vbytes = (int)vr->elem_bytes, vsigned = vr->is_signed;         /* capture before add_res may realloc res[] */
+  char nm[BCIR_CIR_NAME]; snprintf(nm, sizeof nm, "__bcir_ext%d", c->ext_ctr++);
+  uint32_t ext = add_res(c, BCIR_DOM_RAM, vbytes, 1, 0, BCIR_RK_SCALAR, nm);
+  if (c->fn->n_res) c->fn->res[c->fn->n_res - 1].is_signed = (uint8_t)vsigned;   /* mirror the value's signedness */
+  bcir_claim *cp = new_claim(c, "c.copy", BCIR_OP_ADD);
+  if (cp) { cp->n_rd = 1; cp->rd[0] = v; cp->n_wr = 1; cp->wr[0] = ext; }
+  return ext;
 }
 /* §5.12 _bind_extent: bind a recovered element-count to a malloc/calloc'd pointer local (rid `p_rid`,
  * the resource `pr`, name `p_name`), so its `p[i]` accesses promote to `masked`. Only when p is a POINTER
@@ -1164,8 +1248,14 @@ static void bind_extent(CC *c, uint32_t p_rid, const bcir_resource *pr, const to
   if (!pr || pr->kind != BCIR_RK_POINTER) return;
   if (mut_assigned(c, p_name) != 1 || mut_addr(c, p_name)) return;
   int pointee = (int)pr->elem_bytes;                        /* the pointee element size (`p_ct.of.size`) */
-  uint32_t n_rid = recoverable_alloc(c, init_start, init_end, pointee);
-  if (n_rid) ptrext_set(c->fn, p_rid, n_rid);
+  int cstart, cend;
+  uint32_t n_rid = recoverable_alloc(c, init_start, init_end, pointee, &cstart, &cend);
+  if (n_rid) { ptrext_set(c->fn, p_rid, n_rid); return; }   /* a STABLE integer-count Name -> bound BY NAME */
+  if (cstart < 0) return;                                   /* not a recoverable alloc form at all */
+  if (cend == cstart + 1 && c->t[cstart].k == T_ID) return; /* a (non-stable) bare Name -> by-name-or-nothing */
+  if (!is_pure_range(c, cstart, cend)) return;              /* an impure expression count -> unmanaged */
+  uint32_t ext = snapshot_extent(c, cstart, cend);          /* a pure EXPRESSION count -> SNAPSHOT it */
+  if (ext) ptrext_set(c->fn, p_rid, ext);
 }
 
 /* The bounds contract for an indexed access (§5.12 bounds-promotion). A LOCAL/STATIC array OBJECT -- whose
