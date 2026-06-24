@@ -2093,7 +2093,9 @@ _FALLBACK_PROBES = [
                      # post/pre distinction was discarded in the desugar, so it routes away on both rails.
     ("unsigned f(unsigned a){ return ({ a = a+1u; }); }", "fallback"),     # an assignment as a stmt-expr value
                      # (the twin's value-expression grammar has none) -> fallback on both rails, in lockstep.
-    ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "fallback"),  # computed goto
+    ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "clean"),  # computed goto (#computedgoto):
+                     # the GNU label-as-value `&&L` (a `void *`) + the indirect `goto *p` are now native on BOTH
+                     # rails -- they lower to the GNU forms (which Clang compiles), so the unit is clean, not fallback.
     ("struct Q{unsigned*p; unsigned n;}; unsigned f(struct Q q,unsigned i){ return q.p[i&3u]+q.n; }",
      "clean"),      # a *pointer* member indexed (`q.p[i]` == `*(q.p + i)`): both rails now load the full
                      # pointer field and subscript the loaded pointer (#fieldderef, pointer-value slice 2b).

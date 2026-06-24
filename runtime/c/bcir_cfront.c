@@ -1357,8 +1357,17 @@ static bcir_bounds access_bnd(CC *c, uint32_t rid) {
   return BCIR_BND_ASSUMED;
 }
 static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -- GEP load */
-  int es=base->type.size?base->type.size:4;
-  uint32_t t=base->type.is_float ? tempf(c,es) : tempi(c,es,base->type.signd);  /* float -> a float temp; else keep the sign */
+  const bcir_resource *br=res_of(c->fn,base->rid);
+  uint32_t t;
+  if(base->type.kind==2 && br && br->kind==BCIR_RK_SCALAR && br->count>1){   /* an ARRAY of pointers `T *a[N]`
+    * (a SCALAR array with pointer-wide elements, NOT a pointer variable `T *p`): `a[i]` loads a pointer */
+    t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_POINTER,"");
+    if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+      tr->ptr_depth=base->type.ptr_depth?base->type.ptr_depth:1;
+      if(base->type.ptr_to_struct) snprintf(tr->agg,sizeof tr->agg,"%s %s",base->type.is_union?"union":"struct",base->type.tag);
+      else if(base->type.size==0 && !base->type.is_float) tr->is_voidptr=1; }   /* a `void *` element */
+  } else { int es=base->type.size?base->type.size:4;
+    t=base->type.is_float ? tempf(c,es) : tempi(c,es,base->type.signd); }  /* float -> a float temp; else keep the sign */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;cl->bounds=access_bnd(c,base->rid);
   return t;
@@ -2025,6 +2034,14 @@ static uint32_t p_unary(CC *c) {
     char op[BCIR_CIR_NAME];snprintf(op,sizeof op,"c.un.%s",suf);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);if(cl){cl->n_rd=1;cl->rd[0]=a;cl->n_wr=1;cl->wr[0]=r;}
     return r; }
+  if(is(c,"&&")){ c->i++;                          /* `&&label` -- a label's address as a `void *` value (GNU).
+    * Safe in unary position: a binary `&&` never STARTS a unary expression, so logical-AND is unaffected. */
+    tok lb=adv(c);                                  /* the label identifier */
+    uint32_t t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_POINTER,"");   /* a `void *` temp */
+    if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1]; tr->ptr_depth=1; tr->is_voidptr=1; }
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.labeladdr:%.*s",lb.n,lb.s);   /* emit `void *t = &&L;` */
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_LOAD); if(cl){cl->n_wr=1;cl->wr[0]=t;}   /* a LOAD claim, no reads */
+    return t; }
   if(is(c,"&")){ c->i++;                          /* address-of: &lvalue -> a pointer value (c.addrof) */
     if(is(c,"*")){ c->i++; return p_unary(c); }    /* &*p == p (the pointer itself; &*(p+i) == p+i) */
     if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);
@@ -3162,7 +3179,11 @@ static void p_stmt(CC *c) {
   }
   if(is(c,"break")){ c->i++; eat(c,";"); marker(c,"c.break",0,0); return; }
   if(is(c,"continue")){ c->i++; eat(c,";"); marker(c,"c.continue",0,0); return; }
-  if(is(c,"goto")){ c->i++; tok lb=adv(c); eat(c,";");          /* goto label; -- an emit-only marker */
+  if(is(c,"goto")){ c->i++;
+    if(is(c,"*")){ c->i++;                                       /* `goto *expr;` -- a computed (indirect) goto (GNU) */
+      uint32_t tgt=p_expr(c); eat(c,";");                        /* the target is lowered to a void* address */
+      marker(c,"c.cgoto",tgt,1); return; }                       /* emit-only (NOP marker), carries the target rid */
+    tok lb=adv(c); eat(c,";");                                   /* goto label; -- an emit-only marker */
     char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.goto:%.*s",lb.n,lb.s); new_claim(c,op,BCIR_OP_NOP); return; }
   if(isk(c,T_ID)&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==':'){  /* `name:` -- a label */
     tok lb=adv(c); c->i++; char op[BCIR_CIR_NAME];
@@ -3290,14 +3311,21 @@ static void p_stmt(CC *c) {
       if(la_nd>3){ fail(c,"local array of more than 3 dimensions"); return; }   /* adims caps at 3 */
       if(la_nd>1){ for(int z=0;z<3;z++) ty.adims[z]=la_dims[z]; ty.nadims=la_nd; }   /* multi-dim flatten */
       int rk=arr?BCIR_RK_SCALAR:(ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
+      int arr_elem = (arr && ty.kind==2) ? cc_abi(c)->pointer_size : ty.size;   /* an array of pointers: pointer-wide elements */
       uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
-                           arr?ty.size:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
+                           arr?arr_elem:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
                            arr?arr:(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
-      if(ty.kind==2&&!arr){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer local: carry the
+      if(arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`: a
+        * SCALAR array of pointer-wide elements; the decl + `a[i]` load/store carry the pointee (void* for now) */
+        ar->ptr_depth=ty.ptr_depth?ty.ptr_depth:1;
+        if(ty.ptr_to_struct) snprintf(ar->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
+        else if(ty.size==0 && !ty.is_float) ar->is_voidptr=1; }
+      else if(ty.kind==2&&!arr){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer local: carry the
         * pointee type (elem_bytes already = pointee size) so the decl emits `T *p`, not a truncating uint32 */
         pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0); pr->ptr_depth=ty.ptr_depth;
         pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);   /* a `char *` pointee: the deref load emits `char` */
-        if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
+        if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
+        else if(ty.size==0 && !ty.is_float) pr->is_voidptr=1; }   /* a `void *` local (void pointee) -> emit `void *` */
       else if(ty.is_valist) c->fn->res[c->fn->n_res-1].is_valist=1;     /* a `va_list ap;` local -> emit `va_list` */
       else if(ty.is_float){ c->fn->res[c->fn->n_res-1].is_float=1;      /* a float/double (element) local */
         if(ty.is_complex) c->fn->res[c->fn->n_res-1].is_complex=1; }    /* a _Complex local (a float pair) */
@@ -3769,7 +3797,8 @@ static const char *tty(const bcir_func *f,uint32_t rid){
 static const char *decl_ty(const bcir_func *f,uint32_t rid,char *buf,size_t n){
   const bcir_resource *r=res_of(f,rid);
   if(r && r->kind==BCIR_RK_POINTER){
-    const char *base = r->agg[0] ? r->agg
+    const char *base = r->is_voidptr ? "void"   /* a `void *` pointee (`&&L`, void-pointee local): no width/sign */
+      : r->agg[0] ? r->agg
       : r->is_float ? (r->elem_bytes==4?"float":r->elem_bytes>8?"long double":"double")
       : r->elem_bytes==1?(r->is_signed?"int8_t":"uint8_t") : r->elem_bytes==2?(r->is_signed?"int16_t":"uint16_t")
       : r->elem_bytes==8?(r->is_signed?"int64_t":"uint64_t") : (r->is_signed?"int32_t":"uint32_t");
@@ -3844,6 +3873,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
       if(sx>=0) w+=snprintf(o+w,on-w,"  static uint32_t %s = %lluu;\n",nm,(unsigned long long)f->statics[sx].init);
       else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s%s;\n",r->agg,nm,r->zinit?" = {0}":"");
+      else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->is_voidptr) w+=snprintf(o+w,on-w,"  void *%s[%u]%s;\n",nm,r->count,r->zinit?" = {0}":"");  /* an array of `void *` */
       else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+w,on-w,"  %s %s[%u]%s;\n",tty(f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
       else if(r->kind==BCIR_RK_POINTER)               /* a pointer local: `T *p` (the pointee carries width/sign) */
         w+=snprintf(o+w,on-w,"  %s%s;\n",decl_ty(f,r->rid,tb,sizeof tb),nm);
@@ -3871,6 +3901,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.endswitch")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");continue;}
     if(!strcmp(cl->op,"c.continue")){IND();w+=snprintf(o+w,on-w,"goto __cont_%d;\n",nls?lstk[nls-1]:0);continue;}
     if(!strncmp(cl->op,"c.goto:",7)){IND();w+=snprintf(o+w,on-w,"goto %s;\n",cl->op+7);continue;}
+    if(!strcmp(cl->op,"c.cgoto")){IND();w+=snprintf(o+w,on-w,"goto *%s;\n",rname(f,cl->rd[0],a));continue;}  /* indirect jump to a label address (GNU) */
     if(!strncmp(cl->op,"c.label:",8)){w+=snprintf(o+w,on-w,"%s:;\n",cl->op+8);continue;}
     if(!strcmp(cl->op,"c.return")){IND();
       if(cl->n_rd) w+=snprintf(o+w,on-w,"return %s;\n",rname(f,cl->rd[0],a));
@@ -3878,6 +3909,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     IND();
     if(!strncmp(cl->op,"c.bin.",6))                       /* decl_ty: a pointer result (`p + i`) declares `T *t` */
       w+=snprintf(o+w,on-w,"%s %s = %s %s %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
+    else if(!strncmp(cl->op,"c.labeladdr:",12))            /* `&&L` -- a label's address as a `void *` (GNU) */
+      w+=snprintf(o+w,on-w,"%s %s = &&%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),cl->op+12);
     else if(!strncmp(cl->op,"c.fconst:",9))                /* a floating constant -> its literal spelling */
       w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
     else if(!strncmp(cl->op,"c.cconst:",9))                /* <complex.h> imaginary unit -> verbatim token */
@@ -3921,7 +3954,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
          * element reads sign-extended (the zero-extending uint32 form dropped the sign). */
         w+=snprintf(o+w,on-w,"%s %s; memcpy(&%s, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld);\n",
           tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
-      else if(cl->n_rd==2) w+=snprintf(o+w,on-w,"%s %s = %s[%s];\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb));
+      else if(cl->n_rd==2) w+=snprintf(o+w,on-w,"%s %s = %s[%s];\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb));  /* decl_ty: an array-of-pointers element load is `T *` */
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
