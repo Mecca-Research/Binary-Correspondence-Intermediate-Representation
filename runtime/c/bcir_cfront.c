@@ -2013,7 +2013,9 @@ static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
                 : ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t";
   if(ty->kind==2) snprintf(o,n,"c.cast:%s *",nm); else snprintf(o,n,"c.cast:%s",nm);
 }
+static int incdec_value(CC *c, uint32_t *out);   /* fwd: `++a`/`a++`/`--a`/`a--` in EXPRESSION position */
 static uint32_t p_unary(CC *c) {
+  { uint32_t v; if(incdec_value(c,&v)) return v; }   /* PREFIX ++a / POSTFIX a++ (member/array/pointer/scalar) */
   if(is(c,"+")){ c->i++; return p_unary(c); }    /* unary plus is a no-op */
   if(is(c,"__real__")||is(c,"__imag__")){        /* GNU complex part -> the real element float */
     const char *suf=is(c,"__real__")?"creal":"cimag"; c->i++;
@@ -2579,6 +2581,181 @@ static int lv_assign_value(CC *c, uint32_t *out){
     return 1;
   }
   c->i=save; return 0;
+}
+/* `++a` / `a++` / `--a` / `a--` in EXPRESSION position as a VALUE (the C twin of the oracle's _incdec_value,
+ * #incdecexpr). Postfix yields the OLD value, prefix the NEW value; the lvalue is resolved ONCE. Covers a
+ * NAMED local/param/global (scalar OR pointer), a single-level SCALAR struct member (plain or bitfield), and a
+ * plain SCALAR array element -- exactly the lvalue forms the oracle's gate accepts (a NAMED-LOCAL var, or a
+ * scalar memory member; a volatile/MMIO target and any other lvalue stay a both-rails fallback, raising via
+ * the conditional grammar's parse-error like the oracle's CLowerError). Returns 1 (and sets *out) when it
+ * consumed an inc/dec, else 0 (cursor unmoved). The bare-identifier STATEMENT form `a++;` still routes through
+ * p_incdec -> a c.copy (unchanged), so existing fixtures stay byte-identical. */
+static uint32_t incdec_emit_const1(CC *c){
+  uint32_t one=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+  if(kc){kc->n_wr=1;kc->wr[0]=one;kc->n_imm=1;kc->imm[0]=1;} return one;   /* the `1` step (an int literal) */
+}
+/* After a path has resolved its (one-level) lvalue, settle the step operator. POSTFIX: the trailing token MUST
+ * be `++`/`--` (consume it); else a deeper lvalue / a plain access -> not handled here. PREFIX: the operator
+ * was already consumed before the operand, so the lvalue must be COMPLETE -- no trailing `.`/`->`/`[` (a deeper
+ * chain we only partly walked). Returns 1 (OK to proceed) or 0 (roll back to `save` + fall back). */
+static int incdec_settle(CC *c, int prefix, int save){
+  if(!prefix){ if(!(is(c,"++")||is(c,"--"))){ c->i=save; return 0; } c->i++; return 1; }
+  if(is(c,".")||is(c,"->")||is(c,"[")){ c->i=save; return 0; }   /* prefix: a deeper lvalue -> fall back */
+  return 1;
+}
+/* SNAPSHOT a named local's OLD value via a same-type cast (`c.cast` DECLARES a fresh temp; a plain copy would
+ * not) -- _read of a named local hands back the MUTABLE storage rid, which the store below would clobber. The
+ * cast SPELLING is the width-named UNSIGNED type (uintN_t / `T *`), matching the oracle's _cast_name; the temp
+ * carries the var's OWN (sign/float/pointer) type so it declares + reads back correctly. */
+static uint32_t incdec_snapshot(CC *c, venv *v){
+  bcir_ctype st=v->type; int sz=st.size?st.size:4;
+  uint32_t old;
+  if(st.kind==2){                                          /* a POINTER snapshot -> a real `T *` temp (kind ptr) */
+    old=add_res(c,BCIR_DOM_RAM, sz?sz:4, 1,0,BCIR_RK_POINTER,"");
+    if(c->fn->n_res){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* carry the pointee (width/sign/struct) */
+      pr->is_signed=(uint8_t)(st.signd?1:0); pr->is_float=(uint8_t)(st.is_float?1:0); pr->ptr_depth=st.ptr_depth;
+      pr->is_plain_char=(uint8_t)(st.is_plain_char?1:0);
+      if(st.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",st.is_union?"union":"struct",st.tag); }
+  } else {
+    old = st.is_float ? tempf(c,sz) : tempi(c,sz,st.signd?1:0);
+    if(c->fn->n_res && st.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1;
+  }
+  char op[BCIR_CIR_NAME]; cast_name(&st,0,op,sizeof op);   /* width-named UNSIGNED spelling, like _cast_name */
+  bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=old;}
+  return old;
+}
+static int incdec_value(CC *c, uint32_t *out){
+  int prefix=0; char ch=0;
+  if(is(c,"++")||is(c,"--")){ prefix=1; ch=pk(c)->s[0]; }   /* a PREFIX `++`/`--` -- the operand follows */
+  else if(isk(c,T_ID)){
+    /* a POSTFIX `name <tail> ++` -- only if a `++`/`--` immediately follows the (bare / member / index)
+     * lvalue. Scan past a single `.field`/`->field` or a balanced `[...]` chain off the name; if the next
+     * token is not `++`/`--`, this is not an inc/dec -- bail (cursor unmoved) so the value reads normally. */
+    int j=c->i+1;
+    for(;;){ const tok *t=&c->t[j];
+      if(t->k==T_PUN && t->n==1 && t->s[0]=='.'){ j+=2; continue; }
+      if(t->k==T_PUN && t->n==2 && t->s[0]=='-' && t->s[1]=='>'){ j+=2; continue; }
+      if(t->k==T_PUN && t->n==1 && t->s[0]=='['){ int d=1; j++;
+        while(c->t[j].k!=T_END && d){ char k0=c->t[j].s[0]; if(k0=='[')d++; else if(k0==']')d--; j++; } continue; }
+      break; }
+    if(!(c->t[j].k==T_PUN && c->t[j].n==2 && (c->t[j].s[0]=='+'||c->t[j].s[0]=='-') && c->t[j].s[1]==c->t[j].s[0]))
+      return 0;                                            /* the lvalue is not stepped -> not an inc/dec */
+    ch=c->t[j].s[0];
+  } else return 0;
+  int save=c->i;
+  if(prefix) c->i++;                                       /* consume the leading `++`/`--` */
+  if(!isk(c,T_ID)){ c->i=save; return 0; }                 /* only a named-rooted lvalue is supported */
+  tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);
+  if(!v){ c->i=save; return 0; }
+  const char *suf = ch=='+'?"add":"sub"; bcir_opcode oc = ch=='+'?BCIR_OP_ADD:BCIR_OP_SUB;
+
+  /* --- a DIRECT array-of-structs element FIELD `a[i].f` (strided), non-volatile --- */
+  if(isk(c,T_ID) && v->sidx>=0 && !v->type.is_volatile
+     && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+    size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
+    c->i++; uint32_t idx=array_index(c,v);                 /* resolve the index ONCE (Horner-flattened) */
+    field sub; int got=(is(c,".")||is(c,"->")) && aos_elem_field(c,v,&sub);
+    if(c->failed) return 0;
+    if(!got || !incdec_settle(c,prefix,save)){             /* not `a[i].field++` -> roll back, fall through */
+      c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+    uint32_t cur=emit_index_field(c,v,idx,&sub);           /* read OLD (a fresh declared temp -- no snapshot) */
+    uint32_t one=incdec_emit_const1(c);
+    uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+    bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
+    store_index_field(c,v,idx,&sub,nw);
+    if(!prefix){ *out=cur; return 1; }
+    const bcir_resource *nr=res_of(c->fn,nw);
+    *out = ((int)sub.size < (int)(nr?nr->elem_bytes:4)) ? emit_index_field(c,v,idx,&sub) : nw;
+    return 1;
+  }
+
+  /* --- a plain SCALAR ARRAY ELEMENT `a[i]` (kind 0, non-volatile, NOT an array-of-structs) --- */
+  if(isk(c,T_ID) && v->type.kind==0 && !v->type.is_volatile && v->sidx<0
+     && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+    size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
+    c->i++; uint32_t idx=array_index(c,v);                 /* resolve the index ONCE (Horner-flattened) */
+    if(c->failed){ return 0; }
+    if(!incdec_settle(c,prefix,save)){                     /* `a[i]` not stepped -> roll back, fall through */
+      c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+    uint32_t cur=emit_index(c,v,idx);                      /* read OLD (a fresh declared temp -- no snapshot) */
+    uint32_t one=incdec_emit_const1(c);
+    uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+    bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
+    bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+    if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=nw;cl->bounds=access_bnd(c,v->rid);}
+    if(!prefix){ *out=cur; return 1; }                     /* postfix: the OLD value */
+    const bcir_resource *nr=res_of(c->fn,nw);              /* prefix: re-read if the element narrows on store */
+    *out = ((int)v->type.size < (int)(nr?nr->elem_bytes:4)) ? emit_index(c,v,idx) : nw;
+    return 1;
+  }
+
+  /* --- a struct MEMBER `s.x` / `p->x` / nested `o.in.x`, OR a member array `s.arr[i]` / `s.arr[i].f`,
+   *     non-volatile (the C twin of the oracle's scalar-member-lvalue inc/dec). --- */
+  if(isk(c,T_ID) && v->sidx>=0 && !v->type.is_volatile && c->t[c->i+1].k==T_PUN
+     && ((c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='.')
+         || (c->t[c->i+1].n==2 && c->t[c->i+1].s[0]=='-' && c->t[c->i+1].s[1]=='>'))){
+    size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
+    sdef *S=&c->s[v->sidx]; c->i++; (void)adv(c); tok fld=adv(c); int fi=-1;   /* consume `. field` / `-> field` */
+    for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fld.n && !strncmp(S->f[i].name,fld.s,fld.n)) fi=i;
+    if(fi<0){ c->i=save; return 0; }
+    field f=member_descend(c,S->f[fi]);                   /* flatten `o.in.x` -> one offset; cursor past the chain */
+    if(f.arr_count && is(c,"[")){                         /* a MEMBER-ARRAY element `s.arr[i]` / `s.arr[i].f` */
+      uint32_t idx=member_arr_index(c,&f);
+      field sub; int soa=(is(c,".")||is(c,"->")) && elem_field(c,&f,&sub);
+      if(c->failed) return 0;
+      const field *sf = soa ? &sub : &f;                  /* the stored slot: the element FIELD, or the element */
+      if(!incdec_settle(c,prefix,save)){
+        c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+      uint32_t cur = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
+      uint32_t one=incdec_emit_const1(c);
+      uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+      bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
+      store_member_index(c,v,&f,idx,soa,sf,nw);
+      if(!prefix){ *out=cur; return 1; }
+      const bcir_resource *nr=res_of(c->fn,nw);
+      *out = ((int)sf->size < (int)(nr?nr->elem_bytes:4))
+             ? (soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx)) : nw;
+      return 1;
+    }
+    if(f.is_ptr || f.arr_count || f.sidx>=0){ c->i=save; return 0; }   /* a non-scalar leaf -> fallback */
+    if(!incdec_settle(c,prefix,save)){                    /* a deeper lvalue / not stepped -> roll back */
+      c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+    uint32_t cur=emit_member(c,v,&f);                     /* read OLD (a fresh declared temp -- no snapshot) */
+    uint32_t one=incdec_emit_const1(c);
+    uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+    bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
+    if(f.bit_w) store_member_bf(c,v,&f,nw); else store_member(c,v,&f,nw);
+    if(!prefix){ *out=cur; return 1; }                    /* postfix: the OLD value */
+    const bcir_resource *nr=res_of(c->fn,nw);             /* prefix: the STORED new value -- re-read if it */
+    *out = (f.bit_w || (int)f.size < (int)(nr?nr->elem_bytes:4)) ? emit_member(c,v,&f) : nw;   /* narrows */
+    return 1;
+  }
+
+  /* --- a NAMED local/param/global (scalar OR pointer) `a` -- the bare name followed by the step --- */
+  c->i++;                                                  /* consume the name */
+  if(!incdec_settle(c,prefix,save)) return 0;              /* postfix: consume `++`/`--`; prefix: lvalue done */
+  if(v->type.is_volatile){ c->i=save; return 0; }          /* a volatile/MMIO target stays a both-rails fallback */
+  if(v->type.kind==2){                                     /* a POINTER local steps by element (in place) */
+    uint32_t old = !prefix ? incdec_snapshot(c,v) : 0;     /* postfix: snapshot the pre-step pointer first */
+    uint32_t one=incdec_emit_const1(c);
+    char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.ptr%s",ch=='+'?"add":"sub");
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=one;cl->n_wr=1;cl->wr[0]=v->rid;}
+    *out = prefix ? v->rid : old;                          /* prefix: the stepped pointer; postfix: the snapshot */
+    return 1;
+  }
+  /* a SCALAR named local: cur ± 1, stored back into the (addressable) storage via a memory c.store */
+  uint32_t old = !prefix ? incdec_snapshot(c,v) : 0;       /* postfix: snapshot OLD before the store clobbers it */
+  uint32_t one=incdec_emit_const1(c);
+  uint32_t nw=binop_result(c,suf,v->rid,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+  bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
+  int sz=v->type.size?v->type.size:4;
+  bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+  if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=nw;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;cl->bounds=BCIR_BND_ASSUMED;
+    if(v->type.is_bool){cl->imm[2]=1;cl->n_imm=3;}}        /* a _Bool local normalizes on store */
+  if(!prefix){ *out=old; return 1; }                       /* postfix: the OLD value */
+  const bcir_resource *nr=res_of(c->fn,nw);                /* prefix: the STORED new value -- re-read (the var's */
+  *out = ((int)sz < (int)(nr?nr->elem_bytes:4)) ? v->rid : nw;   /* storage rid) if a sub-int target narrows */
+  return 1;
 }
 /* The assignment-expression level (lowest precedence, RIGHT-associative): `name = assign` / `name OP= assign`
  * evaluates to the assigned value (the named variable's storage), mirroring the statement forms in p_stmt and
@@ -3364,6 +3541,16 @@ static uint32_t p_stmt_expr(CC *c){
     /* ^ a BARE assignment terminal `({ a=b; })` falls back (matches the oracle): the `i++`/`++i` desugar
      *   shares the assignment AST, so its post/pre value would be guessed wrong. (A nested `({ (a=b)+1; })`
      *   is NOT a bare assignment and re-parses fine.) */
+    /* A BARE inc/dec terminal `({ a++; })` / `({ ++a; })` ALSO falls back: in STATEMENT position the
+     * oracle desugars `a++;` to an Assign (shedding the post/pre distinction), so a stmt-expr whose last
+     * item is a bare inc/dec is an `ExprStmt(Assign)` -> the oracle's "assignment as a stmt-expr value"
+     * fallback. A nested `({ (a++) + 1; })` is NOT bare (an IncDec inside a Binary) and re-parses fine. */
+    { int k=c->i, bare=0;
+      if((tok_is(&c->t[k],"++")||tok_is(&c->t[k],"--")) && c->t[k+1].k==T_ID
+         && (tok_is(&c->t[k+2],";")||tok_is(&c->t[k+2],"}"))) bare=1;             /* ++a; / --a; */
+      else if(c->t[k].k==T_ID && (tok_is(&c->t[k+1],"++")||tok_is(&c->t[k+1],"--"))
+              && (tok_is(&c->t[k+2],";")||tok_is(&c->t[k+2],"}"))) bare=1;        /* a++; / a-- ; */
+      if(bare){ fail(c,"assignment as a statement-expression value"); return temp(c,4); } }
     result=p_expr(c); if(is(c,";")) c->i++;
   }
   eat(c,"}"); c->nenv=env_mark; eat(c,")");   /* pop the scope, close `)` */
@@ -3701,8 +3888,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"%s %s = __imag__ %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
     else if(!strncmp(cl->op,"c.un.",5))                    /* `-`/`~` keep the operand width (long stays 64) */
       w+=snprintf(o+w,on-w,"%s %s = (%s%s);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
-    else if(!strncmp(cl->op,"c.cast:",7))                  /* (type)operand -- width / float cast */
-      w+=snprintf(o+w,on-w,"%s %s = (%s)%s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+7,rname(f,cl->rd[0],a));
+    else if(!strncmp(cl->op,"c.cast:",7))                  /* (type)operand -- width / float / pointer cast */
+      w+=snprintf(o+w,on-w,"%s %s = (%s)%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),cl->op+7,rname(f,cl->rd[0],a));  /* decl_ty: a pointer-snapshot cast keeps `T *` */
     else if(!strcmp(cl->op,"c.select"))                    /* ternary: cond ? then : els -- the select's own
                                                             * (signed/unsigned) type, not a hardcoded
                                                             * uint32_t (see the c.const note below). */
