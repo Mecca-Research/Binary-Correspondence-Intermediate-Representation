@@ -101,6 +101,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_comma.c",       # the comma operator in a primary parenthesized expr (#comma)
              "cfront_vla.c",         # native 1-D stack VLAs `T a[n]` -- in-body decl + masked bounds (#vla)
              "cfront_vlasizeof.c",   # runtime `sizeof a` of a VLA -> extent * sizeof(elem) (#vlasizeof)
+             "cfront_vlaparam.c",    # VLA function parameters `T a[n]` -> masked param bounds vs n (#vlaparam)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -3081,6 +3082,30 @@ def test_vla_sizeof_is_runtime():
                        ("unsigned g(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); unsigned z=(unsigned)sizeof p; free(p); return z; }", "match")]:
         r2 = compile_unit(src2, check_clang=True)
         assert r2.equivalence == want and r2.is_clean, (src2, r2.equivalence)
+
+
+def test_vla_function_parameters_recover_masked_bounds():
+    """§5.9 (#vlaparam): a VLA function parameter `T a[n]` decays to a pointer (C), but the runtime extent `n`
+    (a prior in-scope integer parameter) is RECOVERED and bound via ptr_extent so the param's `a[i]` promotes
+    to masked -- `a[BCIR_CHK(rid, i, n, "fn:a")]` -- the count re-emitted by name. Behaviour-equivalent to
+    Clang on both rails. Binding is gated on `n` being a stable (unmutated, non-address-taken) integer param,
+    so a mutated size or a non-VLA param stays unchanged (no cross-rail divergence)."""
+    from bcir.frontends.cfront import compile_unit, cparse, lower, emit
+
+    def _body(src):
+        lu = lower.lower_unit(cparse.parse_unit(src), None)
+        return emit.emit_function(lu.functions[next(iter(lu.functions))])
+    # a VLA param read masks against n; Clang-equivalent
+    src = "unsigned f(unsigned n, unsigned a[n]){ unsigned s=0u; for(unsigned i=0u;i<n;i++) s+=a[i]; return s; }"
+    r = compile_unit(src, check_clang=True)
+    assert r.equivalence == "match" and r.is_clean, r.equivalence
+    assert 'BCIR_CHK(' in _body(src) and ', n, ' in _body(src), _body(src)   # masked vs n, by name
+    # a regular (static-dim) array param is unchanged -- NOT masked
+    assert "BCIR_CHK" not in _body("unsigned f(unsigned a[5], unsigned i){ return a[i % 5u]; }")
+    # a MUTATED size param is not bound (assumed_safe) -- the stability gate; still Clang-equivalent
+    src2 = "unsigned f(unsigned n, unsigned a[n]){ n=n+1u; unsigned s=0u; for(unsigned i=0u;i<3u;i++) s+=a[i]; return s; }"
+    assert "BCIR_CHK" not in _body(src2)
+    assert compile_unit(src2, check_clang=True).equivalence == "match"
 
 
 def test_quarantine_report_is_the_debugger_trace_surface():

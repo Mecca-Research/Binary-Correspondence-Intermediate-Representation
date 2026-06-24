@@ -1727,6 +1727,28 @@ class _FuncLowerer:
         for rid, ct in self.genv.values():
             self.rtypes.setdefault(rid, ct)
         for p in self.func.params:                            # params -> input resources (shadowing)
+            if p.type.vla is not None:
+                # a VLA parameter `T a[n]`: like any array param it decays to a pointer, BUT we recover the
+                # runtime extent `n` (a prior in-scope integer parameter) and bind it via ptr_extent so the
+                # param's `a[i]` promotes to masked -- a[BCIR_CHK(rid, i, n, "f:a")] -- exactly like a
+                # malloc'd pointer with a recovered count. (Resolve the element with vla/array stripped:
+                # _resolve_type raises on a VLA TypeRef otherwise -- params are processed in source order, so
+                # `n` is already in env and a later param is not.)
+                elem = self._resolve_type(replace(p.type, vla=None, array=()))
+                if elem.size <= 0 or elem.kind == "array":
+                    raise CLowerError("a VLA parameter of an incomplete / array element is not supported")
+                ct = replace(pointer(elem), shape=(0,))
+                rid = self._new_rid()
+                self._resource(rid, ct, p.name)
+                self.env[p.name] = (rid, ct)
+                self.params.append((p.name, rid, ct))
+                n = p.type.vla                                # bind ONLY for a STABLE prior integer param `n`
+                if isinstance(n, cast.Name) and n.ident in self.env:   # (unmutated, not address-taken --
+                    n_rid, n_ct = self.env[n.ident]                    #  the _bind_extent stable-Name contract,
+                    if (n_ct.kind == "scalar" and not n_ct.is_float    #  so re-emitting `n` by name is sound)
+                            and self._mut_body.get(n.ident, 0) == 0 and n.ident not in self._mut_addr):
+                        self.ptr_extent[rid] = n_rid
+                continue
             ct = self._resolve_type(p.type)
             if ct.kind == "array":                            # an array param decays to a flat
                 dims, elem = [], ct                           # element pointer + a recorded shape
