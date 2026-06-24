@@ -336,11 +336,14 @@ class _LV:
 
 
 def _is_scalar_member_lv(target, lv: "_LV") -> bool:
-    """A memory lvalue the twin handles as an assignment-EXPRESSION value: a SINGLE-LEVEL, plain SCALAR struct
-    member `name.field` / `name->field` (not a bitfield). An array/nested-member/deref/array-of-structs/bitfield
-    target stays a both-rails follow-on (the twin's value grammar only stores+reloads a direct member)."""
-    return (isinstance(target, cast.Member) and isinstance(target.base, cast.Name)
-            and not lv.bit_width and lv.stride == 0 and lv.idx is None and lv.ct.kind == "scalar")
+    """A memory lvalue safe to store+reload as an assignment-EXPRESSION value: a plain SCALAR lvalue -- a
+    direct/nested struct member `s.x` / `s.a.b`, an array element `a[i]`, or a pointer deref `*p` -- that is
+    NOT a bitfield and NOT an array-of-structs strided element. The lvalue is resolved ONCE (its index/address
+    captured), so the re-read returns the stored/converted value without re-running a side-effecting index. A
+    bitfield or array-of-structs element target as a value stays a follow-on (the doubled bf.get / strided
+    read surface)."""
+    return (lv.kind == "mem" and lv.ct.kind == "scalar" and not lv.bit_width and lv.stride == 0
+            and not lv.member)
 
 
 # --- the structured body tree (L6): a block is a list mixing straight-line Claims with these. ---
@@ -1432,7 +1435,7 @@ class _FuncLowerer:
         if (isinstance(node.value, cast.Binary) and node.value.lhs is node.target
                 and not isinstance(node.target, cast.Name)):
             lv = self._lvalue(node.target)
-            if not stmt and not _is_scalar_member_lv(node.target, lv):   # a VALUE: only a plain scalar member
+            if not stmt and not (_is_scalar_member_lv(node.target, lv) and not self._mmio(lv.rid)):
                 raise CLowerError("this lvalue form's compound assignment as a value is a follow-on")
             cur = self._read(lv)
             b = self._rvalue(node.value.rhs)
@@ -1448,8 +1451,8 @@ class _FuncLowerer:
             self._bind_extent(rid, _ct, node.target.ident, node.value)            # §5.12: `p = malloc(N*…)` -> N
             return rid
         lv = self._lvalue(node.target)
-        if not stmt and not _is_scalar_member_lv(node.target, lv):   # a VALUE: only a plain scalar member lvalue
-            raise CLowerError("this lvalue form's assignment as a value is a follow-on")  # (`p->x`/`s.x`)
+        if not stmt and not (_is_scalar_member_lv(node.target, lv) and not self._mmio(lv.rid)):
+            raise CLowerError("this lvalue form's assignment as a value is a follow-on")  # MMIO re-read unsound
         self._write(lv, v)
         return v if stmt else self._read(lv)                   # value context: the stored/converted value (re-read)
 
