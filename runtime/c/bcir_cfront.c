@@ -974,6 +974,58 @@ static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uin
   if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
   return t;
 }
+/* After `a[i]` on a DIRECT local/global ARRAY-OF-STRUCTS variable (`v->sidx>=0`, the element struct) with a
+ * trailing `.`/`->`, parse the element field name and look it up in the element struct. Only a PLAIN SCALAR
+ * element field is handled (a bitfield/array/nested/pointer field is a both-rails follow-on). Returns 1 with
+ * *sub filled, else 0 (may raise via fail()). The leading `.`/`->` must be present; the cursor is past it. */
+static int aos_elem_field(CC *c, venv *base, field *sub) {
+  if(base->sidx<0 || !(is(c,".")||is(c,"->"))) return 0;
+  c->i++; tok fn=adv(c); sdef *ES=&c->s[base->sidx]; int fi=-1;
+  for(int i=0;i<ES->nf;i++) if((int)strlen(ES->f[i].name)==fn.n&&!strncmp(ES->f[i].name,fn.s,fn.n)) fi=i;
+  if(fi<0){ fail(c,"unknown field"); return 0; }
+  field s=ES->f[fi];
+  if(s.bit_w||s.arr_count||s.sidx>=0||s.is_ptr){ fail(c,"array-of-structs non-scalar element field"); return 0; }
+  *sub=s; return 1;
+}
+/* `a[i].field` on a DIRECT array-of-structs variable: load `sub->size` bytes at offsetof(sub), STRIDING by
+ * the element (struct) size `v->type.size` (imm[2]) -- the base is the array itself (member offset 0). */
+static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *sub) {
+  uint32_t t=sub->is_float?tempf(c,sub->size):tempi(c,sub->size,sub->signd);
+  if(sub->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;
+  bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
+  cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
+  cl->n_imm=3;cl->imm[0]=sub->byte_off;cl->imm[1]=sub->size;cl->imm[2]=base->type.size;
+  cl->bounds=BCIR_BND_ASSUMED;
+  if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+  return t;
+}
+/* `a[i].field = val` on a DIRECT array-of-structs variable: store `sub->size` bytes at offsetof(sub),
+ * STRIDING by the element (struct) size. The base is the array itself (member offset 0). Mirrors the
+ * member-array strided store (imm = [field_off, field_size, _Bool-flag, stride]). */
+static void store_index_field(CC *c, venv *base, uint32_t idx, const field *sub, uint32_t val) {
+  bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+  if(!cl) return;
+  cl->n_rd=3;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->rd[2]=val;cl->n_imm=2;
+  cl->imm[0]=sub->byte_off;cl->imm[1]=sub->size;cl->bounds=BCIR_BND_ASSUMED;
+  if(sub->is_bool){cl->imm[2]=1;cl->n_imm=3;}
+  if(cl->n_imm<3){cl->imm[2]=0;cl->n_imm=3;} cl->imm[3]=base->type.size; cl->n_imm=4;   /* stride imm[3] */
+  if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+}
+/* `s.arr[i] = val` (member array, the element copy size == the element/stride size) OR `s.arr[i].field = val`
+ * (member array-of-structs, the field copy size != the element stride): store at member_off + field_off,
+ * striding by the element size. `sf` is the stored slot (the element FIELD for AOS, else the array element),
+ * `soa` selects which (1 -> AOS field, stride = arr->size; 0 -> plain element, stride == copy size). */
+static void store_member_index(CC *c, venv *base, const field *arr, uint32_t idx,
+                               int soa, const field *sf, uint32_t val) {
+  bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+  if(!cl) return;
+  cl->n_rd=3;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->rd[2]=val;cl->n_imm=2;
+  cl->imm[0]= soa ? arr->byte_off+sf->byte_off : arr->byte_off; cl->imm[1]=sf->size;
+  cl->bounds=BCIR_BND_ASSUMED;
+  if(sf->is_bool){cl->imm[2]=1;cl->n_imm=3;}                      /* a _Bool element/field: normalize on store */
+  if(soa){ if(cl->n_imm<3){cl->imm[2]=0;cl->n_imm=3;} cl->imm[3]=arr->size; cl->n_imm=4; }   /* stride imm[3] */
+  if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+}
 /* Parse the `[i]` (or `[i][j][k]`) indices of a member-array access and flatten them row-major into a
  * single linear index (Horner: lin = lin*adims[d] + idx[d]) -- matching the oracle, so 1-D `s.a[i]` and
  * N-D `s.m[i][j]` both reduce to one element-scaled index into the member at its byte offset. */
@@ -1767,6 +1819,9 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
       if(ac){ac->n_rd=2;ac->rd[0]=m1;ac->rd[1]=idxs[d];ac->n_wr=1;ac->wr[0]=a1;}
       lin=a1;
     }
+    if(v->sidx>=0 && (is(c,".")||is(c,"->"))){    /* a[i].field on a DIRECT array-of-structs (strided load) */
+      field sub; if(aos_elem_field(c,v,&sub)) return emit_index_field(c,v,lin,&sub);
+      if(c->failed) return 0; }
     return emit_index(c,v,lin);
   }
   return v->rid;
@@ -2339,6 +2394,36 @@ static int lv_assign_value(CC *c, uint32_t *out){
   if(!isk(c,T_ID)) return 0;
   tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);
   if(!v){ c->i=save; return 0; }
+  /* --- a DIRECT ARRAY-OF-STRUCTS element FIELD `a[i].f = rhs` / `a[i].f OP= rhs` as a VALUE (strided) --- */
+  if(v->sidx>=0 && !v->type.is_volatile && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+    size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
+    int istart=c->i; c->i++; uint32_t idx=array_index(c,v);   /* resolve the index ONCE (Horner-flattened) */
+    field sub; int got = (is(c,".")||is(c,"->")) && aos_elem_field(c,v,&sub);
+    const tok *op=&c->t[c->i];
+    int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
+    if(c->failed){ return 0; }
+    if(!got || !(is_eq || is_compound_op(op))){       /* not `a[i].field`=/OP= -> roll back, fall through */
+      c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc;
+      c->i=istart; c->i=save; return 0;
+    }
+    if(is_eq){                                         /* plain: store rhs, then RELOAD the same strided slot */
+      c->i++; uint32_t rhs=p_assign(c);
+      store_index_field(c,v,idx,&sub,rhs);
+      *out=emit_index_field(c,v,idx,&sub);             /* reload reuses idx + field offset + element stride */
+      return 1;
+    }
+    char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = stored */
+    uint32_t cur=emit_index_field(c,v,idx,&sub); uint32_t rhs=p_assign(c);
+    const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+    uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+    bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+    store_index_field(c,v,idx,&sub,tmp);
+    /* a sub-int element FIELD (`unsigned char c; (a[i].c += v)`) truncates on store, so RE-READ the same
+     * strided slot (#narrowcompound, the fixture's aos_narrow); a full-width field needs no re-read. */
+    const bcir_resource *trr=res_of(c->fn,tmp);
+    *out = ((int)sub.size < (int)(trr?trr->elem_bytes:4)) ? emit_index_field(c,v,idx,&sub) : tmp;
+    return 1;
+  }
   /* --- an ARRAY ELEMENT `a[i] = rhs` / `a[i] OP= rhs` as a VALUE --- */
   if(c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
     /* eligible only for a plain SCALAR-element array (kind 0, non-volatile) indexed directly to an `=`/OP=
@@ -2381,6 +2466,39 @@ static int lv_assign_value(CC *c, uint32_t *out){
     for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n && !strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
     if(fi<0){ c->i=save; return 0; }
     field f=member_descend(c,S->f[fi]);                /* flatten `o.in.x` -> one offset; cursor past the chain */
+    /* --- a MEMBER-ARRAY element `s.arr[i] = rhs` (and member array-of-structs `s.arr[i].f = rhs`) as a
+     * VALUE: a STRIDED store at member_off (+ field_off) + idx*element-size, resolved ONCE, then re-read. --- */
+    if(f.arr_count && !v->type.is_volatile && is(c,"[")){
+      size_t m_res=c->fn->n_res,m_cl=c->fn->n_claims; uint32_t m_rid=c->rid,m_cid=c->cid,m_clc=c->cl_ctr;
+      uint32_t idx=member_arr_index(c,&f);             /* the row-major flattened element index, resolved once */
+      field sub; int soa = (is(c,".")||is(c,"->")) && elem_field(c,&f,&sub);   /* arr[i].field on AOS */
+      if(c->failed) return 0;
+      const field *sf = soa ? &sub : &f;               /* the stored slot: the element FIELD, or the array element */
+      const tok *aop=&c->t[c->i];
+      int a_eq = aop->k==T_PUN && aop->n==1 && aop->s[0]=='=';
+      if(!(a_eq || is_compound_op(aop))){              /* a plain value, not an assignment -> undo + fall back */
+        c->fn->n_res=m_res;c->fn->n_claims=m_cl;c->rid=m_rid;c->cid=m_cid;c->cl_ctr=m_clc;
+        c->i=save; return 0; }
+      if(a_eq){                                        /* plain: store rhs, then RELOAD the same strided slot */
+        c->i++; uint32_t rhs=p_assign(c);
+        store_member_index(c,v,&f,idx,soa,sf,rhs);
+        *out = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
+        return 1;
+      }
+      char ach=aop->s[0]; c->i++;                       /* compound: read cur, binop, store, value = stored */
+      uint32_t cur = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
+      uint32_t rhs=p_assign(c);
+      const char *suf; bcir_opcode oc; compound_binop(ach,&suf,&oc);
+      uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+      bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+      store_member_index(c,v,&f,idx,soa,sf,tmp);
+      /* a sub-int element/field truncates on store -> RE-READ the same strided slot (#narrowcompound); a
+       * full-width element/field needs no re-read (oracle: lv.ct.size < rt.size). */
+      const bcir_resource *trr=res_of(c->fn,tmp);
+      *out = ((int)sf->size < (int)(trr?trr->elem_bytes:4))
+             ? (soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx)) : tmp;
+      return 1;
+    }
     const tok *op=&c->t[c->i];
     int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
     /* eligible for a SCALAR leaf member (plain OR bitfield), non-volatile -- NOT a pointer/array/struct leaf
@@ -3060,13 +3178,7 @@ static void p_stmt(CC *c) {
           bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
           aval=tmp;
         } else { if(!eat(c,"="))return; aval=p_expr(c); }
-        bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-        if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=aval;cl->n_imm=2;
-          cl->imm[0]= soa ? f.byte_off+sub.byte_off : f.byte_off; cl->imm[1]=sf->size;
-          cl->bounds=BCIR_BND_ASSUMED;
-          if(sf->is_bool){cl->imm[2]=1;cl->n_imm=3;}   /* a _Bool element/field: normalize on store */
-          if(soa){ if(cl->n_imm<3){cl->imm[2]=0;cl->n_imm=3;} cl->imm[3]=f.size; cl->n_imm=4; }   /* stride imm[3] */
-          if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
+        store_member_index(c,v,&f,idx,soa,sf,aval);
         eat(c,";");return;
       }
       uint32_t val;
@@ -3106,6 +3218,21 @@ static void p_stmt(CC *c) {
       int as_start=c->i;                                /* roll-back point: `a[i]` may be a VALUE, not a store */
       size_t as_res=c->fn->n_res,as_cl=c->fn->n_claims; uint32_t as_rid=c->rid,as_cid=c->cid,as_clc=c->cl_ctr;
       c->i++; uint32_t idx=array_index(c,v); uint32_t val;   /* a[i] / m[i][j] (Horner-flattened) */
+      if(v->sidx>=0 && (is(c,".")||is(c,"->"))){        /* a[i].field on a DIRECT array-of-structs (strided store) */
+        field sub; if(!aos_elem_field(c,v,&sub)){ if(c->failed) return;
+          c->fn->n_res=as_res;c->fn->n_claims=as_cl;c->rid=as_rid;c->cid=as_cid;c->cl_ctr=as_clc;
+          c->i=as_start;(void)p_expr(c);eat(c,";");return; }
+        uint32_t aval;
+        if(is_compound_op(&c->t[c->i])){               /* a[i].f OP= expr -> strided load, bin op, strided store */
+          char ch=c->t[c->i].s[0]; c->i++;
+          uint32_t cur=emit_index_field(c,v,idx,&sub); uint32_t rhs=p_expr(c);
+          const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+          uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+          bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+          aval=tmp;
+        } else { if(!eat(c,"="))return; aval=p_expr(c); }
+        store_index_field(c,v,idx,&sub,aval); eat(c,";"); return;
+      }
       if(is_compound_op(&c->t[c->i])){
         char ch=c->t[c->i].s[0]; c->i++;                /* a[idx] OP= expr -> load, op, store */
         uint32_t cur=emit_index(c,v,idx); uint32_t rhs=p_expr(c);
@@ -3411,6 +3538,15 @@ static const char *decl_ty(const bcir_func *f,uint32_t rid,char *buf,size_t n){
   } else snprintf(buf,n,"%s",tty(f,rid));
   return buf;
 }
+/* The `&`-or-not prefix that turns a BASE resource into a `(char *)`-castable pointer (mirrors the oracle's
+ * _base_ptr): a POINTER value decays to itself (`(char *)p`), and so does an ARRAY name (a scalar resource
+ * with count>1 -- a DIRECT array-of-structs `a[i].f`, `(char *)a`); a struct/scalar VALUE is addressed
+ * (`(char *)&s`). NOTE: the addrof path keeps its own `&`-for-array rule (it addresses `&arr[i]`). */
+static const char *base_amp(const bcir_resource *br){
+  if(br && br->kind==BCIR_RK_POINTER) return "";
+  if(br && br->kind==BCIR_RK_SCALAR && br->count>1) return "";   /* a direct array name decays */
+  return "&";
+}
 static int is_named_local(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid); if(!r||!r->name[0]) return 0;
   if(r->read_only) return 0;                                          /* a global, defined in source */
@@ -3537,8 +3673,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else w+=snprintf(o+w,on-w,"%s %s = %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));   /* decl_ty: a copied pointer temp keeps `T *` */
     }else if(!strcmp(cl->op,"c.load")){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;
-      if(cl->n_rd==2 && cl->n_imm){       /* s.arr[i]: load at &base + member_off + idx*stride, copy `es` bytes */
-        const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long es=cl->n_imm>1?cl->imm[1]:4;
+      if(cl->n_rd==2 && cl->n_imm){       /* s.arr[i] / a[i].f: load at base + off + idx*stride, copy `es` bytes */
+        const char *amp=base_amp(br); long long es=cl->n_imm>1?cl->imm[1]:4;
         long long stride=cl->n_imm>2?cl->imm[2]:es;   /* array-of-structs `arr[i].field`: stride sizeof(elem) != es */
         /* the temp carries the element's (width, signedness): memcpy es bytes into it so a signed sub-int
          * element reads sign-extended (the zero-extending uint32 form dropped the sign). */
@@ -3551,8 +3687,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         /* a plain member load: memcpy fsz bytes into the typed temp so a signed sub-int member sign-extends */
         w+=snprintf(o+w,on-w,"%s %s; memcpy(&%s, (const char *)%s%s + %lld, %lld);\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz); }  /* decl_ty: a pointer member load is `T *t` */
     }else if(!strcmp(cl->op,"c.store")&&cl->n_rd==3){   /* L3: array element store  a[idx] = value */
-      if(cl->n_imm){                      /* s.arr[i] = v: store at &base + member_off + idx*elem_size */
-        const bcir_resource *br=res_of(f,cl->rd[0]); const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
+      if(cl->n_imm){                      /* s.arr[i]=v / a[i].f=v: store at base + off + idx*stride */
+        const bcir_resource *br=res_of(f,cl->rd[0]); const char *amp=base_amp(br);
         long long off=cl->imm[0], es=cl->n_imm>1?cl->imm[1]:4;
         long long stride=cl->n_imm>3?cl->imm[3]:es;    /* array-of-structs `arr[i].field=v`: stride sizeof(elem) */
         const bcir_resource *vr=res_of(f,cl->rd[2]);   /* a float element converts (double->float), not a uint
