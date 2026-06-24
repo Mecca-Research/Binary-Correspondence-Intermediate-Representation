@@ -2950,6 +2950,39 @@ def test_r21_dual_rail_parity():
             assert twin == oracle, f"case {i}: twin={twin} oracle={oracle}\n{src}"
 
 
+def test_extent_count_mutation_is_not_promoted():
+    """§5.12 soundness: a recovered count must be STABLE from the allocation onward. A count that is
+    re-assigned AFTER the alloc (`n = n - 1`, `n--`) -- so its single assignment is an ordinary BODY write,
+    not a decl-init -- must NOT bind, or the re-emitted runtime extent would disagree with the allocation
+    and FALSE-TRAP a valid access. Both rails leave it unmanaged (no `BCIR_CHK`); a decl-init count
+    (`unsigned m = ...`, before the alloc) still promotes. Guards the gate that distinguishes the two."""
+    from bcir.frontends.cfront import compile_unit
+    # the access p[n] (after n=n-1) reads p[original-1], the LAST valid element -- it must not be guarded
+    # against the mutated extent (which would reject original-1 < original-1).
+    src = ("unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); "
+           "for(unsigned k=0u;k<n;k++) p[k]=k; n=n-1u; return p[n]; }")
+    r = compile_unit("#include <stdlib.h>\n" + src, check_clang=False)
+    assert "BCIR_CHK" not in r.emitted["f"], r.emitted["f"]              # oracle: unmanaged (sound)
+    if _CC:
+        with tempfile.TemporaryDirectory() as d:
+            # twin agrees (no BCIR_CHK), and the emit RUNS without a false trap on the valid p[original-1].
+            exe = _build_frontend(d)
+            cpath = os.path.join(d, "f.c")
+            open(cpath, "w").write("#include <stdlib.h>\n" + src)
+            out = subprocess.run([exe, cpath], capture_output=True, text=True).stdout
+            assert "BCIR_CHK" not in out.partition("----EMIT----")[2], out   # twin: unmanaged too (parity)
+            body = r.emitted["f"].split("*/\n", 1)[-1]
+            prog = (f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
+                    f'{body}\nint main(void){{ printf("%u\\n", bcir_f(5u)); return 0; }}\n')  # f(5)=p[4]=4
+            ep = os.path.join(d, "e")
+            open(os.path.join(d, "e.c"), "w").write(prog)
+            b = subprocess.run([_CC, "-std=c23", "-O2", "-I", _C, os.path.join(d, "e.c"),
+                                os.path.join(_C, "bcir_quarantine.c"), "-o", ep], capture_output=True, text=True)
+            assert b.returncode == 0, b.stderr
+            run = subprocess.run([ep], capture_output=True, text=True)     # must NOT abort (no false trap)
+            assert run.returncode == 0 and run.stdout.strip() == "4", (run.returncode, run.stdout, run.stderr)
+
+
 def test_quarantine_report_is_the_debugger_trace_surface():
     """§5.12 debugger trace surface: a STRONG override of `bcir_bounds_quarantine` (the ML-layer / debugger
     seam) records each OOB event into the ring without aborting, and `bcir_quarantine_report` reads the ring
