@@ -1840,7 +1840,9 @@ static uint32_t p_primary(CC *c) {
     uint32_t r=temp(c,4); bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
     if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=size;} return r;
   }
-  if(is(c,"(")){c->i++;uint32_t r=p_expr(c);eat(c,")");return r;}
+  if(is(c,"(")){c->i++;uint32_t r=p_expr(c);
+    while(is(c,",")){c->i++;r=p_expr(c);}    /* the comma OPERATOR (lowest prec): lower each operand for its */
+    eat(c,")");return r;}                    /* side effects, DISCARD all but the last, yield the last rid */
   if(isk(c,T_ID)){
     tok id=adv(c);
     const char *aop;bcir_opcode aoc;int akind;
