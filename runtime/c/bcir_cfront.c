@@ -2232,10 +2232,12 @@ static int name_assign_ahead(CC *c){
   return c->t[c->i].k==T_ID &&
          ((c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='=') || is_compound_op(&c->t[c->i+1]));
 }
-/* Lookahead (side-effect-free): is the cursor at a SINGLE-LEVEL plain-SCALAR member assignment-expression
+/* Lookahead (side-effect-free): is the cursor at a SINGLE-LEVEL SCALAR member assignment-expression
  * `name.field = ...` / `name->field OP= ...`? Fills *out (the field) + *base (the struct base venv). A
- * bitfield/pointer/array/nested-struct field, a nested/array/deref chain, or a non-local base returns 0 (those
- * stay a both-rails follow-on -- the value grammar only store+reloads a direct member). */
+ * pointer/array/nested-struct field, a nested/array/deref chain, or a non-local base returns 0 (those stay a
+ * both-rails follow-on -- the value grammar store+reloads a direct member). A BITFIELD member IS eligible
+ * (#bfassignexpr) -- its value is the masked/sign-extended STORED field (a bf.set store + a bf.get reload) --
+ * UNLESS the base is volatile/MMIO (the re-read would be an extra access; that stays a fallback). */
 static int member_assign_ahead(CC *c, field *out, venv **base){
   if(!isk(c,T_ID)) return 0;
   venv *v=lookup(c,&c->t[c->i]); if(!v || v->sidx<0) return 0;        /* a local/param struct (value or pointer) */
@@ -2246,7 +2248,8 @@ static int member_assign_ahead(CC *c, field *out, venv **base){
   for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn->n && !strncmp(S->f[i].name,fn->s,fn->n)) fi=i;
   if(fi<0) return 0;
   field f=S->f[fi];
-  if(f.bit_w || f.is_ptr || f.arr_count || f.sidx>=0) return 0;       /* a plain scalar member only */
+  if(f.is_ptr || f.arr_count || f.sidx>=0) return 0;                  /* a scalar member (plain or bitfield) only */
+  if(f.bit_w && v->type.is_volatile) return 0;                        /* a volatile/MMIO bitfield re-read stays a fallback */
   const tok *as=&c->t[c->i+3];
   if(!(as->k==T_PUN && ((as->n==1 && as->s[0]=='=') || is_compound_op(as)))) return 0;
   *out=f; *base=v; return 1;
@@ -2257,6 +2260,24 @@ static void store_member(CC *c, venv *base, const field *f, uint32_t val){
   if(cl){cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f->byte_off;cl->imm[1]=f->size;
     cl->bounds=BCIR_BND_ASSUMED;
     if(f->is_bool){cl->imm[2]=1;cl->n_imm=3;}                         /* a _Bool member normalizes on store */
+    if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
+}
+/* Emit a BITFIELD member store `base.field = val` (#bfassignexpr): read the storage unit (`access_bytes`
+ * spanned bytes, into a pow2 temp), insert the masked bits (c.bf.set), store the unit's spanned bytes back
+ * -- the same bf.set machinery the STATEMENT-form bitfield store uses, factored out so the value path reuses
+ * it. The reload that yields the assignment's VALUE is a plain emit_member (its c.load + c.bf.get). */
+static void store_member_bf(CC *c, venv *base, const field *f, uint32_t val){
+  int absz=f->access_bytes<=4?4:8;
+  uint32_t unit=temp(c,absz);
+  bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
+  if(ld){ld->n_rd=1;ld->rd[0]=base->rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=f->byte_off;ld->imm[1]=f->access_bytes;ld->bounds=BCIR_BND_ASSUMED;
+    if(base->type.is_volatile){ld->domain=BCIR_DOM_MMIO;ld->lane=BCIR_LANE_H;ld->hazard=BCIR_HZ_BARRIERED;}}
+  uint32_t nu=temp(c,absz);
+  bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
+  if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=val;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=f->bit_off;bs->imm[1]=f->bit_w;}
+  bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+  if(cl){cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=nu;cl->n_imm=3;cl->imm[0]=f->byte_off;cl->imm[1]=f->access_bytes;cl->imm[2]=2;
+    cl->bounds=BCIR_BND_ASSUMED;                                      /* a bitfield UNIT store: `_v` takes the unit's full type */
     if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
 }
 static uint32_t p_assign(CC *c);   /* fwd: the rhs of an assignment-as-value is itself an assign (right-assoc) */
@@ -2362,15 +2383,16 @@ static int lv_assign_value(CC *c, uint32_t *out){
     field f=member_descend(c,S->f[fi]);                /* flatten `o.in.x` -> one offset; cursor past the chain */
     const tok *op=&c->t[c->i];
     int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
-    /* eligible only for a plain SCALAR leaf member, non-volatile -- NOT a bitfield, NOT a pointer/array/
-     * struct leaf (a pointer field reaching `->` / an array `[` would not land here; a struct leaf with no
-     * `=` is a value), and the base must not be a volatile/MMIO struct. */
-    if(!(is_eq || is_compound_op(op)) || f.bit_w || f.is_ptr || f.arr_count || f.sidx>=0
+    /* eligible for a SCALAR leaf member (plain OR bitfield), non-volatile -- NOT a pointer/array/struct leaf
+     * (a pointer field reaching `->` / an array `[` would not land here; a struct leaf with no `=` is a
+     * value), and the base must not be a volatile/MMIO struct (a bitfield re-read there would be an extra
+     * access -- it stays a fallback, matching the single-level member path + the oracle's gate). */
+    if(!(is_eq || is_compound_op(op)) || f.is_ptr || f.arr_count || f.sidx>=0
        || v->type.is_volatile){ c->i=save; return 0; }
     if(is_eq){                                         /* plain: store rhs, then RELOAD the same member */
       c->i++; uint32_t rhs=p_assign(c);
-      store_member(c,v,&f,rhs);
-      *out=emit_member(c,v,&f);
+      if(f.bit_w) store_member_bf(c,v,&f,rhs); else store_member(c,v,&f,rhs);   /* a nested bitfield: bf.set */
+      *out=emit_member(c,v,&f);                         /* reload: a bitfield re-reads via bf.get (#bfassignexpr) */
       return 1;
     }
     char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = stored */
@@ -2378,11 +2400,12 @@ static int lv_assign_value(CC *c, uint32_t *out){
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
     bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
-    store_member(c,v,&f,tmp);
+    if(f.bit_w) store_member_bf(c,v,&f,tmp); else store_member(c,v,&f,tmp);     /* a nested bitfield: bf.set */
     /* the value is the STORED (narrowed) value: a sub-int leaf truncates on store, so RE-READ the same
-     * member (#narrowcompound); a full-width leaf needs no re-read (oracle: lv.ct.size < rt.size). */
+     * member (#narrowcompound); a full-width leaf needs no re-read (oracle: lv.ct.size < rt.size). A BITFIELD
+     * narrows to its BIT width (the byte-size test misses it) -- always RE-READ it. */
     const bcir_resource *trr=res_of(c->fn,tmp);
-    *out = ((int)f.size < (int)(trr?trr->elem_bytes:4)) ? emit_member(c,v,&f) : tmp;
+    *out = (f.bit_w || (int)f.size < (int)(trr?trr->elem_bytes:4)) ? emit_member(c,v,&f) : tmp;
     return 1;
   }
   c->i=save; return 0;
@@ -2423,8 +2446,8 @@ static uint32_t p_assign(CC *c){
     const tok *op=&c->t[c->i];
     if(op->n==1 && op->s[0]=='='){                  /* plain: store rhs, then RE-READ -> the converted value */
       c->i++; uint32_t rhs=p_assign(c);             /* right-associative: p->x = s.y = v */
-      store_member(c,mbase,&mf,rhs);
-      return emit_member(c,mbase,&mf);
+      if(mf.bit_w) store_member_bf(c,mbase,&mf,rhs); else store_member(c,mbase,&mf,rhs);   /* a bitfield: bf.set */
+      return emit_member(c,mbase,&mf);              /* reload: a bitfield re-reads via bf.get (#bfassignexpr) */
     }
     char ch=op->s[0]; c->i++;                       /* compound `OP=`: read-once, binop, store, value = stored */
     uint32_t cur=emit_member(c,mbase,&mf);          /* read FIRST (matches the oracle's claim order) */
@@ -2432,13 +2455,15 @@ static uint32_t p_assign(CC *c){
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
     bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
-    store_member(c,mbase,&mf,tmp);
+    if(mf.bit_w) store_member_bf(c,mbase,&mf,tmp); else store_member(c,mbase,&mf,tmp);       /* a bitfield: bf.set */
     /* the value of a compound is the STORED (narrowed) value: a sub-int member (`unsigned char c;
      * (s.c += v)`) truncates on store, so RE-READ it (#narrowcompound) -- the plain `=` path above
      * already re-reads; a full-width member needs no re-read (oracle: lv.ct.size < rt.size), so the
-     * existing #memassignexpr cases stay byte-identical. */
+     * existing #memassignexpr cases stay byte-identical. A BITFIELD narrows to its BIT width (its size is
+     * the full underlying type, so the byte-size test misses it) -- always RE-READ it (oracle:
+     * narrows = lv.bit_width or lv.ct.size < rt.size). */
     const bcir_resource *trr=res_of(c->fn,tmp);
-    return ((int)mf.size < (int)(trr?trr->elem_bytes:4)) ? emit_member(c,mbase,&mf) : tmp;
+    return (mf.bit_w || (int)mf.size < (int)(trr?trr->elem_bytes:4)) ? emit_member(c,mbase,&mf) : tmp;
   }
   { uint32_t v; if(lv_assign_value(c,&v)) return v; }   /* a[i]/ *p/o.in.x = rhs (store + reload) as a VALUE */
   return p_cond(c);
