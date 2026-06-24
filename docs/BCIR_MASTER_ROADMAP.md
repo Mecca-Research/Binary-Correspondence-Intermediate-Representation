@@ -669,9 +669,17 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > `cfront_vla.c` (fill/reduce, signed, reversed-index, expression-sized), `test_native_vla_lowering_and_unsupported_forms`.
 > The **unselected fork (b)** — a managed-buffer `T *a = malloc(n*sizeof(T))` reusing §5.12 extents directly —
 > was rejected: it transforms stack→heap and needs a scope-exit `free` the emitter has no hook for (it would
-> leak), so it is less faithful than the in-body stack VLA. *Remaining VLA follow-ons:* multi-dimensional VLAs
-> `T a[m][n]`, VLA function parameters `void f(int n, int a[n])` (today the dim decays — the param is a plain
-> pointer), and a VLA `sizeof` yielding a runtime value — all currently route to `--fallback`.
+> leak), so it is less faithful than the in-body stack VLA.
+>
+> ✅ **The VLA follow-on triad is complete — all dual-rail, parity-gated:** (1) **runtime `sizeof a`** of a VLA
+> (#vlasizeof) → `(size_t)((size_t)__bcir_extK * sizeof(elem))`, the snapshot extent × the element size, not a
+> stale static fold; (2) **VLA function parameters** `T a[n]` (#vlaparam) — the decayed-pointer param recovers
+> the runtime extent from the prior integer param `n` (stable-Name-gated) so `a[i]` masks `BCIR_CHK(rid,i,n)`;
+> (3) **multi-dimensional VLAs** `T a[m][n]` / 3-D (#vlamd) — each dim snapshotted once, a flat in-body
+> `T a[__ext_total]` sized by the runtime product, the row-major Horner index `i*n+j` (runtime inner-dim
+> stride) masked against the total. Capped at 3 dims (the dim table); a >3-D VLA routes to `--fallback`.
+> *Remaining VLA tail (still fallback):* a VLA whose size expression has side effects re-evaluated unsoundly,
+> and `sizeof a[0]` on a non-int element (the integer-element subset keeps the static element-size fold).
 
 > #### C-frontend differential fuzzer (`tools/c/fuzz_cfront.py`, `test_cfront_differential_fuzz`)
 > A generative **three-way** differential — random *UB-free* C programs run through BOTH rails (twin

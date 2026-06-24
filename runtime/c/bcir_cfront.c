@@ -1296,11 +1296,15 @@ static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -
 static uint32_t array_index(CC *c, venv *v) {
   uint32_t idxs[3]; int ni=0;
   while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]"); if(ni<3)idxs[ni++]=ix; }
+  const bcir_resource *vr=res_of(c->fn,v->rid);    /* a multi-dim VLA -> RUNTIME dim strides (no c.const) */
+  int vla=(vr && vr->vla_ndims>0);
   uint32_t lin = ni?idxs[0]:0;
   for(int d=1; d<ni; d++){
-    int dim = d<v->type.nadims ? v->type.adims[d] : 1;
-    uint32_t k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
-    if(kc){kc->n_wr=1;kc->wr[0]=k;kc->n_imm=1;kc->imm[0]=dim;}
+    uint32_t k;
+    if(vla){ k = (d<(int)vr->vla_ndims) ? vr->vla_strides[d] : 0; }   /* dim d's snapshot rid -- no const */
+    else { int dim = d<v->type.nadims ? v->type.adims[d] : 1;
+      k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+      if(kc){kc->n_wr=1;kc->wr[0]=k;kc->n_imm=1;kc->imm[0]=dim;} }
     uint32_t m1=temp(c,4); bcir_claim *mc=new_claim(c,"c.bin.mul",BCIR_OP_MUL);
     if(mc){mc->n_rd=2;mc->rd[0]=lin;mc->rd[1]=k;mc->n_wr=1;mc->wr[0]=m1;}
     uint32_t a1=temp(c,4); bcir_claim *ac=new_claim(c,"c.bin.add",BCIR_OP_ADD);
@@ -1748,11 +1752,15 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
   if(is(c,"[")){                                /* L3: base[i] / m[i][j] (row-major flatten) */
     uint32_t idxs[3]; int ni=0;
     while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]"); if(ni<3)idxs[ni++]=ix; }
+    const bcir_resource *vr=res_of(c->fn,v->rid);    /* a multi-dim VLA -> RUNTIME dim strides (no c.const) */
+    int vla=(vr && vr->vla_ndims>0);
     uint32_t lin=idxs[0];
     for(int d=1; d<ni; d++){                     /* lin = lin*dim + idxs[d]  (Horner) */
-      int dim = d<v->type.nadims ? v->type.adims[d] : 1;
-      uint32_t k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
-      if(kc){kc->n_wr=1;kc->wr[0]=k;kc->n_imm=1;kc->imm[0]=dim;}
+      uint32_t k;
+      if(vla){ k = (d<(int)vr->vla_ndims) ? vr->vla_strides[d] : 0; }   /* dim d's snapshot rid -- no const */
+      else { int dim = d<v->type.nadims ? v->type.adims[d] : 1;
+        k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+        if(kc){kc->n_wr=1;kc->wr[0]=k;kc->n_imm=1;kc->imm[0]=dim;} }
       uint32_t m1=temp(c,4); bcir_claim *mc=new_claim(c,"c.bin.mul",BCIR_OP_MUL);
       if(mc){mc->n_rd=2;mc->rd[0]=lin;mc->rd[1]=k;mc->n_wr=1;mc->wr[0]=m1;}
       uint32_t a1=temp(c,4); bcir_claim *ac=new_claim(c,"c.bin.add",BCIR_OP_ADD);
@@ -2688,23 +2696,34 @@ static void p_stmt(CC *c) {
       if(!isk(c,T_ID)){ fail(c,"expected declarator name"); return; }
       tok nm=adv(c); char nb[BCIR_CIR_NAME]; idcpy(nb,&nm);
       int arr=0,la_nd=0,la_dims[3]={0,0,0};            /* T name[N] / T m[A][B] -- a (multi-dim) local array */
-      int is_vla=0; uint32_t vla_n=0;                  /* T a[n] -- a 1-D stack VLA: a RUNTIME-sized dim */
+      /* scan ALL `[...]` dims WITHOUT lowering, recording each as either a literal value or a runtime-expr
+       * token range; then classify (oracle order): all-literal -> a static array (unchanged); >=1 runtime
+       * dim with ONE dim -> the 1-D VLA path (byte-identical); >=2 dims with a runtime dim -> a multi-dim
+       * VLA. Deferring the lowering keeps the dim snapshots in canonical dim order (each dim is evaluated
+       * then snapshotted, in turn) -- the byte-parity contract with the oracle's Decl branch. */
+      int dim_nd=0; int dim_is_lit[8]; int dim_lit[8]; int dim_tok[8]; int any_vla=0;
       while(is(c,"[")){ c->i++;
-        if(!isk(c,T_INT) && !is(c,"]")){               /* a non-constant dim -> a VLA: lower it ONCE (C order) */
-          if(la_nd){ fail(c,"a multi-dimensional VLA is not supported"); return; }   /* 1-D only (else fallback) */
-          vla_n=p_expr(c); is_vla=1; eat(c,"]");
-          if(is(c,"[")){ fail(c,"a multi-dimensional VLA is not supported"); return; }
-          break; }
-        int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
-        if(la_nd<3)la_dims[la_nd]=dim; la_nd++; arr = arr?arr*dim:dim; }
-      if(is_vla){
-        /* a 1-D stack VLA `T a[n]` (the C twin of the oracle's Decl VLA branch). The runtime size in `vla_n`
-         * was evaluated ONCE; snapshot it into an immutable hidden extent `__bcir_extK`, register the array
-         * NAMED but with is_vla (so it is declared IN-BODY by `c.vladecl`, not up front -- its size isn't
-         * known until execution reaches the decl), and bind ptr_extent so `a[i]` masks against the snapshot.
-         * A VLA cannot be static / initialized (C) -> those route to the fallback via fail. */
+        if(!isk(c,T_INT) && !is(c,"]")){               /* a non-constant dim -> a runtime VLA dim */
+          if(dim_nd<8){ dim_is_lit[dim_nd]=0; dim_tok[dim_nd]=c->i; } any_vla=1;
+          int paren=0; while(!(paren==0 && is(c,"]")) && !isk(c,T_END)){   /* skip to the matching `]` */
+            if(is(c,"[")||is(c,"(")) paren++; else if(is(c,")")) paren--; c->i++; }
+          eat(c,"]"); }
+        else { int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
+          if(dim_nd<8){ dim_is_lit[dim_nd]=1; dim_lit[dim_nd]=dim; }
+          if(la_nd<3)la_dims[la_nd]=dim; la_nd++; arr = arr?arr*dim:dim; }
+        dim_nd++; }
+      int after_dims=c->i;                             /* the cursor past the last `]` (restored after re-parse) */
+      if(any_vla){
         if(ty.kind!=0 || ty.is_float){ fail(c,"only an integer-element VLA is supported"); return; }
         if(is_static || is(c,"=")){ fail(c,"a VLA cannot have static storage or an initializer"); return; }
+        if(dim_nd>3){ fail(c,"a variable-length array of more than 3 dimensions is not supported"); return; }
+      }
+      if(any_vla && dim_nd==1){
+        /* a 1-D stack VLA `T a[n]` (the C twin of the oracle's Decl VLA branch). The runtime size is
+         * evaluated ONCE; snapshot it into an immutable hidden extent `__bcir_extK`, register the array
+         * NAMED but with is_vla (so it is declared IN-BODY by `c.vladecl`, not up front -- its size isn't
+         * known until execution reaches the decl), and bind ptr_extent so `a[i]` masks against the snapshot. */
+        c->i=dim_tok[0]; uint32_t vla_n=p_expr(c); c->i=after_dims;   /* lower the dim ONCE, in C order */
         const bcir_resource *nr=res_of(c->fn,vla_n);    /* the size must be an integer scalar */
         if(!nr || nr->kind!=BCIR_RK_SCALAR || nr->is_float){ fail(c,"a VLA size must be an integer expression"); return; }
         int nbytes=(int)nr->elem_bytes, nsgn=nr->is_signed;   /* capture before add_res may realloc res[] */
@@ -2719,6 +2738,46 @@ static void p_stmt(CC *c) {
         { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext;vd->n_wr=1;vd->wr[0]=arid;} }
         env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
         ptrext_set(c->fn,arid,ext);   /* §5.12 mask `a[i]` against the recovered runtime extent */
+        if(is(c,",")){ c->i++; continue; }
+        break;
+      }
+      if(any_vla){
+        /* a MULTI-dim stack VLA `T a[d0][d1]...` (the C twin of the oracle's vla_dims Decl branch). Snapshot
+         * each dim ONCE (canonical order: dims 0..k-1) into a named `__bcir_extK` (runtime -> evaluate + copy;
+         * literal -> a const temp + copy), compute the total = product into a final `__bcir_extK`, declare the
+         * array IN-BODY as a FLAT `T a[__ext_total];` (same row-major layout as `T a[d0][d1]`), and record the
+         * per-dim snapshot rids so `a[i][j]` Horner-flattens with RUNTIME strides masked against the total. */
+        uint32_t dim_exts[3]; int nbytes=ty.size, nsgn=ty.signd;
+        for(int d=0; d<dim_nd; d++){                  /* 1. snapshot each dim into a named __bcir_extK */
+          char en[BCIR_CIR_NAME]; snprintf(en,sizeof en,"__bcir_ext%d",c->ext_ctr++);
+          uint32_t ext=add_res(c,BCIR_DOM_RAM,4,1,0,BCIR_RK_SCALAR,en);   /* a uint32_t extent snapshot */
+          if(dim_is_lit[d]){                          /* a literal dim -> a const temp, copied into the ext */
+            uint32_t kt=temp(c,4);
+            { bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD); if(kc){kc->n_wr=1;kc->wr[0]=kt;kc->n_imm=1;kc->imm[0]=dim_lit[d];} }
+            { bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=kt;cp->n_wr=1;cp->wr[0]=ext;} }
+          } else {                                    /* a runtime dim -> evaluated once, copied in */
+            c->i=dim_tok[d]; uint32_t dv=p_expr(c); c->i=after_dims;
+            { bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=dv;cp->n_wr=1;cp->wr[0]=ext;} }
+          }
+          dim_exts[d]=ext;
+        }
+        uint32_t total=dim_exts[0];                   /* 2. total extent = product of all dim snapshots */
+        for(int d=1; d<dim_nd; d++){
+          uint32_t prod=temp(c,4);
+          { bcir_claim *mc=new_claim(c,"c.bin.mul",BCIR_OP_MUL); if(mc){mc->n_rd=2;mc->rd[0]=total;mc->rd[1]=dim_exts[d];mc->n_wr=1;mc->wr[0]=prod;} }
+          total=prod;
+        }
+        char et[BCIR_CIR_NAME]; snprintf(et,sizeof et,"__bcir_ext%d",c->ext_ctr++);
+        uint32_t ext_total=add_res(c,BCIR_DOM_RAM,4,1,0,BCIR_RK_SCALAR,et);   /* a stable name for the decl + mask */
+        { bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=total;cp->n_wr=1;cp->wr[0]=ext_total;} }
+        uint32_t arid=add_res(c,BCIR_DOM_RAM,nbytes,1,0,BCIR_RK_SCALAR,nb);   /* 3. a FLAT runtime-extent array */
+        { bcir_resource *ar=&c->fn->res[c->fn->n_res-1];
+          ar->is_signed=(uint8_t)(nsgn?1:0); ar->is_vla=1; ar->ext_var=ext_total;
+          ar->vla_ndims=(uint8_t)dim_nd; for(int d=0;d<dim_nd;d++) ar->vla_strides[d]=dim_exts[d];
+          if(ty.is_bool) ar->is_bool=1; if(ty.is_plain_char) ar->is_plain_char=1; }
+        { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext_total;vd->n_wr=1;vd->wr[0]=arid;} }
+        env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i][j]` indexes via emit_index */
+        ptrext_set(c->fn,arid,ext_total);   /* §5.12 mask `a[i][j]` against the recovered total runtime extent */
         if(is(c,",")){ c->i++; continue; }
         break;
       }
