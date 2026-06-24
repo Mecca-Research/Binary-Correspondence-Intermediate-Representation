@@ -656,7 +656,12 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > ✅ The **comma operator** `a, b` in a primary parenthesized expression (`#comma`, dual-rail) — isolated to
 > `( ... )` so call-args / initializer-element separator commas are unaffected.
 >
-> ⏭ **Variable-length arrays (`T a[n]`) — design captured, native lowering deferred.** A VLA's extent is a
+> ◑ **Variable-length arrays (`T a[n]`) — parsing FOUNDATION done, native lowering deferred.** ✅ The parser
+> now recognizes a non-literal array dim into `TypeRef.vla` and routes it (a true VLA, or a constant
+> expression needing lowering-time folding like `2+3` / `sizeof(T)`) to `--fallback` via a clean `CLowerError`
+> -- no more confusing mid-declarator parse error -- with ZERO cross-rail divergence (a single-literal dim
+> still compiles on both rails; everything else falls back on both; `test_vla_and_non_literal_array_dims_route_to_fallback`).
+> The deferred part is the NATIVE lowering. A VLA's extent is a
 > *runtime* value, so its `a[i]` bounds are exactly the §5.12 recoverable-extent contract (snapshot `n`,
 > `masked` against it) — the safety half is already built. The blocker is the **emitter**: it declares all
 > locals *up front* (deliberately, for branch-merge / loop-accumulator correctness), but a VLA cannot be

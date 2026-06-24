@@ -3022,6 +3022,36 @@ def test_cfront_lowering_faithfulness_is_a_self_check():
     assert dropped and dropped[0].law == "R12", dropped                                # one guard dropped -> flagged
 
 
+def test_vla_and_non_literal_array_dims_route_to_fallback():
+    """§5.9 VLA foundation: a non-literal array dimension -- a true VLA `T a[n]` (runtime size), OR a constant
+    expression that needs lowering-time folding (`T a[2+3]`, `T a[sizeof(int)]`) -- is now PARSED into the
+    `TypeRef.vla` representation and routed to `--fallback` via a clean `CLowerError`, rather than a confusing
+    mid-declarator parse error. (Native VLA lowering is the deferred deep work -- the emitter's up-front local
+    declaration can't size it; see the §5.9 design note.) A single-integer-literal dim still compiles, exactly
+    as before and exactly as the C twin -- so this introduces NO cross-rail divergence."""
+    from bcir.frontends.cfront import compile_unit
+    from bcir.frontends.cfront.lower import CLowerError
+    from bcir.frontends.cfront.cparse import CParseError
+    # a plain integer-literal dim still compiles + is Clang-equivalent (unchanged)
+    r = compile_unit("unsigned f(unsigned i){ unsigned a[8]={0}; a[i & 7u]=i; return a[i & 7u]; }", check_clang=True)
+    assert r.equivalence == "match" and r.is_clean, r.equivalence
+    # a true VLA, a constant arithmetic dim, and a sizeof dim all PARSE and route to fallback (not a crash)
+    for src in ("unsigned f(unsigned n){ unsigned a[n]; a[0]=1u; return a[0]; }",          # VLA
+                "unsigned f(void){ unsigned a[2+3]={0}; return a[0]; }",                     # const arithmetic
+                "unsigned f(void){ unsigned a[sizeof(unsigned)]={0}; return a[0]; }"):       # sizeof dim
+        try:
+            compile_unit(src, check_clang=False)
+            assert False, f"non-literal dim should route to fallback: {src}"
+        except CLowerError as e:
+            assert "variable-length array" in str(e), e
+    # only a 1-D non-literal dim is recognized; a 2-D form is a clean parse-level fallback too
+    try:
+        compile_unit("unsigned f(unsigned n){ unsigned a[n][n]; return a[0][0]; }", check_clang=False)
+        assert False, "2-D VLA should be rejected"
+    except (CParseError, CLowerError):
+        pass
+
+
 def test_quarantine_report_is_the_debugger_trace_surface():
     """§5.12 debugger trace surface: a STRONG override of `bcir_bounds_quarantine` (the ML-layer / debugger
     seam) records each OOB event into the ring without aborting, and `bcir_quarantine_report` reads the ring
