@@ -865,6 +865,9 @@ class _Parser:
         if self.at("IDENT", "__real__") or self.at("IDENT", "__imag__"):   # GNU complex part extraction
             op = self.nxt().text
             return cast.Unary(op, self._unary())
+        if self.peek().kind == "OP" and self.peek().text in ("++", "--"):  # PREFIX ++a / --a -> yields the NEW value
+            op = self.nxt().text[0]
+            return cast.IncDec(op, self._unary(), prefix=True)
         if self.peek().kind == "OP" and self.peek().text in ("-", "~", "!", "*", "&"):
             op = self.nxt().text
             return cast.Unary(op, self._unary())
@@ -946,6 +949,9 @@ class _Parser:
                 self.eat("PUNCT", ")")
                 node = (cast.CallExpr(node.ident, tuple(args)) if isinstance(node, cast.Name)
                         else cast.CallMember(node, tuple(args)))   # o->fnptr(args): dispatch table
+            elif self.peek().kind == "OP" and self.peek().text in ("++", "--"):  # POSTFIX a++ / a-- -> OLD value
+                op = self.nxt().text[0]
+                node = cast.IncDec(op, node, prefix=False)
             else:
                 break
         return node
