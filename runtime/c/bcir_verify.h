@@ -38,6 +38,13 @@ int bcir_verify_pack(const uint8_t *pack, size_t len, uint32_t expect_segs, char
 /* R13: a deterministic content digest of a function's claim graph (the provenance manifest). */
 uint64_t bcir_provenance_digest(const bcir_func *f);
 
+/* R21 (pointer-lifetime legality, §5.12): an ADVISORY walk over the optional `claim.lifetime` malloc/free
+ * annotation, reporting each use-after-free / double-free via `report(funcname, kind, ctx)` (kind is
+ * "use-after-free" or "double-free"). Separate from the verdict -- never affects bcir_verify_unit / r.ok. */
+void bcir_verify_lifetime(const bcir_unit *u,
+                          void (*report)(const char *funcname, const char *kind, void *ctx),
+                          void *ctx);
+
 #ifdef __cplusplus
 }
 #endif

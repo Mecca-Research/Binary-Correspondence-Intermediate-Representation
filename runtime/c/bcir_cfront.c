@@ -1474,14 +1474,18 @@ static uint32_t p_call(CC *c, const tok *name) {
     if(sal==2){                              /* free(p) -> a void external call statement (opaque to R18) */
       char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.libm.void:%.*s",name->n,name->s);
       bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
-      if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
+      /* R21 lifetime FREE event (§5.12): the freed pointer it reads dies after this claim, so a later
+       * dereference is a use-after-free (or a second free a double-free). Digest-excluded + advisory. */
+      if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;cl->lifetime=2;}
       return temp(c,4);                      /* a void result -- never read */
     }
     uint32_t t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_POINTER,"");  /* a `void *` result */
     if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1]; tr->ptr_depth=1; }  /* no agg -> `void *` */
     char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.libm:%.*s",name->n,name->s);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
-    if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
+    /* R21 lifetime ALLOC event (§5.12): the allocator result (re-)validates the resource it writes, so a
+     * pointer reassigned from it is live again after an earlier free. Digest-excluded + advisory. */
+    if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;cl->lifetime=1;}
     return t;                                /* not added to fn->calls (opaque to R18) */
   }
   const bcir_ctype *rt=callee_ret(c,name);   /* type the result by the callee's return (earlier defs) */

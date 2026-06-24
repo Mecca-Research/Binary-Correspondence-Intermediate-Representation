@@ -2908,6 +2908,48 @@ def test_r21_does_not_disturb_the_corpus():
         assert r.lifetime_diagnostics == [], (fx, [d.message for d in r.lifetime_diagnostics])
 
 
+def _r21_kinds(messages):
+    """(func, kind) pairs from R21 diagnostic strings -- `f: claim N: use-after-free of RID M ...` (oracle)
+    or `R21 f: use-after-free` (twin). RID/claim numbers differ across rails; the FUNC + KIND must agree."""
+    out = []
+    for m in messages:
+        kind = "double-free" if "double-free" in m else ("use-after-free" if "use-after-free" in m else None)
+        if kind is None:
+            continue
+        m = m[len("R21 "):] if m.startswith("R21 ") else m
+        out.append((m.split(":", 1)[0].strip(), kind))
+    return sorted(out)
+
+
+def test_r21_dual_rail_parity():
+    """§5.12 R21 dual-rail: the C twin verifier reports the SAME use-after-free / double-free events as the
+    Python oracle for heap C. The twin prints `R21 <func>: <kind>` lines (kind ∈ {use-after-free,
+    double-free}) ahead of its `----EMIT----` marker; the oracle's `lifetime_diagnostics` carry the same.
+    RID/claim numbering differs across rails, so parity is on the (function, kind) multiset."""
+    if not _CC:
+        return
+    from bcir.frontends.cfront import compile_unit
+    cases = [
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); return p[0]; }",      # UAF
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); p[0]=1u; return n; }", # UAF store
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); free(p); return n; }", # double-free
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }",  # clean
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); "
+        "p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }",                           # reuse
+    ]
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        for i, src in enumerate(cases):
+            full = "#include <stdlib.h>\n" + src
+            oracle = _r21_kinds(d.message for d in compile_unit(full, check_clang=False).lifetime_diagnostics)
+            cpath = os.path.join(d, f"u{i}.c")
+            open(cpath, "w").write(full)
+            out = subprocess.run([exe, cpath], capture_output=True, text=True).stdout
+            summary = out.partition("----EMIT----")[0]
+            twin = _r21_kinds(ln.strip() for ln in summary.splitlines() if ln.startswith("R21 "))
+            assert twin == oracle, f"case {i}: twin={twin} oracle={oracle}\n{src}"
+
+
 def test_quarantine_report_is_the_debugger_trace_surface():
     """§5.12 debugger trace surface: a STRONG override of `bcir_bounds_quarantine` (the ML-layer / debugger
     seam) records each OOB event into the ring without aborting, and `bcir_quarantine_report` reads the ring
