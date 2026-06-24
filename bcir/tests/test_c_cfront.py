@@ -361,6 +361,13 @@ def _parity_check_fixture(args):
     oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
     if _equiv(r.source, oracle_emit, entry) != "MATCH":
         return (fx, "oracle's own emitted C not behaviour-equivalent")
+    # §5.12 bounds-promotion parity: both rails must promote the SAME accesses to `masked` (the R13 digest
+    # includes `bounds`), so they emit the same number of `BCIR_CHK` guards -- a local/static array OR a
+    # malloc/calloc'd pointer with a recovered extent. A divergence here means one rail promoted and the
+    # other did not (a silent two-rail split the claim-summary parity does not catch).
+    if oracle_emit.count("BCIR_CHK") != c_emit.count("BCIR_CHK"):
+        return (fx, f"bounds-guard parity: oracle={oracle_emit.count('BCIR_CHK')} "
+                    f"twin={c_emit.count('BCIR_CHK')} BCIR_CHK guards")
     return (fx, None)
 
 
