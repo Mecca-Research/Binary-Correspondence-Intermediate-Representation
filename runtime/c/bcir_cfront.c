@@ -1833,8 +1833,29 @@ static uint32_t p_primary(CC *c) {
           size=(long long)(str_bytes(sp,sn)+1)*str_elem_size(sp,sn); free(cb); }
         else size=(long long)(str_bytes(st.s,st.n)+1)*str_elem_size(st.s,st.n); }   /* units incl. NUL × width */
       else if(isk(c,T_ID)){ tok vid=*pk(c); venv *v=lookup(c,&vid);
+        int indexed = tok_is(&c->t[c->i+1],"[");   /* `sizeof a[0]` -- an element, NOT a bare name (stays static) */
+        if(v && !indexed){
+          const bcir_resource *vr=res_of(c->fn,v->rid); uint32_t ext=ptrext_get(c->fn,v->rid);
+          if(vr && vr->is_vla && ext){   /* `sizeof a` of a 1-D stack VLA: a RUNTIME value -- the snapshot
+                                          * extent × sizeof(element) (NOT a stale static fold of the 0-size
+                                          * array CType). is_vla (NOT merely ptr_extent != 0) gates it: a
+                                          * recovered malloc pointer is also in ptr_extent but is not a VLA. */
+            c->i++; if(paren) eat(c,")");
+            uint32_t r=temp(c,8);   /* an 8-byte size_t result */
+            bcir_resource *rr=&c->fn->res[c->fn->n_res-1]; rr->is_signed=0;   /* mark it unsigned size_t */
+            bcir_claim *cl=new_claim(c,"c.sizeof.vla",BCIR_OP_ADD);   /* ADD: a cost hint only (emit carries the ×) */
+            if(cl){ cl->n_rd=1; cl->rd[0]=ext; cl->n_wr=1; cl->wr[0]=r; cl->n_imm=1; cl->imm[0]=(long long)vr->elem_bytes; }
+            return r;
+          }
+        }
         if(v) size = v->type.kind==2?cc_abi(c)->pointer_size:(v->type.kind==1?c->s[v->sidx].size:v->type.size);
-        c->i++; }
+        c->i++;
+        if(indexed){   /* `sizeof a[0]`: an element -> the static element size. sizeof is UNEVALUATED,
+                        * so SKIP the index tokens by bracket-matching (do NOT lower them -- no claim). */
+          int bd=0;
+          do{ if(is(c,"[")) bd++; else if(is(c,"]")) bd--; c->i++; }while(bd>0 && !isk(c,T_END));
+        }
+      }
       if(paren) eat(c,")");
     }
     uint32_t r=temp(c,4); bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
@@ -3255,6 +3276,12 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       const bcir_resource *cr=res_of(f,cl->wr[0]); int cs=cr&&cr->is_signed;
       w+=snprintf(o+w,on-w,"%s %s = %llu%s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),
                   (unsigned long long)cl->imm[0], cs?"":"u"); }
+    else if(!strcmp(cl->op,"c.sizeof.vla"))                 /* runtime `sizeof a` of a VLA: extent × sizeof(elem).
+                                                            * HARDCODE the literal `size_t` (NOT tty(), which
+                                                            * returns "uint64_t" for an 8-byte unsigned scalar):
+                                                            * the oracle emits literal `size_t` (scalar('size_t')),
+                                                            * so the two rails would diverge byte-for-byte. */
+      w+=snprintf(o+w,on-w,"size_t %s = (size_t)((size_t)%s * %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),(long long)cl->imm[0]);
     else if(!strcmp(cl->op,"c.copy")){
       if(is_named_local(f,cl->wr[0])||is_global_ref(f,cl->wr[0])||is_param_ref(f,cl->wr[0])) w+=snprintf(o+w,on-w,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
       else w+=snprintf(o+w,on-w,"%s %s = %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));   /* decl_ty: a copied pointer temp keeps `T *` */
