@@ -2069,7 +2069,9 @@ _FALLBACK_PROBES = [
     ("unsigned f(unsigned x){ return x + ; }", "fallback"),              # malformed -> parse reject
     ("unsigned f(void){ _Complex double z; (void)z; return 0u; }", "clean"),  # _Complex: now in the subset
     ("unsigned f(void){ _Imaginary double z; return 0u; }", "fallback"),  # _Imaginary: still outside the subset
-    ("unsigned f(unsigned n){ unsigned a[n]; return a[0]; }", "fallback"),   # VLA
+    ("unsigned f(unsigned n){ unsigned a[n][n]; return a[0][0]; }", "fallback"),   # a *multi-dim* VLA:
+                     # a 1-D stack VLA `T a[n]` is now natively lowered (#vla -- snapshot the runtime size,
+                     # declare in-body, mask `a[i]` against it), but >1-D defers to fallback on both rails.
     ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "clean"),  # statement-expr (#stmtexpr): now native
     ("unsigned f(unsigned a){ a = a*3u + 1u; return a; }", "clean"),       # assigning a PARAMETER: a bare
                      # `a = ..;` in the emit, never a `uint32_t a = ..;` redeclaration (twin-emit regression).
