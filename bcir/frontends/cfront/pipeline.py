@@ -22,7 +22,7 @@ from ...kbcir.compose import Effect, plan_composite, summarize
 from ...kbcir.cost import Theta
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
-from ...verify import Diagnostic, verify, verify_plan
+from ...verify import Diagnostic, verify, verify_lifetime, verify_plan
 from .abi import HOST, target as resolve_target
 from .clex import CLexError
 from .cparse import CParseError, parse_unit, parse_with_recovery
@@ -58,6 +58,9 @@ class CompileResult:
     effects: dict = field(default_factory=dict)        # fn -> Effect (global read/write footprint)
     ipo: dict = field(default_factory=dict)            # inter-procedural plan: worst/expected/leaves/reused
     diagnostics: list = field(default_factory=list)   # R1–R18 Diagnostics (empty == clean)
+    lifetime_diagnostics: list = field(default_factory=list)  # R21 use-after-free / double-free (§5.12) --
+    #     ADVISORY: a smart-lowering law over the optional `claim.lifetime` (malloc/free), NOT part of the
+    #     frontend pass/fail (`is_clean`), exactly as R19/R20 timing are advisory. Empty == no dangling access.
     r18_ok: bool = True
     equivalence: str = "skip"                         # match | MISMATCH | skip:<reason>
     target: str = HOST.name                           # the target ABI the unit was laid out for
@@ -144,6 +147,11 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
         res.emitted[name] = emit_function(lf)
         res.explain[name] = _explain(lf.module, h, theta, policy)
         res.diagnostics += [Diagnostic(d.law, f"{name}: {d.message}") for d in diags]
+        # R21 lifetime (§5.12): an ADVISORY pass over the optional malloc/free `claim.lifetime` -- a
+        # use-after-free / double-free a C program would have left UB. Kept OUT of `res.diagnostics`
+        # (and thus `is_clean`): like the R19/R20 timing laws, it never changes the frontend verdict.
+        res.lifetime_diagnostics += [Diagnostic(d.law, f"{name}: {d.message}")
+                                     for d in verify_lifetime(lf.module)]
 
     # --- alias/effect footprint per function (over shared/module-scope state) -- the basis for
     #     commutation/independence. Each function's own footprint is folded with its callees'
