@@ -391,6 +391,11 @@ class LabelNode:
 
 
 @dataclass
+class ComputedGotoNode:
+    target: int                            # `goto *<target>;` -- an indirect jump to a label address (GNU)
+
+
+@dataclass
 class SwitchNode:
     disc: int                              # the discriminant rid (lowered once)
     body: list                             # flat: CaseLabel | DefaultLabel | Claim | control nodes
@@ -960,6 +965,9 @@ class _FuncLowerer:
             return self._rvalue(node.rhs)                     # its side effects, discard it, yield the right value
         if isinstance(node, cast.IncDec):
             return self._incdec_value(node)
+        if isinstance(node, cast.LabelAddr):              # `&&L` -- a label's address as a `void *` value (GNU)
+            t = self._temp(pointer(scalar("void")), f"labeladdr_{node.label}")
+            return self._emit(f"c.labeladdr:{node.label}", Opcode.LOAD, (), (t,))
         if isinstance(node, cast.Binary):
             a, b = self._rvalue(node.lhs), self._rvalue(node.rhs)
             opcode, suf = _BIN[node.op]
@@ -1818,6 +1826,8 @@ class _FuncLowerer:
             self.block_stack[-1].append(ContinueNode())
         elif isinstance(st, cast.Goto):
             self.block_stack[-1].append(GotoNode(st.label))
+        elif isinstance(st, cast.ComputedGoto):           # `goto *p;` -- the target is lowered to a void*
+            self.block_stack[-1].append(ComputedGotoNode(self._rvalue(st.target)))
         elif isinstance(st, cast.Label):
             self.block_stack[-1].append(LabelNode(st.name))
         else:
@@ -1913,7 +1923,7 @@ def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Re
         elif isinstance(node, SwitchNode):
             flush_run()
             parts.append(_block_region(node.body, functions, calls_iter))   # the clause bodies, in order
-        elif isinstance(node, (ReturnNode, BreakNode, ContinueNode, GotoNode, LabelNode,
+        elif isinstance(node, (ReturnNode, BreakNode, ContinueNode, GotoNode, ComputedGotoNode, LabelNode,
                                CaseLabel, DefaultLabel)):
             continue
         elif node.op.startswith("c.call:"):

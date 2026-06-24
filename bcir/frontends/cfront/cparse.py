@@ -664,6 +664,11 @@ class _Parser:
             return cast.Continue()
         if self.at("IDENT", "goto"):
             self.nxt()
+            if self.at("OP", "*"):                            # `goto *expr;` -- a computed (indirect) goto (GNU)
+                self.nxt()
+                target = self._expr()
+                self.eat("PUNCT", ";")
+                return cast.ComputedGoto(target)
             label = self.eat("IDENT").text
             self.eat("PUNCT", ";")
             return cast.Goto(label)
@@ -865,6 +870,9 @@ class _Parser:
         if self.at("IDENT", "__real__") or self.at("IDENT", "__imag__"):   # GNU complex part extraction
             op = self.nxt().text
             return cast.Unary(op, self._unary())
+        if self.at("OP", "&&"):                            # `&&label` -- a label's address as a value (GNU)
+            self.nxt()
+            return cast.LabelAddr(self.eat("IDENT").text)
         if self.peek().kind == "OP" and self.peek().text in ("++", "--"):  # PREFIX ++a / --a -> yields the NEW value
             op = self.nxt().text[0]
             return cast.IncDec(op, self._unary(), prefix=True)

@@ -263,6 +263,16 @@ class Label:
     name: str                       # `name:` — a jump target at function-body scope
 
 
+@dataclass(frozen=True)
+class LabelAddr:
+    label: str                      # `&&L` — the address of a label as a value (GNU), a `void *`
+
+
+@dataclass(frozen=True)
+class ComputedGoto:
+    target: object                  # `goto *expr;` — an indirect jump to a taken label address (GNU)
+
+
 # --- top level ---
 @dataclass(frozen=True)
 class Param:

@@ -13,6 +13,7 @@ from .ctype_model import CType
 from .lower import (
     BreakNode,
     CaseLabel,
+    ComputedGotoNode,
     ContinueNode,
     DefaultLabel,
     GotoNode,
@@ -149,6 +150,8 @@ def _walk(lf: LoweredFunc, block: list, ref, depth: int, loops: list | None = No
             out.append(f"{ind}goto __cont_{loops[-1]};")
         elif isinstance(node, GotoNode):
             out.append(f"{ind}goto {node.label};")
+        elif isinstance(node, ComputedGotoNode):
+            out.append(f"{ind}goto *{ref(node.target)};")   # an indirect jump to a label address (GNU)
         elif isinstance(node, LabelNode):
             out.append(f"{node.name}:;")               # a jump target (function-body scope)
         elif isinstance(node, Claim):
@@ -180,6 +183,8 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"{c.imm[0]}u")
     if c.op == "c.sizeof.vla":                                # runtime `sizeof a` of a VLA: extent × sizeof(elem)
         return deftmp(c.wr[0], f"(size_t)((size_t){ref(c.rd[0])} * {c.imm[0]})")
+    if c.op.startswith("c.labeladdr:"):                      # `&&L` -- a label's address as a `void *` (GNU)
+        return deftmp(c.wr[0], "&&" + c.op.split(":", 1)[1])
     if c.op.startswith("c.fconst:"):                         # a floating constant -> its literal spelling
         return deftmp(c.wr[0], c.op.split(":", 1)[1])
     if c.op.startswith("c.cconst:"):                         # <complex.h> imaginary unit -> verbatim token

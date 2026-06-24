@@ -110,6 +110,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_signedfnptr.c", # a SIGNED function-pointer return reads back signed (#signedfnptr)
              "cfront_addroffollow.c",# &arr[i].field (plain base) + &s->ptr (pointer member) (#addroffollow)
              "cfront_incdecexpr.c",  # ++/-- in expression position as a value (#incdecexpr)
+             "cfront_computedgoto.c",# computed goto: &&L label-as-value + goto *p (#computedgoto)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -2092,7 +2093,9 @@ _FALLBACK_PROBES = [
                      # post/pre distinction was discarded in the desugar, so it routes away on both rails.
     ("unsigned f(unsigned a){ return ({ a = a+1u; }); }", "fallback"),     # an assignment as a stmt-expr value
                      # (the twin's value-expression grammar has none) -> fallback on both rails, in lockstep.
-    ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "fallback"),  # computed goto
+    ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "clean"),  # computed goto (#computedgoto):
+                     # the GNU label-as-value `&&L` (a `void *`) + the indirect `goto *p` are now native on BOTH
+                     # rails -- they lower to the GNU forms (which Clang compiles), so the unit is clean, not fallback.
     ("struct Q{unsigned*p; unsigned n;}; unsigned f(struct Q q,unsigned i){ return q.p[i&3u]+q.n; }",
      "clean"),      # a *pointer* member indexed (`q.p[i]` == `*(q.p + i)`): both rails now load the full
                      # pointer field and subscript the loaded pointer (#fieldderef, pointer-value slice 2b).
@@ -3296,6 +3299,18 @@ def test_multidim_array_complit_falls_back():
             open(p, "w").write(md)
             summ, _ = _c_run(exe, p)
             assert "ok=1" not in summ, f"twin should fall back, got {summ}: {md}"
+
+
+def test_computed_goto():
+    """§5.10 item 6 (#computedgoto): the GNU label-as-value `&&L` (a `void *`) and the indirect `goto *p`.
+    A void* holds a taken label address; `goto *p` dispatches. Both rails lower to the GNU forms (which Clang
+    compiles), behaviour-equivalent to Clang."""
+    from bcir.frontends.cfront import compile_unit
+    for src in ("unsigned f(unsigned x){ void *p=&&O; if((x&1u)==0u) p=&&E; goto *p; E: return x*2u; O: return x*3u+1u; }",
+                "unsigned f(unsigned i){ void *t[3]; t[0]=&&a; t[1]=&&b; t[2]=&&c; goto *t[i%3u]; a: return 1u; b: return 2u; c: return 3u; }",
+                "unsigned f(unsigned n){ unsigned s=0u,i=0u; void *p=&&L; L: if(i<(n&7u)){ s+=i; i++; goto *p; } return s; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
 def test_quarantine_report_is_the_debugger_trace_surface():
