@@ -1629,8 +1629,11 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    a pointer from `malloc(N*sizeof(T))` / `calloc(N, sizeof(T))` recovers its element COUNT and promotes its
    `p[i]` accesses to `masked` with a RUNTIME extent -- `p[BCIR_CHK(rid, i, N, "func:ptr")]`, N the count
    variable re-emitted by name. Sound by construction: a per-function mutation pre-pass gates promotion on the
-   pointer AND the count being stable (assigned at most their single binding, never address-taken), so a stale
-   extent (a false trap) cannot occur; `p = realloc(...)` reassigns the pointer and is left unmanaged. Both
+   pointer AND the count being stable, so a stale extent (a false trap) cannot occur; `p = realloc(...)`
+   reassigns the pointer and is left unmanaged. The count is re-emitted by name at the access, so it is trusted
+   only when its assignments are ALL decl-inits (`unsigned m = ...`, before the alloc) and never address-taken
+   -- an ORDINARY post-alloc write (`n = n - 1`, `n--`) disqualifies it (`test_extent_count_mutation_is_not_promoted`;
+   the pre-pass tracks decl-init vs body assignments separately on both rails). Both
    rails promote IDENTICALLY -- a new cross-rail bounds-guard PARITY assertion (the R13 digest includes
    `bounds`) makes any one-rail split a hard test failure, and it also caught + fixed two PRE-EXISTING twin
    under-masking gaps (file-scope static/const array globals, aggregate-initializer array stores). ✅ **R21

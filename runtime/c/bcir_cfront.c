@@ -95,7 +95,7 @@ static const bcir_abi *bcir_abi_by_name(const char *name){
 
 /* §5.12 one NAME's mutation tally (assignment count + address-taken flag) for the extent-stability
  * pre-pass; an array of these lives on CC, reset per function. */
-typedef struct { char name[BCIR_CIR_NAME]; int assigned; int addr; } mutent;
+typedef struct { char name[BCIR_CIR_NAME]; int assigned; int body; int addr; } mutent;
 
 typedef struct {
   tok t[MAXTOK]; int nt, i;
@@ -996,15 +996,22 @@ static mutent *mut_find(CC *c, const tok *id) {
     if ((int)strlen(c->mut[k].name) == id->n && !strncmp(c->mut[k].name, id->s, (size_t)id->n))
       return &c->mut[k];
   if (c->mut_n < (int)(sizeof c->mut / sizeof c->mut[0])) {
-    idcpy(c->mut[c->mut_n].name, id); c->mut[c->mut_n].assigned = 0; c->mut[c->mut_n].addr = 0;
+    idcpy(c->mut[c->mut_n].name, id);
+    c->mut[c->mut_n].assigned = 0; c->mut[c->mut_n].body = 0; c->mut[c->mut_n].addr = 0;
     return &c->mut[c->mut_n++];
   }
   return NULL;
 }
-static int mut_assigned(CC *c, const tok *id) {            /* assignment count of a NAME (0 if unseen) */
+static int mut_assigned(CC *c, const tok *id) {            /* TOTAL assignment count of a NAME (0 if unseen) */
   for (int k = 0; k < c->mut_n; k++)
     if ((int)strlen(c->mut[k].name) == id->n && !strncmp(c->mut[k].name, id->s, (size_t)id->n))
       return c->mut[k].assigned;
+  return 0;
+}
+static int mut_body(CC *c, const tok *id) {                /* NON-decl-init assignment count (the count gate) */
+  for (int k = 0; k < c->mut_n; k++)
+    if ((int)strlen(c->mut[k].name) == id->n && !strncmp(c->mut[k].name, id->s, (size_t)id->n))
+      return c->mut[k].body;
   return 0;
 }
 static int mut_addr(CC *c, const tok *id) {                /* has the NAME's address been taken? */
@@ -1028,10 +1035,22 @@ static void scan_mutations(CC *c, int start) {
     if (t->k == T_PUN && t->n == 1 && t->s[0] == '}') { depth--; continue; }
     if (t->k == T_ID) {
       const tok *nx = &c->t[i + 1];                        /* id `=` / id OP= / id++ / id-- -> an assignment */
-      if (nx->k == T_PUN && ((nx->n == 1 && nx->s[0] == '=') || is_compound_op(nx)
-          || (nx->n == 2 && (nx->s[0] == '+' || nx->s[0] == '-') && nx->s[1] == nx->s[0]))) {
+      int plain = nx->k == T_PUN && nx->n == 1 && nx->s[0] == '=';
+      int other = nx->k == T_PUN && (is_compound_op(nx)    /* OP= / postfix ++ / -- : never a decl-init */
+          || (nx->n == 2 && (nx->s[0] == '+' || nx->s[0] == '-') && nx->s[1] == nx->s[0]));
+      if (plain || other) {
         mutent *m = mut_find(c, t);
-        if (m) m->assigned++;
+        if (m) {
+          m->assigned++;
+          /* A decl-init (`<type> id = ...`, the type token just before the name) leaves the value stable
+           * from the alloc onward; an ORDINARY write (any OP=/++/--, or a plain `=` not in a declarator)
+           * may mutate the count AFTER the alloc -> a body assignment that disqualifies it (mirrors the
+           * oracle distinguishing a cast.Decl init from a cast.Assign). */
+          const tok *pv = (i > start) ? &c->t[i - 1] : NULL;
+          int declinit = plain && pv && pv->k == T_ID
+              && (scalar_size(pv->s, pv->n) >= 0 || find_typedef(c, pv->s, pv->n) >= 0);
+          if (!declinit) m->body++;
+        }
       }
       continue;
     }
@@ -1040,7 +1059,7 @@ static void scan_mutations(CC *c, int start) {
       const tok *pv = (i > start) ? &c->t[i - 1] : NULL;
       if (!(pv && is_value_ender(pv))) {                   /* a postfix x++ is counted by the id-rule above */
         mutent *m = mut_find(c, &c->t[i + 1]);
-        if (m) m->assigned++;
+        if (m) { m->assigned++; m->body++; }              /* a pre-inc/dec is always an ordinary write */
       }
       continue;
     }
@@ -1084,7 +1103,7 @@ static uint32_t rec_count_rid(CC *c, int i) {
   venv *v = lookup(c, t);                                  /* must be a declared local/param */
   if (!v) return 0;
   if (v->type.kind != 0 || v->type.is_float) return 0;     /* an integer scalar only */
-  if (mut_assigned(c, t) > 1 || mut_addr(c, t)) return 0;   /* not stable: re-assigned / aliased */
+  if (mut_body(c, t) > 0 || mut_addr(c, t)) return 0;       /* not stable: an ordinary (post-alloc) write, or aliased */
   return v->rid;
 }
 /* §5.12 _recoverable_alloc: if the call in the token range [start,end) is `calloc(N, sizeof(T))`,

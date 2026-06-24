@@ -251,30 +251,36 @@ def _fold_const(node) -> int:
     raise CLowerError("static initializer is not a constant expression")
 
 
-def _scan_mutations(node, assigned: dict, addr: set) -> None:
-    """Walk a function-body AST collecting, per name: the number of assignments to it (a decl-init,
-    `x = e`, compound `x OP= e`, and `x++`/`x--` -- which the parser desugars to an assign) and whether
-    its address is ever taken (`&x`). Drives §5.12 recoverable-extent soundness: a recovered count / a
-    bound pointer is only trusted when it is STABLE -- assigned at most its single binding and never
-    aliased through `&` -- so the runtime extent at a `p[i]` access equals the allocation's, never a
-    false trap. Order-independent and conservative: it never has to be exact, only an over-approximation
-    of mutation (more mutation seen -> fewer promotions, never an unsound one)."""
+def _scan_mutations(node, assigned: dict, body: dict, addr: set) -> None:
+    """Walk a function-body AST collecting, per name: the TOTAL assignment count (`assigned`: a decl-init,
+    `x = e`, compound `x OP= e`, and `x++`/`x--` -- which the parser desugars to an assign), the count of
+    BODY (non-decl-init) assignments (`body`), and whether its address is ever taken (`addr`: `&x`). Drives
+    §5.12 recoverable-extent soundness.
+
+    The two tallies serve different gates. A bound POINTER is trusted when `assigned == 1` (defined exactly
+    once -- at its allocation -- never reassigned/arith'd); its rid is used directly, so a decl-init binding
+    is as good as a plain assignment. A recovered COUNT is re-emitted by NAME at every access, so it must be
+    STABLE from the allocation onward -- it is trusted only when `body == 0`: a decl-init (`m = n & 31`,
+    before the alloc) is fine, but ANY ordinary assignment (`n = n - 1`, `n--`) could mutate it AFTER the
+    alloc and make the runtime extent disagree with the allocation -- a false trap. Order-independent and
+    conservative: an over-approximation of mutation (more seen -> fewer promotions, never an unsound one)."""
     if isinstance(node, (list, tuple)):
         for x in node:
-            _scan_mutations(x, assigned, addr)
+            _scan_mutations(x, assigned, body, addr)
         return
     if not dataclasses.is_dataclass(node):
         return
     if isinstance(node, cast.Assign):
         if isinstance(node.target, cast.Name):
             assigned[node.target.ident] = assigned.get(node.target.ident, 0) + 1
+            body[node.target.ident] = body.get(node.target.ident, 0) + 1   # an ordinary (non-decl-init) write
     elif isinstance(node, cast.Decl):
         if node.init is not None:
-            assigned[node.name] = assigned.get(node.name, 0) + 1
+            assigned[node.name] = assigned.get(node.name, 0) + 1           # a decl-init: counted, but NOT body
     elif isinstance(node, cast.Unary) and node.op == "&" and isinstance(node.operand, cast.Name):
         addr.add(node.operand.ident)
     for f in dataclasses.fields(node):
-        _scan_mutations(getattr(node, f.name), assigned, addr)
+        _scan_mutations(getattr(node, f.name), assigned, body, addr)
 
 
 class CLowerError(Exception):
@@ -499,7 +505,8 @@ class _FuncLowerer:
         # §5.12 recoverable extents: a pointer local bound to malloc(N*sizeof(T)) / calloc(N, sizeof(T)) carries
         # a RECOVERED element-count -> its `p[i]` accesses promote to `masked` (runtime-bounds-checked against N).
         self.ptr_extent: dict[int, int] = {}           # pointer rid -> the count VARIABLE's rid (re-emitted by name)
-        self._mut_assigned: dict[str, int] = {}        # name -> # of assignments in the body (mutation pre-pass)
+        self._mut_assigned: dict[str, int] = {}        # name -> TOTAL assignments incl. decl-init (pointer gate)
+        self._mut_body: dict[str, int] = {}            # name -> NON-decl-init assignments only (count gate)
         self._mut_addr: set[str] = set()               # names whose address is taken anywhere (`&x`)
 
     def _next_loop_id(self) -> int:
@@ -1133,8 +1140,8 @@ class _FuncLowerer:
             rid, ct = self.env[e.ident]
             if ct.kind != "scalar" or getattr(ct, "is_float", False):
                 return None                                  # an integer count only
-            if self._mut_assigned.get(e.ident, 0) > 1 or e.ident in self._mut_addr:
-                return None                                  # not stable: re-assigned / aliased
+            if self._mut_body.get(e.ident, 0) > 0 or e.ident in self._mut_addr:
+                return None                  # not stable: an ordinary (post-alloc-capable) write, or aliased
             return rid
 
         if call.callee == "calloc" and len(call.args) == 2:
@@ -1639,7 +1646,7 @@ class _FuncLowerer:
 
     def lower(self) -> LoweredFunc:
         self.last_return = None
-        _scan_mutations(self.func.body, self._mut_assigned, self._mut_addr)   # §5.12 extent-stability pre-pass
+        _scan_mutations(self.func.body, self._mut_assigned, self._mut_body, self._mut_addr)  # §5.12 stability pre-pass
         self.env.update(self.genv)                            # file-scope globals are in scope
         for rid, ct in self.genv.values():
             self.rtypes.setdefault(rid, ct)
