@@ -65,10 +65,10 @@ def emit_function(lf: LoweredFunc) -> str:
     used.update(name for _rid, name, _ct, _init in lf.statics)
     used.update(lf.globals_used.values())
     local_name: dict[int, str] = {}
-    for rid, name, _ct in lf.locals:
-        uniq = name
-        if uniq in used:
-            k = 2
+    for rid, name, _ct in lf.locals + lf.vla_locals:        # VLAs are NAMED here (so accesses resolve) but
+        uniq = name                                          # are declared IN-BODY (the c.vladecl claim below),
+        if uniq in used:                                     # never in the up-front `decls` -- their runtime
+            k = 2                                            # size isn't known until execution reaches the decl
             while f"{name}_{k}" in used:
                 k += 1
             uniq = f"{name}_{k}"
@@ -169,6 +169,9 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
 
     if c.op == "c.copy":                                     # write a mutable local (no new decl)
         return f"{ref(c.wr[0])} = {ref(c.rd[0])};"
+    if c.op == "c.vladecl":                                  # an in-body stack VLA decl: `T a[__ext];`
+        act = lf.rid_types.get(c.wr[0])                       # the VLA array CType (count 0, of=element type)
+        return f"{_cname(act.of)} {ref(c.wr[0])}[{ref(c.rd[0])}];"
     if c.op == "c.ptradd":                                   # pointer p += n (C scales by element size)
         return f"{ref(c.wr[0])} += {ref(c.rd[1])};"
     if c.op == "c.ptrsub":                                   # pointer p -= n

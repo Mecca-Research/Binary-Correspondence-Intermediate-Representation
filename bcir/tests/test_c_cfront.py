@@ -99,6 +99,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_addrofaos.c",   # array-of-structs element field address
              "cfront_extentsnap.c",  # §5.12 recoverable-extent SNAPSHOT: expression counts (#extentsnap)
              "cfront_comma.c",       # the comma operator in a primary parenthesized expr (#comma)
+             "cfront_vla.c",         # native 1-D stack VLAs `T a[n]` -- in-body decl + masked bounds (#vla)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -3022,32 +3023,37 @@ def test_cfront_lowering_faithfulness_is_a_self_check():
     assert dropped and dropped[0].law == "R12", dropped                                # one guard dropped -> flagged
 
 
-def test_vla_and_non_literal_array_dims_route_to_fallback():
-    """§5.9 VLA foundation: a non-literal array dimension -- a true VLA `T a[n]` (runtime size), OR a constant
-    expression that needs lowering-time folding (`T a[2+3]`, `T a[sizeof(int)]`) -- is now PARSED into the
-    `TypeRef.vla` representation and routed to `--fallback` via a clean `CLowerError`, rather than a confusing
-    mid-declarator parse error. (Native VLA lowering is the deferred deep work -- the emitter's up-front local
-    declaration can't size it; see the §5.9 design note.) A single-integer-literal dim still compiles, exactly
-    as before and exactly as the C twin -- so this introduces NO cross-rail divergence."""
+def test_native_vla_lowering_and_unsupported_forms():
+    """§5.9 native VLAs: a 1-D stack VLA `T a[n]` (runtime size) is lowered FAITHFULLY -- the size is evaluated
+    once and snapshotted, the array is declared IN-BODY (`T a[__ext];`, a real stack array -- no heap, no leak)
+    and `a[i]` is bounds-masked against the snapshot (§5.12). Behaviour-equivalent to Clang on both rails. The
+    genuinely unsupported forms (a VLA with an initializer, or multi-dimensional) route cleanly to `--fallback`,
+    and a plain integer-literal dim still compiles a static array exactly as before."""
     from bcir.frontends.cfront import compile_unit
     from bcir.frontends.cfront.lower import CLowerError
     from bcir.frontends.cfront.cparse import CParseError
-    # a plain integer-literal dim still compiles + is Clang-equivalent (unchanged)
+    # a native VLA compiles and is Clang-equivalent (in-bounds for every n -> the rails + Clang agree)
+    for src in ("unsigned f(unsigned n){ unsigned m=(n&7u)+1u; unsigned a[m]; unsigned s=0u;"
+                "  for(unsigned i=0u;i<m;i++){a[i]=i+n;s+=a[i];} return s; }",
+                "int g(int n){ int m=(n&7)+1; int a[m]; int s=0;"
+                "  for(int i=0;i<m;i++){a[i]=i*2-n;s+=a[i];} return s; }",
+                "unsigned h(unsigned n){ unsigned a[(n&3u)+2u]; unsigned k=(n&3u)+2u; unsigned s=0u;"
+                "  for(unsigned i=0u;i<k;i++){a[i]=i^n;s+=a[i];} return s; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
+    # a single-integer-literal dim still compiles a static array (unchanged)
     r = compile_unit("unsigned f(unsigned i){ unsigned a[8]={0}; a[i & 7u]=i; return a[i & 7u]; }", check_clang=True)
     assert r.equivalence == "match" and r.is_clean, r.equivalence
-    # a true VLA, a constant arithmetic dim, and a sizeof dim all PARSE and route to fallback (not a crash)
-    for src in ("unsigned f(unsigned n){ unsigned a[n]; a[0]=1u; return a[0]; }",          # VLA
-                "unsigned f(void){ unsigned a[2+3]={0}; return a[0]; }",                     # const arithmetic
-                "unsigned f(void){ unsigned a[sizeof(unsigned)]={0}; return a[0]; }"):       # sizeof dim
-        try:
-            compile_unit(src, check_clang=False)
-            assert False, f"non-literal dim should route to fallback: {src}"
-        except CLowerError as e:
-            assert "variable-length array" in str(e), e
-    # only a 1-D non-literal dim is recognized; a 2-D form is a clean parse-level fallback too
+    # a VLA with an initializer (illegal C) routes to fallback
+    try:
+        compile_unit("unsigned f(unsigned n){ unsigned a[n]={0}; return a[0]; }", check_clang=False)
+        assert False, "an initialized VLA should route to fallback"
+    except CLowerError as e:
+        assert "VLA" in str(e) or "variable-length" in str(e), e
+    # a multi-dimensional VLA routes to fallback (only 1-D is supported)
     try:
         compile_unit("unsigned f(unsigned n){ unsigned a[n][n]; return a[0][0]; }", check_clang=False)
-        assert False, "2-D VLA should be rejected"
+        assert False, "a 2-D VLA should route to fallback"
     except (CParseError, CLowerError):
         pass
 
