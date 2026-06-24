@@ -3025,8 +3025,16 @@ static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int count) {
   else if(ty->kind==0){ c->fn->res[ari].is_signed=(uint8_t)(ty->signd?1:0);
     if(ty->is_bool) c->fn->res[ari].is_bool=1;
     if(ty->is_plain_char) c->fn->res[ari].is_plain_char=1; }
+  size_t s_nclaims = c->fn->n_claims;                /* the init stores begin here -- re-mask after sizing */
   int nel = arr_init(c, rid);                        /* note: temp()/new_claim may realloc res[]; re-index ari */
-  if(count<=0) c->fn->res[ari].count = (uint32_t)(nel<1?1:nel);   /* an inferred `[]` size */
+  if(count<=0){ c->fn->res[ari].count = (uint32_t)(nel<1?1:nel);   /* an inferred `[]` size: the count is only
+    * KNOWN now (the resource was created count=1), so the per-element c.store claims arr_init already emitted
+    * saw count=1 and stayed `assumed`. Re-evaluate access_bnd against the patched extent so a known-extent
+    * (count>1) `_clN` masks its init writes exactly like a regular array init -- matching the oracle's per-
+    * element BCIR_CHK. (A sized `(T[N]){...}` already had the right count up front, so it is unaffected.) */
+    bcir_bounds bnd = access_bnd(c, rid);
+    for(size_t i=s_nclaims; i<c->fn->n_claims; i++){ bcir_claim *cl=&c->fn->claims[i];
+      if(cl->opcode==BCIR_OP_STORE && cl->n_rd>=1 && cl->rd[0]==rid) cl->bounds=bnd; } }
   return rid;
 }
 static void p_block(CC *c){            /* `{ stmts }` or a single statement */
