@@ -107,6 +107,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_narrowcompound.c", # a narrow-target compound assignment AS A VALUE re-reads (#narrowcompound)
              "cfront_bfassignexpr.c",# a BITFIELD member assignment used as a value (#bfassignexpr)
              "cfront_aosassignexpr.c",# an array-of-structs field / member-array element as a value (#aosassignexpr)
+             "cfront_signedfnptr.c", # a SIGNED function-pointer return reads back signed (#signedfnptr)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -3212,6 +3213,20 @@ def test_array_of_structs_field_assignment_as_value():
                 "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned v){ struct P a[4]; a[i&3u].y=10u; return (a[i&3u].y += v)*2u + a[i&3u].y; }",
                 "struct S{unsigned arr[4];}; unsigned f(unsigned i, unsigned v){ struct S s; s.arr[i&3u]=0u; return (s.arr[i&3u] = v)+3u + s.arr[i&3u]; }",
                 "struct N{unsigned char c; unsigned x;}; unsigned f(unsigned i, unsigned v){ struct N a[4]; a[i&3u].c=0u; return (a[i&3u].c += v)*2u + a[i&3u].c; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
+
+
+def test_signed_function_pointer_return():
+    """§5.9 (#signedfnptr): a call through a function-pointer (a funcptr struct member / dispatch, or a funcptr
+    param) whose target returns a SIGNED type now types the call RESULT by the return type -- a signed sub-int
+    return promotes to `int`, a wide return keeps its width -- so a downstream arithmetic `>>` / `< 0` /
+    `(long)`-widen sign-extends. The indirect/member call results were hardcoded uint32 (a both-rails
+    miscompile). Behaviour-equivalent to Clang on both rails; an unresolved funcptr return stays uint32."""
+    from bcir.frontends.cfront import compile_unit
+    for src in ("static int neg(int x){return -x-1;} struct D{int(*op)(int);}; int f(int x){ struct D d; d.op=neg; return d.op(x) >> 1; }",
+                "static int neg(int x){return -x-1;} struct D{int(*op)(int);}; int f(int x){ struct D d; d.op=neg; int r=d.op(x); return r<0?-r:r; }",
+                "static long lw(int x){return -(long)x-1;} struct D{long(*op)(int);}; long f(int x){ struct D d; d.op=lw; return d.op(x)-1; }"):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
