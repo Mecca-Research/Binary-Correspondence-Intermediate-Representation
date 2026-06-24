@@ -1129,9 +1129,15 @@ class _FuncLowerer:
         base, then the actuals) emitted as `o->fn(args)`, so no 8-byte function-pointer value has to
         ride in the 4-byte value model. Not added to the call graph (R18: an opaque external edge)."""
         m = node.callee
-        base_rid, _base_ct, _base_off = self._addr(m.base)   # a dispatch base is a pointer (offset 0)
+        base_rid, base_ct, _base_off = self._addr(m.base)    # a dispatch base is a pointer (offset 0)
         actuals = tuple(self._rvalue(a) for a in node.args)
-        t = self._temp(scalar("uint32_t"), f"icall_{m.field}")
+        agg = base_ct.of if m.arrow else base_ct             # the struct carrying the funcptr field
+        try:                                                 # the member's funcptr CType -> its return type
+            fct = agg.field(m.field)[0] if agg is not None else None
+        except KeyError:
+            fct = None
+        ret_ct = fct.of if (fct is not None and fct.kind == "funcptr") else None
+        t = self._temp(self._call_result_ct(ret_ct), f"icall_{m.field}")   # a signed member return reads back signed
         return self._emit(f"c.call.imember:{m.field}", Opcode.GEM_DISPATCH,
                           (base_rid, *actuals), (t,), imm=(1 if m.arrow else 0,))
 
@@ -1486,8 +1492,8 @@ class _FuncLowerer:
         # value then the actuals) and is *not* added to the call graph, leaving R18 to treat it as an
         # opaque external edge (no recursion / callee-resolution constraint can apply).
         if node.callee in self.env and self.env[node.callee][1].kind == "funcptr":
-            fptr = self.env[node.callee][0]
-            t = self._temp(scalar("uint32_t"), f"icall_{node.callee}")
+            fptr, fpct = self.env[node.callee]              # the funcptr CType carries its return type in `.of`
+            t = self._temp(self._call_result_ct(fpct.of), f"icall_{node.callee}")   # a signed return reads back signed
             return self._emit("c.call.indirect", Opcode.GEM_DISPATCH, (fptr, *actuals), (t,))
         # Atomics run on the A lane. A scalar atomic counter is a single-location RMW (not on
         # the decoupled GGG/scatter tail), so it stays SCALAR-shaped -- the lane law (R6) admits
@@ -1584,16 +1590,22 @@ class _FuncLowerer:
         # logical shift / unsigned compare). A struct/union RETURN keeps the aggregate CType (the result is a
         # by-value struct temp -- `struct P t = mk(x);` -- so it can be copied into a local, passed by value, or
         # member-accessed; typing it uint32 emitted invalid C `uint32_t t = mk(x)`).
-        if ret_ct is not None and ret_ct.is_aggregate:
-            rct = ret_ct
-        elif ret_ct is not None and (ret_ct.is_float or (ret_ct.is_integer and ret_ct.size > 4)):
-            rct = ret_ct
-        elif ret_ct is not None and ret_ct.is_integer and ret_ct.signed and ret_ct.size <= 4:
-            rct = scalar("int", self.abi)              # a signed char/short/int return promotes to int and
-        else:                                          # sign-extends downstream (a `(long)` widen, a compare)
-            rct = scalar("uint32_t")
-        t = self._temp(rct, f"call_{node.callee}")
+        t = self._temp(self._call_result_ct(ret_ct), f"call_{node.callee}")
         return self._emit(f"c.call:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
+
+    def _call_result_ct(self, ret_ct):
+        """The result-temp CType for a call, by the callee's return type -- shared by direct, indirect
+        (funcptr param), and member (funcptr field / dispatch) calls so all four type identically. A struct
+        return keeps the aggregate; a float or wide (>4-byte) integer keeps its CType; a SIGNED sub-int return
+        promotes to `int` (so a downstream `>>` / compare / `(long)` widen sign-extends); else uint32. A
+        funcptr whose return type wasn't captured (`ret_ct is None`) stays uint32 -- today's behaviour."""
+        if ret_ct is not None and ret_ct.is_aggregate:
+            return ret_ct
+        if ret_ct is not None and (ret_ct.is_float or (ret_ct.is_integer and ret_ct.size > 4)):
+            return ret_ct
+        if ret_ct is not None and ret_ct.is_integer and ret_ct.signed and ret_ct.size <= 4:
+            return scalar("int", self.abi)
+        return scalar("uint32_t")
 
     # --- statements ---
     def _block(self, stmts) -> list:
