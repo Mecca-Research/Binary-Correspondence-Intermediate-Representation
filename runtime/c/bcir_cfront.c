@@ -2259,6 +2259,120 @@ static void store_member(CC *c, venv *base, const field *f, uint32_t val){
     if(f->is_bool){cl->imm[2]=1;cl->n_imm=3;}                         /* a _Bool member normalizes on store */
     if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
 }
+static uint32_t p_assign(CC *c);   /* fwd: the rhs of an assignment-as-value is itself an assign (right-assoc) */
+/* A MEMORY-lvalue assignment used as a VALUE (the C twin of the oracle's generalized _is_scalar_member_lv
+ * value path, #lvassignexpr): an ARRAY ELEMENT `a[i]`, a pointer DEREF `*p` / `*(p+i)`, or a NESTED struct
+ * member `o.in.x` -- as a sub-expression `(a[i]=v)+1`, `(*p=v)*2`, `(o.in.x=v)+3`, and chains `a[0]=b[0]=v`.
+ * Mirrors the oracle: the lvalue is resolved ONCE (its index/base captured) and then, for a plain `=`, the
+ * rhs is STORED through it and the SAME resolved lvalue is RELOADED (the expression's value); for a compound
+ * `OP=`, the current value is read, `cur OP rhs` computed + stored, and the BINOP result is the value.
+ * Returns 1 (and sets *out) when it handled an eligible form; 0 (cursor unmoved) otherwise, so an ineligible
+ * target -- a BITFIELD, an ARRAY-OF-STRUCTS strided element, a MEMBER-ARRAY element, or a VOLATILE/MMIO
+ * lvalue -- falls through to the conditional grammar and PARSE-ERRs, routing the function to fallback exactly
+ * as the oracle's CLowerError does (the two rails promote the SAME set of forms). */
+static int lv_assign_value(CC *c, uint32_t *out){
+  int save=c->i;
+  /* --- a deref `*p = rhs` / `*(p + i) = rhs` / their `OP=` as a VALUE --- */
+  if(is(c,"*")){
+    c->i++;
+    venv *pv=NULL; uint32_t idx=0; int has_idx=0, ok=0;
+    if(is(c,"(")){ c->i++;                              /* *(p) or *(p + i) */
+      if(isk(c,T_ID)){ tok pid=*pk(c); pv=lookup(c,&pid);
+        if(pv){ c->i++;
+          if(is(c,"+")){ c->i++; idx=p_expr(c); has_idx=1; if(eat(c,")")) ok=1; }
+          else if(is(c,")")){ c->i++; ok=1; } } } }
+    else if(isk(c,T_ID)){ tok pid=*pk(c); pv=lookup(c,&pid); if(pv){ c->i++; ok=1; } }   /* *p */
+    const tok *op=&c->t[c->i];
+    int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
+    if(ok && pv && pv->type.kind==2 && !pv->type.is_volatile      /* a non-volatile pointer to a scalar pointee */
+       && pv->type.ptr_depth<=1 && (is_eq || is_compound_op(op))){
+      int sz = pv->type.size?pv->type.size:4;
+      if(is_eq){                                       /* plain: rhs FIRST, then store, then RELOAD */
+        c->i++; uint32_t rhs=p_assign(c);
+        bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+        if(cl){ if(has_idx){cl->n_rd=3;cl->rd[0]=pv->rid;cl->rd[1]=idx;cl->rd[2]=rhs;}
+          else {cl->n_rd=2;cl->rd[0]=pv->rid;cl->rd[1]=rhs;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;}
+          cl->bounds=BCIR_BND_ASSUMED; }
+        *out = has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv);   /* reload the SAME resolved lvalue */
+        return 1;
+      }
+      char ch=op->s[0]; c->i++;                         /* compound: read cur, binop, store, value = binop */
+      uint32_t cur = has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv);
+      uint32_t rhs=p_assign(c);
+      const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+      uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+      bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+      bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+      if(cl){ if(has_idx){cl->n_rd=3;cl->rd[0]=pv->rid;cl->rd[1]=idx;cl->rd[2]=tmp;}
+        else {cl->n_rd=2;cl->rd[0]=pv->rid;cl->rd[1]=tmp;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;}
+        cl->bounds=BCIR_BND_ASSUMED; }
+      *out=tmp; return 1;
+    }
+    c->i=save;   /* not an eligible deref-assignment value -- rewind (any speculative index lowering is rolled */
+  }              /* back below via the res/claim snapshot when we reach the array path; here nothing was emitted */
+  if(!isk(c,T_ID)) return 0;
+  tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);
+  if(!v){ c->i=save; return 0; }
+  /* --- an ARRAY ELEMENT `a[i] = rhs` / `a[i] OP= rhs` as a VALUE --- */
+  if(c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+    /* eligible only for a plain SCALAR-element array (kind 0, non-volatile) indexed directly to an `=`/OP=
+     * -- NOT an array-of-structs `a[i].f`, NOT a member-array (those are reached as a Member, not here). */
+    if(v->type.kind!=0 || v->type.is_volatile){ c->i=save; return 0; }
+    size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
+    int istart=c->i; c->i++; uint32_t idx=array_index(c,v);   /* resolve the index ONCE (Horner-flattened) */
+    const tok *op=&c->t[c->i];
+    int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
+    if(!(is_eq || is_compound_op(op))){                /* `a[i]` not followed by `=`/OP= -> a plain value */
+      c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc;
+      c->i=istart-1; c->i=save; return 0;
+    }
+    if(is_eq){                                         /* plain: store rhs, then RELOAD the same index */
+      c->i++; uint32_t rhs=p_assign(c);
+      bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+      if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=rhs;cl->bounds=access_bnd(c,v->rid);}
+      *out=emit_index(c,v,idx);                         /* reload reuses idx */
+      return 1;
+    }
+    char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = binop */
+    uint32_t cur=emit_index(c,v,idx); uint32_t rhs=p_assign(c);
+    const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+    uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+    bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+    bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+    if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=tmp;cl->bounds=access_bnd(c,v->rid);}
+    *out=tmp; return 1;
+  }
+  /* --- a NESTED struct member `o.in.x = rhs` / `s->a.b OP= rhs` as a VALUE --- */
+  if(v->sidx>=0 && c->t[c->i+1].k==T_PUN
+     && (c->t[c->i+1].s[0]=='.' || (c->t[c->i+1].n==2 && c->t[c->i+1].s[0]=='-' && c->t[c->i+1].s[1]=='>'))){
+    c->i++; tok dot=*pk(c); c->i++; tok fld=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
+    (void)dot;
+    for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n && !strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
+    if(fi<0){ c->i=save; return 0; }
+    field f=member_descend(c,S->f[fi]);                /* flatten `o.in.x` -> one offset; cursor past the chain */
+    const tok *op=&c->t[c->i];
+    int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
+    /* eligible only for a plain SCALAR leaf member, non-volatile -- NOT a bitfield, NOT a pointer/array/
+     * struct leaf (a pointer field reaching `->` / an array `[` would not land here; a struct leaf with no
+     * `=` is a value), and the base must not be a volatile/MMIO struct. */
+    if(!(is_eq || is_compound_op(op)) || f.bit_w || f.is_ptr || f.arr_count || f.sidx>=0
+       || v->type.is_volatile){ c->i=save; return 0; }
+    if(is_eq){                                         /* plain: store rhs, then RELOAD the same member */
+      c->i++; uint32_t rhs=p_assign(c);
+      store_member(c,v,&f,rhs);
+      *out=emit_member(c,v,&f);
+      return 1;
+    }
+    char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = binop */
+    uint32_t cur=emit_member(c,v,&f); uint32_t rhs=p_assign(c);
+    const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+    uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+    bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+    store_member(c,v,&f,tmp);
+    *out=tmp; return 1;
+  }
+  c->i=save; return 0;
+}
 /* The assignment-expression level (lowest precedence, RIGHT-associative): `name = assign` / `name OP= assign`
  * evaluates to the assigned value (the named variable's storage), mirroring the statement forms in p_stmt and
  * the oracle's _assign. Only a NAMED variable target (local/param/global) is handled as a value; anything else
@@ -2307,6 +2421,7 @@ static uint32_t p_assign(CC *c){
     store_member(c,mbase,&mf,tmp);
     return tmp;
   }
+  { uint32_t v; if(lv_assign_value(c,&v)) return v; }   /* a[i]/ *p/o.in.x = rhs (store + reload) as a VALUE */
   return p_cond(c);
 }
 static uint32_t p_expr(CC *c){ return p_assign(c); }
