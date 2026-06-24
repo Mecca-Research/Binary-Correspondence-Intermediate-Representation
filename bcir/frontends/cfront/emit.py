@@ -178,6 +178,8 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return f"{ref(c.wr[0])} -= {ref(c.rd[1])};"
     if c.op == "c.const":
         return deftmp(c.wr[0], f"{c.imm[0]}u")
+    if c.op == "c.sizeof.vla":                                # runtime `sizeof a` of a VLA: extent × sizeof(elem)
+        return deftmp(c.wr[0], f"(size_t)((size_t){ref(c.rd[0])} * {c.imm[0]})")
     if c.op.startswith("c.fconst:"):                         # a floating constant -> its literal spelling
         return deftmp(c.wr[0], c.op.split(":", 1)[1])
     if c.op.startswith("c.cconst:"):                         # <complex.h> imaginary unit -> verbatim token
