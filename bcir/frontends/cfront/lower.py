@@ -958,6 +958,8 @@ class _FuncLowerer:
         if isinstance(node, cast.Binary) and node.op == ",":
             self._rvalue(node.lhs)                            # the comma operator: evaluate the left operand for
             return self._rvalue(node.rhs)                     # its side effects, discard it, yield the right value
+        if isinstance(node, cast.IncDec):
+            return self._incdec_value(node)
         if isinstance(node, cast.Binary):
             a, b = self._rvalue(node.lhs), self._rvalue(node.rhs)
             opcode, suf = _BIN[node.op]
@@ -1405,6 +1407,41 @@ class _FuncLowerer:
                 off += val * elem.size
                 cur, bit_off, bit_w = elem, 0, 0
         return _LV("mem", rid, cur, byte_off=off, bit_off=bit_off, bit_width=bit_w, packed=parent_packed)
+
+    def _incdec_value(self, node: cast.IncDec) -> int:
+        """`a++` / `++a` / `a--` / `--a` in EXPRESSION position -> a read-modify-write yielding the OLD value
+        (postfix) or the NEW value (prefix). The lvalue is resolved ONCE (C evaluates it once, so a
+        side-effecting index `arr[f()]++` runs f() once). A pointer steps by element (c.ptradd/sub). A
+        NAMED-LOCAL postfix must SNAPSHOT the old value first -- `_read` returns the mutable storage rid, which
+        the store would then clobber. A volatile/MMIO target (an extra access) and a non-scalar memory lvalue
+        stay a both-rails fallback."""
+        lv = self._lvalue(node.operand)
+        if lv.bit_width and lv.kind == "mem" and self._mmio(lv.rid):
+            raise CLowerError("inc/dec of a volatile/MMIO bitfield is a follow-on")
+        if lv.kind != "var" and not (_is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)):
+            raise CLowerError("inc/dec of this lvalue form is a follow-on")  # MMIO / non-scalar member
+        cur = self._read(lv)
+        if not node.prefix and lv.kind == "var":         # snapshot: _read hands back the mutable storage rid,
+            old = self._temp(lv.ct, "id_old")            # which the store below would clobber -- a same-type
+            self._emit(f"c.cast:{_cast_name(lv.ct)}", Opcode.ADD, (cur,), (old,))  # cast DECLARES the temp
+        else:
+            old = cur                                     # a memory read is already a fresh declared temp
+        one = self._rvalue(cast.IntLit(1))
+        if lv.ct.kind == "pointer":                       # a pointer steps by sizeof(*p): c.ptradd MUTATES the
+            self._emit("c.ptradd" if node.op == "+" else "c.ptrsub",   # storage IN PLACE (`p += 1`), so only a
+                       Opcode.ADD, (lv.rid, one), (lv.rid,))           # named-local pointer reaches here (mem
+            return old if not node.prefix else lv.rid     # pointer lvalues fall back); no separate write/re-read
+        opcode, suf = _BIN[node.op]
+        rt = self._bin_result_type(node.op, cur, one)
+        new = self._temp(rt, f"id_{suf}")
+        self._emit(f"c.bin.{suf}", opcode, (cur, one), (new,))
+        self._write(lv, new)
+        if not node.prefix:
+            return old                                    # postfix: the pre-step value
+        nt = self.rtypes.get(new)                         # prefix: the STORED new value -- re-read if the target
+        if lv.bit_width or (nt is not None and lv.ct.size < nt.size):
+            return self._read(lv)                         # narrows (a bitfield / sub-int local), else `new`
+        return new
 
     def _assign(self, node: cast.Assign, stmt: bool = False) -> int:
         # An assignment as a VALUE (a sub-expression: `a = b = c`, `if ((x = f()))`, `(p->x = v) + 1`) yields

@@ -109,6 +109,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_aosassignexpr.c",# an array-of-structs field / member-array element as a value (#aosassignexpr)
              "cfront_signedfnptr.c", # a SIGNED function-pointer return reads back signed (#signedfnptr)
              "cfront_addroffollow.c",# &arr[i].field (plain base) + &s->ptr (pointer member) (#addroffollow)
+             "cfront_incdecexpr.c",  # ++/-- in expression position as a value (#incdecexpr)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -3251,6 +3252,23 @@ def test_address_of_follow_ons():
         compile_unit("struct S{unsigned arr[4];}; unsigned f(struct S *s){ unsigned (*pa)[4]=&s->arr; return (**pa); }", check_clang=True)
     except CLowerError:
         pass
+
+
+def test_incdec_as_expression_value():
+    """§5.10 item 5 (#incdecexpr): `++`/`--` in EXPRESSION position -> a read-modify-write yielding the OLD
+    value (postfix) or the NEW value (prefix). The lvalue is resolved ONCE. Covers a named local, member,
+    array element, bitfield, sub-int (narrowing) local, pointer step, and the comma operator. The statement
+    forms `a++;` already worked. Behaviour-equivalent to Clang on both rails."""
+    from bcir.frontends.cfront import compile_unit
+    for src in ("unsigned f(unsigned a){ unsigned x=a++; return x*100u+a; }",
+                "unsigned f(unsigned a){ unsigned x=++a; return x*100u+a; }",
+                "int f(int a){ int x=a--; return x*100+a; }",
+                "struct S{unsigned x;}; unsigned f(unsigned v){ struct S s; s.x=v; unsigned r=s.x++; return r*100u+s.x; }",
+                "unsigned f(unsigned i, unsigned v){ unsigned a[4]; a[i&3u]=v; unsigned r=a[i&3u]++; return r*100u+a[i&3u]; }",
+                "struct B{unsigned x:5;}; unsigned f(unsigned v){ struct B b; b.x=v&31u; unsigned r=b.x++; return r*100u+b.x; }",
+                "unsigned f(unsigned a, unsigned b){ return (a++, b)+a; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
 def test_quarantine_report_is_the_debugger_trace_surface():

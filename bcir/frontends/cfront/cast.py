@@ -83,6 +83,13 @@ class Unary:
 
 
 @dataclass(frozen=True)
+class IncDec:
+    op: str                         # '+' (++) or '-' (--) -- the direction
+    operand: object                 # the lvalue being stepped
+    prefix: bool                    # True: ++a/--a (yield the NEW value); False: a++/a-- (yield the OLD value)
+
+
+@dataclass(frozen=True)
 class Cast:
     type: TypeRef                   # the target type — `(type)operand`
     operand: object
