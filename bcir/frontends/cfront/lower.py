@@ -251,6 +251,23 @@ def _fold_const(node) -> int:
     raise CLowerError("static initializer is not a constant expression")
 
 
+def _is_pure(node) -> bool:
+    """True if evaluating `node` has NO side effect -- safe to re-evaluate for the §5.12 extent snapshot:
+    an integer literal, a name read, `sizeof`/`_Alignof` (unevaluated), or an arithmetic unary / binary /
+    cast over pure operands. A call, assignment, `++`/`--`, deref/address-of, or anything else is NOT pure
+    (conservative: an unrecognized node is impure, so it stays unmanaged rather than double-run)."""
+    if isinstance(node, (cast.IntLit, cast.Name, cast.SizeOf, cast.AlignOf)):
+        return True
+    if isinstance(node, cast.Unary):
+        return node.op in ("-", "~", "+") and _is_pure(node.operand)       # arithmetic only (NOT * / &)
+    if isinstance(node, cast.Binary):
+        return (node.op in {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
+                and _is_pure(node.lhs) and _is_pure(node.rhs))
+    if isinstance(node, cast.Cast):
+        return _is_pure(node.operand)
+    return False
+
+
 def _scan_mutations(node, assigned: dict, body: dict, addr: set) -> None:
     """Walk a function-body AST collecting, per name: the TOTAL assignment count (`assigned`: a decl-init,
     `x = e`, compound `x OP= e`, and `x++`/`x--` -- which the parser desugars to an assign), the count of
@@ -508,6 +525,7 @@ class _FuncLowerer:
         self._mut_assigned: dict[str, int] = {}        # name -> TOTAL assignments incl. decl-init (pointer gate)
         self._mut_body: dict[str, int] = {}            # name -> NON-decl-init assignments only (count gate)
         self._mut_addr: set[str] = set()               # names whose address is taken anywhere (`&x`)
+        self._ext_ctr = 0                              # unique hidden extent-snapshot locals (`__bcir_extK`)
 
     def _next_loop_id(self) -> int:
         self.loop_ctr += 1
@@ -1118,11 +1136,11 @@ class _FuncLowerer:
                 return "masked"                       # a malloc/calloc pointer with a recovered element count
         return "assumed_safe"
 
-    def _recoverable_alloc(self, call, pointee_size: int) -> int | None:
-        """If `call` is `malloc(N*sizeof(T))` / `malloc(sizeof(T)*N)` / `calloc(N, sizeof(T))` (T the pointee,
-        so N is the element COUNT), or `malloc(N)` for a 1-byte pointee, with N a STABLE integer Name (assigned
-        at most once, never address-taken), return N's variable rid -- the recovered extent. Else None.
-        Conservative by construction: any uncertainty -> None (no guard, never a false trap). (§5.12)"""
+    def _alloc_count_node(self, call, pointee_size: int):
+        """The element-COUNT AST node of a recoverable `malloc(N*sizeof(T))` / `malloc(sizeof(T)*N)` /
+        `calloc(N, sizeof(T))` / `malloc(N)` (1-byte pointee) -- N, where the size operand is `sizeof(T)`
+        (T the pointee) or its byte literal. Else None. Recognition only; the binding decides how to capture
+        N (a stable Name re-emitted by name, or an expression SNAPSHOTTED). (§5.12)"""
         if not isinstance(call, cast.CallExpr) or pointee_size <= 0:
             return None
 
@@ -1134,42 +1152,51 @@ class _FuncLowerer:
                     return None
             return e.value if isinstance(e, cast.IntLit) else None
 
-        def count_rid(e):                                    # a stable integer-count Name -> its variable rid
-            if not isinstance(e, cast.Name) or e.ident not in self.env:
-                return None
-            rid, ct = self.env[e.ident]
-            if ct.kind != "scalar" or getattr(ct, "is_float", False):
-                return None                                  # an integer count only
-            if self._mut_body.get(e.ident, 0) > 0 or e.ident in self._mut_addr:
-                return None                  # not stable: an ordinary (post-alloc-capable) write, or aliased
-            return rid
-
         if call.callee == "calloc" and len(call.args) == 2:
-            return count_rid(call.args[0]) if size_bytes(call.args[1]) == pointee_size else None
+            return call.args[0] if size_bytes(call.args[1]) == pointee_size else None
         if call.callee == "malloc" and len(call.args) == 1:
             a = call.args[0]
             if isinstance(a, cast.Binary) and a.op == "*":
                 if size_bytes(a.rhs) == pointee_size:
-                    return count_rid(a.lhs)
+                    return a.lhs
                 if size_bytes(a.lhs) == pointee_size:
-                    return count_rid(a.rhs)
+                    return a.rhs
                 return None
             if pointee_size == 1:                            # a byte buffer: malloc(N) bytes == N elements
-                return count_rid(a)
+                return a
         return None
 
     def _bind_extent(self, p_rid: int, p_ct: "CType", p_name: str, init) -> None:
         """Bind a recovered element-count to a malloc/calloc'd pointer local, so its `p[i]` accesses promote
         to `masked`. Only when the POINTER itself is stable -- assigned exactly once (this binding) and never
-        address-taken -- so it still points at that allocation at every access (a `p = realloc(...)` reassigns
-        it, count 2, and is correctly left unmanaged). (§5.12)"""
+        address-taken (a `p = realloc(...)` reassigns it, count 2, and is left unmanaged). The COUNT is then
+        captured one of two ways:
+          * a STABLE integer-count Name (no ordinary post-alloc write, not aliased) -- re-emitted BY NAME at
+            the access, byte-identical to the pre-snapshot path (the common `malloc(m*sizeof)` case);
+          * any other side-effect-free COUNT EXPRESSION (`(n+1)`, `a*b`, ...) -- evaluated once into a hidden
+            immutable local `__bcir_extK` at the alloc, immune to any later mutation of its inputs (the
+            SNAPSHOT). Re-evaluating it for the snapshot is sound exactly because it is pure. (§5.12)"""
         if p_ct.kind != "pointer" or p_ct.of is None:
             return
         if self._mut_assigned.get(p_name, 0) != 1 or p_name in self._mut_addr:
             return
-        n_rid = self._recoverable_alloc(init, p_ct.of.size)
-        if n_rid is not None:
-            self.ptr_extent[p_rid] = n_rid
+        count = self._alloc_count_node(init, p_ct.of.size)
+        if count is None:
+            return
+        if isinstance(count, cast.Name) and count.ident in self.env:       # the stable-Name fast path
+            rid, ct = self.env[count.ident]
+            if (ct.kind == "scalar" and not getattr(ct, "is_float", False)
+                    and self._mut_body.get(count.ident, 0) == 0 and count.ident not in self._mut_addr):
+                self.ptr_extent[p_rid] = rid
+            return                                                         # a Name is captured by name or not at all
+        if _is_pure(count):                                                # an EXPRESSION count -> snapshot it
+            v = self._rvalue(count)
+            vct = self.rtypes.get(v)
+            if vct is not None and vct.kind == "scalar" and not getattr(vct, "is_float", False):
+                ext = self._storage(vct, f"__bcir_ext{self._ext_ctr}")
+                self._ext_ctr += 1
+                self._emit("c.copy", Opcode.ADD, (v,), (ext,))
+                self.ptr_extent[p_rid] = ext
 
     def _load_unit(self, lv: "_LV") -> int:
         if lv.bit_width:
