@@ -928,6 +928,9 @@ class _FuncLowerer:
             return self._lookup(node.ident, node.pos)[0]
         if isinstance(node, cast.StringLit):                  # a string value -> the global pointer
             return self._string_ptr(node.value)
+        if isinstance(node, cast.Binary) and node.op == ",":
+            self._rvalue(node.lhs)                            # the comma operator: evaluate the left operand for
+            return self._rvalue(node.rhs)                     # its side effects, discard it, yield the right value
         if isinstance(node, cast.Binary):
             a, b = self._rvalue(node.lhs), self._rvalue(node.rhs)
             opcode, suf = _BIN[node.op]

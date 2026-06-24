@@ -799,6 +799,17 @@ class _Parser:
     def _expr(self):
         return self._assign()
 
+    def _comma(self):
+        """A FULL expression with the comma operator (lowest precedence): `a, b` evaluates `a` for its side
+        effects, discards it, and yields `b`. Only valid where C allows a full `expression` -- used for the
+        PRIMARY parenthesized `( ... )`. Call ARGUMENTS and initializer ELEMENTS keep `_assign` (there the
+        comma is a separator, not the operator), so `f(a, b)` / `{a, b}` are unaffected."""
+        e = self._assign()
+        while self.at("PUNCT", ","):
+            self.nxt()
+            e = cast.Binary(",", e, self._assign())
+        return e
+
     def _assign(self):
         lhs = self._ternary()
         if self.at("OP", "="):
@@ -1018,7 +1029,7 @@ class _Parser:
                 self.eat("PUNCT", ")")
                 return cast.StmtExpr(stmts)
             self.nxt()
-            e = self._expr()
+            e = self._comma()                                 # a full expression: the comma OPERATOR is allowed here
             self.eat("PUNCT", ")")
             return e
         tk = self.peek()
