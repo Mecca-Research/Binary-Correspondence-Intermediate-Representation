@@ -336,13 +336,14 @@ class _LV:
 
 
 def _is_scalar_member_lv(target, lv: "_LV") -> bool:
-    """A memory lvalue safe to store+reload as an assignment-EXPRESSION value: a plain SCALAR lvalue -- a
-    direct/nested struct member `s.x` / `s.a.b`, an array element `a[i]`, a pointer deref `*p`, or a BITFIELD
-    member `s.bits` -- that is NOT an array-of-structs strided element and NOT a member-array. The lvalue is
-    resolved ONCE (its index/address captured), so the re-read returns the stored/converted value without
-    re-running a side-effecting index. (A bitfield's value is the masked/sign-extended stored field -- the
-    plain `=` path re-reads via bf.get, and the compound path re-reads too; see `_assign`.)"""
-    return (lv.kind == "mem" and lv.ct.kind == "scalar" and lv.stride == 0 and not lv.member)
+    """A memory lvalue safe to store+reload as an assignment-EXPRESSION value: any SCALAR memory lvalue -- a
+    direct/nested struct member `s.x` / `s.a.b`, an array element `a[i]`, a pointer deref `*p`, a BITFIELD
+    member `s.bits`, OR a strided member (an array-of-structs element field `aos[i].f` / a member-array element
+    `s.arr[i]`). The lvalue is resolved ONCE (its index/address captured), so the re-read returns the
+    stored/converted value without re-running a side-effecting index. (A bitfield's value is the
+    masked/sign-extended stored field via bf.get; an array-of-structs field re-reads the same strided element.
+    MMIO/volatile lvalues are excluded at the `_assign` call sites -- a re-read would be an extra access.)"""
+    return lv.kind == "mem" and lv.ct.kind == "scalar"
 
 
 # --- the structured body tree (L6): a block is a list mixing straight-line Claims with these. ---
