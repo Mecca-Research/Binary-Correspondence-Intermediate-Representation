@@ -652,6 +652,23 @@ full ABI/object generation, conformance suites, and integration with a resident 
 toolchain — **not** the BCIR optimizer (that is already complete on the MLIR/C++ law rail). We
 complete it **systematically, one PR-sized chunk at a time**, in four phases.
 
+> #### Recently closed + a designed-but-deferred gap
+> ✅ The **comma operator** `a, b` in a primary parenthesized expression (`#comma`, dual-rail) — isolated to
+> `( ... )` so call-args / initializer-element separator commas are unaffected.
+>
+> ⏭ **Variable-length arrays (`T a[n]`) — design captured, native lowering deferred.** A VLA's extent is a
+> *runtime* value, so its `a[i]` bounds are exactly the §5.12 recoverable-extent contract (snapshot `n`,
+> `masked` against it) — the safety half is already built. The blocker is the **emitter**: it declares all
+> locals *up front* (deliberately, for branch-merge / loop-accumulator correctness), but a VLA cannot be
+> declared before its runtime size is computed. Two sound resolutions, each a real design choice:
+> (a) **faithful stack VLA** — teach the emitter *in-body* local declaration for VLAs (emit `T a[n]` at the
+> source point, after the snapshot of `n`); the correct lowering, the emit-model change is the substantial
+> part; (b) **managed-buffer** — lower `T a[n]` to a bounds-managed `T *a = malloc(n*sizeof(T))` (reuses
+> §5.12 extents directly, value-equivalent, sidesteps the emit model) but transforms stack→heap and needs a
+> scope-exit `free` the emitter has no hook for (leaks without it). Recommended as a deliberate fresh effort
+> (parser + `CType.vla_count` + the chosen emit path + the twin), not a tail-end rush. Until then a VLA
+> routes through the existing `--fallback` contract.
+
 > #### C-frontend differential fuzzer (`tools/c/fuzz_cfront.py`, `test_cfront_differential_fuzz`)
 > A generative **three-way** differential — random *UB-free* C programs run through BOTH rails (twin
 > `bcir_cfront.c` + oracle `frontends/cfront`) and Clang, asserting equal **outcome** (clean/dirty/fallback),
