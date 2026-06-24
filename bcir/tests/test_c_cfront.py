@@ -108,6 +108,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_bfassignexpr.c",# a BITFIELD member assignment used as a value (#bfassignexpr)
              "cfront_aosassignexpr.c",# an array-of-structs field / member-array element as a value (#aosassignexpr)
              "cfront_signedfnptr.c", # a SIGNED function-pointer return reads back signed (#signedfnptr)
+             "cfront_addroffollow.c",# &arr[i].field (plain base) + &s->ptr (pointer member) (#addroffollow)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -3231,6 +3232,25 @@ def test_signed_function_pointer_return():
                 "static long lw(int x){return -(long)x-1;} struct D{long(*op)(int);}; long f(int x){ struct D d; d.op=lw; return d.op(x)-1; }"):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
+
+
+def test_address_of_follow_ons():
+    """§5.10 item 1 follow-on (#addroffollow): a PLAIN-base array-of-structs element-field address
+    `&arr[i].field` (the indexed base is a bare array/pointer param or a local array, not a struct member) and
+    a POINTER-member address `&s->ptr`, both store-through-able. Both were both-rails fallbacks. An ARRAY
+    member `&s->arr` (a pointer-to-array result) stays a fallback. Behaviour-equivalent to Clang on both
+    rails."""
+    from bcir.frontends.cfront import compile_unit
+    from bcir.frontends.cfront.lower import CLowerError
+    for src in ("struct P{unsigned a,b;}; unsigned f(struct P *arr, unsigned i){ unsigned *p=&arr[i&3u].b; return *p+1u; }",
+                "struct P{unsigned a,b;}; unsigned f(unsigned i, unsigned v){ struct P arr[4]; unsigned *p=&arr[i&3u].a; *p=v; return arr[i&3u].a; }",
+                "struct S{unsigned *ptr; unsigned n;}; unsigned f(struct S *s, unsigned *q){ s->ptr=q; unsigned **pp=&s->ptr; *pp=q+1; return (unsigned)(s->ptr==q+1); }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
+    try:                                                  # &s->arr (array member) stays a clean fallback
+        compile_unit("struct S{unsigned arr[4];}; unsigned f(struct S *s){ unsigned (*pa)[4]=&s->arr; return (**pa); }", check_clang=True)
+    except CLowerError:
+        pass
 
 
 def test_quarantine_report_is_the_debugger_trace_surface():
