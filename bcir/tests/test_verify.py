@@ -151,6 +151,25 @@ def test_strided_read_extent_counts_stride():
     assert "R7" in _laws(verify(m))
 
 
+def test_masked_without_bounds_verify_is_R7():
+    # §5.12 item 4: R7 now SEES the masked metadata it used to skip. A masked (runtime-bounds-checked)
+    # access that does not declare the `bounds` verify contract is a promotion the backend would emit
+    # without a guard -- a silent loss of the check.
+    m = Module(name="bad")
+    m.add_resource(Resource(rid=1, shape=(8,)))
+    m.add_phase(Phase(phase_id=0, claims=[
+        Claim(id=1, opcode=Opcode.LOAD, rd=(1,), wr=(1,), bounds="masked", verify="none")]))
+    assert "R7" in _laws(verify(m))
+
+
+def test_masked_with_bounds_verify_is_legal():
+    m = Module(name="ok")
+    m.add_resource(Resource(rid=1, shape=(8,)))
+    m.add_phase(Phase(phase_id=0, claims=[
+        Claim(id=1, opcode=Opcode.LOAD, rd=(1,), wr=(1,), bounds="masked", verify="bounds")]))
+    assert "R7" not in _laws(verify(m))
+
+
 def test_random_strict_bounds_without_runtime_verify_is_R7():
     m = Module(name="bad")
     m.add_resource(Resource(rid=1, shape=(1024,)))

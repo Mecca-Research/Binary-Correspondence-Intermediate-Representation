@@ -2984,6 +2984,28 @@ def test_extent_count_mutation_is_not_promoted():
             assert run.returncode == 0 and run.stdout.strip() == "4", (run.returncode, run.stdout, run.stderr)
 
 
+def test_masked_claims_are_discharged_by_a_runtime_guard():
+    """§5.12 lowering faithfulness (item 4): the emit must HONOR the `masked` bounds metadata -- every
+    masked load/store claim is discharged by exactly one `BCIR_CHK` runtime guard in the emitted C, and
+    every masked claim carries the `bounds` verify contract (so R7 validates it). Across the whole corpus,
+    a masked claim never silently loses its guard, and a guard is never emitted without a masked claim."""
+    import glob
+    from bcir.frontends.cfront import compile_unit
+    seen_masked = 0
+    for path in sorted(glob.glob(os.path.join(_C, "cfront_*.c"))):
+        fx = os.path.basename(path)
+        r = compile_unit(open(path, encoding="utf-8").read(), check_clang=False, includes=_includes_for(fx))
+        if r.fallback:
+            continue
+        for name, lf in r.lowered.functions.items():
+            masked = [c for c in lf.claims if c.op in ("c.load", "c.store") and c.bounds == "masked"]
+            seen_masked += len(masked)
+            assert all(c.verify == "bounds" for c in masked), (fx, name)        # R7 contract
+            assert len(masked) == r.emitted[name].count("BCIR_CHK"), \
+                (fx, name, "masked claims", len(masked), "BCIR_CHK guards", r.emitted[name].count("BCIR_CHK"))
+    assert seen_masked > 0                                                       # the corpus exercises the path
+
+
 def test_quarantine_report_is_the_debugger_trace_surface():
     """§5.12 debugger trace surface: a STRONG override of `bcir_bounds_quarantine` (the ML-layer / debugger
     seam) records each OOB event into the ring without aborting, and `bcir_quarantine_report` reads the ring

@@ -1696,7 +1696,14 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    MLIR port of the lifetime attribute.
 4. Extend **R1–R12 coverage** to the promoted-pointer paths (the laws already apply to the claim; the gap
    is the new `verify=bounds`/lifetime metadata, which the laws must learn to check) + the runtime guards
-   the C backend emits (`verify_c_lowering`).
+   the C backend emits. ✅ **Bounds metadata now VALIDATED** (`verify` R7 masked check,
+   `test_masked_without_bounds_verify_is_R7` / `test_masked_with_bounds_verify_is_legal`,
+   `test_masked_claims_are_discharged_by_a_runtime_guard`): R7 no longer SKIPS `masked` -- a masked
+   (runtime-bounds-checked) access must declare the `bounds` verify contract, so a promotion the backend
+   would emit without a guard is now a legality diagnostic. Plus a corpus LOWERING-FAITHFULNESS check: every
+   masked load/store claim is discharged by exactly one `BCIR_CHK` guard in the emit (104 masked claims, 1:1
+   across the corpus -- a masked claim never silently loses its guard, a guard never appears without one).
+   Lifetime is validated by R21 (item 3). *Next:* the same for the K_BCIR/MLIR backend guards.
 
 ### 5.13 C as a substrate — memory wins and paradigm reach (vision, grounded)
 
