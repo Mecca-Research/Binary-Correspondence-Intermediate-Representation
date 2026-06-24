@@ -104,6 +104,10 @@ typedef struct bcir_ctype {
   uint8_t  is_plain_char;    /* a plain `char` (vs signed/unsigned char): emit `char` (impl-defined sign) */
   uint8_t  is_valist;        /* the `va_list` type (variadic argument cursor) -- emit `va_list` */
   char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1/ptr_to_struct), or funcptr alias (kind 3) */
+  int      fp_ret_size;      /* kind-3 funcptr: the captured RETURN type (sign/width/float), used to type a
+                              * c.call.indirect / c.call.imember result temp; ZERO if the return wasn't captured */
+  uint8_t  fp_ret_signd;
+  uint8_t  fp_ret_float;
   int      adims[3];         /* decayed multi-dim array-param shape (outer-first), for m[i][j] */
   int      nadims;           /* number of array dims (0 == not an array parameter) */
 } bcir_ctype;
