@@ -112,6 +112,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_incdecexpr.c",  # ++/-- in expression position as a value (#incdecexpr)
              "cfront_computedgoto.c",# computed goto: &&L label-as-value + goto *p (#computedgoto)
              "cfront_fnptrlocal.c",  # a function-pointer LOCAL VARIABLE `RET (*f)(P)=fn;` (#fnptrlocal)
+             "cfront_arrcomplit.c",  # 1-D scalar array compound literals, bounds-guard-reconciled (#arrcomplit)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -3271,6 +3272,19 @@ def test_incdec_as_expression_value():
                 "unsigned f(unsigned i, unsigned v){ unsigned a[4]; a[i&3u]=v; unsigned r=a[i&3u]++; return r*100u+a[i&3u]; }",
                 "struct B{unsigned x:5;}; unsigned f(unsigned v){ struct B b; b.x=v&31u; unsigned r=b.x++; return r*100u+b.x; }",
                 "unsigned f(unsigned a, unsigned b){ return (a++, b)+a; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
+
+
+def test_array_compound_literal_1d_scalar():
+    """§5.10 item 4 (#arrcomplit): a 1-D SCALAR-element array compound literal lowers on both rails -- indexed,
+    sized+zero-fill, signed-element. Both rails emit the per-element init as a MASKED subscript (a `BCIR_CHK`
+    per write, like a regular array init), so the bounds-guard count reconciles. Behaviour-equivalent to
+    Clang."""
+    from bcir.frontends.cfront import compile_unit
+    for src in ("unsigned f(unsigned i){ return (unsigned[]){10u,20u,30u,40u}[i&3u]; }",
+                "unsigned f(unsigned i){ return (unsigned[4]){10u,20u}[i&3u]; }",
+                "int f(unsigned i){ return (int[]){-1,-2,-3}[i%3u]; }"):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
