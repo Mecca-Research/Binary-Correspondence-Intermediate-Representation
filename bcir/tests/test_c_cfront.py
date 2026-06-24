@@ -44,7 +44,7 @@ _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfron
                  "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c", "cfront_signed.c", "cfront_signedcmp.c", "cfront_signedbare.c", "cfront_longunary.c", "cfront_boolnorm.c", "cfront_unarypromote.c", "cfront_floatsigncast.c", "cfront_intsigncast.c", "cfront_boolcast.c", "cfront_boolmember.c"]   # + char consts + str table/dedup + const LUT + ABI sizeof model + bool normalization + unary integer-promotion/float + float->signed + int->signed cast + bool cast + _Bool member/element store-normalization
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
             "cfront_continue.c", "cfront_switch.c", "cfront_switchfall.c", "cfront_goto.c", "cfront_incdec.c",
-            "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c", "cfront_loopscope.c", "cfront_blockscope.c", "cfront_localmd.c", "cfront_ptrlocal.c"]
+            "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c", "cfront_loopscope.c", "cfront_blockscope.c", "cfront_localmd.c", "cfront_localmdinit.c", "cfront_ptrlocal.c"]
             # + multi-declarator locals (T a=x, b, c=z), comma-operator for-step (i++, j--), empty stmts
 _PREPROC = ["cfront_macros.c", "cfront_ppinc.c", "cfront_comments.c"]      # L7: exercise the preprocessor
 _ABI = ["cfront_structret.c", "cfront_structcall.c",  # L8: struct return-by-value (+ using a call RESULT)
@@ -3314,6 +3314,21 @@ def test_multidim_array_complit_falls_back():
             open(p, "w").write(md)
             summ, _ = _c_run(exe, p)
             assert "ok=1" not in summ, f"twin should fall back, got {summ}: {md}"
+
+
+def test_multidim_array_braceinit():
+    """§5.10 (#localmdinit): a REGULAR multi-dimensional local array with a NESTED-brace initializer
+    `T a[A][B] = {{..},{..}}` (2-D + 3-D + a PARTIAL init that exercises the `= {0}` zero baseline). The
+    flat resource keeps the row-major `a[A][B]` layout, so each rail descends a nested brace by ROW
+    (offset = row*stride; the innermost dim stores per element), not by treating the scalar leaf as the
+    element (the old IndexError / parse-error). Behaviour-equivalent to Clang on both rails (the strides /
+    offsets are pinned by the `match` check -- a wrong stride is a silent miscompile, #500)."""
+    from bcir.frontends.cfront import compile_unit
+    for src in ("unsigned f(unsigned i, unsigned j){ unsigned a[2][2]={{1u,2u},{3u,4u}}; return a[i&1u][j&1u]; }",
+                "unsigned f(unsigned i, unsigned j, unsigned k){ unsigned b[2][2][2]={{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}}}; return b[i&1u][j&1u][k&1u]; }",
+                "unsigned f(unsigned i, unsigned j){ unsigned c[2][3]={{1u},{4u,5u}}; return c[i&1u][j%3u]; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
 def test_computed_goto():

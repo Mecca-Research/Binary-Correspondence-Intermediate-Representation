@@ -2897,6 +2897,34 @@ static void subagg_init(CC *c, uint32_t rid, int base_off, int es, int is_bool) 
   }
   eat(c,"}");
 }
+/* A NESTED-brace initializer for a MULTI-dim local array `T a[d0][d1]... = { {..}, {..} }` (the C twin of
+ * the oracle's _init_subagg multi-dim row descent). The flat resource keeps the same row-major memory layout
+ * as `T a[d0][d1]`, so each outer brace descends by ROW: row `r` lands at `base_off + r*stride` where
+ * `stride = product(dims[1:]) * es` (the leaf element size `es`). A nested brace recurses with the inner dims
+ * (`dims+1`, `nd-1`); a scalar inside the innermost dim stores at its element offset (an OFFSET-based member
+ * c.store at `base_off + idx*es`, exactly like subagg_init -- composing through the enclosing `= {0}`
+ * baseline). Positional entries advance a cursor, `[i]=` jumps it, gaps zero-fill (§6.7.10). */
+static void subagg_init_md(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool) {
+  eat(c,"{");
+  int stride=es;                                          /* row stride = product(dims[1:]) * es */
+  for(int d=1; d<nd; d++) stride*=dims[d];
+  int cursor=0;
+  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
+    int idx=cursor;
+    if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
+    if(nd>1 && is(c,"{")){                                /* an outer dim takes a nested ROW brace */
+      subagg_init_md(c, rid, base_off+idx*stride, dims+1, nd-1, es, is_bool);
+    } else {                                              /* innermost dim: a scalar element store */
+      uint32_t v=p_expr(c);
+      bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+      if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=v;cl->n_imm=2;cl->imm[0]=base_off+idx*es;cl->imm[1]=es;cl->bounds=BCIR_BND_ASSUMED;
+        if(is_bool){cl->imm[2]=1;cl->n_imm=3;}}           /* a _Bool[] element init normalizes the value */
+    }
+    cursor=idx+1;
+    if(is(c,",")) c->i++;
+  }
+  eat(c,"}");
+}
 /* A nested braced initializer for an ARRAY-OF-STRUCTS member -- `{ {a,b}, {c,d}, ... }`: each element brace
  * recurses into the element struct's init at `base_off + idx*stride` (the C twin of the oracle's _init_subagg
  * array-of-struct branch). Composes through the enclosing `= {0}` baseline; `[i]=` jumps, gaps zero-fill. */
@@ -3389,7 +3417,23 @@ static void p_stmt(CC *c) {
           if(f->n_statics<f->cap_statics){ idcpy(f->statics[f->n_statics].name,&nm);
             f->statics[f->n_statics].init=init; f->n_statics++; } }
       } else if(is(c,"=")){c->i++;
-        if(is(c,"{")){ if(arr) arr_init(c,rid); else agg_init(c,rid,si); }   /* {…} array / struct-union init */
+        if(is(c,"{")){
+          int md_nested=0;                                  /* peek: does a MULTI-dim init use a nested ROW brace? */
+          if(arr && la_nd>1){ int j=c->i+1;                 /* (skip an optional leading `[const]=` designator) */
+            if(tok_is(&c->t[j],"[")){
+              int p=0; while(!(p==0 && tok_is(&c->t[j],"]")) && c->t[j].k!=T_END){
+                if(tok_is(&c->t[j],"[")) p++; else if(tok_is(&c->t[j],"]")) p--; j++; }
+              j++; if(tok_is(&c->t[j],"=")) j++; }
+            md_nested = tok_is(&c->t[j],"{"); }
+          if(md_nested){                                    /* a MULTI-dim array `T a[d0][d1] = {{..},{..}}`: the
+            * flat resource is row-major, so descend each outer brace by ROW (the C twin of the oracle's
+            * _agg_init multi-dim row descent). A `= {0}` baseline zero-fills any unwritten element. A FLAT
+            * `{e0,e1,..}` multi-dim init (no nested braces) keeps the idx-based arr_init path -- the oracle
+            * also flattens that form positionally, so the rails stay byte-identical. */
+            for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }
+            subagg_init_md(c, rid, 0, la_dims, la_nd, ty.size, ty.is_bool);
+          }
+          else if(arr) arr_init(c,rid); else agg_init(c,rid,si); }   /* {…} 1-D array / struct-union init */
         else { int ist=c->i; uint32_t v=p_expr(c); int ien=c->i;
           bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}
           bind_extent(c,rid,res_of(c->fn,rid),&nm,ist,ien); } }   /* §5.12: `T *p = malloc(N*sizeof(T))` -> extent N */
