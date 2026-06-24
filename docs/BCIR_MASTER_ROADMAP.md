@@ -656,23 +656,22 @@ complete it **systematically, one PR-sized chunk at a time**, in four phases.
 > ✅ The **comma operator** `a, b` in a primary parenthesized expression (`#comma`, dual-rail) — isolated to
 > `( ... )` so call-args / initializer-element separator commas are unaffected.
 >
-> ◑ **Variable-length arrays (`T a[n]`) — parsing FOUNDATION done, native lowering deferred.** ✅ The parser
-> now recognizes a non-literal array dim into `TypeRef.vla` and routes it (a true VLA, or a constant
-> expression needing lowering-time folding like `2+3` / `sizeof(T)`) to `--fallback` via a clean `CLowerError`
-> -- no more confusing mid-declarator parse error -- with ZERO cross-rail divergence (a single-literal dim
-> still compiles on both rails; everything else falls back on both; `test_vla_and_non_literal_array_dims_route_to_fallback`).
-> The deferred part is the NATIVE lowering. A VLA's extent is a
-> *runtime* value, so its `a[i]` bounds are exactly the §5.12 recoverable-extent contract (snapshot `n`,
-> `masked` against it) — the safety half is already built. The blocker is the **emitter**: it declares all
-> locals *up front* (deliberately, for branch-merge / loop-accumulator correctness), but a VLA cannot be
-> declared before its runtime size is computed. Two sound resolutions, each a real design choice:
-> (a) **faithful stack VLA** — teach the emitter *in-body* local declaration for VLAs (emit `T a[n]` at the
-> source point, after the snapshot of `n`); the correct lowering, the emit-model change is the substantial
-> part; (b) **managed-buffer** — lower `T a[n]` to a bounds-managed `T *a = malloc(n*sizeof(T))` (reuses
-> §5.12 extents directly, value-equivalent, sidesteps the emit model) but transforms stack→heap and needs a
-> scope-exit `free` the emitter has no hook for (leaks without it). Recommended as a deliberate fresh effort
-> (parser + `CType.vla_count` + the chosen emit path + the twin), not a tail-end rush. Until then a VLA
-> routes through the existing `--fallback` contract.
+> ✅ **Variable-length arrays (`T a[n]`) — native FAITHFUL stack lowering, dual-rail.** A 1-D stack VLA is
+> lowered natively (no longer routed to fallback): the runtime size `n` is evaluated **exactly once** and
+> snapshotted into a hidden immutable extent (`__bcir_extK`), the array is declared **IN-BODY** at the source
+> decl point (`T a[__ext];` — a real stack array, no heap, no leak), and every `a[i]` is **bounds-masked**
+> against the snapshot via the §5.12 recoverable-extent machinery (`a[BCIR_CHK(rid, i, __ext, "fn:a")]`). The
+> crux was the **emit-model change** chosen as fork (a): the emitter declares locals up front (deliberately,
+> for branch-merge / loop-accumulator correctness), but a VLA's size isn't known until execution reaches the
+> declaration — so a VLA local is *named but excluded* from the up-front decls, and a new **`c.vladecl`** claim
+> emits its declaration in-body, right after the snapshot (oracle `lower._vla_storage` + `vla_locals`; C twin
+> `is_vla` resources + the `c.vladecl` emit). Behaviour-equivalent to Clang on both rails for every input;
+> `cfront_vla.c` (fill/reduce, signed, reversed-index, expression-sized), `test_native_vla_lowering_and_unsupported_forms`.
+> The **unselected fork (b)** — a managed-buffer `T *a = malloc(n*sizeof(T))` reusing §5.12 extents directly —
+> was rejected: it transforms stack→heap and needs a scope-exit `free` the emitter has no hook for (it would
+> leak), so it is less faithful than the in-body stack VLA. *Remaining VLA follow-ons:* multi-dimensional VLAs
+> `T a[m][n]`, VLA function parameters `void f(int n, int a[n])` (today the dim decays — the param is a plain
+> pointer), and a VLA `sizeof` yielding a runtime value — all currently route to `--fallback`.
 
 > #### C-frontend differential fuzzer (`tools/c/fuzz_cfront.py`, `test_cfront_differential_fuzz`)
 > A generative **three-way** differential — random *UB-free* C programs run through BOTH rails (twin
