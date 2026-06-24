@@ -908,9 +908,9 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
                "#include <stdlib.h>\n#include <stddef.h>\n"
                # §5.12 bounds-quarantine: a `masked` local-array access emits BCIR_CHK(rid,idx,N); the stub
                # handler is never reached for an in-bounds index (the generator's are), so it is transparent.
-               "static void bcir_bounds_quarantine(uint64_t r,uint64_t i,uint64_t e,const char*s){(void)r;(void)i;(void)e;(void)s;abort();}\n"
+               "static size_t bcir_bounds_quarantine(uint64_t r,uint64_t i,uint64_t e,const char*s){(void)r;(void)i;(void)e;(void)s;abort();return 0;}\n"
                "#define BCIR_CHK(rid,idx,n,site) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
-               "(bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)),(size_t)0))\n"
+               "bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)))\n"
                + (_FEQ if need_feq else "") + renamed + "\n" + emit + "\n" + "\n".join(lines))
     cpath = os.path.join(d, f"{label}.c")
     epath = os.path.join(d, label)
