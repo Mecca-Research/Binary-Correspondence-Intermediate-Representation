@@ -1433,7 +1433,7 @@ def test_variadic_dual_rail():
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["isum", "twice", "vsumv", "forward", "nth", "caller"]
+    funcs = ["isum", "twice", "vsumv", "forward", "nth", "dsum", "lsum", "caller"]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -1444,6 +1444,8 @@ def test_variadic_dual_rail():
     if(twice_s(3,a,b,c)!=bcir_twice(3,a,b,c)){printf("twice@%d,%d\n",a,b);return 1;}
     if(forward_s(3,a,b,c)!=bcir_forward(3,a,b,c)){printf("forward@%d,%d\n",a,b);return 1;}
     if(nth_s(2,(double)a,(double)b,(double)c)!=bcir_nth(2,(double)a,(double)b,(double)c)){printf("nth@%d,%d\n",a,b);return 1;}
+    if(dsum_s(3,(double)a,(double)b,(double)c)!=bcir_dsum(3,(double)a,(double)b,(double)c)){printf("dsum@%d,%d\n",a,b);return 1;}
+    if(lsum_s(3,(long)a,(long)b,(long)c)!=bcir_lsum(3,(long)a,(long)b,(long)c)){printf("lsum@%d,%d\n",a,b);return 1;}
   }
   printf("MATCH\n");return 0;}"""
     with tempfile.TemporaryDirectory() as d:
