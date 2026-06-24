@@ -111,6 +111,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_addroffollow.c",# &arr[i].field (plain base) + &s->ptr (pointer member) (#addroffollow)
              "cfront_incdecexpr.c",  # ++/-- in expression position as a value (#incdecexpr)
              "cfront_computedgoto.c",# computed goto: &&L label-as-value + goto *p (#computedgoto)
+             "cfront_fnptrlocal.c",  # a function-pointer LOCAL VARIABLE `RET (*f)(P)=fn;` (#fnptrlocal)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -3309,6 +3310,19 @@ def test_computed_goto():
     for src in ("unsigned f(unsigned x){ void *p=&&O; if((x&1u)==0u) p=&&E; goto *p; E: return x*2u; O: return x*3u+1u; }",
                 "unsigned f(unsigned i){ void *t[3]; t[0]=&&a; t[1]=&&b; t[2]=&&c; goto *t[i%3u]; a: return 1u; b: return 2u; c: return 3u; }",
                 "unsigned f(unsigned n){ unsigned s=0u,i=0u; void *p=&&L; L: if(i<(n&7u)){ s+=i; i++; goto *p; } return s; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
+
+
+def test_function_pointer_local_variable():
+    """§5.10 (#fnptrlocal): a function-pointer LOCAL VARIABLE `RET (*f)(P) = fn;` -- declared, called (an
+    indirect call), reassigned, value-selected, and with a signed return. The oracle parsed it; the twin's
+    local-decl path did not (only funcptr struct members + typedefs), a latent divergence. Behaviour-equivalent
+    to Clang on both rails."""
+    from bcir.frontends.cfront import compile_unit
+    for src in ("static unsigned a(unsigned x){return x+1u;} static unsigned d(unsigned x){return x*2u;} unsigned f(unsigned x){ unsigned (*g)(unsigned)=a; unsigned r=g(x); g=d; return r*10u+g(x); }",
+                "static unsigned a(unsigned x){return x+1u;} static unsigned d(unsigned x){return x*2u;} unsigned f(unsigned x, unsigned w){ unsigned (*g)(unsigned)=a; if(w&1u) g=d; return g(x); }",
+                "static int n(int x){return -x-1;} int f(int x){ int (*g)(int)=n; int r=g(x); return r>>1; }"):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
