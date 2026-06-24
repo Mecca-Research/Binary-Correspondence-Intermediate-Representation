@@ -4,8 +4,9 @@
  * the declared fixed params (the default argument promotions ride on the real emitted call, so Clang
  * applies them). va_start/va_arg/va_end/va_copy lower as opaque builtins (the libm-call mold) emitted
  * verbatim against <stdarg.h>; the result of `va_arg(ap, T)` carries type T. Both rails agree structurally
- * and the emit is Clang-behaviour-equivalent. (float/wide-int vararg += accumulation -- which needs the
- * compound-assignment result-typing fix -- and external variadic calls like snprintf are follow-ons.) */
+ * and the emit is Clang-behaviour-equivalent. Float/wide-int vararg += accumulation keeps the operand type
+ * (the compound-assignment result-typing); external variadic calls (snprintf-family) live in
+ * cfront_extvariadic.c. */
 
 /* the canonical integer accumulator (a printf-style consumer) */
 int isum(int n, ...) {
@@ -41,6 +42,23 @@ double nth(int k, ...) {
   for (int i = 0; i <= k; i++) r = va_arg(ap, double);
   va_end(ap);
   return r;
+}
+/* a float vararg ACCUMULATION (+=): the compound desugars to `s = s + va_arg(ap, double)`, and the binary
+ * result keeps `double` (the compound-assignment result-typing absorbs the float operand) */
+double dsum(int n, ...) {
+  va_list ap; va_start(ap, n);
+  double s = 0;
+  for (int i = 0; i < n; i++) s += va_arg(ap, double);
+  va_end(ap);
+  return s;
+}
+/* a WIDE-int (long) vararg accumulation: the compound keeps the 8-byte width */
+long lsum(int n, ...) {
+  va_list ap; va_start(ap, n);
+  long s = 0;
+  for (int i = 0; i < n; i++) s += va_arg(ap, long);
+  va_end(ap);
+  return s;
 }
 /* a same-unit variadic CALL with extra arguments (the call applies the default argument promotions) */
 int caller(int a, int b, int c) {
