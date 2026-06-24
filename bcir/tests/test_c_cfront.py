@@ -103,6 +103,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_vlasizeof.c",   # runtime `sizeof a` of a VLA -> extent * sizeof(elem) (#vlasizeof)
              "cfront_vlaparam.c",    # VLA function parameters `T a[n]` -> masked param bounds vs n (#vlaparam)
              "cfront_vlamd.c",       # multi-dimensional VLAs `T a[m][n]` -> flat m*n extent + Horner (#vlamd)
+             "cfront_lvassignexpr.c",# array/deref/nested lvalue assignment used as a value (#lvassignexpr)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -3133,6 +3134,33 @@ def test_multidim_vla_lowering():
         compile_unit("unsigned f(unsigned n){ unsigned a[n][n][n][n]; return a[0][0][0][0]; }", check_clang=False)
         assert False, "a >3-D VLA should route to fallback"
     except (CParseError, CLowerError):
+        pass
+
+
+def test_lvalue_assignment_as_value_extended_forms():
+    """§5.9 (#lvassignexpr): an assignment whose target is an ARRAY ELEMENT `a[i]`, a pointer DEREF `*p`, or a
+    NESTED member `o.in.x` -- used as a VALUE (`(a[i]=v)+1`, `(*p=v)*2`, chained `a[0]=b[0]=v`) -- yields the
+    stored/converted value (the once-resolved lvalue re-read). Extends the single-level-scalar-member case
+    (#memassignexpr). Behaviour-equivalent to Clang on both rails; a VOLATILE/MMIO lvalue stays a fallback
+    (the re-read would be an extra observable access), and a bitfield / array-of-structs target stays a
+    follow-on."""
+    from bcir.frontends.cfront import compile_unit
+    from bcir.frontends.cfront.lower import CLowerError
+    for src in ("unsigned f(unsigned i, unsigned v){ unsigned a[8]={0}; unsigned r=(a[i&7u]=v)+1u; return r+a[i&7u]; }",
+                "unsigned f(unsigned v){ unsigned y=0u; unsigned *p=&y; unsigned r=(*p=v)*2u; return r+y; }",
+                "unsigned f(unsigned v){ unsigned a[4]={0},b[4]={0}; unsigned r=(a[0]=b[0]=v)+7u; return r+a[0]+b[0]; }",
+                "unsigned f(unsigned i, unsigned v){ unsigned a[8]={0}; a[i&7u]=v; unsigned r=(a[i&7u]+=5u)*2u; return r+a[i&7u]; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
+    # the single-level scalar member case (#memassignexpr) still compiles
+    assert compile_unit("struct S{unsigned a;}; unsigned f(unsigned v){ struct S s; return (s.a=v)+1u; }",
+                        check_clang=True).equivalence == "match"
+    # a VOLATILE lvalue as a value falls back (the re-read would be an extra MMIO access)
+    try:
+        compile_unit("struct R{volatile unsigned reg;}; unsigned f(volatile struct R *r, unsigned v){ return (r->reg=v)+1u; }",
+                     check_clang=False)
+        assert False, "a volatile lvalue-as-value should fall back"
+    except CLowerError:
         pass
 
 
