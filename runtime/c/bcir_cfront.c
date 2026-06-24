@@ -120,6 +120,14 @@ typedef struct {
    * unsoundly. Reset (mut_n=0) per function. */
   mutent mut[512]; int mut_n;
   int ext_ctr;       /* §5.12 unique hidden extent-snapshot locals (`__bcir_extK`); reset per function */
+  /* §5.12 deferred VLA-parameter extent bindings (#vlaparam). A param `T a[n]` decays to a pointer and is
+   * bound to the prior integer-scalar param `n` via ptr_extent -- BUT only when `n` is STABLE (unmutated,
+   * not address-taken), which the body mutation pre-pass (scan_mutations) determines, and that pre-pass runs
+   * only AFTER the whole param list is parsed. So at param time we just RECORD the candidate (the decayed
+   * pointer's rid, the size param's rid, and its NAME token for the stability gate); after scan_mutations we
+   * resolve each, ptrext_set'ing only the stable ones -- exactly the oracle's gate, evaluated at the same
+   * point in the pipeline. Reset per function. */
+  struct { uint32_t ptr_rid; uint32_t cnt_rid; tok cnt_tok; } vlaext[16]; int n_vlaext;
   char err[256]; int failed;
 } CC;
 /* Grow a CC parser-state array geometrically (no fixed cap), zeroing the fresh slots. On OOM the cap
@@ -2967,7 +2975,7 @@ static uint32_t p_stmt_expr(CC *c){
 
 static void ctype_str(const bcir_ctype *ty,char *o,size_t n);   /* used to spell a captured funcptr signature */
 static int p_func(CC *c, bcir_func *fn) {
-  c->fn=fn; c->nenv=0;
+  c->fn=fn; c->nenv=0; c->n_vlaext=0;
   bcir_ctype rt;int rsi;if(p_type(c,&rt,&rsi))return 1; fn->ret=rt;
   tok nm=adv(c); snprintf(fn->name,sizeof fn->name,"%.*s",nm.n,nm.s);
   if(!eat(c,"("))return 1;
@@ -3016,12 +3024,21 @@ static int p_func(CC *c, bcir_func *fn) {
         } else c->i=save;
       } else c->i=save;
     }
+    int vla_have=0; tok vla_tok; memset(&vla_tok,0,sizeof vla_tok);   /* §5.12 a VLA-param extent `a[n]` */
     if(!row_ptr){
     pn=adv(c);
     if(is(c,"[")){              /* an array parameter `T name[A][B]...` decays to a flat element ptr */
       int nd=0;
-      while(is(c,"[")){ c->i++; long long d=isk(c,T_INT)?(long long)adv(c).v:0;
-        if(nd<3)ty.adims[nd]=(int)d; nd++; eat(c,"]"); }
+      while(is(c,"[")){ c->i++;
+        long long d=0;
+        if(isk(c,T_INT)) d=(long long)adv(c).v;          /* a static dim `[A]` -- the byte count is recorded */
+        /* §5.12 a VLA-param extent `[n]`: `n` must be a BARE identifier naming a PRIOR in-scope param (source
+         * order -- a later param is not yet in env). Capture it for the post-scan stability gate. */
+        else if(!is(c,"]") && isk(c,T_ID) && tok_is(&c->t[c->i+1],"]")){
+          tok cand=*pk(c);
+          if(lookup(c,&cand)){ vla_tok=cand; vla_have=1; adv(c); }
+        }
+        if(nd<3)ty.adims[nd]=(int)d; nd++; eat(c,"]"); }   /* a non-int/non-id dim -> 0 today (fallback, no bind) */
       ty.nadims=nd<3?nd:3; if(ty.kind==0) ty.kind=2;     /* T[..] -> T* (element size kept in ty.size) */
     }
     }
@@ -3042,6 +3059,14 @@ static int p_func(CC *c, bcir_func *fn) {
       if(ty.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1; }   /* a plain `char` parameter */
     else if(ty.kind==3) c->fn->res[c->fn->n_res-1].is_funcptr=1;   /* a funcptr param: stored to a member directly */
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
+    if(vla_have && ty.kind==2){          /* §5.12 a VLA param `T a[n]` -> record a deferred extent binding to `n`,
+      * resolved (stability-gated) after scan_mutations. Only if `n` is a prior INTEGER-SCALAR param. */
+      venv *nv=lookup(c,&vla_tok);
+      if(nv && nv->type.kind==0 && !nv->type.is_float && c->n_vlaext<16){
+        c->vlaext[c->n_vlaext].ptr_rid=rid; c->vlaext[c->n_vlaext].cnt_rid=nv->rid;
+        c->vlaext[c->n_vlaext].cnt_tok=vla_tok; c->n_vlaext++;
+      }
+    }
     env_add(c,&pn,rid,&ty,si);
     if(fn->n_params>=fn->cap_params){ int nc=fn->cap_params?fn->cap_params*2:4;
       bcir_param *np=realloc(fn->params,(size_t)nc*sizeof *np); if(np){fn->params=np;fn->cap_params=nc;} }
@@ -3051,6 +3076,13 @@ static int p_func(CC *c, bcir_func *fn) {
   }
   if(!eat(c,")"))return 1; if(!eat(c,"{"))return 1;
   scan_mutations(c,c->i);   /* §5.12 extent-stability pre-pass over the body (cursor is just past `{`) */
+  for(int k=0;k<c->n_vlaext;k++){          /* §5.12 resolve the deferred VLA-param extent bindings: bind `a` to
+    * `n` ONLY when `n` is STABLE -- unmutated in the body and not address-taken (the _bind_extent stable-Name
+    * gate, evaluated now that scan_mutations has populated the mutation table). A mutated-size param stays
+    * assumed_safe -- matching the oracle so the BCIR_CHK count is identical. */
+    if(mut_body(c,&c->vlaext[k].cnt_tok)==0 && !mut_addr(c,&c->vlaext[k].cnt_tok))
+      ptrext_set(c->fn,c->vlaext[k].ptr_rid,c->vlaext[k].cnt_rid);
+  }
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed) p_stmt(c);
   eat(c,"}");
   return c->failed;
