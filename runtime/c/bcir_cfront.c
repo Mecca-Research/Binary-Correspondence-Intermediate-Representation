@@ -3061,6 +3061,7 @@ static int p_incdec(CC *c) {
 /* one simple expression WITHOUT a trailing `;` -- a for-loop step element (each comma-separated piece
  * of `i++, j--, acc += d`). Mirrors the scalar/pointer assignment forms p_stmt handles (plain `=`,
  * compound `OP=`, inc/dec) so a step matches the oracle whether it is one element or a comma list. */
+static void ctype_str(const bcir_ctype *ty,char *o,size_t n);   /* used to spell a captured funcptr signature */
 static void p_simple(CC *c) {
   if(p_incdec(c)) return;
   if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a writable global */
@@ -3220,6 +3221,44 @@ static void p_stmt(CC *c) {
      * per-declarator array (`int a[2], b;`) no longer leaks its dims onto the next declarator. */
     for(;;){
       bcir_ctype ty=base; apply_stars(c,&ty);   /* this declarator's own leading `*`s (none -> base type) */
+      if(is(c,"(") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='*'
+         && c->t[c->i+2].k==T_ID
+         && c->t[c->i+3].k==T_PUN && c->t[c->i+3].n==1 && c->t[c->i+3].s[0]==')'
+         && c->t[c->i+4].k==T_PUN && c->t[c->i+4].n==1 && c->t[c->i+4].s[0]=='('){
+        /* a function-pointer LOCAL `RET (*name)(PARAMS) = fn;` -- the twin of the oracle's Decl funcptr.
+         * Like a direct funcptr PARAMETER there is no alias to print, so capture the full signature as a
+         * synthesized prelude typedef `__bcir_fpN` and bind the local kind-3 with that tag; the env binding
+         * lets p_icall dispatch `f(x)` (typed by the captured return, #signedfnptr) and a bare `f = g;`
+         * decay-assign through p_simple. Scalar return + parameter types. */
+        bcir_ctype ret=ty;                            /* the already-parsed return type */
+        c->i+=2; tok nm=adv(c);                        /* `( *` then the funcptr NAME */
+        if(!eat(c,")")||!eat(c,"("))return;            /* `) (` -- into the parameter-type list */
+        char rets[64]; ctype_str(&ret,rets,sizeof rets);
+        char sig[512]; size_t sw=0; int np=0;
+        sw+=snprintf(sig+sw,sizeof sig-sw,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
+        if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){ c->i++; }   /* `(void)` */
+        else if(!is(c,")")) for(;;){ bcir_ctype pt; int psi; if(p_type(c,&pt,&psi))return;
+          if(isk(c,T_ID)) c->i++;                      /* an optional parameter name (ignored) */
+          char ps[64]; ctype_str(&pt,ps,sizeof ps);
+          sw+=snprintf(sig+sw,sizeof sig-sw,"%s%s",np?", ":"",ps); np++;
+          if(is(c,",")){c->i++;continue;} break; }
+        sw+=snprintf(sig+sw,sizeof sig-sw,"%s);\n",np?"":"void");
+        if(c->fpdefs_w+sw<sizeof c->fpdefs){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
+        if(!eat(c,")"))return;                          /* past the parameter-type list */
+        bcir_ctype fty; memset(&fty,0,sizeof fty); fty.kind=3; fty.size=8; fty.signd=0;
+        fty.fp_ret_size=ret.size; fty.fp_ret_signd=(uint8_t)(ret.signd?1:0); fty.fp_ret_float=(uint8_t)(ret.is_float?1:0);
+        snprintf(fty.tag,sizeof fty.tag,"__bcir_fp%d",c->n_fpdef); c->n_fpdef++;
+        char fnb[BCIR_CIR_NAME]; idcpy(fnb,&nm);
+        uint32_t frid=add_res(c,BCIR_DOM_RAM,8,1,0,BCIR_RK_SCALAR,fnb);   /* a funcptr-wide scalar local */
+        if(c->fn->n_res){ bcir_resource *fr=&c->fn->res[c->fn->n_res-1];
+          fr->is_funcptr=1; snprintf(fr->agg,BCIR_CIR_NAME,"%s",fty.tag); }   /* emit `__bcir_fpN f;` up front */
+        env_add(c,&nm,frid,&fty,-1);                    /* p_icall finds kind-3 -> a c.call.indirect dispatch */
+        if(is(c,"=")){ c->i++;                          /* an init: a function name -> a funcptr value (c.copy) */
+          uint32_t v=p_expr(c);
+          bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=frid;} }
+        if(is(c,",")){ c->i++; continue; }              /* another declarator off the same specifier */
+        break;
+      }
       if(!isk(c,T_ID)){ fail(c,"expected declarator name"); return; }
       tok nm=adv(c); char nb[BCIR_CIR_NAME]; idcpy(nb,&nm);
       int arr=0,la_nd=0,la_dims[3]={0,0,0};            /* T name[N] / T m[A][B] -- a (multi-dim) local array */
@@ -3585,7 +3624,6 @@ static uint32_t p_stmt_expr(CC *c){
   return result;
 }
 
-static void ctype_str(const bcir_ctype *ty,char *o,size_t n);   /* used to spell a captured funcptr signature */
 static int p_func(CC *c, bcir_func *fn) {
   c->fn=fn; c->nenv=0; c->n_vlaext=0;
   bcir_ctype rt;int rsi;if(p_type(c,&rt,&rsi))return 1; fn->ret=rt;
@@ -3872,6 +3910,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       char un[BCIR_CIR_NAME]; const char *nm=uniq_local(f,r->rid,un);   /* unique vs same-named scopes */
       int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
       if(sx>=0) w+=snprintf(o+w,on-w,"  static uint32_t %s = %lluu;\n",nm,(unsigned long long)f->statics[sx].init);
+      else if(r->is_funcptr&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s;\n",r->agg,nm);   /* a funcptr local: `__bcir_fpN f;` */
       else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s%s;\n",r->agg,nm,r->zinit?" = {0}":"");
       else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->is_voidptr) w+=snprintf(o+w,on-w,"  void *%s[%u]%s;\n",nm,r->count,r->zinit?" = {0}":"");  /* an array of `void *` */
       else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+w,on-w,"  %s %s[%u]%s;\n",tty(f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
