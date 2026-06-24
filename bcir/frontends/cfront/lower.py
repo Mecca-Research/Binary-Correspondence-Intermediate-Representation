@@ -1762,6 +1762,23 @@ class _FuncLowerer:
                 for d in dims:
                     total *= d
                 ct = replace(array(elem, total), shape=tuple(dims))
+            elif (len(st.type.array) == 1 and st.type.array[0] in (0, None)
+                  and isinstance(st.init, cast.AggInit)):
+                # an INFERRED-size local array `T a[] = {...}` (scalar OR struct element): `_resolve_type`
+                # would size it `array(elem, 0)` -> `a[0]`, so the per-element init stores write past the
+                # storage (UB, a #500-class silent miscompile). Infer the outer count from the initializer
+                # the SAME way the compound-literal path does (max index + 1; positional advances a cursor,
+                # `[i]=` designators jump it), then build the correctly-sized `array(elem, n)`.
+                elem = self._resolve_type(replace(st.type, array=()))
+                n, cursor = 0, 0
+                for key, _expr in st.init.entries:
+                    if isinstance(key, tuple):                # a nested chain `[i]...` -> its outer array index
+                        idx = key[0][1] if key and key[0][0] == "a" else cursor
+                    else:
+                        idx = key if isinstance(key, int) else cursor
+                    cursor = idx + 1
+                    n = max(n, cursor)
+                ct = array(elem, n or 1)
             else:
                 ct = self._resolve_type(st.type)
             if st.static_storage:                             # static storage: init once, in the decl
