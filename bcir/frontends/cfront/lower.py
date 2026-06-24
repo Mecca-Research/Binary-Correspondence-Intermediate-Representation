@@ -516,6 +516,8 @@ class _FuncLowerer:
         self.locals: list = []                         # (rid, name, CType) mutable named locals
         self.vla_locals: list = []                     # (rid, name, CType) 1-D stack VLAs -- declared IN-BODY
                                                        #   (`T a[__ext];`) at the source decl, NOT up front
+        self.vla_strides: dict = {}                    # multi-dim VLA array rid -> per-dim snapshot rids (the
+                                                       #   runtime Horner multipliers: m[i][j] -> i*dim1 + j)
         self.zero_init: set = set()                    # aggregate-local rids that emit a `= {0}` baseline
         self.statics: list = []                        # (rid, name, CType, init) static-storage locals
         self.calls: list = []
@@ -693,10 +695,14 @@ class _FuncLowerer:
             idx_rids = [self._rvalue(ix) for ix in idx_nodes]
             shape = mem_shape if mem_shape is not None else base_ct.shape
             lin = idx_rids[0]
+            vla_str = self.vla_strides.get(base_rid)          # a multi-dim VLA -> runtime dim multipliers
             for d in range(1, len(idx_rids)):
-                dim = shape[d] if d < len(shape) else 1
-                k = self._temp(scalar("uint32_t"), f"k{dim}")
-                self._emit("c.const", Opcode.LOAD, (), (k,), imm=(dim,))
+                if vla_str is not None:                       # dim d's snapshot rid (NO c.const -- the runtime
+                    k = vla_str[d]                            # extent), so `m[i][j]` -> i*dim1 + j masks the total
+                else:
+                    dim = shape[d] if d < len(shape) else 1
+                    k = self._temp(scalar("uint32_t"), f"k{dim}")
+                    self._emit("c.const", Opcode.LOAD, (), (k,), imm=(dim,))
                 m1 = self._temp(scalar("uint32_t"), "b_mul")
                 self._emit("c.bin.mul", Opcode.MUL, (lin, k), (m1,))
                 a1 = self._temp(scalar("uint32_t"), "b_add")
@@ -1619,6 +1625,42 @@ class _FuncLowerer:
                 rid = self._vla_storage(ct, st.name, ext)     # declared in-body; masked `a[i]` vs the snapshot
                 self.env[st.name] = (rid, ct)
                 self.ptr_extent[rid] = ext
+                return None
+            if st.type.vla_dims:
+                # a MULTI-dim stack VLA `T a[d0][d1]...`: snapshot each dim ONCE (canonical order: dims 0..k-1,
+                # then the product), declare the array IN-BODY as a FLAT `T a[__ext_total];` (same memory layout
+                # as `T a[d0][d1]`), and mask the row-major Horner index `i*d1 + j` against the total extent.
+                # The Horner multiplier at step d is dim d's snapshot rid (a runtime value, not a c.const).
+                if st.static_storage or st.init is not None:
+                    raise CLowerError("a VLA cannot have static storage or an initializer")
+                elem = self._resolve_type(replace(st.type, vla=None, vla_dims=(), array=()))
+                if elem.size <= 0 or elem.kind == "array":
+                    raise CLowerError("a multi-dimensional VLA of an incomplete / array element is not supported")
+                u32 = scalar("uint32_t", self.abi)
+                dim_exts = []                                 # 1. snapshot each dim into a named __bcir_extK
+                for d in st.type.vla_dims:
+                    ext = self._storage(u32, f"__bcir_ext{self._ext_ctr}")
+                    self._ext_ctr += 1
+                    if isinstance(d, int):                    # a literal dim -> a const temp, copied into the ext
+                        kt = self._temp(u32, "kd")
+                        self._emit("c.const", Opcode.LOAD, (), (kt,), imm=(d,))
+                        self._emit("c.copy", Opcode.ADD, (kt,), (ext,))
+                    else:                                     # a runtime dim -> evaluated once, copied in
+                        self._emit("c.copy", Opcode.ADD, (self._rvalue(d),), (ext,))
+                    dim_exts.append(ext)
+                total = dim_exts[0]                           # 2. total extent = product of all dim snapshots
+                for d in range(1, len(dim_exts)):
+                    prod = self._temp(u32, "b_mul")
+                    self._emit("c.bin.mul", Opcode.MUL, (total, dim_exts[d]), (prod,))
+                    total = prod
+                ext_total = self._storage(u32, f"__bcir_ext{self._ext_ctr}")
+                self._ext_ctr += 1
+                self._emit("c.copy", Opcode.ADD, (total,), (ext_total,))   # stable name for the decl + the mask
+                ct = array(elem, 0)                           # 3. a FLAT runtime-extent array
+                rid = self._vla_storage(ct, st.name, ext_total)
+                self.env[st.name] = (rid, ct)
+                self.ptr_extent[rid] = ext_total
+                self.vla_strides[rid] = tuple(dim_exts)       # the per-dim Horner multipliers
                 return None
             if len(st.type.array) > 1:
                 # a multi-dimensional local array `T m[A][B]`: a flat resource of A*B elements carrying

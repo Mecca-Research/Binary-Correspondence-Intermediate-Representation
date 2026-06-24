@@ -545,27 +545,31 @@ class _Parser:
         name = self.eat("IDENT").text
         dims = []
         vla = None
+        vla_dims: tuple = ()
+        raw: list = []                                    # per-dim: an int (literal) or an expression (runtime)
         while self.at("PUNCT", "["):
             self.nxt()
             if self.at("PUNCT", "]"):
-                dims.append(0)                            # an incomplete `[]` dimension
+                raw.append(0)                             # an incomplete `[]` dimension
             else:
                 e = self._assign()                        # the dim expression
-                if isinstance(e, cast.IntLit):            # a single integer literal -> a static dim (as before)
-                    dims.append(e.value)
-                else:
-                    # a non-literal dim -- a VLA `T a[n]`, or a constant expression (`2+3`, `sizeof(T)`) that
-                    # needs lowering-time folding: recognize it as a 1-D VLA and route to fallback gracefully
-                    # (the emitter cannot size an up-front local), rather than a raw mid-declarator parse error.
-                    if dims or vla is not None or self.at("PUNCT", "["):
-                        raise CParseError("only a 1-D variable-length array `T a[n]` is supported")
-                    vla = e
-                    dims.append(0)
+                raw.append(e.value if isinstance(e, cast.IntLit) else e)   # a single int literal -> a static dim
             self.eat("PUNCT", "]")
+        if any(not isinstance(d, int) for d in raw):      # at least one RUNTIME dim -> a VLA
+            if len(raw) > 3:
+                raise CParseError("a variable-length array of more than 3 dimensions is not supported")
+            if len(raw) == 1:
+                vla = raw[0]                              # a 1-D VLA -- the existing representation (unchanged path)
+                dims = [0]
+            else:
+                vla_dims = tuple(raw)                     # a MULTI-dim VLA `T a[m][n]` -- per-dim (literal | expr)
+                dims = [0] * len(raw)
+        else:
+            dims = raw                                    # all-literal -> a static (possibly multi-dim) array
         if base.funcptr and ptr == 0 and not dims:        # `binop_fn fn` — keep the funcptr shape
             return base, name
         return cast.TypeRef(base=base.base, ptr=ptr + base.ptr,         # base.ptr != 0 only for typeof(T*)
-                            array=tuple(base.array) + tuple(dims), vla=vla,
+                            array=tuple(base.array) + tuple(dims), vla=vla, vla_dims=vla_dims,
                             aggregate=base.aggregate, quals=base.quals,
                             typeof_var=base.typeof_var, typeof_expr=base.typeof_expr), name
 

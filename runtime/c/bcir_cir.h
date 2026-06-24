@@ -79,6 +79,11 @@ typedef struct bcir_resource {
                               * isn't known until execution reaches the decl) -- the `c.vladecl` claim emits
                               * `<elem> a[<ext_var>];` IN-BODY; `a[i]` masks against ext_var via ptr_extent */
   uint32_t ext_var;          /* the snapshot extent rid (`__bcir_extK`) sizing a VLA (is_vla); else 0 */
+  uint8_t  vla_ndims;        /* a MULTI-dim stack VLA `T a[d0][d1]...`: the dim count (2..3); 0 == not a
+                              * multi-dim VLA. The array is a FLAT `T a[__ext_total];` (is_vla also set), but
+                              * `a[i][j]` Horner-flattens with RUNTIME strides (no c.const) -- see vla_strides */
+  uint32_t vla_strides[3];   /* the per-dim snapshot rids (`__bcir_extK`), the runtime Horner multipliers:
+                              * `a[i][j]` -> i*vla_strides[1] + j (dim d's snapshot is the step-d multiplier) */
   char     name[BCIR_CIR_NAME];
   char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
 } bcir_resource;

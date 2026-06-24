@@ -102,6 +102,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_vla.c",         # native 1-D stack VLAs `T a[n]` -- in-body decl + masked bounds (#vla)
              "cfront_vlasizeof.c",   # runtime `sizeof a` of a VLA -> extent * sizeof(elem) (#vlasizeof)
              "cfront_vlaparam.c",    # VLA function parameters `T a[n]` -> masked param bounds vs n (#vlaparam)
+             "cfront_vlamd.c",       # multi-dimensional VLAs `T a[m][n]` -> flat m*n extent + Horner (#vlamd)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -2071,9 +2072,10 @@ _FALLBACK_PROBES = [
     ("unsigned f(unsigned x){ return x + ; }", "fallback"),              # malformed -> parse reject
     ("unsigned f(void){ _Complex double z; (void)z; return 0u; }", "clean"),  # _Complex: now in the subset
     ("unsigned f(void){ _Imaginary double z; return 0u; }", "fallback"),  # _Imaginary: still outside the subset
-    ("unsigned f(unsigned n){ unsigned a[n][n]; return a[0][0]; }", "fallback"),   # a *multi-dim* VLA:
-                     # a 1-D stack VLA `T a[n]` is now natively lowered (#vla -- snapshot the runtime size,
-                     # declare in-body, mask `a[i]` against it), but >1-D defers to fallback on both rails.
+    ("unsigned f(unsigned n){ unsigned a[n][n][n][n]; return a[0][0][0][0]; }", "fallback"),   # a >3-D VLA:
+                     # 1-D / 2-D / 3-D stack VLAs are now natively lowered (#vla / #vlamd -- snapshot each
+                     # runtime dim, flatten to m*n, mask the Horner index), but >3 dims defers to fallback
+                     # on both rails (the dim table caps at 3).
     ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "clean"),  # statement-expr (#stmtexpr): now native
     ("unsigned f(unsigned a){ a = a*3u + 1u; return a; }", "clean"),       # assigning a PARAMETER: a bare
                      # `a = ..;` in the emit, never a `uint32_t a = ..;` redeclaration (twin-emit regression).
@@ -3054,10 +3056,10 @@ def test_native_vla_lowering_and_unsupported_forms():
         assert False, "an initialized VLA should route to fallback"
     except CLowerError as e:
         assert "VLA" in str(e) or "variable-length" in str(e), e
-    # a multi-dimensional VLA routes to fallback (only 1-D is supported)
+    # a 2-D / 3-D VLA is now natively lowered (see test_multidim_vla_lowering); only a >3-D VLA falls back
     try:
-        compile_unit("unsigned f(unsigned n){ unsigned a[n][n]; return a[0][0]; }", check_clang=False)
-        assert False, "a 2-D VLA should route to fallback"
+        compile_unit("unsigned f(unsigned n){ unsigned a[n][n][n][n]; return a[0][0][0][0]; }", check_clang=False)
+        assert False, "a >3-D VLA should route to fallback"
     except (CParseError, CLowerError):
         pass
 
@@ -3106,6 +3108,32 @@ def test_vla_function_parameters_recover_masked_bounds():
     src2 = "unsigned f(unsigned n, unsigned a[n]){ n=n+1u; unsigned s=0u; for(unsigned i=0u;i<3u;i++) s+=a[i]; return s; }"
     assert "BCIR_CHK" not in _body(src2)
     assert compile_unit(src2, check_clang=True).equivalence == "match"
+
+
+def test_multidim_vla_lowering():
+    """§5.9 (#vlamd): a multi-dimensional stack VLA `T a[m][n]` (2-D + 3-D) is lowered FAITHFULLY -- each dim
+    is snapshotted once, the array is declared IN-BODY as a flat `T a[__ext_total];` sized by the runtime
+    product, and the row-major Horner index `i*n + j` (the inner-dim runtime stride, NOT a const) is
+    bounds-masked against the total. Behaviour-equivalent to Clang on both rails. A >3-D VLA routes to
+    fallback (the dim table caps at 3); the static multi-dim local + the 1-D VLA paths are unchanged."""
+    from bcir.frontends.cfront import compile_unit, cparse, lower, emit
+    from bcir.frontends.cfront.lower import CLowerError
+    from bcir.frontends.cfront.cparse import CParseError
+    src = ("unsigned f(unsigned p, unsigned q){ unsigned m=(p&3u)+1u; unsigned n=(q&3u)+1u; unsigned a[m][n];"
+           " unsigned s=0u; for(unsigned i=0u;i<m;i++) for(unsigned j=0u;j<n;j++){a[i][j]=i*n+j+p;s+=a[i][j];}"
+           " return s; }")
+    r = compile_unit(src, check_clang=True)
+    assert r.equivalence == "match" and r.is_clean, r.equivalence
+    body = emit.emit_function(lower.lower_unit(cparse.parse_unit(src), None).functions["f"])
+    assert "a[__bcir_ext2]" in body                         # flat in-body decl sized by the product m*n
+    assert "i * __bcir_ext1" in body                        # Horner uses the RUNTIME inner-dim stride (not a const)
+    assert "* __bcir_ext1" in body and "__bcir_ext0 * __bcir_ext1" in body   # total = m*n
+    # a >3-D VLA falls back (dim table caps at 3)
+    try:
+        compile_unit("unsigned f(unsigned n){ unsigned a[n][n][n][n]; return a[0][0][0][0]; }", check_clang=False)
+        assert False, "a >3-D VLA should route to fallback"
+    except (CParseError, CLowerError):
+        pass
 
 
 def test_quarantine_report_is_the_debugger_trace_surface():

@@ -446,7 +446,7 @@ mkdir -p "${tmp}/fb"
 printf 'unsigned f(unsigned x){ return x*2u + 1u; }\n'                  > "${tmp}/fb/ok.c"
 printf 'unsigned f(unsigned n){ return f(n-1u); }\n'                    > "${tmp}/fb/recursion.c"
 printf 'unsigned f(void){ _Complex double z; return 0u; }\n'           > "${tmp}/fb/complex.c"
-printf 'unsigned f(unsigned n){ unsigned a[n][n]; return a[0][0]; }\n'  > "${tmp}/fb/vla.c"  # *multi-dim* VLA (1-D is native)
+printf 'unsigned f(unsigned n){ unsigned a[n][n][n][n]; return a[0][0][0][0]; }\n' > "${tmp}/fb/vla.c"  # >3-D VLA (1-3D native)
 printf 'unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }\n'  > "${tmp}/fb/stmtexpr.c"
 fb_seen=""
 for fb in ok recursion complex vla stmtexpr; do

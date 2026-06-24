@@ -23,6 +23,8 @@ class TypeRef:
     typeof_expr: object = None      # `typeof(expr)` — the unevaluated operand; lowering infers its static type
     vla: object = None              # a 1-D variable-length-array dim `T a[n]` — the runtime size EXPRESSION
                                     #   (None == a normal/constant array); lowering snapshots it for masked bounds
+    vla_dims: tuple = ()            # a MULTI-dim VLA `T a[m][n]` — per-dim (int literal | size expr), at least
+                                    #   one runtime; lowering flattens to a runtime m*n extent + Horner strides
 
 
 # --- expressions ---
