@@ -21,6 +21,8 @@ class TypeRef:
     func_params: tuple = ()         # the parameter TypeRefs (funcptr only) — for faithful emit
     typeof_var: str = ""            # `typeof(var)` — resolved in lowering to the in-scope variable's type
     typeof_expr: object = None      # `typeof(expr)` — the unevaluated operand; lowering infers its static type
+    vla: object = None              # a 1-D variable-length-array dim `T a[n]` — the runtime size EXPRESSION
+                                    #   (None == a normal/constant array); lowering snapshots it for masked bounds
 
 
 # --- expressions ---

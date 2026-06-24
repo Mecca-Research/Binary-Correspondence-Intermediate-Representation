@@ -537,6 +537,9 @@ class _FuncLowerer:
         return self.rid
 
     def _resolve_type(self, tref: cast.TypeRef) -> CType:
+        if tref.vla is not None:                           # `T a[n]` (runtime size): native lowering is a
+            raise CLowerError(                             # follow-on (the emitter's up-front local declaration
+                "variable-length array native lowering is a follow-on")   # can't size it) -- route to fallback
         if tref.funcptr:                                   # a function-pointer alias (HAL dispatch)
             ret = self._resolve_type(tref.func_ret)
             params = tuple(self._resolve_type(p) for p in tref.func_params)

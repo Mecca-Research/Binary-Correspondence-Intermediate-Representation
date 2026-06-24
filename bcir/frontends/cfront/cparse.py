@@ -544,14 +544,28 @@ class _Parser:
             self.i = save                                 # not `(*name)[..]` -> a normal declarator
         name = self.eat("IDENT").text
         dims = []
+        vla = None
         while self.at("PUNCT", "["):
             self.nxt()
-            dims.append(0 if self.at("PUNCT", "]") else parse_int_literal(self.eat("INT").text))
+            if self.at("PUNCT", "]"):
+                dims.append(0)                            # an incomplete `[]` dimension
+            else:
+                e = self._assign()                        # the dim expression
+                if isinstance(e, cast.IntLit):            # a single integer literal -> a static dim (as before)
+                    dims.append(e.value)
+                else:
+                    # a non-literal dim -- a VLA `T a[n]`, or a constant expression (`2+3`, `sizeof(T)`) that
+                    # needs lowering-time folding: recognize it as a 1-D VLA and route to fallback gracefully
+                    # (the emitter cannot size an up-front local), rather than a raw mid-declarator parse error.
+                    if dims or vla is not None or self.at("PUNCT", "["):
+                        raise CParseError("only a 1-D variable-length array `T a[n]` is supported")
+                    vla = e
+                    dims.append(0)
             self.eat("PUNCT", "]")
         if base.funcptr and ptr == 0 and not dims:        # `binop_fn fn` — keep the funcptr shape
             return base, name
         return cast.TypeRef(base=base.base, ptr=ptr + base.ptr,         # base.ptr != 0 only for typeof(T*)
-                            array=tuple(base.array) + tuple(dims),
+                            array=tuple(base.array) + tuple(dims), vla=vla,
                             aggregate=base.aggregate, quals=base.quals,
                             typeof_var=base.typeof_var, typeof_expr=base.typeof_expr), name
 
