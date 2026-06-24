@@ -100,6 +100,7 @@ _PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts
              "cfront_extentsnap.c",  # §5.12 recoverable-extent SNAPSHOT: expression counts (#extentsnap)
              "cfront_comma.c",       # the comma operator in a primary parenthesized expr (#comma)
              "cfront_vla.c",         # native 1-D stack VLAs `T a[n]` -- in-body decl + masked bounds (#vla)
+             "cfront_vlasizeof.c",   # runtime `sizeof a` of a VLA -> extent * sizeof(elem) (#vlasizeof)
              "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -3058,6 +3059,28 @@ def test_native_vla_lowering_and_unsupported_forms():
         assert False, "a 2-D VLA should route to fallback"
     except (CParseError, CLowerError):
         pass
+
+
+def test_vla_sizeof_is_runtime():
+    """§5.9 (#vlasizeof): `sizeof a` of a 1-D stack VLA is a RUNTIME value -- the snapshot extent times the
+    element size, emitted as `(size_t)((size_t)__bcir_extK * sizeof(elem))`. `sizeof a[0]` (an element) stays
+    the STATIC element size, and `sizeof` of a non-VLA (a static array, a pointer) is unchanged -- so no
+    cross-rail divergence and Clang-equivalent on both rails."""
+    from bcir.frontends.cfront import compile_unit, cparse, lower, emit
+    # the runtime sizeof compiles + is Clang-equivalent, and emits the runtime form (NOT a stale `= 0u`)
+    src = ("unsigned f(unsigned n){ unsigned m=(n&7u)+1u; unsigned a[m]; unsigned b=(unsigned)sizeof a;"
+           " unsigned e=(unsigned)sizeof a[0]; unsigned c=b/e; unsigned s=0u;"
+           " for(unsigned i=0u;i<c;i++){a[i]=i+n;s+=a[i];} return s+b+e; }")
+    r = compile_unit(src, check_clang=True)
+    assert r.equivalence == "match" and r.is_clean, r.equivalence
+    body = emit.emit_function(lower.lower_unit(cparse.parse_unit(src), None).functions["f"])
+    assert "(size_t)((size_t)__bcir_ext0 * 4)" in body, body         # the RUNTIME extent*size form
+    assert "size_t" in body                                          # the temp is size_t (matches the twin)
+    # sizeof of a NON-VLA stays a static fold (no extent read) -- no regression
+    for src2, want in [("unsigned f(unsigned i){ unsigned a[8]={0}; a[i&7u]=i; return (unsigned)sizeof a + a[0]; }", "match"),
+                       ("unsigned g(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); unsigned z=(unsigned)sizeof p; free(p); return z; }", "match")]:
+        r2 = compile_unit(src2, check_clang=True)
+        assert r2.equivalence == want and r2.is_clean, (src2, r2.equivalence)
 
 
 def test_quarantine_report_is_the_debugger_trace_surface():

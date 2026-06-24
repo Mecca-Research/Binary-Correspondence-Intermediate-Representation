@@ -1073,7 +1073,14 @@ class _FuncLowerer:
                 prefix, _ = split_lit_prefix(node.expr.value)
                 size = (_str_bytes(node.expr.value) + 1) * str_elem_size(prefix)   # units incl. NUL × width
             elif isinstance(node.expr, cast.Name):
-                size = self._lookup(node.expr.ident, node.expr.pos)[1].size       # the variable's declared type size
+                rid, ct = self._lookup(node.expr.ident, node.expr.pos)
+                if ct.kind == "array" and ct.count == 0 and rid in self.ptr_extent:
+                    # `sizeof a` of a 1-D stack VLA is a RUNTIME value: the snapshot extent × sizeof(element).
+                    # (Opcode.ADD: a cost hint only — the emit string carries the multiply, like c.copy/c.vladecl.)
+                    ext = self.ptr_extent[rid]
+                    t = self._temp(scalar("size_t", self.abi), "szof")
+                    return self._emit("c.sizeof.vla", Opcode.ADD, (ext,), (t,), imm=(ct.of.size,))
+                size = ct.size                                  # the variable's declared (static) type size
             else:
                 size = 4                                       # an integer expression -> int
             t = self._temp(scalar("uint32_t"), "szof")
