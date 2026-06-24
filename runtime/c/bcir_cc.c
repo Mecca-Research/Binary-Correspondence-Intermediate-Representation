@@ -27,6 +27,12 @@
 #include "bcir_cpp.h"
 #include "bcir_hydrate.h"
 #include "bcir_plan.h"
+#include "bcir_verify.h"
+
+/* R21 (§5.12): print one `R21 <func>: <kind>` advisory line per use-after-free / double-free (ctx is FILE*). */
+static void cc_r21_print(const char *funcname, const char *kind, void *ctx) {
+  fprintf((FILE *)ctx, "R21 %s: %s\n", funcname, kind);
+}
 
 #define MAXD 64
 
@@ -154,6 +160,7 @@ int main(int argc, char **argv) {
           fprintf(outf, "  c%zu  %-12s lane=%u dom=%d\n", c, fn->claims[c].op,
                   fn->claims[c].lane, (int)fn->claims[c].domain);
       }
+      bcir_verify_lifetime(&r.unit, cc_r21_print, outf);   /* R21 advisory (§5.12), additive to the call graph */
     } else if (emit_pack) {
       const bcir_func *f = &r.unit.funcs[r.unit.n_funcs - 1];   /* the entry function */
       static bcir_plan_step steps[8192]; bcir_plan plan;

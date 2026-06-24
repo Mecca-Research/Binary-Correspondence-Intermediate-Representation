@@ -1478,7 +1478,11 @@ class _FuncLowerer:
             return self._emit(f"c.call.extern:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # variadic
         if node.callee in _STDLIB_ALLOC and node.callee not in self.func_rets:
             t = self._temp(pointer(scalar("void")), f"mem_{node.callee}")   # malloc/calloc/realloc -> void *
-            return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # verbatim, opaque
+            # a R21 lifetime ALLOC event on the result: it (re-)validates the allocation, so a pointer assigned
+            # from it is live again after an earlier free (`p=malloc; free(p); p=malloc; p[i]` is legal). Pairs
+            # with the `free` event below; digest-excluded + vacuous unless the smart-lowering verifier runs R21.
+            return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,),  # verbatim, opaque
+                              lifetime=Lifetime("alloc"))
         if node.callee == "free" and node.callee not in self.func_rets:
             # void external (verbatim, opaque) + a R21 lifetime FREE event: the freed pointer (the actual it
             # reads) dies after this claim, so a later dereference of it is a use-after-free (§5.12). Vacuous

@@ -119,3 +119,39 @@ uint64_t bcir_provenance_digest(const bcir_func *f){
   #undef MIX
   return h;
 }
+
+/* --- R21 (pointer-lifetime legality: use-after-free / double-free, §5.12) ----
+ * The exact mirror of bcir/verify::verify_lifetime. Walks each function's claims IN ORDER with a set
+ * `freed` of currently-freed resource rids (reset per function). For each claim: FIRST, for every rid it
+ * READS, if that rid is freed, report -- `double-free` if THIS claim is a `free` event, else `use-after-free`.
+ * THEN, if this claim is `free`, add its read rids to `freed`. THEN, for every rid it WRITES, discard it
+ * from `freed` (a write / alloc re-validates). `alloc` (lifetime==1) and `use` (lifetime==0) are identical
+ * for the read-check; only `free` (lifetime==2) distinguishes the kind and marks rids freed.
+ *
+ * ADVISORY: separate from the bcir_verify_unit verdict -- it never changes r.ok or the summary. Reports
+ * each diagnostic via `report(funcname, kind, ctx)`; functions are small, so `freed` is a fixed array. */
+void bcir_verify_lifetime(const bcir_unit *u,
+                          void (*report)(const char *funcname, const char *kind, void *ctx),
+                          void *ctx){
+  for(int fi=0;fi<u->n_funcs;fi++){
+    const bcir_func *f=&u->funcs[fi];
+    uint32_t freed[256]; int nfreed=0;                 /* freed-and-not-re-allocated rids (functions are small) */
+    for(size_t i=0;i<f->n_claims;i++){
+      const bcir_claim *cl=&f->claims[i];
+      int is_free = (cl->lifetime==2);
+      for(int k=0;k<cl->n_rd;k++){                      /* a READ of a freed resource is the dangling deref */
+        for(int j=0;j<nfreed;j++) if(freed[j]==cl->rd[k]){
+          report(f->name, is_free?"double-free":"use-after-free", ctx); break; }
+      }
+      if(is_free){                                      /* the read resources die after this claim */
+        for(int k=0;k<cl->n_rd;k++){
+          int seen=0; for(int j=0;j<nfreed;j++) if(freed[j]==cl->rd[k]){seen=1;break;}
+          if(!seen && nfreed<(int)(sizeof freed/sizeof freed[0])) freed[nfreed++]=cl->rd[k];
+        }
+      }
+      for(int k=0;k<cl->n_wr;k++){                      /* a WRITE (reassignment / alloc) re-validates */
+        for(int j=0;j<nfreed;j++) if(freed[j]==cl->wr[k]){freed[j]=freed[--nfreed];j--;}
+      }
+    }
+  }
+}

@@ -1633,11 +1633,12 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    extent (a false trap) cannot occur; `p = realloc(...)` reassigns the pointer and is left unmanaged. Both
    rails promote IDENTICALLY -- a new cross-rail bounds-guard PARITY assertion (the R13 digest includes
    `bounds`) makes any one-rail split a hard test failure, and it also caught + fixed two PRE-EXISTING twin
-   under-masking gaps (file-scope static/const array globals, aggregate-initializer array stores). **Next ➡**
-   the ML-layer / debugger OVERRIDES the weak symbol to consult the graded-truth quarantine + recover/policy
-   through a recorded `decide` (the only sanctioned two-truth crossing); R21 lifetime becomes load-bearing for
-   C (malloc/free use-after-free, reusing this pointer provenance); and extents extend to `realloc` rebind, a
-   snapshot for mutated counts, and an array param with a sibling count (under a dominating-bound proof).
+   under-masking gaps (file-scope static/const array globals, aggregate-initializer array stores). ✅ **R21
+   lifetime now load-bearing for C, DUAL-RAIL** (see (3) below -- malloc/free use-after-free / double-free
+   surfaced through the closed-loop verify on both rails). **Next ➡** the ML-layer / debugger OVERRIDES the
+   weak symbol to consult the graded-truth quarantine + recover/policy through a recorded `decide` (the only
+   sanctioned two-truth crossing); and extents extend to `realloc` rebind, a snapshot for mutated counts, and
+   an array param with a sibling count (under a dominating-bound proof).
 2. ✅ **Lifetime law R21 DONE (oracle prototype)** (`bcir/model/graph.py::Lifetime` +
    `bcir/verify::verify_lifetime`, `test_lifetime_laws.py`): an OPTIONAL `Claim.lifetime` (`event ∈
    {use, alloc, free}` + `epoch`, `None` default, excluded from the R13 digest allow-list) + the **R21
@@ -1661,8 +1662,19 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    freed resource is the dangling dereference, a write is re-validation). This is purely additive: the
    annotation is excluded from the R13 digest, and R21 is a smart-lowering law run SEPARATELY from the
    frontend's R1–R8 pass/fail -- so `compile_unit` is unchanged (no twin divergence; the whole thorough
-   corpus, 845 tests, still passes byte-identically). *Next:* wire R21 into the closed-loop verify so a UAF
-   unit routes to fallback/quarantine, and the dual-rail twin annotation.
+   corpus, 845 tests, still passes byte-identically). ✅ **Closed-loop verify + dual-rail twin DONE**
+   (`pipeline.CompileResult.lifetime_diagnostics`, twin `bcir_verify_lifetime` + `bcir_claim.lifetime`,
+   `test_r21_lifetime_is_load_bearing_for_c_heap` / `test_r21_dual_rail_parity` /
+   `test_r21_does_not_disturb_the_corpus`): the allocator result now also stamps an `alloc` event
+   (completing the `malloc→alloc` / `free→free` pair, re-validating a reused pointer), and `compile_unit`
+   runs R21 per function into an ADVISORY `lifetime_diagnostics` field -- so a dangling `p[i]`/`*p`/store or
+   a double `free` surfaces through the normal compile path, while access-before-free and realloc-reuse stay
+   silent. The C twin verifier gained the SAME law (a `uint8_t lifetime` on the claim -- DIGEST-EXCLUDED, so
+   the R13 digest + structural summary stay byte-identical -- the `free`/`alloc` stamp in `bcir_cfront`, and
+   the freed-set walk in `bcir_verify`), surfaced as `R21 <func>: <kind>` advisory lines; a (func, kind)
+   parity test gates the two rails in lockstep. R21 stays SEPARATE from the R1–R8 verdict on both rails, like
+   the R19/R20 timing laws. *Next:* a UAF-routes-to-fallback/quarantine policy (currently advisory-only) + the
+   MLIR port of the lifetime attribute.
 4. Extend **R1–R12 coverage** to the promoted-pointer paths (the laws already apply to the claim; the gap
    is the new `verify=bounds`/lifetime metadata, which the laws must learn to check) + the runtime guards
    the C backend emits (`verify_c_lowering`).

@@ -10,6 +10,12 @@
 #include <string.h>
 #include "bcir_cfront.h"
 #include "bcir_cpp.h"
+#include "bcir_verify.h"
+
+/* R21 (§5.12): print one `R21 <func>: <kind>` line per use-after-free / double-free diagnostic. */
+static void r21_print(const char *funcname, const char *kind, void *ctx) {
+  (void)ctx; printf("R21 %s: %s\n", funcname, kind);
+}
 
 /* the directory of `path` (for #include/#embed resolution). */
 static void dirof(const char *path, char *out, size_t cap) {
@@ -42,6 +48,8 @@ int main(int argc, char **argv) {
   char sum[200]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);
   printf("%s\n", sum);
   if (!r.ok) printf("diag: %s\n", r.diag);
+  /* R21 advisory (§5.12): print use-after-free / double-free diagnostics before the emit marker. */
+  bcir_verify_lifetime(&r.unit, r21_print, NULL);
   printf("----EMIT----\n%s", r.emitted);
   bcir_cfront_free(&r);
   return r.ok ? 0 : 1;

@@ -113,6 +113,9 @@ typedef struct bcir_claim {
   bcir_domain domain;
   bcir_hazard hazard;
   bcir_bounds bounds;
+  uint8_t  lifetime;          /* R21 pointer-lifetime event (§5.12): 0 none/use, 1 alloc, 2 free.
+                               * OPTIONAL annotation -- excluded from the R13 provenance digest (it does
+                               * not change the claim-graph identity); default 0 via new_claim's memset. */
   char     op[BCIR_CIR_NAME]; /* semantic label, e.g. "c.bin.add" / "c.load" / "c.bf.get" */
 } bcir_claim;
 
