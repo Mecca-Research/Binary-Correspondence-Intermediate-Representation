@@ -3006,6 +3006,21 @@ def test_masked_claims_are_discharged_by_a_runtime_guard():
     assert seen_masked > 0                                                       # the corpus exercises the path
 
 
+def test_cfront_lowering_faithfulness_is_a_self_check():
+    """§5.12 item 4: the cfront pipeline SELF-VERIFIES that its emit honors the masked bounds metadata
+    (`verify_cfront_lowering`, surfaced in `CompileResult.lowering_diagnostics`). A real compile is faithful
+    (no diagnostic); a doctored emit that DROPS a masked claim's guard is flagged R12 -- the law catches a
+    backend that would silently lose a bounds check, on any compile (not just the corpus)."""
+    from bcir.frontends.cfront import compile_unit
+    from bcir.frontends.cfront.pipeline import verify_cfront_lowering
+    r = compile_unit(open(os.path.join(_C, "cfront_stdlibmem.c"), encoding="utf-8").read(), check_clang=False)
+    assert r.lowering_diagnostics == [], [d.message for d in r.lowering_diagnostics]   # the real emit is faithful
+    lf = r.lowered.functions["msum"]                                                   # 2 masked claims
+    assert verify_cfront_lowering(lf, r.emitted["msum"]) == []                         # faithful
+    dropped = verify_cfront_lowering(lf, r.emitted["msum"].replace("BCIR_CHK", "no_guard", 1))
+    assert dropped and dropped[0].law == "R12", dropped                                # one guard dropped -> flagged
+
+
 def test_quarantine_report_is_the_debugger_trace_surface():
     """§5.12 debugger trace surface: a STRONG override of `bcir_bounds_quarantine` (the ML-layer / debugger
     seam) records each OOB event into the ring without aborting, and `bcir_quarantine_report` reads the ring
