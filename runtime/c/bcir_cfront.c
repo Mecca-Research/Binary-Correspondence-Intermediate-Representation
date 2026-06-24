@@ -2296,7 +2296,7 @@ static int lv_assign_value(CC *c, uint32_t *out){
         *out = has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv);   /* reload the SAME resolved lvalue */
         return 1;
       }
-      char ch=op->s[0]; c->i++;                         /* compound: read cur, binop, store, value = binop */
+      char ch=op->s[0]; c->i++;                         /* compound: read cur, binop, store, value = stored */
       uint32_t cur = has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv);
       uint32_t rhs=p_assign(c);
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
@@ -2306,7 +2306,12 @@ static int lv_assign_value(CC *c, uint32_t *out){
       if(cl){ if(has_idx){cl->n_rd=3;cl->rd[0]=pv->rid;cl->rd[1]=idx;cl->rd[2]=tmp;}
         else {cl->n_rd=2;cl->rd[0]=pv->rid;cl->rd[1]=tmp;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;}
         cl->bounds=BCIR_BND_ASSUMED; }
-      *out=tmp; return 1;
+      /* the value of a compound is the STORED (narrowed) value: a sub-int target (`unsigned char *p;
+       * (*p += v)`) truncates on store, so RE-READ (#narrowcompound); a full-width target needs no
+       * re-read (tmp == the stored value), so `res` byte-unchanged (oracle: lv.ct.size < rt.size). */
+      const bcir_resource *trr=res_of(c->fn,tmp);
+      *out = (sz < (int)(trr?trr->elem_bytes:4)) ? (has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv)) : tmp;
+      return 1;
     }
     c->i=save;   /* not an eligible deref-assignment value -- rewind (any speculative index lowering is rolled */
   }              /* back below via the res/claim snapshot when we reach the array path; here nothing was emitted */
@@ -2333,14 +2338,19 @@ static int lv_assign_value(CC *c, uint32_t *out){
       *out=emit_index(c,v,idx);                         /* reload reuses idx */
       return 1;
     }
-    char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = binop */
+    char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = stored */
     uint32_t cur=emit_index(c,v,idx); uint32_t rhs=p_assign(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
     bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
     if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=tmp;cl->bounds=access_bnd(c,v->rid);}
-    *out=tmp; return 1;
+    /* the value is the STORED (narrowed) value: a sub-int element (`unsigned short a[]; (a[i] += v)`)
+     * truncates on store, so RE-READ the same index (#narrowcompound); a full-width element needs no
+     * re-read (oracle: lv.ct.size < rt.size), so `res` stays byte-identical (the #lvassignexpr cases). */
+    const bcir_resource *trr=res_of(c->fn,tmp);
+    *out = ((int)v->type.size < (int)(trr?trr->elem_bytes:4)) ? emit_index(c,v,idx) : tmp;
+    return 1;
   }
   /* --- a NESTED struct member `o.in.x = rhs` / `s->a.b OP= rhs` as a VALUE --- */
   if(v->sidx>=0 && c->t[c->i+1].k==T_PUN
@@ -2363,13 +2373,17 @@ static int lv_assign_value(CC *c, uint32_t *out){
       *out=emit_member(c,v,&f);
       return 1;
     }
-    char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = binop */
+    char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = stored */
     uint32_t cur=emit_member(c,v,&f); uint32_t rhs=p_assign(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
     bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
     store_member(c,v,&f,tmp);
-    *out=tmp; return 1;
+    /* the value is the STORED (narrowed) value: a sub-int leaf truncates on store, so RE-READ the same
+     * member (#narrowcompound); a full-width leaf needs no re-read (oracle: lv.ct.size < rt.size). */
+    const bcir_resource *trr=res_of(c->fn,tmp);
+    *out = ((int)f.size < (int)(trr?trr->elem_bytes:4)) ? emit_member(c,v,&f) : tmp;
+    return 1;
   }
   c->i=save; return 0;
 }
@@ -2412,14 +2426,19 @@ static uint32_t p_assign(CC *c){
       store_member(c,mbase,&mf,rhs);
       return emit_member(c,mbase,&mf);
     }
-    char ch=op->s[0]; c->i++;                       /* compound `OP=`: read-once, binop, store, value = result */
+    char ch=op->s[0]; c->i++;                       /* compound `OP=`: read-once, binop, store, value = stored */
     uint32_t cur=emit_member(c,mbase,&mf);          /* read FIRST (matches the oracle's claim order) */
     uint32_t rhs=p_assign(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
     bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
     store_member(c,mbase,&mf,tmp);
-    return tmp;
+    /* the value of a compound is the STORED (narrowed) value: a sub-int member (`unsigned char c;
+     * (s.c += v)`) truncates on store, so RE-READ it (#narrowcompound) -- the plain `=` path above
+     * already re-reads; a full-width member needs no re-read (oracle: lv.ct.size < rt.size), so the
+     * existing #memassignexpr cases stay byte-identical. */
+    const bcir_resource *trr=res_of(c->fn,tmp);
+    return ((int)mf.size < (int)(trr?trr->elem_bytes:4)) ? emit_member(c,mbase,&mf) : tmp;
   }
   { uint32_t v; if(lv_assign_value(c,&v)) return v; }   /* a[i]/ *p/o.in.x = rhs (store + reload) as a VALUE */
   return p_cond(c);

@@ -1440,10 +1440,15 @@ class _FuncLowerer:
             cur = self._read(lv)
             b = self._rvalue(node.value.rhs)
             opcode, suf = _BIN[node.value.op]
-            t = self._temp(self._bin_result_type(node.value.op, cur, b), f"b_{suf}")
+            rt = self._bin_result_type(node.value.op, cur, b)
+            t = self._temp(rt, f"b_{suf}")
             res = self._emit(f"c.bin.{suf}", opcode, (cur, b), (t,))
             self._write(lv, res)
-            return res                                         # the value of a compound is the binop result
+            # the value of a compound assignment is the STORED (narrowed) value, not the raw binop result --
+            # when the target is NARROWER than the promoted result (`unsigned char c; (c += v)`) the store
+            # truncates, so re-read it (like the plain `=` path); `res` would be the un-narrowed sum (a
+            # both-rails miscompile). A full-width target needs no re-read (res == the stored value).
+            return res if (stmt or lv.ct.size >= rt.size) else self._read(lv)
         v = self._rvalue(node.value)
         if named_local:
             rid, _ct = self._lookup(node.target.ident, node.target.pos)           # copy into the mutable storage
