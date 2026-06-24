@@ -2833,6 +2833,37 @@ def test_bounds_quarantine_traps_out_of_bounds():
         assert "g:a" in oob.stderr, oob.stderr                    # the source site is in the fail-fast message
 
 
+def test_recovered_extent_quarantines_out_of_bounds():
+    """§5.12 recoverable extents end-to-end: a NAKED pointer from `malloc(n*sizeof(T))` recovers its element
+    count `n`, so `p[i]` is guarded against the RUNTIME extent `BCIR_CHK(rid, i, n, "mpick:p")`. In-bounds
+    (`i < n`) is transparent (the raw value); out-of-bounds calls the weak handler, which records the
+    provenance naming the `<func>:<pointer>` site and aborts. Linked against the real runtime -- this proves
+    the recovered runtime extent (not a constant) actually bounds-checks the heap buffer."""
+    if not _CC:
+        return
+    src = ("unsigned mpick(unsigned n, unsigned i){ unsigned *p = malloc(n*sizeof(unsigned)); "
+           "for(unsigned k=0u;k<n;k++) p[k]=k*2u; return p[i]; }")
+    from bcir.frontends.cfront import compile_unit
+    r = compile_unit("#include <stdlib.h>\n" + src, check_clang=False)
+    body = r.emitted["mpick"].split("*/\n", 1)[-1]
+    assert 'BCIR_CHK(' in body and ', n, "mpick:p")' in body, body   # the extent is the runtime count `n`
+    with tempfile.TemporaryDirectory() as d:
+        prog = (f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
+                f'{body}\n'
+                f'int main(int c, char **v){{ (void)c; printf("%u\\n", bcir_mpick(8u, (unsigned)atoi(v[1]))); '
+                f'return 0; }}\n')
+        cpath, epath = os.path.join(d, "e.c"), os.path.join(d, "e")
+        open(cpath, "w").write(prog)
+        b = subprocess.run([_CC, "-std=c23", "-O2", "-I", _C, cpath,
+                            os.path.join(_C, "bcir_quarantine.c"), "-o", epath], capture_output=True, text=True)
+        assert b.returncode == 0, b.stderr
+        inb = subprocess.run([epath, "3"], capture_output=True, text=True)   # in-bounds: p[3] = 6
+        assert inb.returncode == 0 and inb.stdout.strip() == "6", (inb.returncode, inb.stdout)
+        oob = subprocess.run([epath, "99"], capture_output=True, text=True)  # OOB of the 8-element buffer
+        assert oob.returncode != 0 and "bounds-quarantine" in oob.stderr and "mpick:p" in oob.stderr, \
+            (oob.returncode, oob.stderr)
+
+
 def test_quarantine_report_is_the_debugger_trace_surface():
     """§5.12 debugger trace surface: a STRONG override of `bcir_bounds_quarantine` (the ML-layer / debugger
     seam) records each OOB event into the ring without aborting, and `bcir_quarantine_report` reads the ring

@@ -93,6 +93,10 @@ static const bcir_abi *bcir_abi_by_name(const char *name){
   return NULL;
 }
 
+/* §5.12 one NAME's mutation tally (assignment count + address-taken flag) for the extent-stability
+ * pre-pass; an array of these lives on CC, reset per function. */
+typedef struct { char name[BCIR_CIR_NAME]; int assigned; int addr; } mutent;
+
 typedef struct {
   tok t[MAXTOK]; int nt, i;
   sdef *s; int ns, cap_s;         /* struct/union definitions (grown -- no fixed cap) */
@@ -109,6 +113,12 @@ typedef struct {
                                                       * lines for direct funcptr-param declarators (which
                                                       * have no source typedef to print), emitted as a
                                                       * prelude before the function bodies */
+  /* §5.12 per-function mutation pre-pass (the C twin of _mut_assigned / _mut_addr): over the whole
+   * function body, the number of assignments to each NAME and whether its address is ever taken (`&x`).
+   * Drives extent-stability -- a recovered count / a bound pointer is trusted only when STABLE (assigned
+   * at most its single binding and never aliased). Conservative: an over-approximation never promotes
+   * unsoundly. Reset (mut_n=0) per function. */
+  mutent mut[512]; int mut_n;
   char err[256]; int failed;
 } CC;
 /* Grow a CC parser-state array geometrically (no fixed cap), zeroing the fresh slots. On OOM the cap
@@ -213,6 +223,33 @@ static void strtab_reset(void) {
 static const char *strtab_lookup(uint32_t rid) {
   for (int k = 0; k < g_nstr; k++) if (g_strtab[k].rid == rid) return g_strtab[k].s;
   return NULL;
+}
+
+/* §5.12 recoverable extents (the C twin of LoweredFunc.ptr_extent): a pointer local bound to
+ * malloc(N*sizeof(T)) / calloc(N, sizeof(T)) carries the RECOVERED element-count variable -- its `p[i]`
+ * accesses promote to `masked` and emit `a[BCIR_CHK(rid, idx, <count var>, "func:ptr")]`. The map lives
+ * on a file-static side table keyed by the OWNING function (whose pointer is stable from p_func through
+ * emit_func) so the emitter (guard_idx, which only has a `const bcir_func *`) can read it back -- the
+ * bcir_func struct carries no extra field. Reset per translation unit. */
+#define BCIR_MAX_PTREXT 256
+typedef struct { const bcir_func *fn; uint32_t ptr_rid; uint32_t cnt_rid; } ptrext_ent;
+static ptrext_ent g_ptrext[BCIR_MAX_PTREXT];
+static int g_nptrext;
+static void ptrext_reset(void) { g_nptrext = 0; }
+static void ptrext_set(const bcir_func *fn, uint32_t ptr_rid, uint32_t cnt_rid) {
+  for (int k = 0; k < g_nptrext; k++)                       /* an existing binding -> overwrite */
+    if (g_ptrext[k].fn == fn && g_ptrext[k].ptr_rid == ptr_rid) { g_ptrext[k].cnt_rid = cnt_rid; return; }
+  if (g_nptrext < BCIR_MAX_PTREXT) {
+    g_ptrext[g_nptrext].fn = fn; g_ptrext[g_nptrext].ptr_rid = ptr_rid;
+    g_ptrext[g_nptrext].cnt_rid = cnt_rid; g_nptrext++;
+  }
+}
+/* The recovered count-variable rid bound to a pointer rid (in `fn`), or 0 if the pointer has no extent.
+ * (A real rid is never 0 -- the allocator starts at 100 -- so 0 is an unambiguous "no binding".) */
+static uint32_t ptrext_get(const bcir_func *fn, uint32_t ptr_rid) {
+  for (int k = 0; k < g_nptrext; k++)
+    if (g_ptrext[k].fn == fn && g_ptrext[k].ptr_rid == ptr_rid) return g_ptrext[k].cnt_rid;
+  return 0;
 }
 
 static void lex(CC *c, const char *src) {
@@ -946,13 +983,189 @@ static uint32_t member_arr_index(CC *c, const field *fld) {
     d++; }
   return lin;
 }
+static int is_compound_op(const tok *t);   /* fwd: a `+= ... >>=` compound-assign punctuator */
+
+/* --- §5.12 recoverable-extent mutation pre-pass (the C twin of lower._scan_mutations) ----------
+ * A token-level over-approximation of the oracle's AST walk over the function body: per NAME, the number
+ * of assignments to it and whether its address is ever taken. The body is the balanced `{...}` token
+ * range starting at `start` (just past the opening brace). It MUST agree with the oracle's AST walk on
+ * every fixture (the parity gate enforces it): more mutation seen -> fewer promotions, never an unsound
+ * one. */
+static mutent *mut_find(CC *c, const tok *id) {
+  for (int k = 0; k < c->mut_n; k++)
+    if ((int)strlen(c->mut[k].name) == id->n && !strncmp(c->mut[k].name, id->s, (size_t)id->n))
+      return &c->mut[k];
+  if (c->mut_n < (int)(sizeof c->mut / sizeof c->mut[0])) {
+    idcpy(c->mut[c->mut_n].name, id); c->mut[c->mut_n].assigned = 0; c->mut[c->mut_n].addr = 0;
+    return &c->mut[c->mut_n++];
+  }
+  return NULL;
+}
+static int mut_assigned(CC *c, const tok *id) {            /* assignment count of a NAME (0 if unseen) */
+  for (int k = 0; k < c->mut_n; k++)
+    if ((int)strlen(c->mut[k].name) == id->n && !strncmp(c->mut[k].name, id->s, (size_t)id->n))
+      return c->mut[k].assigned;
+  return 0;
+}
+static int mut_addr(CC *c, const tok *id) {                /* has the NAME's address been taken? */
+  for (int k = 0; k < c->mut_n; k++)
+    if ((int)strlen(c->mut[k].name) == id->n && !strncmp(c->mut[k].name, id->s, (size_t)id->n))
+      return c->mut[k].addr;
+  return 0;
+}
+/* Is token `t` a value-ENDER -- so a following `&` is the BINARY bitwise-and, not a unary address-of?
+ * (An identifier / number / string / `)` / `]`.) */
+static int is_value_ender(const tok *t) {
+  if (t->k == T_ID || t->k == T_INT || t->k == T_FLT || t->k == T_STR) return 1;
+  return t->k == T_PUN && t->n == 1 && (t->s[0] == ')' || t->s[0] == ']');
+}
+static void scan_mutations(CC *c, int start) {
+  c->mut_n = 0;
+  int depth = 1;                                           /* `start` is just past the opening `{` */
+  for (int i = start; c->t[i].k != T_END && depth > 0; i++) {
+    const tok *t = &c->t[i];
+    if (t->k == T_PUN && t->n == 1 && t->s[0] == '{') { depth++; continue; }
+    if (t->k == T_PUN && t->n == 1 && t->s[0] == '}') { depth--; continue; }
+    if (t->k == T_ID) {
+      const tok *nx = &c->t[i + 1];                        /* id `=` / id OP= / id++ / id-- -> an assignment */
+      if (nx->k == T_PUN && ((nx->n == 1 && nx->s[0] == '=') || is_compound_op(nx)
+          || (nx->n == 2 && (nx->s[0] == '+' || nx->s[0] == '-') && nx->s[1] == nx->s[0]))) {
+        mutent *m = mut_find(c, t);
+        if (m) m->assigned++;
+      }
+      continue;
+    }
+    if (t->k == T_PUN && t->n == 2 && (t->s[0] == '+' || t->s[0] == '-') && t->s[1] == t->s[0]
+        && c->t[i + 1].k == T_ID) {                        /* ++id / --id (the id is NOT a value-ender before it) */
+      const tok *pv = (i > start) ? &c->t[i - 1] : NULL;
+      if (!(pv && is_value_ender(pv))) {                   /* a postfix x++ is counted by the id-rule above */
+        mutent *m = mut_find(c, &c->t[i + 1]);
+        if (m) m->assigned++;
+      }
+      continue;
+    }
+    if (t->k == T_PUN && t->n == 1 && t->s[0] == '&' && c->t[i + 1].k == T_ID) {  /* a UNARY `&x` (address-of) */
+      const tok *pv = (i > start) ? &c->t[i - 1] : NULL;
+      if (!(pv && is_value_ender(pv))) {                   /* unary when the previous token is not a value-ender */
+        mutent *m = mut_find(c, &c->t[i + 1]);
+        if (m) m->addr = 1;
+      }
+    }
+  }
+}
+
+/* The byte width of a per-element size operand at token `i` -- `sizeof(type)` or an integer literal --
+ * or -1 if it is neither / a malformed sizeof. Does NOT consume (it parses a copy of the cursor). */
+static int p_type(CC *c, bcir_ctype *ty, int *sidx);   /* fwd (defined above; re-declared for size_bytes) */
+static int rec_size_bytes(CC *c, int i) {
+  const tok *t = &c->t[i];
+  if (t->k == T_INT) return (int)t->v;
+  if (t->k == T_ID && t->n == 6 && !strncmp(t->s, "sizeof", 6) && c->t[i + 1].k == T_PUN
+      && c->t[i + 1].n == 1 && c->t[i + 1].s[0] == '(') {
+    int save = c->i; c->i = i + 2;                         /* past `sizeof (` -- parse the type-name on a copy */
+    int isty = scalar_size(pk(c)->s, pk(c)->n) >= 0 || is(c, "struct") || is(c, "union") || is(c, "enum")
+               || is(c, "_Complex") || is(c, "complex") || is(c, "const") || is(c, "volatile")
+               || is(c, "typeof") || is(c, "__typeof__") || is(c, "typeof_unqual")
+               || find_typedef(c, pk(c)->s, pk(c)->n) >= 0;
+    int sz = -1;
+    if (isty) { bcir_ctype ty; int si; if (!p_type(c, &ty, &si))
+      sz = ty.kind == 2 ? cc_abi(c)->pointer_size : (ty.kind == 1 ? c->s[si].size : ty.size); }
+    c->i = save;                                           /* speculative -- never advance the real cursor */
+    return sz;
+  }
+  return -1;
+}
+/* A stable integer-count NAME at token `i` -> its variable rid, else 0. The name must be a bare in-scope
+ * integer scalar that is STABLE: assigned at most once and never address-taken (the C twin of
+ * _recoverable_alloc.count_rid). */
+static uint32_t rec_count_rid(CC *c, int i) {
+  const tok *t = &c->t[i];
+  if (t->k != T_ID) return 0;
+  venv *v = lookup(c, t);                                  /* must be a declared local/param */
+  if (!v) return 0;
+  if (v->type.kind != 0 || v->type.is_float) return 0;     /* an integer scalar only */
+  if (mut_assigned(c, t) > 1 || mut_addr(c, t)) return 0;   /* not stable: re-assigned / aliased */
+  return v->rid;
+}
+/* §5.12 _recoverable_alloc: if the call in the token range [start,end) is `calloc(N, sizeof(T))`,
+ * `malloc(N*sizeof(T))` / `malloc(sizeof(T)*N)`, or `malloc(N)` for a 1-byte pointee (T the pointee, so
+ * N the element COUNT), with N a stable integer Name, return N's rid (the recovered extent), else 0.
+ * Conservative: any uncertainty -> 0 (no guard, never a false trap). */
+static uint32_t recoverable_alloc(CC *c, int start, int end, int pointee_size) {
+  if (pointee_size <= 0) return 0;
+  const tok *cal = &c->t[start];
+  if (cal->k != T_ID || !(c->t[start + 1].k == T_PUN && c->t[start + 1].n == 1 && c->t[start + 1].s[0] == '('))
+    return 0;
+  int is_malloc = cal->n == 6 && !strncmp(cal->s, "malloc", 6);
+  int is_calloc = cal->n == 6 && !strncmp(cal->s, "calloc", 6);
+  if (!is_malloc && !is_calloc) return 0;
+  int a0 = start + 2;                                      /* first argument token */
+  if (is_calloc) {                                         /* calloc(N, sizeof(T)) -- N, comma, size, ) */
+    /* the first arg must be a bare Name immediately followed by `,` (a complex first arg -> not recovered) */
+    if (c->t[a0].k != T_ID || !(c->t[a0 + 1].k == T_PUN && c->t[a0 + 1].n == 1 && c->t[a0 + 1].s[0] == ','))
+      return 0;
+    int a1 = a0 + 2;
+    if (rec_size_bytes(c, a1) != pointee_size) return 0;
+    return rec_count_rid(c, a0);
+  }
+  /* malloc: the single argument runs [a0, end-1) (end-1 is the closing `)`). Forms: N*S / S*N / N. */
+  int close = end - 1;
+  /* N * sizeof(T)  or  sizeof(T) * N : a single top-level `*` splitting two operands. Detect the `*`
+   * one token after a bare Name (N *) or after a sizeof-type group ( ) * ). */
+  if (c->t[a0].k == T_ID && c->t[a0 + 1].k == T_PUN && c->t[a0 + 1].n == 1 && c->t[a0 + 1].s[0] == '*') {
+    /* N * sizeof(T) : N is at a0, the size operand starts at a0+2 and must reach the close */
+    if (rec_size_bytes(c, a0 + 2) == pointee_size) return rec_count_rid(c, a0);
+    return 0;
+  }
+  /* sizeof(T) * N : the size operand is a sizeof-group; find its closing `)` then a `*` then N at close-1 */
+  if (c->t[a0].k == T_ID && c->t[a0].n == 6 && !strncmp(c->t[a0].s, "sizeof", 6)
+      && c->t[a0 + 1].k == T_PUN && c->t[a0 + 1].s[0] == '(') {
+    int j = a0 + 1, d = 0;                                 /* walk the balanced sizeof `(...)` */
+    for (; j < close; j++) { char ch = c->t[j].s[0];
+      if (c->t[j].k == T_PUN && c->t[j].n == 1 && ch == '(') d++;
+      else if (c->t[j].k == T_PUN && c->t[j].n == 1 && ch == ')') { d--; if (d == 0) { j++; break; } } }
+    if (j < close && c->t[j].k == T_PUN && c->t[j].n == 1 && c->t[j].s[0] == '*'
+        && j + 1 == close - 1 && c->t[close - 1].k == T_ID
+        && rec_size_bytes(c, a0) == pointee_size)
+      return rec_count_rid(c, close - 1);
+    return 0;
+  }
+  /* malloc(N) for a 1-byte pointee: N is a bare Name filling the whole single argument */
+  if (pointee_size == 1 && c->t[a0].k == T_ID && a0 + 1 == close)
+    return rec_count_rid(c, a0);
+  return 0;
+}
+/* §5.12 _bind_extent: bind a recovered element-count to a malloc/calloc'd pointer local (rid `p_rid`,
+ * the resource `pr`, name `p_name`), so its `p[i]` accesses promote to `masked`. Only when p is a POINTER
+ * and STABLE -- assigned exactly once (this binding) and never address-taken -- so it still points at that
+ * allocation at every access (a `p = realloc(...)` reassigns it, count 2, left unmanaged). The init call
+ * is the token range [init_start, init_end). */
+static void bind_extent(CC *c, uint32_t p_rid, const bcir_resource *pr, const tok *p_name,
+                        int init_start, int init_end) {
+  if (!pr || pr->kind != BCIR_RK_POINTER) return;
+  if (mut_assigned(c, p_name) != 1 || mut_addr(c, p_name)) return;
+  int pointee = (int)pr->elem_bytes;                        /* the pointee element size (`p_ct.of.size`) */
+  uint32_t n_rid = recoverable_alloc(c, init_start, init_end, pointee);
+  if (n_rid) ptrext_set(c->fn, p_rid, n_rid);
+}
+
 /* The bounds contract for an indexed access (§5.12 bounds-promotion). A LOCAL/STATIC array OBJECT -- whose
  * extent is statically RECOVERABLE from the resource's element `count` -- is promoted from `assumed` to
  * `masked` (runtime-bounds-checked, the contract the quarantine handler discharges); a pointer base (extent
- * unknown) stays `assumed`. Metadata only -- no emit/behaviour change; `verify` already defaults to bounds. */
+ * unknown) stays `assumed` -- UNLESS it carries a §5.12 recovered count (ptr_extent). Metadata only -- no
+ * emit/behaviour change; `verify` already defaults to bounds. */
 static bcir_bounds access_bnd(CC *c, uint32_t rid) {
   const bcir_resource *r = res_of(c->fn, rid);
-  return (r && r->kind != BCIR_RK_POINTER && r->count > 1) ? BCIR_BND_MASKED : BCIR_BND_ASSUMED;
+  /* A known-extent ARRAY object (oracle `rt.kind=="array" and rt.count`): a LOCAL/STATIC array (kind !=
+   * POINTER), OR a file-scope (static/const) global array -- the twin tags a global array POINTER for
+   * index decay, but it carries its real, small element count, whereas a genuine pointer has the SYMBOLIC
+   * pointee extent 1<<16 (locals/params) or count 1 (a pointer global / a malloc result). So an array is
+   * any base with a small definite count > 1; the pointer extents (65536 / 1) are excluded here and the
+   * recovered ones are masked via ptr_extent below. A string-LITERAL base stays assumed_safe (anonymous
+   * read-only data -- the oracle excludes str_globals). */
+  if (r && r->count > 1 && r->count != (1u << 16) && !strtab_lookup(rid)) return BCIR_BND_MASKED;
+  if (ptrext_get(c->fn, rid)) return BCIR_BND_MASKED;   /* §5.12 a malloc/calloc pointer with a recovered count */
+  return BCIR_BND_ASSUMED;
 }
 static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -- GEP load */
   int es=base->type.size?base->type.size:4;
@@ -1904,8 +2117,9 @@ static uint32_t p_assign(CC *c){
     if(v){
       const tok *op=&c->t[c->i+1];
       if(op->n==1 && op->s[0]=='='){                 /* name = rhs  (right-recursive: a = b = c) */
-        c->i+=2; uint32_t rhs=p_assign(c);
+        tok tnm=c->t[c->i]; c->i+=2; int ist=c->i; uint32_t rhs=p_assign(c); int ien=c->i;
         bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
+        bind_extent(c,v->rid,res_of(c->fn,v->rid),&tnm,ist,ien);   /* §5.12: `p = malloc(N*…)` -> N */
         return v->rid;
       }
       char ch=op->s[0];                              /* name OP= rhs */
@@ -2114,7 +2328,7 @@ static int arr_init(CC *c, uint32_t rid) {
     uint32_t ic=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
     if(kc){kc->n_wr=1;kc->wr[0]=ic;kc->n_imm=1;kc->imm[0]=idx;}
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-    if(cl){cl->n_rd=3;cl->rd[0]=rid;cl->rd[1]=ic;cl->rd[2]=v;cl->bounds=BCIR_BND_ASSUMED;}
+    if(cl){cl->n_rd=3;cl->rd[0]=rid;cl->rd[1]=ic;cl->rd[2]=v;cl->bounds=access_bnd(c,rid);}  /* §5.12 promote a known-extent array */
     cursor=idx+1; if(cursor>n) n=cursor;
     if(is(c,",")) c->i++;
   }
@@ -2360,8 +2574,9 @@ static void p_stmt(CC *c) {
             f->statics[f->n_statics].init=init; f->n_statics++; } }
       } else if(is(c,"=")){c->i++;
         if(is(c,"{")){ if(arr) arr_init(c,rid); else agg_init(c,rid,si); }   /* {…} array / struct-union init */
-        else { uint32_t v=p_expr(c);
-          bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;} } }
+        else { int ist=c->i; uint32_t v=p_expr(c); int ien=c->i;
+          bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}
+          bind_extent(c,rid,res_of(c->fn,rid),&nm,ist,ien); } }   /* §5.12: `T *p = malloc(N*sizeof(T))` -> extent N */
       if(is(c,",")){ c->i++; continue; }   /* another declarator off the same specifier */
       break;
     }
@@ -2514,8 +2729,9 @@ static void p_stmt(CC *c) {
         if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
       eat(c,";");return;}
     if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]=='='){
-      c->i+=2;uint32_t val=p_expr(c);
+      tok tnm=c->t[c->i]; c->i+=2; int ist=c->i; uint32_t val=p_expr(c); int ien=c->i;
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
+      bind_extent(c,v->rid,res_of(c->fn,v->rid),&tnm,ist,ien);   /* §5.12: `p = malloc(N*…)` -> N */
       eat(c,";");return;}
     /* compound assignment  name OP= expr  ->  name = name OP expr  (a bin op + a copy). */
     if(v&&is_compound_op(&c->t[c->i+1])){
@@ -2666,6 +2882,7 @@ static int p_func(CC *c, bcir_func *fn) {
     if(is(c,",")){c->i++;continue;} break;
   }
   if(!eat(c,")"))return 1; if(!eat(c,"{"))return 1;
+  scan_mutations(c,c->i);   /* §5.12 extent-stability pre-pass over the body (cursor is just past `{`) */
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed) p_stmt(c);
   eat(c,"}");
   return c->failed;
@@ -2799,11 +3016,19 @@ static int is_param_ref(const bcir_func *f,uint32_t rid){
  * realized inline). Any other access -> the bare index. Result written into `buf`. */
 static const char *guard_idx(const bcir_func *f, const bcir_claim *cl, char *buf, size_t bn){
   const bcir_resource *br=res_of(f,cl->rd[0]);
-  if(cl->bounds==BCIR_BND_MASKED && br && br->count>1){
+  if(cl->bounds==BCIR_BND_MASKED){
     char ib[BCIR_CIR_NAME], nb[BCIR_CIR_NAME];
-    snprintf(buf,bn,"BCIR_CHK(%u, %s, %lluu, \"%s:%s\")",(unsigned)cl->rd[0],rname(f,cl->rd[1],ib),
-             (unsigned long long)br->count,f->name,rname(f,cl->rd[0],nb));
-    return buf;
+    uint32_t ext=ptrext_get(f,cl->rd[0]);                  /* §5.12 a naked pointer with a RECOVERED runtime extent */
+    if(ext){ char eb[BCIR_CIR_NAME];
+      snprintf(buf,bn,"BCIR_CHK(%u, %s, %s, \"%s:%s\")",(unsigned)cl->rd[0],rname(f,cl->rd[1],ib),
+               rname(f,ext,eb),f->name,rname(f,cl->rd[0],nb));   /* the count VARIABLE, re-emitted by name */
+      return buf;
+    }
+    if(br && br->count>1){                                 /* a known-extent local/static array (constant N) */
+      snprintf(buf,bn,"BCIR_CHK(%u, %s, %lluu, \"%s:%s\")",(unsigned)cl->rd[0],rname(f,cl->rd[1],ib),
+               (unsigned long long)br->count,f->name,rname(f,cl->rd[0],nb));
+      return buf;
+    }
   }
   return rname(f,cl->rd[1],buf);
 }
@@ -3106,6 +3331,7 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
   if(!c.abi){ snprintf(out->diag,sizeof out->diag,"unknown target '%s'",target?target:""); return 1; }
   c.rid=100; c.cid=1000; c.unit=&out->unit;
   strtab_reset();                       /* fresh string-literal table per translation unit */
+  ptrext_reset();                       /* fresh §5.12 ptr_extent map per translation unit */
   lex(&c,src);
   while(!isk(&c,T_END)&&!c.failed){       /* no fixed function ceiling -- the unit list grows */
     if(try_top_decl(&c)) continue;       /* typedef / enum / struct|union defs, interleaved */

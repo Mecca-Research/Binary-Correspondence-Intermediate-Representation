@@ -547,8 +547,8 @@ int main(void){
   printf("MATCH\n");return 0;}
 DRV
 } > "${tmp}/dt_harness.c"
-"${CC}" -std=c23 -O2 "${tmp}/dt_harness.c" -o "${tmp}/dt_h" 2>/dev/null \
-  || "${CC}" -std=c2x -O2 "${tmp}/dt_harness.c" -o "${tmp}/dt_h" \
+"${CC}" -std=c23 -O2 -I "${C}" "${tmp}/dt_harness.c" "${C}/bcir_quarantine.c" -o "${tmp}/dt_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 -I "${C}" "${tmp}/dt_harness.c" "${C}/bcir_quarantine.c" -o "${tmp}/dt_h" \
   || { echo "  FAIL: designated harness build"; exit 1; }
 dtr="$("${tmp}/dt_h")"
 [ "${dtr}" = "MATCH" ] \
