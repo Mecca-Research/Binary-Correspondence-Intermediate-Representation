@@ -1647,9 +1647,17 @@ tracking**. The infrastructure to close this already exists and is unused-by-def
    at a FROZEN threshold into a CLASSICAL action (abort / clamp-to-valid), and RECORDS the crossing in a
    decide-audit ring -- the C twin of `kbcir.twotruth.Decision`, so the graded->classical crossing is the only
    sanctioned one and is never silent (LANGREF §14 / R13). An admitted clamp survives on a valid element; an
-   under-confident proposal fail-fasts -- the frozen threshold dictates. **Next ➡** extents extend to `realloc`
-   rebind, a snapshot for mutated counts, and an array param with a sibling count (under a dominating-bound
-   proof); and the policy table baked by the L2/L3 ML-layer offline (this ships the seam + reference).
+   under-confident proposal fail-fasts -- the frozen threshold dictates. ✅ **Extent SNAPSHOT DONE -- EXPRESSION
+   counts, DUAL-RAIL** (`lower._alloc_count_node`/`_is_pure`/`_bind_extent` snapshot branch, twin
+   `recoverable_alloc`/`snapshot_extent`/`ext_ctr`, `cfront_extentsnap.c`): a count that is a side-effect-free
+   EXPRESSION (`malloc(((n&7)+1)*sizeof)`, `calloc(a*2, sizeof)`) -- not just a bare stable Name -- is evaluated
+   ONCE into a hidden IMMUTABLE local `__bcir_extK` at the alloc and bounds-checked against that snapshot,
+   immune to any later mutation of its inputs (sound because re-evaluating a PURE expression is safe; this
+   SUBSUMES the decl-init stability gate). The stable-Name case stays the byte-identical fast path. The twin
+   mirrors it via a stashed-`T_END` re-lowering of the count token range + a per-function `__bcir_extK`
+   counter; the cross-rail claim/`BCIR_CHK`/equivalence parity holds on the new fixture and the corpus is
+   otherwise byte-identical. **Next ➡** extents extend to `realloc` rebind and an array param with a sibling
+   count (under a dominating-bound proof); and the policy table baked by the L2/L3 ML-layer offline.
 2. ✅ **Lifetime law R21 DONE (oracle prototype)** (`bcir/model/graph.py::Lifetime` +
    `bcir/verify::verify_lifetime`, `test_lifetime_laws.py`): an OPTIONAL `Claim.lifetime` (`event ∈
    {use, alloc, free}` + `epoch`, `None` default, excluded from the R13 digest allow-list) + the **R21
