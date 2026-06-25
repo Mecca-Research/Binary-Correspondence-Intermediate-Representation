@@ -1755,6 +1755,141 @@ does **not** silently change C's observable behavior (the `--fallback` contract 
 forbid it). The "thinner OS / ABI fortress" framing is a long-horizon consequence, not a near-term build
 item; it stays vision until the native backend (§5.5) and a hosted environment (§5.9 Phase 3) land.
 
+### 5.14 The MLIR catch-up + the freestanding-C23-driver release (closing the "law trails the oracle" gap)
+
+The C frontend (§5.9) now lowers a wide C surface **dual-rail** (oracle + the `bcir_cfront.c` twin),
+but two seams have opened between the frontend and the **law rail**:
+
+1. The generated status reports verifier laws **R1–R18**, yet the model already carries *optional*
+   **timing** metadata for **R19/R20** and *optional* **lifetime** metadata for **R21**, enforced in the
+   Python oracle (and R21 in the C twin, advisory). Timing and pointer-lifetime laws are **emerging beyond
+   the stable MLIR law table**.
+2. The frontend lowers several **law-bearing** C semantics (volatile, atomic RMW/CAS, indirect calls,
+   pointer extent/provenance, call ABI) that have **no first-class MLIR representation** — they live only
+   in `lower.py` / `bcir_cfront.c`. *C frontend evolution has outpaced MLIR representation.*
+
+This arc **catches the law rail up to the frontend** — but only for semantics that affect BCIR law — and
+then ships the freestanding-C23-driver compiler as the concrete release on that proven foundation. It does
+**not** widen the Python quarantine: what stays Python (§5.6) is unchanged — learned organs, offline
+calibration, enriched operad / memory-module fixpoints, the conformance **oracle** itself, and the
+generators/fuzzers stay Python *by design* because they are learned / offline / research / host-side, not
+deterministic production law.
+
+> **The filter (non-negotiable).** Do **not** mirror all C syntax in MLIR. Add MLIR representation for a C
+> feature **only where it affects** one of: *effects, aliasing, object lifetime, provenance, ABI,
+> volatile/atomic ordering, timing, target selection, verification, or cost.* Pure-syntax features
+> (storage-class spelling, initializer syntax, source-location spelling) are flattened in the frontend and
+> stay there. "Complete C23 semantics" is **not** the goal; **complete C23 *law* coverage of the
+> law-bearing subset** is. Every addition follows the **prototype-then-port** discipline (§3) and is gated
+> by an **oracle ↔ MLIR ↔ C parity** test, exactly as R14–R18 were ported.
+
+Ordered, dependency-gated — each phase de-risks or enables the next:
+
+#### Phase 0 — Hygiene (cheap, parallelizable, de-risks everything after)
+
+- **(E) Honest test tiers + an explicit C-runtime CI gate.** The local `run_all --tier quick` "19 failures
+  (skip:no-cc)" are **not** a compiler-core or discovery bug: the quick tier *deliberately* hides the
+  toolchain (`bcir/tests/run_all.py` monkey-patches `shutil.which` so the pure-Python oracle/law/parity
+  coverage runs with no compiler installed), while `tools/c/check_runtime.sh` uses the shell's `command -v`
+  and **CI already runs `BCIR_THOROUGH=1`** (all tools visible) — so behaviour-equivalence *does* run in CI.
+  The action is **legibility**, not discovery: (1) a behaviour-equivalence check with no compiler must report
+  a clean **SKIP**, never a FAIL, in the quick tier (the 19 are mislabeled skips — `_CC is None` →
+  `skip:no-cc` should not count against the suite); (2) document the tier ladder
+  (`quick` = pure-Python, `c-runtime`/`thorough` = +toolchain) in the contributor docs; (3) add an explicit
+  **`c-runtime` CI job** running `check_runtime.sh` + `run_all --tier c-runtime` so full C runtime checks are
+  their own *named* gate, not only folded inside `thorough`.
+- **(D) Document the naked-pointer policy (user-facing).** The source already *enforces* it —
+  `lower.py::_access_bounds` (the `assumed_safe → masked` promotion), `_bind_extent`
+  (malloc/calloc extent recovery), the `BCIR_CHK` runtime quarantine — and §5.12 describes it internally, but
+  it is **not user-facing**. Add a normative policy block to `BCIR_LANGREF.md` + `CFRONT_GUIDE.md`: *known /
+  recoverable extent → **checked / quarantined** (`masked`); unknown naked pointer → **`assumed_safe`**
+  (trusted, no runtime check); `malloc`/`free` → optional **R21** advisory lifetime diagnostics; **no silent
+  proof of unknown extents** (BCIR never fabricates a bound it cannot recover).* This pins the contract that
+  R21 (Phase 1) and the driver release (Phase 3) build on.
+
+#### Phase 1 — Promote the emerging laws to first-class (R19 / R20 / R21)
+
+The logic is already proven: `verify_timing` (R19 synchronous-timing legality, R20 clock-domain-crossing) and
+`verify_lifetime` (R21 use-after-free / double-free) run in the oracle; R21 also runs in the C twin
+(`bcir_verify.c`, advisory); the **non-disturbance proof holds** (both are vacuous until a claim opts into
+`timing`/`lifetime`, so the whole corpus verifies byte-identically with them wired in). Promote them with the
+same six artifacts that make a law first-class (the R14–R18 pattern), each parity-gated:
+
+- **(a) MLIR attributes** — `#bcir.timing` + `#bcir.lifetime` `OptionalAttr` on `bcir.claim`
+  (`BCIRAttrs.td` + `BCIRCoreOps.td`'s `BCIR_ClaimAttrs`), carrying the `model/graph.py` `Timing`/`Lifetime`
+  fields verbatim.
+- **(b) C++ verifier laws** — `verifyR19/R20/R21` in `mlir/lib/passes/BCIRVerifyPass.cpp`, mirroring the
+  Python (R20 builds the writer→`clock_domain` map and rejects an unguarded crossing; R21 walks the phase
+  order with a freed-set).
+- **(c) LangRef** — R19/R20/R21 sections in `BCIR_LANGREF.md` §10 + the milestone-map bump (R1–R18 → R1–R21).
+- **(d) Negative FileCheck** — `mlir/test/passes/verify_timing_lifetime.mlir` (no-clock-on-synchronous,
+  setup/hold-exceeds-latency, unguarded-CDC, use-after-free / double-free).
+- **(e) C dual-rail** — R21 is **already** in `bcir_verify.c` (promote from advisory to a verdict path by
+  adding the `lifetime` field to `bcir_claim`); R19/R20 in C are **lower priority** (timing is RTL-specific,
+  §5.11).
+- **(f) `gen_status.py`** — widen the law sweep from `range(1, 19)` to `range(1, 22)` so the generated status
+  reports **R1–R21** and the coverage count drives the FileCheck gate.
+
+*Outcome:* timing + pointer-lifetime become **documented law**, not emerging model laws; this also lands the
+MLIR representation for Phase 2's "object lifetime" area, so it is sequenced first.
+
+#### Phase 2 — Extend MLIR for the law-bearing C semantics (triaged by the filter)
+
+From the C-semantics audit, the eight candidate areas split cleanly under the filter:
+
+**Add MLIR representation (these affect law):**
+- **Object lifetime** → the R21 `#bcir.lifetime` attribute (lands in Phase 1; the frontend already emits
+  `Lifetime("alloc"/"free")` on malloc/free).
+- **Volatile access** → first-class. Today only a string tag `access="volatile"` on a resource; lift it to a
+  `volatile` qualifier on `bcir.load`/`bcir.store` — a **legality/ordering** signal (MMIO must not be
+  reordered, fused, or elided), not cosmetic.
+- **Atomic RMW / CAS** → first-class ops. Today opcode-named `c.atomic.*` claims (string dispatch); lift to
+  MLIR ops carrying the existing `#bcir.mem_ordering` attr so the **ordering law** sees them structurally.
+  (Fence ordering is *already* first-class — `bcir.barrier` + `mem_ordering` — keep it.)
+- **Function pointers / indirect calls** → model the **callee type + effect** on the indirect-call claim. An
+  opaque dispatch currently declares **no effects**, so the R18 reachability check and the
+  effect/commutation footprint cannot analyze it; give the indirect call a declared signature + a
+  conservative effect set.
+- **Pointer provenance / extent** → carry the `masked` vs `assumed_safe` bounds decision into the IR as a
+  first-class **bounds-provenance** signal, so R7/R21 can see *why* an access is checked vs trusted. (Today
+  the plan-level provenance manifest R13 is first-class, but pointer-level provenance is frontend-only.)
+- **Target ABI / calling convention** → the call ABI is **backend-delegated** (`abi.py` computes
+  sizes/offsets, the emitter materializes the frame). For a verifiable cross-target object path, model it as
+  a `lower_contract`-style **ABI contract op** (R12 already models ISA/packet lowering contracts; extend to
+  the call ABI).
+
+**Keep frontend-only (these do NOT affect law — do not mirror in MLIR):**
+- **Storage / linkage** → flattened to RID-addressed resources (decoupled from C storage class; a linkage tag
+  would be cosmetic).
+- **C initializer semantics** (aggregate / designated / compound-literal) → flattened to per-member `store`
+  claims; initialization is a meta-operation, not a claim — *correctly* absent from the law.
+- **Source-location spelling** → diagnostics are a frontend concern; MLIR `loc` + `trace.note` already carry
+  the provenance the law needs.
+
+Each addition ships as: a LangRef section + an ODS op/attr + a **negative FileCheck** + the
+**oracle ↔ MLIR ↔ C parity** gate (the §5.1.3 law-for-law differential). Order within the phase by law
+impact: **volatile / atomic** (ordering + MMIO legality) → **funcptr effect/reachability** → **pointer
+extent-provenance** → **ABI contract**.
+
+#### Phase 3 — Ship the freestanding-C23-driver release (the concrete milestone)
+
+The single-TU pipeline is done end-to-end: C source → claim graph → **R1–R18 clean** → emitted C/object,
+with per-file `--fallback` and real register-map / UART / DMA fixtures (§5.9). The **release** is the
+**multi-file driver project** building through `bcir-cc` with a verified claim graph, an **R1–R18 (now
+R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted C/object artifacts**, and
+**behaviour-equivalence** where runnable. The gap is *infrastructure + breadth*, not the optimizer:
+- **Robust multi-file mode** — today each file compiles independently (no linking, no project verdict). Add
+  project-level orchestration + a per-project verdict (clean / partial-fallback) over a file set.
+- **Compile-database support** — consume `compile_commands.json` (per-file flags / `-I` / `-D`).
+- **Dependency output** — `-M` / `-MM` / `-MF` (`.d` files) for build-system integration.
+- **More real fixtures** — Linux UAPI / CMSIS-style headers, and **PCIe / NVMe / ACPI register-map
+  ingestion** — the breadth that exercises Phase 2's volatile/atomic/ABI laws on real driver headers.
+- **The native-object path** (`BCIR_NATIVE_OBJECT_GATE.md`) for emitted `.o` artifacts where the gate allows.
+
+This is release-ladder rung **0.3b** — the first externally-usable BCIR compiler deliverable. Measurement /
+real-silicon measured replan stays **DEFERRED and host-side** (§5.4) — unchanged: it lights up the instant a
+bare-metal rig with PMU + RAPL + a userspace governor runs the runbook (`HARDWARE_VALIDATION.md`).
+
 ---
 
 ## 6. Next build steps (concrete, prioritized)
@@ -1831,6 +1966,17 @@ In recommended order — each is gated by the generated differential harness + F
     additive seam. **Next ➡** port `Timing`/R19/R20 to the MLIR `#bcir.timing` `OptionalAttr` +
     `BCIRVerifyPass.cpp` (parity-gated), then steps 2–5 of §5.11 (critical-path context factor + `sync`-axis
     CDC, `-bcir-schedule-clocked`, CDC over `!bcir.token`, the x86/aarch64 then FPGA/ASIC channel interp).
+16. **➡ THE MLIR CATCH-UP + FREESTANDING-C23-DRIVER ARC (§5.14).** The consolidated next arc that closes
+    the "law trails the oracle" gap and ships the first externally-usable compiler deliverable, in
+    dependency order: **Phase 0** hygiene — honest test tiers + an explicit `c-runtime` CI gate (E) and a
+    user-facing naked-pointer-policy doc (D, the source already enforces it); **Phase 1** — promote
+    **R19/R20/R21** from emerging model laws to first-class (the a–f artifacts: `#bcir.timing`/`#bcir.lifetime`
+    attrs, the C++ verifier laws, LangRef, negative FileCheck, the C dual-rail, and `gen_status` → R1–R21);
+    **Phase 2** — extend MLIR for the **law-bearing** C semantics only (volatile/atomic ops, indirect-call
+    callee type+effect, pointer extent-provenance, the ABI contract op — *not* storage-class / initializer /
+    source-location syntax); **Phase 3** — stabilize the **freestanding-C23-driver release** (multi-file mode
+    + compile-database + dependency output + Linux-UAPI/CMSIS/PCIe/NVMe/ACPI fixtures, R1–R21 clean with
+    per-file fallback and emitted C/object artifacts). Release rung **0.3b**.
 
 ---
 
@@ -1853,6 +1999,13 @@ In recommended order — each is gated by the generated differential harness + F
   (`run_all --tier {quick,c-runtime,silicon-degrade,thorough}`); and the **hardware-channel plugin
   boundary** (`bcir/channel_plugin.py` — a `channel.json` manifest format so FPGA/NVMe/HBM-PIM
   extensions register without touching the core).
+- **0.3b — freestanding-C23-driver compiler + the law catch-up** (☐, §5.14): R19/R20/R21 promoted to
+  first-class verifier laws (generated status reports **R1–R21**); MLIR representation for the law-bearing C
+  semantics the frontend already lowers (volatile/atomic ops, indirect-call effect, pointer extent-provenance,
+  ABI contract); a **multi-file driver project** building through `bcir-cc` with an R1–R21-clean claim graph,
+  per-file fallback, emitted C/object artifacts, and behaviour-equivalence where runnable (compile-database +
+  dependency output + real UAPI/CMSIS/PCIe/NVMe/ACPI fixtures); the naked-pointer policy documented
+  user-facing; and an explicit `c-runtime` CI gate. The first externally-usable BCIR compiler deliverable.
 - **0.4a — proof-carrying (mechanism)** (✅): replay records + per-claim certificates +
   `bcir.run --explain`/`--replay`/`--reduce` are implemented and tested (§5.3.2).
 - **0.4b — proof-carrying (contract)** (☐): a *stable* certificate schema (versioned, with a
