@@ -492,6 +492,11 @@ conditional compilation, `#embed`, `__VA_OPT__`, `__has_include`), full standard
 
 #### Phase M — Selective ML operations (in parallel with Phase C, but throttled — not at full speed)
 
+> **Phases M and L are expanded into a full dependency-ordered program in
+> [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](BCIR_ML_AI_INTEGRATION_ROADMAP.md)** — the C inference substrate →
+> tensor ops as claims → data/memory organs → language reach → ML-guided hardware deployment → higher
+> cognition, each held to the two-truth quarantine + prototype-then-port discipline.
+
 Add ML-specific ops + passes (tensor ops, attention patterns, quantization, layout/packing) *after*
 the core lowering + C support are stable enough not to be destabilized. Prototype each in the **Python
 oracle first** (cheap iteration, the conformance reference), then port to the **MLIR law** — the exact
