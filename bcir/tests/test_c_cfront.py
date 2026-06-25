@@ -3306,16 +3306,37 @@ def test_multidim_scalar_array_complit_lowers():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
-def test_aggregate_array_complit_falls_back():
-    """§5.10 item 4 (#arrcomplit): an AGGREGATE-element array compound literal `(struct P[]){...}` must STILL
-    FALL BACK on BOTH rails -- the twin's compound-literal type parser does not accept aggregate-element
-    literals yet (an oracle-only parse otherwise), so both rails route away. (Multi-dim SCALAR literals now
-    lower -- see test_multidim_scalar_array_complit_lowers.) The fuzzer does not generate this form, so the
-    rails are pinned in agreement here explicitly. Enabling it is the final follow-on."""
+def test_aggregate_array_complit_lowers():
+    """§5.10 item 4 (#arrcomplit): a 1-D AGGREGATE-element array compound literal `(struct P[]){...}[i].field`
+    lowers on BOTH rails -- the INFERRED form `(struct P[]){...}` (count from the init), the EXPLICIT form
+    `(struct P[N]){...}`, and a PARTIAL element init (the missing `.y` zero-fills off the `= {0}` baseline).
+    Each `{...}` element routes through the offset-based per-element struct store (`idx*sizeof(elem)`), and
+    `[i].field` strides by the element struct (offsetof(field) + i*sizeof(elem)) -- the same array-of-structs
+    descent a regular `struct P a[]` decl uses. Both rails emit an IDENTICAL claim sequence (offsets/strides
+    pinned by the `match` check -- a wrong extent/stride is a #500 silent miscompile) and stay
+    Clang-behaviour-equivalent. (Multi-dim aggregate stays a fallback -- see
+    test_multidim_aggregate_complit_falls_back.)"""
+    from bcir.frontends.cfront import compile_unit
+    for src in ("struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[]){{1u,2u},{3u,4u}}[i&1u].x; }",   # INFERRED
+                "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[2]){{5u,6u},{7u,8u}}[i&1u].y; }",  # EXPLICIT
+                "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[]){{1u},{3u,4u}}[i&1u].y; }"):     # PARTIAL (= {0})
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
+
+
+def test_multidim_aggregate_complit_falls_back():
+    """§5.10 item 4 (#arrcomplit): a MULTI-DIM AGGREGATE-element literal `(struct P[A][B]){...}` is the ONE
+    residual array-compound-literal fallback -- the flat+shape / `_array_row` machinery flattens `[i][j]` by
+    the SCALAR-leaf size, so a struct leaf's row stride / element extent would need the struct size threaded
+    through the multi-dim index path (an extent/stride mismatch == a #500 silent miscompile). Both rails route
+    AWAY in agreement: the oracle raises CLowerError, the twin's literal dispatch rejects `ty.kind==1 &&
+    la_nd>1`. (1-D aggregate + multi-dim SCALAR both lower -- the other two arrcomplit tests.) The fuzzer does
+    not generate this form, so the rails are pinned here explicitly."""
     from bcir.frontends.cfront import compile_unit
     from bcir.frontends.cfront.lower import CLowerError
-    md = "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[]){{1u,2u},{3u,4u}}[i&1u].x; }"
-    try:                                                  # ORACLE: refuses (oracle-only parse)
+    md = ("struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "
+          "return (struct P[2][2]){{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}}}[i&1u][j&1u].x; }")
+    try:                                                  # ORACLE: refuses (the struct-leaf multi-dim stride is unmodelled)
         compile_unit(md, check_clang=False)
         assert False, f"oracle should fall back: {md}"
     except CLowerError:

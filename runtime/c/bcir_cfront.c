@@ -855,7 +855,7 @@ static venv *lookup(CC *c,const tok *t){
 static uint32_t p_expr(CC *c);
 static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si);   /* `(type){init}` (defined w/ agg_init) */
 static uint32_t p_stmt_expr(CC *c);   /* `({ ... })` -- a GCC statement expression (defined after p_stmt) */
-static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int count, const int *la_dims, int la_nd);    /* `(T[N]){init}` / `(T[A][B]){init}` (defined w/ arr_init) */
+static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, const int *la_dims, int la_nd);    /* `(T[N]){init}` / `(T[A][B]){init}` / `(struct P[]){init}` (defined w/ arr_init) */
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
 
 /* typeof( expression ) -- the operand is UNEVALUATED, so resolve its type by SPECULATIVELY lowering it,
@@ -2190,13 +2190,18 @@ static uint32_t p_unary(CC *c) {
         int la_count=0,la_nd=0,la_dims[3]={0,0,0};   /* a `(T[N]...)` array type-name -> an array compound literal */
         while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
           if(la_nd<3)la_dims[la_nd]=dim; la_nd++; la_count=la_count?la_count*dim:dim; }
-        if(la_nd && ty.kind!=1 && la_nd<=3 && is(c,")") &&
+        /* A SCALAR-element literal `(T[...]){...}` lowers for 1..3 dims; a 1-D AGGREGATE-element literal
+         * `(struct P[]){...}` / `(struct P[N]){...}` also lowers (struct element -> subagg_init_struct, the
+         * `sidx` plumbed onto the indexing venv so `[i].field` strides the element struct via emit_index_field).
+         * A MULTI-dim AGGREGATE `(struct P[A][B]){...}` is rejected here (ty.kind==1 && la_nd>1) -> it routes
+         * away to a both-rails fallback, matching the oracle (the struct-leaf multi-dim stride is not modelled). */
+        if(la_nd && (ty.kind!=1 || la_nd==1) && la_nd<=3 && is(c,")") &&
            c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='{'){   /* `(T[...]){...}` */
           c->i++;                                  /* ')' -- p_array_literal/arr_init eats the following `{` */
-          uint32_t rid=p_array_literal(c,&ty,la_count,la_dims,la_nd);   /* multi-dim -> subagg_init_md (row braces) */
-          if(is(c,"[")){ venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=-1;
+          uint32_t rid=p_array_literal(c,&ty,si,la_count,la_dims,la_nd);   /* multi-dim -> subagg_init_md (row braces) */
+          if(is(c,"[")){ venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=ty.kind==1?si:-1;
             if(la_nd>1){ for(int z=0;z<3;z++) sv.type.adims[z]=la_dims[z]; sv.type.nadims=la_nd; }
-            return postfix_lvalue(c,&sv); }       /* `(int[]){...}[i]` / `(int[A][B]){...}[i][j]` -- inline table */
+            return postfix_lvalue(c,&sv); }       /* `(int[]){...}[i]` / `(int[A][B]){...}[i][j]` / `(struct P[]){...}[i].f` */
           return rid; }
       if(!la_nd && is(c,")")){
         c->i++;                                    /* ')' */
@@ -3079,9 +3084,29 @@ static int peek_top_entries(CC *c) {
  * `(T[][N]){...}` infers the row count from the number of top-level braces. The element store emits real
  * typed `_cl[i] = v`, so any scalar element type converts correctly; a struct element is a deferred
  * follow-on. */
-static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int count, const int *la_dims, int la_nd) {
+static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, const int *la_dims, int la_nd) {
   char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"_cl%u",++c->cl_ctr);
   int es = ty->size ? ty->size : 4;
+  if(ty->kind==1){                                   /* a 1-D AGGREGATE-element literal `(struct P[]){...}` /
+    * `(struct P[N]){...}`: a SCALAR-kind array of struct-sized elements (es == the struct size, the per-element
+    * stride), carrying the struct tag so the decl emits `struct P _cl[N]` and `_cl[i].field` strides by the
+    * element struct. Each `{...}` element routes through subagg_init_struct (per-element field stores at
+    * `idx*es`, riding a `= {0}` baseline) -- the C twin of the oracle's _init_subagg array-of-structs branch.
+    * An inferred `[]` patches its count + re-masks the init stores, exactly like the scalar path below. */
+    uint32_t rid = add_res(c, BCIR_DOM_RAM, es, count>0?count:1, 0, BCIR_RK_SCALAR, nm);
+    int ari = (int)c->fn->n_res - 1;
+    snprintf(c->fn->res[ari].agg,BCIR_CIR_NAME,"%s %s",ty->is_union?"union":"struct",ty->tag);
+    c->fn->res[ari].zinit=1;                          /* a `= {0}` baseline -- unwritten fields/elements zero-fill */
+    size_t s_nclaims = c->fn->n_claims;               /* the init stores begin here -- re-mask after sizing */
+    int nel = subagg_init_struct(c, rid, 0, si, es);  /* per-element struct store at `idx*es` */
+    if(count<=0){ c->fn->res[ari].count = (uint32_t)(nel<1?1:nel);   /* an inferred `[]`: size from the init, then
+      * re-evaluate access_bnd against the patched extent so the per-element stores mask exactly like a regular
+      * array init (matching the oracle's per-element BCIR_CHK). */
+      bcir_bounds bnd = access_bnd(c, rid);
+      for(size_t i=s_nclaims; i<c->fn->n_claims; i++){ bcir_claim *cl=&c->fn->claims[i];
+        if(cl->opcode==BCIR_OP_STORE && cl->n_rd>=1 && cl->rd[0]==rid) cl->bounds=bnd; } }
+    return rid;
+  }
   if(la_nd>1){                                       /* a MULTI-dim literal `(T[A][B]){...}` */
     int dims[3]; for(int z=0;z<3;z++) dims[z]=la_dims[z];
     int inner=1; for(int d=1; d<la_nd; d++) inner*=dims[d];   /* product of the FIXED inner dims */
