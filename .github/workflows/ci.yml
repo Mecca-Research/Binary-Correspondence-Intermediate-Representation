@@ -25,7 +25,7 @@ jobs:
         # per-source timeout (a slow mirror fails fast and retries instead of hanging), no
         # translation indexes, and drop the ESM/Pro sources (our packages are all in main).
         run: |
-          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* 2>/dev/null || true
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
@@ -191,7 +191,7 @@ jobs:
 
       - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
         run: |
-          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* 2>/dev/null || true
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
@@ -245,7 +245,9 @@ jobs:
       - name: Add the apt.llvm.org signed repo + harden apt (LLVM ${{ matrix.llvm }})
         # The latest LLVM/MLIR is not in Ubuntu's default repos; apt.llvm.org carries it (the repo
         # llvm.sh would add). Harden apt against mirror hangs FIRST (retries + a 20s per-source
-        # timeout + no translation indexes; drop the slow ESM/Pro sources), then `apt-get update`
+        # timeout + no translation indexes; drop the slow ESM/Pro sources AND the pre-installed
+        # Microsoft/azure runner repos, which began returning 403 "no longer signed" and hard-fail
+        # `apt-get update` (exit 100) -- BCIR needs neither), then `apt-get update`
         # so the install action -- whose package-name resolution runs against the CURRENT lists,
         # before any update of its own -- can find the llvm-${{ matrix.llvm }}/mlir packages.
         run: |
@@ -254,7 +256,7 @@ jobs:
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-${{ matrix.llvm }} main" \
             | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
-          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* 2>/dev/null || true
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
           sudo apt-get update   # the install action resolves names against existing lists -- needed
