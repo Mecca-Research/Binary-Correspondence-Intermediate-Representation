@@ -2927,19 +2927,21 @@ static void subagg_init_md(CC *c, uint32_t rid, int base_off, const int *dims, i
 }
 /* A nested braced initializer for an ARRAY-OF-STRUCTS member -- `{ {a,b}, {c,d}, ... }`: each element brace
  * recurses into the element struct's init at `base_off + idx*stride` (the C twin of the oracle's _init_subagg
- * array-of-struct branch). Composes through the enclosing `= {0}` baseline; `[i]=` jumps, gaps zero-fill. */
-static void subagg_init_struct(CC *c, uint32_t rid, int base_off, int elem_sidx, int stride) {
+ * array-of-struct branch). Composes through the enclosing `= {0}` baseline; `[i]=` jumps, gaps zero-fill.
+ * Returns the element count reached (max index + 1), so an inferred-size `struct P a[] = {...}` sizes itself. */
+static int subagg_init_struct(CC *c, uint32_t rid, int base_off, int elem_sidx, int stride) {
   eat(c,"{");
-  int cursor=0;
+  int cursor=0, n=0;
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
     int idx=cursor;
     if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
-    if(!is(c,"{")){ fail(c,"array-of-structs element needs a brace initializer"); return; }
+    if(!is(c,"{")){ fail(c,"array-of-structs element needs a brace initializer"); return n; }
     agg_init_at(c, rid, elem_sidx, base_off+idx*stride, 0);                   /* {a,b} -> the element struct */
-    cursor=idx+1;
+    cursor=idx+1; if(cursor>n) n=cursor;
     if(is(c,",")) c->i++;
   }
   eat(c,"}");
+  return n;
 }
 static void agg_init_at(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit) {
   eat(c,"{");
@@ -3385,12 +3387,20 @@ static void p_stmt(CC *c) {
       }
       if(la_nd>3){ fail(c,"local array of more than 3 dimensions"); return; }   /* adims caps at 3 */
       if(la_nd>1){ for(int z=0;z<3;z++) ty.adims[z]=la_dims[z]; ty.nadims=la_nd; }   /* multi-dim flatten */
-      int rk=arr?BCIR_RK_SCALAR:(ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
-      int arr_elem = (arr && ty.kind==2) ? cc_abi(c)->pointer_size : ty.size;   /* an array of pointers: pointer-wide elements */
+      int inferred = (la_nd>=1 && arr==0);   /* an inferred-size `[]` array (all dims 0): the count comes
+        * from the initializer (patched after the init, like p_array_literal). Created count=1 for now. */
+      int is_arr = (arr || inferred);         /* a (possibly inferred-size) ARRAY declarator -> a SCALAR-kind
+        * array resource (count>1; a struct-element array carries the struct tag in `agg` for the decl) */
+      int rk=is_arr?BCIR_RK_SCALAR:(ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
+      int arr_elem = (is_arr && ty.kind==2) ? cc_abi(c)->pointer_size : ty.size;   /* an array of pointers: pointer-wide elements */
       uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
-                           arr?arr_elem:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
-                           arr?arr:(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
-      if(arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`: a
+                           is_arr?arr_elem:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
+                           is_arr?(arr?arr:1):(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
+      if(is_arr && ty.kind==1){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an ARRAY-OF-STRUCTS local
+        * `struct P a[N]`: a SCALAR-kind array of struct-sized elements; carry the struct tag so the decl
+        * emits `struct P a[N]` and `a[i].field` strides by the element struct (the venv keeps `si`). */
+        snprintf(ar->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
+      else if(arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`: a
         * SCALAR array of pointer-wide elements; the decl + `a[i]` load/store carry the pointee (void* for now) */
         ar->ptr_depth=ty.ptr_depth?ty.ptr_depth:1;
         if(ty.ptr_to_struct) snprintf(ar->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
@@ -3407,7 +3417,7 @@ static void p_stmt(CC *c) {
       else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
         if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1;       /* a _Bool local: emit `_Bool`, store normalizes */
         if(ty.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1; }   /* a plain `char` local: emit `char` */
-      if(ty.kind==1&&!arr) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local */
+      if(ty.kind==1&&!is_arr) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local (a NON-array struct/union; the array form set its agg above) */
       env_add(c,&nm,rid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
       if(is_static){            /* static storage: a once-only constant init, baked into the decl */
         long long init=0; if(is(c,"=")){c->i++;init=ce_expr(c,0);}
@@ -3433,7 +3443,23 @@ static void p_stmt(CC *c) {
             for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }
             subagg_init_md(c, rid, 0, la_dims, la_nd, ty.size, ty.is_bool);
           }
-          else if(arr) arr_init(c,rid); else agg_init(c,rid,si); }   /* {…} 1-D array / struct-union init */
+          else if(is_arr){                                  /* a 1-D local array init (the C twin of the oracle's
+            * array _agg_init). A struct/union ELEMENT array routes each `{...}` element to subagg_init_struct
+            * (per-element offset stores at `idx*stride`, riding a `= {0}` baseline) -- byte-identical to the
+            * oracle. An INFERRED-size `[]` array (scalar OR struct) infers its count from the initializer and
+            * patches the resource extent + re-masks the init stores, exactly as p_array_literal does. */
+            int ari=-1; for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ ari=(int)i; break; }
+            size_t s_nclaims=c->fn->n_claims;               /* the init stores begin here -- re-mask after sizing */
+            int nel;
+            if(ty.kind==1){                                 /* an ARRAY-OF-STRUCTS local: `{ {a,b}, {c,d}, .. }` */
+              if(ari>=0) c->fn->res[ari].zinit=1;           /* the `= {0}` baseline (composes the per-element stores) */
+              nel = subagg_init_struct(c, rid, 0, si, ty.size);   /* per-element struct store at `idx*ty.size` */
+            } else nel = arr_init(c,rid);                   /* a scalar-element 1-D array */
+            if(inferred && ari>=0){ c->fn->res[ari].count=(uint32_t)(nel<1?1:nel);   /* size the inferred `[]` */
+              bcir_bounds bnd=access_bnd(c,rid);            /* re-mask the per-element stores vs the patched extent */
+              for(size_t i=s_nclaims; i<c->fn->n_claims; i++){ bcir_claim *cl=&c->fn->claims[i];
+                if(cl->opcode==BCIR_OP_STORE && cl->n_rd>=1 && cl->rd[0]==rid) cl->bounds=bnd; } }
+          } else agg_init(c,rid,si); }   /* {…} struct-union init */
         else { int ist=c->i; uint32_t v=p_expr(c); int ien=c->i;
           bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}
           bind_extent(c,rid,res_of(c->fn,rid),&nm,ist,ien); } }   /* §5.12: `T *p = malloc(N*sizeof(T))` -> extent N */
@@ -3965,6 +3991,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else if(r->is_funcptr&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s;\n",r->agg,nm);   /* a funcptr local: `__bcir_fpN f;` */
       else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s%s;\n",r->agg,nm,r->zinit?" = {0}":"");
       else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->is_voidptr) w+=snprintf(o+w,on-w,"  void *%s[%u]%s;\n",nm,r->count,r->zinit?" = {0}":"");  /* an array of `void *` */
+      else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->agg[0]&&!r->ptr_depth) w+=snprintf(o+w,on-w,"  %s %s[%u]%s;\n",r->agg,nm,r->count,r->zinit?" = {0}":"");  /* an ARRAY-OF-STRUCTS local `struct P a[N]` */
       else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+w,on-w,"  %s %s[%u]%s;\n",tty(f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
       else if(r->kind==BCIR_RK_POINTER)               /* a pointer local: `T *p` (the pointee carries width/sign) */
         w+=snprintf(o+w,on-w,"  %s%s;\n",decl_ty(f,r->rid,tb,sizeof tb),nm);

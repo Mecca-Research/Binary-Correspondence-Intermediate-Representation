@@ -64,6 +64,7 @@ _ABI = ["cfront_structret.c", "cfront_structcall.c",  # L8: struct return-by-val
         "cfront_unnamedbf.c",                           # + unnamed / zero-width bitfields (layout-only padding)
         "cfront_charmember.c",                          # + plain `char` members read as `char` not int8_t (ARM)
         "cfront_aostruct.c",                            # + ARRAY-OF-STRUCTS members p->arr[i].field (strided)
+        "cfront_aoslocal.c",                            # + regular LOCAL array decl init (inferred/explicit, scalar/struct)
         "cfront_fnptrmember.c",                         # + funcptr members set from NAMED functions (dispatch)
         "cfront_assignexpr.c",                          # + assignment as an EXPRESSION (a=b=c, if((x=f()))...)
         "cfront_memassignexpr.c",                       # + member-lvalue assignment as a value ((p->x=v)+1)
@@ -3327,6 +3328,24 @@ def test_multidim_array_braceinit():
     for src in ("unsigned f(unsigned i, unsigned j){ unsigned a[2][2]={{1u,2u},{3u,4u}}; return a[i&1u][j&1u]; }",
                 "unsigned f(unsigned i, unsigned j, unsigned k){ unsigned b[2][2][2]={{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}}}; return b[i&1u][j&1u][k&1u]; }",
                 "unsigned f(unsigned i, unsigned j){ unsigned c[2][3]={{1u},{4u,5u}}; return c[i&1u][j%3u]; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
+
+
+def test_inferred_and_aos_local_array():
+    """§5.10 (#aoslocal): a REGULAR local array decl with a brace initializer -- the INFERRED-size form
+    `T a[] = {...}` (the outer count comes from the initializer; an under-sized `a[0]` would let the
+    per-element stores write past the storage -- a #500-class silent miscompile) and the EXPLICIT-size
+    form `T a[N] = {...}`, for a SCALAR element AND a STRUCT element. A struct-element array routes each
+    `{...}` element through the offset-based per-element struct store (idx*sizeof(elem)), riding the
+    `= {0}` baseline so a partial init zero-fills. Both rails lower an IDENTICAL claim sequence
+    (offsets/strides pinned by the `match` check) and stay Clang-behaviour-equivalent."""
+    from bcir.frontends.cfront import compile_unit
+    for src in ("struct P{unsigned x,y;}; unsigned f(unsigned i){ struct P a[]={{1u,2u},{3u,4u}}; return a[i&1u].x; }",     # struct, INFERRED
+                "struct P{unsigned x,y;}; unsigned f(unsigned i){ struct P b[2]={{5u,6u},{7u,8u}}; return b[i&1u].y; }",    # struct, EXPLICIT
+                "unsigned f(unsigned i){ unsigned c[]={10u,20u,30u,40u}; return c[i&3u]; }",                                # scalar, INFERRED
+                "unsigned f(unsigned i){ unsigned a[]={1u,2u,3u,4u}; return a[i&3u]; }",                                    # scalar, INFERRED (Bug A)
+                "struct P{unsigned x,y;}; unsigned f(unsigned i){ struct P d[2]={{1u}}; return d[i&1u].x + d[i&1u].y; }"):  # struct, PARTIAL (= {0})
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
