@@ -3290,31 +3290,44 @@ def test_array_compound_literal_1d_scalar():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
-def test_multidim_array_complit_falls_back():
-    """§5.10 item 4 (#arrcomplit): the array-compound-literal parity boundary is a 1-D SCALAR-element literal
-    (both rails lower it -- see cfront_arrcomplit.c). Two forms must FALL BACK on BOTH rails: a MULTI-DIM
-    `(T[a][b]){...}` (the type resolution keeps only the outer dim -> under-sized storage + wrong stride, a
-    silent miscompile) and an AGGREGATE-element `(struct P[]){...}` (an oracle-only parse the twin rejects).
-    The fuzzer does not generate these, so the rails are pinned in agreement here explicitly."""
+def test_multidim_scalar_array_complit_lowers():
+    """§5.10 item 4 (#arrcomplit): a MULTI-DIM SCALAR-element array compound literal `(T[A][B]){{..},{..}}[i][j]`
+    (including an INFERRED outer dim `(T[][N]){...}` and a SIGNED leaf). Both rails rebuild it as the FLAT
+    `array(leaf, A*B)` + per-dim `shape` (the same representation the regular multi-dim local decl uses), so the
+    storage is `[A*B]` -- NOT the old `shape=()` defect that left it under-sized with the wrong `[i][j]` stride
+    (the #500 silent miscompile). The nested ROW braces descend via `_array_row` / `subagg_init_md`, and `[i][j]`
+    Horner-flattens to `i*B + j` (the inner dim). Both rails emit an IDENTICAL claim sequence (offsets/strides
+    pinned by the `match` check) and stay Clang-behaviour-equivalent."""
+    from bcir.frontends.cfront import compile_unit
+    for src in ("unsigned f(unsigned i, unsigned j){ return (unsigned[2][2]){{1u,2u},{3u,4u}}[i&1u][j&1u]; }",
+                "unsigned f(unsigned i, unsigned j){ return (unsigned[][2]){{1u,2u},{3u,4u},{5u,6u}}[i%3u][j&1u]; }",
+                "int f(unsigned i, unsigned j){ return (int[2][2]){{-1,-2},{-3,-4}}[i&1u][j&1u]; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
+
+
+def test_aggregate_array_complit_falls_back():
+    """§5.10 item 4 (#arrcomplit): an AGGREGATE-element array compound literal `(struct P[]){...}` must STILL
+    FALL BACK on BOTH rails -- the twin's compound-literal type parser does not accept aggregate-element
+    literals yet (an oracle-only parse otherwise), so both rails route away. (Multi-dim SCALAR literals now
+    lower -- see test_multidim_scalar_array_complit_lowers.) The fuzzer does not generate this form, so the
+    rails are pinned in agreement here explicitly. Enabling it is the final follow-on."""
     from bcir.frontends.cfront import compile_unit
     from bcir.frontends.cfront.lower import CLowerError
-    forms = ("unsigned f(unsigned i, unsigned j){ return (unsigned[2][2]){{1u,2u},{3u,4u}}[i&1u][j&1u]; }",
-             "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[]){{1u,2u},{3u,4u}}[i&1u].x; }")
-    for md in forms:                                      # ORACLE: refuses (miscompile / oracle-only parse)
-        try:
-            compile_unit(md, check_clang=False)
-            assert False, f"oracle should fall back: {md}"
-        except CLowerError:
-            pass
+    md = "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[]){{1u,2u},{3u,4u}}[i&1u].x; }"
+    try:                                                  # ORACLE: refuses (oracle-only parse)
+        compile_unit(md, check_clang=False)
+        assert False, f"oracle should fall back: {md}"
+    except CLowerError:
+        pass
     if not _CC:
         return
     with tempfile.TemporaryDirectory() as d:              # TWIN: also refuses -- both rails route away
         exe = _build_frontend(d)
-        for md in forms:
-            p = os.path.join(d, "md.c")
-            open(p, "w").write(md)
-            summ, _ = _c_run(exe, p)
-            assert "ok=1" not in summ, f"twin should fall back, got {summ}: {md}"
+        p = os.path.join(d, "md.c")
+        open(p, "w").write(md)
+        summ, _ = _c_run(exe, p)
+        assert "ok=1" not in summ, f"twin should fall back, got {summ}: {md}"
 
 
 def test_multidim_array_braceinit():

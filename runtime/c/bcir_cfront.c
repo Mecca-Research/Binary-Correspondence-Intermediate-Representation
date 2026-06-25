@@ -855,7 +855,7 @@ static venv *lookup(CC *c,const tok *t){
 static uint32_t p_expr(CC *c);
 static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si);   /* `(type){init}` (defined w/ agg_init) */
 static uint32_t p_stmt_expr(CC *c);   /* `({ ... })` -- a GCC statement expression (defined after p_stmt) */
-static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int count);    /* `(T[N]){init}` (defined w/ arr_init) */
+static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int count, const int *la_dims, int la_nd);    /* `(T[N]){init}` / `(T[A][B]){init}` (defined w/ arr_init) */
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
 
 /* typeof( expression ) -- the operand is UNEVALUATED, so resolve its type by SPECULATIVELY lowering it,
@@ -2193,10 +2193,10 @@ static uint32_t p_unary(CC *c) {
         if(la_nd && ty.kind!=1 && la_nd<=3 && is(c,")") &&
            c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='{'){   /* `(T[...]){...}` */
           c->i++;                                  /* ')' -- p_array_literal/arr_init eats the following `{` */
-          uint32_t rid=p_array_literal(c,&ty,la_count);
+          uint32_t rid=p_array_literal(c,&ty,la_count,la_dims,la_nd);   /* multi-dim -> subagg_init_md (row braces) */
           if(is(c,"[")){ venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=-1;
             if(la_nd>1){ for(int z=0;z<3;z++) sv.type.adims[z]=la_dims[z]; sv.type.nadims=la_nd; }
-            return postfix_lvalue(c,&sv); }       /* `(int[]){...}[i]` -- the inline lookup-table idiom */
+            return postfix_lvalue(c,&sv); }       /* `(int[]){...}[i]` / `(int[A][B]){...}[i][j]` -- inline table */
           return rid; }
       if(!la_nd && is(c,")")){
         c->i++;                                    /* ')' */
@@ -3040,15 +3040,65 @@ static int arr_init(CC *c, uint32_t rid) {
   eat(c,"}");
   return n;
 }
-/* An array compound literal `(T[N]){...}` / `(T[]){...}` -- an anonymous local array of `T`, initialized
- * exactly like a braced local-array decl (a `= {0}` baseline + a c.store per element) and yielded as the
- * array-object rid. The classic use is a direct subscript `(int[]){...}[i]` -- an inline lookup table.
- * An inferred size `[]` takes its length from the initializer (the max index + 1; gaps zero-fill). The
- * element store emits real typed `_cl[i] = v`, so any scalar element type converts correctly; a struct
- * element (per-element aggregate init) is a deferred follow-on. */
-static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int count) {
+/* Peek the number of TOP-LEVEL entries of a braced initializer `{ e0, e1, ... }` WITHOUT consuming it --
+ * the cursor must be at the opening `{`. Counts the same way the oracle/arr_init do (max index + 1):
+ * each comma-separated TOP-LEVEL entry advances a cursor; a leading `[const]=` designator jumps it. Used
+ * to infer the OUTER dim of `(T[][N]){...}` (the count of row braces). Nested `{}` / `()` / `[]` are skipped
+ * by depth so a comma INSIDE an inner brace is not counted as a top-level separator. */
+static int peek_top_entries(CC *c) {
+  int j=c->i; if(!tok_is(&c->t[j],"{")) return 0; j++;
+  int cursor=0, n=0, depth=0, at_entry_start=1;
+  while(c->t[j].k!=T_END){
+    if(depth==0 && tok_is(&c->t[j],"}")) break;
+    if(depth==0 && tok_is(&c->t[j],",")){            /* a top-level entry separator */
+      cursor++; if(cursor>n) n=cursor; at_entry_start=1; j++; continue;
+    }
+    if(depth==0 && at_entry_start && tok_is(&c->t[j],"[")){   /* a `[const]=` outer designator -> jump cursor */
+      int p=0, k=j;
+      while(!(p==0 && tok_is(&c->t[k],"]")) && c->t[k].k!=T_END){
+        if(tok_is(&c->t[k],"[")) p++; else if(tok_is(&c->t[k],"]")) p--; k++; }
+      if(k==j+2 && c->t[j+1].k==T_INT) cursor=(int)c->t[j+1].v;   /* a single integer-literal index */
+      j=k+1; if(tok_is(&c->t[j],"=")) j++;
+      if(cursor+1>n) n=cursor+1;                     /* this entry sits at `cursor`, so max index+1 = cursor+1 */
+      at_entry_start=0; continue;
+    }
+    if(depth==0 && at_entry_start){ if(cursor+1>n) n=cursor+1; at_entry_start=0; }   /* a positional entry */
+    if(tok_is(&c->t[j],"{")||tok_is(&c->t[j],"(")||tok_is(&c->t[j],"[")) depth++;
+    else if(tok_is(&c->t[j],"}")||tok_is(&c->t[j],")")||tok_is(&c->t[j],"]")) depth--;
+    j++;
+  }
+  return n<1?1:n;
+}
+/* An array compound literal `(T[N]){...}` / `(T[]){...}` / `(T[A][B]){...}` -- an anonymous local array of
+ * `T`, initialized exactly like a braced local-array decl (a `= {0}` baseline + a c.store per element) and
+ * yielded as the array-object rid. The classic use is a direct subscript `(int[]){...}[i]` -- an inline
+ * lookup table. An inferred size `[]` takes its length from the initializer (the max index + 1; gaps
+ * zero-fill). A MULTI-dim `(T[A][B]){...}` routes its nested ROW braces through subagg_init_md (the same
+ * proven path the regular multi-dim local decl uses), riding a `= {0}` baseline -- so the flat resource is
+ * row-major `[A*B]` and `[i][j]` Horner-flattens with the right inner stride. An inferred OUTER dim
+ * `(T[][N]){...}` infers the row count from the number of top-level braces. The element store emits real
+ * typed `_cl[i] = v`, so any scalar element type converts correctly; a struct element is a deferred
+ * follow-on. */
+static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int count, const int *la_dims, int la_nd) {
   char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"_cl%u",++c->cl_ctr);
   int es = ty->size ? ty->size : 4;
+  if(la_nd>1){                                       /* a MULTI-dim literal `(T[A][B]){...}` */
+    int dims[3]; for(int z=0;z<3;z++) dims[z]=la_dims[z];
+    int inner=1; for(int d=1; d<la_nd; d++) inner*=dims[d];   /* product of the FIXED inner dims */
+    int outer = dims[0];                             /* `(T[][N]){...}` infers the outer dim from the init */
+    if(outer<=0) outer = peek_top_entries(c);
+    dims[0]=outer;
+    int total = outer*inner;
+    uint32_t rid = add_res(c, BCIR_DOM_RAM, es, total>0?total:1, 0, BCIR_RK_SCALAR, nm);
+    int ari = (int)c->fn->n_res - 1;
+    if(ty->is_float) c->fn->res[ari].is_float=1;     /* element type flags -> the decl emits `float`/`char`/... */
+    else if(ty->kind==0){ c->fn->res[ari].is_signed=(uint8_t)(ty->signd?1:0);
+      if(ty->is_bool) c->fn->res[ari].is_bool=1;
+      if(ty->is_plain_char) c->fn->res[ari].is_plain_char=1; }
+    c->fn->res[ari].zinit=1;                         /* a `= {0}` baseline -- unwritten elements zero-fill */
+    subagg_init_md(c, rid, 0, dims, la_nd, es, ty->is_bool);   /* descend the nested ROW braces */
+    return rid;
+  }
   uint32_t rid = add_res(c, BCIR_DOM_RAM, es, count>0?count:1, 0, BCIR_RK_SCALAR, nm);
   int ari = (int)c->fn->n_res - 1;                  /* the array resource (stable index; patch count below) */
   if(ty->is_float) c->fn->res[ari].is_float=1;      /* element type flags -> the decl emits `float`/`char`/... */
