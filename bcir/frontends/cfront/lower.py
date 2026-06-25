@@ -1305,18 +1305,37 @@ class _FuncLowerer:
         store path; a scalar `(int){v}` copies the single value in. Returns (rid, type) so the result acts
         as an lvalue (address-of / member access) and as an rvalue (a by-value struct arg / scalar read)."""
         ct = self._resolve_type(node.type)
-        if ct.kind == "array" and (len(node.type.array or ()) > 1 or (ct.of is not None and ct.of.is_aggregate)):
-            # The array-compound-literal parity boundary is a 1-D SCALAR-element literal (`(unsigned[]){...}`,
-            # `(int[N]){...}`), which both rails lower. Fall back on BOTH rails for:
-            #  * a MULTI-DIM `(T[a][b]){...}` -- `_resolve_type` keeps only the OUTER dim, so the storage would
-            #    be under-sized and the `[i][j]` stride wrong (a silent miscompile); and
-            #  * an AGGREGATE-element `(struct P[]){...}` -- which the twin's compound-literal type parser does
-            #    not accept (a pre-existing oracle-only path, realigned here to keep the rails consistent).
-            # Full nested/aggregate-element support is a follow-on.
-            raise CLowerError("only a 1-D scalar-element array compound literal is supported")
-        if ct.kind == "array" and ct.count == 0:          # `(T[]){...}` -- infer the length from the init
-            n, cursor = 0, 0                              # (max index + 1; positional advances, `[i]=` jumps)
-            for key, _expr in node.init.entries:
+        if len(node.type.array or ()) > 1:
+            # A MULTI-DIM `(T[a][b]){...}` literal: `_resolve_type` nests array-of-array and keeps `shape=()`,
+            # so the storage is under-sized and the `[i][j]` stride wrong (the #500 silent miscompile). Rebuild
+            # it the SAME way the regular multi-dim declarator does (lower.py ~1751): a FLAT `array(leaf, total)`
+            # carrying the per-dim `shape`, so `_array_row` descends nested braces by row and `_lvalue` flattens
+            # `[i][j]` row-major via `shape`. Capped at 3 dims (the shape / twin-adims table holds 3).
+            elem = self._resolve_type(replace(node.type, array=()))   # the scalar leaf
+            dims = node.type.array
+            if len(dims) > 3:
+                raise CLowerError("a multi-dimensional array compound literal of more than 3 dims is not supported")
+            if dims[0] in (0, None):                      # `(T[][N]){...}` -- infer the OUTER dim from the init
+                n, cursor = 0, 0                          # (max top-level index + 1; positional advances, `[i]=` jumps)
+                for key, _expr in node.init.entries:
+                    if isinstance(key, tuple):            # a nested chain `[i]...` -> its outer array index
+                        idx = key[0][1] if key and key[0][0] == "a" else cursor
+                    else:
+                        idx = key if isinstance(key, int) else cursor
+                    cursor = idx + 1
+                    n = max(n, cursor)
+                dims = (n or 1,) + tuple(dims[1:])        # inferred outer + the fixed inner dims
+            total = 1
+            for d in dims:
+                total *= d
+            ct = replace(array(elem, total), shape=tuple(dims))
+        if ct.kind == "array" and ct.of is not None and ct.of.is_aggregate:
+            # An AGGREGATE-element `(struct P[]){...}` literal: the twin's compound-literal type parser does not
+            # accept aggregate-element literals yet, so keep both rails falling back here (a follow-on enables it).
+            raise CLowerError("only a scalar-element array compound literal is supported")
+        if ct.kind == "array" and len(node.type.array or ()) <= 1 and ct.count == 0:
+            n, cursor = 0, 0                              # `(T[]){...}` -- infer the length from the init
+            for key, _expr in node.init.entries:         # (max index + 1; positional advances, `[i]=` jumps)
                 if isinstance(key, tuple):               # a nested chain `[i]...` -> its outer array index
                     idx = key[0][1] if key and key[0][0] == "a" else cursor
                 else:
