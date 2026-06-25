@@ -356,6 +356,24 @@ int main(void){{
         return subprocess.run([e], capture_output=True, text=True).stdout.strip()
 
 
+def _array_extents(emit: str) -> tuple:
+    """The multiset (sorted) of TOTAL element counts of every array DECLARATION in emitted C -- e.g. both
+    `T a[2][2]` and `T b[4]` contribute 4. Used to compare STORAGE SIZES across rails: an OVER-sized backing
+    array (a compound literal / inferred-size array sized larger than it should be) keeps the same per-element
+    stores, the same observable behaviour, AND the same `BCIR_CHK` guard COUNT, so every other check in
+    `_parity_check_fixture` misses it -- a multi-dim compound literal once sized `_cl[10]` vs `_cl[6]` and
+    slipped through parity + Clang-equivalence undetected (#arrcomplit md). Normalizing to the dim PRODUCT
+    makes a flat `[4]` and a nested `[2][2]` compare equal, so the check is robust to decl-form differences
+    between the rails."""
+    sizes = []
+    for dims in re.findall(r"[A-Za-z_]\w*(?:\s+\w+)?\s+\w+((?:\[\d+\])+)\s*[=;]", emit):
+        total = 1
+        for n in re.findall(r"\[(\d+)\]", dims):
+            total *= int(n)
+        sizes.append(total)
+    return tuple(sorted(sizes))
+
+
 def _parity_check_fixture(args):
     """Parity + dual-emit behaviour-equivalence for ONE fixture. Returns (fx, None) on pass or (fx, msg)
     on failure. Module-level + (exe, fx) string args so it is dispatchable to a process pool: the ~90
@@ -385,7 +403,27 @@ def _parity_check_fixture(args):
     if oracle_emit.count("BCIR_CHK") != c_emit.count("BCIR_CHK"):
         return (fx, f"bounds-guard parity: oracle={oracle_emit.count('BCIR_CHK')} "
                     f"twin={c_emit.count('BCIR_CHK')} BCIR_CHK guards")
+    # Storage-extent parity: both rails must allocate identically-sized backing arrays. An over-sized
+    # compound literal / inferred-size array keeps the same stores, behaviour, and guard COUNT (so the checks
+    # above all pass), but a larger backing array -- the dim-product multiset of array declarations catches it.
+    eo, ec = _array_extents(oracle_emit), _array_extents(c_emit)
+    if eo != ec:
+        return (fx, f"storage-extent parity: oracle={eo} twin={ec} array element-counts")
     return (fx, None)
+
+
+def test_storage_extent_parity_catches_oversizing():
+    """The `_array_extents` storage-extent guard in `_parity_check_fixture` flags an over-sized backing array
+    even when stores / behaviour / `BCIR_CHK` count all match -- the exact gap a multi-dim compound literal
+    once hit (`_cl[10]` vs `_cl[6]`). A harness regression guard so the gap stays closed."""
+    assert _array_extents("unsigned int _cl1[6] = {0};\n_cl1[0] = 1u;") == (6,)
+    assert _array_extents("uint32_t _cl1[10] = {0};\n_cl1[0] = 1u;") == (10,)
+    # the divergence the parity check now flags (same stores/behaviour, different backing size)
+    assert _array_extents("T a[6] = {0};") != _array_extents("T a[10] = {0};")
+    # robust to a flat-vs-nested decl form: a [2][2] and a [4] are the same storage (dim product)
+    assert _array_extents("unsigned int a[2][2] = {0};") == _array_extents("unsigned int b[4] = {0};") == (4,)
+    # a multiset: two same-sized arrays are distinct from one
+    assert _array_extents("T a[2];\nT b[2];") == (2, 2) != _array_extents("T a[2];")
 
 
 def test_python_c_parity_and_equivalence_across_fixtures():
