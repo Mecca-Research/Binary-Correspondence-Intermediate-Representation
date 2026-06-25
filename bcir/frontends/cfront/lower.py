@@ -1329,13 +1329,6 @@ class _FuncLowerer:
             for d in dims:
                 total *= d
             ct = replace(array(elem, total), shape=tuple(dims))
-        if ct.kind == "array" and ct.of is not None and ct.of.is_aggregate and len(ct.shape) > 1:
-            # A MULTI-DIM AGGREGATE-element `(struct P[2][2]){...}` literal stays a both-rails fallback: the
-            # flat+shape / `_array_row` machinery flattens `[i][j]` by the SCALAR-leaf size, but a struct leaf's
-            # row stride / element extent would need the struct size threaded through the multi-dim index path
-            # (an extent/stride mismatch == a #500 silent miscompile), so it is not enabled here. A 1-D
-            # aggregate-element literal `(struct P[]){...}` / `(struct P[N]){...}` IS supported (below).
-            raise CLowerError("a multi-dimensional aggregate-element array compound literal is not supported")
         if ct.kind == "array" and len(node.type.array or ()) <= 1 and ct.count == 0:
             n, cursor = 0, 0                              # `(T[]){...}` -- infer the length from the init
             for key, _expr in node.init.entries:         # (max index + 1; positional advances, `[i]=` jumps)

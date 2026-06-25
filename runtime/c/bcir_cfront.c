@@ -2190,18 +2190,18 @@ static uint32_t p_unary(CC *c) {
         int la_count=0,la_nd=0,la_dims[3]={0,0,0};   /* a `(T[N]...)` array type-name -> an array compound literal */
         while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
           if(la_nd<3)la_dims[la_nd]=dim; la_nd++; la_count=la_count?la_count*dim:dim; }
-        /* A SCALAR-element literal `(T[...]){...}` lowers for 1..3 dims; a 1-D AGGREGATE-element literal
-         * `(struct P[]){...}` / `(struct P[N]){...}` also lowers (struct element -> subagg_init_struct, the
-         * `sidx` plumbed onto the indexing venv so `[i].field` strides the element struct via emit_index_field).
-         * A MULTI-dim AGGREGATE `(struct P[A][B]){...}` is rejected here (ty.kind==1 && la_nd>1) -> it routes
-         * away to a both-rails fallback, matching the oracle (the struct-leaf multi-dim stride is not modelled). */
-        if(la_nd && (ty.kind!=1 || la_nd==1) && la_nd<=3 && is(c,")") &&
+        /* A SCALAR-element literal `(T[...]){...}` lowers for 1..3 dims; an AGGREGATE-element literal
+         * `(struct P[]){...}` / `(struct P[N]){...}` (1-D) AND `(struct P[A][B]){...}` (multi-dim) also lower:
+         * the struct element routes through subagg_init_struct / subagg_init_md_struct, and the indexing venv
+         * carries BOTH `sidx` (so `[...].field` descends the element struct via emit_index_field, striding by
+         * the struct size) AND `adims`/`nadims` (so `[i][j]` Horner-flattens the outer dims). */
+        if(la_nd && la_nd<=3 && is(c,")") &&
            c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='{'){   /* `(T[...]){...}` */
           c->i++;                                  /* ')' -- p_array_literal/arr_init eats the following `{` */
           uint32_t rid=p_array_literal(c,&ty,si,la_count,la_dims,la_nd);   /* multi-dim -> subagg_init_md (row braces) */
           if(is(c,"[")){ venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=ty.kind==1?si:-1;
             if(la_nd>1){ for(int z=0;z<3;z++) sv.type.adims[z]=la_dims[z]; sv.type.nadims=la_nd; }
-            return postfix_lvalue(c,&sv); }       /* `(int[]){...}[i]` / `(int[A][B]){...}[i][j]` / `(struct P[]){...}[i].f` */
+            return postfix_lvalue(c,&sv); }       /* `(int[]){...}[i]` / `(int[A][B]){...}[i][j]` / `(struct P[A][B]){...}[i][j].f` */
           return rid; }
       if(!la_nd && is(c,")")){
         c->i++;                                    /* ')' */
@@ -2948,6 +2948,34 @@ static int subagg_init_struct(CC *c, uint32_t rid, int base_off, int elem_sidx, 
   eat(c,"}");
   return n;
 }
+/* A NESTED-brace initializer for a MULTI-dim AGGREGATE-element array `struct P a[d0][d1]... = { {..}, {..} }`
+ * (the C twin of the oracle's _array_row / _init_subagg multi-dim struct descent). The flat resource keeps the
+ * row-major `struct P a[d0][d1]` layout, so each OUTER brace descends by ROW: row `r` lands at `base_off +
+ * r*stride` where `stride = product(dims[1:]) * es` (the struct element size `es`). The INNERMOST dim takes a
+ * per-element STRUCT brace `{a,b}` -- routed through agg_init_at at `base_off + idx*es` (per-element field
+ * stores at absolute offsets, exactly like subagg_init_struct), composing through the enclosing `= {0}`
+ * baseline. Positional entries advance a cursor, `[i]=` jumps it, gaps zero-fill (§6.7.10). `elem_sidx` is the
+ * element struct's sdef index. */
+static void subagg_init_md_struct(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int elem_sidx) {
+  eat(c,"{");
+  int stride=es;                                          /* row stride = product(dims[1:]) * es */
+  for(int d=1; d<nd; d++) stride*=dims[d];
+  int cursor=0;
+  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
+    int idx=cursor;
+    if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
+    if(nd>1){                                             /* an outer dim takes a nested ROW brace */
+      if(!is(c,"{")){ fail(c,"multi-dim aggregate literal needs a row brace"); return; }
+      subagg_init_md_struct(c, rid, base_off+idx*stride, dims+1, nd-1, es, elem_sidx);
+    } else {                                              /* innermost dim: a per-element struct brace `{a,b}` */
+      if(!is(c,"{")){ fail(c,"array-of-structs element needs a brace initializer"); return; }
+      agg_init_at(c, rid, elem_sidx, base_off+idx*es, 0);
+    }
+    cursor=idx+1;
+    if(is(c,",")) c->i++;
+  }
+  eat(c,"}");
+}
 static void agg_init_at(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit) {
   eat(c,"{");
   sdef *S = sidx>=0 ? &c->s[sidx] : NULL;
@@ -3045,25 +3073,24 @@ static int arr_init(CC *c, uint32_t rid) {
   eat(c,"}");
   return n;
 }
-/* Peek the number of TOP-LEVEL entries of a braced initializer `{ e0, e1, ... }` WITHOUT consuming it --
- * the cursor must be at the opening `{`. Counts the same way the oracle/arr_init do (max index + 1):
- * each comma-separated TOP-LEVEL entry advances a cursor; a leading `[const]=` designator jumps it. Used
- * to infer the OUTER dim of `(T[][N]){...}` (the count of row braces). Nested `{}` / `()` / `[]` are skipped
- * by depth so a comma INSIDE an inner brace is not counted as a top-level separator. */
+/* Peek the OUTER dim of a braced initializer `{ e0, e1, ... }` (the count of top-level row entries) WITHOUT
+ * consuming it -- the cursor must be at the opening `{`. Mirrors the oracle's outer-count inference (lower.py
+ * ~1318-1327, max INDEX + 1): each TOP-LEVEL entry sits at a cursor; a positional entry advances it, a leading
+ * `[const]=` designator JUMPS the cursor to that constant index; the result is `max(seen index)+1`. Nested
+ * `{}` / `()` / `[]` are skipped by depth so a comma -- OR a designator `[..]` -- INSIDE an inner brace is not
+ * counted at the top level (a `[k]=` designator is only honored at depth 0 AND at an entry start). */
 static int peek_top_entries(CC *c) {
   int j=c->i; if(!tok_is(&c->t[j],"{")) return 0; j++;
   int cursor=0, n=0, depth=0, at_entry_start=1;
   while(c->t[j].k!=T_END){
     if(depth==0 && tok_is(&c->t[j],"}")) break;
-    if(depth==0 && tok_is(&c->t[j],",")){            /* a top-level entry separator */
-      cursor++; if(cursor>n) n=cursor; at_entry_start=1; j++; continue;
+    if(depth==0 && tok_is(&c->t[j],",")){            /* a top-level entry separator -> the next entry */
+      cursor++; at_entry_start=1; j++; continue;
     }
-    if(depth==0 && at_entry_start && tok_is(&c->t[j],"[")){   /* a `[const]=` outer designator -> jump cursor */
-      int p=0, k=j;
-      while(!(p==0 && tok_is(&c->t[k],"]")) && c->t[k].k!=T_END){
-        if(tok_is(&c->t[k],"[")) p++; else if(tok_is(&c->t[k],"]")) p--; k++; }
-      if(k==j+2 && c->t[j+1].k==T_INT) cursor=(int)c->t[j+1].v;   /* a single integer-literal index */
-      j=k+1; if(tok_is(&c->t[j],"=")) j++;
+    if(depth==0 && at_entry_start && tok_is(&c->t[j],"[")
+       && c->t[j+1].k==T_INT && tok_is(&c->t[j+2],"]")){   /* a `[const]=` outer designator -> JUMP the cursor */
+      cursor=(int)c->t[j+1].v;                       /* the simple integer-literal outer index (a nested chain's */
+      j+=3; if(tok_is(&c->t[j],"=")) j++;            /* deeper `[..]` is inside the row, not a top-level designator) */
       if(cursor+1>n) n=cursor+1;                     /* this entry sits at `cursor`, so max index+1 = cursor+1 */
       at_entry_start=0; continue;
     }
@@ -3087,12 +3114,27 @@ static int peek_top_entries(CC *c) {
 static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, const int *la_dims, int la_nd) {
   char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"_cl%u",++c->cl_ctr);
   int es = ty->size ? ty->size : 4;
-  if(ty->kind==1){                                   /* a 1-D AGGREGATE-element literal `(struct P[]){...}` /
-    * `(struct P[N]){...}`: a SCALAR-kind array of struct-sized elements (es == the struct size, the per-element
-    * stride), carrying the struct tag so the decl emits `struct P _cl[N]` and `_cl[i].field` strides by the
-    * element struct. Each `{...}` element routes through subagg_init_struct (per-element field stores at
-    * `idx*es`, riding a `= {0}` baseline) -- the C twin of the oracle's _init_subagg array-of-structs branch.
+  if(ty->kind==1){                                   /* an AGGREGATE-element literal `(struct P[]){...}` /
+    * `(struct P[N]){...}` (1-D) OR `(struct P[A][B]){...}` (multi-dim): a SCALAR-kind array of struct-sized
+    * elements (es == the struct size, the per-element stride), carrying the struct tag so the decl emits
+    * `struct P _cl[N]` and `_cl[i]...[k].field` strides by the element struct. Each innermost `{...}` element
+    * routes through agg_init_at (per-element field stores at absolute offsets, riding a `= {0}` baseline) --
+    * the C twin of the oracle's _init_subagg array-of-structs branch (and _array_row row descent for multi-dim).
     * An inferred `[]` patches its count + re-masks the init stores, exactly like the scalar path below. */
+    if(la_nd>1){                                      /* a MULTI-dim AGGREGATE literal `(struct P[A][B]){...}` */
+      int dims[3]; for(int z=0;z<3;z++) dims[z]=la_dims[z];
+      int inner=1; for(int d=1; d<la_nd; d++) inner*=dims[d];   /* product of the FIXED inner dims */
+      int outer = dims[0];                            /* `(struct P[][N]){...}` infers the outer dim from the init */
+      if(outer<=0) outer = peek_top_entries(c);       /* the row-brace count (known up-front -> stores size right) */
+      dims[0]=outer;
+      int total = outer*inner;
+      uint32_t rid = add_res(c, BCIR_DOM_RAM, es, total>0?total:1, 0, BCIR_RK_SCALAR, nm);
+      int ari = (int)c->fn->n_res - 1;
+      snprintf(c->fn->res[ari].agg,BCIR_CIR_NAME,"%s %s",ty->is_union?"union":"struct",ty->tag);
+      c->fn->res[ari].zinit=1;                        /* a `= {0}` baseline -- unwritten fields/elements zero-fill */
+      subagg_init_md_struct(c, rid, 0, dims, la_nd, es, si);   /* descend nested ROW braces; innermost = a struct */
+      return rid;
+    }
     uint32_t rid = add_res(c, BCIR_DOM_RAM, es, count>0?count:1, 0, BCIR_RK_SCALAR, nm);
     int ari = (int)c->fn->n_res - 1;
     snprintf(c->fn->res[ari].agg,BCIR_CIR_NAME,"%s %s",ty->is_union?"union":"struct",ty->tag);
