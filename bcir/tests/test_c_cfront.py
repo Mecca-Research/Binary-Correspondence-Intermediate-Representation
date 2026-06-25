@@ -3339,6 +3339,10 @@ def test_multidim_scalar_array_complit_lowers():
     from bcir.frontends.cfront import compile_unit
     for src in ("unsigned f(unsigned i, unsigned j){ return (unsigned[2][2]){{1u,2u},{3u,4u}}[i&1u][j&1u]; }",
                 "unsigned f(unsigned i, unsigned j){ return (unsigned[][2]){{1u,2u},{3u,4u},{5u,6u}}[i%3u][j&1u]; }",
+                # an inferred outer dim via OUT-OF-ORDER DESIGNATORS: the outer dim is max(designator index)+1 = 2
+                # (NOT the raw entry count), so the storage is `_cl[2*2]` -- the #506 latent under-sizing where
+                # peek_top_entries ignored designators and sized `_cl[1*2]` (a silent over-write past the storage).
+                "unsigned f(unsigned i, unsigned j){ return (unsigned[][2]){[1]={5u,6u},[0]={1u,2u}}[i&1u][j&1u]; }",
                 "int f(unsigned i, unsigned j){ return (int[2][2]){{-1,-2},{-3,-4}}[i&1u][j&1u]; }"):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
@@ -3352,8 +3356,8 @@ def test_aggregate_array_complit_lowers():
     `[i].field` strides by the element struct (offsetof(field) + i*sizeof(elem)) -- the same array-of-structs
     descent a regular `struct P a[]` decl uses. Both rails emit an IDENTICAL claim sequence (offsets/strides
     pinned by the `match` check -- a wrong extent/stride is a #500 silent miscompile) and stay
-    Clang-behaviour-equivalent. (Multi-dim aggregate stays a fallback -- see
-    test_multidim_aggregate_complit_falls_back.)"""
+    Clang-behaviour-equivalent. (The MULTI-dim aggregate form lowers too -- see
+    test_multidim_aggregate_complit_lowers.)"""
     from bcir.frontends.cfront import compile_unit
     for src in ("struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[]){{1u,2u},{3u,4u}}[i&1u].x; }",   # INFERRED
                 "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[2]){{5u,6u},{7u,8u}}[i&1u].y; }",  # EXPLICIT
@@ -3362,31 +3366,30 @@ def test_aggregate_array_complit_lowers():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
-def test_multidim_aggregate_complit_falls_back():
-    """§5.10 item 4 (#arrcomplit): a MULTI-DIM AGGREGATE-element literal `(struct P[A][B]){...}` is the ONE
-    residual array-compound-literal fallback -- the flat+shape / `_array_row` machinery flattens `[i][j]` by
-    the SCALAR-leaf size, so a struct leaf's row stride / element extent would need the struct size threaded
-    through the multi-dim index path (an extent/stride mismatch == a #500 silent miscompile). Both rails route
-    AWAY in agreement: the oracle raises CLowerError, the twin's literal dispatch rejects `ty.kind==1 &&
-    la_nd>1`. (1-D aggregate + multi-dim SCALAR both lower -- the other two arrcomplit tests.) The fuzzer does
-    not generate this form, so the rails are pinned here explicitly."""
+def test_multidim_aggregate_complit_lowers():
+    """§5.10 item 4 (#arrcomplit): a MULTI-DIM AGGREGATE-element array compound literal
+    `(struct P[A][B]){{{..},{..}},{{..},{..}}}[i][j].field` lowers on BOTH rails -- the FIXED-dims form, the
+    INFERRED outer form `(struct P[][N]){...}` (row count from the init), and a PARTIAL element init (the
+    missing field / row zero-fills off the `= {0}` baseline). Both rails rebuild it as the FLAT `array(struct,
+    A*B)` + per-dim `shape` (storage `[A*B]` -- not the old under-sized `shape=()` defect, the #500 silent
+    miscompile), descend the nested ROW braces routing each innermost `{...}` element through the offset-based
+    per-element struct store, and lower `[i][j].field` by Horner-flattening the OUTER dims (`i*B + j`) then
+    striding by the element STRUCT size (8) + the field offset -- the same array-of-structs descent a regular
+    `struct P a[A][B]` decl uses. Both rails emit an IDENTICAL claim sequence (offsets/strides pinned by the
+    `match` check -- a wrong extent/stride is a #500 silent miscompile) and stay Clang-behaviour-equivalent."""
     from bcir.frontends.cfront import compile_unit
-    from bcir.frontends.cfront.lower import CLowerError
-    md = ("struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "
-          "return (struct P[2][2]){{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}}}[i&1u][j&1u].x; }")
-    try:                                                  # ORACLE: refuses (the struct-leaf multi-dim stride is unmodelled)
-        compile_unit(md, check_clang=False)
-        assert False, f"oracle should fall back: {md}"
-    except CLowerError:
-        pass
-    if not _CC:
-        return
-    with tempfile.TemporaryDirectory() as d:              # TWIN: also refuses -- both rails route away
-        exe = _build_frontend(d)
-        p = os.path.join(d, "md.c")
-        open(p, "w").write(md)
-        summ, _ = _c_run(exe, p)
-        assert "ok=1" not in summ, f"twin should fall back, got {summ}: {md}"
+    for src in ("struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "                       # FIXED dims
+                "return (struct P[2][2]){{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}}}[i&1u][j&1u].x; }",
+                "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "                       # INFERRED outer
+                "return (struct P[][2]){{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}},{{9u,10u},{11u,12u}}}[i%3u][j&1u].y; }",
+                # an inferred outer dim via OUT-OF-ORDER DESIGNATORS: outer = max(idx)+1 = 2, so storage is `_cl[2*2]`
+                # (the #506 designated-outer under-sizing, shared with the scalar path -- fixed in peek_top_entries).
+                "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "                       # INFERRED via DESIGNATORS
+                "return (struct P[][2]){[1]={{5u,6u},{7u,8u}},[0]={{1u,2u},{3u,4u}}}[i&1u][j&1u].x; }",
+                "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "                       # PARTIAL (= {0})
+                "return (struct P[2][2]){{{1u},{3u}},{{5u,6u}}}[i&1u][j&1u].y; }"):
+        r = compile_unit(src, check_clang=True)
+        assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
 def test_multidim_array_braceinit():
