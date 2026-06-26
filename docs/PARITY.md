@@ -138,9 +138,22 @@ implementation lives in C and a dual-rail gate keeps the two byte/structurally i
 `tools/c/check_runtime.sh` (the CI-gated fixture list + the per-feature blocks below); both run the
 *same* source through both rails and diff the result.
 
+`_parity_check_fixture` diffs the two C-frontend rails on **four** axes, each the floor the previous
+one cannot see: (1) the **claim-summary** parity (the RID-independent structural summary equals the
+oracle's); (2) **behaviour-equivalence** under Clang of *both* the twin's and the oracle's own emitted C
+on seeded-random inputs; (3) the **bounds-guard count** — both rails promote the same accesses to
+`masked`, so they emit the same number of `BCIR_CHK` guards; and (4) the **storage-extent** parity
+(`_array_extents`): the sorted multiset of dim-product array-declaration sizes must match. (4) closed a
+real blind spot — an *over-sized* backing array keeps the same per-element stores, the same observable
+behaviour, **and** the same `BCIR_CHK` guard count, so it slipped through (1)–(3); a multi-dim compound
+literal once sized `_cl[10]` vs the correct `_cl[6]` and passed every prior check. Normalizing to the
+dim **product** makes a flat `[4]` and a nested `[2][2]` compare equal, so the check is robust to
+decl-form differences between the rails (`test_storage_extent_parity_catches_oversizing` pins the gap
+closed).
+
 | Oracle (`bcir/frontends/cfront/`) | C twin (`runtime/c/`) | Gate |
 |---|---|---|
-| lowering: integers, struct/union/bitfields, casts, control flow, atomics, funcptr dispatch, `<math.h>`, hex-float | `bcir_cfront.c` (claim-graph parity + faithful emit) | `check_runtime.sh` fixture loop; `test_c_cfront.py` |
+| lowering: integers, struct/union/bitfields, casts, control flow, atomics, funcptr dispatch, `<math.h>`, hex-float, array compound literals (1-D + multi-dim, scalar + aggregate-element, inferred/designated outer dims) | `bcir_cfront.c` (claim-graph parity + faithful emit) | `check_runtime.sh` fixture loop; `test_c_cfront.py` |
 | `abi.py` `TargetABI`/`TARGETS` (`--target`) | `bcir_cfront.c` target table + `cc_abi`/`p_type` (long/ptr/`size_t` per data model) | `#abi` block; `test_abi_target_matrix_dual_rail` |
 | `pipeline.compile_with_fallback` (route-to-LLVM) | `bcir-cc --fallback` (clean 0 / dirty 1 / fallback 2) | `#fallback` block; `test_fallback_contract_dual_rail` |
 | `diagnostics.py` renderer (caret layout) | `bcir_diag.c` `bcir_diag_render` | `#diag` block; `test_diagnostic_renderer_dual_rail` |
