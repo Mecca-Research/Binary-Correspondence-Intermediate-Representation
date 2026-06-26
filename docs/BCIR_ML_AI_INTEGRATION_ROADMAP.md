@@ -33,7 +33,7 @@ when the system asks, of every program:
 - *What lane schedule, StreamPack, fences, prefetch contracts execute?* → **GEM**.
 
 The graph is an intelligence **scaffold**: start from the lowest level, work with its rules (the R-laws), and
-structure emerges for free. The intelligence is the **feedback loop of optimization on the computational
+structure emerges in accordance to Landauer's Principle. The intelligence is the **feedback loop of optimization on the computational
 reference state** — and that loop is the foundation we claim for all future AI built this way.
 
 **This is deliberately not neuromorphic.** Brain-mimicking event-driven chips activate only on changing
