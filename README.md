@@ -30,7 +30,7 @@ B(H,Θ) = live budgets (thermal cap, power cap, bandwidth)
 │   ├── frontends/       ROP (declarative) + MAP (macro-assembly) front-ends
 │   ├── lower/           BCIR-5: legal LLVM IR run AOT (clang) or JIT (lli)
 │   ├── telemetry.py     "data DNA" schema + sinks (null/list/file/Kafka)
-│   └── verify/          runnable subset of verifier laws R1–R12
+│   └── verify/          runnable reference of verifier laws R1–R18 (+ emerging R19–R21)
 ├── mlir/                the IR law: TableGen/ODS dialect family + compiled bcir-opt + IRDL projection
 │   ├── include/BCIR/    *.td (enums/types/attrs/ops) + *.h
 │   ├── lib/, tools/     BCIRDialect.cpp + bcir-opt.cpp (the compiled dialect)
@@ -60,7 +60,7 @@ python -m bcir.kbcir.differential -n 5000                            # generated
 python -m bcir.kbcir.microbench --target x86_avx512 --out cal.json   # measure -> freeze a Q8 cost table
 python -m bcir.kbcir.microbench --target x86_avx512 --bayes          # Bayesian posterior + conformal +/- delta
 python -m bcir.run vector_add --tables bcir/kbcir/tables/x86_64_reference.json  # apply frozen table
-python -m bcir.tests.run_all                                         # the conformance test suite
+python -m bcir.tests.run_all                                         # the conformance test suite (878 tests — see docs/STATUS.md)
 
 # The compiled MLIR dialect (needs libmlir-NN-dev + llvm-NN-dev):
 bash tools/wsl/build_mlir.sh            # build bcir-opt (LangRef M3)
@@ -70,11 +70,13 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 
 ## Where the law lives
 
-- [`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md) — the normative language reference (levels, laws R1–R16, the equation).
-- [`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md) — the single master roadmap: positioning, current state, the MLIR/C/C++ placement map, and the next build steps.
+- [`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md) — the normative language reference (levels, laws R1–R18, the equation).
+- [`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md) — the single master roadmap: positioning, current state, the MLIR/C/C++ placement map, and the next build steps (incl. §5.14, the MLIR-catch-up + freestanding-C23-driver arc that promotes the emerging timing/lifetime laws R19/R20/R21).
+- [`docs/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](docs/BCIR_ML_AI_INTEGRATION_ROADMAP.md) — the ML/AI integration companion roadmap: the Phase-M/L program (C inference substrate → tensor ops as claims → data/memory organs → language reach → ML-guided hardware → higher cognition).
 - [`docs/PARITY.md`](docs/PARITY.md) — the Python (`bcir/`) ↔ MLIR (`mlir/`) lockstep contract.
+- [`docs/STATUS.md`](docs/STATUS.md) — the generated single source of truth for counts (tests, ODS ops, passes, verifier-law coverage); prose links here rather than hard-coding numbers.
 - [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md) — how the repo is organized and why.
-- [`docs/CFRONT_GUIDE.md`](docs/CFRONT_GUIDE.md) — the `bcir-cfront` C-frontend user guide: the CLI, diagnostics, the target ABI matrix, the fallback contract, and the supported subset + limits.
+- [`docs/CFRONT_GUIDE.md`](docs/CFRONT_GUIDE.md) — the `bcir-cfront` C-frontend user guide: the CLI, diagnostics, the target ABI matrix, the fallback contract, and the supported subset + limits. The frontend lowers a wide C surface **dual-rail** (oracle + the `bcir_cfront.c` twin) — including the full array-compound-literal surface (1-D + multi-dim, scalar + aggregate-element), computed goto (`goto *p` / `&&L`), and function-pointer local variables — all Clang-equivalence + fuzzer gated (`_Decimal32/64/128` is **blocked**: Clang 18 cannot compile it).
 
 The Python package is the **executable conformance oracle**; the MLIR dialect is
 the **law** it must agree with. LLVM/Clang are backends, not the conceptual center.

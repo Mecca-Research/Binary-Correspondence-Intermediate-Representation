@@ -147,3 +147,17 @@ now `mlir/` (`bcir-opt`). Removed in the fold: `ir/`, the C++ CLI
 
 The two trees stay independently buildable: the oracle needs only `python3`; the
 law needs `libmlir-NN-dev` + `llvm-NN-dev` (`tools/wsl/build_mlir.sh`).
+
+## Documentation inventory (`docs/`)
+
+The normative + steering documents that govern the single tree above:
+
+| Doc | Purpose |
+|-----|---------|
+| `BCIR_LANGREF.md` | Normative language reference: levels, verifier laws (R1–R18), the K_BCIR equation. |
+| `BCIR_MASTER_ROADMAP.md` | The single master roadmap: positioning, current state, the MLIR/C/C++ placement map, and the next build steps (incl. §5.14, the MLIR-catch-up + freestanding-C23-driver arc and the emerging timing/lifetime laws R19/R20/R21). |
+| `BCIR_ML_AI_INTEGRATION_ROADMAP.md` | The ML/AI integration companion roadmap: expands the master roadmap's Phase M/L into one dependency-ordered program (C inference substrate → tensor ops as claims → data/memory organs → language reach → ML-guided hardware → higher cognition). |
+| `PARITY.md` | The Python (`bcir/`) ↔ MLIR (`mlir/`) lockstep contract. |
+| `STATUS.md` | Generated single source of truth for counts (tests, ODS ops, passes, verifier-law coverage). Do **not** hand-edit — regenerate via `tools/docs/gen_status.py`. |
+| `CFRONT_GUIDE.md` | The `bcir-cfront` C-frontend user guide: CLI, diagnostics, target ABI matrix, the fallback contract, and the supported subset + limits. |
+| `BCIR_Repo_Structure.md` | This document — how the repo is organized and why. |

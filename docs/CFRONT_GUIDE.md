@@ -98,7 +98,16 @@ fb.c: fallback to LLVM backend: lower: static initializer is not a constant expr
   arrays, `struct`/`union` (Clang-compatible layout, per target), `enum`, `typedef`.
 - Integer + IEEE-754 floating arithmetic and comparisons, casts and the usual arithmetic conversions,
   `sizeof`/`_Alignof`, bitfields, `<math.h>` library calls.
-- Functions, the call graph (R18: callee resolution, no recursion), and inter-procedural summary reuse.
+- Functions, the call graph (R18: callee resolution, no recursion), inter-procedural summary reuse,
+  function pointers — as a `typedef`'d parameter, a `struct` member (HAL dispatch table), **and as a
+  local variable** (`RET (*f)(PARAMS) = fn;`, reassignable, called indirectly, return-type-signed).
+- **Array compound literals — the full surface:** 1-D scalar (indexed `(T[]){...}[i]`, sized + zero-fill
+  `(T[N]){...}`, signed-element), **multi-dimensional scalar** `(T[A][B]){...}[i][j]` (incl. an inferred
+  outer dim `(T[][N]){...}` and a designated outer `{[1]=..,[0]=..}`), **1-D aggregate-element**
+  `(struct P[]){...}[i].field`, and **multi-dimensional aggregate-element** `(struct P[A][B]){...}[i][j].field`.
+- Local array declarations with initializers, including nested-brace multi-dim (`T a[A][B]={{..},{..}}`),
+  inferred-size (`T a[]={..}`), and array-of-structs (`struct P a[N]={{..},{..}}`).
+- **Computed goto** — the GNU label-as-value `&&L` (a `void *`) and the indirect `goto *p`.
 - String/character literals (with prefixes), `static` locals, file-scope globals, `volatile` (MMIO).
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
   predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators.
@@ -112,6 +121,11 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   general 64-bit *value* model and Windows/ILP32 *code generation* (vs. layout) are not.
 - The i386 in-struct `double`-alignment quirk is not modelled (the `long`/pointer/`long double` data
   axes are).
+- `_Decimal32`/`_Decimal64`/`_Decimal128` are **blocked, not unsupported in principle**: Clang 18
+  cannot compile `_Decimal`, so the form is un-validatable under the Clang-equivalence methodology and
+  is gated out until a `_Decimal`-capable reference compiler is available.
+- An `Index`-base array-member access (`x[i].v[j]`, a member array indexed off an indexed base) stays a
+  general limitation; the array-compound-literal `[i][j].field` form is fully supported.
 - Cross-target builds are layout-only here; running them needs a cross toolchain.
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.

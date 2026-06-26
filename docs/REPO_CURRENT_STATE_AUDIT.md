@@ -130,6 +130,44 @@ native-object gate, the **C StreamPack executor** (`runtime/c/bcir_exec.c`), and
 
 ## Changelog
 
+- 2026-06-25: **C compiler (Phase 2) — array compound literals completed + three foundational
+  decl-path fixes + computed goto + a function-pointer local.** Closed the array-compound-literal
+  surface end to end, dual-rail (oracle `bcir/frontends/cfront/` + the `runtime/c/bcir_cfront.c` twin),
+  every form Clang-equivalence + fuzzer gated. **Array compound literals — the complete surface**
+  (`runtime/c/cfront_arrcomplit.c`): 1-D scalar (indexed `(T[]){...}[i]`, sized + zero-fill
+  `(T[N]){...}`, signed-element); **multi-dim scalar** `(T[A][B]){...}[i][j]` incl. inferred-outer
+  `(T[][N]){...}` and designated-outer `{[1]=..,[0]=..}` (outer = max index + 1, not the entry count);
+  **1-D aggregate-element** `(struct P[]){...}[i].field`; and **multi-dim aggregate-element**
+  `(struct P[A][B]){...}[i][j].field` (incl. inferred-outer) — no residual fallback for these forms (the
+  only array-member limitation left is the pre-existing `Index`-base `x[i].v[j]`). Scalar multi-dim
+  rides the flat+shape / nested-row-brace machinery (`[A*B]` storage, `[i][j]` Horner-flattened to
+  `i*B + j`); a struct-element literal lowers through the offset-based per-element store on a `= {0}`
+  baseline. **Three pre-existing silent-miscompile fixes** surfaced + fixed on the *regular* decl path
+  during this work: nested-brace multi-dim array decl `T a[A][B]={{..},{..}}` (was an oracle crash + a
+  twin parse-error — `cfront_localmd.c`); inferred-size + array-of-structs local decl init
+  `T a[]={..}` / `struct P a[N]={{..},{..}}` (was under-sizing — `cfront_aoslocal.c`); and
+  designated-outer inferred sizing. **Computed goto** (`cfront_computedgoto.c`): the GNU
+  label-as-value `&&L` (a `void *`) + the indirect `goto *p`, lowered to the GNU forms Clang compiles.
+  **Function-pointer local variable** (`cfront_fnptrlocal.c`): `RET (*f)(PARAMS) = fn;` declared,
+  called indirectly, reassigned, and return-type-signed — a funcptr local previously fell into the
+  comma-declarator loop and parse-errored on the twin (a latent oracle-vs-twin divergence; also
+  resolved the earlier multi-funcptr-signature limitation). Earlier in the same arc landed
+  increment/decrement as a value, address-of follow-ons, signed funcptr return, array-of-structs-field
+  / member-array-element as a value, bitfield-as-value, and variadic float/wide-int `+=` accumulation.
+  **`_Decimal32`/`_Decimal64`/`_Decimal128` is BLOCKED, not done:** Clang 18 cannot compile `_Decimal`,
+  so the form is un-validatable under the Clang-equivalence methodology and is gated out until a
+  `_Decimal`-capable reference compiler exists. A **storage-extent parity gate** was added to
+  `bcir/tests/test_c_cfront.py::_parity_check_fixture` (the `_array_extents` dim-product multiset check):
+  the parity harness now also compares the backing-array storage extents across rails, catching an
+  over-sized compound literal / inferred-size array that keeps identical stores, behaviour, and
+  `BCIR_CHK` guard count (the exact `_cl[10]` vs `_cl[6]` gap that once slipped through). **R19/R20
+  (timing) + R21 (pointer-lifetime) are emerging model laws** — enforced in the Python oracle (R21 also
+  advisory in the C twin, `runtime/c/bcir_verify.c`) but **beyond the stable MLIR law table**, so the
+  generated status still reports verifier laws **R1–R18** first-class; the promotion plan is roadmap
+  [`§5.14`](BCIR_MASTER_ROADMAP.md) (the MLIR catch-up + freestanding-C23-driver arc), and the ordered
+  Phase-M/L program now lives in [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](BCIR_ML_AI_INTEGRATION_ROADMAP.md).
+  All warning-clean (C11 + C23); fixtures wired into `tools/c/check_runtime.sh`; thorough suite at
+  878 passed (live count in [`STATUS.md`](STATUS.md)).
 - 2026-06-18: **C compiler (Phase 2) — logical `&&` / `||` + unary `+`.** The condition idiom
   (`if (a && b)`) -- a real gap: the C rail parsed only the *bitwise* `&` / `|`, so a user-written
   `a && b` did not parse (the `switch` desugar built `||` internally but the operator itself was

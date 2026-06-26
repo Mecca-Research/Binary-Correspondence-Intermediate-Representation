@@ -2,8 +2,8 @@
 
 > **Status: DEFERRED (correct).** BCIR does **not** hand-roll an instruction selector /
 > ELF+relocation emitter. The warranted path — emit the K_BCIR-planned kernel and let
-> the **resident compiler** finish it to a real object — is implemented and tested for
-> one target end-to-end (eBPF and x86-64 scalar). This document is the *gate*: the
+> the **resident compiler** finish it to a real object — is implemented and tested
+> end-to-end (eBPF, x86-64 scalar, and aarch64 / Raspberry Pi 5). This document is the *gate*: the
 > explicit criteria under which that decision would flip, and the stop criteria for a
 > native-isel experiment if one is ever taken.
 
@@ -32,7 +32,7 @@ that, (1) is strictly better — it is a real, shippable artifact today, it trac
 host backend's isel improvements for free, and it keeps BCIR's surface the planning
 brain rather than a second-rate codegen.
 
-## 2. The warranted slice (done): one target end-to-end via the resident compiler
+## 2. The warranted slice (done): real native objects end-to-end via the resident compiler
 
 `codegen.codegen_object_c(module, result, target)` closes the loop to a **real native
 object** without any BCIR-native isel:
@@ -41,14 +41,16 @@ object** without any BCIR-native isel:
 |---|---|---|---|---|
 | `bpf` (eBPF) | `int32_t` (eBPF has no FP) | `-ffreestanding` (libc-free) | relocatable ELF, `bcir_kernel` symbol | `EM_BPF` (247) |
 | `x86_64` (scalar) | `int32_t` | host | relocatable ELF | `EM_X86_64` (62) |
+| `aarch64` (scalar, Raspberry Pi 5) | `int32_t` | host/cross | relocatable ELF | `EM_AARCH64` (183) |
 
 The object's ELF header is verified (`\x7fELF` + `e_machine`), so the test asserts a
 genuine native object for the expected ISA, not just a zero-exit compile. eBPF is the
-canonical "integer-only scalar kernel" the roadmap names; x86-64 scalar is the second
-gate target. Tested in `bcir/tests/test_native_object_gate.py` (skips cleanly when
-`clang` lacks the `bpf`/cross target).
+canonical "integer-only scalar kernel" the roadmap names; x86-64 and aarch64 (the
+Raspberry Pi 5 target) are the host/cross scalar gate targets. Tested in
+`bcir/tests/test_native_object_gate.py` (skips cleanly when `clang` lacks the
+`bpf`/cross target).
 
-This is the "one target end-to-end" milestone **without** crossing the gate into
+This is the "target end-to-end" milestone **without** crossing the gate into
 hand-rolled isel — exactly the roadmap's intent.
 
 ## 3. GO criteria — what would warrant BCIR-native isel
@@ -95,8 +97,8 @@ measurement window; otherwise the deliverable is the negative result + this doc.
 
 ## 5. Current verdict
 
-Path (1) is implemented, tested, and produces real objects for one target end-to-end
-(eBPF + x86-64). No seeded target meets the GO bar (every one has a resident LLVM
+Path (1) is implemented, tested, and produces real objects end-to-end
+(eBPF + x86-64 + aarch64). No seeded target meets the GO bar (every one has a resident LLVM
 backend). **Native isel stays deferred; the gate stands.** Revisit when a deployment
 target with no resident backend (G1) and a measured ≥ 2× economics case (G2) appears —
 most plausibly a bare PIM/CIM controller or a driver-resident eBPF JIT under a latency
