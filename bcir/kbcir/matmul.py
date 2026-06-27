@@ -19,7 +19,7 @@ import math
 from dataclasses import dataclass
 
 from .cost import TargetProfile
-from .quantize import quantize_per_group, scaled_dot
+from .quantize import dequantize, quantize_per_group, scaled_dot
 
 # ---- the math: a reference and the tiled/quantized realizations (all must agree) ----------------
 # Row-major A is M x K, row-major B is K x N, C is M x N. The reference is the definition; every
@@ -56,6 +56,18 @@ def matmul_tiled(a, b, M: int, N: int, K: int, plan: "TilePlan") -> list[float]:
                             s += a[i * K + k] * b[k * N + j]
                         c[i * N + j] += s
     return c
+
+
+def gemm_via_bridge(a, b, M: int, N: int, K: int, group_size: int, bits: int) -> list[float]:
+    """B5: the Q8<->float32<->Q8 bridge wrapped around a TRUSTED float gemm (integrate, don't reinvent).
+    Inputs arrive as per-group quantized storage; the bridge dequantizes them to float32, a trusted
+    external sgemm (CBLAS, via the `c.call.libm:` edge) computes the product, and BCIR owns the calling
+    side (row-major layout + the boundary quantization). The oracle reference for that path is the
+    reference matmul of the *round-tripped* inputs -- so the only error vs the true product is the input
+    quantization (R17-certified), the float gemm itself being exact/trusted."""
+    da = dequantize(quantize_per_group(a, group_size, bits))
+    db = dequantize(quantize_per_group(b, group_size, bits))
+    return matmul_reference(da, db, M, N, K)
 
 
 def quantized_matmul(a, b, M: int, N: int, K: int, group_size: int, bits: int) -> list[float]:

@@ -284,6 +284,43 @@ def emit_quantized_dot_c(lane_bits: int, count: int, fn_name: str = "bcir_qdot")
     )
 
 
+def emit_blas_gemm_c(M: int, N: int, K: int, fn_name: str = "bcir_gemm") -> str:
+    """B5: wrap a TRUSTED external BLAS sgemm through the `c.call.libm:` FFI edge -- "integrate, don't
+    reinvent". BCIR owns the CALLING side: it fixes the row-major C = A@B layout and (with the A1.1 Q8
+    bridge at the boundary) the precision, and DELEGATES the kernel to `cblas_sgemm` when CBLAS is linked
+    (`-DBCIR_USE_CBLAS -lcblas`), with a portable reference triple-loop fallback selected by the
+    preprocessor when it is not. Both paths compute the identical row-major product, so the same source is
+    correct linked or standalone -- the win is on the calling side (layout / quant / fusion), not a
+    reimplemented kernel. Dims are baked in (a planned claim knows its shape)."""
+    if M < 1 or N < 1 or K < 1:
+        raise ValueError(f"gemm dims must be >= 1; got M={M} N={N} K={K}")
+    return (
+        f"/* BCIR -> external trusted GEMM via the c.call.libm: edge (integrate, don't reinvent). "
+        f"row-major C[{M}x{N}] = A[{M}x{K}] @ B[{K}x{N}]; CBLAS sgemm when linked, reference fallback "
+        f"otherwise -- BCIR owns the calling side (layout + the Q8<->f32 boundary). */\n"
+        "#include <stddef.h>\n"
+        "#if defined(BCIR_USE_CBLAS)\n"
+        "  #include <cblas.h>\n"
+        "  #define BCIR_GEMM_CBLAS 1\n"
+        "#else\n"
+        "  #define BCIR_GEMM_CBLAS 0\n"
+        "#endif\n"
+        f"void {fn_name}(const float *A, const float *B, float *C) {{\n"
+        f"#if BCIR_GEMM_CBLAS\n"
+        f"  cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,\n"
+        f"              {M}, {N}, {K}, 1.0f, A, {K}, B, {N}, 0.0f, C, {N});\n"
+        f"#else\n"
+        f"  for (size_t i = 0; i < {M}; ++i)\n"
+        f"    for (size_t j = 0; j < {N}; ++j) {{\n"
+        f"      float s = 0.0f;\n"
+        f"      for (size_t k = 0; k < {K}; ++k) s += A[i * {K} + k] * B[k * {N} + j];\n"
+        f"      C[i * {N} + j] = s;\n"
+        f"    }}\n"
+        f"#endif\n"
+        f"}}\n"
+    )
+
+
 def emit_qfixed_selfcheck_c(module: Module, result: RealizationResult,
                             fn_name: str = "bcir_qfixed", lane_bits: int = 16,
                             frac_bits: int = 8) -> str:

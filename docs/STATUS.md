@@ -6,7 +6,7 @@
 
 | Metric | Value |
 |---|---|
-| Python conformance tests (`python -m bcir.tests.run_all`) | **916** across 93 files |
+| Python conformance tests (`python -m bcir.tests.run_all`) | **922** across 94 files |
 | MLIR ODS ops (`mlir/include/BCIR/*.td`) | **85** |
 | Registered `-bcir-*` passes | **25** |
 | MLIR FileCheck tests (`mlir/test/`) | **52** (73 `expected-error` negatives) |
