@@ -105,7 +105,7 @@ bcir.surface(text) ─► bcir.core(typed graph) ─┬─► ir/irdl  (pure-IR 
 > The current build/validate entry points are:
 
 ```bash
-# bcir/ -- the oracle (no third-party deps; CI job oracle-and-training):
+# bcir/ -- the oracle (no third-party deps; CI jobs oracle / c-runtime / llvm-training, in parallel):
 python3 -m bcir.tests.run_all
 
 # mlir/ -- the dialect law (needs libmlir-NN-dev + llvm-NN-dev; CI job mlir-rail-validate):
