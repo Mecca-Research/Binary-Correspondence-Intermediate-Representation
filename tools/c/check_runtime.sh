@@ -133,7 +133,8 @@ for fx in sys.argv[2:]:
         mmio = sum(1 for c in lf.claims if c.op == 'c.load' and c.domain == Domain.MMIO)
         bf = sum(1 for c in lf.claims if c.op == 'c.bf.get'); kn = sum(1 for c in lf.claims if c.op == 'c.const')
         bo = sum(1 for c in lf.claims if c.op.startswith('c.bin.')); ca = sum(1 for c in lf.claims if c.op.startswith('c.call'))
-        print(f"{fx}\tfuncs={len(fns)} claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} binop={bo} call={ca} ok={1 if r.is_clean else 0}")
+        repro = sum(1 for f in fns.values() if getattr(f, 'reproducible', False))  # A1.3: matches the C twin's repro=N
+        print(f"{fx}\tfuncs={len(fns)} claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} binop={bo} call={ca} repro={repro} ok={1 if r.is_clean else 0}")
     except Exception as e:
         sys.stderr.write(f"oracle lowering failed for {fx}: {e}\n"); sys.exit(1)
 PY
