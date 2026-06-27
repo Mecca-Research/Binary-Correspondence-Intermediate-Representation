@@ -53,6 +53,15 @@ class CType:
                                          #   packs bit-by-bit and its access unit spans only the bytes it covers)
     params: tuple = ()                   # parameter CTypes (funcptr only) — for faithful emit
     shape: tuple = ()                    # array dims of a decayed multi-dim array param (m[i][j])
+    bit_width: int = 0                   # a C23 `_BitInt(N)` type's EXACT width N (0 == a normal type; >0 ==
+                                         #   `_BitInt(N)`). A distinct integer type that does NOT promote and does
+                                         #   not canonicalize to a power-of-two width: `name` carries the verbatim
+                                         #   spelling (`_BitInt(12)` / `unsigned _BitInt(12)`) so the emit prints it
+                                         #   faithfully -- Clang then applies the N-bit semantics in both rails.
+
+    @property
+    def is_bitint(self) -> bool:
+        return self.kind == "scalar" and self.bit_width > 0
 
     @property
     def is_integer(self) -> bool:
@@ -119,6 +128,31 @@ def scalar(name: str, abi=None) -> CType:
     return CType("scalar", name=name, size=size, align=max(1, size), signed=signed)
 
 
+def _bitint_storage(n: int) -> int:
+    """The storage-unit byte width of a `_BitInt(N)`: the smallest standard integer width (1/2/4/8 bytes)
+    that holds N bits. (Clang lays a `_BitInt(N)`, 2<=N<=64, in 1/2/4/8 bytes -- e.g. `_BitInt(12)` is
+    2-byte/2-aligned.) The EXACT width is tracked separately in `bit_width`; this only sizes the slot so
+    a same-width store/load round-trips and `sizeof`/layout match Clang. (N>64 is out of the supported
+    subset -- see cparse; it never reaches here.)"""
+    bytes_ = (n + 7) // 8
+    unit = 1
+    while unit < bytes_:
+        unit *= 2
+    return unit
+
+
+def bitint(n: int, signed: bool) -> CType:
+    """A C23 `_BitInt(N)` scalar CType. It carries the EXACT width N in `bit_width` and the verbatim
+    spelling in `name` (`_BitInt(N)` / `unsigned _BitInt(N)`), so every emit site that prints the type
+    spelling reproduces it faithfully -- and the value model keeps it OUT of the power-of-two integer
+    canonicalization (`promote_int`/`usual_arith_int` short-circuit on `bit_width`), since `_BitInt(N)`
+    does not undergo integer promotion. `size` is the storage slot (1/2/4/8 bytes) so a same-type
+    store/load and `sizeof` match Clang; `signed` drives the spelling + any same-type signed arithmetic."""
+    sz = _bitint_storage(n)
+    spelling = f"_BitInt({n})" if signed else f"unsigned _BitInt({n})"
+    return CType("scalar", name=spelling, size=sz, align=max(1, sz), signed=signed, bit_width=n)
+
+
 def is_scalar_name(name: str) -> bool:
     return name in _SCALAR or name in _FLOAT or name in _COMPLEX
 
@@ -136,9 +170,21 @@ def int_type(size: int, signed: bool, abi=None) -> CType:
     return scalar(_INT_CANON.get((size, bool(signed)), "int32_t"), abi)
 
 
+class BitIntMix(Exception):
+    """An unsupported `_BitInt(N)` operand combination: a `_BitInt` mixed with a standard integer, or two
+    DIFFERENT-width `_BitInt`s, in one arithmetic expression. C23 does NOT promote `_BitInt`, so the
+    result type would have to be carried exactly -- but the conservative subset only models SAME-type
+    `_BitInt(N)` arithmetic. The lowering catches this and routes to fallback (a `CLowerError`) rather
+    than emit a canonicalized (width-losing) result that would diverge from Clang."""
+
+
 def promote_int(t: CType, abi=None) -> CType:
     """Integer promotion (§6.3.1.1): a type of rank lower than `int` promotes to `int` (which holds
-    every value of any sub-int type), so char/short/_Bool/bitfield operands become signed int."""
+    every value of any sub-int type), so char/short/_Bool/bitfield operands become signed int. A C23
+    `_BitInt(N)` does NOT promote (§6.3.1.1p2 excludes it) -- it stays `_BitInt(N)`, so its spelling and
+    exact width survive a unary `-`/`~` and a shift's left operand."""
+    if t.is_bitint:
+        return t
     if not t.is_integer:
         return t
     return int_type(4, True, abi) if t.size < 4 else t
@@ -148,7 +194,17 @@ def usual_arith_int(a: CType, b: CType, abi=None) -> CType:
     """Usual arithmetic conversions (§6.3.1.8) for two integer operands -> their common type. After
     promoting both, the wider width wins (carrying the wider operand's signedness, since a strictly
     wider signed type represents every value of the narrower one); on equal width the result is
-    unsigned iff either operand is unsigned."""
+    unsigned iff either operand is unsigned.
+
+    A C23 `_BitInt(N)` is OUTSIDE this canonicalization: same-type `_BitInt(N)` op `_BitInt(N)` stays
+    `_BitInt(N)` (NO promotion, exact width preserved); any OTHER mix involving a `_BitInt` (a
+    different-width/signedness `_BitInt`, or a `_BitInt` with a standard int) raises `BitIntMix` -- the
+    lowering catches it (handling the `_BitInt` op integer-CONSTANT case there, where the literal context
+    is known) and otherwise routes to fallback rather than emit a width-losing (mis-typed) result."""
+    if a.is_bitint or b.is_bitint:
+        if a.is_bitint and b.is_bitint and a.bit_width == b.bit_width and a.signed == b.signed:
+            return a                                          # same-type `_BitInt(N)` -> itself (NO promotion)
+        raise BitIntMix("unsupported `_BitInt` operand combination")
     pa, pb = promote_int(a, abi), promote_int(b, abi)
     if pa.size != pb.size:
         wider = pa if pa.size > pb.size else pb

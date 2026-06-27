@@ -429,7 +429,7 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
        ||is(c,"_Thread_local")||is(c,"thread_local")){c->i++;continue;}  /* storage class / qualifier */
     if(is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")){       /* typeof(type-name) / typeof(var) */
       c->i++; if(!eat(c,"(")) return 1;
-      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")
+      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")||is(c,"_BitInt")
                     || is(c,"const")||is(c,"volatile")
                     || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                     || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
@@ -446,6 +446,19 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
     if(is(c,"unsigned")){ty->signd=0;sign_explicit=1;ty->size=4;seen=1;c->i++;continue;}
     if(is(c,"_Complex")||is(c,"complex")){ty->is_complex=1;ty->is_float=1;seen=1;c->i++;continue;}  /* C99 _Complex
                                                        * (a modifier on a float base; bare _Complex == double) */
+    if(is(c,"_BitInt")){                                /* C23 `_BitInt ( N )` -- a bit-precise integer type */
+      c->i++; if(!eat(c,"(")){return 1;}
+      if(!isk(c,T_INT)){fail(c,"expected the width N in `_BitInt(N)`");return 1;}
+      long long n=adv(c).v; if(!eat(c,")")){return 1;}
+      /* the supported subset is a single `_BitInt` with at most one of signed/unsigned and 2<=N<=64; a
+       * base int keyword already seen, a second `_BitInt`, or an out-of-range width is rejected (the C
+       * twin has no fallback -- a clean failure here routes the Python rail to fallback in parity). */
+      if(ty->bit_width || (seen && !sign_explicit)){fail(c,"unsupported `_BitInt` type specifier");return 1;}
+      if(n<2||n>64){fail(c,"`_BitInt` width is outside the supported range 2..64");return 1;}
+      ty->bit_width=(int)n; ty->size=(n<=8)?1:(n<=16)?2:(n<=32)?4:8;   /* storage slot (1/2/4/8 bytes) */
+      if(!sign_explicit) ty->signd=1;                   /* `_BitInt(N)` defaults signed (no signed/unsigned kw) */
+      seen=1; continue;
+    }
     if(is(c,"struct")||is(c,"union")){c->i++;tok tag=adv(c);int si=find_struct(c,tag.s,tag.n);
       if(si<0){fail(c,"unknown struct");return 1;} ty->kind=1;ty->size=c->s[si].size;*sidx=si;
       ty->is_union=(uint8_t)c->s[si].is_union;idcpy(ty->tag,&tag);seen=1;break;}
@@ -456,7 +469,9 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
     if(!seen&&isk(c,T_ID)){int ti=find_typedef(c,pk(c)->s,pk(c)->n);   /* a typedef alias */
       if(ti>=0){int vol=ty->is_volatile;*ty=c->td[ti].ty;if(vol)ty->is_volatile=1;*sidx=c->td[ti].sidx;c->i++;seen=1;break;}}
     if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
-      if(sz<0){if(seen)break;fail(c,"unknown type");return 1;} ty->size=sz;
+      if(sz<0){if(seen)break;fail(c,"unknown type");return 1;}
+      if(ty->bit_width){fail(c,"unsupported `_BitInt` type specifier");return 1;}   /* a base int after `_BitInt` */
+      ty->size=sz;
       int inh=scalar_signed(pk(c)->s,pk(c)->n);          /* the type name's inherent signedness */
       if(inh>=0 && (!sign_explicit || !is_base_int(pk(c)->s,pk(c)->n))) ty->signd=inh;
       if((int)strlen("long")==pk(c)->n&&!strncmp("long",pk(c)->s,pk(c)->n)) longs++;   /* count `long`s */
@@ -602,6 +617,7 @@ static int p_struct_body(CC *c) {
         if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
       if(nadims>3){ fail(c,"member array of more than 3 dimensions"); return -1; }   /* adims[] caps at 3 */
       int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;}          /* per-declarator bitfield width */
+      if(ty.bit_width>0){ fail(c,"a `_BitInt` struct/union member is not supported"); return -1; }   /* out of subset */
       if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
       int isptr=(ty.kind==2 && !arr_count);            /* a (non-array) pointer member: ABI pointer_size */
       int sz=isptr?cc_abi(c)->pointer_size:ty.size;
@@ -770,6 +786,29 @@ static uint32_t tempf(CC *c,int size){ uint32_t r=add_res(c,BCIR_DOM_RAM,size,1,
  * `<elem> _Complex` (elem width = size/2) and the value is delegated to the backend like any float. */
 static uint32_t tempc(CC *c,int size){ uint32_t r=add_res(c,BCIR_DOM_RAM,size,1,0,BCIR_RK_SCALAR,"");
   if(c->fn->n_res){ c->fn->res[c->fn->n_res-1].is_float=1; c->fn->res[c->fn->n_res-1].is_complex=1; } return r; }
+/* A C23 `_BitInt(N)` temp -- carries the EXACT width N (bit_width) and signedness, so the emit spells
+ * `_BitInt(N)` / `unsigned _BitInt(N)` (NO power-of-two canonicalization) and the value is delegated to
+ * the backend at the N-bit precision. `size` is the storage slot (1/2/4/8 bytes); is_signed drives the
+ * spelling. The C twin of the oracle's `bitint` CType + a `_BitInt` temp. */
+static uint32_t tempbi(CC *c,int bit_width,int signd){
+  int sz=(bit_width<=8)?1:(bit_width<=16)?2:(bit_width<=32)?4:8;
+  uint32_t r=add_res(c,BCIR_DOM_RAM,sz,1,0,BCIR_RK_SCALAR,"");
+  if(c->fn->n_res){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(signd?1:0);
+    c->fn->res[c->fn->n_res-1].bit_width=bit_width; } return r; }
+/* The `_BitInt(N)` width of the value in rid (its exact N), or 0 if rid is not a `_BitInt` scalar. Drives
+ * the non-promoting same-type arithmetic + the fallback-on-mix boundary in `binop_result`. */
+static int rid_bitint(CC *c,uint32_t rid,int *signd){
+  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){
+    if(c->fn->res[i].bit_width>0){ if(signd)*signd=c->fn->res[i].is_signed; return c->fn->res[i].bit_width; }
+    return 0; }
+  return 0; }
+/* Whether rid holds an integer CONSTANT (the write of a `c.const` claim) -- the C twin of the oracle's
+ * `_const_rids`. A `_BitInt(N)` op an integer constant stays `_BitInt(N)` (the constant converts to the
+ * bit-int type), unlike a `_BitInt` mixed with a standard integer VARIABLE (which routes to fallback). */
+static int rid_is_const(CC *c,uint32_t rid){
+  for(size_t i=0;i<c->fn->n_claims;i++){ const bcir_claim *cl=&c->fn->claims[i];
+    if(cl->n_wr&&cl->wr[0]==rid) return !strcmp(cl->op,"c.const"); }
+  return 0; }
 /* The result-temp for a call THROUGH a funcptr (c.call.indirect / c.call.imember), by the funcptr's
  * captured RETURN type -- the C twin of the oracle's _call_result_ct ladder: a float keeps its width;
  * a wide (>4-byte) integer keeps its (width, sign); a SIGNED sub-int return promotes to `int` (so a
@@ -1182,7 +1221,7 @@ static int rec_size_bytes(CC *c, int i) {
       && c->t[i + 1].n == 1 && c->t[i + 1].s[0] == '(') {
     int save = c->i; c->i = i + 2;                         /* past `sizeof (` -- parse the type-name on a copy */
     int isty = scalar_size(pk(c)->s, pk(c)->n) >= 0 || is(c, "struct") || is(c, "union") || is(c, "enum")
-               || is(c, "_Complex") || is(c, "complex") || is(c, "const") || is(c, "volatile")
+               || is(c, "_Complex") || is(c, "complex") || is(c, "_BitInt") || is(c, "const") || is(c, "volatile")
                || is(c, "typeof") || is(c, "__typeof__") || is(c, "typeof_unqual")
                || find_typedef(c, pk(c)->s, pk(c)->n) >= 0;
     int sz = -1;
@@ -1736,6 +1775,9 @@ static uint32_t p_call(CC *c, const tok *name) {
   } else
     t = (rt && rt->is_complex)          ? tempc(c,rt->size)   /* _Complex user return (a float pair) */
       : (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
+      : (rt && rt->kind==0 && rt->bit_width>0) ? tempbi(c,rt->bit_width,rt->signd)  /* a C23 `_BitInt(N)` return:
+                                                            * keep the exact width (it does not promote; same-type
+                                                            * arithmetic on the result must stay `_BitInt(N)`) */
       : (rt && rt->kind==0 && rt->size==8) ? tempi(c,8,rt->signd)  /* wide (8-byte) int return: keep its
                                                             * sign so a `>>` on a `long` result stays arithmetic */
       : (rt && rt->kind==0 && rt->size<=4 && rt->signd) ? tempi(c,4,1)  /* a signed char/short/int return
@@ -1942,7 +1984,7 @@ static uint32_t p_primary(CC *c) {
   if(is(c,"sizeof")){                  /* sizeof(type) / sizeof expr -> a folded constant (no eval) */
     c->i++; long long size=4; int got=0;
     if(is(c,"(")){ int save=c->i; c->i++;
-      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")
+      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")||is(c,"_BitInt")
                     || is(c,"const")||is(c,"volatile")
                     || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                     || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
@@ -2032,6 +2074,8 @@ static uint32_t p_primary(CC *c) {
  * set, a width-named integer uses the SIGNED fixed-width spelling -- needed for a float -> signed-int
  * conversion, which is UB/target-divergent if rendered as float -> unsigned. */
 static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
+  if(ty->kind==0 && ty->bit_width>0){               /* a `_BitInt(N)` cast target -- the exact spelling (faithful) */
+    snprintf(o,n,"c.cast:%s_BitInt(%d)",ty->signd?"":"unsigned ",ty->bit_width); return; }
   const char *nm=ty->is_complex ? (ty->size==8?"float _Complex":ty->size>16?"long double _Complex":"double _Complex")
                 : ty->is_bool ? "_Bool"           /* a bool cast normalizes any nonzero (full value) to 1 */
                 : ty->is_float ? (ty->size==4?"float":"double")
@@ -2149,7 +2193,7 @@ static uint32_t p_unary(CC *c) {
         bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
     if(is(c,"(")){ int save=c->i; c->i++;             /* `&(type){...}` -- address of a compound literal */
-      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")
+      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")||is(c,"_BitInt")
                     || is(c,"const")||is(c,"volatile")
                     || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                     || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
@@ -2198,7 +2242,7 @@ static uint32_t p_unary(CC *c) {
     return p_stmt_expr(c);                          /* `({ ... })` -- a GCC statement expression */
   if(is(c,"(")){                                   /* (type)operand -- a cast binds at the unary level */
     int save=c->i; c->i++;
-    int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")
+    int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")||is(c,"_BitInt")
                   || is(c,"const")||is(c,"volatile")
                     || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
                     || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
@@ -2232,10 +2276,12 @@ static uint32_t p_unary(CC *c) {
          * even when the cast value is used directly -- `(signed char)(-5)` stays -5, and `(int)u` reads
          * back signed (an arithmetic `>>`). A float -> signed-int conversion additionally needs a SIGNED
          * cast operator (float -> unsigned is UB / target-divergent). */
-        int f2s = vr && vr->is_float && !ty.is_float && ty.kind!=2 && ty.signd && ty.size>0;
+        int f2s = vr && vr->is_float && !ty.is_float && ty.kind!=2 && ty.signd && ty.size>0
+                  && ty.bit_width==0;                                  /* a `_BitInt` keeps its exact spelling */
         uint32_t r = ty.is_complex ? tempc(c, ty.size)                /* a _Complex cast -> a complex temp */
                    : ty.is_float ? tempf(c, ty.size)                  /* a float cast -> a float temp */
                    : ty.kind==2 ? temp(c, cc_abi(c)->pointer_size)    /* a pointer cast */
+                   : ty.bit_width>0 ? tempbi(c, ty.bit_width, ty.signd?1:0)   /* a C23 `_BitInt(N)` cast */
                                 : tempi(c, ty.size?ty.size:4, ty.signd?1:0);   /* an integer cast */
         if(ty.is_bool && !ty.is_float && ty.kind!=2 && c->fn->n_res)
           c->fn->res[c->fn->n_res-1].is_bool=1;    /* a bool cast -> a _Bool temp (normalizes to 0/1) */
@@ -2298,6 +2344,20 @@ static int member_is_store(CC *c,int j){
 static uint32_t binop_result(CC *c, const char *suf, uint32_t lhs, uint32_t rhs){
   int is_arith=!strcmp(suf,"add")||!strcmp(suf,"sub")||!strcmp(suf,"mul")||!strcmp(suf,"div");
   int is_shift=!strcmp(suf,"shl")||!strcmp(suf,"shr");
+  /* C23 `_BitInt(N)` (non-promoting, exact width): same-type `_BitInt(N)` op `_BitInt(N)` stays
+   * `_BitInt(N)`; a `_BitInt(N)` op an integer CONSTANT stays `_BitInt(N)` (the constant converts); a
+   * shift `bi << k` keeps the `_BitInt` left operand. Any OTHER mix (a `_BitInt` with a standard integer
+   * VARIABLE, or two different-width/signedness `_BitInt`s) cleanly fails -- the twin has no fallback, so
+   * a clean failure here keeps the rails in lockstep (the Python rail routes the same form to fallback). */
+  int bsa=0,bsb=0; int ba=rid_bitint(c,lhs,&bsa), bb=rid_bitint(c,rhs,&bsb);
+  if(ba||bb){
+    if(is_shift){ if(ba) return tempbi(c,ba,bsa); fail(c,"`_BitInt` shift without a `_BitInt` left operand"); return temp(c,4); }
+    if(ba&&bb){ if(ba==bb&&bsa==bsb) return tempbi(c,ba,bsa);
+      fail(c,"mixing different `_BitInt` widths/signedness"); return temp(c,4); }
+    int bw=ba?ba:bb, bs=ba?bsa:bsb; uint32_t other=ba?rhs:lhs;
+    if(rid_is_const(c,other)) return tempbi(c,bw,bs);   /* `_BitInt(N)` op integer-constant -> `_BitInt(N)` */
+    fail(c,"mixing `_BitInt` with a standard integer"); return temp(c,4);
+  }
   int fa=rid_fsize(c,lhs), fb=rid_fsize(c,rhs);
   if(is_arith&&(fa||fb)){                                      /* float/complex arithmetic */
     int ca=rid_complex(c,lhs), cb=rid_complex(c,rhs);
@@ -3381,6 +3441,7 @@ static void p_stmt(CC *c) {
   if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
     looks_decl=sz>=0||is_static||is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"const")||is(c,"volatile")
                ||is(c,"_Complex")||is(c,"complex")                      /* `double _Complex z;` -- a complex local */
+               ||is(c,"_BitInt")                                        /* `_BitInt(N) z;` -- a bit-precise local */
                ||is(c,"_Atomic")                                        /* `_Atomic int a;` -- an atomic local */
                ||is(c,"va_list")||is(c,"__builtin_va_list")              /* `va_list ap;` -- a variadic cursor local */
                ||is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
@@ -3550,6 +3611,7 @@ static void p_stmt(CC *c) {
         if(ty.is_complex) c->fn->res[c->fn->n_res-1].is_complex=1; }    /* a _Complex local (a float pair) */
       else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* (element) signedness */
         if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1;       /* a _Bool local: emit `_Bool`, store normalizes */
+        if(ty.bit_width>0) c->fn->res[c->fn->n_res-1].bit_width=ty.bit_width;   /* a C23 `_BitInt(N)` local */
         if(ty.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1; }   /* a plain `char` local: emit `char` */
       if(ty.kind==1&&!is_arr) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local (a NON-array struct/union; the array form set its agg above) */
       env_add(c,&nm,rid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
@@ -3806,7 +3868,7 @@ static uint32_t p_stmt_expr(CC *c){
        ||tok_is(lt,"return")||tok_is(lt,"break")||tok_is(lt,"continue")||tok_is(lt,"goto")||tok_is(lt,"{")) is_value=0;
     else if(lt->k==T_ID && c->t[last_save+1].k==T_PUN && c->t[last_save+1].n==1 && c->t[last_save+1].s[0]==':') is_value=0;
     else if(lt->k==T_ID && (scalar_size(lt->s,lt->n)>=0||tok_is(lt,"struct")||tok_is(lt,"union")||tok_is(lt,"enum")
-            ||tok_is(lt,"const")||tok_is(lt,"volatile")||tok_is(lt,"_Atomic")||tok_is(lt,"static")
+            ||tok_is(lt,"const")||tok_is(lt,"volatile")||tok_is(lt,"_Atomic")||tok_is(lt,"static")||tok_is(lt,"_BitInt")
             ||find_typedef(c,lt->s,lt->n)>=0)) is_value=0; }
   uint32_t result;
   if(!is_value){ result=temp(c,4); }      /* a void / empty statement expression: the last stmt (if any) is
@@ -3920,6 +3982,7 @@ static int p_func(CC *c, bcir_func *fn) {
       if(ty.is_complex) c->fn->res[c->fn->n_res-1].is_complex=1; }     /* a _Complex parameter (a float pair) */
     else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
       if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1;       /* a _Bool parameter */
+      if(ty.bit_width>0) c->fn->res[c->fn->n_res-1].bit_width=ty.bit_width;   /* a C23 `_BitInt(N)` parameter */
       if(ty.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1; }   /* a plain `char` parameter */
     else if(ty.kind==3) c->fn->res[c->fn->n_res-1].is_funcptr=1;   /* a funcptr param: stored to a member directly */
     if(ty.kind==1) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
@@ -3968,6 +4031,8 @@ static const char *unop_c(const char *suf){return !strcmp(suf,"neg")?"-":!strcmp
 static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
   if(ty->kind==3){ snprintf(o,n,"%s",ty->tag); return; }   /* funcptr: the typedef spelling */
   if(ty->is_valist){ snprintf(o,n,"va_list"); return; }    /* a `va_list` param (vprintf-style helpers) */
+  if(ty->kind==0 && ty->bit_width>0){                      /* C23 `_BitInt(N)` -- a faithful, exact-width spelling */
+    snprintf(o,n,"%s_BitInt(%d)",ty->signd?"":"unsigned ",ty->bit_width); return; }
   int is_struct = (ty->kind==1) || ty->ptr_to_struct;
   const char *kw = ty->is_union ? "union" : "struct";
   const char *base = is_struct ? ty->tag
@@ -4024,10 +4089,17 @@ static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
  * scalar's true fixed-width type from its (width, signedness) -- so the backend does signed-vs-unsigned
  * and width-correct arithmetic (the old flat uint32 model did not). Non-scalar temps (pointer / address
  * paths) stay uint32 here; their declaration goes through the pointee type. */
+/* A short rotating-buffer pool for type spellings that must format a number (`_BitInt(N)`), so a single
+ * statement that mentions a couple of `_BitInt` types each get a stable string. (4 slots: more than any
+ * one emitted statement needs.) */
+static const char *bitint_spelling(int bit_width,int signd){
+  static char ring[4][24]; static int rr=0; char *b=ring[rr++&3];
+  snprintf(b,sizeof ring[0],"%s_BitInt(%d)",signd?"":"unsigned ",bit_width); return b; }
 static const char *tty(const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid);
   if(!r) return "uint32_t";
   if(r->is_valist) return "va_list";   /* a variadic cursor object -- opaque, declared `va_list ap;` */
+  if(r->bit_width>0) return bitint_spelling(r->bit_width,r->is_signed);   /* C23 `_BitInt(N)` -- faithful spelling */
   if(r->is_complex) return r->elem_bytes==8?"float _Complex":r->elem_bytes>16?"long double _Complex":"double _Complex";
   if(r->is_float) return r->elem_bytes==4?"float":r->elem_bytes>8?"long double":"double";   /* 16/12 -> long double */
   if(r->is_bool) return "_Bool";   /* a store into a bool object normalizes any nonzero to 1 (§6.3.1.2) */

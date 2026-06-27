@@ -24,8 +24,10 @@ from .abi import HOST
 from .clex import split_lit_prefix, str_elem_size
 from .ctype_model import (
     AggregateBuilder,
+    BitIntMix,
     CType,
     array,
+    bitint,
     funcptr,
     is_scalar_name,
     pointer,
@@ -58,6 +60,8 @@ _CAST_W_SIGNED = {1: "int8_t", 2: "int16_t", 4: "int32_t", 8: "int64_t"}
 def _cast_name(ct: CType) -> str:
     if ct.kind == "pointer":
         return _cast_name(ct.of) + " *" if ct.of else "void *"
+    if ct.is_bitint:
+        return ct.name                                # `_BitInt(N)` / `unsigned _BitInt(N)` -- faithful, exact width
     if ct.is_float:
         return ct.name                                # float / double / long double
     if ct.name in ("_Bool", "bool"):
@@ -543,6 +547,9 @@ class _FuncLowerer:
         self._mut_body: dict[str, int] = {}            # name -> NON-decl-init assignments only (count gate)
         self._mut_addr: set[str] = set()               # names whose address is taken anywhere (`&x`)
         self._ext_ctr = 0                              # unique hidden extent-snapshot locals (`__bcir_extK`)
+        self._const_rids: set[int] = set()             # rids holding an integer-literal constant (`c.const` from an
+                                                       #   IntLit) -- a `_BitInt(N)` op an integer CONSTANT stays
+                                                       #   `_BitInt(N)` (the constant converts to the bit-int type)
 
     def _next_loop_id(self) -> int:
         self.loop_ctr += 1
@@ -571,6 +578,8 @@ class _FuncLowerer:
             base = self.aggregates[tref.base]
         elif tref.base == "va_list":                       # the <stdarg.h> variadic cursor (opaque)
             base = valist(self.abi)
+        elif tref.bit_width:                               # C23 `_BitInt(N)`: an exact-width, non-promoting int
+            base = bitint(tref.bit_width, signed="unsigned" not in tref.base)
         elif is_scalar_name(tref.base):
             base = scalar(tref.base, self.abi)
         else:
@@ -830,7 +839,41 @@ class _FuncLowerer:
         """The result type of a binary op over the values in rids `a`, `b` (their types read from
         `rtypes`). Driving the emitted temp's true C type makes the backend do signed-vs-unsigned and
         width-correct arithmetic (the old flat uint32 model did not)."""
-        return self._bin_result_type_ct(op, self.rtypes.get(a), self.rtypes.get(b))
+        ta, tb = self.rtypes.get(a), self.rtypes.get(b)
+        # C23 `_BitInt(N)` (non-promoting, exact width): same-type stays `_BitInt(N)`; a `_BitInt` op an
+        # integer CONSTANT also stays `_BitInt(N)` (the constant converts to the bit-int type). The
+        # constant case needs the rid (is this operand a literal?), so it is resolved HERE, not in the
+        # type-only `_bin_result_type_ct`. A relational/logical op stays `int` (handled below); everything
+        # else over a `_BitInt` mixed with a non-constant standard int / different width routes to fallback.
+        if (ta is not None and ta.is_bitint) or (tb is not None and tb.is_bitint):
+            if op not in ("<", ">", "<=", ">=", "==", "!=", "&&", "||"):
+                bi = self._bitint_binop_type(op, a, b, ta, tb)
+                if bi is not None:
+                    return bi
+        return self._bin_result_type_ct(op, ta, tb)
+
+    def _bitint_binop_type(self, op: str, a: int, b: int, ta: CType | None, tb: CType | None):
+        """The result `_BitInt(N)` type for an arithmetic/bitwise/shift op with a `_BitInt` operand, or
+        raise `CLowerError` (route to fallback) for an unsupported mix. SUPPORTED: same-type `_BitInt(N)`
+        on both sides (-> `_BitInt(N)`); a `_BitInt(N)` with an integer CONSTANT on the other side
+        (-> `_BitInt(N)`; the constant converts). A shift `bi << k` keeps the `_BitInt` LEFT operand (a
+        `_BitInt` does not promote). UNSUPPORTED (fallback): a `_BitInt` mixed with a non-constant standard
+        integer, or two different-width/signedness `_BitInt`s."""
+        ba = ta is not None and ta.is_bitint
+        bb = tb is not None and tb.is_bitint
+        if op in ("<<", ">>"):                                # shift: the (non-promoting) `_BitInt` left operand;
+            if ba:                                            # the right operand may be any integer (it is not
+                return ta                                     # part of the result type)
+            raise CLowerError("a `_BitInt` shift count without a `_BitInt` left operand is not supported")
+        if ba and bb:
+            if ta.bit_width == tb.bit_width and ta.signed == tb.signed:
+                return ta
+            raise CLowerError("mixing different `_BitInt` widths/signedness is not supported")
+        bi = ta if ba else tb
+        other = b if ba else a
+        if other in self._const_rids:                         # `_BitInt(N)` op integer-constant -> `_BitInt(N)`
+            return bi
+        raise CLowerError("mixing `_BitInt` with a standard integer is not supported")
 
     def _bin_result_type_ct(self, op: str, ta: CType | None, tb: CType | None) -> CType:
         """The result type of a binary op from its operand *types*. `+ - * /` over a float operand yield
@@ -858,7 +901,13 @@ class _FuncLowerer:
         if op in ("<<", ">>"):
             return promote_int(ia, self.abi)                  # the shift result carries the promoted LHS type
         ib = tb if (tb is not None and tb.is_integer) else scalar("int", self.abi)
-        return usual_arith_int(ia, ib, self.abi)
+        # `_BitInt(N)` does not canonicalize: a same-type pair stays itself; any other mix raises BitIntMix,
+        # which is an unsupported form here (the rid-aware `_bin_result_type` already handled the legal
+        # `_BitInt op constant` case) -> route the whole unit to fallback rather than mis-type the result.
+        try:
+            return usual_arith_int(ia, ib, self.abi)
+        except BitIntMix as e:
+            raise CLowerError(str(e)) from e
 
     def _type_of(self, node) -> CType:
         """The static C type of an expression, computed WITHOUT evaluating or emitting it -- the operand
@@ -949,7 +998,9 @@ class _FuncLowerer:
         if isinstance(node, cast.IntLit):
             ct = scalar(node.ctype, self.abi) if is_scalar_name(node.ctype) else scalar("int", self.abi)
             t = self._temp(ct, f"k{node.value}")
-            return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(node.value,))
+            r = self._emit("c.const", Opcode.LOAD, (), (t,), imm=(node.value,))
+            self._const_rids.add(r)                            # an integer constant: lets `bi + 3` stay `_BitInt`
+            return r
         if isinstance(node, cast.FloatLit):                   # a float constant -> a typed c.fconst
             ct = _float_lit_type(node.value)                  # f/F -> float, l/L -> long double, else double
             t = self._temp(ct, "fk")
@@ -1047,8 +1098,8 @@ class _FuncLowerer:
             # target loses the sign. Emit the signed fixed-width operator so `(int)(-5.0f)` is -5.
             vt = self.rtypes.get(v)
             cname = (_CAST_W_SIGNED.get(ct.size, "int32_t")
-                     if (vt is not None and vt.is_float and ct.is_integer and ct.signed)
-                     else _cast_name(ct))
+                     if (vt is not None and vt.is_float and ct.is_integer and ct.signed and not ct.is_bitint)
+                     else _cast_name(ct))   # a `_BitInt` target keeps its exact spelling (no width-named fallback)
             return self._emit(f"c.cast:{cname}", Opcode.ADD, (v,), (t,))
         if isinstance(node, (cast.Index, cast.Member)):
             return self._read(self._lvalue(node))
@@ -1684,6 +1735,9 @@ class _FuncLowerer:
         funcptr whose return type wasn't captured (`ret_ct is None`) stays uint32 -- today's behaviour."""
         if ret_ct is not None and ret_ct.is_aggregate:
             return ret_ct
+        if ret_ct is not None and ret_ct.is_bitint:       # a C23 `_BitInt(N)` return keeps its exact width
+            return ret_ct                                 # (it does not promote, and same-type arithmetic on
+                                                          # the result must stay `_BitInt(N)`, not canonicalize)
         if ret_ct is not None and (ret_ct.is_float or (ret_ct.is_integer and ret_ct.size > 4)):
             return ret_ct
         if ret_ct is not None and ret_ct.is_integer and ret_ct.signed and ret_ct.size <= 4:
@@ -2007,7 +2061,11 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     for tag, agg in unit.aggregates.items():
         b = AggregateBuilder(agg.kind, tag, packed=agg.packed, force_align=agg.align)
         for tref, mname, width, malign in agg.members:
-            b.members.append((mname, _resolve_member_type(tref, aggregates, abi), width, malign))
+            mt = _resolve_member_type(tref, aggregates, abi)
+            if mt.is_bitint:                              # a `_BitInt` struct member / bitfield is OUT of the
+                raise CLowerError(                        # supported subset (member layout + access not modeled)
+                    "a `_BitInt` struct/union member is not supported")   # -> route to fallback (conservative)
+            b.members.append((mname, mt, width, malign))
         aggregates[tag] = b.build()
 
     genv: dict[str, tuple] = {}                            # file-scope globals: name -> (rid, CType)
@@ -2053,6 +2111,8 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
         return funcptr(tref.base, ret, params, abi)
     if tref.aggregate:
         base = aggregates[tref.base]
+    elif tref.bit_width:                                  # C23 `_BitInt(N)` (e.g. a function return type)
+        base = bitint(tref.bit_width, signed="unsigned" not in tref.base)
     else:
         base = scalar(tref.base, abi)
     t = base

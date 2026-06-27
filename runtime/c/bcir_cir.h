@@ -77,6 +77,10 @@ typedef struct bcir_resource {
   uint8_t  is_funcptr;       /* a function-pointer value (a named function decayed, or a funcptr param):
                               * stored to a member by a DIRECT `memcpy(&fn, ...)`, not via a `uintN _v` temp
                               * (which would be an invalid pointer->integer conversion) */
+  int      bit_width;        /* a C23 `_BitInt(N)` value's EXACT width N (0 == a normal type; >0 == `_BitInt(N)`).
+                              * A distinct, NON-promoting integer type: the emit spells `_BitInt(N)` /
+                              * `unsigned _BitInt(N)` (signed by is_signed) so Clang applies the N-bit semantics
+                              * in both rails; it is kept OUT of the power-of-two width canonicalization. */
   uint8_t  is_vla;           /* a 1-D stack VLA `T a[n]`: NAMED but NOT declared up front (its runtime size
                               * isn't known until execution reaches the decl) -- the `c.vladecl` claim emits
                               * `<elem> a[<ext_var>];` IN-BODY; `a[i]` masks against ext_var via ptr_extent */
@@ -105,6 +109,8 @@ typedef struct bcir_ctype {
   uint8_t  is_bool;          /* a _Bool/bool type: emit `_Bool` so conversions normalize to 0/1 (§6.3.1.2) */
   uint8_t  is_plain_char;    /* a plain `char` (vs signed/unsigned char): emit `char` (impl-defined sign) */
   uint8_t  is_valist;        /* the `va_list` type (variadic argument cursor) -- emit `va_list` */
+  int      bit_width;        /* a C23 `_BitInt(N)` type's exact width N (0 == a normal type; >0 == `_BitInt(N)`),
+                              * carried on signatures so a param/return spells `_BitInt(N)` faithfully */
   char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1/ptr_to_struct), or funcptr alias (kind 3) */
   int      fp_ret_size;      /* kind-3 funcptr: the captured RETURN type (sign/width/float), used to type a
                               * c.call.indirect / c.call.imember result temp; ZERO if the return wasn't captured */
