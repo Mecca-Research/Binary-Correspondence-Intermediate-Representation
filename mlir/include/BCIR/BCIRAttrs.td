@@ -105,6 +105,37 @@ def BCIR_PrecisionAttr : BCIR_Attr<"Precision", "precision"> {
   let assemblyFormat = "`<` $elem `,` `exact` `=` $exact `,` `tol` `=` $toleranceQ16 `>`";
 }
 
+// --- Timing contract (R19/R20, §5.11 RTL/synchronous-timing) ---
+// OPTIONAL on a claim; mirrors bcir/model/graph.py::Timing field-for-field. A claim with no
+// timing carries none and the timing laws are vacuous over it (the non-disturbance invariant,
+// exactly like R14-R17 are vacuous for the scalar subset). Architecture-agnostic: the channel/
+// lowering layer interprets the fields per target (CPU microarchitectural cost vs FPGA/ASIC RT).
+def BCIR_TimingAttr : BCIR_Attr<"Timing", "timing"> {
+  let summary = "RTL/synchronous-timing metadata (laws R19/R20)";
+  let parameters = (ins
+    StringRefParameter<"clock net / frequency domain ('' = implicit default)">:$clock_domain,
+    "int64_t":$latency_cycles,
+    "int64_t":$min_throughput_q16,
+    "bool":$critical_path,
+    StringRefParameter<"power / voltage domain ('' = implicit default)">:$power_domain,
+    StringRefParameter<"'' | synchronous | asynchronous | mixed">:$sync_type,
+    "int64_t":$clock_frequency_mhz,
+    "int64_t":$setup_hold_margin);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
+// --- Lifetime annotation (R21, §5.12 naked-pointer safety) ---
+// OPTIONAL on a claim; mirrors bcir/model/graph.py::Lifetime. A claim may ALLOCATE the resources
+// it writes (event = "alloc") or FREE the resources it reads (event = "free", the free(p) shape);
+// any other claim is an implicit "use". `epoch` distinguishes a re-allocation. Vacuous when absent.
+def BCIR_LifetimeAttr : BCIR_Attr<"Lifetime", "lifetime"> {
+  let summary = "Pointer-lifetime annotation (law R21: use-after-free / double-free)";
+  let parameters = (ins
+    StringRefParameter<"lifetime event: use | alloc | free">:$event,
+    "int64_t":$epoch);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
 // --- 12-d K_BCIR cost vector (Q16 fixed point; LangRef decimals are normalized sugar) ---
 def BCIR_CostVectorAttr : BCIR_Attr<"CostVector", "costvec"> {
   let summary = "12-dimensional K_BCIR cost vector, Q16 fixed point";

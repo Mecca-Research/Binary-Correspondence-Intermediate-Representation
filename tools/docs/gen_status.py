@@ -60,14 +60,15 @@ def runtime_c() -> list[str]:
 
 
 def verifier_laws() -> list[tuple[str, bool]]:
-    """R1..R18 with whether each has a negative `-verify-diagnostics` case in the law tests.
+    """R1..R21 with whether each has a negative `-verify-diagnostics` case in the law tests.
 
     Detected directly from the committed `mlir/test/passes/verify*.mlir` tree (no hand-listed
-    exceptions): a law is "covered" iff its `Rn` tag appears in a negative case. All 18 currently
-    do, including R1 (`verify_laws.mlir`) and R18 (`verify_callgraph.mlir`).
+    exceptions): a law is "covered" iff its `Rn` tag appears in a negative case. All 21 currently
+    do, including R1 (`verify_laws.mlir`), R18 (`verify_callgraph.mlir`), and the timing/lifetime
+    laws R19/R20/R21 (`verify_timing_lifetime.mlir`).
     """
     neg = "".join(_read(os.path.relpath(f, ROOT)) for f in _glob("mlir/test/passes/verify*.mlir"))
-    return [(f"R{i}", bool(re.search(rf"\bR{i}\b", neg))) for i in range(1, 19)]
+    return [(f"R{i}", bool(re.search(rf"\bR{i}\b", neg))) for i in range(1, 22)]
 
 
 def channels() -> list[tuple[str, str]]:
@@ -83,6 +84,7 @@ def render() -> str:
     ntests, nfiles = python_tests()
     ntd, nneg = mlir_tests()
     laws = verifier_laws()
+    last_law = laws[-1][0]          # e.g. "R21" -- the law range is derived, never hard-coded
     chans = channels()
     kinds = sorted({k for _, k in chans})
     cfiles = runtime_c()
@@ -100,16 +102,19 @@ def render() -> str:
     a(f"| Registered `-bcir-*` passes | **{registered_passes()}** |")
     a(f"| MLIR FileCheck tests (`mlir/test/`) | **{ntd}** ({nneg} `expected-error` negatives) |")
     a(f"| Runtime C components (`runtime/c/`) | **{len(cfiles)}** |")
-    a(f"| Verifier laws | **R1–R18** ({sum(1 for _, ok in laws if ok)}/18 covered) |")
+    a(f"| Verifier laws | **R1–{last_law}** ({sum(1 for _, ok in laws if ok)}/{len(laws)} covered) |")
     a(f"| Hardware channels | **{len(chans)}** ({', '.join(kinds)}) |")
     a("")
-    a("## Verifier law coverage (R1–R18)\n")
+    a(f"## Verifier law coverage (R1–{last_law})\n")
     a("Each law is a first-class `-bcir-verify` check with a negative `-verify-diagnostics` `.mlir`")
     a("case (the table below is computed from `mlir/test/passes/verify*.mlir`). R1 (RID uniqueness)")
     a("and R18 (call-graph integrity) are *additionally* construction-enforced on the oracle rail")
     a("(dict-keyed registry; `plan_composite` raises), so a malformed module can't even be built")
     a("there — but both still carry MLIR negative cases for hand-written IR (R1 in `verify_laws.mlir`,")
-    a("R18 in `verify_callgraph.mlir`).\n")
+    a("R18 in `verify_callgraph.mlir`). R19/R20 (synchronous timing / clock-domain crossing) and R21")
+    a("(pointer lifetime: use-after-free / double-free) ride **optional** claim metadata that defaults")
+    a("to absent, so they are vacuous over the entire scalar/C subset (the non-disturbance invariant) —")
+    a("their negative cases live in `verify_timing_lifetime.mlir`.\n")
     a("| " + " | ".join(law for law, _ in laws) + " |")
     a("|" + "---|" * len(laws))
     a("| " + " | ".join("✅" if ok else "—" for _, ok in laws) + " |")

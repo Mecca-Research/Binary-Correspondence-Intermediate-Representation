@@ -1,4 +1,4 @@
-//===- BCIRVerifyPass.cpp - the -bcir-verify semantic laws R1-R18 -*- C++ -*-===//
+//===- BCIRVerifyPass.cpp - the -bcir-verify semantic laws R1-R21 -*- C++ -*-===//
 //
 // Part of the modular BCIR MLIR pass library (split out of the former monolithic
 // BCIRPasses.cpp). Shared helpers live in BCIRPassSupport.h; registration in
@@ -196,10 +196,11 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
 
   StringRef getArgument() const final { return "bcir-verify"; }
   StringRef getDescription() const final {
-    return "Verify the BCIR semantic laws R1-R18: registry, domain, phase DAG, "
+    return "Verify the BCIR semantic laws R1-R21: registry, domain, phase DAG, "
            "hazard, lane, bounds, cost, plan, provenance, generation, lowering, "
            "policy provenance, CIM/PIM dispatch, DVFS clock, allocator placement, "
-           "accuracy contract, compositional call graph.";
+           "accuracy contract, compositional call graph, synchronous timing, "
+           "clock-domain crossing, pointer lifetime.";
   }
 
   void runOnOperation() override {
@@ -1124,6 +1125,112 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       for (StringRef n : names)
         if (color.lookup(n) == 0)
           visit(n);
+    }
+
+    // R19 (synchronous-timing legality) + R20 (clock-domain-crossing) over the OPTIONAL
+    // claim.timing metadata -- the RTL/synchronous-timing track (§5.11) -- and R21
+    // (pointer-lifetime: use-after-free / double-free) over the OPTIONAL claim.lifetime (§5.12).
+    // A claim with no timing/lifetime is unconstrained, so the whole scalar/C subset verifies
+    // identically (the non-disturbance invariant, exactly like R14-R17). Dual-rail with the
+    // oracle's verify.verify_timing / verify.verify_lifetime. Claims are walked in claim_id order
+    // so the writer->clock-domain map (R20) and the freed set (R21) accumulate deterministically.
+    {
+      SmallVector<ClaimOp> ordered;
+      root->walk([&](ClaimOp c) { ordered.push_back(c); });
+      std::sort(ordered.begin(), ordered.end(),
+                [](ClaimOp a, ClaimOp b) { return a.getClaimId() < b.getClaimId(); });
+      llvm::DenseMap<StringRef, std::string> writerDomain; // resource -> clock_domain of last writer
+      llvm::DenseSet<StringRef> freed;                     // resources freed and not re-allocated
+      for (ClaimOp c : ordered) {
+        // --- R19 / R20 (timing) ---
+        auto tm = c.getTiming();   // std::optional<TimingAttr>
+        if (tm) {
+          StringRef sync = tm->getSyncType();
+          if (!(sync.empty() || sync == "synchronous" || sync == "asynchronous" ||
+                sync == "mixed")) {
+            c.emitError("R19: claim ")
+                << c.getSymName() << " unknown sync_type '" << sync << "'";
+            ok = false;
+          }
+          if (tm->getLatencyCycles() < 0) {
+            c.emitError("R19: claim ") << c.getSymName() << " negative latency_cycles";
+            ok = false;
+          }
+          if (tm->getSetupHoldMargin() < 0) {
+            c.emitError("R19: claim ") << c.getSymName() << " negative setup_hold_margin";
+            ok = false;
+          }
+          if (tm->getClockFrequencyMhz() < 0) {
+            c.emitError("R19: claim ") << c.getSymName() << " negative clock_frequency_mhz";
+            ok = false;
+          }
+          if (sync == "synchronous" && tm->getClockFrequencyMhz() <= 0) {
+            c.emitError("R19: claim ")
+                << c.getSymName() << " a synchronous claim needs a positive clock_frequency_mhz";
+            ok = false;
+          }
+          if (tm->getLatencyCycles() > 0 &&
+              tm->getSetupHoldMargin() > tm->getLatencyCycles()) {
+            c.emitError("R19: claim ")
+                << c.getSymName() << " setup_hold_margin " << tm->getSetupHoldMargin()
+                << " exceeds the stage latency_cycles " << tm->getLatencyCycles();
+            ok = false;
+          }
+          // R20: a RAW dependency that crosses clock domains must be synchronized -- the consumer
+          // declares sync_type='mixed' OR a barriered hazard (the synchronizer / handshake).
+          bool synchronized =
+              (sync == "mixed") || (c.getHazard() == HazardMode::Barriered);
+          StringRef dom = tm->getClockDomain();
+          if (!dom.empty() && !synchronized) {
+            for (Attribute a : c.getReads()) {
+              auto ref = dyn_cast<FlatSymbolRefAttr>(a);
+              if (!ref)
+                continue;
+              auto it = writerDomain.find(ref.getValue());
+              if (it != writerDomain.end() && !it->second.empty() && it->second != dom) {
+                c.emitError("R20: claim ")
+                    << c.getSymName() << " reads @" << ref.getValue() << " from clock domain '"
+                    << it->second << "' into '" << dom
+                    << "' without a synchronizer (declare sync_type='mixed' or a barriered "
+                       "hazard) -- an unguarded clock-domain crossing";
+                ok = false;
+              }
+            }
+          }
+        }
+        // every claim's writes set the clock domain of the resource they produce (dom = "" when
+        // the writer carries no timing) -- so a later cross-domain read is detectable.
+        std::string wdom = tm ? tm->getClockDomain().str() : std::string();
+        for (Attribute a : c.getWrites())
+          if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
+            writerDomain[ref.getValue()] = wdom;
+
+        // --- R21 (lifetime) ---
+        auto lt = c.getLifetime();   // std::optional<LifetimeAttr>
+        StringRef event = lt ? lt->getEvent() : StringRef("use");
+        if (lt && event != "use" && event != "alloc" && event != "free") {
+          c.emitError("R21: claim ")
+              << c.getSymName() << " unknown lifetime event '" << event << "'";
+          ok = false;
+          event = "use";
+        }
+        for (Attribute a : c.getReads()) { // a READ of a freed resource is the dangling deref
+          auto ref = dyn_cast<FlatSymbolRefAttr>(a);
+          if (ref && freed.contains(ref.getValue())) {
+            c.emitError("R21: claim ")
+                << c.getSymName() << (event == "free" ? " double-free of @" : " use-after-free of @")
+                << ref.getValue() << " (freed and not re-allocated)";
+            ok = false;
+          }
+        }
+        if (event == "free") // the read resources die after this claim
+          for (Attribute a : c.getReads())
+            if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
+              freed.insert(ref.getValue());
+        for (Attribute a : c.getWrites()) // a WRITE (reassignment / alloc) re-validates
+          if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
+            freed.erase(ref.getValue());
+      }
     }
 
     // R11: generation validity -- pack tags match the live registry maxima; a
