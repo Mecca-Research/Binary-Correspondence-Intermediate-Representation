@@ -127,20 +127,30 @@ def verify(module: Module) -> list[Diagnostic]:
         # CT2 decoupling soundness: the GGG/random tail executes decoupled from the
         # wave order, so a same-phase conflict touching a sparse claim loses its
         # implicit serialization -- both ends must carry an ordered hazard contract.
+        # R5 can ONLY fire on a conflict where at least one side is sparse, so precompute
+        # sparsity once (not per pair) and skip the whole O(n^2) pair scan when the phase
+        # has no sparse claim -- which collapses a large single-phase function (e.g. a 7500-
+        # claim body) from ~n^2/2 `_conflict` calls to O(n). Behaviour-identical: the same
+        # pairs reach the error condition, in the same order; only the cheap sparse gate now
+        # precedes the costly `_conflict` (and the no-sparse phase is provably a no-op here).
         claims = ph.claims
-        for i, a in enumerate(claims):
-            for b in claims[i + 1:]:
-                if not _conflict(a, b):
-                    continue
-                if not (_is_sparse(a) or _is_sparse(b)):
-                    continue
-                for c in (a, b):
-                    if c.hazard == "unique":
-                        diags.append(Diagnostic(
-                            "R5",
-                            f"claim {c.id}: conflicts across the decoupled GGG tail in "
-                            f"phase {ph.phase_id} without an atomic/barriered hazard",
-                        ))
+        is_sp = [_is_sparse(c) for c in claims]
+        if any(is_sp):
+            for i, a in enumerate(claims):
+                a_sp = is_sp[i]
+                for j in range(i + 1, len(claims)):
+                    if not (a_sp or is_sp[j]):
+                        continue
+                    b = claims[j]
+                    if not _conflict(a, b):
+                        continue
+                    for c in (a, b):
+                        if c.hazard == "unique":
+                            diags.append(Diagnostic(
+                                "R5",
+                                f"claim {c.id}: conflicts across the decoupled GGG tail in "
+                                f"phase {ph.phase_id} without an atomic/barriered hazard",
+                            ))
 
     # R6: lane legality -- lane type matches the declared access pattern.
     for ph in module.phases:
