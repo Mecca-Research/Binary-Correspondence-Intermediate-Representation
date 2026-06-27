@@ -94,6 +94,14 @@ bcir.module @full_vec_add_ct1 attributes {
   // the K_BCIR durations under the target's bandwidth knee.
   bcir.gem.schedule @sched0 { plan = @plan0, mode = "eft", makespan = 7808 : i64, knee = 4 : i32 }
 
+  // Planned GEM matmul (B1): the K_BCIR-chosen tiling/loop-order realization of a 32x32x64 matmul.
+  // The bottleneck is the max,+ roofline = max(compute_cost, mem_cost); quant_bits=8 ties the lanes to
+  // the A1 Q8 bridge. The verifier checks the tiles are in [1, dim] and bottleneck == the max.
+  bcir.gem.matmul @mm0 { m = 32 : i64, n = 32 : i64, k = 64 : i64,
+                         tile_m = 32 : i64, tile_n = 32 : i64, tile_k = 16 : i64, loop_order = "ijk",
+                         compute_cost = 4096 : i64, mem_cost = 6144 : i64, bottleneck = 6144 : i64,
+                         quant_bits = 8 : i32 }
+
   // ---- LangRef Sec. 13: learning placement, as certified data ----
   // L1: the physics-anchored frozen cost table (ratio-1 reference: reproduces
   // the seeded constants; gather_penalty = 8192/256 = 32, base_overhead = 4).
@@ -182,6 +190,7 @@ bcir.module @full_vec_add_ct1 attributes {
 // CHECK: bcir.kbcir.budget @thermal_cap
 // CHECK: bcir.kbcir.scheduled_price @overlap_price
 // CHECK: bcir.gem.schedule @sched0
+// CHECK: bcir.gem.matmul @mm0
 // CHECK: bcir.kbcir.calibration @cal_cpu
 // CHECK: bcir.kbcir.calibration @cal_cpu_bayes
 // CHECK: bcir.kbcir.portfolio @gains

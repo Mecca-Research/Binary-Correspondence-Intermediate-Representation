@@ -18,7 +18,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .cost import TargetProfile
+from .cost import COMPUTE, MEMORY, CostVector, TargetProfile
+from .precision import quantization_error_bound
 from .quantize import dequantize, quantize_per_group, scaled_dot
 
 # ---- the math: a reference and the tiled/quantized realizations (all must agree) ----------------
@@ -137,6 +138,23 @@ def cost_of(M: int, N: int, K: int, tm: int, tn: int, tk: int, target: TargetPro
     mem = (a_reads + b_reads + c_traffic + bw - 1) // bw
     working_set = tm * tk + tk * tn + tm * tn
     return compute, mem, working_set <= _cache_budget_elems(target)
+
+
+def cost_vector(plan: "TilePlan", *, quant_bits: int = 0) -> CostVector:
+    """Express a matmul plan's cost in the production 12-dim K_BCIR CostVector (cost.py) -- this is the
+    "production wiring" that lets a planned gem.matmul be SCORED by the same algebra as every other claim.
+    The analytic roofline terms land on the `compute`/`memory` axes; a quantized realization carries the
+    R17 Q8-bridge bound on the `accuracy` axis. min,+ ranking is then ``cv.couple(factor).dot(weights)``
+    (the existing path/CSE/fusion algebra applies unchanged); the roofline bottleneck is ``bottleneck(cv)``
+    (max,+ over the binding resources -- the SOTA-scan finding that a min,+ sum alone would miss)."""
+    acc = quantization_error_bound() if quant_bits > 0 else 0
+    return CostVector.of(compute=plan.compute_cost, memory=plan.mem_cost, accuracy=acc)
+
+
+def bottleneck(cv: CostVector) -> int:
+    """The max,+ roofline bottleneck of a cost vector: the binding resource among compute and memory
+    (cf. SOTA scan, Pillar 2 -- the bottleneck is a max over competing rooflines, not a min,+ sum)."""
+    return max(cv.v[COMPUTE], cv.v[MEMORY])
 
 
 def plan_matmul(M: int, N: int, K: int, target: TargetProfile | None = None) -> TilePlan:

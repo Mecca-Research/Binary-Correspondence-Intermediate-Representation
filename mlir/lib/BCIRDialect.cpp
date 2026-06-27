@@ -54,6 +54,34 @@ using namespace bcir;
   return ::mlir::success();
 }
 
+::mlir::LogicalResult GEMMatmulOp::verify() {
+  // The B1 plan record: positive shape, each tile in [1, dim], a known loop order, and the
+  // bottleneck = max(compute, memory) (the max,+ roofline the dual-semiring search minimizes).
+  int64_t m = static_cast<int64_t>(getM()), n = static_cast<int64_t>(getN()),
+          k = static_cast<int64_t>(getK());
+  if (m <= 0 || n <= 0 || k <= 0)
+    return emitOpError() << "matmul dims m/n/k must be positive (got " << m << "x" << n << "x" << k
+                         << ")";
+  int64_t tm = static_cast<int64_t>(getTileM()), tn = static_cast<int64_t>(getTileN()),
+          tk = static_cast<int64_t>(getTileK());
+  if (tm < 1 || tm > m || tn < 1 || tn > n || tk < 1 || tk > k)
+    return emitOpError() << "each tile extent must be in [1, dim] (tiles " << tm << "x" << tn << "x"
+                         << tk << " vs dims " << m << "x" << n << "x" << k << ")";
+  ::llvm::StringRef lo = getLoopOrder();
+  if (lo != "ijk" && lo != "ikj" && lo != "jik")
+    return emitOpError() << "loop_order must be one of ijk|ikj|jik (got '" << lo << "')";
+  int64_t compute = static_cast<int64_t>(getComputeCost()),
+          mem = static_cast<int64_t>(getMemCost()), bn = static_cast<int64_t>(getBottleneck());
+  if (compute < 0 || mem < 0)
+    return emitOpError() << "compute_cost and mem_cost must be non-negative";
+  int64_t mx = compute > mem ? compute : mem;
+  if (bn != mx)
+    return emitOpError() << "bottleneck must equal max(compute_cost, mem_cost) = " << mx << " (got "
+                         << bn << ")";
+  // quant_bits is an unsigned i32 attr (0 = dense), so it cannot be negative -- no further check.
+  return ::mlir::success();
+}
+
 ::mlir::LogicalResult ClaimOp::verify() {
   // getCount() is uint64_t (an i64 attr); reinterpret signed so a negative literal is caught.
   int64_t count = static_cast<int64_t>(getCount());
