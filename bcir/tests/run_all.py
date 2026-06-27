@@ -7,7 +7,13 @@ reports PASS/FAIL. Usable two ways:
     python -m bcir.tests.run_all --tier c-runtime      # + the C byte-identity tier
     python -m bcir.tests.run_all --tier silicon-degrade # + measured benchmarks (degrade-ok)
     python -m bcir.tests.run_all --tier thorough        # everything (full toolchain + campaigns)
+    python -m bcir.tests.run_all -j1                    # force the serial path (default: all cores)
     python -m pytest bcir/tests                         # if pytest is installed (same tests)
+
+The suite is dominated by independent compile-and-run tests, so by default it runs the
+``test_*`` callables across all cores (a fork pool; ``-j N`` / ``$BCIR_JOBS`` / ``-j1`` to
+override). A forked worker inherits the applied tier + already-imported modules, so the
+capability gate and per-process build caches carry over with no re-setup.
 
 Named tiers are an *escalating capability ladder* — each adds what the previous
 exposes (``quick`` ⊂ ``c-runtime`` ⊂ ``silicon-degrade`` ⊂ ``thorough``). They work
@@ -21,7 +27,9 @@ which of them do real work vs. self-skip.
 
 from __future__ import annotations
 
+import concurrent.futures
 import importlib
+import multiprocessing
 import os
 import shutil
 import sys
@@ -204,6 +212,55 @@ _TIER_BLURB = {
 }
 
 
+def _collect_tests() -> list[tuple[str, str]]:
+    """Import every module and return the flat (module, test) work list, in declared module order
+    then alphabetical test order (so a serial run is byte-identical to the historic behaviour)."""
+    pairs: list[tuple[str, str]] = []
+    for modname in _MODULES:
+        mod = importlib.import_module(modname)
+        for name in sorted(dir(mod)):
+            if name.startswith("test_") and callable(getattr(mod, name)):
+                pairs.append((modname, name))
+    return pairs
+
+
+def _run_one(pair: tuple[str, str]) -> tuple[str, str, str | None]:
+    """Run one test function and return (module, test, traceback-or-None). Runs in a forked worker
+    that inherits the parent's applied tier + already-imported modules (so import is instant and the
+    `shutil.which` capability gate is already in effect)."""
+    modname, name = pair
+    try:
+        getattr(importlib.import_module(modname), name)()
+    except Exception:  # noqa: BLE001 - capture every failure for the parent to report
+        return modname, name, traceback.format_exc()
+    return modname, name, None
+
+
+def _resolve_jobs() -> int:
+    """Worker count: ``-j N`` / ``--jobs N`` argv > ``$BCIR_JOBS`` > all cores. The suite is dominated
+    by independent compile-and-run tests, so running across cores is a ~Ncores win at every tier; the
+    fork is cheap. ``-j1`` (or ``BCIR_JOBS=1``) forces the historic serial path; ``-j0``/``auto`` ==
+    all cores. Out-of-range values clamp to ``[1, cpu]``."""
+    val: str | None = None
+    argv = sys.argv[1:]
+    for i, a in enumerate(argv):
+        if a in ("-j", "--jobs") and i + 1 < len(argv):
+            val = argv[i + 1]; break
+        if a.startswith("-j") and a != "-j":
+            val = a[2:]; break
+        if a.startswith("--jobs="):
+            val = a.split("=", 1)[1]; break
+    if val is None:
+        val = os.environ.get("BCIR_JOBS")
+    cpu = os.cpu_count() or 1
+    if val is None or val in ("auto", "0"):
+        return cpu
+    try:
+        return max(1, min(cpu, int(val)))
+    except ValueError:
+        return cpu
+
+
 def main() -> int:
     if "--list-tiers" in sys.argv:
         print("tiers (escalating capability ladder):")
@@ -212,26 +269,35 @@ def main() -> int:
         return 0
     tier = resolve_tier()
     _apply_tier(tier)                       # gate the toolchain BEFORE importing test modules
-    print(f"[run_all] tier={tier} — {_TIER_BLURB[tier]}\n")
-    passed = 0
-    failed = 0
-    for modname in _MODULES:
-        mod = importlib.import_module(modname)
-        for name in sorted(dir(mod)):
-            if not name.startswith("test_"):
-                continue
-            fn = getattr(mod, name)
-            if not callable(fn):
-                continue
-            try:
-                fn()
-            except Exception:  # noqa: BLE001 - report every failure
-                failed += 1
-                print(f"FAIL {modname}.{name}")
-                traceback.print_exc()
-            else:
-                passed += 1
-                print(f"PASS {modname}.{name}")
+    jobs = _resolve_jobs()
+    print(f"[run_all] tier={tier} — {_TIER_BLURB[tier]}  (jobs={jobs})\n")
+    pairs = _collect_tests()                # imports every module in the parent (warms fork inheritance)
+    passed = failed = 0
+
+    def _report(modname: str, name: str, tb: str | None) -> None:
+        nonlocal passed, failed
+        if tb is None:
+            passed += 1
+            print(f"PASS {modname}.{name}")
+        else:
+            failed += 1
+            print(f"FAIL {modname}.{name}\n{tb}", end="")
+
+    if jobs <= 1:
+        for pair in pairs:                  # the historic serial path, unchanged
+            _report(*_run_one(pair))
+    else:
+        # Fork so workers inherit the applied tier + already-imported modules (no re-import, no
+        # re-gate). ProcessPoolExecutor workers are NON-daemonic, so a test that spawns its own pool
+        # (the cross-fixture parity check) still works. `.map` preserves submission order for a
+        # stable, diff-friendly log; chunksize=1 dispatches one test at a time so a worker that frees
+        # up pulls the next -- natural load balancing for the very uneven per-test compile cost (the C
+        # twin's build cache is a worker-process global, so it is still built once per worker).
+        ctx = multiprocessing.get_context("fork")
+        with concurrent.futures.ProcessPoolExecutor(max_workers=jobs, mp_context=ctx) as pool:
+            for res in pool.map(_run_one, pairs, chunksize=1):
+                _report(*res)
+
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
 
