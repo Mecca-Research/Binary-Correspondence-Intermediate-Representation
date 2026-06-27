@@ -18,6 +18,9 @@ Options (a cc-compatible subset):
     --emit-json     print the diagnostics as a machine-readable JSON array, then stop
     --fallback      graceful degradation: a construct outside the supported subset reports a
                     fallback-to-LLVM signal (exit 2) instead of a hard error
+    --r21 <policy>  how a detected use-after-free / double-free (R21, §5.12) gates the compile:
+                    advisory (default; surfaced, never gates), fallback (route to LLVM, exit 2),
+                    or reject (hard verify error, exit 1)
     -o <file>       write output to <file> instead of stdout
     --explain       also print the per-function explain record
     --selfcheck     print the generated self-check harness
@@ -47,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     files: list[str] = []
     std = "c23"
     pp_only = show_explain = selfcheck = syntax_only = emit_json = fallback = False
+    r21_policy = "advisory"
     target: str | None = None
     out_path: str | None = None
 
@@ -63,6 +67,10 @@ def main(argv: list[str] | None = None) -> int:
             emit_json = True
         elif a == "--fallback":
             fallback = True
+        elif a == "--r21":
+            i += 1; r21_policy = args[i]
+        elif a.startswith("--r21="):
+            r21_policy = a[len("--r21="):]
         elif a == "--target":
             i += 1; target = args[i]
         elif a.startswith("--target="):
@@ -103,6 +111,10 @@ def main(argv: list[str] | None = None) -> int:
     if target is not None and target not in TARGETS:
         sys.stderr.write(f"bcir-cfront: unknown --target {target!r}; choose from "
                          f"{', '.join(sorted(TARGETS))}\n")
+        return 2
+    if r21_policy not in ("advisory", "fallback", "reject"):
+        sys.stderr.write(f"bcir-cfront: unknown --r21 policy {r21_policy!r} "
+                         f"(advisory|fallback|reject)\n")
         return 2
     if std in _STD_VERSION:
         defines.setdefault("__STDC_VERSION__", _STD_VERSION[std])
@@ -156,6 +168,20 @@ def main(argv: list[str] | None = None) -> int:
             rep = diagnose(text, search_paths=search, defines=defines, filename=path)
             sys.stderr.write((rep.render() + "\n") if rep.diagnostics else f"{path}: error: {e}\n")
             rc = 1
+            continue
+
+        # R21 lifetime policy (§5.12): a detected use-after-free / double-free routes the unit to the
+        # LLVM backend (fallback, rc 2) or hard-rejects it (rc 1) under a non-advisory policy. The
+        # detection is the advisory `lifetime_diagnostics`; only the verdict changes. Parity: the C
+        # twin driver runtime/c/bcir_cc.c applies the identical policy + exit codes.
+        if r21_policy != "advisory" and r.lifetime_diagnostics:
+            d0 = r.lifetime_diagnostics[0]
+            if r21_policy == "fallback":
+                sys.stderr.write(f"{path}: fallback to LLVM backend: lifetime: {d0.law} {d0.message}\n")
+                rc = 2
+            else:                                        # reject
+                sys.stderr.write(f"{path}: lifetime error: {d0.law} {d0.message}\n")
+                rc = 1
             continue
 
         if selfcheck:

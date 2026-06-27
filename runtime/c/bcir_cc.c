@@ -34,6 +34,25 @@ static void cc_r21_print(const char *funcname, const char *kind, void *ctx) {
   fprintf((FILE *)ctx, "R21 %s: %s\n", funcname, kind);
 }
 
+/* R21 lifetime policy (§5.12): how a detected use-after-free / double-free gates the compile.
+ *   advisory -- the default: surfaced (with --emit-claimgraph) but never affects the verdict;
+ *   fallback -- route the unit to the LLVM backend (exit 2), the --fallback contract;
+ *   reject   -- a hard verify error (exit 1). The detection (the freed-set walk in
+ * bcir_verify_lifetime) is unchanged; only the verdict the driver draws from it changes. */
+typedef enum { R21_ADVISORY, R21_FALLBACK, R21_REJECT } r21_policy;
+
+/* Count R21 findings and keep the first (func, kind) for the message; does NOT print -- the driver
+ * emits a single summary line under a non-advisory policy. */
+typedef struct { int count; char kind[32]; char func[64]; } r21_count_ctx;
+static void cc_r21_count(const char *funcname, const char *kind, void *ctx) {
+  r21_count_ctx *c = (r21_count_ctx *)ctx;
+  if (c->count == 0) {
+    snprintf(c->kind, sizeof c->kind, "%s", kind);
+    snprintf(c->func, sizeof c->func, "%s", funcname);
+  }
+  c->count++;
+}
+
 #define MAXD 64
 
 static const char *USAGE =
@@ -43,6 +62,9 @@ static const char *USAGE =
   "                 riscv64-linux, x86_64-windows, i386-linux\n"
   "  --fallback     total compile: a construct outside the supported subset exits 2 with\n"
   "                 'fallback to LLVM backend: <phase>: <reason>' instead of a hard error\n"
+  "  --r21 <policy> how a detected use-after-free / double-free (R21, §5.12) gates the compile:\n"
+  "                 advisory (default; surfaced, never gates) | fallback (route to LLVM, exit 2)\n"
+  "                 | reject (hard verify error, exit 1)\n"
   "  --emit-effects per-function module-scope effect footprints + the commutation matrix\n";
 
 static void dirof(const char *path, char *out, size_t cap) {
@@ -71,6 +93,7 @@ int main(int argc, char **argv) {
   const char *files[256]; int nfiles = 0;
   const char *std = "c23", *out_path = NULL, *target = NULL;
   int pp_only = 0, emit_c = 0, emit_cg = 0, emit_pack = 0, emit_fx = 0, fallback = 0;
+  r21_policy r21 = R21_ADVISORY;
 
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
@@ -78,6 +101,13 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--target")) { if (++i < argc) target = argv[i]; }
     else if (!strncmp(a, "--target=", 9)) target = a + 9;
     else if (!strcmp(a, "--fallback")) fallback = 1;
+    else if (!strcmp(a, "--r21") || !strncmp(a, "--r21=", 6)) {
+      const char *v = a[5] == '=' ? a + 6 : (++i < argc ? argv[i] : "");
+      if (!strcmp(v, "advisory")) r21 = R21_ADVISORY;
+      else if (!strcmp(v, "fallback")) r21 = R21_FALLBACK;
+      else if (!strcmp(v, "reject")) r21 = R21_REJECT;
+      else { fprintf(stderr, "bcir-cc: unknown --r21 policy '%s' (advisory|fallback|reject)\n", v); return 2; }
+    }
     else if (!strcmp(a, "--emit-effects")) emit_fx = 1;
     else if (!strcmp(a, "--emit-c")) emit_c = 1;
     else if (!strcmp(a, "--emit-claimgraph")) emit_cg = 1;
@@ -139,6 +169,21 @@ int main(int argc, char **argv) {
       fprintf(stderr, "%s: parse error: %s\n", path, r.diag); rc = 1; continue;
     }
     if (!r.ok) { fprintf(stderr, "%s: verify error: %s\n", path, r.diag); rc = 1; bcir_cfront_free(&r); continue; }
+
+    /* R21 lifetime policy (§5.12): a detected use-after-free / double-free routes the unit to the
+     * LLVM backend (fallback, rc 2) or hard-rejects it (rc 1) under a non-advisory policy. The
+     * detection is the same freed-set walk surfaced advisory below; only the verdict changes.
+     * Parity: bcir/frontends/cfront/__main__.py applies the identical policy + exit codes. */
+    if (r21 != R21_ADVISORY) {
+      r21_count_ctx lc = {0, "", ""};
+      bcir_verify_lifetime(&r.unit, cc_r21_count, &lc);
+      if (lc.count > 0) {
+        if (r21 == R21_FALLBACK) { fprintf(stderr, "%s: fallback to LLVM backend: lifetime: R21 %s in %s\n", path, lc.kind, lc.func); rc = 2; }
+        else { fprintf(stderr, "%s: lifetime error: R21 %s in %s\n", path, lc.kind, lc.func); rc = 1; }
+        bcir_cfront_free(&r);
+        continue;
+      }
+    }
 
     if (emit_c) {
       /* §5.12: a masked (bounds-promoted) access emits `a[BCIR_CHK(...)]`, which references the
