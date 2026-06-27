@@ -97,17 +97,33 @@ def reduction_error_bound(count: int, *, compensated: bool = False) -> int:
     return 1 if compensated else n
 
 
+def quantization_error_bound(*, rounding: str = "nearest") -> int:
+    """Worst-case round-trip error (ULPs at the realized per-group grid) of the Q8<->float32<->Q8 bridge
+    (`bcir.kbcir.quantize`): quantizing one value to a `bits`-wide code at the group's power-of-two scale
+    loses <= 1/2 ULP (round-to-nearest) or < 1 ULP (truncate) -- both bounded by 1 ULP *at the grid*. The
+    per-group SCALE is what makes that 1-ULP grid fine in real terms; choosing it is quantize.py's job,
+    certifying the contract is R17's. (Integer currency, so both modes report the conservative 1 ULP.)"""
+    return ULP
+
+
 def accuracy_bound(claim, *, compensated: bool = False) -> int:
     """Static worst-case error (ULPs) for a claim's Q8 realization -- the deterministic
     producer for the cost vector's accuracy dimension. A `reduce.*` claim accumulates
     `count` terms (bound = count ULP naive, 1 ULP compensated); any other elementwise
-    Q8 op truncates at most once (1 ULP). Opt-in: callers feed this into the accuracy
-    dim explicitly; it is not wired into the default plan cost."""
+    Q8 op truncates at most once (1 ULP). A `quantize.*` claim is the bridge itself (1 ULP
+    at its grid). A claim whose INPUTS are quantized lanes (`quantized_bits > 0`) ADDS the
+    bridge's round-trip step to its own error -- so a quantized reduction is `quant + reduce`,
+    and a tight tolerance forces BOTH compensation and budgeting the quant step (the A1
+    inference contract). Opt-in: callers feed this into the accuracy dim explicitly; it is
+    not wired into the default plan cost (the pinned K_BCIR scores are unaffected)."""
     op = getattr(claim, "op", "") or ""
     n = max(1, getattr(claim, "count", 1))
-    if op.startswith("reduce."):
-        return reduction_error_bound(n, compensated=compensated)
-    return ULP
+    if op.startswith("quantize"):
+        return quantization_error_bound()
+    base = reduction_error_bound(n, compensated=compensated) if op.startswith("reduce.") else ULP
+    if getattr(claim, "quantized_bits", 0) > 0:        # consumes `_BitInt(N)` quantized lanes
+        base += quantization_error_bound()
+    return base
 
 
 def meets_tolerance(claim, tolerance_ulp: int, *, compensated: bool = False) -> bool:

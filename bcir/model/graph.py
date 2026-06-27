@@ -93,6 +93,8 @@ class Claim:
     primary_rid: Optional[int] = None
     precision: str = ""              # "" (naive) | "compensated" (residual-carry MAC)
     tolerance_ulp: int = 0           # accuracy contract: 0 = none; >0 = max Q8-ULP error (R17)
+    quantized_bits: int = 0          # 0 = dense (no-op); >0 = inputs are `_BitInt(N)` per-group quantized
+                                     # lanes (A1), so R17 adds the Q8<->f32<->Q8 bridge step to the bound
     dynamic: bool = False            # True: `count` is a static UPPER BOUND (dynamic shape);
                                      # the plan is valid + worst-case-priced for any actual <= count
     timing: Optional["Timing"] = None  # OPTIONAL RTL/synchronous-timing metadata (§5.11); None = the

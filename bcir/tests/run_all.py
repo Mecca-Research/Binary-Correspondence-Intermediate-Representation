@@ -175,6 +175,7 @@ _MODULES = [
     "bcir.tests.test_silicon",
     "bcir.tests.test_persistent_oracles",
     "bcir.tests.test_precision",
+    "bcir.tests.test_quantize",
     "bcir.tests.test_differential",
     "bcir.tests.test_target_matrix",
     "bcir.tests.test_c23_kernels",
