@@ -665,7 +665,8 @@ from bcir.model import Domain
 r=compile_unit(open('${tmp}/pstress.c').read(), check_clang=False)
 fns=r.lowered.functions; lf=fns[next(reversed(fns))]
 kn=sum(1 for c in lf.claims if c.op=='c.const'); bo=sum(1 for c in lf.claims if c.op.startswith('c.bin.'))
-print(f'funcs={len(fns)} claims={len(lf.claims)} mmio=0 bf=0 const={kn} binop={bo} call=0 ok={1 if r.is_clean else 0}')")"
+repro=sum(1 for f in fns.values() if getattr(f,'reproducible',False))  # A1.3: matches the C twin's repro=N
+print(f'funcs={len(fns)} claims={len(lf.claims)} mmio=0 bf=0 const={kn} binop={bo} call=0 repro={repro} ok={1 if r.is_clean else 0}')")"
 [ -n "${c_ps}" ] && [ "${c_ps}" = "${py_ps}" ] \
   && echo "  PASS pscale: 20 structs / 25 globals / 300 locals compile clean == oracle (${c_ps})" \
   || { echo "  FAIL: pscale (C='${c_ps}' PY='${py_ps}')"; exit 1; }
