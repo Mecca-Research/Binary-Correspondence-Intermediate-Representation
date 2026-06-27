@@ -120,3 +120,44 @@ def max_abs_error(values, group_size: int, bits: int, *, rounding: str = "neares
     strictly bounded by each group's ``error_bound`` (the property R17 certifies)."""
     deq = roundtrip(values, group_size, bits, rounding=rounding)
     return max((abs(float(v) - d) for v, d in zip(values, deq)), default=0.0)
+
+
+# --- quantized dot product: the inference primitive (a matmul is a grid of these) ----------------
+# Integer-code accumulation is EXACT -- a sum of `bits`-wide code products carries no per-term Q8
+# truncation (unlike a fixed-point reduce). So a quantized dot product's only error is the INPUT
+# quantization; the accumulation contributes none. The exact integer sum is what the `_BitInt(N)`-lane
+# C kernel (lower.c_kernel.emit_quantized_dot_c) computes; the per-group scales are applied here.
+
+def integer_dot(codes_a, codes_b) -> int:
+    """Exact integer dot product of two equal-length code vectors (Python big-ints: no overflow, the
+    reference the `_BitInt`-lane C kernel's wide accumulator must match within its declared width)."""
+    if len(codes_a) != len(codes_b):
+        raise ValueError(f"length mismatch: {len(codes_a)} != {len(codes_b)}")
+    return sum(int(a) * int(b) for a, b in zip(codes_a, codes_b))
+
+
+def scaled_dot(groups_a, groups_b) -> float:
+    """Dequantized dot product of two identically-grouped quantizations: per group, the EXACT integer
+    code dot times the product of the two power-of-two scales, summed over groups (real units)."""
+    if len(groups_a) != len(groups_b):
+        raise ValueError(f"group count mismatch: {len(groups_a)} != {len(groups_b)}")
+    acc = 0.0
+    for ga, gb in zip(groups_a, groups_b):
+        acc += integer_dot(ga.codes, gb.codes) * math.ldexp(1.0, ga.scale_exp + gb.scale_exp)
+    return acc
+
+
+def quantized_dot(a, b, group_size: int, bits: int, *, rounding: str = "nearest") -> float:
+    """float -> per-group quantize BOTH operands -> exact integer code dot per group -> rescale. The end-
+    to-end quantized inference dot product; its error vs the exact float dot is bounded by the INPUT
+    quantization alone (the accumulation is exact)."""
+    qa = quantize_per_group(a, group_size, bits, rounding=rounding)
+    qb = quantize_per_group(b, group_size, bits, rounding=rounding)
+    return scaled_dot(qa, qb)
+
+
+def accumulator_bits(lane_bits: int, count: int) -> int:
+    """The exact accumulator width for a `count`-term dot product of `lane_bits` codes: a product needs
+    2*lane_bits bits, and summing `count` of them needs ceil(log2(count)) carry bits more. This is the
+    width the `_BitInt`-lane kernel must declare so the integer accumulation never overflows (= is exact)."""
+    return 2 * lane_bits + max(0, (max(1, count) - 1)).bit_length()

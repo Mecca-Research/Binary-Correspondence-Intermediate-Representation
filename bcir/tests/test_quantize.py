@@ -7,11 +7,17 @@ fit their `_BitInt(N)` lane (|code| <= code_max -- no overflow); determinism; ed
 claims (a quantize bridge is 1 ULP; a quantized reduction is quant + reduce, so a tight tolerance forces
 both compensation and budgeting the quant step). All pure-Python + deterministic (no toolchain needed)."""
 
+import os
 import random
+import shutil
+import subprocess
+import tempfile
 
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound, reduction_error_bound
-from bcir.kbcir.quantize import (QGroup, code_max, dequantize, max_abs_error, quantize_group,
-                                 quantize_per_group, roundtrip)
+from bcir.kbcir.quantize import (QGroup, accumulator_bits, code_max, dequantize, integer_dot,
+                                 max_abs_error, quantize_group, quantize_per_group, quantized_dot,
+                                 roundtrip, scaled_dot)
+from bcir.lower.c_kernel import emit_quantized_dot_c
 from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 from bcir.verify import verify_accuracy
 
@@ -214,3 +220,97 @@ def test_r17_is_a_noop_for_dense_claims_unchanged():
     # the non-disturbance guard: a dense (quantized_bits=0) claim with no tolerance is untouched.
     assert verify_accuracy(_module(_claim("reduce.add", count=1000), 1000)) == []
     assert accuracy_bound(_claim("reduce.add", count=1000)) == reduction_error_bound(1000)
+
+
+# --- the quantized dot product: the inference primitive (a matmul is a grid of these) ---
+
+def test_integer_dot_is_exact_and_order_independent():
+    a = [3, -2, 7, 0, -5]
+    b = [1, 4, -1, 9, 2]
+    assert integer_dot(a, b) == sum(x * y for x, y in zip(a, b)) == -22
+    assert integer_dot(a, b) == integer_dot(b, a)
+    try:
+        integer_dot([1, 2], [1]); assert False, "length mismatch should raise"
+    except ValueError:
+        pass
+
+
+def test_accumulator_width_holds_the_exact_sum():
+    # a product of two N-bit codes needs 2N bits; summing `count` needs ceil(log2(count)) carry bits.
+    assert accumulator_bits(8, 1) == 16
+    assert accumulator_bits(8, 64) == 16 + 6
+    assert accumulator_bits(16, 16) == 32 + 4
+    # the contract: the worst-case |dot| fits in accumulator_bits (signed) for any in-lane codes.
+    for lane_bits, count in [(4, 9), (8, 64), (12, 32)]:
+        cmax = code_max(lane_bits)
+        worst = cmax * cmax * count                         # all-max-magnitude products
+        assert worst < (1 << (accumulator_bits(lane_bits, count) - 1))
+
+
+def test_scaled_dot_matches_the_float_reference_within_quantization_error():
+    rng = random.Random(0xD07)
+    for _ in range(200):
+        n = rng.randint(1, 32)
+        a = [rng.uniform(-4, 4) for _ in range(n)]
+        b = [rng.uniform(-4, 4) for _ in range(n)]
+        exact = sum(x * y for x, y in zip(a, b))
+        approx = quantized_dot(a, b, group_size=8, bits=8)
+        # 8-bit per-group quant of |.|<=4 operands: each product error is small; the sum of n of them is
+        # bounded well under a loose envelope (this asserts the bridge is faithful, not a tight ULP claim).
+        assert abs(exact - approx) <= 0.5 * n + 1e-6
+
+
+def test_per_group_quantized_dot_beats_per_tensor_on_a_wide_range():
+    G = 16
+    a = [500.0 + i for i in range(G)] + [0.02 * (i + 1) for i in range(G)]
+    b = [0.03 * (i + 1) for i in range(G)] + [400.0 + i for i in range(G)]   # the tiny weights pair with big
+    exact = sum(x * y for x, y in zip(a, b))
+    per_tensor = abs(exact - scaled_dot(quantize_per_group(a, 2 * G, 6), quantize_per_group(b, 2 * G, 6)))
+    per_group = abs(exact - scaled_dot(quantize_per_group(a, G, 6), quantize_per_group(b, G, 6)))
+    assert per_group < per_tensor
+
+
+def test_emit_quantized_dot_uses_exact_width_bitint_lanes():
+    c = emit_quantized_dot_c(lane_bits=12, count=32)
+    assert "_BitInt(12) q_lane_t" in c                       # exact 12-bit lane (no padding to 16)
+    assert f"_BitInt({accumulator_bits(12, 32)}) q_acc_t" in c
+    assert "__STDC_VERSION__ >= 202311L" in c and "__BITINT_MAXWIDTH__" in c   # C23-gated, C11 fallback
+    try:
+        emit_quantized_dot_c(lane_bits=32, count=1 << 20); assert False, "acc > 64 should raise"
+    except ValueError:
+        pass
+
+
+def test_emit_quantized_dot_compiles_and_matches_the_exact_reference():
+    cc = shutil.which("clang")
+    if not cc:
+        return                                               # quick tier hides the toolchain -> self-skip
+    rng = random.Random(0x90D)
+    lane_bits, n = 12, 24
+    a = [rng.uniform(-2, 2) for _ in range(n)]
+    b = [rng.uniform(-2, 2) for _ in range(n)]
+    qa = quantize_per_group(a, n, lane_bits)                 # one group -> one scale, codes drive the kernel
+    qb = quantize_per_group(b, n, lane_bits)
+    codes_a, codes_b = qa[0].codes, qb[0].codes
+    ref = integer_dot(codes_a, codes_b)                      # the exact integer dot the kernel must reproduce
+    kernel = emit_quantized_dot_c(lane_bits, n, "qdot")
+    main = (f"\n#include <stdio.h>\n"
+            f"int main(void){{\n"
+            f"  q_lane_t A[{n}] = {{{', '.join(str(c) for c in codes_a)}}};\n"
+            f"  q_lane_t B[{n}] = {{{', '.join(str(c) for c in codes_b)}}};\n"
+            f'  printf("%lld %d\\n", (long long)qdot(A, B, {n}), BCIR_QDOT_BITINT);\n'
+            f"  return 0;\n}}\n")
+    with tempfile.TemporaryDirectory() as d:
+        src = os.path.join(d, "qd.c")
+        open(src, "w").write(kernel + main)
+        seen = {}
+        for std in ("c23", "c11"):
+            exe = os.path.join(d, f"qd_{std}")
+            b1 = subprocess.run([cc, f"-std={std}", "-O2", src, "-o", exe], capture_output=True, text=True)
+            assert b1.returncode == 0, f"{std} build: {b1.stderr}"
+            r = subprocess.run([exe], capture_output=True, text=True)
+            assert r.returncode == 0, r.stderr
+            val, bitint = r.stdout.split()
+            assert int(val) == ref, f"{std}: kernel {val} != exact {ref}"   # exact integer accumulation
+            seen[std] = bitint
+        assert seen["c23"] == "1" and seen["c11"] == "0"     # C23 used _BitInt; C11 used the fallback

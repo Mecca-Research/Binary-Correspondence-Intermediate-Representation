@@ -237,6 +237,53 @@ def emit_qfixed_kernel_c(module: Module, result: RealizationResult,
     )
 
 
+def emit_quantized_dot_c(lane_bits: int, count: int, fn_name: str = "bcir_qdot") -> str:
+    """Emit a quantized integer DOT PRODUCT over exact-width `_BitInt(lane_bits)` code lanes -- the A1
+    inference primitive (a matmul is a grid of these; B1/B5 build on it). The accumulation is INTEGER and
+    EXACT: a `2*lane_bits + ceil(log2(count))`-bit accumulator holds the full sum of code products with no
+    per-term truncation, so -- unlike a Q8 fixed-point reduce -- it adds ZERO error (the quantized dot's
+    only error is the input quantization; ``bcir.kbcir.quantize.accumulator_bits`` is this width).
+
+    Portable like the Q-fixed kernel: the lane/accumulator are a `_BitInt(N)`/`_BitInt(acc)` pair under
+    C23 (when ``__BITINT_MAXWIDTH__`` admits the accumulator) and the smallest standard ints otherwise,
+    selected by the preprocessor -- so the same source builds bit-identically under -std=c23 and -std=c11.
+    The dequant per-group scale is applied by the caller (oracle ``quantize.scaled_dot``); this kernel is
+    the pure exact-integer core."""
+    if lane_bits < 2:
+        raise ValueError(f"lane_bits must be >= 2; got {lane_bits}")
+    from ..kbcir.quantize import accumulator_bits          # the exact-accumulation width contract
+    acc_bits = accumulator_bits(lane_bits, count)
+    if acc_bits > 64:
+        raise ValueError(f"acc_bits {acc_bits} (lane_bits={lane_bits}, count={count}) exceeds the 64-bit "
+                         f"standard-int fallback ceiling; the C23 _BitInt path would still hold it")
+    lane_std, acc_std = _std_int_for(lane_bits), _std_int_for(acc_bits)
+    return (
+        f"/* BCIR -> quantized integer dot product (exact-width _BitInt lanes). lane_bits={lane_bits} "
+        f"count={count} acc_bits={acc_bits} (the accumulation is exact -> zero reduction error; only the "
+        f"input quantization contributes). */\n"
+        "#include <stddef.h>\n#include <stdint.h>\n"
+        f"#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L \\\n"
+        f"    && defined(__BITINT_MAXWIDTH__) && __BITINT_MAXWIDTH__ >= {acc_bits}\n"
+        f"  typedef _BitInt({lane_bits}) q_lane_t;   /* exact {lane_bits}-bit code lane */\n"
+        f"  typedef _BitInt({acc_bits}) q_acc_t;     /* exact {acc_bits}-bit dot accumulator */\n"
+        f"  #define BCIR_QDOT_BITINT 1\n"
+        f"#else\n"
+        f"  typedef {lane_std} q_lane_t;     /* portable fallback: smallest std int >= {lane_bits} bits */\n"
+        f"  typedef {acc_std} q_acc_t;\n"
+        f"  #define BCIR_QDOT_BITINT 0\n"
+        f"#endif\n"
+        f'_Static_assert(BCIR_QDOT_BITINT || sizeof(q_acc_t) * 8 >= {acc_bits},\n'
+        f'               "BCIR quantized-dot accumulator must hold the {acc_bits}-bit exact sum");\n'
+        f"\n"
+        f"int64_t {fn_name}(const q_lane_t * restrict A, const q_lane_t * restrict B, size_t n) {{\n"
+        f"  q_acc_t acc = 0;\n"
+        f"  for (size_t i = 0; i < n; ++i)\n"
+        f"    acc += (q_acc_t)A[i] * (q_acc_t)B[i];     /* exact integer MAC -- no truncation */\n"
+        f"  return (int64_t)acc;\n"
+        f"}}\n"
+    )
+
+
 def emit_qfixed_selfcheck_c(module: Module, result: RealizationResult,
                             fn_name: str = "bcir_qfixed", lane_bits: int = 16,
                             frac_bits: int = 8) -> str:
