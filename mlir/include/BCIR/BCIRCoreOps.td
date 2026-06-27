@@ -34,7 +34,12 @@ defvar BCIR_ClaimAttrs = (ins
   // Dynamic shape (compose): `count` is a STATIC UPPER BOUND, so the plan priced at it is a
   // worst-case latency bound that holds for any actual size <= the bound (compose.dynamic /
   // plan_holds_for). Defaulted false (an exact static count) so existing IR parses.
-  DefaultValuedAttr<BoolAttr, "false">:$dynamic);
+  DefaultValuedAttr<BoolAttr, "false">:$dynamic,
+  // OPTIONAL timing (§5.11, laws R19/R20) + lifetime (§5.12, law R21) metadata, mirroring
+  // model.graph Timing/Lifetime. Absent for the entire scalar/C subset, so R19/R20/R21 are
+  // vacuous over it (the non-disturbance invariant -- existing IR parses and verifies unchanged).
+  OptionalAttr<BCIR_TimingAttr>:$timing,
+  OptionalAttr<BCIR_LifetimeAttr>:$lifetime);
 
 def BCIR_ModuleOp : BCIR_Op<"module",
     [IsolatedFromAbove, NoTerminator, SymbolTable, Symbol]> {

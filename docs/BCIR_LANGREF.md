@@ -118,7 +118,7 @@ hard score, with equality at `T = 0`) is a verifier obligation under R9
   bandwidth knee, or the `!bcir.token` DAG (pipelined phases, ABI v2
   double-buffer contracts).
 
-## 10. Verifier laws (R1–R18)
+## 10. Verifier laws (R1–R21)
 
 R1 registry uniqueness · R2 registry resolution · R3 domain legality ·
 R4 phase-DAG legality · R5 hazard legality · R6 lane legality · R7 bounds
@@ -146,32 +146,39 @@ swaps are never silent. Encoded as IR via the `bcir.verify.*` op family. The
 runnable full set lives in `bcir/verify`, one entry point per correspondence
 artifact — `verify(module)` R1–R8(static), `verify_plan` R8–R9, `verify_pack`
 R10–R11, `verify_lowering` R12, `verify_provenance` R13 — and the MLIR-native
-`-bcir-verify` pass enforces the structurally checkable form of all of R1–R18
+`-bcir-verify` pass enforces the structurally checkable form of all of R1–R21
 on the dialect.
 
-**Emerging model laws (R19/R20/R21 — not yet first-class).** Three further laws
-are *emerging*: they exist on the oracle rail today but are **not** yet
-first-class `-bcir-verify` MLIR laws, so the generated status
-([`STATUS.md`](STATUS.md)) still reports the first-class set as **R1–R18**.
-They are driven by *optional* claim metadata (`None` by default, so the entire
-scalar / C-frontend subset is unconstrained — the non-disturbance invariant,
-exactly as R14–R17 are vacuous for it):
+**Timing + lifetime laws (R19/R20/R21).** Three further laws over the
+register-transfer / naked-pointer-safety tracks. They are driven by *optional*
+claim metadata (absent by default, so the entire scalar / C-frontend subset is
+unconstrained — the non-disturbance invariant, exactly as R14–R17 are vacuous for
+it), now carried on the dialect as the `#bcir.timing` / `#bcir.lifetime` attributes
+(`OptionalAttr` on `bcir.claim` / `load` / `store`):
 
 - **R19 (synchronous-timing legality)** and **R20 (clock-domain-crossing)** —
-  over the optional `Timing` block (`model.graph.Timing`, §5.11):
-  `verify.verify_timing` checks a declared timing block is internally consistent
-  (R19) and that a RAW dependency crossing clock domains is synchronized
-  (R20). Python-enforced only.
+  over the optional `#bcir.timing` block (`model.graph.Timing`, §5.11): a declared
+  timing block must be internally consistent — a valid `sync_type`; non-negative
+  `latency_cycles` / `setup_hold_margin` / `clock_frequency_mhz`; a synchronous
+  claim carries a positive clock; the setup/hold margin fits within the stage
+  latency (R19) — and a RAW dependency that crosses clock domains must be
+  synchronized (the consumer declares `sync_type='mixed'` or a barriered hazard),
+  else it is an unguarded crossing (R20).
 - **R21 (pointer-lifetime legality: use-after-free / double-free)** — over the
-  optional `Lifetime` annotation (`model.graph.Lifetime`, §5.12):
-  `verify.verify_lifetime` walks the claim order against the freed set. Enforced
-  on the oracle rail and *advisory* in the C twin
-  (`runtime/c/bcir_verify.c::bcir_verify_lifetime`).
+  optional `#bcir.lifetime` annotation (`model.graph.Lifetime`, §5.12): walking the
+  claim order against the freed set, a read of a freed-and-not-reallocated resource
+  is a use-after-free, a `free` of an already-freed resource is a double-free, and a
+  write (reassignment / `alloc`) re-validates.
 
-All three run through `verify.verify_smart_lowering` alongside R14–R17. Their
-promotion to first-class MLIR laws — `#bcir.timing` / `#bcir.lifetime` attrs, the
-`-bcir-verify` checks, negative FileCheck cases, and widening `gen_status.py` to
-report **R1–R21** — is tracked in the master roadmap §5.14.
+R19/R20/R21 are now **first-class `-bcir-verify` MLIR laws**, dual-rail with the
+oracle's `verify.verify_timing` / `verify.verify_lifetime` (run through
+`verify.verify_smart_lowering` alongside R14–R17), each with a negative
+`-verify-diagnostics` case in `mlir/test/passes/verify_timing_lifetime.mlir`, so the
+generated status ([`STATUS.md`](STATUS.md)) now reports the first-class set as
+**R1–R21**. R21 additionally remains *advisory* in the C twin
+(`runtime/c/bcir_verify.c::bcir_verify_lifetime`); promoting the C-twin lifetime
+walk to a hard verdict — together with the UAF-handling policy (reject vs
+route-to-`--fallback` vs quarantine) — is the remaining §5.12 step.
 
 ## 11. Rewrite laws (the building-blocks engine)
 

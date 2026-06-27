@@ -9,23 +9,26 @@
 | Python conformance tests (`python -m bcir.tests.run_all`) | **878** across 91 files |
 | MLIR ODS ops (`mlir/include/BCIR/*.td`) | **85** |
 | Registered `-bcir-*` passes | **25** |
-| MLIR FileCheck tests (`mlir/test/`) | **51** (68 `expected-error` negatives) |
+| MLIR FileCheck tests (`mlir/test/`) | **52** (73 `expected-error` negatives) |
 | Runtime C components (`runtime/c/`) | **210** |
-| Verifier laws | **R1–R18** (18/18 covered) |
+| Verifier laws | **R1–R21** (21/21 covered) |
 | Hardware channels | **9** (cpu, fpga, gpu, memory, storage) |
 
-## Verifier law coverage (R1–R18)
+## Verifier law coverage (R1–R21)
 
 Each law is a first-class `-bcir-verify` check with a negative `-verify-diagnostics` `.mlir`
 case (the table below is computed from `mlir/test/passes/verify*.mlir`). R1 (RID uniqueness)
 and R18 (call-graph integrity) are *additionally* construction-enforced on the oracle rail
 (dict-keyed registry; `plan_composite` raises), so a malformed module can't even be built
 there — but both still carry MLIR negative cases for hand-written IR (R1 in `verify_laws.mlir`,
-R18 in `verify_callgraph.mlir`).
+R18 in `verify_callgraph.mlir`). R19/R20 (synchronous timing / clock-domain crossing) and R21
+(pointer lifetime: use-after-free / double-free) ride **optional** claim metadata that defaults
+to absent, so they are vacuous over the entire scalar/C subset (the non-disturbance invariant) —
+their negative cases live in `verify_timing_lifetime.mlir`.
 
-| R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15 | R16 | R17 | R18 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15 | R16 | R17 | R18 | R19 | R20 | R21 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ## Hardware channel / target matrix
 
