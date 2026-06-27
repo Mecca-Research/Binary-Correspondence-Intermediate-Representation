@@ -50,6 +50,27 @@ def BCIR_GEMBlockOp : BCIR_Op<"gem.block", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def BCIR_GEMMatmulOp : BCIR_Op<"gem.matmul", [Symbol]> {
+  let summary = "Planned GEM matmul: the K_BCIR-chosen tiling/loop-order realization (B1)";
+  // The law-rail record of the B1 plan (bcir/kbcir/matmul.py::plan_matmul). A matmul is a grid of dot
+  // products; its realization -- tile extents + loop order -- is a FREE choice the dual-semiring cost
+  // search picks (min,+ over the path cost; max,+ for the roofline bottleneck), and every realization
+  // reproduces the same result. The op carries the shape (m/n/k), the chosen tiling (tile_m/n/k +
+  // loop_order), the analytic compute/memory roofline terms, the bottleneck = max(compute, memory), and
+  // the quantized lane width (0 = dense). `quant_bits > 0` ties to the A1 Q8 bridge (the R17 accuracy
+  // bound rides the accuracy cost axis; mirrors CostVector via matmul.cost_vector). hasVerifier checks
+  // well-formedness: positive dims, each tile in [1, dim], a known loop order, and bottleneck == the max.
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    I64Attr:$m, I64Attr:$n, I64Attr:$k,
+    I64Attr:$tile_m, I64Attr:$tile_n, I64Attr:$tile_k,
+    StrAttr:$loop_order,
+    I64Attr:$compute_cost, I64Attr:$mem_cost, I64Attr:$bottleneck,
+    DefaultValuedAttr<I32Attr, "0">:$quant_bits);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
 def BCIR_GEMLaneSegmentOp : BCIR_Op<"gem.lane_segment", [Symbol]> {
   let summary = "Lane-specialized GEM executable segment";
   let arguments = (ins

@@ -9,9 +9,9 @@ compute-only ranking would ignore). All deterministic + pure-Python."""
 
 import random
 
-from bcir.kbcir.cost import TargetProfile
-from bcir.kbcir.matmul import (TilePlan, cost_of, matmul_reference, matmul_tiled, plan_matmul,
-                               quantized_matmul)
+from bcir.kbcir.cost import ACCURACY, COMPUTE, MEMORY, CostVector, TargetProfile
+from bcir.kbcir.matmul import (TilePlan, bottleneck, cost_of, cost_vector, matmul_reference,
+                               matmul_tiled, plan_matmul, quantized_matmul)
 
 _HOST = TargetProfile.for_host()
 
@@ -104,6 +104,24 @@ def test_memory_bound_shape_is_decided_by_the_mem_term():
     assert plan.bottleneck == plan.mem_cost
     _, untiled_mem, _ = cost_of(M, N, K, M, N, K, _HOST)
     assert plan.mem_cost <= untiled_mem                    # tiling did not increase the binding term
+
+
+def test_cost_vector_wires_the_plan_into_the_production_12d_algebra():
+    plan = plan_matmul(32, 32, 64, _HOST)
+    cv = cost_vector(plan)
+    assert isinstance(cv, CostVector)
+    assert cv.v[COMPUTE] == plan.compute_cost and cv.v[MEMORY] == plan.mem_cost
+    # the max,+ roofline bottleneck is recoverable from the vector and equals the planner's.
+    assert bottleneck(cv) == plan.bottleneck == max(cv.v[COMPUTE], cv.v[MEMORY])
+    # it composes with the existing cost algebra: couple by an identity factor + scalarize by weights.
+    w = tuple(1 if i in (COMPUTE, MEMORY) else 0 for i in range(len(cv.v)))
+    assert cv.couple((256,) * len(cv.v)).dot(w) == plan.compute_cost + plan.mem_cost
+
+
+def test_cost_vector_carries_the_r17_bound_on_the_accuracy_axis_when_quantized():
+    plan = plan_matmul(8, 8, 8, _HOST)
+    assert cost_vector(plan, quant_bits=0).v[ACCURACY] == 0          # dense: no accuracy cost
+    assert cost_vector(plan, quant_bits=8).v[ACCURACY] == 1          # quantized: the R17 bridge bound (1 ULP)
 
 
 def test_cost_is_monotone_and_well_formed():
