@@ -12,8 +12,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  oracle-and-training:
-    name: BCIR oracle + LLVM training
+  # The former monolithic "oracle + training" job is split into three jobs that run in
+  # PARALLEL (oracle | c-runtime | llvm-training) — the check-runtime / decoder-fuzz / training
+  # work no longer sits sequentially behind the ~80s Python suite, so the critical path drops
+  # from their sum to their max. Each job restores the same cached toolchain (clang/lld/llvm/node).
+  oracle:
+    name: BCIR oracle (Python conformance + parity + fuzz)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -61,6 +65,25 @@ jobs:
           python3 -m bcir.kbcir.fuzz -n 4000 --seed 2 & pf2=$!
           wait "$pf1"; wait "$pf2"
 
+  c-runtime:
+    name: BCIR C runtime (StreamPack byte-identity + decoder fuzz)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
+      - name: Install lowering toolchain (clang/lld/llvm; node for WASM)
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        with:
+          packages: clang lld llvm nodejs libclang-rt-18-dev
+          version: train-${{ runner.arch }}-v1
+
       - name: Freestanding C StreamPack runtime (no-libc + Python->C ABI parity)
         run: bash tools/c/check_runtime.sh
 
@@ -77,6 +100,25 @@ jobs:
         # Non-flaky by design: STRICT on correctness + measurement validity always, perf floors
         # only under BCIR_BAREMETAL (unset here), so a loaded shared runner never flakes the gate.
         run: python3 tools/perf/check_budgets.py --trend build/perf/trend.jsonl
+
+  llvm-training:
+    name: LLVM training corpus
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
+      - name: Install LLVM toolchain (llvm-as/opt/llc/clang for the corpus checks)
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        with:
+          packages: clang lld llvm nodejs libclang-rt-18-dev
+          version: train-${{ runner.arch }}-v1
 
       - name: LLVM training examples and invalid-example tripwire
         run: |
