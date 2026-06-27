@@ -31,7 +31,12 @@ typedef struct { tkind k; const char *s; int n; long long v; } tok;
 #define MAXTOK 16384
 #define MAXFLD 64        /* members per struct (f[] is embedded in sdef; generous, guarded) */
 
-typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; int is_complex; int is_bool; int is_plain_char; int byte_off, bit_off, bit_w; int sidx;
+typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; int is_complex; int is_bool; int is_plain_char; int bit_width; int byte_off, bit_off, bit_w; int sidx;
+                 /* bit_width: a PLAIN (non-bitfield) C23 `_BitInt(N)` member's EXACT width N (0 == a normal
+                  * member; >0 == `_BitInt(N)`). `size` is the storage slot (1/2/4/8 bytes, == Clang's), so the
+                  * layout matches; the load/store goes through the storage width, and the loaded value carries
+                  * the `_BitInt(N)` type so the emit spells it faithfully + same-type arithmetic stays N-bit.
+                  * (A `_BitInt` BITFIELD `_BitInt(N) m:W` is OUT of the subset -- rejected at parse.) */
                  int access_bytes;   /* a bitfield's storage-unit byte span (== size, except a PACKED bitfield
                                       * spans only ceil((bit_off+bit_w)/8) bytes -- it may straddle byte/word
                                       * boundaries; `size` stays the DECLARED type width, for read promotion) */
@@ -617,7 +622,9 @@ static int p_struct_body(CC *c) {
         if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
       if(nadims>3){ fail(c,"member array of more than 3 dimensions"); return -1; }   /* adims[] caps at 3 */
       int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;}          /* per-declarator bitfield width */
-      if(ty.bit_width>0){ fail(c,"a `_BitInt` struct/union member is not supported"); return -1; }   /* out of subset */
+      if(ty.bit_width>0 && width){ fail(c,"a `_BitInt` struct/union bitfield is not supported"); return -1; }   /* bitfield: out of subset */
+      /* a PLAIN `_BitInt(N)` member IS first-class: `ty.size` is the Clang storage slot (1/2/4/8 bytes) so the
+       * layout matches; the member's exact width rides in f->bit_width so the load/store + emit spell `_BitInt(N)`. */
       if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
       int isptr=(ty.kind==2 && !arr_count);            /* a (non-array) pointer member: ABI pointer_size */
       int sz=isptr?cc_abi(c)->pointer_size:ty.size;
@@ -629,6 +636,7 @@ static int p_struct_body(CC *c) {
       field *f=&S->f[S->nf++];
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
       idcpy(f->name,&nm);f->size=sz;f->access_bytes=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
+      f->bit_width=(!isptr && !arr_count && ty.bit_width>0)?ty.bit_width:0;   /* a PLAIN C23 `_BitInt(N)` member */
       f->is_float=(!isptr && ty.is_float)?1:0;          /* a float/double member loads/stores as itself */
       f->is_complex=(!isptr && ty.is_complex)?1:0;      /* a `_Complex` member: load/store as the complex pair,
                                                          * NOT a same-size real (16B would wrongly read as long double) */
@@ -1000,7 +1008,10 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld) {
   /* the BITFIELD unit temp is sized to a power of 2 >= its byte span (a packed field that straddles into
    * bits >= 32 needs a 64-bit unit); the load reads only `access_bytes` (the spanned bytes). */
   int usz = fld->bit_w ? (fld->access_bytes<=4?4:8) : fld->size;
-  uint32_t t=fld->is_ptr?tempptr_field(c,fld):fld->is_complex?tempc(c,fld->size):fld->is_float?tempf(c,fld->size):tempi(c,usz,fld->signd);   /* loaded value carries the field's type */
+  uint32_t t=fld->is_ptr?tempptr_field(c,fld):fld->is_complex?tempc(c,fld->size):fld->is_float?tempf(c,fld->size)
+            :fld->bit_width>0?tempbi(c,fld->bit_width,fld->signd)   /* a C23 `_BitInt(N)` member: load at the storage
+                                                                    * width, typed `_BitInt(N)` (faithful + N-bit) */
+            :tempi(c,usz,fld->signd);   /* loaded value carries the field's type */
   if(fld->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;   /* read as `char`, not int8_t */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->bit_w?fld->access_bytes:fld->size;

@@ -2062,9 +2062,13 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         b = AggregateBuilder(agg.kind, tag, packed=agg.packed, force_align=agg.align)
         for tref, mname, width, malign in agg.members:
             mt = _resolve_member_type(tref, aggregates, abi)
-            if mt.is_bitint:                              # a `_BitInt` struct member / bitfield is OUT of the
-                raise CLowerError(                        # supported subset (member layout + access not modeled)
-                    "a `_BitInt` struct/union member is not supported")   # -> route to fallback (conservative)
+            if mt.is_bitint and width:                    # a `_BitInt` BITFIELD (`_BitInt(N) m : W`) is a
+                raise CLowerError(                        # bit-precise, subtler feature -- still OUT of the
+                    "a `_BitInt` struct/union bitfield is not supported")  # supported subset -> route to fallback
+            # a PLAIN `_BitInt(N)` member is first-class: its `bitint` CType already carries the Clang
+            # storage width (1/2/4/8 bytes) and alignment, so AggregateBuilder lays it out exactly like
+            # the equivalent power-of-two int (sizeof/offsetof match Clang); the member load/store uses
+            # that storage width typed `_BitInt(N)`, and the emit prints the faithful spelling.
             b.members.append((mname, mt, width, malign))
         aggregates[tag] = b.build()
 

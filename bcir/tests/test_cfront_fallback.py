@@ -51,6 +51,26 @@ def test_bitint_supported_subset_does_not_fall_back():
         assert not r.needs_fallback and r.is_clean, (src, r.fallback)
 
 
+def test_bitint_plain_member_does_not_fall_back():
+    # a PLAIN (non-bitfield) `_BitInt(N)` struct/union MEMBER is now first-class: its `bitint` CType carries
+    # the Clang storage width (so the layout matches), the member access loads/stores at that width typed
+    # `_BitInt(N)`, and same-type arithmetic on the loaded value stays N-bit -- so these compile clean.
+    for src in (
+        # read a `_BitInt(12)` (non-standard width) member, same-type arithmetic, return a `_BitInt`.
+        "struct S { int t; _BitInt(12) x; }; _BitInt(12) f(struct S s){ return s.x + (_BitInt(12))1; }\n",
+        # write a `_BitInt` member of a local, read it back.
+        "struct S { unsigned _BitInt(12) x; };"
+        " unsigned _BitInt(12) f(unsigned _BitInt(12) v){ struct S s; s.x = v + (unsigned _BitInt(12))2; return s.x; }\n",
+        # a `_BitInt(64)` member alongside a 12-bit member (mixed sub-word/word/8-byte layout).
+        "struct S { _BitInt(12) lo; unsigned _BitInt(64) hi; };"
+        " unsigned _BitInt(64) f(struct S s){ return s.hi + (unsigned _BitInt(64))9; }\n",
+        # a `_BitInt` UNION member.
+        "union U { _BitInt(20) a; int b; }; _BitInt(20) f(union U u){ return u.a; }\n",
+    ):
+        r = compile_with_fallback(src, check_clang=False)
+        assert not r.needs_fallback and r.is_clean, (src, r.fallback)
+
+
 def test_bitint_unsupported_forms_route_to_fallback_not_miscompile():
     # the conservative boundary (the SAFETY CONTRACT): a form OUTSIDE the supported `_BitInt` subset must
     # route to fallback (a CLowerError / CParseError -> needs_fallback) rather than emit possibly-wrong code
@@ -61,8 +81,12 @@ def test_bitint_unsupported_forms_route_to_fallback_not_miscompile():
         "unsigned _BitInt(8) f(unsigned _BitInt(8) a, int b){ return a + b; }\n": "lower",
         # mixing two DIFFERENT `_BitInt` widths in one expression.
         "_BitInt(8) f(_BitInt(8) a, _BitInt(16) b){ return a + b; }\n": "lower",
-        # a `_BitInt` as a struct member (member layout + access not modeled in the subset).
-        "struct S { _BitInt(12) x; }; _BitInt(12) f(struct S s){ return s.x; }\n": "lower",
+        # a `_BitInt` BITFIELD (`_BitInt(N) m : W`) -- a bit-precise bitfield is a separate, subtler feature
+        # (the access unit / packing is not yet modeled); the PLAIN member is supported, the bitfield is not.
+        "struct S { _BitInt(12) x : 5; }; _BitInt(12) f(struct S s){ return (_BitInt(12))s.x; }\n": "lower",
+        # mixing a `_BitInt` MEMBER read with a standard integer variable -- the member is loadable, but the
+        # mix in the arithmetic still routes to fallback (same as the local/param mix above).
+        "struct S { _BitInt(12) x; }; _BitInt(12) f(struct S s, int k){ return s.x + k; }\n": "lower",
         # widths outside the supported 2..64 range are rejected at parse.
         "_BitInt(100) f(_BitInt(100) a){ return a + a; }\n": "parse",
         "_BitInt(1) f(_BitInt(1) a){ return a; }\n": "parse",
