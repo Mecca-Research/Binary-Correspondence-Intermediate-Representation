@@ -27,6 +27,7 @@ KEYWORDS = frozenset({
     "struct", "union", "return", "if", "else", "while", "for", "do", "break", "continue",
     "void", "_Bool", "bool", "char", "short", "int", "long", "unsigned", "signed",
     "const", "volatile", "static", "inline", "sizeof", "typedef", "enum",
+    "_BitInt",                                   # C23 bit-precise integer type `_BitInt(N)` (§6.2.5)
 })
 
 # Multi-char operators first (longest-match), then single-char.

@@ -30,7 +30,8 @@ _FIXABLE_PUNCT = frozenset({";", ")", "}", "]"})
 # type-start keywords (a statement beginning with one of these is a declaration).
 _TYPE_KW = frozenset({"void", "_Bool", "bool", "char", "short", "int", "long", "unsigned",
                       "signed", "float", "double", "_Complex", "complex", "const", "volatile",
-                      "static", "extern", "inline", "_Thread_local", "thread_local", "struct", "union"})
+                      "static", "extern", "inline", "_Thread_local", "thread_local", "struct", "union",
+                      "_BitInt"})   # C23 bit-precise integer `_BitInt(N)` (a type-start keyword)
 # `typeof` / `typeof_unqual` (C23) / `__typeof__` (GNU): a type-specifier whose type is the operand's
 # -- supported for a type-name operand `typeof(int*)` and a bare in-scope variable `typeof(x)`.
 _TYPEOF_KW = frozenset({"typeof", "typeof_unqual", "__typeof__"})
@@ -423,9 +424,23 @@ class _Parser:
         words: list[str] = []
         aggregate = ""
         base = ""
-        td: cast.TypeRef | None = None
+        bit_width = 0                                     # a C23 `_BitInt(N)` width (set when a `_BitInt` is seen)
+        saw_bitint = False                                # `_BitInt` seen (separate from bit_width, since N==0 is
+        td: cast.TypeRef | None = None                    #   falsy -- the validation below rejects it as out-of-range)
         while self.at("IDENT"):
             w = self.peek().text
+            if w == "_BitInt":                            # C23 `_BitInt ( N )` -- a bit-precise integer type
+                self.nxt()
+                self.eat("PUNCT", "(")
+                if not self.at("INT"):
+                    raise CParseError("expected the width N in `_BitInt(N)`", pos=self.peek().pos)
+                bit_width = parse_int_literal(self.eat("INT").text)
+                self.eat("PUNCT", ")")
+                if saw_bitint:                            # a second `_BitInt` in one specifier run -> fallback
+                    raise CParseError("duplicate `_BitInt` type specifier")
+                saw_bitint = True
+                words.append("_BitInt")
+                continue
             if w == "_Atomic" and self.peek(1).text == "(":   # `_Atomic ( type-name )` -- atomic type specifier
                 self.nxt()
                 self.eat("PUNCT", "(")
@@ -490,9 +505,27 @@ class _Parser:
                 return td
             return cast.TypeRef(base=td.base, ptr=td.ptr, array=td.array,
                                 aggregate=td.aggregate, quals=tuple(quals) + td.quals)
+        if saw_bitint:                                    # C23 `_BitInt(N)`: the spelling carries N + signedness;
+            return self._bitint_typeref(words, bit_width, quals)   # lowering builds the `bitint` CType from it
         if not aggregate and not base:                    # `enum [tag]` already set base="int"; only
             base = self._canon_scalar(words)              # canonicalize a scalar keyword run otherwise
         return cast.TypeRef(base=base, aggregate=aggregate, quals=tuple(quals))
+
+    @staticmethod
+    def _bitint_typeref(words: list[str], bit_width: int, quals) -> cast.TypeRef:
+        """Build the TypeRef for a `_BitInt(N)` keyword run. The supported subset is a single `_BitInt`
+        with at most one of `signed`/`unsigned` (and cv-quals, already split off): `_BitInt(N)` /
+        `signed _BitInt(N)` are signed, `unsigned _BitInt(N)` unsigned. Any other word in the run (a base
+        int keyword, a second `_BitInt`, a width N<2 or N>64) is rejected -- a CParseError routes the whole
+        unit to fallback, the conservative boundary. The `base` is the verbatim emit spelling."""
+        extra = [x for x in words if x not in ("_BitInt", "signed", "unsigned")]
+        if extra or words.count("_BitInt") != 1 or ("signed" in words and "unsigned" in words):
+            raise CParseError(f"unsupported `_BitInt` type specifier {' '.join(words)!r}")
+        if not (2 <= bit_width <= 64):                    # the faithful-emit subset (N<2 / N>64 -> fallback)
+            raise CParseError(f"`_BitInt({bit_width})` is outside the supported width range 2..64")
+        signed = "unsigned" not in words
+        spelling = f"_BitInt({bit_width})" if signed else f"unsigned _BitInt({bit_width})"
+        return cast.TypeRef(base=spelling, quals=tuple(quals), bit_width=bit_width)
 
     @staticmethod
     def _canon_scalar(words: list[str]) -> str:
@@ -559,7 +592,8 @@ class _Parser:
                         self.eat("PUNCT", "]")
                     return cast.TypeRef(base=base.base, ptr=0, array=tuple([0] + dims),
                                         aggregate=base.aggregate, quals=base.quals,
-                                        typeof_var=base.typeof_var, typeof_expr=base.typeof_expr), nm
+                                        typeof_var=base.typeof_var, typeof_expr=base.typeof_expr,
+                                        bit_width=base.bit_width), nm
             self.i = save                                 # not `(*name)[..]` -> a normal declarator
         name = self.eat("IDENT").text
         dims = []
@@ -590,7 +624,8 @@ class _Parser:
         return cast.TypeRef(base=base.base, ptr=ptr + base.ptr,         # base.ptr != 0 only for typeof(T*)
                             array=tuple(base.array) + tuple(dims), vla=vla, vla_dims=vla_dims,
                             aggregate=base.aggregate, quals=base.quals,
-                            typeof_var=base.typeof_var, typeof_expr=base.typeof_expr), name
+                            typeof_var=base.typeof_var, typeof_expr=base.typeof_expr,
+                            bit_width=base.bit_width), name
 
     # --- functions ---
     def _func_body(self, ret: cast.TypeRef, name: str, reproducible: bool = False) -> cast.Func:
@@ -913,7 +948,7 @@ class _Parser:
                 self.eat("PUNCT", "]")
             self.eat("PUNCT", ")")
             tref = cast.TypeRef(base=tref.base, ptr=ptr, array=tuple(dims),
-                                aggregate=tref.aggregate, quals=tref.quals)
+                                aggregate=tref.aggregate, quals=tref.quals, bit_width=tref.bit_width)
             if self.at("PUNCT", "{"):                   # `(type){ init }` — a C99 compound literal, not a cast
                 # supported in rvalue position (`f((struct P){...})`, `x = (struct P){...}`), under `&`
                 # (`&(int){v}`), and now with direct postfix on the literal (`(struct P){...}.field`,

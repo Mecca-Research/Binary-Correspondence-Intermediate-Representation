@@ -42,7 +42,8 @@ _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfron
                  "cfront_sizeof.c", "cfront_strsizeof.c", "cfront_strval.c", "cfront_charlit.c",
                  "cfront_strtab.c", "cfront_strconcat.c", "cfront_widelit.c", "cfront_cast.c", "cfront_alignof.c", "cfront_static.c",
                  "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c", "cfront_signed.c", "cfront_signedcmp.c", "cfront_signedbare.c", "cfront_longunary.c", "cfront_boolnorm.c", "cfront_unarypromote.c", "cfront_floatsigncast.c", "cfront_intsigncast.c", "cfront_boolcast.c", "cfront_boolmember.c",
-                 "cfront_unsequenced.c", "cfront_reproducible.c"]   # + char consts + str table/dedup + const LUT + ABI sizeof model + bool normalization + unary integer-promotion/float + float->signed + int->signed cast + bool cast + _Bool member/element store-normalization + C23 [[unsequenced]]/[[reproducible]] hints (A1.3)
+                 "cfront_unsequenced.c", "cfront_reproducible.c",   # + char consts + str table/dedup + const LUT + ABI sizeof model + bool normalization + unary integer-promotion/float + float->signed + int->signed cast + bool cast + _Bool member/element store-normalization + C23 [[unsequenced]]/[[reproducible]] hints (A1.3)
+                 "cfront_bitint.c"]   # + C23 `_BitInt(N)` (#bitint): exact-width, non-promoting bit-precise ints (incl. a NON-standard 12/20-bit lane) as locals/params/returns, same-type arithmetic, faithful `_BitInt(N)` emit
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
             "cfront_continue.c", "cfront_switch.c", "cfront_switchfall.c", "cfront_goto.c", "cfront_incdec.c",
             "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c", "cfront_loopscope.c", "cfront_blockscope.c", "cfront_localmd.c", "cfront_localmdinit.c", "cfront_ptrlocal.c"]

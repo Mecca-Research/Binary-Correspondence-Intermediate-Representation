@@ -25,6 +25,10 @@ class TypeRef:
                                     #   (None == a normal/constant array); lowering snapshots it for masked bounds
     vla_dims: tuple = ()            # a MULTI-dim VLA `T a[m][n]` — per-dim (int literal | size expr), at least
                                     #   one runtime; lowering flattens to a runtime m*n extent + Horner strides
+    bit_width: int = 0              # a C23 `_BitInt(N)` type's exact width N (0 == not a `_BitInt`); `base` is
+                                    #   the verbatim spelling (`_BitInt(N)` / `unsigned _BitInt(N)`) lowering builds
+                                    #   the `bitint` CType from. Carried on the TypeRef so the no-promotion +
+                                    #   faithful-emit width survives parse -> lower.
 
 
 # --- expressions ---
