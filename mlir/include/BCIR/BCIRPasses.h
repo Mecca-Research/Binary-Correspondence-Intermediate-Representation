@@ -70,6 +70,10 @@ std::unique_ptr<mlir::Pass> createAllocPoolPass();
 std::unique_ptr<mlir::Pass> createBatchPass();
 std::unique_ptr<mlir::Pass> createSchedulePass();
 std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
+// -bcir-lower-gem-matmul: lower each gem.matmul plan record into its concrete
+// tiled realization -- one gem.block descriptor per tile of the tiled iteration
+// space, emitted in the plan's loop_order; erases the matmul (a genuine lowering).
+std::unique_ptr<mlir::Pass> createLowerGemMatmulPass();
 
 /// Register all BCIR passes with the global pass registry (for bcir-opt).
 void registerBCIRPasses();

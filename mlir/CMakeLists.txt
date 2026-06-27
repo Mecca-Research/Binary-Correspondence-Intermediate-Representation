@@ -85,6 +85,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRPromotePass.cpp     # GGG->UX opt-law
   lib/passes/BCIRConvertToLLVM.cpp   # compute/barrier -> LLVM dialect
   lib/passes/BCIRGEMPasses.cpp       # classify / batch / schedule / lower
+  lib/passes/BCIRLowerGemMatmulPass.cpp # lower gem.matmul plan -> tiled gem.block sequence
   lib/passes/BCIRSelectPass.cpp      # min-plus selection
   lib/passes/BCIRCostModel.cpp       # K_BCIR cost algebra (cost.py port)
   lib/passes/BCIRPlanPass.cpp        # min-plus shortest path (realize.optimize)
