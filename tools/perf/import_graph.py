@@ -26,7 +26,7 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 # --- the COLD set: opt-in research organs + heavy capabilities (never on the simple path) ---
 _COLD_KBCIR = ("calibloop", "microbench", "accel", "portfolio", "moegate", "regret", "softdp",
                "egraph", "operad", "twotruth", "memory", "throttle", "mapping", "bayescal",
-               "allocator", "sensing", "precision")
+               "allocator", "sensing", "precision", "autodiff")
 _COLD_LOWER = ("jit", "wasm", "specialist")
 _COLD_GEM = ("concurrency", "overlap", "schedule", "async_tokens", "cim", "dvfs")
 _COLD_TOP = ("silicon",)

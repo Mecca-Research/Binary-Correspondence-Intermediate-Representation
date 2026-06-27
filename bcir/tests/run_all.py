@@ -177,6 +177,7 @@ _MODULES = [
     "bcir.tests.test_precision",
     "bcir.tests.test_quantize",
     "bcir.tests.test_matmul",
+    "bcir.tests.test_autodiff",
     "bcir.tests.test_blas_gemm",
     "bcir.tests.test_differential",
     "bcir.tests.test_target_matrix",
