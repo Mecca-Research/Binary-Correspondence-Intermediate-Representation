@@ -77,7 +77,10 @@ _ABI = ["cfront_structret.c", "cfront_structcall.c",  # L8: struct return-by-val
         "cfront_structmulti.c",                        # + multi-declarator struct members (unsigned x,y,z;)
         "cfront_nestmember.c",                         # + nested member access (o.pos.lo / dev->ctrl.bf)
         "cfront_memberarray.c",                        # + native 1-D struct member arrays (s.arr[i])
-        "cfront_neststruct.c"]                          # + nested struct members + nested-brace init `{ {..}, .. }`
+        "cfront_neststruct.c",                          # + nested struct members + nested-brace init `{ {..}, .. }`
+        "cfront_bitint_member.c"]                        # + C23 `_BitInt(N)` struct MEMBERS (#bitintmember): a PLAIN
+                                                         #   (non-bitfield) `_BitInt(N)` member -- read + write + same-type
+                                                         #   arithmetic, layout (sizeof/offsetof) == Clang, faithful emit
 _FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_mathh.c",
           "cfront_mathh_mixed.c", "cfront_mathh_long.c", "cfront_mathh_ptr.c",
           "cfront_calltyped.c", "cfront_complex.c", "cfront_complexdiv.c",   # + C99 _Complex (#complex) + complex `/`
@@ -2003,6 +2006,36 @@ def test_L8_packed_layout_matches_clang():
         if subprocess.run([_CC, "-std=c11", c, "-o", e], capture_output=True).returncode == 0:
             nums = [int(x) for x in subprocess.run([e], capture_output=True, text=True).stdout.split()]
             assert nums == [hdr.size, hdr.field("cmd")[1], hdr.field("addr")[1], hdr.field("len")[1]]
+
+
+def test_bitint_member_layout_matches_clang():
+    """A PLAIN C23 `_BitInt(N)` struct member must lay out at Clang's sizeof/offsetof (the ABI). Clang
+    lays a `_BitInt(N)`, 2<=N<=64, in the smallest power-of-two byte storage unit >= N bits, so a
+    `_BitInt(12)` is 2-byte/2-aligned (== uint16_t) and a `_BitInt(64)` is 8-byte/8-aligned. The oracle's
+    `bitint` CType already carries that storage width + alignment, so AggregateBuilder must agree with
+    Clang's actual layout -- the same differential the packed-layout test runs."""
+    src = open(os.path.join(_C, "cfront_bitint_member.c"), encoding="utf-8").read()
+    bp = compile_unit(src, check_clang=False).lowered.aggregates["bipair"]
+    # the oracle layout: tag@0 (int), lo@4 (_BitInt(12) -> 2-byte slot), hi@8 (_BitInt(64) -> 8-byte slot)
+    assert bp.size == 16 and bp.align == 8
+    assert bp.field("tag")[1] == 0 and bp.field("lo")[1] == 4 and bp.field("hi")[1] == 8
+    assert bp.field("lo")[0].is_bitint and bp.field("lo")[0].bit_width == 12 and bp.field("lo")[0].size == 2
+    assert bp.field("hi")[0].is_bitint and bp.field("hi")[0].bit_width == 64 and bp.field("hi")[0].size == 8
+    if not _CC:
+        return
+    probe = ("#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n"
+             "struct bipair { int tag; unsigned _BitInt(12) lo; unsigned _BitInt(64) hi; };\n"
+             'int main(void){printf("%zu %zu %zu %zu %zu", sizeof(struct bipair),'
+             " (size_t)_Alignof(struct bipair), offsetof(struct bipair,tag),"
+             " offsetof(struct bipair,lo), offsetof(struct bipair,hi)); return 0;}")
+    with tempfile.TemporaryDirectory() as d:
+        c, e = os.path.join(d, "p.c"), os.path.join(d, "p")
+        open(c, "w").write(probe)
+        for std in ("c23", "c2x"):
+            if subprocess.run([_CC, f"-std={std}", c, "-o", e], capture_output=True).returncode == 0:
+                nums = [int(x) for x in subprocess.run([e], capture_output=True, text=True).stdout.split()]
+                assert nums == [bp.size, bp.align, bp.field("tag")[1], bp.field("lo")[1], bp.field("hi")[1]]
+                break
 
 
 def test_c_frontend_builds_warning_clean():
