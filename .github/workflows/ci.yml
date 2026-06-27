@@ -224,8 +224,13 @@ jobs:
   # cannot -- the perf_event_open syscall number (241 on aarch64, not x86's 298), the tile
   # lane width (vec4 on NEON, not 16), host-arch target defaults, and the freestanding C
   # runtime (endianness / fixed-width / no-libc) -- on GitHub's native ARM runners.
+  #
+  # Split into oracle-arm64 | c-runtime-arm64 that run in PARALLEL, mirroring the x86 oracle /
+  # c-runtime split: the ~25s ARM StreamPack runtime no longer sits sequentially behind the
+  # Python conformance suite, so the ARM critical path drops from their sum to their max. Each
+  # restores the same cached toolchain and re-confirms it is really running on aarch64.
   oracle-arm64:
-    name: BCIR oracle + C runtime (aarch64 / ARM)
+    name: BCIR oracle (aarch64 / ARM)
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
@@ -256,6 +261,28 @@ jobs:
 
       - name: Python<->MLIR differential parity on ARM (smaller campaign)
         run: python3 -m bcir.kbcir.differential -n 3000 --seed 1
+
+  c-runtime-arm64:
+    name: BCIR C runtime (aarch64 / ARM)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
+      - name: Install the C lowering toolchain
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        with:
+          packages: clang lld llvm
+          version: arm-${{ runner.arch }}-v1
+
+      - name: Confirm the runner is aarch64
+        run: test "$(uname -m)" = "aarch64" || { echo "expected aarch64, got $(uname -m)"; exit 1; }
 
       - name: Freestanding C StreamPack runtime on ARM (no-libc + ABI parity)
         run: bash tools/c/check_runtime.sh
