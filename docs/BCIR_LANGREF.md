@@ -175,10 +175,14 @@ oracle's `verify.verify_timing` / `verify.verify_lifetime` (run through
 `verify.verify_smart_lowering` alongside R14–R17), each with a negative
 `-verify-diagnostics` case in `mlir/test/passes/verify_timing_lifetime.mlir`, so the
 generated status ([`STATUS.md`](STATUS.md)) now reports the first-class set as
-**R1–R21**. R21 additionally remains *advisory* in the C twin
-(`runtime/c/bcir_verify.c::bcir_verify_lifetime`); promoting the C-twin lifetime
-walk to a hard verdict — together with the UAF-handling policy (reject vs
-route-to-`--fallback` vs quarantine) — is the remaining §5.12 step.
+**R1–R21**. R21 detection runs on both driver rails; it is *advisory* by default
+(surfaced, never gates), and the `bcir-cc` / `bcir-cfront` drivers expose a `--r21`
+policy — `advisory` (default) · `fallback` (route the unit to the LLVM backend,
+exit 2) · `reject` (a hard verify error, exit 1) — so a detected use-after-free /
+double-free can gate the production compile, with the two rails drawing the same
+exit code (the parity gate in `tools/c/check_runtime.sh`). The remaining §5.12 work
+is the bounds-promotion of array parameters under a dominating-bound proof and the
+offline ML policy table.
 
 ## 11. Rewrite laws (the building-blocks engine)
 

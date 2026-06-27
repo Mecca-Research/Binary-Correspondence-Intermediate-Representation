@@ -470,6 +470,35 @@ case "${fb_seen}" in
   *) echo "  FAIL: fallback gate never reached a clean (0): ${fb_seen}"; exit 1 ;;
 esac
 
+# R21 lifetime policy (bcir-cc --r21, §5.12): a detected use-after-free / double-free becomes a
+# VERDICT under a non-advisory policy, and the C twin (bcir-cc) and the Python rail (bcir-cfront) must
+# draw the SAME exit code. advisory (default) never gates (0); fallback routes to LLVM (2); reject is a
+# hard error (1); a clean (no-UAF) unit stays 0 under every policy. Detection is the same freed-set walk.
+echo "[c-runtime] R21 lifetime policy (bcir-cc --r21): verdict + exit-code parity vs the oracle (#r21policy)"
+mkdir -p "${tmp}/r21"
+printf '#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); return p[0]; }\n'           > "${tmp}/r21/uaf.c"
+printf '#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); free(p); return n; }\n'      > "${tmp}/r21/dfree.c"
+printf '#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }\n' > "${tmp}/r21/clean.c"
+r21_seen=""
+for pol in advisory fallback reject; do
+  for fx in uaf dfree clean; do
+    "${tmp}/bcir-cc" --r21=${pol} "${tmp}/r21/${fx}.c" >/dev/null 2>&1; trc=$?
+    python3 -m bcir.frontends.cfront --r21=${pol} -o /dev/null "${tmp}/r21/${fx}.c" >/dev/null 2>&1; prc=$?
+    [ "${trc}" = "${prc}" ] \
+      && echo "  PASS r21 ${pol}/${fx} (rc oracle == C: ${trc})" \
+      || { echo "  FAIL: r21 ${pol}/${fx} (C rc=${trc} PY rc=${prc})"; exit 1; }
+    r21_seen="${r21_seen}${trc}"
+  done
+done
+# the policy gate must reach all three verdicts (clean 0 / reject 1 / fallback 2), else it has no teeth.
+case "${r21_seen}" in
+  *0*) case "${r21_seen}" in *1*) case "${r21_seen}" in *2*)
+    echo "  PASS r21 policy spans advisory / fallback / reject verdicts" ;;
+    *) echo "  FAIL: r21 gate never reached a fallback (2): ${r21_seen}"; exit 1 ;; esac ;;
+    *) echo "  FAIL: r21 gate never reached a reject (1): ${r21_seen}"; exit 1 ;; esac ;;
+  *) echo "  FAIL: r21 gate never reached a clean (0): ${r21_seen}"; exit 1 ;;
+esac
+
 # Module-scope effect / commutation analysis (#effects, the C twin of pipeline.own_footprint +
 # commute): per function the global names it reads/writes (callee effects folded in transitively),
 # then the pairwise commute matrix (two readers commute; a writer conflicts with any reader/writer of

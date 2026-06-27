@@ -3012,6 +3012,37 @@ def test_r21_dual_rail_parity():
             assert twin == oracle, f"case {i}: twin={twin} oracle={oracle}\n{src}"
 
 
+def test_r21_policy_gates_the_verdict():
+    """§5.12 R21 promotion: the `--r21` driver policy turns a detected use-after-free / double-free
+    into a VERDICT. advisory (the default) never gates; fallback routes the unit to the LLVM backend
+    (exit 2); reject is a hard error (exit 1); a clean (no-UAF) unit is exit 0 under every policy.
+    The C twin driver (bcir-cc) is checked for the SAME exit codes (cross-rail parity) in
+    tools/c/check_runtime.sh; here the Python rail (bcir-cfront) is exercised directly so the policy
+    is gated even without a C compiler. Default == advisory keeps the corpus + fuzzer undisturbed."""
+    from bcir.frontends.cfront.__main__ import main
+    uaf = "#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); return p[0]; }\n"
+    dfree = "#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); free(p); return n; }\n"
+    clean = "#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }\n"
+    with tempfile.TemporaryDirectory() as d:
+        def run(src, *flags):
+            p = os.path.join(d, "u.c"); open(p, "w").write(src)
+            return main([*flags, "-o", os.path.join(d, "out.txt"), p])
+        # advisory (explicit AND the default) never gates -- everything compiles clean (exit 0)
+        for src in (uaf, dfree, clean):
+            assert run(src, "--r21=advisory") == 0
+            assert run(src) == 0                                      # no --r21 == advisory (non-disturbance)
+        # fallback: a UAF / double-free routes to LLVM (2); a clean unit stays 0
+        assert run(uaf, "--r21=fallback") == 2
+        assert run(dfree, "--r21=fallback") == 2
+        assert run(clean, "--r21=fallback") == 0
+        # reject: a UAF / double-free is a hard verify error (1); a clean unit stays 0
+        assert run(uaf, "--r21=reject") == 1
+        assert run(dfree, "--r21=reject") == 1
+        assert run(clean, "--r21=reject") == 0
+        # an unknown policy is a usage error (2)
+        assert run(clean, "--r21=bogus") == 2
+
+
 def test_extent_count_mutation_is_not_promoted():
     """§5.12 soundness: a recovered count must be STABLE from the allocation onward. A count that is
     re-assigned AFTER the alloc (`n = n - 1`, `n--`) -- so its single assignment is an ordinary BODY write,

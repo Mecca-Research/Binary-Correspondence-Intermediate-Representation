@@ -44,6 +44,7 @@ library entry points are `compile_unit`, `diagnose`, and `compile_with_fallback`
 | `-fsyntax-only` | parse + check only; print diagnostics, emit no compiled output |
 | `--emit-json` | print diagnostics as a machine-readable JSON array |
 | `--fallback` | report a fallback-to-LLVM signal (exit 2) for unsupported constructs instead of erroring |
+| `--r21 <policy>` | how a detected use-after-free / double-free (R21, §5.12) gates the compile: `advisory` (default; surfaced, never gates), `fallback` (route the unit to LLVM, exit 2), or `reject` (a hard verify error, exit 1) |
 | `-o <file>` | write output to `<file>` instead of stdout |
 | `--explain` | also print the per-function plan/explain record |
 | `--selfcheck` | print the generated dual-rail self-check harness |
@@ -90,6 +91,26 @@ fail. Without `--fallback`, an unsupported construct is a normal diagnostic.
 
 ```
 fb.c: fallback to LLVM backend: lower: static initializer is not a constant expression
+```
+
+## Pointer-lifetime policy (R21, §5.12)
+
+The frontend stamps lifetime events on `malloc`/`calloc` (alloc) and `free` (free), so the R21 law
+catches a use-after-free / double-free a C program would otherwise leave as UB. By default this is
+**advisory** — surfaced (e.g. via `--emit-claimgraph` / the oracle's `lifetime_diagnostics`) but never
+gating the compile, so the supported corpus and the UB-free fuzzer are undisturbed. The `--r21` policy
+promotes it to a verdict:
+
+- `--r21=advisory` (default) — detect + surface only.
+- `--r21=fallback` — a detected UAF/double-free routes the unit to the LLVM backend (exit 2), like the
+  `--fallback` contract.
+- `--r21=reject` — a detected UAF/double-free is a hard verify error (exit 1).
+
+The Python oracle (`bcir-cfront`) and the C twin (`bcir-cc`) draw the **same exit code** for the same
+input under the same policy; the cross-rail exit-code parity is gated in `tools/c/check_runtime.sh`.
+
+```
+uaf.c: lifetime error: R21 f: use-after-free of RID 102 (freed and not re-allocated)
 ```
 
 ## What's supported
