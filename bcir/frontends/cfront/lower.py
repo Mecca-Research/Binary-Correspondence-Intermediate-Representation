@@ -483,6 +483,10 @@ class LoweredFunc:
     globals_used: dict = field(default_factory=dict)   # rid -> name (file-scope globals referenced)
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {0}`
     variadic: bool = False                # a trailing `...` after the named params (variadic function)
+    reproducible: bool = False            # a C23 `[[reproducible]]`/`[[unsequenced]]` hint is on the
+                                          #   definition -- a fusion-legality signal (the hint is value-
+                                          #   neutral, so the emit drops it). Default False == every
+                                          #   un-annotated function, undisturbed.
     ptr_extent: dict = field(default_factory=dict)      # §5.12: pointer rid -> recovered extent (count) variable rid
 
 
@@ -1944,6 +1948,7 @@ class _FuncLowerer:
                            vla_locals=list(self.vla_locals),
                            statics=list(self.statics), globals_used=gnames,
                            zero_init_locals=set(self.zero_init), variadic=self.func.variadic,
+                           reproducible=getattr(self.func, "reproducible", False),
                            ptr_extent=dict(self.ptr_extent))
 
 

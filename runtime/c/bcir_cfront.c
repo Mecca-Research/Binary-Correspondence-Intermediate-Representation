@@ -504,6 +504,23 @@ static void attrs(CC *c,int *packed,int *aligned){
     else break;
   }
 }
+/* Consume a C23 `[[ ... ]]` attribute run (a `[` is a single-char token, so `[[` is two adjacent `[`).
+ * Sets *repro if the run names the value-neutral hint `unsequenced` or `reproducible`; every other token
+ * (args, `gnu::` namespaces) is scanned over and dropped. Returns 1 if a run was consumed, else 0 (the
+ * cursor is left untouched so the caller's normal parse proceeds). Matches the oracle's `_attributes`. */
+static int c23_attrs(CC *c,int *repro){
+  int any=0;
+  while(is(c,"[") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+    c->i+=2; any=1;                                  /* consume the opening `[[` */
+    while(!(is(c,"]") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]==']')){
+      if(isk(c,T_END)){fail(c,"unterminated [[...]] attribute");return any;}
+      if(is(c,"unsequenced")||is(c,"reproducible")) *repro=1;   /* both fold to one fusion-legality flag */
+      c->i++;                                         /* skip every other token (robust to args/namespaces) */
+    }
+    c->i+=2;                                          /* eat the closing `]]` */
+  }
+  return any;
+}
 /* Parse `struct|union [tag] [attrs] { members } [attrs]` (NO trailing `;`). Registers an sdef and
  * returns its index (-1 on error). An anonymous aggregate (no tag, e.g. `typedef struct {...} N;`)
  * gets a synthesized internal tag so a typedef can alias it. */
@@ -4406,6 +4423,11 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
   ptrext_reset();                       /* fresh §5.12 ptr_extent map per translation unit */
   lex(&c,src);
   while(!isk(&c,T_END)&&!c.failed){       /* no fixed function ceiling -- the unit list grows */
+    /* A1.3: a leading C23 `[[unsequenced]]`/`[[reproducible]]` (or any `[[...]]`) attribute precedes a
+     * function/global. Consume it here and carry the value-neutral hint flag into the next p_func (the
+     * emit drops it). No run -> repro stays 0, every existing item undisturbed. */
+    int lead_repro=0; c23_attrs(&c,&lead_repro);
+    if(c.failed) break;
     if(try_top_decl(&c)) continue;       /* typedef / enum / struct|union defs, interleaved */
     if(isk(&c,T_END)||c.failed) break;
     if(looks_global(&c)){ p_global(&c); continue; }   /* a file-scope global (lookup table) */
@@ -4419,6 +4441,7 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
     bcir_func *fn=&out->unit.funcs[out->unit.n_funcs]; /* res/claims/params/calls/statics grow lazily */
     c.rid=100+out->unit.n_funcs*1000; c.cid=1000+out->unit.n_funcs*1000;
     if(p_func(&c,fn)){snprintf(out->diag,sizeof out->diag,"%s",c.err);return 1;}
+    fn->reproducible=(uint8_t)lead_repro;   /* the C23 hint consumed just above (A1.3); emit drops it */
     out->unit.n_funcs++;
   }
   if(c.failed){snprintf(out->diag,sizeof out->diag,"%s",c.err);return 1;}
@@ -4466,8 +4489,10 @@ void bcir_cfront_summary(const bcir_unit *u,int ok,char *buf,size_t n){
       else if(!strcmp(cl->op,"c.const"))kn++;
       else if(!strncmp(cl->op,"c.bin.",6))binop++;
       else if(!strncmp(cl->op,"c.call",6))calls++;}}   /* c.call:NAME + c.call.indirect */
-  snprintf(buf,n,"funcs=%d claims=%zu mmio=%d bf=%d const=%d binop=%d call=%d ok=%d",
-           u->n_funcs,nc,mmio,bf,kn,binop,calls,ok);
+  int repro=0;                                   /* A1.3: C23 `[[reproducible]]`/`[[unsequenced]]` hints */
+  for(int i=0;i<u->n_funcs;i++) if(u->funcs[i].reproducible) repro++;   /* counted over the WHOLE unit */
+  snprintf(buf,n,"funcs=%d claims=%zu mmio=%d bf=%d const=%d binop=%d call=%d repro=%d ok=%d",
+           u->n_funcs,nc,mmio,bf,kn,binop,calls,repro,ok);
 }
 
 /* --- module-scope effect / commutation analysis (the C twin of pipeline own_footprint + commute) ---

@@ -287,6 +287,10 @@ class Func:
     params: tuple
     body: tuple
     variadic: bool = False          # a trailing `...` after the named params (variadic function)
+    reproducible: bool = False      # a C23 `[[reproducible]]`/`[[unsequenced]]` hint attribute is present
+                                    #   on the definition. The hint is value-neutral (no effect on computed
+                                    #   results), so the emit DROPS it; recorded here only as a fusion-
+                                    #   legality signal (default False == every existing function, untouched).
 
 
 @dataclass(frozen=True)

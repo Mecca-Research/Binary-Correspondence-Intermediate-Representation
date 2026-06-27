@@ -45,7 +45,8 @@ void bcir_cfront_free(bcir_cfront_result *out);
 
 /* A canonical, RID-independent structural summary of the entry function's claim graph --
  * the Python<->C dual-rail parity key (bcir/tests/test_c_cfront.py computes the same from
- * the oracle). Writes "funcs=N claims=N mmio=N bf=N const=N binop=N call=N ok=1". */
+ * the oracle). Writes "funcs=N claims=N mmio=N bf=N const=N binop=N call=N repro=N ok=1"
+ * (repro = the count of C23 [[reproducible]]/[[unsequenced]]-hinted functions in the unit). */
 void bcir_cfront_summary(const bcir_unit *u, int ok, char *buf, size_t n);
 
 /* The module-scope effect / commutation analysis (the C twin of pipeline.own_footprint + commute):

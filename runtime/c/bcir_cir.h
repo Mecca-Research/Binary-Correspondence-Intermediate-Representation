@@ -147,6 +147,9 @@ typedef struct bcir_func {
   bcir_param    *params; int n_params, cap_params;
   bcir_ctype  ret;
   uint8_t  variadic;          /* the function is variadic: a trailing `...` after its named params */
+  uint8_t  reproducible;      /* a C23 `[[reproducible]]`/`[[unsequenced]]` hint is on the definition --
+                               * a fusion-legality signal. The hint is value-neutral, so the emit drops it
+                               * (it is never re-spelled); recorded only for the dual-rail repro= summary. */
   uint32_t return_rid; uint8_t has_return;
   char (*calls)[BCIR_CIR_NAME]; int n_calls, cap_calls;   /* callee names (R18 call graph) */
   bcir_static *statics; int n_statics, cap_statics;       /* static locals */
