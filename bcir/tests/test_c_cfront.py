@@ -41,7 +41,8 @@ _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfron
                  "cfront_callgraph.c", "cfront_typedef.c", "cfront_enum.c", "cfront_enumtype.c", "cfront_ternary.c",
                  "cfront_sizeof.c", "cfront_strsizeof.c", "cfront_strval.c", "cfront_charlit.c",
                  "cfront_strtab.c", "cfront_strconcat.c", "cfront_widelit.c", "cfront_cast.c", "cfront_alignof.c", "cfront_static.c",
-                 "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c", "cfront_signed.c", "cfront_signedcmp.c", "cfront_signedbare.c", "cfront_longunary.c", "cfront_boolnorm.c", "cfront_unarypromote.c", "cfront_floatsigncast.c", "cfront_intsigncast.c", "cfront_boolcast.c", "cfront_boolmember.c"]   # + char consts + str table/dedup + const LUT + ABI sizeof model + bool normalization + unary integer-promotion/float + float->signed + int->signed cast + bool cast + _Bool member/element store-normalization
+                 "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c", "cfront_signed.c", "cfront_signedcmp.c", "cfront_signedbare.c", "cfront_longunary.c", "cfront_boolnorm.c", "cfront_unarypromote.c", "cfront_floatsigncast.c", "cfront_intsigncast.c", "cfront_boolcast.c", "cfront_boolmember.c",
+                 "cfront_unsequenced.c", "cfront_reproducible.c"]   # + char consts + str table/dedup + const LUT + ABI sizeof model + bool normalization + unary integer-promotion/float + float->signed + int->signed cast + bool cast + _Bool member/element store-normalization + C23 [[unsequenced]]/[[reproducible]] hints (A1.3)
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
             "cfront_continue.c", "cfront_switch.c", "cfront_switchfall.c", "cfront_goto.c", "cfront_incdec.c",
             "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c", "cfront_loopscope.c", "cfront_blockscope.c", "cfront_localmd.c", "cfront_localmdinit.c", "cfront_ptrlocal.c"]
@@ -147,8 +148,12 @@ def _oracle(src: str, includes=None):
     kn = sum(1 for c in cl if c.op == "c.const")
     bo = sum(1 for c in cl if c.op.startswith("c.bin."))
     ca = sum(1 for c in cl if c.op.startswith("c.call"))   # c.call:NAME (direct) + c.call.indirect
+    # A1.3 fusion-legality signal: how many functions in the unit carry a C23 `[[reproducible]]` /
+    # `[[unsequenced]]` hint. Value-neutral (dropped from the emit), so it never affects behaviour --
+    # it is surfaced here so the dual-rail parity gate pins it identically on both rails.
+    repro = sum(1 for f in funcs.values() if getattr(f, "reproducible", False))
     summary = (f"funcs={len(funcs)} claims={len(cl)} mmio={mmio} bf={bf} const={kn} "
-               f"binop={bo} call={ca} ok={1 if r.is_clean else 0}")
+               f"binop={bo} call={ca} repro={repro} ok={1 if r.is_clean else 0}")
     return summary, r, entry
 
 
@@ -424,6 +429,36 @@ def test_storage_extent_parity_catches_oversizing():
     assert _array_extents("unsigned int a[2][2] = {0};") == _array_extents("unsigned int b[4] = {0};") == (4,)
     # a multiset: two same-sized arrays are distinct from one
     assert _array_extents("T a[2];\nT b[2];") == (2, 2) != _array_extents("T a[2];")
+
+
+def test_c23_unsequenced_reproducible_dual_rail():
+    """C23 function attributes (#unsequenced / A1.3): `[[unsequenced]]` / `[[reproducible]]` on a function
+    definition. Both rails parse + CONSUME the hint and record it as a fusion-legality signal surfaced in the
+    `repro=` field of the parity summary; the value-neutral hint is DROPPED from the emit (so the C stays
+    behaviour-equivalent under Clang). Asserts: (a) both rails parse the fixtures and agree on `repro=`;
+    (b) the hinted fixtures count repro=2 while an un-annotated unit counts repro=0 (NON-DISTURBANCE);
+    (c) the attribute does NOT leak into the emitted C; (d) twin == oracle parity + Clang-equivalence."""
+    # (b) NON-DISTURBANCE: a unit with no attribute counts repro=0; a one-function hinted unit counts 1.
+    plain_summary, _, _ = _oracle("uint32_t f(uint32_t a){ return a + 1u; }")
+    assert "repro=0" in plain_summary, plain_summary
+    hinted_summary, hr, _ = _oracle("[[unsequenced]] uint32_t g(uint32_t a){ return a + 1u; }")
+    assert "repro=1" in hinted_summary, hinted_summary
+    # (c) the value-neutral hint is dropped from the emit -- no `[[` survives into the emitted C.
+    assert "[[" not in "\n".join(hr.emitted.values())
+
+    for fx, want_repro in (("cfront_unsequenced.c", 2), ("cfront_reproducible.c", 2)):
+        path = os.path.join(_C, fx)
+        src = open(path, encoding="utf-8").read()
+        oracle_summary, r, entry = _oracle(src)
+        assert "ok=1" in oracle_summary, oracle_summary
+        assert f"repro={want_repro}" in oracle_summary, oracle_summary
+        assert "[[" not in "\n".join(r.emitted.values())            # (c) emit drops the attribute
+        if not _CC:
+            continue
+        # (d) the dual-rail gate: the twin prints the same summary (incl. repro=) and its emit == Clang.
+        exe = _build_frontend(_session_build_dir())
+        fx_, msg = _parity_check_fixture((exe, fx))
+        assert msg is None, f"{fx_}: {msg}"
 
 
 # The cross-fixture parity/equivalence campaign is split into N groups so run_all's worker pool

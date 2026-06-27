@@ -130,10 +130,25 @@ class _Parser:
 
     # --- unit ---
     def _attributes(self) -> dict:
-        """Consume `__attribute__((packed))` / `__attribute__((aligned(N)))` / `alignas(N)` runs."""
+        """Consume `__attribute__((packed))` / `__attribute__((aligned(N)))` / `alignas(N)` runs, plus a
+        C23 `[[ ... ]]` attribute run. The only C23 attributes acted on are the value-neutral hints
+        `[[unsequenced]]` / `[[reproducible]]` (recorded in the dict); any other C23 attribute (incl.
+        namespaced `gnu::packed` / argument forms) is scanned over and dropped."""
         attrs: dict = {}
         while True:
-            if self.at("IDENT", "__attribute__"):
+            if self.at("PUNCT", "[") and self.peek(1).kind == "PUNCT" and self.peek(1).text == "[":
+                self.nxt()                                # consume the opening `[[`
+                self.nxt()
+                while not (self.at("PUNCT", "]") and self.peek(1).kind == "PUNCT"   # scan to the closing `]]`
+                           and self.peek(1).text == "]"):
+                    if self.at("EOF"):
+                        raise CParseError("unterminated [[...]] attribute", pos=self.peek().pos)
+                    if self.at("IDENT", "unsequenced") or self.at("IDENT", "reproducible"):
+                        attrs["reproducible"] = True      # both hints fold to one fusion-legality flag
+                    self.nxt()                            # robust to args/namespaces: skip every other token
+                self.nxt()                                # eat the closing `]]`
+                self.nxt()
+            elif self.at("IDENT", "__attribute__"):
                 self.nxt()
                 self.eat("PUNCT", "(")
                 self.eat("PUNCT", "(")
@@ -173,6 +188,10 @@ class _Parser:
 
     def _toplevel_item(self, unit: cast.Unit) -> None:
         """Parse one top-level item (typedef / enum / aggregate definition / function / global)."""
+        # A C23 `[[unsequenced]]`/`[[reproducible]]` (or any leading attribute) may precede a function /
+        # global. `_attributes()` returns {} when the next token is not an attribute, so this is a no-op
+        # before a typedef / enum / struct / plain type -- NON-DISTURBANCE for every existing item.
+        lead = self._attributes()
         if self.at("IDENT", "typedef"):                        # a type alias (resolved at parse time)
             self._typedef(unit)
             return
@@ -200,7 +219,7 @@ class _Parser:
         tref = self._type_spec()
         tref, name = self._declarator(tref)
         if self.at("PUNCT", "("):                              # a function definition
-            unit.funcs.append(self._func_body(tref, name))
+            unit.funcs.append(self._func_body(tref, name, reproducible=bool(lead.get("reproducible"))))
         else:                                                  # a file-scope global variable
             unit.globals.append(self._global(tref, name))
 
@@ -574,7 +593,7 @@ class _Parser:
                             typeof_var=base.typeof_var, typeof_expr=base.typeof_expr), name
 
     # --- functions ---
-    def _func_body(self, ret: cast.TypeRef, name: str) -> cast.Func:
+    def _func_body(self, ret: cast.TypeRef, name: str, reproducible: bool = False) -> cast.Func:
         self.eat("PUNCT", "(")
         params = []
         variadic = False
@@ -595,7 +614,8 @@ class _Parser:
             self.nxt()
         self.eat("PUNCT", ")")
         body = self._block()
-        return cast.Func(ret=ret, name=name, params=tuple(params), body=body, variadic=variadic)
+        return cast.Func(ret=ret, name=name, params=tuple(params), body=body, variadic=variadic,
+                         reproducible=reproducible)
 
     # --- statements ---
     def _block(self) -> tuple:

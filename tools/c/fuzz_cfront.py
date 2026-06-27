@@ -751,6 +751,7 @@ def _oracle_summary_emit(src: str):
             f"const={sum(1 for c in cl if c.op == 'c.const')} "
             f"binop={sum(1 for c in cl if c.op.startswith('c.bin.'))} "
             f"call={sum(1 for c in cl if c.op.startswith('c.call'))} "
+            f"repro={sum(1 for fn in funcs.values() if getattr(fn, 'reproducible', False))} "
             f"ok={1 if r.is_clean else 0}")
     return summ, "\n".join(r.emitted[n] for n in funcs)
 
