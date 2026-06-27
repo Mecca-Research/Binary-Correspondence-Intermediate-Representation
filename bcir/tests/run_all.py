@@ -289,10 +289,10 @@ def main() -> int:
     else:
         # Fork so workers inherit the applied tier + already-imported modules (no re-import, no
         # re-gate). ProcessPoolExecutor workers are NON-daemonic, so a test that spawns its own pool
-        # (the cross-fixture parity check) still works. `.map` preserves submission order for a
-        # stable, diff-friendly log; chunksize=1 dispatches one test at a time so a worker that frees
-        # up pulls the next -- natural load balancing for the very uneven per-test compile cost (the C
-        # twin's build cache is a worker-process global, so it is still built once per worker).
+        # still works. `.map` preserves submission order for a stable, diff-friendly log; chunksize=1
+        # dispatches one test at a time so a worker that frees up pulls the next -- natural load
+        # balancing for the very uneven per-test compile cost (the C twin's build cache is a
+        # worker-process global, so it is still built once per worker).
         ctx = multiprocessing.get_context("fork")
         with concurrent.futures.ProcessPoolExecutor(max_workers=jobs, mp_context=ctx) as pool:
             for res in pool.map(_run_one, pairs, chunksize=1):

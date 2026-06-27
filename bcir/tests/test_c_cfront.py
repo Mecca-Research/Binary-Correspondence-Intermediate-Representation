@@ -426,25 +426,53 @@ def test_storage_extent_parity_catches_oversizing():
     assert _array_extents("T a[2];\nT b[2];") == (2, 2) != _array_extents("T a[2];")
 
 
-def test_python_c_parity_and_equivalence_across_fixtures():
+# The cross-fixture parity/equivalence campaign is split into N groups so run_all's worker pool
+# parallelizes it WITHOUT a nested process pool. The former single test spawned its OWN
+# os.cpu_count()-wide pool INSIDE run_all's already-cpu_count()-wide pool -- a 2x oversubscription that
+# both inflated this test's own wall (~6.7s -> ~12.4s) and crushed whatever ran alongside it (a 3.8s
+# neighbour ballooned to 12.3s in its window). As N independent `test_*` groups each run their slice
+# SERIALLY, the global scheduler load-balances them against every other test with no core contention.
+# Round-robin slicing keeps the groups balanced and auto-covers any fixture added to _FIXTURES (no
+# hand-maintained partition to drift).
+_PARITY_GROUPS = 4
+_PARITY_SLICES = [_FIXTURES[i::_PARITY_GROUPS] for i in range(_PARITY_GROUPS)]
+
+
+def _parity_check_group(fxs):
+    """Parity + dual-emit behaviour-equivalence over a SLICE of the fixtures (see `_PARITY_SLICES`).
+    Runs serially -- run_all's process pool supplies the parallelism *across* groups, so there is no
+    nested pool to oversubscribe the cores."""
     if not _CC:
         # quick tier: still validate the oracle side computes the summaries.
-        for fx in _FIXTURES:
+        for fx in fxs:
             s, _, _ = _oracle(open(os.path.join(_C, fx), encoding="utf-8").read(), _includes_for(fx))
             assert "ok=1" in s
         return
-    with tempfile.TemporaryDirectory() as d:
-        exe = _build_frontend(d)
-        workers = min(len(_FIXTURES), os.cpu_count() or 1)
-        if workers > 1:
-            import concurrent.futures  # noqa: PLC0415 -- only when the toolchain tier actually runs
-            with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as ex:
-                results = list(ex.map(_parity_check_fixture, [(exe, fx) for fx in _FIXTURES]))
-        else:
-            results = [_parity_check_fixture((exe, fx)) for fx in _FIXTURES]
+    exe = _build_frontend(_session_build_dir())                  # session-cached; the arg is ignored
+    results = [_parity_check_fixture((exe, fx)) for fx in fxs]
     fails = [(fx, msg) for fx, msg in results if msg]
     assert not fails, "C-frontend parity/equivalence failures:\n" + "\n".join(
         f"  {fx}: {msg}" for fx, msg in fails)
+
+
+def test_python_c_parity_and_equivalence_across_fixtures_g0():
+    """Cross-fixture C<->oracle parity + behaviour-equivalence, group 0/4 (see `_parity_check_group`)."""
+    _parity_check_group(_PARITY_SLICES[0])
+
+
+def test_python_c_parity_and_equivalence_across_fixtures_g1():
+    """Cross-fixture C<->oracle parity + behaviour-equivalence, group 1/4 (see `_parity_check_group`)."""
+    _parity_check_group(_PARITY_SLICES[1])
+
+
+def test_python_c_parity_and_equivalence_across_fixtures_g2():
+    """Cross-fixture C<->oracle parity + behaviour-equivalence, group 2/4 (see `_parity_check_group`)."""
+    _parity_check_group(_PARITY_SLICES[2])
+
+
+def test_python_c_parity_and_equivalence_across_fixtures_g3():
+    """Cross-fixture C<->oracle parity + behaviour-equivalence, group 3/4 (see `_parity_check_group`)."""
+    _parity_check_group(_PARITY_SLICES[3])
 
 
 def test_pointer_to_pointer_dual_rail():
@@ -2783,7 +2811,7 @@ def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
             assert "ok=0" in out and "R18" in out and needle in out, out
 
 
-def test_cfront_differential_fuzz():
+def _cfront_differential_fuzz_seed(seed: int):
     """A seeded differential fuzzer over the shared cfront subset (`tools/c/fuzz_cfront.py`): random but
     well-defined programs -- struct/union type definitions, an optional helper prelude, then an entry `f`,
     with `char`/`short`/`int`/`long`/`unsigned`/`unsigned long`/`float`/`double` and mixed
@@ -2818,7 +2846,13 @@ def test_cfront_differential_fuzz():
     type-aligned storage unit instead of packing it into the current bit cursor (the Itanium/Clang rule),
     giving a wrong struct size + member offsets vs Clang, and BOTH rails storing into a `_Bool` MEMBER /
     `_Bool[]` element as a raw byte copy instead of NORMALIZING any nonzero to 1 (§6.3.1.2) -- `s.flag = 2`
-    read back as 2. The seeds are fixed (deterministic)."""
+    read back as 2. The seeds are fixed (deterministic).
+
+    Factored to ONE seed so the three independent seeds run as three separate `test_*` callables: this
+    campaign was the conformance suite's single longest pole (~47s serial), and run_all schedules
+    `test_*` functions across its worker pool, so one indivisible 3-seed unit pinned the whole parallel
+    wall time to itself. Splitting it lets the three seeds pack across cores -- the seeds/count are
+    unchanged, so coverage is byte-identical to the former single test (it just parallelizes)."""
     import random as _random
     import sys as _sys
     tools_c = os.path.join(_ROOT, "tools", "c")
@@ -2827,16 +2861,30 @@ def test_cfront_differential_fuzz():
     import fuzz_cfront
 
     if not _CC:                                         # no compiler -> can't build the twin; at least pin
-        rng = _random.Random(1234)                     # that generation terminates and the oracle never
+        rng = _random.Random(seed)                     # that generation terminates and the oracle never
         for _ in range(60):                            # crashes on an in-subset program.
             fuzz_cfront._oracle_outcome(fuzz_cfront.Gen(rng).program().source)
         return
     with tempfile.TemporaryDirectory() as d:
         twin = _build_frontend(d)
-        for seed in (1234, 5678, 4242):
-            divergence, stats = fuzz_cfront.run_seed(twin, _CC, count=40, seed=seed, d=d)
-            assert divergence is None, divergence
-            assert stats["clean"] >= 1 and stats["checked"] == stats["clean"], stats
+        divergence, stats = fuzz_cfront.run_seed(twin, _CC, count=40, seed=seed, d=d)
+        assert divergence is None, divergence
+        assert stats["clean"] >= 1 and stats["checked"] == stats["clean"], stats
+
+
+def test_cfront_differential_fuzz_seed1234():
+    """Differential cfront fuzz, seed 1234 (one of three seed shards; see `_cfront_differential_fuzz_seed`)."""
+    _cfront_differential_fuzz_seed(1234)
+
+
+def test_cfront_differential_fuzz_seed5678():
+    """Differential cfront fuzz, seed 5678 (one of three seed shards; see `_cfront_differential_fuzz_seed`)."""
+    _cfront_differential_fuzz_seed(5678)
+
+
+def test_cfront_differential_fuzz_seed4242():
+    """Differential cfront fuzz, seed 4242 (one of three seed shards; see `_cfront_differential_fuzz_seed`)."""
+    _cfront_differential_fuzz_seed(4242)
 
 
 def test_bounds_promotion_local_static_arrays_to_masked():
