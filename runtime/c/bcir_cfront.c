@@ -1447,6 +1447,10 @@ static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -
 /* Parse `[i]` (or `[i][j][k]`) on an array variable and Horner-flatten via its declared dims
  * (`v->type.adims`): `m[i][j]` on a `T m[A][B]` -> `i*B + j`. The cursor must be at the first `[`. */
 static uint32_t array_index(CC *c, venv *v) {
+  /* SNAPSHOT the env entry: the index p_expr below can declare locals (a `({...})` stmt-expr) and realloc
+   * c->env[] -- the incoming `v`, a pointer into that array, would dangle after the move. Reading from the
+   * by-value copy is byte-identical (only v->rid / v->type are read). */
+  venv vsnap=*v; v=&vsnap;
   uint32_t idxs[3]; int ni=0;
   while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]"); if(ni<3)idxs[ni++]=ix; }
   const bcir_resource *vr=res_of(c->fn,v->rid);    /* a multi-dim VLA -> RUNTIME dim strides (no c.const) */
@@ -1815,6 +1819,9 @@ static uint32_t p_call(CC *c, const tok *name) {
  * there is no named callee -- a `c.call.indirect` claim (reads: the pointer value then the actuals).
  * It is *not* added to fn->calls, so R18 leaves it an opaque external edge (no recursion/resolution). */
 static uint32_t p_icall(CC *c, const venv *fv) {
+  /* SNAPSHOT the funcptr's env entry: the actuals p_expr below can declare locals (a stmt-expr arg) and
+   * realloc c->env[] -- `fv`, a pointer into it, would dangle before fv->type / fv->rid are read. */
+  venv fvsnap=*fv; fv=&fvsnap;
   c->i++; /* '(' */
   uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
   if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a;
@@ -1888,6 +1895,10 @@ static char *gather_strings(CC *c, tok first, int *out_n) {
  * already-resolved lvalue base `v`. Shared by the identifier primary and the compound-literal path -- a
  * synthesized base (rid + struct type + sidx) lets `(struct P){...}.field` read like any struct base. */
 static uint32_t postfix_lvalue(CC *c, venv *v){
+  /* SNAPSHOT the env entry: the member-funcptr-call args, the `[idx]` subscript, and member_arr_index all
+   * re-enter the expression grammar (p_expr), which can declare locals and realloc c->env[] -- the incoming
+   * `v`, a pointer into that array, would dangle. The emit/store helpers only READ the venv (by-value identical). */
+  venv vsnap=*v; v=&vsnap;
   if(is(c,".")||is(c,"->")){
     int arrow=is(c,"->"); c->i++; tok fn=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
     for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
@@ -2126,7 +2137,10 @@ static uint32_t p_unary(CC *c) {
     return t; }
   if(is(c,"&")){ c->i++;                          /* address-of: &lvalue -> a pointer value (c.addrof) */
     if(is(c,"*")){ c->i++; return p_unary(c); }    /* &*p == p (the pointer itself; &*(p+i) == p+i) */
-    if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);
+    if(isk(c,T_ID)){ tok id=*pk(c); venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id);
+      /* SNAPSHOT the env entry: &s.arr[i] / &arr[i] resolve the index via member_arr_index / p_expr, which
+       * can declare locals and realloc c->env[] -- a pointer into it would dangle (the helpers only READ). */
+      venv vsnap; venv *v=NULL; if(vp){ vsnap=*vp; v=&vsnap; }
       if(v){ c->i++;
         if((is(c,".")||is(c,"->")) && v->sidx>=0){   /* &s.m / &s->m (scalar/struct member; value OR ptr base) */
           sdef *S=&c->s[v->sidx]; c->i++; tok fn=adv(c); int fi=-1;
@@ -2250,13 +2264,13 @@ static uint32_t p_unary(CC *c) {
   if(is(c,"*")){                                   /* pointer dereference: *p / *(p + i) */
     c->i++;
     if(is(c,"(")){ int save=c->i; c->i++;          /* *(p) or *(p + i) */
-      if(isk(c,T_ID)){ tok pid=*pk(c); venv *pv=lookup(c,&pid);
-        if(pv){ c->i++;
+      if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid);
+        if(pvp){ c->i++; venv pvsnap=*pvp; venv *pv=&pvsnap;   /* SNAPSHOT: the `+ i` index p_expr below can realloc c->env[] */
           if(is(c,"+")){ c->i++; uint32_t idx=p_expr(c); eat(c,")"); return emit_index(c,pv,idx); }
           if(is(c,")")){ c->i++; return emit_deref(c,pv); } } }
       c->i=save;
     } else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pv=lookup(c,&pid);
-      if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p */
+      if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p (no sub-parse between lookup and use) */
     return emit_deref_rid(c, p_unary(c));            /* general: `**pp`, `*(<expr>)` -- deref a ptr rvalue */
   }
   if(is(c,"(") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='{')
@@ -2538,13 +2552,15 @@ static int lv_assign_value(CC *c, uint32_t *out){
   /* --- a deref `*p = rhs` / `*(p + i) = rhs` / their `OP=` as a VALUE --- */
   if(is(c,"*")){
     c->i++;
-    venv *pv=NULL; uint32_t idx=0; int has_idx=0, ok=0;
+    venv pvsnap; venv *pv=NULL; uint32_t idx=0; int has_idx=0, ok=0;
+    /* SNAPSHOT the pointer's env entry: the `*(p + i)` index and the RHS p_assign below can declare locals
+     * and realloc c->env[] -- a pointer into it dangles. The store/emit helpers only READ the venv. */
     if(is(c,"(")){ c->i++;                              /* *(p) or *(p + i) */
-      if(isk(c,T_ID)){ tok pid=*pk(c); pv=lookup(c,&pid);
-        if(pv){ c->i++;
+      if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid);
+        if(pvp){ c->i++; pvsnap=*pvp; pv=&pvsnap;
           if(is(c,"+")){ c->i++; idx=p_expr(c); has_idx=1; if(eat(c,")")) ok=1; }
           else if(is(c,")")){ c->i++; ok=1; } } } }
-    else if(isk(c,T_ID)){ tok pid=*pk(c); pv=lookup(c,&pid); if(pv){ c->i++; ok=1; } }   /* *p */
+    else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(pvp){ c->i++; pvsnap=*pvp; pv=&pvsnap; ok=1; } }   /* *p */
     const tok *op=&c->t[c->i];
     int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
     if(ok && pv && pv->type.kind==2 && !pv->type.is_volatile      /* a non-volatile pointer to a scalar pointee */
@@ -2579,8 +2595,12 @@ static int lv_assign_value(CC *c, uint32_t *out){
     c->i=save;   /* not an eligible deref-assignment value -- rewind (any speculative index lowering is rolled */
   }              /* back below via the res/claim snapshot when we reach the array path; here nothing was emitted */
   if(!isk(c,T_ID)) return 0;
-  tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);
-  if(!v){ c->i=save; return 0; }
+  tok id=*pk(c); venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id);
+  if(!vp){ c->i=save; return 0; }
+  /* SNAPSHOT the env entry: the value-store paths below resolve an index / RHS via array_index /
+   * member_arr_index / p_assign, which can declare locals and realloc c->env[] mid-parse -- a pointer
+   * INTO that array dangles afterward. The store/emit helpers only READ the venv (by-value identical). */
+  venv vsnap=*vp; venv *v=&vsnap;
   /* --- a DIRECT ARRAY-OF-STRUCTS element FIELD `a[i].f = rhs` / `a[i].f OP= rhs` as a VALUE (strided) --- */
   if(v->sidx>=0 && !v->type.is_volatile && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
@@ -2778,8 +2798,12 @@ static int incdec_value(CC *c, uint32_t *out){
   int save=c->i;
   if(prefix) c->i++;                                       /* consume the leading `++`/`--` */
   if(!isk(c,T_ID)){ c->i=save; return 0; }                 /* only a named-rooted lvalue is supported */
-  tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);
-  if(!v){ c->i=save; return 0; }
+  tok id=*pk(c); venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id);
+  if(!vp){ c->i=save; return 0; }
+  /* SNAPSHOT the env entry: the indexed inc/dec paths below resolve the index via array_index (a p_expr
+   * sub-parse) before reading v->rid/sidx/type -- a stmt-expr index can realloc c->env[] and dangle a
+   * pointer into it. The by-value copy is byte-identical (the helpers only READ the venv). */
+  venv vsnap=*vp; venv *v=&vsnap;
   const char *suf = ch=='+'?"add":"sub"; bcir_opcode oc = ch=='+'?BCIR_OP_ADD:BCIR_OP_SUB;
 
   /* --- a DIRECT array-of-structs element FIELD `a[i].f` (strided), non-volatile --- */
@@ -2896,7 +2920,12 @@ static int incdec_value(CC *c, uint32_t *out){
  * falls through to the conditional grammar (so a member/array-lvalue assignment used as a value falls back). */
 static uint32_t p_assign(CC *c){
   if(name_assign_ahead(c)){
-    venv *v=lookup(c,&c->t[c->i]); if(!v) v=use_global(c,&c->t[c->i]);
+    venv *vp=lookup(c,&c->t[c->i]); if(!vp) vp=use_global(c,&c->t[c->i]);
+    /* SNAPSHOT the env entry into a LOCAL before any RHS sub-parse: p_assign below calls back into the
+     * expression grammar, which can declare locals (a `({...})` stmt-expr / a `use_global`) and realloc
+     * c->env[] -- a pointer INTO that array dangles after the move. The helpers only READ the venv, so a
+     * by-value copy is byte-identical (#532 class). */
+    venv vsnap; venv *v=NULL; if(vp){ vsnap=*vp; v=&vsnap; }
     if(v){
       const tok *op=&c->t[c->i+1];
       if(op->n==1 && op->s[0]=='='){                 /* name = rhs  (right-recursive: a = b = c) */
@@ -2920,8 +2949,11 @@ static uint32_t p_assign(CC *c){
       return v->rid;
     }
   }
-  field mf; venv *mbase;
-  if(member_assign_ahead(c,&mf,&mbase)){            /* `p->x = rhs` / `s.x OP= rhs` as a VALUE (store + reload) */
+  field mf; venv *mbp;
+  if(member_assign_ahead(c,&mf,&mbp)){             /* `p->x = rhs` / `s.x OP= rhs` as a VALUE (store + reload) */
+    /* SNAPSHOT the struct base env entry into a LOCAL before the RHS sub-parse below reallocs c->env[]
+     * (store_member/emit_member read mbase->rid + mbase->type only -- a by-value copy is identical). */
+    venv mbsnap=*mbp; venv *mbase=&mbsnap;
     c->i+=3;                                        /* consume `name . field` (or `name -> field`) */
     const tok *op=&c->t[c->i];
     if(op->n==1 && op->s[0]=='='){                  /* plain: store rhs, then RE-READ -> the converted value */
@@ -3330,7 +3362,9 @@ static int p_incdec(CC *c) {
 static void ctype_str(const bcir_ctype *ty,char *o,size_t n);   /* used to spell a captured funcptr signature */
 static void p_simple(CC *c) {
   if(p_incdec(c)) return;
-  if(isk(c,T_ID)){ tok id=*pk(c); venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a writable global */
+  if(isk(c,T_ID)){ tok id=*pk(c); venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id);   /* a writable global */
+    /* SNAPSHOT the env entry before the RHS p_expr below can realloc c->env[] (a stmt-expr / use_global). */
+    venv vsnap; venv *v=NULL; if(vp){ vsnap=*vp; v=&vsnap; }
     if(v && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='='){      /* name = expr */
       c->i+=2; uint32_t val=p_expr(c);
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
@@ -3502,15 +3536,27 @@ static void p_stmt(CC *c) {
         if(!eat(c,")")||!eat(c,"("))return;            /* `) (` -- into the parameter-type list */
         char rets[64]; ctype_str(&ret,rets,sizeof rets);
         char sig[512]; size_t sw=0; int np=0;
-        sw+=snprintf(sig+sw,sizeof sig-sw,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
+        /* `sw` accumulates snprintf's RETURN (the would-be length), so on a long signature it can
+         * reach/exceed `sizeof sig` -- `sizeof sig - sw` would then underflow size_t to a huge value and
+         * the next snprintf would write past sig[512] (a stack-buffer-overflow). CLAMP the size argument
+         * to 0 once the buffer is full: snprintf then writes NOTHING but still returns the would-be
+         * length, so `sw` tracks the true total for the `fpdefs_w+sw < sizeof fpdefs` guard below (which
+         * already drops an over-long prelude) -- the parse CONTINUES and the kind-3 binding + claim graph
+         * are byte-identical to the oracle (which has no fixed buffer). The signature text is cosmetic
+         * prelude only; this is a memory-safety clamp, NOT a behaviour change. */
+        #define SIG_REM (sw<sizeof sig?sizeof sig-sw:0)
+        sw+=snprintf(sig+sw,SIG_REM,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
         if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){ c->i++; }   /* `(void)` */
         else if(!is(c,")")) for(;;){ bcir_ctype pt; int psi; if(p_type(c,&pt,&psi))return;
           if(isk(c,T_ID)) c->i++;                      /* an optional parameter name (ignored) */
           char ps[64]; ctype_str(&pt,ps,sizeof ps);
-          sw+=snprintf(sig+sw,sizeof sig-sw,"%s%s",np?", ":"",ps); np++;
+          sw+=snprintf(sig+sw,SIG_REM,"%s%s",np?", ":"",ps); np++;
           if(is(c,",")){c->i++;continue;} break; }
-        sw+=snprintf(sig+sw,sizeof sig-sw,"%s);\n",np?"":"void");
-        if(c->fpdefs_w+sw<sizeof c->fpdefs){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
+        sw+=snprintf(sig+sw,SIG_REM,"%s);\n",np?"":"void");
+        #undef SIG_REM
+        /* only copy a signature that fit in `sig` (sw<=sizeof sig): a clamped (over-long) one was
+         * truncated, so its `sw` overstates the bytes actually in `sig` -- never read past sig[512]. */
+        if(sw<sizeof sig && c->fpdefs_w+sw<sizeof c->fpdefs){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
         if(!eat(c,")"))return;                          /* past the parameter-type list */
         bcir_ctype fty; memset(&fty,0,sizeof fty); fty.kind=3; fty.size=8; fty.signd=0;
         fty.fp_ret_size=ret.size; fty.fp_ret_signd=(uint8_t)(ret.signd?1:0); fty.fp_ret_float=(uint8_t)(ret.is_float?1:0);
@@ -3704,13 +3750,15 @@ static void p_stmt(CC *c) {
    * [ptr, idx, val], like the array store). A compound `OP=` loads first (emit_deref / emit_index). */
   if(is(c,"*")){
     int save=c->i; c->i++;
-    venv *pv=NULL; uint32_t idx=0; int has_idx=0, ok=0;
+    venv pvsnap; venv *pv=NULL; uint32_t idx=0; int has_idx=0, ok=0;
+    /* SNAPSHOT the pointer's env entry: the `*(p + i)` index and the RHS p_expr below can declare locals
+     * and realloc c->env[] -- a pointer into it dangles. The store/emit helpers only READ the venv. */
     if(is(c,"(")){ c->i++;                              /* *(p) or *(p + i) */
-      if(isk(c,T_ID)){ tok pid=*pk(c); pv=lookup(c,&pid);
-        if(pv){ c->i++;
+      if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid);
+        if(pvp){ c->i++; pvsnap=*pvp; pv=&pvsnap;
           if(is(c,"+")){ c->i++; idx=p_expr(c); has_idx=1; if(eat(c,")")) ok=1; }
           else if(is(c,")")){ c->i++; ok=1; } } } }
-    else if(isk(c,T_ID)){ tok pid=*pk(c); pv=lookup(c,&pid); if(pv){ c->i++; ok=1; } }   /* *p */
+    else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(pvp){ c->i++; pvsnap=*pvp; pv=&pvsnap; ok=1; } }   /* *p */
     if(ok && pv && (is_compound_op(&c->t[c->i]) ||
                     (c->t[c->i].k==T_PUN && c->t[c->i].n==1 && c->t[c->i].s[0]=='='))){
       int sz = (pv->type.ptr_depth>1) ? cc_abi(c)->pointer_size : (pv->type.size?pv->type.size:4); uint32_t val;
@@ -3755,7 +3803,12 @@ static void p_stmt(CC *c) {
     }
     c->i=save;   /* not a deref-store -- fall through (e.g. a bare `*p;` expression statement) */
   }
-  if(isk(c,T_ID)){tok id=*pk(c);venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a writable file-scope global */
+  if(isk(c,T_ID)){tok id=*pk(c);venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id);   /* a writable file-scope global */
+    /* SNAPSHOT the env entry: every assignment form below re-enters the expression grammar (p_expr /
+     * array_index / member_arr_index), which can declare locals and realloc c->env[] mid-parse -- a
+     * pointer INTO that array then dangles. The store/emit helpers only READ the venv, so the by-value
+     * copy is byte-identical (#532 class). */
+    venv vsnap; venv *v=NULL; if(vp){ vsnap=*vp; v=&vsnap; }
     /* L8: struct member store  v.field = expr  /  v->field = expr  (only when an `=`/OP= actually follows
      * the access chain -- else `s.m` is a VALUE, e.g. the last item of a `({...})`, and falls through to the
      * expression-statement path below, exactly like a bare `a[i];` subscript). */
@@ -3955,15 +4008,24 @@ static int p_func(CC *c, bcir_func *fn) {
       if(!eat(c,")")||!eat(c,"("))return 1;          /* `) (` -- into the parameter-type list */
       char rets[64]; ctype_str(&ret,rets,sizeof rets);
       char sig[512]; size_t sw=0; int np=0;
-      sw+=snprintf(sig+sw,sizeof sig-sw,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
+      /* CLAMP the snprintf size to 0 once `sw` (the accumulated would-be length) reaches `sizeof sig`,
+       * so `sizeof sig - sw` never underflows size_t and the next snprintf never overflows sig[512].
+       * snprintf still returns the would-be length, so `sw` tracks the true total for the fpdefs guard
+       * below; the parse CONTINUES with a byte-identical kind-3 binding + claim graph (memory-safety
+       * clamp, not a behaviour change -- the signature text is cosmetic prelude only). See Bug 2. */
+      #define SIG_REM (sw<sizeof sig?sizeof sig-sw:0)
+      sw+=snprintf(sig+sw,SIG_REM,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
       if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){ c->i++; }   /* `(void)` */
       else if(!is(c,")")) for(;;){ bcir_ctype pt; int psi; if(p_type(c,&pt,&psi))return 1;
         if(isk(c,T_ID)) c->i++;                      /* an optional parameter name (ignored) */
         char ps[64]; ctype_str(&pt,ps,sizeof ps);
-        sw+=snprintf(sig+sw,sizeof sig-sw,"%s%s",np?", ":"",ps); np++;
+        sw+=snprintf(sig+sw,SIG_REM,"%s%s",np?", ":"",ps); np++;
         if(is(c,",")){c->i++;continue;} break; }
-      sw+=snprintf(sig+sw,sizeof sig-sw,"%s);\n",np?"":"void");
-      if(c->fpdefs_w+sw<sizeof c->fpdefs){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
+      sw+=snprintf(sig+sw,SIG_REM,"%s);\n",np?"":"void");
+      #undef SIG_REM
+      /* only copy a signature that fit in `sig` (sw<=sizeof sig): a clamped one's `sw` overstates the
+       * bytes actually in `sig`, so never read past sig[512]. */
+      if(sw<sizeof sig && c->fpdefs_w+sw<sizeof c->fpdefs){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
       if(!eat(c,")"))return 1;                        /* past the parameter-type list */
       memset(&ty,0,sizeof ty); ty.kind=3; ty.size=8; ty.signd=0;
       ty.fp_ret_size=ret.size; ty.fp_ret_signd=(uint8_t)(ret.signd?1:0); ty.fp_ret_float=(uint8_t)(ret.is_float?1:0);
@@ -4519,6 +4581,11 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
   sdef *sv_s=c.s; int sv_cs=c.cap_s; tdef *sv_td=c.td; int sv_ctd=c.cap_td;
   econst *sv_ec=c.ec; int sv_cec=c.cap_ec; gvar *sv_gv=c.gv; int sv_cgv=c.cap_gv;
   venv *sv_env=c.env; int sv_cenv=c.cap_env;
+  /* free any PRIOR unit before the entry memset zeroes out->unit.funcs: a reused `out` (a static result
+   * compiled again without an intervening bcir_cfront_free) would otherwise leak its previous function
+   * array + every per-func sub-array. bcir_cfront_free is a no-op on a zero-initialised out (funcs=NULL,
+   * n_funcs=0 -> free(NULL)), so this is safe on the first call. */
+  bcir_cfront_free(out);
   memset(&c,0,sizeof c); memset(out,0,sizeof *out);
   c.s=sv_s; c.cap_s=sv_cs; c.td=sv_td; c.cap_td=sv_ctd; c.ec=sv_ec; c.cap_ec=sv_cec;
   c.gv=sv_gv; c.cap_gv=sv_cgv; c.env=sv_env; c.cap_env=sv_cenv;
@@ -4546,7 +4613,12 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
     }
     bcir_func *fn=&out->unit.funcs[out->unit.n_funcs]; /* res/claims/params/calls/statics grow lazily */
     c.rid=100+out->unit.n_funcs*1000; c.cid=1000+out->unit.n_funcs*1000;
-    if(p_func(&c,fn)){snprintf(out->diag,sizeof out->diag,"%s",c.err);return 1;}
+    if(p_func(&c,fn)){snprintf(out->diag,sizeof out->diag,"%s",c.err);
+      /* free the in-progress (uncounted) func's sub-arrays: it was never folded into n_funcs, so
+       * bcir_cfront_free's `i<n_funcs` loop would never reach it -> a per-parse-failure leak. */
+      free(fn->res); free(fn->claims); free(fn->params); free(fn->calls); free(fn->statics);
+      memset(fn,0,sizeof *fn);
+      return 1;}
     fn->reproducible=(uint8_t)lead_repro;   /* the C23 hint consumed just above (A1.3); emit drops it */
     out->unit.n_funcs++;
   }

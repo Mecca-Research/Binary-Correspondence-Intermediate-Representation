@@ -165,8 +165,11 @@ int main(int argc, char **argv) {
 
     static bcir_cfront_result r;
     if (bcir_cfront_compile_target(src, target, &r) != 0) {
-      if (fallback) { fprintf(stderr, "%s: fallback to LLVM backend: compile: %s\n", path, r.diag); rc = 2; continue; }
-      fprintf(stderr, "%s: parse error: %s\n", path, r.diag); rc = 1; continue;
+      /* free the partial unit on the compile-error path too (the success path frees at the loop foot): `r`
+       * is a reused static, so a skipped free here would leak the in-progress unit across files (the next
+       * call's entry memset zeroes out->unit.funcs without freeing it). */
+      if (fallback) { fprintf(stderr, "%s: fallback to LLVM backend: compile: %s\n", path, r.diag); rc = 2; bcir_cfront_free(&r); continue; }
+      fprintf(stderr, "%s: parse error: %s\n", path, r.diag); rc = 1; bcir_cfront_free(&r); continue;
     }
     if (!r.ok) { fprintf(stderr, "%s: verify error: %s\n", path, r.diag); rc = 1; bcir_cfront_free(&r); continue; }
 

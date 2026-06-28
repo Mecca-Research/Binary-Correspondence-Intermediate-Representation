@@ -44,7 +44,10 @@ int main(int argc, char **argv) {
   if (bcir_cpp_run(raw, base, src, sizeof src, cpperr, sizeof cpperr)) { printf("CPP-ERR %s\n", cpperr); return 1; }
 
   static bcir_cfront_result r;
-  if (bcir_cfront_compile_target(src, target, &r) != 0) { printf("PARSE-ERR %s\n", r.diag); return 1; }
+  /* free even on the compile-error path (not just success): the in-progress unit owns heap arrays, so an
+   * error-path leak (Bug 3) is surfaced -- under the harness's LSan/detect_leaks=1 pass this orphaned
+   * memory becomes a LeakSanitizer report, pinning the regression. */
+  if (bcir_cfront_compile_target(src, target, &r) != 0) { printf("PARSE-ERR %s\n", r.diag); bcir_cfront_free(&r); return 1; }
   char sum[200]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);
   printf("%s\n", sum);
   if (!r.ok) printf("diag: %s\n", r.diag);
