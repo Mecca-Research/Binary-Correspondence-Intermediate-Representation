@@ -661,6 +661,55 @@ done
 "${tmp}/bcir-cc" --emit-c "${tmp}/lf/mathh.c" | grep -q "link_flags  -lm" \
   && echo "  PASS linkflags: --emit-c attestation header carries the derived flags (link_flags -lm)" \
   || { echo "  FAIL: --emit-c header missing the derived link_flags line"; exit 1; }
+# B2 FFTW link-flag rule (dual-rail): the trusted-library edges (cblas_*/fftwf_*) are NOT reachable from a
+# cfront SOURCE (an unknown callee lowers to an in-unit `c.call:` edge, not `c.call.libm:`) -- they are
+# minted by the kernel EMITTERS (emit_blas_gemm_c / emit_fftw_fft_c). So this probe drives the C twin's
+# bcir_cfront_link_flags over a FABRICATED unit carrying a `c.call.libm:fftwf_execute` edge and asserts it
+# derives `-lfftw3` (the B2 rule), with a cblas edge -> -lcblas (no B5 regression), a libm edge -> -lm,
+# and an unknown edge -> no flag. The oracle (linkflags.library_for_callee) is pinned in test_c_cfront.py.
+echo "[c-runtime] B2 FFTW link-flag rule (bcir_cfront_link_flags twin): fftwf_* -> -lfftw3 (#linkflags-fftw)"
+cat > "${tmp}/lf_fftw.c" <<'PROBE'
+#include <stdio.h>
+#include <string.h>
+#include "bcir_cir.h"
+#include "bcir_cfront.h"
+/* Build a one-function unit whose single claim is the given external-call edge op, then derive its flags. */
+static const char *derive(const char *op) {
+  static char buf[128];
+  bcir_claim cl; memset(&cl, 0, sizeof cl);
+  snprintf(cl.op, sizeof cl.op, "%s", op);
+  bcir_func f; memset(&f, 0, sizeof f);
+  f.claims = &cl; f.n_claims = 1;
+  bcir_unit u; memset(&u, 0, sizeof u);
+  u.funcs = &f; u.n_funcs = 1;
+  bcir_cfront_link_flags(&u, buf, sizeof buf);
+  return buf;
+}
+static int eq(const char *op, const char *want) {
+  const char *got = derive(op);
+  if (strcmp(got, want)) { printf("FAIL %s -> '%s' want '%s'\n", op, got, want); return 0; }
+  return 1;
+}
+int main(void) {
+  int ok = 1;
+  ok &= eq("c.call.libm:fftwf_execute", "-lfftw3");      /* the B2 rule */
+  ok &= eq("c.call.libm:fftwf_plan_dft_1d", "-lfftw3");  /* any fftwf_* */
+  ok &= eq("c.call.libm:fftw_execute", "-lfftw3");       /* the double-prec fftw_* prefix */
+  ok &= eq("c.call.libm:cblas_sgemm", "-lcblas");        /* B5 (no regression) */
+  ok &= eq("c.call.libm:sqrt", "-lm");                   /* libm (no regression) */
+  ok &= eq("c.call.libm:totally_unknown_fn", "");        /* unknown -> no flag (no regression) */
+  if (ok) puts("OK linkflags-fftw");
+  return ok ? 0 : 1;
+}
+PROBE
+"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${tmp}/lf_fftw.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
+  "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_fftw" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 -I "${C}" "${tmp}/lf_fftw.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
+       "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_fftw" \
+  || { echo "  FAIL: FFTW link-flag probe build"; exit 1; }
+"${tmp}/lf_fftw" | grep -q "^OK linkflags-fftw" \
+  && echo "  PASS linkflags-fftw: C twin derives fftwf_*/fftw_* -> -lfftw3 (cblas/-lm/unknown unchanged)" \
+  || { echo "  FAIL: FFTW link-flag rule diverged on the C twin"; "${tmp}/lf_fftw"; exit 1; }
 
 # Scalable IR (no fixed BCIR_MAX_*): a unit that busts every OLD ceiling -- 43 functions (> the old
 # BCIR_MAX_FUNCS 16), many12 with 12 params (> 8), agg with 40 calls (> 32), big with 7500 claims

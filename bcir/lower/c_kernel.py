@@ -321,6 +321,63 @@ def emit_blas_gemm_c(M: int, N: int, K: int, fn_name: str = "bcir_gemm") -> str:
     )
 
 
+def emit_fftw_fft_c(n: int, fn_name: str = "bcir_fft") -> str:
+    """B2: wrap a TRUSTED external FFTW 1-D complex FFT through the `c.call.libm:` FFI edge -- "integrate,
+    don't reinvent", a genuinely NEW kernel class (a spectral transform, not a matmul). BCIR owns the
+    CALLING side: it fixes the interleaved complex layout `X[2k]=Re, X[2k+1]=Im` and (with the A1.1 Q8
+    bridge at the boundary) the precision, and DELEGATES the transform to FFTW's plan API
+    (`fftwf_plan_dft_1d` + `fftwf_execute` + `fftwf_destroy_plan`) when linked (`-DBCIR_USE_FFTW -lfftw3`),
+    with a portable reference DFT (the naive O(n^2) `sum_k x[k]*exp(-2*pi*i*j*k/n)`) selected by the
+    preprocessor when it is not. BOTH paths compute the IDENTICAL forward transform (FFTW's
+    FFTW_FORWARD == the `e^{-2*pi*i*jk/n}` sign convention), so the same source is correct linked or
+    standalone -- the win is on the calling side (layout / quant), not a reimplemented FFT. `n` is baked
+    in (a planned claim knows its length). The interface is a float[2*n] in -> float[2*n] out, interleaved
+    complex, exactly the `fftwf_complex` memory layout (so the wrapped call is a pointer cast, no copy)."""
+    if n < 1:
+        raise ValueError(f"fft length must be >= 1; got {n}")
+    return (
+        f"/* BCIR -> external trusted 1-D FFT via the c.call.libm: edge (integrate, don't reinvent). "
+        f"forward complex DFT of length {n}; interleaved layout X[2k]=Re,X[2k+1]=Im. FFTW "
+        f"fftwf_plan_dft_1d(FFTW_FORWARD) when linked, naive O(n^2) reference DFT otherwise -- both "
+        f"compute the identical transform; BCIR owns the calling side (layout + the Q8<->f32 boundary). */\n"
+        "#include <stddef.h>\n"
+        "#if defined(BCIR_USE_FFTW)\n"
+        "  #include <fftw3.h>\n"
+        "  #define BCIR_FFT_FFTW 1\n"
+        "#else\n"
+        "  #include <math.h>\n"
+        "  #define BCIR_FFT_FFTW 0\n"
+        "#endif\n"
+        f"void {fn_name}(const float *in, float *out) {{\n"
+        f"#if BCIR_FFT_FFTW\n"
+        f"  /* The trusted external kernel. `in`/`out` are interleaved complex == fftwf_complex layout; the\n"
+        f"     plan is created/executed/destroyed around the single transform (n={n} baked in). */\n"
+        f"  fftwf_complex *fin = (fftwf_complex *)(void *)in;\n"
+        f"  fftwf_complex *fout = (fftwf_complex *)out;\n"
+        f"  fftwf_plan plan = fftwf_plan_dft_1d({n}, fin, fout, FFTW_FORWARD, FFTW_ESTIMATE);\n"
+        f"  fftwf_execute(plan);                  /* c.call.libm:fftwf_execute */\n"
+        f"  fftwf_destroy_plan(plan);\n"
+        f"#else\n"
+        f"  /* Portable reference DFT: out[j] = sum_k in[k] * exp(-2*pi*i*j*k/n) -- the SAME forward\n"
+        f"     transform FFTW computes, so linked and standalone agree to float round-off. */\n"
+        f"  const float two_pi = 6.28318530717958647692f;\n"
+        f"  for (size_t j = 0; j < {n}; ++j) {{\n"
+        f"    float re = 0.0f, im = 0.0f;\n"
+        f"    for (size_t k = 0; k < {n}; ++k) {{\n"
+        f"      float ang = -two_pi * (float)((j * k) % {n}) / (float){n};   /* reduced phase: stable for large n */\n"
+        f"      float c = cosf(ang), s = sinf(ang);                          /* c.call.libm:cosf/sinf */\n"
+        f"      float xr = in[2 * k], xi = in[2 * k + 1];\n"
+        f"      re += xr * c - xi * s;\n"
+        f"      im += xr * s + xi * c;\n"
+        f"    }}\n"
+        f"    out[2 * j] = re;\n"
+        f"    out[2 * j + 1] = im;\n"
+        f"  }}\n"
+        f"#endif\n"
+        f"}}\n"
+    )
+
+
 # --- G1: gem.activation kernels (relu exact / the transcendental four via the c.call.libm: edge) ----
 # The activation analog of the B5 BLAS wrap. relu is integer/Q-fixed CLEAN -- a pure max(0,x), emitted
 # with NO transcendental and NO libm dependency (exact, 0 ULP, valid for f32 OR i32). The transcendental
