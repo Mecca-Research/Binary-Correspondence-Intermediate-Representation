@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..model import Module
-from ..telemetry import DataDNA
+from ..telemetry import DataDNA, TelemetryIntegrity, sanitize_events
 from .cost import HProfile, Theta
 from .realize import RealizationResult, optimize
 from .weights import ENERGY, PERF, THROUGHPUT, Policy
@@ -37,6 +37,10 @@ class EwmaCalibrator:
         return (self.alpha * observed + (256 - self.alpha) * old) >> 8
 
     def update(self, theta: Theta, events: list[DataDNA]) -> Theta:
+        # Ingest gate: drop any record that violates the documented 0..100 schema BEFORE
+        # it reaches the EWMA, so an injected out-of-range/NaN value cannot skew Theta or
+        # trip the policy's >=60 thresholds. Legitimate (in-range) batches are unchanged.
+        events, _ = sanitize_events(events)
         if not events:
             return theta
         return Theta(
@@ -86,6 +90,9 @@ class LinearCalibrator:
             self.steps += 1
 
     def update(self, theta: Theta, events: list[DataDNA]) -> Theta:
+        # Ingest gate: a poisoned record (out-of-range thermal / NaN feature) would
+        # corrupt the SGD fit and the projected Theta; drop it at the boundary first.
+        events, _ = sanitize_events(events)
         if not events:
             return theta
         self.partial_fit(events)
@@ -124,6 +131,9 @@ class FrozenCalibrator:
         return max(0, min(100, acc))
 
     def update(self, theta: Theta, events: list[DataDNA]) -> Theta:
+        # Ingest gate: drop out-of-range/non-finite records before they reach the
+        # frozen model's prediction average (the certified rail must not fold poison).
+        events, _ = sanitize_events(events)
         if not events:
             return theta
         pred = sum(self.predict(e) for e in events) // len(events)
@@ -141,8 +151,21 @@ class FrozenCalibrator:
         return json.dumps({"w_q8": list(self.w_q8), "gen": self.gen, "samples": self.samples},
                           sort_keys=True)
 
+    # The frozen model has exactly NFEAT==4 weights (utilization, voltage, misses, bias).
+    # A Q8 weight beyond +/-256*W_ABS_MAX is nonsensical for a model whose features are
+    # 0..100 and whose output is clamped to 0..100 -- rejecting it stops a forged
+    # certificate from installing adversarial (or non-finite) calibrator weights.
+    _NWEIGHTS = 4
+    _W_Q8_ABS_MAX = 1 << 20            # |w| <= ~4096.0 in float; far past any trained weight
+
     @staticmethod
     def from_json(text: str) -> "FrozenCalibrator":
+        """Parse + VALIDATE a frozen calibrator. A certificate is an installable
+        artifact (its weights drive Theta on the certified rail), so a forged or
+        malformed one must be REJECTED, not installed: `w_q8` must be exactly
+        `_NWEIGHTS` finite integers within `+/-_W_Q8_ABS_MAX`, and `gen` a
+        non-negative int. Any violation raises `ValueError` instead of seating
+        adversarial weights."""
         import json
         d = json.loads(text)
         if not isinstance(d, dict) or "w_q8" not in d or "gen" not in d:
@@ -150,7 +173,26 @@ class FrozenCalibrator:
         w = d["w_q8"]
         if not isinstance(w, (list, tuple)):
             raise ValueError("FrozenCalibrator w_q8 must be an array")
-        return FrozenCalibrator(tuple(w), d["gen"], d.get("samples", 0))
+        if len(w) != FrozenCalibrator._NWEIGHTS:
+            raise ValueError(
+                f"FrozenCalibrator w_q8 must have exactly {FrozenCalibrator._NWEIGHTS} "
+                f"weights, got {len(w)}")
+        wi_out: list[int] = []
+        for i, wi in enumerate(w):
+            if isinstance(wi, bool) or not isinstance(wi, int):
+                raise ValueError(f"FrozenCalibrator w_q8[{i}] must be an int, got {wi!r}")
+            if abs(wi) > FrozenCalibrator._W_Q8_ABS_MAX:
+                raise ValueError(
+                    f"FrozenCalibrator w_q8[{i}]={wi} exceeds |{FrozenCalibrator._W_Q8_ABS_MAX}| "
+                    "(out-of-range / adversarial weight)")
+            wi_out.append(wi)
+        gen = d["gen"]
+        if isinstance(gen, bool) or not isinstance(gen, int) or gen < 0:
+            raise ValueError(f"FrozenCalibrator gen must be a non-negative int, got {gen!r}")
+        samples = d.get("samples", 0)
+        if isinstance(samples, bool) or not isinstance(samples, int) or samples < 0:
+            raise ValueError(f"FrozenCalibrator samples must be a non-negative int, got {samples!r}")
+        return FrozenCalibrator(tuple(wi_out), gen, samples)
 
 
 def train_calibrator(dataset: list[DataDNA], epochs: int = 300, lr: float = 0.2,
@@ -203,8 +245,34 @@ def calibrate_and_replan(
     base_theta: Theta = Theta.cool(),
     calibrator: EwmaCalibrator = EwmaCalibrator(),
 ) -> tuple[Theta, Policy, RealizationResult]:
-    """Calibrate Theta from telemetry, pick an adaptive policy, and re-optimize."""
+    """Calibrate Theta from telemetry, pick an adaptive policy, and re-optimize.
+
+    Telemetry is validated at ingest (see `EwmaCalibrator.update`): an out-of-range or
+    non-finite record is dropped before it can move Theta or the policy, so the replan
+    decision reflects only genuine in-range samples."""
     theta = calibrator.update(base_theta, events)
     policy = adaptive_policy(theta)
     result = optimize(module, h, theta, policy)
     return theta, policy, result
+
+
+def calibrate_with_witness(
+    theta: Theta,
+    events: list[DataDNA],
+    calibrator: EwmaCalibrator = EwmaCalibrator(),
+    *,
+    ring_dropped: int = 0,
+) -> tuple[Theta, TelemetryIntegrity]:
+    """Calibrate Theta AND return the `TelemetryIntegrity` witness for the batch, so a
+    suppression/injection attack is observable rather than a silent no-op.
+
+    The plain `calibrator.update` swallows an empty/all-rejected stream (returns Theta
+    unchanged) -- correct numerically, but a *blind* calibrator and a *nominal* one are
+    indistinguishable to the caller. This surfaces `witness.blind` (no valid record
+    survived), `witness.rejected` (records dropped for a schema violation), and
+    `witness.dropped` (records the upstream ring evicted, via `ring_dropped`), so the
+    decision to NOT throttle is a visible signal. Theta itself is identical to
+    `calibrator.update(theta, events)` for any in-range batch."""
+    clean, witness = sanitize_events(events, dropped=ring_dropped)
+    new_theta = calibrator.update(theta, clean)
+    return new_theta, witness

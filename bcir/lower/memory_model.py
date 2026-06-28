@@ -59,17 +59,26 @@ def barrier_fence_ir(ordering: str = "seq_cst") -> str:
 #   [ 0] _Atomic uint64_t head        records written so far (monotonic publish ctr)
 #   [ 8] uint64_t        capacity     record slots
 #   [16] uint64_t        record_size  = 56 (7 x int64)
-#   [24] uint64_t        reserved
+#   [24] uint64_t        magic        = (0x42434952 << 16) | 1  -- self-describing stamp
 #   [32] record[capacity]             each: claim_id, cycles, bytes, misses,
 #                                            thermal, voltage, utilization (i64 LE)
 #
 # `head` is published with RELEASE ordering (`hazard_to_ordering("atomic")` -> acq_rel,
 # narrowed to release for a store) so a reader that acquire-loads `head` sees a fully
 # written record -- the same hazard->ordering law the rest of the lowering uses.
+#
+# INTEGRITY: slot [24] was a `reserved` word == 0; it is repurposed APPEND-ONLY as a
+# magic/version stamp so the wire format is self-describing on BOTH sides. The Python
+# reader (`telemetry.parse_shared_ring`) validates magic + `record_size` + bounds
+# before unpacking, rejecting a forged header instead of reading out of bounds; a
+# legacy producer that still writes 0 there is accepted (back-compatible) as long as
+# `record_size`/bounds match. `RING_MAGIC_STAMP` mirrors `telemetry.RING_STAMP`.
 
 RING_HEADER_BYTES = 32
 RING_RECORD_BYTES = 56          # 7 x int64, == struct.calcsize("<7q")
 RING_FIELDS = ("claim_id", "cycles", "bytes", "misses", "thermal", "voltage", "utilization")
+# Self-describing header stamp written to slot [24]; MUST equal telemetry.RING_STAMP.
+RING_MAGIC_STAMP = (0x42434952 << 16) | 1       # ("BCIR" << 16) | version 1
 
 # LLVM ordering -> C11 stdatomic memory_order_*.
 _C_MEMORDER = {
@@ -106,7 +115,8 @@ def emit_ring_header_c(fn_prefix: str = "bcir_ring") -> str:
         f"void {fn_prefix}_init(void *base, uint64_t capacity) {{\n"
         "  uint64_t *h = (uint64_t *)base;\n"
         "  atomic_store_explicit((_Atomic uint64_t *)&h[0], 0u, memory_order_relaxed);\n"
-        f"  h[1] = capacity; h[2] = {RING_RECORD_BYTES}u; h[3] = 0u;\n"
+        f"  h[1] = capacity; h[2] = {RING_RECORD_BYTES}u; "
+        f"h[3] = {RING_MAGIC_STAMP}ull;  /* self-describing magic|version stamp */\n"
         "}\n\n"
         f"void {fn_prefix}_write(void *base, {fields}) {{\n"
         "  _Atomic uint64_t *head = (_Atomic uint64_t *)base;\n"

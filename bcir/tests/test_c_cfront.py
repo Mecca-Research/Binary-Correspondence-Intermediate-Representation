@@ -3452,9 +3452,16 @@ def test_r21_does_not_disturb_the_corpus():
     spurious lifetime diagnostic."""
     import glob
     from bcir.frontends.cfront import compile_unit
+    from bcir.frontends.cfront.cparse import CParseError
     for path in sorted(glob.glob(os.path.join(_C, "cfront_*.c"))):
         fx = os.path.basename(path)
-        r = compile_unit(open(path, encoding="utf-8").read(), check_clang=False, includes=_includes_for(fx))
+        try:
+            r = compile_unit(open(path, encoding="utf-8").read(), check_clang=False, includes=_includes_for(fx))
+        except CParseError:
+            if fx.startswith("cfront_sec_"):
+                continue   # a deliberately-malformed adversarial fixture (cfront_sec_deepnest/lextail) -- out
+                           # of scope for this "every well-formed fixture" corpus check; both rails reject it.
+            raise          # a REAL fixture must still parse: a regression to CParseError is a hard failure.
         if r.fallback:
             continue
         assert r.lifetime_diagnostics == [], (fx, [d.message for d in r.lifetime_diagnostics])
@@ -3573,10 +3580,17 @@ def test_masked_claims_are_discharged_by_a_runtime_guard():
     a masked claim never silently loses its guard, and a guard is never emitted without a masked claim."""
     import glob
     from bcir.frontends.cfront import compile_unit
+    from bcir.frontends.cfront.cparse import CParseError
     seen_masked = 0
     for path in sorted(glob.glob(os.path.join(_C, "cfront_*.c"))):
         fx = os.path.basename(path)
-        r = compile_unit(open(path, encoding="utf-8").read(), check_clang=False, includes=_includes_for(fx))
+        try:
+            r = compile_unit(open(path, encoding="utf-8").read(), check_clang=False, includes=_includes_for(fx))
+        except CParseError:
+            if fx.startswith("cfront_sec_"):
+                continue   # a deliberately-malformed adversarial fixture (cfront_sec_deepnest/lextail) -- out
+                           # of scope for this masked-claims corpus check; both rails reject it cleanly.
+            raise          # a REAL fixture must still parse: a regression to CParseError is a hard failure.
         if r.fallback:
             continue
         for name, lf in r.lowered.functions.items():

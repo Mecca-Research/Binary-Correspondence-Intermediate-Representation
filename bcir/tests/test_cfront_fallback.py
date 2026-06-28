@@ -6,8 +6,35 @@ so a driver routes it to the LLVM backend -- it never crashes. `compile_unit` ke
 """
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import tempfile
+
 from bcir.frontends.cfront import compile_unit, compile_with_fallback
 from bcir.frontends.cfront.cparse import CParseError
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(os.path.dirname(_HERE))
+_C = os.path.join(_ROOT, "runtime", "c")
+
+
+def _build_c_twin():
+    """Build the C twin (bcir_cfront) once; return its path, or None if no C compiler is available
+    (the Python-rail assertions still run). The deep-nesting parity test uses it to confirm BOTH rails
+    handle deeply-nested input crash-free + in agreement."""
+    cc = os.environ.get("CC") or shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    if not cc:
+        return None
+    out = os.path.join(tempfile.gettempdir(), "bcir_twin_fallback_test")
+    srcs = [os.path.join(_C, s) for s in
+            ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c", "test_cfront.c")]
+    for std in ("c23", "c2x", "c11"):
+        b = subprocess.run([cc, f"-std={std}", "-O1", "-I", _C, *srcs, "-o", out],
+                           capture_output=True, text=True)
+        if b.returncode == 0:
+            return out
+    return None
 
 
 def test_supported_program_does_not_fall_back():
@@ -156,3 +183,62 @@ def test_compile_unit_keeps_its_raise_contract():
         raise AssertionError("compile_unit should raise on malformed input")
     except CParseError:
         pass
+
+
+# --- deeply-nested input: the dual-rail DoS-hardening parity (Bug A) -------------------------------
+# A pathological deeply-nested input must be handled IDENTICALLY on both rails: neither the Python oracle
+# (which previously raised an UNCAUGHT RecursionError out of compile_with_fallback) nor the C twin (which
+# previously SEGFAULTed / ASan `stack-overflow`) may crash, and both must route it to fallback / a clean
+# parse error. The depth, in tokens, stays well under the C twin's MAXTOK=16384 cap so it is the DEPTH
+# guard (not the token cap) that stops it on the C side -- matching the oracle's parser depth guard.
+_DEEP_N = 3000   # nesting levels: above both depth caps (Python _MAX_DEPTH=50, C BCIR_MAXDEPTH=1200),
+                 # below MAXTOK so the depth guard fires, and ~6000 tokens stays inside the token cap.
+_DEEP_PAREN = "int deep_paren(void){ return " + "(" * _DEEP_N + "0" + ")" * _DEEP_N + "; }\n"
+_DEEP_BLOCK = "int deep_block(void){ " + "{" * _DEEP_N + " ; " + "}" * _DEEP_N + " return 0; }\n"
+
+
+def test_deeply_nested_input_routes_to_fallback_not_recursionerror():
+    # the Python rail: a clean fallback (needs_fallback=True), NOT an uncaught RecursionError crash.
+    # Both the expression (`(((...)))`) and statement (`{{{...}}}`) recursion cycles are covered.
+    for src in (_DEEP_PAREN, _DEEP_BLOCK):
+        r = compile_with_fallback(src, check_clang=False)
+        assert r.needs_fallback and not r.is_clean, src[:30]
+        assert r.fallback.startswith("parse:"), r.fallback     # the depth guard rejects at the parse stage
+        assert "nesting too deep" in r.fallback, r.fallback
+
+
+def test_deeply_nested_compile_unit_raises_cparseerror_not_recursionerror():
+    # compile_unit keeps its raise contract, and the depth guard makes it a CLEAN CParseError (a fallback
+    # phase) -- NOT a RecursionError (which is not a fallback phase and would crash the total wrapper).
+    try:
+        compile_unit(_DEEP_PAREN, check_clang=False)
+        raise AssertionError("deep input must raise, not compile")
+    except RecursionError:
+        raise AssertionError("deep input must raise CParseError, never RecursionError (the pre-fix crash)")
+    except CParseError:
+        pass
+
+
+def test_deeply_nested_input_is_handled_identically_on_both_rails():
+    """The dual-rail agreement: a deeply-nested input does not crash EITHER rail, and both reject it
+    (Python -> needs_fallback=True; the C twin -> a clean rc-1 PARSE-ERR `nesting too deep`)."""
+    # Python rail: crash-free fallback.
+    r = compile_with_fallback(_DEEP_PAREN, check_clang=False)
+    assert r.needs_fallback and "nesting too deep" in r.fallback
+
+    # C rail: build the twin (no C compiler in this tier -> the Python half above still pins the bug).
+    twin = _build_c_twin()
+    if twin is None:
+        return
+    with tempfile.NamedTemporaryFile("w", suffix=".c", delete=False) as f:
+        f.write(_DEEP_PAREN)
+        path = f.name
+    try:
+        proc = subprocess.run([twin, path], capture_output=True, text=True)
+    finally:
+        os.unlink(path)
+    # A clean parse error is rc 1 (NOT a crash: rc < 128 / no signal). ASan/SIGSEGV would be rc >= 128.
+    assert proc.returncode == 1, (proc.returncode, proc.stdout, proc.stderr)
+    assert "nesting too deep" in proc.stdout, proc.stdout
+    # and crucially, no sanitizer/crash text leaked.
+    assert "stack-overflow" not in (proc.stdout + proc.stderr).lower()

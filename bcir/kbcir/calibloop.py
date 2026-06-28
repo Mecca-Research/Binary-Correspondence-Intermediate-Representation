@@ -107,15 +107,62 @@ class CalibrationCertificate:
 
     @staticmethod
     def from_json(text: str) -> "CalibrationCertificate":
+        """Parse + VALIDATE a closed-loop certificate. The certificate is the R13
+        witness a downstream consumer trusts (its `cal_gen`/`win` make a replan
+        admissible), so a forged or malformed one must be REJECTED, not seated:
+        `cal_gen` and `measured_thermal` are finite ints (`cal_gen >= 0`,
+        `measured_thermal` in 0..100), the costs are finite ints, `ratios` is exactly
+        four finite ints, and the width tuples are well-formed `(claim_id, width)`
+        pairs. Any violation raises `ValueError`."""
         d = json.loads(text)
         if not isinstance(d, dict):
             raise ValueError("CalibrationCertificate JSON must be an object")
+
+        def _int(key: str, *, lo: int | None = None, hi: int | None = None) -> int:
+            if key not in d:
+                raise ValueError(f"CalibrationCertificate missing field {key!r}")
+            v = d[key]
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise ValueError(f"CalibrationCertificate {key} must be an int, got {v!r}")
+            if lo is not None and v < lo:
+                raise ValueError(f"CalibrationCertificate {key}={v} below {lo}")
+            if hi is not None and v > hi:
+                raise ValueError(f"CalibrationCertificate {key}={v} above {hi}")
+            return v
+
+        cal_gen = _int("cal_gen", lo=0)
+        measured_thermal = _int("measured_thermal", lo=0, hi=100)
+        stale_cost = _int("stale_cost")
+        calibrated_cost = _int("calibrated_cost")
+        ratios = d.get("ratios")
+        if not isinstance(ratios, (list, tuple)) or len(ratios) != 4:
+            raise ValueError("CalibrationCertificate ratios must be exactly 4 values")
+        for i, r in enumerate(ratios):
+            if isinstance(r, bool) or not isinstance(r, int):
+                raise ValueError(f"CalibrationCertificate ratios[{i}] must be an int, got {r!r}")
+
+        def _widths(key: str) -> tuple:
+            raw = d.get(key)
+            if not isinstance(raw, (list, tuple)):
+                raise ValueError(f"CalibrationCertificate {key} must be an array")
+            pairs = []
+            for x in raw:
+                if not isinstance(x, (list, tuple)) or len(x) != 2:
+                    raise ValueError(f"CalibrationCertificate {key} entries must be (claim_id, width)")
+                cid, width = x
+                if any(isinstance(v, bool) or not isinstance(v, int) for v in (cid, width)):
+                    raise ValueError(f"CalibrationCertificate {key} entries must be ints")
+                pairs.append((cid, width))
+            return tuple(pairs)
+
+        if not isinstance(d.get("target"), str) or not isinstance(d.get("provenance"), str):
+            raise ValueError("CalibrationCertificate target/provenance must be strings")
         return CalibrationCertificate(
-            target=d["target"], cal_gen=d["cal_gen"], provenance=d["provenance"],
-            ratios=tuple(d["ratios"]), measured_thermal=d["measured_thermal"],
-            seeded_widths=tuple(tuple(x) for x in d["seeded_widths"]),
-            calibrated_widths=tuple(tuple(x) for x in d["calibrated_widths"]),
-            stale_cost=d["stale_cost"], calibrated_cost=d["calibrated_cost"])
+            target=d["target"], cal_gen=cal_gen, provenance=d["provenance"],
+            ratios=tuple(ratios), measured_thermal=measured_thermal,
+            seeded_widths=_widths("seeded_widths"),
+            calibrated_widths=_widths("calibrated_widths"),
+            stale_cost=stale_cost, calibrated_cost=calibrated_cost)
 
 
 def _widths(result: RealizationResult) -> tuple:

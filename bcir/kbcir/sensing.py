@@ -19,6 +19,28 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+
+def _valid_cost(cost) -> bool:
+    """A cost sample is admissible iff it is a finite, non-negative real number.
+
+    INTEGRITY (CT4-sec): `RegretSensor` trusts the `cost` it is fed; a NaN/inf or a
+    negative cost is a clearly-bogus injection that would corrupt the variance/CV the
+    gate keys on (e.g. a NaN poisons every downstream sum). Such values are REJECTED at
+    `observe`. This bounds the blast radius but does NOT defend the harder attack -- a
+    *plausible, in-range, low-variance fabricated* cost for a genuinely-bad path (it
+    looks confident, so telemetry is forced "off"). That residual needs source
+    authentication (a MAC on the producer), which is out of scope; the witness here
+    surfaces *how many* samples were rejected and flags a path whose "off" verdict
+    rests on too few samples (`forced_off`), so the suppression is at least observable.
+    """
+    if isinstance(cost, bool):
+        return False
+    if isinstance(cost, int):
+        return cost >= 0
+    if isinstance(cost, float):
+        return math.isfinite(cost) and cost >= 0
+    return False
+
 # A path is "uncertain" once its coefficient of variation (stdev/mean) exceeds this
 # many milli-units (200 == 0.20 == 20% relative spread). Below it the model is
 # confident enough that high-resolution telemetry is not worth the overhead.
@@ -71,6 +93,7 @@ class TelemetryDecision:
     resolution: str        # "high" | "low" | "off"
     cv_milli: int
     samples: int
+    forced_off: bool = False   # "off" rests on < min_samples -> the verdict is unwitnessed
 
     @property
     def overhead(self) -> int:
@@ -82,8 +105,16 @@ class RegretSensor:
     """Accumulates per-path samples and decides where to spend telemetry."""
 
     paths: dict[str, PathSamples] = field(default_factory=dict)
+    rejected: int = 0          # cost samples dropped as non-finite/negative (injection)
 
     def observe(self, path: str, cost: int) -> None:
+        """Record one cost sample for `path`. A non-finite or negative `cost` is a bogus
+        injection and is REJECTED-and-counted (it never enters the variance/CV the gate
+        keys on). See `_valid_cost` for the honest defends/does-NOT note: a *plausible*
+        fabricated cost still passes -- that residual is surfaced via `forced_off`."""
+        if not _valid_cost(cost):
+            self.rejected += 1
+            return
         self.paths.setdefault(path, PathSamples(path=path)).observe(cost)
 
     def uncertainty(self, path: str) -> int:
@@ -101,6 +132,7 @@ class RegretSensor:
         hires = 0
         for s in ranked:
             uncertain = s.n >= min_samples and s.cv_milli >= cv_threshold_milli
+            forced_off = False
             if uncertain and hires < budget:
                 res = "high"
                 hires += 1
@@ -108,8 +140,10 @@ class RegretSensor:
                 res = "low"
             else:
                 res = "off"
+                forced_off = True            # "off" with too few samples to judge: unwitnessed
             out.append(TelemetryDecision(path=s.path, resolution=res,
-                                         cv_milli=s.cv_milli, samples=s.n))
+                                         cv_milli=s.cv_milli, samples=s.n,
+                                         forced_off=forced_off))
         return sorted(out, key=lambda d: d.path)
 
 
