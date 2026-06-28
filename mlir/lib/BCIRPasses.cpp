@@ -67,6 +67,8 @@ void registerBCIRPasses() {
   ::mlir::registerPass([] { return createLowerGemConvPass(); });
   ::mlir::registerPass([] { return createLowerGemAttentionPass(); });
   ::mlir::registerPass([] { return createFuseMatmulActivationPass(); });
+  ::mlir::registerPass([] { return createCacheContentionPass(); });
+  ::mlir::registerPass([] { return createLayoutPivotPass(); });
 }
 
 void registerBCIRPipelines() {

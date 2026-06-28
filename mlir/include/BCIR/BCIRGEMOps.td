@@ -250,6 +250,85 @@ def BCIR_GEMFusedMatmulActivationOp : BCIR_Op<"gem.fused_matmul_activation", [Sy
   let hasVerifier = 1;
 }
 
+def BCIR_GEMContentionOp : BCIR_Op<"gem.contention", [Symbol]> {
+  let summary = "Cache-line/bank-conflict CONTENTION cost signal: the frozen analytic predictor for one access shape (G4)";
+  // The law-rail record + producer of the G4 cache-line-utilization / memory-bank-conflict cost SIGNAL
+  // (port of bcir/kbcir/cache_predict.py::CachePredictor.contention_q8). An access touches `count` elements
+  // of `elem_bytes` each at element `stride` (1 == unit/contiguous; large == gather-like). From that shape +
+  // the FROZEN cache/bank geometry (`cacheline` bytes per line; `banks` == TargetProfile.mem_channels) the
+  // analytic predictor computes a Q8 CONTENTION signal -- the cache-line-utilization WASTE plus the
+  // bank-conflict serialization degree -- and the integer CONTENTION cost (the per-element Q8 scaled by
+  // `count`). -bcir-cache-contention RECOMPUTES that signal from the shape + the frozen params and annotates
+  // the SAME line_waste_q8 / bank_conflict_q8 / contention_q8 / contention_cost on the op (the cost annotation).
+  //
+  // THE TWO-TRUTH / QUARANTINE CONSTRAINT (the non-negotiable G4 discipline, mirrored from cache_predict.py):
+  // a predicted cache/bank cost is a GRADED signal. It rides the CONTENTION cost axis ONLY -- it may INFORM
+  // which realization is cheapest (rank plans) but it MUST NEVER change a legality verdict and MUST NEVER gate
+  // legality. The R1-R16 verifier reads only R8/R9 (lane legality + 12-d cost completeness/non-negativity) and
+  // NEVER reads CONTENTION, so a conflict-prone plan and a conflict-free plan are EXACTLY as legal; this op's
+  // signal only moves the CONTENTION dimension. It carries NOTHING on the legality path. `gen` is the R13-style
+  // provenance generation (0 = the seeded analytic constants).
+  //
+  // hasVerifier checks the op is internally consistent with the frozen analytic model (the same recompute the
+  // pass cross-checks; NO new globally-numbered R-law): positive shape (stride/elem_bytes/count >= 1, cacheline/
+  // banks >= 1), line_waste_q8 == (min(stride, cacheline/elem_bytes) - 1) * 256, bank_conflict_q8 ==
+  // (gcd(stride, banks) - 1) * 256, contention_q8 == waste + conflict (unit weights), and contention_cost ==
+  // (contention_q8 * count) >> 8. A unit-stride sweep is the clean NO-OP (waste 0, conflict 0, cost 0).
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    // the access SHAPE the predictor prices (read off a claim's declared geometry).
+    I64Attr:$stride, I64Attr:$elem_bytes, I64Attr:$count,
+    // the FROZEN cache/bank geometry (cacheline bytes; banks == mem_channels).
+    I64Attr:$cacheline, I64Attr:$banks,
+    // the recomputed CONTENTION signal: the Q8 terms + the integer cost (on the CONTENTION axis ONLY).
+    I64Attr:$line_waste_q8, I64Attr:$bank_conflict_q8, I64Attr:$contention_q8, I64Attr:$contention_cost,
+    DefaultValuedAttr<I32Attr, "0">:$gen);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
+def BCIR_GEMLayoutPivotOp : BCIR_Op<"gem.layout_pivot", [Symbol]> {
+  let summary = "SoA<->AoS layout-pivot pricing: the cost-model-priced layout choice for a multi-field resource (G3)";
+  // The law-rail record of the G3 SoA<->AoS layout-pivot PRICING DECISION (port of bcir/kbcir/layout.py::
+  // plan_layout + LayoutCertificate). A multi-field (F-field) resource can live as SoA (one contiguous array
+  // per field) or AoS (records interleaved). A single-field SWEEP is UNIT under SoA / STRIDED(stride=F) under
+  // AoS; a whole-record access is the exact mirror -- so the two access shapes have MIRRORED costs and which
+  // layout wins is PRICED, not asserted. -bcir-layout-pivot recomputes the SoA-vs-AoS workload cost through
+  // the SAME stride-penalty memory terms realize.candidates_for prices every claim by (a UNIT access pays
+  // base_overhead*1 + vectorizes; a STRIDED access pays base_overhead*min(F, cacheline/elem) and is pinned
+  // scalar), picks the MIN-cost layout (ties keep the declared default SoA), and annotates the chosen layout +
+  // the SoA/AoS cost + the gain (a LayoutCertificate-equivalent).
+  //
+  // THE HARD INVARIANT is the oracle's (layout changes ADDRESSES, never VALUES -- proved bit-exact by
+  // lower.layout_kernel); the law records only the PRICED choice. Like G4, this is INFORMS-ONLY: the priced
+  // layout/cost informs the plan but the R1-R16 verifier never reads it as a legality verdict (it is the
+  // memory-cost lever, off the legality path -- the same two-truth quarantine).
+  //
+  // The op carries the resource id, the record width F, the per-shape access workload reduced to two summed
+  // counts (`single_field_records` = records swept single-field, `whole_record_records` = records accessed
+  // whole-record) over the frozen memory geometry (cacheline/elem_bytes/base_overhead/streams/vector_width --
+  // the pinned cost constants), the priced soa_cost/aos_cost, the chosen layout, and the gain. hasVerifier
+  // recomputes the two costs through the closed-form stride-penalty memory terms and checks the op is
+  // internally consistent (the chosen layout is the min-cost one, ties keep SoA, gain >= 0, F <= 1 is a
+  // clean no-op). NO new globally-numbered R-law (the op-level pricing check gem.conv/attention run inline).
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    I64Attr:$rid, I64Attr:$fields,
+    // the access workload reduced to the two mirrored shapes (records swept under each).
+    I64Attr:$single_field_records, I64Attr:$whole_record_records,
+    // the FROZEN memory geometry the stride-penalty terms price over (the pinned cost constants).
+    // gather_penalty is the random-gather access overhead -- a STRIDED claim's cheapest candidate is the
+    // min of its `strided` (penalty min(F, cacheline/elem)) and `gather` (penalty gather_penalty) realizations,
+    // so a target whose gather is cheaper than a large stride (e.g. PTX gp=16) prices the gather instead.
+    I64Attr:$cacheline, I64Attr:$elem_bytes, I64Attr:$base_overhead, I64Attr:$streams, I64Attr:$vector_width,
+    I64Attr:$gather_penalty,
+    // the priced SoA-vs-AoS workload cost + the chosen layout + the modeled win.
+    I64Attr:$soa_cost, I64Attr:$aos_cost,
+    StrAttr:$layout, I64Attr:$gain);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
 def BCIR_GEMMatmulBufferOp : BCIR_Op<"gem.matmul_buffer", []> {
   let summary = "Buffer-form GEM matmul: real SSA memref operands C += A*B with a tiling plan (toward executable code)";
   // The next step past gem.matmul (an attribute-only plan record): a NORMAL op carrying

@@ -17,6 +17,9 @@
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
 
+#include <algorithm>
+#include <numeric>
+
 using namespace bcir;
 
 #include "BCIRDialect.cpp.inc"
@@ -349,6 +352,138 @@ using namespace bcir;
     return emitOpError() << "attention: acc_bound must be " << wantAcc << " (the R17 Q8-bridge bound, "
                          << (quantBits > 0 ? "1 ULP for a quantized realization" : "0 for a dense one")
                          << "), got " << accBound;
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult GEMContentionOp::verify() {
+  // The G4 cache-line/bank-conflict CONTENTION signal (mirrors bcir/kbcir/cache_predict.py::CachePredictor;
+  // the op-level analytic-model well-formedness check gem.conv/attention validate inline -- NO new globally-
+  // numbered R-law). It is INFORMS-ONLY: the recomputed signal rides the CONTENTION cost axis and NEVER gates
+  // legality (the two-truth quarantine -- the R1-R16 verifier reads only R8/R9, never CONTENTION).
+  //
+  // (1) positive access shape + frozen geometry.
+  int64_t stride = static_cast<int64_t>(getStride()), eb = static_cast<int64_t>(getElemBytes()),
+          count = static_cast<int64_t>(getCount());
+  int64_t cl = static_cast<int64_t>(getCacheline()), banks = static_cast<int64_t>(getBanks());
+  if (stride < 1 || eb < 1 || count < 1)
+    return emitOpError() << "contention: access shape stride/elem_bytes/count must be >= 1 (got stride "
+                         << stride << ", elem_bytes " << eb << ", count " << count << ")";
+  if (cl < 1 || banks < 1)
+    return emitOpError() << "contention: frozen cacheline/banks must be >= 1 (got cacheline " << cl
+                         << ", banks " << banks << ")";
+
+  // (2) the frozen analytic model (the same Q8 recompute the pass cross-checks):
+  //   line_waste_q8   = (min(stride, cacheline/elem_bytes) - 1) * 256   (0 == perfect cache-line utilization)
+  //   bank_conflict_q8= (gcd(stride, banks) - 1)            * 256        (0 == reaches all banks, no conflict)
+  //   contention_q8   = waste + conflict                                 (unit Q8 weights, both x1.0)
+  //   contention_cost = (contention_q8 * count) >> 8                     (the per-element Q8 scaled by count)
+  const int64_t Q8 = 256;
+  int64_t epl = std::max<int64_t>(1, cl / eb);                    // useful elements per cache line (>= 1)
+  int64_t reach = std::min<int64_t>(std::max<int64_t>(1, stride), epl);
+  int64_t wantWaste = (reach - 1) * Q8;
+  int64_t g = std::gcd(std::max<int64_t>(1, stride), banks);
+  int64_t wantConflict = (g - 1) * Q8;
+  int64_t wantCont = wantWaste + wantConflict;
+  int64_t wantCost = (wantCont * count) >> 8;
+
+  int64_t waste = static_cast<int64_t>(getLineWasteQ8()),
+          conflict = static_cast<int64_t>(getBankConflictQ8()),
+          cont = static_cast<int64_t>(getContentionQ8()), cost = static_cast<int64_t>(getContentionCost());
+  if (waste != wantWaste)
+    return emitOpError() << "contention: line_waste_q8 must equal (min(stride, cacheline/elem_bytes) - 1)*256 = "
+                         << wantWaste << " (got " << waste << ")";
+  if (conflict != wantConflict)
+    return emitOpError() << "contention: bank_conflict_q8 must equal (gcd(stride, banks) - 1)*256 = "
+                         << wantConflict << " (got " << conflict << ")";
+  if (cont != wantCont)
+    return emitOpError() << "contention: contention_q8 must equal line_waste_q8 + bank_conflict_q8 = "
+                         << wantCont << " (got " << cont << ")";
+  if (cost != wantCost)
+    return emitOpError() << "contention: contention_cost must equal (contention_q8 * count) >> 8 = "
+                         << wantCost << " (got " << cost << ")";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult GEMLayoutPivotOp::verify() {
+  // The G3 SoA<->AoS layout-pivot pricing (mirrors bcir/kbcir/layout.py::plan_layout + LayoutCertificate; the
+  // op-level pricing well-formedness check gem.conv/attention validate inline -- NO new globally-numbered
+  // R-law). It is INFORMS-ONLY: the priced layout choice/cost informs the plan's memory cost but NEVER gates
+  // legality (the same two-truth quarantine; the hard "layout changes addresses, never values" invariant is
+  // the oracle's, proved bit-exact by lower.layout_kernel -- the law records only the priced choice).
+  //
+  // (1) the frozen memory geometry the stride-penalty terms price over must be well-formed.
+  int64_t fields = static_cast<int64_t>(getFields());
+  int64_t cl = static_cast<int64_t>(getCacheline()), eb = static_cast<int64_t>(getElemBytes()),
+          bo = static_cast<int64_t>(getBaseOverhead()), streams = static_cast<int64_t>(getStreams()),
+          vw = static_cast<int64_t>(getVectorWidth()), gp = static_cast<int64_t>(getGatherPenalty());
+  if (fields < 1)
+    return emitOpError() << "layout_pivot: fields (record width F) must be >= 1 (got " << fields << ")";
+  if (cl < 1 || eb < 1 || bo < 1 || streams < 1 || vw < 1 || gp < 1)
+    return emitOpError() << "layout_pivot: frozen geometry cacheline/elem_bytes/base_overhead/streams/"
+                            "vector_width/gather_penalty must be >= 1 (got "
+                         << cl << "/" << eb << "/" << bo << "/" << streams << "/" << vw << "/" << gp << ")";
+
+  // (2) recompute the SoA-vs-AoS workload cost through the SAME closed-form stride-penalty MEMORY terms
+  //     realize.candidates_for prices every claim by (taking the CHEAPEST candidate's memory axis):
+  //       UNIT (contiguous) min-mem    = n*streams + ceil(n/vector_width)*streams*base_overhead*1
+  //       STRIDED (step F) min-mem     = n*streams + n*streams*base_overhead*min(F, cacheline/elem_bytes)
+  //     A single-field sweep is UNIT under SoA / STRIDED(F) under AoS; a whole-record access is the mirror.
+  //     The workload cost under a layout is the sum over the two shapes (each weighted by its records).
+  int64_t sfr = static_cast<int64_t>(getSingleFieldRecords()),
+          wrr = static_cast<int64_t>(getWholeRecordRecords());
+  if (sfr < 0 || wrr < 0)
+    return emitOpError() << "layout_pivot: record counts must be non-negative (got single_field " << sfr
+                         << ", whole_record " << wrr << ")";
+  int64_t sp = std::min<int64_t>(std::max<int64_t>(2, fields), std::max<int64_t>(1, cl / eb)); // STRIDED penalty
+  auto unitMem = [&](int64_t n) -> int64_t {
+    if (n <= 0)
+      return 0;
+    int64_t ceil = (n + vw - 1) / vw;
+    return n * streams + ceil * streams * bo; // base_overhead * 1 (unit stride)
+  };
+  auto stridedMem = [&](int64_t n) -> int64_t {
+    if (n <= 0)
+      return 0;
+    // the cheapest STRIDED candidate = min(strided penalty min(F, cl/eb), gather penalty); a target whose
+    // gather is cheaper than a large stride (e.g. PTX gp=16) prices the gather instead (mirrors candidates_for).
+    int64_t strided = n * streams + n * streams * bo * sp;
+    int64_t gather = n * streams + n * streams * bo * gp;
+    return std::min(strided, gather);
+  };
+  // single-field: UNIT under SoA, STRIDED under AoS; whole-record: STRIDED under SoA, UNIT under AoS.
+  int64_t wantSoa, wantAos;
+  if (fields <= 1) {
+    // No SoA/AoS distinction (a single-field resource): both costs equal (a clean no-op).
+    wantSoa = wantAos = unitMem(sfr) + unitMem(wrr);
+  } else {
+    wantSoa = unitMem(sfr) + stridedMem(wrr);
+    wantAos = stridedMem(sfr) + unitMem(wrr);
+  }
+  int64_t soa = static_cast<int64_t>(getSoaCost()), aos = static_cast<int64_t>(getAosCost());
+  if (soa != wantSoa)
+    return emitOpError() << "layout_pivot: soa_cost must equal the priced SoA workload memory cost = "
+                         << wantSoa << " (got " << soa << ")";
+  if (aos != wantAos)
+    return emitOpError() << "layout_pivot: aos_cost must equal the priced AoS workload memory cost = "
+                         << wantAos << " (got " << aos << ")";
+
+  // (3) the min,+ layout selection: AoS is adopted ONLY on a STRICT win; ties keep the declared default SoA.
+  ::llvm::StringRef layout = getLayout();
+  if (layout != "soa" && layout != "aos")
+    return emitOpError() << "layout_pivot: layout must be one of soa|aos (got '" << layout << "')";
+  ::llvm::StringRef wantLayout = (aos < soa) ? "aos" : "soa";
+  if (layout != wantLayout)
+    return emitOpError() << "layout_pivot: layout must be the min-cost choice '" << wantLayout
+                         << "' (ties keep the default soa; soa_cost " << soa << " vs aos_cost " << aos
+                         << "), got '" << layout << "'";
+
+  // (4) the gain = the declared-layout (SoA) cost minus the chosen-layout cost (>= 0; pure addressing).
+  int64_t chosen = (layout == "aos") ? aos : soa;
+  int64_t wantGain = soa - chosen;
+  int64_t gain = static_cast<int64_t>(getGain());
+  if (gain != wantGain)
+    return emitOpError() << "layout_pivot: gain must equal soa_cost - chosen_cost = " << wantGain
+                         << " (got " << gain << ")";
   return ::mlir::success();
 }
 

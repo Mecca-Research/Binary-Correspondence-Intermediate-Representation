@@ -91,6 +91,8 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRLowerGemConvPass.cpp # lower gem.conv plan -> im2col-gemm tiled gem.block sequence (G7)
   lib/passes/BCIRLowerGemAttentionPass.cpp # lower gem.attention plan -> two gem.matmul tile seqs + softmax (G7)
   lib/passes/BCIRFuseMatmulActivationPass.cpp # fuse sole-consumer gem.matmul -> gem.activation epilogue (G2)
+  lib/passes/BCIRCacheContentionPass.cpp # recompute the G4 cache-line/bank-conflict CONTENTION cost signal (informs-only)
+  lib/passes/BCIRLayoutPivotPass.cpp  # recompute the G3 SoA<->AoS layout-pivot pricing (informs-only)
   lib/passes/BCIRSelectPass.cpp      # min-plus selection
   lib/passes/BCIRCostModel.cpp       # K_BCIR cost algebra (cost.py port)
   lib/passes/BCIRPlanPass.cpp        # min-plus shortest path (realize.optimize)

@@ -6,10 +6,10 @@
 
 | Metric | Value |
 |---|---|
-| Python conformance tests (`python -m bcir.tests.run_all`) | **1227** across 113 files |
-| MLIR ODS ops (`mlir/include/BCIR/*.td`) | **91** |
-| Registered `-bcir-*` passes | **31** |
-| MLIR FileCheck tests (`mlir/test/`) | **63** (114 `expected-error` negatives) |
+| Python conformance tests (`python -m bcir.tests.run_all`) | **1235** across 115 files |
+| MLIR ODS ops (`mlir/include/BCIR/*.td`) | **93** |
+| Registered `-bcir-*` passes | **33** |
+| MLIR FileCheck tests (`mlir/test/`) | **67** (124 `expected-error` negatives) |
 | Runtime C components (`runtime/c/`) | **230** |
 | Verifier laws | **R1–R21** (21/21 covered) |
 | Hardware channels | **9** (cpu, fpga, gpu, memory, storage) |
