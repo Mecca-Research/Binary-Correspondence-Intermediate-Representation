@@ -71,8 +71,12 @@ _LIBRARY_RULES: tuple[tuple, ...] = (
     # (bcir/lower/c_kernel.py emit_blas_gemm_c links `-lcblas`); stay consistent so a BLAS unit links
     # with one flag regardless of which emitter produced the call.
     (lambda c: c.startswith("cblas_"), "-lcblas"),
+    # B2 FFTW: fftwf_* (single-precision) and fftw_* (double) -> -lfftw3. The B2 wrap
+    # (bcir/lower/c_kernel.py emit_fftw_fft_c) links `-lfftw3` for the trusted fftwf_plan_dft_1d /
+    # fftwf_execute / fftwf_destroy_plan edge; this rule makes a unit with an FFTW edge link it
+    # automatically. (libfftw3 is the single-prec build too -- fftwf_* lives in -lfftw3, not -lfftw3f.)
+    (lambda c: c.startswith("fftw_") or c.startswith("fftwf_"), "-lfftw3"),
     # --- B2 EXTENSION POINT (roadmap): add one rule per newly-wrapped trusted library, e.g.
-    #   (lambda c: c.startswith("fftw_") or c.startswith("fftwf_"), "-lfftw3"),  # FFTW
     #   (lambda c: c.startswith("LAPACKE_") or c.startswith("dge"), "-llapack"), # LAPACK
     #   (lambda c: c.startswith("gsl_"), "-lgsl"),                                # GSL
     #   (lambda c: c.startswith("Sleef_"), "-lsleef"),                            # SLEEF

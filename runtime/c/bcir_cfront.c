@@ -1733,6 +1733,10 @@ static const char *bcir_lib_for_callee(const char *s, int n) {
   if(is_stdlib_alloc(s,n) || is_extern_variadic(s,n)) return "";
   /* B5 BLAS: cblas_sgemm and any cblas_* (CBLAS) -> -lcblas (the existing B5 path's choice). */
   if(n>=6 && !strncmp("cblas_",s,6)) return "-lcblas";
+  /* B2 FFTW: fftwf_* (single-prec) and fftw_* (double) -> -lfftw3 (the B2 wrap's choice -- fftwf_* also
+   * lives in -lfftw3). Matches linkflags.py's fftw rule, in the SAME order (first match wins). */
+  if(n>=6 && !strncmp("fftwf_",s,6)) return "-lfftw3";
+  if(n>=5 && !strncmp("fftw_",s,5))  return "-lfftw3";
   /* --- B2 EXTENSION POINT: one branch per newly-wrapped library, matching the oracle's order. --- */
   return NULL;                                          /* unknown external callee -> no flag */
 }
