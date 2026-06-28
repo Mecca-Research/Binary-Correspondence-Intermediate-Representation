@@ -74,6 +74,14 @@ void bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n);
  * readers commute, a writer conflicts with any reader/writer of the same global). */
 void bcir_cfront_effects(const bcir_unit *u, char *buf, size_t n);
 
+/* B1: derive the linker flags a unit's external-call edges need (e.g. `c.call.libm:sqrt` -> `-lm`),
+ * written as one space-separated, deduped, STABLY-SORTED line to `buf` (empty for a pure-integer
+ * unit). Deterministic/reproducible. The byte-identical C twin of bcir/frontends/cfront/linkflags.py
+ * (derive_link_flags + format_link_flags); the parity is gated in bcir/tests/test_c_cfront.py +
+ * tools/c/check_runtime.sh. The callee->library mapping (bcir_lib_for_callee, the extension point for
+ * roadmap B2's FFTW/LAPACK/GSL/SLEEF wraps) lives in bcir_cfront.c. */
+void bcir_cfront_link_flags(const bcir_unit *u, char *buf, size_t n);
+
 #ifdef __cplusplus
 }
 #endif

@@ -30,6 +30,7 @@ from .cparse import CParseError, parse_unit, parse_with_recovery
 from .cpp import CPPError, preprocess
 from .diagnostics import DiagnosticReport, SourceDiagnostic, Span
 from .emit import emit_function
+from .linkflags import derive_link_flags, format_link_flags
 from .lower import CLowerError, LoweredUnit, lower_unit, own_footprint
 
 
@@ -68,6 +69,9 @@ class CompileResult:
     equivalence: str = "skip"                         # match | MISMATCH | skip:<reason>
     target: str = HOST.name                           # the target ABI the unit was laid out for
     fallback: str = ""                                 # non-empty == BCIR can't compile this; route to LLVM
+    link_flags: list = field(default_factory=list)    # B1: the deduped, stably-sorted linker flags this
+    #     unit's external-call edges need (e.g. ["-lm"]); derived from the claim graph (linkflags.py),
+    #     mirrored byte-for-byte by the C twin's bcir_cfront_link_flags. Empty for a pure-integer unit.
 
     @property
     def is_clean(self) -> bool:
@@ -238,9 +242,16 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
     elif abi is not HOST:
         res.equivalence = f"skip:cross-target:{abi.name}"
 
-    # --- C.2 attestation: stamp each emitted function with its R12/R13/R17/R18 provenance ---
+    # --- B1: the link flags this unit's external-call edges need (e.g. ["-lm"]) -- derived from the
+    #     claim graph, deduped + stably sorted (reproducible). The C twin bcir_cfront_link_flags derives
+    #     the byte-identical list; both surface it via --emit-link-flags and the C.2 link_flags header. ---
+    res.link_flags = derive_link_flags(lowered)
+
+    # --- C.2 attestation: stamp each emitted function with its R12/R13/R17/R18 provenance + the unit's
+    #     derived link flags (so --emit-c is self-describing -- a comment, stripped on re-parse) ---
+    link_line = format_link_flags(res.link_flags)
     for name in lowered.functions:
-        res.attestation[name] = _attest(res, name, h.name)
+        res.attestation[name] = _attest(res, name, h.name, link_line)
         res.emitted[name] = _attestation_comment(res.attestation[name]) + "\n" + res.emitted[name]
     return res
 
@@ -275,9 +286,11 @@ def compile_with_fallback(source: str, **kwargs) -> CompileResult:
         return res
 
 
-def _attest(res: CompileResult, fn: str, target: str) -> dict:
+def _attest(res: CompileResult, fn: str, target: str, link_flags: str = "") -> dict:
     """The verified-C-output provenance for one function: which laws hold, a claim-graph digest
-    (R13-style), the integer-exactness (R17), the call-graph integrity (R18), and the plan cost."""
+    (R13-style), the integer-exactness (R17), the call-graph integrity (R18), and the plan cost.
+    `link_flags` is the unit-wide derived linker flag line (B1; e.g. `-lm`), stamped into every
+    function's attestation so the emitted C is self-describing about what it links against."""
     lf = res.lowered.functions[fn]
     fp = repr([(c.id, c.op, c.opcode.name, c.rd, c.wr, c.imm, c.domain.name) for c in lf.claims])
     digest = hashlib.sha256(fp.encode()).hexdigest()[:16]
@@ -301,6 +314,7 @@ def _attest(res: CompileResult, fn: str, target: str) -> dict:
         "effect_reads": _names(eff.reads) if eff else "-",      # alias/effect footprint (shared state)
         "effect_writes": _names(eff.writes) if eff else "-",
         "plan_score": str(getattr(res.plans[fn], "score", "?")),
+        "link_flags": link_flags or "-",                        # B1: the unit's derived linker flags (-lm/...)
     }
 
 

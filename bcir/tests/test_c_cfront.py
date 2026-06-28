@@ -664,6 +664,63 @@ def test_storage_extent_parity_catches_oversizing():
     assert _array_extents("T a[2];\nT b[2];") == (2, 2) != _array_extents("T a[2];")
 
 
+def test_link_flag_derivation_dual_rail():
+    """B1 (`bcir-cc --emit-link-flags`): the compiler DERIVES the linker flags a translation unit needs
+    from the external-call edges it uses, instead of every harness hard-coding `-lm`. The callee->library
+    mapping (linkflags.py / bcir_cfront.c's bcir_lib_for_callee) is the dual-rail source of truth; the
+    derived, deduped, STABLY-SORTED flag line must be BYTE-IDENTICAL on both rails.
+
+    Covers a pure-integer unit (no flags), a math.h unit (`-lm`), a free()/malloc unit (no flag --
+    libc is implicit), and a mixed math+free unit (still just `-lm`, dedup + implicit-skip). Also pins
+    the callee->library classification (incl. cblas_*->-lcblas and the unknown-callee policy) directly."""
+    from bcir.frontends.cfront.linkflags import (
+        NO_FLAG, derive_link_flags, format_link_flags, library_for_callee,
+    )
+
+    # (a) the mapping itself -- the source of truth, independent of the C-toolchain gate.
+    assert library_for_callee("sqrt") == "-lm"            # base math.h
+    assert library_for_callee("sqrtf") == "-lm"           # f-suffixed variant
+    assert library_for_callee("lroundl") == "-lm"         # fixed-long suffixed variant
+    assert library_for_callee("free") == NO_FLAG          # libc-implicit, EXPLICITLY known (not unknown)
+    assert library_for_callee("malloc") == NO_FLAG
+    assert library_for_callee("printf") == NO_FLAG        # printf-family extern variadic
+    assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS (the existing path's choice)
+    assert library_for_callee("cblas_dgemm") == "-lcblas"  # any cblas_*
+    assert library_for_callee("totally_unknown_fn") is None  # unknown-callee policy: None (no invented -l)
+    # dedup + STABLE sort (reproducible): a set with two libs always yields the same ordered line.
+    assert format_link_flags(sorted({"-lm", "-lcblas"})) == "-lcblas -lm"
+
+    # (b) end-to-end derivation over real units (oracle rail).
+    cases = {
+        "pure-int":   ("uint32_t f(uint32_t a){ return a*3u + 1u; }", ""),
+        "mathh":      ("#include <math.h>\ndouble f(double x){ return sqrt(x) + floor(x); }", "-lm"),
+        "free":       ("#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*4u);"
+                       " unsigned r=p[0]; free(p); return r; }", ""),
+        "math+free":  ("#include <math.h>\n#include <stdlib.h>\ndouble f(double x){ double *p=malloc(8);"
+                       " double r=sqrt(x); free(p); return r; }", "-lm"),
+    }
+    for label, (src, want) in cases.items():
+        r = compile_unit(src, check_clang=False)
+        flags = format_link_flags(derive_link_flags(r.lowered))
+        assert flags == want, f"{label}: oracle derived {flags!r}, want {want!r}"
+        assert format_link_flags(r.link_flags) == want, f"{label}: result.link_flags mismatch"
+
+    if not _CC:
+        return
+    # (c) the dual-rail parity gate: the C twin's --emit-link-flags == the oracle, byte-for-byte.
+    exe = _build_frontend(_session_build_dir())
+    d = tempfile.mkdtemp(prefix="bcir_lf_"); atexit.register(shutil.rmtree, d, ignore_errors=True)
+    for label, (src, want) in cases.items():
+        path = os.path.join(d, f"lf_{label.replace('+', '_')}.c")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(src + "\n")
+        c_out = subprocess.run([exe, "--emit-link-flags", path],
+                               capture_output=True, text=True).stdout.strip()
+        py_out = format_link_flags(derive_link_flags(compile_unit(src, check_clang=False).lowered))
+        assert c_out == want, f"{label}: C twin emitted {c_out!r}, want {want!r}"
+        assert c_out == py_out, f"{label}: dual-rail divergence  C={c_out!r}  PY={py_out!r}"
+
+
 def test_c23_unsequenced_reproducible_dual_rail():
     """C23 function attributes (#unsequenced / A1.3): `[[unsequenced]]` / `[[reproducible]]` on a function
     definition. Both rails parse + CONSUME the hint and record it as a fusion-legality signal surfaced in the
