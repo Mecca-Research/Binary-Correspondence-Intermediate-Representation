@@ -8,8 +8,8 @@
 |---|---|
 | Python conformance tests (`python -m bcir.tests.run_all`) | **952** across 95 files |
 | MLIR ODS ops (`mlir/include/BCIR/*.td`) | **86** |
-| Registered `-bcir-*` passes | **25** |
-| MLIR FileCheck tests (`mlir/test/`) | **52** (77 `expected-error` negatives) |
+| Registered `-bcir-*` passes | **26** |
+| MLIR FileCheck tests (`mlir/test/`) | **53** (77 `expected-error` negatives) |
 | Runtime C components (`runtime/c/`) | **214** |
 | Verifier laws | **R1–R21** (21/21 covered) |
 | Hardware channels | **9** (cpu, fpga, gpu, memory, storage) |

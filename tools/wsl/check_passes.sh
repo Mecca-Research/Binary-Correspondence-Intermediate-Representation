@@ -80,6 +80,8 @@ else
   "${BO}" ${GEM} "${T}/gem_corpus.mlir" >/dev/null 2>/tmp/pe \
     && echo "  RUN-ONLY gem_corpus.mlir" || { echo "  FAIL gem_corpus.mlir"; cat /tmp/pe; fail=1; }
 fi
+echo "[passes] lower-gem-matmul (gem.matmul plan -> concrete tiled gem.block sequence)"
+run_fc -bcir-lower-gem-matmul "${T}/lower_gem_matmul.mlir"
 echo "[passes] cost model (the K_BCIR cost algebra recomputed from claim + capability)"
 run_fc -bcir-cost-model "${T}/cost_model.mlir"
 echo "[passes] cost-model fusion (intra-phase deforestation + CSE)"
