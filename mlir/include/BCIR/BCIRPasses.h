@@ -111,6 +111,24 @@ std::unique_ptr<mlir::Pass> createLowerGemAttentionPass();
 // the transcendentals route a libm edge) and scopes out softmax (a non-fusible row
 // reduction); a non-fusible / unprofitable / non-sole-consumer pair is a clean no-op.
 std::unique_ptr<mlir::Pass> createFuseMatmulActivationPass();
+// -bcir-cache-contention: the G4 cache-line/memory-bank-conflict CONTENTION cost SIGNAL
+// (port of bcir/kbcir/cache_predict.py::CachePredictor.contention_q8). For each
+// gem.contention carrier op it RECOMPUTES the frozen analytic signal from the access shape
+// (stride/elem_bytes/count) + frozen cache/bank params -- line_waste_q8 = (min(stride,
+// cacheline/elem)-1)*256, bank_conflict_q8 = (gcd(stride, banks)-1)*256, contention_q8 = the
+// sum, contention_cost = (contention_q8*count)>>8 -- and annotates them (a cost producer, NOT
+// a lowering: the op is not erased). INFORMS-ONLY: the signal rides the CONTENTION cost axis
+// and NEVER gates legality (the two-truth quarantine -- -bcir-verify reads only R8/R9).
+std::unique_ptr<mlir::Pass> createCacheContentionPass();
+// -bcir-layout-pivot: the G3 SoA<->AoS layout-pivot PRICING DECISION (port of
+// bcir/kbcir/layout.py::plan_layout + LayoutCertificate). For each gem.layout_pivot carrier op
+// it prices SoA vs AoS through the SAME stride-penalty memory terms realize.candidates_for
+// prices every claim by (a single-field sweep is UNIT under SoA / STRIDED(F) under AoS; a
+// whole-record access the mirror), picks the MIN-cost layout (ties keep the default SoA), and
+// annotates the chosen layout + the SoA/AoS cost + the gain (a LayoutCertificate-equivalent; a
+// cost producer, NOT a lowering). The hard "layout changes addresses, never values" invariant
+// is the oracle's; the law records the priced choice. INFORMS-ONLY (never a legality verdict).
+std::unique_ptr<mlir::Pass> createLayoutPivotPass();
 
 /// Register all BCIR passes with the global pass registry (for bcir-opt).
 void registerBCIRPasses();

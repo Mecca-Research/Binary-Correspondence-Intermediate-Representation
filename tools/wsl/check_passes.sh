@@ -113,6 +113,16 @@ run_fc -bcir-fuse-matmul-activation "${T}/fuse_matmul_activation.mlir"
 echo "[passes] fuse-matmul-activation op verifier negatives (softmax scope-out + the quarantine rule + the strict-win invariant)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/fuse_matmul_activation_neg.mlir" \
   && echo "  PASS fuse_matmul_activation_neg.mlir" || { echo "  FAIL fuse_matmul_activation_neg.mlir"; fail=1; }
+echo "[passes] cache-contention (G4: recompute the cache-line/bank-conflict CONTENTION signal; informs-only, never gates legality)"
+run_fc -bcir-cache-contention "${T}/cache_contention.mlir"
+echo "[passes] cache-contention op verifier negatives (the frozen analytic model: waste/conflict/q8-sum/cost consistency)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/cache_contention_neg.mlir" \
+  && echo "  PASS cache_contention_neg.mlir" || { echo "  FAIL cache_contention_neg.mlir"; fail=1; }
+echo "[passes] layout-pivot (G3: recompute the SoA<->AoS pricing through the stride-penalty terms; informs-only, the priced choice)"
+run_fc -bcir-layout-pivot "${T}/layout_pivot.mlir"
+echo "[passes] layout-pivot op verifier negatives (priced SoA/AoS cost / the min-cost layout choice / the gain)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/layout_pivot_neg.mlir" \
+  && echo "  PASS layout_pivot_neg.mlir" || { echo "  FAIL layout_pivot_neg.mlir"; fail=1; }
 echo "[passes] cost model (the K_BCIR cost algebra recomputed from claim + capability)"
 run_fc -bcir-cost-model "${T}/cost_model.mlir"
 echo "[passes] cost-model fusion (intra-phase deforestation + CSE)"
