@@ -223,8 +223,11 @@ def _cname(ct) -> str:
     return ("_Atomic " if getattr(ct, "atomic", False) else "") + ct.name
 
 
-def _equiv(source: str, c_emitted: str, entry) -> str:
-    """Compile the original source beside the C-frontend's emitted bcir_* and diff outputs."""
+def _seed_params(entry):
+    """The seeded-input harness fragments shared by `_equiv` and the cross-compiler original-fairness
+    fingerprint (`_original_xcc_fingerprint`): `(decls, setup, args, prelude)` -- the per-parameter
+    declarations, the per-trial RNG seeding, the call arguments, and any funcptr-target preludes. Factored
+    out so the fairness fingerprint feeds the ORIGINAL function byte-identically-seeded inputs."""
     has_ptr = any(ct.kind in ("pointer", "array") for _n, _r, ct in entry.params)
     decls, setup, args, prelude = [], [], [], []
     for i, (_pn, _rid, ct) in enumerate(entry.params):
@@ -259,6 +262,16 @@ def _equiv(source: str, c_emitted: str, entry) -> str:
             mod = 1000 if ct.is_float else (200 if has_ptr else 2000000000)
             setup.append(f"    s{i}=({_cname(ct)})(rng()%{mod});")
             args.append(f"s{i}")
+    return decls, setup, args, prelude
+
+
+def _equiv(source: str, c_emitted: str, entry, *, cc=_CC) -> str:
+    """Compile the original source beside the C-frontend's emitted bcir_* and diff outputs.
+
+    `cc` is the C compiler to build the equivalence harness with (default `_CC` -- the single
+    compiler the suite picks up). The cross-compiler differential (test_emitted_c_is_equivalent_under
+    _both_gcc_and_clang) passes an EXPLICIT gcc / clang so the SAME emit is exercised under each."""
+    decls, setup, args, prelude = _seed_params(entry)
     call = ", ".join(args)
     rt = _cname(entry.ret_type)
     if entry.ret_type.is_complex:
@@ -303,7 +316,7 @@ int main(void){{
         c, e = os.path.join(d, "e.c"), os.path.join(d, "e")
         open(c, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e, "-lm"],   # -lm: <math.h> links
+            b = subprocess.run([cc, f"-std={std}", "-O2", c, "-o", e, "-lm"],   # -lm: <math.h> links
                                capture_output=True, text=True)
             if b.returncode == 0:
                 break
@@ -312,12 +325,15 @@ int main(void){{
         return subprocess.run([e], capture_output=True, text=True).stdout.strip()
 
 
-def _equiv_atomic(source: str, c_emitted: str, entry) -> str:
+def _equiv_atomic(source: str, c_emitted: str, entry, *, cc=_CC) -> str:
     """Side-effect-aware behaviour equivalence for atomics. The generic `_equiv` calls the
     original then the emitted bcir_* on the *same* buffer -- invalid here, since an atomic RMW
     mutates its pointee, so the second call would start from a counter the first already moved.
     Instead this runs each on an independent copy of the *same* seeded state and compares both the
-    return value and the final memory state (an atomic counter is a single location, not an array)."""
+    return value and the final memory state (an atomic counter is a single location, not an array).
+
+    `cc` parameterizes the harness compiler (default `_CC`); the cross-compiler differential passes an
+    explicit gcc / clang so the same atomic emit is exercised under each."""
     # Seed from a small range so a compare-and-swap's expected value collides with the cell
     # often enough to exercise the swap-taken path (not just the no-op path); equivalence holds
     # for any inputs, but this makes the behaviour check meaningful for CAS.
@@ -361,7 +377,7 @@ int main(void){{
         c, e = os.path.join(d, "a.c"), os.path.join(d, "a")
         open(c, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e, "-lm"],   # -lm: <math.h> links
+            b = subprocess.run([cc, f"-std={std}", "-O2", c, "-o", e, "-lm"],   # -lm: <math.h> links
                                capture_output=True, text=True)
             if b.returncode == 0:
                 break
@@ -424,6 +440,205 @@ def _parity_check_fixture(args):
     if eo != ec:
         return (fx, f"storage-extent parity: oracle={eo} twin={ec} array element-counts")
     return (fx, None)
+
+
+# --- the GCC<->Clang behaviour-equivalence DIFFERENTIAL -----------------------------------------
+# The single-compiler equivalence gate (`_parity_check_group`) builds the {original + emitted bcir_*}
+# harness with only ONE host compiler (`_CC` == clang here, the first of clang/cc/gcc found). So a
+# construct that leans on compiler-specific / undefined behaviour -- or a cfront emit bug a single
+# compiler happens to tolerate -- can pass unseen. This differential builds the SAME harness for every
+# fixture under BOTH gcc AND clang and requires MATCH under EACH, for BOTH rails' emit (the C twin's
+# emit AND the oracle's own emit) -- the exact dual-rail pair the parity gate uses. It reuses the
+# `_equiv` / `_equiv_atomic` helpers (now parameterized by `cc=`), so the seeded inputs / harness shape
+# are byte-identical to the existing gate; only the compiler differs.
+
+
+def _differential_compilers():
+    """The (gcc, clang) pair the cross-compiler differential builds under, or None if either is absent.
+    Resolved at call time so run_all's tier capability gate (`shutil.which`) is honoured -- under the
+    quick tier both are hidden and the differential self-skips, exactly like the rest of this module."""
+    gcc, clang = shutil.which("gcc"), shutil.which("clang")
+    return (gcc, clang) if (gcc and clang) else None
+
+
+def _original_xcc_verdict(source: str, entry, compilers) -> str:
+    """Cross-compiler FAIRNESS gate on the ORIGINAL program (#3 of the differential): build a harness that
+    runs ONLY the original `entry` over the SAME 256 seeded inputs `_equiv` uses and checksums every
+    trial's result, under EACH compiler. The differential charges a {original != emit} divergence against
+    cfront only when the ORIGINAL is well-defined and agrees across compilers; otherwise the fixture itself
+    is unfair and is excluded. Returns:
+      * "fair"        -- the original builds under every compiler and they agree on the checksum;
+      * "unsupported" -- the original fails to BUILD under some compiler (a toolchain capability gap, e.g.
+                         gcc 13 has no C23 `_BitInt`), so that feature simply isn't testable there;
+      * "xcc-divergent" -- the original builds under every compiler but they DISAGREE on the checksum, so
+                         the original is not single-valued across toolchains: it relies on undefined
+                         behaviour (signed overflow / oversized shift for an oversized seed) OR on an
+                         implementation-defined choice (gcc vs clang lower `_Complex` multiply/divide
+                         differently). A single-compiler emit gate was never a fair check for such a
+                         fixture -- within ONE binary both rails share the toolchain's choice, which is why
+                         the in-binary `_equiv` still passes; ACROSS toolchains there is no single truth.
+    The fingerprint mirrors `_equiv`'s comparison so it never FALSE-flags a well-defined original: a scalar
+    folds its value; an aggregate folds its bytes (both rails run identical stores, like `_equiv`'s memcmp);
+    a _Complex folds creal/cimag VALUES (immune to indeterminate x87 padding, like `_equiv`'s element-wise
+    compare). A pointer/array return is fingerprinted at zero -- an absolute address is binary-dependent
+    (gcc and clang place a static buffer differently), so it is not a fair cross-BINARY value; such fixtures
+    have no return-type UB exposure, so they are treated as fair (the in-binary `_equiv` check still runs)."""
+    decls, setup, args, prelude = _seed_params(entry)
+    call = ", ".join(args)
+    rt = _cname(entry.ret_type)
+    if entry.ret_type.kind in ("pointer", "array"):
+        fold = f"    (void)({entry.name}({call}));"        # absolute address: not a cross-binary value
+    elif entry.ret_type.is_complex:
+        fold = (f"    {rt} rr={entry.name}({call});\n"
+                f"    h=h*1099511628211u + (uint64_t)(int64_t)creall(rr);\n"
+                f"    h=h*1099511628211u + (uint64_t)(int64_t)cimagl(rr);")
+    elif entry.ret_type.is_aggregate:
+        fold = (f"    {rt} rr={entry.name}({call});\n"
+                f"    for(unsigned b=0;b<sizeof rr;b++) h=h*1099511628211u + ((unsigned char*)&rr)[b];")
+    else:
+        fold = f"    h=h*1099511628211u + (uint64_t)({entry.name}({call}));"
+    harness = f"""#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdatomic.h>
+#include <math.h>
+#include <complex.h>
+{_BOUNDS_GUARD}
+{source}
+{chr(10).join(prelude)}
+static uint64_t S=0x9E3779B97F4A7C15u;
+static uint32_t rng(void){{S=S*6364136223846793005u+1442695040888963407u;return (uint32_t)(S>>32);}}
+int main(void){{
+  uint64_t h=1469598103934665603u;
+{chr(10).join(decls)}
+  for(int i=0;i<256;i++){{
+{chr(10).join(setup)}
+{fold}
+  }}
+  printf("%llu\\n",(unsigned long long)h);return 0;}}"""
+    fingerprints = []
+    with tempfile.TemporaryDirectory() as d:
+        c = os.path.join(d, "o.c")
+        open(c, "w").write(harness)
+        for idx, cc in enumerate(compilers):
+            e = os.path.join(d, f"o{idx}")
+            for std in ("c23", "c2x", "c17"):
+                b = subprocess.run([cc, f"-std={std}", "-O2", c, "-o", e, "-lm"],
+                                   capture_output=True, text=True)
+                if b.returncode == 0:
+                    break
+            else:
+                return "unsupported"                       # the original doesn't build under this compiler
+            fingerprints.append(subprocess.run([e], capture_output=True, text=True).stdout.strip())
+    return "fair" if len(set(fingerprints)) == 1 else "xcc-divergent"
+
+
+def _differential_check_fixture(fx: str, compilers) -> tuple[str | None, str | None]:
+    """Cross-compiler emit-equivalence for ONE fixture, GATED on the original being fair (see
+    `_original_xcc_verdict`). Returns `(failure, excluded)`:
+      * `(msg, None)`  -- a REAL divergence: the fixture's original is well-defined + agrees across
+                          compilers, yet the cfront emit (twin or oracle) diverges under some compiler;
+      * `(None, why)`  -- the fixture was excluded as not a fair differential ("unsupported" capability
+                          gap / "xcc-divergent" original); the emit is NOT charged against cfront;
+      * `(None, None)` -- the emit matched the original under every compiler (a clean pass).
+    The diagnostic names the failing fixture + rail + compiler + the harness's own output
+    (`build-failed:...` / `MISMATCH@<trial>`)."""
+    path = os.path.join(_C, fx)
+    src = open(path, encoding="utf-8").read()
+    _oracle_summary, r, entry = _oracle(src, _includes_for(fx))
+    verdict = _original_xcc_verdict(r.source, entry, compilers)
+    if verdict != "fair":
+        return (None, f"{fx}: {verdict}")                  # not a fair differential -- exclude, don't blame
+    _c_summary, c_emit = _c_run(_build_frontend(_session_build_dir()), path)
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    check = _equiv_atomic if fx in _ATOMIC else _equiv
+    for cc in compilers:
+        for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            out = check(r.source, emit, entry, cc=cc)
+            if out != "MATCH":
+                return (f"{fx}: {rail} emit not behaviour-equivalent under "
+                        f"{os.path.basename(cc)} ({out})", None)
+    return (None, None)
+
+
+# Same round-robin slicing as the single-compiler parity campaign (`_PARITY_SLICES`): N independent
+# `test_*` groups so run_all's worker pool fans them out WITHOUT a nested pool, and any fixture added to
+# the corpus is auto-covered. Atomics get their own slices (they need the side-effect-aware harness).
+_DIFF_GROUPS = 4
+_DIFF_SLICES = [(_FIXTURES + _ATOMIC)[i::_DIFF_GROUPS] for i in range(_DIFF_GROUPS)]
+
+
+def _differential_check_group(fxs):
+    """Cross-compiler (gcc + clang) behaviour-equivalence over a SLICE of the corpus, gated on each
+    fixture's original being a fair differential. Runs serially -- run_all supplies the parallelism across
+    groups. Self-skips (returns) when gcc or clang is absent. A fixture excluded as unfair (a capability
+    gap or an xcc-divergent original) is NOT charged against cfront; only a real {original != emit} divergence
+    on a fair fixture fails the group."""
+    compilers = _differential_compilers()
+    if not compilers:                                            # quick tier or a single-compiler host
+        return
+    fails, tested = [], 0
+    for fx in fxs:
+        msg, excluded = _differential_check_fixture(fx, compilers)
+        if msg:
+            fails.append(msg)
+        elif excluded is None:
+            tested += 1                                          # a fair fixture that passed both compilers
+    assert not fails, ("GCC<->Clang behaviour-equivalence differential failures (the cfront emit diverges "
+                       "from the original under a compiler where the original is well-defined):\n"
+                       + "\n".join(f"  {m}" for m in fails))
+    # at least one fixture in the slice must have actually run under BOTH compilers, so a slice that
+    # silently degenerated to all-excluded (or a single-compiler fall-back) is itself a failure.
+    assert tested > 0, f"differential exercised no fair fixture in this slice under both compilers: {fxs}"
+
+
+def test_emitted_c_is_equivalent_under_both_gcc_and_clang_g0():
+    """Cross-compiler emit differential, group 0/4: the {original + cfront-emitted bcir_*} harness for
+    each fixture in this slice builds + runs MATCH under BOTH gcc AND clang, for BOTH rails' emit. The
+    single-compiler gate (`_parity_check_group`) builds with clang only; this proves the emit is not
+    relying on a clang-tolerated construct that gcc would diverge on. Self-skips if gcc or clang is
+    absent (e.g. the quick tier hides the toolchain)."""
+    _differential_check_group(_DIFF_SLICES[0])
+
+
+def test_emitted_c_is_equivalent_under_both_gcc_and_clang_g1():
+    """Cross-compiler emit differential, group 1/4 (see `_differential_check_group`)."""
+    _differential_check_group(_DIFF_SLICES[1])
+
+
+def test_emitted_c_is_equivalent_under_both_gcc_and_clang_g2():
+    """Cross-compiler emit differential, group 2/4 (see `_differential_check_group`)."""
+    _differential_check_group(_DIFF_SLICES[2])
+
+
+def test_emitted_c_is_equivalent_under_both_gcc_and_clang_g3():
+    """Cross-compiler emit differential, group 3/4 (see `_differential_check_group`)."""
+    _differential_check_group(_DIFF_SLICES[3])
+
+
+def test_emitted_c_is_equivalent_under_both_gcc_and_clang_smoke():
+    """A non-skippable proof both compilers actually run (the differential's anti-skip guard): on a host
+    where gcc + clang are BOTH present this builds one representative fixture's emit under EACH and
+    asserts MATCH under each, FAILING (not skipping) if either compiler is missing when it should be
+    there. So a silent fall-back to a single compiler -- the failure mode this whole differential guards
+    against -- is itself caught. Under the quick tier (toolchain hidden) it correctly self-skips."""
+    if not _CC:                                                 # quick tier: toolchain hidden -> skip
+        return
+    compilers = _differential_compilers()
+    # _CC resolved (a compiler is visible), so under any tier that exposes a C compiler BOTH gcc and
+    # clang are in the visible set (run_all's `_C_COMPILER`) -- a single-compiler host is the bug.
+    assert compilers, ("cross-compiler differential degenerated to ONE compiler: "
+                       f"gcc={shutil.which('gcc')} clang={shutil.which('clang')} -- "
+                       "the equivalence gate would silently exercise only one toolchain")
+    gcc, clang = compilers
+    fx = "cfront_intsigncast.c"                                 # signed/float casts: a UB-sensitive pick
+    path = os.path.join(_C, fx)
+    src = open(path, encoding="utf-8").read()
+    _summary, r, entry = _oracle(src, _includes_for(fx))
+    _c_summary, c_emit = _c_run(_build_frontend(_session_build_dir()), path)
+    assert _equiv(r.source, c_emit, entry, cc=gcc) == "MATCH", f"{fx}: twin emit diverges under gcc"
+    assert _equiv(r.source, c_emit, entry, cc=clang) == "MATCH", f"{fx}: twin emit diverges under clang"
 
 
 def test_storage_extent_parity_catches_oversizing():
