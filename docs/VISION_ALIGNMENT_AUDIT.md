@@ -46,7 +46,7 @@
 | 5a | Baked-weights inference kernel in C | 🟡 PARTIAL | `#embed` Q8 tables + `gem.matmul` plan exist; no end-to-end baked-weights kernel emitted |
 | 5b | Forward/backward training kernels on bare metal | 🟡 PARTIAL | autodiff is a complete **Python-oracle-only** organ; not lowered to MLIR/C; no training loop (B4) |
 | 5c | Tensor ops as first-class claims | 🟡 PARTIAL | `gem.matmul` done; no conv/attention/activation ops |
-| 5d | C++ hand-off boundary (dynamic graphs / MPI / NCCL) | 🔴 MISSING | single-node by design; no distributed contract defined |
+| 5d | C++ hand-off boundary (dynamic graphs / MPI / NCCL) | 🟡 SCAFFOLDED | boundary contract defined + a compilable, round-trip-tested single-node seam; dynamic/distributed backends are marked stubs |
 
 Legend: 🟢 achieved · 🟡 partial · 🔴 missing · ⚪ deliberately-not-done (vision clarification).
 
@@ -154,9 +154,19 @@ or fusion — i.e. none of them is the "Layer-1 AI" the vision describes.
 - **5c tensor ops as claims — PARTIAL.** `gem.matmul` is a first-class planned claim with
   K_BCIR tile/loop search; there are no `gem.conv` / `gem.attention` / `gem.activation`
   ops.
-- **5d C++ hand-off boundary — MISSING.** No MPI/NCCL/distributed/dynamic-graph
-  machinery anywhere; the design is single-node, and the contract for "too big for C —
-  hand off to C++" is undefined.
+- **5d C++ hand-off boundary — SCAFFOLDED.** The boundary is now defined doc-first
+  ([`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md)) and backed by a compilable,
+  round-trip-tested seam ([`runtime/cpp/`](../runtime/cpp), gated by
+  [`tools/cpp/check_handoff.sh`](../tools/cpp/check_handoff.sh), wired into the c-runtime
+  suite). The contract: the C/IR rail produces a frozen StreamPack; a C++ `Orchestrator`
+  consumes it, decides placement/topology, and re-enters the existing single-node C kernels
+  per shard — it may schedule/shard/retry/replicate but may NEVER alter the artifact's
+  semantics or become an R-law verdict (the two-truth quarantine extends across the seam).
+  **Honest depth:** the `SingleNodeOrchestrator` reference is REAL (it round-trips an
+  artifact through the existing C decoder and its dispatch order == the direct C/IR path);
+  the dynamic-graph (RL node spawning / mixed-length token graphs) and distributed
+  (MPI/NCCL multi-node) backends are documented STUBS behind the same interface — they fail
+  loudly and add no real MPI/NCCL dependency (that needs multi-node hardware we don't have).
 
 ---
 
@@ -189,8 +199,13 @@ Pillar 3):**
    unlocks training on the deployed rail.
 9. **Baked-weights inference kernel emitter** — `static const` weights + fused single-pass
    loop for a frozen model (Pillar 5a).
-10. Define the **C↔C++ hand-off boundary** doc-first (dynamic-graph + distributed), even
-    before building it, so the single-node limit is explicit (Pillar 5d).
+10. ✅ **Define the C↔C++ hand-off boundary** doc-first (dynamic-graph + distributed) so the
+    single-node limit is explicit (Pillar 5d). **DONE** —
+    [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) + a compilable, round-trip-tested
+    single-node seam ([`runtime/cpp/`](../runtime/cpp), gated by
+    [`tools/cpp/check_handoff.sh`](../tools/cpp/check_handoff.sh)); the dynamic/distributed
+    backends remain marked stubs (no real MPI/NCCL). *Follow-up:* build a real dynamic-graph
+    freeze loop + an MPI/NCCL backend when multi-node hardware is available.
 
 **Pillar-1/2 boundaries & formalization:**
 11. `Domain.DMA` + DMA-descriptor specialist + device-isolation annotation (Pillar 1).

@@ -163,6 +163,7 @@ _MODULES = [
     "bcir.tests.test_ir_structural_parity",
     "bcir.tests.test_cfront_roundtrip",
     "bcir.tests.test_c_channel",
+    "bcir.tests.test_cpp_handoff",
     "bcir.tests.test_memory_model",
     "bcir.tests.test_codegen",
     "bcir.tests.test_async",
