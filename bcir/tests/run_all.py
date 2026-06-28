@@ -196,6 +196,7 @@ _MODULES = [
     "bcir.tests.test_precision_lowering",
     "bcir.tests.test_bundle",
     "bcir.tests.test_fusion_matmul_activation",
+    "bcir.tests.test_calling_side_tuning",
     "bcir.tests.test_compose",
     "bcir.tests.test_compose_differential",
     "bcir.tests.test_proof",
