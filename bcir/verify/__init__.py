@@ -70,6 +70,20 @@ def verify(module: Module) -> list[Diagnostic]:
             diags.append(Diagnostic("R1", f"duplicate RID {rid}"))
         seen.add(rid)
 
+    # R1.1: claim-id uniqueness (mirror of R1, for the claim namespace). Every claim id must be unique
+    # within the module -- a duplicate/injected claim id makes the claim graph ambiguous (a plan step,
+    # an attestation, or the structural digest could silently bind to the wrong claim). The C twin
+    # (runtime/c/bcir_verify.c) enforces the same law over the WHOLE unit's claim array; the cfront rail
+    # additionally calls cfront_unit_claim_ids_unique() to aggregate across functions (each cfront
+    # function is verified as its own single-phase Module, so this per-module pass only catches an
+    # intra-function duplicate -- the unit-wide pass catches a cross-function one).
+    seen_cid: set[int] = set()
+    for ph in module.phases:
+        for claim in ph.claims:
+            if claim.id in seen_cid:
+                diags.append(Diagnostic("R1.1", f"duplicate claim id {claim.id}"))
+            seen_cid.add(claim.id)
+
     # R2: registry resolution -- every claim resource reference resolves.
     for ph in module.phases:
         for claim in ph.claims:
@@ -223,6 +237,220 @@ def verify(module: Module) -> list[Diagnostic]:
                 diags.append(Diagnostic(
                     "R8", f"claim {claim.id}: unknown cost class {claim.cost_class!r}"))
 
+    return diags
+
+
+# --- the cross-rail PER-CLAIM STRUCTURAL DIGEST (the count->structural parity fix) ------------------
+# The dual-rail parity gate used to compare the two cfront rails by a 9-INTEGER count summary only, so
+# any corruption that PRESERVES the counts slipped through: swapping operands between two same-op
+# claims, redirecting a call @foo->@bar (both defined), substituting one c.bin.* op for another. This
+# digest closes that gap with a CANONICAL, language-independent serialization of every function's claim
+# DATAFLOW, hashed with FNV-1a (64-bit). The C twin (bcir_cfront_digest in runtime/c/bcir_cfront.c)
+# builds the SAME records and the SAME hash, so the two rails produce a BYTE-IDENTICAL digest, proven
+# empirically over the whole fixture corpus (the --canon diff is EMPTY; see
+# bcir/tests/test_ir_structural_parity.py).
+#
+# WHY DATAFLOW VALUE-NUMBERS, not raw positions/rids (empirically forced by the C twin's --canon dump):
+# the two cfront frontends are NOT byte-identical IR producers. Three benign divergences would defeat a
+# naive "positional rid serialization" and were each measured against the C --canon over all 122
+# fixtures:
+#   (1) RID base: the Python rid is the C rid + 1, and the absolute values are rail-private.
+#   (2) Claim ORDER: 11 fixtures evaluate sibling sub-expressions in a different order (e.g. a*b+c vs
+#       c... ), so claim POSITION is not a cross-rail invariant -- a position-sensitive digest diverges.
+#   (3) Operand ORDER within a multi-read claim (c.store's base/index/value) differs on a few fixtures.
+# A digest that is invariant to (1)-(3) yet still catches the mandated corruptions is the per-function
+# multiset of each claim's DATAFLOW VALUE-NUMBER:
+#
+#   record(claim) = <op-base>|<opcode-int>|<read value-numbers>|<semantic imm>|<dom-int>
+#   value_number(rid) = <op-base>(<vns of that producer claim's reads>)  if some claim writes rid;
+#                       else "in:p<j>" if rid is the j-th PARAMETER (position is cross-rail stable, so
+#                       the two params in `a - b` are distinguished); else the literal "in" (any other
+#                       input -- a global / uninitialized local -- stays anonymous, rail-private rid out).
+#   plus a per-function OBSERVABLE-OUTPUT anchor:  ret=<vn of the return value>|stores=<dest->value;...>
+#   (the LAST-writer value-numbers of what the function RETURNS / STORES -- see _canon_func_records).
+#
+# - op-base = the `op` string up to the first ':', BUT only for the ops whose ':' suffix is a
+#   rail-divergent label the two rails spell differently -- which is ONLY `c.call.vaarg` (the Python
+#   oracle emits bare `c.call.vaarg`; the C twin emits `c.call.vaarg:int`). Every OTHER ':' suffix is
+#   STRUCTURAL and KEPT: the callee in `c.call:foo` (a redirect @foo->@bar changes it), the WIDTH in
+#   `c.cast:uint8_t` (a width change is a real type corruption), and the VALUE in `c.fconst:1.0`.
+# - opcode/domain: their INTEGER values (Opcode/Domain are IntEnum valued 0..17 / 0..5 to match the C
+#   bcir_opcode/bcir_domain enums by construction -- no enum->name table can drift between rails).
+# - SEMANTIC imm is folded per op (see _vn_imm): c.const's value; the struct member BYTE OFFSET (c.load
+#   imm[0] / c.addrof / c.store imm[0]); the bitfield BIT-OFFSET/WIDTH/SIGN (c.bf.get/c.bf.set). So
+#   tampering a constant (5->999), reading the wrong member (s->x vs s->y), or the wrong/oppositely-
+#   signed bitfield (p->a vs p->b) changes the digest. Only the cross-rail-STABLE imm positions are
+#   folded; rail-divergent metadata (the c.load bounds `ub`, the c.store trailing _Bool/stride flag) is
+#   dropped, preserving byte-identity.
+# - the OBSERVABLE-OUTPUT anchor pins what the function actually emits -- the RETURN value's last-writer
+#   VN and the sorted STORE (dest-VN -> value-VN) pairs -- so redirecting a SINK claim's write target (a
+#   dead/return-temp copy: `return t` -> `return u`; a store destination) changes the digest even though
+#   no per-claim record does (wr is rail-private, excluded from the per-claim record). last==first for a
+#   single-write rid, so the anchor is byte-identical cross-rail.
+# - read-operand order: POSITIONAL BY DEFAULT (so reversing the reads of a non-commutative op -- sub /
+#   div / mod / shl / shr / the lt/gt/le/ge comparisons / a c.store's base,index,value -- changes the
+#   record, since emit.py lowers `ref(rd[0]) op ref(rd[1])` in order and the reversal is
+#   execution-observable). Reads are SORTED ONLY for the genuinely COMMUTATIVE ops (add/mul/and/or/xor/
+#   eq/ne), where order cannot affect the value; that sort is what absorbs the few cross-rail operand-
+#   order divergences on those ops. The per-function record list is SORTED (absorbs divergence (2): the
+#   11 sibling-eval-order fixtures). NOP-marker claims are skipped (matches the count).
+#
+# This is rid invariant + claim-order invariant (so it matches cross-rail, 171/171) but a real STRUCTURE
+# check: an operand swap (commutative OR non-commutative -- the latter now via positional order)
+# rebinds value-number trees; an op substitution changes a base; a call redirect changes a `c.call:NAME`
+# base; a constant tamper changes c.const's imm; a cast-width change changes `c.cast:WIDTH`; an injected/
+# duplicate id is caught by the dedicated unit-wide R1.1 law. Non-tautological in test_ir_structural_parity.py.
+_DIGEST_OFFSET = 1469598103934665603        # FNV-1a 64-bit offset basis (== the C offset)
+_DIGEST_PRIME = 1099511628211               # FNV-1a 64-bit prime
+_DIGEST_MASK = (1 << 64) - 1
+_NOP = 0                                     # Opcode.NOP integer value (the control-marker opcode)
+_VN_MAXDEPTH = 96                            # recursion guard (== the C twin's; a deep/cyclic chain folds to "cyc")
+# The ONLY op whose ':' suffix is a rail-divergent label (Python `c.call.vaarg` vs the C twin
+# `c.call.vaarg:int`); its suffix is stripped. Every other ':' suffix is structural and KEPT.
+_VN_STRIP_SUFFIX = ("c.call.vaarg",)
+# Genuinely COMMUTATIVE ops: operand order cannot change the computed value, so their reads are sorted
+# (this is what absorbs the few cross-rail operand-order divergences). All other ops keep POSITIONAL
+# read order, so reversing a non-commutative op's operands is caught.
+_VN_COMMUTATIVE = frozenset((
+    "c.bin.add", "c.bin.mul", "c.bin.and", "c.bin.or", "c.bin.xor", "c.bin.eq", "c.bin.ne"))
+
+
+def _vn_base(op: str) -> str:
+    """The op identity for value-numbering: strip ONLY `c.call.vaarg`'s rail-divergent `:T` suffix; keep
+    every other ':' suffix (the c.call callee, the c.cast width, the c.fconst value -- all structural)."""
+    head = op.split(":", 1)[0]
+    return head if head in _VN_STRIP_SUFFIX else op
+
+
+def _vn_imm(c) -> str:
+    """The SEMANTIC immediate component of a claim's record -- the imm fields that encode WHICH datum a
+    claim touches (a constant value, a struct member byte offset, a bitfield bit-offset/width/sign), so
+    reading/writing the WRONG member or bitfield is caught. Only the cross-rail-STABLE positions are
+    folded (the C twin emits the same bytes); rail-divergent metadata (the c.load bounds `ub`, the
+    c.store trailing _Bool / stride flags) is dropped, preserving --canon byte-identity:
+      c.const           -> all imm (the literal value);
+      c.load            -> imm[0], the member BYTE OFFSET (0 if absent; the `ub` at imm[1] is dropped);
+      c.store           -> imm[0],imm[1], the (byte offset, unit size) (the _Bool/stride tail dropped);
+      c.addrof          -> all imm (&member offset [+ array stride] -- agrees on both rails);
+      c.bf.get/c.bf.set -> all imm (bit offset, bit width, signedness -- agrees on both rails);
+      c.call.imember    -> all imm (the arrow/dot dispatch flag);
+      c.sizeof.vla      -> all imm (the element size).
+    A digest-relevant imm change (s->x vs s->y offset, a bitfield p->a vs p->b layout, a signed-vs-
+    unsigned bitfield) thus moves the digest, while non-member loads stay cross-rail identical."""
+    op = c.op
+    imm = [int(v) for v in c.imm]
+    if op in ("c.const", "c.addrof", "c.bf.get", "c.bf.set", "c.call.imember", "c.sizeof.vla"):
+        keep = imm
+    elif op == "c.load":
+        keep = [imm[0] if imm else 0]                  # the member byte offset (drop the divergent bound)
+    elif op == "c.store":
+        keep = imm[:2]                                 # (byte offset, unit size); drop the _Bool/stride tail
+    else:
+        return ""
+    return ",".join(str(v) for v in keep)
+
+
+def _canon_func_records(lf) -> list[str]:
+    """The sorted multiset of per-claim dataflow value-number records for one lowered function, plus an
+    OBSERVABLE-OUTPUT anchor line. The per-claim multiset alone is blind to a SINK claim's write target
+    (redirecting a dead/return-temp/store wr is invisible if its result is not read downstream); the
+    anchor closes that by pinning what the function actually OUTPUTS -- the value it RETURNS and the
+    memory it STORES -- as rail-stable value-number trees."""
+    claims = [c for c in lf.claims if int(c.opcode) != _NOP]
+    first_writer: dict[int, int] = {}              # rid -> index of the FIRST claim that writes it
+    last_writer: dict[int, int] = {}               # rid -> index of the LAST claim that writes it
+    for i, c in enumerate(claims):
+        for w in c.wr:
+            first_writer.setdefault(int(w), i)
+            last_writer[int(w)] = i
+    # A function-INPUT rid (one no claim writes) is a param or a global/uninitialized read. Its absolute
+    # rid is rail-private, but a PARAMETER's POSITION is cross-rail stable, so an input that is the j-th
+    # parameter value-numbers to "in:pj" -- which DISTINGUISHES the two params in `a - b` vs `b - a` (a
+    # non-commutative reversal of two params is now caught). Any other input stays anonymous "in".
+    param_ix = {int(rid): j for j, (_nm, rid, _ty) in enumerate(getattr(lf, "params", []))}
+
+    def _ordered(c, parts: list[str]) -> list[str]:
+        # commutative ops: sort the reads (order-irrelevant, absorbs cross-rail divergence); else keep
+        # POSITIONAL order so reversing a non-commutative op's operands is a real, caught change.
+        return sorted(parts) if _vn_base(c.op) in _VN_COMMUTATIVE else parts
+
+    def _vn(writer: dict, memo: dict):
+        def vn(rid: int, depth: int) -> str:
+            i = writer.get(rid)
+            if i is None:
+                j = param_ix.get(int(rid))
+                return f"in:p{j}" if j is not None else "in"  # a param (positional, cross-rail) else anon
+            if depth > _VN_MAXDEPTH:
+                return "cyc"
+            if i in memo:
+                return memo[i]
+            memo[i] = "cyc"                        # cycle guard (a loop-carried rid resolves to "cyc")
+            c = claims[i]
+            parts = _ordered(c, [vn(int(r), depth + 1) for r in c.rd])
+            memo[i] = "{}({})".format(_vn_base(c.op), ",".join(parts))
+            return memo[i]
+        return vn
+
+    # Per-claim records: the FIRST-writer dataflow VN (the form that holds cross-rail byte-identity).
+    vn_first = _vn(first_writer, {})
+    recs = []
+    for c in claims:
+        parts = _ordered(c, [vn_first(int(r), 0) for r in c.rd])
+        recs.append("{}|{}|{}|{}|{}".format(
+            _vn_base(c.op), int(c.opcode), ",".join(parts), _vn_imm(c), int(c.domain)))
+    recs.sort()
+
+    # The OBSERVABLE-OUTPUT anchor (LAST-writer VN -- a use observes the most-recent prior write, which
+    # is what the emitted C returns/stores). The RETURN value's VN catches a sink-wr redirect (e.g.
+    # making the `u=a+b` copy write the return temp turns `return t` into `return (a+b)` -- the anchor
+    # changes though no per-claim record does). The STORE destinations+values (sorted, rail-stable VNs)
+    # catch a dead/store-target redirect. last==first for a single-write rid, so this stays byte-identical.
+    vn_last = _vn(last_writer, {})
+    rr = getattr(lf, "return_rid", None)           # None for a void function (no returned value)
+    ret = vn_last(int(rr), 0) if rr is not None else "void"
+    stores = sorted(
+        "{}->{}".format(vn_last(int(c.rd[0]), 0) if c.rd else "?",
+                        vn_last(int(c.rd[-1]), 0) if c.rd else "?")
+        for c in claims if c.op == "c.store")
+    recs.append("ret={}|stores={}".format(ret, ";".join(stores)))
+    return recs
+
+
+def cfront_structural_canon(lowered) -> str:
+    """The raw canonical serialization the digest hashes -- the byte-identity proof artifact (the Python
+    canon must equal the C twin's `--canon` dump byte-for-byte on the corpus, so the digests match).
+    One sorted dataflow value-number record per non-marker claim, with a '@' line per function
+    boundary. See the module note above for the exact record format and the empirical justification."""
+    out: list[str] = []
+    for lf in lowered.functions.values():
+        out.extend(_canon_func_records(lf))
+        out.append("@")
+    return "\n".join(out) + "\n"
+
+
+def cfront_structural_digest(lowered) -> int:
+    """The cross-rail per-claim structural digest of a lowered C unit (the C twin is
+    `bcir_cfront_digest`). FNV-1a (64-bit) over `cfront_structural_canon`'s bytes; returns a 64-bit int
+    (the dual-rail summary stamps it as `digest=<16-hex>`). Byte-identical to the C twin's digest."""
+    h = _DIGEST_OFFSET
+    for byte in cfront_structural_canon(lowered).encode("utf-8"):
+        h = ((h ^ byte) * _DIGEST_PRIME) & _DIGEST_MASK
+    return h
+
+
+def cfront_unit_claim_ids_unique(lowered) -> list[Diagnostic]:
+    """R1.1 across the WHOLE cfront unit: claim ids are unit-wide unique (the cid base is bumped per
+    function, so every claim id is globally distinct by construction). The cfront pipeline verifies each
+    function as its own single-phase Module, so the per-module R1.1 in verify() only sees an
+    intra-function duplicate -- this pass aggregates all functions' claim ids to catch a CROSS-function
+    duplicate too, exactly as the C twin's unit-wide bcir_verify_unit R1.1 does."""
+    diags: list[Diagnostic] = []
+    seen: set[int] = set()
+    for lf in lowered.functions.values():
+        for c in lf.claims:
+            if c.id in seen:
+                diags.append(Diagnostic("R1.1", f"duplicate claim id {c.id}"))
+            seen.add(c.id)
     return diags
 
 

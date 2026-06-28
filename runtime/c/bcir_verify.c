@@ -65,6 +65,19 @@ static int has_cycle(const bcir_unit *u,int fi,int *state){
 
 int bcir_verify_unit(const bcir_unit *u,char *diag,size_t dn){
   if(dn) diag[0]=0;
+  /* R1.1: claim-id uniqueness (the mirror of R1's RID uniqueness, for the claim namespace). Claim ids
+   * are unit-wide unique by construction (the cid base is bumped per function); a duplicate/injected id
+   * makes the claim graph ambiguous (a plan step / attestation / structural digest could bind to the
+   * wrong claim), so it is rejected here exactly as bcir/verify's R1.1 does. O(total_claims^2) over the
+   * unit -- claim arrays are small per function; for a large unit this stays well within the verifier
+   * budget (the cost model never runs on a dirty graph). */
+  for(int i=0;i<u->n_funcs;i++){ const bcir_func *fi=&u->funcs[i];
+    for(size_t a=0;a<fi->n_claims;a++){ uint32_t id=fi->claims[a].id;
+      for(size_t b=a+1;b<fi->n_claims;b++) if(fi->claims[b].id==id){
+        snprintf(diag,dn,"R1.1: duplicate claim id %u",id); return 0; }
+      for(int j=i+1;j<u->n_funcs;j++){ const bcir_func *fj=&u->funcs[j];
+        for(size_t b=0;b<fj->n_claims;b++) if(fj->claims[b].id==id){
+          snprintf(diag,dn,"R1.1: duplicate claim id %u",id); return 0; } } } }
   for(int i=0;i<u->n_funcs;i++) if(!verify_func(&u->funcs[i],diag,dn)) return 0;
   for(int i=0;i<u->n_funcs;i++) for(int k=0;k<u->funcs[i].n_calls;k++)
     if(func_index(u,u->funcs[i].calls[k])<0){snprintf(diag,dn,"R18: call to undefined function %s",u->funcs[i].calls[k]);return 0;}

@@ -2149,7 +2149,7 @@ static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
     snprintf(o,n,"c.cast:%s_BitInt(%d)",ty->signd?"":"unsigned ",ty->bit_width); return; }
   const char *nm=ty->is_complex ? (ty->size==8?"float _Complex":ty->size>16?"long double _Complex":"double _Complex")
                 : ty->is_bool ? "_Bool"           /* a bool cast normalizes any nonzero (full value) to 1 */
-                : ty->is_float ? (ty->size==4?"float":"double")
+                : ty->is_float ? (ty->size==4?"float":ty->size>8?"long double":"double")  /* >8: extended (matches the oracle's `long double`) */
                 : signed_int ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
                 : ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t";
   if(ty->kind==2) snprintf(o,n,"c.cast:%s *",nm); else snprintf(o,n,"c.cast:%s",nm);
@@ -4765,8 +4765,242 @@ void bcir_cfront_summary(const bcir_unit *u,int ok,char *buf,size_t n){
       else if(!strncmp(cl->op,"c.call",6))calls++;}}   /* c.call:NAME + c.call.indirect */
   int repro=0;                                   /* A1.3: C23 `[[reproducible]]`/`[[unsequenced]]` hints */
   for(int i=0;i<u->n_funcs;i++) if(u->funcs[i].reproducible) repro++;   /* counted over the WHOLE unit */
-  snprintf(buf,n,"funcs=%d claims=%zu mmio=%d bf=%d const=%d binop=%d call=%d repro=%d ok=%d",
-           u->n_funcs,nc,mmio,bf,kn,binop,calls,repro,ok);
+  snprintf(buf,n,"funcs=%d claims=%zu mmio=%d bf=%d const=%d binop=%d call=%d repro=%d ok=%d digest=%016llx",
+           u->n_funcs,nc,mmio,bf,kn,binop,calls,repro,ok,
+           (unsigned long long)bcir_cfront_digest(u));
+}
+
+/* --- the cross-rail PER-CLAIM STRUCTURAL DIGEST (the count->structural parity fix) -----------------
+ * The 9-integer summary above compares the two cfront rails by COUNTS only, so any corruption that
+ * preserves the counts -- swapping operands between two same-op claims, redirecting a call @foo->@bar
+ * (both defined), or substituting one c.bin.* op for another -- slips through the gate. This digest
+ * closes that gap with a CANONICAL, language-independent serialization of every function's claim
+ * DATAFLOW, hashed with FNV-1a (64-bit). The Python oracle (bcir.verify.cfront_structural_digest)
+ * builds the SAME records and the SAME hash, so the digests are byte-identical across the whole fixture
+ * corpus (proven empirically by --canon: the diff is EMPTY).
+ *
+ * WHY DATAFLOW VALUE-NUMBERS, not raw positions/rids (the two cfront frontends are NOT byte-identical IR
+ * producers -- benign divergences, each measured against the oracle over the whole corpus, defeat a
+ * naive positional serialization): (1) the Python rid is the C rid + 1 and absolute rids are
+ * rail-private; (2) the sibling sub-expression EVALUATION ORDER differs on 11 fixtures, so claim
+ * POSITION is not a cross-rail invariant; (3) a few COMMUTATIVE ops order their two reads differently.
+ * The digest is invariant to (1)-(3) yet still a STRUCTURE check:
+ *
+ *   record(claim) = <op-base>|<opcode-int>|<value-numbers of its reads>|<c.const imm>|<dom>
+ *   vn(rid) = <op-base>(<value-numbers of that producer's reads>)  if a claim writes rid; else "in:pj"
+ *             if rid is the j-th PARAMETER (position is cross-rail stable -> the two params in `a - b`
+ *             are distinguished); else "in" (any other input -- a global/local -- stays anonymous).
+ *
+ * op-base strips ONLY `c.call.vaarg`'s rail-divergent `:T` suffix (Python emits bare `c.call.vaarg`, the
+ * C twin `c.call.vaarg:int`); every OTHER ':' suffix is STRUCTURAL and KEPT -- the c.call callee (a
+ * redirect @foo->@bar changes it), the c.cast WIDTH (a type change is caught), the c.fconst VALUE.
+ * opcode/domain are their INTEGER values (== the Python IntEnum values by construction). c.const's imm
+ * is folded in (a constant tamper is caught). Read order is POSITIONAL by default (so reversing a
+ * non-commutative op -- sub/div/mod/shl/shr/lt/gt/le/ge or a c.store -- is caught: emit lowers
+ * `ref(rd[0]) op ref(rd[1])` in order); reads are SORTED ONLY for the COMMUTATIVE ops (add/mul/and/or/
+ * xor/eq/ne), which is what absorbs (3). The per-function record list is SORTED (absorbs (2)). NOP
+ * markers are skipped (matches the count). A duplicate/injected claim id is caught by the unit-wide
+ * R1.1 law, not here. */
+
+#define BCIR_VN_MAXDEPTH 96
+/* the ONLY op whose ':' suffix is a rail-divergent label (stripped); every other suffix is kept. */
+#define BCIR_VN_STRIP(head) (!strcmp(head,"c.call.vaarg"))
+/* genuinely commutative ops: their reads are sorted (order cannot change the value); all others stay
+ * positional, so reversing a non-commutative op's operands changes the record. */
+static int vn_commutative(const char *base){
+  return !strcmp(base,"c.bin.add")||!strcmp(base,"c.bin.mul")||!strcmp(base,"c.bin.and")||
+         !strcmp(base,"c.bin.or")||!strcmp(base,"c.bin.xor")||!strcmp(base,"c.bin.eq")||
+         !strcmp(base,"c.bin.ne");
+}
+
+/* op-base: strip ONLY c.call.vaarg's rail-divergent `:T` suffix; else keep the full op (so the callee
+ * in c.call:NAME, the width in c.cast:W, and the value in c.fconst:V all survive). */
+static void vn_base(const char *op, char *out){
+  const char *c=strchr(op,':');
+  if(c){ size_t h=(size_t)(c-op); char head[BCIR_CIR_NAME];
+    if(h>=sizeof head) h=sizeof head-1; memcpy(head,op,h); head[h]=0;
+    if(BCIR_VN_STRIP(head)){ snprintf(out,BCIR_CIR_NAME,"%s",head); return; } }
+  snprintf(out,BCIR_CIR_NAME,"%s",op);
+}
+
+/* a small growable byte string (the per-function record buffer + the value-number scratch). */
+typedef struct { char *s; size_t n, cap; } sbuf;
+static void sb_add(sbuf *b, const char *p, size_t k){
+  if(b->n+k+1>b->cap){ size_t nc=b->cap?b->cap*2:256; while(nc<b->n+k+1)nc*=2;
+    char *r=realloc(b->s,nc); if(!r)return; b->s=r; b->cap=nc; }
+  memcpy(b->s+b->n,p,k); b->n+=k; b->s[b->n]=0;
+}
+static void sb_str(sbuf *b,const char *s){ sb_add(b,s,strlen(s)); }
+
+/* The SEMANTIC imm component of a claim's record -- the imm fields that encode WHICH datum a claim
+ * touches (a const value, a struct member byte offset, a bitfield bit-off/width/sign), so reading or
+ * writing the WRONG member/bitfield is caught. Only the cross-rail-STABLE positions are folded (the
+ * Python oracle emits the same bytes); rail-divergent metadata (the c.load bounds `ub`, the c.store
+ * trailing _Bool/stride flags) is dropped, preserving --canon byte-identity. Mirrors _vn_imm exactly:
+ *   c.const/c.addrof/c.bf.get/c.bf.set/c.call.imember/c.sizeof.vla -> all imm;
+ *   c.load -> imm[0] (member byte offset; 0 if absent);  c.store -> imm[0],imm[1] (offset, unit size). */
+static void vn_imm(const bcir_claim *cl, sbuf *rec){
+  const char *op=cl->op; char nb[24]; int n=cl->n_imm;
+  if(!strcmp(op,"c.const")||!strcmp(op,"c.addrof")||!strcmp(op,"c.bf.get")||!strcmp(op,"c.bf.set")||
+     !strcmp(op,"c.call.imember")||!strcmp(op,"c.sizeof.vla")){
+    for(int k=0;k<n;k++){ if(k)sb_str(rec,","); int l=snprintf(nb,sizeof nb,"%lld",(long long)cl->imm[k]); sb_add(rec,nb,(size_t)l); }
+  } else if(!strcmp(op,"c.load")){
+    long long off = n>0 ? (long long)cl->imm[0] : 0;   /* the member byte offset (0 if absent) */
+    int l=snprintf(nb,sizeof nb,"%lld",off); sb_add(rec,nb,(size_t)l);
+  } else if(!strcmp(op,"c.store")){
+    int m = n<2 ? n : 2;                               /* (byte offset, unit size); drop the _Bool/stride tail */
+    for(int k=0;k<m;k++){ if(k)sb_str(rec,","); int l=snprintf(nb,sizeof nb,"%lld",(long long)cl->imm[k]); sb_add(rec,nb,(size_t)l); }
+  }
+}
+
+/* sort an array of \0-terminated strings (small n; insertion sort, strcmp order). */
+static void sort_strs(char **a, int n){
+  for(int i=1;i<n;i++){ char *t=a[i]; int j=i;
+    while(j>0 && strcmp(a[j-1],t)>0){ a[j]=a[j-1]; j--; } a[j]=t; }
+}
+
+/* per-function value-number context: writer[rid]=claim index that first writes it, plus a memo. */
+typedef struct {
+  const bcir_func *f;
+  int *wclaim;          /* parallel to a rid list: index of the first writer claim, or -1 */
+  uint32_t *wrid; int nw;
+  char **memo;          /* memo[claim] -> its value-number string (lazily built), or NULL */
+} vnctx;
+static int writer_of(vnctx *v, uint32_t rid){
+  for(int k=0;k<v->nw;k++) if(v->wrid[k]==rid) return v->wclaim[k]; return -1;
+}
+/* append vn(rid) to `out`. depth guards recursion; a re-entered claim folds to "cyc". */
+static void vn_of(vnctx *v, uint32_t rid, int depth, sbuf *out);
+static void vn_claim(vnctx *v, int ci, int depth, sbuf *out){
+  if(v->memo[ci]){ sb_str(out,v->memo[ci]); return; }
+  if(depth>BCIR_VN_MAXDEPTH){ sb_str(out,"cyc"); return; }
+  v->memo[ci]=strdup("cyc");                 /* cycle guard: a loop-carried rid resolves to "cyc" */
+  const bcir_claim *cl=&v->f->claims[ci];
+  char base[BCIR_CIR_NAME]; vn_base(cl->op,base);
+  /* gather the vns of this claim's reads -- POSITIONAL, except sorted for a commutative op */
+  char *parts[BCIR_CLAIM_MAX_RD]; sbuf ps[BCIR_CLAIM_MAX_RD]; int np=cl->n_rd;
+  for(int k=0;k<np;k++){ ps[k]=(sbuf){0,0,0}; vn_of(v,cl->rd[k],depth+1,&ps[k]); parts[k]=ps[k].s?ps[k].s:(char*)""; }
+  if(vn_commutative(base)) sort_strs(parts,np);
+  sbuf me={0,0,0}; sb_str(&me,base); sb_str(&me,"(");
+  for(int k=0;k<np;k++){ if(k)sb_str(&me,","); sb_str(&me,parts[k]); }
+  sb_str(&me,")");
+  for(int k=0;k<np;k++) free(ps[k].s);
+  free(v->memo[ci]); v->memo[ci]=me.s?me.s:strdup("");
+  sb_str(out,v->memo[ci]);
+}
+static void vn_of(vnctx *v, uint32_t rid, int depth, sbuf *out){
+  int ci=writer_of(v,rid);
+  if(ci<0){                                   /* a function input: a param (positional) or a global/etc */
+    const bcir_func *f=v->f;
+    for(int j=0;j<f->n_params;j++) if(f->params[j].rid==rid){   /* the j-th parameter -> "in:pj" */
+      char b[24]; int l=snprintf(b,sizeof b,"in:p%d",j); sb_add(out,b,(size_t)l); return; }
+    sb_str(out,"in"); return;                 /* any other input stays anonymous (rail-private rid out) */
+  }
+  vn_claim(v,ci,depth,out);
+}
+
+/* Build the sorted multiset of per-claim dataflow records for one function; emit each, '\n'-joined.
+ * Even a zero-real-claim function (e.g. `int read_a(void){ return a_global; }`) emits its OBSERVABLE-
+ * OUTPUT anchor (ret=...|stores=...), exactly as the Python oracle does -- so the byte-identity holds. */
+static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t), void *ctx){
+  /* index the non-NOP claims and the first-writer of each rid */
+  int nc=0; for(size_t i=0;i<f->n_claims;i++) if(f->claims[i].opcode!=BCIR_OP_NOP) nc++;
+  size_t maxw=f->n_claims*(size_t)BCIR_CLAIM_MAX_WR+1;   /* an upper bound on distinct written rids */
+  int *cidx=malloc((size_t)(nc?nc:1)*sizeof *cidx);   /* cidx[j] = original claim index of the j-th non-NOP */
+  vnctx v={f,NULL,NULL,0,NULL};
+  v.wclaim=malloc(maxw*sizeof(int)); v.wrid=malloc(maxw*sizeof(uint32_t));
+  v.memo=calloc(f->n_claims?f->n_claims:1,sizeof(char*));
+  /* NB: vn indexes by ORIGINAL claim index (so memo/writer reference the real claim array). */
+  int j=0;
+  for(size_t i=0;i<f->n_claims;i++){ const bcir_claim *cl=&f->claims[i];
+    if(cl->opcode==BCIR_OP_NOP) continue; cidx[j++]=(int)i;
+    for(int k=0;k<cl->n_wr;k++){ uint32_t rid=cl->wr[k]; int seen=0;
+      for(int m=0;m<v.nw;m++) if(v.wrid[m]==rid){seen=1;break;}
+      if(!seen){ v.wrid[v.nw]=rid; v.wclaim[v.nw]=(int)i; v.nw++; } } }
+  /* build each non-NOP claim's record */
+  char **recs=malloc((size_t)nc*sizeof *recs);
+  for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
+    char base[BCIR_CIR_NAME]; vn_base(cl->op,base);
+    char *parts[BCIR_CLAIM_MAX_RD]; sbuf ps[BCIR_CLAIM_MAX_RD]; int np=cl->n_rd;
+    for(int k=0;k<np;k++){ ps[k]=(sbuf){0,0,0}; vn_of(&v,cl->rd[k],0,&ps[k]); parts[k]=ps[k].s?ps[k].s:(char*)""; }
+    if(vn_commutative(base)) sort_strs(parts,np);     /* commutative: sort; else POSITIONAL */
+    sbuf rec={0,0,0}; char nb[24];
+    sb_str(&rec,base); sb_str(&rec,"|");
+    int ol=snprintf(nb,sizeof nb,"%d",(int)cl->opcode); sb_add(&rec,nb,(size_t)ol); sb_str(&rec,"|");
+    for(int k=0;k<np;k++){ if(k)sb_str(&rec,","); sb_str(&rec,parts[k]); }
+    sb_str(&rec,"|");
+    vn_imm(cl,&rec);                                  /* the semantic imm (member offset / bitfield layout) */
+    sb_str(&rec,"|");
+    int dl=snprintf(nb,sizeof nb,"%d",(int)cl->domain); sb_add(&rec,nb,(size_t)dl);
+    for(int k=0;k<np;k++) free(ps[k].s);
+    recs[r]=rec.s?rec.s:strdup("");
+  }
+  sort_strs(recs,nc);
+  for(int r=0;r<nc;r++){ emit(ctx,recs[r],strlen(recs[r])); emit(ctx,"\n",1); free(recs[r]); }
+  free(recs);
+
+  /* The OBSERVABLE-OUTPUT anchor (LAST-writer VN -- a use observes the most-recent prior write, which
+   * is what the emitted C returns/stores). It pins what the function OUTPUTS: the RETURN value's VN
+   * (catches a sink-wr redirect that turns `return t` into `return (a+b)` though no per-claim record
+   * changes) and the sorted STORE (dest-VN -> value-VN) pairs (catch a dead/store-target redirect).
+   * last==first for a single-write rid, so the anchor stays cross-rail byte-identical. */
+  vnctx vl={f,NULL,NULL,0,NULL};
+  vl.wclaim=malloc(maxw*sizeof(int)); vl.wrid=malloc(maxw*sizeof(uint32_t));
+  vl.memo=calloc(f->n_claims?f->n_claims:1,sizeof(char*));
+  for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
+    for(int k=0;k<cl->n_wr;k++){ uint32_t rid=cl->wr[k]; int slot=-1;
+      for(int m=0;m<vl.nw;m++) if(vl.wrid[m]==rid){slot=m;break;}
+      if(slot<0){ vl.wrid[vl.nw]=rid; vl.wclaim[vl.nw]=(int)i; vl.nw++; }
+      else vl.wclaim[slot]=(int)i; } }                /* LAST writer wins (overwrite) */
+  sbuf anc={0,0,0}; sb_str(&anc,"ret=");
+  if(f->has_return){ vn_of(&vl,f->return_rid,0,&anc); } else sb_str(&anc,"void");
+  sb_str(&anc,"|stores=");
+  /* collect store (dest->value) pairs, sorted */
+  int nst=0; for(int r=0;r<nc;r++) if(!strcmp(f->claims[cidx[r]].op,"c.store")) nst++;
+  if(nst){ char **sp=malloc((size_t)nst*sizeof *sp); int si=0;
+    for(int r=0;r<nc;r++){ const bcir_claim *cl=&f->claims[cidx[r]];
+      if(strcmp(cl->op,"c.store")) continue;
+      sbuf s={0,0,0};
+      if(cl->n_rd){ vn_of(&vl,cl->rd[0],0,&s); sb_str(&s,"->"); vn_of(&vl,cl->rd[cl->n_rd-1],0,&s); }
+      else sb_str(&s,"?->?");
+      sp[si++]=s.s?s.s:strdup(""); }
+    sort_strs(sp,nst);
+    for(int k=0;k<nst;k++){ if(k)sb_str(&anc,";"); sb_str(&anc,sp[k]); free(sp[k]); }
+    free(sp);
+  }
+  emit(ctx,anc.s?anc.s:"ret=void|stores=",anc.s?strlen(anc.s):16); emit(ctx,"\n",1); free(anc.s);
+  for(size_t i=0;i<f->n_claims;i++) free(vl.memo[i]);
+  free(vl.memo); free(vl.wclaim); free(vl.wrid);
+
+  for(size_t i=0;i<f->n_claims;i++) free(v.memo[i]);
+  free(v.memo); free(v.wclaim); free(v.wrid); free(cidx);
+}
+
+/* The shared canonical serializer: invokes emit(ctx, bytes, len) for each byte of the canon (so the
+ * digest and the --canon text dump are GUARANTEED to be the same bytes). One '@' line per function. */
+static void canon_walk(const bcir_unit *u, void (*emit)(void*,const char*,size_t), void *ctx){
+  for(int fi=0;fi<u->n_funcs;fi++){ canon_func(&u->funcs[fi],emit,ctx); emit(ctx,"@\n",2); }
+}
+
+typedef struct { uint64_t h; } fnv_ctx;
+static void fnv_emit(void *vc, const char *b, size_t n){
+  fnv_ctx *c=vc; for(size_t i=0;i<n;i++) c->h=(c->h^(unsigned char)b[i])*1099511628211ull;
+}
+uint64_t bcir_cfront_digest(const bcir_unit *u){
+  fnv_ctx c={1469598103934665603ull};            /* FNV-1a offset basis (== the Python _DIGEST_OFFSET) */
+  canon_walk(u,fnv_emit,&c);
+  return c.h;
+}
+
+typedef struct { char *buf; size_t cap, w; } buf_ctx;
+static void buf_emit(void *vc, const char *b, size_t n){
+  buf_ctx *c=vc; for(size_t i=0;i<n;i++){ if(c->w+1<c->cap) c->buf[c->w]=b[i]; c->w++; }
+}
+/* The raw canonical serialization the digest hashes (text, NOT hashed) -- the byte-identity proof
+ * (the Python cfront_structural_canon must equal this byte-for-byte on the corpus). */
+void bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n){
+  buf_ctx c={buf,n,0}; canon_walk(u,buf_emit,&c);
+  if(n) buf[c.w<n?c.w:n-1]=0;
 }
 
 /* --- module-scope effect / commutation analysis (the C twin of pipeline own_footprint + commute) ---

@@ -742,6 +742,7 @@ def _oracle_outcome(src: str):
 def _oracle_summary_emit(src: str):
     from bcir.frontends.cfront import compile_unit
     from bcir.model import Domain
+    from bcir.verify import cfront_structural_digest        # the cross-rail per-claim STRUCTURAL digest
     r = compile_unit(src, check_clang=False)
     funcs = r.lowered.functions
     cl = funcs[next(reversed(funcs))].claims                    # the entry `f` is the last-defined function
@@ -752,7 +753,8 @@ def _oracle_summary_emit(src: str):
             f"binop={sum(1 for c in cl if c.op.startswith('c.bin.'))} "
             f"call={sum(1 for c in cl if c.op.startswith('c.call'))} "
             f"repro={sum(1 for fn in funcs.values() if getattr(fn, 'reproducible', False))} "
-            f"ok={1 if r.is_clean else 0}")
+            f"ok={1 if r.is_clean else 0} "
+            f"digest={cfront_structural_digest(r.lowered):016x}")   # byte-identical to the C twin's digest
     return summ, "\n".join(r.emitted[n] for n in funcs)
 
 

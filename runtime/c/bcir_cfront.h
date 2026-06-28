@@ -45,9 +45,27 @@ void bcir_cfront_free(bcir_cfront_result *out);
 
 /* A canonical, RID-independent structural summary of the entry function's claim graph --
  * the Python<->C dual-rail parity key (bcir/tests/test_c_cfront.py computes the same from
- * the oracle). Writes "funcs=N claims=N mmio=N bf=N const=N binop=N call=N repro=N ok=1"
- * (repro = the count of C23 [[reproducible]]/[[unsequenced]]-hinted functions in the unit). */
+ * the oracle). Writes "funcs=N claims=N mmio=N bf=N const=N binop=N call=N repro=N ok=1
+ * digest=<16-hex>" (repro = the count of C23 [[reproducible]]/[[unsequenced]]-hinted functions in
+ * the unit; digest = the cross-rail per-claim structural digest, see bcir_cfront_digest). */
 void bcir_cfront_summary(const bcir_unit *u, int ok, char *buf, size_t n);
+
+/* The cross-rail PER-CLAIM STRUCTURAL DIGEST (the count->structural parity fix): an FNV-1a (64-bit)
+ * hash of a canonical, language-independent serialization of every function's claim DATAFLOW -- the
+ * sorted multiset of each claim's value-number record, plus a per-function OBSERVABLE-OUTPUT anchor.
+ * Catches count-PRESERVING corruptions the 9-count summary misses: operand swaps incl. NON-COMMUTATIVE
+ * operand REVERSAL, op substitutions, call redirects, c.const tampers, c.cast width changes, WRONG
+ * struct member / bitfield (member offset + bit off/width/sign folded from the imm), and SINK-write
+ * redirects (return-temp / store target, via the anchor). The Python oracle (bcir.verify.cfront_
+ * structural_digest) builds the same records + hash, so the two rails produce a BYTE-IDENTICAL digest.
+ * Per-claim record: "<op-base>|<opcode-int>|<read value-numbers>|<semantic imm>|<dom-int>";
+ * anchor: "ret=<return-value VN>|stores=<dest-VN->value-VN;...>". */
+uint64_t bcir_cfront_digest(const bcir_unit *u);
+
+/* The raw canonical serialization the digest hashes (text, NOT hashed) -- the byte-identity proof:
+ * the Python cfront_structural_canon must equal this byte-for-byte on the corpus, so the digests
+ * match. Writes the per-function sorted records, '@'-separated. */
+void bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n);
 
 /* The module-scope effect / commutation analysis (the C twin of pipeline.own_footprint + commute):
  * for each function a `fn=<name> reads=<globals|-> writes=<globals|->` line (its alias/effect

@@ -20,6 +20,7 @@ import tempfile
 
 from bcir.frontends.cfront import compile_unit
 from bcir.model import Domain
+from bcir.verify import cfront_structural_digest
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
@@ -161,8 +162,11 @@ def _oracle(src: str, includes=None):
     # `[[unsequenced]]` hint. Value-neutral (dropped from the emit), so it never affects behaviour --
     # it is surfaced here so the dual-rail parity gate pins it identically on both rails.
     repro = sum(1 for f in funcs.values() if getattr(f, "reproducible", False))
+    # digest = the cross-rail per-claim STRUCTURAL digest (the count->structural parity fix): the C twin
+    # appends the byte-identical `digest=<16-hex>` to its summary, so the gate now compares structure.
+    digest = cfront_structural_digest(r.lowered)
     summary = (f"funcs={len(funcs)} claims={len(cl)} mmio={mmio} bf={bf} const={kn} "
-               f"binop={bo} call={ca} repro={repro} ok={1 if r.is_clean else 0}")
+               f"binop={bo} call={ca} repro={repro} ok={1 if r.is_clean else 0} digest={digest:016x}")
     return summary, r, entry
 
 
@@ -3044,6 +3048,66 @@ def test_scalable_ir_no_fixed_ceilings():
         assert out.returncode == 0, out.stderr
         m = re.search(r"funcs=(\d+) claims=(\d+).*ok=(\d)", out.stdout)
         assert m and (m.group(1), m.group(2), m.group(3)) == ("43", "7500", "1"), out.stdout[:200]
+
+
+# the C twin's claim-id uniqueness law (R1.1): lower a unit, then inject a duplicate claim id (both
+# WITHIN a function and ACROSS two functions) and confirm bcir_verify_unit flips clean->dirty with an
+# R1.1 diagnostic in BOTH cases. Mirrors the oracle's R1.1
+# (test_ir_structural_parity.{test_duplicate_claim_id..., test_cross_function_duplicate_claim_id...}).
+_R11_HARNESS = r"""
+#include <stdio.h>
+#include <string.h>
+#include "bcir_cfront.h"
+#include "bcir_cpp.h"
+#include "bcir_verify.h"
+static int verdict_has_r11(const char *src, int intra){
+  static bcir_cfront_result r;
+  if(bcir_cfront_compile(src,&r)){ printf("COMPILE-ERR %s\n", r.diag); return -2; }
+  char diag[256];
+  int ok0=bcir_verify_unit(&r.unit,diag,sizeof diag);     /* clean baseline */
+  if(intra){
+    bcir_func *f=&r.unit.funcs[r.unit.n_funcs-1];
+    if(f->n_claims<2){ bcir_cfront_free(&r); return -3; }
+    f->claims[1].id=f->claims[0].id;                      /* intra-function duplicate */
+  } else {
+    if(r.unit.n_funcs<2 || r.unit.funcs[0].n_claims<1 || r.unit.funcs[1].n_claims<1){ bcir_cfront_free(&r); return -3; }
+    r.unit.funcs[1].claims[0].id=r.unit.funcs[0].claims[0].id;   /* CROSS-function duplicate */
+  }
+  int ok1=bcir_verify_unit(&r.unit,diag,sizeof diag);
+  int good = (ok0==1 && ok1==0 && strstr(diag,"R1.1")!=NULL);
+  bcir_cfront_free(&r);
+  return good;
+}
+int main(void){
+  int intra=verdict_has_r11("unsigned f(unsigned a,unsigned b){ return a+b; }\n", 1);
+  int cross=verdict_has_r11("unsigned foo(unsigned x){return x+1u;}\nunsigned bar(unsigned x){return x+2u;}\n", 0);
+  printf("intra=%d cross=%d\n", intra, cross);
+  return 0;
+}
+"""
+
+
+def test_claim_id_uniqueness_law_R1_1_dual_rail():
+    """R1.1 (claim-id uniqueness) on the C twin: a clean unit verifies, and an injected duplicate claim
+    id flips the verdict to dirty with an `R1.1` diagnostic -- for BOTH an intra-function and a
+    CROSS-function duplicate (unit-wide). The C mirror of the oracle's unit-wide R1.1."""
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        cpath, exe = os.path.join(d, "r11.c"), os.path.join(d, "r11")
+        with open(cpath, "w", encoding="utf-8") as fh:
+            fh.write(_R11_HARNESS)
+        srcs = [os.path.join(_C, s) for s in
+                ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c")]
+        for std in ("c23", "c2x", "c11"):
+            b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, cpath, *srcs, "-o", exe],
+                               capture_output=True, text=True)
+            if b.returncode == 0:
+                break
+        else:
+            raise AssertionError(f"R1.1 harness build failed:\n{b.stderr}")
+        out = subprocess.run([exe], capture_output=True, text=True).stdout.strip()
+        assert out == "intra=1 cross=1", f"C twin R1.1 (intra + cross): expected 'intra=1 cross=1', got {out!r}"
 
 
 def _pstress_unit_src() -> str:
