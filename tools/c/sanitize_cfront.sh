@@ -182,6 +182,38 @@ else
   echo "[sanitize] SKIP gcc ASan/UBSan (tool absent: no gcc)"
 fi
 
+# ----- stage 2b: clang UBSan in TRAP mode (no compiler-rt / libclang_rt needed) ---------------------
+# clang's -fsanitize=undefined is STRICTER than gcc's: it flags out-of-bounds POINTER ARITHMETIC (forming
+# `a + i` past an array, even with no dereference) which gcc's UBSan does NOT -- exactly the class that
+# passed a gcc-only local run but failed clang-UBSan on CI (the sig[512] `sig+sw` formation). With
+# -fsanitize-trap=undefined each UB becomes an inline trap (ud2 -> SIGILL), needing NO sanitizer runtime to
+# link, so this stage runs even where clang lacks compiler-rt -- closing the "local gcc green, CI clang red"
+# gap. UB-only (no ASan/leak), so it does NOT count as an ASan engine for the vacuous-gate below.
+if command -v clang >/dev/null 2>&1; then
+  CTRAP=""
+  for std in c23 c2x c11; do
+    if clang -std=${std} -fsanitize=undefined -fsanitize-trap=undefined -fno-sanitize-recover=all -g -O1 \
+         -I "${C}" ${CFRONT_SRCS} -o "${tmp}/cfront_clang_trap" 2>/dev/null; then CTRAP="${tmp}/cfront_clang_trap"; break; fi
+  done
+  if [ -z "${CTRAP}" ]; then
+    echo "[sanitize] SKIP clang UBSan-trap (clang could not build the trap twin)"
+  else
+    nct=$(printf '%s\n' ${FIXTURES} | wc -l)
+    echo "[sanitize] clang UBSan-trap (-fsanitize=undefined -fsanitize-trap, no compiler-rt): all ${nct} cfront_*.c fixtures"
+    ctfail=0
+    for fx in ${FIXTURES}; do
+      "${CTRAP}" "${C}/${fx}" >/dev/null 2>"${tmp}/ct.txt"; rc=$?
+      # A UB trap dies by signal (rc>=128: SIGILL=132). A normal parse error is rc 1 (fine, not UB).
+      if [ "${rc}" -ge 128 ]; then
+        echo "  FAIL: clang UBSan-trap caught undefined behavior on ${fx} (rc=${rc}, signal $((rc-128))) -- a clang-strict UB gcc's UBSan misses"; ctfail=1; fail=1
+      fi
+    done
+    [ "${ctfail}" -eq 0 ] && echo "  PASS clang UBSan-trap (${nct} cfront_*.c fixtures incl. adversarial, no clang-strict UB)"
+  fi
+else
+  echo "[sanitize] SKIP clang UBSan-trap (no clang)"
+fi
+
 # The vacuous-gate guard: if NO sanitizer engine actually ran (neither a compiler-rt clang nor a libasan
 # gcc could link the runtime), the per-tool SKIPs above would otherwise leave `fail=0` and exit 0 -- a
 # green gate that tested NOTHING. Make that case a LOUD, distinct non-zero failure so a CI step cannot pass

@@ -3544,16 +3544,20 @@ static void p_stmt(CC *c) {
          * already drops an over-long prelude) -- the parse CONTINUES and the kind-3 binding + claim graph
          * are byte-identical to the oracle (which has no fixed buffer). The signature text is cosmetic
          * prelude only; this is a memory-safety clamp, NOT a behaviour change. */
-        #define SIG_REM (sw<sizeof sig?sizeof sig-sw:0)
-        sw+=snprintf(sig+sw,SIG_REM,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
+        /* Clamp the OFFSET, not just the size: forming `sig+sw` with sw>sizeof sig is itself
+         * out-of-bounds-pointer UB (clang-UBSan flags it even when snprintf's size is 0). `sig+SIG_OFF`
+         * is at most one-past-the-end (a legal pointer) and `sizeof sig - SIG_OFF` is the remaining space
+         * (0 once full); `sw` still accumulates the true would-be length for the fpdefs guard. */
+        #define SIG_OFF (sw<sizeof sig?sw:sizeof sig)
+        sw+=snprintf(sig+SIG_OFF,sizeof sig-SIG_OFF,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
         if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){ c->i++; }   /* `(void)` */
         else if(!is(c,")")) for(;;){ bcir_ctype pt; int psi; if(p_type(c,&pt,&psi))return;
           if(isk(c,T_ID)) c->i++;                      /* an optional parameter name (ignored) */
           char ps[64]; ctype_str(&pt,ps,sizeof ps);
-          sw+=snprintf(sig+sw,SIG_REM,"%s%s",np?", ":"",ps); np++;
+          sw+=snprintf(sig+SIG_OFF,sizeof sig-SIG_OFF,"%s%s",np?", ":"",ps); np++;
           if(is(c,",")){c->i++;continue;} break; }
-        sw+=snprintf(sig+sw,SIG_REM,"%s);\n",np?"":"void");
-        #undef SIG_REM
+        sw+=snprintf(sig+SIG_OFF,sizeof sig-SIG_OFF,"%s);\n",np?"":"void");
+        #undef SIG_OFF
         /* only copy a signature that fit in `sig` (sw<=sizeof sig): a clamped (over-long) one was
          * truncated, so its `sw` overstates the bytes actually in `sig` -- never read past sig[512]. */
         if(sw<sizeof sig && c->fpdefs_w+sw<sizeof c->fpdefs){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
@@ -4008,21 +4012,20 @@ static int p_func(CC *c, bcir_func *fn) {
       if(!eat(c,")")||!eat(c,"("))return 1;          /* `) (` -- into the parameter-type list */
       char rets[64]; ctype_str(&ret,rets,sizeof rets);
       char sig[512]; size_t sw=0; int np=0;
-      /* CLAMP the snprintf size to 0 once `sw` (the accumulated would-be length) reaches `sizeof sig`,
-       * so `sizeof sig - sw` never underflows size_t and the next snprintf never overflows sig[512].
-       * snprintf still returns the would-be length, so `sw` tracks the true total for the fpdefs guard
-       * below; the parse CONTINUES with a byte-identical kind-3 binding + claim graph (memory-safety
-       * clamp, not a behaviour change -- the signature text is cosmetic prelude only). See Bug 2. */
-      #define SIG_REM (sw<sizeof sig?sizeof sig-sw:0)
-      sw+=snprintf(sig+sw,SIG_REM,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
+      /* Clamp the OFFSET, not just the size: forming `sig+sw` with sw>sizeof sig is itself
+       * out-of-bounds-pointer UB (clang-UBSan flags it even when snprintf's size is 0). `sig+SIG_OFF`
+       * is at most one-past-the-end (a legal pointer) and `sizeof sig - SIG_OFF` is the remaining space
+       * (0 once full); `sw` still accumulates the true would-be length for the fpdefs guard. See Bug 2. */
+      #define SIG_OFF (sw<sizeof sig?sw:sizeof sig)
+      sw+=snprintf(sig+SIG_OFF,sizeof sig-SIG_OFF,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
       if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){ c->i++; }   /* `(void)` */
       else if(!is(c,")")) for(;;){ bcir_ctype pt; int psi; if(p_type(c,&pt,&psi))return 1;
         if(isk(c,T_ID)) c->i++;                      /* an optional parameter name (ignored) */
         char ps[64]; ctype_str(&pt,ps,sizeof ps);
-        sw+=snprintf(sig+sw,SIG_REM,"%s%s",np?", ":"",ps); np++;
+        sw+=snprintf(sig+SIG_OFF,sizeof sig-SIG_OFF,"%s%s",np?", ":"",ps); np++;
         if(is(c,",")){c->i++;continue;} break; }
-      sw+=snprintf(sig+sw,SIG_REM,"%s);\n",np?"":"void");
-      #undef SIG_REM
+      sw+=snprintf(sig+SIG_OFF,sizeof sig-SIG_OFF,"%s);\n",np?"":"void");
+      #undef SIG_OFF
       /* only copy a signature that fit in `sig` (sw<=sizeof sig): a clamped one's `sw` overstates the
        * bytes actually in `sig`, so never read past sig[512]. */
       if(sw<sizeof sig && c->fpdefs_w+sw<sizeof c->fpdefs){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
