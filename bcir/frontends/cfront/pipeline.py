@@ -358,12 +358,19 @@ def _equivalence(source: str, lowered: LoweredUnit) -> str:
 _BOUNDS_GUARD = (
     "/* §5.12 bounds-quarantine guard, mirrored from runtime/c/bcir_quarantine.h for the in-process\n"
     "   equivalence build: in-bounds -> the raw index (transparent); the handler is a non-aborting stub\n"
-    "   (a masked access is provably bounded, so it is never reached). */\n"
+    "   (a masked access is provably bounded, so it is never reached). BCIR_CHK is the READ guard (may\n"
+    "   clamp); BCIR_CHK_W is the WRITE guard whose handler is `noreturn` and never clamps -- an OOB\n"
+    "   store fails-fast. A `masked` access never goes OOB in a trial, so neither stub is reached. */\n"
     "static size_t bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent, const char *site)\n"
     "{ (void)rid; (void)index; (void)extent; (void)site; return 0; }\n"
+    "static void bcir_bounds_quarantine_write(uint64_t rid, uint64_t index, uint64_t extent, const char *site)\n"
+    "{ (void)rid; (void)index; (void)extent; (void)site; }\n"
     "#define BCIR_CHK(rid, i, n, site) \\\n"
     "    ((uint64_t)(i) < (uint64_t)(n) ? (size_t)(i) \\\n"
     "     : bcir_bounds_quarantine((uint64_t)(rid), (uint64_t)(i), (uint64_t)(n), (site)))\n"
+    "#define BCIR_CHK_W(rid, i, n, site) \\\n"
+    "    ((uint64_t)(i) < (uint64_t)(n) ? (size_t)(i) \\\n"
+    "     : (bcir_bounds_quarantine_write((uint64_t)(rid), (uint64_t)(i), (uint64_t)(n), (site)), (size_t)(i)))\n"
 )
 
 

@@ -181,3 +181,129 @@ bcir.module @r7_nonreduce_overrun {
     verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>
   } { %i = bcir.index_range 0 to 1024 step 1 }
 }
+
+// -----
+
+// R3 (isolated-domain redirection gap): the FIRST-MATCH weakness -- a claim declaring
+// domain RAM, backed by ONE same-domain resource (@A), must NOT silently reach a
+// device-isolated MMIO register (@DEV) as if it were RAM. The old check set
+// `domainBacked` on @A and accepted the claim; the tightened R3 flags the MMIO touch.
+bcir.module @r3_mmio_redirect {
+  bcir.registry @RES {
+    bcir.resource @A   { rid = 10 : i32, domain_kind = #bcir.domain<ram>,  shape = array<i64: 64>, layout = #bcir.layout<soa> }
+    bcir.resource @DEV { rid = 11 : i32, domain_kind = #bcir.domain<mmio>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  // expected-error @+1 {{R3: claim c reads @DEV (domain mmio) does not match the claim domain ram -- the resource is in a device-isolated domain, so an isolated resource may not be reached as another address space}}
+  bcir.claim @c attributes {
+    claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A, @DEV], writes = [@A], count = 64 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>,
+    verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>
+  } { %i = bcir.index_range 0 to 64 step 1 }
+}
+
+// -----
+
+// R3 (positive -- host-memory mixing stays legal): a compute claim declaring RAM may
+// legitimately read RAM tiles and write an HBM accumulator (the tiled-matmul pattern in
+// the corpus). RAM/HBM are mutually addressable host domains, NOT device-isolated, so the
+// tightened R3 accepts this (no diagnostic).
+bcir.module @r3_host_mix_ok {
+  bcir.registry @RES {
+    bcir.resource @TILE { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa> }
+    bcir.resource @ACC  { rid = 11 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 128, 128>, layout = #bcir.layout<soa> }
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @mm attributes {
+    claim_id = 1 : i32, phase = @p0, op = "linalg.matmul", reads = [@TILE, @ACC], writes = [@ACC], count = 16384 : i64,
+    lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>,
+    verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>
+  } { %i = bcir.index_range 0 to 16384 step 1 }
+}
+
+// -----
+
+// R10 (cross-segment lane-alias isolation): two lane segments in the SAME phase on
+// DIFFERENT lanes that write-alias the same resource (@C: seg_u writes it, seg_t reads
+// it -- a RAW across lanes) run concurrently with no wave serialization between them, and
+// carry no ordering fence on @C. That is an unsynchronized cross-lane alias -> a race.
+// (seg_u and seg_t write DISJOINT resources @C vs @B, so @C is the sole alias.)
+bcir.module @r10_lane_alias {
+  bcir.registry @RES {
+    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
+    bcir.resource @B { rid = 12 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
+    bcir.resource @C { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @cu attributes {
+    claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A], writes = [@C], count = 64 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 64 step 1 }
+  bcir.claim @ct attributes {
+    claim_id = 2 : i32, phase = @p0, op = "linalg.matmul", reads = [@C], writes = [@B], count = 64 : i64,
+    lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 64 step 1 }
+  // expected-error @+1 {{R10: segment seg_u (lane u) and segment @seg_t (lane t) have a cross-lane write alias on @C in phase @p0 without an ordering fence (a fence_after on one naming @C paired with a fence_before on the other) -- an isolation violation}}
+  bcir.gem.lane_segment @seg_u { claim = @cu, phase = @p0, lane = #bcir.lane<u>, width = 16 : i32, opcode = "vector.add", reads = [@A], writes = [@C], fence_before = [], fence_after = [] }
+  bcir.gem.lane_segment @seg_t { claim = @ct, phase = @p0, lane = #bcir.lane<t>, width = 16 : i32, opcode = "linalg.matmul", reads = [@C], writes = [@B], fence_before = [], fence_after = [] }
+}
+
+// -----
+
+// R10 (positive -- a fence makes the cross-lane alias legal): the same two segments, but
+// seg_u declares `fence_after = [@C]` (and seg_t `fence_before = [@C]`), ordering the
+// access to @C. The aliased resource is fenced, so no diagnostic. Also confirms a SAME-LANE
+// accumulator alias (the corpus pattern) is never flagged -- both legal forms pass clean.
+bcir.module @r10_lane_alias_fenced_ok {
+  bcir.registry @RES {
+    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
+    bcir.resource @B { rid = 12 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
+    bcir.resource @C { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @cu attributes {
+    claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A], writes = [@C], count = 64 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 64 step 1 }
+  bcir.claim @ct attributes {
+    claim_id = 2 : i32, phase = @p0, op = "linalg.matmul", reads = [@C], writes = [@B], count = 64 : i64,
+    lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 64 step 1 }
+  bcir.gem.lane_segment @seg_u { claim = @cu, phase = @p0, lane = #bcir.lane<u>, width = 16 : i32, opcode = "vector.add", reads = [@A], writes = [@C], fence_before = [], fence_after = [@C] }
+  bcir.gem.lane_segment @seg_t { claim = @ct, phase = @p0, lane = #bcir.lane<t>, width = 16 : i32, opcode = "linalg.matmul", reads = [@C], writes = [@B], fence_before = [@C], fence_after = [] }
+}
+
+// -----
+
+// R10 (negative -- a LONE fence does NOT order the alias): seg_u (writer of @C) declares only
+// `fence_before = [@C]` and seg_t (reader of @C) has no fence. A fence_before on the WRITER does
+// not publish seg_u's write to seg_t -- ordering needs a release/acquire PAIR (seg_u.fence_after
+// paired with seg_t.fence_before). So this is still an unsynchronized cross-lane race -> flagged.
+bcir.module @r10_lone_fence_insufficient {
+  bcir.registry @RES {
+    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
+    bcir.resource @B { rid = 12 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
+    bcir.resource @C { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 64>, layout = #bcir.layout<soa> }
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @cu attributes {
+    claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A], writes = [@C], count = 64 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 64 step 1 }
+  bcir.claim @ct attributes {
+    claim_id = 2 : i32, phase = @p0, op = "linalg.matmul", reads = [@C], writes = [@B], count = 64 : i64,
+    lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+  } { %i = bcir.index_range 0 to 64 step 1 }
+  // a LONE fence_before on the writer is NOT a release/acquire pair -> still flagged.
+  // expected-error @+1 {{R10: segment seg_u (lane u) and segment @seg_t (lane t) have a cross-lane write alias on @C in phase @p0 without an ordering fence (a fence_after on one naming @C paired with a fence_before on the other) -- an isolation violation}}
+  bcir.gem.lane_segment @seg_u { claim = @cu, phase = @p0, lane = #bcir.lane<u>, width = 16 : i32, opcode = "vector.add", reads = [@A], writes = [@C], fence_before = [@C], fence_after = [] }
+  bcir.gem.lane_segment @seg_t { claim = @ct, phase = @p0, lane = #bcir.lane<t>, width = 16 : i32, opcode = "linalg.matmul", reads = [@C], writes = [@B], fence_before = [], fence_after = [] }
+}
