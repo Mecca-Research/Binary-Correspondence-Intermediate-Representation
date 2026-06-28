@@ -163,6 +163,68 @@ using namespace bcir;
   return ::mlir::success();
 }
 
+::mlir::LogicalResult GEMFusedMatmulActivationOp::verify() {
+  // The G2 fused matmul+activation epilogue (mirrors bcir/kbcir/fusion.py). It carries the matmul tile
+  // plan AND the activation epilogue, so it must satisfy BOTH halves' well-formedness laws plus the
+  // fusion-legality boundary (softmax is non-fusible; the gain must be a strict, positive win).
+  //
+  // (A) the matmul tile half (identical to GEMMatmulOp::verify): positive dims, each tile in [1, dim],
+  //     a known loop order.
+  int64_t m = static_cast<int64_t>(getM()), n = static_cast<int64_t>(getN()),
+          k = static_cast<int64_t>(getK());
+  if (m <= 0 || n <= 0 || k <= 0)
+    return emitOpError() << "fused matmul dims m/n/k must be positive (got " << m << "x" << n << "x"
+                         << k << ")";
+  int64_t tm = static_cast<int64_t>(getTileM()), tn = static_cast<int64_t>(getTileN()),
+          tk = static_cast<int64_t>(getTileK());
+  if (tm < 1 || tm > m || tn < 1 || tn > n || tk < 1 || tk > k)
+    return emitOpError() << "each tile extent must be in [1, dim] (tiles " << tm << "x" << tn << "x"
+                         << tk << " vs dims " << m << "x" << n << "x" << k << ")";
+  ::llvm::StringRef lo = getLoopOrder();
+  if (lo != "ijk" && lo != "ikj" && lo != "jik")
+    return emitOpError() << "loop_order must be one of ijk|ikj|jik (got '" << lo << "')";
+
+  // (B) the activation epilogue half: a known kind, and the FUSION-LEGALITY boundary -- softmax is a
+  //     last-axis ROW REDUCTION (its normalizer needs the whole row), so it can NOT be applied inline as
+  //     each matmul element drops out: it is NON-FUSIBLE and rejected (mirrors fusion.is_fusible_activation
+  //     / FUSIBLE_ACTIVATIONS). Only the elementwise four (relu/sigmoid/tanh/gelu) fuse.
+  ::llvm::StringRef kind = getKind();
+  const bool isExact = (kind == "relu");
+  const bool isFusibleTrans = (kind == "sigmoid" || kind == "tanh" || kind == "gelu");
+  if (kind == "softmax")
+    return emitOpError() << "softmax is non-fusible (a last-axis row reduction needs the whole row "
+                         << "before any output element is final, so it can not be an inline epilogue)";
+  if (!isExact && !isFusibleTrans)
+    return emitOpError() << "unknown fusible activation kind '" << kind
+                         << "' (expected relu|sigmoid|tanh|gelu)";
+
+  // (C) the QUARANTINE dtype rule carries THROUGH the fused epilogue: a transcendental routes a libm
+  //     call (expf/tanhf) through the trusted c.call.libm: edge, which returns float -- so it needs an f32
+  //     result, never i32. relu (the exact, 0-ULP integer/Q-fixed-clean activation) may be i32 OR f32.
+  ::llvm::StringRef dtype = getDtype();
+  if (dtype != "f32" && dtype != "i32")
+    return emitOpError() << kind << ": dtype '" << dtype << "' is not a known dtype (f32|i32)";
+  if (isFusibleTrans && dtype != "f32")
+    return emitOpError() << kind << ": transcendental activation needs f32 (the libm edge returns float), "
+                         << "got '" << dtype << "'";
+
+  // (D) the deforestation-priced fusion DECISION (the FusionCertificate invariant): the fusion was
+  //     ADOPTED, so it must be a STRICT win -- gain = unfused_score - fused_score > 0 (fusion is a no-op
+  //     when it does not strictly lower the score; an adopted fusion that did not win is unsound evidence).
+  int64_t unfused = static_cast<int64_t>(getUnfusedScore()),
+          fused = static_cast<int64_t>(getFusedScore()), gain = static_cast<int64_t>(getGain());
+  if (unfused < 0 || fused < 0)
+    return emitOpError() << "fusion scores must be non-negative (unfused " << unfused << ", fused "
+                         << fused << ")";
+  if (gain != unfused - fused)
+    return emitOpError() << "gain must equal unfused_score - fused_score = " << (unfused - fused)
+                         << " (got " << gain << ")";
+  if (gain <= 0)
+    return emitOpError() << "an adopted fusion must STRICTLY lower the score (gain " << gain
+                         << " <= 0: the deforestation discount did not win)";
+  return ::mlir::success();
+}
+
 ::mlir::LogicalResult GEMMatmulBufferOp::verify() {
   // Buffer-form matmul: real memref operands C += A*B with a tile plan. Require A/B/C to be
   // rank-2 f32 memrefs with STATIC shapes, the contraction dims to agree (A.dim1==B.dim0 = K,

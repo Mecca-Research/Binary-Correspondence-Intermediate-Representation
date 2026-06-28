@@ -98,6 +98,11 @@ run_fc -bcir-lower-gem-activation "${T}/lower_gem_activation.mlir"
 echo "[passes] lower-gem-activation op verifier negatives (the quarantine rule + shape/dtype/axis laws)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/lower_gem_activation_neg.mlir" \
   && echo "  PASS lower_gem_activation_neg.mlir" || { echo "  FAIL lower_gem_activation_neg.mlir"; fail=1; }
+echo "[passes] fuse-matmul-activation (G2: sole-consumer gem.matmul -> gem.activation -> fused epilogue; deforestation-priced)"
+run_fc -bcir-fuse-matmul-activation "${T}/fuse_matmul_activation.mlir"
+echo "[passes] fuse-matmul-activation op verifier negatives (softmax scope-out + the quarantine rule + the strict-win invariant)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/fuse_matmul_activation_neg.mlir" \
+  && echo "  PASS fuse_matmul_activation_neg.mlir" || { echo "  FAIL fuse_matmul_activation_neg.mlir"; fail=1; }
 echo "[passes] cost model (the K_BCIR cost algebra recomputed from claim + capability)"
 run_fc -bcir-cost-model "${T}/cost_model.mlir"
 echo "[passes] cost-model fusion (intra-phase deforestation + CSE)"
