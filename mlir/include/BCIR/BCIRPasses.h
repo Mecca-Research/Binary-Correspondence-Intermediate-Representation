@@ -74,6 +74,10 @@ std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
 // tiled realization -- one gem.block descriptor per tile of the tiled iteration
 // space, emitted in the plan's loop_order; erases the matmul (a genuine lowering).
 std::unique_ptr<mlir::Pass> createLowerGemMatmulPass();
+// -bcir-lower-gem-matmul-buffer: lower each gem.matmul_buffer (real SSA memref
+// operands A/B/C + tile plan) into a concrete tiled scf.for loop nest computing
+// C += A*B (memref.load/store + arith.mulf/addf); erases the op (genuine lowering).
+std::unique_ptr<mlir::Pass> createLowerGemMatmulBufferPass();
 
 /// Register all BCIR passes with the global pass registry (for bcir-opt).
 void registerBCIRPasses();

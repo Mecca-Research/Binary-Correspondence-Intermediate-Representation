@@ -13,6 +13,7 @@
 #include "BCIR/BCIRTypes.h"
 
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -79,6 +80,57 @@ using namespace bcir;
     return emitOpError() << "bottleneck must equal max(compute_cost, mem_cost) = " << mx << " (got "
                          << bn << ")";
   // quant_bits is an unsigned i32 attr (0 = dense), so it cannot be negative -- no further check.
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult GEMMatmulBufferOp::verify() {
+  // Buffer-form matmul: real memref operands C += A*B with a tile plan. Require A/B/C to be
+  // rank-2 f32 memrefs with STATIC shapes, the contraction dims to agree (A.dim1==B.dim0 = K,
+  // A.dim0==C.dim0 = M, B.dim1==C.dim1 = N), each tile extent in [1, its dim], and a known
+  // loop order. M/N/K are derived from the static shapes, not duplicated as attributes.
+  auto checkMemref = [&](::mlir::Value v, const char *name)
+      -> ::mlir::FailureOr<::mlir::MemRefType> {
+    auto mr = ::mlir::dyn_cast<::mlir::MemRefType>(v.getType());
+    if (!mr)
+      return emitOpError() << name << " must be a memref (got " << v.getType() << ")";
+    if (mr.getRank() != 2)
+      return emitOpError() << name << " must be rank-2 (got rank " << mr.getRank() << ")";
+    if (!mr.getElementType().isF32())
+      return emitOpError() << name << " element type must be f32 (got " << mr.getElementType()
+                           << ")";
+    if (!mr.hasStaticShape())
+      return emitOpError() << name << " must have a static shape (got " << mr << ")";
+    return mr;
+  };
+  auto a = checkMemref(getA(), "A");
+  if (::mlir::failed(a))
+    return ::mlir::failure();
+  auto b = checkMemref(getB(), "B");
+  if (::mlir::failed(b))
+    return ::mlir::failure();
+  auto c = checkMemref(getC(), "C");
+  if (::mlir::failed(c))
+    return ::mlir::failure();
+
+  int64_t M = a->getDimSize(0), K = a->getDimSize(1);
+  int64_t Kb = b->getDimSize(0), N = b->getDimSize(1);
+  int64_t Mc = c->getDimSize(0), Nc = c->getDimSize(1);
+  if (K != Kb)
+    return emitOpError() << "contraction dim mismatch: A is " << M << "x" << K << ", B is " << Kb
+                         << "x" << N << " (A.dim1 must equal B.dim0)";
+  if (M != Mc)
+    return emitOpError() << "M mismatch: A.dim0 = " << M << " but C.dim0 = " << Mc;
+  if (N != Nc)
+    return emitOpError() << "N mismatch: B.dim1 = " << N << " but C.dim1 = " << Nc;
+
+  int64_t tm = static_cast<int64_t>(getTileM()), tn = static_cast<int64_t>(getTileN()),
+          tk = static_cast<int64_t>(getTileK());
+  if (tm < 1 || tm > M || tn < 1 || tn > N || tk < 1 || tk > K)
+    return emitOpError() << "each tile extent must be in [1, dim] (tiles " << tm << "x" << tn << "x"
+                         << tk << " vs dims " << M << "x" << N << "x" << K << ")";
+  ::llvm::StringRef lo = getLoopOrder();
+  if (lo != "ijk" && lo != "ikj" && lo != "jik")
+    return emitOpError() << "loop_order must be one of ijk|ikj|jik (got '" << lo << "')";
   return ::mlir::success();
 }
 
