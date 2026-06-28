@@ -321,6 +321,95 @@ def emit_blas_gemm_c(M: int, N: int, K: int, fn_name: str = "bcir_gemm") -> str:
     )
 
 
+# --- G1: gem.activation kernels (relu exact / the transcendental four via the c.call.libm: edge) ----
+# The activation analog of the B5 BLAS wrap. relu is integer/Q-fixed CLEAN -- a pure max(0,x), emitted
+# with NO transcendental and NO libm dependency (exact, 0 ULP, valid for f32 OR i32). The transcendental
+# four (sigmoid/tanh/gelu/softmax) route their exp/tanh through the SAME `c.call.libm:` FFI edge B5 used
+# for cblas_sgemm: the C kernel `#include <math.h>` and calls the trusted `expf`/`tanhf` (link with -lm),
+# keeping the transcendental fully OFF the deterministic legality rail (libm is opaque/trusted, like any
+# external edge). All are f32 (the libm edge returns float); relu additionally supports i32.
+
+def emit_relu_kernel_c(n: int, fn_name: str = "bcir_relu", elem: str = "f32") -> str:
+    """Emit the EXACT relu kernel `C[i] = max(0, A[i])` -- the integer/Q-fixed-clean activation. No
+    transcendental, no libm, 0-ULP exact on f32 OR i32 (a pure comparison/select the compiler lowers to a
+    branchless max). This is the activation that stays on the deterministic rail."""
+    if n < 1:
+        raise ValueError(f"relu length must be >= 1; got {n}")
+    ctype = _ctype(elem)
+    includes = "#include <stddef.h>\n" + ("#include <stdint.h>\n" if elem == "i32" else "")
+    zero = "0" if elem == "i32" else "0.0f"
+    return (
+        f"/* BCIR -> gem.activation relu (EXACT, integer/Q-fixed clean: max(0,x), 0 ULP, no "
+        f"transcendental). elem={ctype} n={n}. */\n"
+        f"{includes}"
+        f"void {fn_name}(const {ctype} *restrict A, {ctype} *restrict C, size_t n) {{\n"
+        f"  for (size_t i = 0; i < n; ++i)\n"
+        f"    C[i] = A[i] > {zero} ? A[i] : {zero};\n"
+        f"}}\n"
+    )
+
+
+def emit_activation_kernel_c(kind: str, n: int, fn_name: str = "bcir_activation",
+                             axis_len: int | None = None) -> str:
+    """Emit a gem.activation C kernel. ``relu`` -> the exact `emit_relu_kernel_c` (f32). The transcendental
+    four route their exp/tanh through the trusted ``c.call.libm:`` edge (`<math.h>` `expf`/`tanhf`, -lm),
+    exactly as B5's `emit_blas_gemm_c` wraps `cblas_sgemm` -- the transcendental is the trusted external,
+    BCIR owns the calling side (the elementwise/last-axis layout). All transcendental kernels are f32.
+
+    Shapes/forms (each matches the oracle reference in kbcir.activation):
+      sigmoid: C[i] = 1/(1+expf(-A[i]))
+      tanh:    C[i] = tanhf(A[i])
+      gelu:    C[i] = 0.5*A[i]*(1+tanhf(sqrt(2/pi)*(A[i]+0.044715*A[i]^3)))   (the GPT/BERT tanh form)
+      softmax: per row of `axis_len`: m=max(row); e=expf(x-m); C=e/sum(e)     (the stable reduce-max form)
+    """
+    from ..kbcir.activation import _check_kind, libm_edges
+    _check_kind(kind)
+    if n < 1:
+        raise ValueError(f"activation length must be >= 1; got {n}")
+    if kind == "relu":
+        return emit_relu_kernel_c(n, fn_name, elem="f32")
+
+    edges = libm_edges(kind)                       # the trusted libm symbols this kernel calls
+    head = (f"/* BCIR -> gem.activation {kind} via the c.call.libm: edge ({', '.join(edges)}; trusted "
+            f"external, BCIR owns the calling side -- the B5 wrap pattern). f32 n={n}. */\n"
+            "#include <stddef.h>\n#include <math.h>\n")
+
+    if kind == "sigmoid":
+        body = (f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
+                f"  for (size_t i = 0; i < n; ++i)\n"
+                f"    C[i] = 1.0f / (1.0f + expf(-A[i]));   /* c.call.libm:expf */\n"
+                f"}}\n")
+    elif kind == "tanh":
+        body = (f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
+                f"  for (size_t i = 0; i < n; ++i)\n"
+                f"    C[i] = tanhf(A[i]);                   /* c.call.libm:tanhf */\n"
+                f"}}\n")
+    elif kind == "gelu":
+        body = (f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
+                f"  const float c = sqrtf(2.0f / 3.14159265358979323846f);\n"
+                f"  for (size_t i = 0; i < n; ++i) {{\n"
+                f"    float x = A[i];\n"
+                f"    C[i] = 0.5f * x * (1.0f + tanhf(c * (x + 0.044715f * x * x * x)));  /* c.call.libm:tanhf */\n"
+                f"  }}\n"
+                f"}}\n")
+    else:  # softmax
+        ax = axis_len if axis_len is not None else n
+        if ax < 1 or n % ax != 0:
+            raise ValueError(f"softmax: axis_len {ax} must be >= 1 and divide n {n}")
+        body = (f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
+                f"  const size_t ax = {ax}u;   /* the last-axis (reduction) length */\n"
+                f"  for (size_t r = 0; r < n; r += ax) {{\n"
+                f"    float m = A[r];\n"
+                f"    for (size_t j = 1; j < ax; ++j) if (A[r + j] > m) m = A[r + j];  /* reduce-max */\n"
+                f"    float s = 0.0f;\n"
+                f"    for (size_t j = 0; j < ax; ++j) {{ C[r + j] = expf(A[r + j] - m); s += C[r + j]; }}  /* c.call.libm:expf */\n"
+                f"    if (s == 0.0f) s = 1.0f;\n"
+                f"    for (size_t j = 0; j < ax; ++j) C[r + j] /= s;                  /* normalize */\n"
+                f"  }}\n"
+                f"}}\n")
+    return head + body
+
+
 def emit_qfixed_selfcheck_c(module: Module, result: RealizationResult,
                             fn_name: str = "bcir_qfixed", lane_bits: int = 16,
                             frac_bits: int = 8) -> str:
