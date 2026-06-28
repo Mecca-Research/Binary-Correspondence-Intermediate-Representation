@@ -194,15 +194,17 @@ Clang comparison.
 > "C-as-Macro-Assembly / Registry-Oriented + IR-owns-the-math + bare-metal-AI" thesis is in
 > [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md). Headline: the **substrate is real**
 > (C *is* a thin registry-oriented macro-assembly target; the IR owns scheduling; the linearized
-> StreamPack + the R17 Q8↔f32↔Q8 bridge exist and are tested). The **unbuilt half is the
-> intelligence + ML payload**: the macro-assembly-layer "Layer-1 AI" (cache/bank prediction 🔴,
-> SoA↔AoS layout pivot 🔴, matmul+activation fusion 🟡), library-integration breadth (🟡 — BLAS+libm
-> only), and the end-to-end bare-metal inference/training pipeline (🟡 — autodiff is oracle-only; no
-> baked-weights kernel; C++ hand-off boundary now 🟡 SCAFFOLDED — contract + a round-trip-tested single-node
-seam in [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) / [`runtime/cpp/`](../runtime/cpp), with the
-dynamic/distributed backends marked stubs). The immediate, gateable next increment is
-> the Area-B library-wrapping slices (§5.2 of the ML/AI roadmap; B1 link-flags → B2 a new library → B3
-> calling-side tuning), which advance Pillar 4b + the calling-side half of Pillar 3.
+> StreamPack + the R17 Q8↔f32↔Q8 bridge exist and are tested). **Build update (2026-06-28):** the
+> intelligence + ML-payload half is now **built and merged too** — the macro-assembly-layer
+> "Layer-1 AI" (cache/bank contention 🟢, SoA↔AoS layout pivot 🟢, matmul+activation fusion 🟢), the
+> tensor-op vocabulary (`gem.activation`/`conv`/`attention` 🟢), and the end-to-end bare-metal
+> inference (`emit_inference_kernel_c` 🟢) + training (`emit_autodiff_kernel_c` 🟢) kernels — each
+> prototyped in the oracle and **ported to the MLIR law rail**, parity-gated + CI-green (conformance
+> 956 → 1235). The C++ hand-off boundary is 🟡 SCAFFOLDED (contract + a round-trip-tested single-node
+> seam, [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) / [`runtime/cpp/`](../runtime/cpp); the
+> dynamic/distributed backends are marked stubs). What genuinely remains is **Area-B library breadth**
+> (LAPACK/GSL/SLEEF through the `c.call.libm:` edge — B1/B2/B3 done), the 5d distributed backends
+> (need multi-node hardware), and the Pillar-1/2 boundary items (DMA/device-isolation, a flatness law).
 
 ### 5.1 Oracle → MLIR / C++ (plan-time law) — remaining ports
 

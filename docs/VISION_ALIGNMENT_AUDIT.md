@@ -36,19 +36,31 @@
 |---|--------|---------|----------------|
 | 1 | **C = Registry Definition Layer** (registers / MMIO / DMA) | 🟢 ACHIEVED (core) · 🟡 boundaries | MMIO/volatile/bitfield/barriered-hazard done & Clang-gated; DMA-boundary + device-isolation modeling missing |
 | 2 | **C = Macro Target** (flat unrolled C; IR owns math/layout/scheduling) | 🟢 ACHIEVED (core) | Emitter has zero scheduling logic; one flat statement per claim; specialist-kernel unrolling exists |
-| 3a | "Layer-1 AI" cache-line / bank-conflict prediction | 🔴 MISSING | `memory` is a static 12-d cost formula, not a learned prediction |
-| 3b | AI SoA ↔ AoS layout pivot before emit | 🔴 MISSING | `layout="soa"` is hard-coded; never transformed |
-| 3c | Autonomous matmul+activation fusion via tropical min-plus | 🟡 PARTIAL | elementwise deforestation/CSE priced tropically; no matmul+activation fusion |
+| 3a | "Layer-1 AI" cache-line / bank-conflict prediction | 🟢 BUILT (dual-rail) | frozen-Q8 contention predictor (line-waste + bank-conflict) on the CONTENTION axis, informs-only; oracle `cache_predict.py` + MLIR `-bcir-cache-contention` |
+| 3b | AI SoA ↔ AoS layout pivot before emit | 🟢 BUILT (dual-rail) | cost-priced SoA↔AoS selection (stride-penalty), address-map-invariant; oracle `layout.py` + MLIR `-bcir-layout-pivot` |
+| 3c | Autonomous matmul+activation fusion via tropical min-plus | 🟢 BUILT (dual-rail) | sole-consumer epilogue fusion priced by the deforestation discount; oracle `fusion.py` + MLIR `-bcir-fuse-matmul-activation` |
 | 4a | Tropical rewriting of **kernel arithmetic** into semirings | ⚪ BY DESIGN NOT DONE | tropical algebra is the **cost optimizer**, not a kernel-arithmetic rewrite (correct & deliberate) |
-| 4b | Lift legacy C math libraries **into** the IR | 🟡 PARTIAL | FFI call-out (`c.call.libm:`) only — BLAS + libm wrapped; LAPACK/FFTW/GSL/SLEEF not yet |
+| 4b | Lift legacy C math libraries **into** the IR | 🟡 ADVANCED | FFI call-out (`c.call.libm:`) + auto link-flags (B1) + a new FFTW wrap (B2) + calling-side tuning (B3); LAPACK/GSL/SLEEF breadth = remaining Area-B |
 | 4c | Graph linearization into async strided data streams | 🟢 ACHIEVED | StreamPack: strided blocks, fork/await tokens, pipelined phases, channel dispatch |
 | 4d | Q8↔float32↔Q8 bridge certified by R17 | 🟢 ACHIEVED | dual-rail R17 law (oracle + MLIR); compensated reduction bit-exact to int64 |
-| 5a | Baked-weights inference kernel in C | 🟡 PARTIAL | `#embed` Q8 tables + `gem.matmul` plan exist; no end-to-end baked-weights kernel emitted |
-| 5b | Forward/backward training kernels on bare metal | 🟡 PARTIAL | autodiff is a complete **Python-oracle-only** organ; not lowered to MLIR/C; no training loop (B4) |
-| 5c | Tensor ops as first-class claims | 🟡 PARTIAL | `gem.matmul` done; no conv/attention/activation ops |
+| 5a | Baked-weights inference kernel in C | 🟢 BUILT | `emit_inference_kernel_c`: `static const` weights (`#embed`/literal) fused single-pass, R17-bounded; reference-verified bit-exact (relu) |
+| 5b | Forward/backward training kernels on bare metal | 🟢 BUILT | `emit_autodiff_kernel_c` lowers the autodiff DAG to a forward+backward C kernel + SGD step; gradients match oracle + finite-difference |
+| 5c | Tensor ops as first-class claims | 🟢 BUILT (dual-rail) | `gem.matmul`/`activation`/`conv`/`attention` — all oracle + MLIR law ops, reference-verified |
 | 5d | C++ hand-off boundary (dynamic graphs / MPI / NCCL) | 🟡 SCAFFOLDED | boundary contract defined + a compilable, round-trip-tested single-node seam; dynamic/distributed backends are marked stubs |
 
-Legend: 🟢 achieved · 🟡 partial · 🔴 missing · ⚪ deliberately-not-done (vision clarification).
+Legend: 🟢 achieved/built · 🟡 partial/advanced · 🔴 missing · ⚪ deliberately-not-done (vision clarification).
+
+> ### Build update (2026-06-28, post-gap-program)
+> The 🔴/🟡 pillars above (except 4a, which is correct as-is) were **built and merged** in a
+> 21-PR program this cycle (oracle prototype → MLIR law, each parity-gated + CI-green):
+> **3a** cache/bank contention (G4), **3b** SoA↔AoS pivot (G3), **3c** matmul+activation fusion
+> (G2), **5a** baked-weights inference (G5), **5b** forward/backward training kernel (G6),
+> **5c** the `gem.activation`/`conv`/`attention` ops (G1/G7) — all **also ported to the MLIR
+> law rail** (`gem.activation`/`fused_matmul_activation`/`conv`/`attention`/`layout_pivot`/
+> `contention`), and **4b** advanced via B1/B2/B3. Conformance **956 → 1235**. The per-pillar
+> sections below retain the original audit prose for provenance; the verdicts above are current.
+> Remaining: **4b breadth** (LAPACK/GSL/SLEEF), **5d** distributed/dynamic backends (need
+> multi-node hardware), and the Pillar-1/2 boundary items (DMA/device-isolation, flatness law).
 
 ---
 
@@ -177,28 +189,25 @@ prototype-then-port discipline. Each item is PR-sized and parity-gated.
 
 **Immediate (the queued Area-B slices — they advance Pillar 4b + the calling-side half of
 Pillar 3):**
-1. **B1 — `bcir-cc --emit-c` automatic link-flag emission** (`-lblas`/`-lfftw3`/… emitted
-   from the `c.call.libm:` edges a unit uses) so the FFI wrap is linkable end-to-end.
-2. **B2 — wrap a new C math library** (FFTW *or* LAPACK *or* GSL *or* SLEEF) through
-   `c.call.libm:`, B5-style, with the R17 Q8↔f32↔Q8 bridge at the seam.
-3. **B3 — calling-side tuning** (layout / tiling / prefetch / channel selection) around a
-   wrapped kernel — the first concrete step toward Pillar-3 layout intelligence.
-4. **Area B breadth — ATLAS / GSL / FFTW / OpenBLAS-LAPACK / SLEEF** wrapped through the
-   same edge.
+1. ✅ **B1 — `bcir-cc --emit-c` automatic link-flag emission** — DONE (`-lm`/`-lcblas`/
+   `-lfftw3` derived from the `c.call.libm:` edges, dual-rail).
+2. ✅ **B2 — wrap a new C math library** — DONE (FFTW 1-D FFT via `c.call.libm:`, R17 bridge,
+   portable DFT fallback).
+3. ✅ **B3 — calling-side tuning** — DONE (cost-priced major-order / tile / prefetch / channel).
+4. **Area-B breadth — ATLAS / GSL / OpenBLAS-LAPACK / SLEEF** wrapped through the same edge —
+   **remaining** (the active frontier).
 
-**Pillar-3 intelligence (the largest vision gap):**
-5. A **memory-layout cost producer** + a SoA↔AoS selection step the cost model can price
-   (Pillar 3b), prototyped in the oracle, ported to the law.
-6. A **cache/bank cost signal** trained from microbench measurements, frozen to Q8 and fed
-   to the cost model as a new dimension (Pillar 3a).
-7. **matmul+activation fusion** — add fusible `gem.activation` ops + a fused lowering, let
-   the bundle/deforestation optimizer price it (Pillar 3c, 5c).
+**Pillar-3 intelligence:**
+5. ✅ **SoA↔AoS layout pivot** (Pillar 3b) — DONE: oracle `layout.py` + MLIR `-bcir-layout-pivot`.
+6. ✅ **cache/bank cost signal** (Pillar 3a) — DONE: frozen-Q8 `cache_predict.py` + MLIR
+   `-bcir-cache-contention`, informs-only.
+7. ✅ **matmul+activation fusion** (Pillar 3c, 5c) — DONE: `fusion.py` + MLIR
+   `-bcir-fuse-matmul-activation`, deforestation-priced.
 
 **Pillar-5 bare-metal AI:**
-8. **Lower B3 autodiff to a backward-pass kernel** (MLIR/C), parity-gated to the oracle —
-   unlocks training on the deployed rail.
-9. **Baked-weights inference kernel emitter** — `static const` weights + fused single-pass
-   loop for a frozen model (Pillar 5a).
+8. ✅ **Lower the autodiff oracle to a backward-pass kernel** (Pillar 5b) — DONE:
+   `emit_autodiff_kernel_c` + SGD; gradients match oracle + finite-difference.
+9. ✅ **Baked-weights inference kernel emitter** (Pillar 5a) — DONE: `emit_inference_kernel_c`.
 10. ✅ **Define the C↔C++ hand-off boundary** doc-first (dynamic-graph + distributed) so the
     single-node limit is explicit (Pillar 5d). **DONE** —
     [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) + a compilable, round-trip-tested
@@ -218,10 +227,20 @@ Pillar 3):**
 
 The **foundation the vision rests on is real and demonstrable**: C *is* a thin,
 type-safe, registry-oriented macro-assembly target; the IR *does* own scheduling and the
-math; the linearized StreamPack and the certified Q8 precision bridge exist. The
-**unbuilt half is the intelligence and the ML payload**: the macro-assembly-layer
-"Layer-1 AI" (cache/bank prediction, layout pivoting, autonomous fusion), the breadth of
-library integration, and the end-to-end bare-metal inference/training pipeline. The
-queued Area-B work is the correct next increment, and items 5–10 above are the path from
-"a verifiable C macro-assembly substrate" to "an AI-optimizing compiler that runs
-inference and training on bare metal."
+math; the linearized StreamPack and the certified Q8 precision bridge exist.
+
+As of the 2026-06-28 build update, the **intelligence and ML-payload half is now built too**
+(items 5–10 above, all merged): the macro-assembly-layer "Layer-1 AI" (cache/bank contention
+prediction, SoA↔AoS layout pivoting, autonomous matmul+activation fusion), the tensor-op
+vocabulary (`gem.activation`/`conv`/`attention`), and the end-to-end bare-metal
+inference (`emit_inference_kernel_c`) + training (`emit_autodiff_kernel_c`) kernels — each
+prototyped in the oracle and **ported to the MLIR law rail**, parity-gated. BCIR has moved
+from "a verifiable C macro-assembly substrate" to "an AI-optimizing compiler that runs
+inference and training on bare metal," with the learned/predicted signals held off the
+deterministic legality path by the two-truth quarantine.
+
+**What genuinely remains** is breadth and the hardware-gated frontier, not core capability:
+**4b** library breadth (LAPACK/GSL/SLEEF through the existing edge), **5d** the real
+dynamic-graph + MPI/NCCL distributed backends (a contract + single-node seam exist; the
+multi-node backends need cluster hardware), and the **Pillar-1/2 boundary** items
+(DMA/device-isolation domains, a normative flatness law).
