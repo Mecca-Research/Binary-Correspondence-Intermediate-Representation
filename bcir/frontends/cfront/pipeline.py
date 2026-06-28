@@ -22,7 +22,8 @@ from ...kbcir.compose import Effect, plan_composite, summarize
 from ...kbcir.cost import Theta
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
-from ...verify import Diagnostic, verify, verify_lifetime, verify_plan
+from ...verify import (Diagnostic, cfront_unit_claim_ids_unique, verify, verify_lifetime,
+                       verify_plan)
 from .abi import HOST, target as resolve_target
 from .clex import CLexError
 from .cparse import CParseError, parse_unit, parse_with_recovery
@@ -176,6 +177,13 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
         # surfacing a masked claim the backend emitted without its runtime guard.
         res.lowering_diagnostics += [Diagnostic(d.law, f"{name}: {d.message}")
                                      for d in verify_cfront_lowering(lf, res.emitted[name])]
+
+    # R1.1 UNIT-WIDE: claim-id uniqueness across ALL functions (the per-function verify() above only
+    # sees an intra-function duplicate, since each function is its own single-phase Module). This
+    # aggregates the whole unit's claim ids -- a cross-function duplicate/injected id fails `is_clean`
+    # here, exactly as the C twin's unit-wide bcir_verify_unit R1.1 rejects it (ok=0). Counted into
+    # `res.diagnostics`, so it couples to the cross-rail `ok` parity.
+    res.diagnostics += cfront_unit_claim_ids_unique(lowered)
 
     # --- alias/effect footprint per function (over shared/module-scope state) -- the basis for
     #     commutation/independence. Each function's own footprint is folded with its callees'

@@ -126,6 +126,7 @@ python3 - "${C}" ${FIXTURES} > "${tmp}/py_sums.txt" <<'PY' || { echo "  FAIL: py
 import os, re, sys
 from bcir.frontends.cfront import compile_unit
 from bcir.model import Domain
+from bcir.verify import cfront_structural_digest          # the cross-rail per-claim STRUCTURAL digest
 cdir = sys.argv[1]
 for fx in sys.argv[2:]:
     try:
@@ -138,7 +139,8 @@ for fx in sys.argv[2:]:
         bf = sum(1 for c in lf.claims if c.op == 'c.bf.get'); kn = sum(1 for c in lf.claims if c.op == 'c.const')
         bo = sum(1 for c in lf.claims if c.op.startswith('c.bin.')); ca = sum(1 for c in lf.claims if c.op.startswith('c.call'))
         repro = sum(1 for f in fns.values() if getattr(f, 'reproducible', False))  # A1.3: matches the C twin's repro=N
-        print(f"{fx}\tfuncs={len(fns)} claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} binop={bo} call={ca} repro={repro} ok={1 if r.is_clean else 0}")
+        dg = cfront_structural_digest(r.lowered)           # byte-identical to the C twin's bcir_cfront_digest
+        print(f"{fx}\tfuncs={len(fns)} claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} binop={bo} call={ca} repro={repro} ok={1 if r.is_clean else 0} digest={dg:016x}")
     except Exception as e:
         sys.stderr.write(f"oracle lowering failed for {fx}: {e}\n"); sys.exit(1)
 PY
@@ -662,15 +664,17 @@ L.append("unsigned big(void){\n"+"\n".join(f"  unsigned v{i} = {i}u;" for i in r
 L.append("unsigned useg(unsigned i){ return G0[i%2u] + G19[i%2u] + G24[i%2u]; }")
 open(sys.argv[1],"w").write("\n".join(L)+"\n")
 PY
-c_ps="$("${tmp}/bcir-cc" --emit-claimgraph "${tmp}/pstress.c" 2>&1 | grep -oE 'funcs=[0-9]+ claims=[0-9]+.*ok=[0-9]' | tail -1)"
+c_ps="$("${tmp}/bcir-cc" --emit-claimgraph "${tmp}/pstress.c" 2>&1 | grep -oE 'funcs=[0-9]+ claims=[0-9]+.*ok=[0-9] digest=[0-9a-f]+' | tail -1)"
 py_ps="$(python3 -c "
 from bcir.frontends.cfront import compile_unit
 from bcir.model import Domain
+from bcir.verify import cfront_structural_digest          # the cross-rail per-claim STRUCTURAL digest
 r=compile_unit(open('${tmp}/pstress.c').read(), check_clang=False)
 fns=r.lowered.functions; lf=fns[next(reversed(fns))]
 kn=sum(1 for c in lf.claims if c.op=='c.const'); bo=sum(1 for c in lf.claims if c.op.startswith('c.bin.'))
 repro=sum(1 for f in fns.values() if getattr(f,'reproducible',False))  # A1.3: matches the C twin's repro=N
-print(f'funcs={len(fns)} claims={len(lf.claims)} mmio=0 bf=0 const={kn} binop={bo} call=0 repro={repro} ok={1 if r.is_clean else 0}')")"
+dg=cfront_structural_digest(r.lowered)                    # byte-identical to the C twin's bcir_cfront_digest
+print(f'funcs={len(fns)} claims={len(lf.claims)} mmio=0 bf=0 const={kn} binop={bo} call=0 repro={repro} ok={1 if r.is_clean else 0} digest={dg:016x}')")"
 [ -n "${c_ps}" ] && [ "${c_ps}" = "${py_ps}" ] \
   && echo "  PASS pscale: 20 structs / 25 globals / 300 locals compile clean == oracle (${c_ps})" \
   || { echo "  FAIL: pscale (C='${c_ps}' PY='${py_ps}')"; exit 1; }
