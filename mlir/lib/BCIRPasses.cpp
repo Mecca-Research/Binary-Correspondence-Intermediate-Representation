@@ -63,6 +63,7 @@ void registerBCIRPasses() {
   ::mlir::registerPass([] { return createLowerToLLVMPass(); });
   ::mlir::registerPass([] { return createLowerGemMatmulPass(); });
   ::mlir::registerPass([] { return createLowerGemMatmulBufferPass(); });
+  ::mlir::registerPass([] { return createLowerGemActivationPass(); });
 }
 
 void registerBCIRPipelines() {

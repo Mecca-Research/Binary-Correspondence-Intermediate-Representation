@@ -83,6 +83,86 @@ using namespace bcir;
   return ::mlir::success();
 }
 
+::mlir::LogicalResult GEMActivationOp::verify() {
+  // The G1 plan record (mirrors bcir/kbcir/activation.py::check_activation -- the op-level shape/dtype
+  // law gem.matmul validates inline; NO new globally-numbered R-law). The laws an activation must satisfy:
+  //   (0) a known kind; (1) elementwise-shaped (spec shape's product == element count, all extents > 0);
+  //   (2) a known, preserved dtype (f32|i32); (4) the QUARANTINE rule: a transcendental needs f32 (its
+  //   libm edge returns float), relu may be i32 or f32; (5) the softmax axis divides the tensor and equals
+  //   the last dim, the elementwise four declare axis_len 0; plus the roofline invariant bottleneck == max.
+  ::llvm::StringRef kind = getKind();
+  const bool isExact = (kind == "relu");
+  const bool isTrans = (kind == "sigmoid" || kind == "tanh" || kind == "gelu" || kind == "softmax");
+  if (!isExact && !isTrans)
+    return emitOpError() << "unknown activation kind '" << kind
+                         << "' (expected relu|sigmoid|tanh|gelu|softmax)";
+
+  // (1) shape well-formed: a non-empty extent list with all positive dims; count = product.
+  ::llvm::ArrayRef<int64_t> shape = getShape();
+  if (shape.empty())
+    return emitOpError() << kind << ": shape must be a non-empty (>=1-D) tensor extent";
+  int64_t count = 1;
+  for (int64_t d : shape) {
+    if (d <= 0)
+      return emitOpError() << kind << ": shape extents must be positive (got " << d << ")";
+    count *= d;
+  }
+
+  // (2) dtype known + preserved (the op carries a single declared dtype: input == output == spec).
+  ::llvm::StringRef dtype = getDtype();
+  if (dtype != "f32" && dtype != "i32")
+    return emitOpError() << kind << ": dtype '" << dtype << "' is not a known dtype (f32|i32)";
+
+  // (4) the quarantine dtype rule: a transcendental routes a libm call (expf/tanhf) through the trusted
+  // c.call.libm: edge, which returns float -- so it needs an f32 result, never i32. relu (the exact,
+  // 0-ULP integer/Q-fixed-clean activation) may be i32 OR f32.
+  if (isTrans && dtype != "f32")
+    return emitOpError() << kind << ": transcendental activation needs f32 (the libm edge returns float), "
+                         << "got '" << dtype << "'";
+
+  // (5) the softmax axis: a valid last-axis length that divides the tensor and equals the last dim; the
+  // elementwise four declare axis_len 0 (no reduction axis).
+  int64_t axisLen = static_cast<int64_t>(getAxisLen());
+  if (kind == "softmax") {
+    int64_t last = shape.back();
+    if (axisLen != last)
+      return emitOpError() << "softmax: axis_len " << axisLen << " != last shape dim " << last;
+    if (axisLen < 1 || (count % axisLen != 0))
+      return emitOpError() << "softmax: axis_len " << axisLen << " must be >=1 and divide count " << count;
+  } else if (axisLen != 0) {
+    return emitOpError() << kind << ": elementwise activation must declare axis_len 0, got " << axisLen;
+  }
+
+  // width in [1, count]: a lane wider than the tensor is pointless (mirrors _divisor_widths' cap).
+  int64_t width = static_cast<int64_t>(getWidth());
+  if (width < 1 || width > count)
+    return emitOpError() << kind << ": width " << width << " must be in [1, count " << count << "]";
+
+  // the roofline invariant: bottleneck == max(compute_cost, mem_cost), the max,+ step the dual-semiring
+  // width search minimizes (identical to gem.matmul's bottleneck check).
+  int64_t compute = static_cast<int64_t>(getComputeCost()),
+          mem = static_cast<int64_t>(getMemCost()), bn = static_cast<int64_t>(getBottleneck());
+  if (compute < 0 || mem < 0)
+    return emitOpError() << kind << ": compute_cost and mem_cost must be non-negative";
+  int64_t mx = compute > mem ? compute : mem;
+  if (bn != mx)
+    return emitOpError() << kind << ": bottleneck must equal max(compute_cost, mem_cost) = " << mx
+                         << " (got " << bn << ")";
+
+  // the R17 accuracy axis: an EXACT activation (relu) carries 0 ULP from its own op, so its only accuracy
+  // cost is the Q8 bridge step itself when quantized -- identical to a transcendental, whose libm kernel is
+  // trusted/exact. So acc_bound must be 0 when dense (quant_bits == 0) and the 1-ULP bridge bound when
+  // quantized (quant_bits > 0). (quantization_error_bound() == 1 ULP; mirrors activation.cost_vector.)
+  int64_t accBound = static_cast<int64_t>(getAccBound());
+  int64_t quantBits = static_cast<int64_t>(getQuantBits());
+  int64_t wantAcc = quantBits > 0 ? 1 : 0;
+  if (accBound != wantAcc)
+    return emitOpError() << kind << ": acc_bound must be " << wantAcc << " (the R17 Q8-bridge bound, "
+                         << (quantBits > 0 ? "1 ULP for a quantized realization" : "0 for a dense one")
+                         << "), got " << accBound;
+  return ::mlir::success();
+}
+
 ::mlir::LogicalResult GEMMatmulBufferOp::verify() {
   // Buffer-form matmul: real memref operands C += A*B with a tile plan. Require A/B/C to be
   // rank-2 f32 memrefs with STATIC shapes, the contraction dims to agree (A.dim1==B.dim0 = K,

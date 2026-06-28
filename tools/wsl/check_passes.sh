@@ -93,6 +93,11 @@ fi
 echo "[passes] lower-gem-matmul-buffer op verifier negatives (-verify-diagnostics)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/lower_gem_matmul_buffer_neg.mlir" \
   && echo "  PASS lower_gem_matmul_buffer_neg.mlir" || { echo "  FAIL lower_gem_matmul_buffer_neg.mlir"; fail=1; }
+echo "[passes] lower-gem-activation (gem.activation plan -> lane-width gem.block stripes; G1 dual-rail parity)"
+run_fc -bcir-lower-gem-activation "${T}/lower_gem_activation.mlir"
+echo "[passes] lower-gem-activation op verifier negatives (the quarantine rule + shape/dtype/axis laws)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/lower_gem_activation_neg.mlir" \
+  && echo "  PASS lower_gem_activation_neg.mlir" || { echo "  FAIL lower_gem_activation_neg.mlir"; fail=1; }
 echo "[passes] cost model (the K_BCIR cost algebra recomputed from claim + capability)"
 run_fc -bcir-cost-model "${T}/cost_model.mlir"
 echo "[passes] cost-model fusion (intra-phase deforestation + CSE)"
