@@ -532,6 +532,7 @@ def verify_pack(module: Module, pack) -> list[Diagnostic]:
     claims = {c.id for ph in module.phases for c in ph.claims}
     traced = {t.claim_id for t in pack.trace_notes}
     prefetches = {p.name for p in pack.prefetches}
+    pf_targets = {p.name: set(p.targets) for p in pack.prefetches}
 
     # R10: stream structure -- v2 pipeline/double-buffer contracts are well-formed.
     if getattr(pack, "pipeline_depth", 1) < 1:
@@ -557,6 +558,17 @@ def verify_pack(module: Module, pack) -> list[Diagnostic]:
         if seg.prefetch is not None and seg.prefetch not in prefetches:
             diags.append(Diagnostic(
                 "R10", f"segment {seg.name}: undeclared prefetch {seg.prefetch!r}"))
+        # R10: a declared prefetch must actually FEED this segment -- at least one of its
+        # read RIDs must be a prefetch target (hydrate sets pf.targets == claim.rd). A
+        # redirected/swapped target (no read covered) is a broken provenance binding the
+        # freestanding C twin (bcir_sp_verify_semantic) also rejects, so the rails agree.
+        elif seg.prefetch is not None and seg.reads:
+            tgts = pf_targets.get(seg.prefetch, set())
+            if not (set(seg.reads) & tgts):
+                diags.append(Diagnostic(
+                    "R10",
+                    f"segment {seg.name}: prefetch {seg.prefetch!r} feeds no read RID "
+                    f"(targets {sorted(tgts)} disjoint from reads {sorted(seg.reads)})"))
 
     # R11: generation validity -- the pack's tags match the live registry. A
     # mismatch is a stale pack: rehydrate (keep/patch/repack/replan,

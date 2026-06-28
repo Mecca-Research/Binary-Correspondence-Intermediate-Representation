@@ -2162,4 +2162,18 @@ else
   echo "  FAIL: cfront sanitizer/valgrind harness reported a diagnostic"; exit 1
 fi
 
+# StreamPack SEMANTIC trust boundary (R10/R11 + lane/width/dispatch range, ported into the
+# freestanding C decoder/executor): the CRC + bounds decode is memory-safe, but a CRC-VALID pack
+# can still be semantically corrupt (a dangling/redirected claim_id, a swapped/undeclared RID, an
+# out-of-range lane/width, an unresolved prefetch, a stale generation, a tampered dispatch). Each
+# used to execute SILENTLY in C. check_streampack_semantic.sh crafts each as a CRC-FIXED pack and
+# asserts the C rail (bcir_sp_verify_semantic / bcir_sp_execute_checked) now REJECTS it, plus a
+# C-decode == Python-decode differential (the lane-asymmetry class) over v1/v2/v3 packs.
+echo "[c-runtime] StreamPack semantic trust boundary (check_streampack_semantic.sh)"
+if bash "${ROOT}/tools/c/check_streampack_semantic.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+  echo "  PASS StreamPack semantic-corruption rejection + C/Python decode differential"
+else
+  echo "  FAIL: a CRC-valid semantically-corrupt pack was not rejected on the C rail"; exit 1
+fi
+
 echo "[c-runtime] ok"

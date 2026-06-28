@@ -60,6 +60,9 @@ int main(int argc, char **argv) {
     printf("seg0.n_reads=%u\n", s->n_reads);
     if (s->n_reads > 0) printf("seg0.read0=%u\n", bcir_seg_read_rid(s, 0));
     if (s->n_writes > 0) printf("seg0.write0=%u\n", bcir_seg_write_rid(s, 0));
+    printf("seg0.dispatch=%u\n", s->dispatch);
+    printf("seg0.channel=%.*s\n", (int)s->channel_len, s->channel ? s->channel : "");
+    printf("seg0.prefetch=%.*s\n", (int)s->prefetch_len, s->prefetch ? s->prefetch : "");
   }
   printf("OK\n");
   free(buf);

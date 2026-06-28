@@ -33,7 +33,14 @@ from ..model import Lane
 
 ABI_MAGIC = b"BSPK"
 ABI_VERSION = 1
-ABI_VERSION_MAX = 2     # v2: pipeline_depth + prefetch double-buffer (append-only)
+ABI_VERSION_MAX = 3     # v2: pipeline_depth + prefetch double-buffer; v3: segment dispatch/channel (append-only)
+
+# v3 dispatch is a small closed enum -> u8 on the wire (channel stays a free str). "core"/"host"
+# are the defaults a v1/v2 pack carries implicitly, so a pack that uses neither encodes as v1/v2.
+_DISPATCH_DEFAULT = "core"
+_DISPATCH_WIRE = {"core": 0, "pim": 1}            # u8 dispatch code (decoder mirrors)
+_DISPATCH_FROM_WIRE = {v: k for k, v in _DISPATCH_WIRE.items()}
+_CHANNEL_DEFAULT = "host"
 
 _HEADER = struct.Struct("<4sHHIIIIIII")  # magic, ver, flags, 3 gens, 4 counts
 _HEADER_SIZE = 64
@@ -122,10 +129,14 @@ def encode(pack: StreamPack) -> bytes:
     """Serialize a StreamPack (CRC trailer); emits the lowest carrying version.
 
     Packs without v2 features (pipeline_depth == 1, no double-buffer prefetch)
-    encode byte-identically to the frozen v1 format.
+    encode byte-identically to the frozen v1 format. A pack that uses v3 segment
+    dispatch/channel (any non-default `dispatch`/`channel`) encodes as v3; one that
+    uses neither v2 nor v3 features stays byte-identical frozen v1.
     """
     needs_v2 = pack.pipeline_depth > 1 or any(pf.buffers != 1 for pf in pack.prefetches)
-    version = 2 if needs_v2 else ABI_VERSION
+    needs_v3 = any(seg.dispatch != _DISPATCH_DEFAULT or seg.channel != _CHANNEL_DEFAULT
+                   for seg in pack.segments)
+    version = 3 if needs_v3 else (2 if needs_v2 else ABI_VERSION)
     header = _HEADER.pack(
         ABI_MAGIC, version, 0,
         pack.topo_gen, pack.map_gen, pack.data_gen,
@@ -150,6 +161,10 @@ def encode(pack: StreamPack) -> bytes:
         w.s(seg.prefetch or "")
         w.s_array(seg.fence_before)
         w.s_array(seg.fence_after)
+        if version >= 3:
+            # v3 append-only segment-record tail: dispatch (u8 enum) + channel (str).
+            w.u8(_DISPATCH_WIRE.get(seg.dispatch, 0))
+            w.s(seg.channel)
     for pf in pack.prefetches:
         w.s(pf.name)
         w.u32(pf.distance)
@@ -196,10 +211,18 @@ def decode(data: bytes) -> StreamPack:
         reads = r.u32_array(); writes = r.u32_array()
         prefetch = r.s() or None
         fb = r.s_array(); fa = r.s_array()
+        if version >= 3:
+            dcode = r.u8()
+            if dcode not in _DISPATCH_FROM_WIRE:
+                raise AbiError(f"unknown segment dispatch code {dcode} (0=core, 1=pim)")
+            dispatch = _DISPATCH_FROM_WIRE[dcode]
+            channel = r.s()
+        else:
+            dispatch, channel = _DISPATCH_DEFAULT, _CHANNEL_DEFAULT
         pack.segments.append(LaneSegment(
             name=name, claim_id=claim_id, phase_id=phase_id, lane=lane, width=width,
             opcode=opcode, reads=reads, writes=writes, prefetch=prefetch,
-            fence_before=fb, fence_after=fa))
+            fence_before=fb, fence_after=fa, dispatch=dispatch, channel=channel))
     for _ in range(npf):
         pack.prefetches.append(Prefetch(
             name=r.s(), distance=r.u32(), targets=r.u32_array(), hint=r.s(), pattern=r.s(),
