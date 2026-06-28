@@ -1473,14 +1473,19 @@ static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
   const bcir_resource *r=res_of(c->fn,rid);
   if(!r || r->kind!=BCIR_RK_POINTER){ fail(c,"dereference of a non-pointer"); return rid; }
   int depth=r->ptr_depth?r->ptr_depth:1, base=r->elem_bytes?(int)r->elem_bytes:4;
+  /* SNAPSHOT every field of `r` we still need: the add_res/tempi/tempf calls below allocate a
+   * NEW resource, which may realloc (and thus MOVE+free) c->fn->res -- so `r`, a pointer INTO that
+   * array, dangles after the first allocation. Reading through it afterward is a use-after-free. */
+  uint8_t r_signd=r->is_signed, r_float=r->is_float, r_plain_char=r->is_plain_char;
+  char r_agg[sizeof r->agg]; snprintf(r_agg,sizeof r_agg,"%s",r->agg);
   uint32_t t;
   if(depth>1){                                     /* the pointee is itself a pointer (read pointer_size) */
     t=add_res(c,BCIR_DOM_RAM,base,1,0,BCIR_RK_POINTER,"");
     if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
-      tr->is_signed=r->is_signed; tr->is_float=r->is_float; tr->ptr_depth=(uint8_t)(depth-1);
-      snprintf(tr->agg,sizeof tr->agg,"%s",r->agg); }
-  } else { t = r->is_float ? tempf(c,base) : tempi(c,base,r->is_signed);
-    if(depth==1 && r->is_plain_char && c->fn->n_res)   /* a `char *` deref loads a plain `char` value */
+      tr->is_signed=r_signd; tr->is_float=r_float; tr->ptr_depth=(uint8_t)(depth-1);
+      snprintf(tr->agg,sizeof tr->agg,"%s",r_agg); }
+  } else { t = r_float ? tempf(c,base) : tempi(c,base,r_signd);
+    if(depth==1 && r_plain_char && c->fn->n_res)   /* a `char *` deref loads a plain `char` value */
       c->fn->res[c->fn->n_res-1].is_plain_char=1; }
   int rd_sz = depth>1 ? cc_abi(c)->pointer_size : base;
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
