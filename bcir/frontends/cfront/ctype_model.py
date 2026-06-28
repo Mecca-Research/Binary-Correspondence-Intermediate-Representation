@@ -171,11 +171,51 @@ def int_type(size: int, signed: bool, abi=None) -> CType:
 
 
 class BitIntMix(Exception):
-    """An unsupported `_BitInt(N)` operand combination: a `_BitInt` mixed with a standard integer, or two
-    DIFFERENT-width `_BitInt`s, in one arithmetic expression. C23 does NOT promote `_BitInt`, so the
-    result type would have to be carried exactly -- but the conservative subset only models SAME-type
-    `_BitInt(N)` arithmetic. The lowering catches this and routes to fallback (a `CLowerError`) rather
-    than emit a canonicalized (width-losing) result that would diverge from Clang."""
+    """A `_BitInt(N)` operand combination whose C23 result type is OUTSIDE the modeled first-class subset:
+    a `_BitInt` mixed with a standard integer (or a different `_BitInt`) whose usual-arithmetic-conversion
+    result is a STANDARD integer type, not a `_BitInt`. The first-class subset (see `bitint_arith_result`)
+    only carries results that are themselves a `_BitInt(N)` -- where the bit-precise operand wins the C23
+    rank, so the result spelling is one the emit already reproduces faithfully + Clang-verified. Where the
+    result would be a standard type, the long/long-long width-collapse in the value model loses the exact
+    spelling, so the lowering catches this and routes to fallback (a `CLowerError`) rather than emit a
+    result type that could diverge from Clang's `_Generic` view."""
+
+
+def bitint_arith_result(a: CType, b: CType) -> CType | None:
+    """The C23 6.3.1.8 usual-arithmetic-conversions common type for two integer operands when AT LEAST ONE
+    is a `_BitInt(N)`, RESTRICTED to the first-class subset: returns the result CType iff it is itself a
+    `_BitInt(N)` (the bit-precise operand wins the C23 rank); returns None iff one or both operands are
+    NOT a `_BitInt` AND the standard sub-int operand would need integer promotion before the comparison
+    (caller already promoted standard operands); raises `BitIntMix` iff the modeled result is a STANDARD
+    integer type (out of the conservative subset). Operands here are assumed already integer-promoted, so
+    a standard operand is `int`/`unsigned`/`long`/.../`long long` (rank fixed by width + standard sub-rank).
+
+    The C23 rank (6.2.5 + 6.3.1.1, as VERIFIED against Clang 18): a `_BitInt(N)` has rank GREATER than any
+    standard/extended integer of LESS width, LESS than any standard integer of GREATER width, and for the
+    SAME width the standard integer has the greater rank. So the result is a `_BitInt(N)` exactly when the
+    bit-precise operand's width strictly exceeds the other operand's width (a tie goes to the standard, or
+    -- two `_BitInt`s -- to the wider, equal width combining signedness). When a `_BitInt` wins, the result
+    is that `_BitInt(N)` with ITS OWN signedness (a strictly-wider type represents the narrower one, so the
+    sign rules never flip the winner)."""
+    if not (a.is_bitint or b.is_bitint):
+        return None
+    # a `_BitInt` mixed with a FLOAT converts to the float -> the result is a FLOATING type, NOT a `_BitInt`
+    # (and the integer rank rules below do not apply). Route to fallback (out of the first-class subset).
+    if a.is_float or b.is_float:
+        raise BitIntMix("`_BitInt` mixed with a floating type (result is not a `_BitInt`)")
+    if a.is_bitint and b.is_bitint:
+        if a.bit_width > b.bit_width:
+            return a
+        if b.bit_width > a.bit_width:
+            return b
+        # equal width: combine signedness (unsigned iff either unsigned); a same-type pair stays itself.
+        return a if (a.signed and b.signed) else bitint(a.bit_width, signed=False)
+    bi = a if a.is_bitint else b
+    std = b if a.is_bitint else a
+    # `std` is already integer-promoted (>= int), so its width is its rank-width; std_width 4/8 bytes here.
+    if bi.bit_width > std.size * 8:
+        return bi                                         # the `_BitInt` strictly wider -> it wins, own sign
+    raise BitIntMix("`_BitInt` arithmetic whose C23 result is a standard integer type")
 
 
 def promote_int(t: CType, abi=None) -> CType:
@@ -196,14 +236,19 @@ def usual_arith_int(a: CType, b: CType, abi=None) -> CType:
     wider signed type represents every value of the narrower one); on equal width the result is
     unsigned iff either operand is unsigned.
 
-    A C23 `_BitInt(N)` is OUTSIDE this canonicalization: same-type `_BitInt(N)` op `_BitInt(N)` stays
-    `_BitInt(N)` (NO promotion, exact width preserved); any OTHER mix involving a `_BitInt` (a
-    different-width/signedness `_BitInt`, or a `_BitInt` with a standard int) raises `BitIntMix` -- the
+    A C23 `_BitInt(N)` does NOT promote, so the conversions follow the bit-precise rank rules (6.2.5 +
+    6.3.1.8): the first-class subset carries the result iff it is itself a `_BitInt(N)` (the bit-precise
+    operand wins the C23 rank). Same-type `_BitInt(N)` op `_BitInt(N)` stays `_BitInt(N)`; a wider `_BitInt`
+    mixed with a narrower standard int (or a narrower `_BitInt`) yields the wider `_BitInt`. A mix whose
+    C23 result would be a STANDARD integer type raises `BitIntMix` (out of the conservative subset) -- the
     lowering catches it (handling the `_BitInt` op integer-CONSTANT case there, where the literal context
-    is known) and otherwise routes to fallback rather than emit a width-losing (mis-typed) result."""
+    is known) and otherwise routes to fallback rather than emit a width-collapsed (mis-typed) result."""
     if a.is_bitint or b.is_bitint:
-        if a.is_bitint and b.is_bitint and a.bit_width == b.bit_width and a.signed == b.signed:
-            return a                                          # same-type `_BitInt(N)` -> itself (NO promotion)
+        # promote the standard operand (a `_BitInt` does not promote) before the rank comparison, so a
+        # `char`/`short` operand is compared at its post-promotion `int` width (its real rank-width).
+        r = bitint_arith_result(promote_int(a, abi), promote_int(b, abi))
+        if r is not None:
+            return r
         raise BitIntMix("unsupported `_BitInt` operand combination")
     pa, pb = promote_int(a, abi), promote_int(b, abi)
     if pa.size != pb.size:

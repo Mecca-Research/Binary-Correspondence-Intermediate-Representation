@@ -547,9 +547,6 @@ class _FuncLowerer:
         self._mut_body: dict[str, int] = {}            # name -> NON-decl-init assignments only (count gate)
         self._mut_addr: set[str] = set()               # names whose address is taken anywhere (`&x`)
         self._ext_ctr = 0                              # unique hidden extent-snapshot locals (`__bcir_extK`)
-        self._const_rids: set[int] = set()             # rids holding an integer-literal constant (`c.const` from an
-                                                       #   IntLit) -- a `_BitInt(N)` op an integer CONSTANT stays
-                                                       #   `_BitInt(N)` (the constant converts to the bit-int type)
 
     def _next_loop_id(self) -> int:
         self.loop_ctr += 1
@@ -854,26 +851,38 @@ class _FuncLowerer:
 
     def _bitint_binop_type(self, op: str, a: int, b: int, ta: CType | None, tb: CType | None):
         """The result `_BitInt(N)` type for an arithmetic/bitwise/shift op with a `_BitInt` operand, or
-        raise `CLowerError` (route to fallback) for an unsupported mix. SUPPORTED: same-type `_BitInt(N)`
-        on both sides (-> `_BitInt(N)`); a `_BitInt(N)` with an integer CONSTANT on the other side
-        (-> `_BitInt(N)`; the constant converts). A shift `bi << k` keeps the `_BitInt` LEFT operand (a
-        `_BitInt` does not promote). UNSUPPORTED (fallback): a `_BitInt` mixed with a non-constant standard
-        integer, or two different-width/signedness `_BitInt`s."""
+        raise `CLowerError` (route to fallback) for a mix outside the first-class subset. SUPPORTED:
+          * same-type `_BitInt(N)` on both sides (-> `_BitInt(N)`);
+          * a `_BitInt(A)` mixed with a NARROWER `_BitInt(B)`, a NARROWER standard-int VARIABLE, or an
+            integer CONSTANT whose (post-promotion) literal type is narrower, where the C23
+            usual-arithmetic-conversions result is the WIDER `_BitInt` (its width strictly exceeds the other
+            operand's post-promotion width, so it wins the bit-precise rank). The result is that `_BitInt(N)`
+            with its own signedness -- verified == Clang via the `_Generic` differential. (So `bi64 + 5`
+            stays `_BitInt(64)`, but `bi8 + 5` -- whose Clang result is `int`, the constant `5` being an
+            `int` of greater rank -- falls back; the constant carries its REAL literal type, not a forced
+            bit-int conversion.) An explicitly-cast constant like `(_BitInt(8))3` is already a `_BitInt`
+            value, so it takes the same-type path.
+          * a shift `bi << k` keeps the `_BitInt` LEFT operand (a `_BitInt` does not promote).
+        UNSUPPORTED (fallback): a `_BitInt` mixed with a standard int / constant / different `_BitInt` whose
+        C23 result is a STANDARD integer type (the bit-precise operand does NOT win the rank -- equal or
+        lesser width). Those collapse long/long-long in the value model, so they stay fallback (correctness
+        over coverage). `a`/`b` (the rids) are unused now that the constant flows through the real model."""
+        del a, b                                              # the constant case uses ta/tb's real literal type
         ba = ta is not None and ta.is_bitint
-        bb = tb is not None and tb.is_bitint
         if op in ("<<", ">>"):                                # shift: the (non-promoting) `_BitInt` left operand;
             if ba:                                            # the right operand may be any integer (it is not
                 return ta                                     # part of the result type)
             raise CLowerError("a `_BitInt` shift count without a `_BitInt` left operand is not supported")
-        if ba and bb:
-            if ta.bit_width == tb.bit_width and ta.signed == tb.signed:
-                return ta
-            raise CLowerError("mixing different `_BitInt` widths/signedness is not supported")
-        bi = ta if ba else tb
-        other = b if ba else a
-        if other in self._const_rids:                         # `_BitInt(N)` op integer-constant -> `_BitInt(N)`
-            return bi
-        raise CLowerError("mixing `_BitInt` with a standard integer is not supported")
+        # Apply the C23 6.3.1.8 model to the operands' REAL types, keeping ONLY the cases whose result is a
+        # `_BitInt(N)`. A bare integer constant carries its true literal type (`int`/`long`/...), so the
+        # rank comparison matches Clang exactly (`bi64 + 5` -> `_BitInt(64)`, `bi8 + 5` -> fallback).
+        try:
+            r = usual_arith_int(ta, tb, self.abi)
+        except BitIntMix as e:
+            raise CLowerError(str(e)) from e
+        if not r.is_bitint:                                   # defensive: the subset must yield a `_BitInt`
+            raise CLowerError("`_BitInt` arithmetic whose C23 result is a standard integer type")
+        return r
 
     def _bin_result_type_ct(self, op: str, ta: CType | None, tb: CType | None) -> CType:
         """The result type of a binary op from its operand *types*. `+ - * /` over a float operand yield
@@ -999,7 +1008,6 @@ class _FuncLowerer:
             ct = scalar(node.ctype, self.abi) if is_scalar_name(node.ctype) else scalar("int", self.abi)
             t = self._temp(ct, f"k{node.value}")
             r = self._emit("c.const", Opcode.LOAD, (), (t,), imm=(node.value,))
-            self._const_rids.add(r)                            # an integer constant: lets `bi + 3` stay `_BitInt`
             return r
         if isinstance(node, cast.FloatLit):                   # a float constant -> a typed c.fconst
             ct = _float_lit_type(node.value)                  # f/F -> float, l/L -> long double, else double
@@ -2062,13 +2070,18 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         b = AggregateBuilder(agg.kind, tag, packed=agg.packed, force_align=agg.align)
         for tref, mname, width, malign in agg.members:
             mt = _resolve_member_type(tref, aggregates, abi)
-            if mt.is_bitint and width:                    # a `_BitInt` BITFIELD (`_BitInt(N) m : W`) is a
-                raise CLowerError(                        # bit-precise, subtler feature -- still OUT of the
-                    "a `_BitInt` struct/union bitfield is not supported")  # supported subset -> route to fallback
-            # a PLAIN `_BitInt(N)` member is first-class: its `bitint` CType already carries the Clang
-            # storage width (1/2/4/8 bytes) and alignment, so AggregateBuilder lays it out exactly like
-            # the equivalent power-of-two int (sizeof/offsetof match Clang); the member load/store uses
-            # that storage width typed `_BitInt(N)`, and the emit prints the faithful spelling.
+            if mt.is_bitint and width:                    # a `_BitInt(N)` BITFIELD `_BitInt(N) m : W` is now
+                # first-class: it packs into the `_BitInt(N)` STORAGE UNIT (its `mt.size` = 1/2/4/8 bytes,
+                # the Clang slot) with the same LSB-first packing as a standard-int bitfield of that storage
+                # size -- VERIFIED byte-identical to Clang (size/align/bit-layout) for 2<=N<=64, 1<=W<=N.
+                # The field value is typed `_BitInt(N)` (its W bits), and the emit prints `_BitInt(N) m : W;`.
+                if not (1 <= width <= mt.bit_width):       # W>N is invalid C (Clang errors); W<1 not a named
+                    raise CLowerError(                     # field -> conservatively route to fallback.
+                        "a `_BitInt` bitfield width outside 1..N is not supported")
+            # a PLAIN `_BitInt(N)` member is also first-class: its `bitint` CType carries the Clang storage
+            # width (1/2/4/8 bytes) and alignment, so AggregateBuilder lays it out exactly like the
+            # equivalent power-of-two int (sizeof/offsetof match Clang); the member load/store uses that
+            # storage width typed `_BitInt(N)`, and the emit prints the faithful spelling.
             b.members.append((mname, mt, width, malign))
         aggregates[tag] = b.build()
 
