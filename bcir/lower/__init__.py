@@ -24,6 +24,8 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
                  "SpatialBinding", "SpatialPlan", "optimize_spatial", "is_pim_target"),
     "inference": ("InferenceModel", "Layer", "emit_inference_kernel_c",
                   "compile_and_run_inference_c", "quantize_model"),
+    "autodiff_kernel": ("emit_autodiff_kernel_c", "emit_sgd_step_c", "emit_train_step_c",
+                        "compile_and_run_grad_c", "compile_and_run_training_c", "oracle_train"),
     "mlir": ("to_mlir", "plan_view", "PlanView", "ClaimView", "PathView"),
     "memory_model": ("barrier_fence_ir", "fence_ordering", "hazard_to_ordering",
                      "c_memory_order", "emit_ring_header_c"),
