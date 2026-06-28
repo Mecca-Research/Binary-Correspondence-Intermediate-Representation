@@ -26,6 +26,19 @@ class CParseError(Exception):
 # punctuation whose absence is a high-confidence fix-it: suggest inserting it after the prior token.
 _FIXABLE_PUNCT = frozenset({";", ")", "}", "]"})
 
+# Recursion-depth cap for the recursive-descent grammar. A pathologically deeply-nested input (e.g.
+# 100000 nested `(`, `{{{...}}}`, or `int a[((((...))))]`) would otherwise drive the mutually-recursive
+# descent (_comma/_assign/_ternary/_binary/_unary/_postfix/_primary->`(`->_comma; _block<->_stmt;
+# _init_value; _type_spec; _const_eval) past Python's native recursion limit and raise an UNCAUGHT
+# RecursionError -- which is NOT in pipeline._FALLBACK_PHASE, so compile_with_fallback would CRASH instead
+# of routing to fallback. _descend() bumps a depth counter at every recursive-cycle entry and raises a
+# clean CParseError ("nesting too deep") on overflow; CParseError IS a fallback phase, so deep input
+# routes to LLVM (needs_fallback=True) exactly as the C twin returns a clean rc-1 PARSE-ERR -- the two
+# rails agree on the over-deep boundary. The cap is set well below the per-level frame budget that trips
+# Python's default 1000-frame limit (~17 frames/level -> RecursionError near depth 58), so this guard
+# fires FIRST with a clean error rather than a crash, yet far above any real program's nesting.
+_MAX_DEPTH = 50
+
 
 # type-start keywords (a statement beginning with one of these is a declaration).
 _TYPE_KW = frozenset({"void", "_Bool", "bool", "char", "short", "int", "long", "unsigned",
@@ -44,6 +57,22 @@ _COMPOUND = {"+=": "+", "-=": "-", "*=": "*", "/=": "/", "%=": "%", "&=": "&", "
              "^=": "^", "<<=": "<<", ">>=": ">>"}
 
 
+class _Descend:
+    """The context manager returned by _Parser._descend(): decrements the parser's recursion-depth
+    counter on exit (the increment + overflow check happen in _descend before this is constructed)."""
+    __slots__ = ("_p",)
+
+    def __init__(self, p: "_Parser"):
+        self._p = p
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._p._depth -= 1
+        return False
+
+
 class _Parser:
     def __init__(self, toks: list[Tok], tags: set):
         self.t = toks
@@ -55,6 +84,18 @@ class _Parser:
         self.diags: list = []                 # list[SourceDiagnostic] accumulated when recover is on
         self.unit: cast.Unit | None = None    # the unit being built (so a nested inline aggregate registers)
         self._anon_ctr = 0                    # synthesizes unique tags for tagless inline aggregates
+        self._depth = 0                       # recursive-descent nesting depth (see _MAX_DEPTH / _descend)
+
+    def _descend(self) -> "_Descend":
+        """Enter one recursive-grammar level; raise CParseError on overflow (caught as a fallback phase so
+        deep input routes to LLVM, never an uncaught RecursionError). Used as `with self._descend():` at
+        each recursive-cycle entry point so a pathological deeply-nested input fails cleanly + crash-free,
+        matching the C twin's depth guard (both rails route over-deep input to fallback / a clean error)."""
+        self._depth += 1
+        if self._depth > _MAX_DEPTH:
+            self._depth -= 1   # unwind the counter on the failing entry so recovery mode stays consistent
+            raise CParseError("nesting too deep", pos=self.peek().pos)
+        return _Descend(self)
 
     # --- error recovery (panic mode): on a parse error, record a diagnostic and skip to the next
     # synchronization boundary, so one run reports several independent errors instead of just the
@@ -420,6 +461,11 @@ class _Parser:
 
     # --- types ---
     def _type_spec(self) -> cast.TypeRef:
+        # depth guard: _type_spec recurses via `typeof(type-name)` / `_Atomic(type-name)` -> _type_spec.
+        with self._descend():
+            return self._type_spec_inner()
+
+    def _type_spec_inner(self) -> cast.TypeRef:
         quals: list[str] = []
         words: list[str] = []
         aggregate = ""
@@ -654,20 +700,21 @@ class _Parser:
 
     # --- statements ---
     def _block(self) -> tuple:
-        self.eat("PUNCT", "{")
-        stmts = []
-        while not self.at("PUNCT", "}"):
-            if not self.recover:
-                stmts.append(self._stmt())
-                continue
-            try:                                              # statement-level recovery: a bad
-                stmts.append(self._stmt())                    # statement doesn't abandon the block
-            except CParseError as e:
-                self._record(e)
-                if not self._sync_stmt():                     # hit the block's `}` / EOF -> stop
-                    break
-        self.eat("PUNCT", "}")
-        return tuple(stmts)
+        with self._descend():   # depth guard: _block<->_stmt nesting (`{{{...}}}`) cycle
+            self.eat("PUNCT", "{")
+            stmts = []
+            while not self.at("PUNCT", "}"):
+                if not self.recover:
+                    stmts.append(self._stmt())
+                    continue
+                try:                                              # statement-level recovery: a bad
+                    stmts.append(self._stmt())                    # statement doesn't abandon the block
+                except CParseError as e:
+                    self._record(e)
+                    if not self._sync_stmt():                     # hit the block's `}` / EOF -> stop
+                        break
+            self.eat("PUNCT", "}")
+            return tuple(stmts)
 
     def _is_decl_start(self) -> bool:
         if not self.at("IDENT"):
@@ -848,6 +895,10 @@ class _Parser:
         + `[i]=` / `.field=` designators) for a struct/union/array local."""
         if not self.at("PUNCT", "{"):
             return self._expr()
+        with self._descend():   # depth guard: nested braced initializers (`{{{...}}}`) self-recurse here
+            return self._init_value_braced()
+
+    def _init_value_braced(self):
         self.nxt()
         entries = []
         while not self.at("PUNCT", "}"):
@@ -882,11 +933,12 @@ class _Parser:
         effects, discards it, and yields `b`. Only valid where C allows a full `expression` -- used for the
         PRIMARY parenthesized `( ... )`. Call ARGUMENTS and initializer ELEMENTS keep `_assign` (there the
         comma is a separator, not the operator), so `f(a, b)` / `{a, b}` are unaffected."""
-        e = self._assign()
-        while self.at("PUNCT", ","):
-            self.nxt()
-            e = cast.Binary(",", e, self._assign())
-        return e
+        with self._descend():   # depth guard: _comma is the parenthesized-expression re-entry (`(...)`)
+            e = self._assign()
+            while self.at("PUNCT", ","):
+                self.nxt()
+                e = cast.Binary(",", e, self._assign())
+            return e
 
     def _assign(self):
         lhs = self._ternary()
@@ -919,6 +971,12 @@ class _Parser:
         return lhs
 
     def _unary(self):
+        # depth guard: _unary is a recursive-cycle entry (unary `+`/`-`/`*`/`&`/`++` chains, and
+        # _unary->_postfix->_primary->`(`->_comma re-entry). Bump/check once per level, then delegate.
+        with self._descend():
+            return self._unary_inner()
+
+    def _unary_inner(self):
         if self.at("OP", "+"):                             # unary plus is a no-op
             self.nxt()
             return self._unary()

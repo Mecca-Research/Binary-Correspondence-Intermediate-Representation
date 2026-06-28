@@ -136,8 +136,29 @@ typedef struct {
    * resolve each, ptrext_set'ing only the stable ones -- exactly the oracle's gate, evaluated at the same
    * point in the pipeline. Reset per function. */
   struct { uint32_t ptr_rid; uint32_t cnt_rid; tok cnt_tok; } vlaext[16]; int n_vlaext;
+  int depth;         /* recursion-depth counter for the recursive-descent grammar -- a pathological
+                      * deeply-nested input (e.g. 100000 nested `(`, `{{{...}}}`, `int a[((((...))))]`)
+                      * would otherwise exhaust the native stack (a DoS: ASan reports `stack-overflow`).
+                      * Bumped at the entry of each recursive cycle's entry point (ENTER_REC / LEAVE_REC),
+                      * checked against MAXDEPTH; on exceed the parse cleanly fails ("nesting too deep")
+                      * and unwinds -- a clean rc-1 PARSE-ERR, never a crash. Mirrors the oracle's parser
+                      * recursion guard (bcir/frontends/cfront/cparse.py) so both rails agree on the
+                      * boundary (deep input -> a clean fallback/parse-error, not a segfault). */
+  int tok_overflow;  /* set by lex() when the input exceeds MAXTOK tokens -- the entry then fails cleanly
+                      * ("input too large") and routes to fallback rather than silently truncating the
+                      * token stream and mis-compiling a partial unit (Bug B correctness gap). */
   char err[256]; int failed;
 } CC;
+/* The recursion-depth cap for the recursive-descent parser. Comfortably below the real native-stack
+ * limit (the deepest cycle, the expression chain p_expr->...->p_primary->`(`->p_expr, is ~8 frames per
+ * nesting level, so ~1200 levels is well under an 8MiB stack at ~Nx that depth) yet far ABOVE any real
+ * program's nesting in the fixture corpus (the deepest fixture nests only a handful of levels). The
+ * Python oracle's recursion guard uses the same cap so the two rails agree on the over-deep boundary. */
+#define BCIR_MAXDEPTH 1200
+/* Enter a recursive cycle: bump depth, and on overflow record a clean parse error. Pairs with LEAVE_REC.
+ * The `_over` flag lets a caller bail with its own (typed) return value after a failed ENTER_REC. */
+#define ENTER_REC(c) (++(c)->depth > BCIR_MAXDEPTH ? (fail((c),"nesting too deep"), 1) : 0)
+#define LEAVE_REC(c) (--(c)->depth)
 /* Grow a CC parser-state array geometrically (no fixed cap), zeroing the fresh slots. On OOM the cap
  * is left unchanged, so the append guard (`n < cap`) stops -- a truncated unit the verifier catches. */
 #define CC_ENSURE(arr, n, cap) do { \
@@ -279,7 +300,9 @@ static void lex(CC *c, const char *src) {
     if (p[0]=='/'&&p[1]=='/'){while(*p&&*p!='\n')p++;continue;}
     if (p[0]=='/'&&p[1]=='*'){p+=2;while(*p&&!(p[0]=='*'&&p[1]=='/'))p++;if(*p)p+=2;continue;}
     if (*p=='#'){while(*p&&*p!='\n')p++;continue;}   /* preprocessor: L7 */
-    if (c->nt>=MAXTOK-1) break;
+    if (c->nt>=MAXTOK-1){ c->tok_overflow=1; break; }   /* over MAXTOK: flag it -- the entry fails cleanly
+                                                         * (a fallback the oracle agrees with) instead of
+                                                         * SILENTLY truncating + mis-compiling (Bug B). */
     tok *t=&c->t[c->nt];
     if (p[0]=='L'||p[0]=='u'||p[0]=='U'){             /* wide/UTF literal prefix L/u/U/u8 before a quote */
       const char *qp=0;
@@ -339,11 +362,24 @@ static void lex(CC *c, const char *src) {
 }
 
 /* --- token helpers ------------------------------------------------------- */
-static tok *pk(CC *c){return &c->t[c->i];}
+/* A read-only T_END sentinel returned for any out-of-range token index (a fixed `tok` with kind T_END,
+ * empty spelling). Used to bound every lookahead so a near-MAXTOK token stream cannot read past the
+ * fixed `c->t[MAXTOK]` array (Bug B: a global-buffer-overflow). The lexer fills `c->t[0..nt-1]` and a
+ * T_END at `c->t[nt]` (nt<=MAXTOK-1), so the only valid readable indices are [0, nt]; anything beyond
+ * resolves to this sentinel rather than indexing past the array end. */
+static const tok BCIR_TOK_END = { T_END, "", 0, 0 };
+/* The token at absolute index `idx`, bounded: an index past the last real token (idx>nt) or a negative
+ * index yields the T_END sentinel, never an out-of-array read. Every `c->t[c->i+k]` lookahead and every
+ * unbounded scan (`j+=2` member chains) routes through this so the parser is OOB-read-safe at the tail. */
+static const tok *tat(CC *c,int idx){ return (idx>=0 && idx<=c->nt) ? &c->t[idx] : &BCIR_TOK_END; }
+static tok *pk(CC *c){return (c->i>=0 && c->i<=c->nt) ? &c->t[c->i] : (tok *)&BCIR_TOK_END;}
 static int is(CC *c,const char *s){tok *t=pk(c);return (int)strlen(s)==t->n&&!strncmp(t->s,s,t->n);}
 static int tok_is(const tok *t,const char *s){return (int)strlen(s)==t->n&&!strncmp(t->s,s,t->n);}
 static int isk(CC *c,tkind k){return pk(c)->k==k;}
-static tok adv(CC *c){return c->t[c->i++];}
+static tok adv(CC *c){
+  if(c->i<0 || c->i>c->nt) return BCIR_TOK_END;   /* never index past the T_END slot at c->t[nt] */
+  return c->t[c->i++];                            /* (clamping i to nt keeps a runaway parser in-bounds) */
+}
 static void fail(CC *c,const char *m){if(!c->failed){snprintf(c->err,sizeof c->err,"%s",m);c->failed=1;}}
 static int eat(CC *c,const char *s){if(is(c,s)){c->i++;return 1;}fail(c,s);return 0;}
 static void idcpy(char *d,const tok *t){int n=t->n<BCIR_CIR_NAME-1?t->n:BCIR_CIR_NAME-1;memcpy(d,t->s,n);d[n]=0;}
@@ -441,7 +477,7 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
       if(is_type){ bcir_ctype inner; int isi;                            /* typeof( type-name ), incl. typeof(int*) */
         if(p_type(c,&inner,&isi)) return 1; *ty=inner; *sidx=isi; }
       else {                                                            /* typeof( expression ) operand */
-        venv *v = (isk(c,T_ID) && tok_is(&c->t[c->i+1],")")) ? lookup(c,pk(c)) : NULL;
+        venv *v = (isk(c,T_ID) && tok_is(tat(c,c->i+1),")")) ? lookup(c,pk(c)) : NULL;
         if(v){ c->i++; *ty=v->type; *sidx=v->sidx; }                    /* a bare in-scope variable -- exact type */
         else if(p_typeof_expr(c,ty,sidx)) return 1; }                   /* any other operand -- speculative lower */
       if(!eat(c,")")) return 1;
@@ -503,7 +539,9 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
 /* The full type: the specifier + the (first declarator's) `*`s folded in -- the single-declarator /
  * type-name form (params, casts, sizeof/_Alignof, the first declarator of a declaration). */
 static int p_type(CC *c, bcir_ctype *ty, int *sidx) {
-  int r=p_type_base(c,ty,sidx); if(r) return r; apply_stars(c,ty); return 0;
+  if(ENTER_REC(c)){ LEAVE_REC(c); return 1; }   /* depth guard: typeof/_Atomic re-enter p_type */
+  int r=p_type_base(c,ty,sidx); if(r){ LEAVE_REC(c); return r; }
+  apply_stars(c,ty); LEAVE_REC(c); return 0;
 }
 
 /* --- struct layout (Clang-compatible; bitfields LSB-first; packed/aligned, L8) --- */
@@ -530,9 +568,9 @@ static void attrs(CC *c,int *packed,int *aligned){
  * cursor is left untouched so the caller's normal parse proceeds). Matches the oracle's `_attributes`. */
 static int c23_attrs(CC *c,int *repro){
   int any=0;
-  while(is(c,"[") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+  while(is(c,"[") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
     c->i+=2; any=1;                                  /* consume the opening `[[` */
-    while(!(is(c,"]") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]==']')){
+    while(!(is(c,"]") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]==']')){
       if(isk(c,T_END)){fail(c,"unterminated [[...]] attribute");return any;}
       if(is(c,"unsequenced")||is(c,"reproducible")) *repro=1;   /* both fold to one fusion-legality flag */
       c->i++;                                         /* skip every other token (robust to args/namespaces) */
@@ -600,8 +638,8 @@ static int p_struct_body(CC *c) {
         if(is(c,",")){c->i++;continue;} break;
       }
       tok nm;
-      if(is(c,"(") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='*'
-         && c->t[c->i+2].k==T_ID){       /* a function-pointer member `RET (*name)(params)` -> a kind-3 (8-byte)
+      if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
+         && tat(c,c->i+2)->k==T_ID){       /* a function-pointer member `RET (*name)(params)` -> a kind-3 (8-byte)
                                           * field. The struct definition comes from the source (not emitted), so
                                           * no signature is captured; set via a funcptr value + called via
                                           * `o->fn(args)` (the existing c.call.imember machinery). */
@@ -691,6 +729,7 @@ static long long ce_primary(CC *c){
   fail(c,"non-constant enum initializer");return 0;
 }
 static long long ce_expr(CC *c,int minp){
+  if(ENTER_REC(c)){ LEAVE_REC(c); return 0; }   /* depth guard: ce_expr<->ce_primary `(...)` cycle */
   struct{const char*t;int p;}P[]={{"|",1},{"^",2},{"&",3},{"<<",5},{">>",5},
     {"+",6},{"-",6},{"*",7},{"/",7},{"%",7},{0,0}};
   long long lhs=ce_primary(c);
@@ -702,7 +741,7 @@ static long long ce_expr(CC *c,int minp){
           !strcmp(op,"&")?lhs&rhs:!strcmp(op,"|")?lhs|rhs:!strcmp(op,"^")?lhs^rhs:
           !strcmp(op,"<<")?lhs<<rhs:lhs>>rhs;
   }
-  return lhs;
+  LEAVE_REC(c); return lhs;
 }
 static void p_enum_body(CC *c){
   eat(c,"{"); long long val=0;
@@ -2032,7 +2071,7 @@ static uint32_t p_primary(CC *c) {
           size=(long long)(str_bytes(sp,sn)+1)*str_elem_size(sp,sn); free(cb); }
         else size=(long long)(str_bytes(st.s,st.n)+1)*str_elem_size(st.s,st.n); }   /* units incl. NUL × width */
       else if(isk(c,T_ID)){ tok vid=*pk(c); venv *v=lookup(c,&vid);
-        int indexed = tok_is(&c->t[c->i+1],"[");   /* `sizeof a[0]` -- an element, NOT a bare name (stays static) */
+        int indexed = tok_is(tat(c,c->i+1),"[");   /* `sizeof a[0]` -- an element, NOT a bare name (stays static) */
         if(v && !indexed){
           const bcir_resource *vr=res_of(c->fn,v->rid); uint32_t ext=ptrext_get(c->fn,v->rid);
           if(vr && vr->is_vla && ext){   /* `sizeof a` of a 1-D stack VLA: a RUNTIME value -- the snapshot
@@ -2116,7 +2155,15 @@ static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
   if(ty->kind==2) snprintf(o,n,"c.cast:%s *",nm); else snprintf(o,n,"c.cast:%s",nm);
 }
 static int incdec_value(CC *c, uint32_t *out);   /* fwd: `++a`/`a++`/`--a`/`a--` in EXPRESSION position */
+static uint32_t p_unary_inner(CC *c);
+/* Depth-guarded wrapper: p_unary is a recursive-cycle entry point (p_unary->p_primary->`(`->p_expr->
+ * ...->p_unary), so a deeply-nested expression would exhaust the native stack. Bump/check depth once
+ * per level here; on overflow fail cleanly ("nesting too deep") and return without recursing. */
 static uint32_t p_unary(CC *c) {
+  if(ENTER_REC(c)){ LEAVE_REC(c); return 0; }
+  uint32_t r=p_unary_inner(c); LEAVE_REC(c); return r;
+}
+static uint32_t p_unary_inner(CC *c) {
   { uint32_t v; if(incdec_value(c,&v)) return v; }   /* PREFIX ++a / POSTFIX a++ (member/array/pointer/scalar) */
   if(is(c,"+")){ c->i++; return p_unary(c); }    /* unary plus is a no-op */
   if(is(c,"__real__")||is(c,"__imag__")){        /* GNU complex part -> the real element float */
@@ -2273,7 +2320,7 @@ static uint32_t p_unary(CC *c) {
       if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p (no sub-parse between lookup and use) */
     return emit_deref_rid(c, p_unary(c));            /* general: `**pp`, `*(<expr>)` -- deref a ptr rvalue */
   }
-  if(is(c,"(") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='{')
+  if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='{')
     return p_stmt_expr(c);                          /* `({ ... })` -- a GCC statement expression */
   if(is(c,"(")){                                   /* (type)operand -- a cast binds at the unary level */
     int save=c->i; c->i++;
@@ -2292,7 +2339,7 @@ static uint32_t p_unary(CC *c) {
          * carries BOTH `sidx` (so `[...].field` descends the element struct via emit_index_field, striding by
          * the struct size) AND `adims`/`nadims` (so `[i][j]` Horner-flattens the outer dims). */
         if(la_nd && la_nd<=3 && is(c,")") &&
-           c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='{'){   /* `(T[...]){...}` */
+           tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='{'){   /* `(T[...]){...}` */
           c->i++;                                  /* ')' -- p_array_literal/arr_init eats the following `{` */
           uint32_t rid=p_array_literal(c,&ty,si,la_count,la_dims,la_nd);   /* multi-dim -> subagg_init_md (row braces) */
           if(is(c,"[")){ venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=ty.kind==1?si:-1;
@@ -2360,15 +2407,15 @@ static int is_compound_op(const tok *t){
  * chain (`.field`, `->field`, balanced `[...]`) without consuming. */
 static int member_is_store(CC *c,int j){
   for(;;){
-    const tok *t=&c->t[j];
+    const tok *t=tat(c,j);   /* bounded: a `j+=2` chain off the tail must not read past c->t[nt] (Bug B) */
     if(t->k==T_END) return 0;
     if(t->k==T_PUN && t->n==1 && t->s[0]=='.'){ j+=2; continue; }              /* .field */
     if(t->k==T_PUN && t->n==2 && t->s[0]=='-' && t->s[1]=='>'){ j+=2; continue; }  /* ->field */
     if(t->k==T_PUN && t->n==1 && t->s[0]=='['){ int d=1; j++;                  /* balanced [...] */
-      while(c->t[j].k!=T_END && d){ char ch=c->t[j].s[0]; if(ch=='[')d++; else if(ch==']')d--; j++; } continue; }
+      while(tat(c,j)->k!=T_END && d){ char ch=tat(c,j)->s[0]; if(ch=='[')d++; else if(ch==']')d--; j++; } continue; }
     break;
   }
-  return c->t[j].k==T_PUN && ((c->t[j].n==1 && c->t[j].s[0]=='=') || is_compound_op(&c->t[j]));
+  return tat(c,j)->k==T_PUN && ((tat(c,j)->n==1 && tat(c,j)->s[0]=='=') || is_compound_op(tat(c,j)));
 }
 /* The result temp of a binary op `lhs <suf> rhs` -- the usual arithmetic conversions in the (width,
  * signedness) value model: float arithmetic propagates the wider float; a shift keeps the promoted left
@@ -2486,7 +2533,7 @@ static venv *use_global(CC *c,const tok *id){
  * distinguished from `==` (a 2-char token); a compound `+= ... >>=` is an is_compound_op. */
 static int name_assign_ahead(CC *c){
   return c->t[c->i].k==T_ID &&
-         ((c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='=') || is_compound_op(&c->t[c->i+1]));
+         ((tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='=') || is_compound_op(tat(c,c->i+1)));
 }
 /* Lookahead (side-effect-free): is the cursor at a SINGLE-LEVEL SCALAR member assignment-expression
  * `name.field = ...` / `name->field OP= ...`? Fills *out (the field) + *base (the struct base venv). A
@@ -2497,16 +2544,16 @@ static int name_assign_ahead(CC *c){
 static int member_assign_ahead(CC *c, field *out, venv **base){
   if(!isk(c,T_ID)) return 0;
   venv *v=lookup(c,&c->t[c->i]); if(!v || v->sidx<0) return 0;        /* a local/param struct (value or pointer) */
-  const tok *op=&c->t[c->i+1];
+  const tok *op=tat(c,c->i+1);
   if(!(op->k==T_PUN && ((op->n==1 && op->s[0]=='.') || (op->n==2 && op->s[0]=='-' && op->s[1]=='>')))) return 0;
-  const tok *fn=&c->t[c->i+2]; if(fn->k!=T_ID) return 0;
+  const tok *fn=tat(c,c->i+2); if(fn->k!=T_ID) return 0;
   sdef *S=&c->s[v->sidx]; int fi=-1;
   for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn->n && !strncmp(S->f[i].name,fn->s,fn->n)) fi=i;
   if(fi<0) return 0;
   field f=S->f[fi];
   if(f.is_ptr || f.arr_count || f.sidx>=0) return 0;                  /* a scalar member (plain or bitfield) only */
   if(f.bit_w && v->type.is_volatile) return 0;                        /* a volatile/MMIO bitfield re-read stays a fallback */
-  const tok *as=&c->t[c->i+3];
+  const tok *as=tat(c,c->i+3);
   if(!(as->k==T_PUN && ((as->n==1 && as->s[0]=='=') || is_compound_op(as)))) return 0;
   *out=f; *base=v; return 1;
 }
@@ -2602,7 +2649,7 @@ static int lv_assign_value(CC *c, uint32_t *out){
    * INTO that array dangles afterward. The store/emit helpers only READ the venv (by-value identical). */
   venv vsnap=*vp; venv *v=&vsnap;
   /* --- a DIRECT ARRAY-OF-STRUCTS element FIELD `a[i].f = rhs` / `a[i].f OP= rhs` as a VALUE (strided) --- */
-  if(v->sidx>=0 && !v->type.is_volatile && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+  if(v->sidx>=0 && !v->type.is_volatile && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
     int istart=c->i; c->i++; uint32_t idx=array_index(c,v);   /* resolve the index ONCE (Horner-flattened) */
     field sub; int got = (is(c,".")||is(c,"->")) && aos_elem_field(c,v,&sub);
@@ -2632,7 +2679,7 @@ static int lv_assign_value(CC *c, uint32_t *out){
     return 1;
   }
   /* --- an ARRAY ELEMENT `a[i] = rhs` / `a[i] OP= rhs` as a VALUE --- */
-  if(c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+  if(tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
     /* eligible only for a plain SCALAR-element array (kind 0, non-volatile) indexed directly to an `=`/OP=
      * -- NOT an array-of-structs `a[i].f`, NOT a member-array (those are reached as a Member, not here). */
     if(v->type.kind!=0 || v->type.is_volatile){ c->i=save; return 0; }
@@ -2666,8 +2713,8 @@ static int lv_assign_value(CC *c, uint32_t *out){
     return 1;
   }
   /* --- a NESTED struct member `o.in.x = rhs` / `s->a.b OP= rhs` as a VALUE --- */
-  if(v->sidx>=0 && c->t[c->i+1].k==T_PUN
-     && (c->t[c->i+1].s[0]=='.' || (c->t[c->i+1].n==2 && c->t[c->i+1].s[0]=='-' && c->t[c->i+1].s[1]=='>'))){
+  if(v->sidx>=0 && tat(c,c->i+1)->k==T_PUN
+     && (tat(c,c->i+1)->s[0]=='.' || (tat(c,c->i+1)->n==2 && tat(c,c->i+1)->s[0]=='-' && tat(c,c->i+1)->s[1]=='>'))){
     c->i++; tok dot=*pk(c); c->i++; tok fld=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
     (void)dot;
     for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n && !strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
@@ -2785,15 +2832,16 @@ static int incdec_value(CC *c, uint32_t *out){
      * lvalue. Scan past a single `.field`/`->field` or a balanced `[...]` chain off the name; if the next
      * token is not `++`/`--`, this is not an inc/dec -- bail (cursor unmoved) so the value reads normally. */
     int j=c->i+1;
-    for(;;){ const tok *t=&c->t[j];
+    for(;;){ const tok *t=tat(c,j);   /* bounded: a `j+=2` member chain off the tail must stay in-array (Bug B) */
       if(t->k==T_PUN && t->n==1 && t->s[0]=='.'){ j+=2; continue; }
       if(t->k==T_PUN && t->n==2 && t->s[0]=='-' && t->s[1]=='>'){ j+=2; continue; }
       if(t->k==T_PUN && t->n==1 && t->s[0]=='['){ int d=1; j++;
-        while(c->t[j].k!=T_END && d){ char k0=c->t[j].s[0]; if(k0=='[')d++; else if(k0==']')d--; j++; } continue; }
+        while(tat(c,j)->k!=T_END && d){ char k0=tat(c,j)->s[0]; if(k0=='[')d++; else if(k0==']')d--; j++; } continue; }
       break; }
-    if(!(c->t[j].k==T_PUN && c->t[j].n==2 && (c->t[j].s[0]=='+'||c->t[j].s[0]=='-') && c->t[j].s[1]==c->t[j].s[0]))
-      return 0;                                            /* the lvalue is not stepped -> not an inc/dec */
-    ch=c->t[j].s[0];
+    { const tok *tj=tat(c,j);
+      if(!(tj->k==T_PUN && tj->n==2 && (tj->s[0]=='+'||tj->s[0]=='-') && tj->s[1]==tj->s[0]))
+        return 0;                                          /* the lvalue is not stepped -> not an inc/dec */
+      ch=tj->s[0]; }
   } else return 0;
   int save=c->i;
   if(prefix) c->i++;                                       /* consume the leading `++`/`--` */
@@ -2808,7 +2856,7 @@ static int incdec_value(CC *c, uint32_t *out){
 
   /* --- a DIRECT array-of-structs element FIELD `a[i].f` (strided), non-volatile --- */
   if(isk(c,T_ID) && v->sidx>=0 && !v->type.is_volatile
-     && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+     && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
     c->i++; uint32_t idx=array_index(c,v);                 /* resolve the index ONCE (Horner-flattened) */
     field sub; int got=(is(c,".")||is(c,"->")) && aos_elem_field(c,v,&sub);
@@ -2828,7 +2876,7 @@ static int incdec_value(CC *c, uint32_t *out){
 
   /* --- a plain SCALAR ARRAY ELEMENT `a[i]` (kind 0, non-volatile, NOT an array-of-structs) --- */
   if(isk(c,T_ID) && v->type.kind==0 && !v->type.is_volatile && v->sidx<0
-     && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+     && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
     c->i++; uint32_t idx=array_index(c,v);                 /* resolve the index ONCE (Horner-flattened) */
     if(c->failed){ return 0; }
@@ -2848,9 +2896,9 @@ static int incdec_value(CC *c, uint32_t *out){
 
   /* --- a struct MEMBER `s.x` / `p->x` / nested `o.in.x`, OR a member array `s.arr[i]` / `s.arr[i].f`,
    *     non-volatile (the C twin of the oracle's scalar-member-lvalue inc/dec). --- */
-  if(isk(c,T_ID) && v->sidx>=0 && !v->type.is_volatile && c->t[c->i+1].k==T_PUN
-     && ((c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='.')
-         || (c->t[c->i+1].n==2 && c->t[c->i+1].s[0]=='-' && c->t[c->i+1].s[1]=='>'))){
+  if(isk(c,T_ID) && v->sidx>=0 && !v->type.is_volatile && tat(c,c->i+1)->k==T_PUN
+     && ((tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='.')
+         || (tat(c,c->i+1)->n==2 && tat(c,c->i+1)->s[0]=='-' && tat(c,c->i+1)->s[1]=='>'))){
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
     sdef *S=&c->s[v->sidx]; c->i++; (void)adv(c); tok fld=adv(c); int fi=-1;   /* consume `. field` / `-> field` */
     for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fld.n && !strncmp(S->f[i].name,fld.s,fld.n)) fi=i;
@@ -2927,7 +2975,7 @@ static uint32_t p_assign(CC *c){
      * by-value copy is byte-identical (#532 class). */
     venv vsnap; venv *v=NULL; if(vp){ vsnap=*vp; v=&vsnap; }
     if(v){
-      const tok *op=&c->t[c->i+1];
+      const tok *op=tat(c,c->i+1);
       if(op->n==1 && op->s[0]=='='){                 /* name = rhs  (right-recursive: a = b = c) */
         tok tnm=c->t[c->i]; c->i+=2; int ist=c->i; uint32_t rhs=p_assign(c); int ien=c->i;
         bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
@@ -2980,7 +3028,10 @@ static uint32_t p_assign(CC *c){
   { uint32_t v; if(lv_assign_value(c,&v)) return v; }   /* a[i]/ *p/o.in.x = rhs (store + reload) as a VALUE */
   return p_cond(c);
 }
-static uint32_t p_expr(CC *c){ return p_assign(c); }
+static uint32_t p_expr(CC *c){           /* depth guard: p_expr re-enters via p_primary's `(...)`/call args */
+  if(ENTER_REC(c)){ LEAVE_REC(c); return 0; }
+  uint32_t r=p_assign(c); LEAVE_REC(c); return r;
+}
 /* a control-flow marker claim (no realization; the emitter renders it as a brace). carries an
  * optional condition rid as a read so the verifier resolves it and the emitter can test it. */
 static void marker(CC *c,const char *op,uint32_t cond,int has_cond){
@@ -3052,7 +3103,14 @@ static void subagg_init(CC *c, uint32_t rid, int base_off, int es, int is_bool) 
  * (`dims+1`, `nd-1`); a scalar inside the innermost dim stores at its element offset (an OFFSET-based member
  * c.store at `base_off + idx*es`, exactly like subagg_init -- composing through the enclosing `= {0}`
  * baseline). Positional entries advance a cursor, `[i]=` jumps it, gaps zero-fill (§6.7.10). */
+static void subagg_init_md_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool);
+/* Depth-guarded wrapper: subagg_init_md self-recurses per nested-row brace, so a deeply nested
+ * multi-dim `{{{...}}}` initializer would exhaust the stack. Bump/check depth once per row level. */
 static void subagg_init_md(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool) {
+  if(ENTER_REC(c)){ LEAVE_REC(c); return; }
+  subagg_init_md_inner(c, rid, base_off, dims, nd, es, is_bool); LEAVE_REC(c);
+}
+static void subagg_init_md_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool) {
   eat(c,"{");
   int stride=es;                                          /* row stride = product(dims[1:]) * es */
   for(int d=1; d<nd; d++) stride*=dims[d];
@@ -3099,7 +3157,13 @@ static int subagg_init_struct(CC *c, uint32_t rid, int base_off, int elem_sidx, 
  * stores at absolute offsets, exactly like subagg_init_struct), composing through the enclosing `= {0}`
  * baseline. Positional entries advance a cursor, `[i]=` jumps it, gaps zero-fill (§6.7.10). `elem_sidx` is the
  * element struct's sdef index. */
+static void subagg_init_md_struct_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int elem_sidx);
+/* Depth-guarded wrapper: subagg_init_md_struct self-recurses per nested-row brace. */
 static void subagg_init_md_struct(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int elem_sidx) {
+  if(ENTER_REC(c)){ LEAVE_REC(c); return; }
+  subagg_init_md_struct_inner(c, rid, base_off, dims, nd, es, elem_sidx); LEAVE_REC(c);
+}
+static void subagg_init_md_struct_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int elem_sidx) {
   eat(c,"{");
   int stride=es;                                          /* row stride = product(dims[1:]) * es */
   for(int d=1; d<nd; d++) stride*=dims[d];
@@ -3119,7 +3183,15 @@ static void subagg_init_md_struct(CC *c, uint32_t rid, int base_off, const int *
   }
   eat(c,"}");
 }
+static void agg_init_at_inner(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit);
+/* Depth-guarded wrapper: agg_init_at is the aggregate-initializer recursion entry (agg_init_at<->
+ * subagg_init_struct/subagg_init_md/subagg_init_md_struct and the nested-brace re-entry), so a deeply
+ * nested `{{{...}}}` initializer would exhaust the stack. Bump/check depth once per brace level. */
 static void agg_init_at(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit) {
+  if(ENTER_REC(c)){ LEAVE_REC(c); return; }
+  agg_init_at_inner(c, rid, sidx, base_off, do_zinit); LEAVE_REC(c);
+}
+static void agg_init_at_inner(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit) {
   eat(c,"{");
   sdef *S = sidx>=0 ? &c->s[sidx] : NULL;
   if(!S){ fail(c,"aggregate initializer needs a struct/union type"); return; }
@@ -3328,20 +3400,22 @@ static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, 
   return rid;
 }
 static void p_block(CC *c){            /* `{ stmts }` or a single statement */
+  if(ENTER_REC(c)){ LEAVE_REC(c); return; }   /* depth guard: p_block<->p_stmt nesting cycle */
   if(is(c,"{")){c->i++; int env_mark=c->nenv;   /* a block is a scope: its locals do not leak out */
     while(!is(c,"}")&&!isk(c,T_END)&&!c->failed)p_stmt(c);
     eat(c,"}"); c->nenv=env_mark;}              /* pop the block scope -- restore outer name bindings */
   else p_stmt(c);
+  LEAVE_REC(c);
 }
 /* ++i / --i / i++ / i-- (value discarded) -> i = i ± 1 (const 1 + a bin op + a copy).  Returns 1 if
  * it consumed an increment/decrement, 0 (consuming nothing) otherwise. */
 static int p_incdec(CC *c) {
   venv *v=NULL; char ch=0;
-  if((is(c,"++")||is(c,"--")) && c->t[c->i+1].k==T_ID){            /* ++name / --name */
-    v=lookup(c,&c->t[c->i+1]); if(!v) return 0; ch=c->t[c->i].s[0]; c->i+=2;
-  } else if(isk(c,T_ID) && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==2 &&
-            (c->t[c->i+1].s[0]=='+'||c->t[c->i+1].s[0]=='-') && c->t[c->i+1].s[1]==c->t[c->i+1].s[0]){
-    v=lookup(c,pk(c)); if(!v) return 0; ch=c->t[c->i+1].s[0]; c->i+=2;   /* name++ / name-- */
+  if((is(c,"++")||is(c,"--")) && tat(c,c->i+1)->k==T_ID){            /* ++name / --name */
+    v=lookup(c,tat(c,c->i+1)); if(!v) return 0; ch=c->t[c->i].s[0]; c->i+=2;
+  } else if(isk(c,T_ID) && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==2 &&
+            (tat(c,c->i+1)->s[0]=='+'||tat(c,c->i+1)->s[0]=='-') && tat(c,c->i+1)->s[1]==tat(c,c->i+1)->s[0]){
+    v=lookup(c,pk(c)); if(!v) return 0; ch=tat(c,c->i+1)->s[0]; c->i+=2;   /* name++ / name-- */
   } else return 0;
   uint32_t one=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
   if(kc){kc->n_wr=1;kc->wr[0]=one;kc->n_imm=1;kc->imm[0]=1;}
@@ -3365,12 +3439,12 @@ static void p_simple(CC *c) {
   if(isk(c,T_ID)){ tok id=*pk(c); venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id);   /* a writable global */
     /* SNAPSHOT the env entry before the RHS p_expr below can realloc c->env[] (a stmt-expr / use_global). */
     venv vsnap; venv *v=NULL; if(vp){ vsnap=*vp; v=&vsnap; }
-    if(v && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='='){      /* name = expr */
+    if(v && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='='){      /* name = expr */
       c->i+=2; uint32_t val=p_expr(c);
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
       return; }
-    if(v && is_compound_op(&c->t[c->i+1])){                                             /* name OP= expr */
-      char ch=c->t[c->i+1].s[0];
+    if(v && is_compound_op(tat(c,c->i+1))){                                             /* name OP= expr */
+      char ch=tat(c,c->i+1)->s[0];
       if(v->type.kind==2 && (ch=='+'||ch=='-')){       /* pointer arithmetic: p += n / p -= n (verbatim) */
         c->i+=2; uint32_t rhs=p_expr(c);
         char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.ptr%s",ch=='+'?"add":"sub");
@@ -3389,7 +3463,14 @@ static void p_simple(CC *c) {
  * its pointee struct (-1 for a pointer-to-scalar), `pfld` the field it came from. Mirrors the member /
  * indexed store path but with the loaded pointer as the base; a further pointer hop loads and recurses.
  * (Bitfields through a pointer chain are not modelled here -- not part of the slice.) */
+static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld);
+/* Depth-guarded wrapper: store_through_ptr self-recurses per pointer hop (`->`/`.`/`[`), so a long
+ * `p->p->p->...->x = v` chain would exhaust the stack. Bump/check depth once per hop. */
 static void store_through_ptr(CC *c, uint32_t ptr, int psidx, field pfld) {
+  if(ENTER_REC(c)){ LEAVE_REC(c); return; }
+  store_through_ptr_inner(c, ptr, psidx, pfld); LEAVE_REC(c);
+}
+static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) {
   if(is(c,"[")){                                        /* `...->p[i] = v` -- indexed store via the pointer */
     c->i++; uint32_t idx=p_expr(c); eat(c,"]");
     venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=-1;
@@ -3427,7 +3508,14 @@ static void store_through_ptr(CC *c, uint32_t ptr, int psidx, field pfld) {
   bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
   if(cl){cl->n_rd=2;cl->rd[0]=b.rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.size;cl->bounds=BCIR_BND_ASSUMED;}
 }
+static void p_stmt_inner(CC *c);
+/* Depth-guarded wrapper: p_stmt is a recursive-cycle entry (p_stmt->p_block->p_stmt, and the stmt-expr
+ * `({...})` path p_stmt_expr->p_stmt). Bump/check depth once per statement nesting level. */
 static void p_stmt(CC *c) {
+  if(ENTER_REC(c)){ LEAVE_REC(c); return; }
+  p_stmt_inner(c); LEAVE_REC(c);
+}
+static void p_stmt_inner(CC *c) {
   if(is(c,";")){c->i++;return;}          /* empty statement -> a no-op (`for(...);`, `if(c);`, `;;`) */
   if(is(c,"return")){c->i++;
     if(!is(c,";")){uint32_t rv=p_expr(c);c->fn->return_rid=rv;c->fn->has_return=1;marker(c,"c.return",rv,1);}
@@ -3486,7 +3574,7 @@ static void p_stmt(CC *c) {
       marker(c,"c.cgoto",tgt,1); return; }                       /* emit-only (NOP marker), carries the target rid */
     tok lb=adv(c); eat(c,";");                                   /* goto label; -- an emit-only marker */
     char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.goto:%.*s",lb.n,lb.s); new_claim(c,op,BCIR_OP_NOP); return; }
-  if(isk(c,T_ID)&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==':'){  /* `name:` -- a label */
+  if(isk(c,T_ID)&&tat(c,c->i+1)->k==T_PUN&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]==':'){  /* `name:` -- a label */
     tok lb=adv(c); c->i++; char op[BCIR_CIR_NAME];
     snprintf(op,sizeof op,"c.label:%.*s",lb.n,lb.s); new_claim(c,op,BCIR_OP_NOP); return; }
   if(is(c,"switch")){                  /* a real C switch: case labels + fallthrough preserved */
@@ -3522,10 +3610,10 @@ static void p_stmt(CC *c) {
      * per-declarator array (`int a[2], b;`) no longer leaks its dims onto the next declarator. */
     for(;;){
       bcir_ctype ty=base; apply_stars(c,&ty);   /* this declarator's own leading `*`s (none -> base type) */
-      if(is(c,"(") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='*'
-         && c->t[c->i+2].k==T_ID
-         && c->t[c->i+3].k==T_PUN && c->t[c->i+3].n==1 && c->t[c->i+3].s[0]==')'
-         && c->t[c->i+4].k==T_PUN && c->t[c->i+4].n==1 && c->t[c->i+4].s[0]=='('){
+      if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
+         && tat(c,c->i+2)->k==T_ID
+         && tat(c,c->i+3)->k==T_PUN && tat(c,c->i+3)->n==1 && tat(c,c->i+3)->s[0]==')'
+         && tat(c,c->i+4)->k==T_PUN && tat(c,c->i+4)->n==1 && tat(c,c->i+4)->s[0]=='('){
         /* a function-pointer LOCAL `RET (*name)(PARAMS) = fn;` -- the twin of the oracle's Decl funcptr.
          * Like a direct funcptr PARAMETER there is no alias to print, so capture the full signature as a
          * synthesized prelude typedef `__bcir_fpN` and bind the local kind-3 with that tag; the env binding
@@ -3550,7 +3638,7 @@ static void p_stmt(CC *c) {
          * (0 once full); `sw` still accumulates the true would-be length for the fpdefs guard. */
         #define SIG_OFF (sw<sizeof sig?sw:sizeof sig)
         sw+=snprintf(sig+SIG_OFF,sizeof sig-SIG_OFF,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
-        if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){ c->i++; }   /* `(void)` */
+        if(is(c,"void")&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]==')'){ c->i++; }   /* `(void)` */
         else if(!is(c,")")) for(;;){ bcir_ctype pt; int psi; if(p_type(c,&pt,&psi))return;
           if(isk(c,T_ID)) c->i++;                      /* an optional parameter name (ignored) */
           char ps[64]; ctype_str(&pt,ps,sizeof ps);
@@ -3816,7 +3904,7 @@ static void p_stmt(CC *c) {
     /* L8: struct member store  v.field = expr  /  v->field = expr  (only when an `=`/OP= actually follows
      * the access chain -- else `s.m` is a VALUE, e.g. the last item of a `({...})`, and falls through to the
      * expression-statement path below, exactly like a bare `a[i];` subscript). */
-    if(v&&v->sidx>=0&&c->t[c->i+1].k==T_PUN&&(c->t[c->i+1].s[0]=='.'||(c->t[c->i+1].n==2&&c->t[c->i+1].s[0]=='-'))
+    if(v&&v->sidx>=0&&tat(c,c->i+1)->k==T_PUN&&(tat(c,c->i+1)->s[0]=='.'||(tat(c,c->i+1)->n==2&&tat(c,c->i+1)->s[0]=='-'))
         && member_is_store(c,c->i+1)){
       c->i+=2; tok fld=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
@@ -3875,7 +3963,7 @@ static void p_stmt(CC *c) {
         if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
       eat(c,";");return;}
     /* L3: array element store  a[idx] = expr  /  a[idx] OP= expr  (driver buffer fill / scatter). */
-    if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]=='['){
+    if(v&&tat(c,c->i+1)->k==T_PUN&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]=='['){
       int as_start=c->i;                                /* roll-back point: `a[i]` may be a VALUE, not a store */
       size_t as_res=c->fn->n_res,as_cl=c->fn->n_claims; uint32_t as_rid=c->rid,as_cid=c->cid,as_clc=c->cl_ctr;
       c->i++; uint32_t idx=array_index(c,v); uint32_t val;   /* a[i] / m[i][j] (Horner-flattened) */
@@ -3910,14 +3998,14 @@ static void p_stmt(CC *c) {
       if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=access_bnd(c,v->rid);  /* §5.12 promote */
         if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
       eat(c,";");return;}
-    if(v&&c->t[c->i+1].k==T_PUN&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]=='='){
+    if(v&&tat(c,c->i+1)->k==T_PUN&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]=='='){
       tok tnm=c->t[c->i]; c->i+=2; int ist=c->i; uint32_t val=p_expr(c); int ien=c->i;
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
       bind_extent(c,v->rid,res_of(c->fn,v->rid),&tnm,ist,ien);   /* §5.12: `p = malloc(N*…)` -> N */
       eat(c,";");return;}
     /* compound assignment  name OP= expr  ->  name = name OP expr  (a bin op + a copy). */
-    if(v&&is_compound_op(&c->t[c->i+1])){
-      char ch=c->t[c->i+1].s[0];
+    if(v&&is_compound_op(tat(c,c->i+1))){
+      char ch=tat(c,c->i+1)->s[0];
       if(v->type.kind==2 && (ch=='+'||ch=='-')){       /* pointer arithmetic: p += n / p -= n (verbatim) */
         c->i+=2; uint32_t rhs=p_expr(c);
         char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.ptr%s",ch=='+'?"add":"sub");
@@ -3995,7 +4083,7 @@ static int p_func(CC *c, bcir_func *fn) {
   tok nm=adv(c); snprintf(fn->name,sizeof fn->name,"%.*s",nm.n,nm.s);
   if(!eat(c,"("))return 1;
   if(!is(c,")")) for(;;){
-    if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){c->i++;break;}
+    if(is(c,"void")&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]==')'){c->i++;break;}
     if(is(c,"...")){fn->variadic=1;c->i++;break;}   /* a trailing `...` -- the function is variadic */
     bcir_ctype ty;int si;if(p_type(c,&ty,&si))return 1;
     tok pn; int row_ptr=0;
@@ -4003,10 +4091,10 @@ static int p_func(CC *c, bcir_func *fn) {
      * is no alias to print, so capture the full signature as a synthesized prelude typedef `__bcir_fpN`
      * and type the param kind-3 with that tag. The indirect-call dispatch (p_icall) + the param/emit path
      * then reuse the typedef-funcptr machinery verbatim (ctype_str prints the tag). Scalar ret + params. */
-    if(is(c,"(") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='*'
-       && c->t[c->i+2].k==T_ID
-       && c->t[c->i+3].k==T_PUN && c->t[c->i+3].n==1 && c->t[c->i+3].s[0]==')'
-       && c->t[c->i+4].k==T_PUN && c->t[c->i+4].n==1 && c->t[c->i+4].s[0]=='('){
+    if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
+       && tat(c,c->i+2)->k==T_ID
+       && tat(c,c->i+3)->k==T_PUN && tat(c,c->i+3)->n==1 && tat(c,c->i+3)->s[0]==')'
+       && tat(c,c->i+4)->k==T_PUN && tat(c,c->i+4)->n==1 && tat(c,c->i+4)->s[0]=='('){
       bcir_ctype ret=ty;                            /* the already-parsed return type */
       c->i+=2; pn=adv(c);                            /* `( *` then the parameter NAME */
       if(!eat(c,")")||!eat(c,"("))return 1;          /* `) (` -- into the parameter-type list */
@@ -4018,7 +4106,7 @@ static int p_func(CC *c, bcir_func *fn) {
        * (0 once full); `sw` still accumulates the true would-be length for the fpdefs guard. See Bug 2. */
       #define SIG_OFF (sw<sizeof sig?sw:sizeof sig)
       sw+=snprintf(sig+SIG_OFF,sizeof sig-SIG_OFF,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
-      if(is(c,"void")&&c->t[c->i+1].n==1&&c->t[c->i+1].s[0]==')'){ c->i++; }   /* `(void)` */
+      if(is(c,"void")&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]==')'){ c->i++; }   /* `(void)` */
       else if(!is(c,")")) for(;;){ bcir_ctype pt; int psi; if(p_type(c,&pt,&psi))return 1;
         if(isk(c,T_ID)) c->i++;                      /* an optional parameter name (ignored) */
         char ps[64]; ctype_str(&pt,ps,sizeof ps);
@@ -4040,7 +4128,7 @@ static int p_func(CC *c, bcir_func *fn) {
       int save=c->i; c->i++; int inner=0;          /* modeled as the equivalent multi-dim array param */
       while(is(c,"*")){inner++;c->i++;}
       if(inner==1 && isk(c,T_ID)){ tok cand=adv(c);
-        if(is(c,")") && c->t[c->i+1].k==T_PUN && c->t[c->i+1].n==1 && c->t[c->i+1].s[0]=='['){
+        if(is(c,")") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
           c->i++;                                  /* consume ) ; the next token is [ */
           pn=cand; int nd=1; ty.adims[0]=0;        /* the outer (pointer) dim is unspecified */
           while(is(c,"[")){ c->i++; long long d=isk(c,T_INT)?(long long)adv(c).v:0;
@@ -4059,7 +4147,7 @@ static int p_func(CC *c, bcir_func *fn) {
         if(isk(c,T_INT)) d=(long long)adv(c).v;          /* a static dim `[A]` -- the byte count is recorded */
         /* §5.12 a VLA-param extent `[n]`: `n` must be a BARE identifier naming a PRIOR in-scope param (source
          * order -- a later param is not yet in env). Capture it for the post-scan stability gate. */
-        else if(!is(c,"]") && isk(c,T_ID) && tok_is(&c->t[c->i+1],"]")){
+        else if(!is(c,"]") && isk(c,T_ID) && tok_is(tat(c,c->i+1),"]")){
           tok cand=*pk(c);
           if(lookup(c,&cand)){ vla_tok=cand; vla_have=1; adv(c); }
         }
@@ -4598,6 +4686,11 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
   strtab_reset();                       /* fresh string-literal table per translation unit */
   ptrext_reset();                       /* fresh §5.12 ptr_extent map per translation unit */
   lex(&c,src);
+  if(c.tok_overflow){                     /* Bug B: more than MAXTOK tokens -> a clean fail (fallback), NOT
+                                           * a silent truncation + partial mis-compile. The oracle has no
+                                           * token cap but its recursion/size guards route the same oversized
+                                           * input to fallback, so both rails agree (neither mis-compiles). */
+    snprintf(out->diag,sizeof out->diag,"input too large"); return 1; }
   while(!isk(&c,T_END)&&!c.failed){       /* no fixed function ceiling -- the unit list grows */
     /* A1.3: a leading C23 `[[unsequenced]]`/`[[reproducible]]` (or any `[[...]]`) attribute precedes a
      * function/global. Consume it here and carry the value-neutral hint flag into the next p_func (the

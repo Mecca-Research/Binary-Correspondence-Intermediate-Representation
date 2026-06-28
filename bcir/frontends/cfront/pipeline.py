@@ -256,6 +256,15 @@ def compile_with_fallback(source: str, **kwargs) -> CompileResult:
                             target=(kwargs.get("target") or HOST.name))
         res.fallback = f"{_FALLBACK_PHASE[type(e)]}: {e}"
         return res
+    except RecursionError as e:                        # belt-and-suspenders: a pathologically deeply-nested
+        # input the parser's depth guard (cparse._MAX_DEPTH) didn't catch first (e.g. recursion deep inside
+        # const-eval / lowering over a large AST). Without this it would propagate UNCAUGHT and crash this
+        # supposedly-total entry point. Route it to fallback so the C twin's clean rc-1 "nesting too deep"
+        # PARSE-ERR and this rail AGREE: deep input -> needs_fallback=True on both, never a crash.
+        res = CompileResult(source=source, unit=None, lowered=None,
+                            target=(kwargs.get("target") or HOST.name))
+        res.fallback = f"parse: nesting too deep ({e})"
+        return res
 
 
 def _attest(res: CompileResult, fn: str, target: str) -> dict:
