@@ -146,7 +146,10 @@ static void subst_into(const char *body, const Macro *m, char args[][1024], int 
         continue;
       }
       const char *rt = (pi >= 0 && pi < na) ? args[pi] : r;
-      app(out, cap, w, rt); strcpy(prev, rt[0] ? rt : prev); continue;
+      app(out, cap, w, rt);
+      if (rt[0]) strcpy(prev, rt);   /* an empty paste operand leaves `prev` untouched: `strcpy(prev,prev)`
+                                        is a self-overlapping copy (UB; ASan strcpy-param-overlap) -- guard it */
+      continue;
     }
     int pi = -1; if (k == 'i') for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], t)) pi = q;
     if (pi >= 0 && !strcmp(m->params[pi], "__VA_ARGS__")) {   /* all trailing args, comma-joined */
@@ -196,8 +199,13 @@ static int expand_once(const char *line, char *out, size_t cap, int *changed) {
           i = j; *changed = 1; continue;
         }
       } else if (mi >= 0) {                        /* object macro */
-        if (w && needspace(prevc, M[mi].body[0])) app(out, cap, &w, " ");
-        app(out, cap, &w, M[mi].body); prevc = M[mi].body[0] ? M[mi].body[strlen(M[mi].body)-1] : prevc;
+        /* C 6.10.4.3: `##` pastes ANY two adjacent replacement-list tokens, not only parameter-adjacent
+         * ones -- so an OBJECT-macro body `a##c` / `1##2` pastes too. Run the body through the SHARED
+         * substitute/paste path (no args: `#`/`##` see only literal tokens) so object + function macros
+         * use ONE paste engine; the result is rescanned by the outer expand_line loop. */
+        char osub[2048]; substitute(&M[mi], NULL, 0, osub, sizeof osub);
+        if (w && needspace(prevc, osub[0])) app(out, cap, &w, " ");
+        app(out, cap, &w, osub); prevc = osub[0] ? osub[strlen(osub) - 1] : prevc;
         *changed = 1; continue;
       } else if (!strcmp(t, "__LINE__")) {         /* dynamic predefined: current line number */
         char num[16]; snprintf(num, sizeof num, "%d", g_cur_line);

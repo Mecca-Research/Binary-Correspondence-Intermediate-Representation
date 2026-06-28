@@ -27,14 +27,15 @@ static void dirof(const char *path, char *out, size_t cap) {
 int main(int argc, char **argv) {
   /* args: [--target <abi>] [--canon] <c-source>. --target selects the data model (x86_64-linux
    * default); --canon prints the raw cross-rail canonical serialization (the byte-identity proof). */
-  const char *path = NULL, *target = NULL; int canon = 0;
+  const char *path = NULL, *target = NULL; int canon = 0, emit_cpp = 0;
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--target")) { if (++i < argc) target = argv[i]; }
     else if (!strncmp(argv[i], "--target=", 9)) target = argv[i] + 9;
     else if (!strcmp(argv[i], "--canon")) canon = 1;
+    else if (!strcmp(argv[i], "--emit-cpp")) emit_cpp = 1;   /* dump the preprocessed text and exit (L7) */
     else path = argv[i];
   }
-  if (!path) { fprintf(stderr, "usage: %s [--target <abi>] <c-source>\n", argv[0]); return 2; }
+  if (!path) { fprintf(stderr, "usage: %s [--target <abi>] [--emit-cpp] <c-source>\n", argv[0]); return 2; }
   FILE *fp = fopen(path, "rb");
   if (!fp) { perror("fopen"); return 2; }
   static char raw[1 << 16];
@@ -44,6 +45,9 @@ int main(int argc, char **argv) {
   static char src[1 << 16], cpperr[256], base[1024];
   dirof(path, base, sizeof base);
   if (bcir_cpp_run(raw, base, src, sizeof src, cpperr, sizeof cpperr)) { printf("CPP-ERR %s\n", cpperr); return 1; }
+  /* --emit-cpp: the C-twin preprocessor's expansion verbatim, so the Python differential can compare the
+   * C rail against the reference compiler (catching a Python<->C preprocessor divergence). No frontend. */
+  if (emit_cpp) { fputs(src, stdout); return 0; }
 
   static bcir_cfront_result r;
   /* free even on the compile-error path (not just success): the in-progress unit owns heap arrays, so an

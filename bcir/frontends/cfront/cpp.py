@@ -38,7 +38,10 @@ _TOKEN_RE = re.compile(
     r"|'(?:\\.|[^'\\])*'"                         # char
     r"|\.?\d(?:[eEpP][-+]|[\w.'])*"               # pp-number (C23 ' seps; ints, hex/bin, floats w/ exp+suffix)
     r"|[A-Za-z_]\w*"                             # identifier
-    r"|" + "|".join(re.escape(p) for p in _PUNCT))
+    r"|" + "|".join(re.escape(p) for p in _PUNCT) +
+    r"|\\")                                       # a stray backslash is its own token (e.g. a path in a
+    #                                               stringize arg `#x` -> `"C:\\tmp"`); it would otherwise be
+    #                                               dropped, corrupting the `#`-spelling.
 
 
 class CPPError(Exception):
@@ -312,7 +315,11 @@ class Preprocessor:
             if _is_id(t) and t in self.macros and t not in hide:
                 mac = self.macros[t]
                 if mac.params is None:                        # object-like
-                    out += self._expand(list(mac.body), hide | {t})
+                    # C 6.10.4.3: `##` pastes ANY two adjacent replacement-list tokens, not only ones
+                    # adjacent to a parameter -- so an OBJECT-macro body `a##c` / `1##2` pastes too. Run
+                    # the body through the SHARED substitute/paste path (with no args: `#`/`##` then see
+                    # only literal tokens) so object + function macros use ONE paste engine, then rescan.
+                    out += self._expand(self._substitute(mac, []), hide | {t})
                     i += 1
                     continue
                 # function-like: needs a '(' next
@@ -359,7 +366,14 @@ class Preprocessor:
 
     def _substitute(self, mac: Macro, args: list) -> list:
         params = mac.params or []
+        # C11/C23 6.10.4.1: a parameter has TWO replacement forms. When it is an operand of `#` or `##`
+        # the RAW (unexpanded) argument tokens are used; everywhere else the argument is COMPLETELY
+        # macro-expanded *first* (argument prescan) and that expansion is substituted. We build both maps:
+        # `amap` (raw) feeds `#`/`##`; `eamap` (prescanned) feeds the ordinary substitution -- this is what
+        # makes the classic two-level `XSTR(__LINE__)` -> the line NUMBER, and an argument that is itself a
+        # macro call (`INC(VAL)` with `VAL == INC(5)`) expand all the way down.
         amap: dict[str, list] = {}
+        eamap: dict[str, list] = {}
         for k, p in enumerate(params):
             if p == "__VA_ARGS__":
                 rest = args[k:] if k < len(args) else []
@@ -371,9 +385,14 @@ class Preprocessor:
                 amap[p] = flat
             else:
                 amap[p] = args[k] if k < len(args) else []
-        return self._subst_tokens(list(mac.body), amap)
+            eamap[p] = self._expand(list(amap[p]), set())     # prescan: full expansion in a fresh context
+        return self._subst_tokens(list(mac.body), amap, eamap)
 
-    def _subst_tokens(self, body: list, amap: dict) -> list:
+    def _subst_tokens(self, body: list, amap: dict, eamap: dict | None = None) -> list:
+        # `amap` = raw arguments (for `#`/`##`); `eamap` = prescanned arguments (for plain substitution).
+        # `eamap is None` -> a nested `__VA_OPT__` body re-enters with the same pair (passed through below).
+        if eamap is None:
+            eamap = amap
         out: list = []
         i = 0
         while i < len(body):
@@ -381,21 +400,29 @@ class Preprocessor:
             if t == "__VA_OPT__" and i + 1 < len(body) and body[i + 1] == "(":   # C23 __VA_OPT__
                 content, i = _balanced(body, i + 1)
                 if amap.get("__VA_ARGS__"):                # __VA_ARGS__ non-empty -> the content
-                    out += self._subst_tokens(content, amap)
+                    out += self._subst_tokens(content, amap, eamap)
                 continue
-            if t == "#" and i + 1 < len(body) and body[i + 1] in amap:     # stringize
-                out.append('"' + _join(amap[body[i + 1]]).replace('"', '\\"') + '"')
+            if t == "#" and i + 1 < len(body) and body[i + 1] in amap:     # stringize (RAW arg)
+                out.append(_stringize(amap[body[i + 1]]))
                 i += 2
                 continue
-            if t == "##" and out and i + 1 < len(body):                    # paste
+            if t == "##" and i + 1 < len(body):                            # paste (RAW args; placemarkers)
                 right = amap.get(body[i + 1], [body[i + 1]])
-                left = out.pop()
-                glued = left + (_join(right[:1]) if right else "")
-                out.append(glued)
-                out += right[1:]
+                left = out.pop() if out else ""
+                # An empty operand acts as a placemarker (C 6.10.4.3): `a ## b` with an empty side yields
+                # just the non-empty side and NO literal `##`. Gluing only happens when both inner tokens
+                # exist; otherwise the surviving side passes through untouched. (Pasting against an empty
+                # `out` -- the left arg expanded to nothing -- still elides the `##` instead of emitting it.)
+                if left == "":
+                    out += right                            # empty left -> result is the right operand
+                elif right:
+                    out.append(left + right[0])             # glue the inner tokens, keep the right's tail
+                    out += right[1:]
+                else:
+                    out.append(left)                        # empty right -> result is the left operand
                 i += 2
                 continue
-            out += amap.get(t, [t])                                        # arg or literal
+            out += eamap.get(t, [t])                                       # prescanned arg or literal
             i += 1
         return out
 
@@ -522,6 +549,22 @@ def _join(toks: list[str]) -> str:
             out += " "
         out += t
     return out
+
+
+def _stringize(toks: list[str]) -> str:
+    """The `#`-operator spelling of an argument (C 6.10.4.2): the argument's preprocessing tokens joined
+    with single spaces, leading/trailing whitespace removed, wrapped in `"..."`. A `\\` is inserted before
+    each `"` and `\\` *that is part of a character-constant or string-literal token* -- and ONLY there: a
+    bare backslash floating in the token stream (`S(a\\b)` -> `"a\\b"`, like clang/gcc) is NOT doubled, but
+    one inside a literal is (`S("q")` -> `"\\"q\\""`, `S("c:\\t")` -> `"\\"c:\\\\t\\""`). So the escape is
+    applied per-token to literals, not blanket to the joined text."""
+    esc = []
+    for t in toks:
+        if t[:1] in ('"', "'") and len(t) >= 2:                # a string/char literal -> escape \ and "
+            esc.append(t.replace("\\", "\\\\").replace('"', '\\"'))
+        else:                                                  # any other token, incl. a bare `\`, verbatim
+            esc.append(t)
+    return '"' + _join(esc) + '"'
 
 
 class _ConstEval:
