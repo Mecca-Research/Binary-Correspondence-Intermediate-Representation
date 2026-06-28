@@ -27,12 +27,13 @@ static void dirof(const char *path, char *out, size_t cap) {
 int main(int argc, char **argv) {
   /* args: [--target <abi>] [--canon] <c-source>. --target selects the data model (x86_64-linux
    * default); --canon prints the raw cross-rail canonical serialization (the byte-identity proof). */
-  const char *path = NULL, *target = NULL; int canon = 0, emit_cpp = 0;
+  const char *path = NULL, *target = NULL; int canon = 0, emit_cpp = 0, emit_lf = 0;
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--target")) { if (++i < argc) target = argv[i]; }
     else if (!strncmp(argv[i], "--target=", 9)) target = argv[i] + 9;
     else if (!strcmp(argv[i], "--canon")) canon = 1;
     else if (!strcmp(argv[i], "--emit-cpp")) emit_cpp = 1;   /* dump the preprocessed text and exit (L7) */
+    else if (!strcmp(argv[i], "--emit-link-flags")) emit_lf = 1;  /* B1: the derived linker flags, then exit */
     else path = argv[i];
   }
   if (!path) { fprintf(stderr, "usage: %s [--target <abi>] [--emit-cpp] <c-source>\n", argv[0]); return 2; }
@@ -54,6 +55,11 @@ int main(int argc, char **argv) {
    * error-path leak (Bug 3) is surfaced -- under the harness's LSan/detect_leaks=1 pass this orphaned
    * memory becomes a LeakSanitizer report, pinning the regression. */
   if (bcir_cfront_compile_target(src, target, &r) != 0) { printf("PARSE-ERR %s\n", r.diag); bcir_cfront_free(&r); return 1; }
+  /* --emit-link-flags (B1): the deduped, sorted linker flags the unit's external-call edges need, one
+   * line (e.g. `-lm`; empty for a pure-integer unit). bcir/tests/test_c_cfront.py compares this against
+   * the oracle's linkflags.derive_link_flags -- the dual-rail parity gate. */
+  if (emit_lf) { static char lf[256]; bcir_cfront_link_flags(&r.unit, lf, sizeof lf);
+    printf("%s\n", lf); bcir_cfront_free(&r); return 0; }
   if (canon) { static char cbuf[1 << 17]; bcir_cfront_canon(&r.unit, cbuf, sizeof cbuf);
     fputs(cbuf, stdout); bcir_cfront_free(&r); return 0; }
   char sum[256]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);

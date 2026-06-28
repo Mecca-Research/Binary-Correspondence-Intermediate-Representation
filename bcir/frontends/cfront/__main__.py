@@ -24,6 +24,9 @@ Options (a cc-compatible subset):
     -o <file>       write output to <file> instead of stdout
     --explain       also print the per-function explain record
     --selfcheck     print the generated self-check harness
+    --emit-link-flags  print just the linker flags this unit's external-call edges need (B1), one
+                    space-separated line (e.g. `-lm`); empty for a pure-integer unit. For build-system
+                    consumption. Mirrors bcir-cc --emit-link-flags byte-for-byte (dual-rail parity).
 """
 from __future__ import annotations
 
@@ -50,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     files: list[str] = []
     std = "c23"
     pp_only = show_explain = selfcheck = syntax_only = emit_json = fallback = False
+    emit_link_flags = False
     r21_policy = "advisory"
     target: str | None = None
     out_path: str | None = None
@@ -61,6 +65,8 @@ def main(argv: list[str] | None = None) -> int:
             show_explain = True
         elif a == "--selfcheck":
             selfcheck = True
+        elif a == "--emit-link-flags":
+            emit_link_flags = True
         elif a == "-fsyntax-only":
             syntax_only = True
         elif a == "--emit-json":
@@ -184,6 +190,10 @@ def main(argv: list[str] | None = None) -> int:
                 rc = 1
             continue
 
+        if emit_link_flags:                          # B1: just the derived linker flags, one line
+            from .linkflags import format_link_flags  # noqa: PLC0415
+            out.append(format_link_flags(r.link_flags))
+            continue
         if selfcheck:
             out.append(emit_selfcheck(r))
             continue

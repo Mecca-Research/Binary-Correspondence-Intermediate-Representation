@@ -18,6 +18,8 @@
  *                      (masked) access pulls in "bcir_quarantine.h" -- link runtime/c/bcir_quarantine.c
  *     --emit-claimgraph  emit the structural summary + the per-function claim graph
  *     --emit-pack      emit the entry function's hydrated StreamPack (binary; use -o)
+ *     --emit-link-flags  emit just the linker flags the unit's external-call edges need (one line,
+ *                      space-separated, e.g. `-lm`), for build-system consumption (B1)
  *===----------------------------------------------------------------------===*/
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,7 +59,8 @@ static void cc_r21_count(const char *funcname, const char *kind, void *ctx) {
 
 static const char *USAGE =
   "usage: bcir-cc [-I dir] [-D name[=val]] [-U name] [-std=c23] [-E] [-o out]\n"
-  "               [--target abi] [--fallback] [--emit-c] [--emit-claimgraph] [--emit-pack] file.c ...\n"
+  "               [--target abi] [--fallback] [--emit-c] [--emit-claimgraph] [--emit-pack]\n"
+  "               [--emit-link-flags] file.c ...\n"
   "  --target abi   data model to lay out for: x86_64-linux (default), aarch64-linux,\n"
   "                 riscv64-linux, x86_64-windows, i386-linux\n"
   "  --fallback     total compile: a construct outside the supported subset exits 2 with\n"
@@ -65,7 +68,9 @@ static const char *USAGE =
   "  --r21 <policy> how a detected use-after-free / double-free (R21, §5.12) gates the compile:\n"
   "                 advisory (default; surfaced, never gates) | fallback (route to LLVM, exit 2)\n"
   "                 | reject (hard verify error, exit 1)\n"
-  "  --emit-effects per-function module-scope effect footprints + the commutation matrix\n";
+  "  --emit-effects per-function module-scope effect footprints + the commutation matrix\n"
+  "  --emit-link-flags  the linker flags the unit's external-call edges need (one space-separated\n"
+  "                 line, e.g. -lm; empty for a pure-integer unit) -- for build-system consumption\n";
 
 static void dirof(const char *path, char *out, size_t cap) {
   const char *s = strrchr(path, '/');
@@ -92,7 +97,7 @@ int main(int argc, char **argv) {
   const char *undefs[MAXD]; int nundef = 0;
   const char *files[256]; int nfiles = 0;
   const char *std = "c23", *out_path = NULL, *target = NULL;
-  int pp_only = 0, emit_c = 0, emit_cg = 0, emit_pack = 0, emit_fx = 0, fallback = 0;
+  int pp_only = 0, emit_c = 0, emit_cg = 0, emit_pack = 0, emit_fx = 0, emit_lf = 0, fallback = 0;
   r21_policy r21 = R21_ADVISORY;
 
   for (int i = 1; i < argc; i++) {
@@ -109,6 +114,7 @@ int main(int argc, char **argv) {
       else { fprintf(stderr, "bcir-cc: unknown --r21 policy '%s' (advisory|fallback|reject)\n", v); return 2; }
     }
     else if (!strcmp(a, "--emit-effects")) emit_fx = 1;
+    else if (!strcmp(a, "--emit-link-flags")) emit_lf = 1;
     else if (!strcmp(a, "--emit-c")) emit_c = 1;
     else if (!strcmp(a, "--emit-claimgraph")) emit_cg = 1;
     else if (!strcmp(a, "--emit-pack")) emit_pack = 1;
@@ -188,7 +194,13 @@ int main(int argc, char **argv) {
       }
     }
 
-    if (emit_c) {
+    if (emit_lf) {
+      /* B1: just the linker flags the unit's external-call edges need (one space-separated line, e.g.
+       * `-lm`; empty for a pure-integer unit) -- for build-system consumption. Byte-identical to the
+       * Python rail (bcir-cfront --emit-link-flags); parity gated in check_runtime.sh. */
+      char lflags[256]; bcir_cfront_link_flags(&r.unit, lflags, sizeof lflags);
+      fprintf(outf, "%s\n", lflags);
+    } else if (emit_c) {
       /* §5.12: a masked (bounds-promoted) access emits `a[BCIR_CHK(...)]`, which references the
        * bounds-quarantine runtime ABI. Make the driver's output a self-contained translation unit by
        * pulling in the runtime header -- the user links runtime/c/bcir_quarantine.c (or overrides the

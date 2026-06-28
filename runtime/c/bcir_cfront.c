@@ -1710,6 +1710,72 @@ static int is_stdlib_alloc(const char *s, int n) {
   if(n==4 && !strncmp("free",s,4)) return 2;
   return 0;
 }
+
+/* B1 link-flag derivation -- the byte-identical C twin of bcir/frontends/cfront/linkflags.py. The
+ * callee->library classification is the SOURCE OF TRUTH for what an external-call edge links against;
+ * both rails must agree (gated in test_c_cfront.py + check_runtime.sh). `s[0..n)` is the external
+ * callee name (the suffix of a c.call.libm: / c.call.libm.void: / c.call.extern: claim op).
+ *
+ * Returns the `-l...` flag, "" for a known-but-implicit libc symbol (NO flag, but EXPLICITLY known),
+ * or NULL for an UNKNOWN external callee. Unknown-callee policy (deterministic): NULL contributes no
+ * flag -- BCIR does not invent a `-l` it can't justify; an unknown symbol is the build system's to
+ * resolve (today's behaviour). NULL is kept DISTINCT from "" so the mapping is a complete statement of
+ * what BCIR knows about its own emitted external seams.
+ *
+ * EXTENSION POINT (roadmap B2): add one branch per newly-wrapped trusted library here, in the SAME
+ * ORDER as the oracle's _LIBRARY_RULES (e.g. fftw_*->"-lfftw3", LAPACKE_*->"-llapack", gsl_*->"-lgsl",
+ * Sleef_*->"-lsleef"). First match wins, so order is significant. */
+static const char *bcir_lib_for_callee(const char *s, int n) {
+  if(n<=0) return NULL;
+  /* <math.h> / <complex.h> (incl. the f/l-suffixed + fixed-int/long variants) -> -lm. */
+  if(libm_float_size(s,n) || libm_is_int(s,n) || libm_is_long(s,n) || libm_is_ld(s,n)) return "-lm";
+  /* libc-implicit (malloc/free/realloc/calloc/aligned_alloc + the printf/scanf family) -> no flag. */
+  if(is_stdlib_alloc(s,n) || is_extern_variadic(s,n)) return "";
+  /* B5 BLAS: cblas_sgemm and any cblas_* (CBLAS) -> -lcblas (the existing B5 path's choice). */
+  if(n>=6 && !strncmp("cblas_",s,6)) return "-lcblas";
+  /* --- B2 EXTENSION POINT: one branch per newly-wrapped library, matching the oracle's order. --- */
+  return NULL;                                          /* unknown external callee -> no flag */
+}
+
+/* The external callee named by a claim op (the suffix of a c.call.libm:/.void:/extern: edge), or NULL
+ * if `op` is not an external-call edge; sets *len to the callee length. Mirrors the oracle's
+ * _EXTERN_CALL_PREFIXES + _callee_of. */
+static const char *bcir_extern_callee(const char *op, int *len) {
+  static const char *const P[]={"c.call.libm:","c.call.libm.void:","c.call.extern:",0};
+  for(int i=0;P[i];i++){ size_t pl=strlen(P[i]);
+    if(!strncmp(op,P[i],pl)){ const char *c=op+pl; *len=(int)strlen(c); return c; } }
+  return NULL;
+}
+
+/* B1: derive the deduped, STABLY-SORTED linker flags a whole unit's external-call edges need, written
+ * one space-separated line to `buf` (e.g. "-lm"; empty for a pure-integer unit). Reproducible (a BCIR
+ * hard requirement): the flags are sorted, so the same unit always yields a byte-identical line,
+ * independent of claim order. The Python oracle (linkflags.derive_link_flags) produces the identical
+ * string. NB: kept tiny -- the flag SET is small (one per linked library), so an insertion-sorted
+ * fixed array is exact and allocation-free. */
+void bcir_cfront_link_flags(const bcir_unit *u, char *buf, size_t cap) {
+  #define BCIR_MAX_LINK_FLAGS 32
+  const char *flags[BCIR_MAX_LINK_FLAGS]; int nf=0;
+  for(int fi=0; fi<u->n_funcs; fi++){ const bcir_func *f=&u->funcs[fi];
+    for(size_t ci=0; ci<f->n_claims; ci++){
+      int len=0; const char *callee=bcir_extern_callee(f->claims[ci].op,&len);
+      if(!callee) continue;
+      const char *flag=bcir_lib_for_callee(callee,len);
+      if(!flag || !flag[0]) continue;                  /* "" (implicit) and NULL (unknown) add no flag */
+      int dup=0; for(int k=0;k<nf;k++) if(!strcmp(flags[k],flag)){ dup=1; break; }
+      if(dup) continue;
+      if(nf>=BCIR_MAX_LINK_FLAGS) continue;             /* defensive: the live library set is tiny */
+      int p=nf;                                         /* insertion sort -> a deterministic sorted set */
+      while(p>0 && strcmp(flags[p-1],flag)>0){ flags[p]=flags[p-1]; p--; }
+      flags[p]=flag; nf++;
+    }
+  }
+  size_t w=0;
+  for(int k=0;k<nf && w<cap;k++)
+    w+=(size_t)snprintf(buf+w, w<cap?cap-w:0, "%s%s", k?" ":"", flags[k]);
+  if(cap){ if(w>=cap) w=cap-1; buf[w]=0; }
+  #undef BCIR_MAX_LINK_FLAGS
+}
 /* GCC/Clang integer builtins -- emitted verbatim (no bcir_ twin, opaque to R18) with a fixed result type.
  * Returns the result's SIGNED size: -4 a signed int (the bit-count family + abs), -8 a signed long
  * (labs/llabs), or a POSITIVE unsigned size for byte-swap (2/4/8). 0 == not a recognized builtin. */
@@ -4727,16 +4793,21 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
   }
   if(c.failed){snprintf(out->diag,sizeof out->diag,"%s",c.err);return 1;}
   out->ok=bcir_verify_unit(&out->unit,out->diag,sizeof out->diag);
-  /* C.2 verified-C attestation: stamp the emitted C with its R-law status + R13 digest. */
+  /* C.2 verified-C attestation: stamp the emitted C with its R-law status + R13 digest + the unit's
+   * derived link flags (B1; so --emit-c is self-describing about what it links -- a comment, stripped
+   * on re-parse). The link_flags line mirrors the oracle's C.2 attestation. */
   const bcir_func *entry = out->unit.n_funcs ? &out->unit.funcs[out->unit.n_funcs-1] : NULL;
+  char lflags[256]; bcir_cfront_link_flags(&out->unit, lflags, sizeof lflags);
   size_t w=snprintf(out->emitted,sizeof out->emitted,
     "/* BCIR verified-C attestation (C.2) -- generated by bcir_cfront, do not edit.\n"
     " *   R1-R8 + R18  %s\n"
     " *   R9 plan / R10-R11 pack  checked in the compile->execute loop\n"
     " *   R12 lowering-contract  support preserved (emit Clang-behaviour-equivalent)\n"
     " *   R13 provenance digest  %016llx\n"
-    " *   R17 accuracy  exact (integer / Q-fixed, 0 ULP)\n */\n",
-    out->ok?"clean":"DIRTY", entry?(unsigned long long)bcir_provenance_digest(entry):0ull);
+    " *   R17 accuracy  exact (integer / Q-fixed, 0 ULP)\n"
+    " *   link_flags  %s\n */\n",
+    out->ok?"clean":"DIRTY", entry?(unsigned long long)bcir_provenance_digest(entry):0ull,
+    lflags[0]?lflags:"-");
   if(c.fpdefs_w && w<sizeof out->emitted-c.fpdefs_w-1)   /* synthesized funcptr-param typedefs (prelude) */
     w+=snprintf(out->emitted+w,sizeof out->emitted-w,"%.*s",(int)c.fpdefs_w,c.fpdefs);
   for(int i=0;i<out->unit.n_funcs && w<sizeof out->emitted-256;i++){
