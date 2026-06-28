@@ -112,6 +112,10 @@ bcir_status bcir_sp_reencode(const uint8_t *BCIR_RESTRICT in, size_t in_len,
     copy_str(&r, &w);             /* prefetch */
     copy_strarr(&r, &w);          /* fence_before */
     copy_strarr(&r, &w);          /* fence_after */
+    if (hdr.version >= 3) {
+      w_u8(&w, r_u8(&r));         /* v3: dispatch (u8) */
+      copy_str(&r, &w);           /* v3: channel (str) */
+    }
   }
   for (uint32_t i = 0; i < hdr.n_prefetches && !r.err && !w.err; i++) {
     copy_str(&r, &w);             /* name */

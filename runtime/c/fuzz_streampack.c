@@ -29,6 +29,12 @@ static int visit(const bcir_segment_view *seg, void *ctx) {
     *acc += (uint8_t)seg->name[0];           /* in-bounds by construction */
   if (seg->opcode_len)
     *acc += (uint8_t)seg->opcode[seg->opcode_len - 1];
+  /* v3 + prefetch view fields: touch their bounds-derived ends so ASan flags a bad range. */
+  *acc += seg->dispatch;
+  if (seg->prefetch_len)
+    *acc += (uint8_t)seg->prefetch[seg->prefetch_len - 1];
+  if (seg->channel_len)
+    *acc += (uint8_t)seg->channel[seg->channel_len - 1];
   return 0;
 }
 
@@ -37,6 +43,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   (void)bcir_sp_validate(data, size, &hdr);   /* header + CRC validation path */
   uint64_t acc = 0;
   (void)bcir_sp_for_each_segment(data, size, visit, &acc);  /* the full body walk */
+  /* The semantic verifier (R10/R11 + range gate) is a second trust-boundary pass: it makes
+   * extra bounded walks over the same untrusted bytes, so it must also never over-read. */
+  (void)bcir_sp_verify_semantic(data, size, 0xFFFFFFFFu, 0xFFFFFFFFu);
+  (void)bcir_sp_check_generation(data, size, 1u, 0u);
   /* A standalone CRC over the buffer must also never over-read. */
   if (size)
     (void)bcir_crc32(data, size);

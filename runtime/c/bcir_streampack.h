@@ -49,8 +49,17 @@
 
 #define BCIR_STREAMPACK_MAGIC   "BSPK"   /* bytes 0..3 of the header */
 #define BCIR_STREAMPACK_VERSION 1
-#define BCIR_STREAMPACK_VERSION_MAX 2    /* v2: append-only pipeline/double-buffer */
+#define BCIR_STREAMPACK_VERSION_MAX 3    /* v2: pipeline/double-buffer; v3: segment dispatch/channel */
 #define BCIR_STREAMPACK_HEADER_SIZE 64
+
+/* v3 segment dispatch (the execution-routing target). u8 enum on the wire, mirroring
+ * bcir/abi/streampack_abi.py::_DISPATCH_WIRE. "core" is the default a v1/v2 pack carries
+ * implicitly; "pim" dispatches to processing-in-memory. A code outside this set is rejected. */
+typedef enum bcir_dispatch {
+  BCIR_DISPATCH_CORE = 0,   /* execute on the compute core (default) */
+  BCIR_DISPATCH_PIM  = 1    /* dispatch to the memory controller (processing-in-memory) */
+} bcir_dispatch;
+#define BCIR_DISPATCH_MAX 1  /* the largest legal dispatch code (range gate) */
 
 #ifdef __cplusplus
 extern "C" {
@@ -89,6 +98,7 @@ typedef enum bcir_lane {
  *   segment   := name:str  claim_id:u64  phase_id:u32  lane:u8  width:u32
  *                stride_k:u32  opcode:str  reads:u32_array  writes:u32_array
  *                prefetch:str  fence_before:str_array  fence_after:str_array
+ *                [v3: dispatch:u8  channel:str]
  *   prefetch  := name:str  distance:u32  targets:u32_array  hint:str  pattern:str
  *                [v2: buffers:u8  (2 = double-buffer contract)]
  *   block     := base:u64  count:u64  strides:u64_array
@@ -97,6 +107,13 @@ typedef enum bcir_lane {
  * v2 (append-only): the header gains pipeline_depth (in the v1 pad) and the
  * prefetch record appends buffers:u8. Segment/block/trace records are unchanged,
  * so v1 walkers remain correct on the segment stream of a v2 pack.
+ *
+ * v3 (append-only): the SEGMENT record appends dispatch:u8 (a bcir_dispatch code) +
+ * channel:str (the heterogeneous HardwareChannel, "host" by default), so the
+ * execution-routing target is now ON the wire and inside the CRC -- a dispatch/channel
+ * mutation is no longer invisible to byte-identity. v3 implies v2 (it carries
+ * pipeline_depth + the prefetch buffers tail). A pack that uses neither (every segment
+ * "core"/"host") encodes as the lowest carrying version, so v1/v2 packs are unchanged.
  */
 
 #ifdef __cplusplus

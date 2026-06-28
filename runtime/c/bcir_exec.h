@@ -64,6 +64,20 @@ BCIR_NODISCARD bcir_status bcir_sp_execute(const uint8_t *BCIR_RESTRICT data, si
                                            size_t phases_cap, bcir_exec_fn fn, void *ctx,
                                            bcir_exec_result *BCIR_RESTRICT out);
 
+/* As bcir_sp_execute, but FIRST enforces R11 (generation/staleness) against the caller's
+ * expected map_gen/data_gen (pass (uint32_t)-1 to skip a field): a STALE pack is rejected
+ * with BCIR_ERR_STALE instead of executed. R10 + the lane/width/dispatch range gate are
+ * enforced by bcir_sp_execute itself, so this is the fully-checked executor entry point --
+ * the freestanding twin of refusing to run a pack that verify_pack would diagnose. */
+BCIR_NODISCARD bcir_status bcir_sp_execute_checked(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                                   uint32_t expected_map_gen,
+                                                   uint32_t expected_data_gen,
+                                                   bcir_exec_item *BCIR_RESTRICT scratch,
+                                                   size_t scratch_cap,
+                                                   bcir_phase_stat *BCIR_RESTRICT phases,
+                                                   size_t phases_cap, bcir_exec_fn fn, void *ctx,
+                                                   bcir_exec_result *BCIR_RESTRICT out);
+
 #ifdef __cplusplus
 }
 #endif

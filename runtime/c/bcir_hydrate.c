@@ -42,7 +42,11 @@ bcir_status bcir_hydrate(const bcir_func *f, const bcir_plan *plan,
   w_u16(&w, 0);                       /* flags */
   w_u32(&w, 0); w_u32(&w, 0); w_u32(&w, 0);          /* topo/map/data gen */
   w_u32(&w, n_seg);                   /* n_segments (realizable claims only) */
-  w_u32(&w, 0); w_u32(&w, 0); w_u32(&w, 0);          /* n_prefetches / n_blocks / n_trace */
+  /* one trace note PER realizable segment (claim_id provenance), mirroring Python hydrate:
+   * R10 requires every segment's claim_id to resolve to a decoded trace record, so the C
+   * hydrate must emit them too -- else bcir_sp_verify_semantic / the checked executor would
+   * reject the pack this very function produced. */
+  w_u32(&w, 0); w_u32(&w, 0); w_u32(&w, n_seg);      /* n_prefetches / n_blocks / n_trace */
   w_u16(&w, 0);                       /* pipeline_depth (v1) */
   for (int i = 0; i < 26; i++) w_u8(&w, 0);          /* reserved -> 64 bytes */
 
@@ -65,7 +69,15 @@ bcir_status bcir_hydrate(const bcir_func *f, const bcir_plan *plan,
     w_u16(&w, 0);                     /* fence_before (str_array, count 0) */
     w_u16(&w, 0);                     /* fence_after */
   }
-  /* prefetches[0] / blocks[0] / trace[0]: nothing to write (counts are 0). */
+  /* prefetches[0] / blocks[0]: nothing to write (counts are 0). */
+  /* trace[n_seg]: one note per realizable segment, claim_id only (src/trace hash 0). */
+  for (size_t i = 0; i < f->n_claims; i++) {
+    const bcir_claim *cl = &f->claims[i];
+    if (cl->opcode == BCIR_OP_NOP) continue;
+    w_u64(&w, cl->id);                /* claim_id */
+    w_u64(&w, 0);                     /* src_hash */
+    w_u64(&w, 0);                     /* trace_hash */
+  }
 
   if (w.err) return BCIR_ERR_NOSPACE;
 
