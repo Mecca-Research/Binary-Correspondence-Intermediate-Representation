@@ -9,14 +9,73 @@ runtime state Theta and the policy, closing the AI-guided optimization loop.
 they map directly onto Theta. Kafka is the intended production transport; the
 sinks here are a null/in-memory/file (JSONL) interface that a broker backend can
 later implement.
+
+INTEGRITY (CT4-sec): telemetry is the one BCIR artifact that crosses into
+decision-making, so a poisoned record skews Theta / the adaptive policy / the regret
+gate. `DataDNA.validate` enforces the *documented* schema at the ingest boundary
+(every normalized field in ``[0, 100]``, every field finite, counters non-negative);
+`sanitize_events` is the validating filter the calibrate/sense path runs first, and it
+surfaces a `TelemetryIntegrity` witness (rejected count + monotonic sequence + an
+``empty``/``blind`` flag) so a suppression or injection attack is *observable* rather
+than a silent no-op. See `TelemetryIntegrity` for the explicit defends / does-NOT-defend
+boundary (it bounds values + detects drop/replay/reorder; it does NOT authenticate a
+lying-but-in-range PMU -- that residual trust is what `MeasuredReplanCertificate`'s
+provenance-of-source gate is for).
 """
 
 from __future__ import annotations
 
 import json
+import math
 import struct
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+
+# The documented normalized-pressure band (inclusive). A field outside it is bogus
+# (an injected `thermal=10000`, a negative, a NaN/inf), not a real silicon reading.
+NORM_MIN = 0
+NORM_MAX = 100
+_NORM_FIELDS = ("misses", "thermal", "voltage", "utilization")   # the 0..100 pressures
+_COUNTER_FIELDS = ("cycles", "bytes")                            # non-negative counters
+
+
+class TelemetryIntegrityError(ValueError):
+    """A telemetry record violated the documented schema (out-of-range / non-finite /
+    negative counter). Raised by the strict-mode validators; the sink/stream path
+    instead *drops and counts* the record (see `sanitize_events`)."""
+
+
+class SharedRingError(ValueError):
+    """A shared-memory ring header failed integrity validation (bad magic/version,
+    wrong `record_size`, or a `capacity * record_size` that overruns the buffer).
+    `parse_shared_ring` raises this instead of reading arbitrary offsets out of the
+    mmap'd region (the OOB-read / disclosure surface)."""
+
+
+# Self-describing header for the shared-memory ring (see `parse_shared_ring`). The
+# header is 4 x u64; slot [3] (byte offset 24) was a `reserved` word == 0 in the
+# original layout, so it is repurposed APPEND-ONLY as `magic<<16 | version`: a reader
+# that sees 0 there falls back to the legacy validation (record_size must still match),
+# and the C producer (`emit_ring_header_c`) now stamps the magic so the wire format is
+# self-describing on both sides. ``BCIR`` packed big-end into the high 32 bits.
+RING_MAGIC = 0x42434952            # "BCIR" (0x42 'B' 0x43 'C' 0x49 'I' 0x52 'R')
+RING_VERSION = 1
+RING_STAMP = (RING_MAGIC << 16) | RING_VERSION   # the value written into header slot [3]
+
+
+def _is_finite_number(v) -> bool:
+    """True iff `v` is a real, finite int/float (rejects NaN, +/-inf, bool, non-numbers).
+
+    `bool` is excluded deliberately: `True`/`False` are ints in Python and would
+    silently coerce to 1/0, which is exactly the kind of type confusion an injected
+    JSON payload exploits."""
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, int):
+        return True
+    if isinstance(v, float):
+        return math.isfinite(v)
+    return False
 
 
 @dataclass(frozen=True)
@@ -30,6 +89,49 @@ class DataDNA:
     voltage: int = 0         # 0..100 (0 = nominal)
     utilization: int = 0     # 0..100
     provenance: str = ""     # back-reference (e.g. plan/claim hash)
+
+    def violations(self) -> list[str]:
+        """Return the list of schema violations (empty == a valid, in-range record).
+
+        The documented contract, enforced here at the ingest boundary: the four
+        normalized pressures (`misses`/`thermal`/`voltage`/`utilization`) are finite
+        ints in ``[0, 100]``; the `cycles`/`bytes` counters are finite and
+        non-negative; `claim_id` is a finite int. A NaN/inf, a negative, or a value
+        ``> 100`` is a bogus reading (injected, not measured) and is reported so the
+        ingest path can REJECT-and-count it before it reaches Theta or the policy."""
+        bad: list[str] = []
+        if not _is_finite_number(self.claim_id) or isinstance(self.claim_id, float):
+            bad.append("claim_id not a finite int")
+        for f in _COUNTER_FIELDS:
+            v = getattr(self, f)
+            if not _is_finite_number(v):
+                bad.append(f"{f} not finite")
+            elif v < 0:
+                bad.append(f"{f} negative ({v})")
+        for f in _NORM_FIELDS:
+            v = getattr(self, f)
+            if not _is_finite_number(v):
+                bad.append(f"{f} not finite")
+            elif v < NORM_MIN or v > NORM_MAX:
+                bad.append(f"{f} out of [0,100] ({v})")
+        return bad
+
+    def is_valid(self) -> bool:
+        """True iff the record satisfies the documented schema (no violations)."""
+        return not self.violations()
+
+    def validate(self) -> "DataDNA":
+        """Strict gate: return `self` unchanged if valid, else raise. Use at a trust
+        boundary where a bogus record must HARD-FAIL (a forged certificate's seed,
+        a single record from an untrusted producer). The stream/sink path uses the
+        soft `sanitize_events` (drop-and-count) instead, so one poisoned record in a
+        batch cannot deny service to the whole telemetry loop."""
+        bad = self.violations()
+        if bad:
+            raise TelemetryIntegrityError(
+                f"DataDNA(segment_id={self.segment_id!r}, claim_id={self.claim_id!r}) "
+                f"violates the documented 0..100 schema: {'; '.join(bad)}")
+        return self
 
     def to_dict(self) -> dict:
         # Explicit flat dict: DataDNA is 9 scalar fields, so the recursive
@@ -46,6 +148,89 @@ class DataDNA:
             "utilization": self.utilization,
             "provenance": self.provenance,
         }
+
+
+@dataclass(frozen=True)
+class TelemetryIntegrity:
+    """The per-stream integrity witness the calibrate/sense ingest path produces
+    (the telemetry analogue of the plan/pack rail's R13 content digest).
+
+    DEFENDS (what an attacker can no longer do once the calibrator runs through
+    `sanitize_events`):
+      - *value injection*: a record with a field outside the documented ``[0, 100]``
+        band, a NaN/inf, or a negative counter is `rejected` (dropped + counted), so a
+        forged ``thermal=10000`` never reaches the EWMA / the ``>=60`` policy thresholds.
+      - *stream suppression / eviction*: an empty stream (or one wholly rejected, or one
+        the ring dropped) is no longer a silent no-op -- `blind` is True and the caller
+        (and the security harness) can assert the absence is surfaced.
+      - *replay / reorder*: `accepted == seq_span` only when the surviving claim_ids
+        are a strictly increasing run; a duplicated or reordered record makes
+        `monotonic` False, so a replayed batch is detectable.
+
+    Does NOT DEFEND (the honest residual-trust boundary, pinned like the autodiff
+    limitation note): it CANNOT authenticate a *lying-but-in-range* PMU. A producer
+    that fabricates plausible 0..100 values (e.g. the low-variance cost-masking attack
+    in `kbcir.sensing`) passes value validation by construction -- a content MAC keyed
+    to the producer would be required, which is out of scope here. The witness bounds
+    the blast radius (no out-of-band value can move the policy, and a *missing* stream
+    is visible); authenticating the *source* of an in-range value remains the job of
+    `MeasuredReplanCertificate`'s provenance-of-source gate, which this complements
+    rather than replaces."""
+
+    accepted: int = 0          # records that passed the documented schema
+    rejected: int = 0          # records dropped for a schema violation
+    dropped: int = 0           # records evicted/lost upstream (ring overwrite, etc.)
+    monotonic: bool = True     # surviving claim_ids form a strictly increasing run
+    seq_span: int = 0          # distinct strictly-increasing claim_ids observed
+
+    @property
+    def blind(self) -> bool:
+        """True when no valid telemetry survived (empty / all-rejected / all-dropped):
+        the suppression-attack signal. A calibrator that returns Theta unchanged must
+        report `blind` so the no-throttle outcome is a visible decision, not silence."""
+        return self.accepted == 0
+
+    @property
+    def clean(self) -> bool:
+        """True iff every record was accepted and nothing was dropped or replayed."""
+        return (self.rejected == 0 and self.dropped == 0 and self.monotonic
+                and self.accepted > 0)
+
+
+def sanitize_events(events, *, dropped: int = 0) -> tuple[list[DataDNA], TelemetryIntegrity]:
+    """The ingest gate: filter a telemetry batch to the records that satisfy the
+    documented schema and return them alongside a `TelemetryIntegrity` witness.
+
+    REJECT-and-count policy (deliberate, not clamp): a clearly-bogus value (negative,
+    ``> 100``, NaN/inf, a non-finite counter) is DROPPED, not clamped to the band.
+    Clamping a hostile ``thermal=10000`` to 100 would let the attacker *saturate* the
+    policy (force ENERGY) at will -- a free lever -- whereas dropping it leaves the
+    EWMA/average computed only over genuine in-range samples, so an injected record
+    cannot move Theta at all. The cost is that a hostile batch can *shrink* (fewer
+    samples), but that is surfaced as `rejected`/`blind`, never silent. Legitimate,
+    fully in-range telemetry passes through UNCHANGED (same objects, same order)."""
+    out: list[DataDNA] = []
+    rejected = 0
+    monotonic = True
+    last_cid = None
+    seq = 0                                       # count of distinct strictly-increasing claim_ids
+    for e in events:
+        if not isinstance(e, DataDNA) or not e.is_valid():
+            rejected += 1
+            continue
+        out.append(e)
+        # Non-decreasing claim_ids are legitimate (a batch of segments for one claim, or
+        # an advancing publish counter). A *decrease* is a stale record resent after a
+        # newer one -> reorder/replay, which flags `monotonic`. A strictly higher id
+        # advances the sequence span.
+        if last_cid is not None and e.claim_id < last_cid:
+            monotonic = False
+        elif last_cid is None or e.claim_id > last_cid:
+            seq += 1
+        last_cid = e.claim_id if last_cid is None else max(last_cid, e.claim_id)
+    witness = TelemetryIntegrity(accepted=len(out), rejected=rejected, dropped=dropped,
+                                 monotonic=monotonic, seq_span=seq)
+    return out, witness
 
 
 class TelemetrySink(ABC):
@@ -71,6 +256,41 @@ class ListSink(TelemetrySink):
 
     def emit(self, event: DataDNA) -> None:
         self.events.append(event)
+
+
+@dataclass
+class ValidatingSink(TelemetrySink):
+    """A boundary sink that enforces the documented schema on EVERY event before it
+    reaches the wrapped (downstream) sink, counting rejections in a live witness.
+
+    Place this at the *entry* of any untrusted telemetry transport (a `Broker`
+    subscriber feeding the calibrator, a network/Kafka ingest tap) so a poisoned
+    record is dropped + counted at the wire rather than silently folded into Theta.
+    REJECT-and-count (never clamp), matching `sanitize_events`. The running
+    `rejected`/`accepted`/`blind` are inspectable so suppression/injection are
+    observable in the live stream, not just in a post-hoc batch."""
+
+    inner: TelemetrySink = field(default_factory=lambda: NullSink())
+    accepted: int = 0
+    rejected: int = 0
+
+    def emit(self, event: DataDNA) -> None:
+        if isinstance(event, DataDNA) and event.is_valid():
+            self.accepted += 1
+            self.inner.emit(event)
+        else:
+            self.rejected += 1            # dropped at the boundary; never reaches Theta
+
+    def flush(self) -> None:
+        self.inner.flush()
+
+    @property
+    def witness(self) -> "TelemetryIntegrity":
+        return TelemetryIntegrity(accepted=self.accepted, rejected=self.rejected)
+
+    @property
+    def blind(self) -> bool:
+        return self.accepted == 0
 
 
 class FileSink(TelemetrySink):
@@ -185,25 +405,86 @@ class TelemetryRing(TelemetrySink):
     def pending(self) -> int:
         return self._head - self._tail
 
+    @property
+    def lost(self) -> bool:
+        """True iff the ring has overwritten any unread record. A silent eviction is a
+        telemetry-suppression vector (records vanish before the calibrator reads them);
+        the caller can assert ``not ring.lost`` to make the loss a visible signal rather
+        than a number buried in `stats.dropped`."""
+        return self.stats.dropped > 0
 
-def parse_shared_ring(buf) -> list[DataDNA]:
+    def witness(self) -> "TelemetryIntegrity":
+        """Surface the ring's read/drop accounting as a `TelemetryIntegrity` witness so
+        an eviction (`dropped > 0`) is observable on the same channel as the calibrate
+        path's injection/suppression signals."""
+        return TelemetryIntegrity(accepted=self.stats.read, rejected=0,
+                                  dropped=self.stats.dropped)
+
+
+_RING_HEADER_BYTES = 4 * 8              # 4 x u64 (head, capacity, record_size, magic/ver)
+
+
+def parse_shared_ring(buf, *, strict: bool = False) -> list[DataDNA]:
     """Read records from a shared-memory ring written by the C producer
     (`lower.memory_model.emit_ring_header_c`): an mmap/bytes/bytearray with the
-    32-byte header (head, capacity, record_size) + fixed records. Samples by pointer
-    offset only -- no syscall, no serialization. Returns up to `min(head, capacity)`
-    records, oldest-first (the live window the producer has published)."""
-    head, capacity, record_size, _ = struct.unpack_from("<4Q", buf, 0)
-    if capacity == 0 or record_size == 0:
+    32-byte header (head, capacity, record_size, magic) + fixed records. Samples by
+    pointer offset only -- no syscall, no serialization. Returns up to
+    `min(head, capacity)` records, oldest-first (the live window the producer published).
+
+    INTEGRITY (CT4-sec): the header is no longer TRUSTED. A crafted header (a large
+    `capacity` x a wrong `record_size`, or an out-of-range `head`) could otherwise make
+    the loop `unpack_from` arbitrary offsets out of the mmap'd region (an OOB read /
+    info disclosure). Before iterating this validates, against the *real* buffer length:
+
+      - the buffer is at least one header long;
+      - `magic` (header slot [3]) is `RING_STAMP` (self-describing) OR 0 (legacy
+        producers; back-compatible). Any other value is a foreign/forged buffer;
+      - `record_size` equals the real `TelemetryRing._FMT` stride (56) -- it is the
+        unpack stride, so a lie here is the disclosure lever;
+      - `header + capacity * record_size` fits within `len(buf)` (no slot is OOB);
+      - `head <= capacity` after a legitimate wrap, and `head` is sane.
+
+    On ANY mismatch it REJECTS the buffer: returns `[]` (or raises `SharedRingError`
+    when `strict=True`) -- it never reads past the validated record region. A
+    deliberately short buffer therefore yields `[]`, not an out-of-bounds unpack."""
+    blen = len(buf)
+
+    def _reject(msg: str) -> list[DataDNA]:
+        if strict:
+            raise SharedRingError(msg)
         return []
-    n = min(head, capacity)                 # records currently live in the ring
-    base = 4 * 8
+
+    if blen < _RING_HEADER_BYTES:
+        return _reject(f"buffer too short for header ({blen} < {_RING_HEADER_BYTES})")
+    head, capacity, record_size, magic = struct.unpack_from("<4Q", buf, 0)
+
+    if magic not in (RING_STAMP, 0):
+        return _reject(f"bad ring magic/version 0x{magic:x} (expected 0x{RING_STAMP:x})")
+    if capacity == 0 or record_size == 0:
+        return []                            # an empty/uninitialized ring (legitimate)
+
+    real_stride = struct.calcsize(TelemetryRing._FMT)
+    if record_size != real_stride:
+        return _reject(f"record_size {record_size} != real stride {real_stride} "
+                       "(record-format mismatch / OOB-read lever)")
+    # bounds: every live slot index must address a full record inside the buffer.
+    need = _RING_HEADER_BYTES + capacity * record_size
+    if need > blen:
+        return _reject(f"capacity*record_size overruns buffer "
+                       f"({need} > {blen}); header is forged/corrupt")
+    if head > capacity * 2 + capacity:       # a sane wrap keeps head bounded; reject absurd heads
+        return _reject(f"implausible head {head} for capacity {capacity}")
+
+    n = min(head, capacity)                  # records currently live in the ring
+    base = _RING_HEADER_BYTES
     out: list[DataDNA] = []
-    # oldest live slot first (head has wrapped iff head > capacity).
-    start = head - n
+    start = head - n                         # oldest live slot first (head wrapped iff > capacity)
     for k in range(n):
         slot = (start + k) % capacity
-        cid, cyc, byt, mis, th, vo, ut = struct.unpack_from(
-            TelemetryRing._FMT, buf, base + slot * record_size)
+        off = base + slot * record_size
+        if off + real_stride > blen:         # defensive: never unpack past the buffer
+            return _reject(f"record at offset {off} would overrun buffer {blen}")
+        cid, cyc, byt, mis, th, vo, ut = struct.unpack_from(TelemetryRing._FMT, buf, off)
         out.append(DataDNA(segment_id="", claim_id=cid, cycles=cyc, bytes=byt,
                            misses=mis, thermal=th, voltage=vo, utilization=ut))
     return out
