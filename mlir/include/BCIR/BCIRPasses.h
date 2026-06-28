@@ -92,6 +92,17 @@ std::unique_ptr<mlir::Pass> createLowerGemActivationPass();
 // plan_conv's strategy (direct = the untiled gemm), and erases the conv (the conv analog of
 // lower-gem-matmul / lower-gem-activation).
 std::unique_ptr<mlir::Pass> createLowerGemConvPass();
+// -bcir-lower-gem-attention: lower each gem.attention plan record (the K_BCIR-chosen
+// two-matmul realization of single-head scaled-dot-product attention
+// softmax(Q@K^T/sqrt(d_k))@V, G7) into its concrete decomposition -- the two gem.matmul
+// tile sequences (scores Q@K^T + context A@V) with the softmax gem.activation between
+// them. Attention DECOMPOSES into the existing ops, so it is priced through the matmul
+// roofline for BOTH matmuls (the SUM of the two priced costs -- no bespoke term).
+// Recomputes the host-independent roofline parity (summed compute/mem == the two
+// per-gemm costs; bottleneck == max) + the R17 verdict + the softmax quarantine (expf
+// via the trusted libm edge; the matmuls are exact), and erases the attention (the
+// attention analog of lower-gem-matmul / lower-gem-conv).
+std::unique_ptr<mlir::Pass> createLowerGemAttentionPass();
 // -bcir-fuse-matmul-activation: the G2 matmul+activation epilogue fusion (port of
 // bcir/kbcir/fusion.py::optimize_fused). Fuse a SOLE-CONSUMER gem.matmul -> gem.activation
 // pair into a single gem.fused_matmul_activation iff the deforestation-priced fused score
