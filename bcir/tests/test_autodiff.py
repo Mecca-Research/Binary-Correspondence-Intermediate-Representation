@@ -25,10 +25,16 @@ from bcir.kbcir.autodiff import (
     finite_difference_grad,
     grad,
     grad_at,
+    grad_graph,
     gradients_match,
+    hessian,
+    hessians_match,
     max_grad_error,
+    max_hessian_error,
     naive_tree_node_count,
     reverse_orders,
+    second_difference_hessian,
+    unroll_scan,
 )
 
 
@@ -344,3 +350,312 @@ def test_grad_result_shape():
     assert isinstance(g, GradResult)
     assert g.value == 9.0 and g.grads == {"a": 6.0}
     assert g.forward_ops >= 1 and g.backward_ops >= 1
+
+
+# --- control flow: the differentiable conditional `select` -----------------------
+
+def test_select_forward_picks_the_right_branch():
+    # predicate is the SIGN TEST of cond's forward value (JAX lax.select / C ?:).
+    t = Tape()
+    cond, a, b = t.var("cond"), t.var("a"), t.var("b")
+    s = t.select(cond, a, b)
+    assert evaluate(t, s, {"cond": 1.0, "a": 5.0, "b": 9.0}) == 5.0     # cond > 0 -> a
+    assert evaluate(t, s, {"cond": -1.0, "a": 5.0, "b": 9.0}) == 9.0    # cond <= 0 -> b
+    assert evaluate(t, s, {"cond": 0.0, "a": 5.0, "b": 9.0}) == 9.0     # boundary: 0 is not > 0 -> b
+
+
+def test_grad_through_select_matches_fd_away_from_boundary():
+    # AWAY from the switch (cond value comfortably != 0) select is locally just one branch,
+    # so its gradient is finite-difference-checkable like any smooth function.
+    t = Tape()
+    cond, a, b = t.var("cond"), t.var("a"), t.var("b")
+    s = t.select(cond, t.mul(a, a), t.mul(b, b))     # a*a if cond>0 else b*b
+    # cond = +2.0 (well away from 0): selected branch is a*a -> d/da = 2a, d/db = 0, d/dcond = 0.
+    _check_fd(t, s, {"cond": 2.0, "a": 1.3, "b": -0.7})
+    # cond = -2.0: selected branch is b*b -> d/db = 2b, d/da = 0.
+    _check_fd(t, s, {"cond": -2.0, "a": 1.3, "b": -0.7})
+
+
+def test_select_non_selected_branch_gets_zero_gradient():
+    # The a.e. VJP routes the whole adjoint to the SELECTED branch and 0 to the other
+    # branch and to cond (the predicate is piecewise-constant; the boundary delta is dropped).
+    t = Tape()
+    cond, a, b = t.var("cond"), t.var("a"), t.var("b")
+    s = t.select(cond, a, b)
+    g = grad(t, s, {"cond": 3.0, "a": 5.0, "b": 9.0})   # picks a
+    assert g.grads["a"] == 1.0       # selected branch: full adjoint
+    assert g.grads["b"] == 0.0       # other branch: zero
+    assert g.grads["cond"] == 0.0    # predicate: zero (a.e.)
+    g2 = grad(t, s, {"cond": -3.0, "a": 5.0, "b": 9.0})  # picks b
+    assert g2.grads["b"] == 1.0 and g2.grads["a"] == 0.0 and g2.grads["cond"] == 0.0
+
+
+def test_grad_when_differentiated_var_is_inside_the_selected_branch():
+    # The differentiated var lives INSIDE the selected branch (a non-trivial expression),
+    # so the chain rule must flow through the branch -- checked against finite difference.
+    t = Tape()
+    cond, x = t.var("cond"), t.var("x")
+    # f = select(cond, (x*x*x), 0) ; cond>0 picks the cubic in x.
+    cubic = t.mul(t.mul(x, x), x)
+    s = t.select(cond, cubic, t.const(0.0))
+    g = _check_fd(t, s, {"cond": 1.5, "x": 2.0})
+    assert abs(g.grads["x"] - 3.0 * 2.0 * 2.0) < 1e-6   # d/dx x^3 = 3x^2 = 12
+
+
+# --- bounded control flow: unroll_scan demonstrates BPTT -------------------------
+
+def test_unroll_scan_recurrence_grad_matches_fd():
+    # A bounded recurrence carry_{k+1} = carry_k * w + x_k over a few steps (a linear RNN
+    # cell). Unrolled into plain primitives, the existing reverse pass differentiates it ->
+    # backprop-through-time, checked against finite difference.
+    t = Tape()
+    w = t.var("w")
+    xs = tuple(t.var(f"x{i}") for i in range(4))
+
+    def step(tape, carry, x):
+        return tape.add(tape.mul(carry, w), x)       # carry*w + x
+
+    final = unroll_scan(t, step, t.const(0.0), xs)
+    env = {"w": 0.6, "x0": 1.0, "x1": -2.0, "x2": 0.5, "x3": 3.0}
+    g = _check_fd(t, final, env)
+    # closed form: final = sum_k x_k * w^(n-1-k); d/dx_k = w^(n-1-k). Spot-check the last input.
+    assert abs(g.grads["x3"] - 1.0) < 1e-6           # x3 has exponent 0 -> w^0 = 1
+
+
+def test_unroll_scan_shares_structure_across_steps():
+    # A step body whose SUBEXPRESSION is structurally identical across iterations is
+    # hash-consed to one shared node (content-addressing across the unroll). Here the
+    # constant gain and the var w are reused every step, so the unrolled DAG is far smaller
+    # than n independent copies.
+    t = Tape()
+    w = t.var("w")
+    xs = tuple(t.var(f"x{i}") for i in range(5))
+
+    def step(tape, carry, x):
+        # carry*w + x : 'w' (one var node) and the mul/add ops reuse interned operands.
+        return tape.add(tape.mul(carry, w), x)
+
+    final = unroll_scan(t, step, t.const(0.0), xs)
+    # The var w is ONE node shared by all 5 steps (not 5 copies): measurable via dedup.
+    assert t.unique_node_count < naive_tree_node_count(t, final)
+    # exactly: w(1) + init const(1) + 5 x-vars(5) + 5 mul + 5 add = 17 unique nodes.
+    assert t.unique_node_count == 17
+
+
+def test_unroll_scan_nonlinear_cell_grad_matches_fd():
+    # A nonlinear cell mixing mul/add/div (a rational recurrence) to exercise the full rule
+    # set under unrolling, gated against finite difference.
+    t = Tape()
+    w, x = t.var("w"), t.var("x")
+    xs = (x, x, x)
+
+    def step(tape, carry, xk):
+        # carry = (carry + xk) / (1 + w) : a contractive nonlinear-in-w update.
+        return tape.div(tape.add(carry, xk), tape.add(tape.const(1.0), w))
+
+    final = unroll_scan(t, step, t.const(0.5), xs)
+    _check_fd(t, final, {"w": 0.3, "x": 1.7})
+
+
+# --- higher-order: symbolic (graph-valued) gradient ------------------------------
+
+def _eval_grad_graph(t: Tape, gnodes: dict, env: dict) -> dict:
+    """Evaluate each gradient NODE (from grad_graph) at env into a {name: float} dict."""
+    return {name: evaluate(t, nid, env) for name, nid in gnodes.items()}
+
+
+def test_grad_graph_evaluated_equals_numeric_grad():
+    # The symbolic rail (gradient as NODES) and the numeric rail (gradient as floats) must
+    # agree at every point: grad_graph evaluated == grad. Checked on several functions.
+    cases = []
+
+    t1 = Tape()
+    a, b = t1.var("a"), t1.var("b")
+    cases.append((t1, t1.add(t1.mul(t1.mul(a, a), b), t1.mul(t1.const(3.0), a)),
+                  {"a": 1.7, "b": -2.3}))                       # a*a*b + 3a
+
+    t2 = Tape()
+    c, d = t2.var("c"), t2.var("d")
+    cases.append((t2, t2.div(t2.sub(c, d), t2.mul(c, d)), {"c": 1.5, "d": 2.5}))  # (c-d)/(c*d)
+
+    t3 = Tape()
+    u = tuple(t3.var(f"u{i}") for i in range(3))
+    v = tuple(t3.var(f"v{i}") for i in range(3))
+    env3 = {f"u{i}": float(i + 1) for i in range(3)}
+    env3.update({f"v{i}": float(2 * i - 1) for i in range(3)})
+    cases.append((t3, t3.dot(u, v), env3))                     # the dot substrate
+
+    for t, out, env in cases:
+        numeric = grad(t, out, env).grads
+        symbolic = _eval_grad_graph(t, grad_graph(t, out, env), env)
+        assert gradients_match(symbolic, numeric, rtol=1e-9, atol=1e-9), (
+            f"symbolic != numeric: sym={symbolic} num={numeric}")
+
+
+def test_grad_graph_is_a_valid_dag():
+    # The returned gradient is an ordinary node in the same DAG -- evaluable, and (because
+    # it is in the closed primitive set) itself differentiable. Both are exercised here.
+    t = Tape()
+    a, b = t.var("a"), t.var("b")
+    out = t.mul(t.mul(a, a), b)                                 # a*a*b
+    gnodes = grad_graph(t, out, ["a", "b"])
+    env = {"a": 2.0, "b": 3.0}
+    # d/da (a*a*b) = 2ab = 12 ; the gradient NODE evaluates to that.
+    assert abs(evaluate(t, gnodes["a"], env) - 2.0 * 2.0 * 3.0) < 1e-9
+    # and the gradient node can be differentiated again (closure): d/da (2ab) = 2b = 6.
+    g2 = grad(t, gnodes["a"], env)
+    assert abs(g2.grads["a"] - 2.0 * 3.0) < 1e-9
+
+
+def test_grad_graph_unused_input_is_zero_node():
+    t = Tape()
+    a, unused = t.var("a"), t.var("unused")
+    out = t.mul(a, a)
+    gnodes = grad_graph(t, out, ["a", "unused"])
+    env = {"a": 4.0, "unused": 99.0}
+    assert evaluate(t, gnodes["unused"], env) == 0.0           # never reaches output
+    assert abs(evaluate(t, gnodes["a"], env) - 8.0) < 1e-9     # d/da a*a = 2a
+
+
+# --- higher-order: the Hessian, gated against the second difference --------------
+
+def _check_hessian_fd(t: Tape, out: int, env: dict, *, eps=1e-4):
+    """Assert the analytic Hessian matches the central SECOND difference at env."""
+    H = hessian(t, out, env, env)
+    sd = second_difference_hessian(t, out, env, eps=eps)
+    assert hessians_match(H, sd), (
+        f"hessian != second-difference: analytic={H} sd={sd} "
+        f"max_abs_err={max_hessian_error(H, sd)} env={env}")
+    return H
+
+
+def test_hessian_matches_second_difference_on_a_quadratic_form():
+    # f = a*a*b : H_aa = 2b, H_ab = H_ba = 2a, H_bb = 0 (a known closed form).
+    t = Tape()
+    a, b = t.var("a"), t.var("b")
+    f = t.mul(t.mul(a, a), b)
+    env = {"a": 1.5, "b": -2.0}
+    H = _check_hessian_fd(t, f, env)
+    assert abs(H[("a", "a")] - 2.0 * env["b"]) < 1e-2
+    assert abs(H[("a", "b")] - 2.0 * env["a"]) < 1e-2
+    assert abs(H[("b", "b")] - 0.0) < 1e-2
+
+
+def test_hessian_matches_second_difference_on_a_polynomial():
+    # f = a^3 + a*a*b - b*b : a deeper polynomial with nonzero mixed + diagonal entries.
+    t = Tape()
+    a, b = t.var("a"), t.var("b")
+    f = t.sub(t.add(t.mul(t.mul(a, a), a), t.mul(t.mul(a, a), b)), t.mul(b, b))
+    _check_hessian_fd(t, f, {"a": 1.1, "b": 0.7})
+
+
+def test_hessian_matches_second_difference_on_a_division():
+    # f = a / b : H_aa = 0, H_ab = -1/b^2, H_bb = 2a/b^3 (the quotient's second derivatives).
+    t = Tape()
+    a, b = t.var("a"), t.var("b")
+    f = t.div(a, b)
+    env = {"a": 1.3, "b": 2.1}
+    H = _check_hessian_fd(t, f, env)
+    assert abs(H[("a", "a")] - 0.0) < 1e-2
+    assert abs(H[("a", "b")] - (-1.0 / env["b"] ** 2)) < 1e-2
+    assert abs(H[("b", "b")] - (2.0 * env["a"] / env["b"] ** 3)) < 1e-2
+
+
+def test_hessian_is_symmetric():
+    # For a twice-continuously-differentiable f, H is symmetric (Clairaut/Schwarz). Check
+    # H[i,j] == H[j,i] exactly (the symbolic rail is deterministic, so equality is exact).
+    t = Tape()
+    a, b = t.var("a"), t.var("b")
+    f = t.add(t.mul(t.mul(a, a), b), t.div(a, b))              # a*a*b + a/b
+    env = {"a": 1.4, "b": 2.2}
+    H = hessian(t, f, env, env)
+    assert H[("a", "b")] == H[("b", "a")]
+
+
+def _random_dag_no_select(rng, n_vars, n_ops):
+    """A random DAG over the SMOOTH primitive set only (no select) -- used for the Hessian
+    fuzz, which must stay AWAY from the select boundary delta. (Reuses _random_dag, whose
+    pool already excludes select.)"""
+    return _random_dag(rng, n_vars, n_ops)
+
+
+def test_hessian_fuzz_matches_second_difference():
+    # A deterministic fuzz: random smooth DAGs (no select), analytic Hessian vs the central
+    # second difference. The eps/tol is the looser second-difference gate -- still tight
+    # enough to catch a wrong second-derivative rule. select is excluded to avoid the
+    # boundary delta (see the honest-limitation test).
+    rng = random.Random(0xB3_2D)
+    for trial in range(60):
+        n_vars = rng.randint(2, 3)
+        n_ops = rng.randint(2, 7)
+        t, out, env = _random_dag_no_select(rng, n_vars, n_ops)
+        H = hessian(t, out, env, env)
+        sd = second_difference_hessian(t, out, env, eps=1e-4)
+        assert hessians_match(H, sd), (
+            f"FUZZ trial {trial} FAILED: analytic={H} sd={sd} "
+            f"max_abs_err={max_hessian_error(H, sd)} env={env} n_ops={n_ops}")
+        # symmetry where the second difference is well-conditioned.
+        for i in env:
+            for j in env:
+                assert abs(H[(i, j)] - H[(j, i)]) < 1e-9
+
+
+# --- the honest limitation: closure + the select boundary caveat -----------------
+
+def test_higher_order_closure_every_vjp_stays_in_the_primitive_set():
+    # The reverse-over-reverse soundness argument: the gradient graph of any expression in
+    # this primitive set is ITSELF an expression in the SAME set (+,-,*,/,neg,dot,select).
+    # We pin it structurally: every node of every gradient expression has an op drawn from
+    # the closed set -- so it can be differentiated again (which is why `hessian` works).
+    allowed = {"const", "var", "neg", "add", "sub", "mul", "div", "dot", "select"}
+    t = Tape()
+    a, b = t.var("a"), t.var("b")
+    out = t.div(t.mul(t.mul(a, a), b), t.add(a, b))            # mixes mul/div/add
+    gnodes = grad_graph(t, out, ["a", "b"])
+
+    def ops_reachable(root):
+        seen, stack, ops = set(), [root], set()
+        while stack:
+            nid = stack.pop()
+            if nid in seen:
+                continue
+            seen.add(nid)
+            n = t.node(nid)
+            ops.add(n.op)
+            stack.extend(n.args)
+        return ops
+
+    for name, gnid in gnodes.items():
+        assert ops_reachable(gnid) <= allowed, (name, ops_reachable(gnid) - allowed)
+
+
+def test_select_hessian_away_from_boundary_matches_but_boundary_caveat_holds():
+    # (4) THE honest-limitation test, both halves.
+    #
+    # AWAY from the switch, hessian through a select is the second derivative of the
+    # selected branch and matches the second difference.
+    t = Tape()
+    cond, x = t.var("cond"), t.var("x")
+    f = t.select(cond, t.mul(t.mul(x, x), x), x)   # x^3 if cond>0 else x ; pick the cubic
+    env_away = {"cond": 1.0, "x": 1.5}             # cond comfortably > 0
+    H = hessian(t, f, ["cond", "x"], env_away)
+    sd = second_difference_hessian(t, f, env_away, eps=1e-4)
+    assert hessians_match(H, sd), (H, sd)
+    assert abs(H[("x", "x")] - 6.0 * 1.5) < 1e-2   # d^2/dx^2 x^3 = 6x = 9
+
+    # AT the boundary, the EXACT second derivative carries a distributional (delta) term at
+    # the value jump that this a.e. convention DROPS. We do NOT claim the analytic Hessian is
+    # exact there -- and we PIN that it disagrees with the second difference (which sees the
+    # jump and blows up). This is the documented caveat, asserted rather than papered over.
+    t2 = Tape()
+    cb = t2.var("cb")
+    # branches differ in VALUE at the switch -> a unit jump at cb == 0 -> a delta in d^2.
+    jump = t2.select(cb, t2.add(cb, t2.const(1.0)), t2.sub(cb, t2.const(1.0)))
+    env_boundary = {"cb": 0.0}
+    H_b = hessian(t2, jump, ["cb"], env_boundary)
+    sd_b = second_difference_hessian(t2, jump, env_boundary, eps=1e-3)
+    # the a.e. convention reports a finite (here zero) second derivative; the numeric stencil
+    # diverges because of the dropped delta -- they are NOT equal at the boundary.
+    assert H_b[("cb", "cb")] == 0.0                # delta dropped -> finite a.e. value
+    assert abs(sd_b[("cb", "cb")]) > 1e3           # the stencil sees the jump (blows up)
+    assert not hessians_match(H_b, sd_b)           # honest: NOT exact at the boundary

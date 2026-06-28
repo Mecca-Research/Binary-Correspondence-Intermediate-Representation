@@ -12,15 +12,19 @@
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIRPasses.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
 int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   registry.insert<bcir::BCIRDialect, mlir::LLVM::LLVMDialect,
-                  mlir::func::FuncDialect>();
+                  mlir::func::FuncDialect, mlir::scf::SCFDialect,
+                  mlir::memref::MemRefDialect, mlir::arith::ArithDialect>();
   bcir::registerBCIRPasses();
   bcir::registerBCIRPipelines();
   return mlir::asMainReturnCode(

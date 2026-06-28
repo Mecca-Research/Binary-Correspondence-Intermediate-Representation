@@ -71,6 +71,26 @@ def BCIR_GEMMatmulOp : BCIR_Op<"gem.matmul", [Symbol]> {
   let hasVerifier = 1;
 }
 
+def BCIR_GEMMatmulBufferOp : BCIR_Op<"gem.matmul_buffer", []> {
+  let summary = "Buffer-form GEM matmul: real SSA memref operands C += A*B with a tiling plan (toward executable code)";
+  // The next step past gem.matmul (an attribute-only plan record): a NORMAL op carrying
+  // three real rank-2 f32 memref operands -- A (MxK), B (KxN), C (MxN) accumulated IN PLACE --
+  // plus the K_BCIR tile plan (tile_m/n/k + loop_order). M/N/K are DERIVED from the operands'
+  // static shapes (not duplicated as attributes). -bcir-lower-gem-matmul-buffer lowers this to a
+  // concrete TILED scf.for loop nest (memref.load/store + arith.mulf/addf) computing C += A*B.
+  // hasVerifier checks: A/B/C are rank-2 f32 memrefs with static shapes; A.dim1==B.dim0 (K),
+  // A.dim0==C.dim0 (M), B.dim1==C.dim1 (N); each tile extent in [1, its dim]; a known loop order.
+  let arguments = (ins
+    AnyMemRef:$A, AnyMemRef:$B, AnyMemRef:$C,
+    I64Attr:$tile_m, I64Attr:$tile_n, I64Attr:$tile_k,
+    StrAttr:$loop_order);
+  let assemblyFormat = [{
+    `tile` `(` $tile_m `,` $tile_n `,` $tile_k `)` `order` $loop_order attr-dict
+    $A `,` $B `,` $C `:` type($A) `,` type($B) `,` type($C)
+  }];
+  let hasVerifier = 1;
+}
+
 def BCIR_GEMLaneSegmentOp : BCIR_Op<"gem.lane_segment", [Symbol]> {
   let summary = "Lane-specialized GEM executable segment";
   let arguments = (ins

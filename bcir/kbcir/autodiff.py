@@ -48,6 +48,43 @@ and against the exact symbolic gradient for closed-form cases. Sharing is *measu
 (``unique_node_count``); confluence/determinism is *tested* (two accumulation orders,
 plus byte-identical replay).
 
+CONTROL FLOW + HIGHER-ORDER (the B3 extension slice). Three additions keep the same
+discipline:
+
+  * ``select(cond, a, b)`` -- a differentiable conditional (JAX ``lax.select`` / C ``?:``;
+    predicate = sign test of ``cond``'s forward value). Its VJP routes the adjoint entirely
+    to the selected branch (0 to the other, 0 to ``cond``) -- the standard a.e. convention.
+  * ``unroll_scan`` -- a bounded loop/scan UNROLLED into the same first-order primitives (no
+    new functional primitive), so the existing reverse pass differentiates through it:
+    reverse-mode over a bounded loop is backprop-through-time.
+  * SYMBOLIC backward rules (``_BACKWARD_SYM``) that REWRITE INTO NEW GRAPH NODES instead of
+    computing floats, so the gradient is itself a DAG. ``grad_graph`` returns gradient
+    *nodes*; ``hessian`` differentiates those nodes AGAIN (reverse-over-reverse) and is gated
+    against ``second_difference_hessian``.
+
+HONEST LIMITATION (the precise boundary; faithful to the SOTA scan, Pillar 3, which cites
+arXiv:2107.13433, 1804.00746, 2105.09469). Reverse-over-reverse is sound HERE for one
+specific reason: every primitive's VJP is itself expressible in the SAME closed primitive
+set (+, -, *, /, neg, dot, select), so the gradient graph is an ordinary DAG that can be
+differentiated again. This closure is what makes ``hessian`` honest -- and it is exactly
+where the general story is known to strain. Two boundaries:
+
+  (a) CLOSURE is required. A primitive whose VJP is NOT in the primitive set (e.g. one
+      needing exp/log/a transcendental), or a genuinely higher-order functional / unbounded
+      data-dependent recursion, breaks the closure: the gradient would not be a DAG in this
+      set and could not be re-differentiated by this machinery. The SOTA scan flags this
+      directly -- reverse-derivative categories "do not natively support higher-order
+      functions" (1910.07065 via the scan), and higher-order/control-flow/mutation coverage
+      is named as the open AD risk. ``unroll_scan`` deliberately handles only BOUNDED loops
+      (a finite composition of primitives) for this reason.
+  (b) ``select``'s exact second derivative carries a DISTRIBUTIONAL (Dirac-delta) term at
+      the switch boundary ``fval[cond] == 0`` -- the derivative of the step. The a.e.
+      convention here (matching JAX/PyTorch) DROPS that term. So a ``hessian`` taken through
+      a ``select`` is correct ALMOST EVERYWHERE but NOT at the boundary: away from the switch
+      it matches the second difference; at/near the switch the true Hessian has a delta the
+      numbers cannot see and this code does not claim. A test pins both halves of this (away:
+      matches; boundary: caveat asserted, not papered over).
+
 Deterministic, pure-Python, dependency-free. This is a **research organ** and is kept
 *cold* (off the hot plan->emit import path; see ``tools/perf/import_graph.py``).
 """
@@ -67,8 +104,10 @@ from dataclasses import dataclass
 # backward (adjoint) rule.
 
 # Primitive arities. ``const`` / ``var`` are leaves; the rest are first-order ops.
+# ``select`` is the differentiable conditional (arity 3: predicate, then-branch, else-branch).
 _ARITY = {"const": 0, "var": 0, "neg": 1,
-          "add": 2, "sub": 2, "mul": 2, "div": 2, "dot": None}  # dot is n-ary (variadic)
+          "add": 2, "sub": 2, "mul": 2, "div": 2, "select": 3,
+          "dot": None}  # dot is n-ary (variadic)
 
 
 @dataclass(frozen=True)
@@ -147,6 +186,21 @@ class Tape:
         """a / b (b must be non-zero at the linearization point)."""
         return self._intern("div", (a, b))
 
+    # -- the control-flow primitive: a differentiable conditional (JAX lax.select / C ?:) --
+    def select(self, cond: int, a: int, b: int) -> int:
+        """select(cond, a, b) = a if fval[cond] > 0 else b -- the differentiable
+        conditional / ``where``.
+
+        Semantics match JAX ``lax.select`` and the C ternary ``?:``: the predicate is the
+        SIGN TEST of ``cond``'s forward value (``cond > 0`` picks ``a``, else ``b``). It is
+        a *piecewise-constant selector*: on either side of the switch boundary the output
+        equals one branch exactly, so its derivative w.r.t. the selected branch is 1, w.r.t.
+        the other branch is 0, and w.r.t. ``cond`` is 0 almost everywhere (the standard a.e.
+        VJP convention -- see :func:`_bw_select`). This is what lets bounded data-dependent
+        control flow enter the content-addressed DAG without leaving the first-order
+        primitive set: a ``select`` is just one more local rewrite rule."""
+        return self._intern("select", (cond, a, b))
+
     # -- the composite that ties to the AI substrate: a dot product (sum of products) --
     def dot(self, us: tuple, vs: tuple) -> int:
         """dot(u, v) = sum_i u_i * v_i -- a sum of products, the scalar core of the A1.2
@@ -197,6 +251,10 @@ def evaluate(tape: Tape, root: int, env: dict) -> float:
             cache[nid] = cache[n.args[0]] * cache[n.args[1]]
         elif op == "div":
             cache[nid] = cache[n.args[0]] / cache[n.args[1]]
+        elif op == "select":
+            # predicate is the SIGN TEST of the cond node's forward value (JAX lax.select).
+            cond, a, b = n.args
+            cache[nid] = cache[a] if cache[cond] > 0 else cache[b]
         elif op == "dot":
             k = n.const[1]
             us, vs = n.args[:k], n.args[k:]
@@ -289,11 +347,25 @@ def _bw_dot(fvals, args, const, gz):
     return out
 
 
+def _bw_select(fvals, args, const, gz):
+    # z = a if cond > 0 else b. The VJP of a piecewise-constant selector (the standard
+    # a.e. convention, identical to JAX/PyTorch ``where``): the incoming adjoint flows
+    # ENTIRELY to the SELECTED branch, 0 to the other, and 0 to ``cond``. The predicate is
+    # locally constant on each side of the switch, so its local Jacobian w.r.t. cond is
+    # zero almost everywhere; the measure-zero boundary delta (an exact distributional
+    # term at fval[cond] == 0) is DROPPED -- exactly what the mainstream frameworks do, and
+    # the boundary caveat the honest-limitation note pins.
+    cond, a, b = args
+    if fvals[cond] > 0:
+        return [(a, gz), (b, 0.0), (cond, 0.0)]
+    return [(a, 0.0), (b, gz), (cond, 0.0)]
+
+
 # the rewrite-rule table: one local backward rule per primitive (leaves have none --
 # const and var are differentiation boundaries, const contributing zero by definition).
 _BACKWARD = {
     "neg": _bw_neg, "add": _bw_add, "sub": _bw_sub,
-    "mul": _bw_mul, "div": _bw_div, "dot": _bw_dot,
+    "mul": _bw_mul, "div": _bw_div, "dot": _bw_dot, "select": _bw_select,
 }
 
 
@@ -429,6 +501,9 @@ def _forward_values(tape: Tape, topo: list[int], env: dict) -> dict:
             cache[nid] = cache[n.args[0]] * cache[n.args[1]]
         elif op == "div":
             cache[nid] = cache[n.args[0]] / cache[n.args[1]]
+        elif op == "select":
+            cond, a, b = n.args
+            cache[nid] = cache[a] if cache[cond] > 0 else cache[b]
         elif op == "dot":
             k = n.const[1]
             us, vs = n.args[:k], n.args[k:]
@@ -487,3 +562,247 @@ def naive_tree_node_count(tape: Tape, root: int) -> int:
         return total
 
     return count(root)
+
+
+# --- bounded control flow: unrolling a scan into the content-addressed DAG -----------
+#
+# A bounded loop / scan is differentiated by UNROLLING it into the existing first-order
+# primitive set -- no new functional primitive, no closure capture in the IR. The
+# unrolled body is plain add/sub/mul/div/neg/dot/select, so the EXISTING reverse pass
+# differentiates straight through it: reverse-mode through a bounded loop is exactly
+# backprop-through-time (BPTT). Because the builder is content-addressed, any step body
+# that is structurally identical across iterations is hash-consed to one shared node,
+# and -- by the global shared-adjoint property -- contributes a single shared adjoint.
+
+def unroll_scan(tape: Tape, step, init: int, xs: tuple) -> int:
+    """Fold ``carry = step(tape, carry, x)`` over ``xs`` and return the final carry node id.
+
+    ``step(tape, carry_nid, x_nid) -> nid`` is a Python callable that builds ONE step of a
+    recurrence out of existing primitives (e.g. ``carry * w + x``); ``init`` is the initial
+    carry node id; ``xs`` is a tuple of input node ids fed one per step. This is the honest
+    way to put a bounded loop into the DAG: we unroll the loop body into ordinary nodes, so
+
+      d(final_carry)/d(input)  ==  reverse-mode AD over the unrolled DAG  ==  BPTT,
+
+    with no extra machinery -- :func:`grad` already differentiates the result, and the
+    finite-difference gate already checks it. (Unbounded / data-dependent trip counts are
+    out of scope here: that is the genuinely-higher-order case the limitation note flags;
+    a *bounded* scan is just a finite composition of primitives.)"""
+    carry = init
+    for x in xs:
+        carry = step(tape, carry, x)
+    return carry
+
+
+# --- higher-order: SYMBOLIC (graph-valued) backward rules ----------------------------
+#
+# To get SECOND derivatives honestly, the backward pass must REWRITE INTO NEW GRAPH NODES
+# rather than computing floats -- this is the literal "AD as graph rewrites" thesis. A
+# symbolic adjoint rule for z = op(a, b, ...) takes the tape, the operand node ids, and
+# the incoming-adjoint NODE id ``gz`` and BUILDS the contribution to each operand's adjoint
+# as a new Tape node (e.g. for mul(a, b): grad_a contribution node = tape.mul(gz, b)). The
+# accumulated gradient is then an ordinary node in the SAME DAG, in the SAME closed
+# primitive set -- so it can be fed back into the very same machinery and differentiated
+# AGAIN (reverse-over-reverse), which is what makes :func:`hessian` sound here. The closure
+# property -- every primitive's VJP is expressible in {+, -, *, /, neg, dot, select} -- is
+# exactly the boundary the honest-limitation note pins (see the module docstring).
+#
+# A symbolic rule mirrors its numeric twin in _BACKWARD but returns
+# [(operand_nid, contribution_nid), ...] -- node ids, not floats.
+
+
+def _sbw_neg(tape, args, const, gz):
+    # z = -a  ->  grad_a += -gz
+    return [(args[0], tape.neg(gz))]
+
+
+def _sbw_add(tape, args, const, gz):
+    # z = a + b  ->  grad_a += gz ; grad_b += gz
+    return [(args[0], gz), (args[1], gz)]
+
+
+def _sbw_sub(tape, args, const, gz):
+    # z = a - b  ->  grad_a += gz ; grad_b += -gz
+    return [(args[0], gz), (args[1], tape.neg(gz))]
+
+
+def _sbw_mul(tape, args, const, gz):
+    # z = a * b  ->  grad_a += gz * b ; grad_b += gz * a (product rule, as graph nodes)
+    a, b = args
+    return [(a, tape.mul(gz, b)), (b, tape.mul(gz, a))]
+
+
+def _sbw_div(tape, args, const, gz):
+    # z = a / b  ->  grad_a += gz / b ; grad_b += -(gz * a) / (b * b)  (quotient rule).
+    # Built ENTIRELY from the closed primitive set so the gradient graph is differentiable
+    # again: neg(div(mul(gz, a), mul(b, b))).
+    a, b = args
+    grad_a = tape.div(gz, b)
+    grad_b = tape.neg(tape.div(tape.mul(gz, a), tape.mul(b, b)))
+    return [(a, grad_a), (b, grad_b)]
+
+
+def _sbw_dot(tape, args, const, gz):
+    # z = sum_i u_i * v_i  ->  grad_u_i += gz * v_i ; grad_v_i += gz * u_i (as graph nodes).
+    k = const[1]
+    us, vs = args[:k], args[k:]
+    out = []
+    for u, v in zip(us, vs):
+        out.append((u, tape.mul(gz, v)))
+        out.append((v, tape.mul(gz, u)))
+    return out
+
+
+def _sbw_select(tape, args, const, gz):
+    # z = a if cond > 0 else b. The symbolic VJP keeps the SAME a.e. convention as the
+    # numeric rule, but expresses the branch routing AS A select node so it stays a
+    # graph-valued, re-differentiable expression: grad_a = select(cond, gz, 0),
+    # grad_b = select(cond, 0, gz), grad_cond = 0. (The boundary delta is dropped here too;
+    # see the honest-limitation note -- the SECOND derivative through a select is a.e.
+    # correct but misses the distributional term at fval[cond] == 0.)
+    cond, a, b = args
+    zero = tape.const(0.0)
+    grad_a = tape.select(cond, gz, zero)
+    grad_b = tape.select(cond, zero, gz)
+    return [(a, grad_a), (b, grad_b), (cond, zero)]
+
+
+# the SYMBOLIC rewrite-rule table -- one graph-valued backward rule per primitive,
+# mirroring _BACKWARD. Each builds new Tape nodes in the SAME closed primitive set, so the
+# gradient graph is an ordinary DAG that can be differentiated again.
+_BACKWARD_SYM = {
+    "neg": _sbw_neg, "add": _sbw_add, "sub": _sbw_sub,
+    "mul": _sbw_mul, "div": _sbw_div, "dot": _sbw_dot, "select": _sbw_select,
+}
+
+
+def grad_graph(tape: Tape, output: int, inputs) -> dict:
+    """SYMBOLIC reverse-mode gradient: return, for each input var name, the NODE ID of its
+    gradient EXPRESSION (not a float).
+
+    This is reverse mode done as pure graph rewriting: seed the output adjoint with a
+    ``const(1.0)`` node, visit the forward DAG in reverse-topological order, and for each
+    node fire its SYMBOLIC backward rule (:data:`_BACKWARD_SYM`), BUILDING new Tape nodes
+    for each operand's adjoint contribution. Multiple contributions into the same node are
+    combined with ``tape.add`` nodes (kept content-addressed/deterministic, so the gradient
+    graph is reproducible and shares structure). The result is an ordinary DAG in the SAME
+    closed primitive set -- which is exactly why it can be differentiated AGAIN to get a
+    Hessian (see :func:`hessian`).
+
+    ``inputs`` is an iterable of var names *or* an ``env`` dict (its keys are used). For a
+    var that does not reach the output, the gradient is a fresh ``const(0.0)`` node (an
+    unused input has identically-zero gradient). Evaluating the returned nodes at a point
+    must reproduce the NUMERIC :func:`grad` at that point -- the symbolic and numeric rails
+    agree (a test pins this)."""
+    names = list(inputs.keys()) if isinstance(inputs, dict) else list(inputs)
+    topo = _topo_order(tape, output)
+    order = _reverse_order(topo)
+    # adjoint table: node id -> NODE ID of its accumulated adjoint expression.
+    adj: dict[int, int] = {output: tape.const(1.0)}     # seed d(output)/d(output) = 1
+    for nid in order:
+        gz = adj.get(nid)
+        if gz is None:
+            continue                                    # no adjoint flows here
+        n = tape.node(nid)
+        rule = _BACKWARD_SYM.get(n.op)
+        if rule is None:
+            continue                                    # a leaf (const/var)
+        for operand, contribution in rule(tape, n.args, n.const, gz):
+            if operand in adj:
+                adj[operand] = tape.add(adj[operand], contribution)   # combine contributions
+            else:
+                adj[operand] = contribution
+    name_to_nid = {tape.node(nid).const: nid for nid in topo if tape.node(nid).op == "var"}
+    out: dict[str, int] = {}
+    for name in names:
+        vnid = name_to_nid.get(name)
+        out[name] = adj[vnid] if (vnid is not None and vnid in adj) else tape.const(0.0)
+    return out
+
+
+def hessian(tape: Tape, output: int, inputs, env: dict) -> dict:
+    """The Hessian H[i, j] = d^2(output) / (d x_i d x_j), evaluated at ``env`` (floats).
+
+    The second derivative is obtained HONESTLY by differentiating the GRADIENT GRAPH: call
+    :func:`grad_graph` to get, for each input x_i, the node id g_i of d(output)/d(x_i) as an
+    ordinary expression in the closed primitive set; then differentiate EACH g_i again with
+    the numeric :func:`grad`, giving d g_i / d x_j = d^2(output)/(d x_i d x_j). This is
+    reverse-over-reverse: it is sound precisely because every primitive's VJP lives in the
+    same primitive set, so the gradient graph is just another DAG (see the module
+    docstring's limitation note for the exact boundary of this argument).
+
+    Returns ``{(name_i, name_j): float}`` for every ordered pair of input names. The
+    central-second-difference :func:`second_difference_hessian` is the hard numeric gate; a
+    symmetric closed form gives H[i, j] == H[j, i] (which a test checks)."""
+    names = list(inputs.keys()) if isinstance(inputs, dict) else list(inputs)
+    gnodes = grad_graph(tape, output, names)
+    out: dict[tuple, float] = {}
+    for ni in names:
+        gi = gnodes[ni]
+        row = grad(tape, gi, env).grads        # d g_i / d x_j for all j, at env
+        for nj in names:
+            out[(ni, nj)] = row.get(nj, 0.0)
+    return out
+
+
+def second_difference_hessian(tape: Tape, output: int, env: dict, *, eps: float = 1e-4) -> dict:
+    """Central SECOND-difference numeric Hessian at ``env`` -- the HARD gate for
+    :func:`hessian`.
+
+    Diagonal entries use the standard three-point second difference
+
+        H[i, i] ~ (f(x + e_i) - 2 f(x) + f(x - e_i)) / eps^2,
+
+    off-diagonal entries the standard four-point central stencil
+
+        H[i, j] ~ (f(x+e_i+e_j) - f(x+e_i-e_j) - f(x-e_i+e_j) + f(x-e_i-e_j)) / (4 eps^2).
+
+    Second differences are noisier than the first differences used for the gradient gate
+    (they divide by eps^2 and subtract nearly-equal numbers), so the matching tolerance
+    (:func:`hessians_match`) is looser and ``eps`` is chosen larger than the gradient gate's
+    -- still tight enough to catch a wrong second-derivative rule on the closed forms tested.
+    Returns ``{(name_i, name_j): float}``."""
+    names = list(env.keys())
+    base = evaluate(tape, output, env)
+
+    def shifted(deltas: dict) -> float:
+        e = dict(env)
+        for nm, d in deltas.items():
+            e[nm] = env[nm] + d
+        return evaluate(tape, output, e)
+
+    out: dict[tuple, float] = {}
+    for i in names:
+        fpp = shifted({i: +eps})
+        fmm = shifted({i: -eps})
+        out[(i, i)] = (fpp - 2.0 * base + fmm) / (eps * eps)
+        for j in names:
+            if j == i:
+                continue
+            f_pp = shifted({i: +eps, j: +eps})
+            f_pm = shifted({i: +eps, j: -eps})
+            f_mp = shifted({i: -eps, j: +eps})
+            f_mm = shifted({i: -eps, j: -eps})
+            out[(i, j)] = (f_pp - f_pm - f_mp + f_mm) / (4.0 * eps * eps)
+    return out
+
+
+def hessians_match(a: dict, b: dict, *, rtol: float = 2e-2, atol: float = 2e-3) -> bool:
+    """Whether two Hessian dicts (keyed by ``(name_i, name_j)``) agree within a
+    relative+absolute tolerance. The tolerance is deliberately LOOSER than
+    :func:`gradients_match`: a central second difference divides by eps^2 and subtracts
+    nearly-equal forward values, so it carries more numerical noise than a first difference.
+    The eps/tol pair is chosen so closed forms pass cleanly while a wrong second-derivative
+    rule still trips the gate."""
+    if set(a) != set(b):
+        return False
+    for k in a:
+        if abs(a[k] - b[k]) > atol + rtol * abs(b[k]):
+            return False
+    return True
+
+
+def max_hessian_error(a: dict, b: dict) -> float:
+    """The largest absolute disagreement between two Hessian dicts (for reporting the exact
+    failing entry rather than a bare pass/fail)."""
+    return max((abs(a[k] - b.get(k, 0.0)) for k in a), default=0.0)

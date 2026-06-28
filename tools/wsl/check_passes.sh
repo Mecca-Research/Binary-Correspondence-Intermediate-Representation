@@ -82,6 +82,17 @@ else
 fi
 echo "[passes] lower-gem-matmul (gem.matmul plan -> concrete tiled gem.block sequence)"
 run_fc -bcir-lower-gem-matmul "${T}/lower_gem_matmul.mlir"
+echo "[passes] lower-gem-matmul-buffer (gem.matmul_buffer -> tiled scf.for nest, C += A*B)"
+if [ -n "${FC}" ]; then
+  "${BO}" -bcir-lower-gem-matmul-buffer -split-input-file "${T}/lower_gem_matmul_buffer.mlir" 2>/tmp/pe | "${FC}" "${T}/lower_gem_matmul_buffer.mlir" \
+    && echo "  PASS lower_gem_matmul_buffer.mlir" || { echo "  FAIL lower_gem_matmul_buffer.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" -bcir-lower-gem-matmul-buffer -split-input-file "${T}/lower_gem_matmul_buffer.mlir" >/dev/null 2>/tmp/pe \
+    && echo "  RUN-ONLY lower_gem_matmul_buffer.mlir" || { echo "  FAIL lower_gem_matmul_buffer.mlir"; cat /tmp/pe; fail=1; }
+fi
+echo "[passes] lower-gem-matmul-buffer op verifier negatives (-verify-diagnostics)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/lower_gem_matmul_buffer_neg.mlir" \
+  && echo "  PASS lower_gem_matmul_buffer_neg.mlir" || { echo "  FAIL lower_gem_matmul_buffer_neg.mlir"; fail=1; }
 echo "[passes] cost model (the K_BCIR cost algebra recomputed from claim + capability)"
 run_fc -bcir-cost-model "${T}/cost_model.mlir"
 echo "[passes] cost-model fusion (intra-phase deforestation + CSE)"
