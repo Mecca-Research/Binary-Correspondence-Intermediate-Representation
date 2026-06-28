@@ -64,6 +64,8 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
     "layout": ("AOS", "SOA", "SINGLE_FIELD", "WHOLE_RECORD", "FieldAccess", "LayoutCertificate",
                "LayoutPlan", "analyze_resource_accesses", "certify_layout", "plan_layout",
                "pivot_resource_layout"),
+    "cache_predict": ("AccessShape", "CachePredictor", "ContentionPrediction", "predict",
+                      "rank_realizations"),
     "compose": ("Call", "Cond", "CompositeResult", "Effect", "Function",
                 "FunctionSummary", "Leaf", "Region", "Seq", "effect", "independent",
                 "plan_composite", "plan_holds_for", "summarize", "worst_case_module"),
