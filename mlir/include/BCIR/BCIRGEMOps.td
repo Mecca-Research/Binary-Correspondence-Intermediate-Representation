@@ -71,6 +71,40 @@ def BCIR_GEMMatmulOp : BCIR_Op<"gem.matmul", [Symbol]> {
   let hasVerifier = 1;
 }
 
+def BCIR_GEMActivationOp : BCIR_Op<"gem.activation", [Symbol]> {
+  let summary = "Planned GEM activation: the K_BCIR-chosen lane-width realization of an elementwise tensor op (G1)";
+  // The law-rail record of the G1 plan (bcir/kbcir/activation.py::plan_activation). An activation is the
+  // elementwise tensor-op family relu/sigmoid/tanh/gelu/softmax: its RESULT is fixed by a single reference,
+  // while its REALIZATION -- the lane width of the elementwise loop -- is a FREE choice the cost search
+  // picks (max,+ over the roofline bottleneck; min,+ to select the width), exactly as gem.matmul picks a
+  // tiling. The op carries the activation kind, the row-major tensor shape, the element dtype ("f32"/"i32"),
+  // the softmax last-axis length (0 for the elementwise four), the K_BCIR-chosen lane `width`, the analytic
+  // compute/memory roofline terms, the bottleneck = max(compute, memory), and the quantized lane width
+  // (quant_bits > 0 ties to the A1 Q8 bridge: the R17 accuracy bound rides the accuracy cost axis; mirrors
+  // activation.cost_vector). `acc_bound` records that R17 quantization bound (0 = dense).
+  //
+  // THE QUARANTINE SPLIT (the load-bearing G1 design constraint, mirrored from activation.check_activation):
+  // relu is integer/Q-fixed CLEAN -- max(0,x), 0 ULP, no transcendental, so it lowers on the deterministic
+  // rail with NO accuracy contract and MAY be i32 OR f32. The transcendentals (sigmoid/tanh/gelu/softmax)
+  // route a libm call (expf/tanhf) through the trusted c.call.libm: FFI edge (the B5 wrap), so they need a
+  // FLOAT result -- never i32. hasVerifier enforces the op-level shape/dtype laws check_activation enforces
+  // (shape-preserving via spec shape == count, a known dtype, the softmax axis, the quarantine dtype rule,
+  // and bottleneck == max). NO new globally-numbered R-law (gem.matmul added none; this is the inline,
+  // op-level shape/dtype check the oracle rail runs).
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    StrAttr:$kind,
+    DenseI64ArrayAttr:$shape,
+    StrAttr:$dtype,
+    DefaultValuedAttr<I64Attr, "0">:$axis_len,
+    DefaultValuedAttr<I64Attr, "1">:$width,
+    I64Attr:$compute_cost, I64Attr:$mem_cost, I64Attr:$bottleneck,
+    DefaultValuedAttr<I32Attr, "0">:$quant_bits,
+    DefaultValuedAttr<I64Attr, "0">:$acc_bound);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
 def BCIR_GEMMatmulBufferOp : BCIR_Op<"gem.matmul_buffer", []> {
   let summary = "Buffer-form GEM matmul: real SSA memref operands C += A*B with a tiling plan (toward executable code)";
   // The next step past gem.matmul (an attribute-only plan record): a NORMAL op carrying

@@ -78,6 +78,12 @@ std::unique_ptr<mlir::Pass> createLowerGemMatmulPass();
 // operands A/B/C + tile plan) into a concrete tiled scf.for loop nest computing
 // C += A*B (memref.load/store + arith.mulf/addf); erases the op (genuine lowering).
 std::unique_ptr<mlir::Pass> createLowerGemMatmulBufferPass();
+// -bcir-lower-gem-activation: lower each gem.activation plan record (the K_BCIR-chosen
+// lane-width realization of relu/sigmoid/tanh/gelu/softmax, G1) into its concrete
+// realization -- one gem.block per lane-width stripe; recomputes the dual-semiring
+// roofline cost + the quarantine/R17 verdict (relu exact, the transcendentals route a
+// libm edge); erases the activation (the activation analog of lower-gem-matmul).
+std::unique_ptr<mlir::Pass> createLowerGemActivationPass();
 
 /// Register all BCIR passes with the global pass registry (for bcir-opt).
 void registerBCIRPasses();

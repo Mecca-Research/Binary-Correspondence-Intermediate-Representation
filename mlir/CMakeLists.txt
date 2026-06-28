@@ -87,6 +87,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRGEMPasses.cpp       # classify / batch / schedule / lower
   lib/passes/BCIRLowerGemMatmulPass.cpp # lower gem.matmul plan -> tiled gem.block sequence
   lib/passes/BCIRLowerGemMatmulBufferPass.cpp # lower gem.matmul_buffer -> tiled scf.for nest (C += A*B)
+  lib/passes/BCIRLowerGemActivationPass.cpp # lower gem.activation plan -> lane-width gem.block stripes (G1)
   lib/passes/BCIRSelectPass.cpp      # min-plus selection
   lib/passes/BCIRCostModel.cpp       # K_BCIR cost algebra (cost.py port)
   lib/passes/BCIRPlanPass.cpp        # min-plus shortest path (realize.optimize)
