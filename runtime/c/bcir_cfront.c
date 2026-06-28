@@ -622,9 +622,12 @@ static int p_struct_body(CC *c) {
         if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
       if(nadims>3){ fail(c,"member array of more than 3 dimensions"); return -1; }   /* adims[] caps at 3 */
       int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;}          /* per-declarator bitfield width */
-      if(ty.bit_width>0 && width){ fail(c,"a `_BitInt` struct/union bitfield is not supported"); return -1; }   /* bitfield: out of subset */
-      /* a PLAIN `_BitInt(N)` member IS first-class: `ty.size` is the Clang storage slot (1/2/4/8 bytes) so the
-       * layout matches; the member's exact width rides in f->bit_width so the load/store + emit spell `_BitInt(N)`. */
+      if(ty.bit_width>0 && width && !(width>=1 && width<=ty.bit_width)){   /* a `_BitInt(N)` BITFIELD: W in 1..N */
+        fail(c,"a `_BitInt` bitfield width outside 1..N is not supported"); return -1; }   /* W>N is invalid C */
+      /* a `_BitInt(N)` BITFIELD `_BitInt(N) m : W` (1<=W<=N) is first-class: `ty.size` is the Clang storage slot
+       * (1/2/4/8 bytes) so it packs into the `_BitInt(N)` storage unit LSB-first exactly like a standard-int
+       * bitfield of that size (byte-identical to Clang); a PLAIN `_BitInt(N)` member likewise uses that slot.
+       * Either way the member's exact width rides in f->bit_width so the load/store + emit spell `_BitInt(N)`. */
       if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
       int isptr=(ty.kind==2 && !arr_count);            /* a (non-array) pointer member: ABI pointer_size */
       int sz=isptr?cc_abi(c)->pointer_size:ty.size;
@@ -636,7 +639,8 @@ static int p_struct_body(CC *c) {
       field *f=&S->f[S->nf++];
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
       idcpy(f->name,&nm);f->size=sz;f->access_bytes=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
-      f->bit_width=(!isptr && !arr_count && ty.bit_width>0)?ty.bit_width:0;   /* a PLAIN C23 `_BitInt(N)` member */
+      f->bit_width=(!isptr && !arr_count && ty.bit_width>0)?ty.bit_width:0;   /* a C23 `_BitInt(N)` member (plain OR
+                                                                              * bitfield): exact N; f->bit_w holds W */
       f->is_float=(!isptr && ty.is_float)?1:0;          /* a float/double member loads/stores as itself */
       f->is_complex=(!isptr && ty.is_complex)?1:0;      /* a `_Complex` member: load/store as the complex pair,
                                                          * NOT a same-size real (16B would wrongly read as long double) */
@@ -809,13 +813,6 @@ static int rid_bitint(CC *c,uint32_t rid,int *signd){
   for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){
     if(c->fn->res[i].bit_width>0){ if(signd)*signd=c->fn->res[i].is_signed; return c->fn->res[i].bit_width; }
     return 0; }
-  return 0; }
-/* Whether rid holds an integer CONSTANT (the write of a `c.const` claim) -- the C twin of the oracle's
- * `_const_rids`. A `_BitInt(N)` op an integer constant stays `_BitInt(N)` (the constant converts to the
- * bit-int type), unlike a `_BitInt` mixed with a standard integer VARIABLE (which routes to fallback). */
-static int rid_is_const(CC *c,uint32_t rid){
-  for(size_t i=0;i<c->fn->n_claims;i++){ const bcir_claim *cl=&c->fn->claims[i];
-    if(cl->n_wr&&cl->wr[0]==rid) return !strcmp(cl->op,"c.const"); }
   return 0; }
 /* The result-temp for a call THROUGH a funcptr (c.call.indirect / c.call.imember), by the funcptr's
  * captured RETURN type -- the C twin of the oracle's _call_result_ct ladder: a float keeps its width;
@@ -1009,18 +1006,26 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld) {
    * bits >= 32 needs a 64-bit unit); the load reads only `access_bytes` (the spanned bytes). */
   int usz = fld->bit_w ? (fld->access_bytes<=4?4:8) : fld->size;
   uint32_t t=fld->is_ptr?tempptr_field(c,fld):fld->is_complex?tempc(c,fld->size):fld->is_float?tempf(c,fld->size)
-            :fld->bit_width>0?tempbi(c,fld->bit_width,fld->signd)   /* a C23 `_BitInt(N)` member: load at the storage
-                                                                    * width, typed `_BitInt(N)` (faithful + N-bit) */
+            :fld->bit_w?tempi(c,usz,0)   /* a BITFIELD storage unit: a plain unsigned load (bf.get extracts below),
+                                          * even a `_BitInt(N)` bitfield -- its unit is read raw, then masked. */
+            :fld->bit_width>0?tempbi(c,fld->bit_width,fld->signd)   /* a PLAIN C23 `_BitInt(N)` member: load at the
+                                                                    * storage width, typed `_BitInt(N)` (faithful) */
             :tempi(c,usz,fld->signd);   /* loaded value carries the field's type */
   if(fld->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;   /* read as `char`, not int8_t */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->bit_w?fld->access_bytes:fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
   if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
-  if(fld->bit_w){uint32_t u=t;t=tempi(c,fld->bit_w>32?fld->size:4,(fld->signd||fld->bit_w<32)?1:0);   /* integer
-    * promotion (6.3.1.1): a bitfield narrower than int promotes to int, so an UNSIGNED sub-int bitfield reads
-    * as a SIGNED int (`bf < x` is a signed compare); a full-width (==32) unsigned bitfield stays unsigned; a
-    * WIDE bitfield (>32 bits, long-long unit) keeps its declared 64-bit type -- int/unsigned can't hold it. */
+  if(fld->bit_w){uint32_t u=t;
+    /* integer promotion (6.3.1.1) of a bitfield read, keyed on the BITFIELD WIDTH W (`fld->bit_w`):
+     *   * W <= 32  -> promotes to int (int holds all W-bit values), so an UNSIGNED sub-int bitfield reads
+     *                 as a SIGNED int (`bf < x` is a signed compare); W==32 unsigned stays unsigned.
+     *   * W >  32  -> int can't hold it: a `_BitInt(N)` bitfield stays `_BitInt(N)` (does NOT promote --
+     *                 matching Clang's `s.wide + s.wide == _BitInt(N)`); a standard wide field keeps its
+     *                 declared 64-bit type. So a `_BitInt(N<=32)` bitfield promotes to int just like a
+     *                 standard one -- VERIFIED == Clang via the `_Generic` differential. */
+    if(fld->bit_width>0 && fld->bit_w>32) t=tempbi(c,fld->bit_width,fld->signd);   /* WIDE `_BitInt(N)` bitfield */
+    else t=tempi(c,fld->bit_w>32?fld->size:4,(fld->signd||fld->bit_w<32)?1:0);
     bcir_claim *g=new_claim(c,"c.bf.get",BCIR_OP_ADD);if(!g)return t;
     g->n_rd=1;g->rd[0]=u;g->n_wr=1;g->wr[0]=t;g->n_imm=3;g->imm[0]=fld->bit_off;g->imm[1]=fld->bit_w;g->imm[2]=fld->signd;}
   return t;
@@ -2355,19 +2360,32 @@ static int member_is_store(CC *c,int j){
 static uint32_t binop_result(CC *c, const char *suf, uint32_t lhs, uint32_t rhs){
   int is_arith=!strcmp(suf,"add")||!strcmp(suf,"sub")||!strcmp(suf,"mul")||!strcmp(suf,"div");
   int is_shift=!strcmp(suf,"shl")||!strcmp(suf,"shr");
-  /* C23 `_BitInt(N)` (non-promoting, exact width): same-type `_BitInt(N)` op `_BitInt(N)` stays
-   * `_BitInt(N)`; a `_BitInt(N)` op an integer CONSTANT stays `_BitInt(N)` (the constant converts); a
-   * shift `bi << k` keeps the `_BitInt` left operand. Any OTHER mix (a `_BitInt` with a standard integer
-   * VARIABLE, or two different-width/signedness `_BitInt`s) cleanly fails -- the twin has no fallback, so
-   * a clean failure here keeps the rails in lockstep (the Python rail routes the same form to fallback). */
+  /* C23 `_BitInt(N)` (non-promoting, exact width). The first-class subset carries the result ONLY when it
+   * is itself a `_BitInt(N)` -- the bit-precise operand WINS the C23 6.2.5/6.3.1.8 rank (its width strictly
+   * exceeds the other operand's post-promotion width). VERIFIED == Clang via the `_Generic` differential.
+   *   * same-type `_BitInt(N)` op `_BitInt(N)`           -> `_BitInt(N)`
+   *   * a WIDER `_BitInt` op a narrower `_BitInt`/standard-int VARIABLE/constant -> the wider `_BitInt`
+   *   * a shift `bi << k`                                -> the (non-promoting) `_BitInt` left operand
+   * Any mix whose C23 result is a STANDARD integer type (the `_BitInt` does NOT out-rank: equal/lesser
+   * width) cleanly fails -- the twin has no fallback, so a clean failure here keeps the rails in lockstep
+   * (the Python rail routes the same form to fallback). A bare integer constant carries its REAL literal
+   * type (so `bi64+5`->`_BitInt(64)`, `bi8+5`->`int`->fail), matching Clang -- no const short-circuit. */
   int bsa=0,bsb=0; int ba=rid_bitint(c,lhs,&bsa), bb=rid_bitint(c,rhs,&bsb);
   if(ba||bb){
     if(is_shift){ if(ba) return tempbi(c,ba,bsa); fail(c,"`_BitInt` shift without a `_BitInt` left operand"); return temp(c,4); }
-    if(ba&&bb){ if(ba==bb&&bsa==bsb) return tempbi(c,ba,bsa);
-      fail(c,"mixing different `_BitInt` widths/signedness"); return temp(c,4); }
+    if(ba&&bb){                                          /* two `_BitInt`s: the WIDER wins (its own sign);
+                                                          * equal width combines signedness (unsigned if either). */
+      if(ba>bb) return tempbi(c,ba,bsa);
+      if(bb>ba) return tempbi(c,bb,bsb);
+      return tempbi(c,ba,(bsa&&bsb)?1:0);
+    }
     int bw=ba?ba:bb, bs=ba?bsa:bsb; uint32_t other=ba?rhs:lhs;
-    if(rid_is_const(c,other)) return tempbi(c,bw,bs);   /* `_BitInt(N)` op integer-constant -> `_BitInt(N)` */
-    fail(c,"mixing `_BitInt` with a standard integer"); return temp(c,4);
+    /* a `_BitInt` mixed with a FLOAT converts to the float -> the result is FLOATING, not a `_BitInt`. */
+    if(rid_fsize(c,other)){ fail(c,"`_BitInt` mixed with a floating type (result is not a `_BitInt`)"); return temp(c,4); }
+    int osz=4,osg=1; rid_int(c,other,&osz,&osg);         /* the other operand's (width, sign) ... */
+    if(osz<4){osz=4;osg=1;}                               /* ... after integer promotion (a `_BitInt` does not) */
+    if(bw>osz*8) return tempbi(c,bw,bs);                  /* `_BitInt` strictly wider -> it wins, own sign */
+    fail(c,"`_BitInt` arithmetic whose C23 result is a standard integer type"); return temp(c,4);
   }
   int fa=rid_fsize(c,lhs), fb=rid_fsize(c,rhs);
   if(is_arith&&(fa||fb)){                                      /* float/complex arithmetic */

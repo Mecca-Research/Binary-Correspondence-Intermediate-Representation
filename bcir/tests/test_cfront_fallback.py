@@ -40,12 +40,53 @@ def test_fallback_is_total_over_several_unsupported_constructs():
 
 def test_bitint_supported_subset_does_not_fall_back():
     # the supported `_BitInt(N)` subset: same-type arithmetic (incl. a NON-standard 12-bit lane) over
-    # locals/params/returns, and a `_BitInt` with an integer constant -- compiles clean, no fallback.
+    # locals/params/returns, and a `_BitInt` with an explicitly-cast constant -- compiles clean, no fallback.
     for src in (
         "unsigned _BitInt(12) f(unsigned _BitInt(12) a, unsigned _BitInt(12) b){ return a + b; }\n",
         "_BitInt(20) f(_BitInt(20) a, _BitInt(20) b){ _BitInt(20) c = a * b; return c - (_BitInt(20))7; }\n",
         "signed _BitInt(8) f(signed _BitInt(8) a){ return a + (signed _BitInt(8))3 - a; }\n",
         "unsigned _BitInt(64) f(unsigned _BitInt(64) a, unsigned _BitInt(64) b){ return (a & b) << (unsigned _BitInt(64))1; }\n",
+    ):
+        r = compile_with_fallback(src, check_clang=False)
+        assert not r.needs_fallback and r.is_clean, (src, r.fallback)
+
+
+def test_bitint_mixed_width_where_bitint_wins_is_first_class():
+    # NEW first-class subset (sub-feature A): a mixed-width `_BitInt` expression whose C23 6.3.1.8 result is
+    # itself a `_BitInt(N)` -- the bit-precise operand WINS the rank (its width strictly exceeds the other
+    # operand's post-promotion width). The modeled result type == Clang's (verified by the `_Generic`
+    # differential in test_c_cfront.py); these compile clean, NO fallback.
+    for src in (
+        # `_BitInt(N>32)` + a standard int VARIABLE -> the `_BitInt` wins (N > 32 = width(int)).
+        "_BitInt(33) f(_BitInt(33) a, int b){ return a + b; }\n",
+        "unsigned _BitInt(64) f(unsigned _BitInt(64) a, unsigned b){ return a + b; }\n",
+        "_BitInt(64) f(_BitInt(64) a, unsigned b){ return a * b; }\n",       # bi64 + uint -> bi64 (own sign)
+        # a WIDER `_BitInt` mixed with a NARROWER `_BitInt` -> the wider wins.
+        "_BitInt(16) f(_BitInt(16) a, _BitInt(8) b){ return a + b; }\n",
+        "unsigned _BitInt(20) f(unsigned _BitInt(20) a, _BitInt(12) b){ return a | (unsigned _BitInt(20))b; }\n",
+        # a `_BitInt(N>32)` + a bare integer constant whose literal type is narrower -> stays `_BitInt(N)`.
+        "_BitInt(33) f(_BitInt(33) a){ return a + 5; }\n",
+        "unsigned _BitInt(40) f(unsigned _BitInt(40) a){ return a * 3u; }\n",
+    ):
+        r = compile_with_fallback(src, check_clang=False)
+        assert not r.needs_fallback and r.is_clean, (src, r.fallback)
+
+
+def test_bitint_bitfield_is_first_class():
+    # NEW first-class subset (sub-feature B): a `_BitInt(N)` BITFIELD `_BitInt(N) m : W` (2<=N<=64, 1<=W<=N)
+    # packs into the `_BitInt(N)` storage unit (1/2/4/8 bytes) with the SAME LSB-first packing as a
+    # standard-int bitfield of that storage size -- byte-identical to Clang (verified by the layout
+    # differential in test_c_cfront.py). The field reads/writes its W bits typed `_BitInt(N)`.
+    for src in (
+        "struct S { _BitInt(12) a : 5; _BitInt(12) b : 6; }; _BitInt(12) f(struct S s){ return s.a + s.b; }\n",
+        "struct S { unsigned _BitInt(12) a : 5; }; unsigned _BitInt(12) f(unsigned _BitInt(12) v){"
+        " struct S s; s.a = v; return s.a; }\n",
+        # a WIDE (W>32) `_BitInt` bitfield does NOT promote -- it stays `_BitInt(N)` in arithmetic.
+        "struct S { unsigned _BitInt(64) x : 40; }; unsigned _BitInt(64) f(struct S s){"
+        " return s.x + (unsigned _BitInt(64))1; }\n",
+        # a `_BitInt` bitfield alongside a standard-int bitfield (mixed packing in one unit family).
+        "struct S { unsigned _BitInt(12) a : 5; unsigned int b : 6; };"
+        " unsigned _BitInt(12) f(struct S s){ return s.a; }\n",
     ):
         r = compile_with_fallback(src, check_clang=False)
         assert not r.needs_fallback and r.is_clean, (src, r.fallback)
@@ -76,17 +117,28 @@ def test_bitint_unsupported_forms_route_to_fallback_not_miscompile():
     # route to fallback (a CLowerError / CParseError -> needs_fallback) rather than emit possibly-wrong code
     # that drops the exact width. Each of these is unsupported and MUST NOT compile to BCIR.
     cases = {
-        # mixing a `_BitInt` with a standard integer VARIABLE in arithmetic (C23 does NOT promote `_BitInt`,
-        # so the common type would have to be carried exactly -- only same-type is modeled).
+        # THE PRECISE BOUNDARY (sub-feature A): a `_BitInt` mixed with a standard int / different `_BitInt`
+        # whose C23 6.3.1.8 result is a STANDARD integer type stays fallback -- the bit-precise operand does
+        # NOT win the rank (equal or LESSER width), so the result would be int/long/... whose long-vs-long-long
+        # width-collapse in the value model could diverge from Clang's `_Generic` view. Correctness > coverage.
+        #
+        # `_BitInt(N<=32)` + int: int has the greater(-or-equal) rank -> result int (NOT a `_BitInt`).
         "unsigned _BitInt(8) f(unsigned _BitInt(8) a, int b){ return a + b; }\n": "lower",
-        # mixing two DIFFERENT `_BitInt` widths in one expression.
-        "_BitInt(8) f(_BitInt(8) a, _BitInt(16) b){ return a + b; }\n": "lower",
-        # a `_BitInt` BITFIELD (`_BitInt(N) m : W`) -- a bit-precise bitfield is a separate, subtler feature
-        # (the access unit / packing is not yet modeled); the PLAIN member is supported, the bitfield is not.
-        "struct S { _BitInt(12) x : 5; }; _BitInt(12) f(struct S s){ return (_BitInt(12))s.x; }\n": "lower",
-        # mixing a `_BitInt` MEMBER read with a standard integer variable -- the member is loadable, but the
-        # mix in the arithmetic still routes to fallback (same as the local/param mix above).
+        "_BitInt(32) f(_BitInt(32) a, int b){ return a + b; }\n": "lower",
+        # `_BitInt(N)` + a standard int of EQUAL-OR-GREATER width (the standard wins the tie / the rank).
+        "_BitInt(64) f(_BitInt(64) a, long b){ return a + b; }\n": "lower",
+        "_BitInt(8) f(_BitInt(8) a, long b){ return a + b; }\n": "lower",
+        # `_BitInt(N)` + a bare integer constant whose literal type out-ranks it -> result is the standard type.
+        "_BitInt(8) f(_BitInt(8) a){ return a + 5; }\n": "lower",
+        "_BitInt(20) f(_BitInt(20) a){ return a + 5L; }\n": "lower",
+        # mixing a `_BitInt` MEMBER read with a standard integer variable where the std wins (same as above).
         "struct S { _BitInt(12) x; }; _BitInt(12) f(struct S s, int k){ return s.x + k; }\n": "lower",
+        # a `_BitInt` mixed with a FLOATING type -> the result is a float, NOT a `_BitInt` (even a WIDE
+        # `_BitInt(64)` -- the float width must not be mistaken for a standard-int rank). Route to fallback.
+        "_BitInt(64) f(_BitInt(64) a, double b){ return a + b; }\n": "lower",
+        "_BitInt(64) f(_BitInt(64) a, float b){ return a + b; }\n": "lower",
+        # a `_BitInt` bitfield with width W outside 1..N (W>N is invalid C; Clang errors) -> fallback.
+        "struct S { _BitInt(8) x : 9; }; _BitInt(8) f(struct S s){ return s.x; }\n": "lower",
         # widths outside the supported 2..64 range are rejected at parse.
         "_BitInt(100) f(_BitInt(100) a){ return a + a; }\n": "parse",
         "_BitInt(1) f(_BitInt(1) a){ return a; }\n": "parse",

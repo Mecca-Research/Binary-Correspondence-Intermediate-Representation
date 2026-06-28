@@ -43,7 +43,8 @@ _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfron
                  "cfront_strtab.c", "cfront_strconcat.c", "cfront_widelit.c", "cfront_cast.c", "cfront_alignof.c", "cfront_static.c",
                  "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c", "cfront_signed.c", "cfront_signedcmp.c", "cfront_signedbare.c", "cfront_longunary.c", "cfront_boolnorm.c", "cfront_unarypromote.c", "cfront_floatsigncast.c", "cfront_intsigncast.c", "cfront_boolcast.c", "cfront_boolmember.c",
                  "cfront_unsequenced.c", "cfront_reproducible.c",   # + char consts + str table/dedup + const LUT + ABI sizeof model + bool normalization + unary integer-promotion/float + float->signed + int->signed cast + bool cast + _Bool member/element store-normalization + C23 [[unsequenced]]/[[reproducible]] hints (A1.3)
-                 "cfront_bitint.c"]   # + C23 `_BitInt(N)` (#bitint): exact-width, non-promoting bit-precise ints (incl. a NON-standard 12/20-bit lane) as locals/params/returns, same-type arithmetic, faithful `_BitInt(N)` emit
+                 "cfront_bitint.c",   # + C23 `_BitInt(N)` (#bitint): exact-width, non-promoting bit-precise ints (incl. a NON-standard 12/20-bit lane) as locals/params/returns, same-type arithmetic, faithful `_BitInt(N)` emit
+                 "cfront_bitint_mixed.c"]   # + C23 `_BitInt(N)` MIXED-WIDTH arithmetic (#bitintmixed): a `_BitInt(N)` mixed with a NARROWER standard int / `_BitInt` / constant, where the C23 6.3.1.8 result is the WIDER `_BitInt` -- modeled result type == Clang (the `_Generic` differential), faithful emit
 _CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
             "cfront_continue.c", "cfront_switch.c", "cfront_switchfall.c", "cfront_goto.c", "cfront_incdec.c",
             "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c", "cfront_loopscope.c", "cfront_blockscope.c", "cfront_localmd.c", "cfront_localmdinit.c", "cfront_ptrlocal.c"]
@@ -78,9 +79,13 @@ _ABI = ["cfront_structret.c", "cfront_structcall.c",  # L8: struct return-by-val
         "cfront_nestmember.c",                         # + nested member access (o.pos.lo / dev->ctrl.bf)
         "cfront_memberarray.c",                        # + native 1-D struct member arrays (s.arr[i])
         "cfront_neststruct.c",                          # + nested struct members + nested-brace init `{ {..}, .. }`
-        "cfront_bitint_member.c"]                        # + C23 `_BitInt(N)` struct MEMBERS (#bitintmember): a PLAIN
+        "cfront_bitint_member.c",                        # + C23 `_BitInt(N)` struct MEMBERS (#bitintmember): a PLAIN
                                                          #   (non-bitfield) `_BitInt(N)` member -- read + write + same-type
                                                          #   arithmetic, layout (sizeof/offsetof) == Clang, faithful emit
+        "cfront_bitint_bitfield.c"]                      # + C23 `_BitInt(N)` BITFIELDS (#bitintbitfield): `_BitInt(N) m:W`
+                                                         #   (1<=W<=N) packs into the `_BitInt(N)` storage unit LSB-first,
+                                                         #   byte-identical to Clang (the layout differential); W<=32 reads
+                                                         #   promote to int, W>32 stay `_BitInt(N)` -- faithful emit
 _FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_mathh.c",
           "cfront_mathh_mixed.c", "cfront_mathh_long.c", "cfront_mathh_ptr.c",
           "cfront_calltyped.c", "cfront_complex.c", "cfront_complexdiv.c",   # + C99 _Complex (#complex) + complex `/`
@@ -2036,6 +2041,159 @@ def test_bitint_member_layout_matches_clang():
                 nums = [int(x) for x in subprocess.run([e], capture_output=True, text=True).stdout.split()]
                 assert nums == [bp.size, bp.align, bp.field("tag")[1], bp.field("lo")[1], bp.field("hi")[1]]
                 break
+
+
+def _bitint_model_tag(ta, tb):
+    """The cfront's MODELED C23 result type for `ta OP b` (an arithmetic/bitwise op), as a `_Generic`-style
+    type-name tag (`_BitInt(N)` / `unsigned _BitInt(N)` / a standard name), OR None iff the cfront routes
+    that mix to fallback (its result would be a STANDARD integer type, outside the first-class subset). This
+    is the single source of truth the differential checks against Clang -- if it returns a `_BitInt` tag,
+    Clang's `_Generic` MUST select that exact tag; if it returns None, Clang's result MUST NOT be a
+    `_BitInt` (so routing to fallback is correct, never hiding a wrong claim)."""
+    from bcir.frontends.cfront.ctype_model import BitIntMix, usual_arith_int
+    try:
+        r = usual_arith_int(ta, tb)
+    except BitIntMix:
+        return None
+    if not r.is_bitint:
+        return None
+    return f"_BitInt({r.bit_width})" if r.signed else f"unsigned _BitInt({r.bit_width})"
+
+
+def test_bitint_mixed_width_result_type_matches_clang():
+    """SUB-FEATURE A differential: the cfront's MODELED C23 6.3.1.8 result type for a mixed `_BitInt`/
+    standard-int (or two-`_BitInt`) expression must EQUAL Clang's, on every case -- the gate that makes the
+    new first-class subset Clang-equivalent. For each operand pair the cfront's model (`_bitint_model_tag`)
+    yields either a `_BitInt(N)` tag (first-class) or None (routed to fallback). A single Clang `_Generic`
+    probe asserts, per case, that:
+      * a first-class `_BitInt` tag is EXACTLY the type Clang selects (`_Generic((a OP b), <tag>:1, ...)==1`);
+      * a None (fallback) case's Clang result is NOT a `_BitInt` (the model never hides a wrong `_BitInt`).
+    If the model disagreed with Clang on ANY case, the probe's `_Static_assert`s fail (so the test fails) --
+    correctness over coverage. (Verified live against Clang 18; the model reproduces every case.)"""
+    if not _CC:
+        return
+    from bcir.frontends.cfront.ctype_model import bitint, scalar
+
+    def bi(n, signed=True):
+        return bitint(n, signed)
+
+    # (label, decl-c-type, cfront-CType) for each operand we mix.
+    operands = {
+        "bi8": ("_BitInt(8)", bi(8)), "ubi8": ("unsigned _BitInt(8)", bi(8, False)),
+        "bi12": ("_BitInt(12)", bi(12)), "ubi12": ("unsigned _BitInt(12)", bi(12, False)),
+        "bi16": ("_BitInt(16)", bi(16)), "ubi16": ("unsigned _BitInt(16)", bi(16, False)),
+        "bi32": ("_BitInt(32)", bi(32)), "ubi32": ("unsigned _BitInt(32)", bi(32, False)),
+        "bi33": ("_BitInt(33)", bi(33)), "ubi33": ("unsigned _BitInt(33)", bi(33, False)),
+        "bi40": ("_BitInt(40)", bi(40)), "ubi40": ("unsigned _BitInt(40)", bi(40, False)),
+        "bi64": ("_BitInt(64)", bi(64)), "ubi64": ("unsigned _BitInt(64)", bi(64, False)),
+        "i": ("int", scalar("int")), "u": ("unsigned", scalar("unsigned int")),
+        "l": ("long", scalar("long")), "ul": ("unsigned long", scalar("unsigned long")),
+        "ll": ("long long", scalar("long long")), "ull": ("unsigned long long", scalar("unsigned long long")),
+        "sh": ("short", scalar("short")), "c": ("char", scalar("char")),
+        "fl": ("float", scalar("float")), "db": ("double", scalar("double")),
+    }
+    # Cover: _BitInt + int / unsigned, signed/unsigned _BitInt mixes, two different _BitInt widths, and the
+    # boundary on both sides of the rank (N<width, N==width, N>width); plus long / long long / sub-int.
+    pairs = [
+        ("bi8", "i"), ("bi12", "i"), ("bi16", "i"), ("bi32", "i"), ("bi33", "i"), ("bi40", "i"), ("bi64", "i"),
+        ("bi8", "u"), ("bi32", "u"), ("bi33", "u"), ("bi64", "u"),
+        ("ubi8", "i"), ("ubi32", "i"), ("ubi33", "i"), ("ubi64", "i"),
+        ("ubi8", "u"), ("ubi32", "u"), ("ubi64", "u"),
+        ("bi8", "sh"), ("bi12", "sh"), ("bi8", "c"),
+        ("bi8", "l"), ("bi33", "l"), ("bi64", "l"), ("bi64", "ll"), ("bi64", "ull"), ("bi40", "l"),
+        ("bi8", "bi12"), ("bi12", "bi8"), ("bi8", "bi16"), ("bi32", "bi64"), ("bi16", "bi40"),
+        ("bi8", "ubi8"), ("bi32", "ubi32"), ("bi64", "ubi64"),
+        ("bi8", "ubi12"), ("ubi8", "bi12"), ("bi16", "ubi8"), ("bi32", "ubi64"), ("ubi32", "bi64"),
+        ("bi40", "ubi16"),
+        # a `_BitInt` mixed with a FLOAT -> float (NOT a `_BitInt`): the model must route to fallback, never
+        # mistake the float's byte-width for an integer rank (the `bi64 + float` regression class). The probe
+        # asserts Clang's result is NOT a `_BitInt` (a float result lands on its float:300/double:301 tag,
+        # still >= 100, so the "fallback => not a _BitInt" assertion holds).
+        ("bi8", "fl"), ("bi64", "fl"), ("bi64", "db"), ("ubi64", "fl"), ("bi32", "db"),
+    ]
+    # the universal _Generic type list (every _BitInt width we might land on, + the standard ints).
+    glist = ("    _BitInt(8):1, unsigned _BitInt(8):2, _BitInt(12):3, unsigned _BitInt(12):4,\n"
+             "    _BitInt(16):5, unsigned _BitInt(16):6, _BitInt(32):7, unsigned _BitInt(32):8,\n"
+             "    _BitInt(33):9, unsigned _BitInt(33):10, _BitInt(40):11, unsigned _BitInt(40):12,\n"
+             "    _BitInt(64):13, unsigned _BitInt(64):14, int:100, unsigned:101, long:102,\n"
+             "    unsigned long:103, long long:104, unsigned long long:105, float:300, double:301, default:200")
+    tags = {  # the _Generic value for a `_BitInt` tag (so a static-assert can compare)
+        "_BitInt(8)": 1, "unsigned _BitInt(8)": 2, "_BitInt(12)": 3, "unsigned _BitInt(12)": 4,
+        "_BitInt(16)": 5, "unsigned _BitInt(16)": 6, "_BitInt(32)": 7, "unsigned _BitInt(32)": 8,
+        "_BitInt(33)": 9, "unsigned _BitInt(33)": 10, "_BitInt(40)": 11, "unsigned _BitInt(40)": 12,
+        "_BitInt(64)": 13, "unsigned _BitInt(64)": 14,
+    }
+    decls, asserts, checked_firstclass, checked_fallback = [], [], 0, 0
+    for i, (la, lb) in enumerate(pairs):
+        (ca, _ta), (cb, _tb) = operands[la], operands[lb]
+        ta, tb = operands[la][1], operands[lb][1]
+        model = _bitint_model_tag(ta, tb)
+        decls.append(f"{ca} a{i}; {cb} b{i};")
+        gen = f"_Generic((a{i} + b{i}),\n{glist})"
+        if model is not None:                          # first-class: Clang MUST select the modeled _BitInt tag
+            assert model in tags, (la, lb, model)
+            asserts.append(f"_Static_assert(({gen}) == {tags[model]}, "
+                           f'"{la}+{lb}: cfront models {model}, Clang disagrees");')
+            checked_firstclass += 1
+        else:                                          # fallback: Clang's result must NOT be a _BitInt (< 100)
+            asserts.append(f"_Static_assert(({gen}) >= 100, "
+                           f'"{la}+{lb}: cfront routes to fallback but Clang result IS a _BitInt");')
+            checked_fallback += 1
+    assert checked_firstclass >= 10 and checked_fallback >= 8   # both sides of the boundary are exercised
+    probe = ("int probe(void){\n  " + "\n  ".join(decls) + "\n  "
+             + "\n  ".join(asserts) + "\n  return 0;\n}\n")
+    with tempfile.TemporaryDirectory() as d:
+        c = os.path.join(d, "g.c")
+        open(c, "w").write(probe)
+        built = None
+        for std in ("c23", "c2x"):
+            b = subprocess.run([_CC, f"-std={std}", "-Wno-constant-conversion", "-c", c, "-o", os.devnull],
+                               capture_output=True, text=True)
+            if "unknown" not in b.stderr.lower() or b.returncode == 0:
+                built = b
+                break
+        assert built is not None
+        # a non-zero return code here means a `_Static_assert` fired: the cfront's model disagreed with Clang.
+        assert built.returncode == 0, ("cfront _BitInt result-type model diverges from Clang:\n" + built.stderr)
+
+
+def test_bitint_bitfield_layout_matches_clang():
+    """SUB-FEATURE B differential: a `_BitInt(N)` BITFIELD `_BitInt(N) m : W` must lay out byte-identically
+    to Clang -- the gate that makes bit-precise bitfields Clang-equivalent. The cfront packs a `_BitInt(N)`
+    bitfield LSB-first into the `_BitInt(N)` storage unit (its 1/2/4/8-byte slot), the same rule it uses for
+    a standard-int bitfield of that size. This asserts the cfront's sizeof / _Alignof for a battery of
+    `_BitInt` bitfield structs EQUALS Clang's (the same `sizeof`/`_Alignof` differential the member-layout
+    test runs, extended to bitfields -- `offsetof` is illegal on a bitfield, so the cross-check is on the
+    aggregate size + alignment, which the LSB-first packing fully determines)."""
+    cases = [  # (tag, member-decls) -- each a struct of `_BitInt` (and standard) bitfields
+        ("A", "unsigned _BitInt(12) a : 5; unsigned _BitInt(12) b : 6;"),
+        ("B", "unsigned _BitInt(20) a : 10; unsigned _BitInt(20) b : 10;"),
+        ("C", "unsigned _BitInt(8) a : 3; unsigned _BitInt(8) b : 5; unsigned _BitInt(8) c : 2;"),
+        ("D", "int tag; _BitInt(64) x : 40; _BitInt(64) y : 20;"),
+        ("E", "unsigned _BitInt(12) a : 5; unsigned int b : 6;"),     # mixed bit-int + standard bitfield
+        ("F", "unsigned _BitInt(12) a : 12;"),                         # full-width W == N
+        ("G", "unsigned _BitInt(16) a : 5; unsigned _BitInt(8) b : 5;"),  # different storage sizes
+        ("H", "unsigned _BitInt(32) a : 20; unsigned _BitInt(32) b : 20;"),  # straddle -> two units
+        ("I", "unsigned _BitInt(12) a : 12; unsigned _BitInt(12) b : 6;"),   # straddle in a 2-byte unit
+    ]
+    for tag, members in cases:
+        src = f"struct {tag} {{ {members} }};\n_BitInt(8) f(struct {tag} s){{ (void)s; return (_BitInt(8))0; }}\n"
+        agg = compile_unit(src, check_clang=False).lowered.aggregates[tag]
+        if not _CC:
+            continue
+        probe = ("#include <stddef.h>\n#include <stdio.h>\n"
+                 f"struct {tag} {{ {members} }};\n"
+                 f'int main(void){{printf("%zu %zu", sizeof(struct {tag}),'
+                 f" (size_t)_Alignof(struct {tag})); return 0;}}")
+        with tempfile.TemporaryDirectory() as d:
+            c, e = os.path.join(d, "p.c"), os.path.join(d, "p")
+            open(c, "w").write(probe)
+            for std in ("c23", "c2x"):
+                if subprocess.run([_CC, f"-std={std}", c, "-o", e],
+                                  capture_output=True).returncode == 0:
+                    nums = [int(x) for x in subprocess.run([e], capture_output=True, text=True).stdout.split()]
+                    assert nums == [agg.size, agg.align], (tag, members, nums, agg.size, agg.align)
+                    break
 
 
 def test_c_frontend_builds_warning_clean():
