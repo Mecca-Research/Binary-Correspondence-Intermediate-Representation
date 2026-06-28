@@ -321,6 +321,82 @@ def emit_blas_gemm_c(M: int, N: int, K: int, fn_name: str = "bcir_gemm") -> str:
     )
 
 
+def emit_tuned_gemm_c(plan, fn_name: str = "bcir_gemm_tuned") -> str:
+    """B3: emit a wrapped BLAS sgemm whose CALLING-SIDE params are the cost model's PRICED PLAN, not
+    hard-coded -- the tuned variant of ``emit_blas_gemm_c``. ``plan`` is a ``kbcir.calling_side.Calling
+    SidePlan`` carrying the chosen {major-order, caller block, prefetch distance, channel}. The emitted C
+    computes the IDENTICAL row-major C[MxN] = A[MxK] @ B[KxN] as the untuned ``emit_blas_gemm_c`` -- calling
+    -side tuning never changes the math; that is the whole point (the invariance the tests prove).
+
+    What the plan turns into emitted C:
+      * **major-order** -- ``CblasRowMajor`` (lda=K, ldb=N, ldc=N) OR ``CblasColMajor`` via the textbook
+        C^T = B^T A^T identity: ``cblas_sgemm(CblasColMajor, NoTrans, NoTrans, N, M, K, 1, B, N, A, K, 0,
+        C, N)`` writes the SAME row-major C buffer (a row-major MxN matrix IS a column-major NxM matrix in
+        memory), so the column-major call is numerically identical, byte-for-byte, to the row-major call.
+      * **prefetch** -- when ``plan.prefetches``, the portable fallback loop emits ``__builtin_prefetch``
+        hints for the NEXT row block of A (distance ``plan.prefetch_distance`` blocks ahead); a prefetch
+        hint changes NOTHING numerically (it is a pure cache hint), so the result is unchanged. cblas owns
+        its own prefetching internally, so the hint rides the fallback path where the loop is open.
+      * **channel** -- emitted as a ``/* channel: <name> (<kind>) */`` annotation (the routed execution
+        channel from ``channels.orchestrate``); a different channel computes the same value.
+
+    Keeps the ``#if defined(BCIR_USE_CBLAS)`` + portable fallback structure: the fallback honors the SAME
+    row-major result for either major-order (the math is layout-independent), so the same source is correct
+    linked or standalone. Dims are baked in from the plan (a planned claim knows its shape)."""
+    M, N, K = plan.M, plan.N, plan.K
+    if M < 1 or N < 1 or K < 1:
+        raise ValueError(f"gemm dims must be >= 1; got M={M} N={N} K={K}")
+    major = "CblasColMajor" if not plan.is_row_major else "CblasRowMajor"
+    # The chosen cblas call. Column-major passes B first (the C^T=B^T A^T swap) into the SAME C buffer.
+    if plan.is_row_major:
+        cblas_call = (f"  cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,\n"
+                      f"              {M}, {N}, {K}, 1.0f, A, {K}, B, {N}, 0.0f, C, {N});\n")
+    else:
+        cblas_call = (f"  /* column-major C^T = B^T A^T into the SAME row-major C buffer (identical result) */\n"
+                      f"  cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,\n"
+                      f"              {N}, {M}, {K}, 1.0f, B, {N}, A, {K}, 0.0f, C, {N});\n")
+    # The portable fallback: ALWAYS the row-major reference math (layout-independent), with the chosen
+    # prefetch hints. A `__builtin_prefetch` is a pure cache hint -- zero numeric effect.
+    blk = max(1, plan.block.tile_m)
+    if plan.prefetches:
+        pf = (f"      /* B3 prefetch: pull the next row block of A (distance {plan.prefetch_distance} "
+              f"block(s)) -- a pure cache hint, 0 numeric effect */\n"
+              f"      if (i + {plan.prefetch_distance * blk}u < {M}u)\n"
+              f"        __builtin_prefetch(&A[(i + {plan.prefetch_distance * blk}u) * {K}u], 0, 1);\n")
+    else:
+        pf = ""
+    fallback = (f"  for (size_t i = 0; i < {M}; ++i) {{\n"
+                f"{pf}"
+                f"    for (size_t j = 0; j < {N}; ++j) {{\n"
+                f"      float s = 0.0f;\n"
+                f"      for (size_t k = 0; k < {K}; ++k) s += A[i * {K} + k] * B[k * {N} + j];\n"
+                f"      C[i * {N} + j] = s;\n"
+                f"    }}\n"
+                f"  }}\n")
+    pf_note = (f"prefetch dist={plan.prefetch_distance}" if plan.prefetches else "no prefetch")
+    return (
+        f"/* BCIR -> B3 calling-side-tuned wrapped GEMM (cost-model-priced plan; integrate, don't reinvent). "
+        f"row-major C[{M}x{N}] = A[{M}x{K}] @ B[{K}x{N}]; major-order={major}, {pf_note}, "
+        f"channel={plan.channel} ({plan.channel_kind}). The tuned call computes the IDENTICAL C as the "
+        f"untuned row-major reference -- calling-side tuning never changes the math. */\n"
+        f"/* channel: {plan.channel} ({plan.channel_kind}) */\n"
+        "#include <stddef.h>\n"
+        "#if defined(BCIR_USE_CBLAS)\n"
+        "  #include <cblas.h>\n"
+        "  #define BCIR_GEMM_CBLAS 1\n"
+        "#else\n"
+        "  #define BCIR_GEMM_CBLAS 0\n"
+        "#endif\n"
+        f"void {fn_name}(const float *A, const float *B, float *C) {{\n"
+        f"#if BCIR_GEMM_CBLAS\n"
+        f"{cblas_call}"
+        f"#else\n"
+        f"{fallback}"
+        f"#endif\n"
+        f"}}\n"
+    )
+
+
 def emit_fftw_fft_c(n: int, fn_name: str = "bcir_fft") -> str:
     """B2: wrap a TRUSTED external FFTW 1-D complex FFT through the `c.call.libm:` FFI edge -- "integrate,
     don't reinvent", a genuinely NEW kernel class (a spectral transform, not a matmul). BCIR owns the
@@ -465,6 +541,75 @@ def emit_activation_kernel_c(kind: str, n: int, fn_name: str = "bcir_activation"
                 f"  }}\n"
                 f"}}\n")
     return head + body
+
+
+# --- G2: fused matmul+activation epilogue kernel (the inline activation, no intermediate buffer) -----
+# The optimizer (kbcir.fusion) chooses this fused form when it prices cheaper than the two-pass
+# (matmul-then-activation) plan -- the win is eliding the intermediate C-buffer's write+read. The kernel
+# applies the activation to each matmul output element s INLINE, just before the store: C[i*N+j] = act(s).
+# relu stays the EXACT clean-rail max(0,s); the transcendentals inline the SAME trusted libm call
+# (expf/tanhf) the standalone activation kernel uses (the c.call.libm: edge, quarantine rules carried over).
+# softmax is NOT supported here (a last-axis row reduction can not be an inline per-element epilogue -- it
+# is scoped out of fusion in kbcir.fusion).
+
+def _inline_activation_expr(kind: str, var: str) -> tuple[str, bool]:
+    """The C expression applying activation `kind` INLINE to the float scalar `var` (the matmul output
+    element), plus whether it needs ``<math.h>``. relu -> the exact ``(var > 0.0f ? var : 0.0f)`` (no libm);
+    the transcendentals -> the SAME expf/tanhf form the standalone ``emit_activation_kernel_c`` uses, so the
+    fused result equals the unfused reference to float round-off. softmax is rejected (non-elementwise)."""
+    if kind == "relu":
+        return f"({var} > 0.0f ? {var} : 0.0f)", False
+    if kind == "sigmoid":
+        return f"(1.0f / (1.0f + expf(-({var}))))", True            # c.call.libm:expf
+    if kind == "tanh":
+        return f"tanhf({var})", True                                # c.call.libm:tanhf
+    if kind == "gelu":
+        # the GPT/BERT tanh-approximation GELU, identical to emit_activation_kernel_c's gelu form.
+        return (f"(0.5f * ({var}) * (1.0f + tanhf(0.7978845608028654f * "
+                f"(({var}) + 0.044715f * ({var}) * ({var}) * ({var})))))"), True   # c.call.libm:tanhf
+    raise ValueError(f"{kind!r} is not an inline-fusible activation (softmax is a row reduction; relu/"
+                     f"sigmoid/tanh/gelu fuse)")
+
+
+def emit_matmul_activation_c(M: int, N: int, K: int, kind: str = "relu",
+                             fn_name: str = "bcir_matmul_act") -> str:
+    """G2: a FUSED matmul -> activation epilogue kernel -- ``C[i,j] = act( (A@B)[i,j] )`` with the activation
+    applied INLINE as each output element is produced and NO intermediate buffer materialized (the whole
+    point of the fusion: the un-activated product never round-trips to memory). This is what the tropical
+    optimizer (kbcir.fusion) emits when it prices the fused plan cheaper than matmul-then-activation.
+
+    relu inlines the EXACT clean-rail ``max(0,s)`` (no libm); sigmoid/tanh/gelu inline the SAME trusted
+    ``c.call.libm:`` call (expf/tanhf) the standalone activation kernel uses, so the fused output EQUALS the
+    unfused reference (bit-exact for relu, float round-off for the transcendentals).
+
+    The matmul part uses the REFERENCE triple loop (NOT the ``#if defined(BCIR_USE_CBLAS)`` cblas path of
+    ``emit_blas_gemm_c``): cblas writes the WHOLE C buffer before returning, so there is no per-element seam
+    to splice the inline activation into -- the fusion's defining property (no intermediate materialized) is
+    only expressible on the open reference loop, where ``s`` is in a register exactly when the activation
+    needs it. A cblas-backed variant would have to either materialize C and run a second pass (the UNFUSED
+    plan we are beating) or use a cblas epilogue callback (not portable C23). So the fused path is the
+    reference loop by construction -- documented here, the trade the fusion makes."""
+    if M < 1 or N < 1 or K < 1:
+        raise ValueError(f"matmul+act dims must be >= 1; got M={M} N={N} K={K}")
+    expr, needs_math = _inline_activation_expr(kind, "s")
+    includes = "#include <stddef.h>\n" + ("#include <math.h>\n" if needs_math else "")
+    note = (f"relu: EXACT inline max(0,s), no libm" if kind == "relu"
+            else f"{kind}: inline via the c.call.libm: edge (the same trusted call the standalone kernel "
+                 f"uses); fused == unfused reference to float round-off")
+    return (
+        f"/* BCIR -> FUSED gem.matmul + gem.activation({kind}) epilogue (optimizer's priced choice; "
+        f"kbcir.fusion). row-major C[{M}x{N}] = act(A[{M}x{K}] @ B[{K}x{N}]); the activation is applied "
+        f"INLINE per output element -- NO intermediate buffer materialized. {note}. */\n"
+        f"{includes}"
+        f"void {fn_name}(const float *restrict A, const float *restrict B, float *restrict C) {{\n"
+        f"  for (size_t i = 0; i < {M}; ++i)\n"
+        f"    for (size_t j = 0; j < {N}; ++j) {{\n"
+        f"      float s = 0.0f;\n"
+        f"      for (size_t k = 0; k < {K}; ++k) s += A[i * {K} + k] * B[k * {N} + j];\n"
+        f"      C[i * {N} + j] = {expr};   /* the inline activation epilogue (no separate pass) */\n"
+        f"    }}\n"
+        f"}}\n"
+    )
 
 
 def emit_qfixed_selfcheck_c(module: Module, result: RealizationResult,

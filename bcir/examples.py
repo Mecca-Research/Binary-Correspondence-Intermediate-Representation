@@ -184,6 +184,27 @@ def matmul_tiled(n: int = 256, tile: int = 128) -> Module:
     return m
 
 
+def matmul_activation(n: int = 1024, kind: str = "relu") -> Module:
+    """G2: a matmul -> activation epilogue C = act(A @ B), the canonical fusion target. The ``gem.matmul``
+    claim writes the intermediate product CPRE; the ``gem.activation`` claim (the SOLE consumer of CPRE)
+    reads it and writes the final C. Producer and consumer share the phase, so the tropical optimizer's
+    deforestation discount applies (the intermediate need not round-trip) -- ``kbcir.fusion.optimize_fused``
+    prices this fused form against the barrier-separated (materialized) two-pass plan and adopts it when it
+    wins, emitting a proof-carrying ``FusionCertificate``. ``kind`` rides the activation op string as the
+    ``gem.activation:<kind>`` suffix (relu/sigmoid/tanh/gelu fuse; softmax is scoped out as a row
+    reduction). The shapes here are 1-D element streams (the cost model is element-count driven); the fused
+    C kernel (``emit_matmul_activation_c``) carries the real M/N/K grid."""
+    m = Module(name=f"matmul_activation_{kind}")
+    for rid, nm in ((1, "A"), (2, "B"), (3, "CPRE"), (4, "C")):
+        m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,), name=nm))
+    mm = Claim(id=1, opcode=Opcode.T_MACC, lane=Lane.T, stride_class=StrideClass.TILE,
+               count=n, rd=(1, 2), wr=(3,), op="gem.matmul", domain=Domain.RAM)
+    act = Claim(id=2, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.UNIT,
+                count=n, rd=(3,), wr=(4,), op=f"gem.activation:{kind}", domain=Domain.RAM)
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[mm, act]))
+    return m
+
+
 def scan(n: int = 4096, stages: int = 4) -> Module:
     """A multi-stage scan / prefix pipeline: O0 = A + B, then Ok = O(k-1) + Ck for
     k = 1..stages-1. Each stage reads the previous stage's output (a RAW hazard), so
@@ -249,6 +270,7 @@ PROGRAMS = {
     "scan_chain": scan_chain,
     "tiled_matmul": tiled_matmul,
     "matmul_tiled": matmul_tiled,
+    "matmul_activation": matmul_activation,
     "scan": scan,
     "multi_histogram": multi_histogram,
 }
