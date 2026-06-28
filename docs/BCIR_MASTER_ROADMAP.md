@@ -14,6 +14,8 @@
 > - [`HARDWARE_VALIDATION.md`](HARDWARE_VALIDATION.md) — what is measured vs blocked on real silicon.
 > - [`CLANG_COMPARISON.md`](CLANG_COMPARISON.md) — the measured BCIR-vs-Clang evidence.
 > - [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) — the dated snapshot + changelog.
+> - [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md) — the dated 7-pillar honest-state map of the
+>   "C-as-Macro-Assembly + IR-owns-everything + bare-metal-AI" thesis vs what is built (+ the prioritized gap backlog).
 > - [`BCIR_Repo_Structure.md`](BCIR_Repo_Structure.md) — directory layout + build entry points.
 
 ---
@@ -184,6 +186,18 @@ Clang comparison.
 ---
 
 ## 5. The forward roadmap (what's next)
+
+> **Vision-alignment snapshot (2026-06-28).** A dated 7-pillar audit of the
+> "C-as-Macro-Assembly / Registry-Oriented + IR-owns-the-math + bare-metal-AI" thesis is in
+> [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md). Headline: the **substrate is real**
+> (C *is* a thin registry-oriented macro-assembly target; the IR owns scheduling; the linearized
+> StreamPack + the R17 Q8↔f32↔Q8 bridge exist and are tested). The **unbuilt half is the
+> intelligence + ML payload**: the macro-assembly-layer "Layer-1 AI" (cache/bank prediction 🔴,
+> SoA↔AoS layout pivot 🔴, matmul+activation fusion 🟡), library-integration breadth (🟡 — BLAS+libm
+> only), and the end-to-end bare-metal inference/training pipeline (🟡 — autodiff is oracle-only; no
+> baked-weights kernel; C++ hand-off boundary undefined 🔴). The immediate, gateable next increment is
+> the Area-B library-wrapping slices (§5.2 of the ML/AI roadmap; B1 link-flags → B2 a new library → B3
+> calling-side tuning), which advance Pillar 4b + the calling-side half of Pillar 3.
 
 ### 5.1 Oracle → MLIR / C++ (plan-time law) — remaining ports
 

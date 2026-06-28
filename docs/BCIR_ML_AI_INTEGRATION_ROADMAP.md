@@ -294,15 +294,30 @@ once the first tensor op and the first vector-DB slice are dual-rail and measure
 
 ## 6. Where to start (the first concrete, gateable slices)
 
+> **Status (2026-06-28, see [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md)).** Slices 1–3 below
+> (A1 `_BitInt(N)` + fusion attributes, B1 `gem.matmul` + MLIR law, B5 one BLAS `gemm` wrap) are **DONE**.
+> The active frontier is **finishing the B5/Area-B library-integration breadth** — the calling-side win the
+> roadmap is built on — before C1.
+
 In dependency order, the lowest-risk entry points — each a single PR-sized, oracle-first, parity-gated slice:
 
-1. **A1 slice** — lower `_BitInt(N)` end-to-end and elevate `[[unsequenced]]`/`[[reproducible]]` to a fusion-
-   legality signal the cost model prices. (C23 substrate, dual-rail, Clang-equivalence gated.)
-2. **B1 slice** — one `gem.matmul` op (oracle + MLIR law), with the K_BCIR search choosing tile size / loop
-   order over new cost-vector dimensions; verify against a reference C matmul.
-3. **B5 slice** — wrap a single BLAS `gemm` through the existing `c.call.libm:` edge; `bcir-cc --emit-c` links
-   `-lblas`; BCIR optimizes layout/prefetch on the calling side.
-4. **C1 slice** — a column-oriented streaming buffer over the binary-record decoder, feeding a B1 matmul as a
+1. ✅ **A1 slice — DONE.** `_BitInt(N)` lowered end-to-end; `[[unsequenced]]`/`[[reproducible]]` elevated to a
+   fusion-legality signal the cost model prices. (C23 substrate, dual-rail, Clang-equivalence gated.)
+2. ✅ **B1 slice — DONE.** One `gem.matmul` op (oracle + MLIR law), the K_BCIR search choosing tile size / loop
+   order over new cost-vector dimensions; verified against a reference C matmul.
+3. ✅ **B5 slice (first kernel) — DONE.** One BLAS `gemm` wrapped through the `c.call.libm:` edge with the
+   R17-certified Q8↔f32↔Q8 bridge; portable reference fallback.
+
+**The active Area-B frontier — finish library integration (B5 breadth, the calling-side win):**
+
+4. **B1-link slice** — `bcir-cc --emit-c` emits the **automatic link flags** (`-lblas`/`-lfftw3`/…) implied by
+   the `c.call.libm:` edges a unit actually uses, so a wrapped kernel links end-to-end with no manual flags.
+5. **B2 slice** — wrap a **new** C math library (FFTW *or* LAPACK *or* GSL *or* SLEEF) through the same edge,
+   B5-style, with the R17 bridge at the seam and a portable fallback.
+6. **B3 slice** — **calling-side tuning** (layout / tiling / prefetch / channel selection) around a wrapped
+   kernel — the first concrete step toward the Pillar-3 layout intelligence the audit flags as missing.
+7. **Area-B breadth** — ATLAS / GSL / FFTW / OpenBLAS-LAPACK / SLEEF wrapped through the same edge.
+8. **C1 slice** — a column-oriented streaming buffer over the binary-record decoder, feeding a B1 matmul as a
    tensor stream.
 
 Each slice deepens master-roadmap **Phase M**; the data/driver/cognition phases (C–F) follow as the substrate
