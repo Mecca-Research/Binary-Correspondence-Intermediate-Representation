@@ -2143,4 +2143,19 @@ sxr="$("${tmp}/sx_h")"
   && echo "  PASS stmtexpr: temporary / max / embedded / loop / nested / scope / void == Clang" \
   || { echo "  FAIL: stmtexpr behaviour (${sxr})"; exit 1; }
 
+# Sanitizer + memory-stress harness for the cfront C twin (#sanitize): the dual-rail parity gates above
+# compare the twin's OUTPUT against the oracle, but never build bcir_cfront.c under AddressSanitizer/UBSan
+# and never run Valgrind -- so a memory bug (buffer overflow, use-after-free, UB) INSIDE the compiler's own
+# lexer/parser/lowering/emit would go uncaught. sanitize_cfront.sh closes that: it builds the SAME
+# `test_cfront` driver (same source list as above) under ASan/UBSan with clang and/or gcc, runs every
+# cfront_*.c fixture + a bounded seeded fuzz campaign (valid + malformed) through it, and runs a bounded
+# Valgrind pass over a fixture subset. Each stage self-skips when its tool is absent (SKIP, not FAIL). The
+# heavy Valgrind stage can be dropped with SANITIZE_SKIP_VALGRIND=1 while ASan/UBSan stay always-on.
+echo "[c-runtime] cfront twin under ASan/UBSan + Valgrind (sanitize_cfront.sh)"
+if bash "${ROOT}/tools/c/sanitize_cfront.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+  echo "  PASS cfront sanitizer/valgrind harness"
+else
+  echo "  FAIL: cfront sanitizer/valgrind harness reported a diagnostic"; exit 1
+fi
+
 echo "[c-runtime] ok"
