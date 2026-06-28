@@ -105,6 +105,42 @@ def BCIR_GEMActivationOp : BCIR_Op<"gem.activation", [Symbol]> {
   let hasVerifier = 1;
 }
 
+def BCIR_GEMFusedMatmulActivationOp : BCIR_Op<"gem.fused_matmul_activation", [Symbol]> {
+  let summary = "Fused GEM matmul+activation epilogue: the activation applied INLINE per matmul output element (G2)";
+  // The law-rail record of an ADOPTED matmul -> activation epilogue fusion (bcir/kbcir/fusion.py::
+  // optimize_fused + FusionCertificate). A gem.matmul whose output feeds a SOLE-consumer gem.activation
+  // is fused into ONE pass: the activation is applied inline as each matmul output element is produced, so
+  // the intermediate C-buffer never materializes (deforestation). This op is what -bcir-fuse-matmul-
+  // activation rewrites the adjacent pair into when fusion is the PRICED CHOICE (the fused score, with the
+  // intermediate deforested, strictly beats the unfused score, with a phase barrier materializing it).
+  //
+  // It carries BOTH halves of the fused plan: the matmul tile (m/n/k + tile_m/n/k + loop_order, copied
+  // verbatim off the gem.matmul) AND the activation epilogue (kind + dtype + the quarantine fields). It
+  // also pins the deforestation-priced fusion DECISION as proof-carrying evidence (mirrors FusionCertificate):
+  // unfused_score (the intermediate materialized at a barrier), fused_score (deforested), and gain =
+  // unfused - fused (> 0 for an adopted fusion).
+  //
+  // THE QUARANTINE SPLIT carries THROUGH the fused epilogue, exactly as the standalone gem.activation:
+  // relu is EXACT (inline max(0,x), 0 ULP, no libm, may be i32 or f32); the transcendentals (sigmoid/tanh/
+  // gelu) route a libm call (expf/tanhf) through the trusted c.call.libm: edge and need f32. softmax is a
+  // last-axis ROW REDUCTION -- it needs the whole row before any output element is final, so it can NOT be
+  // an inline epilogue: hasVerifier REJECTS a fused softmax (the documented non-fusible kind), mirroring
+  // fusion.is_fusible_activation. NO new globally-numbered R-law (G2 added none; this is the op-level
+  // fusion-legality check the oracle rail runs).
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    // the matmul half (the B1 tile plan, copied verbatim off the producer gem.matmul).
+    I64Attr:$m, I64Attr:$n, I64Attr:$k,
+    I64Attr:$tile_m, I64Attr:$tile_n, I64Attr:$tile_k,
+    StrAttr:$loop_order,
+    // the activation epilogue half (the G1 quarantine fields).
+    StrAttr:$kind, StrAttr:$dtype,
+    // the deforestation-priced fusion DECISION (the FusionCertificate evidence).
+    I64Attr:$unfused_score, I64Attr:$fused_score, I64Attr:$gain);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
 def BCIR_GEMMatmulBufferOp : BCIR_Op<"gem.matmul_buffer", []> {
   let summary = "Buffer-form GEM matmul: real SSA memref operands C += A*B with a tiling plan (toward executable code)";
   // The next step past gem.matmul (an attribute-only plan record): a NORMAL op carrying

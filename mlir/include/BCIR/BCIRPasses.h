@@ -84,6 +84,14 @@ std::unique_ptr<mlir::Pass> createLowerGemMatmulBufferPass();
 // roofline cost + the quarantine/R17 verdict (relu exact, the transcendentals route a
 // libm edge); erases the activation (the activation analog of lower-gem-matmul).
 std::unique_ptr<mlir::Pass> createLowerGemActivationPass();
+// -bcir-fuse-matmul-activation: the G2 matmul+activation epilogue fusion (port of
+// bcir/kbcir/fusion.py::optimize_fused). Fuse a SOLE-CONSUMER gem.matmul -> gem.activation
+// pair into a single gem.fused_matmul_activation iff the deforestation-priced fused score
+// (the intermediate's mem round-trip elided, x0.75) STRICTLY beats the unfused score (a
+// barrier materializes it). Carries the quarantine split through the epilogue (relu exact;
+// the transcendentals route a libm edge) and scopes out softmax (a non-fusible row
+// reduction); a non-fusible / unprofitable / non-sole-consumer pair is a clean no-op.
+std::unique_ptr<mlir::Pass> createFuseMatmulActivationPass();
 
 /// Register all BCIR passes with the global pass registry (for bcir-opt).
 void registerBCIRPasses();
