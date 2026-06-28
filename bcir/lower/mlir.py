@@ -40,6 +40,16 @@ _STRIDE_SPELL = {StrideClass.SCALAR: "scalar", StrideClass.UNIT: "unit",
                  StrideClass.TILE: "tile", StrideClass.RANDOM: "random"}
 _DOMAIN_SPELL = {Domain.RAM: "ram", Domain.VRAM: "vram", Domain.NVM: "nvm",
                  Domain.MMIO: "mmio", Domain.CXL: "cxl", Domain.HBM: "hbm"}
+# Resource.layout -> the #bcir.layout<...> spelling (BCIRAttrs.td BCIR_Layout). The chosen
+# layout (G3: kbcir.layout's SoA<->AoS pivot) flows here instead of a hard-coded `soa`; an
+# unrecognized value falls back to the declared "soa" default so the emit never breaks.
+_LAYOUT_SPELL = {"soa": "soa", "aos": "aos", "aosoa": "aosoa", "blocked": "blocked"}
+
+
+def _layout_spell(layout: str) -> str:
+    """The #bcir.layout<...> spelling for a resource's chosen layout (soa/aos/aosoa/blocked),
+    defaulting to the declared `soa` for any unknown value so the emitter stays parseable."""
+    return _LAYOUT_SPELL.get((layout or "soa").lower(), "soa")
 _POLICY_MODE = {"latency": "latency", "throughput": "throughput",
                 "energy": "energy", "safe": "safe"}
 
@@ -215,7 +225,8 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
         # symbol (addressed by @rN); the old !bcir.resource handle was vestigial.
         L.append(f"    bcir.resource @r{rid} {{ rid = {rid} : i32, "
                  f"domain_kind = #bcir.domain<{_DOMAIN_SPELL[r.domain]}>, "
-                 f"shape = array<i64: {shape}>, layout = #bcir.layout<soa>{access} }}")
+                 f"shape = array<i64: {shape}>, "
+                 f"layout = #bcir.layout<{_layout_spell(r.layout)}>{access} }}")
     L.append("  }")
     # live runtime state Theta: the emitter folds it into the policy weights (for
     # scalarization) AND emits it raw, so -bcir-plan / -bcir-overlap can apply the
@@ -254,13 +265,18 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
     # the K_BCIR plan: candidate paths + per-claim min-plus select.
     L.append("  bcir.kbcir.plan @plan0 {")
     for cv in pv.claims:
+        # The path's layout is the claim's primary (read[0]) resource's CHOSEN layout (G3): a path that
+        # addresses an AoS resource carries #bcir.layout<aos>, not a hard-coded `soa`. Falls back to the
+        # declared `soa` default when the claim has no resource handle.
+        prim = module.resource(cv.reads[0]) if cv.reads else None
+        path_layout = _layout_spell(prim.layout if prim is not None else "soa")
         for p in cv.paths:
             sym = _path_sym(cv.claim_id, p.name)
             # kbcir.path is a Symbol (referenced by @sym) -> no SSA result on MLIR 22.
             L.append(
                 f"    bcir.kbcir.path @{sym} {{ claim = @c{cv.claim_id}, "
                 f"realization = \"{_LANE_SPELL[p.lane]}.{p.name}\", "
-                f"lane = #bcir.lane<{_LANE_SPELL[p.lane]}>, layout = #bcir.layout<soa>, "
+                f"lane = #bcir.lane<{_LANE_SPELL[p.lane]}>, layout = #bcir.layout<{path_layout}>, "
                 f"cost = {_costvec(p.cost)} }}")
         frm = ", ".join(f"@{_path_sym(cv.claim_id, p.name)}" for p in cv.paths)
         L.append(
