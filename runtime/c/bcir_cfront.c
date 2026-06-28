@@ -4343,22 +4343,29 @@ static int is_param_ref(const bcir_func *f,uint32_t rid){
   for(int i=0;i<f->n_params;i++) if(f->params[i].rid==rid) return 1; return 0;
 }
 /* The index expression for `base[idx]`: a MASKED (runtime-bounds-checked, §5.12) access into a known-extent
- * array is wrapped in `BCIR_CHK(rid, idx, N, "site")` -- in-bounds returns idx (behaviour-identical to the
- * raw `a[i]`), out-of-bounds calls the bounds-quarantine handler; the numeric `rid` is the access provenance
- * and `"<func>:<array>"` is the source-site handle the debugger / ML-layer reads (a site->source table
- * realized inline). Any other access -> the bare index. Result written into `buf`. */
-static const char *guard_idx(const bcir_func *f, const bcir_claim *cl, char *buf, size_t bn){
+ * array is wrapped in a bounds guard -- in-bounds returns idx (behaviour-identical to the raw `a[i]`),
+ * out-of-bounds calls the bounds-quarantine handler; the numeric `rid` is the access provenance and
+ * `"<func>:<array>"` is the source-site handle the debugger / ML-layer reads (a site->source table realized
+ * inline). Any other access -> the bare index. Result written into `buf`.
+ *
+ * READ vs WRITE (§5.12): a READ index site uses `BCIR_CHK` (the handler MAY clamp an OOB read to a valid
+ * element -- a load mutates nothing); a WRITE index site (`is_write`) uses `BCIR_CHK_W`, whose handler is
+ * `noreturn` and NEVER clamps -- a clamped OOB store would silently redirect the write onto a[extent-1] and
+ * corrupt it, so an OOB store always fails-fast. This MUST mirror emit.py's `_idx(write=...)` so the two
+ * rails stay parity-identical. */
+static const char *guard_idx(const bcir_func *f, const bcir_claim *cl, char *buf, size_t bn, int is_write){
   const bcir_resource *br=res_of(f,cl->rd[0]);
+  const char *chk = is_write ? "BCIR_CHK_W" : "BCIR_CHK";
   if(cl->bounds==BCIR_BND_MASKED){
     char ib[BCIR_CIR_NAME], nb[BCIR_CIR_NAME];
     uint32_t ext=ptrext_get(f,cl->rd[0]);                  /* §5.12 a naked pointer with a RECOVERED runtime extent */
     if(ext){ char eb[BCIR_CIR_NAME];
-      snprintf(buf,bn,"BCIR_CHK(%u, %s, %s, \"%s:%s\")",(unsigned)cl->rd[0],rname(f,cl->rd[1],ib),
+      snprintf(buf,bn,"%s(%u, %s, %s, \"%s:%s\")",chk,(unsigned)cl->rd[0],rname(f,cl->rd[1],ib),
                rname(f,ext,eb),f->name,rname(f,cl->rd[0],nb));   /* the count VARIABLE, re-emitted by name */
       return buf;
     }
     if(br && br->count>1){                                 /* a known-extent local/static array (constant N) */
-      snprintf(buf,bn,"BCIR_CHK(%u, %s, %lluu, \"%s:%s\")",(unsigned)cl->rd[0],rname(f,cl->rd[1],ib),
+      snprintf(buf,bn,"%s(%u, %s, %lluu, \"%s:%s\")",chk,(unsigned)cl->rd[0],rname(f,cl->rd[1],ib),
                (unsigned long long)br->count,f->name,rname(f,cl->rd[0],nb));
       return buf;
     }
@@ -4465,7 +4472,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
          * element reads sign-extended (the zero-extending uint32 form dropped the sign). */
         w+=snprintf(o+w,on-w,"%s %s; memcpy(&%s, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld);\n",
           tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
-      else if(cl->n_rd==2) w+=snprintf(o+w,on-w,"%s %s = %s[%s];\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb));  /* decl_ty: an array-of-pointers element load is `T *` */
+      else if(cl->n_rd==2) w+=snprintf(o+w,on-w,"%s %s = %s[%s];\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,0));  /* READ guard; decl_ty: an array-of-pointers element load is `T *` */
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
@@ -4487,7 +4494,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+w,on-w,"((volatile uint32_t *)%s)[%s] = %s;\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],d));
       else
-        w+=snprintf(o+w,on-w,"%s[%s] = %s;\n",rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb),rname(f,cl->rd[2],d));
+        w+=snprintf(o+w,on-w,"%s[%s] = %s;\n",rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,1),rname(f,cl->rd[2],d));  /* WRITE guard: an OOB store fails-fast, never clamps */
     }else if(!strcmp(cl->op,"c.store")){          /* L8: member store -> memcpy `size` bytes */
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->imm[0]; long long sz=cl->n_imm>1?cl->imm[1]:4;
       if(cl->domain==BCIR_DOM_MMIO)

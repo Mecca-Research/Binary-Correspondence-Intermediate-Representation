@@ -244,7 +244,7 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                 if conv:                                     # convert the source to the element type first (a
                     return f"{{ {conv} _sv = {ref(c.rd[2])}; memcpy({dst}, &_sv, {es}); }}"   # _Bool normalizes), else
                 return f"memcpy({dst}, &{ref(c.rd[2])}, {es});"   # `es` bytes of a narrower/float source corrupts it
-            return f"{ref(c.rd[0])}[{_idx(lf, c, ref)}] = {ref(c.rd[2])};"   # typed array (masked -> guarded)
+            return f"{ref(c.rd[0])}[{_idx(lf, c, ref, write=True)}] = {ref(c.rd[2])};"   # typed array (masked -> WRITE-guarded)
         ptr = _base_ptr(lf, c.rd[0], ref)
         size = c.imm[1] if len(c.imm) > 1 else 4
         if c.domain.name == "MMIO":                          # device register: ordered volatile store
@@ -371,19 +371,25 @@ def _base_ptr(lf: LoweredFunc, rid: int, ref) -> str:
     return f"&{name}"
 
 
-def _idx(lf: LoweredFunc, c, ref) -> str:
+def _idx(lf: LoweredFunc, c, ref, *, write: bool = False) -> str:
     """The index expression for a `base[idx]` access. A `masked` access (§5.12 bounds-promotion) into a
-    known-extent local/static array is wrapped in `BCIR_CHK(rid, idx, N, "site")`: in-bounds returns idx
-    (transparent -> behaviour-identical to the raw `a[i]`), out-of-bounds calls the bounds-quarantine
-    handler. The numeric `rid` is the access provenance and `"<func>:<array>"` is the source-site handle
-    the debugger / ML-layer reads (a site->source table realized inline). Any other access -> the bare index."""
+    known-extent local/static array is wrapped in a bounds guard: in-bounds returns idx (transparent ->
+    behaviour-identical to the raw `a[i]`), out-of-bounds calls the bounds-quarantine handler. The numeric
+    `rid` is the access provenance and `"<func>:<array>"` is the source-site handle the debugger / ML-layer
+    reads (a site->source table realized inline). Any other access -> the bare index.
+
+    READ vs WRITE matters (§5.12): a READ index site uses `BCIR_CHK` (the handler MAY clamp an OOB read to a
+    valid element -- a load mutates nothing); a WRITE index site uses `BCIR_CHK_W`, whose handler is
+    `noreturn` and NEVER clamps -- a clamped OOB store would silently redirect the write onto a valid element
+    (a[extent-1]) and corrupt it, so an OOB store always fails-fast. `write=True` for c.store index sites."""
+    chk = "BCIR_CHK_W" if write else "BCIR_CHK"
     idx = ref(c.rd[1])
     if c.bounds == "masked":
         ext = lf.ptr_extent.get(c.rd[0])
         if ext is not None:                                  # a naked pointer with a RECOVERED runtime extent
-            return f'BCIR_CHK({c.rd[0]}, {idx}, {ref(ext)}, "{lf.name}:{ref(c.rd[0])}")'
+            return f'{chk}({c.rd[0]}, {idx}, {ref(ext)}, "{lf.name}:{ref(c.rd[0])}")'
         rt = lf.rid_types.get(c.rd[0])
         n = getattr(rt, "count", 0) if rt is not None else 0
         if n:                                                # a known-extent local/static array (constant N)
-            return f'BCIR_CHK({c.rd[0]}, {idx}, {n}u, "{lf.name}:{ref(c.rd[0])}")'
+            return f'{chk}({c.rd[0]}, {idx}, {n}u, "{lf.name}:{ref(c.rd[0])}")'
     return idx

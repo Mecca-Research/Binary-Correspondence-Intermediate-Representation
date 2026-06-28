@@ -308,6 +308,101 @@ rec_abrt="$("${tmp}/rec_h" 1 2>&1 1>/dev/null)"; rec_rc=$?     # rejected: confi
   && echo "  PASS recover: frozen-policy decide -> admitted clamp (a[7]=21) / under-confident abort (#recover)" \
   || { echo "  FAIL: rejected path did not fail-fast (rc=${rec_rc}: ${rec_abrt})"; exit 1; }
 
+# WRITE-guard adversarial test (#writeguard, §5.12): a clamped OOB *store* silently redirects the write onto
+# a valid element (a[extent-1]) -- data corruption disguised as recovery. So a STORE index site emits the
+# WRITE guard `BCIR_CHK_W`, whose handler is `noreturn` and NEVER clamps: under the SAME confident clamp
+# policy that recovers a read, an OOB store must ABORT (not corrupt a[7]). The emit names the store site
+# `BCIR_CHK_W(...)` and the load site `BCIR_CHK(...)` -- both rails identically (gated in test_c_cfront.py).
+echo "[c-runtime] bcir-cc WRITE-guard: an OOB store fails-fast, never clamps (#writeguard)"
+printf 'unsigned el_sw(unsigned i, unsigned j, unsigned v){ unsigned a[8]; for(unsigned k=0u;k<8u;k++) a[k]=k*3u; a[i]=v; return a[j]; }\n' \
+  > "${tmp}/sw.c"
+"${tmp}/bcir-cc" --emit-c "${tmp}/sw.c" > "${tmp}/sw_emit.c" || { echo "  FAIL: --emit-c (write-guard)"; exit 1; }
+# the STORE sites use BCIR_CHK_W, the LOAD site uses the read BCIR_CHK -- distinguished per site.
+{ grep -q 'a\[BCIR_CHK_W(.*) *\] *= *v;' "${tmp}/sw_emit.c" \
+  && grep -q '= a\[BCIR_CHK(.*"el_sw:a")\]' "${tmp}/sw_emit.c"; } \
+  || { echo "  FAIL: store site not WRITE-guarded / load site not READ-guarded"; cat "${tmp}/sw_emit.c"; exit 1; }
+{ echo '#include <stdio.h>'; echo '#include <stdlib.h>'; echo '#include "bcir_quarantine_recover.h"'
+  cat "${tmp}/sw_emit.c"
+  cat <<'DRV'
+int main(int c, char **v){
+  /* the SAME confident clamp policy used for the read-recovery test above (threshold 500, conf 900). */
+  static const bcir_recover_rule clampall[] = {{"el_sw:a", BCIR_RECOVER_CLAMP, 900}};
+  bcir_recover_set_policy(clampall, 1, 500);
+  int mode = c > 1 ? atoi(v[1]) : 0;
+  if (mode == 0) {                          /* an OOB READ still clamps to a[7] = 7*3 = 21 */
+    printf("%u\n", bcir_el_sw(0u, 99u, 555u));
+  } else {                                  /* an OOB STORE must abort BEFORE the redirect corrupts a[7] */
+    (void)bcir_el_sw(99u, 7u, 777u);
+    printf("NO-ABORT a[7]=%u\n", 777u);     /* reaching here means the store was silently clamped -> BUG */
+  }
+  return 0; }
+DRV
+} > "${tmp}/sw_main.c"
+"${CC}" -std=c23 -O2 -I "${C}" "${tmp}/sw_main.c" "${C}/bcir_quarantine.c" "${C}/bcir_quarantine_recover.c" -o "${tmp}/sw_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 -I "${C}" "${tmp}/sw_main.c" "${C}/bcir_quarantine.c" "${C}/bcir_quarantine_recover.c" -o "${tmp}/sw_h" \
+  || { echo "  FAIL: write-guard override build"; exit 1; }
+sw_read="$("${tmp}/sw_h" 0)"                                   # OOB read: clamps to a[7] = 21
+[ "${sw_read}" = "21" ] || { echo "  FAIL: OOB read did not clamp (got '${sw_read}', want 21)"; exit 1; }
+sw_wr="$("${tmp}/sw_h" 1 2>&1 1>/dev/null)"; sw_rc=$?          # OOB store: must abort, never reach NO-ABORT
+{ [ "${sw_rc}" != "0" ] && ! printf '%s' "${sw_wr}" | grep -q "NO-ABORT" \
+  && printf '%s' "${sw_wr}" | grep -q "out-of-bounds store cannot be clamped"; } \
+  && echo "  PASS writeguard: OOB read clamps (a[7]=21) but OOB store ABORTS (no a[7] corruption) (#writeguard)" \
+  || { echo "  FAIL: OOB store did not fail-fast (rc=${sw_rc}: ${sw_wr})"; exit 1; }
+
+# Atomic OOB-ring counter (#atomicring, §5.12): `bcir_oob_count++` is a non-atomic read-modify-write; under
+# concurrent OOB events two threads can claim the SAME ring slot and lose an audit record, and the running
+# total scrambles. The counter is now `_Atomic` (atomic_fetch_add) where C11 atomics are available, so the
+# total is EXACT under concurrency. This test hammers bcir_oob_record_event from N threads and asserts the
+# total equals N*M (no lost increments). If the freestanding build has no atomics the contract is single-
+# threaded (BCIR_OOB_COUNTER_ATOMIC == 0) and this hosted concurrency test is skipped.
+echo "[c-runtime] OOB ring counter is atomic under concurrent events (#atomicring)"
+{ echo '#include <stdio.h>'; echo '#include "bcir_quarantine.h"'
+  cat <<'DRV'
+#if BCIR_OOB_COUNTER_ATOMIC
+#include <pthread.h>
+#define NT 8
+#define NM 50000
+static void *hammer(void *arg){ (void)arg;
+  for(long k=0;k<NM;k++) bcir_oob_record_event(1u, (uint64_t)k, 64u, "race:a");
+  return 0; }
+int main(void){
+  pthread_t th[NT];
+  for(int i=0;i<NT;i++) pthread_create(&th[i],0,hammer,0);
+  for(int i=0;i<NT;i++) pthread_join(th[i],0);
+  unsigned long got = bcir_oob_count, want = (unsigned long)NT*NM;
+  printf(got==want ? "EXACT %lu\n" : "LOST %lu/%lu\n", got, want);
+  return got==want ? 0 : 1; }
+#else
+int main(void){ printf("SKIP (no atomics; single-threaded contract)\n"); return 0; }
+#endif
+DRV
+} > "${tmp}/race_main.c"
+"${CC}" -std=c23 -O2 -pthread -I "${C}" "${tmp}/race_main.c" "${C}/bcir_quarantine.c" -o "${tmp}/race_h" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 -pthread -I "${C}" "${tmp}/race_main.c" "${C}/bcir_quarantine.c" -o "${tmp}/race_h" \
+  || { echo "  FAIL: atomic-ring test build"; exit 1; }
+race_out="$("${tmp}/race_h")"; race_rc=$?
+{ [ "${race_rc}" = "0" ] && { printf '%s' "${race_out}" | grep -q "^EXACT" || printf '%s' "${race_out}" | grep -q "^SKIP"; }; } \
+  && echo "  PASS atomicring: ${race_out} (concurrent OOB events do not scramble the total)" \
+  || { echo "  FAIL: OOB ring counter raced (${race_out})"; exit 1; }
+
+# rid->extent tamper-evidence (#extentassert, §5.12): the guard trusts the inline `n`, and the freestanding
+# unit has NO registry to resolve `rid`->extent (a DOCUMENTED limit; see bcir_quarantine.h). The feasible
+# lightweight check, for a KNOWN-EXTENT array, ties `n` to the array's true storage via a COMPILE-TIME
+# BCIR_EXTENT_ASSERT(arr, n) == _Static_assert(n == sizeof(arr)/sizeof(arr[0])): a correct extent compiles,
+# a TAMPERED `n` fails to compile -- so the extent is tamper-evident with no runtime cost and no registry.
+echo "[c-runtime] rid->extent tamper-evidence: BCIR_EXTENT_ASSERT (freestanding lightweight check) (#extentassert)"
+{ echo '#include "bcir_quarantine.h"'; echo 'static unsigned a[8];'
+  echo 'int main(void){ BCIR_EXTENT_ASSERT(a, 8u); return (int)a[0]; }'; } > "${tmp}/ext_ok.c"
+"${CC}" -std=c23 -I "${C}" "${tmp}/ext_ok.c" "${C}/bcir_quarantine.c" -o "${tmp}/ext_ok" 2>/dev/null \
+  || "${CC}" -std=c2x -I "${C}" "${tmp}/ext_ok.c" "${C}/bcir_quarantine.c" -o "${tmp}/ext_ok" \
+  || { echo "  FAIL: BCIR_EXTENT_ASSERT rejected a CORRECT extent"; exit 1; }
+{ echo '#include "bcir_quarantine.h"'; echo 'static unsigned a[8];'
+  echo 'int main(void){ BCIR_EXTENT_ASSERT(a, 99u); return (int)a[0]; }'; } > "${tmp}/ext_bad.c"
+if "${CC}" -std=c23 -I "${C}" "${tmp}/ext_bad.c" "${C}/bcir_quarantine.c" -o "${tmp}/ext_bad" 2>/dev/null; then
+  echo "  FAIL: BCIR_EXTENT_ASSERT did NOT catch a tampered extent (n=99 vs storage 8)"; exit 1
+fi
+echo "  PASS extentassert: correct extent compiles; tampered n=99 fails to compile (tamper-evident) (#extentassert)"
+
 # Clang-grade diagnostics (#diag): the C source-location model + caret renderer (bcir_diag.c, the C
 # twin of cfront/diagnostics.py). Fed the SAME synthetic diagnostic (severity / message / byte span)
 # over the same source, the C renderer's Clang-layout output (banner + source line + ^~~~ underline)

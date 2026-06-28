@@ -248,9 +248,25 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         ok = false;
       }
     });
+    // A device-ISOLATED domain: an MMIO register or NVM cell is a distinct address
+    // space the host cannot transparently substitute for RAM/HBM/VRAM/CXL (which
+    // are mutually addressable host memory a compute claim may legitimately stage
+    // tiles across -- e.g. a matmul reading RAM tiles, accumulating in HBM). A claim
+    // that declares a host domain but TOUCHES an MMIO/NVM resource (or vice versa) is
+    // the data-redirection / MMIO-as-RAM gap: an isolated resource silently treated
+    // as the wrong address space. Such a touch must MATCH the claim's declared domain.
+    auto isIsolatedDomain = [](Domain d) {
+      return d == Domain::MMIO || d == Domain::NVM;
+    };
     root->walk([&](ClaimOp c) {
       bool anyResolved = false, domainBacked = false;
-      auto touch = [&](ArrayAttr refs) {
+      // Tighten the FIRST-MATCH weakness: the old check set domainBacked on the FIRST
+      // same-domain resource and accepted the claim even when OTHER touched resources
+      // were cross-domain. We keep that "at least one backs it" check (host domains may
+      // legitimately mix) BUT additionally require every touched ISOLATED-domain resource
+      // to match the claim's declared domain -- so a claim cannot reach a device register
+      // (MMIO) or NVM cell while declaring itself RAM/HBM, the redirection gap.
+      auto touch = [&](ArrayAttr refs, StringRef which) {
         for (Attribute a : refs) {
           auto ref = dyn_cast<FlatSymbolRefAttr>(a);
           if (!ref)
@@ -259,12 +275,28 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           if (it == resourceByName.end())
             continue;
           anyResolved = true;
-          if (it->second.getDomainKind() == c.getDomain())
+          Domain rd = it->second.getDomainKind();
+          if (rd == c.getDomain())
             domainBacked = true;
+          else if (isIsolatedDomain(rd) || isIsolatedDomain(c.getDomain())) {
+            // Name whichever SIDE is the device-isolated one (the resource domain, the claim
+            // domain, or both) so the diagnostic is never factually wrong -- a RAM resource
+            // touched by an MMIO claim must not be called "device-isolated ram".
+            const char *which_isolated =
+                (isIsolatedDomain(rd) && isIsolatedDomain(c.getDomain())) ? "both domains are device-isolated and differ"
+                : isIsolatedDomain(rd) ? "the resource is in a device-isolated domain"
+                                       : "the claim declares a device-isolated domain";
+            c.emitError("R3: claim ")
+                << c.getSymName() << " " << which << " @" << ref.getValue()
+                << " (domain " << stringifyDomain(rd) << ") does not match the claim domain "
+                << stringifyDomain(c.getDomain()) << " -- " << which_isolated
+                << ", so an isolated resource may not be reached as another address space";
+            ok = false;
+          }
         }
       };
-      touch(c.getReads());
-      touch(c.getWrites());
+      touch(c.getReads(), "reads");
+      touch(c.getWrites(), "writes");
       if (anyResolved && !domainBacked) {
         c.emitError("R3: claim ")
             << c.getSymName()
@@ -1027,6 +1059,67 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         ok = false;
       }
     });
+
+    // R10 (cross-segment alias isolation): GEMLaneSegmentOp::verify is per-op and cannot
+    // see siblings, so a write-write / write-read alias BETWEEN two concurrently-runnable
+    // segments slips past parse-time verification. The verify pass DOES see all segments,
+    // so do the cross-segment check here. Two segments in the SAME PHASE on DIFFERENT LANES
+    // that alias on a write -- one writes a resource the other writes (WAW) or reads (RAW/
+    // WAR) -- run concurrently (distinct lanes have no implicit wave serialization between
+    // them, mirroring the R5 same-phase reasoning), so an unsynchronized write alias is a
+    // data race / isolation violation. It is legal ONLY if an explicit fence on the aliased
+    // resource orders the two: the resource appears in one segment's fence_after or the
+    // other's fence_before. SAME-LANE aliases (the legitimate accumulator chain -- a tiled
+    // matmul's C += A*B over K-tiles writes the same accumulator from successive same-lane
+    // segments) ARE wave-serialized and not flagged, so the pretty corpus stays clean.
+    llvm::DenseMap<StringRef, SmallVector<GEMLaneSegmentOp, 8>> segsByPhase;
+    root->walk([&](GEMLaneSegmentOp seg) {
+      segsByPhase[seg.getPhase()].push_back(seg);
+    });
+    for (auto &entry : segsByPhase) {
+      auto &group = entry.second;
+      for (size_t i = 0; i < group.size(); ++i) {
+        for (size_t j = i + 1; j < group.size(); ++j) {
+          GEMLaneSegmentOp a = group[i], b = group[j];
+          if (a.getLane() == b.getLane())
+            continue; // same lane: wave-serialized, the accumulator chain is legal
+          auto aw = symbolSet(a.getWrites()), ar = symbolSet(a.getReads());
+          auto bw = symbolSet(b.getWrites()), br = symbolSet(b.getReads());
+          // the aliased resources: WAW + WAR + RAW between the two segments.
+          llvm::DenseSet<StringRef> aliased;
+          for (StringRef w : aw)
+            if (bw.count(w) || br.count(w))
+              aliased.insert(w);
+          for (StringRef w : bw)
+            if (ar.count(w))
+              aliased.insert(w);
+          if (aliased.empty())
+            continue;
+          // A fence ORDERS the alias only as a release/acquire PAIR: one segment must PUBLISH the
+          // resource with `fence_after` (a release after its access) AND the other must ACQUIRE it
+          // with `fence_before` (gate its access behind that publish). A LONE fence on one side does
+          // not order the two -- a `fence_before` on the writer gates the writer behind something
+          // else, not the reader behind the writer (pooling all four lists wrongly accepts that). So
+          // require the full pair in EITHER direction: (a.after & b.before) OR (b.after & a.before).
+          auto aAfter = symbolSet(a.getFenceAfter()), aBefore = symbolSet(a.getFenceBefore());
+          auto bAfter = symbolSet(b.getFenceAfter()), bBefore = symbolSet(b.getFenceBefore());
+          for (StringRef r : aliased) {
+            bool aPubBAcq = aAfter.count(r) && bBefore.count(r);
+            bool bPubAAcq = bAfter.count(r) && aBefore.count(r);
+            if (aPubBAcq || bPubAAcq)
+              continue; // a release/acquire fence pair orders the cross-lane access to @r
+            a.emitError("R10: segment ")
+                << a.getSymName() << " (lane " << laneSpelling(a.getLane())
+                << ") and segment @" << b.getSymName() << " (lane "
+                << laneSpelling(b.getLane()) << ") have a cross-lane write alias on @"
+                << r << " in phase @" << entry.first
+                << " without an ordering fence (a fence_after on one naming @" << r
+                << " paired with a fence_before on the other) -- an isolation violation";
+            ok = false;
+          }
+        }
+      }
+    }
 
     // R16 (allocator placement legality): an on-chip placement must fit -- a resource
     // placed in L1 must be <= 64 KiB, in L2 <= 4 MiB (static caps; size =

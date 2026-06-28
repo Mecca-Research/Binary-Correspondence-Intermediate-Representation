@@ -26,16 +26,21 @@ _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
 _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 
-# Bounds-quarantine support (§5.12): the emit of a `masked` array access uses BCIR_CHK(rid, idx, N, "site"),
-# which calls bcir_bounds_quarantine on an out-of-bounds index. Inlined here (matching the ABI in
-# runtime/c/bcir_quarantine.h) so the equivalence harness is self-contained; for the in-bounds seeds the
-# handler is never reached, so a guarded access is behaviour-identical to the raw `a[i]`.
+# Bounds-quarantine support (§5.12): the emit of a `masked` array access uses BCIR_CHK(rid, idx, N, "site")
+# for a READ and BCIR_CHK_W(...) for a WRITE -- a READ may clamp an OOB index, a WRITE never clamps (its
+# handler is noreturn: an OOB store fails-fast rather than silently redirect onto a valid element). Inlined
+# here (matching the ABI in runtime/c/bcir_quarantine.h) so the equivalence harness is self-contained; for
+# the in-bounds seeds neither handler is reached, so a guarded access is behaviour-identical to raw `a[i]`.
 _BOUNDS_GUARD = (
     "#include <stdlib.h>\n#include <stddef.h>\n"
     "static size_t bcir_bounds_quarantine(uint64_t r,uint64_t i,uint64_t e,const char*s)"
     "{(void)r;(void)i;(void)e;(void)s;abort();return 0;}\n"
+    "static void bcir_bounds_quarantine_write(uint64_t r,uint64_t i,uint64_t e,const char*s)"
+    "{(void)r;(void)i;(void)e;(void)s;abort();}\n"
     "#define BCIR_CHK(rid,idx,n,site) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
-    "bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)))")
+    "bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)))\n"
+    "#define BCIR_CHK_W(rid,idx,n,site) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
+    "(bcir_bounds_quarantine_write((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)),(size_t)(idx)))")
 # straight-line fixtures run the full execute loop; control-flow fixtures get parity + emit + Clang ≡
 # (control flow is not a flat StreamPack segment stream, so the loop runs the straight-line set).
 _STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfront_widerow.c", "cfront_deref.c",

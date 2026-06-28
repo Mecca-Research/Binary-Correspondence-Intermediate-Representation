@@ -62,3 +62,35 @@ size_t bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent, con
     }
     return recovered;                                         /* clamp: the access lands on a valid element */
 }
+
+/* The WRITE override (§5.12). A store is governed by the SAME frozen policy, but a clamp is NEVER applied to
+ * a write: redirecting an OOB store onto a[extent-1] would silently corrupt a live element. So even when the
+ * policy's graded proposition clears the threshold and proposes a clamp, the classical write outcome is
+ * ABORT -- the crossing is RECORDED (so the audit trail still witnesses that a clamp was proposed AND
+ * refused for a write), then we fail-fast. This handler is `noreturn`: an OOB store always terminates. The
+ * only difference from the read path is that a cleared-threshold clamp becomes a recorded abort, not a
+ * redirect. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noreturn))           /* noreturn on the DEFINITION too: a write override that adds a clamp
+                                     * path (returning a redirected index) is then a compile error. */
+#endif
+void bcir_bounds_quarantine_write(uint64_t rid, uint64_t index, uint64_t extent, const char *site) {
+    bcir_oob_record_event(rid, index, extent, site);          /* (1) trace */
+
+    uint32_t confidence_milli;                                /* (2) frozen graded proposition */
+    int proposed = policy_lookup(site, &confidence_milli);
+
+    int admitted = confidence_milli >= g_threshold_milli;     /* (3) decide: collapse at the frozen threshold */
+    /* (4) RECORD the crossing -- a clamp is NEVER the write's classical action, so record abort regardless;
+     * but preserve `admitted`/`proposed` so the trail shows a clamp WAS proposed and REFUSED for the write. */
+    int clamp_proposed = admitted && proposed == BCIR_RECOVER_CLAMP;
+    bcir_decide_record_event(rid, index, extent, site,
+                             confidence_milli, g_threshold_milli, admitted, BCIR_RECOVER_ABORT, 0);
+
+    fprintf(stderr, "BCIR bounds-quarantine (WRITE): %s index %llu of [0, %llu) -- %s; an out-of-bounds "
+            "store cannot be clamped (would corrupt a valid element); aborting\n",
+            site ? site : "?", (unsigned long long)index, (unsigned long long)extent,
+            clamp_proposed ? "clamp proposed but REFUSED for a write"
+                           : "recovery rejected (under confident)");
+    abort();
+}

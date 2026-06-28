@@ -8,11 +8,13 @@
 #include <stdlib.h>
 
 bcir_oob_record bcir_oob_ring[BCIR_OOB_RING];
-volatile unsigned long bcir_oob_count;          /* total OOB events; the ring index is count % BCIR_OOB_RING */
+bcir_oob_counter bcir_oob_count;                /* total OOB events; the ring index is count % BCIR_OOB_RING */
 
-/* Record one event into the ring (shared by the weak default and any override that wants the trace). */
+/* Record one event into the ring (shared by the weak default and any override that wants the trace). The
+ * slot is claimed atomically (bcir_counter_next returns the PRE-increment total), so two concurrent OOB
+ * events land in DISTINCT slots and neither audit record is lost -- the non-atomic `count++` raced here. */
 void bcir_oob_record_event(uint64_t rid, uint64_t index, uint64_t extent, const char *site) {
-    unsigned slot = (unsigned)(bcir_oob_count++ % BCIR_OOB_RING);
+    unsigned slot = (unsigned)(bcir_counter_next(&bcir_oob_count) % BCIR_OOB_RING);
     bcir_oob_ring[slot].rid = rid;
     bcir_oob_ring[slot].index = index;
     bcir_oob_ring[slot].extent = extent;
@@ -31,16 +33,35 @@ size_t bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent, con
     return 0;                                       /* unreachable (abort is noreturn); satisfies the return type */
 }
 
+/* The WEAK default WRITE handler. An OOB store is NEVER recoverable by clamping -- a clamped store would
+ * silently corrupt a[extent-1] (a valid element the program owns), which is data corruption, not recovery.
+ * So this handler is `noreturn`: it records the provenance + aborts (fail-fast). A strong override may
+ * record a richer `decide` first (e.g. a rejected clamp proposal), but it too must not let the store land
+ * on a redirected element -- the only legal classical write outcomes are abort / reject, both terminating. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak, noreturn))     /* noreturn on the DEFINITION too: a future edit that adds a returning
+                                     * (recovering) path to a WRITE handler is then a compile error -- the
+                                     * write-never-clamps invariant is enforced where it can break. */
+#endif
+void bcir_bounds_quarantine_write(uint64_t rid, uint64_t index, uint64_t extent, const char *site) {
+    bcir_oob_record_event(rid, index, extent, site);
+    fprintf(stderr, "BCIR bounds-quarantine (WRITE): %s resource %llu index %llu out of [0, %llu) -- "
+            "an out-of-bounds store cannot be clamped (would corrupt a valid element); aborting\n",
+            site ? site : "?", (unsigned long long)rid,
+            (unsigned long long)index, (unsigned long long)extent);
+    abort();
+}
+
 /* --- the decide-audit ring: the recorded two-truth crossings (§5.12 + LANGREF §14) --- */
 bcir_decision bcir_decide_ring[BCIR_DECIDE_RING];
-volatile unsigned long bcir_decide_count;           /* total crossings; ring slot is count % BCIR_DECIDE_RING */
+bcir_oob_counter bcir_decide_count;                 /* total crossings; ring slot is count % BCIR_DECIDE_RING */
 
 /* Record one recovery `decide` -- a graded->classical collapse an override applied. Keeping it auditable is
  * the whole point: the crossing is never silent. (The weak default never calls this; it aborts outright.) */
 void bcir_decide_record_event(uint64_t rid, uint64_t index, uint64_t extent, const char *site,
                               uint32_t confidence_milli, uint32_t threshold_milli,
                               int admitted, int action, size_t recovered_index) {
-    unsigned slot = (unsigned)(bcir_decide_count++ % BCIR_DECIDE_RING);
+    unsigned slot = (unsigned)(bcir_counter_next(&bcir_decide_count) % BCIR_DECIDE_RING);
     bcir_decision *d = &bcir_decide_ring[slot];
     d->rid = rid; d->index = index; d->extent = extent; d->site = site;
     d->confidence_milli = confidence_milli; d->threshold_milli = threshold_milli;
@@ -51,7 +72,7 @@ void bcir_decide_record_event(uint64_t rid, uint64_t index, uint64_t extent, con
  * graded confidence, the frozen threshold, whether it was admitted, and the classical action taken -- the
  * trail that witnesses every graded->classical crossing. Pure observation; never decides legality. */
 void bcir_decide_report(FILE *f) {
-    unsigned long total = bcir_decide_count;
+    unsigned long total = bcir_counter_load(&bcir_decide_count);
     unsigned long shown = total < BCIR_DECIDE_RING ? total : BCIR_DECIDE_RING;
     unsigned long start = total < BCIR_DECIDE_RING ? 0UL : total % BCIR_DECIDE_RING;
     fprintf(f, "BCIR decide report: %lu recovery crossing(s)\n", total);
@@ -72,7 +93,7 @@ void bcir_decide_report(FILE *f) {
  * ring keeps the most recent BCIR_OOB_RING events; the running total `bcir_oob_count` is reported even when
  * older events have scrolled out. Pure observation -- it never decides legality. */
 void bcir_quarantine_report(FILE *f) {
-    unsigned long total = bcir_oob_count;
+    unsigned long total = bcir_counter_load(&bcir_oob_count);
     unsigned long shown = total < BCIR_OOB_RING ? total : BCIR_OOB_RING;
     unsigned long start = total < BCIR_OOB_RING ? 0UL : total % BCIR_OOB_RING;   /* oldest retained slot */
     fprintf(f, "BCIR quarantine report: %lu out-of-bounds event(s)\n", total);
