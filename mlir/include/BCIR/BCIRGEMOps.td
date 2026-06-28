@@ -105,6 +105,54 @@ def BCIR_GEMActivationOp : BCIR_Op<"gem.activation", [Symbol]> {
   let hasVerifier = 1;
 }
 
+def BCIR_GEMConvOp : BCIR_Op<"gem.conv", [Symbol]> {
+  let summary = "Planned GEM convolution: the K_BCIR-chosen direct|im2col realization of a 2-D single-group conv (G7)";
+  // The law-rail record of the G7 plan (bcir/kbcir/conv.py::plan_conv). A 2-D single-group convolution is
+  // a STRUCTURED MATMUL: the im2col (patch-gather) reshaping turns the direct conv into the gemm
+  // C[out_pix x C_out] = patches[out_pix x (C_in*Kh*Kw)] @ W[(C_in*Kh*Kw) x C_out], so its REALIZATION --
+  // the lowering STRATEGY (direct vs im2col+gemm) and the tile/loop order of that gemm -- is a FREE choice
+  // the dual-semiring cost search picks (max,+ over the roofline bottleneck; min,+ to select the strategy),
+  // exactly as gem.matmul picks a tiling. Crucially the conv is PRICED THROUGH THE EXISTING matmul roofline
+  // (a conv IS a structured matmul; NO bespoke roofline term) -- the im2col gemm's (compute, mem) is exactly
+  // matmul.cost_of at the chosen tile; the direct strategy is the UNTILED gemm (whole M,N,K).
+  //
+  // The op carries the conv shape metadata (in_c/in_h/in_w, out_c, kh/kw, stride, pad), the DERIVED output
+  // dims (out_h/out_w) + the equivalent im2col gemm dims (gemm_m = out_h*out_w, gemm_n = out_c,
+  // gemm_k = in_c*kh*kw), the K_BCIR-chosen realization (strategy + the inner gemm tile tile_m/n/k +
+  // loop_order), the analytic compute/memory roofline terms (priced via the matmul roofline), the
+  // bottleneck = max(compute, memory), and the quantized lane width (quant_bits > 0 ties to the A1 Q8
+  // bridge: the R17 accuracy bound rides the accuracy cost axis; mirrors conv.cost_vector). `acc_bound`
+  // records that R17 quantization bound (0 = dense).
+  //
+  // hasVerifier enforces the op-level shape/dtype/realization laws check_conv enforces (mirrors
+  // bcir/kbcir/conv.py::check_conv, the inline op-level check gem.matmul/gem.activation run; NO new
+  // globally-numbered R-law): positive extents, the kernel fits the padded input, a known + preserved
+  // dtype, the DERIVED out_h/out_w + gemm dims are internally consistent, the strategy is direct|im2col,
+  // each inner tile in [1, gemm dim] with a known loop order, bottleneck == max(compute, mem), and the R17
+  // acc_bound is 0 dense / 1 ULP quantized.
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    // the conv shape metadata (NCHW-flat input, C_out*C_in*Kh*Kw weights).
+    I64Attr:$in_c, I64Attr:$in_h, I64Attr:$in_w,
+    I64Attr:$out_c, I64Attr:$kh, I64Attr:$kw,
+    DefaultValuedAttr<I64Attr, "1">:$stride,
+    DefaultValuedAttr<I64Attr, "0">:$pad,
+    StrAttr:$dtype,
+    // the DERIVED output dims + the equivalent im2col gemm dims (carried for the verifier to cross-check).
+    I64Attr:$out_h, I64Attr:$out_w,
+    I64Attr:$gemm_m, I64Attr:$gemm_n, I64Attr:$gemm_k,
+    // the K_BCIR-chosen realization: the strategy + the inner im2col gemm's tile/loop plan.
+    StrAttr:$strategy,
+    I64Attr:$tile_m, I64Attr:$tile_n, I64Attr:$tile_k,
+    StrAttr:$loop_order,
+    // the roofline cost (priced through the matmul roofline) + the R17 accuracy axis.
+    I64Attr:$compute_cost, I64Attr:$mem_cost, I64Attr:$bottleneck,
+    DefaultValuedAttr<I32Attr, "0">:$quant_bits,
+    DefaultValuedAttr<I64Attr, "0">:$acc_bound);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
 def BCIR_GEMFusedMatmulActivationOp : BCIR_Op<"gem.fused_matmul_activation", [Symbol]> {
   let summary = "Fused GEM matmul+activation epilogue: the activation applied INLINE per matmul output element (G2)";
   // The law-rail record of an ADOPTED matmul -> activation epilogue fusion (bcir/kbcir/fusion.py::

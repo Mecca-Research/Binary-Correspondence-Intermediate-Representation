@@ -163,6 +163,103 @@ using namespace bcir;
   return ::mlir::success();
 }
 
+::mlir::LogicalResult GEMConvOp::verify() {
+  // The G7 plan record (mirrors bcir/kbcir/conv.py::check_conv + the realization/cost invariants -- the
+  // op-level shape/dtype/realization law gem.matmul/gem.activation validate inline; NO new globally-
+  // numbered R-law). A 2-D single-group conv is a STRUCTURED MATMUL, priced through the matmul roofline.
+  int64_t inC = static_cast<int64_t>(getInC()), inH = static_cast<int64_t>(getInH()),
+          inW = static_cast<int64_t>(getInW());
+  int64_t outC = static_cast<int64_t>(getOutC()), kh = static_cast<int64_t>(getKh()),
+          kw = static_cast<int64_t>(getKw());
+  int64_t stride = static_cast<int64_t>(getStride()), pad = static_cast<int64_t>(getPad());
+
+  // (4) hyperparameter sanity (checked first; the derived out dims below assume stride >= 1).
+  if (stride < 1)
+    return emitOpError() << "conv: stride must be >= 1 (got " << stride << ")";
+  if (pad < 0)
+    return emitOpError() << "conv: pad must be >= 0 (got " << pad << ")";
+  // (1) positive extents.
+  if (inC < 1 || inH < 1 || inW < 1 || outC < 1 || kh < 1 || kw < 1)
+    return emitOpError() << "conv: in_c/in_h/in_w/out_c/kh/kw must all be >= 1 (got " << inC << "x"
+                         << inH << "x" << inW << ", out_c " << outC << ", kernel " << kh << "x" << kw
+                         << ")";
+  // (1b) the kernel fits the padded input frame.
+  if (kh > inH + 2 * pad || kw > inW + 2 * pad)
+    return emitOpError() << "conv: kernel " << kh << "x" << kw << " does not fit the padded input "
+                         << (inH + 2 * pad) << "x" << (inW + 2 * pad);
+
+  // (3) the DERIVED output dims: out = floor((in + 2*pad - k)/stride) + 1 (the standard valid-after-pad
+  // formula); the op's declared out_h/out_w must equal them.
+  int64_t outH = static_cast<int64_t>(getOutH()), outW = static_cast<int64_t>(getOutW());
+  int64_t wantH = (inH + 2 * pad - kh) / stride + 1;
+  int64_t wantW = (inW + 2 * pad - kw) / stride + 1;
+  if (wantH < 1 || wantW < 1)
+    return emitOpError() << "conv: output is empty (derived out_h=" << wantH << ", out_w=" << wantW
+                         << ")";
+  if (outH != wantH || outW != wantW)
+    return emitOpError() << "conv: declared out " << outH << "x" << outW
+                         << " != the derived floor((in+2*pad-k)/stride)+1 = " << wantH << "x" << wantW;
+
+  // (3b) the equivalent im2col gemm dims: gemm_m = out_h*out_w (the output pixels), gemm_n = out_c,
+  // gemm_k = in_c*kh*kw (the taps / the reduction). This is what makes a conv a STRUCTURED MATMUL.
+  int64_t gm = static_cast<int64_t>(getGemmM()), gn = static_cast<int64_t>(getGemmN()),
+          gk = static_cast<int64_t>(getGemmK());
+  int64_t wantM = outH * outW, wantN = outC, wantK = inC * kh * kw;
+  if (gm != wantM || gn != wantN || gk != wantK)
+    return emitOpError() << "conv: declared im2col gemm dims (" << gm << "," << gn << "," << gk
+                         << ") != (out_h*out_w, out_c, in_c*kh*kw) = (" << wantM << "," << wantN << ","
+                         << wantK << ")";
+
+  // (2) dtype known + preserved (the op carries a single declared dtype: input == output == spec).
+  ::llvm::StringRef dtype = getDtype();
+  if (dtype != "f32" && dtype != "i32")
+    return emitOpError() << "conv: dtype '" << dtype << "' is not a known dtype (f32|i32)";
+
+  // the realization: a known strategy (direct|im2col), each inner gemm tile in [1, gemm dim], and a known
+  // loop order. The strategy is the K_BCIR-chosen lowering (mirrors conv.STRATEGIES); for the direct
+  // stream the tile is the WHOLE gemm (untiled), for im2col it is the chosen matmul tile.
+  ::llvm::StringRef strat = getStrategy();
+  if (strat != "direct" && strat != "im2col")
+    return emitOpError() << "conv: strategy must be one of direct|im2col (got '" << strat << "')";
+  int64_t tm = static_cast<int64_t>(getTileM()), tn = static_cast<int64_t>(getTileN()),
+          tk = static_cast<int64_t>(getTileK());
+  if (tm < 1 || tm > gm || tn < 1 || tn > gn || tk < 1 || tk > gk)
+    return emitOpError() << "conv: each inner gemm tile must be in [1, gemm dim] (tiles " << tm << "x"
+                         << tn << "x" << tk << " vs gemm dims " << gm << "x" << gn << "x" << gk << ")";
+  // the direct stream is the UNTILED gemm (the whole M,N,K) -- it can not block the reduction the way the
+  // im2col gemm tile does (mirrors conv.cost_of's direct branch == matmul.cost_of at tile = whole dims).
+  if (strat == "direct" && (tm != gm || tn != gn || tk != gk))
+    return emitOpError() << "conv: the direct strategy is the UNTILED gemm -- tile must be the whole "
+                         << gm << "x" << gn << "x" << gk << " (got " << tm << "x" << tn << "x" << tk
+                         << ")";
+  ::llvm::StringRef lo = getLoopOrder();
+  if (lo != "ijk" && lo != "ikj" && lo != "jik")
+    return emitOpError() << "conv: loop_order must be one of ijk|ikj|jik (got '" << lo << "')";
+
+  // the roofline invariant: bottleneck == max(compute_cost, mem_cost), the max,+ step the dual-semiring
+  // strategy search minimizes (identical to gem.matmul's bottleneck check).
+  int64_t compute = static_cast<int64_t>(getComputeCost()),
+          mem = static_cast<int64_t>(getMemCost()), bn = static_cast<int64_t>(getBottleneck());
+  if (compute < 0 || mem < 0)
+    return emitOpError() << "conv: compute_cost and mem_cost must be non-negative";
+  int64_t mx = compute > mem ? compute : mem;
+  if (bn != mx)
+    return emitOpError() << "conv: bottleneck must equal max(compute_cost, mem_cost) = " << mx
+                         << " (got " << bn << ")";
+
+  // the R17 accuracy axis: a conv's MACs are exact, so its only certified error is the Q8 bridge step when
+  // quantized -- acc_bound must be 0 dense (quant_bits == 0) / the 1-ULP bridge bound quantized
+  // (quant_bits > 0). (quantization_error_bound() == 1 ULP; mirrors conv.cost_vector.)
+  int64_t accBound = static_cast<int64_t>(getAccBound());
+  int64_t quantBits = static_cast<int64_t>(getQuantBits());
+  int64_t wantAcc = quantBits > 0 ? 1 : 0;
+  if (accBound != wantAcc)
+    return emitOpError() << "conv: acc_bound must be " << wantAcc << " (the R17 Q8-bridge bound, "
+                         << (quantBits > 0 ? "1 ULP for a quantized realization" : "0 for a dense one")
+                         << "), got " << accBound;
+  return ::mlir::success();
+}
+
 ::mlir::LogicalResult GEMFusedMatmulActivationOp::verify() {
   // The G2 fused matmul+activation epilogue (mirrors bcir/kbcir/fusion.py). It carries the matmul tile
   // plan AND the activation epilogue, so it must satisfy BOTH halves' well-formedness laws plus the
