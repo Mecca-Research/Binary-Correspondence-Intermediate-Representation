@@ -2349,4 +2349,20 @@ else
   echo "  FAIL: a CRC-valid semantically-corrupt pack was not rejected on the C rail"; exit 1
 fi
 
+# The C<->C++ hand-off seam scaffold (#cpphandoff, docs/CPP_HANDOFF_BOUNDARY.md): the boundary
+# between the deterministic single-node C/IR rail and the C++ layer ABOVE it (dynamic graph
+# topology + distributed MPI/NCCL orchestration). check_handoff.sh compiles the STANDALONE C++17
+# scaffold (runtime/cpp/, NOT part of the MLIR build), hands a StreamPack the C/IR path produces
+# through the single-node Orchestrator, and asserts the seam ROUND-TRIPS (the C++ dispatch order ==
+# the direct C/IR decode of the same artifact) -- plus that a corrupted artifact is REJECTED at the
+# boundary (admit() carries the C verifier's verdict; the two-truth quarantine holds across the seam).
+# The dynamic-graph + distributed backends are documented STUBS behind the same interface (no real
+# MPI/NCCL dependency). Self-skips (exit 0) if no C++ compiler is present, like the gates above.
+echo "[c-runtime] C<->C++ hand-off seam scaffold round-trip (tools/cpp/check_handoff.sh)"
+if bash "${ROOT}/tools/cpp/check_handoff.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+  echo "  PASS C<->C++ hand-off seam compiles + round-trips (single-node Orchestrator == direct C/IR)"
+else
+  echo "  FAIL: the C++ hand-off seam scaffold did not compile or round-trip"; exit 1
+fi
+
 echo "[c-runtime] ok"

@@ -16,6 +16,9 @@
 > - [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) — the dated snapshot + changelog.
 > - [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md) — the dated 7-pillar honest-state map of the
 >   "C-as-Macro-Assembly + IR-owns-everything + bare-metal-AI" thesis vs what is built (+ the prioritized gap backlog).
+> - [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) — the C↔C++ hand-off boundary (Pillar 5d): the contract
+>   for when work exceeds the deterministic single-node C/IR rail and crosses to C++ (dynamic graph topology +
+>   distributed MPI/NCCL orchestration), with a compilable, round-trip-tested seam scaffold (`runtime/cpp/`).
 > - [`BCIR_Repo_Structure.md`](BCIR_Repo_Structure.md) — directory layout + build entry points.
 
 ---
@@ -195,7 +198,9 @@ Clang comparison.
 > intelligence + ML payload**: the macro-assembly-layer "Layer-1 AI" (cache/bank prediction 🔴,
 > SoA↔AoS layout pivot 🔴, matmul+activation fusion 🟡), library-integration breadth (🟡 — BLAS+libm
 > only), and the end-to-end bare-metal inference/training pipeline (🟡 — autodiff is oracle-only; no
-> baked-weights kernel; C++ hand-off boundary undefined 🔴). The immediate, gateable next increment is
+> baked-weights kernel; C++ hand-off boundary now 🟡 SCAFFOLDED — contract + a round-trip-tested single-node
+seam in [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) / [`runtime/cpp/`](../runtime/cpp), with the
+dynamic/distributed backends marked stubs). The immediate, gateable next increment is
 > the Area-B library-wrapping slices (§5.2 of the ML/AI roadmap; B1 link-flags → B2 a new library → B3
 > calling-side tuning), which advance Pillar 4b + the calling-side half of Pillar 3.
 
