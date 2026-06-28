@@ -153,6 +153,67 @@ def BCIR_GEMConvOp : BCIR_Op<"gem.conv", [Symbol]> {
   let hasVerifier = 1;
 }
 
+def BCIR_GEMAttentionOp : BCIR_Op<"gem.attention", [Symbol]> {
+  let summary = "Planned GEM attention: the K_BCIR-chosen two-matmul realization of single-head scaled-dot-product attention (G7)";
+  // The law-rail record of the G7 attention plan (bcir/kbcir/attention.py::plan_attention). Single-head
+  // scaled-dot-product attention softmax(Q@K^T/sqrt(d_k))@V is NOT a new primitive: it DECOMPOSES into the
+  // ops BCIR already has -- two gem.matmuls with a gem.activation softmax between them:
+  //     S  = Q @ K^T              (a gem.matmul: seq_len x d_k  times  d_k x seq_len -> seq x seq)
+  //     S' = S / sqrt(d_k)        (an exact elementwise scale, 0 ULP, on the deterministic rail)
+  //     A  = softmax(S', axis=seq)(the EXISTING gem.activation softmax -- reused, NOT reinvented)
+  //     out= A @ V                (a second gem.matmul: seq x seq  times  seq x d_k -> seq x d_k)
+  // So its REALIZATION -- the tile/loop plan of each underlying matmul -- is a FREE choice the dual-semiring
+  // cost search picks (min,+ over the path; max,+ for the roofline bottleneck), exactly as gem.matmul. The
+  // attention is PRICED THROUGH THE EXISTING matmul roofline for BOTH matmuls (NO bespoke attention term):
+  // its (compute, mem) is the SUM of the two priced matmul costs (the O(seq^2) scale/softmax passes are
+  // dominated by, and folded into, the Q@K^T traffic).
+  //
+  // The op carries the attention shape (seq_len, d_k), the DERIVED two gemm dims (scores Q@K^T = seq,seq,d_k;
+  // context A@V = seq,d_k,seq -- carried for the verifier to cross-check), the K_BCIR-chosen tile/loop plan
+  // of each gemm, the PER-GEMM priced roofline terms (scores_compute/mem, context_compute/mem), and the
+  // SUMMED roofline (compute_cost = scores_compute + context_compute, mem_cost = scores_mem + context_mem,
+  // bottleneck = max(compute_cost, mem_cost)), plus the quantized lane width (quant_bits > 0 ties to the A1
+  // Q8 bridge: the R17 accuracy bound rides the accuracy axis; mirrors attention.cost_vector). `acc_bound`
+  // records that R17 quantization bound (0 = dense).
+  //
+  // THE QUARANTINE BOUNDARY (the load-bearing G7 constraint, mirrored from attention.py): the softmax's exp
+  // is a TRANSCENDENTAL that rides the trusted c.call.libm: edge (expf), fully OFF the deterministic legality
+  // rail -- the same float story as gem.activation softmax. The two matmuls and the scale are exact. So the
+  // ONLY certified error of a QUANTIZED attention is the Q8 bridge step (R17, 1 ULP), the matmul arithmetic
+  // being exact and the libm kernel trusted; a dense attention carries acc_bound 0. The softmax forces an
+  // f32 result (the libm edge returns float), never i32.
+  //
+  // hasVerifier enforces the op-level shape/dtype/realization laws check_attention enforces (mirrors
+  // bcir/kbcir/attention.py::check_attention + the cost invariants -- the inline op-level check gem.matmul/
+  // gem.activation/gem.conv run; NO new globally-numbered R-law): positive seq_len/d_k, a known + preserved
+  // dtype that is f32 (the softmax quarantine rule), the DERIVED two gemm dims internally consistent, each
+  // gemm tile in [1, gemm dim] with a known loop order, the per-gemm bottleneck == max-per-gemm, the SUMMED
+  // compute/mem == the two per-gemm costs, bottleneck == max(compute, mem), and the R17 acc_bound.
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    // the attention shape (single head: d_model == d_k); Q/K/V/out are each seq_len x d_k.
+    I64Attr:$seq_len, I64Attr:$d_k,
+    StrAttr:$dtype,
+    // the DERIVED two gemm dims (carried for the verifier to cross-check the decomposition):
+    //   scores Q@K^T : (seq_len, seq_len, d_k);  context A@V : (seq_len, d_k, seq_len).
+    I64Attr:$scores_m, I64Attr:$scores_n, I64Attr:$scores_k,
+    I64Attr:$context_m, I64Attr:$context_n, I64Attr:$context_k,
+    // the K_BCIR-chosen tile/loop plan of each underlying matmul.
+    I64Attr:$scores_tile_m, I64Attr:$scores_tile_n, I64Attr:$scores_tile_k,
+    StrAttr:$scores_loop_order,
+    I64Attr:$context_tile_m, I64Attr:$context_tile_n, I64Attr:$context_tile_k,
+    StrAttr:$context_loop_order,
+    // the PER-GEMM priced roofline terms (each == matmul.cost_of at its chosen tile).
+    I64Attr:$scores_compute, I64Attr:$scores_mem,
+    I64Attr:$context_compute, I64Attr:$context_mem,
+    // the SUMMED roofline (compute = sum of the two computes, mem = sum of the two mems) + the R17 axis.
+    I64Attr:$compute_cost, I64Attr:$mem_cost, I64Attr:$bottleneck,
+    DefaultValuedAttr<I32Attr, "0">:$quant_bits,
+    DefaultValuedAttr<I64Attr, "0">:$acc_bound);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
 def BCIR_GEMFusedMatmulActivationOp : BCIR_Op<"gem.fused_matmul_activation", [Symbol]> {
   let summary = "Fused GEM matmul+activation epilogue: the activation applied INLINE per matmul output element (G2)";
   // The law-rail record of an ADOPTED matmul -> activation epilogue fusion (bcir/kbcir/fusion.py::

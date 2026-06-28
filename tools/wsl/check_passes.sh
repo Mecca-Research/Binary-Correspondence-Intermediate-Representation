@@ -103,6 +103,11 @@ run_fc -bcir-lower-gem-conv "${T}/lower_gem_conv.mlir"
 echo "[passes] lower-gem-conv op verifier negatives (derived out dims / im2col gemm dims / strategy/tile / bottleneck / R17)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/lower_gem_conv_neg.mlir" \
   && echo "  PASS lower_gem_conv_neg.mlir" || { echo "  FAIL lower_gem_conv_neg.mlir"; fail=1; }
+echo "[passes] lower-gem-attention (gem.attention plan -> two gem.matmul tile seqs + softmax; G7 dual-rail parity)"
+run_fc -bcir-lower-gem-attention "${T}/lower_gem_attention.mlir"
+echo "[passes] lower-gem-attention op verifier negatives (quarantine dtype / scores+context gemm dims / tile / summed cost / bottleneck / R17)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/lower_gem_attention_neg.mlir" \
+  && echo "  PASS lower_gem_attention_neg.mlir" || { echo "  FAIL lower_gem_attention_neg.mlir"; fail=1; }
 echo "[passes] fuse-matmul-activation (G2: sole-consumer gem.matmul -> gem.activation -> fused epilogue; deforestation-priced)"
 run_fc -bcir-fuse-matmul-activation "${T}/fuse_matmul_activation.mlir"
 echo "[passes] fuse-matmul-activation op verifier negatives (softmax scope-out + the quarantine rule + the strict-win invariant)"

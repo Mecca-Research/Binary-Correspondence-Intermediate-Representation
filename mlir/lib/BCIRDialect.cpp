@@ -260,6 +260,98 @@ using namespace bcir;
   return ::mlir::success();
 }
 
+::mlir::LogicalResult GEMAttentionOp::verify() {
+  // The G7 attention plan record (mirrors bcir/kbcir/attention.py::check_attention + the realization/cost
+  // invariants -- the op-level shape/dtype/realization law gem.matmul/gem.activation/gem.conv validate
+  // inline; NO new globally-numbered R-law). Single-head scaled-dot-product attention DECOMPOSES into two
+  // gem.matmuls with a softmax between them, so it is PRICED THROUGH THE EXISTING matmul roofline (NO
+  // bespoke term): its (compute, mem) is the SUM of the two priced matmul costs.
+
+  // (1) positive extents (single head: d_model == d_k; Q/K/V/out are each seq_len x d_k).
+  int64_t seq = static_cast<int64_t>(getSeqLen()), dk = static_cast<int64_t>(getDK());
+  if (seq < 1 || dk < 1)
+    return emitOpError() << "attention: seq_len and d_k must be >= 1 (got seq_len " << seq << ", d_k "
+                         << dk << ")";
+
+  // (2) dtype known + preserved + the QUARANTINE rule: attention contains a softmax (a transcendental whose
+  // libm edge returns float), so it needs an f32 result -- never i32 (mirrors gem.activation softmax).
+  ::llvm::StringRef dtype = getDtype();
+  if (dtype != "f32" && dtype != "i32")
+    return emitOpError() << "attention: dtype '" << dtype << "' is not a known dtype (f32|i32)";
+  if (dtype != "f32")
+    return emitOpError() << "attention: contains a softmax (a transcendental; the libm edge returns float), "
+                         << "so it needs f32, got '" << dtype << "'";
+
+  // (3) the DERIVED two gemm dims (the decomposition into two matmuls): the scores Q@K^T gemm is
+  // (seq_len, seq_len, d_k) -> the seq x seq score matrix; the context A@V gemm is (seq_len, d_k, seq_len)
+  // -> the seq x d_k context. The op's declared dims must equal them (mirrors AttentionSpec.scores_dims /
+  // context_dims). This is what makes attention a COMPOSITION of two structured matmuls.
+  int64_t sm = static_cast<int64_t>(getScoresM()), sn = static_cast<int64_t>(getScoresN()),
+          sk = static_cast<int64_t>(getScoresK());
+  int64_t cm = static_cast<int64_t>(getContextM()), cn = static_cast<int64_t>(getContextN()),
+          ck = static_cast<int64_t>(getContextK());
+  if (sm != seq || sn != seq || sk != dk)
+    return emitOpError() << "attention: declared scores Q@K^T gemm dims (" << sm << "," << sn << "," << sk
+                         << ") != (seq_len, seq_len, d_k) = (" << seq << "," << seq << "," << dk << ")";
+  if (cm != seq || cn != dk || ck != seq)
+    return emitOpError() << "attention: declared context A@V gemm dims (" << cm << "," << cn << "," << ck
+                         << ") != (seq_len, d_k, seq_len) = (" << seq << "," << dk << "," << seq << ")";
+
+  // the realization: each underlying matmul's tile in [1, its gemm dim], with a known loop order (identical
+  // to gem.matmul's tile checks, applied to each of the two gemms).
+  auto checkTile = [&](const char *which, int64_t tm, int64_t tn, int64_t tk, int64_t M, int64_t N,
+                       int64_t K, ::llvm::StringRef lo) -> ::mlir::LogicalResult {
+    if (tm < 1 || tm > M || tn < 1 || tn > N || tk < 1 || tk > K)
+      return emitOpError() << "attention: the " << which << " gemm tile must be in [1, gemm dim] (tiles "
+                           << tm << "x" << tn << "x" << tk << " vs gemm dims " << M << "x" << N << "x" << K
+                           << ")";
+    if (lo != "ijk" && lo != "ikj" && lo != "jik")
+      return emitOpError() << "attention: the " << which << " gemm loop_order must be one of ijk|ikj|jik "
+                           << "(got '" << lo << "')";
+    return ::mlir::success();
+  };
+  if (failed(checkTile("scores", static_cast<int64_t>(getScoresTileM()),
+                       static_cast<int64_t>(getScoresTileN()), static_cast<int64_t>(getScoresTileK()),
+                       sm, sn, sk, getScoresLoopOrder())))
+    return ::mlir::failure();
+  if (failed(checkTile("context", static_cast<int64_t>(getContextTileM()),
+                       static_cast<int64_t>(getContextTileN()), static_cast<int64_t>(getContextTileK()),
+                       cm, cn, ck, getContextLoopOrder())))
+    return ::mlir::failure();
+
+  // the per-gemm + summed roofline invariants. Each per-gemm bottleneck rides matmul.cost_of (compute/mem
+  // non-negative); the attention compute/mem are the SUM of the two priced matmul costs (NO bespoke term);
+  // bottleneck == max(compute, mem) (the max,+ step). Mirrors attention.cost_of: c1+c2, m1+m2.
+  int64_t sc = static_cast<int64_t>(getScoresCompute()), smm = static_cast<int64_t>(getScoresMem());
+  int64_t cc = static_cast<int64_t>(getContextCompute()), cmm = static_cast<int64_t>(getContextMem());
+  int64_t compute = static_cast<int64_t>(getComputeCost()), mem = static_cast<int64_t>(getMemCost()),
+          bn = static_cast<int64_t>(getBottleneck());
+  if (sc < 0 || smm < 0 || cc < 0 || cmm < 0 || compute < 0 || mem < 0)
+    return emitOpError() << "attention: all roofline cost terms must be non-negative";
+  if (compute != sc + cc)
+    return emitOpError() << "attention: compute_cost must equal scores_compute + context_compute = "
+                         << (sc + cc) << " (the SUM of the two priced matmuls; got " << compute << ")";
+  if (mem != smm + cmm)
+    return emitOpError() << "attention: mem_cost must equal scores_mem + context_mem = " << (smm + cmm)
+                         << " (the SUM of the two priced matmuls; got " << mem << ")";
+  int64_t mx = compute > mem ? compute : mem;
+  if (bn != mx)
+    return emitOpError() << "attention: bottleneck must equal max(compute_cost, mem_cost) = " << mx
+                         << " (got " << bn << ")";
+
+  // the R17 accuracy axis: the two matmuls are exact and the softmax's libm kernel is trusted, so the only
+  // certified error of a QUANTIZED attention is the Q8 bridge step -- acc_bound must be 0 dense
+  // (quant_bits == 0) / the 1-ULP bridge bound quantized (quant_bits > 0). (mirrors attention.cost_vector.)
+  int64_t accBound = static_cast<int64_t>(getAccBound());
+  int64_t quantBits = static_cast<int64_t>(getQuantBits());
+  int64_t wantAcc = quantBits > 0 ? 1 : 0;
+  if (accBound != wantAcc)
+    return emitOpError() << "attention: acc_bound must be " << wantAcc << " (the R17 Q8-bridge bound, "
+                         << (quantBits > 0 ? "1 ULP for a quantized realization" : "0 for a dense one")
+                         << "), got " << accBound;
+  return ::mlir::success();
+}
+
 ::mlir::LogicalResult GEMFusedMatmulActivationOp::verify() {
   // The G2 fused matmul+activation epilogue (mirrors bcir/kbcir/fusion.py). It carries the matmul tile
   // plan AND the activation epilogue, so it must satisfy BOTH halves' well-formedness laws plus the
