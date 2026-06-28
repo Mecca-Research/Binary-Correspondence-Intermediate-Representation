@@ -182,6 +182,7 @@ _MODULES = [
     "bcir.tests.test_matmul",
     "bcir.tests.test_activation",
     "bcir.tests.test_autodiff",
+    "bcir.tests.test_autodiff_kernel",
     "bcir.tests.test_blas_gemm",
     "bcir.tests.test_fftw",
     "bcir.tests.test_differential",
