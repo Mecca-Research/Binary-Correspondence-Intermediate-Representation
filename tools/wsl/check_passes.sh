@@ -98,6 +98,11 @@ run_fc -bcir-lower-gem-activation "${T}/lower_gem_activation.mlir"
 echo "[passes] lower-gem-activation op verifier negatives (the quarantine rule + shape/dtype/axis laws)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/lower_gem_activation_neg.mlir" \
   && echo "  PASS lower_gem_activation_neg.mlir" || { echo "  FAIL lower_gem_activation_neg.mlir"; fail=1; }
+echo "[passes] lower-gem-conv (gem.conv plan -> im2col-gemm tiled gem.block sequence; G7 dual-rail parity)"
+run_fc -bcir-lower-gem-conv "${T}/lower_gem_conv.mlir"
+echo "[passes] lower-gem-conv op verifier negatives (derived out dims / im2col gemm dims / strategy/tile / bottleneck / R17)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/lower_gem_conv_neg.mlir" \
+  && echo "  PASS lower_gem_conv_neg.mlir" || { echo "  FAIL lower_gem_conv_neg.mlir"; fail=1; }
 echo "[passes] fuse-matmul-activation (G2: sole-consumer gem.matmul -> gem.activation -> fused epilogue; deforestation-priced)"
 run_fc -bcir-fuse-matmul-activation "${T}/fuse_matmul_activation.mlir"
 echo "[passes] fuse-matmul-activation op verifier negatives (softmax scope-out + the quarantine rule + the strict-win invariant)"

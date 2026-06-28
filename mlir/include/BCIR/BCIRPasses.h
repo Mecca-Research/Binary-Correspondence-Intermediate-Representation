@@ -84,6 +84,14 @@ std::unique_ptr<mlir::Pass> createLowerGemMatmulBufferPass();
 // roofline cost + the quarantine/R17 verdict (relu exact, the transcendentals route a
 // libm edge); erases the activation (the activation analog of lower-gem-matmul).
 std::unique_ptr<mlir::Pass> createLowerGemActivationPass();
+// -bcir-lower-gem-conv: lower each gem.conv plan record (the K_BCIR-chosen direct|im2col
+// realization of a 2-D single-group convolution, G7) into its concrete realization -- the
+// EQUIVALENT im2col gemm tiled into one gem.block per tile, in loop_order (a conv IS a
+// structured matmul, priced through the matmul roofline -- no bespoke term). Recomputes the
+// host-independent roofline parity (bottleneck == max) + the R17 verdict, reproduces
+// plan_conv's strategy (direct = the untiled gemm), and erases the conv (the conv analog of
+// lower-gem-matmul / lower-gem-activation).
+std::unique_ptr<mlir::Pass> createLowerGemConvPass();
 // -bcir-fuse-matmul-activation: the G2 matmul+activation epilogue fusion (port of
 // bcir/kbcir/fusion.py::optimize_fused). Fuse a SOLE-CONSUMER gem.matmul -> gem.activation
 // pair into a single gem.fused_matmul_activation iff the deforestation-priced fused score

@@ -64,6 +64,7 @@ void registerBCIRPasses() {
   ::mlir::registerPass([] { return createLowerGemMatmulPass(); });
   ::mlir::registerPass([] { return createLowerGemMatmulBufferPass(); });
   ::mlir::registerPass([] { return createLowerGemActivationPass(); });
+  ::mlir::registerPass([] { return createLowerGemConvPass(); });
   ::mlir::registerPass([] { return createFuseMatmulActivationPass(); });
 }
 
