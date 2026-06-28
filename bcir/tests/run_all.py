@@ -181,6 +181,8 @@ _MODULES = [
     "bcir.tests.test_quantize",
     "bcir.tests.test_matmul",
     "bcir.tests.test_activation",
+    "bcir.tests.test_conv",
+    "bcir.tests.test_attention",
     "bcir.tests.test_autodiff",
     "bcir.tests.test_autodiff_kernel",
     "bcir.tests.test_blas_gemm",

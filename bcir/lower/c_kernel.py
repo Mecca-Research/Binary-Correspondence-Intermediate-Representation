@@ -454,6 +454,116 @@ def emit_fftw_fft_c(n: int, fn_name: str = "bcir_fft") -> str:
     )
 
 
+# --- G7: gem.conv kernel (a 2-D conv == a structured matmul; reference-verified vs the naive direct conv) -
+# A 2-D single-group convolution lowered to portable C. Following the B5 "BCIR owns the calling side"
+# pattern, the emitted kernel computes the IDENTICAL result as the naive direct conv (kbcir.conv.
+# conv2d_reference) -- the realization (direct stream vs im2col+gemm) is a cost-model choice that never
+# changes the math, so the emit is the clean, transparent direct loop the reference defines (bit-exact for
+# integer/exact inputs, float round-off otherwise). The conv arithmetic is pure multiply-accumulate -- NO
+# transcendental, so it stays on the deterministic rail (no libm; like the exact relu / the gemm fallback).
+
+def emit_conv2d_c(in_c: int, in_h: int, in_w: int, out_c: int, kh: int, kw: int,
+                  stride: int = 1, pad: int = 0, fn_name: str = "bcir_conv2d") -> str:
+    """Emit a portable C kernel for a single-group 2-D convolution (cross-correlation, the ML convention),
+    reproducing ``kbcir.conv.conv2d_reference`` exactly. Layout is NCHW-flat: ``in`` is C_in*H*W row-major,
+    ``W`` is C_out*C_in*Kh*Kw row-major, ``out`` is C_out*out_h*out_w row-major. Zero padding is implicit
+    (an index outside the H x W frame contributes 0). Dims are baked in (a planned claim knows its shape).
+
+    The kernel is the direct loop -- a pure multiply-accumulate, NO transcendental, NO libm (the conv stays
+    on the deterministic rail, like the exact relu / the gemm reference fallback). The im2col+gemm
+    realization (kbcir.conv) computes the IDENTICAL products, so this transparent direct emit IS the
+    reference both realizations are verified against."""
+    if min(in_c, in_h, in_w, out_c, kh, kw) < 1:
+        raise ValueError(f"conv dims must be >= 1; got C_in={in_c} H={in_h} W={in_w} C_out={out_c} "
+                         f"Kh={kh} Kw={kw}")
+    if stride < 1 or pad < 0:
+        raise ValueError(f"conv needs stride >= 1 (got {stride}) and pad >= 0 (got {pad})")
+    out_h = (in_h + 2 * pad - kh) // stride + 1
+    out_w = (in_w + 2 * pad - kw) // stride + 1
+    if out_h < 1 or out_w < 1:
+        raise ValueError(f"conv output is empty (out_h={out_h}, out_w={out_w})")
+    return (
+        f"/* BCIR -> gem.conv 2-D (single-group cross-correlation; reference-verified vs the naive direct "
+        f"conv). NCHW-flat: in[{in_c}x{in_h}x{in_w}], W[{out_c}x{in_c}x{kh}x{kw}], out[{out_c}x{out_h}x"
+        f"{out_w}]; stride={stride} pad={pad}. Pure MAC -- no transcendental, deterministic rail. */\n"
+        "#include <stddef.h>\n"
+        f"void {fn_name}(const float *restrict in, const float *restrict W, float *restrict out) {{\n"
+        f"  for (size_t oc = 0; oc < {out_c}; ++oc)\n"
+        f"    for (long oy = 0; oy < {out_h}; ++oy)\n"
+        f"      for (long ox = 0; ox < {out_w}; ++ox) {{\n"
+        f"        float s = 0.0f;\n"
+        f"        for (size_t ic = 0; ic < {in_c}; ++ic)\n"
+        f"          for (long ky = 0; ky < {kh}; ++ky) {{\n"
+        f"            long iy = oy * {stride} + ky - {pad};\n"
+        f"            if (iy < 0 || iy >= {in_h}) continue;        /* implicit zero padding */\n"
+        f"            for (long kx = 0; kx < {kw}; ++kx) {{\n"
+        f"              long ix = ox * {stride} + kx - {pad};\n"
+        f"              if (ix < 0 || ix >= {in_w}) continue;\n"
+        f"              float wv = W[((oc * {in_c} + ic) * {kh} + ky) * {kw} + kx];\n"
+        f"              s += in[(ic * {in_h} + iy) * {in_w} + ix] * wv;\n"
+        f"            }}\n"
+        f"          }}\n"
+        f"        out[(oc * {out_h} + oy) * {out_w} + ox] = s;\n"
+        f"      }}\n"
+        f"}}\n"
+    )
+
+
+# --- G7: gem.attention kernel (single-head scaled-dot-product; the softmax exp rides the c.call.libm: edge) -
+# Single-head scaled-dot-product attention out = softmax(Q@K^T/sqrt(d))@V, lowered to portable C and
+# reproducing kbcir.attention.attention_reference. Attention decomposes into the existing ops: two matmuls
+# + a scale (exact, deterministic) + the EXISTING softmax (its exp is the only transcendental). The kernel
+# routes that exp through the trusted ``c.call.libm:`` edge (`<math.h>` expf, -lm) exactly as the activation
+# softmax / B5 do -- the transcendental stays OFF the deterministic legality rail. So the emit matches the
+# reference bit-exactly on the matmul/scale, to float round-off through the softmax.
+
+def emit_attention_c(seq_len: int, d_k: int, fn_name: str = "bcir_attention") -> str:
+    """Emit a portable C kernel for single-head scaled-dot-product attention ``out = softmax(Q@K^T/
+    sqrt(d_k))@V``, reproducing ``kbcir.attention.attention_reference``. Q, K, V, out are each row-major
+    ``seq_len x d_k``. The softmax is the numerically-stable reduce-max -> exp -> normalize form (the SAME
+    as the activation softmax / inference kernel), and its exp rides the trusted ``c.call.libm:`` edge
+    (expf, link -lm). The two matmuls + the 1/sqrt(d_k) scale are exact/deterministic. Dims baked in.
+
+    BCIR owns the calling side (the seq x d_k layout, the scale, the stable softmax); the only external is
+    the trusted libm expf -- so the emit equals the reference bit-exactly on the matmul/scale and to float
+    round-off through the softmax (the quarantine boundary, exactly as activation.softmax)."""
+    if seq_len < 1 or d_k < 1:
+        raise ValueError(f"attention dims must be >= 1; got seq_len={seq_len} d_k={d_k}")
+    return (
+        f"/* BCIR -> gem.attention single-head scaled-dot-product: out = softmax(Q@K^T/sqrt(d))@V. "
+        f"seq_len={seq_len} d_k={d_k}; Q,K,V,out are seq_len x d_k row-major. The two matmuls + scale are "
+        f"exact; the softmax exp rides the c.call.libm: edge (expf, -lm) -- the quarantine boundary. */\n"
+        "#include <stddef.h>\n#include <math.h>\n"
+        f"void {fn_name}(const float *restrict Q, const float *restrict K,\n"
+        f"             const float *restrict V, float *restrict out) {{\n"
+        f"  const size_t n = {seq_len}u, d = {d_k}u;\n"
+        f"  const float scale = 1.0f / sqrtf((float)d);   /* 1/sqrt(d_k), the scaled-dot normalizer */\n"
+        f"  float A[{seq_len} * {seq_len}];               /* the seq x seq attention weights */\n"
+        f"  for (size_t i = 0; i < n; ++i) {{\n"
+        f"    /* row i of the scaled scores S' = (Q @ K^T) * scale */\n"
+        f"    float m = -INFINITY;\n"
+        f"    for (size_t j = 0; j < n; ++j) {{\n"
+        f"      float s = 0.0f;\n"
+        f"      for (size_t t = 0; t < d; ++t) s += Q[i * d + t] * K[j * d + t];   /* Q_i . K_j */\n"
+        f"      s *= scale;\n"
+        f"      A[i * n + j] = s;\n"
+        f"      if (s > m) m = s;                          /* reduce-max (softmax stability shift) */\n"
+        f"    }}\n"
+        f"    float sum = 0.0f;\n"
+        f"    for (size_t j = 0; j < n; ++j) {{ A[i * n + j] = expf(A[i * n + j] - m); sum += A[i * n + j]; }}  /* c.call.libm:expf */\n"
+        f"    if (sum == 0.0f) sum = 1.0f;\n"
+        f"    for (size_t j = 0; j < n; ++j) A[i * n + j] /= sum;   /* normalize -> softmax row */\n"
+        f"    /* out row i = A_i @ V (the context: seq x d_k) */\n"
+        f"    for (size_t t = 0; t < d; ++t) {{\n"
+        f"      float c = 0.0f;\n"
+        f"      for (size_t j = 0; j < n; ++j) c += A[i * n + j] * V[j * d + t];\n"
+        f"      out[i * d + t] = c;\n"
+        f"    }}\n"
+        f"  }}\n"
+        f"}}\n"
+    )
+
+
 # --- G1: gem.activation kernels (relu exact / the transcendental four via the c.call.libm: edge) ----
 # The activation analog of the B5 BLAS wrap. relu is integer/Q-fixed CLEAN -- a pure max(0,x), emitted
 # with NO transcendental and NO libm dependency (exact, 0 ULP, valid for f32 OR i32). The transcendental
