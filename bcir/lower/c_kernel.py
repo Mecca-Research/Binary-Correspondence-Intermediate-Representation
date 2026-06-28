@@ -467,6 +467,75 @@ def emit_activation_kernel_c(kind: str, n: int, fn_name: str = "bcir_activation"
     return head + body
 
 
+# --- G2: fused matmul+activation epilogue kernel (the inline activation, no intermediate buffer) -----
+# The optimizer (kbcir.fusion) chooses this fused form when it prices cheaper than the two-pass
+# (matmul-then-activation) plan -- the win is eliding the intermediate C-buffer's write+read. The kernel
+# applies the activation to each matmul output element s INLINE, just before the store: C[i*N+j] = act(s).
+# relu stays the EXACT clean-rail max(0,s); the transcendentals inline the SAME trusted libm call
+# (expf/tanhf) the standalone activation kernel uses (the c.call.libm: edge, quarantine rules carried over).
+# softmax is NOT supported here (a last-axis row reduction can not be an inline per-element epilogue -- it
+# is scoped out of fusion in kbcir.fusion).
+
+def _inline_activation_expr(kind: str, var: str) -> tuple[str, bool]:
+    """The C expression applying activation `kind` INLINE to the float scalar `var` (the matmul output
+    element), plus whether it needs ``<math.h>``. relu -> the exact ``(var > 0.0f ? var : 0.0f)`` (no libm);
+    the transcendentals -> the SAME expf/tanhf form the standalone ``emit_activation_kernel_c`` uses, so the
+    fused result equals the unfused reference to float round-off. softmax is rejected (non-elementwise)."""
+    if kind == "relu":
+        return f"({var} > 0.0f ? {var} : 0.0f)", False
+    if kind == "sigmoid":
+        return f"(1.0f / (1.0f + expf(-({var}))))", True            # c.call.libm:expf
+    if kind == "tanh":
+        return f"tanhf({var})", True                                # c.call.libm:tanhf
+    if kind == "gelu":
+        # the GPT/BERT tanh-approximation GELU, identical to emit_activation_kernel_c's gelu form.
+        return (f"(0.5f * ({var}) * (1.0f + tanhf(0.7978845608028654f * "
+                f"(({var}) + 0.044715f * ({var}) * ({var}) * ({var})))))"), True   # c.call.libm:tanhf
+    raise ValueError(f"{kind!r} is not an inline-fusible activation (softmax is a row reduction; relu/"
+                     f"sigmoid/tanh/gelu fuse)")
+
+
+def emit_matmul_activation_c(M: int, N: int, K: int, kind: str = "relu",
+                             fn_name: str = "bcir_matmul_act") -> str:
+    """G2: a FUSED matmul -> activation epilogue kernel -- ``C[i,j] = act( (A@B)[i,j] )`` with the activation
+    applied INLINE as each output element is produced and NO intermediate buffer materialized (the whole
+    point of the fusion: the un-activated product never round-trips to memory). This is what the tropical
+    optimizer (kbcir.fusion) emits when it prices the fused plan cheaper than matmul-then-activation.
+
+    relu inlines the EXACT clean-rail ``max(0,s)`` (no libm); sigmoid/tanh/gelu inline the SAME trusted
+    ``c.call.libm:`` call (expf/tanhf) the standalone activation kernel uses, so the fused output EQUALS the
+    unfused reference (bit-exact for relu, float round-off for the transcendentals).
+
+    The matmul part uses the REFERENCE triple loop (NOT the ``#if defined(BCIR_USE_CBLAS)`` cblas path of
+    ``emit_blas_gemm_c``): cblas writes the WHOLE C buffer before returning, so there is no per-element seam
+    to splice the inline activation into -- the fusion's defining property (no intermediate materialized) is
+    only expressible on the open reference loop, where ``s`` is in a register exactly when the activation
+    needs it. A cblas-backed variant would have to either materialize C and run a second pass (the UNFUSED
+    plan we are beating) or use a cblas epilogue callback (not portable C23). So the fused path is the
+    reference loop by construction -- documented here, the trade the fusion makes."""
+    if M < 1 or N < 1 or K < 1:
+        raise ValueError(f"matmul+act dims must be >= 1; got M={M} N={N} K={K}")
+    expr, needs_math = _inline_activation_expr(kind, "s")
+    includes = "#include <stddef.h>\n" + ("#include <math.h>\n" if needs_math else "")
+    note = (f"relu: EXACT inline max(0,s), no libm" if kind == "relu"
+            else f"{kind}: inline via the c.call.libm: edge (the same trusted call the standalone kernel "
+                 f"uses); fused == unfused reference to float round-off")
+    return (
+        f"/* BCIR -> FUSED gem.matmul + gem.activation({kind}) epilogue (optimizer's priced choice; "
+        f"kbcir.fusion). row-major C[{M}x{N}] = act(A[{M}x{K}] @ B[{K}x{N}]); the activation is applied "
+        f"INLINE per output element -- NO intermediate buffer materialized. {note}. */\n"
+        f"{includes}"
+        f"void {fn_name}(const float *restrict A, const float *restrict B, float *restrict C) {{\n"
+        f"  for (size_t i = 0; i < {M}; ++i)\n"
+        f"    for (size_t j = 0; j < {N}; ++j) {{\n"
+        f"      float s = 0.0f;\n"
+        f"      for (size_t k = 0; k < {K}; ++k) s += A[i * {K} + k] * B[k * {N} + j];\n"
+        f"      C[i * {N} + j] = {expr};   /* the inline activation epilogue (no separate pass) */\n"
+        f"    }}\n"
+        f"}}\n"
+    )
+
+
 def emit_qfixed_selfcheck_c(module: Module, result: RealizationResult,
                             fn_name: str = "bcir_qfixed", lane_bits: int = 16,
                             frac_bits: int = 8) -> str:
