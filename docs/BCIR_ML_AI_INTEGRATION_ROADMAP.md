@@ -246,6 +246,31 @@ law, parity-gate. Throttled, parallel to C/driver work.*
     bridge tracks the reference within the R17 bound, the fallback **compiles + runs + recovers** the known `x`
     (the `#ols` runtime probe), and the module **touches no verifier / emits no `Diagnostic`** (off the legality
     path). Pure-Python oracle, deterministic.
+  - **E2 — PCA (principal component analysis) BUILT** (`bcir/kbcir/pca.py`, `bcir/tests/test_pca.py`; the
+    emitted C twin `bcir/lower/c_kernel.py::emit_lapack_eigh_c`). The second ML-breadth slice, built on the same
+    **Area-B "integrate, don't reinvent" wrap pattern** as E1. PCA **generalizes the OLS shape "form a symmetric
+    matrix then SOLVE" into "form a symmetric matrix then EIGENDECOMPOSE"**: given data `X` (m samples × n
+    features), `pca_reference` **centers** each feature, forms the **symmetric sample covariance** `C =
+    (1/(m−ddof))·Xcᵀ·Xc` (ddof=1 default), and **eigendecomposes** `C` for the principal directions
+    (eigenvectors) and explained variances (eigenvalues), sorted **descending** (largest variance first). Where
+    E1 *reused* the trusted square solve, the symmetric eig is **net-new** (nothing existed to reuse): the
+    deterministic **Jacobi rotation** algorithm (`_jacobi_eigh`) is the trusted-eig source of truth — the analog
+    of E1 leaning on Gaussian elimination. Two *independent* verifiers (recomputed directly from `C` and the
+    eigenpairs, not via the eig path): `eigen_residual` (`max|C·v − λ·v|` — the defining eigen equation, ~0) and
+    `orthonormality_residual` (`max|VᵀV − I|` — the components are orthonormal), with a `trace_residual`
+    total-variance check (Σλ ≈ trace(C)); `pca_via_bridge` is the Q8↔f32↔Q8 input round-trip then reference.
+    **Honest note:** the emitted C path delegates to LAPACK's **`ssyev`** (Householder + implicit-QR /
+    divide-and-conquer) when linked (`-DBCIR_USE_LAPACK -llapack` — `LAPACKE_ssyev` rides the *existing*
+    `LAPACKE_*`→`-llapack` rule, **no linkflags change**), with the portable **Jacobi** fallback otherwise (CI
+    needs no LAPACK); the two differ in *realization* but agree to float round-off on **well-separated**
+    eigenvalues (a degenerate/repeated eigenvalue makes the eigenVECTORS non-unique — any orthonormal basis of
+    the eigenspace is valid — so tests use **distinct** eigenvalues). A deterministic **sign convention**
+    (largest-magnitude entry positive) is applied in both the Python and the C path so they are byte-comparable.
+    The R17 bridge bound is the **input round-trip alone**; the eig is trusted/exact. Verified: recovers known
+    eigenpairs of a hand-built spectrum and the dominant direction of a spread dataset, the two residuals are
+    ~0, eigenvalues descending and Σλ ≈ trace, the fallback **compiles + runs + recovers** `diag(5,3,1)` (the
+    `#pca` runtime probe), and the module **touches no verifier / emits no `Diagnostic`** (off the legality
+    path). Pure-Python oracle, deterministic.
 - **B4 — Hybrid tropical + selective gradient.** Reframe training: the **tropical planner finds the structure**
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and

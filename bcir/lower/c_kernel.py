@@ -659,6 +659,143 @@ def emit_lapack_ols_c(m: int, n: int, nrhs: int = 1, fn_name: str = "bcir_ols") 
     )
 
 
+def emit_lapack_eigh_c(n: int, fn_name: str = "bcir_eigh") -> str:
+    """E2 (ML-breadth): wrap a TRUSTED external LAPACK SYMMETRIC EIGENDECOMPOSITION through the
+    `c.call.libm:` FFI edge -- "integrate, don't reinvent", the PCA sibling of ``emit_lapack_ols_c``. Where E1's
+    OLS forms a symmetric Gram matrix and SOLVES it, E2's PCA forms a symmetric covariance and EIGENDECOMPOSES
+    it; this emitter is the eigensolver half. Given the n x n SYMMETRIC matrix ``C`` (row-major; the covariance
+    from ``kbcir.pca.covariance_matrix``), it writes the n eigenvalues and n eigenvectors, sorted by eigenvalue
+    DESCENDING (the PCA convention -- first principal component = largest variance) with the same sign
+    convention as the Python reference. BCIR owns the CALLING side: it fixes the ROW-MAJOR layout and (with the
+    A1.1 Q8 bridge at the boundary) the precision, and DELEGATES the eig to ``LAPACKE_ssyev`` (jobz='V',
+    uplo='U', LAPACK_ROW_MAJOR) when linked (`-DBCIR_USE_LAPACK -llapack`), with a portable JACOBI fallback (the
+    SAME algorithm as ``kbcir.pca._jacobi_eigh``) selected by the preprocessor when it is not. ``n`` is baked in
+    (a planned claim knows its shape). CI needs NO LAPACK -- the Jacobi fallback is the full standalone path.
+
+    HONEST CONDITIONING NOTE (why the two paths differ in REALIZATION): the linked path uses ``ssyev``
+    (Householder tridiagonalization followed by an implicit-QR / divide-and-conquer iteration on the
+    tridiagonal -- the numerically-hardened LAPACK eig). The portable fallback uses the classic JACOBI rotation
+    sweep (the textbook symmetric eig, the C twin of ``kbcir.pca._jacobi_eigh``). The two methods differ in
+    REALIZATION but compute the SAME spectral decomposition of a symmetric matrix and AGREE to float round-off
+    on WELL-SEPARATED eigenvalues (which the tests use). The honest caveat: a DEGENERATE (repeated) eigenvalue
+    makes the eigenVECTORS non-unique -- any orthonormal basis of the eigenspace is a valid answer, so ssyev and
+    Jacobi can legitimately return DIFFERENT bases there (this is not a bug; tests must use DISTINCT eigenvalues
+    to compare eigenvectors). Both honor the SAME post-processing: eigenvalues sorted DESCENDING (ssyev returns
+    them ASCENDING, so the linked path reverses), and each eigenvector's largest-magnitude entry forced positive
+    (the sign convention -- ties broken by the lowest index -- so the two paths produce identical signs).
+
+    LAYOUT + SCRATCH CONTRACT (mirrors LAPACKE_ssyev with LAPACK_ROW_MAJOR): ``C`` is the n x n symmetric matrix
+    row-major (``C[p*n+q]``). ``ssyev`` is DESTRUCTIVE -- it OVERWRITES its matrix argument with the eigenVECTORS
+    (jobz='V') -- so, exactly as ``emit_lapack_ols_c`` copies for ``sgels``, this emitter copies the caller's
+    ``C`` into internal scratch, runs ssyev there, and writes the (sorted, sign-fixed) results into the separate
+    ``eigvals`` / ``eigvecs`` output buffers. So the CALLER's ``C`` is NOT mutated. The signature is
+    ``void {fn}(const float *C, float *eigvals, float *eigvecs)``: ``eigvals`` is a length-n buffer (descending),
+    ``eigvecs`` is an n*n row-major buffer whose ROW t (``eigvecs[t*n + j]``) is component t's j-th coordinate --
+    the same flat layout ``kbcir.pca.pca_reference`` returns. Returns nothing."""
+    if n < 1:
+        raise ValueError(f"eigh dimension must be >= 1; got {n}")
+    return (
+        f"/* BCIR -> external trusted SYMMETRIC EIGENDECOMPOSITION (PCA) via the c.call.libm: edge (integrate, "
+        f"don't reinvent; E2 -- the eig sibling of E1's OLS solve). symmetric C[{n}x{n}] row-major -> n "
+        f"eigenvalues (DESCENDING) + n eigenvectors (row t = component t), sign convention: largest-magnitude "
+        f"entry positive. LAPACKE_ssyev (jobz='V', uplo='U', LAPACK_ROW_MAJOR) when linked -- Householder + "
+        f"implicit-QR; reference JACOBI rotation fallback otherwise -- the C twin of kbcir.pca._jacobi_eigh. "
+        f"Both agree to float round-off on well-separated eigenvalues; BCIR owns the calling side (layout + the "
+        f"Q8<->f32 boundary). Degenerate eigenvalues make eigenVECTORS non-unique (use distinct ones). */\n"
+        "#include <stddef.h>\n"
+        "#include <math.h>\n"
+        "#if defined(BCIR_USE_LAPACK)\n"
+        "  #include <lapacke.h>\n"
+        "  #include <string.h>\n"
+        "  #define BCIR_EIGH_LAPACK 1\n"
+        "#else\n"
+        "  #define BCIR_EIGH_LAPACK 0\n"
+        "#endif\n"
+        f"void {fn_name}(const float *C, float *eigvals, float *eigvecs) {{\n"
+        f"  const size_t N = {n}u;\n"
+        f"  float val[{n}];        /* eigenvalues, pre-sort (ssyev: ascending; Jacobi: unsorted) */\n"
+        f"  float vec[{n}][{n}];   /* vec[t] = eigenvector t (a row) */\n"
+        f"#if BCIR_EIGH_LAPACK\n"
+        f"  /* The trusted external kernel: ssyev (jobz='V', uplo='U'). ssyev OVERWRITES its matrix argument\n"
+        f"     with the eigenvectors and is DESTRUCTIVE, so copy the caller's C into scratch (the caller's C\n"
+        f"     survives), run ssyev, then read the eigenvalues (ASCENDING) and eigenvector ROWS out. With\n"
+        f"     LAPACK_ROW_MAJOR + uplo='U', on return scratch's ROW t holds eigenvector t. */\n"
+        f"  float scratch[{n * n}];\n"
+        f"  memcpy(scratch, C, sizeof scratch);\n"
+        f"  LAPACKE_ssyev(LAPACK_ROW_MAJOR, 'V', 'U', {n}, scratch, {n}, val);  /* c.call.libm:LAPACKE_ssyev */\n"
+        f"  for (size_t t = 0; t < N; ++t)\n"
+        f"    for (size_t j = 0; j < N; ++j) vec[t][j] = scratch[t * N + j];\n"
+        f"#else\n"
+        f"  /* Portable reference: the classic JACOBI rotation sweep -- the C twin of kbcir.pca._jacobi_eigh.\n"
+        f"     Maintain a working symmetric matrix a (a copy of C) and an accumulated rotation matrix v; each\n"
+        f"     cyclic sweep applies the plane rotation that zeroes a[p][q] (a similarity transform, so the\n"
+        f"     spectrum is preserved) and accumulates it into v. Converges to float precision on a symmetric\n"
+        f"     matrix. Deterministic (fixed sweep order + cap), so it agrees with ssyev to round-off on\n"
+        f"     well-separated eigenvalues. */\n"
+        f"  float a[{n}][{n}], v[{n}][{n}];\n"
+        f"  for (size_t p = 0; p < N; ++p)\n"
+        f"    for (size_t q = 0; q < N; ++q) {{ a[p][q] = C[p * N + q]; v[p][q] = (p == q) ? 1.0f : 0.0f; }}\n"
+        f"  for (int sweep = 0; sweep < 100; ++sweep) {{\n"
+        f"    float off = 0.0f;                               /* off-diagonal Frobenius norm (convergence) */\n"
+        f"    for (size_t p = 0; p < N; ++p)\n"
+        f"      for (size_t q = p + 1; q < N; ++q) off += a[p][q] * a[p][q];\n"
+        f"    if (sqrtf(2.0f * off) <= 1e-20f) break;          /* converged to float precision */\n"
+        f"    for (size_t p = 0; p < N; ++p) {{\n"
+        f"      for (size_t q = p + 1; q < N; ++q) {{\n"
+        f"        float apq = a[p][q];\n"
+        f"        if (apq == 0.0f) continue;                   /* already zero -> no rotation */\n"
+        f"        float theta = (a[q][q] - a[p][p]) / (2.0f * apq);\n"
+        f"        float tt = copysignf(1.0f, theta) / (fabsf(theta) + sqrtf(theta * theta + 1.0f));\n"
+        f"        float cc = 1.0f / sqrtf(tt * tt + 1.0f);     /* cos */\n"
+        f"        float ss = tt * cc;                          /* sin */\n"
+        f"        for (size_t kk = 0; kk < N; ++kk) {{         /* A <- A J (columns p,q) */\n"
+        f"          float akp = a[kk][p], akq = a[kk][q];\n"
+        f"          a[kk][p] = cc * akp - ss * akq;\n"
+        f"          a[kk][q] = ss * akp + cc * akq;\n"
+        f"        }}\n"
+        f"        for (size_t kk = 0; kk < N; ++kk) {{         /* A <- J^T A (rows p,q) */\n"
+        f"          float apk = a[p][kk], aqk = a[q][kk];\n"
+        f"          a[p][kk] = cc * apk - ss * aqk;\n"
+        f"          a[q][kk] = ss * apk + cc * aqk;\n"
+        f"        }}\n"
+        f"        a[p][q] = 0.0f; a[q][p] = 0.0f;              /* force the annihilated entries to zero */\n"
+        f"        for (size_t kk = 0; kk < N; ++kk) {{         /* V <- V J (accumulate the rotation) */\n"
+        f"          float vkp = v[kk][p], vkq = v[kk][q];\n"
+        f"          v[kk][p] = cc * vkp - ss * vkq;\n"
+        f"          v[kk][q] = ss * vkp + cc * vkq;\n"
+        f"        }}\n"
+        f"      }}\n"
+        f"    }}\n"
+        f"  }}\n"
+        f"  for (size_t t = 0; t < N; ++t) {{                  /* val[t] = a[t][t]; vec[t] = column t of V */\n"
+        f"    val[t] = a[t][t];\n"
+        f"    for (size_t r = 0; r < N; ++r) vec[t][r] = v[r][t];\n"
+        f"  }}\n"
+        f"#endif\n"
+        f"  /* Common post-processing (BOTH paths): sort eigenpairs by eigenvalue DESCENDING (PCA convention --\n"
+        f"     ssyev returns ascending, Jacobi unsorted; a selection sort that carries vectors along is fine for\n"
+        f"     these small n), then force each eigenvector's largest-magnitude entry positive (the sign\n"
+        f"     convention, ties to the lowest index) -- so the linked and fallback outputs are identical. */\n"
+        f"  size_t idx[{n}];\n"
+        f"  for (size_t t = 0; t < N; ++t) idx[t] = t;\n"
+        f"  for (size_t s = 0; s < N; ++s) {{                  /* selection sort idx[] by val[] DESCENDING */\n"
+        f"    size_t best = s;\n"
+        f"    for (size_t t = s + 1; t < N; ++t)\n"
+        f"      if (val[idx[t]] > val[idx[best]]) best = t;     /* strict > keeps stable order on ties */\n"
+        f"    size_t tmp = idx[s]; idx[s] = idx[best]; idx[best] = tmp;\n"
+        f"  }}\n"
+        f"  for (size_t s = 0; s < N; ++s) {{\n"
+        f"    size_t t = idx[s];\n"
+        f"    eigvals[s] = val[t];\n"
+        f"    size_t bj = 0; float bmag = fabsf(vec[t][0]);    /* largest-magnitude entry -> sign convention */\n"
+        f"    for (size_t j = 1; j < N; ++j) {{ float mg = fabsf(vec[t][j]); if (mg > bmag) {{ bmag = mg; bj = j; }} }}\n"
+        f"    float sign = (vec[t][bj] < 0.0f) ? -1.0f : 1.0f;\n"
+        f"    for (size_t j = 0; j < N; ++j) eigvecs[s * N + j] = sign * vec[t][j];\n"
+        f"  }}\n"
+        f"}}\n"
+    )
+
+
 def emit_gsl_stats_c(kind: str, n: int, fn_name: str = "bcir_stats") -> str:
     """Area-B breadth (#62): wrap a TRUSTED external GSL (GNU Scientific Library) STATISTIC through the
     `c.call.libm:` FFI edge -- "integrate, don't reinvent", a FOURTH distinct library after B5's BLAS sgemm
