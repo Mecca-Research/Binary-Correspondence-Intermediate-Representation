@@ -112,4 +112,45 @@ else
   echo "[sycl-diff] no SYCL compiler (icpx/acpp/clang++ -fsycl); #sycl-device path self-skipped (expected on CI)"
 fi
 
+# --- S2: the RESIDENT DISPATCH round-trip (the channel EXECUTES routed work) ----------------------------
+# The probes above prove the emitted SAXPY kernel compiles + diffs STANDALONE. This drives the resident
+# DISPATCHER (bcir.lower.sycl_dispatch.SyclDispatcher) end-to-end on fixed data and checks the EXECUTED
+# output == BCIR's saxpy_reference -- the channel now has a dispatch path that RUNS routed work. The
+# dispatcher self-selects the portable fallback (CI) or the -fsycl device path (when a SYCL compiler probes
+# OK); it reports its `mode` so we PASS #sycl-dispatch honestly. The dispatcher uses a C++ compiler itself,
+# so this stays self-skipping when none is present.
+echo "[sycl-dispatch] resident DISPATCH round-trip (SyclDispatcher executes a*x+y == BCIR reference)"
+disp_out="$(python3 - <<'PY'
+import sys
+from bcir.kbcir.sycl_saxpy import saxpy_reference
+from bcir.lower.sycl_dispatch import SyclDispatcher, DispatchUnavailable
+a = 2.0
+x = [1.0, 2.0, 3.0, 0.5, -1.0, 4.0, -2.5, 0.0]
+y = [10.0, 20.0, 30.0, -0.5, 1.0, -4.0, 2.5, 7.0]
+disp = SyclDispatcher()
+try:
+    got = disp.run_saxpy(a, x, y)
+except DispatchUnavailable as e:
+    print("SKIP " + str(e).splitlines()[0]); sys.exit(0)
+finally:
+    disp.close()
+ref = saxpy_reference(a, x, y)
+for g, r in zip(got, ref):
+    if abs(g - r) > 1e-3 * (1.0 + abs(r)):
+        print(f"DIVERGE got={g} ref={r}"); sys.exit(1)
+print("OK " + disp.mode)
+PY
+)" || { echo "  FAIL: the resident SYCL dispatch round-trip diverged from the BCIR reference"; echo "${disp_out}"; exit 1; }
+case "${disp_out}" in
+  "OK fallback")
+    echo "  PASS #sycl-dispatch (portable fallback: SyclDispatcher executed a*x+y == BCIR reference)" ;;
+  "OK sycl-device")
+    echo "  PASS #sycl-dispatch + #sycl-device (the -fsycl dispatch executed a*x+y == BCIR reference)" ;;
+  SKIP\ *)
+    echo "  ${disp_out} (no C++ compiler; the dispatch round-trip self-skipped, expected when toolchain absent)" ;;
+  *)
+    echo "  FAIL: unexpected dispatch probe result: ${disp_out}"; exit 1 ;;
+esac
+
+echo "[sycl-dispatch] ok"
 echo "[sycl-diff] ok"
