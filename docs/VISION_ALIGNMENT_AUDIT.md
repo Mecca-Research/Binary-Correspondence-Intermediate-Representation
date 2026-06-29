@@ -162,6 +162,34 @@ ranks top on a tile-heavy `matmul_tiled`). Two-truth: it perturbs COST/Theta onl
 reimplements) the cost model, emits no `Diagnostic`, and the module still `verify()`s clean before
 and after — it never reads or alters the legality path.
 
+**Telemetry export adapters (T4) — BUILT (cost-side only).** The telemetry pipeline now has its
+external export boundary (`bcir/telemetry_export.py`,
+[`TELEMETRY_PIPELINE_RESEARCH.md`](TELEMETRY_PIPELINE_RESEARCH.md) §6): read-only egress of the T1
+registry readings + T3 metrics in the two industry-standard shapes plus an out-of-band read,
+stdlib-only (`json`/`re`). **Prometheus/OpenMetrics** (PULL, `to_prometheus`/`scrape`): `# HELP`/`#
+TYPE`/`bcir_<name>{channel,cost_dim,provenance,unit} <value>` lines — a monotonic-counter source
+(RAPL `energy_uj`, `cycles`) → `counter`, a pressure/level/capacity → `gauge`; an unavailable signal
+emits no value but a `bcir_signal_up{...} 0` (the honest real/unavailable split); names sanitized to
+the Prometheus charset; deterministic. **OTLP** (PUSH, `to_otlp`/`otlp_to_json`/`export_push` + a
+frozen `OtlpMetric`): the OTLP-JSON `resourceMetrics`/`scopeMetrics` data model with kind +
+temporality + monotonicity declared EXPLICITLY per metric (counters = sum+cumulative+monotonic;
+gauges = gauge+unspecified+non-monotonic) and the channel as the `Resource`. **Redfish** (out-of-band
+PULL): `to_redfish_metric_report` + `metric_definitions` (the 4-split — units/provenance on the
+`MetricDefinition`) + `parse_redfish_metric_report` (parse a BMC report back into `Reading`s, tolerant
+of foreign fields). The `TelemetryIntegrity` witness exports as `up`/`accepted`/`rejected`/`blind` so
+suppression stays observable. Honest depth: no live collector/server/BMC — these produce/parse the
+exposition bytes+JSON (the testable contract); HTTP/gRPC/protobuf transport is a documented unbuilt
+adapter. Two-truth: read-only egress of the graded signal — no `Diagnostic`, touches neither
+`bcir/verify` nor the cost DIMS, never a verdict.
+
+**Telemetry pipeline (T1–T4) — COMPLETE (cost-side only; never a verdict).** With T4 the
+telemetry/monitoring pipeline is built end-to-end: **T1** vendor-neutral signal-provider registry →
+**T2** framed CRC-sealed UART transport (dual-rail with a C twin) → **T3** derived metrics + plan-cost
+sensitivity → **T4** Prometheus/OTLP/Redfish export adapters. Every stage is pure-Python (T2 also a
+freestanding C twin), strictly on the *cost/optimization* side of the two-truth quarantine: telemetry
+may inform `theta` / cost calibration but is never — and can never become — an R-law legality verdict;
+the decision path (`bcir/verify`, R1–R21) reads no telemetry.
+
 ### Pillar 4 — tropical / lifting / linearization / precision
 
 - **4a kernel-arithmetic tropical rewrite — BY DESIGN NOT DONE (vision clarification).**

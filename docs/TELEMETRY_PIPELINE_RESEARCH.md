@@ -186,6 +186,37 @@ mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 a
   path — the module still `verify()`s clean before and after a sensitivity run; the cost model is
   reused, not reimplemented.
 - **T4** — **export adapters**: OTLP/Prometheus exposition (data-center) + the out-of-band Redfish read.
+  **BUILT** — `bcir/telemetry_export.py` (+ `bcir/tests/test_telemetry_export.py`). The external
+  export boundary: read-only egress of the T1 registry's readings + T3's derived metrics in the two
+  industry-standard shapes plus an out-of-band read, pure-Python/stdlib-only (`json`, `re`).
+  **Prometheus/OpenMetrics (PULL)**: `to_prometheus(reg_or_snapshot, *, channel, derived, sensitivity,
+  witness)` / `scrape()` emit `# HELP`/`# TYPE`/`bcir_<name>{channel,cost_dim,provenance,unit} <value>`
+  lines — a monotonic-counter source (RAPL `energy_uj`, `cycles`) → `counter`, a pressure/level/capacity/
+  flag → `gauge`. An unavailable signal emits NO value line but DOES emit `bcir_signal_up{...} 0` (the
+  honest real/unavailable split, downstream-observable); names are sanitized to the Prometheus charset
+  `[a-zA-Z_:][a-zA-Z0-9_:]*`; output is deterministic. **OTLP data model (PUSH)**: a frozen `OtlpMetric`
+  (name/unit/kind∈{gauge,sum}/temporality∈{delta,cumulative}/monotonic/points/resource) + `to_otlp(...)` →
+  the OTLP-JSON `resourceMetrics`/`scopeMetrics` structure + `otlp_to_json(...)`/`export_push(...)` → the
+  JSON bytes a protobuf exporter would POST. Temporality + monotonicity are declared EXPLICITLY per metric
+  (counters = sum+cumulative+monotonic; gauges = gauge+unspecified+non-monotonic — the research's "these
+  break silently if implicit"); the channel identity is the OTLP `Resource`. **Redfish (out-of-band PULL)**:
+  `to_redfish_metric_report(...)` → a `MetricReport` (each `MetricValues[]` with `MetricId`/`MetricValue`
+  (string)/`Timestamp` + an `Oem.BCIR` provenance/cost_dim), `metric_definitions(reg)` → the
+  `MetricDefinition` resources (units + provenance + cost_dim + sampling_model live HERE, the 4-split:
+  MetricDefinition[T1] / MetricReportDefinition / MetricReport / Triggers), and
+  `parse_redfish_metric_report(json)` → the out-of-band READ that parses a BMC's `MetricReport` back into
+  BCIR `Reading`s (tolerant of missing/extra/foreign fields). The witness (`TelemetryIntegrity`) exports as
+  an `up`/`accepted`/`rejected`/`dropped`/`blind` set so suppression stays observable downstream. **Honest
+  depth**: no live OTLP collector / Prometheus server / BMC here — these produce/parse the exposition
+  bytes+JSON, which IS the testable contract; the HTTP `/metrics` handler + OTLP gRPC/HTTP POST + protobuf
+  + Redfish REST client are a thin documented adapter, NOT built (no protobuf/requests dependency).
+  **Two-truth**: export is read-only egress of the graded L2/L3 signal — it emits no `Diagnostic`, touches
+  neither `bcir/verify` nor the cost DIMS, and is never an R-law verdict.
+
+**Pipeline status: T1–T4 all built.** The telemetry/monitoring pipeline is complete end-to-end —
+T1 (signal-provider registry) → T2 (UART telemetry frame) → T3 (derived metrics + sensitivity) →
+T4 (export adapters) — all pure-Python (T2 dual-rail with a C twin), all strictly on the
+*cost/optimization* side of the two-truth quarantine.
 
 Everything above is the *cost/optimization* side. The legality verdict (R1–R21) never reads telemetry.
 
