@@ -39,9 +39,15 @@ from bcir.frontends.cfront.emit import emit_function
 from bcir.frontends.cfront.pipeline import compile_with_fallback
 from bcir.model import Domain
 
+import platform
+
 _GCC = shutil.which("gcc")
 _CLANG = shutil.which("clang")
 _CC = _CLANG or shutil.which("cc") or _GCC
+# The emitted asm is x86 `in`/`out`, so it must be assembled FOR an x86 target regardless of the host arch
+# (the CI matrix includes an aarch64 lane, whose native assembler rejects x86 instructions). clang
+# cross-assembles via `-target x86_64-linux-gnu` on ANY host; a native gcc can only assemble x86 on an x86 host.
+_HOST_X86 = platform.machine().lower() in ("x86_64", "amd64", "x86", "i386", "i486", "i586", "i686")
 
 
 # --- helpers ------------------------------------------------------------------------------------
@@ -68,21 +74,28 @@ def _emit_clean(lf) -> str:
 
 def _assemble_only(c_text: str) -> str:
     """ASSEMBLE `c_text` to an object under BOTH gcc AND clang at `-std=c11 -pedantic -c` (assemble-only —
-    NEVER linked or run, because `in`/`out` are privileged ring-0 instructions). Returns "ok" iff every
-    available compiler builds the object, "skip" if no compiler is present, else "FAIL:<cc>:<detail>". This
-    is the honest seam: the emitted x86 `in`/`out` must be VALID assembly the toolchain accepts."""
-    ccs = [(n, p) for n, p in (("gcc", _GCC), ("clang", _CLANG)) if p]
+    NEVER linked or run, because `in`/`out` are privileged ring-0 instructions). The emitted asm is x86
+    `in`/`out`, so it is assembled FOR an x86 target regardless of the host arch: clang cross-assembles via
+    `-target x86_64-linux-gnu` on any host (incl. the aarch64 CI lane); a native gcc can only assemble x86 on
+    an x86 host. Returns "ok" iff every x86-capable compiler builds the object, "skip" if none is available,
+    else "FAIL:<cc>:<detail>". This is the honest seam: the emitted x86 `in`/`out` must be VALID assembly."""
+    ccs = []
+    if _CLANG:
+        ccs.append(("clang", _CLANG, ["-target", "x86_64-linux-gnu"]))   # clang cross-assembles on any host
+    if _GCC and _HOST_X86:
+        ccs.append(("gcc", _GCC, []))                                    # native gcc only on an x86 host
     if not ccs:
-        if not _CC:
-            return "skip"
-        ccs = [("cc", _CC)]
+        if _CC and _HOST_X86:                                            # a non-clang `cc` only if x86
+            ccs = [("cc", _CC, [])]
+        else:
+            return "skip"                                                # no x86-capable assembler here
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "portio.c")
         with open(src, "w", encoding="utf-8") as f:
             f.write(c_text)
-        for name, cc in ccs:
+        for name, cc, tflag in ccs:
             obj = os.path.join(d, f"portio_{name}.o")
-            b = subprocess.run([cc, "-std=c11", "-pedantic", "-c", src, "-o", obj],  # -c: assemble only
+            b = subprocess.run([cc, *tflag, "-std=c11", "-pedantic", "-c", src, "-o", obj],  # -c: assemble only
                                capture_output=True, text=True)
             if b.returncode != 0:
                 return f"FAIL:{name}:assemble:{(b.stderr or b.stdout).strip().splitlines()[-1:]}"

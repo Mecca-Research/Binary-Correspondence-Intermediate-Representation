@@ -2880,18 +2880,35 @@ PY
   || { echo "  FAIL: portio emit missing the real in/out instruction"; cat "${tmp}/portio_emit.c"; exit 1; }
 # ASSEMBLE-ONLY (-c): prove the emitted x86 asm is valid the toolchain accepts. NEVER linked/run (the
 # `in`/`out` instructions are privileged). Every available CC must assemble it.
-pio_ok=1; pio_seen=""
+# The emitted asm is x86 `in`/`out`, so assemble it FOR an x86 target regardless of the runner's host arch
+# (the CI matrix includes an aarch64 lane whose native assembler rejects x86). clang cross-assembles via
+# `-target x86_64-linux-gnu` on ANY host; a native gcc can only assemble x86 on an x86 host.
+case "$(uname -m)" in x86_64|amd64|x86|i386|i486|i586|i686) pio_host_x86=1;; *) pio_host_x86=0;; esac
+pio_ok=1; pio_seen=""; pio_asm=0
 for cc in "${CC}" "$(command -v gcc)" "$(command -v clang)"; do
   [ -n "${cc}" ] && [ -x "${cc}" ] || continue
   case " ${pio_seen} " in *" ${cc} "*) continue;; esac     # de-dup (CC may already be gcc/clang)
   pio_seen="${pio_seen} ${cc}"
-  "${cc}" -std=c11 -pedantic -c "${tmp}/portio_emit.c" -o "${tmp}/portio_${cc##*/}.o" 2>/dev/null \
-    || { echo "  FAIL: portio emit did not ASSEMBLE under ${cc}"; pio_ok=0; break; }
+  if "${cc}" --version 2>/dev/null | grep -qi clang; then
+    pio_t="-target x86_64-linux-gnu"                       # clang cross-assembles x86 on any host
+  elif [ "${pio_host_x86}" = "1" ]; then
+    pio_t=""                                               # native gcc on an x86 host
+  else
+    continue                                               # native gcc on non-x86 can't assemble x86 -> skip
+  fi
+  # shellcheck disable=SC2086
+  "${cc}" ${pio_t} -std=c11 -pedantic -c "${tmp}/portio_emit.c" -o "${tmp}/portio_${cc##*/}.o" 2>/dev/null \
+    || { echo "  FAIL: portio emit did not ASSEMBLE under ${cc} ${pio_t}"; pio_ok=0; break; }
   [ -f "${tmp}/portio_${cc##*/}.o" ] || { echo "  FAIL: portio object not produced by ${cc}"; pio_ok=0; break; }
+  pio_asm=$((pio_asm + 1))
 done
-[ "${pio_ok}" = "1" ] \
-  && echo "  PASS portio: emitted x86 in/out ASSEMBLES under every CC (-c, assemble-only; execution is privileged)" \
-  || exit 1
+if [ "${pio_ok}" = "1" ] && [ "${pio_asm}" -ge 1 ]; then
+  echo "  PASS portio: emitted x86 in/out ASSEMBLES (-c, x86 target; assemble-only, execution is privileged)"
+elif [ "${pio_ok}" = "1" ]; then
+  echo "  SKIP portio assemble: no x86-capable assembler on this host (emit-text check passed)"
+else
+  exit 1
+fi
 # the non-x86 honest diagnostic: ARM/RISC-V have no port I/O -> route to the LLVM fallback (the oracle).
 pio_fb="$(python3 -c "
 from bcir.frontends.cfront.pipeline import compile_with_fallback
