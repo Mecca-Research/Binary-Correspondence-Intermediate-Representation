@@ -325,6 +325,29 @@ the decision path (`bcir/verify`, R1–R21) reads no telemetry.
     KNN / tree / linear-SVM are exact and may be i32) — NOT a new R-law. Off the legality path; the R17 bridge
     bound is the input round-trip alone. libsvm is the canonical SVM library in the framing only — the decision
     function is emitted self-contained.
+  - **E6 — unsupervised + the data pipeline** (`bcir/kbcir/unsupervised.py`, `emit_kmeans_assign_c`): the sixth
+    ML-breadth slice — **K-means / scalers / cross-validation folds / a small autoencoder / an embedding lookup**,
+    which **REUSES** BCIR's existing pieces (the Area-B "integrate, don't reinvent" discipline). It carries the
+    E5 **FIT vs PREDICT/TRANSFORM split**: FIT (Lloyd's iteration; a scaler's statistical pass) is
+    bounded-iterative/statistical; the PREDICT/TRANSFORM over a BAKED model (nearest-centroid assign, the exact
+    scaler transform, the autoencoder forward, the row gather) is a fixed-shape kernel = the **G5 baked-weights
+    pattern**. **K-means**: `kmeans_assign` reuses `classical.squared_distance` and takes the argmin (= ranking
+    on distance, `sqrt` monotone → **no transcendental**; tie-break lowest index); `kmeans_fit` is the bounded
+    DETERMINISTIC Lloyd loop with deterministic empty-cluster handling (keep the previous centroid); the
+    independent verifier is the defining property that **inertia is monotone non-increasing** across iterations.
+    **Scalers**: FIT bakes the transform (StandardScaler's `sqrt(population variance)` is the only transcendental,
+    at fit time → the transform `(x−μ)/σ` is exact division; MinMax `(x−mn)/(mx−mn)` exact, guarded), verified by
+    standardized data having mean ≈ 0 / std ≈ 1 and min-max data lying in `[0,1]`. **CV folds**: `k_fold_indices`
+    reuses the M3 `training._lcg_permutation` (no new RNG); the verifier confirms a **genuine partition** (disjoint
+    + cover) with balanced sizes. **Autoencoder**: a composition reusing `matmul.matmul_reference` + the G1
+    activation references + M1 `losses.mse_value`, verified by tied-identity weights reconstructing the input
+    (error ≈ 0) vs a real bottleneck (> 0). **Embedding**: an exact baked-table row gather (verified == the direct
+    slice; an out-of-range id raises). The one new C kernel `emit_kmeans_assign_c` is the EXACT nearest-centroid
+    argmin (pure compare/add, returns an `int`) — **NO transcendental, NO libm** (needs no `-lm`, **no linkflags
+    change**), integer-exact vs the oracle, compiled + run + matched by the `#kmeans` probe. `check_unsupervised`
+    is op-level well-formedness (the quarantine rule: a transcendental-activation autoencoder needs f32; K-means
+    assign / scaler transform / embedding are exact) — NOT a new R-law. Off the legality path; the R17 bridge
+    bound is the input round-trip alone.
 - **5c tensor ops as claims — PARTIAL (broadening).** `gem.matmul` is a first-class planned claim with
   K_BCIR tile/loop search, joined by `gem.activation` (relu / sigmoid / tanh / gelu / softmax), `gem.conv`, and
   the **G7 `gem.attention`** single-head scaled-dot-product op — and now the **E3 full Transformer encoder

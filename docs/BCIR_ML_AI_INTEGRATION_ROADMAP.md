@@ -375,6 +375,49 @@ law, parity-gate. Throttled, parallel to C/driver work.*
       Gaussian-NB `log` need f32 while KNN / tree / linear-SVM are exact and may be i32) — NOT a new R-law (mirrors
       `check_recurrent`). The module **touches no verifier / emits no `Diagnostic`** (off the legality path,
       AST-inspected). Pure-Python oracle, deterministic.
+  - **E6 — unsupervised + pipeline BUILT** (`bcir/kbcir/unsupervised.py`, `bcir/tests/test_unsupervised.py`; the
+    emitted C twin `bcir/lower/c_kernel.py::emit_kmeans_assign_c`). The sixth ML-breadth slice — **K-means
+    clustering, the preprocessing scalers, cross-validation folds, a small autoencoder, and an embedding
+    lookup** — which **REUSES** BCIR's existing pieces rather than reinventing them (the Area-B discipline). It
+    carries forward the E5 **FIT vs PREDICT/TRANSFORM split**: the FIT/TRAIN half (Lloyd's iteration, a scaler's
+    statistical pass) is bounded-iterative/statistical, while the PREDICT/TRANSFORM step over a BAKED model is a
+    deterministic fixed-shape kernel = the **G5 baked-weights pattern**.
+    - **K-means** — `kmeans_assign` is the nearest-centroid **PREDICT kernel**: it **REUSES**
+      `classical.squared_distance` (E5's exact squared Euclidean) and takes the argmin — ranking on squared
+      distance is IDENTICAL to ranking on distance (`sqrt` monotone), so it needs **NO transcendental** (exact;
+      tie-break lowest index). `kmeans_fit` is the bounded, DETERMINISTIC **Lloyd's iteration** (fixed
+      `init_indices` + fixed `n_iter`: assign → recompute each centroid as its assigned-points' mean), with
+      **deterministic empty-cluster handling** (keep the previous centroid — no `0/0`). `kmeans_inertia` is the
+      objective `Σᵢ ‖Xᵢ − centroid[labelᵢ]‖²`, whose INDEPENDENT verifier is its defining property: inertia is
+      **MONOTONE NON-INCREASING** across Lloyd iterations (a test runs the fit for increasing `n_iter` and
+      asserts it never rises).
+    - **Scalers** — **FIT produces a baked transform, TRANSFORM is the exact kernel.** `StandardScaler` bakes
+      per-feature `(mean, std)` with `std = sqrt(population variance)` — the `sqrt` is the **only**
+      transcendental and it is at FIT time, so `standard_scaler_transform` `(x−mean)/std` is **exact division**.
+      Independent verifier: standardized training data has per-feature mean ≈ 0 / std ≈ 1 (recomputed directly).
+      `MinMaxScaler` bakes `(min, max)`; `minmax_transform` `(x−mn)/(mx−mn)` is exact (guarded `mx > mn`);
+      verifier: standardized data lies in `[0, 1]`. A constant feature (std 0 / `mx == mn`) is rejected.
+    - **CV folds** — `k_fold_indices` partitions `[0, n)` into `n_folds` balanced index lists, **REUSING** the
+      M3 `training._lcg_permutation` (the deterministic LCG Fisher-Yates shuffle — no new RNG). Independent
+      verifier: the folds are a **genuine partition** (pairwise DISJOINT + their union is exactly `{0,…,n−1}`)
+      with sizes differing by ≤ 1.
+    - **Autoencoder** — a **COMPOSITION**: `autoencoder_forward` encodes `h = act(x @ W_enc + b_enc)` and decodes
+      `recon = h @ W_dec + b_dec`, **REUSING** `matmul.matmul_reference` + the G1 `activation` references;
+      `reconstruction_error` is the MSE, **REUSING** M1 `losses.mse_value`. Independent verifier: with TIED
+      IDENTITY weights (`W_enc = W_dec = I`, zero bias, `relu` on positive inputs) the reconstruction equals the
+      input (error ≈ 0), while a real bottleneck has error > 0.
+    - **Embedding lookup** — `embedding_lookup` gathers the rows of a baked `n_vocab × dim` table
+      (`out[t] = table[ids[t]]`), exact; verifier: the lookup equals the direct row slice, and an out-of-range
+      id raises.
+    - Each input-consuming kernel has a `*_via_bridge` Q8 round-trip (the **R17 input bound**). The one new C
+      kernel `emit_kmeans_assign_c` emits the nearest-centroid argmin — **EXACT** (pure subtract/multiply/add +
+      comparisons, returns an `int` cluster id), **NO transcendental, NO libm** (it needs no `-lm` — **no
+      linkflags change**), so the C-vs-oracle check is **integer-exact** (the same argmin); it **compiles + runs
+      + matches** (the `#kmeans` runtime probe). `check_unsupervised` is the op-level shape/dtype well-formedness
+      checker (positive extents; dtype preserved; the quarantine rule that a transcendental-activation
+      autoencoder needs f32 while K-means assign / scaler transform / embedding are exact) — NOT a new R-law
+      (mirrors `check_classical`). The module **touches no verifier / emits no `Diagnostic`** (off the legality
+      path, AST-inspected). Pure-Python oracle, deterministic.
 - **B4 — Hybrid tropical + selective gradient.** Reframe training: the **tropical planner finds the structure**
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and

@@ -194,6 +194,7 @@ _MODULES = [
     "bcir.tests.test_transformer",
     "bcir.tests.test_recurrent",
     "bcir.tests.test_classical",
+    "bcir.tests.test_unsupervised",
     "bcir.tests.test_autodiff",
     "bcir.tests.test_autodiff_kernel",
     "bcir.tests.test_losses",
