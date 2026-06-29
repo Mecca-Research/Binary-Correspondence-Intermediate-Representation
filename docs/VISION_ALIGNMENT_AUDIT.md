@@ -205,7 +205,13 @@ Pillar 3):**
     own reference (portable scalar fallback does the real work; the `-fsycl` device path self-skips on
     CI). SYCL is a compiler MODE, **not** a `c.call.libm:` link edge (no `linkflags.py` rule); its
     dynamic scheduler is held off the legality path. See [`SYCL_INTEROP.md`](SYCL_INTEROP.md). No
-    `mlir/` changes, no new R-laws.
+    `mlir/` changes, no new R-laws. **S2 (resident dispatch):** the channel now has a host-side
+    **dispatcher** ([`bcir/lower/sycl_dispatch.py`](../bcir/lower/sycl_dispatch.py) `SyclDispatcher` +
+    `build_execute_kernels`) so a module `orchestrate` places onto a tower including `sycl_spirv` is
+    **run end-to-end** through `gem.execute`, the sycl-placed claim dispatched through the emitted kernel
+    (portable fallback on CI, `-fsycl` device path gated), round-trip-verified vs the reference and gated
+    by `#sycl-dispatch` in [`tools/cpp/check_sycl.sh`](../tools/cpp/check_sycl.sh); the SPIR-V codegen
+    identity is reachable via the `spirv64` target (best-effort). Above the G8 boundary, never a verdict.
 
 **Pillar-3 intelligence:**
 5. ✅ **SoA↔AoS layout pivot** (Pillar 3b) — DONE: oracle `layout.py` + MLIR `-bcir-layout-pivot`.

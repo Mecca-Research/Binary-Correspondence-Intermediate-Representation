@@ -36,6 +36,37 @@ exactly **two** roles, and is held out of a third on purpose:
    (the two-truth quarantine): a SYCL device's measured agreement *informs* (a differential oracle), it
    never *legislates*.
 
+## Resident dispatch (the channel executes)
+
+Beyond pricing + routing + the standalone differential oracle, the `sycl_spirv` channel now has a
+host-side **resident dispatcher** ([`bcir/lower/sycl_dispatch.py`](../bcir/lower/sycl_dispatch.py)
+`SyclDispatcher`): a module [`orchestrate`](../bcir/channels.py) places onto a tower including
+`sycl_spirv` can be **run end-to-end** through [`gem.execute`](../bcir/gem/execute.py), with the
+sycl-placed claim dispatched through the emitted SYCL kernel.
+
+`SyclDispatcher.run_saxpy(a, x, y)` emits `emit_sycl_saxpy_c`, compiles it as single-source C++
+(`-std=c++17 -O2`), and runs it on fixed data: the **device path** (`-DBCIR_USE_SYCL -fsycl`, the SYCL
+runtime JITs SPIR-V and submits to the device) when a SYCL compiler is detected (`icpx` / `acpp` /
+`clang++ -fsycl` that compiles+links a SYCL probe), else the **portable scalar C++ fallback**. Its `mode`
+property reports which path ran (`"sycl-device"` / `"fallback"` / `"unavailable"`). `build_execute_kernels`
+wires each sycl-placed claim into the `kernels` dict `execute()` consumes — the callable reads the claim's
+inputs from a `store`, runs the dispatcher, and writes the outputs back — so the routed claim genuinely
+**executes**, round-trip-verified against `saxpy_reference` to float round-off. The SPIR-V codegen identity
+is reachable via `try_emit_spirv`, which drives the existing `codegen(…, target_name="spirv64")` path
+(triple `spirv64-unknown-unknown`, marker `OpEntryPoint`) — best-effort: stock `llc` has no SPIR-V backend,
+so it returns a clean `"no SPIR-V backend"` note and never crashes.
+
+**Honest depth** (the same framing as [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md)): there is no
+SYCL toolchain and no GPU on CI. What is **real + gated on CI**: the dispatcher seam, the end-to-end
+`execute()` round-trip via the portable fallback ([`bcir/tests/test_sycl_dispatch.py`](../bcir/tests/test_sycl_dispatch.py),
+gate marker `#sycl-dispatch` in [`tools/cpp/check_sycl.sh`](../tools/cpp/check_sycl.sh)), and the SPIR-V
+emission attempt. What is **gated / self-skipping** (needs hardware): the `-fsycl` device submission and a
+real SPIR-V backend in `llc` — detect-and-skip, never faked. The claim is precise: the channel has a
+resident dispatch path that *executes routed work* (portable path on CI, SYCL/SPIR-V when present),
+not that it runs on a real GPU. The dispatcher is host-side, lives **above** the G8 boundary, and is a
+graded L2/L3 backend like the G8 orchestrator — it produces data and **never** renders or alters a
+legality verdict (the two-truth quarantine holds: `verify()` is unchanged by a dispatch).
+
 ## The bright line: SYCL is a compiler MODE, not a `c.call.libm` link edge
 
 This is the critical architectural difference from the five Area-B library wraps
