@@ -773,6 +773,7 @@ int main(void) {
   int ok = 1;
   ok &= eq("c.call.libm:LAPACKE_sgesv", "-llapack");     /* the LAPACK rule (the wrapper's actual callee) */
   ok &= eq("c.call.libm:LAPACKE_dgesv", "-llapack");     /* any LAPACKE_* */
+  ok &= eq("c.call.libm:LAPACKE_sgels", "-llapack");     /* E1 OLS: LAPACKE_sgels rides the SAME LAPACKE_* rule */
   ok &= eq("c.call.libm:sgesv_", "-llapack");            /* the Fortran-ABI driver symbol */
   ok &= eq("c.call.libm:fftwf_execute", "-lfftw3");      /* B2 (no regression) */
   ok &= eq("c.call.libm:cblas_sgemm", "-lcblas");        /* B5 (no regression) */
@@ -788,8 +789,43 @@ PROBE
        "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_lapack" \
   || { echo "  FAIL: LAPACK link-flag probe build"; exit 1; }
 "${tmp}/lf_lapack" | grep -q "^OK linkflags-lapack" \
-  && echo "  PASS linkflags-lapack: C twin derives LAPACKE_*/sgesv_ -> -llapack (fftw/cblas/-lm/unknown unchanged)" \
+  && echo "  PASS linkflags-lapack: C twin derives LAPACKE_*/sgels/sgesv_ -> -llapack (fftw/cblas/-lm/unknown unchanged)" \
   || { echo "  FAIL: LAPACK link-flag rule diverged on the C twin"; "${tmp}/lf_lapack"; exit 1; }
+
+# E1 (ML-breadth) OLS portable fallback (#ols): the OVERDETERMINED least-squares wrap (emit_lapack_ols_c)
+# generalizes the square sgesv solve to linear regression (minimize ||A x - b||_2). The linked path is the
+# QR-based LAPACKE_sgels (~cond(A)); the portable fallback forms the NORMAL EQUATIONS G = A^T A (~cond(A)^2,
+# the textbook OLS twin of kbcir.ols.ols_reference). This probe compiles + runs the FALLBACK (no LAPACK
+# needed -- CI is LAPACK-free, exactly the Area-B norm) over a CONSISTENT overdetermined system b = A x_true
+# and checks it RECOVERS x_true on a well-conditioned A. The LAPACKE_sgels -> -llapack dual-rail is confirmed
+# by the #linkflags-lapack probe above (LAPACKE_sgels rides the SAME LAPACKE_* rule -- no linkflags change).
+echo "[c-runtime] E1 OLS portable fallback (emit_lapack_ols_c): normal-equations recovers a known x (#ols)"
+# Emit the fallback OLS kernel from the oracle, append a main that fits y = 2x + 1 (m=8, n=2 -> [1, x] rows,
+# recovers [c0=1, c1=2]), and assert the recovered coefficients match to float round-off.
+python3 - > "${tmp}/ols_kernel.c" <<'PY' || { echo "  FAIL: python OLS emit"; exit 1; }
+from bcir.lower.c_kernel import emit_lapack_ols_c
+print(emit_lapack_ols_c(8, 2, 1, "ols"))
+PY
+cat >> "${tmp}/ols_kernel.c" <<'MAIN'
+#include <stdio.h>
+#include <math.h>
+int main(void) {
+  /* fit y = 2x + 1 over 8 points exactly on the line: design rows [1, x_i], b_i = 2*x_i + 1. */
+  float A[16], b[8], x[2] = {0.0f, 0.0f};
+  for (int i = 0; i < 8; ++i) { A[i*2+0] = 1.0f; A[i*2+1] = (float)i; b[i] = 2.0f*(float)i + 1.0f; }
+  ols(A, b, x);                                   /* x = [c0, c1] */
+  printf("c0=%.6f c1=%.6f\n", x[0], x[1]);
+  /* recovered coefficients must be [1, 2] to float round-off (consistent, well-conditioned). */
+  return (fabsf(x[0] - 1.0f) < 1e-3f && fabsf(x[1] - 2.0f) < 1e-3f) ? 0 : 1;
+}
+MAIN
+"${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/ols_kernel.c" -lm -o "${tmp}/ols" 2>/dev/null \
+  || "${CC}" -std=c23 -O2 "${tmp}/ols_kernel.c" -lm -o "${tmp}/ols" \
+  || { echo "  FAIL: OLS fallback build"; exit 1; }
+ols_out="$("${tmp}/ols")"; ols_rc=$?    # rc=0 IS the recovery check: |c0-1|<1e-3 && |c1-2|<1e-3 (in the driver)
+{ [ "${ols_rc}" = "0" ] && printf '%s' "${ols_out}" | grep -q "^c0=.* c1=.*"; } \
+  && echo "  PASS ols: normal-equations fallback recovers y=2x+1 (${ols_out}; LAPACKE_sgels -> -llapack via #linkflags-lapack)" \
+  || { echo "  FAIL: OLS fallback did not recover [1,2] (rc=${ols_rc}: ${ols_out})"; exit 1; }
 
 # Area-B breadth (#62) GSL link-flag rule (dual-rail): the GSL edge (gsl_stats_mean) is minted by the kernel
 # EMITTER (emit_gsl_stats_c), not reachable from a cfront source. So this probe drives the C twin's

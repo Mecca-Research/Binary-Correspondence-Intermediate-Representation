@@ -539,6 +539,126 @@ def emit_lapack_solve_c(n: int, nrhs: int = 1, fn_name: str = "bcir_solve") -> s
     )
 
 
+def emit_lapack_ols_c(m: int, n: int, nrhs: int = 1, fn_name: str = "bcir_ols") -> str:
+    """E1 (ML-breadth): wrap a TRUSTED external LAPACK OVERDETERMINED least-squares solve through the
+    `c.call.libm:` FFI edge -- "integrate, don't reinvent", GENERALIZING ``emit_lapack_solve_c`` (the square
+    ``sgesv`` solve) to OLS linear regression. Finds the ``x`` minimizing ``||A x - b||_2`` for an m x n design
+    matrix A (m >= n) and right-hand side b. BCIR owns the CALLING side: it fixes the ROW-MAJOR layout and (with
+    the A1.1 Q8 bridge at the boundary) the precision, and DELEGATES the least-squares solve to
+    ``LAPACKE_sgels`` (the QR-based driver, LAPACK_ROW_MAJOR, trans='N') when linked
+    (`-DBCIR_USE_LAPACK -llapack`), with a portable normal-equations fallback selected by the preprocessor when
+    it is not. Both compute the IDENTICAL least-squares ``x`` to float round-off ON A WELL-CONDITIONED SYSTEM,
+    so the same source is correct linked or standalone -- the win is on the calling side (layout / quant), not a
+    reimplemented solver. `m`/`n`/`nrhs` are baked in (a planned claim knows its shape).
+
+    HONEST CONDITIONING NOTE (why the two paths differ in REALIZATION): the linked path uses ``sgels`` (a QR
+    factorization of A directly -- conditioning ~``cond(A)``), the more numerically stable least-squares method.
+    The portable fallback forms the NORMAL EQUATIONS ``G = A^T A`` (n x n), ``c = A^T b`` (n x nrhs) and solves
+    ``G x = c`` by the SAME Gaussian-elimination-with-partial-pivoting as ``emit_lapack_solve_c``'s fallback;
+    this squares the conditioning (~``cond(A)^2``) and is the textbook OLS twin of ``kbcir.ols.ols_reference``.
+    On a WELL-CONDITIONED A (which the tests use) both agree to float round-off; on an ill-conditioned A the QR
+    path is the more accurate (the honest caveat). CI needs no LAPACK -- the fallback is the full standalone OLS.
+
+    LAYOUT + IN-PLACE/WORKSPACE CONTRACT (mirrors LAPACKE_sgels with LAPACK_ROW_MAJOR exactly): `A` is the m x n
+    design matrix row-major (`A[i*n+j]`), `b` is the right-hand side. ``sgels`` is DESTRUCTIVE -- it OVERWRITES
+    A with its QR factorization and OVERWRITES b with the result, in place; b must be sized for the LARGER of
+    the m-row input and the n-row solution (LAPACKE_sgels's ``ldb = max(m,n)``-row contract: b is an
+    ``max(m,n) x nrhs`` buffer, the first m rows the input, the first n rows the solution x on return). LAPACKE
+    allocates its own QR workspace. This emitter's signature takes a separate ``x`` output buffer (n x nrhs) and
+    does NOT mutate A/b: the linked path copies A and b into ``sgels``-shaped scratch internally, runs sgels,
+    and copies the first n result rows into x; the fallback writes x from the normal-equations solve. So the
+    CALLER's A/b survive (the destructive sgels contract is honored on internal scratch, not the caller's data)
+    -- the kernel is ``void {fn}(const float *A, const float *b, float *x)``. Returns nothing; a singular normal
+    matrix in the fallback (rank-deficient A) leaves x at the partial-elimination state (the honest analog of
+    sgels's ``info > 0`` "A is rank-deficient")."""
+    if m < 1 or n < 1 or nrhs < 1:
+        raise ValueError(f"ols dims must be >= 1; got m={m} n={n} nrhs={nrhs}")
+    if m < n:
+        raise ValueError(f"ols needs an overdetermined system m >= n; got m={m} < n={n}")
+    ldb = max(m, n)
+    return (
+        f"/* BCIR -> external trusted OVERDETERMINED least-squares (OLS) via the c.call.libm: edge (integrate, "
+        f"don't reinvent; E1 generalizes the square sgesv solve to linear regression). minimize ||A x - b||_2; "
+        f"A is m*n={m}x{n} row-major, b is m*nrhs={m}x{nrhs} row-major, x is n*nrhs={n}x{nrhs} row-major. "
+        f"LAPACKE_sgels (QR, LAPACK_ROW_MAJOR, trans='N') when linked -- conditioning ~cond(A); reference "
+        f"NORMAL-EQUATIONS (G=A^T A) fallback otherwise -- conditioning ~cond(A)^2. Both agree to float "
+        f"round-off on a well-conditioned A; BCIR owns the calling side (layout + the Q8<->f32 boundary). */\n"
+        "#include <stddef.h>\n"
+        "#if defined(BCIR_USE_LAPACK)\n"
+        "  #include <lapacke.h>\n"
+        "  #include <string.h>\n"
+        "  #define BCIR_OLS_LAPACK 1\n"
+        "#else\n"
+        "  #include <math.h>\n"
+        "  #define BCIR_OLS_LAPACK 0\n"
+        "#endif\n"
+        f"void {fn_name}(const float *A, const float *b, float *x) {{\n"
+        f"#if BCIR_OLS_LAPACK\n"
+        f"  /* The trusted external kernel: QR-based least squares (the more stable, ~cond(A) method).\n"
+        f"     sgels is DESTRUCTIVE + uses an ldb=max(m,n)={ldb}-row b buffer (the input in the first m rows,\n"
+        f"     the solution in the first n rows on return), so copy the caller's A/b into sgels-shaped scratch\n"
+        f"     (the caller's data survives), run sgels, then copy the first n solution rows into x. */\n"
+        f"  float qa[{m * n}];\n"
+        f"  float bx[{ldb * nrhs}];\n"
+        f"  memcpy(qa, A, sizeof qa);\n"
+        f"  for (size_t i = 0; i < {ldb}u * {nrhs}u; ++i) bx[i] = 0.0f;\n"
+        f"  for (size_t i = 0; i < {m}u; ++i)\n"
+        f"    for (size_t r = 0; r < {nrhs}u; ++r) bx[i * {nrhs}u + r] = b[i * {nrhs}u + r];\n"
+        f"  LAPACKE_sgels(LAPACK_ROW_MAJOR, 'N', {m}, {n}, {nrhs}, qa, {n}, bx, {nrhs});  /* c.call.libm:LAPACKE_sgels */\n"
+        f"  for (size_t i = 0; i < {n}u; ++i)\n"
+        f"    for (size_t r = 0; r < {nrhs}u; ++r) x[i * {nrhs}u + r] = bx[i * {nrhs}u + r];\n"
+        f"#else\n"
+        f"  /* Portable reference: the NORMAL EQUATIONS G x = c, G = A^T A (n x n), c = A^T b (n x nrhs),\n"
+        f"     solved by the SAME Gaussian elimination with PARTIAL PIVOTING as emit_lapack_solve_c's fallback.\n"
+        f"     The textbook OLS twin of kbcir.ols.ols_reference; squares the conditioning (~cond(A)^2) but is\n"
+        f"     exact on a well-conditioned A, so it agrees with the QR path to float round-off there. */\n"
+        f"  const size_t M = {m}u, N = {n}u, NR = {nrhs}u;\n"
+        f"  float G[{n * n}], c[{n * nrhs}];\n"
+        f"  for (size_t p = 0; p < N; ++p) {{\n"
+        f"    for (size_t q = 0; q < N; ++q) {{                 /* G = A^T A */\n"
+        f"      float s = 0.0f;\n"
+        f"      for (size_t i = 0; i < M; ++i) s += A[i * N + p] * A[i * N + q];\n"
+        f"      G[p * N + q] = s;\n"
+        f"    }}\n"
+        f"    for (size_t r = 0; r < NR; ++r) {{                /* c = A^T b */\n"
+        f"      float s = 0.0f;\n"
+        f"      for (size_t i = 0; i < M; ++i) s += A[i * N + p] * b[i * NR + r];\n"
+        f"      c[p * NR + r] = s;\n"
+        f"    }}\n"
+        f"  }}\n"
+        f"  for (size_t col = 0; col < N; ++col) {{            /* solve G x = c in place on (G, c) */\n"
+        f"    size_t pivot = col;\n"
+        f"    float best = fabsf(G[col * N + col]);\n"
+        f"    for (size_t row = col + 1; row < N; ++row) {{    /* partial pivoting (numerically necessary) */\n"
+        f"      float v = fabsf(G[row * N + col]);\n"
+        f"      if (v > best) {{ best = v; pivot = row; }}\n"
+        f"    }}\n"
+        f"    if (best == 0.0f) {{ for (size_t r = 0; r < NR; ++r) x[col * NR + r] = 0.0f; continue; }}  /* singular normal matrix: rank-deficient A (sgels info>0 analog) */\n"
+        f"    if (pivot != col) {{\n"
+        f"      for (size_t j = 0; j < N; ++j) {{ float t = G[col * N + j]; G[col * N + j] = G[pivot * N + j]; G[pivot * N + j] = t; }}\n"
+        f"      for (size_t r = 0; r < NR; ++r) {{ float t = c[col * NR + r]; c[col * NR + r] = c[pivot * NR + r]; c[pivot * NR + r] = t; }}\n"
+        f"    }}\n"
+        f"    float inv = 1.0f / G[col * N + col];\n"
+        f"    for (size_t row = col + 1; row < N; ++row) {{\n"
+        f"      float factor = G[row * N + col] * inv;\n"
+        f"      if (factor != 0.0f) {{\n"
+        f"        for (size_t j = col; j < N; ++j) G[row * N + j] -= factor * G[col * N + j];\n"
+        f"        for (size_t r = 0; r < NR; ++r) c[row * NR + r] -= factor * c[col * NR + r];\n"
+        f"      }}\n"
+        f"    }}\n"
+        f"  }}\n"
+        f"  for (size_t row = N; row-- > 0; ) {{               /* back substitution -> x */\n"
+        f"    for (size_t r = 0; r < NR; ++r) {{\n"
+        f"      float s = c[row * NR + r];\n"
+        f"      for (size_t j = row + 1; j < N; ++j) s -= G[row * N + j] * x[j * NR + r];\n"
+        f"      x[row * NR + r] = s / G[row * N + row];\n"
+        f"    }}\n"
+        f"  }}\n"
+        f"#endif\n"
+        f"}}\n"
+    )
+
+
 def emit_gsl_stats_c(kind: str, n: int, fn_name: str = "bcir_stats") -> str:
     """Area-B breadth (#62): wrap a TRUSTED external GSL (GNU Scientific Library) STATISTIC through the
     `c.call.libm:` FFI edge -- "integrate, don't reinvent", a FOURTH distinct library after B5's BLAS sgemm

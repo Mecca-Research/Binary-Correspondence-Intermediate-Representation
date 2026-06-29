@@ -228,6 +228,24 @@ law, parity-gate. Throttled, parallel to C/driver work.*
     over epochs and mini-batches, to high accuracy on toy datasets — entirely as a pure-Python oracle off the
     legality path. The capstone demonstration trains **logistic regression** (the BCE closed-form seed path)
     and a **small MLP** (the hidden relu, clearing a linear ceiling) end-to-end and deterministically.
+  - **E1 — OLS (ordinary least squares) BUILT** (`bcir/kbcir/ols.py`, `bcir/tests/test_ols.py`; the emitted C
+    twin `bcir/lower/c_kernel.py::emit_lapack_ols_c`). The first of an ML-breadth series, built on the **exact
+    Area-B "integrate, don't reinvent" wrap pattern** the `linsolve` (LAPACK `sgesv`) / BLAS / FFTW / GSL /
+    SLEEF kernels use. OLS **generalizes the square dense solve to overdetermined linear regression**: given
+    `A` (m×n, m≥n) and `b`, find `x` minimizing `‖A·x − b‖₂` (the line/plane of best fit). The source of truth
+    `ols_reference` forms the **normal equations** `G = AᵀA`, `c = Aᵀb` and **REUSES `linsolve.solve_reference`**
+    for the inner square solve; `normal_equation_residual` is an *independent* verifier (`max|Aᵀ(A·x − b)|` — the
+    optimality condition `AᵀA x = Aᵀb`, ~0 at the optimum even when `‖A·x−b‖ > 0` on an inconsistent system);
+    `ols_via_bridge` is the Q8↔f32↔Q8 round-trip then reference. **Honest conditioning note:** the normal
+    equations *square* `cond(A)` (less stable), so the emitted C path delegates to LAPACK's **QR-based `sgels`**
+    (better conditioned, ~`cond(A)`) when linked (`-DBCIR_USE_LAPACK -llapack` — `LAPACKE_sgels` rides the
+    *existing* `LAPACKE_*`→`-llapack` rule, **no linkflags change**), with the portable normal-equations
+    fallback otherwise (CI needs no LAPACK); they agree to float round-off on a **well-conditioned** system. The
+    R17 bridge bound is the **input round-trip alone**; the solve is trusted/exact. Verified: recovers a known
+    `x` on a consistent overdetermined system (e.g. fits `y = 2x + 1`), is optimal on an inconsistent one, the
+    bridge tracks the reference within the R17 bound, the fallback **compiles + runs + recovers** the known `x`
+    (the `#ols` runtime probe), and the module **touches no verifier / emits no `Diagnostic`** (off the legality
+    path). Pure-Python oracle, deterministic.
 - **B4 — Hybrid tropical + selective gradient.** Reframe training: the **tropical planner finds the structure**
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and
