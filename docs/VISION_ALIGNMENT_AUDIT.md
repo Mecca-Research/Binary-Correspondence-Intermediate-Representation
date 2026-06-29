@@ -212,6 +212,14 @@ Pillar 3):**
     (portable fallback on CI, `-fsycl` device path gated), round-trip-verified vs the reference and gated
     by `#sycl-dispatch` in [`tools/cpp/check_sycl.sh`](../tools/cpp/check_sycl.sh); the SPIR-V codegen
     identity is reachable via the `spirv64` target (best-effort). Above the G8 boundary, never a verdict.
+    **S3 (all three declared capabilities):** the channel's `{data_parallel, matmul, reduce}` caps are now
+    each differentially verified + dispatchable — `reduce` (`sycl::reduction`,
+    [`bcir/kbcir/sycl_reduce.py`](../bcir/kbcir/sycl_reduce.py) + `emit_sycl_reduce_c`, `#sycl-reduce`) and
+    `matmul` (a 2-D `parallel_for` reusing the B1/B5 `matmul_reference`, `emit_sycl_matmul_c`,
+    `#sycl-matmul`) join SAXPY, with `SyclDispatcher.run_reduce` / `.run_matmul` executing them
+    ([`bcir/tests/test_sycl_reduce_matmul.py`](../bcir/tests/test_sycl_reduce_matmul.py)). The reduce device
+    path honestly notes its tree-reorder tolerance; the portable fallback sums sequentially and matches the
+    reference exactly. Still a compiler MODE, no `linkflags.py` rule, no `mlir/` changes, no new R-laws.
 
 **Pillar-3 intelligence:**
 5. ✅ **SoA↔AoS layout pivot** (Pillar 3b) — DONE: oracle `layout.py` + MLIR `-bcir-layout-pivot`.

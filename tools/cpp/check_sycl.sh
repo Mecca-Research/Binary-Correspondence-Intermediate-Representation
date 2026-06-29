@@ -153,4 +153,71 @@ case "${disp_out}" in
 esac
 
 echo "[sycl-dispatch] ok"
+
+# --- S3: the channel's OTHER two declared capabilities (reduce + matmul) round-trip --------------------
+# The probes above cover data_parallel (SAXPY). The sycl_spirv channel ALSO declares `reduce` and `matmul`;
+# these drive the resident dispatcher for both, on fixed data, checking the EXECUTED result == BCIR's own
+# deterministic reference (kbcir.sycl_reduce.reduce_reference and the REUSED kbcir.matmul.matmul_reference).
+# The dispatcher self-selects the portable fallback (CI) or the -fsycl device path; it reports `mode`. Both
+# stay self-skipping when no C++ compiler is present. NOTE the honest reduce subtlety: a device TREE
+# reduction reorders the float adds, so the device path agrees only within reduce_reorder_bound; the
+# portable fallback's SEQUENTIAL sum matches the reference exactly (so the fallback round-trip is exact).
+echo "[sycl-reduce] resident DISPATCH round-trip (SyclDispatcher executes sum(x) == BCIR reference)"
+red_out="$(python3 - <<'PY'
+import sys
+from bcir.kbcir.sycl_reduce import reduce_reference, reduce_reorder_bound
+from bcir.lower.sycl_dispatch import SyclDispatcher, DispatchUnavailable
+x = [1.0, 2.0, 3.0, 0.5, -1.0, 4.0, -2.5, 0.0]
+disp = SyclDispatcher()
+try:
+    got = disp.run_reduce(x)
+except DispatchUnavailable as e:
+    print("SKIP " + str(e).splitlines()[0]); sys.exit(0)
+finally:
+    disp.close()
+ref = reduce_reference(x)
+# fallback: sequential sum == reference to float round-off; device: agrees within the reorder tolerance.
+tol = 1e-3 * (1.0 + abs(ref)) if disp.mode == "fallback" else reduce_reorder_bound(x) + 1e-2 * (1.0 + abs(ref))
+if abs(got - ref) > tol:
+    print(f"DIVERGE got={got} ref={ref} mode={disp.mode}"); sys.exit(1)
+print("OK " + disp.mode)
+PY
+)" || { echo "  FAIL: the SYCL reduce dispatch round-trip diverged from the BCIR reference"; echo "${red_out}"; exit 1; }
+case "${red_out}" in
+  "OK fallback")    echo "  PASS #sycl-reduce (portable fallback: SyclDispatcher executed sum(x) == BCIR reference)" ;;
+  "OK sycl-device") echo "  PASS #sycl-reduce + #sycl-device (the -fsycl reduction executed within the reorder bound)" ;;
+  SKIP\ *)          echo "  ${red_out} (no C++ compiler; the reduce round-trip self-skipped, expected when toolchain absent)" ;;
+  *)                echo "  FAIL: unexpected reduce probe result: ${red_out}"; exit 1 ;;
+esac
+
+echo "[sycl-matmul] resident DISPATCH round-trip (SyclDispatcher executes A.B == BCIR matmul_reference)"
+mm_out="$(python3 - <<'PY'
+import sys
+from bcir.kbcir.matmul import matmul_reference
+from bcir.lower.sycl_dispatch import SyclDispatcher, DispatchUnavailable
+m, k, n = 2, 3, 4
+A = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]                                 # 2x3
+B = [1.0, 0.0, 2.0, 1.0, 0.0, 1.0, 1.0, 2.0, 3.0, 1.0, 0.0, 1.0]   # 3x4
+disp = SyclDispatcher()
+try:
+    got = disp.run_matmul(A, B, m, k, n)
+except DispatchUnavailable as e:
+    print("SKIP " + str(e).splitlines()[0]); sys.exit(0)
+finally:
+    disp.close()
+ref = matmul_reference(A, B, m, n, k)                              # arg order (a, b, M, N, K)
+for g, r in zip(got, ref):
+    if abs(g - r) > 1e-3 * (1.0 + abs(r)):
+        print(f"DIVERGE got={g} ref={r} mode={disp.mode}"); sys.exit(1)
+print("OK " + disp.mode)
+PY
+)" || { echo "  FAIL: the SYCL matmul dispatch round-trip diverged from the BCIR reference"; echo "${mm_out}"; exit 1; }
+case "${mm_out}" in
+  "OK fallback")    echo "  PASS #sycl-matmul (portable fallback: SyclDispatcher executed A.B == BCIR matmul_reference)" ;;
+  "OK sycl-device") echo "  PASS #sycl-matmul + #sycl-device (the -fsycl 2-D parallel_for executed A.B == BCIR reference)" ;;
+  SKIP\ *)          echo "  ${mm_out} (no C++ compiler; the matmul round-trip self-skipped, expected when toolchain absent)" ;;
+  *)                echo "  FAIL: unexpected matmul probe result: ${mm_out}"; exit 1 ;;
+esac
+
+echo "[sycl-dispatch] ok"
 echo "[sycl-diff] ok"

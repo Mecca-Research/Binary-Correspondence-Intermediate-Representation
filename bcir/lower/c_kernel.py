@@ -735,6 +735,142 @@ def emit_sycl_saxpy_c(n: int, fn_name: str = "bcir_saxpy") -> str:
     )
 
 
+def emit_sycl_reduce_c(n: int, fn_name: str = "bcir_reduce") -> str:
+    """SYCL backend differential oracle (the ``reduce`` capability): emit a SINGLE-SOURCE C++ reduction
+    kernel ``out = Sum_i x[i]`` over a dense unit-stride ``float[n]`` -- a SYCL device ``sycl::reduction``
+    (``sycl::plus<float>()``) in a ``q.submit`` when compiled with a SYCL toolchain (``-fsycl``,
+    ``BCIR_USE_SYCL``), a portable scalar C++ sequential sum otherwise. The signature bakes ``n`` in:
+    ``void {fn}(const float *x, float *out)`` -- ``out`` is a 1-element result. ``n >= 1`` (a reduction
+    needs at least one element).
+
+    THE ACCURACY SUBTLETY -- unlike SAXPY, the two paths are NOT bit-identical. The portable fallback does a
+    SEQUENTIAL left-to-right sum, which matches ``kbcir.sycl_reduce.reduce_reference`` EXACTLY; the SYCL
+    ``sycl::reduction`` is a tree/parallel reduction that REORDERS the float adds (float add is not
+    associative), so the device path agrees with the sequential reference only within the documented reorder
+    tolerance (``kbcir.sycl_reduce.reduce_reorder_bound`` ~ ``n*eps*Sum|x|``). Both are honest realizations
+    of ``Sum x[i]``; only their add ORDER differs.
+
+    CRITICAL -- this is NOT a ``c.call.libm:`` edge. Like ``emit_sycl_saxpy_c``, this is a single-source C++
+    *compiler MODE* (``-fsycl``) and the kernel is emitted SYCL C++ source (a ``sycl::reduction``), NOT a
+    call to a linkable symbol -- so it mints NO ``c.call.libm:`` label and adds NO link-flag rule (a
+    SYCL-ish symbol resolves to None/unknown). SYCL lives on the C++ side of the G8 boundary; the kernel is
+    emitted as C++ either way (no ``extern "C"``)."""
+    if n < 1:
+        raise ValueError(f"sycl reduce length must be >= 1; got {n}")
+    return (
+        f"/* BCIR -> SYCL device (sycl::reduction) differential oracle: out = sum(x[i]) over a dense "
+        f"unit-stride float[{n}]; the SYCL device path (sycl::reduction + sycl::plus<float>()) when "
+        f"compiled with a SYCL toolchain (-fsycl, BCIR_USE_SYCL), a portable scalar C++ SEQUENTIAL sum "
+        f"otherwise. NOTE: the device tree-reduction REORDERS the float adds, so it matches the sequential "
+        f"reference only within ~n*eps*sum|x| (float add is non-associative); the fallback's sequential sum "
+        f"matches exactly. SYCL is a compiler MODE (-fsycl), NOT a 'c.call.libm' -l<lib> edge. */\n"
+        "#include <cstddef>\n"
+        "#if defined(BCIR_USE_SYCL)\n"
+        "  #include <sycl/sycl.hpp>\n"
+        "  #define BCIR_REDUCE_SYCL 1\n"
+        "#else\n"
+        "  #define BCIR_REDUCE_SYCL 0\n"
+        "#endif\n"
+        f"void {fn_name}(const float *x, float *out) {{\n"
+        "#if BCIR_REDUCE_SYCL\n"
+        f"  /* SYCL device path: a queue, USM device pointers, one reduction over the {n} lanes with "
+        f"sycl::plus. */\n"
+        "  sycl::queue q;\n"
+        f"  const std::size_t n = {n};\n"
+        "  float *dx = sycl::malloc_device<float>(n, q);\n"
+        "  float *dsum = sycl::malloc_device<float>(1, q);\n"
+        "  q.memcpy(dx, x, n * sizeof(float)).wait();\n"
+        "  q.memset(dsum, 0, sizeof(float)).wait();\n"
+        "  q.submit([&](sycl::handler &h) {\n"
+        "    auto r = sycl::reduction(dsum, sycl::plus<float>());\n"
+        "    h.parallel_for(sycl::range<1>(n), r, [=](sycl::id<1> i, auto &acc) {\n"
+        "      acc += dx[i];                  /* out += x[i] -- tree reduction (reordered adds) */\n"
+        "    });\n"
+        "  }).wait();\n"
+        "  q.memcpy(out, dsum, sizeof(float)).wait();\n"
+        "  sycl::free(dx, q); sycl::free(dsum, q);\n"
+        "#else\n"
+        f"  /* Portable scalar C++ fallback (no SYCL header): the SEQUENTIAL left-to-right sum -- matches "
+        f"the BCIR reference exactly. */\n"
+        "  float s = 0.0f;\n"
+        f"  for (std::size_t i = 0; i < {n}; ++i)\n"
+        "    s += x[i];\n"
+        "  out[0] = s;\n"
+        "#endif\n"
+        "}\n"
+    )
+
+
+def emit_sycl_matmul_c(m: int, k: int, n: int, fn_name: str = "bcir_matmul") -> str:
+    """SYCL backend differential oracle (the ``matmul`` capability): emit a SINGLE-SOURCE C++ matmul kernel
+    ``C = A . B`` (row-major A[m x k], B[k x n], C[m x n]) -- a SYCL device 2-D ``parallel_for`` over
+    ``sycl::range<2>(m, n)`` accumulating over ``k`` when compiled with a SYCL toolchain (``-fsycl``,
+    ``BCIR_USE_SYCL``), a portable triple-loop C++ matmul otherwise. The signature bakes the dims in:
+    ``void {fn}(const float *A, const float *B, float *C)``. ``m, k, n >= 1``.
+
+    This matches ``kbcir.matmul.matmul_reference``'s layout + accumulation EXACTLY: row-major, each output
+    ``C[i*n + j]`` is the sequential ``k``-order dot of A's row ``i`` and B's column ``j`` -- so the
+    differential is clean (the realization reorders nothing per output; each output's k-sum is the same
+    left-to-right order on both paths). For integer-valued inputs the device and fallback are bit-identical
+    to the reference; for general floats they agree to float round-off (the dot accumulation order is the
+    same, so there is no reduce-style reorder term between paths).
+
+    CRITICAL -- this is NOT a ``c.call.libm:`` edge (and is distinct from the B5 ``emit_blas_gemm_c`` CBLAS
+    wrap, which DOES call ``cblas_sgemm`` through the ``c.call.libm:`` FFI edge). Here the math is emitted as
+    SYCL C++ source (a ``parallel_for``) in a single-source *compiler MODE* (``-fsycl``), NOT a call to a
+    linkable symbol -- so it mints NO ``c.call.libm:`` label and adds NO link-flag rule (a SYCL-ish symbol
+    resolves to None/unknown). SYCL lives on the C++ side of the G8 boundary; emitted as C++ either way (no
+    ``extern "C"``)."""
+    if m < 1 or k < 1 or n < 1:
+        raise ValueError(f"sycl matmul dims must be >= 1; got m={m} k={k} n={n}")
+    return (
+        f"/* BCIR -> SYCL device (2-D parallel_for) differential oracle: row-major C[{m}x{n}] = "
+        f"A[{m}x{k}] . B[{k}x{n}]; the SYCL device path (parallel_for over sycl::range<2>({m}, {n}), each "
+        f"work-item accumulates the k-dot) when compiled with a SYCL toolchain (-fsycl, BCIR_USE_SYCL), a "
+        f"portable triple-loop C++ matmul otherwise -- both reproduce kbcir.matmul.matmul_reference (same "
+        f"row-major layout + sequential k-accumulation). NOTE: SYCL is a compiler MODE (-fsycl), NOT a "
+        f"'c.call.libm' -l<lib> edge (unlike the B5 CBLAS gemm wrap). */\n"
+        "#include <cstddef>\n"
+        "#if defined(BCIR_USE_SYCL)\n"
+        "  #include <sycl/sycl.hpp>\n"
+        "  #define BCIR_MATMUL_SYCL 1\n"
+        "#else\n"
+        "  #define BCIR_MATMUL_SYCL 0\n"
+        "#endif\n"
+        f"void {fn_name}(const float *A, const float *B, float *C) {{\n"
+        "#if BCIR_MATMUL_SYCL\n"
+        f"  /* SYCL device path: USM device pointers + one 2-D parallel_for over the {m}x{n} output grid; "
+        f"each (i, j) work-item accumulates the length-{k} dot in k-order. */\n"
+        "  sycl::queue q;\n"
+        f"  const std::size_t M = {m}, K = {k}, N = {n};\n"
+        "  float *dA = sycl::malloc_device<float>(M * K, q);\n"
+        "  float *dB = sycl::malloc_device<float>(K * N, q);\n"
+        "  float *dC = sycl::malloc_device<float>(M * N, q);\n"
+        "  q.memcpy(dA, A, M * K * sizeof(float)).wait();\n"
+        "  q.memcpy(dB, B, K * N * sizeof(float)).wait();\n"
+        "  q.parallel_for(sycl::range<2>(M, N), [=](sycl::id<2> idx) {\n"
+        "    const std::size_t i = idx[0], j = idx[1];\n"
+        "    float s = 0.0f;\n"
+        "    for (std::size_t kk = 0; kk < K; ++kk)\n"
+        "      s += dA[i * K + kk] * dB[kk * N + j];   /* C[i,j] = sum_k A[i,k]*B[k,j] */\n"
+        "    dC[i * N + j] = s;\n"
+        "  }).wait();\n"
+        "  q.memcpy(C, dC, M * N * sizeof(float)).wait();\n"
+        "  sycl::free(dA, q); sycl::free(dB, q); sycl::free(dC, q);\n"
+        "#else\n"
+        f"  /* Portable triple-loop C++ fallback (no SYCL header): the IDENTICAL row-major product. */\n"
+        f"  for (std::size_t i = 0; i < {m}; ++i)\n"
+        f"    for (std::size_t j = 0; j < {n}; ++j) {{\n"
+        "      float s = 0.0f;\n"
+        f"      for (std::size_t kk = 0; kk < {k}; ++kk)\n"
+        f"        s += A[i * {k} + kk] * B[kk * {n} + j];\n"
+        f"      C[i * {n} + j] = s;\n"
+        "    }\n"
+        "#endif\n"
+        "}\n"
+    )
+
+
 # --- G7: gem.conv kernel (a 2-D conv == a structured matmul; reference-verified vs the naive direct conv) -
 # A 2-D single-group convolution lowered to portable C. Following the B5 "BCIR owns the calling side"
 # pattern, the emitted kernel computes the IDENTICAL result as the naive direct conv (kbcir.conv.
