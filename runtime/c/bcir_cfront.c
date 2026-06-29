@@ -1711,6 +1711,18 @@ static int is_stdlib_alloc(const char *s, int n) {
   return 0;
 }
 
+/* B-breadth (#61) LAPACK: nonzero if s[0..n) is a Fortran-ABI LU/solve driver base name with a trailing
+ * underscore (e.g. `sgesv_`) -- the symbol a C caller links against. Mirrors linkflags.py's _LAPACK_FORTRAN
+ * set EXACTLY (same names, same trailing-underscore convention); the LAPACKE_ C interface is matched by
+ * prefix in bcir_lib_for_callee. Kept tiny/explicit so an unrelated `foo_` callee is not swept into it. */
+static int lapack_is_fortran(const char *s, int n) {
+  static const char *L[]={"sgesv","dgesv","sgetrf","dgetrf","sgetrs","dgetrs",0};
+  if(n<2 || s[n-1]!='_') return 0;
+  int base=n-1;
+  for(int i=0;L[i];i++) if((int)strlen(L[i])==base && !strncmp(L[i],s,(size_t)base)) return 1;
+  return 0;
+}
+
 /* B1 link-flag derivation -- the byte-identical C twin of bcir/frontends/cfront/linkflags.py. The
  * callee->library classification is the SOURCE OF TRUTH for what an external-call edge links against;
  * both rails must agree (gated in test_c_cfront.py + check_runtime.sh). `s[0..n)` is the external
@@ -1737,7 +1749,13 @@ static const char *bcir_lib_for_callee(const char *s, int n) {
    * lives in -lfftw3). Matches linkflags.py's fftw rule, in the SAME order (first match wins). */
   if(n>=6 && !strncmp("fftwf_",s,6)) return "-lfftw3";
   if(n>=5 && !strncmp("fftw_",s,5))  return "-lfftw3";
-  /* --- B2 EXTENSION POINT: one branch per newly-wrapped library, matching the oracle's order. --- */
+  /* B-breadth (#61) LAPACK: the LAPACKE C interface (LAPACKE_sgesv et al.) and the Fortran-ABI driver
+   * symbols (sgesv_/...) -> -llapack (the linear-solve wrap emit_lapack_solve_c calls LAPACKE_sgesv and
+   * links -llapacke -llapack; -llapack is the load-bearing dep). Matches linkflags.py's LAPACK rule, in
+   * the SAME order (first match wins). */
+  if(n>=8 && !strncmp("LAPACKE_",s,8)) return "-llapack";
+  if(lapack_is_fortran(s,n))           return "-llapack";
+  /* --- EXTENSION POINT: one branch per newly-wrapped library, matching the oracle's order. --- */
   return NULL;                                          /* unknown external callee -> no flag */
 }
 

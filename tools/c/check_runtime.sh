@@ -711,6 +711,57 @@ PROBE
   && echo "  PASS linkflags-fftw: C twin derives fftwf_*/fftw_* -> -lfftw3 (cblas/-lm/unknown unchanged)" \
   || { echo "  FAIL: FFTW link-flag rule diverged on the C twin"; "${tmp}/lf_fftw"; exit 1; }
 
+# B-breadth (#61) LAPACK link-flag rule (dual-rail): the LAPACK edge (LAPACKE_sgesv) is minted by the kernel
+# EMITTER (emit_lapack_solve_c), not reachable from a cfront source. So this probe drives the C twin's
+# bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:LAPACKE_sgesv` edge and asserts it
+# derives `-llapack` (the LAPACK rule), with a Fortran-ABI `sgesv_` edge -> -llapack too, and no regression
+# on fftwf_* -> -lfftw3, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The oracle
+# (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_lapack.py.
+echo "[c-runtime] LAPACK link-flag rule (bcir_cfront_link_flags twin): LAPACKE_*/sgesv_ -> -llapack (#linkflags-lapack)"
+cat > "${tmp}/lf_lapack.c" <<'PROBE'
+#include <stdio.h>
+#include <string.h>
+#include "bcir_cir.h"
+#include "bcir_cfront.h"
+/* Build a one-function unit whose single claim is the given external-call edge op, then derive its flags. */
+static const char *derive(const char *op) {
+  static char buf[128];
+  bcir_claim cl; memset(&cl, 0, sizeof cl);
+  snprintf(cl.op, sizeof cl.op, "%s", op);
+  bcir_func f; memset(&f, 0, sizeof f);
+  f.claims = &cl; f.n_claims = 1;
+  bcir_unit u; memset(&u, 0, sizeof u);
+  u.funcs = &f; u.n_funcs = 1;
+  bcir_cfront_link_flags(&u, buf, sizeof buf);
+  return buf;
+}
+static int eq(const char *op, const char *want) {
+  const char *got = derive(op);
+  if (strcmp(got, want)) { printf("FAIL %s -> '%s' want '%s'\n", op, got, want); return 0; }
+  return 1;
+}
+int main(void) {
+  int ok = 1;
+  ok &= eq("c.call.libm:LAPACKE_sgesv", "-llapack");     /* the LAPACK rule (the wrapper's actual callee) */
+  ok &= eq("c.call.libm:LAPACKE_dgesv", "-llapack");     /* any LAPACKE_* */
+  ok &= eq("c.call.libm:sgesv_", "-llapack");            /* the Fortran-ABI driver symbol */
+  ok &= eq("c.call.libm:fftwf_execute", "-lfftw3");      /* B2 (no regression) */
+  ok &= eq("c.call.libm:cblas_sgemm", "-lcblas");        /* B5 (no regression) */
+  ok &= eq("c.call.libm:sqrt", "-lm");                   /* libm (no regression) */
+  ok &= eq("c.call.libm:totally_unknown_fn", "");        /* unknown -> no flag (no regression) */
+  if (ok) puts("OK linkflags-lapack");
+  return ok ? 0 : 1;
+}
+PROBE
+"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${tmp}/lf_lapack.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
+  "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_lapack" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 -I "${C}" "${tmp}/lf_lapack.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
+       "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_lapack" \
+  || { echo "  FAIL: LAPACK link-flag probe build"; exit 1; }
+"${tmp}/lf_lapack" | grep -q "^OK linkflags-lapack" \
+  && echo "  PASS linkflags-lapack: C twin derives LAPACKE_*/sgesv_ -> -llapack (fftw/cblas/-lm/unknown unchanged)" \
+  || { echo "  FAIL: LAPACK link-flag rule diverged on the C twin"; "${tmp}/lf_lapack"; exit 1; }
+
 # Scalable IR (no fixed BCIR_MAX_*): a unit that busts every OLD ceiling -- 43 functions (> the old
 # BCIR_MAX_FUNCS 16), many12 with 12 params (> 8), agg with 40 calls (> 32), big with 7500 claims
 # (> the old 4096 per-function cap). The IR grows geometrically, so the twin compiles it clean and

@@ -454,6 +454,91 @@ def emit_fftw_fft_c(n: int, fn_name: str = "bcir_fft") -> str:
     )
 
 
+def emit_lapack_solve_c(n: int, nrhs: int = 1, fn_name: str = "bcir_solve") -> str:
+    """B-breadth (#61): wrap a TRUSTED external LAPACK dense linear solve through the `c.call.libm:` FFI edge
+    -- "integrate, don't reinvent", a THIRD distinct kernel class (a direct SOLVER, not a matmul or a
+    spectral transform; mirrors B5's BLAS sgemm and B2's FFTW). Solves `A x = b` via LU with PARTIAL
+    PIVOTING. BCIR owns the CALLING side: it fixes the ROW-MAJOR layout and (with the A1.1 Q8 bridge at the
+    boundary) the precision, and DELEGATES the solve to `LAPACKE_sgesv` (LAPACK_ROW_MAJOR) when linked
+    (`-DBCIR_USE_LAPACK -llapacke -llapack`), with a portable reference Gaussian-elimination-with-partial-
+    pivoting fallback selected by the preprocessor when it is not. BOTH paths solve the IDENTICAL system to
+    the same result (to float round-off), so the same source is correct linked or standalone -- the win is
+    on the calling side (layout / quant), not a reimplemented solver. `n`/`nrhs` are baked in (a planned
+    claim knows its shape).
+
+    LAYOUT + IN-PLACE CONTRACT (mirrors LAPACKE_sgesv with LAPACK_ROW_MAJOR exactly): `A` is the `n*n`
+    coefficient matrix row-major (`A[i*n+j]`), `b` is `n*nrhs` row-major (`b[i*nrhs+r]`). `sgesv` is
+    DESTRUCTIVE -- it OVERWRITES A with its L and U factors and OVERWRITES b WITH THE SOLUTION x, in place.
+    Both paths here honor that contract byte-for-byte: on return, A holds the LU factors (its original
+    entries are gone) and `b` holds the solution x (same `n*nrhs` row-major layout). A caller that needs the
+    original A/b must copy them before the call. Returns 0 on success, or a positive pivot index (1-based)
+    if A is singular -- the same `info` convention LAPACK uses (U[i,i] exactly 0 -> no unique solution)."""
+    if n < 1:
+        raise ValueError(f"solve dimension must be >= 1; got {n}")
+    if nrhs < 1:
+        raise ValueError(f"nrhs must be >= 1; got {nrhs}")
+    return (
+        f"/* BCIR -> external trusted dense linear solve via the c.call.libm: edge (integrate, don't "
+        f"reinvent). solve A x = b (LU + partial pivoting); A is n*n={n}x{n} row-major, b is n*nrhs="
+        f"{n}x{nrhs} row-major, OVERWRITTEN with x in place (the sgesv contract). LAPACKE_sgesv "
+        f"(LAPACK_ROW_MAJOR) when linked, reference Gaussian-elimination-with-partial-pivoting fallback "
+        f"otherwise -- both solve the identical system; BCIR owns the calling side (layout + the Q8<->f32 "
+        f"boundary). Returns 0 on success, or the 1-based singular pivot index. */\n"
+        "#include <stddef.h>\n"
+        "#if defined(BCIR_USE_LAPACK)\n"
+        "  #include <lapacke.h>\n"
+        "  #define BCIR_SOLVE_LAPACK 1\n"
+        "#else\n"
+        "  #include <math.h>\n"
+        "  #define BCIR_SOLVE_LAPACK 0\n"
+        "#endif\n"
+        f"int {fn_name}(float *A, float *b) {{\n"
+        f"#if BCIR_SOLVE_LAPACK\n"
+        f"  /* The trusted external kernel. LAPACK_ROW_MAJOR matches BCIR's row-major A/b layout; sgesv\n"
+        f"     overwrites A with LU and b with x in place (n={n}, nrhs={nrhs} baked in). */\n"
+        f"  lapack_int ipiv[{n}];\n"
+        f"  lapack_int info = LAPACKE_sgesv(LAPACK_ROW_MAJOR, {n}, {nrhs}, A, {n}, ipiv, b, {nrhs});  /* c.call.libm:LAPACKE_sgesv */\n"
+        f"  return (int)info;\n"
+        f"#else\n"
+        f"  /* Portable reference solver: Gaussian elimination with PARTIAL PIVOTING -- the SAME LU-with-\n"
+        f"     partial-pivoting algorithm sgesv realizes, so linked and standalone agree to float round-off.\n"
+        f"     Overwrites A (with the eliminated/LU state) and b (with x) in place, honoring the sgesv\n"
+        f"     contract. Partial pivoting (largest-magnitude pivot per column) is numerically necessary. */\n"
+        f"  const size_t N = {n}u, NR = {nrhs}u;\n"
+        f"  for (size_t col = 0; col < N; ++col) {{\n"
+        f"    size_t pivot = col;\n"
+        f"    float best = fabsf(A[col * N + col]);\n"
+        f"    for (size_t row = col + 1; row < N; ++row) {{    /* select the largest-magnitude pivot */\n"
+        f"      float v = fabsf(A[row * N + col]);\n"
+        f"      if (v > best) {{ best = v; pivot = row; }}\n"
+        f"    }}\n"
+        f"    if (best == 0.0f) return (int)(col + 1);          /* singular: 1-based pivot index, like sgesv info */\n"
+        f"    if (pivot != col) {{                              /* swap the pivot row into place (A and b) */\n"
+        f"      for (size_t j = 0; j < N; ++j) {{ float t = A[col * N + j]; A[col * N + j] = A[pivot * N + j]; A[pivot * N + j] = t; }}\n"
+        f"      for (size_t r = 0; r < NR; ++r) {{ float t = b[col * NR + r]; b[col * NR + r] = b[pivot * NR + r]; b[pivot * NR + r] = t; }}\n"
+        f"    }}\n"
+        f"    float inv = 1.0f / A[col * N + col];\n"
+        f"    for (size_t row = col + 1; row < N; ++row) {{     /* eliminate column `col` below the pivot */\n"
+        f"      float factor = A[row * N + col] * inv;\n"
+        f"      if (factor != 0.0f) {{\n"
+        f"        for (size_t j = col; j < N; ++j) A[row * N + j] -= factor * A[col * N + j];\n"
+        f"        for (size_t r = 0; r < NR; ++r) b[row * NR + r] -= factor * b[col * NR + r];\n"
+        f"      }}\n"
+        f"    }}\n"
+        f"  }}\n"
+        f"  for (size_t row = N; row-- > 0; ) {{               /* back substitution per right-hand side */\n"
+        f"    for (size_t r = 0; r < NR; ++r) {{\n"
+        f"      float s = b[row * NR + r];\n"
+        f"      for (size_t j = row + 1; j < N; ++j) s -= A[row * N + j] * b[j * NR + r];\n"
+        f"      b[row * NR + r] = s / A[row * N + row];\n"
+        f"    }}\n"
+        f"  }}\n"
+        f"  return 0;\n"
+        f"#endif\n"
+        f"}}\n"
+    )
+
+
 # --- G7: gem.conv kernel (a 2-D conv == a structured matmul; reference-verified vs the naive direct conv) -
 # A 2-D single-group convolution lowered to portable C. Following the B5 "BCIR owns the calling side"
 # pattern, the emitted kernel computes the IDENTICAL result as the naive direct conv (kbcir.conv.

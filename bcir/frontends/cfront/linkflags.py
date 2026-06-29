@@ -57,6 +57,12 @@ def _is_libc_implicit(callee: str) -> bool:
     return callee == "free" or callee in _STDLIB_ALLOC or callee in _EXTERN_VARIADIC
 
 
+# B-breadth (#61) LAPACK: the Fortran-ABI LU/solve driver base names (the trailing-underscore form a C
+# caller links against, e.g. `sgesv_`). The LAPACKE C interface (`LAPACKE_*`) is matched by prefix; this
+# set covers a direct Fortran-symbol edge. Kept tiny and explicit -- exactly the LU/solve family the wrap
+# touches, so an unrelated `foo_` callee is NOT swept into -llapack. The C twin lists the identical names.
+_LAPACK_FORTRAN = frozenset({"sgesv", "dgesv", "sgetrf", "dgetrf", "sgetrs", "dgetrs"})
+
 # The callee -> library classification, an ORDERED list of `(matcher, flag)` rules. The first matching
 # rule wins; `flag` is the `-l...` string, or `NO_FLAG` ("") for a known-but-implicit symbol. This is
 # the single EXTENSION POINT: B2 adds one rule per newly-wrapped library here (and its byte-identical
@@ -76,8 +82,14 @@ _LIBRARY_RULES: tuple[tuple, ...] = (
     # fftwf_execute / fftwf_destroy_plan edge; this rule makes a unit with an FFTW edge link it
     # automatically. (libfftw3 is the single-prec build too -- fftwf_* lives in -lfftw3, not -lfftw3f.)
     (lambda c: c.startswith("fftw_") or c.startswith("fftwf_"), "-lfftw3"),
-    # --- B2 EXTENSION POINT (roadmap): add one rule per newly-wrapped trusted library, e.g.
-    #   (lambda c: c.startswith("LAPACKE_") or c.startswith("dge"), "-llapack"), # LAPACK
+    # B-breadth (#61) LAPACK: the LAPACKE C interface (LAPACKE_sgesv et al.) and the Fortran-ABI driver
+    # symbols (sgesv_/dgesv_/sgetrf_/...) -> -llapack. The linear-solve wrap (bcir/lower/c_kernel.py
+    # emit_lapack_solve_c) calls `LAPACKE_sgesv` and links `-llapacke -llapack`; libllapacke depends on
+    # liblapack, so -llapack is the load-bearing flag a unit with a LAPACK edge needs (the LAPACKE_ prefix
+    # rule covers the wrapper's actual callee). Matches the C twin's branch in the SAME order (first match
+    # wins). The trailing-underscore Fortran forms are matched too so a direct sgesv_ edge resolves.
+    (lambda c: c.startswith("LAPACKE_") or (c.endswith("_") and c[:-1] in _LAPACK_FORTRAN), "-llapack"),
+    # --- EXTENSION POINT (roadmap): add one rule per newly-wrapped trusted library, e.g.
     #   (lambda c: c.startswith("gsl_"), "-lgsl"),                                # GSL
     #   (lambda c: c.startswith("Sleef_"), "-lsleef"),                            # SLEEF
     # Each new rule's twin goes in bcir_cfront.c's bcir_lib_for_callee in the SAME order.
