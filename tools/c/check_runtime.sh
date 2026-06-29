@@ -869,6 +869,48 @@ eigh_out="$("${tmp}/eigh")"; eigh_rc=$?    # rc=0 IS the recovery check: eigenva
   && echo "  PASS pca: Jacobi fallback recovers diag(5,3,1) (${eigh_out}; LAPACKE_ssyev -> -llapack via #linkflags-lapack)" \
   || { echo "  FAIL: PCA fallback did not recover [5,3,1] (rc=${eigh_rc}: ${eigh_out})"; exit 1; }
 
+# E3 (ML-breadth) full Transformer block's ONE new numeric primitive (#layernorm): the LAYERNORM kernel
+# (emit_layernorm_c). Unlike E1/E2 (each a wrap of one external LAPACK kernel), the Transformer block is a
+# COMPOSITION -- its per-head matmuls + scale + softmax are the EXISTING emit_attention_c C twin, the
+# projections/feed-forward are the EXISTING matmul emitters, so the ONLY net-new C kernel is the per-row
+# layernorm: out = gamma*(x-mean)/sqrtf(var+eps) + beta (POPULATION /dim variance). Its only transcendental is
+# the 1/sqrtf(var+eps), which rides the c.call.libm:sqrtf edge (-lm, ALREADY mapped -- no linkflags change,
+# confirmed by #linkflags-* probes: sqrtf rides the libm rule). This probe compiles + runs the kernel (no
+# external library needed -- only libm) on a known matrix with gamma=1/beta=0 and checks each output row is
+# normalized to mean~0 / var~1 (the property layernorm guarantees), the C twin of kbcir.transformer.layernorm_
+# reference + its layernorm_stats independent verifier.
+echo "[c-runtime] E3 Transformer layernorm (emit_layernorm_c): per-row normalize to mean~0/var~1 (#layernorm)"
+python3 - > "${tmp}/ln_kernel.c" <<'PY' || { echo "  FAIL: python layernorm emit"; exit 1; }
+from bcir.lower.c_kernel import emit_layernorm_c
+print(emit_layernorm_c(2, 4, "ln"))
+PY
+cat >> "${tmp}/ln_kernel.c" <<'MAIN'
+#include <stdio.h>
+#include <math.h>
+int main(void) {
+  /* two rows over a dim=4 feature axis; gamma=1/beta=0 -> a pure normalization (mean 0, var 1 per row). */
+  float X[8] = {1.0f, 2.0f, 3.0f, 4.0f,  -2.0f, 0.0f, 2.0f, 4.0f};
+  float G[4] = {1.0f, 1.0f, 1.0f, 1.0f}, B[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  float O[8] = {0};
+  ln(X, G, B, 1e-5f, O);                         /* out[r*4+c] = (X[r,c]-mean)/sqrtf(var+eps) */
+  int ok = 1;
+  for (int r = 0; r < 2 && ok; ++r) {
+    float mean = 0.0f; for (int c = 0; c < 4; ++c) mean += O[r*4+c]; mean /= 4.0f;
+    float var = 0.0f;  for (int c = 0; c < 4; ++c) { float d = O[r*4+c] - mean; var += d*d; } var /= 4.0f;
+    printf("r%d mean=%.6f var=%.6f\n", r, mean, var);
+    if (fabsf(mean) >= 1e-3f || fabsf(var - 1.0f) >= 1e-2f) ok = 0;   /* normalized: mean~0, var~1 */
+  }
+  return ok ? 0 : 1;
+}
+MAIN
+"${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/ln_kernel.c" -lm -o "${tmp}/ln" 2>/dev/null \
+  || "${CC}" -std=c23 -O2 "${tmp}/ln_kernel.c" -lm -o "${tmp}/ln" \
+  || { echo "  FAIL: layernorm kernel build"; exit 1; }
+ln_out="$("${tmp}/ln")"; ln_rc=$?    # rc=0 IS the check: each output row has mean~0 and var~1 (in the driver)
+{ [ "${ln_rc}" = "0" ] && printf '%s' "${ln_out}" | grep -q "^r0 mean=.* var=.*"; } \
+  && echo "  PASS layernorm: rows normalize to mean~0/var~1 (${ln_out//$'\n'/ }; sqrtf -> -lm via the libm rule, no linkflags change)" \
+  || { echo "  FAIL: layernorm did not normalize rows (rc=${ln_rc}: ${ln_out})"; exit 1; }
+
 # Area-B breadth (#62) GSL link-flag rule (dual-rail): the GSL edge (gsl_stats_mean) is minted by the kernel
 # EMITTER (emit_gsl_stats_c), not reachable from a cfront source. So this probe drives the C twin's
 # bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:gsl_stats_mean` edge and asserts it

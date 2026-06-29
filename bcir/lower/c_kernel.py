@@ -1238,6 +1238,64 @@ def emit_attention_c(seq_len: int, d_k: int, fn_name: str = "bcir_attention") ->
     )
 
 
+def emit_layernorm_c(rows: int, dim: int, fn_name: str = "bcir_layernorm") -> str:
+    """E3 (ML-breadth): emit a portable C LAYERNORM kernel -- the ONE new numeric primitive of the full
+    Transformer block (``bcir/kbcir/transformer.py``). Per-ROW over the ``dim`` feature axis, reproducing
+    ``kbcir.transformer.layernorm_reference``:
+
+        mean = (1/dim) * sum_c x[r,c]
+        var  = (1/dim) * sum_c (x[r,c] - mean)^2          (POPULATION variance: /dim, the layernorm convention)
+        out[r,c] = gamma[c] * (x[r,c] - mean) / sqrtf(var + eps) + beta[c]
+
+    ``x``/``out`` are ``rows x dim`` row-major; ``gamma``/``beta`` are length ``dim``. The ONLY transcendental
+    is the ``1/sqrtf(var + eps)`` -- it rides the trusted ``c.call.libm:sqrtf`` FFI edge (link ``-lm``, which the
+    cfront link rail ALREADY maps: ``library_for_callee("sqrtf") == "-lm"`` -- NO linkflags change). The mean /
+    variance sums and the per-channel scale/shift are exact/deterministic. So this is the layernorm analog of
+    the GSL ``sd`` wrap and the attention softmax: a portable, self-contained kernel whose single external is
+    the trusted libm rsqrt, matching the oracle reference to float round-off (float32 C vs float64 oracle).
+
+    WHY THIS IS THE ONLY NEW KERNEL (the honest-depth contract): a transformer block is a COMPOSITION of ops
+    BCIR already ships -- the per-head matmuls + scale + softmax are the EXISTING ``emit_attention_c`` single-head
+    attention C twin, the projections / feed-forward are the EXISTING matmul emitters, and the residual adds are
+    plain arithmetic. Only the layernorm had no C twin, so the block's executable seam is this one new kernel
+    plus the already-tested existing twins. ``dim==1`` is degenerate (variance 0, so the normalized term is 0 +
+    beta); it is allowed (eps keeps the sqrt well-defined), but layernorm over a single channel is uninformative.
+
+    Signature ``void {fn}(const float *x, const float *gamma, const float *beta, float eps, float *out)`` with
+    ``rows``/``dim`` baked in (a planned claim knows its shape). BCIR owns the calling side (the row-major layout,
+    the population /dim variance, the eps floor); the trusted libm ``sqrtf`` is the sole external. ``out`` may NOT
+    alias ``x`` (the kernel reads each row's x while writing out -- give distinct buffers)."""
+    if rows < 1:
+        raise ValueError(f"layernorm rows must be >= 1; got {rows}")
+    if dim < 1:
+        raise ValueError(f"layernorm dim must be >= 1; got {dim}")
+    return (
+        f"/* BCIR -> gem.layernorm (E3 Transformer block's one NEW numeric primitive): per-row over the dim "
+        f"feature axis, out = gamma*(x-mean)/sqrtf(var+eps) + beta. rows={rows} dim={dim}; x,out are rows x dim "
+        f"row-major, gamma/beta length dim. POPULATION variance (/dim, the layernorm rule). The only "
+        f"transcendental is the 1/sqrtf(var+eps) -- it rides the c.call.libm: edge (sqrtf, -lm; already mapped, "
+        f"no linkflags change). The mean/variance sums + the scale/shift are exact. Matches "
+        f"kbcir.transformer.layernorm_reference to float round-off. */\n"
+        "#include <stddef.h>\n#include <math.h>\n"
+        f"void {fn_name}(const float *restrict x, const float *restrict gamma,\n"
+        f"             const float *restrict beta, float eps, float *restrict out) {{\n"
+        f"  const size_t rows = {rows}u, dim = {dim}u;\n"
+        f"  for (size_t r = 0; r < rows; ++r) {{\n"
+        f"    const float *xr = x + r * dim;\n"
+        f"    float mean = 0.0f;\n"
+        f"    for (size_t c = 0; c < dim; ++c) mean += xr[c];\n"
+        f"    mean /= (float)dim;                            /* row mean */\n"
+        f"    float var = 0.0f;\n"
+        f"    for (size_t c = 0; c < dim; ++c) {{ float d = xr[c] - mean; var += d * d; }}\n"
+        f"    var /= (float)dim;                             /* POPULATION variance (/dim, the layernorm rule) */\n"
+        f"    float inv = 1.0f / sqrtf(var + eps);           /* the rsqrt -- the c.call.libm:sqrtf edge */\n"
+        f"    for (size_t c = 0; c < dim; ++c)\n"
+        f"      out[r * dim + c] = gamma[c] * (xr[c] - mean) * inv + beta[c];   /* scale + shift (exact) */\n"
+        f"  }}\n"
+        f"}}\n"
+    )
+
+
 # --- G1: gem.activation kernels (relu exact / the transcendental four via the c.call.libm: edge) ----
 # The activation analog of the B5 BLAS wrap. relu is integer/Q-fixed CLEAN -- a pure max(0,x), emitted
 # with NO transcendental and NO libm dependency (exact, 0 ULP, valid for f32 OR i32). The transcendental
