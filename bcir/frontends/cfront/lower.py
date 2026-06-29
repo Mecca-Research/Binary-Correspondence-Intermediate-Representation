@@ -541,6 +541,13 @@ class LoweredFunc:
                                                         #   threaded to the emit so the per-ISA port-I/O `in`/`out`
                                                         #   realization keys off `--target` (x86 emits; non-x86 is
                                                         #   an honest unsupported diagnostic -> LLVM fallback)
+    target_explicit: bool = False                       # ASM3: True iff the caller chose `--target` EXPLICITLY.
+                                                        #   The native per-ISA memory-fence asm (mfence / dmb ish /
+                                                        #   fence rw,rw) is emitted only then; an unspecified
+                                                        #   (host-default) target emits the PORTABLE
+                                                        #   __atomic_thread_fence, so the default emit compiles on
+                                                        #   ANY host (a cross-arch native compile never sees foreign
+                                                        #   asm). Port-I/O has no portable form, so it is unaffected.
 
 
 @dataclass

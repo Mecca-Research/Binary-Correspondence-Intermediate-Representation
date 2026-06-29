@@ -187,7 +187,8 @@ def test_fence_is_off_the_legality_value_path():
 
 def test_unused_fence_is_not_eliminated():
     # a side-effecting barrier whose result temp is unused must still emit (the emit never drops a claim).
-    r, lf = _lf("void f(void){ __sync_synchronize(); }")
+    # An explicit target realizes the native asm form (the portable default emit is exercised separately).
+    r, lf = _lf("void f(void){ __sync_synchronize(); }", target="x86_64-linux")
     assert _fence_claims(lf), "the fence claim was dropped from the lowered graph"
     assert "__asm__ __volatile__" in r.emitted["f"], "the fence was eliminated from the emit"
 
@@ -229,14 +230,25 @@ def test_every_emit_carries_the_required_memory_clobber():
 
 
 def test_unknown_target_keeps_the_portable_default():
-    # every ISA HAS a fence, so a target outside the three families is NOT an unsupported diagnostic (unlike
-    # port I/O) -- it keeps the portable __atomic_thread_fence(__ATOMIC_SEQ_CST) as an honest default. The
-    # shipping ABIs are all in the three families, so this default is reached only by a hand-set target.
+    # every ISA HAS a fence, so an EXPLICIT target outside the three families is NOT an unsupported diagnostic
+    # (unlike port I/O) -- it keeps the portable __atomic_thread_fence(__ATOMIC_SEQ_CST) as an honest default.
+    # The shipping ABIs are all in the three families, so this default is reached only by a hand-set target.
     r, lf = _lf("void f(void){ __sync_synchronize(); }")       # default (host) target
     lf.target = "mips-linux"                                   # outside x86/aarch64/riscv64 -> portable default
-    body = _emit_clean(lf)
+    lf.target_explicit = True                                  # force the explicit-target path so we test the
+    body = _emit_clean(lf)                                     #   per-ISA dispatch falling through to portable
     assert "__atomic_thread_fence(__ATOMIC_SEQ_CST);" in body, body
     assert "__asm__" not in body, "the portable default must not emit inline asm"
+
+
+def test_default_host_target_emits_the_portable_fence():
+    # with NO explicit --target, the fence emits the PORTABLE __atomic_thread_fence -- so the default emit
+    # compiles on ANY host (a cross-arch native compile never sees foreign asm). Native per-ISA asm is the
+    # opt-in behaviour of an explicit `--target` (asserted by the per-target tests above).
+    r, lf = _lf("void f(void){ __sync_synchronize(); _mm_lfence(); _mm_sfence(); }")   # no target
+    body = _emit_clean(lf)
+    assert body.count("__atomic_thread_fence(__ATOMIC_SEQ_CST);") == 3, body
+    assert "__asm__" not in body, "the host-default fence emit must be portable, not inline asm"
 
 
 # --- (4) source-order ordering (the barriered contract is realized by in-order emit) ------------

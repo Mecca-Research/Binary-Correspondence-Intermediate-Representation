@@ -158,6 +158,9 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
                         search_paths=search_paths, defines=defines, name=filename)
     unit = parse_unit(source)
     lowered = lower_unit(unit, abi)
+    explicit_target = target is not None                 # ASM3: native per-ISA fence asm only on an EXPLICIT --target;
+    for _lf in lowered.functions.values():               #   an unspecified (host-default) target emits the portable
+        _lf.target_explicit = explicit_target            #   __atomic_thread_fence, so the default emit compiles on any host
     h, theta, policy = host_channel().profile, Theta.cool(), PERF
     res = CompileResult(source=source, unit=unit, lowered=lowered, target=abi.name)
 

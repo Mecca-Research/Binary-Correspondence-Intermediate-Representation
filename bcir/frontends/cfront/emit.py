@@ -86,7 +86,13 @@ def _fence_stmt(lf: LoweredFunc, c: Claim) -> str:
     (store fence). Unlike port I/O, every ISA HAS a fence -- so a target outside the x86/aarch64/riscv64
     families keeps the portable `__atomic_thread_fence(__ATOMIC_SEQ_CST);` as an honest default (all five
     shipping ABIs are covered by the three families, so this is just a safety net, NOT an unsupported
-    diagnostic). The `"memory"` clobber is the compiler-barrier half of the fence and is always present."""
+    diagnostic). The `"memory"` clobber is the compiler-barrier half of the fence and is always present.
+
+    When NO ISA was explicitly chosen (a host-default target), the portable __atomic_thread_fence is emitted
+    instead -- so the default emit compiles on ANY host (a cross-arch native compile never sees foreign asm,
+    e.g. x86 `mfence` would not assemble on an aarch64 host); native per-ISA asm is opt-in via `--target`."""
+    if not getattr(lf, "target_explicit", False):
+        return "__atomic_thread_fence(__ATOMIC_SEQ_CST);"     # no explicit --target: portable, host-agnostic
     parts = c.op.split(".")                                    # ["c", "fence"] | ["c", "fence", "acquire"|"release"]
     kind = parts[2] if len(parts) > 2 else "full"             # the bare `c.fence` is the FULL (seq_cst) fence
     if lf.target in _X86_TARGETS:
