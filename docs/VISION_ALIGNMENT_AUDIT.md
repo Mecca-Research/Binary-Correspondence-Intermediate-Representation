@@ -306,6 +306,25 @@ the decision path (`bcir/verify`, R1–R21) reads no telemetry.
     `c.call.libm:` edge, `-lm`, **already mapped — no linkflags change**), compiled + run + matched by the `#lstm`
     runtime probe. `check_recurrent` is op-level well-formedness (NOT a new R-law). Off the legality path; the R17
     bridge bound is the input round-trip alone.
+  - **E5 — classical-ML PREDICT path** (`bcir/kbcir/classical.py`, `emit_svm_rbf_predict_c` + `emit_tree_predict_c`):
+    the fifth ML-breadth slice — KNN / decision tree / SVM / Naive-Bayes **PREDICT**. **The research finding (E7
+    cites):** classical ML splits sharply — **TRAINING** (tree induction, the SVM dual **QP** solve, NB fitting) is
+    iterative/combinatorial (no fixed dataflow, data-dependent control flow, convergence loops) → a **poor fit** for
+    BCIR's fixed-shape claim model → library/Python; **PREDICT** over a BAKED model (tree thresholds; SVM SVs + dual
+    coeffs `αᵢyᵢ` + bias; NB per-class log-prior/mean/var; the KNN set) is a deterministic, fixed-shape kernel = the
+    **G5 baked-weights pattern** BCIR wraps. KNN ranks on the **squared** distance (= ranking on distance, sqrt
+    monotone → no transcendental), majority vote / mean; the decision tree is an EXACT threshold traversal (no
+    transcendental); the linear SVM is exact dot products, the RBF SVM rides `exp` (`expf` → `-lm`); Gaussian-NB
+    `argmax_c [log_prior − ½ Σⱼ((xⱼ−μ)²/σ² + log(2π·σ²))]` with the `log(2π·σ²)` normaliser **baked** (data-
+    independent), so the predict kernel's only `log` is a bake-time constant. Independent verifiers: an O(n²)
+    neighbour-set selection (KNN), a recursive traversal + leaf-reachability (tree), independent dot/kernel-sums
+    (SVM), the full Gaussian log-likelihood recompute (NB). The two new C kernels cover **both** Area-B halves —
+    the RBF-SVM (transcendental `expf` → the `c.call.libm:` edge, `-lm`, **already mapped — no linkflags change**)
+    and the tree (EXACT, **no libm**) — compiled + run + matched by the `#classical` `#svm` / `#tree` probes.
+    `check_classical` is op-level well-formedness (the quarantine rule: RBF-SVM `exp` / Gaussian-NB `log` need f32;
+    KNN / tree / linear-SVM are exact and may be i32) — NOT a new R-law. Off the legality path; the R17 bridge
+    bound is the input round-trip alone. libsvm is the canonical SVM library in the framing only — the decision
+    function is emitted self-contained.
 - **5c tensor ops as claims — PARTIAL (broadening).** `gem.matmul` is a first-class planned claim with
   K_BCIR tile/loop search, joined by `gem.activation` (relu / sigmoid / tanh / gelu / softmax), `gem.conv`, and
   the **G7 `gem.attention`** single-head scaled-dot-product op — and now the **E3 full Transformer encoder

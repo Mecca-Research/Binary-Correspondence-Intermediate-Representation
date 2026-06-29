@@ -1374,6 +1374,107 @@ def emit_lstm_cell_c(input_dim: int, hidden_dim: int, fn_name: str = "bcir_lstm_
     )
 
 
+# --- E5: classical-ML PREDICT-path kernels (the baked-model fixed-shape predict; G5 baked-weights pattern) ---
+# Classical ML splits sharply: TRAINING (tree induction, the SVM QP solve, NB fitting) is iterative/
+# combinatorial -- a POOR fit for BCIR's fixed-shape claim model (library/Python). PREDICT over a BAKED model is
+# the opposite: a deterministic, fixed-shape kernel -- the G5 baked-weights inference pattern. These two emitters
+# show the Area-B pattern covers BOTH a transcendental predictor (RBF-SVM: the only external is expf on the
+# c.call.libm: edge, -lm; the dot/distance sums are exact) and an exact one (the tree: pure comparisons + a leaf
+# return, NO transcendental). BCIR owns the calling side (the row-major layout, the baked params); libsvm is the
+# canonical SVM library in the framing only -- the decision function is emitted self-contained.
+
+def emit_svm_rbf_predict_c(n_sv: int, n_feat: int, fn_name: str = "bcir_svm_rbf") -> str:
+    """E5 (ML-breadth): emit a portable C RBF-SVM DECISION-FUNCTION predict kernel -- the classical-ML
+    transcendental-predictor seam, reproducing ``kbcir.classical.svm_decision_rbf``:
+
+        f(x) = Sum_i alpha_y[i] * expf(-gamma * ||x - SV[i]||^2) + b
+
+    ``x`` is length ``n_feat``; ``SV`` is ``n_sv x n_feat`` row-major (``SV[i*n_feat + j]``); ``alpha_y`` is the
+    per-SV dual coefficient ALREADY MULTIPLIED by the label (``alpha_i * y_i``), length ``n_sv``; ``b`` is the
+    bias; ``gamma > 0`` is the RBF width. The ONLY transcendental is the ``expf`` -- it rides the trusted
+    ``c.call.libm:`` FFI edge (link ``-lm``, which the cfront link rail ALREADY maps:
+    ``library_for_callee("expf") == "-lm"`` -- NO linkflags change). The squared distance ``||x - SV[i]||^2`` and
+    the dual-weighted sum are EXACT/deterministic. ``expf(-gamma*d^2)`` underflows to 0 for a far SV (fine -- a
+    distant support vector contributes ~0); there is no overflow (the argument is <= 0). So this is the
+    classical-ML analog of the LSTM / attention-softmax wraps: a portable, self-contained kernel whose only
+    external is the trusted libm exp, matching the oracle reference (``svm_decision_rbf``) to float round-off
+    (float32 C vs float64 oracle). This IS libsvm's RBF ``svm_predict`` -- emitted DIRECTLY (no libsvm
+    dependency), per the "integrate, don't reinvent" framing (libsvm is the canonical library; the math is small
+    + self-contained so we emit it).
+
+    Signature ``float {fn}(const float *x, const float *SV, const float *alpha_y, float b, float gamma)`` with
+    ``n_sv`` / ``n_feat`` baked in (a planned claim knows its shape). The caller takes ``sign()`` of the result
+    for the class (``svm_predict``)."""
+    if n_sv < 1 or n_feat < 1:
+        raise ValueError(f"svm rbf dims must be >= 1; got n_sv={n_sv} n_feat={n_feat}")
+    return (
+        f"/* BCIR -> classical-ML PREDICT (E5): RBF-SVM decision function (G5 baked-model fixed-shape kernel). "
+        f"f(x)=Sum_i alpha_y[i]*expf(-gamma*||x-SV[i]||^2)+b. n_sv={n_sv} n_feat={n_feat}; x len n_feat, SV n_sv x "
+        f"n_feat row-major, alpha_y len n_sv (=alpha_i*y_i), b bias, gamma>0. The ONLY transcendental is expf -- "
+        f"it rides the c.call.libm: edge (expf, -lm; already mapped, no linkflags change); the squared distances "
+        f"+ the dual-weighted sum are exact. This is libsvm's RBF svm_predict, emitted self-contained. Matches "
+        f"kbcir.classical.svm_decision_rbf to float round-off. */\n"
+        "#include <stddef.h>\n#include <math.h>\n"
+        f"float {fn_name}(const float *restrict x, const float *restrict SV,\n"
+        f"             const float *restrict alpha_y, float b, float gamma) {{\n"
+        f"  const size_t n_sv = {n_sv}u, n_feat = {n_feat}u;\n"
+        f"  float acc = b;\n"
+        f"  for (size_t i = 0; i < n_sv; ++i) {{\n"
+        f"    float d2 = 0.0f;                          /* ||x - SV[i]||^2 (exact) */\n"
+        f"    for (size_t j = 0; j < n_feat; ++j) {{\n"
+        f"      float d = x[j] - SV[i * n_feat + j];\n"
+        f"      d2 += d * d;\n"
+        f"    }}\n"
+        f"    acc += alpha_y[i] * expf(-gamma * d2);    /* the RBF kernel -- c.call.libm:expf (the sole transcendental) */\n"
+        f"  }}\n"
+        f"  return acc;\n"
+        f"}}\n"
+    )
+
+
+def emit_tree_predict_c(n_nodes: int, n_feat: int, fn_name: str = "bcir_tree") -> str:
+    """E5 (ML-breadth): emit a portable C DECISION-TREE predict kernel -- the classical-ML EXACT-predictor seam
+    (the counterpart to the RBF-SVM transcendental one), reproducing ``kbcir.classical.tree_predict``. Traverse
+    the baked flat-array tree from the root (node 0): at an INTERNAL node go ``left`` if ``x[feature] <=
+    threshold`` else ``right``; stop at a LEAF (``feature[node] == -1``) and return its ``leaf_value``.
+
+    EXACT -- pure comparisons + a leaf-constant return, NO transcendental, NO libm (integer/float-exact, 0 ULP).
+    So this kernel needs NO ``-lm`` and mints NO ``c.call.libm:`` edge -- it is the EXACT half of the Area-B
+    pattern (the RBF-SVM kernel is the transcendental half), showing the classical-ML predict path covers both.
+    The baked arrays are passed in: ``feature`` (``int``, ``-1`` = leaf), ``threshold`` / ``leaf_value``
+    (``float``), ``left`` / ``right`` (``int`` child node ids), each length ``n_nodes``; ``x`` is length
+    ``n_feat``. A depth bound (``n_nodes + 1`` hops) guards a malformed cyclic tree (a well-formed CART tree's
+    children have a strictly larger node id, so it terminates well within the bound). Matches ``tree_predict``
+    EXACTLY (it is the same comparisons + leaf return -- integer/float-exact, not merely to round-off).
+
+    Signature ``float {fn}(const float *x, const int *feature, const float *threshold, const int *left, const int
+    *right, const float *leaf_value)`` with ``n_nodes`` / ``n_feat`` baked in. The caller maps the returned leaf
+    value to a class id (or uses it directly for regression)."""
+    if n_nodes < 1 or n_feat < 1:
+        raise ValueError(f"tree dims must be >= 1; got n_nodes={n_nodes} n_feat={n_feat}")
+    return (
+        f"/* BCIR -> classical-ML PREDICT (E5): decision-tree threshold traversal (G5 baked-model fixed-shape "
+        f"kernel; the EXACT half of the Area-B pattern -- NO transcendental, NO libm). From the root, go left if "
+        f"x[feature[node]] <= threshold[node] else right, until feature[node]==-1 (a leaf) -> return "
+        f"leaf_value[node]. n_nodes={n_nodes} n_feat={n_feat}; x len n_feat, the tree arrays len n_nodes. Pure "
+        f"comparisons + a leaf return (integer/float-exact, 0 ULP). Matches kbcir.classical.tree_predict "
+        f"exactly. */\n"
+        "#include <stddef.h>\n"
+        f"float {fn_name}(const float *restrict x, const int *restrict feature,\n"
+        f"             const float *restrict threshold, const int *restrict left,\n"
+        f"             const int *restrict right, const float *restrict leaf_value) {{\n"
+        f"  const size_t n_nodes = {n_nodes}u;\n"
+        f"  size_t node = 0u;\n"
+        f"  for (size_t hop = 0; hop <= n_nodes; ++hop) {{   /* bounded: at most n_nodes hops to a leaf */\n"
+        f"    if (feature[node] == -1) return leaf_value[node];   /* a leaf -- the prediction (exact) */\n"
+        f"    if (x[feature[node]] <= threshold[node]) node = (size_t)left[node];\n"
+        f"    else node = (size_t)right[node];\n"
+        f"  }}\n"
+        f"  return leaf_value[node];   /* depth-bound fallthrough (malformed tree); return the current node's value */\n"
+        f"}}\n"
+    )
+
+
 # --- G1: gem.activation kernels (relu exact / the transcendental four via the c.call.libm: edge) ----
 # The activation analog of the B5 BLAS wrap. relu is integer/Q-fixed CLEAN -- a pure max(0,x), emitted
 # with NO transcendental and NO libm dependency (exact, 0 ULP, valid for f32 OR i32). The transcendental
