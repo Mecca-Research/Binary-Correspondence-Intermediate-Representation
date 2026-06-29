@@ -193,6 +193,7 @@ _MODULES = [
     "bcir.tests.test_fftw",
     "bcir.tests.test_lapack",
     "bcir.tests.test_gsl",
+    "bcir.tests.test_sleef",
     "bcir.tests.test_differential",
     "bcir.tests.test_target_matrix",
     "bcir.tests.test_c23_kernels",

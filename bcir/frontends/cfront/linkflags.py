@@ -95,8 +95,14 @@ _LIBRARY_RULES: tuple[tuple, ...] = (
     # with a GSL edge needs (mirrors how LAPACK emits the load-bearing -llapack though the call is
     # LAPACKE_*). Matches the C twin's branch in the SAME order (first match wins).
     (lambda c: c.startswith("gsl_"), "-lgsl"),
-    # --- EXTENSION POINT (roadmap): add one rule per newly-wrapped trusted library, e.g.
-    #   (lambda c: c.startswith("Sleef_"), "-lsleef"),                            # SLEEF
+    # Area-B breadth (#63) SLEEF: any Sleef_* (the SIMD-oriented vectorized math library -- a fast,
+    # vectorized libm) -> -lsleef. The vectorized-exp wrap (bcir/lower/c_kernel.py emit_sleef_exp_c) calls
+    # Sleef_expf1_u10 and links `-lsleef`; this rule makes a unit with a SLEEF edge link it automatically.
+    # SLEEF's vectorized transcendentals are the vectorized alternative to the libm expf the G1 activation
+    # kernels use (so a Sleef_* edge is a trusted external just like the cblas/fftw/lapack/gsl edges).
+    # Matches the C twin's branch in the SAME order (first match wins).
+    (lambda c: c.startswith("Sleef_"), "-lsleef"),
+    # --- EXTENSION POINT (roadmap): add one rule per newly-wrapped trusted library here.
     # Each new rule's twin goes in bcir_cfront.c's bcir_lib_for_callee in the SAME order.
 )
 

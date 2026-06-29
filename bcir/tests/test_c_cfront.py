@@ -692,11 +692,16 @@ def test_link_flag_derivation_dual_rail():
     assert library_for_callee("LAPACKE_sgesv") == "-llapack"  # #61 LAPACK (the linear-solve wrap's callee)
     assert library_for_callee("LAPACKE_dgesv") == "-llapack"  # any LAPACKE_*
     assert library_for_callee("sgesv_") == "-llapack"        # the Fortran-ABI driver symbol
+    assert library_for_callee("gsl_stats_mean") == "-lgsl"   # #62 GSL (the statistics wrap's callee)
+    assert library_for_callee("gsl_sf_erf") == "-lgsl"       # any gsl_*
+    assert library_for_callee("Sleef_expf1_u10") == "-lsleef"  # #63 SLEEF (the vectorized-exp wrap's callee)
+    assert library_for_callee("Sleef_sinf1_u10") == "-lsleef"  # any Sleef_*
     assert library_for_callee("totally_unknown_fn") is None  # unknown-callee policy: None (no invented -l)
     # dedup + STABLE sort (reproducible): a set with two libs always yields the same ordered line.
     assert format_link_flags(sorted({"-lm", "-lcblas"})) == "-lcblas -lm"
     assert format_link_flags(sorted({"-lm", "-lfftw3"})) == "-lfftw3 -lm"
     assert format_link_flags(sorted({"-lm", "-llapack"})) == "-llapack -lm"
+    assert format_link_flags(sorted({"-lm", "-lsleef"})) == "-lm -lsleef"
 
     # (b) end-to-end derivation over real units (oracle rail).
     cases = {

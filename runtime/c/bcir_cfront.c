@@ -1759,6 +1759,10 @@ static const char *bcir_lib_for_callee(const char *s, int n) {
    * -lgsl (the statistics wrap emit_gsl_stats_c calls gsl_stats_mean/variance/sd and links -lgsl
    * -lgslcblas; -lgsl is the load-bearing dep). Matches linkflags.py's GSL rule, in the SAME order. */
   if(n>=4 && !strncmp("gsl_",s,4)) return "-lgsl";
+  /* Area-B breadth (#63) SLEEF: any Sleef_* (the SIMD-oriented vectorized math library -- a fast,
+   * vectorized libm) -> -lsleef (the vectorized-exp wrap emit_sleef_exp_c calls Sleef_expf1_u10 and links
+   * -lsleef). Matches linkflags.py's SLEEF rule, in the SAME order (first match wins). */
+  if(n>=6 && !strncmp("Sleef_",s,6)) return "-lsleef";
   /* --- EXTENSION POINT: one branch per newly-wrapped library, matching the oracle's order. --- */
   return NULL;                                          /* unknown external callee -> no flag */
 }
