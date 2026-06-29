@@ -197,6 +197,37 @@ law, parity-gate. Throttled, parallel to C/driver work.*
     minimum at (w,b)=(2,1)) to ~0 with near-monotone descent, and Adam's per-coordinate scaling beats plain
     SGD on an ill-conditioned variant. Off the legality path (cost/optimization-side, never an R-law verdict;
     touches no verifier, emits no `Diagnostic`). **One step is the primitive** — M3 wires the repeated loop.
+  - **M3 — training loop BUILT** (`bcir/kbcir/training.py`, `bcir/tests/test_training.py`). The
+    epoch / mini-batch TRAINING LOOP that composes the trio into end-to-end supervised learning: a
+    `Dataset(X, y)` abstraction, a DETERMINISTIC seed-keyed shuffle (`minibatches`, a stdlib LCG — no numpy,
+    no `random`), a disjoint `train_val_split`, eval metrics (`accuracy` argmax/threshold, `mse_metric`,
+    `binary_f1` with the full confusion matrix), an `EarlyStop` patience hook, and
+    `train(model, params0, dataset, *, loss, optimizer, epochs, batch_size, lr, val, metrics, early_stop,
+    seed) -> TrainResult`. **How it composes** (the same two-path split M1 is forced into by the autodiff
+    closure): the `model` callable builds a fresh `Tape` forward per batch; for a **closed-set loss (MSE)**
+    the loop builds `mse(...)` INTO the Tape and the EXISTING `autodiff.grad` gives `dL/dparam` directly (no
+    seed); for a **transcendental loss (BCE, softmax-CE)** the loop takes M1's closed-form `grad_logits` and
+    CHAINS it — `dL/dparam = Σ_k grad_logits[k]·d(logit_k)/dparam` (run `grad` on each logit, scale by the
+    seed) — so the transcendental lives only in the monitored loss value, never in the parameter gradient.
+    The per-parameter gradient then drives the M2 optimizer rule selected by name (`"adam"` + hypers), the
+    loop managing its per-param state (velocity / squared-grad EMA / Adam's m,v,t) across steps. It is the
+    oracle GENERALIZATION of `autodiff_kernel.oracle_train` (the single-DAG forward→backward→SGD reference) to
+    epochs / mini-batch / arbitrary M1 loss / arbitrary M2 optimizer / held-out val / metrics / early stop.
+    Verified: `minibatches` is a deterministic full-coverage permutation (ragged last batch); the metrics
+    match a hand-computed confusion matrix; **logistic regression** (BCE + Adam on a linearly-separable set)
+    reaches **100% train + 100% val accuracy** in ≤ 40 epochs with a near-monotone loss and identical
+    final loss/params across same-seed runs; a **2-layer MLP** (hidden relu via the closed-set `select`,
+    BCE + Adam) on a NON-linearly-separable XOR set reaches **100% train accuracy**, clearing the **linear
+    model's ceiling (~0.51) by +0.49** — the hidden layer learns the nonlinearity; softmax-CE multiclass and
+    the MSE closed-set regression converge too; early stop fires when val plateaus. Off the legality path
+    (cost/optimization-side, never an R-law verdict; touches no verifier, emits no `Diagnostic`; the model
+    graphs stay in the closed lowerable primitive set). Pure-Python oracle, deterministic given the seed.
+  - **Tier-1 trio (M1–M3) COMPLETE: BCIR trains logistic regression + an MLP end-to-end.** M1 (loss head) +
+    M2 (adaptive optimizers) + M3 (the training loop) close the loop that turns BCIR's existing matmul +
+    activation + reverse-mode autodiff into supervised learning — forward → loss → backward → optimizer step,
+    over epochs and mini-batches, to high accuracy on toy datasets — entirely as a pure-Python oracle off the
+    legality path. The capstone demonstration trains **logistic regression** (the BCE closed-form seed path)
+    and a **small MLP** (the hidden relu, clearing a linear ceiling) end-to-end and deterministically.
 - **B4 — Hybrid tropical + selective gradient.** Reframe training: the **tropical planner finds the structure**
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and

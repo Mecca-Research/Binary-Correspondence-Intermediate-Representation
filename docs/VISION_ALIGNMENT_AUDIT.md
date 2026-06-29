@@ -44,7 +44,7 @@
 | 4c | Graph linearization into async strided data streams | 🟢 ACHIEVED | StreamPack: strided blocks, fork/await tokens, pipelined phases, channel dispatch |
 | 4d | Q8↔float32↔Q8 bridge certified by R17 | 🟢 ACHIEVED | dual-rail R17 law (oracle + MLIR); compensated reduction bit-exact to int64 |
 | 5a | Baked-weights inference kernel in C | 🟢 BUILT | `emit_inference_kernel_c`: `static const` weights (`#embed`/literal) fused single-pass, R17-bounded; reference-verified bit-exact (relu) |
-| 5b | Forward/backward training kernels on bare metal | 🟢 BUILT | `emit_autodiff_kernel_c` lowers the autodiff DAG to a forward+backward C kernel + SGD step; gradients match oracle + finite-difference. Loss head (M1) + adaptive optimizers — momentum/RMSprop/Adam w/ bias correction (M2, `bcir/lower/optimizers.py`) — built on top; RMSprop/Adam ride libm `sqrtf`, SGD/momentum pure arithmetic |
+| 5b | Forward/backward training kernels on bare metal | 🟢 BUILT (end-to-end supervised training) | `emit_autodiff_kernel_c` lowers the autodiff DAG to a forward+backward C kernel + SGD step; gradients match oracle + finite-difference. **ML Tier-1 trio (M1–M3) complete on top:** loss head (M1, `bcir/kbcir/losses.py`) + adaptive optimizers — momentum/RMSprop/Adam w/ bias correction (M2, `bcir/lower/optimizers.py`; RMSprop/Adam ride libm `sqrtf`, SGD/momentum pure arithmetic) + the **epoch/mini-batch training loop (M3, `bcir/kbcir/training.py`)** — dataset/shuffle/split, eval metrics, early stop — that **trains logistic regression AND a small MLP end-to-end to high accuracy** (deterministic, pure-Python oracle). Cost/optimization-side, never an R-law verdict |
 | 5c | Tensor ops as first-class claims | 🟢 BUILT (dual-rail) | `gem.matmul`/`activation`/`conv`/`attention` — all oracle + MLIR law ops, reference-verified |
 | 5d | C++ hand-off boundary (dynamic graphs / MPI / NCCL) | 🟡 SCAFFOLDED | boundary contract defined + a compilable, round-trip-tested single-node seam; dynamic/distributed backends are marked stubs |
 
@@ -223,24 +223,36 @@ the decision path (`bcir/verify`, R1–R21) reads no telemetry.
   (`bcir/abi/q8_tables.py`, fixtures); `gem.matmul` plans + lowers (MLIR
   `BCIRLowerGemMatmulPass.cpp`). But no end-to-end function is emitted that bakes a
   specific model's weights as `static const …[]` and fuses them into a single-pass kernel.
-- **5b forward/backward training — BUILT (kernels + loss head).** `bcir/kbcir/autodiff.py`
+- **5b forward/backward training — BUILT (end-to-end supervised training).** `bcir/kbcir/autodiff.py`
   is a complete, correct, content-addressed reverse-mode autodiff organ; `emit_autodiff_kernel_c`
   lowers it to a forward+backward C kernel + SGD step (gradients match oracle + finite-difference).
-  The **loss head is now built too** (`bcir/kbcir/losses.py`, M1): MSE, softmax cross-entropy,
-  BCE-with-logits, hinge, so a full training step (forward → loss → backward → param grads) runs
-  end-to-end. It follows the **autodiff closure property** — MSE is built into the `Tape` as
-  closed-set nodes (the existing `grad`/`emit_autodiff_kernel_c` handle it for free); the
-  transcendental losses (softmax-CE, BCE) keep their `log`/`exp` forward value off the
-  re-differentiable path and instead provide the closed-form `grad_logits`
-  (`softmax−onehot` / `sigmoid−target`, reusing the G1 activation references) that SEEDS the model
-  backward. Unlocks logistic regression + multiclass classification. The **adaptive optimizer family is
-  now built too** (`bcir/lower/optimizers.py`, M2): momentum (heavy-ball), RMSprop, and Adam (with bias
-  correction) generalize the minimal SGD step, each a reference oracle + an emitted C step that mirrors
-  `emit_sgd_step_c` (verified C-vs-reference to round-off incl. Adam's m/v/t state round-trip, shown to
-  converge on a convex MSE). Honest libm boundary: RMSprop/Adam ride libm `sqrtf` (the `c.call.libm:` edge,
-  link `-lm`), while SGD/momentum stay pure arithmetic. Off the legality path (cost-side, never a verdict).
-  One step is the primitive; the repeated training loop (M3) and the hybrid tropical-structure +
-  gradient-tune loop (B4) remain the next steps.
+  The **ML Tier-1 trio (M1–M3) is now complete**, turning that machinery into actual supervised learning:
+  - **M1 loss head** (`bcir/kbcir/losses.py`): MSE, softmax cross-entropy, BCE-with-logits, hinge.
+    It follows the **autodiff closure property** — MSE is built into the `Tape` as closed-set nodes (the
+    existing `grad`/`emit_autodiff_kernel_c` handle it for free); the transcendental losses (softmax-CE, BCE)
+    keep their `log`/`exp` forward value off the re-differentiable path and instead provide the closed-form
+    `grad_logits` (`softmax−onehot` / `sigmoid−target`, reusing the G1 activation references) that SEEDS the
+    model backward.
+  - **M2 adaptive optimizers** (`bcir/lower/optimizers.py`): momentum (heavy-ball), RMSprop, Adam (with bias
+    correction) generalize the minimal SGD step, each a reference oracle + an emitted C step that mirrors
+    `emit_sgd_step_c` (verified C-vs-reference to round-off incl. Adam's m/v/t state round-trip, shown to
+    converge on a convex MSE). Honest libm boundary: RMSprop/Adam ride libm `sqrtf` (the `c.call.libm:` edge,
+    link `-lm`), while SGD/momentum stay pure arithmetic.
+  - **M3 the training loop** (`bcir/kbcir/training.py`): the epoch / mini-batch loop that composes the trio
+    end-to-end — a `Dataset` abstraction + a deterministic seed-keyed shuffle + a disjoint `train_val_split`,
+    eval metrics (`accuracy`/`mse_metric`/`binary_f1`), an `EarlyStop` patience hook, and
+    `train(...) -> TrainResult`. It drives forward (model `Tape`) → M1 loss → `autodiff.grad` (the closed-set
+    path for MSE, the closed-form `grad_logits` seed chained through each logit for BCE/softmax-CE) → M2
+    optimizer step, managing optimizer state across steps — the oracle generalization of
+    `autodiff_kernel.oracle_train` to epochs/mini-batch/loss/optimizer/val/metrics/early-stop. **It trains
+    logistic regression (BCE) AND a small 2-layer MLP (hidden relu, clearing a linear model's ceiling on an
+    XOR-like non-separable set) end-to-end to ~100% accuracy, deterministically.**
+
+  End-to-end supervised training is therefore now **built** as a pure-Python oracle, **off the legality
+  path** (training is cost/optimization-side — which legal plan's weights fit best — never an R-law verdict;
+  the modules touch no verifier and emit no `Diagnostic`, and the model graphs stay in the closed lowerable
+  primitive set). The remaining next step on this axis is the hybrid tropical-structure + gradient-tune
+  loop (B4).
 - **5c tensor ops as claims — PARTIAL.** `gem.matmul` is a first-class planned claim with
   K_BCIR tile/loop search; there are no `gem.conv` / `gem.attention` / `gem.activation`
   ops.
