@@ -44,7 +44,7 @@
 | 4c | Graph linearization into async strided data streams | 🟢 ACHIEVED | StreamPack: strided blocks, fork/await tokens, pipelined phases, channel dispatch |
 | 4d | Q8↔float32↔Q8 bridge certified by R17 | 🟢 ACHIEVED | dual-rail R17 law (oracle + MLIR); compensated reduction bit-exact to int64 |
 | 5a | Baked-weights inference kernel in C | 🟢 BUILT | `emit_inference_kernel_c`: `static const` weights (`#embed`/literal) fused single-pass, R17-bounded; reference-verified bit-exact (relu) |
-| 5b | Forward/backward training kernels on bare metal | 🟢 BUILT | `emit_autodiff_kernel_c` lowers the autodiff DAG to a forward+backward C kernel + SGD step; gradients match oracle + finite-difference |
+| 5b | Forward/backward training kernels on bare metal | 🟢 BUILT | `emit_autodiff_kernel_c` lowers the autodiff DAG to a forward+backward C kernel + SGD step; gradients match oracle + finite-difference. Loss head (M1) + adaptive optimizers — momentum/RMSprop/Adam w/ bias correction (M2, `bcir/lower/optimizers.py`) — built on top; RMSprop/Adam ride libm `sqrtf`, SGD/momentum pure arithmetic |
 | 5c | Tensor ops as first-class claims | 🟢 BUILT (dual-rail) | `gem.matmul`/`activation`/`conv`/`attention` — all oracle + MLIR law ops, reference-verified |
 | 5d | C++ hand-off boundary (dynamic graphs / MPI / NCCL) | 🟡 SCAFFOLDED | boundary contract defined + a compilable, round-trip-tested single-node seam; dynamic/distributed backends are marked stubs |
 
@@ -233,8 +233,14 @@ the decision path (`bcir/verify`, R1–R21) reads no telemetry.
   transcendental losses (softmax-CE, BCE) keep their `log`/`exp` forward value off the
   re-differentiable path and instead provide the closed-form `grad_logits`
   (`softmax−onehot` / `sigmoid−target`, reusing the G1 activation references) that SEEDS the model
-  backward. Unlocks logistic regression + multiclass classification. The hybrid tropical-structure +
-  gradient-tune training loop (B4) remains the next step.
+  backward. Unlocks logistic regression + multiclass classification. The **adaptive optimizer family is
+  now built too** (`bcir/lower/optimizers.py`, M2): momentum (heavy-ball), RMSprop, and Adam (with bias
+  correction) generalize the minimal SGD step, each a reference oracle + an emitted C step that mirrors
+  `emit_sgd_step_c` (verified C-vs-reference to round-off incl. Adam's m/v/t state round-trip, shown to
+  converge on a convex MSE). Honest libm boundary: RMSprop/Adam ride libm `sqrtf` (the `c.call.libm:` edge,
+  link `-lm`), while SGD/momentum stay pure arithmetic. Off the legality path (cost-side, never a verdict).
+  One step is the primitive; the repeated training loop (M3) and the hybrid tropical-structure +
+  gradient-tune loop (B4) remain the next steps.
 - **5c tensor ops as claims — PARTIAL.** `gem.matmul` is a first-class planned claim with
   K_BCIR tile/loop search; there are no `gem.conv` / `gem.attention` / `gem.activation`
   ops.
