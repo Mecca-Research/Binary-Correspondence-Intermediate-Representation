@@ -1475,6 +1475,61 @@ def emit_tree_predict_c(n_nodes: int, n_feat: int, fn_name: str = "bcir_tree") -
     )
 
 
+# --- E6: unsupervised-learning kernel (K-means nearest-centroid ASSIGN: the exact predict kernel) ----
+# E6 (unsupervised + the data pipeline) mirrors E5's train-vs-predict split: K-means FIT is a bounded iterative
+# optimization (Lloyd's, library/Python-shaped), while ASSIGN over BAKED centroids is the fixed-shape PREDICT
+# kernel -- the G5 baked-weights pattern. The assign kernel is the EXACT half of the Area-B pattern (like the
+# decision tree): pure subtract/multiply/add + comparisons (the squared distance + an argmin), NO transcendental,
+# NO libm -- so the C-vs-oracle check is INTEGER-EXACT (the same argmin cluster id), not merely to round-off. C
+# twin of kbcir.unsupervised.kmeans_assign.
+
+def emit_kmeans_assign_c(k: int, n_feat: int, fn_name: str = "bcir_kmeans_assign") -> str:
+    """E6 (ML-breadth): emit a portable C K-MEANS nearest-centroid ASSIGN kernel -- the unsupervised-learning
+    EXACT-predictor seam (the analog of E5's exact decision-tree kernel), reproducing
+    ``kbcir.unsupervised.kmeans_assign``:
+
+        argmin_c  ||x - centroid[c]||^2        (the nearest centroid by SQUARED Euclidean distance)
+
+    ``x`` is length ``n_feat``; ``centroids`` is ``k x n_feat`` row-major (``centroids[c*n_feat + j]``). Ranking
+    on the squared distance is IDENTICAL to ranking on distance (``sqrt`` is monotone), so the assignment needs
+    NO transcendental -- pure subtract/multiply/add + a ``<`` comparison. DETERMINISTIC tie-break: the LOWEST
+    centroid index wins on a distance tie (the strict ``<`` only updates the best on a STRICTLY smaller
+    distance). EXACT -- 0 ULP, NO libm, needs NO ``-lm`` and mints NO ``c.call.libm:`` edge (it is the EXACT
+    half of the Area-B pattern, like the decision tree). Returns an ``int`` cluster id, so the C-vs-oracle check
+    is INTEGER-EXACT (the same argmin) as long as the test point is off an exact equidistant tie -- a float32
+    (C) vs float64 (oracle) difference can never flip the integer argmin away from a tie.
+
+    Signature ``int {fn}(const float *x, const float *centroids)`` with ``k`` / ``n_feat`` baked in (a planned
+    claim knows its shape). The caller uses the returned cluster id directly. Matches ``kmeans_assign``
+    exactly."""
+    if k < 1 or n_feat < 1:
+        raise ValueError(f"kmeans assign dims must be >= 1; got k={k} n_feat={n_feat}")
+    return (
+        f"/* BCIR -> unsupervised K-means ASSIGN (E6): nearest-centroid argmin (G5 baked-model fixed-shape "
+        f"kernel; the EXACT half of the Area-B pattern -- NO transcendental, NO libm). argmin_c "
+        f"||x-centroid[c]||^2 by squared Euclidean distance (= ranking on distance, sqrt monotone -> no "
+        f"transcendental). k={k} n_feat={n_feat}; x len n_feat, centroids k x n_feat row-major. Tie-break: "
+        f"lowest centroid index (strict < updates only on a STRICTLY smaller distance). Returns an int cluster "
+        f"id -- integer-exact vs the oracle (same argmin). Matches kbcir.unsupervised.kmeans_assign exactly. */\n"
+        "#include <stddef.h>\n"
+        f"int {fn_name}(const float *restrict x, const float *restrict centroids) {{\n"
+        f"  const size_t k = {k}u, n_feat = {n_feat}u;\n"
+        f"  int best_c = 0;\n"
+        f"  float best_d = 0.0f;                          /* ||x - centroid[0]||^2 (exact) */\n"
+        f"  for (size_t j = 0; j < n_feat; ++j) {{ float d = x[j] - centroids[j]; best_d += d * d; }}\n"
+        f"  for (size_t c = 1; c < k; ++c) {{\n"
+        f"    float dist = 0.0f;                          /* ||x - centroid[c]||^2 (exact) */\n"
+        f"    for (size_t j = 0; j < n_feat; ++j) {{\n"
+        f"      float d = x[j] - centroids[c * n_feat + j];\n"
+        f"      dist += d * d;\n"
+        f"    }}\n"
+        f"    if (dist < best_d) {{ best_d = dist; best_c = (int)c; }}   /* strict < : a tie keeps the LOWER index */\n"
+        f"  }}\n"
+        f"  return best_c;\n"
+        f"}}\n"
+    )
+
+
 # --- G1: gem.activation kernels (relu exact / the transcendental four via the c.call.libm: edge) ----
 # The activation analog of the B5 BLAS wrap. relu is integer/Q-fixed CLEAN -- a pure max(0,x), emitted
 # with NO transcendental and NO libm dependency (exact, 0 ULP, valid for f32 OR i32). The transcendental

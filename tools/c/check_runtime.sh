@@ -1026,6 +1026,42 @@ tree_out="$("${tmp}/tree")"; tree_rc=$?    # rc=0 IS the check: the three leaves
   && echo "  PASS tree: exact threshold traversal returns the known leaves (${tree_out}; NO libm -- the EXACT half of the Area-B pattern)" \
   || { echo "  FAIL: tree predict did not return the known leaves (rc=${tree_rc}: ${tree_out})"; exit 1; }
 
+# E6 (ML-breadth) UNSUPERVISED K-means nearest-centroid ASSIGN (#kmeans): the unsupervised analog of the E5 EXACT
+# tree kernel. K-means FIT is a bounded iterative optimization (Lloyd's, library/Python-shaped); ASSIGN over
+# BAKED centroids is the fixed-shape PREDICT kernel (G5 baked-weights pattern). It is the EXACT half of the
+# Area-B pattern -- argmin_c ||x-centroid[c]||^2 by squared distance: pure subtract/multiply/add + comparisons,
+# NO transcendental, NO libm (needs no -lm). It returns an int cluster id, so the C-vs-oracle check is
+# INTEGER-EXACT (the same argmin). C twin of kbcir.unsupervised.kmeans_assign.
+echo "[c-runtime] E6 unsupervised K-means assign (emit_kmeans_assign_c): nearest-centroid argmin, NO libm (#kmeans)"
+python3 - > "${tmp}/kmeans_kernel.c" <<'PY' || { echo "  FAIL: python kmeans emit"; exit 1; }
+from bcir.lower.c_kernel import emit_kmeans_assign_c
+print(emit_kmeans_assign_c(3, 2, "km_assign"))
+PY
+cat >> "${tmp}/kmeans_kernel.c" <<'MAIN'
+#include <stdio.h>
+int main(void) {
+  /* three baked centroids: (0,0), (10,10), (-5,5). Points off any exact equidistant tie. */
+  float C[6] = {0.0f, 0.0f,  10.0f, 10.0f,  -5.0f, 5.0f};
+  float X0[2] = {0.3f, 0.1f};    /* -> centroid 0 (near origin) */
+  float X1[2] = {9.7f, 10.2f};   /* -> centroid 1 (near (10,10)) */
+  float X2[2] = {-4.8f, 5.1f};   /* -> centroid 2 (near (-5,5)) */
+  int a = km_assign(X0, C);
+  int b = km_assign(X1, C);
+  int c = km_assign(X2, C);
+  printf("a=%d b=%d c=%d\n", a, b, c);
+  /* the assign kernel is EXACT (integer cluster id) -- the argmin matches kmeans_assign exactly. */
+  return (a == 0 && b == 1 && c == 2) ? 0 : 1;
+}
+MAIN
+# the K-means assign kernel is EXACT -- no libm needed (no -lm; the EXACT half of the Area-B pattern).
+"${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/kmeans_kernel.c" -o "${tmp}/kmeans" 2>/dev/null \
+  || "${CC}" -std=c23 -O2 "${tmp}/kmeans_kernel.c" -o "${tmp}/kmeans" \
+  || { echo "  FAIL: kmeans assign kernel build"; exit 1; }
+kmeans_out="$("${tmp}/kmeans")"; kmeans_rc=$?    # rc=0 IS the check: the three argmins match exactly (driver)
+{ [ "${kmeans_rc}" = "0" ] && printf '%s' "${kmeans_out}" | grep -q "^a=.* b=.* c=.*"; } \
+  && echo "  PASS kmeans: exact nearest-centroid argmin returns the known clusters (${kmeans_out}; NO libm -- the EXACT half of the Area-B pattern, integer-exact)" \
+  || { echo "  FAIL: kmeans assign did not return the known clusters (rc=${kmeans_rc}: ${kmeans_out})"; exit 1; }
+
 # Area-B breadth (#62) GSL link-flag rule (dual-rail): the GSL edge (gsl_stats_mean) is minted by the kernel
 # EMITTER (emit_gsl_stats_c), not reachable from a cfront source. So this probe drives the C twin's
 # bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:gsl_stats_mean` edge and asserts it
