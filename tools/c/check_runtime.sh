@@ -774,6 +774,7 @@ int main(void) {
   ok &= eq("c.call.libm:LAPACKE_sgesv", "-llapack");     /* the LAPACK rule (the wrapper's actual callee) */
   ok &= eq("c.call.libm:LAPACKE_dgesv", "-llapack");     /* any LAPACKE_* */
   ok &= eq("c.call.libm:LAPACKE_sgels", "-llapack");     /* E1 OLS: LAPACKE_sgels rides the SAME LAPACKE_* rule */
+  ok &= eq("c.call.libm:LAPACKE_ssyev", "-llapack");     /* E2 PCA: LAPACKE_ssyev rides the SAME LAPACKE_* rule */
   ok &= eq("c.call.libm:sgesv_", "-llapack");            /* the Fortran-ABI driver symbol */
   ok &= eq("c.call.libm:fftwf_execute", "-lfftw3");      /* B2 (no regression) */
   ok &= eq("c.call.libm:cblas_sgemm", "-lcblas");        /* B5 (no regression) */
@@ -826,6 +827,47 @@ ols_out="$("${tmp}/ols")"; ols_rc=$?    # rc=0 IS the recovery check: |c0-1|<1e-
 { [ "${ols_rc}" = "0" ] && printf '%s' "${ols_out}" | grep -q "^c0=.* c1=.*"; } \
   && echo "  PASS ols: normal-equations fallback recovers y=2x+1 (${ols_out}; LAPACKE_sgels -> -llapack via #linkflags-lapack)" \
   || { echo "  FAIL: OLS fallback did not recover [1,2] (rc=${ols_rc}: ${ols_out})"; exit 1; }
+
+# E2 (ML-breadth) PCA portable fallback (#pca): the SYMMETRIC EIGENDECOMPOSITION wrap (emit_lapack_eigh_c) is
+# the PCA sibling of E1's OLS solve -- where OLS forms a symmetric Gram matrix and SOLVES it, PCA forms a
+# symmetric covariance and EIGENDECOMPOSES it. The linked path is LAPACKE_ssyev (Householder + implicit-QR);
+# the portable fallback is the classic JACOBI rotation sweep (the C twin of kbcir.pca._jacobi_eigh). This probe
+# compiles + runs the FALLBACK (no LAPACK needed -- CI is LAPACK-free, exactly the Area-B norm) on a hand-built
+# DIAGONAL symmetric matrix diag(5,3,1) with DISTINCT (well-separated) eigenvalues, and checks it recovers the
+# eigenvalues DESCENDING [5,3,1] and the standard-basis eigenvectors (sign convention: largest-magnitude entry
+# positive). The LAPACKE_ssyev -> -llapack dual-rail is confirmed by the #linkflags-lapack probe above
+# (LAPACKE_ssyev rides the SAME LAPACKE_* rule -- no linkflags change).
+echo "[c-runtime] E2 PCA portable fallback (emit_lapack_eigh_c): Jacobi recovers a known spectrum (#pca)"
+python3 - > "${tmp}/eigh_kernel.c" <<'PY' || { echo "  FAIL: python PCA eigh emit"; exit 1; }
+from bcir.lower.c_kernel import emit_lapack_eigh_c
+print(emit_lapack_eigh_c(3, "eigh"))
+PY
+cat >> "${tmp}/eigh_kernel.c" <<'MAIN'
+#include <stdio.h>
+#include <math.h>
+int main(void) {
+  /* a hand-built symmetric matrix diag(5,3,1): eigenvalues [5,3,1] DESCENDING, eigenvectors = standard basis. */
+  float C[9] = {5.0f, 0.0f, 0.0f,  0.0f, 3.0f, 0.0f,  0.0f, 0.0f, 1.0f};
+  float vals[3] = {0}, vecs[9] = {0};
+  eigh(C, vals, vecs);                            /* vals descending, vecs[t*3+j] = component t coord j */
+  printf("l0=%.6f l1=%.6f l2=%.6f\n", vals[0], vals[1], vals[2]);
+  int ok = fabsf(vals[0] - 5.0f) < 1e-4f && fabsf(vals[1] - 3.0f) < 1e-4f && fabsf(vals[2] - 1.0f) < 1e-4f;
+  for (int t = 0; t < 3 && ok; ++t)               /* eigenvectors are the standard basis, sign convention */
+    for (int j = 0; j < 3; ++j) {
+      float want = (j == t) ? 1.0f : 0.0f;
+      if (fabsf(fabsf(vecs[t*3+j]) - want) >= 1e-4f) ok = 0;
+    }
+  ok = ok && vecs[0] > 0.0f && vecs[4] > 0.0f && vecs[8] > 0.0f;   /* largest-magnitude entry positive */
+  return ok ? 0 : 1;
+}
+MAIN
+"${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/eigh_kernel.c" -lm -o "${tmp}/eigh" 2>/dev/null \
+  || "${CC}" -std=c23 -O2 "${tmp}/eigh_kernel.c" -lm -o "${tmp}/eigh" \
+  || { echo "  FAIL: PCA eigh fallback build"; exit 1; }
+eigh_out="$("${tmp}/eigh")"; eigh_rc=$?    # rc=0 IS the recovery check: eigenvalues [5,3,1] + standard-basis vecs
+{ [ "${eigh_rc}" = "0" ] && printf '%s' "${eigh_out}" | grep -q "^l0=.* l1=.* l2=.*"; } \
+  && echo "  PASS pca: Jacobi fallback recovers diag(5,3,1) (${eigh_out}; LAPACKE_ssyev -> -llapack via #linkflags-lapack)" \
+  || { echo "  FAIL: PCA fallback did not recover [5,3,1] (rc=${eigh_rc}: ${eigh_out})"; exit 1; }
 
 # Area-B breadth (#62) GSL link-flag rule (dual-rail): the GSL edge (gsl_stats_mean) is minted by the kernel
 # EMITTER (emit_gsl_stats_c), not reachable from a cfront source. So this probe drives the C twin's

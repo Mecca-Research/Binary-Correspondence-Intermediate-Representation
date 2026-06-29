@@ -261,6 +261,19 @@ the decision path (`bcir/verify`, R1–R21) reads no telemetry.
     fallback (CI needs no LAPACK). Honest conditioning note: the normal equations square `cond(A)`, so the QR
     `sgels` path is the more stable; they agree to float round-off on a well-conditioned system. Off the
     legality path; the R17 bridge bound is the input round-trip alone.
+  - **E2 — PCA (principal component analysis)** (`bcir/kbcir/pca.py`, `emit_lapack_eigh_c`): the second
+    ML-breadth slice — it **generalizes OLS's "form a symmetric matrix then solve" into "form a symmetric matrix
+    then eigendecompose."** `pca_reference` centers the data, forms the symmetric covariance `C =
+    (1/(m−ddof))·Xcᵀ·Xc`, and eigendecomposes `C` (eigenvalues = explained variances, eigenvectors = principal
+    directions, sorted descending). The symmetric eig is **net-new** (nothing existed to reuse): a deterministic
+    **Jacobi rotation** solver is the source of truth — the analog of E1 reusing the trusted square solve. The
+    emitted C delegates to LAPACK's **`ssyev`** when linked (the *existing* `LAPACKE_*`→`-llapack` rule covers it
+    — no linkflags change), with a portable Jacobi fallback (CI needs no LAPACK). Independent verifiers
+    `eigen_residual` (`max|C·v − λ·v|`) and `orthonormality_residual` (`max|VᵀV − I|`) recompute directly from
+    `C` and the eigenpairs. Honest note: `ssyev` (Householder + QR) and Jacobi differ in realization but agree to
+    float round-off on well-separated eigenvalues; degenerate eigenvalues make eigenVECTORS non-unique. A
+    deterministic sign convention is applied on both rails. Off the legality path; the R17 bridge bound is the
+    input round-trip alone.
 - **5c tensor ops as claims — PARTIAL.** `gem.matmul` is a first-class planned claim with
   K_BCIR tile/loop search; there are no `gem.conv` / `gem.attention` / `gem.activation`
   ops.
