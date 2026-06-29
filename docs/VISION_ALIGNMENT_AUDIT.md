@@ -348,6 +348,16 @@ the decision path (`bcir/verify`, R1–R21) reads no telemetry.
     is op-level well-formedness (the quarantine rule: a transcendental-activation autoencoder needs f32; K-means
     assign / scaler transform / embedding are exact) — NOT a new R-law. Off the legality path; the R17 bridge
     bound is the input round-trip alone.
+  - **E7 — the ML language-placement analysis (the capstone)** ([`ML_LANGUAGE_PLACEMENT_ANALYSIS.md`](ML_LANGUAGE_PLACEMENT_ANALYSIS.md)):
+    the doc-only capstone of the E-series. It classifies every ML/numeric component (the substrate, the `gem.*`
+    ops, the Area-B wraps, the M-trio, and E1–E6) into a four-language hierarchy — **Python** (the oracle + the
+    iterative/combinatorial TRAIN/FIT halves + the autodiff Tape + the planners/cost model + the bridges), **C**
+    (the dual-rail verifier twin + the fixed-shape PREDICT/INFERENCE/TRANSFORM `emit_*_c` kernels + the
+    `c.call.libm:` edge + the Area-B BLAS/LAPACK/FFTW/GSL/SLEEF wraps), **MLIR** (the `gem.*` law rail + R1–R21 +
+    CostVectors), **C++** (the G8 boundary — the hand-off scaffold + the SYCL `-fsycl` backend) — with the
+    determining criterion and a migration map. The dominant pattern is the train/predict (fit/transform) split
+    crossed with the exact/transcendental and legality/cost axes; it confirms the two-truth quarantine (no ML
+    module emits a verdict) against the source.
 - **5c tensor ops as claims — PARTIAL (broadening).** `gem.matmul` is a first-class planned claim with
   K_BCIR tile/loop search, joined by `gem.activation` (relu / sigmoid / tanh / gelu / softmax), `gem.conv`, and
   the **G7 `gem.attention`** single-head scaled-dot-product op — and now the **E3 full Transformer encoder

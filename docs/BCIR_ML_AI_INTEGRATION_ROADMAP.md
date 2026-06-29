@@ -418,6 +418,21 @@ law, parity-gate. Throttled, parallel to C/driver work.*
       autoencoder needs f32 while K-means assign / scaler transform / embedding are exact) — NOT a new R-law
       (mirrors `check_classical`). The module **touches no verifier / emits no `Diagnostic`** (off the legality
       path, AST-inspected). Pure-Python oracle, deterministic.
+  - **E7 — the ML language-placement analysis (the CAPSTONE)** ([`ML_LANGUAGE_PLACEMENT_ANALYSIS.md`](ML_LANGUAGE_PLACEMENT_ANALYSIS.md)).
+    The doc-only capstone of the E-series: it classifies **every** ML/numeric component into a four-language
+    hierarchy — **Python / C / MLIR / C++** — with the determining reason, plus a migration map. The thesis: a
+    component's genuine language is fixed by **five criteria** (legality/cost two-truth quarantine; the
+    train-vs-predict / fit-vs-transform split; exact-vs-transcendental closure; the planned-tensor-claim cost
+    model; the C++ performance/runtime boundary), and the dominant pattern is the **train/predict split** crossed
+    with the **exact/transcendental** and **legality/cost** axes. The clean hierarchy: **Python** = the oracle /
+    source of truth + the iterative/combinatorial TRAIN/FIT halves (tree induction, the SVM dual QP, K-means'
+    Lloyd, the gradient loop, the autodiff Tape, the planners + cost model, the bridges); **C** = the dual-rail
+    verifier twin + the fixed-shape PREDICT/INFERENCE/TRANSFORM kernels (`emit_*_c`, the G5 baked-weights pattern)
+    + the `c.call.libm:` edge (exp/log/tanh/sqrt) + the five Area-B wraps (BLAS/LAPACK/FFTW/GSL/SLEEF); **MLIR** =
+    the law rail (the `gem.*` tensor-op claims + R1–R21 + CostVectors); **C++** = the G8 boundary (the hand-off
+    orchestrator scaffold + the SYCL `-fsycl` single-source backend). Cites the E5 `classical.py` / E6
+    `unsupervised.py` docstrings verbatim (they name "the research finding the E7 capstone cites"). Doc-only;
+    every ML module is verified off the legality path.
 - **B4 — Hybrid tropical + selective gradient.** Reframe training: the **tropical planner finds the structure**
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and
