@@ -9,7 +9,11 @@ exactly **two** roles, and is held out of a third on purpose:
    subgroup profile (lane widths `[1, 32]`, `warp: 32`, a 2-tier L1/HBM hierarchy, the fabric/sync cost
    dims) and routes a `data_parallel` / `matmul` / `reduce` claim to it like any other channel — no core
    edit, a pure plugin (see [`channels/README.md`](../channels/README.md) and
-   [`HETEROGENEOUS_CHANNELS.md`](HETEROGENEOUS_CHANNELS.md)).
+   [`HETEROGENEOUS_CHANNELS.md`](HETEROGENEOUS_CHANNELS.md)). Cross-device placement cost is now wired into
+   `orchestrate`, so the `sycl_spirv` channel is chosen for a claim **only when its compute savings beat
+   the host↔device transfer** (the `fabric`/`sync` cost of moving the claim's operands on/off the device) —
+   a small operand offloads, a large one stays on the host. See the "Cross-device placement cost
+   (fabric/sync)" section of [`HETEROGENEOUS_CHANNELS.md`](HETEROGENEOUS_CHANNELS.md).
 
 2. **A differential ORACLE.** Before committing to a resident SYCL driver, we **measure** that a
    heterogeneous device reproduces BCIR's own deterministic reference. The canonical data-parallel op is

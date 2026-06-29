@@ -265,7 +265,14 @@ from dataclasses import dataclass as _dc  # noqa: E402 (kept local to the orches
 @_dc(frozen=True)
 class ChannelPlacement:
     """One claim's assignment in a heterogeneous tower: the channel chosen, the K_BCIR realization
-    on it, and that realization's cost. The same K_BCIR arithmetic on the channel's profile."""
+    on it, and that realization's cost. The same K_BCIR arithmetic on the channel's profile.
+
+    ``cost`` is the claim's COMPUTE cost (the channel's K_BCIR realization score, scalarized under the
+    plan policy). ``transfer_cost`` is the CROSS-DEVICE TRANSFER charged to LAND the claim's inputs on
+    this channel when a producer wrote them on a *different* channel (FABRIC ∝ bytes moved + a SYNC
+    barrier per cross-device edge, scalarized under the same policy weights). It is 0 for a same-channel
+    edge or a live-in (see `_transfer_cost` / orchestrate). The placement's full burdened cost is
+    ``cost + transfer_cost``."""
     claim_id: int
     op: str
     channel: str
@@ -273,17 +280,35 @@ class ChannelPlacement:
     realization: str
     width: int
     cost: int
+    transfer_cost: int = 0
 
 
 @_dc(frozen=True)
 class HeterogeneousPlan:
     """A module planned across a tower: per-claim channel placements that decompose to a single
-    GEM StreamPack (each segment carrying its channel dispatch). One binary graph, many backends."""
+    GEM StreamPack (each segment carrying its channel dispatch). One binary graph, many backends.
+
+    ``total_cost`` is the burdened total: the sum of per-claim compute costs PLUS the cross-device
+    transfer the placement pays to move inputs between backends (``transfer_total``). A single-channel
+    tower has no cross-channel edges, so ``transfer_total == 0`` and the burdened total equals the
+    oracle's single-channel score (the invariant the cpu-only test pins)."""
     placements: tuple
 
     @property
-    def total_cost(self) -> int:
+    def compute_cost(self) -> int:
+        """The sum of per-claim K_BCIR realization (compute) costs, ignoring cross-device transfer."""
         return sum(p.cost for p in self.placements)
+
+    @property
+    def transfer_total(self) -> int:
+        """The total cross-device transfer the plan pays (FABRIC bytes + SYNC barriers); 0 when every
+        producer->consumer edge stays on one channel (single-channel tower / no offload)."""
+        return sum(p.transfer_cost for p in self.placements)
+
+    @property
+    def total_cost(self) -> int:
+        """The burdened total: per-claim compute + cross-device transfer."""
+        return sum(p.cost + p.transfer_cost for p in self.placements)
 
     @property
     def channels_used(self) -> set:
@@ -320,24 +345,77 @@ def _claim_suits_channel(claim, ch: HardwareChannel) -> bool:
     return False
 
 
+# --- cross-device transfer cost (the fabric/sync dimensions wired into placement) ----------------
+# A claim placed on a channel different from the one that produced its inputs pays to MOVE that data
+# host<->device. This is the first real producer of the FABRIC cost dim (SYNC was only the BARRIER
+# at realize.py): a cross-channel producer->consumer edge costs
+#
+#     FABRIC = (bytes(R) * XFER_BW_Q8) >> 8        # bytes ∝ traffic, Q8-scaled to the memory scale
+#     SYNC   = XFER_SYNC                           # one cross-device barrier per dependency
+#
+# where bytes(R) = R.count * elem_bytes. XFER_BW_Q8 = 64 (x0.25) makes the FABRIC term for moving a
+# resource equal to ONE memory-stream-equivalent of that resource on the cost model's scale: realize's
+# `mem_shared` charges (count * mem_unit * 256) >> 8 == count per stream, and bytes/4 == count for the
+# default 4-byte element, so a cross-device operand transfer is the same order as one memory pass over
+# it -- not a wildly different scale. XFER_SYNC = 16 mirrors the BARRIER `sync=16` at realize.py (one
+# barrier per cross-device dependency). Same-channel edges and live-ins (resources no claim in the
+# module writes) cost ZERO: a same-channel edge needs no move, and a live-in is assumed pre-resident
+# on whatever channel first consumes it (a v1 scope limit -- placement does not yet model staging a
+# live-in to a device). This keeps a single-channel tower at exactly the oracle's single-channel score.
+XFER_BW_Q8 = 64        # Q8 fabric-bandwidth factor: bytes -> fabric units (x0.25 == 1 mem-stream/elem)
+XFER_SYNC = 16         # cross-device barrier constant (matches the realize.py BARRIER sync=16)
+
+
+def _transfer_cost(module, claim, consumer_channel, producer_of, weights_vec) -> int:
+    """The cross-device transfer charged to land ``claim``'s inputs on ``consumer_channel``, scalarized
+    under ``weights_vec`` (the same policy weights orchestrate scores compute costs with, so the term is
+    in the SAME units as ``step.cost`` -- a scalarized int). For each read RID, if a prior claim wrote
+    it on a *different* channel, charge FABRIC ∝ bytes(R) + one SYNC barrier; same-channel producers and
+    live-ins (no producer in the module) cost zero. Summed over the claim's reads."""
+    from .kbcir.cost import CostVector
+
+    xfer = CostVector.zero()
+    consumer_elem_bytes = consumer_channel.profile.elem_bytes
+    for rid in claim.rd:
+        src = producer_of.get(rid)
+        if src is None or src == consumer_channel.name:
+            continue                                 # live-in (assume resident) or same-channel: free
+        res = module.resource(rid)
+        count = res.count if res is not None else 1
+        nbytes = count * consumer_elem_bytes
+        fabric = (nbytes * XFER_BW_Q8) >> 8
+        xfer = xfer + CostVector.of(fabric=fabric, sync=XFER_SYNC)
+    return xfer.dot(weights_vec)
+
+
 def orchestrate(module, channels, theta, policy=None) -> HeterogeneousPlan:
     """Plan a module across a TOWER of heterogeneous channels (x86 + ARM + GPU + FPGA + NVMe + HBM).
 
-    For each claim, among the channels whose *kind* suits it, pick the one whose K_BCIR cost is
-    lowest -- so a large reduction may land on the HBM/PIM module, a tiled matmul on the FPGA, a
-    gather on the GPU, and control on the CPU, all in one plan. Every placement is the same K_BCIR
-    realization arithmetic on that channel's profile, so the result decomposes to a single GEM
-    StreamPack whose segments carry their channel dispatch: one binary graph, executed across the
-    whole tower. ``channels`` is the tower (a list of HardwareChannel)."""
+    A GREEDY FORWARD PASS in topological claim order. For each claim, among the channels whose *kind*
+    suits it, pick the one whose K_BCIR compute cost PLUS the cross-device transfer to land its inputs
+    is lowest -- so a large reduction may land on the HBM/PIM module, a tiled matmul on the FPGA, a
+    gather on the GPU, and control on the CPU, but only when the compute savings beat the host<->device
+    transfer. Every placement is the same K_BCIR realization arithmetic on that channel's profile, so
+    the result decomposes to a single GEM StreamPack whose segments carry their channel dispatch: one
+    binary graph, executed across the whole tower. ``channels`` is the tower (a list of HardwareChannel).
+
+    The transfer term (FABRIC ∝ bytes moved + a SYNC barrier, see `_transfer_cost`) is the first real
+    producer of the FABRIC cost dim and makes offload a genuine cost-governed decision: a claim only
+    moves off its producer's channel when its compute is enough cheaper there to pay the move. Because a
+    claim's transfer cost depends on where its producers already landed, the pass is order-dependent --
+    the greedy forward placement IS the model. Tie-breaks stay deterministic (burdened cost, then
+    channel name)."""
     from .kbcir.realize import optimize, _flatten
-    from .kbcir.weights import PERF
+    from .kbcir.weights import PERF, weights as _weights
 
     policy = policy or PERF
     plans = {c.name: optimize(module, c.profile, theta, policy) for c in channels}
     step_of = {c.name: {s.claim_id: s for s in plans[c.name].steps} for c in channels}
 
     placements = []
-    for _phase, claim in _flatten(module):
+    producer_of: dict[int, str] = {}     # rid -> name of the channel the claim that WROTE it landed on
+    for phase_id, claim in _flatten(module):
+        wv = _weights(None, theta, phase_id, policy)   # policy weights for this phase (target-neutral)
         cands = [(c, step_of[c.name][claim.id]) for c in channels
                  if channel_suits(claim, c) and claim.id in step_of[c.name]]
         if not cands:                                # nothing suits -> the host CPU channel
@@ -345,9 +423,13 @@ def orchestrate(module, channels, theta, policy=None) -> HeterogeneousPlan:
             if hc.name not in step_of:
                 step_of[hc.name] = {s.claim_id: s for s in optimize(module, hc.profile, theta, policy).steps}
             cands = [(hc, step_of[hc.name][claim.id])]
-        ch, step = min(cands, key=lambda x: (x[1].cost, x[0].name))   # cheapest suitable (det. tie-break)
+        # burdened cost = the channel's compute score + the cross-device transfer to land inputs there.
+        scored = [(c, step, _transfer_cost(module, claim, c, producer_of, wv)) for c, step in cands]
+        ch, step, xfer = min(scored, key=lambda x: (x[1].cost + x[2], x[0].name))  # det. tie-break
         placements.append(ChannelPlacement(claim.id, claim.op, ch.name, ch.kind,
-                                           step.candidate.name, step.candidate.width, step.cost))
+                                           step.candidate.name, step.candidate.width, step.cost, xfer))
+        for rid in claim.wr:                         # record where this claim's outputs now live
+            producer_of[rid] = ch.name
     return HeterogeneousPlan(tuple(placements))
 
 
