@@ -125,6 +125,19 @@ GNN MoE router (`moegate`), Bayesian calibrator (`bayescal`), soft-DP posterior
 path is the hand-set allocator placer). They optimize *plan selection*, not memory layout
 or fusion — i.e. none of them is the "Layer-1 AI" the vision describes.
 
+**Telemetry signal-provider registry (T1) — BUILT (cost-side only).** The graded L2/L3
+measurement seam now has a vendor-neutral PAPI-component registry
+([`SIGNAL_REGISTRY.md`](SIGNAL_REGISTRY.md), `bcir/signal_registry.py`): typed providers
+wrapping `bcir/silicon.py` (thermal/die-temp → `thermal`, RAPL energy → `power`, cpufreq →
+`compute`, L1/L2/L3 cache → `memory`, PMU capability → `compute`) plus honest-unavailable
+gap providers (GPU/BMC power, mem-bandwidth, fabric, throttle, reliability) so the namespace
+is complete and a future NVML/amd-smi/Redfish backend just fills them in. Provenance/units
+live on a `MetricDefinition` (Redfish split); a `register()` plugin seam mirrors the channel
+plugin; `registry_for_channel` maps `energy_source`→power provider. It is strictly on the
+*cost/optimization* side: it returns only `Reading`/`None` (never a verdict/Diagnostic),
+surfaces a graded 0..100 signal to feed `theta`, and touches neither `bcir/verify` nor the
+cost-vector DIMS — the two-truth quarantine, applied to measurement.
+
 ### Pillar 4 — tropical / lifting / linearization / precision
 
 - **4a kernel-arithmetic tropical rewrite — BY DESIGN NOT DONE (vision clarification).**

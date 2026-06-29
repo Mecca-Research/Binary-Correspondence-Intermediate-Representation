@@ -128,6 +128,20 @@ mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 a
 - **T1** — a vendor-neutral **signal-provider registry** (PAPI-component model): one provider per
   `energy_source`/dim behind a stable typed interface; honest `None` when absent; provenance on the
   definition (Redfish 4-split). Pure Python oracle + a metric-definition schema. Fully testable.
+  **BUILT** — `bcir/signal_registry.py` (+ `bcir/tests/test_signal_registry.py`). See
+  [`SIGNAL_REGISTRY.md`](SIGNAL_REGISTRY.md). `MetricDefinition` (units/dim/provenance/`sampling_model`)
+  / `Reading` (one sample) / `SignalProvider` (ABC) / `SignalRegistry` (the `register()` plugin seam,
+  `snapshot()`/`availability()`). **Wired** (wrapping `bcir/silicon.py`, mapped to a cost dim):
+  thermal pressure + die-temp (`thermal`), RAPL energy counter (`power`; watts is T3-derived), CPU
+  nominal freq (`compute`), L1/L2/L3 cache capacity (`memory`), PMU capability (`compute`; the actual
+  counters stay work-scoped in `silicon.py`). **Honest-unavailable** vocabulary-completing gap
+  providers (a real definition, `available()→False`/`read()→None` until a backend lands): GPU power
+  (NVML/amd-smi) + BMC power (Redfish) → `power`, memory bandwidth (PCM/DCGM) → `memory`, fabric bytes
+  (NVLink/PCIe/UPI) → `fabric`, throttle state → `contention`, reliability (ECC/XID/RUL) →
+  `reliability`. `registry_for_channel(ch)` picks the power provider matching `ch.runtime.energy_source`
+  (`rapl`→RAPL, `nvml`→GPU, `hwmon`→hwmon-power, `none`→none). Off the legality path: a provider returns
+  only a `Reading`/`None`, never a verdict/Diagnostic; `theta_pressures()` surfaces the graded 0..100
+  signal to feed `theta` without touching `bcir/verify` or the cost-vector DIMS.
 - **T2** — the **UART telemetry frame**: a StreamPack/SyS-T-style framed, CRC-sealed record stream; a
   C producer drains `TelemetryRing`; the host decoder reuses RT3 (`sanitize_events`/`TelemetryIntegrity`).
   Resync-on-magic; per-frame CRC; sequence/timestamp for drop/reorder. (Feeds the planned UART driver.)
