@@ -277,6 +277,33 @@ class ComputedGoto:
     target: object                  # `goto *expr;` — an indirect jump to a taken label address (GNU)
 
 
+@dataclass(frozen=True)
+class AsmStmt:
+    """GNU inline assembly as an ISA-neutral trusted opaque effect edge (ASM1). The assembly TEMPLATE is
+    opaque/trusted and re-emitted VERBATIM; BCIR owns only the *calling side* — the operand binding, the
+    constraints, the clobber declaration, and the ordering semantics. NOT interpreted, computes no verified
+    value (off the legality value-path), exactly like the `c.call.libm.void:` external-effect family.
+      * `template`     — the assembly string's source spelling (the surrounding quotes intact; adjacent
+                         string-literal concatenation is joined here, like other string operands).
+      * `outputs`      — list of (symbolic_name | None, constraint_str, lvalue_expr). A `"="` output is
+                         write-only; a `"+"` output is read+write (its lvalue is also read).
+      * `inputs`       — list of (symbolic_name | None, constraint_str, value_expr).
+      * `clobbers`     — list of clobber-string source spellings (`"memory"`, `"cc"`, `"rax"`, …).
+      * `is_volatile`  — True for `asm volatile`/`asm __volatile__`, AND implicitly for a *basic* asm (no
+                         operand sections): a volatile/basic asm is a side-effecting edge that must NOT be
+                         dead-code-eliminated, and a `"memory"` clobber / volatile asm is an ordering barrier.
+      * `goto_labels`  — the `asm goto` label list (parsed for grammar completeness; rejected with an honest
+                         diagnostic in lowering — `asm goto` control flow is deferred)."""
+    template: str
+    outputs: tuple = ()
+    inputs: tuple = ()
+    clobbers: tuple = ()
+    is_volatile: bool = False
+    goto_labels: tuple = ()
+    is_goto: bool = False           # the `asm goto` qualifier was present (parsed for grammar completeness,
+                                    #   rejected in lowering even if the label list is grammatically empty)
+
+
 # --- top level ---
 @dataclass(frozen=True)
 class Param:

@@ -28,6 +28,9 @@ KEYWORDS = frozenset({
     "void", "_Bool", "bool", "char", "short", "int", "long", "unsigned", "signed",
     "const", "volatile", "static", "inline", "sizeof", "typedef", "enum",
     "_BitInt",                                   # C23 bit-precise integer type `_BitInt(N)` (§6.2.5)
+    "asm", "__asm__", "__volatile__",            # GNU inline assembly: the asm-statement keyword (both
+                                                 #   spellings) + the qualifier (`volatile` already lexes
+                                                 #   for the `__volatile__` synonym; ASM1 trusted opaque edge)
 })
 
 # Multi-char operators first (longest-match), then single-char.

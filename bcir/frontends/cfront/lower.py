@@ -57,6 +57,15 @@ _CAST_W = {1: "uint8_t", 2: "uint16_t", 4: "uint32_t", 8: "uint64_t"}
 _CAST_W_SIGNED = {1: "int8_t", 2: "int16_t", 4: "int32_t", 8: "int64_t"}
 
 
+def _strip_quotes(spelling: str) -> str:
+    """The inner content of a string-literal source spelling (`"=r"` -> `=r`, `"memory"` -> `memory`).
+    Used for inline-asm (ASM1) constraints/clobbers, which are simple unescaped quoted strings; the
+    surrounding double quotes are dropped (a non-quoted input is returned unchanged, defensively)."""
+    if len(spelling) >= 2 and spelling[0] == '"' and spelling[-1] == '"':
+        return spelling[1:-1]
+    return spelling
+
+
 def _cast_name(ct: CType) -> str:
     if ct.kind == "pointer":
         return _cast_name(ct.of) + " *" if ct.of else "void *"
@@ -400,6 +409,26 @@ class ComputedGotoNode:
 
 
 @dataclass
+class AsmInfo:
+    """The verbatim, ISA-neutral payload of one inline-asm claim (ASM1) -- everything the emitter needs to
+    reconstruct the exact GNU `__asm__` statement, since the claim's `imm` is int-only. Keyed by claim id in
+    `LoweredFunc.asm_meta`. The template + constraints + clobbers are SOURCE spellings (re-emitted unchanged
+    -> ISA-neutral pass-through); the operand RIDs live on the claim's `rd`/`wr` (so the alias/effect/verify
+    machinery sees the real read/write set). `out_n` is the number of leading operands that are OUTPUTS (the
+    rest are INPUTS), so the emitter splits the operand list back into the two `:` sections; `out_rids` /
+    `in_rids` are the per-operand RIDs in source order so the constraints pair up 1:1 with their refs."""
+    template: str
+    out_names: tuple                       # per-output (symbolic_name | None)
+    out_constraints: tuple                 # per-output constraint source spelling ("=r", "+r", …)
+    out_rids: tuple                        # per-output destination RID
+    in_names: tuple                        # per-input  (symbolic_name | None)
+    in_constraints: tuple                  # per-input  constraint source spelling ("r", "m", …)
+    in_rids: tuple                         # per-input  value RID
+    clobbers: tuple                        # clobber source spellings ("\"memory\"", "\"cc\"", …)
+    is_volatile: bool
+
+
+@dataclass
 class SwitchNode:
     disc: int                              # the discriminant rid (lowered once)
     body: list                             # flat: CaseLabel | DefaultLabel | Claim | control nodes
@@ -492,6 +521,8 @@ class LoweredFunc:
                                           #   neutral, so the emit drops it). Default False == every
                                           #   un-annotated function, undisturbed.
     ptr_extent: dict = field(default_factory=dict)      # §5.12: pointer rid -> recovered extent (count) variable rid
+    asm_meta: dict = field(default_factory=dict)        # ASM1: claim id -> AsmInfo (the verbatim inline-asm payload
+                                                        #   the emitter reconstructs the `__asm__(...)` statement from)
 
 
 @dataclass
@@ -547,6 +578,7 @@ class _FuncLowerer:
         self._mut_body: dict[str, int] = {}            # name -> NON-decl-init assignments only (count gate)
         self._mut_addr: set[str] = set()               # names whose address is taken anywhere (`&x`)
         self._ext_ctr = 0                              # unique hidden extent-snapshot locals (`__bcir_extK`)
+        self.asm_meta: dict[int, AsmInfo] = {}         # ASM1: claim id -> AsmInfo (verbatim inline-asm payload)
 
     def _next_loop_id(self) -> int:
         self.loop_ctr += 1
@@ -1611,6 +1643,76 @@ class _FuncLowerer:
         self._write(lv, v)
         return v if stmt else self._read(lv)                   # value context: the stored/converted value (re-read)
 
+    # --- inline assembly (ASM1): an ISA-neutral TRUSTED OPAQUE EFFECT EDGE, modeled on c.call.libm.void: ---
+    def _asm_output_rid(self, name_or_none, constraint: str, lvalue) -> int:
+        """The destination RID for one extended-asm OUTPUT operand `"=c"(lvalue)` / `"+c"(lvalue)`. ASM1
+        supports a scalar NAMED LOCAL lvalue (the dominant portable form: `asm("" : "=r"(y) : "r"(x))`), whose
+        rid IS its mutable storage -- the asm writes through it, so a downstream read of the variable sees the
+        new value, exactly like an assignment. A non-named-local / non-scalar / bitfield / MMIO output lvalue
+        is a follow-on (deferred), reported as an honest diagnostic that routes to the LLVM fallback."""
+        if isinstance(lvalue, cast.Name) and lvalue.ident in self.env:
+            rid, ct = self._lookup(lvalue.ident, lvalue.pos)
+            if ct.kind != "scalar":
+                raise CLowerError(
+                    f"inline-asm output to a non-scalar lvalue ('{lvalue.ident}') is a follow-on")
+            return rid
+        raise CLowerError(
+            "inline-asm output operand must be a scalar local variable in this subset (a member / array / "
+            "deref / bitfield / MMIO output lvalue is a follow-on)")
+
+    def _asm_stmt(self, st: cast.AsmStmt) -> None:
+        """Lower a GNU inline-asm statement to a TRUSTED OPAQUE EFFECT EDGE -- a `c.asm:` (or
+        `c.asm.volatile:`) claim, the sibling of `c.call.libm.void:`. The assembly template + per-operand
+        constraints + clobbers are stashed VERBATIM in an `AsmInfo` (keyed by claim id) so the emit
+        reconstructs the exact `__asm__` statement (ISA-neutral pass-through); the operand RIDs ride the
+        claim's read/write set so the alias/effect/verify machinery sees the real footprint.
+
+        Semantics:
+          * an INPUT operand's value rid is a READ; a `"+"` (read-write) OUTPUT lvalue is BOTH read + written;
+            a `"="` (write-only) OUTPUT lvalue is a WRITE.
+          * a `volatile` asm (and a basic asm, which is implicitly volatile) is a SIDE-EFFECTING edge: it must
+            NOT be dead-code-eliminated even with unused outputs. The cfront emit walks `lf.body` (every claim,
+            in source order) -- it never reorders or drops a claim -- so the asm edge is conservatively never
+            moved/eliminated. A `"memory"` clobber / `volatile` asm additionally carries the `barriered` hazard
+            (the existing MMIO ordering-barrier marker) so any consumer of the hazard contract treats it as an
+            ordering fence, never to be reordered or fused across.
+          * `asm goto` (a label list) is rejected with an honest diagnostic -- its control flow is deferred."""
+        if st.is_goto or st.goto_labels:
+            raise CLowerError("`asm goto` (label operands) is not yet supported (deferred to a later slice)")
+        in_rids: list = []
+        in_names: list = []
+        in_constraints: list = []
+        for nm, constraint, expr in st.inputs:                # inputs first: their value rids are pure reads
+            in_rids.append(self._rvalue(expr))
+            in_names.append(nm)
+            in_constraints.append(_strip_quotes(constraint))
+        out_rids: list = []
+        out_names: list = []
+        out_constraints: list = []
+        rw_reads: list = []                                   # `"+"` outputs are also reads
+        for nm, constraint, lvalue in st.outputs:
+            dest = self._asm_output_rid(nm, constraint, lvalue)
+            out_rids.append(dest)
+            out_names.append(nm)
+            out_constraints.append(_strip_quotes(constraint))
+            if "+" in constraint:                             # read-write output: the lvalue is read too
+                rw_reads.append(dest)
+        # a `"memory"` clobber OR a volatile asm is an ordering barrier; mark it with the existing
+        # `barriered` hazard so it is treated as a fence (never reordered/fused across) -- else `unique`.
+        clob_spellings = tuple(st.clobbers)
+        is_barrier = st.is_volatile or any(_strip_quotes(c) == "memory" for c in clob_spellings)
+        hazard = "barriered" if is_barrier else "unique"
+        op = "c.asm.volatile:" if st.is_volatile else "c.asm:"
+        rd = tuple(in_rids) + tuple(rw_reads)                 # inputs + read-write output lvalues (reads)
+        wr = tuple(out_rids)                                  # write-only + read-write output lvalues (writes)
+        self._emit(op, Opcode.GEM_DISPATCH, rd, wr, hazard=hazard)
+        claim_id = self.cid[0]                                # the id `_emit` just assigned (== the claim's .id)
+        self.asm_meta[claim_id] = AsmInfo(
+            template=st.template, out_names=tuple(out_names), out_constraints=tuple(out_constraints),
+            out_rids=tuple(out_rids), in_names=tuple(in_names), in_constraints=tuple(in_constraints),
+            in_rids=tuple(in_rids), clobbers=tuple(_strip_quotes(c) for c in clob_spellings),
+            is_volatile=st.is_volatile)
+
     # GCC/Clang atomic + fence builtins -> the BCIR ATOMIC_*/BARRIER opcodes (§5.8).
     _ATOMIC = {"__atomic_fetch_add": ("c.atomic.add", Opcode.ATOMIC_ADD),
                "__atomic_fetch_sub": ("c.atomic.sub", Opcode.ATOMIC_SUB),
@@ -1944,6 +2046,8 @@ class _FuncLowerer:
             self.block_stack[-1].append(ComputedGotoNode(self._rvalue(st.target)))
         elif isinstance(st, cast.Label):
             self.block_stack[-1].append(LabelNode(st.name))
+        elif isinstance(st, cast.AsmStmt):
+            self._asm_stmt(st)
         else:
             raise CLowerError(f"statement {type(st).__name__} is beyond the L1–L6 subset")
         return None
@@ -2011,7 +2115,8 @@ class _FuncLowerer:
                            statics=list(self.statics), globals_used=gnames,
                            zero_init_locals=set(self.zero_init), variadic=self.func.variadic,
                            reproducible=getattr(self.func, "reproducible", False),
-                           ptr_extent=dict(self.ptr_extent))
+                           ptr_extent=dict(self.ptr_extent),
+                           asm_meta=dict(self.asm_meta))
 
 
 def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Region":

@@ -113,6 +113,40 @@ input under the same policy; the cross-rail exit-code parity is gated in `tools/
 uaf.c: lifetime error: R21 f: use-after-free of RID 102 (freed and not re-allocated)
 ```
 
+## Inline assembly (ASM1)
+
+GNU inline assembly — `asm` / `__asm__`, basic and extended — is modeled as an **ISA-neutral trusted
+opaque effect edge**, exactly like the `c.call.libm.void:` external-effect family. It is **not
+interpreted**: the assembly *template* is opaque and trusted, and BCIR owns only the **calling side** —
+the operand binding, the constraints, the clobber declaration, and the ordering semantics.
+
+```c
+asm("nop");                                    // basic — implicitly volatile
+asm volatile("" ::: "memory");                 // a compiler ordering barrier
+asm("" : "=r"(out) : "r"(in));                 // extended: outputs : inputs : clobbers
+asm("" : [o]"=r"(out) : [i]"r"(in) : "cc");    // symbolic names + a clobber
+```
+
+- **Verbatim, ISA-neutral pass-through.** The template + per-operand constraints + clobber list are
+  re-emitted unchanged as a GNU statement, in the reserved `__asm__` / `__volatile__` spellings so the
+  output is valid even under `-std=c11 -pedantic`. The same asm therefore compiles on whatever target the
+  C compiler targets — no per-ISA logic in this slice.
+- **BCIR owns the calling side.** Each lowers to a `c.asm:` (or `c.asm.volatile:`) claim whose **read**
+  operands are the input values (plus any `"+"` read-write output lvalue read) and whose **written**
+  operands are the output lvalues — so the alias/effect/verify machinery sees the real footprint. Output
+  operands must be scalar local variables in this slice (a member / array / deref / bitfield / MMIO output
+  lvalue is a follow-on).
+- **Off the legality value-path.** The asm edge computes no verified value and emits no R-law verdict — it
+  is a trusted opaque effect, like a `c.call.libm` edge.
+- **Side-effect + barrier ordering.** A `volatile` asm (and a *basic* asm, which is implicitly volatile) is
+  a side-effecting edge that is **never dead-code-eliminated**, even with unused outputs: the emit walks the
+  claim graph in source order and never reorders or drops a claim. A `"memory"`-clobber or `volatile` asm
+  additionally carries the `barriered` hazard — an **ordering fence** that is never reordered or fused
+  across.
+- **Deferred.** `asm goto` (label operands) is parsed for grammar completeness but rejected with an honest
+  diagnostic. Per-ISA *semantic* modeling (port-I/O intrinsics, hardware barriers) is **ASM2 / ASM3**, not
+  this slice — here raw inline asm is a trusted, re-emitted-verbatim edge.
+
 ## What's supported
 
 - Fixed-width and core integer types, `_Bool`/`char`, `void`, `float`/`double`/`long double`, pointers,

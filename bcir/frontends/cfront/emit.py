@@ -11,6 +11,7 @@ from __future__ import annotations
 from ...model import Claim
 from .ctype_model import CType
 from .lower import (
+    AsmInfo,
     BreakNode,
     CaseLabel,
     ComputedGotoNode,
@@ -159,6 +160,35 @@ def _walk(lf: LoweredFunc, block: list, ref, depth: int, loops: list | None = No
     return out
 
 
+def _asm_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
+    """Re-emit one inline-asm claim (ASM1) as a VERBATIM GNU `__asm__` statement. The template +
+    constraints + clobbers pass through unchanged (ISA-neutral); each operand renders as
+    `[name] "constraint" (ref(rid))` using the same `ref(...)` operand printer the other trusted edges use.
+    The reserved spellings `__asm__` / `__volatile__` are used so the emitted C is valid even under
+    `-std=c11 -pedantic`. A BASIC asm (no operand sections) renders as `__asm__ [__volatile__] ("template");`
+    so re-parsing it round-trips; an EXTENDED asm always emits all three `:` sections (empty ones included)."""
+    info: AsmInfo = lf.asm_meta[c.id]
+    vol = " __volatile__" if info.is_volatile else ""
+
+    def operand(name, constraint, rid) -> str:
+        sym = f"[{name}] " if name else ""
+        return f'{sym}"{constraint}" ({ref(rid)})'
+
+    outs = info.out_rids
+    ins = info.in_rids
+    # `info.template` is the SOURCE spelling (quotes intact, adjacent-literal concatenation joined) -- emitted
+    # unchanged (ISA-neutral verbatim pass-through), so no quotes are re-added around it.
+    # a BASIC asm: no operands, no clobbers, not parsed with any `:` -- emit the bare 1-colon form.
+    if not outs and not ins and not info.clobbers:
+        return f'__asm__{vol} ({info.template});'
+    out_s = ", ".join(operand(n, ct, r) for n, ct, r in
+                      zip(info.out_names, info.out_constraints, info.out_rids))
+    in_s = ", ".join(operand(n, ct, r) for n, ct, r in
+                     zip(info.in_names, info.in_constraints, info.in_rids))
+    clob_s = ", ".join(f'"{cl}"' for cl in info.clobbers)
+    return f'__asm__{vol} ({info.template} : {out_s} : {in_s} : {clob_s});'
+
+
 def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     suf = c.op.split(".", 2)[-1] if "." in c.op else c.op
 
@@ -290,6 +320,8 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     if c.op.startswith("c.call.libm.void:"):                 # a void external (free) -- verbatim statement, opaque
         callee = c.op.split(":", 1)[1]
         return f"{callee}({', '.join(ref(r) for r in c.rd)});"
+    if c.op == "c.asm:" or c.op == "c.asm.volatile:":        # inline assembly (ASM1): a TRUSTED OPAQUE EFFECT
+        return _asm_stmt(lf, c, ref)                          # EDGE -- re-emit the GNU __asm__ statement VERBATIM
     if c.op.startswith("c.call.extern:"):                    # a printf/scanf-family external variadic call
         callee = c.op.split(":", 1)[1]                       # emitted verbatim against <stdio.h>, returns int
         return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})", "int")

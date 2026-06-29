@@ -487,6 +487,12 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 | L7 | preprocessor — object/function/variadic `#define` (+ `#`/`##`, `__VA_ARGS__`/`__VA_OPT__`), `#if`/`#ifdef`/`#elifdef`, predefined macros (`__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), `#line`, `_Pragma`, `#include`, C23 `#embed` (→ const globals) | ✅ |
 | L8 | ABI — struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked against Clang's `sizeof`/`offsetof` | ✅ |
 
+> **Inline assembly (ASM1)** — GNU `asm`/`__asm__` (basic + extended) is an **ISA-neutral trusted opaque
+> effect edge** (the `c.asm:` / `c.asm.volatile:` sibling of `c.call.libm.void:`): the template is re-emitted
+> **verbatim**, BCIR owns only the calling side (operands + constraints + clobbers + ordering), volatile/basic
+> asm is never DCE'd and a `"memory"`-clobber / `volatile` asm is an ordering barrier. Per-ISA *semantic*
+> modeling (port-I/O intrinsics, hardware barriers) is **ASM2 / ASM3** — see `docs/CFRONT_GUIDE.md`.
+
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
 register-map header now ingests through L7 → L5 → an R1–R18-clean plan with `bcir-explain`,
 behaviour-equivalent to Clang. Next: **Phase D** — the first real driver behind a `channel.json`
