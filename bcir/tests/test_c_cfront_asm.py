@@ -84,13 +84,16 @@ def _both_compile(c_text: str) -> str:
 # --- (1) lexing ---------------------------------------------------------------------------------
 
 def test_asm_keywords_are_registered():
-    assert {"asm", "__asm__", "__volatile__"} <= KEYWORDS
-    # `volatile` was already a keyword (it lexes the volatile spelling); we only add the GNU synonyms.
-    assert "volatile" in KEYWORDS
+    # only the DOUBLE-UNDERSCORE spellings are reserved keywords (implementation-reserved, benign). Plain
+    # `asm` is NOT a keyword -- it stays a usable ISO-C identifier under -std=c11 (see
+    # test_plain_asm_is_a_usable_identifier); the asm STATEMENT is recognized contextually.
+    assert {"__asm__", "__volatile__"} <= KEYWORDS
+    assert "asm" not in KEYWORDS
+    assert "volatile" in KEYWORDS              # already a keyword (it lexes the volatile spelling)
 
 
 def test_asm_lexes_as_an_identifier_token():
-    # keywords lex as IDENT tokens (the parser decides their role) -- asm/__asm__ are no exception.
+    # keywords + `asm` all lex as IDENT tokens (the parser decides their role).
     toks = [t.text for t in tokenize('asm __asm__ __volatile__ x') if t.kind == "IDENT"]
     assert toks == ["asm", "__asm__", "__volatile__", "x"]
 
@@ -151,6 +154,53 @@ def test_parse_adjacent_template_concatenation():
 def test_parse_asm_goto_is_recorded():
     s = parse_unit('void f(int x){ asm goto("" : : "r"(x) : : L1, L2); L1: ; L2: ; }').funcs[0].body[0]
     assert s.is_goto is True and s.goto_labels == ("L1", "L2")
+
+
+def test_plain_asm_is_a_usable_identifier():
+    # `asm` is NOT a global keyword (only `__asm__`/`__volatile__` are reserved) -- it stays a usable ISO-C
+    # identifier under -std=c11, recognized as a STATEMENT only when followed by `(` or a qualifier. (Regression
+    # for the Clang-equivalence break where a plain-`asm` keyword rejected `int asm = 3;` etc.)
+    # a local named `asm`:
+    s = parse_unit('int f(void){ int asm = 3; return asm; }').funcs[0].body
+    assert type(s[0]).__name__ == "Decl" and s[0].name == "asm"
+    # a parameter named `asm`:
+    g = parse_unit('int g(int asm){ return asm + 1; }').funcs[0]
+    assert g.params[0].name == "asm"
+    # `asm` assigned as a statement (not an asm-statement -- no following `(`/qualifier):
+    h = parse_unit('int h(void){ int asm = 1; asm = 4; return asm; }').funcs[0].body
+    assert type(h[1]).__name__ == "ExprStmt"
+    # and an asm STATEMENT still parses when followed by `(` or a qualifier:
+    a = parse_unit('void k(void){ asm("nop"); asm volatile("" ::: "memory"); }').funcs[0].body
+    assert type(a[0]).__name__ == "AsmStmt" and type(a[1]).__name__ == "AsmStmt"
+
+
+def test_asm_as_identifier_is_clang_equivalent():
+    # the original regression: `int g(int asm)` must compile clean AND stay Clang-equivalent (asm is an
+    # ordinary identifier, not a keyword). Self-skips cleanly without a compiler.
+    r = compile_unit('int g(int asm){ return asm + 1; }', check_clang=True)
+    assert r.is_clean
+    assert r.equivalence == "match" or r.equivalence.startswith("skip"), r.equivalence
+
+
+def test_missing_comma_clobber_is_a_clean_diagnostic():
+    # FIX 3: a clobber is exactly ONE string token -- a missing-comma list `"cc" "memory"` must be a clean
+    # CParseError (not silently merged into one clobber `cc" "memory`, which would miss the "memory" barrier).
+    rep = diagnose('void f(void){ asm("" : : : "cc" "memory"); }')
+    assert not rep.ok and rep.diagnostics
+
+
+def test_missing_comma_constraint_is_a_clean_diagnostic():
+    # FIX 3: same for a constraint (one string token) -- `"=r" "x"(y)` is not a merged constraint.
+    rep = diagnose('unsigned f(unsigned x){ unsigned y=0; asm("" : "=r" "x"(y) : "r"(x)); return y; }')
+    assert not rep.ok and rep.diagnostics
+
+
+def test_non_goto_trailing_labels_section_is_a_clean_parse_error():
+    # FIX 4: only `asm goto` has a 5th (labels) section -- a non-goto extended asm with a trailing `: labels`
+    # is a clean syntax error at the parse layer (not a misleading downstream "asm goto" message).
+    rep = diagnose('void f(int x){ asm("" : : "r"(x) : "cc" : L1); L1: ; }')
+    assert not rep.ok and rep.diagnostics
+    assert "asm goto" not in rep.diagnostics[0].message       # a syntax error, not the goto rejection
 
 
 def test_malformed_asm_is_a_clean_diagnostic():
@@ -289,6 +339,10 @@ def test_emit_reparse_idempotence():
         'void g(void){ asm volatile("" ::: "memory"); }',
         'unsigned h(unsigned x){ unsigned y=0; asm("" : "=r"(y) : "r"(x)); return y; }',
         'unsigned k(unsigned x){ unsigned y=x; asm volatile("" : "+r"(y) : : "cc"); return y; }',
+        # FIX 2: an all-empty EXTENDED (non-volatile) asm must NOT collapse to the implicitly-volatile basic
+        # form on re-emit -- so its `c.asm:`/`unique` signature is a fixed point, not `c.asm.volatile:`.
+        'void m(void){ asm("nop" : :); }',
+        'void n(void){ asm("x" : : :); }',
     ):
         _r1, lf1 = _lf(src)
         e1 = _emit_clean(lf1)
@@ -299,6 +353,17 @@ def test_emit_reparse_idempotence():
         assert _asm_signature(lf2) == _asm_signature(lf3) == _asm_signature(lf1), (
             f"asm round-trip drift for {src!r}: {_asm_signature(lf1)} -> "
             f"{_asm_signature(lf2)} -> {_asm_signature(lf3)}")
+
+
+def test_all_empty_extended_asm_stays_nonvolatile():
+    # FIX 2: `asm("nop" : :)` is EXTENDED (has colon sections) -> non-volatile `c.asm:`/`unique`. It must
+    # re-emit with its `:` sections (not as the basic `__asm__ ("nop");`, which re-parses to volatile).
+    _r, lf = _lf('void f(void){ asm("nop" : :); }')
+    c = _asm_claims(lf)[0]
+    assert c.op == "c.asm:" and c.hazard == "unique"
+    body = _emit_clean(lf)
+    assert '__asm__ ("nop" :  :  : );' in body                  # the extended (3-colon) form, not the basic form
+    assert '__asm__ __volatile__ ("nop");' not in body
 
 
 # --- (7) gcc AND clang BOTH compile the emit; the barrier preserves the value (A2 analog) --------

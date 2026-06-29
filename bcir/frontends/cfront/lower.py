@@ -414,9 +414,11 @@ class AsmInfo:
     reconstruct the exact GNU `__asm__` statement, since the claim's `imm` is int-only. Keyed by claim id in
     `LoweredFunc.asm_meta`. The template + constraints + clobbers are SOURCE spellings (re-emitted unchanged
     -> ISA-neutral pass-through); the operand RIDs live on the claim's `rd`/`wr` (so the alias/effect/verify
-    machinery sees the real read/write set). `out_n` is the number of leading operands that are OUTPUTS (the
-    rest are INPUTS), so the emitter splits the operand list back into the two `:` sections; `out_rids` /
-    `in_rids` are the per-operand RIDs in source order so the constraints pair up 1:1 with their refs."""
+    machinery sees the real read/write set). The outputs + inputs are carried as separate parallel lists so
+    the emitter splits them back into the two `:` sections; `out_rids` / `in_rids` are the per-operand RIDs in
+    source order so the constraints pair up 1:1 with their refs. `is_basic` records the BASIC source form (no
+    colon sections) so the emit re-renders the basic 1-colon form ONLY there -- an all-empty EXTENDED asm
+    re-emits with its (empty) `:` sections, so a non-volatile `asm("x" : :)` round-trips as non-volatile."""
     template: str
     out_names: tuple                       # per-output (symbolic_name | None)
     out_constraints: tuple                 # per-output constraint source spelling ("=r", "+r", …)
@@ -426,6 +428,7 @@ class AsmInfo:
     in_rids: tuple                         # per-input  value RID
     clobbers: tuple                        # clobber source spellings ("\"memory\"", "\"cc\"", …)
     is_volatile: bool
+    is_basic: bool                         # the BASIC source form (no colon sections) -- gates the basic-form emit
 
 
 @dataclass
@@ -1711,7 +1714,7 @@ class _FuncLowerer:
             template=st.template, out_names=tuple(out_names), out_constraints=tuple(out_constraints),
             out_rids=tuple(out_rids), in_names=tuple(in_names), in_constraints=tuple(in_constraints),
             in_rids=tuple(in_rids), clobbers=tuple(_strip_quotes(c) for c in clob_spellings),
-            is_volatile=st.is_volatile)
+            is_volatile=st.is_volatile, is_basic=st.is_basic)
 
     # GCC/Clang atomic + fence builtins -> the BCIR ATOMIC_*/BARRIER opcodes (§5.8).
     _ATOMIC = {"__atomic_fetch_add": ("c.atomic.add", Opcode.ATOMIC_ADD),

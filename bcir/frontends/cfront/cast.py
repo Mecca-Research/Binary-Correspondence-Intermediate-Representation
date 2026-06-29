@@ -302,6 +302,9 @@ class AsmStmt:
     goto_labels: tuple = ()
     is_goto: bool = False           # the `asm goto` qualifier was present (parsed for grammar completeness,
                                     #   rejected in lowering even if the label list is grammatically empty)
+    is_basic: bool = False          # the BASIC form `asm("template")` -- NO colon operand sections at all (so
+                                    #   the emit re-renders the basic form only here, never for an all-empty
+                                    #   EXTENDED asm `asm("x" : :)`, which must round-trip as non-volatile)
 
 
 # --- top level ---

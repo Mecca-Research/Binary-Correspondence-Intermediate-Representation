@@ -165,8 +165,10 @@ def _asm_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     constraints + clobbers pass through unchanged (ISA-neutral); each operand renders as
     `[name] "constraint" (ref(rid))` using the same `ref(...)` operand printer the other trusted edges use.
     The reserved spellings `__asm__` / `__volatile__` are used so the emitted C is valid even under
-    `-std=c11 -pedantic`. A BASIC asm (no operand sections) renders as `__asm__ [__volatile__] ("template");`
-    so re-parsing it round-trips; an EXTENDED asm always emits all three `:` sections (empty ones included)."""
+    `-std=c11 -pedantic`. The BASIC source form (`info.is_basic`: no colon sections) renders as
+    `__asm__ [__volatile__] ("template");` so re-parsing it round-trips; an EXTENDED asm (incl. one with all
+    sections empty, e.g. `asm("x" : :)`) always emits all three `:` sections, so it round-trips as the
+    NON-volatile extended form rather than drifting to the implicitly-volatile basic form."""
     info: AsmInfo = lf.asm_meta[c.id]
     vol = " __volatile__" if info.is_volatile else ""
 
@@ -174,12 +176,11 @@ def _asm_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         sym = f"[{name}] " if name else ""
         return f'{sym}"{constraint}" ({ref(rid)})'
 
-    outs = info.out_rids
-    ins = info.in_rids
     # `info.template` is the SOURCE spelling (quotes intact, adjacent-literal concatenation joined) -- emitted
     # unchanged (ISA-neutral verbatim pass-through), so no quotes are re-added around it.
-    # a BASIC asm: no operands, no clobbers, not parsed with any `:` -- emit the bare 1-colon form.
-    if not outs and not ins and not info.clobbers:
+    # the BASIC source form: emit the bare 1-colon form. (Gated on `is_basic`, NOT "all sections empty", so an
+    # all-empty EXTENDED `asm("x" : :)` does NOT collapse to the implicitly-volatile basic form on re-emit.)
+    if info.is_basic:
         return f'__asm__{vol} ({info.template});'
     out_s = ", ".join(operand(n, ct, r) for n, ct, r in
                       zip(info.out_names, info.out_constraints, info.out_rids))

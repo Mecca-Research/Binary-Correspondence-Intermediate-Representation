@@ -774,7 +774,7 @@ class _Parser:
             label = self.eat("IDENT").text
             self.eat("PUNCT", ";")
             return cast.Goto(label)
-        if self.at("IDENT", "asm") or self.at("IDENT", "__asm__"):
+        if self._at_asm_stmt():
             return self._asm()                                # GNU inline assembly (ASM1 trusted opaque edge)
         if self.at("IDENT") and self.peek(1).kind == "PUNCT" and self.peek(1).text == ":":
             name = self.nxt().text                            # `label:` — the labeled stmt follows
@@ -831,9 +831,23 @@ class _Parser:
             return cast.Assign(nm, cast.Binary(op, nm, cast.IntLit(1)))
         return None
 
-    def _asm_string(self) -> str:
-        """A single asm string operand (template / clobber): a string literal with adjacent-literal
-        concatenation, returned as the SOURCE spelling (quotes intact) so it re-emits verbatim."""
+    def _at_asm_stmt(self) -> bool:
+        """Whether the cursor begins a GNU inline-asm STATEMENT. `asm` is NOT a keyword (it stays a usable
+        ISO-C identifier under -std=c11), so it is recognized CONTEXTUALLY: the `asm`/`__asm__` token must be
+        FOLLOWED BY `(` (basic/extended asm) or a `volatile`/`__volatile__`/`goto`/`inline` qualifier
+        (extended asm). Otherwise `asm` is an ordinary identifier (`int asm = 3; asm = 4; return asm + 1;`)
+        and this falls through to the normal declaration/expression-statement parsing. (`__asm__` IS a reserved
+        keyword, but is recognized the same way so a stray `__asm__;` still degrades gracefully.)"""
+        if not (self.at("IDENT", "asm") or self.at("IDENT", "__asm__")):
+            return False
+        nxt = self.peek(1)
+        return (nxt.kind == "PUNCT" and nxt.text == "(") or \
+               (nxt.kind == "IDENT" and nxt.text in ("volatile", "__volatile__", "goto", "inline"))
+
+    def _asm_template(self) -> str:
+        """The asm TEMPLATE string: a string literal with adjacent-literal concatenation (`"a\\n" "b"`),
+        returned as the SOURCE spelling (quotes intact) so it re-emits verbatim. Concatenation is legitimate
+        for the template (unlike a constraint/clobber, which is exactly one token -- see _asm_single_string)."""
         if not self.at("STRING"):
             tk = self.peek()
             raise CParseError(f"expected a string literal in asm, got {tk.kind} {tk.text!r}", pos=tk.pos)
@@ -842,42 +856,51 @@ class _Parser:
             text += " " + self.nxt().text                     # like the expression-level string concatenation)
         return text
 
-    def _asm_operand(self, lvalue: bool):
+    def _asm_single_string(self, what: str) -> str:
+        """Exactly ONE string-literal token (a constraint or a clobber) -- NO adjacent-literal concatenation,
+        so a missing comma (`"cc" "memory"`) is a clean CParseError, not a silently-merged operand. Returned
+        as the SOURCE spelling (quotes intact)."""
+        if not self.at("STRING"):
+            tk = self.peek()
+            raise CParseError(f"expected a {what} string literal in asm, got {tk.kind} {tk.text!r}", pos=tk.pos)
+        return self.nxt().text
+
+    def _asm_operand(self):
         """One extended-asm operand: `[ [ symbolic-name ] ] "constraint" ( expr )`. The optional bracketed
-        symbolic name (`[name]`) precedes the constraint; the constraint is a string literal; the operand is
-        a parenthesized expression (an lvalue for outputs, any value for inputs). Returns
-        (symbolic_name | None, constraint_str, expr)."""
+        symbolic name (`[name]`) precedes the constraint (exactly one string token); the operand is a
+        parenthesized expression (reused for both outputs and inputs -- the output-lvalue restriction is
+        enforced in lowering with an honest diagnostic). Returns (symbolic_name | None, constraint_str, expr)."""
         name = None
         if self.at("PUNCT", "["):                             # an optional `[symbolic-name]`
             self.nxt()
             name = self.eat("IDENT").text
             self.eat("PUNCT", "]")
-        constraint = self._asm_string()
+        constraint = self._asm_single_string("constraint")
         self.eat("PUNCT", "(")
         expr = self._expr()                                   # reuse the expression/lvalue parser
         self.eat("PUNCT", ")")
         return (name, constraint, expr)
 
-    def _asm_operands(self, lvalue: bool) -> tuple:
+    def _asm_operands(self) -> tuple:
         """A (possibly empty) comma-separated operand list, terminated by `:` or `)`. An empty section
         (`: :`) is valid."""
         if self.at("PUNCT", ":") or self.at("PUNCT", ")"):
             return ()
-        ops = [self._asm_operand(lvalue)]
+        ops = [self._asm_operand()]
         while self.at("PUNCT", ","):
             self.nxt()
-            ops.append(self._asm_operand(lvalue))
+            ops.append(self._asm_operand())
         return tuple(ops)
 
     def _asm_clobbers(self) -> tuple:
-        """A (possibly empty) comma-separated clobber list of string literals (`"memory"`, `"cc"`, …),
-        terminated by `:` or `)`."""
+        """A (possibly empty) comma-separated clobber list of string literals (`"memory"`, `"cc"`, …), each
+        exactly ONE token (a missing comma is a clean error), terminated by `:` or `)`."""
         if self.at("PUNCT", ":") or self.at("PUNCT", ")"):
             return ()
-        clob = [self._asm_string()]
+        clob = [self._asm_single_string("clobber")]
         while self.at("PUNCT", ","):
             self.nxt()
-            clob.append(self._asm_string())
+            clob.append(self._asm_single_string("clobber"))
         return tuple(clob)
 
     def _asm_labels(self) -> tuple:
@@ -909,30 +932,35 @@ class _Parser:
                 is_goto = True                                # `asm goto` -- a label list (parsed; rejected below)
             # `inline` is accepted + ignored (a size hint, value-neutral)
         self.eat("PUNCT", "(")
-        template = self._asm_string()
+        template = self._asm_template()
         outputs: tuple = ()
         inputs: tuple = ()
         clobbers: tuple = ()
         labels: tuple = ()
+        is_basic = not self.at("PUNCT", ":")                  # BASIC == no colon sections at all (so the emit can
+                                                              #   re-render the basic form ONLY for a true basic asm,
+                                                              #   not an all-empty EXTENDED asm -- else a non-volatile
+                                                              #   `asm("x" : :)` would round-trip to volatile/barriered)
         if self.at("PUNCT", ":"):                             # extended form: at least the outputs section
             self.nxt()
-            outputs = self._asm_operands(lvalue=True)
+            outputs = self._asm_operands()
             if self.at("PUNCT", ":"):
                 self.nxt()
-                inputs = self._asm_operands(lvalue=False)
+                inputs = self._asm_operands()
                 if self.at("PUNCT", ":"):
                     self.nxt()
                     clobbers = self._asm_clobbers()
-                    if self.at("PUNCT", ":"):                 # the 5th section: `asm goto` labels
-                        self.nxt()
-                        labels = self._asm_labels()
+                    if is_goto and self.at("PUNCT", ":"):     # the 5th section: ONLY `asm goto` has labels -- a
+                        self.nxt()                            #   non-goto trailing `: labels` falls through to the
+                        labels = self._asm_labels()           #   `)` and raises a clean syntax error (not a misleading
+                                                              #   "asm goto" downstream message)
         else:
             is_volatile = True                                # a BASIC asm is implicitly volatile (§6.47.1)
         self.eat("PUNCT", ")")
         self.eat("PUNCT", ";")
         return cast.AsmStmt(template=template, outputs=outputs, inputs=inputs,
                             clobbers=clobbers, is_volatile=is_volatile, goto_labels=labels,
-                            is_goto=is_goto)
+                            is_goto=is_goto, is_basic=is_basic)
 
     def _switch(self):
         """`switch (disc) { case C: ...; break; default: ...; }` -> a real C `switch`: the
