@@ -179,6 +179,17 @@ _BUILTIN_OTHER = {"__builtin_labs": "long", "__builtin_llabs": "long long",
                   "__builtin_bswap16": "uint16_t", "__builtin_bswap32": "uint32_t",
                   "__builtin_bswap64": "uint64_t"}
 
+# ASM2 -- port-mapped I/O intrinsics. Each is a CALL expression (no new syntax), recognized at lowering
+# like `_LIBM`, and lowered to a typed, isolated, BARRIERED I/O-port edge (`c.portio.in.<w>:` /
+# `c.portio.out.<w>:`). Keyed by name: (direction, width-bytes, result-CType-name | None for the void
+# writes). `b`/`w`/`l` are the x86 byte (8b) / word (16b) / long (32b) widths. The READS take one `port`
+# arg and RETURN the read value (u8/u16/u32); the WRITES take `(value, port)` in the Linux <asm/io.h>
+# convention (value FIRST, port SECOND) and are void. The `port` operand is conceptually a u16 I/O-port
+# address. Port I/O exists ONLY on x86 (the `in`/`out` instructions); the per-ISA realization is emitted in
+# emit.py keyed off the active `--target` (a non-x86 target raises an honest CLowerError -> LLVM fallback).
+_PORTIO_IN = {"inb": (1, "uint8_t"), "inw": (2, "uint16_t"), "inl": (4, "uint32_t")}
+_PORTIO_OUT = {"outb": 1, "outw": 2, "outl": 4}
+
 
 def _builtin_type(name: str, abi) -> "CType | None":
     if name in _BUILTIN_INT:
@@ -526,6 +537,10 @@ class LoweredFunc:
     ptr_extent: dict = field(default_factory=dict)      # §5.12: pointer rid -> recovered extent (count) variable rid
     asm_meta: dict = field(default_factory=dict)        # ASM1: claim id -> AsmInfo (the verbatim inline-asm payload
                                                         #   the emitter reconstructs the `__asm__(...)` statement from)
+    target: str = HOST.name                             # ASM2: the target ABI short name the unit lays out for --
+                                                        #   threaded to the emit so the per-ISA port-I/O `in`/`out`
+                                                        #   realization keys off `--target` (x86 emits; non-x86 is
+                                                        #   an honest unsupported diagnostic -> LLVM fallback)
 
 
 @dataclass
@@ -1800,6 +1815,8 @@ class _FuncLowerer:
         if node.callee in ("va_start", "va_end", "va_copy"):   # opaque void variadic builtins (verbatim emit)
             self._emit(f"c.call.vabuiltin:{node.callee}", Opcode.GEM_DISPATCH, actuals, ())
             return _VOID_RID                           # not added to self.calls: opaque to the R18 call graph
+        if (node.callee in _PORTIO_IN or node.callee in _PORTIO_OUT) and node.callee not in self.func_rets:
+            return self._portio(node, actuals)         # ASM2: a typed, isolated, barriered I/O-port edge
         libm = _libm_type(node.callee)
         if libm is not None:                           # a <math.h> call -> a typed external library edge
             t = self._temp(libm, f"libm_{node.callee}")    # not added to self.calls: opaque to the call
@@ -1839,6 +1856,89 @@ class _FuncLowerer:
         # member-accessed; typing it uint32 emitted invalid C `uint32_t t = mk(x)`).
         t = self._temp(self._call_result_ct(ret_ct), f"call_{node.callee}")
         return self._emit(f"c.call:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
+
+    # the I/O-port "address space" resource: a single MMIO-domain resource ALL port accesses share, so two
+    # port ops alias each other (ordered against one another, never reordered/fused) but a port access never
+    # aliases a normal-memory RID (the rid lives in the dedicated 990000 band, disjoint from RAM locals /
+    # globals / string pools). One per function, lazily created -- the isolation seam ASM2 hangs on.
+    def _io_port_space(self) -> int:
+        rid = getattr(self, "_io_port_rid", None)
+        if rid is None:
+            rid = 990000                                   # dedicated band: disjoint from RAM rids + globals
+            self.resources[rid] = Resource(
+                rid=rid, domain=Domain.MMIO, elem_bytes=1, shape=(1 << 16,),   # the 64K I/O port address space
+                access="volatile", name="__ioport")
+            self._io_port_rid = rid
+        return rid
+
+    def _portio(self, node: cast.CallExpr, actuals: tuple) -> int:
+        """ASM2 -- lower a port-mapped I/O intrinsic CALL to a typed, isolated, BARRIERED I/O-port edge.
+
+        The edge is `c.portio.in.<b|w|l>:` (a READ -> the value) or `c.portio.out.<b|w|l>:` (a void WRITE),
+        carrying the access WIDTH + DIRECTION in the op suffix and the I/O-port-space rid on the read/write
+        set so the alias/effect machinery sees a real I/O footprint. Three properties the design pins:
+
+          * ISOLATED -- the port access reads/writes the dedicated `__ioport` MMIO resource (the I/O address
+            space), so it can never alias a normal-memory RID; `domain=Domain.MMIO` carries it.
+          * BARRIERED -- `hazard='barriered'` (the existing MMIO ordering marker, reused): port I/O is volatile
+            + ordered, so two port ops must never be reordered / fused / eliminated. The cfront emit walks the
+            body in source order and never drops a claim, so the edge also survives even when its result is
+            unused (a side-effecting probe).
+          * OFF THE LEGALITY VALUE-PATH -- a trusted effect (Opcode.GEM_DISPATCH), no Diagnostic verdict, like
+            the `c.asm`/`c.call.libm` edges.
+
+        The per-ISA `in`/`out` instruction is NOT chosen here (ISA-neutral IR): emit.py realizes it keyed off
+        the function's target (x86 -> the real instruction as `__asm__ __volatile__`; a non-x86 target raises
+        the honest unsupported diagnostic). Arity + operand width are validated here (an honest CLowerError)."""
+        io = self._io_port_space()
+        if node.callee in _PORTIO_IN:                       # inb/inw/inl(port) -> u8/u16/u32
+            width, rty = _PORTIO_IN[node.callee]
+            if len(actuals) != 1:
+                raise CLowerError(
+                    f"{node.callee}(port) takes exactly 1 argument (the u16 I/O port), got {len(actuals)}")
+            port = actuals[0]
+            self._check_port_operand(node.callee, port)
+            suf = {1: "b", 2: "w", 4: "l"}[width]
+            t = self._temp(scalar(rty, self.abi), f"portio_{node.callee}")
+            # rd = (port value, the I/O-port space); wr = (the result temp). The io rid on BOTH sides makes a
+            # read ALSO an effect on the port space, so two reads do not commute (ordered, never fused).
+            return self._emit(f"c.portio.in.{suf}:{node.callee}", Opcode.GEM_DISPATCH, (port, io), (t, io),
+                              imm=(width,), domain=Domain.MMIO, lane=Lane.H, hazard="barriered")
+        # outb/outw/outl(value, port) -- the Linux <asm/io.h> convention: VALUE first, PORT second (void).
+        width = _PORTIO_OUT[node.callee]
+        if len(actuals) != 2:
+            raise CLowerError(
+                f"{node.callee}(value, port) takes exactly 2 arguments (value, then the u16 I/O port), "
+                f"got {len(actuals)} -- note the Linux out*(value, port) order")
+        value, port = actuals[0], actuals[1]
+        self._check_port_operand(node.callee, port)
+        self._check_value_operand(node.callee, value, width)
+        suf = {1: "b", 2: "w", 4: "l"}[width]
+        # rd = (value, port, the I/O-port space); wr = (the port space). The void write produces no value
+        # temp; its write of `io` makes the edge a real effect that orders against every other port op.
+        self._emit(f"c.portio.out.{suf}:{node.callee}", Opcode.GEM_DISPATCH, (value, port, io), (io,),
+                   imm=(width,), domain=Domain.MMIO, lane=Lane.H, hazard="barriered")
+        return _VOID_RID                                    # a void write: its value is never read
+
+    def _check_port_operand(self, callee: str, port: int) -> None:
+        """The `port` operand is the I/O port address -- conceptually a u16. Accept any integer operand
+        (the value model is integer; a wider expression is masked to u16 by the `"Nd"`/`%w` constraint the
+        x86 emit uses), but reject a non-integer (float / pointer / aggregate) port as an honest diagnostic."""
+        pct = self.rtypes.get(port)
+        if pct is not None and not pct.is_integer and pct.kind != "scalar":
+            raise CLowerError(f"{callee}: the I/O port must be an integer (u16), not a {pct.kind}")
+        if pct is not None and pct.is_float:
+            raise CLowerError(f"{callee}: the I/O port must be an integer (u16), not a floating value")
+
+    def _check_value_operand(self, callee: str, value: int, width: int) -> None:
+        """The `value` written by out{b,w,l} is a u8/u16/u32 matching the suffix width. Accept any integer
+        (the x86 `"a"` accumulator constraint takes the low byte/word/dword); reject a non-integer value."""
+        vct = self.rtypes.get(value)
+        if vct is not None and vct.is_float:
+            raise CLowerError(f"{callee}: the written value must be an integer (u{width * 8}), not a float")
+        if vct is not None and not vct.is_integer and vct.kind != "scalar":
+            raise CLowerError(f"{callee}: the written value must be an integer (u{width * 8}), "
+                              f"not a {vct.kind}")
 
     def _call_result_ct(self, ret_ct):
         """The result-temp CType for a call, by the callee's return type -- shared by direct, indirect
@@ -2119,7 +2219,7 @@ class _FuncLowerer:
                            zero_init_locals=set(self.zero_init), variadic=self.func.variadic,
                            reproducible=getattr(self.func, "reproducible", False),
                            ptr_extent=dict(self.ptr_extent),
-                           asm_meta=dict(self.asm_meta))
+                           asm_meta=dict(self.asm_meta), target=self.abi.name)
 
 
 def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Region":

@@ -493,6 +493,19 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 > asm is never DCE'd and a `"memory"`-clobber / `volatile` asm is an ordering barrier. Per-ISA *semantic*
 > modeling (port-I/O intrinsics, hardware barriers) is **ASM2 / ASM3** — see `docs/CFRONT_GUIDE.md`.
 
+> **Port-mapped I/O (ASM2)** — the six `inb`/`inw`/`inl` / `outb`/`outw`/`outl` intrinsics (ordinary CALLs,
+> no new syntax) lower to a **typed, isolated, barriered I/O-port edge** (`c.portio.in.{b,w,l}:` /
+> `c.portio.out.{b,w,l}:`) carrying width + direction: **isolated** under the I/O address space (a dedicated
+> `__ioport` MMIO resource — a port access never aliases normal memory), **`barriered`** (volatile + ordered
+> — two port ops never reorder/fuse/eliminate), and off the legality value-path. Writes use the Linux
+> `out*(value, port)` convention (pinned + tested). The IR is **ISA-neutral**; the per-ISA `in`/`out`
+> instruction is emitted behind `--target` — x86 (`x86_64`/`i386`/`x86_64-windows`) emits the real
+> instruction as `__asm__ __volatile__` (`<asm/io.h>` `"=a"`/`"a"`/`"Nd"` constraints, reusing the ASM1
+> machinery); a non-x86 target (`aarch64`/`riscv64`) has **no port I/O** → an honest unsupported diagnostic
+> (LLVM fallback). **Honest boundary:** executing `in`/`out` is privileged (ring-0 / iopl), so the emitted
+> asm is **assembled** (`gcc -c`/`clang -c`), never run — see `docs/CFRONT_GUIDE.md`. ASM3 (hardware
+> barriers) is next.
+
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
 register-map header now ingests through L7 → L5 → an R1–R18-clean plan with `bcir-explain`,
 behaviour-equivalent to Clang. Next: **Phase D** — the first real driver behind a `channel.json`

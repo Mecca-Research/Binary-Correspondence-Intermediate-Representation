@@ -147,6 +147,52 @@ asm("" : [o]"=r"(out) : [i]"r"(in) : "cc");    // symbolic names + a clobber
   diagnostic. Per-ISA *semantic* modeling (port-I/O intrinsics, hardware barriers) is **ASM2 / ASM3**, not
   this slice — here raw inline asm is a trusted, re-emitted-verbatim edge.
 
+## Port-mapped I/O (ASM2)
+
+Unlike raw inline asm, port I/O has *known* semantics, so BCIR models the six intrinsics as a **typed
+port-access trusted edge** — not an opaque template. Each is an ordinary **CALL expression** (no new
+syntax), recognized at lowering like the `<math.h>` family:
+
+```c
+unsigned v = inb(0x60);            // read  u8  from an I/O port  -> inw -> u16, inl -> u32
+outb(value, 0x60);                 // write u8  to an I/O port    -> outw, outl (u16/u32)
+```
+
+- **Six intrinsics.** Reads return the value — `inb`→`u8`, `inw`→`u16`, `inl`→`u32`; writes are `void` —
+  `outb`/`outw`/`outl`. The `port` is conceptually a `u16` I/O-port address.
+- **The Linux `out*(value, port)` convention.** The written **value is the first argument** and the **port
+  is the second** (matching `<asm/io.h>`). Some headers use the reverse order — the convention is pinned
+  here and tested, so a reversed call would fail rather than silently miscompile.
+- **Typed, isolated, barriered edge.** Each lowers to a `c.portio.in.{b,w,l}:` / `c.portio.out.{b,w,l}:`
+  claim carrying the access **width + direction** in the op suffix (the IR records "a width-1 port read",
+  not an opaque blob). The access is **isolated** under the I/O address space — it reads/writes a dedicated
+  `__ioport` resource in the **MMIO domain**, so a port access can never alias a normal-memory RID — and is
+  **`barriered`** (volatile + ordered): two port ops share that resource, so they never reorder, fuse, or
+  eliminate. It is **off the legality value-path** (a trusted effect, no R-law verdict), exactly like the
+  inline-asm and `c.call.libm` edges.
+- **Per-`--target` emit (ISA-neutral IR, per-ISA realization).** Port I/O exists **only on x86** (the
+  `in`/`out` instructions). For an **x86 target** (`x86_64-linux` / `i386-linux` / `x86_64-windows`) the
+  edge emits the real instruction as a GNU `__asm__ __volatile__`, reusing the ASM1 trusted-edge + barrier
+  machinery and the standard `<asm/io.h>` operand constraints (`"=a"`/`"a"` accumulator, `"Nd"`
+  immediate-or-`dx` port):
+
+  ```c
+  __asm__ __volatile__ ("inb %w1, %b0" : "=a" (v) : "Nd" (port));        // inb (inw %w0, inl %k0)
+  __asm__ __volatile__ ("outb %b0, %w1" :  : "a" (value), "Nd" (port));  // outb (outw %w0, outl %k0)
+  ```
+
+  For a **non-x86 target** (`aarch64-linux` / `riscv64-linux`) port I/O is genuinely **unsupported** —
+  these ISAs have no port I/O, only MMIO — so the emit raises an honest `CLowerError` (*"port-mapped I/O
+  (inb) requires an x86 target; aarch64-linux has no port I/O — use MMIO"*) that routes the unit to the
+  LLVM fallback (the established honest-depth pattern).
+- **Privileged-execution honest boundary (assemble-only).** Executing `in`/`out` from userspace **traps**
+  — it needs `iopl`/`ioperm` + ring-0. So the emitted asm is verified by **assembling** it (`gcc -c` /
+  `clang -c`, `-std=c11 -pedantic`) — proving it is valid x86 the toolchain accepts — and is **never linked
+  or run**. That is the honest seam: the emitted instruction is real and assembles; execution is privileged
+  and gated, like the SYCL device path.
+- **Deferred.** String/block I/O (`insb`/`outsb` …), the paused `*_p` variants (`inb_p`/`outb_p`), and any
+  non-integer port/value are out of this slice (a non-integer port or value is an honest diagnostic).
+
 ## What's supported
 
 - Fixed-width and core integer types, `_Bool`/`char`, `void`, `float`/`double`/`long double`, pointers,

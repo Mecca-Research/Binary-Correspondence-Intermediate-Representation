@@ -14,6 +14,7 @@ from .lower import (
     AsmInfo,
     BreakNode,
     CaseLabel,
+    CLowerError,
     ComputedGotoNode,
     ContinueNode,
     DefaultLabel,
@@ -25,6 +26,41 @@ from .lower import (
     SwitchNode,
     WhileNode,
 )
+
+# ASM2 -- the x86 targets that have port-mapped I/O (`in`/`out` instructions). ARM/RISC-V have no port I/O
+# (only MMIO), so their realization is an honest unsupported diagnostic -> the LLVM fallback.
+_X86_TARGETS = frozenset({"x86_64-linux", "i386-linux", "x86_64-windows"})
+
+# The x86 `in`/`out` operand templates per access width, in the standard GCC/Linux <asm/io.h> form. The
+# accumulator is `%b0`/`%w0`/`%k0` (al / ax / eax) and the port is `%w1` (an immediate-or-dx port, the `Nd`
+# constraint). A READ writes the accumulator (`"=a"`); a WRITE reads it (`"a"`). The port rides `"Nd"`.
+_PORTIO_IN_ASM = {"b": '"inb %w1, %b0"', "w": '"inw %w1, %w0"', "l": '"inl %w1, %k0"'}
+_PORTIO_OUT_ASM = {"b": '"outb %b0, %w1"', "w": '"outw %w0, %w1"', "l": '"outl %k0, %w1"'}
+
+
+def _portio_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
+    """Re-emit one port-I/O claim (ASM2) as the real x86 `in`/`out` instruction, behind a GNU
+    `__asm__ __volatile__` (reusing the ASM1 trusted-edge + `barriered` machinery), keyed off the function's
+    target. The width + direction live in the op suffix (`c.portio.in.b:` etc.); the port/value RIDs ride the
+    claim's rd. A NON-x86 target raises an honest `CLowerError` -- port-mapped I/O is an x86-only facility
+    (ARM/RISC-V have no port I/O, only MMIO), so the unit routes to the LLVM fallback (the established
+    honest-depth pattern). The emitted instruction is REAL x86 the toolchain assembles; EXECUTING it is
+    privileged (ring-0 / iopl), so the runtime probe + tests ASSEMBLE the asm (gcc/clang -c), never run it."""
+    head, name = c.op.split(":", 1) if ":" in c.op else (c.op, "")
+    parts = head.split(".")                                   # ["c", "portio", "in"|"out", "b"|"w"|"l"]
+    direction, width = parts[2], parts[3]
+    if lf.target not in _X86_TARGETS:                         # ARM / RISC-V: no port I/O -> honest diagnostic
+        raise CLowerError(
+            f"port-mapped I/O ({name}) requires an x86 target; {lf.target} has no port I/O -- use MMIO")
+    if direction == "in":                                     # inb/inw/inl: port is rd[0]; result temp is wr[0]
+        et = _load_ctype(lf, c.wr[0])
+        templ = _PORTIO_IN_ASM[width]
+        return (f"{et} {ref(c.wr[0])}; "
+                f'__asm__ __volatile__ ({templ} : "=a" ({ref(c.wr[0])}) : "Nd" ({ref(c.rd[0])}));')
+    # outb/outw/outl: value is rd[0], port is rd[1] (the Linux out*(value, port) order)
+    templ = _PORTIO_OUT_ASM[width]
+    return (f'__asm__ __volatile__ ({templ} :  : '
+            f'"a" ({ref(c.rd[0])}), "Nd" ({ref(c.rd[1])}));')
 
 # op-suffix -> C operator.
 _BINOP = {"add": "+", "sub": "-", "mul": "*", "div": "/", "mod": "%", "and": "&", "or": "|",
@@ -323,6 +359,8 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return f"{callee}({', '.join(ref(r) for r in c.rd)});"
     if c.op == "c.asm:" or c.op == "c.asm.volatile:":        # inline assembly (ASM1): a TRUSTED OPAQUE EFFECT
         return _asm_stmt(lf, c, ref)                          # EDGE -- re-emit the GNU __asm__ statement VERBATIM
+    if c.op.startswith("c.portio."):                         # port-mapped I/O (ASM2): the real x86 in/out
+        return _portio_stmt(lf, c, ref)                       # instruction, keyed off the target (non-x86 raises)
     if c.op.startswith("c.call.extern:"):                    # a printf/scanf-family external variadic call
         callee = c.op.split(":", 1)[1]                       # emitted verbatim against <stdio.h>, returns int
         return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})", "int")
