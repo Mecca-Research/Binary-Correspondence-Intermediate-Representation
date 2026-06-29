@@ -539,6 +539,86 @@ def emit_lapack_solve_c(n: int, nrhs: int = 1, fn_name: str = "bcir_solve") -> s
     )
 
 
+def emit_gsl_stats_c(kind: str, n: int, fn_name: str = "bcir_stats") -> str:
+    """Area-B breadth (#62): wrap a TRUSTED external GSL (GNU Scientific Library) STATISTIC through the
+    `c.call.libm:` FFI edge -- "integrate, don't reinvent", a FOURTH distinct library after B5's BLAS sgemm
+    (a matmul), B2's FFTW (a spectral transform), and #61's LAPACK sgesv (a linear solve). GSL's distinctive
+    domain is SPECIAL FUNCTIONS / STATISTICS, so this does not overlap the existing wraps. `kind` is one of
+    "mean" / "variance" / "sd" -> ``gsl_stats_mean`` / ``gsl_stats_variance`` / ``gsl_stats_sd``.
+
+    BCIR owns the CALLING side: it fixes the DENSE CONTIGUOUS (unit-stride) layout and (with the A1.1 Q8
+    bridge at the boundary) the precision, and DELEGATES the statistic to GSL when linked
+    (`-DBCIR_USE_GSL -lgsl -lgslcblas`; gsl depends on a cblas), with a portable reference fallback selected
+    by the preprocessor when it is not. BOTH paths compute the IDENTICAL statistic (to float round-off), so
+    the same source is correct linked or standalone -- CI needs no GSL installed.
+
+    GSL CONTRACT (mirrored exactly): ``gsl_stats_mean(data, stride=1, n)`` = (1/n) sum data[i];
+    ``gsl_stats_variance(data, 1, n)`` = (1/(n-1)) sum (data[i]-mean)^2 -- the UNBIASED (sample) variance
+    with the ``n-1`` divisor; ``gsl_stats_sd(data, 1, n)`` = sqrt(variance). The mean/variance are exact
+    sum/divide (NO transcendental); only the sd's square root rides the trusted ``c.call.libm:sqrtf`` edge
+    (link -lm), quarantining the transcendental exactly as the activation/attention kernels do. The kernel
+    takes a ``const float *data`` and returns the ``float`` statistic. `n` is baked in (a planned claim
+    knows its length); variance/sd require n>=2 (the n-1 divisor), the mean n>=1."""
+    if kind not in ("mean", "variance", "sd"):
+        raise ValueError(f"unknown GSL statistic {kind!r}; expected 'mean', 'variance', or 'sd'")
+    if n < 1:
+        raise ValueError(f"stats length must be >= 1; got {n}")
+    if kind in ("variance", "sd") and n < 2:
+        raise ValueError(f"{kind} needs n >= 2 (the n-1 divisor); got {n}")
+    gsl_call = f"gsl_stats_{kind}"
+    # The GSL header for these is <gsl/gsl_statistics.h> (the gsl_stats_* family). The reference fallback
+    # needs <math.h> only for the sd's sqrtf.
+    head = (
+        f"/* BCIR -> external trusted GSL statistic via the c.call.libm: edge (integrate, don't reinvent; a "
+        f"FOURTH library -- GSL's special-functions/statistics domain). gsl_stats_{kind} over a dense "
+        f"unit-stride float[{n}]; {gsl_call} when linked (-lgsl -lgslcblas), portable reference fallback "
+        f"otherwise -- both compute the identical statistic to float round-off. BCIR owns the calling side "
+        f"(layout + the Q8<->f32 boundary). */\n"
+        "#include <stddef.h>\n"
+        "#if defined(BCIR_USE_GSL)\n"
+        "  #include <gsl/gsl_statistics.h>\n"
+        "  #define BCIR_STATS_GSL 1\n"
+        "#else\n"
+        "  #include <math.h>\n"
+        "  #define BCIR_STATS_GSL 0\n"
+        "#endif\n"
+    )
+    # The trusted GSL call. gsl_stats_* take a (data, stride, n) triple; BCIR fixes stride=1 (dense).
+    linked = (f"  /* The trusted external kernel: {gsl_call}(data, stride=1, n={n}). */\n"
+              f"  return (float){gsl_call}(data, 1, {n});  /* c.call.libm:{gsl_call} */\n")
+    # The portable reference: the IDENTICAL textbook statistic GSL computes (two-pass mean then, for
+    # variance/sd, the unbiased sum-of-squared-deviations / (n-1)). Float math, so it agrees with the linked
+    # GSL (double-internally) to float round-off, exactly as the FFTW/LAPACK fallbacks do.
+    if kind == "mean":
+        fallback = (f"  /* gsl_stats_mean reference: (1/n) sum data[i]. */\n"
+                    f"  float sum = 0.0f;\n"
+                    f"  for (size_t i = 0; i < {n}; ++i) sum += data[i];\n"
+                    f"  return sum / (float){n};\n")
+    else:
+        var_body = (f"  /* gsl_stats_variance reference: (1/(n-1)) sum (data[i]-mean)^2 -- the UNBIASED\n"
+                    f"     (sample) variance, GSL's n-1 divisor. Two-pass: mean, then squared deviations. */\n"
+                    f"  float sum = 0.0f;\n"
+                    f"  for (size_t i = 0; i < {n}; ++i) sum += data[i];\n"
+                    f"  float mean = sum / (float){n};\n"
+                    f"  float ss = 0.0f;\n"
+                    f"  for (size_t i = 0; i < {n}; ++i) {{ float d = data[i] - mean; ss += d * d; }}\n"
+                    f"  float var = ss / (float)({n} - 1);\n")
+        if kind == "variance":
+            fallback = var_body + "  return var;\n"
+        else:  # sd = sqrt(variance) -- the only transcendental, on the c.call.libm:sqrtf edge
+            fallback = var_body + "  return sqrtf(var);   /* c.call.libm:sqrtf -- the sole transcendental */\n"
+    return (
+        head
+        + f"float {fn_name}(const float *data) {{\n"
+        + "#if BCIR_STATS_GSL\n"
+        + linked
+        + "#else\n"
+        + fallback
+        + "#endif\n"
+        + "}\n"
+    )
+
+
 # --- G7: gem.conv kernel (a 2-D conv == a structured matmul; reference-verified vs the naive direct conv) -
 # A 2-D single-group convolution lowered to portable C. Following the B5 "BCIR owns the calling side"
 # pattern, the emitted kernel computes the IDENTICAL result as the naive direct conv (kbcir.conv.

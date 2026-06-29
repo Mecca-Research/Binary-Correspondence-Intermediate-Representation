@@ -89,8 +89,13 @@ _LIBRARY_RULES: tuple[tuple, ...] = (
     # rule covers the wrapper's actual callee). Matches the C twin's branch in the SAME order (first match
     # wins). The trailing-underscore Fortran forms are matched too so a direct sgesv_ edge resolves.
     (lambda c: c.startswith("LAPACKE_") or (c.endswith("_") and c[:-1] in _LAPACK_FORTRAN), "-llapack"),
+    # Area-B breadth (#62) GSL: any gsl_* (the GNU Scientific Library -- special functions / statistics) ->
+    # -lgsl. The statistics wrap (bcir/lower/c_kernel.py emit_gsl_stats_c) calls gsl_stats_mean/variance/sd
+    # and links `-lgsl -lgslcblas` (gsl depends on a cblas); -lgsl is the load-bearing dependency a unit
+    # with a GSL edge needs (mirrors how LAPACK emits the load-bearing -llapack though the call is
+    # LAPACKE_*). Matches the C twin's branch in the SAME order (first match wins).
+    (lambda c: c.startswith("gsl_"), "-lgsl"),
     # --- EXTENSION POINT (roadmap): add one rule per newly-wrapped trusted library, e.g.
-    #   (lambda c: c.startswith("gsl_"), "-lgsl"),                                # GSL
     #   (lambda c: c.startswith("Sleef_"), "-lsleef"),                            # SLEEF
     # Each new rule's twin goes in bcir_cfront.c's bcir_lib_for_callee in the SAME order.
 )
