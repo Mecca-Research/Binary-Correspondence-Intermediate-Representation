@@ -814,6 +814,58 @@ PROBE
   && echo "  PASS linkflags-gsl: C twin derives gsl_* -> -lgsl (lapack/fftw/cblas/-lm/unknown unchanged)" \
   || { echo "  FAIL: GSL link-flag rule diverged on the C twin"; "${tmp}/lf_gsl"; exit 1; }
 
+# Area-B breadth (#63) SLEEF link-flag rule (dual-rail): the SLEEF edge (Sleef_expf1_u10) is minted by the
+# kernel EMITTER (emit_sleef_exp_c), not reachable from a cfront source. So this probe drives the C twin's
+# bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:Sleef_expf1_u10` edge and asserts it
+# derives `-lsleef` (the SLEEF rule), with any Sleef_* -> -lsleef too, and no regression on gsl_* -> -lgsl,
+# LAPACKE_* -> -llapack, fftwf_* -> -lfftw3, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The
+# oracle (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_sleef.py.
+echo "[c-runtime] SLEEF link-flag rule (bcir_cfront_link_flags twin): Sleef_* -> -lsleef (#linkflags-sleef)"
+cat > "${tmp}/lf_sleef.c" <<'PROBE'
+#include <stdio.h>
+#include <string.h>
+#include "bcir_cir.h"
+#include "bcir_cfront.h"
+/* Build a one-function unit whose single claim is the given external-call edge op, then derive its flags. */
+static const char *derive(const char *op) {
+  static char buf[128];
+  bcir_claim cl; memset(&cl, 0, sizeof cl);
+  snprintf(cl.op, sizeof cl.op, "%s", op);
+  bcir_func f; memset(&f, 0, sizeof f);
+  f.claims = &cl; f.n_claims = 1;
+  bcir_unit u; memset(&u, 0, sizeof u);
+  u.funcs = &f; u.n_funcs = 1;
+  bcir_cfront_link_flags(&u, buf, sizeof buf);
+  return buf;
+}
+static int eq(const char *op, const char *want) {
+  const char *got = derive(op);
+  if (strcmp(got, want)) { printf("FAIL %s -> '%s' want '%s'\n", op, got, want); return 0; }
+  return 1;
+}
+int main(void) {
+  int ok = 1;
+  ok &= eq("c.call.libm:Sleef_expf1_u10", "-lsleef");    /* the SLEEF rule (the wrapper's actual callee) */
+  ok &= eq("c.call.libm:Sleef_sinf1_u10", "-lsleef");    /* any Sleef_* */
+  ok &= eq("c.call.libm:gsl_stats_mean", "-lgsl");       /* #62 GSL (no regression) */
+  ok &= eq("c.call.libm:LAPACKE_sgesv", "-llapack");     /* #61 LAPACK (no regression) */
+  ok &= eq("c.call.libm:fftwf_execute", "-lfftw3");      /* B2 (no regression) */
+  ok &= eq("c.call.libm:cblas_sgemm", "-lcblas");        /* B5 (no regression) */
+  ok &= eq("c.call.libm:expf", "-lm");                   /* libm (no regression -- the SLEEF fallback's twin) */
+  ok &= eq("c.call.libm:totally_unknown_fn", "");        /* unknown -> no flag (no regression) */
+  if (ok) puts("OK linkflags-sleef");
+  return ok ? 0 : 1;
+}
+PROBE
+"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${tmp}/lf_sleef.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
+  "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_sleef" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 -I "${C}" "${tmp}/lf_sleef.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
+       "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_sleef" \
+  || { echo "  FAIL: SLEEF link-flag probe build"; exit 1; }
+"${tmp}/lf_sleef" | grep -q "^OK linkflags-sleef" \
+  && echo "  PASS linkflags-sleef: C twin derives Sleef_* -> -lsleef (gsl/lapack/fftw/cblas/-lm/unknown unchanged)" \
+  || { echo "  FAIL: SLEEF link-flag rule diverged on the C twin"; "${tmp}/lf_sleef"; exit 1; }
+
 # Scalable IR (no fixed BCIR_MAX_*): a unit that busts every OLD ceiling -- 43 functions (> the old
 # BCIR_MAX_FUNCS 16), many12 with 12 params (> 8), agg with 40 calls (> 32), big with 7500 claims
 # (> the old 4096 per-function cap). The IR grows geometrically, so the twin compiles it clean and

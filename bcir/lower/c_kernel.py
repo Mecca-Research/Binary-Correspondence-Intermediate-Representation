@@ -619,6 +619,61 @@ def emit_gsl_stats_c(kind: str, n: int, fn_name: str = "bcir_stats") -> str:
     )
 
 
+def emit_sleef_exp_c(n: int, fn_name: str = "bcir_vexp") -> str:
+    """Area-B breadth (#63): wrap a TRUSTED external SLEEF (SIMD-oriented vectorized libm) VECTORIZED
+    ELEMENTWISE EXP through the `c.call.libm:` FFI edge -- "integrate, don't reinvent", the FIFTH and final
+    Area-B library after B5's BLAS sgemm (a matmul), B2's FFTW (a spectral transform), #61's LAPACK sgesv (a
+    linear solve), and #62's GSL (statistics). SLEEF's distinctive domain is VECTORIZED TRANSCENDENTAL MATH
+    (a fast vectorized libm), so this does not overlap the existing wraps. The kernel maps `out[i] =
+    exp(data[i])` over a dense unit-stride float[`n`] array.
+
+    BCIR owns the CALLING side: it fixes the dense contiguous (unit-stride) layout and (with the A1.1 Q8
+    bridge at the boundary) the precision, and DELEGATES the transcendental to SLEEF when linked
+    (`-DBCIR_USE_SLEEF -lsleef`), with a portable reference fallback (plain libm `expf` per element, -lm)
+    selected by the preprocessor when it is not. BOTH paths compute the IDENTICAL elementwise transform (to
+    float round-off -- both are `exp`), so the same source is correct linked or standalone -- CI needs no
+    SLEEF installed. The win is on the calling side (the elementwise loop / layout / quant), not a
+    reimplemented transcendental.
+
+    PORTABILITY (the function choice): the linked path calls `Sleef_expf1_u10` -- SLEEF's SCALAR
+    single-precision exp at 1.0-ULP accuracy (`f1` == one f32 lane, `u10` == <= 1.0 ULP). The scalar form
+    needs NO target-ISA vector type (no `__m256`/`svfloat32_t`), so the SAME emitted source builds on any
+    ISA; BCIR owns the elementwise loop and the compiler/library owns the vectorization. `Sleef_expf1_u10`
+    is the elementwise twin of libm `expf` (both `e^x` per lane) -- the SAME transcendental the G1
+    activation kernels already route through the libm edge, of which SLEEF is the vectorized alternative.
+    The transcendental stays fully OFF the deterministic legality rail (SLEEF/libm are opaque/trusted, like
+    any external edge), exactly as the activation/attention `expf`. `n` is baked in (a planned claim knows
+    its length); n >= 1 (an elementwise map needs at least one lane). The contract: `data`/`out` are dense
+    `float[n]` (out may alias data for an in-place map; both paths read data[i] before writing out[i])."""
+    if n < 1:
+        raise ValueError(f"sleef exp length must be >= 1; got {n}")
+    return (
+        f"/* BCIR -> external trusted SLEEF vectorized exp via the c.call.libm: edge (integrate, don't "
+        f"reinvent; a FIFTH library -- SLEEF's vectorized-transcendental-math domain). out[i] = exp(data[i]) "
+        f"over a dense unit-stride float[{n}]; Sleef_expf1_u10 (scalar f32, 1.0 ULP) when linked (-lsleef), "
+        f"portable libm expf-per-element fallback otherwise (-lm) -- both compute the identical elementwise "
+        f"exp to float round-off. BCIR owns the calling side (the elementwise layout + the Q8<->f32 "
+        f"boundary); the transcendental is trusted (off the deterministic rail, like the G1 activation "
+        f"expf). */\n"
+        "#include <stddef.h>\n"
+        "#if defined(BCIR_USE_SLEEF)\n"
+        "  #include <sleef.h>\n"
+        "  #define BCIR_VEXP_SLEEF 1\n"
+        "#else\n"
+        "  #include <math.h>\n"
+        "  #define BCIR_VEXP_SLEEF 0\n"
+        "#endif\n"
+        f"void {fn_name}(const float *data, float *out) {{\n"
+        f"  for (size_t i = 0; i < {n}; ++i)\n"
+        f"#if BCIR_VEXP_SLEEF\n"
+        f"    out[i] = Sleef_expf1_u10(data[i]);   /* c.call.libm:Sleef_expf1_u10 -- the trusted vectorized libm */\n"
+        f"#else\n"
+        f"    out[i] = expf(data[i]);              /* c.call.libm:expf -- the portable reference twin (-lm) */\n"
+        f"#endif\n"
+        f"}}\n"
+    )
+
+
 # --- G7: gem.conv kernel (a 2-D conv == a structured matmul; reference-verified vs the naive direct conv) -
 # A 2-D single-group convolution lowered to portable C. Following the B5 "BCIR owns the calling side"
 # pattern, the emitted kernel computes the IDENTICAL result as the naive direct conv (kbcir.conv.
