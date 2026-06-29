@@ -75,27 +75,26 @@ def _emit_clean(lf) -> str:
 def _assemble_only(c_text: str) -> str:
     """ASSEMBLE `c_text` to an object under BOTH gcc AND clang at `-std=c11 -pedantic -c` (assemble-only —
     NEVER linked or run, because `in`/`out` are privileged ring-0 instructions). The emitted asm is x86
-    `in`/`out`, so it is assembled FOR an x86 target regardless of the host arch: clang cross-assembles via
-    `-target x86_64-linux-gnu` on any host (incl. the aarch64 CI lane); a native gcc can only assemble x86 on
-    an x86 host. Returns "ok" iff every x86-capable compiler builds the object, "skip" if none is available,
-    else "FAIL:<cc>:<detail>". This is the honest seam: the emitted x86 `in`/`out` must be VALID assembly."""
-    ccs = []
-    if _CLANG:
-        ccs.append(("clang", _CLANG, ["-target", "x86_64-linux-gnu"]))   # clang cross-assembles on any host
-    if _GCC and _HOST_X86:
-        ccs.append(("gcc", _GCC, []))                                    # native gcc only on an x86 host
+    `in`/`out`, which a non-x86 host's native assembler cannot accept and a clang cross-compile
+    (`-target x86_64-linux-gnu`) cannot satisfy without an x86 sysroot the ARM CI lane lacks. So this check
+    runs ONLY on an x86 host (where it is native + reliable) and SELF-SKIPS on a non-x86 host -- the emit-text
+    assertions are arch-independent, and the emitted x86 asm's validity is proven on the x86 CI lanes. Returns
+    "ok" iff every available compiler builds the object, "skip" if none is available or the host is non-x86,
+    else "FAIL:<cc>:<detail>". The honest seam: the emitted x86 `in`/`out` is VALID assembly the toolchain accepts."""
+    if not _HOST_X86:
+        return "skip"                                                   # non-x86 host cannot assemble x86 in/out
+    ccs = [(n, p) for n, p in (("gcc", _GCC), ("clang", _CLANG)) if p]
     if not ccs:
-        if _CC and _HOST_X86:                                            # a non-clang `cc` only if x86
-            ccs = [("cc", _CC, [])]
-        else:
-            return "skip"                                                # no x86-capable assembler here
+        if not _CC:
+            return "skip"
+        ccs = [("cc", _CC)]
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "portio.c")
         with open(src, "w", encoding="utf-8") as f:
             f.write(c_text)
-        for name, cc, tflag in ccs:
+        for name, cc in ccs:
             obj = os.path.join(d, f"portio_{name}.o")
-            b = subprocess.run([cc, *tflag, "-std=c11", "-pedantic", "-c", src, "-o", obj],  # -c: assemble only
+            b = subprocess.run([cc, "-std=c11", "-pedantic", "-c", src, "-o", obj],  # -c: assemble only (x86 host)
                                capture_output=True, text=True)
             if b.returncode != 0:
                 return f"FAIL:{name}:assemble:{(b.stderr or b.stdout).strip().splitlines()[-1:]}"
