@@ -179,6 +179,24 @@ law, parity-gate. Throttled, parallel to C/driver work.*
       included on the same seed path. This unlocks **logistic regression** (BCE) and **multiclass
       classification** (softmax-CE); MSE unlocks the regression head. Pure-Python oracle, off the legality
       path (a loss is cost/optimization-side, never an R-law verdict).
+  - **M2 — adaptive optimizers BUILT** (`bcir/lower/optimizers.py`, `bcir/tests/test_optimizers.py`). The
+    minimal SGD (`autodiff_kernel.py::emit_sgd_step_c`, `params[i] -= lr·grad[i]`) generalized into the
+    standard adaptive family — **momentum (heavy-ball)**, **RMSprop**, **Adam (with bias correction)** — as a
+    reference oracle (pure Python, side-effect-free `(params, state) → (params′, state′)`) + an emitted C
+    step that mirrors `emit_sgd_step_c` (an in-place `void` over the param vector + state buffers, compiled
+    and run by a tempdir harness). The exact conventions: momentum `v = β·v + g; p −= lr·v` (raw grad into
+    the decayed velocity, β=0 ⇒ plain SGD); RMSprop `s = β·s + (1−β)·g²; p −= lr·g/(√s + ε)`; Adam
+    `t += 1; m = β₁m + (1−β₁)g; v = β₂v + (1−β₂)g²; m̂ = m/(1−β₁ᵗ); v̂ = v/(1−β₂ᵗ); p −= lr·m̂/(√v̂ + ε)`
+    (the **bias correction** — the t-dependent divisors — is the distinctive feature and matters most in the
+    first few steps; `t` round-trips as state, `int *t` in the C step). **Which ride libm `sqrtf`** (the
+    honest `c.call.libm:` edge): SGD and momentum are **pure arithmetic** (`<stddef.h>` only, no `-lm`);
+    **RMSprop and Adam need a square root** → `#include <math.h>`, `sqrtf`, link `-lm` (the harness links it
+    for those two only). Verified: each reference step matches an independent hand computation (Adam's bias
+    correction pinned at t=1 AND t=2); the emitted C step matches the reference to float round-off over
+    several steps (Adam's m/v/t state round-trips); each optimizer drives a convex MSE (a linear model, known
+    minimum at (w,b)=(2,1)) to ~0 with near-monotone descent, and Adam's per-coordinate scaling beats plain
+    SGD on an ill-conditioned variant. Off the legality path (cost/optimization-side, never an R-law verdict;
+    touches no verifier, emits no `Diagnostic`). **One step is the primitive** — M3 wires the repeated loop.
 - **B4 — Hybrid tropical + selective gradient.** Reframe training: the **tropical planner finds the structure**
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and
