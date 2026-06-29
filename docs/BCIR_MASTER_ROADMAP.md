@@ -22,6 +22,11 @@
 > - [`SYCL_INTEROP.md`](SYCL_INTEROP.md) — SYCL/SPIR-V as a backend channel + a differential oracle (a SAXPY
 >   `parallel_for` measured against BCIR's reference), never on the legality path; a compiler mode (`-fsycl`),
 >   not a `c.call.libm:` link edge.
+> - [`TELEMETRY_PIPELINE_RESEARCH.md`](TELEMETRY_PIPELINE_RESEARCH.md) — research + scoping for the telemetry/
+>   monitoring pipeline: a seven-layer survey of industry telemetry sources (NVML/DCGM, ROCm/amd-smi, RAPL,
+>   hwmon, PAPI, SEGGER RTT, CoreSight, Redfish, OpenTelemetry, Synopsys SLM, proteanTecs, the SPICE probe/
+>   measure/sweep metaphor) mapped to BCIR's cost dims + signal-provider/calibration surfaces, with the
+>   two-truth invariant (telemetry informs plan cost, never a legality verdict) and a build order.
 > - [`BCIR_Repo_Structure.md`](BCIR_Repo_Structure.md) — directory layout + build entry points.
 
 ---
