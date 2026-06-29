@@ -193,6 +193,61 @@ outb(value, 0x60);                 // write u8  to an I/O port    -> outw, outl 
 - **Deferred.** String/block I/O (`insb`/`outsb` …), the paused `*_p` variants (`inb_p`/`outb_p`), and any
   non-integer port/value are out of this slice (a non-integer port or value is an honest diagnostic).
 
+## Hardware barriers (ASM3)
+
+The memory-fence intrinsic was already a recognized `barriered` claim; ASM3 deepens it the same way ASM2
+deepened raw asm into typed port I/O — **typed fence kinds** plus **real per-ISA assembly emit behind
+`--target`**. Each fence is an ordinary **CALL expression** (no new syntax), recognized at lowering like the
+atomic / port-I/O families:
+
+```c
+__sync_synchronize();              // full (seq_cst) fence  -> c.fence
+atomic_thread_fence(5);            // C11 <stdatomic.h>, full fence -> c.fence
+_mm_mfence();                      // x86-conventional full  fence -> c.fence
+_mm_lfence();                      //                   load (acquire) fence -> c.fence.acquire
+_mm_sfence();                      //                   store (release) fence -> c.fence.release
+```
+
+- **Recognized intrinsics + kinds.** `__sync_synchronize`, the GCC/Clang `__atomic_thread_fence`, and the
+  C11 `<stdatomic.h>` `atomic_thread_fence` (newly recognized) are **full (seq_cst)** fences; the
+  x86-conventional `_mm_mfence` is also full, `_mm_lfence` is the **load (acquire)** fence, and `_mm_sfence`
+  is the **store (release)** fence. The kind is read off the intrinsic **name** — no `memory_order` argument
+  is parsed (those constants are not part of this subset).
+- **Backward-compatible op strings.** The **full** fence keeps the existing op string **`c.fence`** — so the
+  existing `__atomic_thread_fence` / `__sync_synchronize` claims, and the Python↔C dual-rail parity digest,
+  are **unchanged** (no digest/parity churn). The two lighter kinds get the new op strings **`c.fence.acquire`**
+  and **`c.fence.release`**. The edge stays `Opcode.BARRIER`, `lane A`, **`barriered`** (never reordered /
+  fused across), and off the legality value-path (a trusted effect, no R-law verdict) — exactly as before.
+- **Per-`--target` emit (ISA-neutral IR, per-ISA realization).** The bare portable
+  `__atomic_thread_fence(__ATOMIC_SEQ_CST);` is replaced by the real hardware-barrier instruction behind a
+  GNU `__asm__ __volatile__ (… ::: "memory")`, keyed off `--target`. The `"memory"` clobber is the
+  **required compiler-barrier half** of the fence:
+
+  | kind | x86 | aarch64 | riscv64 |
+  |------|-----|---------|---------|
+  | full (`c.fence`)            | `mfence` | `dmb ish`   | `fence rw,rw` |
+  | acquire (`c.fence.acquire`) | `lfence` | `dmb ishld` | `fence r,rw`  |
+  | release (`c.fence.release`) | `sfence` | `dmb ishst` | `fence rw,w`  |
+
+  ```c
+  __asm__ __volatile__ ("mfence" ::: "memory");      // x86 full fence (lfence / sfence for acquire / release)
+  __asm__ __volatile__ ("dmb ish" ::: "memory");     // aarch64 full fence (dmb ishld / ishst)
+  __asm__ __volatile__ ("fence rw,rw" ::: "memory"); // riscv64 full fence (fence r,rw / rw,w)
+  ```
+
+  **Unlike port I/O, every ISA has a fence** — so a target *outside* the three families is **not** an
+  unsupported diagnostic; it keeps the portable `__atomic_thread_fence(__ATOMIC_SEQ_CST);` as an honest
+  default. All five shipping ABIs are covered by the three families, so the default is a safety net only.
+- **Per-ISA assemble (host-arch-gated, carried-forward lesson).** Barriers are per-ISA and cannot be
+  cross-assembled (the aarch64 CI runner has no x86 sysroot, and vice-versa). So the gate assembles each
+  fence for the **host's own native arch** (`gcc -c` / `clang -c`, assemble-only) and asserts the emit
+  **text** for non-native targets without assembling — real assembled coverage on every CI lane (x86 lanes
+  assemble `mfence`/`lfence`/`sfence`; the aarch64 lane assembles `dmb ish`/`ishld`/`ishst`).
+- **Cross-claim ordering enforcement is a follow-on.** ASM3 is a frontend emit/recognition slice: it gives
+  the fence typed kinds + native emit. Making `barriered` *forbid* the optimizer/scheduler from reordering
+  or fusing **other** claims across a fence is the next slice (ASM3b), in the realizer / bundler / GEM
+  scheduler — untouched here.
+
 ## What's supported
 
 - Fixed-width and core integer types, `_Bool`/`char`, `void`, `float`/`double`/`long double`, pointers,
