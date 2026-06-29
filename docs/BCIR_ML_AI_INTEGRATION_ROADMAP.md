@@ -271,6 +271,35 @@ law, parity-gate. Throttled, parallel to C/driver work.*
     ~0, eigenvalues descending and Σλ ≈ trace, the fallback **compiles + runs + recovers** `diag(5,3,1)` (the
     `#pca` runtime probe), and the module **touches no verifier / emits no `Diagnostic`** (off the legality
     path). Pure-Python oracle, deterministic.
+  - **E3 — full TRANSFORMER ENCODER BLOCK BUILT** (`bcir/kbcir/transformer.py`, `bcir/tests/test_transformer.py`;
+    the emitted C twin `bcir/lower/c_kernel.py::emit_layernorm_c`). The third ML-breadth slice — and a
+    **structurally different** one: where E1/E2 each *wrapped one external LAPACK kernel*, a Transformer block is
+    a **COMPOSITION** of ops BCIR already ships, so it mirrors the **G7 single-head attention** (`attention.py`),
+    NOT the LAPACK-wrap pattern. `attention.py`'s own docstring named the deferred follow-up — *"Multi-head,
+    batched, masked/causal attention … are the deferred follow-up"* — and **this is that follow-up.** The
+    canonical **POST-LN** block (`transformer_block_reference`) is `x1 = LayerNorm(x + MultiHeadAttention(x))`,
+    `out = LayerNorm(x1 + FeedForward(x1))`, with a one-line **PRE-LN** variant (`pre_ln=True`). It **REUSES**,
+    never reinvents: `attention.scores_reference` (the scaled `Q·Kᵀ/√d_k` per head), `activation.softmax_reference`
+    (the existing stable last-axis softmax), and `matmul.matmul_reference` (every projection / `A·V` / feed-forward
+    GEMM). **The ONE net-new numeric primitive is LayerNorm** — `layernorm_reference` (per-row over the feature
+    axis: `mean`, **population** `var` (÷dim), `out = γ·(x−mean)/√(var+eps) + β`), whose `sqrt` is the only new
+    transcendental, riding the trusted `c.call.libm:sqrtf` edge (`-lm`, **already mapped** —
+    `library_for_callee("sqrtf") == "-lm"`, **no linkflags change**). `causal_mask` is an additive `-inf`
+    upper-triangle mask (`exp(-inf)=0`, the diagonal always kept so no all-masked row → NaN);
+    `multihead_attention_reference` projects→splits→per-head masked attention→concat→`W_o`, **batch a simple
+    outer loop**; `feedforward_reference` is `act(x·W1+b1)·W2+b2` (relu/gelu). **Independent verifiers** (recomputed
+    off the block code path): `layernorm_stats` (a γ=1/β=0 row has mean≈0/var≈1), the causal-mask property (the
+    post-softmax weights for j>i are **exactly 0**), `multihead_concat_residual` (multi-head == concat of
+    **independently-computed** per-head attentions then `W_o`, ≈0), softmax rows sum to 1, the dense block ==
+    a naive from-scratch composition to float round-off, and the **zero-weight identity** (all sublayer weights 0
+    ⇒ the block reduces to `LayerNorm(LayerNorm(x))`). `transformer_block_via_bridge` is the Q8↔f32↔Q8 input
+    round-trip (optionally weights too) then the trusted block; the R17 bridge bound is the **input round-trip
+    alone** (the matmuls are exact, softmax/sqrt ride the trusted libm edge). The only NEW C kernel is
+    `emit_layernorm_c` — the matmul/softmax/single-head-attention C twins (`emit_attention_c`, the matmul
+    emitters) **already exist**, so the rest of the block composes already-tested twins. Verified: the layernorm
+    kernel **compiles + runs + normalizes** rows to mean≈0/var≈1 (the `#layernorm` runtime probe), and the module
+    **touches no verifier / emits no `Diagnostic`** (off the legality path, AST-inspected). Pure-Python oracle,
+    deterministic.
 - **B4 — Hybrid tropical + selective gradient.** Reframe training: the **tropical planner finds the structure**
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and

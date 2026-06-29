@@ -274,9 +274,30 @@ the decision path (`bcir/verify`, R1–R21) reads no telemetry.
     float round-off on well-separated eigenvalues; degenerate eigenvalues make eigenVECTORS non-unique. A
     deterministic sign convention is applied on both rails. Off the legality path; the R17 bridge bound is the
     input round-trip alone.
-- **5c tensor ops as claims — PARTIAL.** `gem.matmul` is a first-class planned claim with
-  K_BCIR tile/loop search; there are no `gem.conv` / `gem.attention` / `gem.activation`
-  ops.
+  - **E3 — full Transformer encoder block** (`bcir/kbcir/transformer.py`, `emit_layernorm_c`): the third
+    ML-breadth slice — and the one that **completes the multi-head / batched / masked attention + layernorm
+    follow-up** that `attention.py`'s docstring (and Pillar 5c) flagged as **deferred**. Structurally distinct
+    from E1/E2: where those each *wrapped one external LAPACK kernel*, a Transformer block is a **COMPOSITION**
+    of ops BCIR already ships, so it mirrors the G7 single-head attention, **REUSING**
+    `attention.scores_reference` + `activation.softmax_reference` + `matmul.matmul_reference` (never reinvented).
+    The canonical **POST-LN** block (`transformer_block_reference`) is `LayerNorm(x + MultiHeadAttention(x))`
+    then `LayerNorm(x1 + FeedForward(x1))`, with a one-line **PRE-LN** variant. **The ONE net-new primitive is
+    LayerNorm** (`layernorm_reference`: per-row mean / **population** variance / `γ·(x−mean)/√(var+eps)+β`), whose
+    `sqrt` rides the trusted `c.call.libm:sqrtf` edge (`-lm`, **already mapped — no linkflags change**). A
+    `causal_mask` (additive `-inf` upper triangle, the diagonal always kept so no all-masked row → NaN) and
+    `feedforward_reference` (`act(x·W1+b1)·W2+b2`) complete it; batch is a simple outer loop. Independent verifiers
+    (`layernorm_stats` ⇒ mean≈0/var≈1; the causal-mask future weights are exactly 0; multi-head == concat of
+    independently-computed heads then `W_o`; the zero-weight block reduces to `LayerNorm(LayerNorm(x))`) are
+    recomputed off the block code path. The only NEW C kernel is `emit_layernorm_c` — the matmul / softmax /
+    single-head-attention C twins already exist, so the rest composes already-tested twins. Off the legality
+    path; the R17 bridge bound is the input round-trip alone.
+- **5c tensor ops as claims — PARTIAL (broadening).** `gem.matmul` is a first-class planned claim with
+  K_BCIR tile/loop search, joined by `gem.activation` (relu / sigmoid / tanh / gelu / softmax), `gem.conv`, and
+  the **G7 `gem.attention`** single-head scaled-dot-product op — and now the **E3 full Transformer encoder
+  block** (multi-head / batched / masked attention + the net-new **layernorm**), which composes those existing
+  claims (the deferred multi-head/masked attention + layernorm follow-up `attention.py` flagged is **built**).
+  Wiring these compositions into globally-numbered MLIR law ops remains the separate follow-on (kept separate,
+  as `matmul.py`'s MLIR wiring was).
 - **5d C++ hand-off boundary — SCAFFOLDED.** The boundary is now defined doc-first
   ([`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md)) and backed by a compilable,
   round-trip-tested seam ([`runtime/cpp/`](../runtime/cpp), gated by
