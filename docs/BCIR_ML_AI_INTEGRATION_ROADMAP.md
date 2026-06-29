@@ -161,6 +161,24 @@ law, parity-gate. Throttled, parallel to C/driver work.*
   operad 2-cells** (this is the concrete use for the proposed 2-cell rewrite algebra in §1) — autodiff becomes a
   traceable, content-addressed transformation over the claim graph, reusing the e-graph + the SourceMap. Oracle
   prototype → MLIR law.
+  - **M1 — loss-function library BUILT** (`bcir/kbcir/losses.py`, `bcir/tests/test_losses.py`). The loss head
+    that turns the existing matmul + activation + autodiff + SGD into trainable supervised models (forward →
+    loss → backward → param grads, end-to-end). It implements a **two-path design forced by the autodiff
+    closure property** (`bcir/kbcir/autodiff.py`'s docstring, boundary (a): a primitive whose VJP needs
+    exp/log breaks the closed set `{const,var,neg,add,sub,mul,div,dot,select}`):
+    - **Closed-set loss (MSE)** — built ENTIRELY into the `Tape` as `(1/n)·dot(e, e)` with `e_i = pred_i −
+      target_i` (sub + dot + scale), so the EXISTING `autodiff.grad` differentiates and
+      `lower/autodiff_kernel.py::emit_autodiff_kernel_c` lowers the whole model→loss DAG for free (verified:
+      grad == finite-difference; lowered to C, matched the oracle to round-off).
+    - **Transcendental losses (softmax-CE, BCE-with-logits)** — the forward value needs `log`/`exp` (the libm
+      side, like `activation.py`), so each returns `(loss_value, grad_logits)` with the famous CLOSED-FORM
+      gradient that lives in the closed set (`softmax(logits) − onehot`; `sigmoid(logits) − target`, reusing
+      the G1 `softmax_reference`/`sigmoid_reference`). That vector SEEDS the model's backward, so the
+      parameter gradient never carries a transcendental. Numerically stable forms: log-sum-exp (subtract
+      `max`) for softmax-CE, `max(z,0) − z·y + log(1+exp(−|z|))` for BCE. A `hinge` (SVM) `(value, grad)` is
+      included on the same seed path. This unlocks **logistic regression** (BCE) and **multiclass
+      classification** (softmax-CE); MSE unlocks the regression head. Pure-Python oracle, off the legality
+      path (a loss is cost/optimization-side, never an R-law verdict).
 - **B4 — Hybrid tropical + selective gradient.** Reframe training: the **tropical planner finds the structure**
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and
