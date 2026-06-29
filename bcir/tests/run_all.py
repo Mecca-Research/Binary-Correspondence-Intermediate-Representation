@@ -134,6 +134,7 @@ _MODULES = [
     "bcir.tests.test_targets",
     "bcir.tests.test_channels",
     "bcir.tests.test_channel_plugin",
+    "bcir.tests.test_signal_registry",
     "bcir.tests.test_verify",
     "bcir.tests.test_etl",
     "bcir.tests.test_gem",

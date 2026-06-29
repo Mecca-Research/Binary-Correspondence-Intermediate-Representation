@@ -27,6 +27,10 @@
 >   hwmon, PAPI, SEGGER RTT, CoreSight, Redfish, OpenTelemetry, Synopsys SLM, proteanTecs, the SPICE probe/
 >   measure/sweep metaphor) mapped to BCIR's cost dims + signal-provider/calibration surfaces, with the
 >   two-truth invariant (telemetry informs plan cost, never a legality verdict) and a build order.
+> - [`SIGNAL_REGISTRY.md`](SIGNAL_REGISTRY.md) — the telemetry signal-provider registry (T1, BUILT): a
+>   vendor-neutral PAPI-component registry of typed providers wrapping `bcir/silicon.py`, mapped to the
+>   12-D cost vector, with honest `None`/unavailable + provenance-on-the-definition (Redfish split), a
+>   `register()` plugin seam, and the channel↔provider power mapping — off the legality path.
 > - [`BCIR_Repo_Structure.md`](BCIR_Repo_Structure.md) — directory layout + build entry points.
 
 ---
