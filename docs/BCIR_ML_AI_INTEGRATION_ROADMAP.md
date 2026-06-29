@@ -335,6 +335,46 @@ law, parity-gate. Throttled, parallel to C/driver work.*
       op-level shape/dtype well-formedness checker (positive dims; dtype preserved; the quarantine rule that
       LSTM/GRU need f32) — NOT a new R-law (mirrors `check_transformer`). The module **touches no verifier / emits
       no `Diagnostic`** (off the legality path, AST-inspected). Pure-Python oracle, deterministic.
+  - **E5 — classical-ML PREDICT wraps BUILT** (`bcir/kbcir/classical.py`, `bcir/tests/test_classical.py`; the
+    emitted C twins `bcir/lower/c_kernel.py::emit_svm_rbf_predict_c` + `::emit_tree_predict_c`). The fifth
+    ML-breadth slice — KNN / decision tree / SVM / Naive-Bayes **PREDICT path**. **THE RESEARCH FINDING (the
+    train-vs-predict split — E7 cites this):** classical ML splits SHARPLY into two halves with OPPOSITE structure.
+    - **TRAINING is the poor-fit half → library/Python.** Decision-tree INDUCTION (the greedy recursive split
+      search over the data), the SVM dual **QUADRATIC-PROGRAM** solve, Naive-Bayes FITTING (per-class mean/variance
+      estimation): these are ITERATIVE / COMBINATORIAL optimization — no fixed dataflow, data-dependent control
+      flow, convergence loops, variable-length intermediate structures. That is a **poor fit for BCIR's fixed-shape,
+      planned-claim model** — it belongs in scikit-learn / libsvm, NOT as a BCIR claim. BCIR does not try to own it.
+    - **PREDICT is the good-fit half → the baked-model fixed-shape kernel BCIR wraps.** Once trained the model is a
+      FIXED, BAKED set of constants (tree thresholds; SVM support vectors + dual coeffs `αᵢ·yᵢ` + bias; Gaussian-NB
+      per-class log-prior + mean/var; the KNN training set), so PREDICT is a deterministic, fixed-shape kernel —
+      exactly the **G5 baked-weights inference pattern** (`bcir/lower/inference.py::emit_inference_kernel_c`) plus
+      the **Area-B "integrate, don't reinvent"** discipline. BCIR owns the CALLING side (the row-major layout, the
+      baked params, the Q8 feature boundary = the R17 input bound); the transcendentals ride the trusted
+      `c.call.libm:` edge (RBF-SVM `exp` → `expf`, Gaussian-NB `log` → `logf`, both `-lm` — **already mapped, no
+      linkflags change**); the rest is **exact** arithmetic. Each predictor: a plain-float reference (the source of
+      truth), an INDEPENDENT verifier, and a `*_via_bridge` Q8 round-trip of the FEATURE vector.
+    - **KNN** (`knn_classify` / `knn_regress`) ranks on the **SQUARED** Euclidean distance — ranking on squared
+      distance is IDENTICAL to ranking on distance (sqrt is monotone), so classification needs **NO transcendental**;
+      `k` smallest (tie-break: lowest index), majority vote (tie-break: lowest class id) / neighbour-mean. The
+      independent verifier recomputes the k nearest by an O(n²) selection (vs one sort) and confirms the same
+      neighbour set. **DECISION TREE** (`tree_predict`) traverses the baked flat-array tree (`feature`/`threshold`/
+      `left`/`right`/`leaf_value`, leaf ⇔ `feature == -1`) — EXACT comparisons, NO transcendental; the verifier is a
+      separate recursive traversal + a structural leaf-reachability check. **SVM** — `svm_decision_linear` =
+      `Σᵢ αᵢyᵢ·(SVᵢ·x) + b` (exact dot products), `svm_decision_rbf` = `Σᵢ αᵢyᵢ·exp(−γ‖x−SVᵢ‖²) + b` (the `exp`
+      on the libm edge); `svm_predict = sign(decision)`. **libsvm** is the canonical library in the framing, but the
+      decision function is emitted DIRECTLY (it IS libsvm's `svm_predict`) — self-contained, no libsvm dependency.
+      **GAUSSIAN-NB** (`nb_predict`) = `argmax_c [ log_prior[c] − ½ Σⱼ ((xⱼ−μ)²/σ² + log(2π·σ²)) ]`; the
+      `log(2π·σ²)` normaliser is **DATA-INDEPENDENT → PRECOMPUTED / BAKED** (`baked_log_norm`), so the predict
+      kernel's only `log` is a bake-time constant — at runtime nothing logs. The Q8↔f32↔Q8 bridges round-trip the
+      INPUT feature then run the trusted predict, so the SOLE certified error is the **R17 input bound** (mirrors
+      E1–E4). The two new C kernels show the Area-B pattern covers **both** halves: `emit_svm_rbf_predict_c`
+      (transcendental — only `expf` on the `c.call.libm:` edge, `-lm`, already mapped) and `emit_tree_predict_c`
+      (EXACT — pure comparisons + a leaf return, NO transcendental, NO libm); both **compile + run + match** the
+      reference (the `#classical` `#svm` / `#tree` runtime probes). `check_classical` is the op-level shape/dtype
+      well-formedness checker (positive extents; dtype preserved; the quarantine rule that the RBF-SVM `exp` /
+      Gaussian-NB `log` need f32 while KNN / tree / linear-SVM are exact and may be i32) — NOT a new R-law (mirrors
+      `check_recurrent`). The module **touches no verifier / emits no `Diagnostic`** (off the legality path,
+      AST-inspected). Pure-Python oracle, deterministic.
 - **B4 — Hybrid tropical + selective gradient.** Reframe training: the **tropical planner finds the structure**
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and

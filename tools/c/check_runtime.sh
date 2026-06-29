@@ -956,6 +956,76 @@ lstm_out="$("${tmp}/lstm")"; lstm_rc=$?    # rc=0 IS the check: H/C match the ha
   && echo "  PASS lstm: 1x1 cell matches hand-computed forward (${lstm_out}; tanhf/expf -> -lm via the libm rule, no linkflags change)" \
   || { echo "  FAIL: lstm cell did not match the reference (rc=${lstm_rc}: ${lstm_out})"; exit 1; }
 
+# E5 (ML-breadth) CLASSICAL-ML PREDICT path: the baked-model fixed-shape predict kernels (#classical). The
+# honest framing E7 cites: classical-ML TRAINING (tree induction, the SVM QP solve, NB fitting) is iterative/
+# combinatorial -- a POOR fit for BCIR's fixed-shape claim model (library/Python). PREDICT over a BAKED model is
+# the opposite: a deterministic, fixed-shape kernel = the G5 baked-weights pattern. Two probes show the Area-B
+# pattern covers BOTH halves: the RBF-SVM (transcendental -- its only external is expf on the c.call.libm: edge,
+# -lm, ALREADY mapped -- no linkflags change) and the decision tree (EXACT -- pure comparisons + a leaf return,
+# NO transcendental, NO libm). C twins of kbcir.classical.svm_decision_rbf / tree_predict.
+echo "[c-runtime] E5 classical-ML RBF-SVM predict (emit_svm_rbf_predict_c): decision function matches reference (#classical #svm)"
+python3 - > "${tmp}/svm_rbf_kernel.c" <<'PY' || { echo "  FAIL: python svm-rbf emit"; exit 1; }
+from bcir.lower.c_kernel import emit_svm_rbf_predict_c
+print(emit_svm_rbf_predict_c(1, 2, "svm_rbf"))
+PY
+cat >> "${tmp}/svm_rbf_kernel.c" <<'MAIN'
+#include <stdio.h>
+#include <math.h>
+int main(void) {
+  /* one SV at the origin, alpha_y=2, b=0.5, gamma=1: f(x)=2*expf(-||x||^2)+0.5. At x=(1,0): 2*exp(-1)+0.5. */
+  float X[2] = {1.0f, 0.0f};
+  float SV[2] = {0.0f, 0.0f};
+  float AY[1] = {2.0f};
+  float f = svm_rbf(X, SV, AY, 0.5f, 1.0f);
+  float exp_f = 2.0f * expf(-1.0f) + 0.5f;
+  printf("f=%.6f (exp=%.6f)\n", f, exp_f);
+  return (fabsf(f - exp_f) < 1e-4f) ? 0 : 1;
+}
+MAIN
+"${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/svm_rbf_kernel.c" -lm -o "${tmp}/svm_rbf" 2>/dev/null \
+  || "${CC}" -std=c23 -O2 "${tmp}/svm_rbf_kernel.c" -lm -o "${tmp}/svm_rbf" \
+  || { echo "  FAIL: svm-rbf kernel build"; exit 1; }
+svm_out="$("${tmp}/svm_rbf")"; svm_rc=$?    # rc=0 IS the check: f matches the hand-computed value (driver)
+{ [ "${svm_rc}" = "0" ] && printf '%s' "${svm_out}" | grep -q "^f=.*"; } \
+  && echo "  PASS svm: RBF decision matches reference (${svm_out}; expf -> -lm via the libm rule, no linkflags change)" \
+  || { echo "  FAIL: svm RBF decision did not match the reference (rc=${svm_rc}: ${svm_out})"; exit 1; }
+
+echo "[c-runtime] E5 classical-ML decision-tree predict (emit_tree_predict_c): exact threshold traversal, NO libm (#classical #tree)"
+python3 - > "${tmp}/tree_kernel.c" <<'PY' || { echo "  FAIL: python tree emit"; exit 1; }
+from bcir.lower.c_kernel import emit_tree_predict_c
+print(emit_tree_predict_c(5, 2, "tree_p"))
+PY
+cat >> "${tmp}/tree_kernel.c" <<'MAIN'
+#include <stdio.h>
+#include <math.h>
+int main(void) {
+  /* the toy 5-node tree (test_classical._toy_tree): node0 split x[0]<=0.5 -> node1 else leaf2(30);
+     node1 split x[1]<=0.5 -> leaf3(10) else leaf4(20). */
+  int   FE[5] = {0, 1, -1, -1, -1};
+  float TH[5] = {0.5f, 0.5f, 0.0f, 0.0f, 0.0f};
+  int   LE[5] = {1, 3, 0, 0, 0};
+  int   RI[5] = {2, 4, 0, 0, 0};
+  float LV[5] = {0.0f, 0.0f, 30.0f, 10.0f, 20.0f};
+  float X0[2] = {0.2f, 0.2f};   /* -> leaf3 = 10 */
+  float X1[2] = {0.2f, 0.9f};   /* -> leaf4 = 20 */
+  float X2[2] = {0.9f, 0.0f};   /* -> leaf2 = 30 */
+  float a = tree_p(X0, FE, TH, LE, RI, LV);
+  float b = tree_p(X1, FE, TH, LE, RI, LV);
+  float c = tree_p(X2, FE, TH, LE, RI, LV);
+  printf("a=%.1f b=%.1f c=%.1f\n", a, b, c);
+  /* the tree is EXACT (no transcendental) -- the leaf values match bit-for-bit. */
+  return (a == 10.0f && b == 20.0f && c == 30.0f) ? 0 : 1;
+}
+MAIN
+# the tree kernel is EXACT -- no libm needed (we still link -lm only for the harness fabsf-free main; not required).
+"${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/tree_kernel.c" -o "${tmp}/tree" 2>/dev/null \
+  || "${CC}" -std=c23 -O2 "${tmp}/tree_kernel.c" -o "${tmp}/tree" \
+  || { echo "  FAIL: tree kernel build"; exit 1; }
+tree_out="$("${tmp}/tree")"; tree_rc=$?    # rc=0 IS the check: the three leaves match exactly (driver)
+{ [ "${tree_rc}" = "0" ] && printf '%s' "${tree_out}" | grep -q "^a=.* b=.* c=.*"; } \
+  && echo "  PASS tree: exact threshold traversal returns the known leaves (${tree_out}; NO libm -- the EXACT half of the Area-B pattern)" \
+  || { echo "  FAIL: tree predict did not return the known leaves (rc=${tree_rc}: ${tree_out})"; exit 1; }
+
 # Area-B breadth (#62) GSL link-flag rule (dual-rail): the GSL edge (gsl_stats_mean) is minted by the kernel
 # EMITTER (emit_gsl_stats_c), not reachable from a cfront source. So this probe drives the C twin's
 # bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:gsl_stats_mean` edge and asserts it
