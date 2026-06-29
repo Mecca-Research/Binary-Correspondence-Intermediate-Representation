@@ -8,6 +8,13 @@ The coupling operator (X) (`CostVector.couple`) scales a base cost by a
 per-dimension *context factor* in Q8 fixed point (256 == x1.0). This is the
 f_i(pi) of the K_BCIR equation: a transition's realized cost depends on where/when
 it runs (placement, fusion, thermal), not just on the raw opcode.
+
+The ``fabric`` and ``sync`` axes are produced by the cross-device transfer model in
+``bcir/channels.py::orchestrate``: a producer->consumer edge that crosses channels
+pays ``fabric`` proportional to the bytes moved host<->device plus one ``sync``
+barrier per cross-device dependency (``sync`` is also charged by the BARRIER opcode
+in ``realize.py``). They are 0 within a single channel -- the cost of *placement*,
+not of the in-channel realization.
 """
 
 from __future__ import annotations
