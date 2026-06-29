@@ -160,6 +160,31 @@ mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 a
   Two-truth: the frame carries data (graded L2/L3), never a verdict; off the legality path.
 - **T3** — **derived/aggregate metrics + sensitivity** (the `.MEASURE`/`.SENS` analogy): edge-computed
   figures-of-merit + a sensitivity rank that steers the sampling budget toward high-impact signals.
+  **BUILT** — `bcir/kbcir/telemetry_metrics.py` (+ `bcir/tests/test_telemetry_metrics.py`). Two
+  pure-Python, deterministic, side-effect-free capabilities on the `DataDNA` stream, both strictly on
+  the cost/optimization side. **Derived metrics (`.MEASURE`)**: `derive_field_metrics(records, field)`
+  → `{count, min, max, avg, rms}` for one field over a batch (exact integer min/max/count; `avg` =
+  round-HALF-UP integer mean `(Σx + n//2)//n`, float-free; `rms` = `round(sqrt(Σx²/n))`, the one float,
+  reported for inspection only — never fed to the optimizer); `derive_all` rolls it up over the 0..100
+  pressures + the `cycles`/`bytes` counters; an empty batch → a well-defined all-`None` result (no
+  crash). `measure_trig_targ(series, *, trig, targ, rising=True)` is the SPICE `.MEASURE TRIG…TARG`
+  span: the index distance from the first TRIG crossing to the first TARG crossing **at or after** it
+  (`>=` rising / `<=` falling), `None` if either never crosses. Metrics run over **RT3-sanitized**
+  records (the caller sanitizes via `sanitize_events`, as `calibrate.py` does; the metrics compute
+  honestly and do not silently re-drop). **Sensitivity (`.SENS`)**: `signal_sensitivity(module, h,
+  theta, *, signals=None, delta=10, policy=None)` is a **finite-difference over the existing
+  optimizer** — for each T1-registry signal whose `cost_dim` maps to a perturbable `Theta` pressure
+  (`thermal→thermal`, `power→power`, `memory→mem_pressure`, `contention→contention`), it builds a
+  perturbed Theta (pressure +`delta`, clamped 0..100, via `dataclasses.replace`), re-runs
+  `realize.optimize`, and records `Δscore = score(perturbed) − score(baseline)`; signals rank by
+  `|Δscore|` desc (tie-break by name). On a tile-heavy `matmul_tiled` the **thermal** signal ranks top
+  (a +10 bump past the `>=60` wide-SIMD thermal-coupling threshold moves the plan score), while a dim
+  the workload does not exercise ranks lower. `sampling_budget(ranked, total, floor=1)` apportions a
+  fixed budget proportional to `|Δscore|` (integer largest-remainder, sums to exactly `total`) with a
+  documented floor so a zero-sensitivity signal still gets a minimum sample — the budget-steering
+  payoff. **Two-truth**: it perturbs COST/Theta, emits no Diagnostic, never reads/alters the legality
+  path — the module still `verify()`s clean before and after a sensitivity run; the cost model is
+  reused, not reimplemented.
 - **T4** — **export adapters**: OTLP/Prometheus exposition (data-center) + the out-of-band Redfish read.
 
 Everything above is the *cost/optimization* side. The legality verdict (R1–R21) never reads telemetry.

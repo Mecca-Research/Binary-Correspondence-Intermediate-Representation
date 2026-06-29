@@ -149,6 +149,19 @@ from `bcir_runtime.c`), mirroring the StreamPack discipline. Egress-over-UART (`
 is a documented adapter, not a hardware dependency. Strictly cost-side: a frame carries graded
 L2/L3 data, never a verdict/`Diagnostic`, and touches neither `bcir/verify` nor the cost DIMS.
 
+**Derived metrics + plan-cost sensitivity (T3) — BUILT (cost-side only).** The telemetry pipeline
+now has the SPICE `.MEASURE`/`.SENS` analogy (`bcir/kbcir/telemetry_metrics.py`,
+[`TELEMETRY_PIPELINE_RESEARCH.md`](TELEMETRY_PIPELINE_RESEARCH.md) §6): edge-computed
+figures-of-merit (`derive_field_metrics`/`derive_all` → per-field max/min/avg/rms/count with
+documented float-free round-half-up `avg` and an inspection-only `rms`; `measure_trig_targ` for the
+`TRIG…TARG` crossing span) over RT3-sanitized batches, plus a `signal_sensitivity` ranking that
+**finite-differences the existing `realize.optimize`** over a perturbed `Theta` pressure (mapping a
+T1-registry `cost_dim` → a Theta channel: thermal/power/memory/contention) and ranks signals by
+`|Δscore|` so `sampling_budget` can steer a fixed budget toward the high-impact signals (thermal
+ranks top on a tile-heavy `matmul_tiled`). Two-truth: it perturbs COST/Theta only, reuses (never
+reimplements) the cost model, emits no `Diagnostic`, and the module still `verify()`s clean before
+and after — it never reads or alters the legality path.
+
 ### Pillar 4 — tropical / lifting / linearization / precision
 
 - **4a kernel-arithmetic tropical rewrite — BY DESIGN NOT DONE (vision clarification).**
