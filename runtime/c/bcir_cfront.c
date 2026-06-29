@@ -1755,6 +1755,10 @@ static const char *bcir_lib_for_callee(const char *s, int n) {
    * the SAME order (first match wins). */
   if(n>=8 && !strncmp("LAPACKE_",s,8)) return "-llapack";
   if(lapack_is_fortran(s,n))           return "-llapack";
+  /* Area-B breadth (#62) GSL: any gsl_* (the GNU Scientific Library -- special functions / statistics) ->
+   * -lgsl (the statistics wrap emit_gsl_stats_c calls gsl_stats_mean/variance/sd and links -lgsl
+   * -lgslcblas; -lgsl is the load-bearing dep). Matches linkflags.py's GSL rule, in the SAME order. */
+  if(n>=4 && !strncmp("gsl_",s,4)) return "-lgsl";
   /* --- EXTENSION POINT: one branch per newly-wrapped library, matching the oracle's order. --- */
   return NULL;                                          /* unknown external callee -> no flag */
 }
