@@ -138,6 +138,17 @@ plugin; `registry_for_channel` maps `energy_source`→power provider. It is stri
 surfaces a graded 0..100 signal to feed `theta`, and touches neither `bcir/verify` nor the
 cost-vector DIMS — the two-truth quarantine, applied to measurement.
 
+**UART telemetry frame (T2) — BUILT (cost-side only).** The embedded telemetry tap now has a
+framed, CRC-sealed, resync-able transport ([`TELEMETRY_FRAME_ABI.md`](TELEMETRY_FRAME_ABI.md),
+`bcir/telemetry_frame.py`): a producer drains `TelemetryRing` and emits self-delimiting frames
+(`"BTLM"` magic | version | seq | timestamp | the ring's 56-byte `<7q>` records | CRC-32) over a
+byte egress; the host decoder reuses the RT3 gate (`sanitize_events`/`TelemetryIntegrity`),
+resyncs on magic, and bounds a corrupt byte to one frame. It is dual-rail (a freestanding C twin
+`runtime/c/bcir_telemetry_frame.{c,h}` pinned byte-identical to the Python reference, CRC reused
+from `bcir_runtime.c`), mirroring the StreamPack discipline. Egress-over-UART (`out` → `uart_send`)
+is a documented adapter, not a hardware dependency. Strictly cost-side: a frame carries graded
+L2/L3 data, never a verdict/`Diagnostic`, and touches neither `bcir/verify` nor the cost DIMS.
+
 ### Pillar 4 — tropical / lifting / linearization / precision
 
 - **4a kernel-arithmetic tropical rewrite — BY DESIGN NOT DONE (vision clarification).**
