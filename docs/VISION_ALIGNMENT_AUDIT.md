@@ -223,11 +223,18 @@ the decision path (`bcir/verify`, R1–R21) reads no telemetry.
   (`bcir/abi/q8_tables.py`, fixtures); `gem.matmul` plans + lowers (MLIR
   `BCIRLowerGemMatmulPass.cpp`). But no end-to-end function is emitted that bakes a
   specific model's weights as `static const …[]` and fuses them into a single-pass kernel.
-- **5b forward/backward training — PARTIAL.** `bcir/kbcir/autodiff.py` is a complete,
-  correct, content-addressed reverse-mode autodiff organ (forward eval, reverse/symbolic
-  gradients, Hessians, finite-difference-gated) — but it is **Python-oracle-only, kept
-  cold, not lowered to MLIR/C**, so gradients cannot run on the deployed rail. The
-  hybrid tropical-structure + gradient-tune training loop (B4) is not built.
+- **5b forward/backward training — BUILT (kernels + loss head).** `bcir/kbcir/autodiff.py`
+  is a complete, correct, content-addressed reverse-mode autodiff organ; `emit_autodiff_kernel_c`
+  lowers it to a forward+backward C kernel + SGD step (gradients match oracle + finite-difference).
+  The **loss head is now built too** (`bcir/kbcir/losses.py`, M1): MSE, softmax cross-entropy,
+  BCE-with-logits, hinge, so a full training step (forward → loss → backward → param grads) runs
+  end-to-end. It follows the **autodiff closure property** — MSE is built into the `Tape` as
+  closed-set nodes (the existing `grad`/`emit_autodiff_kernel_c` handle it for free); the
+  transcendental losses (softmax-CE, BCE) keep their `log`/`exp` forward value off the
+  re-differentiable path and instead provide the closed-form `grad_logits`
+  (`softmax−onehot` / `sigmoid−target`, reusing the G1 activation references) that SEEDS the model
+  backward. Unlocks logistic regression + multiclass classification. The hybrid tropical-structure +
+  gradient-tune training loop (B4) remains the next step.
 - **5c tensor ops as claims — PARTIAL.** `gem.matmul` is a first-class planned claim with
   K_BCIR tile/loop search; there are no `gem.conv` / `gem.attention` / `gem.activation`
   ops.
