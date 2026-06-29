@@ -1761,7 +1761,20 @@ class _FuncLowerer:
     _ATOMIC = {"__atomic_fetch_add": ("c.atomic.add", Opcode.ATOMIC_ADD),
                "__atomic_fetch_sub": ("c.atomic.sub", Opcode.ATOMIC_SUB),
                "__atomic_fetch_xor": ("c.atomic.xor", Opcode.ATOMIC_XOR)}
-    _FENCE = {"__atomic_thread_fence", "__sync_synchronize"}
+    # ASM3 -- memory-fence (hardware barrier) intrinsics -> the BARRIER opcode, keyed by KIND. The op string
+    # carries the kind so emit.py realizes the per-ISA instruction behind `--target` (full -> mfence/dmb ish/
+    # fence rw,rw; acquire -> lfence/dmb ishld/fence r,rw; release -> sfence/dmb ishst/fence rw,w). The full
+    # fence keeps the BACKWARD-COMPATIBLE op string `c.fence` (so the existing __atomic_thread_fence /
+    # __sync_synchronize claims -- and the C-twin parity corpus -- are unchanged, no digest/parity churn); only
+    # the lighter kinds get the new op strings. `__sync_synchronize`, the GCC/Clang `__atomic_thread_fence`,
+    # and the C11 `<stdatomic.h>` `atomic_thread_fence` are all SEQ_CST full fences. The x86-conventional
+    # `_mm_{m,l,s}fence` intrinsic NAMES encode the kind directly, so the kind is read off the name -- no
+    # `memory_order` argument is parsed (the order constants are not recognized constants in this subset).
+    _FENCE = {"__atomic_thread_fence": "c.fence", "__sync_synchronize": "c.fence",
+              "atomic_thread_fence": "c.fence",                  # C11 <stdatomic.h> -- seq_cst full fence
+              "_mm_mfence": "c.fence",                           # x86 mfence -- full (load+store) fence
+              "_mm_lfence": "c.fence.acquire",                   # x86 lfence -- load (acquire) fence
+              "_mm_sfence": "c.fence.release"}                   # x86 sfence -- store (release) fence
     # Compare-and-swap -> the CMPXCHG opcode: a 3-read claim (ptr, expected, desired). The `val`
     # form returns the pre-swap value, the `bool` form returns whether the swap happened.
     _CMPXCHG = {"__sync_val_compare_and_swap": "c.cmpxchg.val",
@@ -1786,9 +1799,10 @@ class _FuncLowerer:
         # Atomics run on the A lane. A scalar atomic counter is a single-location RMW (not on
         # the decoupled GGG/scatter tail), so it stays SCALAR-shaped -- the lane law (R6) admits
         # lane A for SCALAR, and the atomic/barriered hazard discharges R5.
-        if node.callee in self._FENCE:
+        if node.callee in self._FENCE and node.callee not in self.func_rets:
+            op = self._FENCE[node.callee]                # c.fence | c.fence.acquire | c.fence.release (the KIND)
             t = self._temp(scalar("uint32_t"), "fence")
-            self._emit("c.fence", Opcode.BARRIER, (), (), lane=Lane.A, hazard="barriered")
+            self._emit(op, Opcode.BARRIER, (), (), lane=Lane.A, hazard="barriered")
             return t
         if node.callee in self._ATOMIC:
             op, oc = self._ATOMIC[node.callee]

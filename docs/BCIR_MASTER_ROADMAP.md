@@ -503,8 +503,24 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 > instruction as `__asm__ __volatile__` (`<asm/io.h>` `"=a"`/`"a"`/`"Nd"` constraints, reusing the ASM1
 > machinery); a non-x86 target (`aarch64`/`riscv64`) has **no port I/O** → an honest unsupported diagnostic
 > (LLVM fallback). **Honest boundary:** executing `in`/`out` is privileged (ring-0 / iopl), so the emitted
-> asm is **assembled** (`gcc -c`/`clang -c`), never run — see `docs/CFRONT_GUIDE.md`. ASM3 (hardware
-> barriers) is next.
+> asm is **assembled** (`gcc -c`/`clang -c`), never run — see `docs/CFRONT_GUIDE.md`.
+
+> **Hardware barriers (ASM3)** — the memory-fence intrinsic (already a recognized `barriered` claim) gets
+> **typed kinds** + **real per-ISA assembly emit behind `--target`**, mirroring ASM2. `__sync_synchronize` /
+> `__atomic_thread_fence` / the C11 `atomic_thread_fence` + `_mm_mfence` are **full (seq_cst)** fences (op
+> **`c.fence`**, kept backward-compatible so the parity digest is unchanged); `_mm_lfence` is the **load
+> (acquire)** fence (`c.fence.acquire`) and `_mm_sfence` the **store (release)** fence (`c.fence.release`) —
+> the kind read off the intrinsic NAME, no `memory_order` parse. The portable
+> `__atomic_thread_fence(__ATOMIC_SEQ_CST)` emit is replaced by the real barrier behind `--target` — x86
+> `mfence`/`lfence`/`sfence`, aarch64 `dmb ish`/`ishld`/`ishst`, riscv64 `fence rw,rw`/`r,rw`/`rw,w`, always
+> with the required `"memory"` compiler-barrier clobber. **Every ISA has a fence**, so a target outside the
+> three families keeps the portable emit as an honest default (no unsupported-diagnostic path, unlike port
+> I/O). **Per-ISA assemble, host-arch-gated:** barriers can't be cross-assembled, so the gate assembles each
+> fence for the **host's own native arch** (`gcc -c`/`clang -c`) and asserts the emit text for non-native
+> targets — real assembled coverage on every CI lane (x86 lanes assemble `mfence`/`lfence`/`sfence`; the
+> aarch64 lane assembles the `dmb ish` family). Cross-claim ordering **enforcement** (making `barriered`
+> forbid the optimizer/scheduler from reordering other claims across a fence) is the next slice (ASM3b). See
+> `docs/CFRONT_GUIDE.md`.
 
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
 register-map header now ingests through L7 → L5 → an R1–R18-clean plan with `bcir-explain`,

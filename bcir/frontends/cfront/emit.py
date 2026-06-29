@@ -28,8 +28,12 @@ from .lower import (
 )
 
 # ASM2 -- the x86 targets that have port-mapped I/O (`in`/`out` instructions). ARM/RISC-V have no port I/O
-# (only MMIO), so their realization is an honest unsupported diagnostic -> the LLVM fallback.
+# (only MMIO), so their realization is an honest unsupported diagnostic -> the LLVM fallback. ASM3 reuses the
+# same target families to key the per-ISA memory-fence (barrier) instruction; unlike port I/O, EVERY ISA has
+# fences, so a target outside these three families falls back to the portable __atomic_thread_fence emit.
 _X86_TARGETS = frozenset({"x86_64-linux", "i386-linux", "x86_64-windows"})
+_ARM_TARGETS = frozenset({"aarch64-linux"})
+_RISCV_TARGETS = frozenset({"riscv64-linux"})
 
 # The x86 `in`/`out` operand templates per access width, in the standard GCC/Linux <asm/io.h> form. The
 # accumulator is `%b0`/`%w0`/`%k0` (al / ax / eax) and the port is `%w1` (an immediate-or-dx port, the `Nd`
@@ -61,6 +65,40 @@ def _portio_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     templ = _PORTIO_OUT_ASM[width]
     return (f'__asm__ __volatile__ ({templ} :  : '
             f'"a" ({ref(c.rd[0])}), "Nd" ({ref(c.rd[1])}));')
+
+# ASM3 -- the native memory-fence (hardware barrier) mnemonic per (kind, ISA family). The kind rides the op
+# suffix (`c.fence` full / `c.fence.acquire` load / `c.fence.release` store); the `"memory"` clobber is the
+# REQUIRED compiler-barrier half of the fence (it stops the compiler reordering memory accesses across it).
+# x86: mfence (full) / lfence (load) / sfence (store). aarch64: `dmb ish` (full) / `dmb ishld` (load) /
+# `dmb ishst` (store), the inner-shareable data-memory barriers. riscv64: `fence rw,rw` / `fence r,rw` /
+# `fence rw,w`, the RISC-V predecessor,successor fences. Every ISA HAS a fence, so a target outside these
+# three families uses the portable __atomic_thread_fence default (an honest seam, NOT a fallback).
+_FENCE_ASM = {
+    "x86":   {"full": "mfence", "acquire": "lfence", "release": "sfence"},
+    "arm":   {"full": "dmb ish", "acquire": "dmb ishld", "release": "dmb ishst"},
+    "riscv": {"full": "fence rw,rw", "acquire": "fence r,rw", "release": "fence rw,w"}}
+
+
+def _fence_stmt(lf: LoweredFunc, c: Claim) -> str:
+    """Re-emit one memory-fence claim (ASM3) as the REAL per-ISA hardware barrier instruction behind a GNU
+    `__asm__ __volatile__ (... ::: "memory")`, keyed off the function's target (mirroring ASM2's `_portio_stmt`).
+    The KIND rides the op suffix: `c.fence` (full / seq_cst) / `c.fence.acquire` (load fence) / `c.fence.release`
+    (store fence). Unlike port I/O, every ISA HAS a fence -- so a target outside the x86/aarch64/riscv64
+    families keeps the portable `__atomic_thread_fence(__ATOMIC_SEQ_CST);` as an honest default (all five
+    shipping ABIs are covered by the three families, so this is just a safety net, NOT an unsupported
+    diagnostic). The `"memory"` clobber is the compiler-barrier half of the fence and is always present."""
+    parts = c.op.split(".")                                    # ["c", "fence"] | ["c", "fence", "acquire"|"release"]
+    kind = parts[2] if len(parts) > 2 else "full"             # the bare `c.fence` is the FULL (seq_cst) fence
+    if lf.target in _X86_TARGETS:
+        family = "x86"
+    elif lf.target in _ARM_TARGETS:
+        family = "arm"
+    elif lf.target in _RISCV_TARGETS:
+        family = "riscv"
+    else:                                                     # an ISA outside the three families: portable default
+        return "__atomic_thread_fence(__ATOMIC_SEQ_CST);"
+    mnem = _FENCE_ASM[family][kind]
+    return f'__asm__ __volatile__ ("{mnem}" ::: "memory");'
 
 # op-suffix -> C operator.
 _BINOP = {"add": "+", "sub": "-", "mul": "*", "div": "/", "mod": "%", "and": "&", "or": "|",
@@ -397,8 +435,8 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     if c.op.startswith("c.cmpxchg."):             # compare-and-swap -> the __sync CAS builtin
         return deftmp(c.wr[0], f"__sync_{c.op.split('.')[-1]}_compare_and_swap("
                                f"{ref(c.rd[0])}, {ref(c.rd[1])}, {ref(c.rd[2])})")
-    if c.op == "c.fence":
-        return "__atomic_thread_fence(__ATOMIC_SEQ_CST);"
+    if c.op == "c.fence" or c.op.startswith("c.fence."):     # memory fence (ASM3): the real per-ISA hardware
+        return _fence_stmt(lf, c)                            # barrier behind --target ("memory" compiler barrier)
     if c.op.startswith("c.c11atom."):             # C11 <stdatomic.h> generics on _Atomic objects
         fn = c.op.split(".")[-1]                   # fetch_add / fetch_sub / fetch_xor / load / store
         if fn == "load":
