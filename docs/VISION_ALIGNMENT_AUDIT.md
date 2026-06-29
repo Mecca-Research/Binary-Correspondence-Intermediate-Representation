@@ -253,6 +253,14 @@ the decision path (`bcir/verify`, R1–R21) reads no telemetry.
   the modules touch no verifier and emit no `Diagnostic`, and the model graphs stay in the closed lowerable
   primitive set). The remaining next step on this axis is the hybrid tropical-structure + gradient-tune
   loop (B4).
+  - **E1 — OLS (ordinary least squares)** (`bcir/kbcir/ols.py`, `emit_lapack_ols_c`): the first ML-breadth
+    slice — **overdetermined linear regression** (minimize `‖A·x − b‖₂`) built on the Area-B wrap pattern.
+    The `ols_reference` source of truth forms the normal equations `G = AᵀA`, `c = Aᵀb` and **reuses
+    `linsolve.solve_reference`**; the emitted C delegates to LAPACK's QR-based **`sgels`** when linked (the
+    *existing* `LAPACKE_*`→`-llapack` rule covers it — no linkflags change), with a portable normal-equations
+    fallback (CI needs no LAPACK). Honest conditioning note: the normal equations square `cond(A)`, so the QR
+    `sgels` path is the more stable; they agree to float round-off on a well-conditioned system. Off the
+    legality path; the R17 bridge bound is the input round-trip alone.
 - **5c tensor ops as claims — PARTIAL.** `gem.matmul` is a first-class planned claim with
   K_BCIR tile/loop search; there are no `gem.conv` / `gem.attention` / `gem.activation`
   ops.

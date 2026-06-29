@@ -199,6 +199,7 @@ _MODULES = [
     "bcir.tests.test_blas_gemm",
     "bcir.tests.test_fftw",
     "bcir.tests.test_lapack",
+    "bcir.tests.test_ols",
     "bcir.tests.test_gsl",
     "bcir.tests.test_sleef",
     "bcir.tests.test_sycl_channel",
