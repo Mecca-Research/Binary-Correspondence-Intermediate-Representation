@@ -28,6 +28,12 @@ KEYWORDS = frozenset({
     "void", "_Bool", "bool", "char", "short", "int", "long", "unsigned", "signed",
     "const", "volatile", "static", "inline", "sizeof", "typedef", "enum",
     "_BitInt",                                   # C23 bit-precise integer type `_BitInt(N)` (§6.2.5)
+    "__asm__", "__volatile__",                   # GNU inline assembly (ASM1 trusted opaque edge): only the
+                                                 #   DOUBLE-UNDERSCORE spellings are reserved keywords (benign;
+                                                 #   implementation-reserved). Plain `asm` is NOT a keyword -- it
+                                                 #   stays a usable ISO-C identifier under -std=c11; the parser
+                                                 #   recognizes the `asm` STATEMENT contextually (a following `(`
+                                                 #   or a volatile/__volatile__/goto qualifier), see cparse._stmt.
 })
 
 # Multi-char operators first (longest-match), then single-char.
