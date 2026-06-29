@@ -300,6 +300,41 @@ law, parity-gate. Throttled, parallel to C/driver work.*
     kernel **compiles + runs + normalizes** rows to mean≈0/var≈1 (the `#layernorm` runtime probe), and the module
     **touches no verifier / emits no `Diagnostic`** (off the legality path, AST-inspected). Pure-Python oracle,
     deterministic.
+  - **E4 — RNN / LSTM / GRU recurrent cells BUILT** (`bcir/kbcir/recurrent.py`, `bcir/tests/test_recurrent.py`;
+    the emitted C twin `bcir/lower/c_kernel.py::emit_lstm_cell_c`). The fourth ML-breadth slice — and a
+    **TWO-TIER** design *forced by the B3 autodiff's CLOSED primitive set* `{const, var, neg, add, sub, mul, div,
+    dot, select}` (no transcendentals), exactly mirroring **M1's two-path losses** (closed-set MSE built into the
+    Tape vs. a transcendental loss that supplies a closed-form gradient SEED). Because `relu(x) = select(x, x, 0)`
+    is in the closed set but `tanh`/`sigmoid` are not, a recurrent cell splits the same way:
+    - **Tier A — the closed-set relu-RNN, trainable end-to-end via the EXISTING `unroll_scan` + `grad` (= literal
+      BPTT).** An Elman RNN `h_t = relu(W_h·h_{t-1} + W_x·x_t + b)` is built from ONLY closed primitives (`dot`
+      matmuls, `add`, `relu = select(z, z, 0)`); folding the step over a sequence (an explicit **vector-carry
+      unroll** — the same finite composition the scalar `autodiff.unroll_scan` builds, cited verbatim) yields one
+      output DAG whose `autodiff.grad` over a scalar readout **IS backprop-through-time**, just as `unroll_scan`'s
+      docstring states (`d(final_carry)/d(input) == reverse-mode AD over the unrolled DAG == BPTT`). **THE HEADLINE
+      GATE:** the BPTT gradient (w.r.t. the inputs *and* the weights) matches `finite_difference_grad` via
+      `gradients_match` — a real trainable recurrent net whose BPTT is the existing reverse-mode AD, verified by
+      finite differences (inputs kept off the relu kink so the a.e. select-derivative equals the FD). A tiny
+      end-to-end run (reusing `training.py`) drives a loss down. The single-hidden-unit recurrence is folded by
+      `autodiff.unroll_scan` **verbatim**, pinning the vector unroll is the same composition.
+    - **Tier B — LSTM and GRU cells (transcendental `tanh`/`sigmoid` gates), the M1 closed-form-SEED treatment.** A
+      NUMERIC forward reference (`lstm_cell_reference`: `f/i/o = σ(·)`, `g = tanh(·)`, `c = f⊙c_prev + i⊙g`,
+      `h = o⊙tanh(c)`; `gru_cell_reference`: `z/r = σ(·)`, `n = tanh(W_n x + r⊙(U_n h_prev) + b_n)`,
+      `h = (1−z)⊙n + z⊙h_prev` — the canonical PyTorch GRU) riding the trusted libm edge, plus **closed-form
+      analytic gradients** (`lstm_cell_grads` / `gru_cell_grads`) built from the gate derivatives `σ' = σ(1−σ)`,
+      `tanh' = 1 − tanh²` — the seed, exactly like `losses.py`'s `*_grad_logits`. Verified: the forward against a
+      **hand-computed** small example; the analytic Jacobians against **CENTRAL finite differences** (numeric,
+      since tanh/sigmoid aren't closed Tape primitives) to ~1e-11. **Independent verifiers:** the BPTT-vs-FD gate
+      (Tier A); gate-range checks (every σ ∈ (0,1), every tanh ∈ (−1,1)); a **temporal-dependence** check
+      (`∂h_T/∂x_0 ≠ 0` — genuine memory across time). The Q8↔f32↔Q8 bridges (`lstm_via_bridge` / `gru_via_bridge`)
+      round-trip the INPUT sequence then run the trusted forward, so the SOLE certified error is the R17 input
+      bound (mirrors the transformer/attention bridge). The new C kernel `emit_lstm_cell_c` emits a portable LSTM
+      cell using `tanhf` + the `expf`-based guarded sigmoid — the `c.call.libm:` edge (`-lm`, **already mapped** —
+      `library_for_callee("tanhf") == library_for_callee("expf") == "-lm"`, **no linkflags change**); it
+      **compiles + runs + matches** the hand-computed forward (the `#lstm` runtime probe). `check_recurrent` is the
+      op-level shape/dtype well-formedness checker (positive dims; dtype preserved; the quarantine rule that
+      LSTM/GRU need f32) — NOT a new R-law (mirrors `check_transformer`). The module **touches no verifier / emits
+      no `Diagnostic`** (off the legality path, AST-inspected). Pure-Python oracle, deterministic.
 - **B4 — Hybrid tropical + selective gradient.** Reframe training: the **tropical planner finds the structure**
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and

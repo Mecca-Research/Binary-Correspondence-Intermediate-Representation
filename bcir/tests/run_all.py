@@ -192,6 +192,7 @@ _MODULES = [
     "bcir.tests.test_attention",
     "bcir.tests.test_attention_law_parity",
     "bcir.tests.test_transformer",
+    "bcir.tests.test_recurrent",
     "bcir.tests.test_autodiff",
     "bcir.tests.test_autodiff_kernel",
     "bcir.tests.test_losses",

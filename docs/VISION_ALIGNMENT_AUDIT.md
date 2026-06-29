@@ -291,6 +291,21 @@ the decision path (`bcir/verify`, R1–R21) reads no telemetry.
     recomputed off the block code path. The only NEW C kernel is `emit_layernorm_c` — the matmul / softmax /
     single-head-attention C twins already exist, so the rest composes already-tested twins. Off the legality
     path; the R17 bridge bound is the input round-trip alone.
+  - **E4 — RNN / LSTM / GRU recurrent cells** (`bcir/kbcir/recurrent.py`, `emit_lstm_cell_c`): the fourth
+    ML-breadth slice — a **TWO-TIER** design forced by the B3 autodiff's CLOSED primitive set (no transcendentals),
+    mirroring **M1's two-path losses**. **Tier A** — the closed-set relu-RNN `h_t = relu(W_h·h_{t-1} + W_x·x_t + b)`
+    (relu = `select`, the matmuls = `dot`), trainable end-to-end via the EXISTING `unroll_scan` + `grad` (= literal
+    **BPTT**); the HEADLINE gate asserts the BPTT gradient (inputs **and** weights) matches `finite_difference_grad`
+    — a real trainable recurrent net whose BPTT is the existing reverse-mode AD, verified by finite differences.
+    **Tier B** — LSTM (`f/i/o = σ`, `g = tanh`, `c = f⊙c_prev + i⊙g`, `h = o⊙tanh(c)`) and GRU (`z/r = σ`,
+    `n = tanh(W_n x + r⊙(U_n h_prev) + b_n)`, `h = (1−z)⊙n + z⊙h_prev`) as transcendental cells with a numeric
+    forward (checked against a hand-computed example) + **closed-form analytic gradients** from `σ' = σ(1−σ)`,
+    `tanh' = 1 − tanh²` (the M1-style seed), checked against CENTRAL finite differences (~1e-11). Independent
+    verifiers: gate-range (`σ ∈ (0,1)`, `tanh ∈ (−1,1)`) and **temporal dependence** (`∂h_T/∂x_0 ≠ 0` — memory
+    across time). The only NEW C kernel is `emit_lstm_cell_c` (`tanhf` + the `expf`-based guarded sigmoid → the
+    `c.call.libm:` edge, `-lm`, **already mapped — no linkflags change**), compiled + run + matched by the `#lstm`
+    runtime probe. `check_recurrent` is op-level well-formedness (NOT a new R-law). Off the legality path; the R17
+    bridge bound is the input round-trip alone.
 - **5c tensor ops as claims — PARTIAL (broadening).** `gem.matmul` is a first-class planned claim with
   K_BCIR tile/loop search, joined by `gem.activation` (relu / sigmoid / tanh / gelu / softmax), `gem.conv`, and
   the **G7 `gem.attention`** single-head scaled-dot-product op — and now the **E3 full Transformer encoder
