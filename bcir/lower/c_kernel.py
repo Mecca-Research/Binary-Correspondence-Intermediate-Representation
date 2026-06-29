@@ -674,6 +674,67 @@ def emit_sleef_exp_c(n: int, fn_name: str = "bcir_vexp") -> str:
     )
 
 
+def emit_sycl_saxpy_c(n: int, fn_name: str = "bcir_saxpy") -> str:
+    """SYCL backend differential oracle: emit a SINGLE-SOURCE C++ SAXPY kernel ``out[i] = a*x[i] + y[i]`` over
+    a dense unit-stride ``float[n]`` -- a SYCL device ``parallel_for`` when compiled with a SYCL toolchain
+    (``-fsycl``, ``BCIR_USE_SYCL``), a portable scalar C++ fallback otherwise. BOTH paths compute the IDENTICAL
+    SAXPY to float round-off (SAXPY is exact multiply-add, no transcendental), so the same source is correct
+    on the device or standalone -- CI needs no SYCL compiler installed.
+
+    CRITICAL -- this is NOT a ``c.call.libm:`` edge. The five Area-B library wraps (BLAS/FFTW/LAPACK/GSL/SLEEF)
+    each call an external symbol through the ``c.call.libm:`` FFI edge and carry a ``-l<lib>`` link rule. SYCL
+    is fundamentally different: it is a single-source C++ *compiler MODE* (``-fsycl``: ``icpx -fsycl`` / ``acpp``
+    / ``clang++ -fsycl``), and the kernel is emitted SYCL C++ source (a ``parallel_for``), NOT a call to a
+    linkable symbol. So this emitter mints NO ``c.call.libm:`` label and there is NO link-flag rule for SYCL in
+    bcir/frontends/cfront/linkflags.py (a SYCL-ish symbol resolves to None/unknown -- asserted in
+    test_sycl_channel.py). SYCL lives on the C++ side of the G8 boundary (a host runtime / device programming
+    model ABOVE the deterministic C rail); this kernel is C++ so it is emitted as C++ either way (no
+    ``extern "C"``), consistent with that placement.
+
+    BCIR owns the CALLING side: the dense contiguous (unit-stride) ``float`` array layout and (with the A1.1 Q8
+    bridge at the boundary) the precision; the device merely realizes the elementwise map. The signature bakes
+    ``n`` in (a planned claim knows its length): ``void {fn}(float a, const float *x, const float *y, float
+    *out)``; ``out`` may not alias x/y on the device path (a ``parallel_for`` writes out[i] from a*x[i]+y[i]).
+    ``n >= 1`` (a map needs at least one lane)."""
+    if n < 1:
+        raise ValueError(f"sycl saxpy length must be >= 1; got {n}")
+    return (
+        f"/* BCIR -> SYCL device (parallel_for) differential oracle: a*x+y over a dense unit-stride "
+        f"float[{n}]; the SYCL device path when compiled with a SYCL toolchain (-fsycl, BCIR_USE_SYCL), a "
+        f"portable scalar C++ fallback otherwise -- both compute the identical SAXPY to float round-off. BCIR "
+        f"owns the calling side (dense layout + the Q8<->f32 boundary). NOTE: SYCL is a compiler MODE "
+        f"(-fsycl), NOT a 'c.call.libm' -l<lib> external-symbol edge. */\n"
+        "#include <cstddef>\n"
+        "#if defined(BCIR_USE_SYCL)\n"
+        "  #include <sycl/sycl.hpp>\n"
+        "  #define BCIR_SAXPY_SYCL 1\n"
+        "#else\n"
+        "  #define BCIR_SAXPY_SYCL 0\n"
+        "#endif\n"
+        f"void {fn_name}(float a, const float *x, const float *y, float *out) {{\n"
+        "#if BCIR_SAXPY_SYCL\n"
+        f"  /* SYCL device path: a single queue, USM device pointers, one parallel_for over the {n} lanes. */\n"
+        "  sycl::queue q;\n"
+        f"  const std::size_t n = {n};\n"
+        "  float *dx = sycl::malloc_device<float>(n, q);\n"
+        "  float *dy = sycl::malloc_device<float>(n, q);\n"
+        "  float *dout = sycl::malloc_device<float>(n, q);\n"
+        "  q.memcpy(dx, x, n * sizeof(float)).wait();\n"
+        "  q.memcpy(dy, y, n * sizeof(float)).wait();\n"
+        "  q.parallel_for(sycl::range<1>(n), [=](sycl::id<1> i) {\n"
+        "    dout[i] = a * dx[i] + dy[i];   /* out[i] = a*x[i] + y[i] */\n"
+        "  }).wait();\n"
+        "  q.memcpy(out, dout, n * sizeof(float)).wait();\n"
+        "  sycl::free(dx, q); sycl::free(dy, q); sycl::free(dout, q);\n"
+        "#else\n"
+        f"  /* Portable scalar C++ fallback (no SYCL header, plain g++/clang++): the IDENTICAL SAXPY. */\n"
+        f"  for (std::size_t i = 0; i < {n}; ++i)\n"
+        f"    out[i] = a * x[i] + y[i];\n"
+        "#endif\n"
+        "}\n"
+    )
+
+
 # --- G7: gem.conv kernel (a 2-D conv == a structured matmul; reference-verified vs the naive direct conv) -
 # A 2-D single-group convolution lowered to portable C. Following the B5 "BCIR owns the calling side"
 # pattern, the emitted kernel computes the IDENTICAL result as the naive direct conv (kbcir.conv.

@@ -19,6 +19,9 @@
 > - [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) — the C↔C++ hand-off boundary (Pillar 5d): the contract
 >   for when work exceeds the deterministic single-node C/IR rail and crosses to C++ (dynamic graph topology +
 >   distributed MPI/NCCL orchestration), with a compilable, round-trip-tested seam scaffold (`runtime/cpp/`).
+> - [`SYCL_INTEROP.md`](SYCL_INTEROP.md) — SYCL/SPIR-V as a backend channel + a differential oracle (a SAXPY
+>   `parallel_for` measured against BCIR's reference), never on the legality path; a compiler mode (`-fsycl`),
+>   not a `c.call.libm:` link edge.
 > - [`BCIR_Repo_Structure.md`](BCIR_Repo_Structure.md) — directory layout + build entry points.
 
 ---
