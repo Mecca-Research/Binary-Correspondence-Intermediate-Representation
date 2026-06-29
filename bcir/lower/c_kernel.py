@@ -1296,6 +1296,84 @@ def emit_layernorm_c(rows: int, dim: int, fn_name: str = "bcir_layernorm") -> st
     )
 
 
+def emit_lstm_cell_c(input_dim: int, hidden_dim: int, fn_name: str = "bcir_lstm_cell") -> str:
+    """E4 (ML-breadth): emit a portable C LSTM CELL forward -- the recurrent-cell executable seam, reproducing
+    ``kbcir.recurrent.lstm_cell_reference``. ONE step of a standard LSTM, per hidden unit ``u`` with gate
+    pre-activations ``a_g = W_g x + U_g h_prev + b_g``:
+
+        f = sigmoid(a_f) ; i = sigmoid(a_i) ; o = sigmoid(a_o) ; g = tanhf(a_g)
+        c[u] = f * c_prev[u] + i * g
+        h[u] = o * tanhf(c[u])
+
+    ``x`` is length ``input_dim``; ``h_prev`` / ``c_prev`` / ``h`` / ``c`` are length ``hidden_dim``; each gate's
+    ``W_*`` is ``hidden_dim x input_dim`` row-major and ``U_*`` is ``hidden_dim x hidden_dim`` row-major, with a
+    length-``hidden_dim`` bias ``b_*`` -- the gates are passed grouped (f, i, o, g) in that order. The ONLY
+    transcendentals are ``tanhf`` and the ``expf`` inside the sigmoid -- BOTH ride the trusted ``c.call.libm:``
+    FFI edge (link ``-lm``, which the cfront link rail ALREADY maps: ``library_for_callee("tanhf") ==
+    library_for_callee("expf") == "-lm"`` -- NO linkflags change). The gate matmuls / adds and the elementwise
+    products are exact/deterministic. So this is the recurrent-cell analog of the layernorm / attention-softmax
+    wraps: a portable, self-contained kernel whose only externals are the trusted libm tanh/exp, matching the
+    oracle reference (``lstm_cell_reference``) to float round-off (float32 C vs float64 oracle).
+
+    WHY LSTM IS THE C SEAM (the honest-depth contract): of E4's two tiers, Tier A (the closed-set relu-RNN) is
+    already lowerable through the EXISTING autodiff/closed-set machinery (relu = select, exact, no libm), so the
+    net-new executable seam is the TRANSCENDENTAL tier -- and the LSTM cell is its canonical, gate-rich
+    representative (four sigmoids/tanh + the cell-state recurrence). The sigmoid is the numerically-guarded
+    ``x >= 0 ? 1/(1+expf(-x)) : ex/(1+ex)`` form (mirrors ``recurrent.sigmoid``) so large ``|x|`` never overflows.
+
+    Signature ``void {fn}(const float *x, const float *h_prev, const float *c_prev, const float *Wf, const float
+    *Uf, const float *bf, ... (i, o, g) ..., float *h, float *c)`` with ``input_dim`` / ``hidden_dim`` baked in (a
+    planned claim knows its shape). BCIR owns the calling side (the row-major layout, the gate order, the guarded
+    sigmoid); the trusted libm ``tanhf`` / ``expf`` are the sole externals. ``h`` / ``c`` are distinct output
+    buffers and may NOT alias the inputs."""
+    if input_dim < 1 or hidden_dim < 1:
+        raise ValueError(f"lstm cell dims must be >= 1; got input_dim={input_dim} hidden_dim={hidden_dim}")
+    return (
+        f"/* BCIR -> gem.recurrent LSTM cell (E4 recurrent-cell C seam): one step, per unit "
+        f"f=sigmoid(Wf x+Uf h+bf), i,o likewise, g=tanhf(Wg x+Ug h+bg), c=f*c_prev+i*g, h=o*tanhf(c). "
+        f"input_dim={input_dim} hidden_dim={hidden_dim}; x len input_dim, h_prev/c_prev/h/c len hidden_dim, "
+        f"W_* hidden_dim x input_dim, U_* hidden_dim x hidden_dim, b_* len hidden_dim (gates f,i,o,g). The only "
+        f"transcendentals are tanhf + the expf in the sigmoid -- both ride the c.call.libm: edge (tanhf/expf, "
+        f"-lm; already mapped, no linkflags change). The gate matmuls/adds + products are exact. Matches "
+        f"kbcir.recurrent.lstm_cell_reference to float round-off. */\n"
+        "#include <stddef.h>\n#include <math.h>\n"
+        "/* numerically-guarded logistic sigmoid (no overflow for large |x|; mirrors recurrent.sigmoid). */\n"
+        f"static float {fn_name}_sigmoid(float z) {{\n"
+        f"  if (z >= 0.0f) {{ float e = expf(-z); return 1.0f / (1.0f + e); }}   /* c.call.libm:expf */\n"
+        f"  float e = expf(z); return e / (1.0f + e);                          /* c.call.libm:expf */\n"
+        f"}}\n"
+        f"void {fn_name}(const float *restrict x, const float *restrict h_prev,\n"
+        f"             const float *restrict c_prev,\n"
+        f"             const float *restrict Wf, const float *restrict Uf, const float *restrict bf,\n"
+        f"             const float *restrict Wi, const float *restrict Ui, const float *restrict bi,\n"
+        f"             const float *restrict Wo, const float *restrict Uo, const float *restrict bo,\n"
+        f"             const float *restrict Wg, const float *restrict Ug, const float *restrict bg,\n"
+        f"             float *restrict h, float *restrict c) {{\n"
+        f"  const size_t di = {input_dim}u, dh = {hidden_dim}u;\n"
+        f"  for (size_t u = 0; u < dh; ++u) {{\n"
+        f"    float af = bf[u], ai = bi[u], ao = bo[u], ag = bg[u];\n"
+        f"    for (size_t j = 0; j < di; ++j) {{        /* W_* x : the input-weight matmul rows (exact) */\n"
+        f"      float xj = x[j];\n"
+        f"      af += Wf[u * di + j] * xj; ai += Wi[u * di + j] * xj;\n"
+        f"      ao += Wo[u * di + j] * xj; ag += Wg[u * di + j] * xj;\n"
+        f"    }}\n"
+        f"    for (size_t k = 0; k < dh; ++k) {{        /* U_* h_prev : the recurrent-weight matmul rows (exact) */\n"
+        f"      float hk = h_prev[k];\n"
+        f"      af += Uf[u * dh + k] * hk; ai += Ui[u * dh + k] * hk;\n"
+        f"      ao += Uo[u * dh + k] * hk; ag += Ug[u * dh + k] * hk;\n"
+        f"    }}\n"
+        f"    float fgate = {fn_name}_sigmoid(af);     /* forget gate  */\n"
+        f"    float igate = {fn_name}_sigmoid(ai);     /* input gate   */\n"
+        f"    float ogate = {fn_name}_sigmoid(ao);     /* output gate  */\n"
+        f"    float gcand = tanhf(ag);                  /* candidate -- c.call.libm:tanhf */\n"
+        f"    float cu = fgate * c_prev[u] + igate * gcand;     /* new cell state (exact given the gates) */\n"
+        f"    c[u] = cu;\n"
+        f"    h[u] = ogate * tanhf(cu);                 /* new hidden state -- c.call.libm:tanhf */\n"
+        f"  }}\n"
+        f"}}\n"
+    )
+
+
 # --- G1: gem.activation kernels (relu exact / the transcendental four via the c.call.libm: edge) ----
 # The activation analog of the B5 BLAS wrap. relu is integer/Q-fixed CLEAN -- a pure max(0,x), emitted
 # with NO transcendental and NO libm dependency (exact, 0 ULP, valid for f32 OR i32). The transcendental

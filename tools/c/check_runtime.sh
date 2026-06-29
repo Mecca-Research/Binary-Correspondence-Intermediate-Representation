@@ -911,6 +911,51 @@ ln_out="$("${tmp}/ln")"; ln_rc=$?    # rc=0 IS the check: each output row has me
   && echo "  PASS layernorm: rows normalize to mean~0/var~1 (${ln_out//$'\n'/ }; sqrtf -> -lm via the libm rule, no linkflags change)" \
   || { echo "  FAIL: layernorm did not normalize rows (rc=${ln_rc}: ${ln_out})"; exit 1; }
 
+# E4 (ML-breadth) recurrent cells: the LSTM CELL kernel (emit_lstm_cell_c) -- the recurrent-cell executable seam
+# (#lstm). E4 is a TWO-TIER design: Tier A (the closed-set relu-RNN) is already lowerable through the EXISTING
+# autodiff/closed-set machinery (relu = select, exact, no libm), so the net-new C seam is the TRANSCENDENTAL
+# tier, of which the LSTM cell is the canonical gate-rich representative: per unit f=sigmoid(Wf x+Uf h+bf),
+# i,o likewise, g=tanhf(Wg x+Ug h+bg), c=f*c_prev+i*g, h=o*tanhf(c). Its only transcendentals are tanhf + the
+# expf inside the (numerically-guarded) sigmoid, BOTH riding the c.call.libm: edge (-lm, ALREADY mapped -- no
+# linkflags change; sqrtf/tanhf/expf all ride the libm rule, confirmed by the #linkflags-* probes). This probe
+# compiles + runs the kernel (only libm needed) on a 1x1 cell with KNOWN weights (W_*=1, U_*=0, b_*=0, x=0.5,
+# h_prev=0, c_prev=0) and asserts it matches the hand-computed output to float round-off -- the C twin of
+# kbcir.recurrent.lstm_cell_reference.
+echo "[c-runtime] E4 recurrent LSTM cell (emit_lstm_cell_c): 1x1 cell matches hand-computed forward (#lstm)"
+python3 - > "${tmp}/lstm_kernel.c" <<'PY' || { echo "  FAIL: python lstm emit"; exit 1; }
+from bcir.lower.c_kernel import emit_lstm_cell_c
+print(emit_lstm_cell_c(1, 1, "lstm_cell"))
+PY
+cat >> "${tmp}/lstm_kernel.c" <<'MAIN'
+#include <stdio.h>
+#include <math.h>
+int main(void) {
+  /* a 1x1 LSTM with W_*=1, U_*=0, b_*=0, x=0.5, h_prev=0, c_prev=0: every gate pre-activation is 0.5. */
+  float X[1] = {0.5f}, HP[1] = {0.0f}, CP[1] = {0.0f};
+  float Wf[1]={1.0f}, Uf[1]={0.0f}, bf[1]={0.0f};
+  float Wi[1]={1.0f}, Ui[1]={0.0f}, bi[1]={0.0f};
+  float Wo[1]={1.0f}, Uo[1]={0.0f}, bo[1]={0.0f};
+  float Wg[1]={1.0f}, Ug[1]={0.0f}, bg[1]={0.0f};
+  float H[1], C[1];
+  lstm_cell(X, HP, CP, Wf,Uf,bf, Wi,Ui,bi, Wo,Uo,bo, Wg,Ug,bg, H, C);
+  /* hand-computed reference: f=i=o=sigmoid(0.5), g=tanhf(0.5); c=i*g; h=o*tanhf(c). */
+  float s = 1.0f/(1.0f+expf(-0.5f));
+  float g = tanhf(0.5f);
+  float c_exp = s*g;
+  float h_exp = s*tanhf(c_exp);
+  printf("h=%.6f c=%.6f (exp h=%.6f c=%.6f)\n", H[0], C[0], h_exp, c_exp);
+  int ok = (fabsf(H[0]-h_exp) < 1e-4f) && (fabsf(C[0]-c_exp) < 1e-4f);
+  return ok ? 0 : 1;
+}
+MAIN
+"${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/lstm_kernel.c" -lm -o "${tmp}/lstm" 2>/dev/null \
+  || "${CC}" -std=c23 -O2 "${tmp}/lstm_kernel.c" -lm -o "${tmp}/lstm" \
+  || { echo "  FAIL: lstm kernel build"; exit 1; }
+lstm_out="$("${tmp}/lstm")"; lstm_rc=$?    # rc=0 IS the check: H/C match the hand-computed reference (driver)
+{ [ "${lstm_rc}" = "0" ] && printf '%s' "${lstm_out}" | grep -q "^h=.* c=.*"; } \
+  && echo "  PASS lstm: 1x1 cell matches hand-computed forward (${lstm_out}; tanhf/expf -> -lm via the libm rule, no linkflags change)" \
+  || { echo "  FAIL: lstm cell did not match the reference (rc=${lstm_rc}: ${lstm_out})"; exit 1; }
+
 # Area-B breadth (#62) GSL link-flag rule (dual-rail): the GSL edge (gsl_stats_mean) is minted by the kernel
 # EMITTER (emit_gsl_stats_c), not reachable from a cfront source. So this probe drives the C twin's
 # bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:gsl_stats_mean` edge and asserts it
