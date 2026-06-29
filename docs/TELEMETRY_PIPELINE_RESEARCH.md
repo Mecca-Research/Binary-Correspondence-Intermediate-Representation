@@ -145,6 +145,19 @@ mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 a
 - **T2** — the **UART telemetry frame**: a StreamPack/SyS-T-style framed, CRC-sealed record stream; a
   C producer drains `TelemetryRing`; the host decoder reuses RT3 (`sanitize_events`/`TelemetryIntegrity`).
   Resync-on-magic; per-frame CRC; sequence/timestamp for drop/reorder. (Feeds the planned UART driver.)
+  **BUILT** — frozen frame ABI in [`TELEMETRY_FRAME_ABI.md`](TELEMETRY_FRAME_ABI.md); dual-rail Python
+  reference `bcir/telemetry_frame.py` ↔ freestanding C twin `runtime/c/bcir_telemetry_frame.{c,h}`
+  (+ `test_telemetry_frame.c`), pinned **byte-identical** by `bcir/tests/test_telemetry_frame.py` and
+  the `#telemetry-frame` probe in `tools/c/check_runtime.sh`. Frame `magic="BTLM"` | `version:u16=1` |
+  `flags:u16` | `seq:u32` | `timestamp:u64` | `n_records:u16` | records[n] (the ring's 56-byte `<7q>`
+  DataDNA, REUSED with no body re-encoding) | `crc32:u32`. **Resync-on-magic** (join mid-stream / recover
+  past a corrupt frame by scanning to the next `BTLM`); **per-frame CRC** (one bad byte fails one frame,
+  counted, not the stream); **seq/timestamp** for drop/reorder. The CRC is REUSED — C `bcir_crc32`
+  (`bcir_runtime.c`) == Python `zlib.crc32` (zlib poly 0xEDB88320). The host decoder `parse_uart_frames`
+  delegates to the **RT3 gate** (`sanitize_events`/`TelemetryIntegrity`), carrying frame-level drops into
+  `dropped` and seq/reorder into the monotonic signal — same witness as the ring path. **Egress-over-UART**
+  is a documented 1-line adapter (`out` → `uart_send`, `runtime/c/uart_regs.h`), not a hardware dependency.
+  Two-truth: the frame carries data (graded L2/L3), never a verdict; off the legality path.
 - **T3** — **derived/aggregate metrics + sensitivity** (the `.MEASURE`/`.SENS` analogy): edge-computed
   figures-of-merit + a sensitivity rank that steers the sampling budget toward high-impact signals.
 - **T4** — **export adapters**: OTLP/Prometheus exposition (data-center) + the out-of-band Redfish read.

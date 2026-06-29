@@ -31,6 +31,12 @@
 >   vendor-neutral PAPI-component registry of typed providers wrapping `bcir/silicon.py`, mapped to the
 >   12-D cost vector, with honest `None`/unavailable + provenance-on-the-definition (Redfish split), a
 >   `register()` plugin seam, and the channel↔provider power mapping — off the legality path.
+> - [`TELEMETRY_FRAME_ABI.md`](TELEMETRY_FRAME_ABI.md) — the frozen UART telemetry-frame wire ABI (T2,
+>   BUILT): a self-delimiting, resync-able, CRC-sealed frame (magic `"BTLM"` | version | flags | seq |
+>   timestamp | n | the ring's 56-byte `<7q>` records | CRC-32) a producer drains from `TelemetryRing`
+>   and the host decoder reuses RT3 to validate. Dual-rail (`bcir/telemetry_frame.py` ↔
+>   `runtime/c/bcir_telemetry_frame.{c,h}`, byte-identical), CRC reused (`bcir_crc32`/`zlib.crc32`) —
+>   off the legality path.
 > - [`BCIR_Repo_Structure.md`](BCIR_Repo_Structure.md) — directory layout + build entry points.
 
 ---

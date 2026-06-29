@@ -83,6 +83,35 @@ else
   echo "  FAIL: encoder bytes differ from the Python encoding"; exit 1
 fi
 
+echo "[c-runtime] UART telemetry frame (#telemetry-frame): freestanding compile (C11 + C23) + byte-identical re-encode"
+# bcir_telemetry_frame.c is the C twin of bcir/telemetry_frame.py -- the framed, CRC-sealed,
+# resync-able telemetry transport (T2). The producer drains TelemetryRing and frames the 56-byte
+# <7q> records; the host decoder reuses RT3. It REUSES bcir_crc32 from bcir_runtime.c (so the C
+# and Python (zlib.crc32) CRCs agree). Self-skipping/non-fatal without a C compiler (the section
+# is only reached past the CC guard at the top, so a missing CC already exited 0 cleanly above).
+for std in c11 c23; do
+  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -I "${C}" -c "${C}/bcir_telemetry_frame.c" -o /dev/null \
+    || { echo "  FAIL: bcir_telemetry_frame not freestanding-clean under -std=${std}"; exit 1; }
+done
+"${CC}" -std=c23 -O2 "${C}/bcir_telemetry_frame.c" "${C}/bcir_runtime.c" "${C}/test_telemetry_frame.c" -I "${C}" -o "${tmp}/test_tframe" \
+  || { echo "  FAIL: telemetry-frame harness build"; exit 1; }
+# Python-encode a fixed DataDNA batch into one frame; C decode + re-encode; assert byte-identical.
+python3 -c "
+from bcir.telemetry import DataDNA
+from bcir.telemetry_frame import encode_frame
+recs=[DataDNA(segment_id='',claim_id=1,cycles=100,bytes=200,misses=5,thermal=40,voltage=10,utilization=30),
+      DataDNA(segment_id='',claim_id=2,cycles=999999,bytes=4096,misses=0,thermal=0,voltage=0,utilization=100),
+      DataDNA(segment_id='',claim_id=3,cycles=-50,bytes=0,misses=100,thermal=99,voltage=50,utilization=0)]
+open('${tmp}/tframe.bin','wb').write(encode_frame(recs, seq=7, timestamp=123456))
+" || { echo "  FAIL: python frame encode"; exit 1; }
+tfout="$("${tmp}/test_tframe" "${tmp}/tframe.bin" "${tmp}/tframe_reenc.bin")" || { echo "  FAIL: C frame decode"; echo "${tfout}"; exit 1; }
+echo "${tfout}" | grep -q "^OK " || { echo "  FAIL: C frame decode did not OK"; echo "${tfout}"; exit 1; }
+if cmp -s "${tmp}/tframe.bin" "${tmp}/tframe_reenc.bin"; then
+  echo "  PASS #telemetry-frame (C bcir_tf decode + re-encode == Python encode_frame, byte-identical; bcir_crc32 == zlib.crc32)"
+else
+  echo "  FAIL: telemetry-frame bytes differ from the Python encoding"; exit 1
+fi
+
 echo "[c-runtime] frozen Q8 table (#embed / fallback): build + self-check (C11 + C23)"
 # Drift gate: the committed runtime/c/{q8_tiers.bin,bcir_q8_tables.h} must equal a
 # fresh emission from the oracle (bcir.kbcir.cost.MemoryHierarchy.default()).
