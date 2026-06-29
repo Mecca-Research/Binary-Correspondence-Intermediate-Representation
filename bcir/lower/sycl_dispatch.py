@@ -38,7 +38,7 @@ import subprocess
 import tempfile
 
 from ..kbcir.sycl_saxpy import saxpy_reference
-from .c_kernel import emit_sycl_saxpy_c
+from .c_kernel import emit_sycl_matmul_c, emit_sycl_reduce_c, emit_sycl_saxpy_c
 
 
 # --- compiler detection (mirrors test_sycl_channel.py _cxx / _sycl_cxx) --------------------------------
@@ -96,21 +96,33 @@ class ChannelDispatcher:
         """Execute the data_parallel SAXPY ``out[i] = a*x[i] + y[i]`` on this channel."""
         raise NotImplementedError
 
+    def run_reduce(self, x: list[float]) -> float:
+        """Execute the reduce sum ``out = Sum_i x[i]`` on this channel."""
+        raise NotImplementedError
+
+    def run_matmul(self, a: list[float], b: list[float], m: int, k: int, n: int) -> list[float]:
+        """Execute the matmul ``C = A . B`` (row-major A[m x k], B[k x n], C[m x n]) on this channel."""
+        raise NotImplementedError
+
 
 class SyclDispatcher(ChannelDispatcher):
-    """The resident dispatcher for the ``sycl_spirv`` channel's data_parallel SAXPY class.
+    """The resident dispatcher for the ``sycl_spirv`` channel's THREE declared capability classes:
+    ``data_parallel`` (``run_saxpy``), ``reduce`` (``run_reduce``), and ``matmul`` (``run_matmul``).
 
-    ``run_saxpy`` emits ``emit_sycl_saxpy_c`` (the single-source C++ kernel), wraps it in a tiny ``main``
-    that calls ``bcir_saxpy`` on the data and prints the results (mirroring test_sycl_channel's
-    ``_run_saxpy_kernel``), compiles it as C++ (``-std=c++17 -O2``), runs it, and parses the outputs back.
+    Each ``run_*`` emits its single-source C++ kernel (``emit_sycl_saxpy_c`` / ``emit_sycl_reduce_c`` /
+    ``emit_sycl_matmul_c``), wraps it in a tiny ``main`` that reads the data from stdin, calls the kernel,
+    and prints the results, compiles it as C++ (``-std=c++17 -O2``), runs it, and parses the outputs back.
     When ``sycl_cxx()`` detects a real SYCL compiler it uses ``-DBCIR_USE_SYCL -fsycl`` (the DEVICE path --
     the SYCL runtime JITs SPIR-V and submits to the device), otherwise the PORTABLE scalar C++ fallback
-    executes. Both compute the identical SAXPY to float round-off.
+    executes. The data_parallel + matmul paths compute the identical result to float round-off on both
+    paths; the reduce device path is a tree reduction whose reordered float adds agree with the sequential
+    reference only within ``kbcir.sycl_reduce.reduce_reorder_bound`` (documented, not faked).
 
     ``mode`` exposes which path executed -- ``"sycl-device"`` / ``"fallback"`` / ``"unavailable"`` -- so the
     tests + gate can report HONESTLY (on CI, with no SYCL toolchain, this is ``"fallback"``; with no C++
-    compiler at all it is ``"unavailable"`` and ``run_saxpy`` raises ``DispatchUnavailable``). The compiled
-    executable is cached per (n, mode) within the dispatcher's lifetime so a repeated dispatch is cheap."""
+    compiler at all it is ``"unavailable"`` and the ``run_*`` raises ``DispatchUnavailable``). The compiled
+    executable is cached per (kernel-class, shape, mode) within the dispatcher's lifetime so a repeated
+    dispatch is cheap."""
 
     name = "sycl_spirv"
 
@@ -141,13 +153,14 @@ class SyclDispatcher(ChannelDispatcher):
             self._tmpdir = tempfile.TemporaryDirectory(prefix="bcir-sycl-dispatch-")
         return self._tmpdir.name
 
-    def _compile(self, n: int, fn_name: str) -> tuple[str, str]:
-        """Compile the emitted SAXPY kernel + a data-driven ``main`` to an executable; return (exe, mode).
-        Prefers the SYCL device path when a SYCL compiler is present, else the portable C++ fallback.
-        Raises ``DispatchUnavailable`` if no C++ compiler exists at all."""
+    def _build(self, tag: str, kernel: str, main: str) -> tuple[str, str]:
+        """Compile an emitted single-source C++ ``kernel`` + a stdin-driven ``main`` to an executable;
+        return (exe, mode). ``tag`` keys the per-(kernel-class, shape) compile cache (e.g. ``"saxpy_8"``).
+        Prefers the SYCL device path (``-DBCIR_USE_SYCL -fsycl``) when a SYCL compiler is present, else the
+        portable C++ fallback. Raises ``DispatchUnavailable`` if no C++ compiler exists at all."""
         device = self._sycl is not None
         mode = "sycl-device" if device else "fallback"
-        key = (n, mode)
+        key = (tag, mode)
         if key in self._exe_cache:
             return self._exe_cache[key], mode
 
@@ -161,25 +174,9 @@ class SyclDispatcher(ChannelDispatcher):
                     "(self-skip -- this is not a failure and not a legality verdict)")
             cxx, define, flags = self._cxx, None, []
 
-        kernel = emit_sycl_saxpy_c(n, fn_name)
-        # A data-INDEPENDENT main: read a/x/y from argv-free stdin-free fixed file is overkill; instead the
-        # kernel is recompiled per distinct n only, and the data is passed at RUN time via a generated main.
-        # To keep the (n, mode) cache meaningful we bake the call but read the actual values from a sidecar
-        # data file the runner writes -- simpler: regenerate main per run is cheap relative to compile, so
-        # we compile a fixed harness that reads a, then x[n], then y[n] from stdin and prints out[n].
-        main = (
-            "\n#include <cstdio>\n#include <cstddef>\n"
-            f"int main(void){{\n"
-            f"  float a;\n  if (std::scanf(\"%f\", &a) != 1) return 2;\n"
-            f"  float x[{n}], y[{n}], out[{n}];\n"
-            f"  for (int i = 0; i < {n}; ++i) if (std::scanf(\"%f\", &x[i]) != 1) return 2;\n"
-            f"  for (int i = 0; i < {n}; ++i) if (std::scanf(\"%f\", &y[i]) != 1) return 2;\n"
-            f"  {fn_name}(a, x, y, out);\n"
-            f"  for (int i = 0; i < {n}; ++i) std::printf(\"%.8f\\n\", (double)out[i]);\n"
-            f"  return 0;\n}}\n")
         wd = self._workdir()
-        src = os.path.join(wd, f"saxpy_{n}_{mode}.cpp")
-        exe = os.path.join(wd, f"saxpy_{n}_{mode}")
+        src = os.path.join(wd, f"{tag}_{mode}.cpp")
+        exe = os.path.join(wd, f"{tag}_{mode}")
         with open(src, "w") as f:
             f.write(kernel + main)
         cmd = [cxx, "-std=c++17", "-O2"]
@@ -193,6 +190,23 @@ class SyclDispatcher(ChannelDispatcher):
                 f"the SYCL dispatch kernel did not build ({mode} path):\n{bld.stderr.strip()}")
         self._exe_cache[key] = exe
         return exe, mode
+
+    def _compile(self, n: int, fn_name: str) -> tuple[str, str]:
+        """Compile the emitted SAXPY kernel + a data-driven ``main`` to an executable; return (exe, mode).
+        The harness reads ``a``, then ``x[n]``, then ``y[n]`` from stdin, calls the kernel, and prints
+        ``out[n]``; the kernel is recompiled per distinct n only, so the run-time data rides stdin."""
+        kernel = emit_sycl_saxpy_c(n, fn_name)
+        main = (
+            "\n#include <cstdio>\n#include <cstddef>\n"
+            f"int main(void){{\n"
+            f"  float a;\n  if (std::scanf(\"%f\", &a) != 1) return 2;\n"
+            f"  float x[{n}], y[{n}], out[{n}];\n"
+            f"  for (int i = 0; i < {n}; ++i) if (std::scanf(\"%f\", &x[i]) != 1) return 2;\n"
+            f"  for (int i = 0; i < {n}; ++i) if (std::scanf(\"%f\", &y[i]) != 1) return 2;\n"
+            f"  {fn_name}(a, x, y, out);\n"
+            f"  for (int i = 0; i < {n}; ++i) std::printf(\"%.8f\\n\", (double)out[i]);\n"
+            f"  return 0;\n}}\n")
+        return self._build(f"saxpy_{n}", kernel, main)
 
     def run_saxpy(self, a: float, x: list[float], y: list[float]) -> list[float]:
         """Dispatch ``out[i] = a*x[i] + y[i]`` through the emitted SYCL kernel and return the executed
@@ -210,6 +224,76 @@ class SyclDispatcher(ChannelDispatcher):
         if run.returncode != 0:
             raise DispatchUnavailable(
                 f"the SYCL dispatch kernel did not run ({mode} path):\n{run.stdout}{run.stderr}")
+        self._mode = mode
+        return [float(v) for v in run.stdout.split()]
+
+    def _compile_reduce(self, n: int, fn_name: str) -> tuple[str, str]:
+        """Compile the emitted reduce kernel + a stdin-driven ``main`` (reads ``x[n]``, calls the kernel,
+        prints the single ``out`` scalar)."""
+        kernel = emit_sycl_reduce_c(n, fn_name)
+        main = (
+            "\n#include <cstdio>\n#include <cstddef>\n"
+            f"int main(void){{\n"
+            f"  float x[{n}], out;\n"
+            f"  for (int i = 0; i < {n}; ++i) if (std::scanf(\"%f\", &x[i]) != 1) return 2;\n"
+            f"  {fn_name}(x, &out);\n"
+            f"  std::printf(\"%.8f\\n\", (double)out);\n"
+            f"  return 0;\n}}\n")
+        return self._build(f"reduce_{n}", kernel, main)
+
+    def run_reduce(self, x: list[float]) -> float:
+        """Dispatch the reduce sum ``out = Sum_i x[i]`` through the emitted SYCL kernel and return the
+        executed scalar. Sets ``mode`` to the path that ran. Raises ``ValueError`` on an empty input (a
+        reduction needs >= 1 element); raises ``DispatchUnavailable`` (catchably) if no C++ compiler exists
+        -- the caller self-skips, never fakes success. NOTE: the device tree-reduction reorders the float
+        adds, so it agrees with the sequential reference only within ``reduce_reorder_bound``; the portable
+        fallback's sequential sum matches exactly."""
+        n = len(x)
+        if n < 1:
+            raise ValueError("sycl dispatch reduce: need at least one element")
+        exe, mode = self._compile_reduce(n, "bcir_reduce")
+        stdin = "".join(f"{v:.8f}\n" for v in x)
+        run = subprocess.run([exe], input=stdin, capture_output=True, text=True)
+        if run.returncode != 0:
+            raise DispatchUnavailable(
+                f"the SYCL reduce dispatch kernel did not run ({mode} path):\n{run.stdout}{run.stderr}")
+        self._mode = mode
+        return float(run.stdout.split()[0])
+
+    def _compile_matmul(self, m: int, k: int, n: int, fn_name: str) -> tuple[str, str]:
+        """Compile the emitted matmul kernel + a stdin-driven ``main`` (reads A[m*k] then B[k*n], calls the
+        kernel, prints C[m*n] row-major)."""
+        kernel = emit_sycl_matmul_c(m, k, n, fn_name)
+        na, nb, nc = m * k, k * n, m * n
+        main = (
+            "\n#include <cstdio>\n#include <cstddef>\n"
+            f"int main(void){{\n"
+            f"  float A[{na}], B[{nb}], C[{nc}];\n"
+            f"  for (int i = 0; i < {na}; ++i) if (std::scanf(\"%f\", &A[i]) != 1) return 2;\n"
+            f"  for (int i = 0; i < {nb}; ++i) if (std::scanf(\"%f\", &B[i]) != 1) return 2;\n"
+            f"  {fn_name}(A, B, C);\n"
+            f"  for (int i = 0; i < {nc}; ++i) std::printf(\"%.8f\\n\", (double)C[i]);\n"
+            f"  return 0;\n}}\n")
+        return self._build(f"matmul_{m}x{k}x{n}", kernel, main)
+
+    def run_matmul(self, a: list[float], b: list[float], m: int, k: int, n: int) -> list[float]:
+        """Dispatch the matmul ``C = A . B`` (row-major A[m x k], B[k x n], C[m x n]) through the emitted
+        SYCL kernel and return the executed C as a fresh row-major list. Sets ``mode`` to the path that ran.
+        Raises ``ValueError`` on a bad dim (m/k/n < 1) or an operand whose length does not match its shape;
+        raises ``DispatchUnavailable`` (catchably) if no C++ compiler exists -- the caller self-skips. Both
+        paths reproduce ``matmul_reference`` to float round-off (same k-accumulation order)."""
+        if m < 1 or k < 1 or n < 1:
+            raise ValueError(f"sycl dispatch matmul: dims must be >= 1; got m={m} k={k} n={n}")
+        if len(a) != m * k:
+            raise ValueError(f"sycl dispatch matmul: A length {len(a)} != m*k ({m * k})")
+        if len(b) != k * n:
+            raise ValueError(f"sycl dispatch matmul: B length {len(b)} != k*n ({k * n})")
+        exe, mode = self._compile_matmul(m, k, n, "bcir_matmul")
+        stdin = "".join(f"{v:.8f}\n" for v in [*a, *b])
+        run = subprocess.run([exe], input=stdin, capture_output=True, text=True)
+        if run.returncode != 0:
+            raise DispatchUnavailable(
+                f"the SYCL matmul dispatch kernel did not run ({mode} path):\n{run.stdout}{run.stderr}")
         self._mode = mode
         return [float(v) for v in run.stdout.split()]
 

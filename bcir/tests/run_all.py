@@ -196,6 +196,7 @@ _MODULES = [
     "bcir.tests.test_sleef",
     "bcir.tests.test_sycl_channel",
     "bcir.tests.test_sycl_dispatch",
+    "bcir.tests.test_sycl_reduce_matmul",
     "bcir.tests.test_differential",
     "bcir.tests.test_target_matrix",
     "bcir.tests.test_c23_kernels",
