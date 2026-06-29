@@ -36,6 +36,7 @@ import tempfile
 
 from bcir.frontends.cfront import compile_unit, diagnose
 from bcir.frontends.cfront.emit import emit_function
+from bcir.frontends.cfront.lower import _IO_PORT_RID
 from bcir.frontends.cfront.pipeline import compile_with_fallback
 from bcir.model import Domain
 
@@ -204,14 +205,14 @@ def test_portio_edge_is_in_the_mmio_io_domain():
 
 
 def test_port_access_does_not_alias_a_normal_pointer():
-    # the port access rides the dedicated __ioport resource (rid 990000, MMIO); a normal pointer parameter
-    # is a RAM resource in the function-local rid band. The two rid sets are DISJOINT — no aliasing.
+    # the port access rides the dedicated __ioport resource (the reserved _IO_PORT_RID, MMIO); a normal
+    # pointer parameter is a RAM resource in the function-local rid band. The two rid sets are DISJOINT.
     _r, lf = _lf("unsigned f(unsigned *p){ *p = 1u; return inb(0x60); }")
     c = _portio_claims(lf)[0]
     prid = next(rid for n, rid, _ct in lf.params if n == "p")
     io_rids = set(c.rd) | set(c.wr)
     assert prid not in io_rids, "the port access must not reference the normal pointer rid"
-    io_res = lf.resources[990000]
+    io_res = lf.resources[_IO_PORT_RID]
     assert io_res.domain == Domain.MMIO and io_res.name == "__ioport"
     assert lf.resources[prid].domain == Domain.RAM        # the pointer is normal memory, disjoint
 
@@ -222,7 +223,7 @@ def test_two_port_ops_share_the_io_space_so_they_do_not_commute():
     _r, lf = _lf("unsigned f(unsigned a){ outb(a, 0x70); return inb(0x71); }")
     cs = _portio_claims(lf)
     assert len(cs) == 2
-    io = 990000
+    io = _IO_PORT_RID
     # the write writes io; the read reads AND writes io -> a dependency chain on the shared resource.
     assert io in cs[0].wr and io in cs[1].rd and io in cs[1].wr
 
@@ -310,8 +311,10 @@ def test_emitted_x86_portio_assembles_under_gcc_and_clang():
 
 
 def test_emitted_x86_portio_assembles_with_a_literal_immediate_port():
-    # an immediate port (`inb(0x60)`) exercises the `"Nd"` immediate-or-dx constraint's immediate leg; a
-    # variable port exercises the dx leg (above). Both must assemble.
+    # a LITERAL port argument (`inb(0x60)`): the `"Nd"` constraint accepts an immediate-or-dx port, and which
+    # leg the toolchain picks is its choice -- at -O0 it materializes the literal into `dx` (the `d` leg)
+    # rather than emitting an immediate, while a variable port (above) is likewise via dx. Either way the
+    # emitted `in`/`out` must assemble; the case proves a constant-argument port is accepted by the toolchain.
     r = compile_unit("unsigned f(void){ return inb(0x60); } void g(unsigned v){ outb(v, 0x80); }",
                      check_clang=False)
     emit = "#include <stdint.h>\n" + "\n\n".join(
@@ -329,6 +332,69 @@ def test_user_defined_inb_is_not_treated_as_the_intrinsic():
     _r, lf = _lf(src, fn="f")
     assert not _portio_claims(lf), "a user-defined inb must not lower to a port-I/O edge"
     assert any(c.op == "c.call:inb" for c in lf.claims), "the user inb should be a normal call"
+
+
+# --- (9) the I/O-port rid is a PROVABLY-reserved sentinel (isolation invariant 3) ----------------
+
+def test_io_port_rid_is_not_producible_by_the_count_indexed_bands():
+    # the isolation invariant rests on _IO_PORT_RID being DISJOINT from every count-indexed band. The bands
+    # are base+count: the global band (900000 + gi) and the string/func-value band (970000 + idx), both
+    # growing upward without a fixed ceiling, and the per-function temp band (100 + idx*1000 + k). The
+    # sentinel sits FAR above any of them, so no non-negative count can land on it within a real unit. (A
+    # POSITIVE sentinel, not negative, keeps every rid-as-dict-key / sorted(resources) / digest path on the
+    # same non-negative footing every other rid uses.)
+    assert _IO_PORT_RID > 970000, "the io rid must be above the string-literal band base"
+    assert _IO_PORT_RID > 900000, "the io rid must be above the global band base"
+    assert _IO_PORT_RID >= 0, "a non-negative sentinel keeps the rid-as-dict-key / sort / digest paths sound"
+    # the gap from the highest reachable band base to the sentinel is astronomically large (~10^9), so a real
+    # unit cannot count up to it -- and the allocators are GUARDED against it regardless (below).
+    assert _IO_PORT_RID - 970000 > 100_000_000
+
+
+def test_band_allocator_guards_the_reserved_io_rid_and_merge_preserves_it():
+    # DETERMINISTIC proof of the fix WITHOUT 90001 globals: temporarily move the reserved sentinel onto the
+    # string-literal band so the boundary is reached at small scale. (1) The allocator must raise an honest
+    # CLowerError exactly when it would produce the reserved rid (never a silent collision). (2) Below that
+    # boundary, the global/string merge must NOT overwrite the MMIO `__ioport` resource with a RAM one (so a
+    # port access can never alias normal memory). Both are exercised against the real lowering pipeline.
+    import bcir.frontends.cfront.lower as L
+    from bcir.frontends.cfront.lower import CLowerError
+
+    saved = L._IO_PORT_RID
+    try:
+        # park the sentinel on the string band at idx 2 (rid 970002): the 3rd string literal hits it.
+        L._IO_PORT_RID = 970002
+        # (1) three string literals -> the allocator reaches 970002 and must reject honestly (not collide).
+        raised = False
+        try:
+            compile_unit('void f(void){ const char *a="x"; const char *b="y"; const char *c="z";'
+                         ' (void)a; (void)b; (void)c; }', check_clang=False)
+        except CLowerError as e:
+            raised = "reserved I/O-port rid" in str(e)
+        assert raised, "the string allocator did not honestly reject reaching the reserved I/O-port rid"
+        # (1b) the GLOBAL band (900000 + gi) is likewise guarded: park the sentinel at 900001 -> the 2nd
+        # file-scope global reaches it and must reject honestly (not silently collide + overwrite __ioport).
+        L._IO_PORT_RID = 900001
+        graised = False
+        try:
+            compile_unit("int g0; int g1; unsigned f(void){ return 0u; }", check_clang=False)
+        except CLowerError as e:
+            graised = "reserved I/O-port rid" in str(e)
+        assert graised, "the global allocator did not honestly reject reaching the reserved I/O-port rid"
+        L._IO_PORT_RID = 970002                            # restore the string-band sentinel for part (2)
+        # (2) below the boundary (no literals), a unit with a port op + a normal pointer keeps __ioport MMIO
+        # -- the merge never replaces it. (The io resource lives at the moved sentinel here.)
+        r = compile_unit("unsigned f(unsigned *p){ *p = 1u; return inb(0x60); }", check_clang=False)
+        lf = r.lowered.functions["f"]
+        io_res = lf.resources[L._IO_PORT_RID]
+        assert io_res.domain == Domain.MMIO and io_res.name == "__ioport", (
+            "the merge overwrote the reserved __ioport MMIO resource -- a port access could alias RAM")
+        assert r.is_clean
+    finally:
+        L._IO_PORT_RID = saved
+    # the sentinel is restored: a normal unit still uses the real reserved rid.
+    r2 = compile_unit("unsigned f(void){ return inb(0x60); }", check_clang=False)
+    assert L._IO_PORT_RID in r2.lowered.functions["f"].resources
 
 
 if __name__ == "__main__":

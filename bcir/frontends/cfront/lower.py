@@ -556,6 +556,32 @@ class LoweredUnit:
 # Return lowering maps it back to a bare `return;`.
 _VOID_RID = -1
 
+# ASM2 -- the RESERVED rid of the I/O-port "address space" resource (`__ioport`), the single MMIO-domain
+# resource ALL port accesses share so they alias each other (ordered) but never normal memory (isolation
+# invariant 3). It must be DISJOINT from every count-indexed band -- the function-local temps (`base_rid +
+# k`, base = 100 + idx*1000), the shared-global band (`900000 + gi`), and the string/func-value band
+# (`970000 + idx`) -- ALL of which grow upward without a fixed ceiling. So the sentinel is parked FAR above
+# any reachable band (0x40000000 == 1,073,741,824; a unit would need ~10^9 globals/literals to approach it),
+# and -- belt + suspenders -- the unbounded allocators raise an honest CLowerError if they ever reach it
+# (`_check_band_rid`), and the global/string merge in `lower()` never overwrites the reserved MMIO resource. The
+# reservation is thus PROVABLE (a guarded disjoint constant), not a numeric-gap guess. A positive constant
+# (not a negative sentinel) keeps `sorted(self.resources)` / the provenance-digest resource ordering / every
+# rid-as-dict-key path on the same non-negative footing every other rid already uses.
+_IO_PORT_RID = 0x4000_0000
+
+
+def _check_band_rid(rid: int) -> int:
+    """Honest deterministic guard for the count-indexed rid bands: a translation unit so large that its
+    global / string-literal allocator reaches the RESERVED I/O-port rid (`_IO_PORT_RID`) is rejected with a
+    clear diagnostic instead of silently colliding (and then having the global/string resource overwrite the
+    `__ioport` MMIO resource -- the isolation hole this guards). Unreachable in practice (~10^9 globals or
+    literals), but it makes the reservation PROVABLE rather than a numeric-gap assumption. Returns `rid`."""
+    if rid == _IO_PORT_RID:
+        raise CLowerError(
+            "translation unit exhausted the rid band: reached the reserved I/O-port rid -- too many "
+            "globals / string literals in one unit")
+    return rid
+
 
 class _FuncLowerer:
     def __init__(self, func: cast.Func, aggregates: dict, base_rid: int, cid: list,
@@ -816,7 +842,7 @@ class _FuncLowerer:
         nunits = _str_bytes(spelling) + 1                     # the decoded code units + the NUL
         idx = self.strctr[0]
         self.strctr[0] += 1
-        rid = 970000 + idx
+        rid = _check_band_rid(970000 + idx)               # guard the reserved I/O-port rid (belt + suspenders)
         self.gres[rid] = Resource(rid=rid, domain=Domain.RAM, elem_bytes=elem, shape=(nunits,),
                                   access="ro", data_gen=1, name=f"__str{idx}")
         self.rtypes[rid] = array(scalar("char" if elem == 1 else f"uint{elem * 8}_t"), nunits)
@@ -834,7 +860,7 @@ class _FuncLowerer:
             return existing
         idx = self.strctr[0]                              # share the literal-global rid space (unique rids)
         self.strctr[0] += 1
-        rid = 970000 + idx
+        rid = _check_band_rid(970000 + idx)               # guard the reserved I/O-port rid (belt + suspenders)
         self.gres[rid] = Resource(rid=rid, domain=Domain.RAM, elem_bytes=self.abi.pointer_size, shape=(1,),
                                   access="ro", data_gen=1, name=name)
         self.rtypes[rid] = funcptr(name, self.func_rets[name], (), self.abi)
@@ -1859,12 +1885,13 @@ class _FuncLowerer:
 
     # the I/O-port "address space" resource: a single MMIO-domain resource ALL port accesses share, so two
     # port ops alias each other (ordered against one another, never reordered/fused) but a port access never
-    # aliases a normal-memory RID (the rid lives in the dedicated 990000 band, disjoint from RAM locals /
-    # globals / string pools). One per function, lazily created -- the isolation seam ASM2 hangs on.
+    # aliases a normal-memory RID. Its rid is the RESERVED `_IO_PORT_RID` sentinel -- provably disjoint from
+    # every count-indexed band (the allocators are guarded against ever reaching it, and the global/string
+    # merge never overwrites this MMIO resource). One per function, lazily created -- the isolation seam.
     def _io_port_space(self) -> int:
         rid = getattr(self, "_io_port_rid", None)
         if rid is None:
-            rid = 990000                                   # dedicated band: disjoint from RAM rids + globals
+            rid = _IO_PORT_RID                             # reserved sentinel: never produced by base+count
             self.resources[rid] = Resource(
                 rid=rid, domain=Domain.MMIO, elem_bytes=1, shape=(1 << 16,),   # the 64K I/O port address space
                 access="volatile", name="__ioport")
@@ -2201,6 +2228,12 @@ class _FuncLowerer:
         claims = _flatten_block(body)
         touched = {r for c in claims for r in (tuple(c.rd) + tuple(c.wr))}
         for rid in touched & set(self.gres):                  # pull in referenced global resources
+            if rid == _IO_PORT_RID:
+                # belt + suspenders: NEVER let a (guarded-impossible) global/string-band collision overwrite
+                # the reserved `__ioport` MMIO resource with a RAM resource -- that would make a port access
+                # alias normal memory (the isolation hole). The allocator guard already forbids producing
+                # this rid, so this branch is unreachable; it pins the invariant locally regardless.
+                continue
             self.resources[rid] = self.gres[rid]
         gnames = {rid: nm for nm, (rid, _ct) in self.genv.items() if rid in touched}
         gnames.update(self.str_globals)                       # string globals render as inline literals
@@ -2301,7 +2334,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             ct = array(ct.of, len(g.init))                # `T name[] = {...}` -> sized from the init
         elif g.init and ct.kind != "array":
             ct = array(ct, len(g.init))
-        rid = 900000 + gi
+        rid = _check_band_rid(900000 + gi)                # guard the reserved I/O-port rid (belt + suspenders)
         gres[rid] = Resource(rid=rid, domain=Domain.RAM, elem_bytes=(ct.of.size if ct.of else ct.size),
                              shape=(ct.count or len(g.init) or 1,), access="ro",
                              data_gen=1, name=g.name)
