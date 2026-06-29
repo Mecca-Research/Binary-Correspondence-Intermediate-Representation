@@ -2520,4 +2520,19 @@ else
   echo "  FAIL: the C++ hand-off seam scaffold did not compile or round-trip"; exit 1
 fi
 
+# The SYCL backend differential oracle (#sycldiff, docs/SYCL_INTEROP.md): SYCL is a backend CHANNEL +
+# a differential oracle, NEVER on the legality path. check_sycl.sh emits the single-source C++ SAXPY
+# kernel (emit_sycl_saxpy_c) and proves it reproduces BCIR's own deterministic reference (a*x+y) to
+# float round-off: the PORTABLE scalar C++ fallback always (the real reference-verification work, no
+# SYCL needed -- the #sycl-fallback marker), and the SYCL DEVICE parallel_for (-DBCIR_USE_SYCL -fsycl,
+# the #sycl-device marker) IF a real SYCL compiler is detected (icpx/acpp/clang++ -fsycl that compiles+
+# links a probe). SYCL is a compiler MODE, NOT a c.call.libm: -l<lib> edge (no link-flag rule). Lives
+# above the G8 C++ boundary; self-skips (exit 0) if no C++ compiler, like check_handoff.sh.
+echo "[c-runtime] SYCL backend differential oracle (tools/cpp/check_sycl.sh)"
+if bash "${ROOT}/tools/cpp/check_sycl.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+  echo "  PASS SYCL SAXPY differential (portable C++ fallback == BCIR reference; device path when -fsycl present)"
+else
+  echo "  FAIL: the SYCL backend differential oracle did not compile or agree"; exit 1
+fi
+
 echo "[c-runtime] ok"

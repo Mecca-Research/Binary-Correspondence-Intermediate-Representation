@@ -37,3 +37,8 @@ plugin never silently joins the tower.
 
 [`example_tpu.channel.json`](example_tpu.channel.json) is a worked example: a modeled systolic
 matrix accelerator the core has never heard of, declared entirely in JSON.
+
+[`sycl.channel.json`](sycl.channel.json) is a modeled SPIR-V/SYCL GPU channel; SYCL also serves as a
+*differential oracle* (a SAXPY `parallel_for` checked against BCIR's own reference) — see
+[`docs/SYCL_INTEROP.md`](../docs/SYCL_INTEROP.md). SYCL is a C++ compiler mode (`-fsycl`), **not** a
+`c.call.libm:` link edge (no `-l<lib>` rule).

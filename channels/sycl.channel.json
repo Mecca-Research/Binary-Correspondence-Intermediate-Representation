@@ -1,0 +1,73 @@
+{
+  "format_version": 1,
+  "name": "sycl_spirv",
+  "kind": "gpu",
+  "provenance": "modeled",
+  "modeled": true,
+  "arch_match": [],
+  "capabilities": [
+    "data_parallel",
+    "matmul",
+    "reduce"
+  ],
+  "codegen": {
+    "llvm_triple": "spirv64-unknown-unknown",
+    "e_machine": 0
+  },
+  "runtime": {
+    "perf_syscall_nr": 298,
+    "energy_source": "hwmon",
+    "thermal_zone_types": [
+      "gpu",
+      "soc"
+    ]
+  },
+  "calibration": {
+    "ref": "calib/sycl_spirv.v0.json",
+    "digest": "sha256:modeled-not-yet-measured",
+    "cal_gen": 0,
+    "provenance": "modeled"
+  },
+  "profile": {
+    "name": "sycl-spirv",
+    "triple": "spirv64",
+    "cacheline": 128,
+    "elem_bytes": 4,
+    "lane_widths": [
+      1,
+      32
+    ],
+    "warp": 32,
+    "scalable": false,
+    "gather_penalty": 16,
+    "mem_unit": 1,
+    "base_overhead": 16,
+    "thermal_density": 32,
+    "power_density": 48,
+    "per_op_heat": 1,
+    "fma": true,
+    "isa_features": [
+      "spirv",
+      "subgroup"
+    ],
+    "affinity_domains": 128,
+    "mem_channels": 32,
+    "cal_gen": 0,
+    "mem_tiers": [
+      {
+        "name": "L1",
+        "latency_cyc": 3,
+        "bw_factor": 64,
+        "lat_factor": 24,
+        "capacity": 0
+      },
+      {
+        "name": "HBM",
+        "latency_cyc": 200,
+        "bw_factor": 64,
+        "lat_factor": 192,
+        "capacity": 0
+      }
+    ]
+  }
+}

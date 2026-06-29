@@ -196,6 +196,16 @@ Pillar 3):**
 3. ✅ **B3 — calling-side tuning** — DONE (cost-priced major-order / tile / prefetch / channel).
 4. **Area-B breadth — ATLAS / GSL / OpenBLAS-LAPACK / SLEEF** wrapped through the same edge —
    **remaining** (the active frontier).
+4b. ✅ **SYCL/SPIR-V backend channel + differential oracle** (heterogeneous interop — "measure a
+    heterogeneous backend before committing to a resident driver") — **BUILT**: a modeled SPIR-V GPU
+    channel ([`channels/sycl.channel.json`](../channels/sycl.channel.json)) the planner prices + routes
+    like any other, plus a toolchain-gated SAXPY `parallel_for` differential oracle
+    ([`bcir/kbcir/sycl_saxpy.py`](../bcir/kbcir/sycl_saxpy.py) + `emit_sycl_saxpy_c`, gated by
+    [`tools/cpp/check_sycl.sh`](../tools/cpp/check_sycl.sh)) that verifies a device reproduces BCIR's
+    own reference (portable scalar fallback does the real work; the `-fsycl` device path self-skips on
+    CI). SYCL is a compiler MODE, **not** a `c.call.libm:` link edge (no `linkflags.py` rule); its
+    dynamic scheduler is held off the legality path. See [`SYCL_INTEROP.md`](SYCL_INTEROP.md). No
+    `mlir/` changes, no new R-laws.
 
 **Pillar-3 intelligence:**
 5. ✅ **SoA↔AoS layout pivot** (Pillar 3b) — DONE: oracle `layout.py` + MLIR `-bcir-layout-pivot`.
