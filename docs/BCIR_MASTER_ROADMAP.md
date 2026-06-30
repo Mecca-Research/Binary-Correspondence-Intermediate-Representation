@@ -576,6 +576,27 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 > produce **byte-identical** claims for the ordered fences via the extended `runtime/c/cfront_atomic.c`
 > corpus. See `docs/CFRONT_GUIDE.md`.
 
+> **Inline asm on the MLIR law rail (SEG8.1)** — ✅ the ASM1 inline-asm edge gets a **first-class MLIR law
+> op**, `bcir.asm`, closing the gap where inline asm was **cfront-only** (the MLIR rail had `bcir.barrier`
+> for fences but nothing for inline asm). `bcir.asm` is the MLIR-rail twin of the cfront `c.asm:` /
+> `c.asm.volatile:` claim (`lower.py::_asm_stmt` + `AsmInfo`): it carries the template **verbatim**
+> (`asm_template`, named to dodge the C++ `template` keyword), `is_volatile`, the `out_constraints` /
+> `in_constraints` / `clobbers` string arrays, and the outputs-then-inputs SSA operands (one result per
+> output) — the closest sibling op being `bcir.barrier`. Its `hasVerifier` is the op-level structural check
+> (`args == out + in`, `results == out`), like the merged `gem.autodiff` law op — and like `gem.autodiff`,
+> it does **not** need the Python oracle's MLIR emitter to produce it yet (the oracle→MLIR wiring is a later
+> increment). The `-convert-bcir-to-llvm` lowering emits `llvm.inline_asm` with a **single** LLVM constraint
+> string (out, then in, then each clobber as a `~{...}` entry, comma-joined — e.g. `"=r,r,~{memory}"`),
+> `has_side_effects`, default (AT&T) dialect; the LLVM `call asm` operand list is the **inputs only** (a
+> write-only `"="` output is the *result*). **Scoped first slice:** 0 or 1 result, write-only `"="` outputs;
+> multi-output (LLVM returns a struct needing `extractvalue`) and read-write `"+"` outputs are a clean
+> follow-on (SEG8.x) — the lowering rejects `results > 1` with an honest diagnostic rather than shipping a
+> wrong unpack. This establishes exactly the `llvm.inline_asm` lowering that the **SEG8.2** port-I/O op
+> (`bcir.portio`, the per-ISA x86 `in`/`out` edge emitted *as* inline asm) reuses. Tests:
+> `mlir/test/passes/inline_asm_roundtrip.mlir` (byte-identical round-trip), `inline_asm.mlir` (the LLVM
+> lowering + constraint string), `inline_asm_verify_neg.mlir` (the two count laws); wired into
+> `tools/wsl/check_passes.sh`. See `docs/BCIR_LANGREF.md`.
+
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
 register-map header now ingests through L7 → L5 → an R1–R18-clean plan with `bcir-explain`,
 behaviour-equivalent to Clang. Next: **Phase D** — the first real driver behind a `channel.json`
