@@ -162,9 +162,14 @@ def BCIR_AsmOp : BCIR_Op<"asm"> {
   // clobber / volatile form is an ordering fence, never reordered/fused across.
   //
   // Fields (mirroring AsmInfo):
-  //   * `asm_template`    -- the asm template string, carried VERBATIM (e.g. "mfence", "movl $1, $0").
-  //                          (Named `asm_template`, not `template`, since `template` is a C++ keyword the
-  //                          ODS-generated accessors would collide with.)
+  //   * `asm_template`    -- the asm template string in the user's (cfront/C source) GCC operand syntax
+  //                          (e.g. "mfence", "movl %1, %0"). The LOWERING TRANSLATES the GCC operand
+  //                          syntax to LLVM-IR `$`-syntax before storing it on `llvm.inline_asm`
+  //                          (`%%`->`%`, `%<letter><N>`->`${N:<letter>}`, `%<N>`->`$N`, a literal
+  //                          `$`->`$$`; exotic `%[name]`/`%P`/`%=` are REJECTED at lowering), since a
+  //                          verbatim GCC `%w1` fails `llc: invalid register name`. (Named `asm_template`,
+  //                          not `template`, since `template` is a C++ keyword the ODS-generated
+  //                          accessors would collide with.)
   //   * `is_volatile`     -- a `__asm__ __volatile__` (a side-effecting edge that must not be DCE'd).
   //                          The lowering ALWAYS marks `has_side_effects` (asm is conservatively
   //                          side-effecting); `is_volatile` records the source spelling for round-trip.
@@ -194,7 +199,10 @@ def BCIR_AsmOp : BCIR_Op<"asm"> {
   // struct needing extractvalue unpacking) is a follow-on (SEG8.x); the lowering rejects
   // `results.size() > 1` with a clear diagnostic rather than shipping a wrong struct-unpack.
   // (Read-write "+" outputs, which tie an input via a matching constraint, are the same follow-on;
-  // the op itself + verifier already model any output arity -- only the LLVM lowering is scoped.)
+  // the op itself + verifier already model any output arity -- only the LLVM lowering is scoped. The
+  // lowering REJECTS a "+" out-constraint explicitly: a "+" output is read-write, not a "=" result, so
+  // it lowers to `llvm.inline_asm ... "+r,r" %x : (i32) -> i32` which opt/llc reject -- "inline asm
+  // without outputs must return void".)
   let arguments = (ins
     StrAttr:$asm_template,
     UnitAttr:$is_volatile,
@@ -237,11 +245,18 @@ def BCIR_PortioOp : BCIR_Op<"portio"> {
   // for `out`, exactly two operands (value, port) and no result. (When present, the in-result /
   // out-value integer width must match the op width i8/i16/i32 and the port must be an integer.)
   //
-  // LOWERING (`-convert-bcir-to-llvm`): selects the x86 template from (direction, width) -- BYTE-
-  // IDENTICAL to cfront's `_PORTIO_IN_ASM` / `_PORTIO_OUT_ASM` -- and emits an `llvm.inline_asm` via
-  // the SAME generic attribute-list builder as `AsmOpLowering`. in: constraint "=a,Nd", returns the
-  // i{width}; out: constraint "a,Nd", no result. `has_side_effects` is ALWAYS true (port I/O is
-  // volatile, never DCE'd/reordered -- like the cfront `__volatile__`).
+  // LOWERING (`-convert-bcir-to-llvm`): selects the x86 template from (direction, width) in LLVM-IR
+  // operand syntax (VERIFIED to assemble via `llc` to `inb %dx,%al` etc.) -- in: `inb ${1:w}, ${0:b}`
+  // / `inw ${1:w}, ${0:w}` / `inl ${1:w}, ${0:k}`; out: `outb ${0:b}, ${1:w}` / `outw ${0:w}, ${1:w}`
+  // / `outl ${0:k}, ${1:w}` (accumulator `${0:b/w/k}` = al/ax/eax, port `${1:w}` = the 16-bit dx) --
+  // and emits an `llvm.inline_asm` via the SAME generic attribute-list builder as `AsmOpLowering`. in:
+  // constraint "={ax},N{dx}", returns the i{width}; out: constraint "{ax},N{dx}", no result. The
+  // FULLY-QUALIFIED register names are what LLVM's x86 backend needs: cfront's GCC `%w1`/`=a,Nd`
+  // spellings are correct on the C->clang path but `llc` rejects them on this MLIR->LLVM path
+  // ("invalid register name" / "couldn't allocate output register"); clang's frontend does the
+  // `%b0`->`${0:b}`, `=a`->`={ax}`, `Nd`->`N{dx}` translation, which the frontend-less MLIR rail emits
+  // directly. `has_side_effects` is ALWAYS true (port I/O is volatile, never DCE'd/reordered -- like
+  // the cfront `__volatile__`).
   let arguments = (ins
     BCIR_PortDirAttr:$direction,
     I32Attr:$width,

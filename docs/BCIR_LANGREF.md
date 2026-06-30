@@ -340,9 +340,13 @@ the cfront rail it is the `c.asm:` / `c.asm.volatile:` claim
 a `"memory"`-clobber / `volatile` form is an ordering fence. Fields (mirroring
 `AsmInfo`):
 
-- `asm_template` — the asm template string, carried verbatim (e.g. `"mfence"`,
-  `"movl $1, $0"`). Named `asm_template`, not `template`, since `template` is a C++
-  keyword the ODS-generated accessors would collide with;
+- `asm_template` — the asm template string in the user's (cfront/C source) **GCC operand
+  syntax** (e.g. `"mfence"`, `"movl %1, %0"`). The lowering **translates** the GCC operand
+  syntax to LLVM-IR `$`-syntax before storing it on `llvm.inline_asm` (`%%`→`%`,
+  `%<letter><N>`→`${N:<letter>}`, `%<N>`→`$N` incl. multi-digit, a literal `$`→`$$`; exotic
+  `%[name]`/`%P`/`%=` are **rejected** at lowering with a clear diagnostic), since a verbatim
+  GCC `%w1` fails `llc: invalid register name`. Named `asm_template`, not `template`, since
+  `template` is a C++ keyword the ODS-generated accessors would collide with;
 - `is_volatile` — a `__asm__ __volatile__` (a side-effecting edge that must not be
   DCE'd); the lowering *always* marks `has_side_effects` (asm is conservatively
   side-effecting), so this records the source spelling for round-trip;
@@ -365,13 +369,19 @@ then the in constraints, then each clobber as a `~{<clobber>}` entry, all comma-
 **input operands only** (a write-only `"="` output is the *result*, never an asm-call
 argument), so the lowering passes `args[out_constraints.size():]`. **Lowering scope (the
 first slice):** 0 or 1 result, write-only `"="` outputs; a multi-output asm (LLVM
-returns a struct needing `extractvalue` unpacking) and read-write `"+"` outputs (which
-tie an input via a matching constraint) are a follow-on (SEG8.x) — the lowering rejects
-`results.size() > 1` with a clear diagnostic rather than shipping a wrong unpack. This
-establishes the `llvm.inline_asm` lowering the **SEG8.2** port-I/O op (`bcir.portio`,
-per-ISA x86 `in`/`out` emitted *as* inline asm) reuses. (Tests:
+returns a struct needing `extractvalue` unpacking) and read-write `"+"` outputs are a
+follow-on (SEG8.x) — the lowering rejects `results.size() > 1` **and** any `"+"`
+out-constraint with a clear diagnostic rather than shipping wrong/invalid LLVM. (A `"+"`
+output is read-write, not a `"="` result: it lowers to `llvm.inline_asm … "+r,r" %x :
+(i32) -> i32`, which opt/llc reject — *“inline asm without outputs must return void”* —
+so the full `"+"` handling, the tied input + matching constraint, is the same SEG8.x
+follow-on.) This establishes the `llvm.inline_asm` lowering the **SEG8.2** port-I/O op
+(`bcir.portio`, per-ISA x86 `in`/`out` emitted *as* inline asm) reuses. The lowering is
+**assemble-checked** end-to-end (`mlir-translate-20 --mlir-to-llvmir | llc-20
+-filetype=obj`), not just FileCheck text. (Tests:
 `mlir/test/passes/inline_asm_roundtrip.mlir`, `inline_asm.mlir`,
-`inline_asm_verify_neg.mlir`.)
+`inline_asm_verify_neg.mlir`, `inline_asm_lower_neg.mlir`,
+`asm_lowering_smoke.mlir`.)
 
 **`bcir.portio` — x86 port-mapped I/O as a law op (ASM2, SEG8.2).** The x86
 `in`/`out` instructions (port-mapped I/O) are a **trusted opaque effect edge**: on
@@ -398,20 +408,27 @@ Its verifier (`hasVerifier`) is the op-level structural well-formedness check (*
 a new globally-numbered R-law): `width ∈ {8,16,32}`; `in` ⇒ one operand + one result;
 `out` ⇒ two operands + zero results; the in-result / out-value integer width equals the
 op width (`i8`/`i16`/`i32`) and the port is an integer. The lowering
-(`-convert-bcir-to-llvm`) selects the x86 template from `(direction, width)` —
-**byte-identical** to cfront's `_PORTIO_IN_ASM` (`inb %w1, %b0` / `inw %w1, %w0` /
-`inl %w1, %k0`) / `_PORTIO_OUT_ASM` (`outb %b0, %w1` / `outw %w0, %w1` /
-`outl %k0, %w1`), where the accumulator is `%b0`/`%w0`/`%k0` (al/ax/eax) and the port
-is `%w1` (the 16-bit `dx`) — and emits `llvm.inline_asm` via the **same generic
-attribute-list builder** as `bcir.asm` (so it compiles identically on LLVM-20 and the
-CI's LLVM-22, where the positional `InlineAsmOp` builder gained a `tail_call_kind`
-parameter). The constraint string is `"=a,Nd"` for `in` (output `=a`, then input `Nd`;
-the call operand is the port only — the `=a` output is the *result*) and `"a,Nd"` for
-`out` (two inputs `value, port`, no output). `has_side_effects` is **always** set (port
-I/O is volatile, never DCE'd/reordered — like the cfront `__volatile__`). Like
-`bcir.asm`, it does **not** need the Python oracle's MLIR emitter to produce it yet
-(the oracle→MLIR wiring is a later increment). (Tests:
-`mlir/test/passes/portio_roundtrip.mlir`, `portio.mlir`, `portio_verify_neg.mlir`.)
+(`-convert-bcir-to-llvm`) selects the x86 template from `(direction, width)` in
+**LLVM-IR operand syntax** (verified to assemble via `llc` to `inb %dx,%al` etc.) —
+`in`: `inb ${1:w}, ${0:b}` / `inw ${1:w}, ${0:w}` / `inl ${1:w}, ${0:k}`; `out`:
+`outb ${0:b}, ${1:w}` / `outw ${0:w}, ${1:w}` / `outl ${0:k}, ${1:w}`, where the
+accumulator is `${0:b}`/`${0:w}`/`${0:k}` (al/ax/eax) and the port is `${1:w}` (the
+16-bit `dx`) — and emits `llvm.inline_asm` via the **same generic attribute-list builder**
+as `bcir.asm` (so it compiles identically on LLVM-20 and the CI's LLVM-22, where the
+positional `InlineAsmOp` builder gained a `tail_call_kind` parameter). The constraint
+string is `"={ax},N{dx}"` for `in` (output `={ax}`, then input `N{dx}`; the call operand
+is the port only — the `={ax}` output is the *result*) and `"{ax},N{dx}"` for `out` (two
+inputs `value, port`, no output). The **fully-qualified register names** are what LLVM’s
+x86 backend needs: cfront’s GCC `%w1`/`=a,Nd` spellings are correct on the C→clang path
+but `llc` rejects them on this MLIR→LLVM path (*“invalid register name”* / *“couldn’t
+allocate output register”*) — clang’s frontend does the `%b0`→`${0:b}`, `=a`→`={ax}`,
+`Nd`→`N{dx}` translation, which the frontend-less MLIR rail emits directly. `has_side_effects`
+is **always** set (port I/O is volatile, never DCE'd/reordered — like the cfront
+`__volatile__`). The lowering is **assemble-checked** end-to-end (`mlir-translate-20 |
+llc-20`), not just FileCheck text. Like `bcir.asm`, it does **not** need the Python
+oracle's MLIR emitter to produce it yet (the oracle→MLIR wiring is a later increment).
+(Tests: `mlir/test/passes/portio_roundtrip.mlir`, `portio.mlir`, `portio_verify_neg.mlir`,
+`asm_lowering_smoke.mlir`.)
 
 **`bcir.volatile_load` / `bcir.volatile_store` — first-class MMIO on the law rail
 (SEG8.2 / D1.2).** A memory-mapped device-register access is an **ordered volatile**
@@ -448,10 +465,11 @@ edge, like `bcir.asm`/`bcir.portio`). **Unlike** those two, it has **no cfront d
 twin** (the cfront rail expresses control-register access only as a raw `c.asm` blob), so
 the template is authored **directly in LLVM-IR inline-asm syntax** (`$0` operand,
 single-`%` register) — empirically the exact form clang emits for
-`__asm__("mov %%cr3, %0" : "=r"(v))`. (This is the LLVM-IR-correct syntax; `bcir.asm` and
-`bcir.portio` instead store cfront's GCC C-asm templates verbatim, which is correct on the
-cfront C→clang rail — a follow-up could translate GCC operand syntax to `${N:mod}` for the
-MLIR→LLVM path, which is currently text-checked but never assembled.) x86-only.
+`__asm__("mov %%cr3, %0" : "=r"(v))`. (`bcir.asm` and `bcir.portio` carry GCC operand
+syntax and the lowering **translates** it to this LLVM-IR `${N:mod}` form; the creg
+templates, having no cfront dual-rail twin, are simply authored in the LLVM-IR form
+directly. All three are now **assemble-checked** through `mlir-translate | llc`, not just
+FileCheck text.) x86-only.
 
 - `bcir.creg_read <crN> -> i64` — `reg` is a `#bcir.ctrl_reg` enum
   (`cr0`/`cr2`/`cr3`/`cr4`/`cr8`); the result is the 64-bit register value (control
