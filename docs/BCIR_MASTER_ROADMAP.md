@@ -221,7 +221,10 @@ Clang comparison.
 > 956 → 1235). The C++ hand-off boundary is 🟡 SCAFFOLDED (contract + a round-trip-tested single-node
 > seam, [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) / [`runtime/cpp/`](../runtime/cpp); the
 > dynamic/distributed backends are marked stubs). What genuinely remains is **Area-B library breadth**
-> (BLAS/FFTW/LAPACK/GSL/SLEEF/libcerf through the `c.call.libm:` edge — six wraps done: matmul, FFT,
+> (BLAS/FFTW/LAPACK/GSL/SLEEF/libcerf through the `c.call.libm:` edge — six wraps done: matmul, FFT
+> (the FFTW wrap now covers both the **1-D** `fftwf_plan_dft_1d` and the **2-D** `fftwf_plan_dft_2d`
+> complex transform — SEG2.2, the 2-D spectral kernel under image/convolution spectral methods, on the
+> same `-lfftw3` link rule),
 > linear solve, statistics, vectorized libm, and libcerf's numerically-robust `erfcx` scaled
 > complementary error function, a special function libm lacks), the 5d distributed backends
 > (need multi-node hardware), and the Pillar-1/2 boundary items (DMA/device-isolation, a flatness law).
