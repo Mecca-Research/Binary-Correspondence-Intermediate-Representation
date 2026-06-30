@@ -221,7 +221,18 @@ enum and lower to `llvm.fence acquire`/`release`/`seq_cst`
 (`mlir/test/passes/memory_ordering.mlir`); the BCIR↔LLVM ordering map is the identity
 mirrored by `bcir/lower/memory_model.py`. The full-fence op string stays the
 backward-compatible `c.fence` so the existing `__atomic_thread_fence(5)` /
-`__sync_synchronize` claims and the C-twin parity corpus are unchanged.
+`__sync_synchronize` claims are unchanged.
+
+**C-twin dual-rail fence parity (SEG7).** The byte-identical C reimplementation
+(`runtime/c/bcir_cfront.c`) that backs the dual-rail digest parity gate mirrors the
+SEG6.1 *lowering* exactly: the order-taking forms route the fence **kind** by the first
+argument's order (an unshadowed `memory_order_*` / `__ATOMIC_*` name resolves to an int
+const claim identical to a same-valued literal, with the same env→func→constant shadow
+precedence as the oracle), so the dual-rail **digest** now covers `acquire`/`release`/
+`seq_cst` symmetrically — verified by the extended `runtime/c/cfront_atomic.c` corpus
+under `bcir/tests/test_c_cfront.py` / `tools/c/check_runtime.sh`. The C twin re-emits
+**portable** C (`__atomic_thread_fence(__ATOMIC_ACQUIRE/RELEASE/SEQ_CST)`); the per-ISA
+fence asm is Python-only by design, so the C twin carries no per-ISA emit.
 
 ## 11. Rewrite laws (the building-blocks engine)
 

@@ -558,7 +558,23 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 > (`mlir/test/passes/memory_ordering.mlir`; the BCIR↔LLVM map is the identity in
 > `bcir/lower/memory_model.py`). The full-fence op string stays `c.fence`, so `__atomic_thread_fence(5)` /
 > `__sync_synchronize` and the **C-twin parity corpus are unchanged** (the C twin `bcir_cfront.c` fence
-> handling is a separate slice, SEG7). See `docs/CFRONT_GUIDE.md`.
+> handling is a separate slice, **SEG7**, now landed — below). See `docs/CFRONT_GUIDE.md`.
+
+> **C-twin order-parameterized fence parity (SEG7)** — ✅ the byte-identical C reimplementation
+> (`runtime/c/bcir_cfront.c`) that backs the **dual-rail digest parity gate** now mirrors SEG6.1's lowering
+> exactly, so the parity covers acquire/release/seq_cst **symmetrically**. The `atomic_kind` table gains the
+> C11 `atomic_thread_fence` and the x86 `_mm_mfence`/`_mm_lfence`/`_mm_sfence` intrinsic names (kinds read
+> off the name); the identifier→rvalue path resolves an **unshadowed** `memory_order_*` / `__ATOMIC_*` name
+> to an int const claim **identical to a same-valued integer literal** (the same env→func→constant shadow
+> precedence as the oracle's `_rvalue`); the order-taking forms (`__atomic_thread_fence` /
+> `atomic_thread_fence`) **route the fence kind by the first argument's order value** (mirroring
+> `_fence_order_kind`: integer or unshadowed named order → `_ORDER_KIND`, anything else → full `c.fence`),
+> evaluating the arg's const claim **before** choosing the op so the `[const, fence]` claim sequence matches
+> on both rails. The C twin's fence **emit stays portable** (`__atomic_thread_fence(__ATOMIC_ACQUIRE/RELEASE/
+> SEQ_CST)`) — per-ISA fence asm is **Python-only by design**. The dual-rail digest gate
+> (`bcir/tests/test_c_cfront.py`, `tools/c/check_runtime.sh`) verifies the Python oracle and the C twin
+> produce **byte-identical** claims for the ordered fences via the extended `runtime/c/cfront_atomic.c`
+> corpus. See `docs/CFRONT_GUIDE.md`.
 
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
 register-map header now ingests through L7 → L5 → an R1–R18-clean plan with `bcir-explain`,

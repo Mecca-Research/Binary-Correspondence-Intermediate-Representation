@@ -1955,6 +1955,42 @@ def test_atomic_fence_dual_rail_parity_and_behaviour():
             assert m["r9"] == "1" and m["r10r11"] == "1", out
 
 
+def test_fence_order_edge_cases_dual_rail():
+    """SEG7: the order-parameterized fence routing must be byte-identical on BOTH rails for the tricky
+    forms the corpus' bare / integer / parenthesized fences do not exhaust -- a leading unary `+` (which
+    the parser DROPS, like a redundant paren), a cast / binary order (which stays a node -> the full
+    fence), and a `memory_order_*` / `__ATOMIC_*` name SHADOWED by an enum constant (routed by the enum's
+    VALUE, not the builtin mapping -- the oracle parser folds the enumerator to an IntLit). These are
+    compile-only edge cases that were LATENT dual-rail divergences (the C twin's token-peek `fence_order_op`
+    vs the oracle's parsed-AST `_fence_order_kind`); they are pinned here so a future change to either rail
+    cannot silently reintroduce a split. (cfront_atomic.c already pins the bare / paren / unary-+ forms
+    through the full compile->execute loop; this adds the cast/binary-fold and the enum-shadow forms, which
+    need their own translation units.)"""
+    if not _CC:
+        return                                            # quick tier hides the toolchain -> self-skip
+    cases = [
+        ("unary-plus integer",   "uint32_t f(uint32_t *p){ atomic_thread_fence(+2); return *p; }"),
+        ("unary-plus name",      "uint32_t f(uint32_t *p){ __atomic_thread_fence(+memory_order_release); return *p; }"),
+        ("paren+unary-plus",     "uint32_t f(uint32_t *p){ atomic_thread_fence(+(memory_order_acquire)); return *p; }"),
+        ("cast folds to full",   "uint32_t f(uint32_t *p){ atomic_thread_fence((int)2); return *p; }"),
+        ("binary folds to full", "uint32_t f(uint32_t *p){ atomic_thread_fence(memory_order_acquire + 0); return *p; }"),
+        ("enum shadow ->release","enum { memory_order_acquire = 3 };\nuint32_t f(uint32_t *p){ atomic_thread_fence(memory_order_acquire); return *p; }"),
+        ("enum shadow ->full",   "enum { memory_order_acquire = 7 };\nuint32_t f(uint32_t *p){ __atomic_thread_fence(memory_order_acquire); return *p; }"),
+        ("enum __ATOMIC ->acq",  "enum { __ATOMIC_RELEASE = 2 };\nuint32_t f(uint32_t *p){ __atomic_thread_fence(__ATOMIC_RELEASE); return *p; }"),
+    ]
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_frontend(d)
+        for label, src in cases:
+            oracle_summary, _r, _entry = _oracle(src)
+            assert "ok=1" in oracle_summary, f"{label}: oracle rejects: {oracle_summary}"
+            path = os.path.join(d, "fenceorder.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            c_summary, _emit = _c_run(exe, path)
+            assert c_summary == oracle_summary, (
+                f"{label}: dual-rail fence-order parity diverged\n C: {c_summary}\nPY: {oracle_summary}")
+
+
 def test_funcptr_member_dispatch_table():
     """Function-pointer struct members (HAL dispatch table): `o->fn(args)` fuses into one
     `c.call.imember:<field>` claim (reads: the struct base, then the actuals), emitted verbatim as
