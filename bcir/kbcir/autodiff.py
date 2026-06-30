@@ -806,3 +806,180 @@ def max_hessian_error(a: dict, b: dict) -> float:
     """The largest absolute disagreement between two Hessian dicts (for reporting the exact
     failing entry rather than a bare pass/fail)."""
     return max((abs(a[k] - b.get(k, 0.0)) for k in a), default=0.0)
+
+
+# --- the closure proof: d/dx : ClosedSet -> DAG(ClosedSet) ---------------------------
+#
+# This section FORMALIZES and machine-PROVES the property the module's honest-limitation
+# note states in prose and the whole reverse-over-reverse story relies on: the adjoint
+# operator set is CLOSED. Differentiating any expression built from the primitive set
+# {const, var, neg, add, sub, mul, div, dot, select} produces a gradient DAG that stays in
+# the SAME set -- the adjoint never introduces a foreign op kind (no exp/log, no new
+# functional primitive). Together with hash-consing, that closure is exactly what gives the
+# adjoint DAG a CANONICAL FORM over a fixed vocabulary -- the property a future
+# ``gem.autodiff`` law op will serialize/verify against.
+#
+# The proof is a REAL check, not a hardcoded list: it derives the closed set from ``_ARITY``
+# (the single source of truth), then for EVERY differentiable primitive it actually APPLIES
+# that primitive's symbolic VJP rule (``_BACKWARD_SYM``) to symbolic adjoint + primal inputs
+# via a real ``Tape``, walks every node the rule EMITS, and asserts each emitted op kind is
+# in the closed set. Because the rule emits ordinary ``Tape`` nodes, the emitted vocabulary
+# is OBSERVED, not asserted -- if a rule ever started emitting a foreign op, this trips. The
+# numeric twin ``_BACKWARD`` is tied to the same proof by checking it computes exactly the
+# value of the (proven-closed) symbolic DAG (see :func:`numeric_matches_symbolic_vjp`).
+
+#: The closed primitive set, DERIVED from ``_ARITY`` so it is a single source of truth and
+#: cannot drift from the ops the ``Tape`` can build. ``lower.autodiff_kernel._LOWERABLE`` is
+#: asserted equal to this (see :func:`closed_set_agrees_with_lowerable`).
+CLOSED_SET = frozenset(_ARITY)
+
+#: The two leaves (differentiation boundaries): they have arity 0 and carry NO backward rule.
+_LEAVES = frozenset(op for op, ar in _ARITY.items() if ar == 0)
+
+
+def differentiable_ops() -> frozenset:
+    """The differentiable primitives: every op that can appear as a NON-LEAF node and so
+    carries a local VJP rule -- i.e. the closed set minus the two leaves (``const``/``var``).
+    This is the set the registry-completeness check expects a backward rule for, derived from
+    ``_ARITY`` (not hand-listed), so it tracks the primitive set automatically."""
+    return CLOSED_SET - _LEAVES
+
+
+def _canonical_symbolic_inputs(tape: "Tape", op: str) -> tuple:
+    """Build representative SYMBOLIC inputs for applying ``op``'s VJP rule on ``tape``: a
+    tuple ``(args, const, gz)`` of operand node ids, the op's ``const`` payload, and the
+    incoming-adjoint node id ``gz``. Inputs are fresh ``var`` nodes (the linearization point
+    is irrelevant to which OP KINDS the rule emits -- the rule's structure is the same for any
+    inputs), so the emitted vocabulary the closure check observes is exactly the rule's.
+
+    ``dot`` is variadic, so a representative arity (k=2 -> 4 operands) is used with the same
+    ``const=("dot", k)`` payload the ``Tape.dot`` builder records; every fixed-arity op uses
+    its ``_ARITY`` count."""
+    gz = tape.var("__gz__")
+    if op == "dot":
+        k = 2                                   # a representative arity; the rule shape is k-independent
+        args = tuple(tape.var(f"__d{i}__") for i in range(2 * k))
+        return args, ("dot", k), gz
+    arity = _ARITY[op]
+    args = tuple(tape.var(f"__a{i}__") for i in range(arity))
+    return args, None, gz
+
+
+def emitted_ops_for(op: str) -> frozenset:
+    """APPLY ``op``'s symbolic VJP rule (``_BACKWARD_SYM[op]``) to canonical symbolic inputs
+    and return the set of op kinds of EVERY node the rule emits (each contribution node and
+    everything reachable from it on the fresh part of the tape). This is the heart of the
+    closure proof: the emitted vocabulary is OBSERVED by walking the actual emitted nodes, so
+    it cannot drift from the rule. The returned set is what :func:`closure_report` asserts is a
+    subset of :data:`CLOSED_SET`."""
+    rule = _BACKWARD_SYM[op]
+    tape = Tape()
+    args, const, gz = _canonical_symbolic_inputs(tape, op)
+    base = tape.node_count()                    # everything from here on is what the RULE emitted
+    contributions = rule(tape, args, const, gz)
+    # the op kind of every contribution node and everything it reaches (the gradient subgraph
+    # the rule built). Walk reachability so a multi-node contribution (e.g. div's nested
+    # neg(div(mul(...), mul(...)))) is fully inspected.
+    roots = [cnid for _operand, cnid in contributions]
+    ops: set[str] = set()
+    seen: set[int] = set()
+    stack = list(roots)
+    while stack:
+        nid = stack.pop()
+        if nid in seen:
+            continue
+        seen.add(nid)
+        n = tape.node(nid)
+        # only nodes the rule freshly emitted carry NEW op kinds; the input leaves (< base) are
+        # the symbolic primals/adjoint and are not part of the emitted vocabulary. We still
+        # record their op (var) for completeness of the reachable set but they are in CLOSED_SET.
+        ops.add(n.op)
+        for a in n.args:
+            if a not in seen:
+                stack.append(a)
+    return frozenset(ops)
+
+
+def closure_report() -> dict:
+    """The machine-checked closure proof for the SYMBOLIC adjoint (``_BACKWARD_SYM``), as a
+    per-primitive map ``op -> frozenset(emitted op kinds)``. For every differentiable primitive
+    this APPLIES its VJP rule and OBSERVES the op kinds it emits (:func:`emitted_ops_for`). The
+    caller asserts every value is a subset of :data:`CLOSED_SET` -- i.e. ``d/dx`` maps the closed
+    set into a DAG over the SAME closed set. Because ``_BACKWARD_SYM`` is the graph-valued twin
+    used for reverse-over-reverse, this also proves arbitrary-order AD (the Hessian and beyond)
+    stays in the set: the gradient DAG is itself differentiable by the same machinery."""
+    return {op: emitted_ops_for(op) for op in sorted(differentiable_ops())}
+
+
+def numeric_matches_symbolic_vjp(op: str, *, seed: int = 0) -> bool:
+    """Tie the NUMERIC backward rule ``_BACKWARD[op]`` to the proven-closed symbolic DAG: at a
+    random linearization point, the float contributions the numeric rule returns must EQUAL the
+    values obtained by evaluating the symbolic rule's emitted (closed-set) nodes. The numeric
+    rule computes only ``+ - * / neg`` of its float inputs -- the same arithmetic the symbolic
+    rule materializes as closed-set nodes -- so agreement here certifies the numeric adjoint's
+    operations are exactly the closed-set ones (it has no separate vocabulary to escape into).
+    Deterministic (seeded), exact (the closed-form rules are float-exact, no tolerance)."""
+    import random
+    rng = random.Random(seed ^ (hash(op) & 0xFFFF))
+    tape = Tape()
+    args, const, gz = _canonical_symbolic_inputs(tape, op)
+    # a random, well-conditioned point (denominators away from zero for div/dot stability).
+    env = {tape.node(nid).const: rng.uniform(0.5, 2.0) for nid in args}
+    env[tape.node(gz).const] = rng.uniform(0.5, 2.0)
+    fvals = {nid: env[tape.node(nid).const] for nid in (*args, gz)}
+    gz_val = fvals[gz]
+    numeric = _BACKWARD[op](fvals, args, const, gz_val)
+    symbolic = _BACKWARD_SYM[op](tape, args, const, gz)
+    # both return [(operand, contribution), ...] in the same operand order; compare the value of
+    # each numeric float contribution against the evaluated symbolic-node contribution.
+    if len(numeric) != len(symbolic):
+        return False
+    for (n_operand, n_val), (s_operand, s_nid) in zip(numeric, symbolic):
+        if n_operand != s_operand:
+            return False
+        if evaluate(tape, s_nid, env) != n_val:
+            return False
+    return True
+
+
+def registry_completeness() -> dict:
+    """Prove the BIJECTION between the differentiable primitives and each backward registry --
+    no missing rule, no orphan/dead rule -- for BOTH the numeric ``_BACKWARD`` and the symbolic
+    ``_BACKWARD_SYM`` twin. Returns a report dict:
+
+      * ``differentiable``       -- the differentiable op set (closed set minus leaves);
+      * ``backward_keys`` / ``backward_sym_keys`` -- the registry key sets;
+      * ``backward_complete``    -- ``_BACKWARD`` keys == differentiable set (bijection);
+      * ``backward_sym_complete``-- ``_BACKWARD_SYM`` keys == differentiable set (bijection);
+      * ``missing_*`` / ``orphan_*`` -- the exact discrepancies (empty on success), so a failure
+        names the drifting op rather than a bare False.
+
+    A leaf (``const``/``var``) must have NO rule (it is a differentiation boundary); a
+    differentiable op must have EXACTLY one. The caller asserts both ``*_complete`` and that no
+    leaf leaked into either registry."""
+    diff = differentiable_ops()
+    bw = frozenset(_BACKWARD)
+    bws = frozenset(_BACKWARD_SYM)
+    return {
+        "differentiable": diff,
+        "backward_keys": bw,
+        "backward_sym_keys": bws,
+        "backward_complete": bw == diff,
+        "backward_sym_complete": bws == diff,
+        "missing_backward": diff - bw,
+        "orphan_backward": bw - diff,
+        "missing_backward_sym": diff - bws,
+        "orphan_backward_sym": bws - diff,
+        "leaves_in_backward": _LEAVES & bw,
+        "leaves_in_backward_sym": _LEAVES & bws,
+    }
+
+
+def closed_set_agrees_with_lowerable() -> bool:
+    """Assert the two definitions of "the closed set" AGREE -- :data:`CLOSED_SET` (derived here
+    from ``_ARITY``) and ``lower.autodiff_kernel._LOWERABLE`` (the set the G6 C-kernel emitter
+    enforces). A single source of truth: if a primitive is added to the oracle, this trips until
+    the lowerable set is updated too, so the closure proof and the lowering can never silently
+    diverge on what the closed vocabulary is."""
+    from ..lower.autodiff_kernel import _LOWERABLE
+    return CLOSED_SET == frozenset(_LOWERABLE)

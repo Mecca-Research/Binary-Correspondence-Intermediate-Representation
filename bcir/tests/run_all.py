@@ -199,6 +199,7 @@ _MODULES = [
     "bcir.tests.test_classical",
     "bcir.tests.test_unsupervised",
     "bcir.tests.test_autodiff",
+    "bcir.tests.test_autodiff_closure",
     "bcir.tests.test_autodiff_kernel",
     "bcir.tests.test_losses",
     "bcir.tests.test_optimizers",
