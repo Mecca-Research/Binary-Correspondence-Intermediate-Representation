@@ -212,6 +212,7 @@ _MODULES = [
     "bcir.tests.test_pca",
     "bcir.tests.test_gsl",
     "bcir.tests.test_sleef",
+    "bcir.tests.test_area_b_redteam",
     "bcir.tests.test_sycl_channel",
     "bcir.tests.test_sycl_dispatch",
     "bcir.tests.test_sycl_reduce_matmul",
