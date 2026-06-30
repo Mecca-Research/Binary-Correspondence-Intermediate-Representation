@@ -211,4 +211,47 @@ def BCIR_AsmOp : BCIR_Op<"asm"> {
   let hasVerifier = 1;
 }
 
+def BCIR_PortioOp : BCIR_Op<"portio"> {
+  let summary = "x86 port-mapped I/O edge (ASM2, an opaque side-effecting trusted edge)";
+  // The law-rail twin of the cfront `c.portio.in.{b,w,l}:` / `c.portio.out.{b,w,l}:` claim
+  // (bcir/frontends/cfront/lower.py::_portio + emit.py::_portio_stmt). x86 port-mapped I/O (the
+  // `in`/`out` instructions) is a TRUSTED OPAQUE EFFECT EDGE: it is volatile + ordered (barriered),
+  // off the legality value-path, and reuses the `llvm.inline_asm` lowering established by `bcir.asm`
+  // (SEG8.1). It is x86-ONLY -- port I/O is inherently x86; ARM/RISC-V have no port I/O (only MMIO),
+  // matching the cfront claim, which raises an honest diagnostic on a non-x86 target.
+  //
+  // Fields:
+  //   * `direction` -- `in` (a READ: the port is the input, the read value is the result) or `out`
+  //                    (a void WRITE: value-then-port are the inputs, no result). Mirrors the cfront
+  //                    `c.portio.in.*` / `c.portio.out.*` claim suffix.
+  //   * `width`     -- the access width in BITS, one of {8, 16, 32} (verifier-checked). Maps to the
+  //                    GCC operand-size modifier b=8 / w=16 / l=32 (the cfront `{b,w,l}` suffix).
+  //
+  // Operands / results, keyed off `direction` (matching the cfront rd/wr ordering):
+  //   * in:  ONE operand `$port`; ONE result (the read value).
+  //   * out: TWO operands `$value, $port` (value first, the Linux `out(value, port)` order); ZERO
+  //          results.
+  //
+  // The verifier (`hasVerifier`) is the op-level structural well-formedness check (NOT a new globally-
+  // numbered R-law): `width in {8,16,32}`; for `in`, exactly one operand (the port) and one result;
+  // for `out`, exactly two operands (value, port) and no result. (When present, the in-result /
+  // out-value integer width must match the op width i8/i16/i32 and the port must be an integer.)
+  //
+  // LOWERING (`-convert-bcir-to-llvm`): selects the x86 template from (direction, width) -- BYTE-
+  // IDENTICAL to cfront's `_PORTIO_IN_ASM` / `_PORTIO_OUT_ASM` -- and emits an `llvm.inline_asm` via
+  // the SAME generic attribute-list builder as `AsmOpLowering`. in: constraint "=a,Nd", returns the
+  // i{width}; out: constraint "a,Nd", no result. `has_side_effects` is ALWAYS true (port I/O is
+  // volatile, never DCE'd/reordered -- like the cfront `__volatile__`).
+  let arguments = (ins
+    BCIR_PortDirAttr:$direction,
+    I32Attr:$width,
+    Variadic<AnyType>:$args);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $direction `width` $width ( ` ` `(` $args^ `)` )? attr-dict
+    (`:` functional-type($args, $results)^)?
+  }];
+  let hasVerifier = 1;
+}
+
 #endif // BCIR_CORE_OPS

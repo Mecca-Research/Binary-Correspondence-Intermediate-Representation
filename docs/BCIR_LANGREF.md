@@ -373,6 +373,46 @@ per-ISA x86 `in`/`out` emitted *as* inline asm) reuses. (Tests:
 `mlir/test/passes/inline_asm_roundtrip.mlir`, `inline_asm.mlir`,
 `inline_asm_verify_neg.mlir`.)
 
+**`bcir.portio` — x86 port-mapped I/O as a law op (ASM2, SEG8.2).** The x86
+`in`/`out` instructions (port-mapped I/O) are a **trusted opaque effect edge**: on
+the cfront rail this is the `c.portio.in.{b,w,l}:` / `c.portio.out.{b,w,l}:` claim
+(`bcir/frontends/cfront/lower.py::_portio` + `emit.py::_portio_stmt`); `bcir.portio`
+is its **MLIR-rail twin**, **reusing** the `llvm.inline_asm` lowering `bcir.asm`
+established (SEG8.1) — port I/O *is* x86 inline asm. Port I/O is volatile + ordered
+(barriered), off the legality value-path, and **x86-only** (ARM/RISC-V have no port
+I/O, only MMIO; the cfront claim raises an honest diagnostic on a non-x86 target).
+Fields:
+
+- `direction` — `in` (a READ: the port is the input, the read value is the result) or
+  `out` (a void WRITE: value-then-port are the inputs, no result), an `#bcir.port_dir`
+  enum mirroring the cfront `c.portio.in.*` / `c.portio.out.*` suffix;
+- `width` — the access width in **bits**, one of `{8, 16, 32}` (verifier-checked),
+  mapping to the GCC operand-size modifier **b=8 / w=16 / l=32** (the cfront `{b,w,l}`
+  suffix);
+- operands keyed off `direction`: `in` takes **one** operand `$port`; `out` takes
+  **two**, `$value, $port` (value first — the Linux `out(value, port)` order);
+- results keyed off `direction`: `in` produces **one** result (the read value); `out`
+  produces **none**.
+
+Its verifier (`hasVerifier`) is the op-level structural well-formedness check (**not**
+a new globally-numbered R-law): `width ∈ {8,16,32}`; `in` ⇒ one operand + one result;
+`out` ⇒ two operands + zero results; the in-result / out-value integer width equals the
+op width (`i8`/`i16`/`i32`) and the port is an integer. The lowering
+(`-convert-bcir-to-llvm`) selects the x86 template from `(direction, width)` —
+**byte-identical** to cfront's `_PORTIO_IN_ASM` (`inb %w1, %b0` / `inw %w1, %w0` /
+`inl %w1, %k0`) / `_PORTIO_OUT_ASM` (`outb %b0, %w1` / `outw %w0, %w1` /
+`outl %k0, %w1`), where the accumulator is `%b0`/`%w0`/`%k0` (al/ax/eax) and the port
+is `%w1` (the 16-bit `dx`) — and emits `llvm.inline_asm` via the **same generic
+attribute-list builder** as `bcir.asm` (so it compiles identically on LLVM-20 and the
+CI's LLVM-22, where the positional `InlineAsmOp` builder gained a `tail_call_kind`
+parameter). The constraint string is `"=a,Nd"` for `in` (output `=a`, then input `Nd`;
+the call operand is the port only — the `=a` output is the *result*) and `"a,Nd"` for
+`out` (two inputs `value, port`, no output). `has_side_effects` is **always** set (port
+I/O is volatile, never DCE'd/reordered — like the cfront `__volatile__`). Like
+`bcir.asm`, it does **not** need the Python oracle's MLIR emitter to produce it yet
+(the oracle→MLIR wiring is a later increment). (Tests:
+`mlir/test/passes/portio_roundtrip.mlir`, `portio.mlir`, `portio_verify_neg.mlir`.)
+
 ## 12. Lowering contracts
 
 BCIR-4 → BCIR-5 lowering is governed by R12: each lowered op preserves the BCIR
