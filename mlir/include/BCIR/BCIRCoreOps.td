@@ -287,9 +287,21 @@ def BCIR_VolatileLoadOp : BCIR_Op<"volatile_load"> {
   // LOWERING (`-convert-bcir-to-llvm`): `llvm.inttoptr $addr` -> `llvm.load volatile` of the (type-
   // converted) result type. `volatile` is ALWAYS set (a device read must never be elided, duplicated,
   // or reordered with other volatile accesses -- the MMIO guarantee, matching the cfront `volatile`).
+  //
+  // DCE/CSE SAFETY: this op carries NO `Pure`/`NoMemoryEffect` trait by DESIGN -- a device read is
+  // side-effecting (re-reading a status register yields fresh values), so MLIR's conservative
+  // unknown-effect default keeps it from being DCE'd even with an unused result and from being CSE-merged
+  // with a second identical read. DO NOT add `Pure` or `MemoryEffects<[]>` (it would silently make device
+  // reads removable/mergeable). The same holds for every asm-edge op (asm/portio/creg).
+  //
+  // The verifier (`hasVerifier`) constrains the operands the LOWERING relies on: `$value` is a SCALAR
+  // hardware-register type (an integer or float -- a vector/index/struct device register is rejected, as
+  // the op doc promises a scalar natural width), and `$addr` is at least pointer-width (>= 32 bits) so a
+  // too-narrow address is not silently zero-extended into the device pointer.
   let arguments = (ins AnySignlessInteger:$addr);
   let results = (outs AnyType:$value);
   let assemblyFormat = "$addr attr-dict `:` type($addr) `->` type($value)";
+  let hasVerifier = 1;
 }
 
 def BCIR_VolatileStoreOp : BCIR_Op<"volatile_store"> {
@@ -302,8 +314,12 @@ def BCIR_VolatileStoreOp : BCIR_Op<"volatile_store"> {
   //
   //   * `$value` -- the value to write (the register's natural width).
   //   * `$addr`  -- the device-register address (a signless integer).
+  //
+  // Same DCE/CSE-safety + verifier discipline as `bcir.volatile_load`: no `Pure` trait (a device write is
+  // side-effecting), `$value` is a scalar hardware-register type, `$addr` is >= pointer-width.
   let arguments = (ins AnyType:$value, AnySignlessInteger:$addr);
   let assemblyFormat = "$value `,` $addr attr-dict `:` type($value) `,` type($addr)";
+  let hasVerifier = 1;
 }
 
 def BCIR_CRegReadOp : BCIR_Op<"creg_read"> {
