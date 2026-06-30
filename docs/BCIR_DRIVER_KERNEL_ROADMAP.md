@@ -108,10 +108,11 @@ with bounded spins, bitfield control words, device state machines, and table par
 > escape: it is a `Domain.MMIO` resource with ordered, `barriered`, provably-RAM-disjoint volatile
 > load/store (cfront L5, shipped + parity-gated). The UART fixture proves it: `u->SR`, `u->DR`,
 > `u->BRR`, `u->CR` are plain `volatile uint32_t` struct members that lower to ordered MMIO access
-> — no `c.mmio` edge needed; the volatile-qualified type *is* the edge. *The only MMIO gap is in
-> the MLIR law rail:* there is no dedicated `bcir.volatile_load/store` op yet — device access in
-> MLIR currently rides the barrier/hazard machinery + the `Domain.MMIO` enum value, rather than a
-> first-class op.
+> — no `c.mmio` edge needed; the volatile-qualified type *is* the edge. *The MLIR-rail MMIO gap is
+> now closed (D1.2, landed):* `bcir.volatile_load` / `bcir.volatile_store` are first-class ops that
+> lower to `llvm.inttoptr` + a **volatile** `llvm.load`/`llvm.store` (mirroring the cfront
+> `*(volatile T*)(intaddr)` emit), so the MMIO accessor is first-class on the law rail as it already
+> is in cfront — not just the `Domain.MMIO` enum value riding the barrier/hazard machinery.
 
 ### Tier 3 — C++: orchestration above the rail (the G8 boundary)
 
@@ -241,8 +242,10 @@ discipline + a CI-green draft PR per the established cadence):
   always `has_side_effects`. Op + verifier + FileCheck round-trip/lowering/negatives
   (`mlir/test/passes/portio_roundtrip.mlir`, `portio.mlir`, `portio_verify_neg.mlir`), dual-rail with
   the cfront `c.portio.*` claim. (Like `bcir.asm`, the oracle→MLIR emitter wiring is a later increment.)
-- **D1.2** — `bcir.volatile_load/store` (or an MMIO attribute on `bcir.load/store`) so MMIO is
-  first-class in the law rail as it already is in cfront emit.
+- **D1.2** — ✅ **landed.** `bcir.volatile_load` / `bcir.volatile_store` so MMIO is first-class in the
+  law rail as it already is in cfront emit: the ops take the resolved integer register address and lower
+  to `llvm.inttoptr` + a **volatile** `llvm.load`/`llvm.store` (mirroring the cfront
+  `*(volatile T*)(intaddr)` emit; `volatile` set via the generated setter so it is LLVM-20/22 stable).
 - **D1.3** — the **boot/CPU-state asm edges** *as drivers demand them* (not speculatively): entry/
   reset stub + stack init; typed control-register/MSR edges; `lgdt`/`lidt`. The interrupt
   trampoline (the largest new surface) lands only when going interrupt-driven (RUNG 1).
@@ -275,5 +278,7 @@ the warranted path is the resident compiler finishing BCIR-emitted freestanding 
 - **Ordering:** a polled UART needs **nothing** new; it's already shipped. Everything the user named
   is independent / after / out-of-scope, and the firmware/security specs are *parser-kernel*
   opportunities, not implementation targets. The post-UART work is the RUNG 1→7 ladder.
-- **Next code slice:** `bcir.portio` (SEG8.2) is **landed** (D1.1 above); next is D1.2
-  (`bcir.volatile_load/store` / an MMIO attribute) after the Phase-0 hardening gate.
+- **Next code slice:** the Phase-0 hardening gate (D0.1 sanitizer-in-CI, D0.2 Area-B red-team), the
+  `bcir.portio` op (D1.1), and the `bcir.volatile_load/store` MMIO ops (D1.2) are all **landed**; next
+  is D1.3 (the boot/CPU-state asm edges — entry/reset stub, control-reg/MSR, `lgdt`/`lidt`) *as a driver
+  demands them*, then Phase 2's first channel-backed UART driver.

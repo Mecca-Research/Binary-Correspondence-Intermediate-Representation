@@ -413,6 +413,34 @@ I/O is volatile, never DCE'd/reordered — like the cfront `__volatile__`). Like
 (the oracle→MLIR wiring is a later increment). (Tests:
 `mlir/test/passes/portio_roundtrip.mlir`, `portio.mlir`, `portio_verify_neg.mlir`.)
 
+**`bcir.volatile_load` / `bcir.volatile_store` — first-class MMIO on the law rail
+(SEG8.2 / D1.2).** A memory-mapped device-register access is an **ordered volatile**
+read/write. On the cfront rail this is a `volatile`-qualified register: the resource is
+marked `domain=Domain.MMIO, access="volatile"` (`bcir/frontends/cfront/lower.py`) and
+`emit.py` renders the ordered volatile access `*(volatile T *)(ptr + off)`. Until now the
+MLIR rail carried MMIO only as the `Domain.MMIO` **enum value** on a claim/resource, with
+device access riding the barrier/hazard machinery; these two ops make the MMIO **accessor**
+first-class, as it already is in cfront emit. They are the **lowered** accessor — the
+post-bounds-check device access — so they take the resolved integer register **address**
+(mirroring the cfront emit `*(volatile T*)(intaddr)`); the RID/extent/bounds contract (R3)
+stays at the `bcir.claim`/`bcir.load` layer, exactly as in cfront (the claim carries the
+isolation law; the emit is a raw ordered volatile access).
+
+- `bcir.volatile_load $addr : iN -> T` — `$addr` is the device-register address (a
+  **signless integer**, e.g. an `i64` physical address); the result `$value` is the
+  register's natural width (`i8`/`i16`/`i32`/…).
+- `bcir.volatile_store $value, $addr : T, iN` — the void counterpart.
+
+The lowering (`-convert-bcir-to-llvm`) emits `llvm.inttoptr $addr` to an opaque
+`!llvm.ptr` then a **volatile** `llvm.load` / `llvm.store` (`volatile` set via the generated
+setter, not a positional builder arg, so it is stable across LLVM-20 and the CI's LLVM-22).
+`volatile` is **always** set — a device read/write must never be elided, duplicated, or
+reordered with other volatile accesses (the MMIO guarantee, matching the cfront `volatile`).
+The address constraint is `AnySignlessInteger` (a non-integer address is rejected). Like
+`bcir.asm`/`bcir.portio`, the oracle→MLIR wiring is a later increment. (Tests:
+`mlir/test/passes/volatile_mmio_roundtrip.mlir`, `volatile_mmio.mlir`,
+`volatile_mmio_verify_neg.mlir`.)
+
 ## 12. Lowering contracts
 
 BCIR-4 → BCIR-5 lowering is governed by R12: each lowered op preserves the BCIR
