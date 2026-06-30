@@ -658,6 +658,42 @@ def test_recurrent_touches_no_verifier_and_emits_no_diagnostic():
     assert isinstance(c, list) and all(isinstance(v, float) for v in c)
 
 
+def test_tier_b_lstm_readout_training_drives_loss_down():
+    # E4 Tier-B CONVERGENCE (H4): Tier-A (relu-RNN) already has a training-convergence test; Tier-B (LSTM) had
+    # only forward + analytic-gradient checks. The LSTM forward is the (fixed) feature extractor -- its final
+    # hidden state -- and the M3 loop fits a linear readout, MSE dropping to ~0. The transcendental gates
+    # (sigmoid / tanh) break the closed-set autodiff closure, so they are frozen OUTSIDE the Tape; only the
+    # closed-set readout trains, exactly as the Tier-A convergence test does. Gives Tier-B a training gate.
+    from bcir.kbcir.training import Dataset, train
+
+    rng = random.Random(0xE4C0)
+    di, dh, T = 2, 3, 4
+    p = _lstm_params(rng, di, dh)
+    coef = [0.6, -0.4, 0.25]
+    feats, ys = [], []
+    for _ in range(24):
+        seq = _vec(rng, T * di, -0.8, 0.8)
+        hT, _cT = lstm_unroll(seq, [0.0] * dh, [0.0] * dh, p)
+        feats.append(tuple(hT))
+        ys.append(sum(coef[j] * hT[j] for j in range(dh)) + 0.05)
+
+    def model(tape, names, X):
+        r = [tape.var(nm) for nm in names]
+        out = []
+        for row in X:
+            pred = r[dh]
+            for j in range(dh):
+                pred = tape.add(pred, tape.mul(r[j], tape.const(row[j])))
+            out.append(pred)
+        return out
+
+    names = [f"r{j}" for j in range(dh)] + ["b"]
+    res = train(model, [0.0] * (dh + 1), Dataset(tuple(feats), tuple(ys)), loss="mse", optimizer="adam",
+                epochs=120, lr=0.05, seed=1, param_names=names)
+    assert res.train_loss[-1] < res.train_loss[0], (res.train_loss[0], res.train_loss[-1])   # loss decreases
+    assert res.train_loss[-1] < 1e-2, res.train_loss[-1]          # the linear readout is exactly learnable
+
+
 if __name__ == "__main__":
     import sys
 

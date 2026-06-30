@@ -509,6 +509,75 @@ def test_unsupervised_touches_no_verifier_and_emits_no_diagnostic():
     assert isinstance(embedding_lookup(_toy_embedding(), [0], 2), list)
 
 
+def test_autoencoder_training_drives_reconstruction_loss_down():
+    # E6 CONVERGENCE (H4) -- the STRONGEST demo: a relu autoencoder is fully CLOSED-SET (matmul + bias + relu ->
+    # add / mul / select), so EVERY weight (encoder + decoder) trains end-to-end through the Tape autodiff, not
+    # just a readout. Train a 4->2->4 autoencoder by Adam to reconstruct low-rank positive data; the
+    # reconstruction MSE must DROP substantially (the bottleneck can capture the 2-D structure).
+    from bcir.kbcir.training import Dataset, train
+
+    rng = random.Random(0xE6C0)
+    n_in, n_hidden = 4, 2
+    u = [1.0, 0.5, 0.2, 0.8]
+    v = [0.3, 1.0, 0.9, 0.1]
+    inputs = []
+    for _ in range(12):                                          # each input lies near a 2-D subspace...
+        a, b = rng.uniform(0.2, 1.2), rng.uniform(0.2, 1.2)
+        inputs.append([a * u[i] + b * v[i] + 0.3 for i in range(n_in)])   # ...+0.3 keeps it positive for relu
+    # flatten to (input, output-dim) scalar-regression examples: target is the reconstructed component.
+    rows, ys = [], []
+    for x in inputs:
+        for d in range(n_in):
+            rows.append(tuple(x) + (float(d),))
+            ys.append(x[d])
+
+    we = [f"We{i}_{j}" for i in range(n_in) for j in range(n_hidden)]   # encoder W (n_in x n_hidden)
+    be = [f"be{j}" for j in range(n_hidden)]
+    wd = [f"Wd{j}_{i}" for j in range(n_hidden) for i in range(n_in)]   # decoder W (n_hidden x n_in)
+    bd = [f"bd{i}" for i in range(n_in)]
+    names = we + be + wd + bd
+
+    def model(tape, param_names, X):
+        var = {nm: tape.var(nm) for nm in param_names}
+        zero = tape.const(0.0)
+        out = []
+        for row in X:
+            x = row[:n_in]
+            d = int(row[n_in])
+            h = []
+            for j in range(n_hidden):                            # encode: h = relu(x @ W_enc + b_enc)
+                z = var[f"be{j}"]
+                for i in range(n_in):
+                    z = tape.add(z, tape.mul(var[f"We{i}_{j}"], tape.const(x[i])))
+                h.append(tape.select(z, z, zero))                # relu (closed-set)
+            z = var[f"bd{d}"]                                    # decode the d-th component: recon[d]
+            for j in range(n_hidden):
+                z = tape.add(z, tape.mul(var[f"Wd{j}_{d}"], h[j]))
+            out.append(z)
+        return out
+
+    p0 = [rng.uniform(-0.5, 0.5) for _ in names]
+    res = train(model, p0, Dataset(tuple(rows), tuple(ys)), loss="mse", optimizer="adam",
+                epochs=200, lr=0.03, seed=1, param_names=names)
+    assert res.train_loss[-1] < res.train_loss[0], (res.train_loss[0], res.train_loss[-1])   # loss decreases
+    assert res.train_loss[-1] < 0.5 * res.train_loss[0], (res.train_loss[0], res.train_loss[-1])   # by >= 2x
+
+
+def test_kmeans_inertia_strictly_decreases_before_convergence():
+    # Strengthen the K-means convergence evidence: on well-separated data the inertia must STRICTLY drop over the
+    # first Lloyd iterations (not merely non-increase) before it settles -- proof of a real optimization step,
+    # not a no-op. (Complements test_kmeans_inertia_is_monotone_non_increasing_over_iterations.)
+    X, n, nf = _two_cluster_toy()
+    prev, drops = None, 0
+    for it in range(0, 4):
+        centroids, labels = kmeans_fit(X, n, nf, k=2, init_indices=[0, 5], n_iter=it)
+        inertia = kmeans_inertia(X, n, nf, centroids, labels)
+        if prev is not None and inertia < prev - 1e-9:
+            drops += 1
+        prev = inertia
+    assert drops >= 1, "inertia never strictly dropped over early Lloyd iterations"
+
+
 if __name__ == "__main__":
     import sys
 
