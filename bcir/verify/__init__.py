@@ -1163,6 +1163,47 @@ def verify_lifetime(module: Module) -> list[Diagnostic]:
     return diags
 
 
+def verify_barrier_ordering(module: Module, result) -> list[Diagnostic]:
+    """ASM3b structural invariant (NOT a verdict R-law): a `barriered`-hazard claim is a first-class
+    ordering edge -- no claim may be scheduled across it within its phase. The bundle optimizer
+    guarantees this BY CONSTRUCTION (`bundle._conflict` makes a barriered claim conflict with every
+    other claim, so `find_bundles` / `_legal_reorder` never move a claim past it); this pass VERIFIES
+    the property independently over a realized plan, exactly as `verify_lifetime` (R21) is an advisory
+    over the optional metadata -- it is checked OUT of the frontend verdict (`CompileResult.is_clean`),
+    never coupled to a legality `ok`.
+
+    Given a `RealizationResult`, for each phase compare the plan's realized claim order against the
+    declared (module) order: a barriered claim partitions its phase, so every non-barriered claim must
+    stay on its declared side of every barriered claim. A claim that crossed a barrier is flagged
+    (the structural breach the bundle.py guard prevents). Vacuous for a plan with no barriered claim
+    (the entire deforestation/CSE corpus) -- the non-disturbance invariant."""
+    diags: list[Diagnostic] = []
+    # The realized claim order PER PHASE, in plan-step order.
+    realized: dict[int, list[int]] = {}
+    for step in result.steps:
+        realized.setdefault(step.phase_id, []).append(step.claim_id)
+    for ph in module.phases:
+        declared = [c.id for c in ph.claims]
+        if not any(c.hazard == "barriered" for c in ph.claims):
+            continue                              # no fence in this phase: nothing to enforce
+        order = realized.get(ph.phase_id)
+        if order is None:
+            continue                              # phase not realized by this plan (nothing to check)
+        pos = {cid: i for i, cid in enumerate(order)}
+        # Every declared (barriered, other) pair must keep its declared relative order: a barrier is a
+        # hard ordering edge, so a claim before it stays before it (and after stays after).
+        barriers = [c.id for c in ph.claims if c.hazard == "barriered"]
+        for i, a in enumerate(declared):
+            for b in declared[i + 1:]:
+                if (a in barriers or b in barriers) and a in pos and b in pos:
+                    if pos[a] > pos[b]:
+                        diags.append(Diagnostic(
+                            "ASM3b",
+                            f"phase {ph.phase_id}: claim {a} and {b} reordered across a "
+                            f"barriered ordering edge (a barrier is a hard reorder fence)"))
+    return diags
+
+
 def verify_smart_lowering(module: Module, pack=None, dvfs_plan=None,
                           placement=None) -> list[Diagnostic]:
     """Run the smart-lowering laws R14-R17 over whichever artifacts are provided

@@ -283,26 +283,35 @@ def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
     produced: dict[int, set[int]] = {}            # phase -> rids written so far (deforestation)
     version: dict[int, dict[int, int]] = {}       # phase -> {rid: write count} (value numbering)
     seen: dict[int, dict[tuple, int]] = {}        # phase -> {compute signature: first claim}
+    barr_prod: dict[int, set[int]] = {}           # phase -> rids written by a barriered producer (ASM3b)
     for phase_id, claim in _flatten(module):
         cost_rid = claim.rd[0] if claim.rd else claim.primary_rid
         resource = module.resource(cost_rid) if cost_rid is not None else None
         pset = produced.setdefault(phase_id, set())
         ver = version.setdefault(phase_id, {})
         seenmap = seen.setdefault(phase_id, {})
+        bset = barr_prod.setdefault(phase_id, set())
         # value-numbered compute signature: same op + same operands AT THE SAME VERSIONS.
         sig = (claim.op or claim.opcode, tuple((r, ver.get(r, 0)) for r in claim.rd))
 
         cands = candidates_for(claim, h, resource)
+        shared = pset & set(claim.rd)
         if claim.rd and sig in seenmap:                  # CSE: identical value already computed
             cands = [replace(c, base=c.base.couple(_cse_factor(claim))) for c in cands]
-        elif pset & set(claim.rd):                       # producer->consumer deforestation
-            cands = [replace(c, base=c.base.couple(_DEFOREST_FACTOR)) for c in cands]
+        elif shared:                                     # producer->consumer deforestation
+            # ASM3b: a barriered claim is a first-class ordering edge -- no fusion across it. Skip the
+            # deforestation discount when the consumer is barriered OR a shared operand was produced by
+            # a barriered producer (the fence forces the intermediate to materialize, no round-trip elision).
+            if claim.hazard != "barriered" and not (shared & bset):
+                cands = [replace(c, base=c.base.couple(_DEFOREST_FACTOR)) for c in cands]
 
         if claim.rd:
             seenmap.setdefault(sig, claim.id)            # first occurrence pays full
         for r in claim.wr:                               # a write creates a new operand version
             ver[r] = ver.get(r, 0) + 1
         pset |= set(claim.wr)
+        if claim.hazard == "barriered":                  # ASM3b: a barriered producer fences its writes
+            bset |= set(claim.wr)
         out[claim.id] = cands
     return out
 

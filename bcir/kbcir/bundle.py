@@ -35,6 +35,10 @@ from .weights import PERF, Policy
 
 def _conflict(a: Claim, b: Claim) -> bool:
     """RAW / WAR / WAW between two claims (mirrors verify / overlap `_conflict`)."""
+    # ASM3b: a barriered claim is an ordering fence -- it conflicts with everything, so find_bundles /
+    # _legal_reorder never reorder any claim across it (the first-class-ordering-edge contract).
+    if a.hazard == "barriered" or b.hazard == "barriered":
+        return True
     aw, ar = set(a.wr), set(a.rd)
     bw, br = set(b.wr), set(b.rd)
     return bool(aw & (br | bw) or bw & ar)
