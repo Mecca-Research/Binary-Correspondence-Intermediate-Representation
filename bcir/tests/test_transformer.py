@@ -504,6 +504,44 @@ def test_transformer_touches_no_verifier_and_emits_no_diagnostic():
     assert isinstance(layernorm_stats(out, spec.rows, spec.d_model)[0][0], float)
 
 
+def test_transformer_block_training_drives_loss_down():
+    # E3 CONVERGENCE (H4): turn the forward-fidelity demo into an end-to-end TRAINING demo. The transformer block
+    # is the (fixed) FEATURE EXTRACTOR -- its transcendental core (softmax / layernorm) breaks the closed-set
+    # autodiff closure, so it is frozen and computed OUTSIDE the Tape -- and the M3 training loop fits a linear
+    # readout over its features. The MSE loss must genuinely DROP to ~0 (the target is exactly linear in the
+    # features, so a correctly wired forward + grad + optimizer recovers it). Mirrors the Tier-A RNN convergence
+    # test (test_recurrent.test_tier_a_end_to_end_training_drives_loss_down): only the closed-set readout trains.
+    from bcir.kbcir.training import Dataset, train
+
+    rng = random.Random(0xE3C0)
+    spec, params = _spec_params(rng, d_model=4, n_heads=2, d_ff=8, seq=3)
+    dm = spec.d_model
+    coef = [0.5, -0.3, 0.8, 0.2]
+    feats, ys = [], []
+    for _ in range(24):
+        x = _vec(rng, spec.rows * dm, -1.0, 1.0)
+        out = transformer_block_reference(x, spec, params)
+        f = out[0:dm]                                              # the first row's d_model features
+        feats.append(tuple(f))
+        ys.append(sum(coef[j] * f[j] for j in range(dm)) + 0.1)   # an exactly-linear target over the features
+
+    def model(tape, names, X):
+        r = [tape.var(nm) for nm in names]                        # r0..r{dm-1} + bias
+        out = []
+        for row in X:
+            pred = r[dm]
+            for j in range(dm):
+                pred = tape.add(pred, tape.mul(r[j], tape.const(row[j])))
+            out.append(pred)
+        return out
+
+    names = [f"r{j}" for j in range(dm)] + ["b"]
+    res = train(model, [0.0] * (dm + 1), Dataset(tuple(feats), tuple(ys)), loss="mse", optimizer="adam",
+                epochs=150, lr=0.05, seed=1, param_names=names)
+    assert res.train_loss[-1] < res.train_loss[0], (res.train_loss[0], res.train_loss[-1])   # loss decreases
+    assert res.train_loss[-1] < 1e-3, res.train_loss[-1]          # the linear readout is exactly learnable
+
+
 if __name__ == "__main__":
     import sys
 

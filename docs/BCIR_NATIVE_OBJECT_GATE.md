@@ -56,6 +56,33 @@ Raspberry Pi 5 target) are the host/cross scalar gate targets. Tested in
 This is the "target end-to-end" milestone **without** crossing the gate into
 hand-rolled isel — exactly the roadmap's intent.
 
+### 2a. Stack-machine targets (JVM / CIL / WASM): the honesty state
+
+The `lower/stackify.py` encoders (`to_jvm` / `to_cil` / `to_wasm`) render a registerized
+expression into each stack VM's **assembly mnemonics** — they are text emitters, not byte
+assemblers. Their honesty state is made explicit:
+
+- **JVM — execution-validated.** `bcir/tests/test_stackify_exec.py` assembles the actual
+  `to_jvm()` mnemonics into a real `.class` (a minimal constant-pool + Code-attribute writer
+  for the bounded float subset; straight-line code, so no `StackMapTable`) and **runs it on
+  the in-container `java`**, comparing stdout to the oracle. The assembler recognizes only the
+  correct float mnemonics, so a bad `to_jvm()` emit fails to assemble — the JVM's own verifier
+  and execution semantics are the ground truth. Gated on `java` (clean skip if absent).
+- **All three — semantically differentiated.** The same test interprets the emitted
+  `to_jvm` / `to_cil` / `to_wasm` mnemonics under each VM's stack semantics over a fuzz corpus
+  of expression trees and checks they all reproduce the direct evaluation — far stronger than
+  the single pinned-string check in `test_stackify.py`.
+- **CIL — documented skip.** No `ilasm`/`mono`/`dotnet` in CI, so `to_cil` is validated for
+  semantics (above) but not yet assembled+run on a real CLR; the test skips cleanly and names
+  where the `ilasm`+run check lands when a CLR toolchain is present.
+- **WASM — already execution-validated** via the **resident** `clang --target=wasm32 →
+  wasm-ld → node` path in `lower/wasm.py` (`bcir/tests/test_wasm.py`), which is path (1), not
+  this `to_wasm` text encoder. That path stays the warranted, resident-compiler route.
+
+None of this crosses the gate: the JVM `.class` writer is a tiny test-only harness for a
+fixed float subset (it does no instruction *selection* — it transcribes already-chosen
+mnemonics), so the BCIR-native-isel deferral below is unaffected.
+
 ## 3. GO criteria — what would warrant BCIR-native isel
 
 Build a native backend for a target **T** only when *all* of these hold (and record

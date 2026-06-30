@@ -70,6 +70,14 @@ def assign(local_index: int, expr: Expr) -> list[StackOp]:
 
 
 # --- thin per-target encoders (one stack sequence -> three bytecodes) ---
+#
+# HONESTY (H5): these are MNEMONIC-TEXT emitters -- they render the stack sequence into each target's
+# assembly mnemonics, NOT into assembled bytes. Execution-validation lives in tests/test_stackify_exec.py:
+# the JVM path is assembled to a real `.class` and RUN on the in-container `java` (a small class-file writer
+# for this bounded float subset); all three encoders are SEMANTICALLY differentiated across a fuzz corpus by
+# interpreting the emitted mnemonics under each VM's stack semantics. CIL stays a documented skip (no
+# ilasm/mono/dotnet in CI); the execution-validated WASM path is the resident clang->wasm-ld->node pipeline in
+# lower/wasm.py (run by tests/test_wasm.py), distinct from this `to_wasm` text encoder.
 
 _WASM = {"add": "f32.add", "sub": "f32.sub", "mul": "f32.mul", "div": "f32.div"}
 _JVM = {"add": "fadd", "sub": "fsub", "mul": "fmul", "div": "fdiv"}

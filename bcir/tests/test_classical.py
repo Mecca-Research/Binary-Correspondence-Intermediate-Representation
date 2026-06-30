@@ -555,6 +555,38 @@ def test_classical_touches_no_verifier_and_emits_no_diagnostic():
     assert isinstance(svm_decision_linear(SvmModel((1.0,), (1.0,), 0.0, 1), [2.0]), float)
 
 
+def test_classical_nb_fit_quality_on_toy_data():
+    # E5 FIT-QUALITY gate (H4): E5 is PREDICT-ONLY by design -- classical fitting is iterative/combinatorial,
+    # off BCIR's fixed-shape path -- so the convergence evidence is a FIT-QUALITY threshold, not an optimizer
+    # loss curve. Build a Gaussian-NB model by the CLOSED-FORM fit (per-class sample mean + variance) on a
+    # well-separated 2-class toy set and assert the fitted model classifies it with high accuracy.
+    import math as _m
+    from bcir.kbcir.classical import GaussianNbModel
+    from bcir.kbcir.classical import nb_predict as _nb_predict
+
+    rng = random.Random(0xE5C0)
+    nf, nc, per = 2, 2, 30
+    centers = [(0.0, 0.0), (3.0, 3.0)]                            # two well-separated Gaussian blobs
+    pts, labels = [], []
+    for c in range(nc):
+        for _ in range(per):
+            pts.append([centers[c][j] + rng.gauss(0.0, 0.5) for j in range(nf)])
+            labels.append(c)
+    # closed-form Gaussian-NB fit: per-class sample mean + (biased) variance, equal priors (n_class x n_feat).
+    mean, var = [], []
+    for c in range(nc):
+        xs = [pts[i] for i in range(len(pts)) if labels[i] == c]
+        for j in range(nf):
+            mu = sum(p[j] for p in xs) / len(xs)
+            v = sum((p[j] - mu) ** 2 for p in xs) / len(xs)
+            mean.append(mu)
+            var.append(max(v, 1e-6))                             # var > 0 (the model law)
+    model = GaussianNbModel(log_prior=tuple(_m.log(1.0 / nc) for _ in range(nc)),
+                            mean=tuple(mean), var=tuple(var), n_feat=nf)
+    acc = sum(1 for i in range(len(pts)) if _nb_predict(model, pts[i]) == labels[i]) / len(pts)
+    assert acc >= 0.95, acc                                      # the closed-form fit separates the blobs
+
+
 if __name__ == "__main__":
     import sys
 
