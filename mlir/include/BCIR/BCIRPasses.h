@@ -105,6 +105,20 @@ std::unique_ptr<mlir::Pass> createGemActivationCostPass();
 // quarantine the sibling cost passes -gem-matmul-cost / -gem-activation-cost / -cache-contention /
 // -layout-pivot keep; -bcir-verify never reads these).
 std::unique_ptr<mlir::Pass> createGemConvCostPass();
+// -bcir-gem-attention-cost: recompute the G7 attention ROOFLINE COST for each gem.attention plan op
+// (port of bcir/kbcir/attention.py::cost_of). Single-head scaled-dot-product attention DECOMPOSES
+// into two gem.matmuls (a softmax + scale ride between them), so it is priced through the matmul
+// roofline for BOTH matmuls (NO bespoke term): cost_of calls matmul.cost_of on the scores Q@K^T gemm
+// (seq, seq, d_k) and the context A@V gemm (seq, d_k, seq) at their chosen tiles and SUMS them --
+// compute_cost = scores_compute + context_compute, mem_cost = scores_mem + context_mem (each per-gemm
+// term = ceilDiv(M*N*K, vector_width*fma) / ceilDiv(a_reads + b_reads + c_traffic, mem_unit*mem_channels)),
+// bottleneck = max(compute, mem). Pinning the x86-avx512 reference constants for CI-host-independence,
+// parity-check the declared per-gemm + summed compute/mem/bottleneck (the analytic parity the op verifier
+// deliberately omits), and annotate the recomputed roofline (a cost producer, NOT a lowering: the op is
+// NOT erased). INFORMS-ONLY: the recomputed roofline informs the plan's cost but NEVER gates legality (the
+// same two-truth quarantine the sibling cost passes -gem-matmul-cost / -gem-activation-cost / -gem-conv-cost
+// / -cache-contention / -layout-pivot keep; -bcir-verify never reads these).
+std::unique_ptr<mlir::Pass> createGemAttentionCostPass();
 // -bcir-lower-gem-matmul: lower each gem.matmul plan record into its concrete
 // tiled realization -- one gem.block descriptor per tile of the tiled iteration
 // space, emitted in the plan's loop_order; erases the matmul (a genuine lowering).

@@ -95,6 +95,11 @@ run_fc -bcir-gem-conv-cost "${T}/gem_conv_cost.mlir"
 echo "[passes] gem-conv-cost analytic-parity negatives (declared compute/mem != the recomputed im2col-gemm roofline)"
 "${BO}" -bcir-gem-conv-cost -verify-diagnostics -split-input-file "${T}/gem_conv_cost_neg.mlir" \
   && echo "  PASS gem_conv_cost_neg.mlir" || { echo "  FAIL gem_conv_cost_neg.mlir"; fail=1; }
+echo "[passes] gem-attention-cost (G7: recompute the attention roofline (cost_of, two summed matmuls priced through matmul.cost_of) parity-check + annotate; informs-only, never gates legality)"
+run_fc -bcir-gem-attention-cost "${T}/gem_attention_cost.mlir"
+echo "[passes] gem-attention-cost analytic-parity negatives (declared per-gemm/summed compute/mem != the recomputed two-matmul roofline)"
+"${BO}" -bcir-gem-attention-cost -verify-diagnostics -split-input-file "${T}/gem_attention_cost_neg.mlir" \
+  && echo "  PASS gem_attention_cost_neg.mlir" || { echo "  FAIL gem_attention_cost_neg.mlir"; fail=1; }
 echo "[passes] lower-gem-matmul (gem.matmul plan -> concrete tiled gem.block sequence)"
 run_fc -bcir-lower-gem-matmul "${T}/lower_gem_matmul.mlir"
 echo "[passes] lower-gem-matmul-buffer (gem.matmul_buffer -> tiled scf.for nest, C += A*B)"
