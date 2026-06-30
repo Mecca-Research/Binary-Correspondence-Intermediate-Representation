@@ -310,6 +310,140 @@ def test_each_native_fence_kind_assembles_individually():
         assert verdict in ("ok", "skip"), f"{intrinsic}: native fence did not assemble: {verdict}"
 
 
+# --- (7) SEG6.1 -- order-parameterized atomic_thread_fence(memory_order) ------------------------
+#
+# The order-taking forms `__atomic_thread_fence(order)` (GCC/Clang) and `atomic_thread_fence(order)`
+# (C11 <stdatomic.h>) now PARSE their `memory_order` argument and route to the kind it implies, instead of
+# always lowering to the full `c.fence`. The order->kind map (sound; a stronger fence never under-synchronizes):
+#   acquire(2)/consume(1) -> c.fence.acquire   release(3) -> c.fence.release
+#   seq_cst(5)/acq_rel(4)/relaxed(0) -> c.fence (full)     a non-constant/unknown order -> c.fence (full)
+# The named `memory_order_*` (C11) and `__ATOMIC_*` (GCC macro) spellings share these integer values.
+
+# (spelling, op string) for each named C11 `memory_order_*` constant.
+_C11_ORDER_KIND = {
+    "memory_order_relaxed": "c.fence", "memory_order_consume": "c.fence.acquire",
+    "memory_order_acquire": "c.fence.acquire", "memory_order_release": "c.fence.release",
+    "memory_order_acq_rel": "c.fence", "memory_order_seq_cst": "c.fence"}
+# (spelling, op string) for each GCC/Clang `__ATOMIC_*` macro constant (same values).
+_GCC_ORDER_KIND = {
+    "__ATOMIC_RELAXED": "c.fence", "__ATOMIC_CONSUME": "c.fence.acquire",
+    "__ATOMIC_ACQUIRE": "c.fence.acquire", "__ATOMIC_RELEASE": "c.fence.release",
+    "__ATOMIC_ACQ_REL": "c.fence", "__ATOMIC_SEQ_CST": "c.fence"}
+# integer-literal order (0..5) -> op string (the raw GCC/C11 enum values).
+_INT_ORDER_KIND = {0: "c.fence", 1: "c.fence.acquire", 2: "c.fence.acquire",
+                   3: "c.fence.release", 4: "c.fence", 5: "c.fence"}
+# the kind the op string carries (for the per-ISA emit assertions).
+_OP_KIND = {"c.fence": "full", "c.fence.acquire": "acquire", "c.fence.release": "release"}
+
+
+def _fence_op(src: str) -> str:
+    """The single fence claim's op string for a one-function fixture `src`."""
+    _r, lf = _lf(src)
+    cs = _fence_claims(lf)
+    assert len(cs) == 1, f"expected exactly one fence claim, got {len(cs)}: {[c.op for c in cs]}"
+    return cs[0].op
+
+
+def test_c11_atomic_thread_fence_routes_by_named_memory_order():
+    # atomic_thread_fence(memory_order_acquire) -> c.fence.acquire; (release) -> c.fence.release;
+    # (seq_cst) -> c.fence; (acq_rel)/(relaxed) conservatively -> c.fence; (consume) -> c.fence.acquire.
+    for spelling, op in _C11_ORDER_KIND.items():
+        got = _fence_op(f"void f(void){{ atomic_thread_fence({spelling}); }}")
+        assert got == op, f"atomic_thread_fence({spelling}): expected {op!r}, got {got!r}"
+
+
+def test_gcc_atomic_thread_fence_routes_by_named_macro_order():
+    # __atomic_thread_fence(__ATOMIC_ACQUIRE/RELEASE/SEQ_CST/...) routes identically (same integer values).
+    for spelling, op in _GCC_ORDER_KIND.items():
+        got = _fence_op(f"void f(void){{ __atomic_thread_fence({spelling}); }}")
+        assert got == op, f"__atomic_thread_fence({spelling}): expected {op!r}, got {got!r}"
+
+
+def test_integer_literal_order_args_map_per_the_table():
+    # the raw enum integers 0..5 (acquire=2, release=3, seq_cst=5, ...) map by value for BOTH order-taking forms.
+    for order, op in _INT_ORDER_KIND.items():
+        for intrinsic in ("atomic_thread_fence", "__atomic_thread_fence"):
+            got = _fence_op(f"void f(void){{ {intrinsic}({order}); }}")
+            assert got == op, f"{intrinsic}({order}): expected {op!r}, got {got!r}"
+
+
+def test_acquire_release_seqcst_carry_the_three_distinct_kinds():
+    # the headline SEG6.1 contract: acquire/release/seq_cst are now three DISTINCT lowerings (not all full).
+    assert _fence_op("void f(void){ atomic_thread_fence(memory_order_acquire); }") == "c.fence.acquire"
+    assert _fence_op("void f(void){ atomic_thread_fence(memory_order_release); }") == "c.fence.release"
+    assert _fence_op("void f(void){ atomic_thread_fence(memory_order_seq_cst); }") == "c.fence"
+
+
+def test_conservative_folds_for_acq_rel_and_relaxed_and_consume():
+    # acq_rel and relaxed fold to the FULL fence (a stronger fence is sound); consume folds UP to acquire.
+    assert _fence_op("void f(void){ atomic_thread_fence(memory_order_acq_rel); }") == "c.fence"
+    assert _fence_op("void f(void){ atomic_thread_fence(memory_order_relaxed); }") == "c.fence"
+    assert _fence_op("void f(void){ atomic_thread_fence(memory_order_consume); }") == "c.fence.acquire"
+
+
+def test_non_constant_order_arg_folds_to_full_fence():
+    # a RUNTIME order (a function parameter / local variable) cannot be resolved at lower time, so it folds
+    # conservatively to the full `c.fence` (sound -- never under-synchronizes -- and never crashes the lowering).
+    assert _fence_op("void f(unsigned o){ atomic_thread_fence(o); }") == "c.fence"
+    assert _fence_op("void f(int o){ __atomic_thread_fence(o); }") == "c.fence"
+
+
+def test_shadowed_memory_order_name_is_not_resolved_as_the_constant():
+    # a LOCAL declared like a memory_order constant SHADOWS it: the fence arg is then a runtime VARIABLE, so it
+    # must fold conservatively to the full `c.fence` (NOT the lighter kind the constant's value would imply).
+    # This keeps `_fence_order_kind` consistent with `_rvalue`, which also resolves the named constant only when
+    # the name is not a real declaration (`not in self.env`); a unit redeclaring `memory_order_acquire = 3` must
+    # NOT silently get an acquire fence read off the shadowed name (the value rail would say "variable").
+    assert _fence_op("void f(void){ unsigned memory_order_acquire = 3u; "
+                     "atomic_thread_fence(memory_order_acquire); }") == "c.fence"
+    assert _fence_op("void f(void){ int __ATOMIC_RELEASE = 2; "
+                     "__atomic_thread_fence(__ATOMIC_RELEASE); }") == "c.fence"
+    # a FUNCTION named like a memory_order constant also shadows it: _rvalue checks func_rets (a function name
+    # -> a funcptr value) BEFORE _MEMORDER, so the value rail treats the arg as a runtime value -- the kind
+    # rail must agree and fold to the full `c.fence`, NOT read the name as the constant.
+    # (_fence_op targets the LAST function, f, whose single fence claim is what we assert.)
+    assert _fence_op("int __ATOMIC_RELEASE(void){ return 3; } "
+                     "void f(void){ __atomic_thread_fence(__ATOMIC_RELEASE); }") == "c.fence"
+
+
+def test_backward_compat_order_five_still_lowers_to_full_fence():
+    # BACKWARD-COMPAT (the C-twin parity corpus depends on this): the integer 5 (seq_cst) -- the value the
+    # existing fixtures pass -- MUST still lower to the full `c.fence` for both order-taking forms.
+    assert _fence_op("void f(void){ atomic_thread_fence(5); }") == "c.fence"
+    assert _fence_op("void f(void){ __atomic_thread_fence(5); }") == "c.fence"
+
+
+def test_ordered_fence_emits_the_right_per_isa_instruction_through_the_new_kinds():
+    # the order arg routes all the way THROUGH emit: acquire -> lfence/dmb ishld/fence r,rw; release ->
+    # sfence/dmb ishst/fence rw,w; seq_cst -> mfence/dmb ish/fence rw,rw, for every target family.
+    spellings = {"memory_order_acquire": "acquire", "memory_order_release": "release",
+                 "memory_order_seq_cst": "full"}
+    for target in ("x86_64-linux", "aarch64-linux", "riscv64-linux"):
+        for spelling, kind in spellings.items():
+            _r, lf = _lf(f"void f(void){{ atomic_thread_fence({spelling}); }}", target=target)
+            body = _emit_clean(lf)
+            mnem = _FENCE_MNEM[target][kind]
+            assert f'__asm__ __volatile__ ("{mnem}" ::: "memory");' in body, (target, spelling, body)
+
+
+def test_ordered_fence_kinds_are_barriered_barrier_opcode_lane_a():
+    # the order-routed fence keeps the SAME claim contract as the name-routed fence: BARRIER, lane A, barriered.
+    for spelling in ("memory_order_acquire", "memory_order_release", "memory_order_seq_cst"):
+        _r, lf = _lf(f"void f(void){{ atomic_thread_fence({spelling}); }}")
+        c = _fence_claims(lf)[0]
+        assert c.opcode == Opcode.BARRIER and c.lane.name == "A" and c.hazard == "barriered", (spelling, c)
+
+
+def test_user_defined_ordered_fence_shadow_is_still_a_normal_call():
+    # a unit that DEFINES its own atomic_thread_fence shadows the intrinsic even with the new order routing
+    # (the shadowing guard `callee in func_rets` is checked before the order-taking fence branch).
+    src = ("unsigned atomic_thread_fence(unsigned o){ return o + 1u; } "
+           "unsigned f(void){ return atomic_thread_fence(2u); }")
+    _r, lf = _lf(src, fn="f")
+    assert not _fence_claims(lf), "a user-defined atomic_thread_fence must not lower to a fence edge"
+    assert any(c.op == "c.call:atomic_thread_fence" for c in lf.claims), "the user fn should be a normal call"
+
+
 if __name__ == "__main__":
     import sys
 

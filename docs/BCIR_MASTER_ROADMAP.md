@@ -515,7 +515,8 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 > `__atomic_thread_fence` / the C11 `atomic_thread_fence` + `_mm_mfence` are **full (seq_cst)** fences (op
 > **`c.fence`**, kept backward-compatible so the parity digest is unchanged); `_mm_lfence` is the **load
 > (acquire)** fence (`c.fence.acquire`) and `_mm_sfence` the **store (release)** fence (`c.fence.release`) —
-> the kind read off the intrinsic NAME, no `memory_order` parse. The portable
+> the kind read off the intrinsic NAME (the `_mm_*` intrinsics take no argument; the order-taking
+> `*_thread_fence(order)` forms parse their `memory_order` in **SEG6.1**, below). The portable
 > `__atomic_thread_fence(__ATOMIC_SEQ_CST)` emit is replaced by the real barrier behind `--target` — x86
 > `mfence`/`lfence`/`sfence`, aarch64 `dmb ish`/`ishld`/`ishst`, riscv64 `fence rw,rw`/`r,rw`/`rw,w`, always
 > with the required `"memory"` compiler-barrier clobber. **Every ISA has a fence**, so a target outside the
@@ -543,6 +544,21 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 > frontend verdict, like the R21 lifetime advisory; it is **NOT a new verdict R-law** (barriers stay off the
 > legality value-path, per the ASM1/ASM2/ASM3 precedent). A **safe no-op** on the existing corpus (a module
 > with no barriered claim gets neither guard — pinned scores intact). See `docs/CFRONT_GUIDE.md`.
+
+> **Order-parameterized memory fences (SEG6.1)** — ✅ the fence surface is **widened to the
+> order-parameterized form**: `__atomic_thread_fence(order)` (GCC/Clang) and `atomic_thread_fence(order)`
+> (C11 `<stdatomic.h>`) now **parse their `memory_order` argument** instead of dropping it, recognizing both
+> the `memory_order_*` constants and the `__ATOMIC_*` macro spellings (shared ints relaxed=0…seq_cst=5).
+> The order routes to the fence **kind**: `acquire`/`consume` → `c.fence.acquire`, `release` →
+> `c.fence.release`, and `seq_cst`/`acq_rel`/`relaxed` — plus any **non-constant** or unrecognized order —
+> fold conservatively to the full `c.fence` (a stronger fence never under-synchronizes; sound and never
+> crashes). So `atomic_thread_fence(memory_order_acquire)` correctly lowers to the **load** fence (`lfence`
+> / `dmb ishld` / `fence r,rw`) rather than the full `mfence`. `acquire`/`release`/`seq_cst` carry
+> **end-to-end** to the MLIR `BCIR_MemOrdering` enum and lower to `llvm.fence acquire`/`release`/`seq_cst`
+> (`mlir/test/passes/memory_ordering.mlir`; the BCIR↔LLVM map is the identity in
+> `bcir/lower/memory_model.py`). The full-fence op string stays `c.fence`, so `__atomic_thread_fence(5)` /
+> `__sync_synchronize` and the **C-twin parity corpus are unchanged** (the C twin `bcir_cfront.c` fence
+> handling is a separate slice, SEG7). See `docs/CFRONT_GUIDE.md`.
 
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
 register-map header now ingests through L7 → L5 → an R1–R18-clean plan with `bcir-explain`,
