@@ -1692,6 +1692,28 @@ static int cplx_libm(CC *c,const char *s,int n,int *is_cplx){
  * so the re-emitted twin resolves it against <complex.h> exactly as the original does. */
 static int is_imag_unit(const tok *id){
   return (id->n==1 && id->s[0]=='I') || (id->n==10 && !strncmp(id->s,"_Complex_I",10)); }
+/* SEG6.1/SEG7: the C11 `memory_order_*` constants AND the GCC/Clang `__ATOMIC_*` macro spellings (they
+ * share the same integer values 0..5). A `memory_order` ARGUMENT spelled as one of these named constants
+ * folds to its value. The C twin of the oracle's `_MEMORDER` map -- used both by the identifier->rvalue
+ * widening (an unshadowed `memory_order_*` name reads as that int const, like a literal) and by the
+ * order-parameterized fence routing (`_fence_order_kind`). Returns 1 and sets *out when `id` matches a
+ * known constant; 0 otherwise. */
+static int memorder_value(const tok *id, long long *out){
+  static const struct{const char *n; long long v;} M[]={
+    {"memory_order_relaxed",0},{"memory_order_consume",1},{"memory_order_acquire",2},
+    {"memory_order_release",3},{"memory_order_acq_rel",4},{"memory_order_seq_cst",5},
+    {"__ATOMIC_RELAXED",0},{"__ATOMIC_CONSUME",1},{"__ATOMIC_ACQUIRE",2},
+    {"__ATOMIC_RELEASE",3},{"__ATOMIC_ACQ_REL",4},{"__ATOMIC_SEQ_CST",5},{0,0}};
+  for(int i=0;M[i].n;i++) if((int)strlen(M[i].n)==id->n && !strncmp(M[i].n,id->s,(size_t)id->n)){ *out=M[i].v; return 1; }
+  return 0;
+}
+/* SEG7: order value -> fence-kind op string (the C twin of the oracle's `_ORDER_KIND`). acquire(2)/
+ * consume(1) -> a load (acquire) fence; release(3) -> a store (release) fence; seq_cst(5)/acq_rel(4)/
+ * relaxed(0) and any out-of-range value -> the FULL fence (a sound over-approximation -- a stronger
+ * fence never under-synchronizes, so acq_rel and relaxed both conservatively fold to full). */
+static const char *order_kind(long long order){
+  switch(order){ case 1: case 2: return "c.fence.acquire"; case 3: return "c.fence.release"; default: return "c.fence"; }
+}
 /* The printf / scanf family of external variadic <stdio.h> functions -- not defined in the unit and not
  * lowered, they emit verbatim (like a libm call, opaque to R18) and return int. (The format string is a
  * read-only char[] literal, already passed through as an argument.) */
@@ -1983,8 +2005,12 @@ static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *kind){
     {"__atomic_fetch_add","c.atomic.add",BCIR_OP_ATOMIC_ADD,AK_RMW},
     {"__atomic_fetch_sub","c.atomic.sub",BCIR_OP_ATOMIC_SUB,AK_RMW},
     {"__atomic_fetch_xor","c.atomic.xor",BCIR_OP_ATOMIC_XOR,AK_RMW},
-    {"__atomic_thread_fence","c.fence",BCIR_OP_BARRIER,AK_FENCE},
+    {"__atomic_thread_fence","c.fence",BCIR_OP_BARRIER,AK_FENCE},   /* SEG6.1/SEG7: order-taking (routes by arg) */
+    {"atomic_thread_fence","c.fence",BCIR_OP_BARRIER,AK_FENCE},      /* C11 <stdatomic.h> -- order-parameterized */
     {"__sync_synchronize","c.fence",BCIR_OP_BARRIER,AK_FENCE},
+    {"_mm_mfence","c.fence",BCIR_OP_BARRIER,AK_FENCE},               /* x86 mfence -- full (load+store) fence */
+    {"_mm_lfence","c.fence.acquire",BCIR_OP_BARRIER,AK_FENCE},       /* x86 lfence -- load (acquire) fence */
+    {"_mm_sfence","c.fence.release",BCIR_OP_BARRIER,AK_FENCE},       /* x86 sfence -- store (release) fence */
     {"__sync_val_compare_and_swap","c.cmpxchg.val",BCIR_OP_CMPXCHG,AK_CAS},
     {"__sync_bool_compare_and_swap","c.cmpxchg.bool",BCIR_OP_CMPXCHG,AK_CAS},
     {"atomic_fetch_add","c.c11atom.fetch_add",BCIR_OP_ATOMIC_ADD,AK_RMW},  /* C11 <stdatomic.h> */
@@ -1998,8 +2024,51 @@ static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *kind){
   for(int i=0;A[i].n;i++) if((int)strlen(A[i].n)==t->n&&!strncmp(A[i].n,t->s,t->n)){*op=A[i].op;*oc=A[i].oc;*kind=A[i].k;return 1;}
   return 0;
 }
-static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind){
+/* SEG7: resolve the order-taking fence's KIND from its FIRST `memory_order` ARGUMENT, mirroring the
+ * oracle's `_fence_order_kind` EXACTLY. The cursor is positioned at the first arg token (just past `(`).
+ * A bare integer literal -> its value; a bare, UNSHADOWED `memory_order_*` / `__ATOMIC_*` named constant
+ * -> its mapped value; ANYTHING else (a non-constant expression, a parenthesized/cast order, or a name
+ * shadowed by a declared variable/param/global or a same-named function) -> 5 (seq_cst, the FULL fence).
+ * "Bare" == a single int/name token wrapped in any number of BALANCED redundant parens, then `,`/`)` --
+ * mirroring the oracle, whose parser strips redundant parens, so `(memory_order_acquire)`, `((2))`, and a
+ * macro-expanded `(memory_order_acquire)` all reduce to a bare IntLit/Name and resolve. A `(int)2` (Cast)
+ * or `5+0` (Binary) is NOT a single bare token under balanced parens, so it folds to the full fence exactly
+ * as the oracle does. The shadow precedence is env (lookup/global) -> func (callee_ret) -> the constant,
+ * identical to the rvalue widening, so the kind rail never disagrees with the value rail. Side-effect-free:
+ * it only PEEKS (no claim, no cursor move). */
+static const char *fence_order_op(CC *c){
+  /* strip the oracle parser's TRANSPARENT prefixes: balanced redundant parens AND a leading unary `+` (the
+   * parser drops `+x` to `x`, but keeps `-`/`~`/`!`/a cast as a node -> those fold to the full fence). Only
+   * a `(` needs a matching `)`; a `+` is closer-less. */
+  int p=0, i=c->i;
+  while(tok_is(tat(c,i),"(") || tok_is(tat(c,i),"+")){ if(tok_is(tat(c,i),"(")) p++; i++; }
+  const tok *core=tat(c,i);
+  /* EXACTLY p closing parens must follow the core token (balancing the leading ones) -- NOT all consecutive
+   * `)` (that would also swallow the call's own closing paren and reject `(memory_order_acquire)`). */
+  int closed=1; for(int j=0;j<p;j++) if(!tok_is(tat(c,i+1+j),")")){ closed=0; break; }
+  const tok *end=tat(c,i+1+p);                             /* the token right after the p redundant closers */
+  int bare = closed && (tok_is(end,",")||tok_is(end,")")); /* a single core token under p balanced parens, then arg-end */
+  if(!bare) return "c.fence";                              /* a cast / binary / multi-token order -> full */
+  if(core->k==T_INT) return order_kind(core->v);
+  if(core->k==T_ID){
+    /* match p_primary's value-rail precedence EXACTLY (find_enum -> lookup/global -> func -> memory_order),
+     * so the kind rail never disagrees with the value rail or the oracle: an ENUM constant folds to its own
+     * value (like the oracle parser's IntLit), a local/param/global/function is a runtime value (-> full),
+     * and only THEN does the builtin memory_order name map. */
+    int ec=find_enum(c,core->s,core->n);
+    if(ec>=0) return order_kind(c->ec[ec].val);
+    if(lookup(c,core) || find_global(c,core->s,core->n)>=0 || callee_ret(c,core)) return "c.fence";
+    long long mo;
+    if(memorder_value(core,&mo)) return order_kind(mo);
+  }
+  return "c.fence";                                        /* non-constant / shadowed / unknown -> full */
+}
+static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordered){
   c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
+  /* SEG7: an order-taking fence (`__atomic_thread_fence`/`atomic_thread_fence`) routes its KIND by the
+   * first arg's order value -- peeked HERE, BEFORE the arg is lowered, so the arg's const claim (the
+   * value rail) is still emitted in sequence, exactly as the oracle does (digest = [const, fence]). */
+  if(ordered && kind==AK_FENCE && !is(c,")")) op=fence_order_op(c);
   if(!is(c,")")) for(;;){uint32_t a=p_expr(c);if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;if(is(c,",")){c->i++;continue;}break;}
   eat(c,")");
   uint32_t t=temp(c,4);
@@ -2207,7 +2276,11 @@ static uint32_t p_primary(CC *c) {
   if(isk(c,T_ID)){
     tok id=adv(c);
     const char *aop;bcir_opcode aoc;int akind;
-    if(is(c,"(")&&atomic_kind(&id,&aop,&aoc,&akind)) return p_atomic(c,aop,aoc,akind);  /* atomics/fences/CAS */
+    if(is(c,"(")&&atomic_kind(&id,&aop,&aoc,&akind)){    /* atomics/fences/CAS */
+      int ordered = (id.n==21 && !strncmp("__atomic_thread_fence",id.s,21))   /* SEG6.1/SEG7: the order-taking */
+                 || (id.n==19 && !strncmp("atomic_thread_fence",id.s,19));    /* fence forms route by their arg */
+      return p_atomic(c,aop,aoc,akind,ordered);
+    }
     if(is(c,"(")){ venv *fv=lookup(c,&id);        /* indirect call (funcptr var) vs. direct named call */
       if(fv&&fv->type.kind==3) return p_icall(c,fv);
       const bcir_ctype *rt=callee_ret(c,&id);     /* a struct-returning call: `mk(x).field` postfixes the result */
@@ -2235,6 +2308,18 @@ static uint32_t p_primary(CC *c) {
         uint32_t r=tempc(c,8);                          /* `float _Complex` (value i), emitted verbatim */
         char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.cconst:%.*s",id.n,id.s);
         bcir_claim *cl=new_claim(c,op,BCIR_OP_LOAD); if(cl){cl->n_wr=1;cl->wr[0]=r;}
+        return r;
+      }
+      long long mo;
+      if(memorder_value(&id,&mo)){                      /* SEG6.1/SEG7: a `memory_order_*` / `__ATOMIC_*` constant
+                                                         * (reached ONLY when NOT a declared var/param/global -- the
+                                                         * `if(!v)` guard -- and NOT a defined function -- callee_ret
+                                                         * above; EXACTLY the oracle _rvalue precedence env->func->
+                                                         * constant) -> an int const claim, byte-identical to a
+                                                         * same-valued integer literal (so the kind/value rails agree). */
+        uint32_t r=tempi(c,4,1);                        /* signed int, like the oracle's scalar("int") */
+        bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
+        if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=mo;}
         return r;
       }
       fail(c,"undefined identifier");return 0;
@@ -4654,6 +4739,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                   rname(f,cl->wr[0],d),cl->op+10,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
     else if(!strcmp(cl->op,"c.fence"))
       w+=snprintf(o+w,on-w,"__atomic_thread_fence(__ATOMIC_SEQ_CST);\n");
+    else if(!strcmp(cl->op,"c.fence.acquire"))    /* SEG7: order-parameterized acquire fence (PORTABLE -- the */
+      w+=snprintf(o+w,on-w,"__atomic_thread_fence(__ATOMIC_ACQUIRE);\n");   /* C twin does NO per-ISA asm) */
+    else if(!strcmp(cl->op,"c.fence.release"))    /* SEG7: order-parameterized release fence (PORTABLE) */
+      w+=snprintf(o+w,on-w,"__atomic_thread_fence(__ATOMIC_RELEASE);\n");
     else if(!strncmp(cl->op,"c.c11atom.",10)){   /* C11 <stdatomic.h> generics on _Atomic objects */
       const char *fn=cl->op+10;                  /* fetch_add / fetch_sub / fetch_xor / load / store */
       if(!strcmp(fn,"load")) w+=snprintf(o+w,on-w,"uint32_t %s = atomic_load(%s);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
