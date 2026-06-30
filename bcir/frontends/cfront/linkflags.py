@@ -102,6 +102,15 @@ _LIBRARY_RULES: tuple[tuple, ...] = (
     # kernels use (so a Sleef_* edge is a trusted external just like the cblas/fftw/lapack/gsl edges).
     # Matches the C twin's branch in the SAME order (first match wins).
     (lambda c: c.startswith("Sleef_"), "-lsleef"),
+    # Area-B breadth (SEG2) libcerf: erfcx / erfcxf (the SCALED COMPLEMENTARY ERROR FUNCTION
+    # erfcx(x) = e^{x^2}*erfc(x)) -> -lcerf. The erfcx wrap (bcir/lower/c_kernel.py emit_cerf_erfcx_c) calls
+    # erfcxf and links `-lcerf`; this rule makes a unit with a libcerf edge link it automatically. erfcx is a
+    # NUMERICALLY-ROBUST SPECIAL FUNCTION libm does NOT provide (the naive expf(x*x)*erfcf(x) overflows for
+    # moderately large x; libcerf's erfcx stays finite across the full real line) -- so this adds a capability,
+    # not just a faster path (unlike SLEEF's exp, which duplicates libm expf). Note erfcx/erfcxf are NOT in
+    # _LIBM/_LIBM_INT (libm has erf/erfc but not erfcx), so this rule is not shadowed by the _is_libm rule
+    # above. Matches the C twin's branch in the SAME order (first match wins).
+    (lambda c: c.startswith("erfcx"), "-lcerf"),
     # --- EXTENSION POINT (roadmap): add one rule per newly-wrapped trusted library here.
     # Each new rule's twin goes in bcir_cfront.c's bcir_lib_for_callee in the SAME order.
 )

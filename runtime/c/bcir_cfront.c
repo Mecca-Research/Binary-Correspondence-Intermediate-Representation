@@ -1736,7 +1736,7 @@ static int lapack_is_fortran(const char *s, int n) {
  *
  * EXTENSION POINT (roadmap B2): add one branch per newly-wrapped trusted library here, in the SAME
  * ORDER as the oracle's _LIBRARY_RULES (e.g. fftw_*->"-lfftw3", LAPACKE_*->"-llapack", gsl_*->"-lgsl",
- * Sleef_*->"-lsleef"). First match wins, so order is significant. */
+ * Sleef_*->"-lsleef", erfcx*->"-lcerf"). First match wins, so order is significant. */
 static const char *bcir_lib_for_callee(const char *s, int n) {
   if(n<=0) return NULL;
   /* <math.h> / <complex.h> (incl. the f/l-suffixed + fixed-int/long variants) -> -lm. */
@@ -1763,6 +1763,12 @@ static const char *bcir_lib_for_callee(const char *s, int n) {
    * vectorized libm) -> -lsleef (the vectorized-exp wrap emit_sleef_exp_c calls Sleef_expf1_u10 and links
    * -lsleef). Matches linkflags.py's SLEEF rule, in the SAME order (first match wins). */
   if(n>=6 && !strncmp("Sleef_",s,6)) return "-lsleef";
+  /* Area-B breadth (SEG2) libcerf: erfcx / erfcxf (the scaled complementary error function
+   * erfcx(x) = e^{x^2}*erfc(x)) -> -lcerf (the erfcx wrap emit_cerf_erfcx_c calls erfcxf and links -lcerf).
+   * erfcx is a numerically-robust special function libm LACKS (the naive expf(x*x)*erfcf(x) overflows for
+   * large x; libcerf's erfcx stays finite on the full real line). Matches linkflags.py's erfcx rule, in the
+   * SAME order (first match wins). */
+  if(n>=5 && !strncmp("erfcx",s,5)) return "-lcerf";
   /* --- EXTENSION POINT: one branch per newly-wrapped library, matching the oracle's order. --- */
   return NULL;                                          /* unknown external callee -> no flag */
 }

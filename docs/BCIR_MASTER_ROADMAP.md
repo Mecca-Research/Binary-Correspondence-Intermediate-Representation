@@ -221,7 +221,9 @@ Clang comparison.
 > 956 → 1235). The C++ hand-off boundary is 🟡 SCAFFOLDED (contract + a round-trip-tested single-node
 > seam, [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) / [`runtime/cpp/`](../runtime/cpp); the
 > dynamic/distributed backends are marked stubs). What genuinely remains is **Area-B library breadth**
-> (LAPACK/GSL/SLEEF through the `c.call.libm:` edge — B1/B2/B3 done), the 5d distributed backends
+> (BLAS/FFTW/LAPACK/GSL/SLEEF/libcerf through the `c.call.libm:` edge — six wraps done: matmul, FFT,
+> linear solve, statistics, vectorized libm, and libcerf's numerically-robust `erfcx` scaled
+> complementary error function, a special function libm lacks), the 5d distributed backends
 > (need multi-node hardware), and the Pillar-1/2 boundary items (DMA/device-isolation, a flatness law).
 
 ### 5.1 Oracle → MLIR / C++ (plan-time law) — remaining ports
