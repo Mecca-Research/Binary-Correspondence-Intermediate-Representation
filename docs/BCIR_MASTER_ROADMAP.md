@@ -597,6 +597,23 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 > lowering + constraint string), `inline_asm_verify_neg.mlir` (the two count laws); wired into
 > `tools/wsl/check_passes.sh`. See `docs/BCIR_LANGREF.md`.
 
+> **Port-mapped I/O on the MLIR law rail (SEG8.2)** — ✅ the ASM2 port-I/O edge gets a **first-class MLIR
+> law op**, `bcir.portio`, the close analog of `bcir.asm` and the law-rail twin of the cfront
+> `c.portio.in.{b,w,l}:` / `c.portio.out.{b,w,l}:` claim (`lower.py::_portio` + `emit.py::_portio_stmt`).
+> It carries a `#bcir.port_dir` **direction** enum (`in` read / `out` void write) and a `{8,16,32}`-bit
+> **width** (the GCC b/w/l modifier): `in` = one operand (the port) + one result (the read value); `out` =
+> two operands (value, then port — the Linux `out(value, port)` order) + no result. Its `hasVerifier` is the
+> op-level structural check (width ∈ {8,16,32}; the per-direction operand/result arity; the value width =
+> the op width). The `-convert-bcir-to-llvm` lowering **reuses** the `bcir.asm` `llvm.inline_asm` path — the
+> **same generic attribute-list builder**, so it compiles on LLVM-20 *and* the CI's LLVM-22 (whose positional
+> `InlineAsmOp` builder gained a `tail_call_kind` param) — selecting the six x86 templates **byte-identical**
+> to cfront's `_PORTIO_IN_ASM` (`inb %w1, %b0` / `inw %w1, %w0` / `inl %w1, %k0`) / `_PORTIO_OUT_ASM`
+> (`outb %b0, %w1` / `outw %w0, %w1` / `outl %k0, %w1`) with constraints `"=a,Nd"` (in) / `"a,Nd"` (out),
+> always `has_side_effects` (port I/O is volatile, like the cfront `__volatile__`). It is **x86-only** (the
+> cfront claim raises on non-x86) and, like `bcir.asm`, does **not** need the oracle's MLIR emitter yet.
+> Tests: `mlir/test/passes/portio_roundtrip.mlir`, `portio.mlir`, `portio_verify_neg.mlir`; wired into
+> `tools/wsl/check_passes.sh`. See `docs/BCIR_LANGREF.md`.
+
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
 register-map header now ingests through L7 → L5 → an R1–R18-clean plan with `bcir-explain`,
 behaviour-equivalent to Clang. Next: **Phase D** — the first real driver behind a `channel.json`
@@ -662,7 +679,8 @@ destabilize the keystone.
 > boundary*), and the **bring-up dependency ladder** (a *polled* UART needs nothing new and already
 > ships; HPET/ACPI/SMBIOS/TCG/TPM/PCI/USB/e1000/paging/VMs are independent / after / out-of-scope,
 > and the firmware specs are verified *parser-kernel* opportunities, never implementation targets).
-> The next code slice is the `bcir.portio` MLIR op (SEG8.2), after the hardening gate.
+> The `bcir.portio` MLIR op (SEG8.2) is **landed** (the x86 port-I/O law-rail twin reusing the `bcir.asm`
+> → `llvm.inline_asm` path); the next code slice is `bcir.volatile_load/store` (D1.2), after the hardening gate.
 
 The Hardware Description Layer. With verifiable C in hand:
 

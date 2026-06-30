@@ -771,6 +771,62 @@ using namespace bcir;
   return ::mlir::success();
 }
 
+::mlir::LogicalResult PortioOp::verify() {
+  // ASM2 structural well-formedness (mirrors bcir/frontends/cfront/lower.py::_portio + emit.py::
+  // _portio_stmt; the op-level check the sibling law ops run inline, NOT a new globally-numbered
+  // R-law). The (direction, width) pin the operand/result arity and the in/out access width.
+  int64_t width = static_cast<int32_t>(getWidth());
+  if (width != 8 && width != 16 && width != 32)
+    return emitOpError() << "width must be one of 8/16/32 bits (b=8, w=16, l=32), got " << width;
+
+  int64_t nArgs = static_cast<int64_t>(getArgs().size());
+  int64_t nResults = static_cast<int64_t>(getResults().size());
+  if (getDirection() == PortDir::In) {
+    // in{b,w,l}(port) -> value: ONE operand (the port), ONE result (the read value).
+    if (nArgs != 1)
+      return emitOpError() << "an 'in' port read takes exactly 1 operand (the port), got " << nArgs;
+    if (nResults != 1)
+      return emitOpError() << "an 'in' port read produces exactly 1 result (the read value), got "
+                           << nResults;
+  } else {
+    // out{b,w,l}(value, port): TWO operands (value, then port -- the Linux out(value,port) order),
+    // ZERO results (a void write).
+    if (nArgs != 2)
+      return emitOpError() << "an 'out' port write takes exactly 2 operands (value, then port -- the "
+                              "Linux out(value, port) order), got "
+                           << nArgs;
+    if (nResults != 0)
+      return emitOpError() << "an 'out' port write produces no result (a void write), got " << nResults
+                           << " results";
+  }
+
+  // (optional, kept simple) the read value's / written value's integer width must match the op width
+  // (i8/i16/i32) and the port must be an integer -- the value rides the byte/word/long accumulator the
+  // template's `%b0/%w0/%k0` modifier names, and the port the 16-bit `%w1` (dx / `Nd`).
+  ::mlir::Type valueTy =
+      (getDirection() == PortDir::In) ? getResults()[0].getType() : getArgs()[0].getType();
+  if (auto it = ::mlir::dyn_cast<::mlir::IntegerType>(valueTy)) {
+    if (static_cast<int64_t>(it.getWidth()) != width)
+      return emitOpError() << "the port value type must be the i" << width
+                           << " matching the op width (got " << valueTy << ")";
+  } else {
+    return emitOpError() << "the port value must be an integer i" << width << " (got " << valueTy << ")";
+  }
+  ::mlir::Type portTy =
+      (getDirection() == PortDir::In) ? getArgs()[0].getType() : getArgs()[1].getType();
+  // The port must be an i16: x86 in/out address the port through the 16-bit dx register (the lowering
+  // hardcodes the `Nd` constraint + the `%w1` modifier that name dx), and the cfront rail types the
+  // port u16. Accepting any integer width would let a semantically-wrong port (an i1/i8/i64 address
+  // silently truncated to dx) pass a verifier whose contract is u16 -- the same verifier-completeness
+  // gap the bcir.asm out-constraint check closes.
+  auto portIntTy = ::mlir::dyn_cast<::mlir::IntegerType>(portTy);
+  if (!portIntTy || portIntTy.getWidth() != 16)
+    return emitOpError() << "the I/O port operand must be an i16 (the 16-bit dx / Nd port; x86 in/out "
+                            "address the port via dx, got "
+                         << portTy << ")";
+  return ::mlir::success();
+}
+
 void BCIRDialect::initialize() {
   addOperations<
 #define GET_OP_LIST

@@ -159,6 +159,77 @@ struct AsmOpLowering : public OpConversionPattern<AsmOp> {
   }
 };
 
+struct PortioOpLowering : public OpConversionPattern<PortioOp> {
+  using OpConversionPattern<PortioOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(PortioOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // ASM2 -> llvm.inline_asm (the x86 `in`/`out` instruction behind a volatile `call asm`). The
+    // template strings + constraint strings are BYTE-IDENTICAL to the cfront rail's _PORTIO_IN_ASM /
+    // _PORTIO_OUT_ASM (bcir/frontends/cfront/emit.py): the accumulator is `%b0/%w0/%k0` (al/ax/eax)
+    // and the port is `%w1` (the 16-bit dx, the `Nd` immediate-or-dx constraint). A READ writes the
+    // accumulator (constraint "=a,Nd", one result); a WRITE reads it (constraint "a,Nd", no result).
+    // The single LLVM constraint string is the output(s) then the input(s), comma-joined -- exactly
+    // as AsmOpLowering builds it.
+    int64_t width = static_cast<int64_t>(op.getWidth());
+    bool isIn = op.getDirection() == PortDir::In;
+
+    // The 6 templates, keyed (direction, width). KEPT BYTE-IDENTICAL to cfront's _PORTIO_IN_ASM /
+    // _PORTIO_OUT_ASM (the values inside the Python string literals): the size modifier is byte/word/
+    // long (b/w/l) on the accumulator, `%w1` forces the port to 16-bit dx.
+    StringRef asmTemplate;
+    if (isIn) {
+      asmTemplate = (width == 8)    ? "inb %w1, %b0"
+                    : (width == 16) ? "inw %w1, %w0"
+                                    : "inl %w1, %k0";
+    } else {
+      asmTemplate = (width == 8)    ? "outb %b0, %w1"
+                    : (width == 16) ? "outw %w0, %w1"
+                                    : "outl %k0, %w1";
+    }
+    // Constraint string: in -> "=a,Nd" (output "=a", then input "Nd"); out -> "a,Nd" (two inputs, no
+    // output). Byte-identical to the cfront `"=a" (result) : "Nd" (port)` / `"a" (value), "Nd" (port)`.
+    StringRef constraints = isIn ? "=a,Nd" : "a,Nd";
+
+    // Result type: an `in` returns the type-converted i{width}; an `out` is void (no result). The LLVM
+    // `call asm` operand list is the type-converted operands in order (in: just the port; out: value
+    // then port) -- a write-only "=a" output is the RESULT, never an asm-call argument, so the in form
+    // passes ONLY the port (args[0]).
+    SmallVector<Type, 1> resultTypes;
+    ValueRange callOperands;
+    if (isIn) {
+      Type resTy = getTypeConverter()->convertType(op.getResult(0).getType());
+      if (!resTy)
+        return rewriter.notifyMatchFailure(op, "result type not convertible");
+      resultTypes.push_back(resTy);
+      callOperands = adaptor.getArgs().take_front(1); // the port only
+    } else {
+      callOperands = adaptor.getArgs(); // value, then port
+    }
+
+    // Build via the GENERIC attribute-list builder (TypeRange, ValueRange, ArrayRef<NamedAttribute>),
+    // NOT a positional InlineAsmOp::build -- the positional signature is NOT stable across LLVM versions
+    // (LLVM >= 21 inserts a `tail_call_kind` parameter the LLVM-20 form lacks), whereas the generic
+    // builder is identical on both. has_side_effects is ALWAYS set (port I/O is volatile / ordered, like
+    // the cfront `__volatile__`); is_align_stack / asm_dialect / tail_call_kind stay absent (default).
+    // This is copied verbatim from AsmOpLowering.
+    SmallVector<NamedAttribute, 3> asmAttrs = {
+        rewriter.getNamedAttr("asm_string", rewriter.getStringAttr(asmTemplate)),
+        rewriter.getNamedAttr("constraints", rewriter.getStringAttr(constraints)),
+        rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
+    };
+    auto newOp = rewriter.create<LLVM::InlineAsmOp>(
+        op.getLoc(), TypeRange(resultTypes), callOperands, asmAttrs);
+
+    if (isIn)
+      rewriter.replaceOp(op, newOp.getRes());
+    else
+      rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct ConvertToLLVMPass
     : public PassWrapper<ConvertToLLVMPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConvertToLLVMPass)
@@ -175,12 +246,12 @@ struct ConvertToLLVMPass
   void runOnOperation() override {
     LLVMConversionTarget target(getContext());
     target.addLegalOp<ModuleOp>();
-    target.addIllegalOp<ComputeOp, BarrierOp, AsmOp>();
+    target.addIllegalOp<ComputeOp, BarrierOp, AsmOp, PortioOp>();
 
     LLVMTypeConverter typeConverter(&getContext());
     RewritePatternSet patterns(&getContext());
-    patterns.add<ComputeOpLowering, BarrierOpLowering, AsmOpLowering>(
-        typeConverter, &getContext());
+    patterns.add<ComputeOpLowering, BarrierOpLowering, AsmOpLowering,
+                 PortioOpLowering>(typeConverter, &getContext());
 
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns))))

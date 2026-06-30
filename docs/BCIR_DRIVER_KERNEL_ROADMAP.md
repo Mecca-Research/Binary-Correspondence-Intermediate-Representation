@@ -89,7 +89,7 @@ this tier as small as possible; every line here is unverified.**
 | Edge | Status | Notes |
 |---|---|---|
 | Inline asm (**ASM1**, `c.asm` / `c.asm.volatile`; MLIR `bcir.asm`) | ✅ **have** | The general escape hatch; `"memory"`/volatile ⇒ `barriered`. MLIR twin lowers to `llvm.inline_asm` (SEG8.1). |
-| Port-I/O (**ASM2**, `c.portio.in/out.{b,w,l}`) | ✅ **have** (cfront); ⏳ **MLIR op `bcir.portio` is named-but-not-built (SEG8.2)** | x86 `in`/`out`, isolated `__ioport` I/O space, barriered. Non-x86 → honest diagnostic. |
+| Port-I/O (**ASM2**, `c.portio.in/out.{b,w,l}`; MLIR `bcir.portio`) | ✅ **have** | x86 `in`/`out`, isolated `__ioport` I/O space, barriered. Non-x86 → honest diagnostic. MLIR twin `bcir.portio` lowers to `llvm.inline_asm` (SEG8.2, **landed**), byte-identical to the cfront templates. |
 | Memory fences (**ASM3**, `c.fence[.acquire/.release]`; MLIR `bcir.barrier`) | ✅ **have** | Per-ISA `mfence`/`dmb`/`fence`, `memory_order`-parameterized (SEG6/7). |
 | **Entry / reset stub + stack setup before C** | ❌ **missing** | A `bcir.entry` naked-function edge (no prologue, sets `sp`, jumps to C `main`). The genuine floor of bring-up. |
 | **Control-register / MSR access** (CR0/CR3/CR4, `rdmsr`/`wrmsr`) | ❌ **missing as a typed edge** | Expressible today only as a *raw* ASM1 blob; deserves a typed `c.creg`/`c.msr` edge (a small per-ISA table, like ASM2). |
@@ -232,10 +232,15 @@ discipline + a CI-green draft PR per the established cadence):
 - *Parallel/deferred:* **H4** ML convergence demos, **H5** native-codegen honesty (gated).
 
 ### Phase 1 — Driver foundation (the asm-edge + MLIR surface drivers stand on)
-- **D1.1 = SEG8.2 code slice** — the **`bcir.portio` MLIR op** (the named next op): per-ISA x86
-  `in`/`out` emitted *as* inline asm, reusing the SEG8.1 `bcir.asm` → `llvm.inline_asm` lowering;
-  op + verifier + FileCheck round-trip/lowering/negatives, dual-rail with the cfront `c.portio.*`
-  claim.
+- **D1.1 = SEG8.2 code slice** — ✅ **landed.** The **`bcir.portio` MLIR op**: x86 `in`/`out`
+  emitted *as* inline asm, reusing the SEG8.1 `bcir.asm` → `llvm.inline_asm` lowering (same generic
+  attribute-list builder, so it compiles on LLVM-20 *and* the CI's LLVM-22). A `#bcir.port_dir`
+  direction enum (`in`/`out`) + a `{8,16,32}`-bit width (b/w/l); `in` = 1 operand (port) + 1 result,
+  `out` = 2 operands (value, port) + 0 results. The lowering emits the six templates **byte-identical**
+  to the cfront `_PORTIO_IN_ASM` / `_PORTIO_OUT_ASM` with constraints `"=a,Nd"` (in) / `"a,Nd"` (out),
+  always `has_side_effects`. Op + verifier + FileCheck round-trip/lowering/negatives
+  (`mlir/test/passes/portio_roundtrip.mlir`, `portio.mlir`, `portio_verify_neg.mlir`), dual-rail with
+  the cfront `c.portio.*` claim. (Like `bcir.asm`, the oracle→MLIR emitter wiring is a later increment.)
 - **D1.2** — `bcir.volatile_load/store` (or an MMIO attribute on `bcir.load/store`) so MMIO is
   first-class in the law rail as it already is in cfront emit.
 - **D1.3** — the **boot/CPU-state asm edges** *as drivers demand them* (not speculatively): entry/
@@ -270,4 +275,5 @@ the warranted path is the resident compiler finishing BCIR-emitted freestanding 
 - **Ordering:** a polled UART needs **nothing** new; it's already shipped. Everything the user named
   is independent / after / out-of-scope, and the firmware/security specs are *parser-kernel*
   opportunities, not implementation targets. The post-UART work is the RUNG 1→7 ladder.
-- **Next code slice:** `bcir.portio` (SEG8.2), after the Phase-0 hardening gate.
+- **Next code slice:** `bcir.portio` (SEG8.2) is **landed** (D1.1 above); next is D1.2
+  (`bcir.volatile_load/store` / an MMIO attribute) after the Phase-0 hardening gate.

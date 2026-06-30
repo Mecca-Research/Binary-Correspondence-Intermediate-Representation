@@ -157,6 +157,19 @@ run_fc -convert-bcir-to-llvm "${T}/inline_asm.mlir"
 echo "[passes] bcir.asm op verifier negatives (arg/constraint count + result/out count)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/inline_asm_verify_neg.mlir" \
   && echo "  PASS inline_asm_verify_neg.mlir" || { echo "  FAIL inline_asm_verify_neg.mlir"; fail=1; }
+echo "[passes] bcir.portio round-trip (ASM2: x86 port-I/O edge parses/prints identically -- in.{b,l} read + out.{b,l} void write)"
+if [ -n "${FC}" ]; then
+  "${BO}" "${T}/portio_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/portio_roundtrip.mlir" \
+    && echo "  PASS portio_roundtrip.mlir" || { echo "  FAIL portio_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" "${T}/portio_roundtrip.mlir" >/dev/null 2>/tmp/pe \
+    && echo "  RUN-ONLY portio_roundtrip.mlir" || { echo "  FAIL portio_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+fi
+echo "[passes] bcir.portio -> llvm.inline_asm (ASM2 lowering: x86 in/out template + =a,Nd / a,Nd constraints, side-effecting; byte-identical to cfront)"
+run_fc -convert-bcir-to-llvm "${T}/portio.mlir"
+echo "[passes] bcir.portio op verifier negatives (width {8,16,32} + in/out operand/result arity + value width)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/portio_verify_neg.mlir" \
+  && echo "  PASS portio_verify_neg.mlir" || { echo "  FAIL portio_verify_neg.mlir"; fail=1; }
 echo "[passes] cache-contention (G4: recompute the cache-line/bank-conflict CONTENTION signal; informs-only, never gates legality)"
 run_fc -bcir-cache-contention "${T}/cache_contention.mlir"
 echo "[passes] cache-contention op verifier negatives (the frozen analytic model: waste/conflict/q8-sum/cost consistency)"

@@ -98,6 +98,14 @@ def BCIR_MemOrdering : BCIR_Enum<"MemOrdering", "Memory ordering (maps to LLVM A
   I32EnumAttrCase<"AcqRel", 4, "acq_rel">, I32EnumAttrCase<"SeqCst", 5, "seq_cst">]>;
 def BCIR_MemOrderingAttr : BCIR_EnumAttr<BCIR_MemOrdering, "mem_ordering">;
 
+// --- Port-I/O direction (ASM2, SEG8.2): x86 port-mapped I/O edge direction ---
+// `in` is a READ (the `in{b,w,l}` instruction: port -> accumulator, one result); `out` is a void
+// WRITE (the `out{b,w,l}` instruction: accumulator -> port, no result). The law-rail twin of the
+// cfront `c.portio.in.*` / `c.portio.out.*` claim suffix (bcir/frontends/cfront/lower.py::_portio).
+def BCIR_PortDir : BCIR_Enum<"PortDir", "x86 port-mapped I/O direction (ASM2)", [
+  I32EnumAttrCase<"In", 0, "in">, I32EnumAttrCase<"Out", 1, "out">]>;
+def BCIR_PortDirAttr : BCIR_EnumAttr<BCIR_PortDir, "port_dir">;
+
 // --- Precision contract ---
 def BCIR_PrecisionAttr : BCIR_Attr<"Precision", "precision"> {
   let summary = "Numerical precision and tolerance contract";
