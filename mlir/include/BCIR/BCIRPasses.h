@@ -80,6 +80,17 @@ std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
 // informs the plan's cost but NEVER gates legality (the same two-truth quarantine the
 // sibling cost passes -cache-contention / -layout-pivot keep; -bcir-verify never reads these).
 std::unique_ptr<mlir::Pass> createGemMatmulCostPass();
+// -bcir-gem-activation-cost: recompute the G1 activation ROOFLINE COST for each gem.activation
+// plan op (port of bcir/kbcir/activation.py::cost_of) -- compute = ceilDiv(count*op_weight,
+// vector_width*fma), mem = ceilDiv(count*streams, mem_unit*mem_channels), bottleneck =
+// max(compute, mem) (op_weight = relu 1 / sigmoid|tanh|softmax 8 / gelu 12; streams = 3 softmax
+// else 2) -- pinning the x86-avx512 reference constants for CI-host-independence, parity-check
+// the declared compute/mem/bottleneck (the analytic parity the op verifier deliberately omits),
+// and annotate the recomputed roofline (a cost producer, NOT a lowering: the op is NOT erased).
+// INFORMS-ONLY: the recomputed roofline informs the plan's cost but NEVER gates legality (the same
+// two-truth quarantine the sibling cost passes -gem-matmul-cost / -cache-contention / -layout-pivot
+// keep; -bcir-verify never reads these).
+std::unique_ptr<mlir::Pass> createGemActivationCostPass();
 // -bcir-lower-gem-matmul: lower each gem.matmul plan record into its concrete
 // tiled realization -- one gem.block descriptor per tile of the tiled iteration
 // space, emitted in the plan's loop_order; erases the matmul (a genuine lowering).
