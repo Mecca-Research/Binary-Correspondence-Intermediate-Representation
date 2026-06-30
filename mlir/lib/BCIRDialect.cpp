@@ -549,6 +549,127 @@ using namespace bcir;
   return ::mlir::success();
 }
 
+::mlir::LogicalResult GEMAutodiffOp::verify() {
+  // The B3 closed-set forward autodiff DAG (mirrors bcir/kbcir/autodiff.py: CLOSED_SET / _ARITY /
+  // the Tape Node list -- the op-level structural well-formedness law the sibling gem ops validate
+  // inline; NO new globally-numbered R-law). Slice 5 proved differentiating any expression in the
+  // closed vocabulary {const,var,neg,add,sub,mul,div,dot,select} stays in the SAME set; this verifier
+  // is the law that closure underwrites: the serialized forward DAG uses ONLY that vocabulary, with the
+  // correct per-op arity and a strictly-earlier (acyclic/topological) operand-index discipline.
+  //
+  // The fixed opcode codes (mirror autodiff._ARITY's order): 0=const 1=var 2=neg 3=add 4=sub 5=mul
+  // 6=div 7=dot 8=select. _ARITY: const/var leaves = 0; neg = 1; add/sub/mul/div = 2; select = 3;
+  // dot is VARIADIC (an even 2k operands). Codes 0..8 are the closed set; anything else is a FOREIGN op.
+  ::llvm::ArrayRef<int64_t> opcodes = getOpcodes();
+  ::llvm::ArrayRef<int64_t> arities = getArities();
+  ::llvm::ArrayRef<int64_t> argBase = getArgBase();
+  ::llvm::ArrayRef<int64_t> args = getArgs();
+  ::llvm::ArrayRef<int64_t> consts = getConsts();
+  int64_t nNodes = static_cast<int64_t>(opcodes.size());
+  int64_t nInputs = static_cast<int64_t>(getNInputs());
+  int64_t output = static_cast<int64_t>(getOutput());
+
+  // (4a) the parallel per-node arrays must be equal length (one entry per node).
+  if (static_cast<int64_t>(arities.size()) != nNodes ||
+      static_cast<int64_t>(argBase.size()) != nNodes ||
+      static_cast<int64_t>(consts.size()) != nNodes)
+    return emitOpError() << "autodiff: opcodes/arities/arg_base/consts must be parallel per-node arrays "
+                         << "of equal length " << nNodes << " (got arities " << arities.size()
+                         << ", arg_base " << argBase.size() << ", consts " << consts.size() << ")";
+  if (nNodes < 1)
+    return emitOpError() << "autodiff: the DAG must have at least one node (got an empty opcodes array)";
+  if (nInputs < 0)
+    return emitOpError() << "autodiff: n_inputs must be non-negative (got " << nInputs << ")";
+
+  // _ARITY for the fixed-arity ops (index = opcode); dot (7) is variadic and handled separately. -1 marks
+  // the variadic / out-of-range slot. Mirrors autodiff._ARITY exactly.
+  static const int64_t kArity[9] = {/*const*/ 0, /*var*/ 0, /*neg*/ 1, /*add*/ 2, /*sub*/ 2,
+                                    /*mul*/ 2, /*div*/ 2, /*dot*/ -1, /*select*/ 3};
+  static const char *kName[9] = {"const", "var", "neg", "add", "sub",
+                                 "mul", "div", "dot", "select"};
+
+  int64_t expectedBase = 0;   // the running prefix-sum of arities: arg_base[i] must equal it (see (3a')).
+  for (int64_t i = 0; i < nNodes; ++i) {
+    int64_t op = opcodes[i];
+    // (1) CLOSED VOCABULARY: a code outside [0, 8] is a FOREIGN opcode (the law the closure proof underwrites).
+    if (op < 0 || op > 8)
+      return emitOpError() << "autodiff: node " << i << " opcode " << op
+                           << " is not in the closed set {const,var,neg,add,sub,mul,div,dot,select} "
+                              "(codes 0..8)";
+    int64_t arity = arities[i];
+    if (arity < 0)
+      return emitOpError() << "autodiff: node " << i << " (" << kName[op] << ") arity must be non-negative (got "
+                           << arity << ")";
+
+    // (2) ARITY: each node's operand count matches _ARITY for its op (mirrors autodiff._ARITY). dot is variadic
+    // (an even 2k operands -- k u-ids then k v-ids, per Tape.dot), so only its parity/positivity is fixed.
+    if (op == 7) { // dot
+      if (arity < 2 || (arity % 2) != 0)
+        return emitOpError() << "autodiff: node " << i << " (dot) is variadic and must have an even arity >= 2 "
+                             << "(2k operands: k u-ids then k v-ids), got " << arity;
+    } else if (arity != kArity[op]) {
+      return emitOpError() << "autodiff: node " << i << " (" << kName[op] << ") arity must be " << kArity[op]
+                           << " (mirrors autodiff._ARITY), got " << arity;
+    }
+
+    // (4b) per-node leaf/non-leaf payload consistency: a `const` carries an integer value, a `var` carries an
+    // input SLOT in [0, n_inputs); every non-leaf op carries the -1 sentinel (it has no payload). (3b) a var's
+    // slot must be a real input.
+    int64_t payload = consts[i];
+    if (op == 1) { // var
+      if (payload < 0 || payload >= nInputs)
+        return emitOpError() << "autodiff: node " << i << " (var) input slot " << payload
+                             << " must be in [0, n_inputs " << nInputs << ")";
+    } else if (op != 0) { // a non-leaf op (not const, not var) carries no payload -> the -1 sentinel.
+      if (payload != -1)
+        return emitOpError() << "autodiff: node " << i << " (" << kName[op]
+                             << ") is a non-leaf op and must carry the -1 const sentinel, got " << payload;
+    }
+
+    // (3a) DAG / INDEX BOUNDS: this node's operands are args[arg_base[i] : arg_base[i]+arity], and EVERY operand
+    // index must reference a STRICTLY EARLIER node (< i) -- guaranteeing acyclicity + topological order (no
+    // forward / self / out-of-range refs). arg_base must point inside the flat args array.
+    // (3a') CONTIGUITY: arg_base[i] must be the running prefix-sum of arities, so the per-node operand
+    // slices contiguously PARTITION the flat args array -- no overlap (one node reading another node's
+    // operand slot) and, crucially, no GAP (an unread hole that could smuggle an out-of-range / forward
+    // operand index past the bounds + strictly-earlier checks below, which only scan the in-slice entries).
+    // Every faithful Tape serialization emits operands node-by-node, so arg_base IS the prefix-sum; a
+    // non-contiguous arg_base is malformed relative to the oracle. (Makes the sum(arities)==len check below
+    // redundant-but-harmless, and ensures EVERY args entry lands in exactly one bounds-checked slice.)
+    int64_t base = argBase[i];
+    if (base != expectedBase)
+      return emitOpError() << "autodiff: node " << i << " arg_base " << base
+                           << " must equal the running prefix-sum of arities " << expectedBase
+                           << " (the per-node operand slices must contiguously partition args -- no "
+                              "overlap, no gap)";
+    if (base + arity > static_cast<int64_t>(args.size()))
+      return emitOpError() << "autodiff: node " << i << " arg_base " << base << " + arity " << arity
+                           << " is out of range of the flat args array (size " << args.size() << ")";
+    expectedBase += arity;
+    for (int64_t a = 0; a < arity; ++a) {
+      int64_t operand = args[base + a];
+      if (operand < 0 || operand >= i)
+        return emitOpError() << "autodiff: node " << i << " (" << kName[op] << ") operand #" << a << " = "
+                             << operand << " must reference a strictly earlier node (in [0, " << i
+                             << ")) -- forward/out-of-range refs break acyclicity/topological order";
+    }
+  }
+
+  // (4c) the flat args array must hold exactly sum(arities) operands (no slack / no missing operands).
+  int64_t totalArity = 0;
+  for (int64_t a : arities)
+    totalArity += a;
+  if (totalArity != static_cast<int64_t>(args.size()))
+    return emitOpError() << "autodiff: the flat args array must hold exactly sum(arities) = " << totalArity
+                         << " operands (got " << args.size() << ")";
+
+  // (3c) the output node index must be a valid node.
+  if (output < 0 || output >= nNodes)
+    return emitOpError() << "autodiff: output node index " << output << " must be in [0, node_count " << nNodes
+                         << ")";
+  return ::mlir::success();
+}
+
 ::mlir::LogicalResult GEMMatmulBufferOp::verify() {
   // Buffer-form matmul: real memref operands C += A*B with a tile plan. Require A/B/C to be
   // rank-2 f32 memrefs with STATIC shapes, the contraction dims to agree (A.dim1==B.dim0 = K,

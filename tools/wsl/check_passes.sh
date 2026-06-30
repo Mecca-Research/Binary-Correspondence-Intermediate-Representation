@@ -133,6 +133,17 @@ run_fc -bcir-fuse-matmul-activation "${T}/fuse_matmul_activation.mlir"
 echo "[passes] fuse-matmul-activation op verifier negatives (softmax scope-out + the quarantine rule + the strict-win invariant)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/fuse_matmul_activation_neg.mlir" \
   && echo "  PASS fuse_matmul_activation_neg.mlir" || { echo "  FAIL fuse_matmul_activation_neg.mlir"; fail=1; }
+echo "[passes] gem.autodiff round-trip (B3: the closed-set forward autodiff DAG serializes/parses/prints identically)"
+if [ -n "${FC}" ]; then
+  "${BO}" "${T}/gem_autodiff_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/gem_autodiff_roundtrip.mlir" \
+    && echo "  PASS gem_autodiff_roundtrip.mlir" || { echo "  FAIL gem_autodiff_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" "${T}/gem_autodiff_roundtrip.mlir" >/dev/null 2>/tmp/pe \
+    && echo "  RUN-ONLY gem_autodiff_roundtrip.mlir" || { echo "  FAIL gem_autodiff_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+fi
+echo "[passes] gem.autodiff op verifier negatives (the closed-set law: foreign opcode / wrong arity / forward index / var slot / output / payload)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/gem_autodiff_verify_neg.mlir" \
+  && echo "  PASS gem_autodiff_verify_neg.mlir" || { echo "  FAIL gem_autodiff_verify_neg.mlir"; fail=1; }
 echo "[passes] cache-contention (G4: recompute the cache-line/bank-conflict CONTENTION signal; informs-only, never gates legality)"
 run_fc -bcir-cache-contention "${T}/cache_contention.mlir"
 echo "[passes] cache-contention op verifier negatives (the frozen analytic model: waste/conflict/q8-sum/cost consistency)"
