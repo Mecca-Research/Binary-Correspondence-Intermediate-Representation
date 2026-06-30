@@ -144,6 +144,19 @@ fi
 echo "[passes] gem.autodiff op verifier negatives (the closed-set law: foreign opcode / wrong arity / forward index / var slot / output / payload)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/gem_autodiff_verify_neg.mlir" \
   && echo "  PASS gem_autodiff_verify_neg.mlir" || { echo "  FAIL gem_autodiff_verify_neg.mlir"; fail=1; }
+echo "[passes] bcir.asm round-trip (ASM1: verbatim inline asm parses/prints identically -- 0-output fence + 1-out/1-in form)"
+if [ -n "${FC}" ]; then
+  "${BO}" "${T}/inline_asm_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/inline_asm_roundtrip.mlir" \
+    && echo "  PASS inline_asm_roundtrip.mlir" || { echo "  FAIL inline_asm_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" "${T}/inline_asm_roundtrip.mlir" >/dev/null 2>/tmp/pe \
+    && echo "  RUN-ONLY inline_asm_roundtrip.mlir" || { echo "  FAIL inline_asm_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+fi
+echo "[passes] bcir.asm -> llvm.inline_asm (ASM1 lowering: out/in/clobber constraint string, ~{...} clobbers, side-effecting)"
+run_fc -convert-bcir-to-llvm "${T}/inline_asm.mlir"
+echo "[passes] bcir.asm op verifier negatives (arg/constraint count + result/out count)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/inline_asm_verify_neg.mlir" \
+  && echo "  PASS inline_asm_verify_neg.mlir" || { echo "  FAIL inline_asm_verify_neg.mlir"; fail=1; }
 echo "[passes] cache-contention (G4: recompute the cache-line/bank-conflict CONTENTION signal; informs-only, never gates legality)"
 run_fc -bcir-cache-contention "${T}/cache_contention.mlir"
 echo "[passes] cache-contention op verifier negatives (the frozen analytic model: waste/conflict/q8-sum/cost consistency)"

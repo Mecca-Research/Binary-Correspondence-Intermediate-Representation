@@ -330,6 +330,49 @@ equal length with `args` holding exactly `sum(arities)` operands. (Phase 2a: the
 the DAG *structure* — op/operands/leaf-slot — with the `const` value as an integer
 payload; a float `const` value is out of scope for this structural law object.)
 
+**`bcir.asm` — verbatim inline assembly as a law op (ASM1, SEG8.1).** GNU extended
+inline asm (`__asm__`/`__asm__ __volatile__`) is a **trusted opaque effect edge**: on
+the cfront rail it is the `c.asm:` / `c.asm.volatile:` claim
+(`bcir/frontends/cfront/lower.py::_asm_stmt` + `AsmInfo`); `bcir.asm` is its
+**MLIR-rail twin**, closing the gap where inline asm was cfront-only (the MLIR rail had
+`bcir.barrier` for fences but nothing for inline asm). It carries the assembly
+**verbatim** (ISA-neutral pass-through), the closest sibling op being `bcir.barrier` —
+a `"memory"`-clobber / `volatile` form is an ordering fence. Fields (mirroring
+`AsmInfo`):
+
+- `asm_template` — the asm template string, carried verbatim (e.g. `"mfence"`,
+  `"movl $1, $0"`). Named `asm_template`, not `template`, since `template` is a C++
+  keyword the ODS-generated accessors would collide with;
+- `is_volatile` — a `__asm__ __volatile__` (a side-effecting edge that must not be
+  DCE'd); the lowering *always* marks `has_side_effects` (asm is conservatively
+  side-effecting), so this records the source spelling for round-trip;
+- `out_constraints` / `in_constraints` — the per-operand constraints, each output
+  already an output constraint (e.g. `"=r"`), each input a plain constraint (e.g.
+  `"r"`, `"Nd"`);
+- `clobbers` — the clobber list, **bare** (e.g. `"memory"`, `"cc"`); the lowering
+  renders each as a `~{...}` constraint **entry** (LLVM has no separate clobber field);
+- operands `$args` are **outputs-then-inputs** in the cfront SSA order (the first
+  `out_constraints.size()` operands are the output lvalue SSA values); results
+  `$results` are one per output constraint.
+
+Its verifier (`hasVerifier`) is the op-level structural well-formedness check (**not** a
+new globally-numbered R-law): `args.size() == out_constraints + in_constraints` and
+`results.size() == out_constraints`. The lowering (`-convert-bcir-to-llvm`) emits
+`llvm.inline_asm` — a **single** LLVM constraint string built as the out constraints,
+then the in constraints, then each clobber as a `~{<clobber>}` entry, all comma-joined
+(e.g. outs `["=r"]`, ins `["r"]`, clobbers `["memory"]` → `"=r,r,~{memory}"`),
+`has_side_effects`, default (AT&T) dialect. The LLVM `call asm` operand list is the
+**input operands only** (a write-only `"="` output is the *result*, never an asm-call
+argument), so the lowering passes `args[out_constraints.size():]`. **Lowering scope (the
+first slice):** 0 or 1 result, write-only `"="` outputs; a multi-output asm (LLVM
+returns a struct needing `extractvalue` unpacking) and read-write `"+"` outputs (which
+tie an input via a matching constraint) are a follow-on (SEG8.x) — the lowering rejects
+`results.size() > 1` with a clear diagnostic rather than shipping a wrong unpack. This
+establishes the `llvm.inline_asm` lowering the **SEG8.2** port-I/O op (`bcir.portio`,
+per-ISA x86 `in`/`out` emitted *as* inline asm) reuses. (Tests:
+`mlir/test/passes/inline_asm_roundtrip.mlir`, `inline_asm.mlir`,
+`inline_asm_verify_neg.mlir`.)
+
 ## 12. Lowering contracts
 
 BCIR-4 → BCIR-5 lowering is governed by R12: each lowered op preserves the BCIR

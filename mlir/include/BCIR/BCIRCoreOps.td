@@ -151,4 +151,64 @@ def BCIR_BarrierOp : BCIR_Op<"barrier"> {
   let assemblyFormat = "$scope attr-dict";
 }
 
+def BCIR_AsmOp : BCIR_Op<"asm"> {
+  let summary = "ISA-neutral verbatim inline assembly (ASM1, an opaque trusted effect edge)";
+  // The law-rail twin of the cfront `c.asm:` / `c.asm.volatile:` claim
+  // (bcir/frontends/cfront/lower.py::_asm_stmt + AsmInfo). GNU extended inline asm is a
+  // TRUSTED OPAQUE EFFECT EDGE: the assembly template, the per-operand constraints, and the
+  // clobbers are carried VERBATIM (ISA-neutral pass-through), the operand SSA values ride the
+  // op's variadic operands, and the lowering reconstructs the exact `llvm.inline_asm` (which is
+  // LLVM's `call asm` / GCC `__asm__`). The closest sibling op is `bcir.barrier`: a `"memory"`
+  // clobber / volatile form is an ordering fence, never reordered/fused across.
+  //
+  // Fields (mirroring AsmInfo):
+  //   * `asm_template`    -- the asm template string, carried VERBATIM (e.g. "mfence", "movl $1, $0").
+  //                          (Named `asm_template`, not `template`, since `template` is a C++ keyword the
+  //                          ODS-generated accessors would collide with.)
+  //   * `is_volatile`     -- a `__asm__ __volatile__` (a side-effecting edge that must not be DCE'd).
+  //                          The lowering ALWAYS marks `has_side_effects` (asm is conservatively
+  //                          side-effecting); `is_volatile` records the source spelling for round-trip.
+  //   * `out_constraints` -- one per result, each already an output constraint (e.g. "=r", "+r").
+  //   * `in_constraints`  -- one per input operand (e.g. "r", "i", "Nd").
+  //   * `clobbers`        -- the clobber list, BARE (e.g. "memory", "cc", "rax"); the lowering
+  //                          renders each as a `~{...}` constraint ENTRY (LLVM has no separate
+  //                          clobber field).
+  //
+  // Operands: `$args` are the outputs-then-inputs in the cfront SSA order (so the first
+  // `out_constraints.size()` operands are the output lvalue SSA values, the rest the inputs).
+  // Results: `$results` are one per output constraint (the values the asm writes back).
+  //
+  // The verifier (`hasVerifier`) is the op-level structural well-formedness check (NOT a new
+  // globally-numbered R-law): `args.size() == out_constraints.size() + in_constraints.size()`,
+  // `results.size() == out_constraints.size()`, and every `out_constraints` entry must itself be an
+  // output constraint -- begin with LLVM's write-only `=` or read-write `+`. The last check keeps a
+  // stray input spelling (e.g. a bare `"r"` as an output) from passing the count laws and lowering to
+  // a result-returning `llvm.inline_asm` whose constraint string has no `=` output -- structurally
+  // invalid asm the LLVM IR translator rejects far from the source.
+  //
+  // LOWERING SCOPE (the first slice, `-convert-bcir-to-llvm`): 0 or 1 result, write-only ("=")
+  // outputs. A 0-output asm lowers to a void `llvm.inline_asm`; a 1-output asm lowers to one
+  // returning that type. The LLVM `call asm` operand list is the INPUT operands ONLY -- a
+  // write-only "=" output is the RESULT, never an asm-call argument -- so the lowering passes
+  // `args[out_constraints.size():]` (the inputs) as operands. A multi-output asm (LLVM returns a
+  // struct needing extractvalue unpacking) is a follow-on (SEG8.x); the lowering rejects
+  // `results.size() > 1` with a clear diagnostic rather than shipping a wrong struct-unpack.
+  // (Read-write "+" outputs, which tie an input via a matching constraint, are the same follow-on;
+  // the op itself + verifier already model any output arity -- only the LLVM lowering is scoped.)
+  let arguments = (ins
+    StrAttr:$asm_template,
+    UnitAttr:$is_volatile,
+    StrArrayAttr:$out_constraints,
+    StrArrayAttr:$in_constraints,
+    StrArrayAttr:$clobbers,
+    Variadic<AnyType>:$args);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    (`volatile` $is_volatile^)? $asm_template
+    `outs` $out_constraints `ins` $in_constraints `clobbers` $clobbers
+    ( `(` $args^ `)` )? attr-dict (`:` functional-type($args, $results)^)?
+  }];
+  let hasVerifier = 1;
+}
+
 #endif // BCIR_CORE_OPS

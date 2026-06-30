@@ -13,6 +13,7 @@
 #include "BCIR/BCIRTypes.h"
 
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -738,6 +739,35 @@ using namespace bcir;
   for (int64_t w : getLaneWidths())
     if (w <= 0)
       return emitOpError() << "lane widths must be positive (got " << w << ")";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult AsmOp::verify() {
+  // ASM1 structural well-formedness (mirrors bcir/frontends/cfront/lower.py::_asm_stmt + AsmInfo;
+  // the op-level check the sibling law ops run inline, NOT a new globally-numbered R-law). The
+  // operands are outputs-then-inputs, so their count is out + in; the results are one per output.
+  int64_t nOut = static_cast<int64_t>(getOutConstraints().size());
+  int64_t nIn = static_cast<int64_t>(getInConstraints().size());
+  int64_t nArgs = static_cast<int64_t>(getArgs().size());
+  int64_t nResults = static_cast<int64_t>(getResults().size());
+  if (nArgs != nOut + nIn)
+    return emitOpError() << "args count " << nArgs << " must equal out_constraints + in_constraints = "
+                         << nOut << " + " << nIn << " = " << (nOut + nIn)
+                         << " (operands are outputs-then-inputs)";
+  if (nResults != nOut)
+    return emitOpError() << "results count " << nResults << " must equal out_constraints count " << nOut
+                         << " (one result per output constraint)";
+  // Each output constraint must itself be an output constraint -- LLVM write-only '=' or read-write '+'.
+  // Without this, a stray non-output spelling (e.g. "r") still satisfies the count checks and lowers to a
+  // result-returning llvm.inline_asm whose constraint string carries no '=' output: structurally-invalid
+  // inline asm that MLIR's own verifier accepts but LLVM IR translation rejects far from the source.
+  ::mlir::ArrayAttr outs = getOutConstraints();
+  for (int64_t i = 0; i < nOut; ++i) {
+    ::llvm::StringRef c = ::mlir::cast<::mlir::StringAttr>(outs[i]).getValue();
+    if (c.empty() || (c.front() != '=' && c.front() != '+'))
+      return emitOpError() << "out_constraints[" << i
+                           << "] must be an output constraint beginning with '=' or '+' (got '" << c << "')";
+  }
   return ::mlir::success();
 }
 
