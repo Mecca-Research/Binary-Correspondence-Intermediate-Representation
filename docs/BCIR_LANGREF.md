@@ -453,8 +453,11 @@ The lowering (`-convert-bcir-to-llvm`) emits `llvm.inttoptr $addr` to an opaque
 setter, not a positional builder arg, so it is stable across LLVM-20 and the CI's LLVM-22).
 `volatile` is **always** set — a device read/write must never be elided, duplicated, or
 reordered with other volatile accesses (the MMIO guarantee, matching the cfront `volatile`).
-The address constraint is `AnySignlessInteger` (a non-integer address is rejected). Like
-`bcir.asm`/`bcir.portio`, the oracle→MLIR wiring is a later increment. (Tests:
+The verifier requires `$value` to be a **scalar** hardware-register type (an integer or
+float — a vector/index/struct device register is rejected) and `$addr` to be an integer of
+at least **pointer width (≥ 32 bits)** so a too-narrow address is not silently zero-extended
+into the device pointer. Like `bcir.asm`/`bcir.portio`, the oracle→MLIR wiring is a later
+increment. (Tests:
 `mlir/test/passes/volatile_mmio_roundtrip.mlir`, `volatile_mmio.mlir`,
 `volatile_mmio_verify_neg.mlir`.)
 
@@ -477,10 +480,13 @@ FileCheck text.) x86-only.
 - `bcir.creg_write <crN>, $value : i64` — the void counterpart.
 
 The lowering (`-convert-bcir-to-llvm`) emits `llvm.inline_asm has_side_effects` with
-`"mov %<crN>, $0"`, `"=r"` for a read (returns `i64`) and `"mov $0, %<crN>"`,
-`"r,~{memory}"` for a write (no result; the `~{memory}` clobber models the system-wide
-effect — a `CR3` write reloads the page tables and flushes the TLB, `CR0`/`CR4` toggle
-paging/protection). `has_side_effects` is **always** set (a control register is not a pure
+`"mov %<crN>, $0"`, `"=r,~{memory}"` for a read (returns `i64`) and `"mov $0, %<crN>"`,
+`"r,~{memory}"` for a write (no result). The `~{memory}` clobber is carried on **both** the
+read and the write: a control register reflects/controls the live memory system — a `CR3`
+write reloads the page tables and flushes the TLB, `CR0`/`CR4` toggle paging/protection, and
+a `CR2`/`CR3` *read* observes that live state — so each access is an **ordering point** vs
+ordinary memory ops (`has_side_effects` alone only orders vs other side-effecting asm, not vs
+plain loads/stores). `has_side_effects` is **always** set (a control register is not a pure
 value: `CR2` holds the faulting address, `CR3` the live page-table base). Built via the
 **same generic attribute-list `InlineAsmOp` builder** as `bcir.asm` (LLVM-20/22 stable).
 (Tests: `mlir/test/passes/creg_roundtrip.mlir`, `creg.mlir`, `creg_verify_neg.mlir`.)

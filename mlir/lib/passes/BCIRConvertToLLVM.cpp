@@ -396,9 +396,14 @@ struct CRegReadOpLowering : public OpConversionPattern<CRegReadOp> {
   LogicalResult
   matchAndRewrite(CRegReadOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    // Control-register read -> llvm.inline_asm "mov %<reg>, $0", "=r". LLVM-IR inline-asm syntax ($0
-    // operand, single-% register) -- the exact form clang emits; built via the same generic
+    // Control-register read -> llvm.inline_asm "mov %<reg>, $0", "=r,~{memory}". LLVM-IR inline-asm syntax
+    // ($0 operand, single-% register) -- the exact form clang emits; built via the same generic
     // attribute-list InlineAsmOp builder as AsmOpLowering (version-stable). has_side_effects always.
+    // The `~{memory}` clobber is intentional even for a READ: a control register reflects the live memory
+    // system (CR2 = the faulting address, CR3 = the live page-table base, CR0/CR4 = paging/protection), so
+    // the read is an ORDERING POINT -- without the clobber LLVM could sink an unrelated load below a CR2
+    // read in a fault handler. (`has_side_effects` blocks elision/reordering vs other side-effecting asm,
+    // but NOT vs ordinary memory ops; the `~{memory}` clobber adds that.) Mirrors creg_write's clobber.
     Type resTy = getTypeConverter()->convertType(op.getValue().getType());
     if (!resTy)
       return rewriter.notifyMatchFailure(op, "result type not convertible");
@@ -406,7 +411,7 @@ struct CRegReadOpLowering : public OpConversionPattern<CRegReadOp> {
         (Twine("mov %") + stringifyCtrlReg(op.getReg()) + ", $0").str();
     SmallVector<NamedAttribute, 3> attrs = {
         rewriter.getNamedAttr("asm_string", rewriter.getStringAttr(tmpl)),
-        rewriter.getNamedAttr("constraints", rewriter.getStringAttr("=r")),
+        rewriter.getNamedAttr("constraints", rewriter.getStringAttr("=r,~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
     auto newOp = rewriter.create<LLVM::InlineAsmOp>(

@@ -827,6 +827,33 @@ using namespace bcir;
   return ::mlir::success();
 }
 
+// Shared well-formedness for the first-class MMIO accessors (bcir.volatile_load / volatile_store): the
+// device-register VALUE must be a scalar hardware-register type (integer or float -- a vector/index/struct
+// device register is rejected, since the op doc promises a scalar natural width), and the device-register
+// ADDRESS must be at least pointer-width (>= 32 bits) so a too-narrow address is not silently zero-extended
+// into the device pointer by the inttoptr lowering. (Mirrors the operand-discipline PortioOp::verify
+// applies to its port; an op-level structural check, NOT a new globally-numbered R-law.)
+static ::mlir::LogicalResult verifyMmioAccess(::mlir::Operation *op,
+                                              ::mlir::Type valueTy, ::mlir::Type addrTy) {
+  if (!::mlir::isa<::mlir::IntegerType, ::mlir::FloatType>(valueTy))
+    return op->emitOpError()
+           << "the device-register value must be a scalar integer or float (got " << valueTy << ")";
+  auto ait = ::mlir::dyn_cast<::mlir::IntegerType>(addrTy);
+  if (!ait || ait.getWidth() < 32)
+    return op->emitOpError()
+           << "the device-register address must be an integer of at least pointer width (>= 32 bits; got "
+           << addrTy << ")";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult VolatileLoadOp::verify() {
+  return verifyMmioAccess(*this, getValue().getType(), getAddr().getType());
+}
+
+::mlir::LogicalResult VolatileStoreOp::verify() {
+  return verifyMmioAccess(*this, getValue().getType(), getAddr().getType());
+}
+
 void BCIRDialect::initialize() {
   addOperations<
 #define GET_OP_LIST

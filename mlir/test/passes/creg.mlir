@@ -10,7 +10,7 @@
 // (1) read CR3 -> "mov %cr3, $0", "=r", returns i64.
 // CHECK-LABEL: func.func @rd_cr3
 func.func @rd_cr3() -> i64 {
-  // CHECK: %[[V:.*]] = llvm.inline_asm has_side_effects "mov %cr3, $0", "=r" : () -> i64
+  // CHECK: %[[V:.*]] = llvm.inline_asm has_side_effects "mov %cr3, $0", "=r,~{memory}" : () -> i64
   %v = bcir.creg_read <cr3> -> i64
   // CHECK: return %[[V]] : i64
   return %v : i64
@@ -19,7 +19,7 @@ func.func @rd_cr3() -> i64 {
 // (2) read CR2 (the faulting-address register) -> "mov %cr2, $0".
 // CHECK-LABEL: func.func @rd_cr2
 func.func @rd_cr2() -> i64 {
-  // CHECK: llvm.inline_asm has_side_effects "mov %cr2, $0", "=r" : () -> i64
+  // CHECK: llvm.inline_asm has_side_effects "mov %cr2, $0", "=r,~{memory}" : () -> i64
   %v = bcir.creg_read <cr2> -> i64
   return %v : i64
 }

@@ -22,3 +22,31 @@ func.func @store_float_addr(%val: i32, %addr: f32) {
   bcir.volatile_store %val, %addr : i32, f32
   return
 }
+
+// -----
+
+// (3 -- NARROW ADDRESS) an i8 address is too narrow -- it would be silently zero-extended into the
+// device pointer by the inttoptr lowering. The verifier requires >= pointer-width (>= 32 bits).
+func.func @load_narrow_addr(%addr: i8) -> i32 {
+  // expected-error @+1 {{the device-register address must be an integer of at least pointer width (>= 32 bits; got 'i8')}}
+  %v = bcir.volatile_load %addr : i8 -> i32
+  return %v : i32
+}
+
+// -----
+
+// (4 -- VECTOR VALUE) a vector device-register value is not a scalar natural-width register -- rejected.
+func.func @load_vector_value(%addr: i64) -> vector<4xi32> {
+  // expected-error @+1 {{the device-register value must be a scalar integer or float (got 'vector<4xi32>')}}
+  %v = bcir.volatile_load %addr : i64 -> vector<4xi32>
+  return %v : vector<4xi32>
+}
+
+// -----
+
+// (5 -- INDEX VALUE) an `index`-typed device register is meaningless -- rejected (not int/float).
+func.func @store_index_value(%val: index, %addr: i64) {
+  // expected-error @+1 {{the device-register value must be a scalar integer or float (got 'index')}}
+  bcir.volatile_store %val, %addr : index, i64
+  return
+}
