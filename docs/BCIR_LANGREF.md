@@ -491,6 +491,34 @@ value: `CR2` holds the faulting address, `CR3` the live page-table base). Built 
 **same generic attribute-list `InlineAsmOp` builder** as `bcir.asm` (LLVM-20/22 stable).
 (Tests: `mlir/test/passes/creg_roundtrip.mlir`, `creg.mlir`, `creg_verify_neg.mlir`.)
 
+**`bcir.msr_read` / `bcir.msr_write` — x86-64 model-specific-register access (boot/CPU-state
+asm edge, D1.4).** The same Tier-1 trusted-opaque-edge family as `bcir.creg_*` (no C
+value-semantics, **no cfront dual-rail twin** — the cfront rail expresses MSR access only
+as a raw `c.asm` blob — so the template is authored directly in LLVM-IR inline-asm syntax).
+**Unlike `creg`**, the register is **not** an enum but a **runtime index** (`rdmsr`/`wrmsr`
+select the MSR numbered by `ECX`), and the 64-bit value is **split across `EDX:EAX`**
+(high:low). x86-only.
+
+- `bcir.msr_read $index : i32 -> i64` — `index` is the MSR number (placed in `ECX`); the
+  result is the 64-bit MSR value.
+- `bcir.msr_write $index, $value : i32, i64` — the void counterpart.
+
+The lowering (`-convert-bcir-to-llvm`) keeps the op surface a **clean 64-bit register** (the
+`EDX:EAX` split is an ISA detail of `rdmsr`/`wrmsr`, not part of the op contract): a read
+lowers to a **multi-output** `llvm.inline_asm has_side_effects "rdmsr", "={ax},={dx},{cx},
+~{memory}"` returning `!llvm.struct<(i32, i32)>`, then **reassembles** the i64 as
+`(zext hi) << 32 | zext lo` (the kernel `native_read_msr` idiom); a write **splits** the i64
+into its low/high halves (`trunc` / `lshr`+`trunc`) and feeds `llvm.inline_asm
+has_side_effects "wrmsr", "{cx},{ax},{dx},~{memory}"` `(index, low, high)` with no result.
+The `~{memory}` clobber is carried on **both** the read and the write: an MSR is live CPU
+state (`IA32_EFER` toggles long mode, `IA32_APIC_BASE` relocates the local APIC, the
+`SYSENTER`/`STAR` MSRs install syscall entry points), so each access is an **ordering point**
+vs ordinary memory ops, exactly as for `creg`. `has_side_effects` is **always** set. Both
+lowerings are **assemble-checked** through `mlir-translate | llc` (the `rdmsr`/`wrmsr`
+opcodes appear in the emitted object), not just FileCheck text. (Tests:
+`mlir/test/passes/msr_roundtrip.mlir`, `msr.mlir`, and the assemble-smoke fixture
+`asm_lowering_smoke.mlir`.)
+
 ## 12. Lowering contracts
 
 BCIR-4 → BCIR-5 lowering is governed by R12: each lowered op preserves the BCIR

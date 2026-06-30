@@ -444,6 +444,76 @@ struct CRegWriteOpLowering : public OpConversionPattern<CRegWriteOp> {
   }
 };
 
+struct MsrReadOpLowering : public OpConversionPattern<MsrReadOp> {
+  using OpConversionPattern<MsrReadOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(MsrReadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // MSR read -> `rdmsr` (no operand placeholders -- the registers are fixed by the constraints): the
+    // index is bound to ECX (`{cx}`) and the two 32-bit result halves come back in EAX/EDX
+    // (`={ax},={dx}`), so the inline_asm yields an `!llvm.struct<(i32, i32)>`. has_side_effects always;
+    // the `~{memory}` clobber makes the read an ordering point (an MSR is live CPU state -- see the op
+    // doc). The i64 surface value is REASSEMBLED here as `(zext hi) << 32 | zext lo`, so callers see a
+    // clean 64-bit register (the EDX:EAX split is an ISA detail of `rdmsr`, not part of the op contract).
+    Location loc = op.getLoc();
+    Type i32Ty = rewriter.getI32Type();
+    Type i64Ty = rewriter.getI64Type();
+    Type pairTy = LLVM::LLVMStructType::getLiteral(getContext(), {i32Ty, i32Ty});
+    SmallVector<NamedAttribute, 3> attrs = {
+        rewriter.getNamedAttr("asm_string", rewriter.getStringAttr("rdmsr")),
+        rewriter.getNamedAttr("constraints",
+                              rewriter.getStringAttr("={ax},={dx},{cx},~{memory}")),
+        rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
+    };
+    auto asmOp = rewriter.create<LLVM::InlineAsmOp>(
+        loc, TypeRange{pairTy}, ValueRange{adaptor.getIndex()}, attrs);
+    Value lo = rewriter.create<LLVM::ExtractValueOp>(loc, asmOp.getRes(), 0);
+    Value hi = rewriter.create<LLVM::ExtractValueOp>(loc, asmOp.getRes(), 1);
+    Value lo64 = rewriter.create<LLVM::ZExtOp>(loc, i64Ty, lo);
+    Value hi64 = rewriter.create<LLVM::ZExtOp>(loc, i64Ty, hi);
+    Value c32 = rewriter.create<LLVM::ConstantOp>(
+        loc, i64Ty, rewriter.getI64IntegerAttr(32));
+    Value hiShifted = rewriter.create<LLVM::ShlOp>(loc, hi64, c32);
+    Value full = rewriter.create<LLVM::OrOp>(loc, hiShifted, lo64);
+    rewriter.replaceOp(op, full);
+    return success();
+  }
+};
+
+struct MsrWriteOpLowering : public OpConversionPattern<MsrWriteOp> {
+  using OpConversionPattern<MsrWriteOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(MsrWriteOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // MSR write -> `wrmsr` (index in ECX, the 64-bit value split EDX:EAX): the i64 is split into its low
+    // (`trunc`) and high (`trunc (value >> 32)`) 32-bit halves, then `llvm.inline_asm "wrmsr",
+    // "{cx},{ax},{dx},~{memory}"` consumes (index, low, high); no result. The `~{memory}` clobber is
+    // mandatory -- a wrmsr can toggle long mode (IA32_EFER) or relocate the APIC (IA32_APIC_BASE), a
+    // system-wide memory effect. has_side_effects always.
+    Location loc = op.getLoc();
+    Type i32Ty = rewriter.getI32Type();
+    Type i64Ty = rewriter.getI64Type();
+    Value val = adaptor.getValue();
+    Value lo = rewriter.create<LLVM::TruncOp>(loc, i32Ty, val);
+    Value c32 = rewriter.create<LLVM::ConstantOp>(
+        loc, i64Ty, rewriter.getI64IntegerAttr(32));
+    Value hiShifted = rewriter.create<LLVM::LShrOp>(loc, val, c32);
+    Value hi = rewriter.create<LLVM::TruncOp>(loc, i32Ty, hiShifted);
+    SmallVector<NamedAttribute, 3> attrs = {
+        rewriter.getNamedAttr("asm_string", rewriter.getStringAttr("wrmsr")),
+        rewriter.getNamedAttr("constraints",
+                              rewriter.getStringAttr("{cx},{ax},{dx},~{memory}")),
+        rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
+    };
+    rewriter.create<LLVM::InlineAsmOp>(
+        loc, TypeRange{}, ValueRange{adaptor.getIndex(), lo, hi}, attrs);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct ConvertToLLVMPass
     : public PassWrapper<ConvertToLLVMPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConvertToLLVMPass)
@@ -461,14 +531,16 @@ struct ConvertToLLVMPass
     LLVMConversionTarget target(getContext());
     target.addLegalOp<ModuleOp>();
     target.addIllegalOp<ComputeOp, BarrierOp, AsmOp, PortioOp, VolatileLoadOp,
-                        VolatileStoreOp, CRegReadOp, CRegWriteOp>();
+                        VolatileStoreOp, CRegReadOp, CRegWriteOp, MsrReadOp,
+                        MsrWriteOp>();
 
     LLVMTypeConverter typeConverter(&getContext());
     RewritePatternSet patterns(&getContext());
     patterns.add<ComputeOpLowering, BarrierOpLowering, AsmOpLowering,
                  PortioOpLowering, VolatileLoadOpLowering,
                  VolatileStoreOpLowering, CRegReadOpLowering,
-                 CRegWriteOpLowering>(typeConverter, &getContext());
+                 CRegWriteOpLowering, MsrReadOpLowering, MsrWriteOpLowering>(
+        typeConverter, &getContext());
 
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns))))

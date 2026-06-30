@@ -356,4 +356,47 @@ def BCIR_CRegWriteOp : BCIR_Op<"creg_write"> {
   let assemblyFormat = "$reg `,` $value attr-dict `:` type($value)";
 }
 
+def BCIR_MsrReadOp : BCIR_Op<"msr_read"> {
+  let summary = "Read an x86-64 model-specific register (boot/CPU-state asm edge, D1.4)";
+  // A model-specific-register read (`rdmsr`) is a TRUSTED OPAQUE EFFECT EDGE in the same Tier-1 family
+  // as `bcir.creg_read` (BCIR_DRIVER_KERNEL_ROADMAP.md Part II Tier 1): no C value-semantics, no cfront
+  // dual-rail twin (the cfront rail expresses MSR access only as a raw `c.asm` blob), so the template is
+  // authored DIRECTLY in LLVM-IR inline-asm syntax. Unlike `creg_read` the register is NOT an enum but a
+  // RUNTIME index (`rdmsr` reads the MSR numbered by ECX), so the op takes a 32-bit index operand. x86-only.
+  //
+  //   * `$index` -- the MSR number (the 32-bit value `rdmsr` consumes in ECX; an `#bcir`-built i32).
+  //   * result   -- the 64-bit MSR value (`rdmsr` returns it split EDX:EAX = high:low).
+  //
+  // LOWERING (`-convert-bcir-to-llvm`): the index is placed in ECX and `rdmsr` returns the two 32-bit
+  // halves via a multi-output inline-asm (`llvm.inline_asm has_side_effects "rdmsr", "={ax},={dx},{cx},
+  // ~{memory}"` -> `!llvm.struct<(i32, i32)>`); the lowering then REASSEMBLES the i64 (`(zext hi) << 32 |
+  // zext lo`), so the op surface is a clean 64-bit value (matching the kernel `native_read_msr` idiom).
+  // `has_side_effects` is ALWAYS set and the `~{memory}` clobber is intentional even for a READ: an MSR
+  // is live CPU state (IA32_APIC_BASE, IA32_EFER, the TSC-deadline MSR, ...) and a read is an ORDERING
+  // POINT, exactly as for `creg_read` -- without the clobber LLVM could reorder an unrelated load across it.
+  //
+  // DCE/CSE SAFETY: carries NO `Pure`/`NoMemoryEffect` trait by DESIGN (an MSR read is side-effecting --
+  // re-reading yields fresh CPU state and must not be merged/elided), matching every asm-edge op.
+  let arguments = (ins I32:$index);
+  let results = (outs I64:$value);
+  let assemblyFormat = "$index attr-dict `:` type($index) `->` type($value)";
+}
+
+def BCIR_MsrWriteOp : BCIR_Op<"msr_write"> {
+  let summary = "Write an x86-64 model-specific register (boot/CPU-state asm edge, D1.4)";
+  // The void counterpart of `bcir.msr_read`. A model-specific-register write (`wrmsr`) has system-wide
+  // effects (writing IA32_EFER toggles long mode, IA32_APIC_BASE relocates the local APIC, the
+  // SYSENTER/STAR MSRs install syscall entry points), so it is conservatively side-effecting AND carries
+  // a `~{memory}` clobber. x86-only.
+  //
+  //   * `$index` -- the MSR number (placed in ECX).
+  //   * `$value` -- the 64-bit value to write (`wrmsr` consumes it split EDX:EAX = high:low).
+  //
+  // LOWERING: the i64 value is SPLIT into its low/high 32-bit halves (`trunc value` / `trunc (value >>
+  // 32)`), the index goes to ECX, and `llvm.inline_asm has_side_effects "wrmsr", "{cx},{ax},{dx},
+  // ~{memory}"` consumes (index, low, high); no result. `has_side_effects` always.
+  let arguments = (ins I32:$index, I64:$value);
+  let assemblyFormat = "$index `,` $value attr-dict `:` type($index) `,` type($value)";
+}
+
 #endif // BCIR_CORE_OPS

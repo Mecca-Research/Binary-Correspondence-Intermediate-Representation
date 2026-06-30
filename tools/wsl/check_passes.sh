@@ -199,7 +199,17 @@ run_fc -convert-bcir-to-llvm "${T}/creg.mlir"
 echo "[passes] bcir.creg_read/write op negatives (the control-register value must be an i64)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/creg_verify_neg.mlir" \
   && echo "  PASS creg_verify_neg.mlir" || { echo "  FAIL creg_verify_neg.mlir"; fail=1; }
-echo "[passes] ASSEMBLE-SMOKE-TEST (anti-masking: portio/asm/creg/volatile lowerings piped through mlir-translate-20 | llc-20 -- a real .o + the expected instruction, not just FileCheck text)"
+echo "[passes] bcir.msr_read/write round-trip (D1.4: x86-64 model-specific-register access parses/prints identically)"
+if [ -n "${FC}" ]; then
+  "${BO}" "${T}/msr_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/msr_roundtrip.mlir" \
+    && echo "  PASS msr_roundtrip.mlir" || { echo "  FAIL msr_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" "${T}/msr_roundtrip.mlir" >/dev/null 2>/tmp/pe \
+    && echo "  RUN-ONLY msr_roundtrip.mlir" || { echo "  FAIL msr_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+fi
+echo "[passes] bcir.msr_read/write -> llvm.inline_asm (D1.4 lowering: rdmsr/wrmsr; index->ECX, i64 reassembled/split across EDX:EAX, side-effecting + ~{memory})"
+run_fc -convert-bcir-to-llvm "${T}/msr.mlir"
+echo "[passes] ASSEMBLE-SMOKE-TEST (anti-masking: portio/asm/creg/volatile/msr lowerings piped through mlir-translate-20 | llc-20 -- a real .o + the expected instruction, not just FileCheck text)"
 # Source the harness so it shares ${BO}; it returns nonzero on any assemble failure (and skips cleanly
 # when llc-20/mlir-translate-20 are absent, like the FileCheck guard). Fold its result into ${fail}.
 if . "${ROOT}/tools/wsl/check_asm_lowering.sh"; then :; else fail=1; fi
