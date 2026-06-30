@@ -654,6 +654,16 @@ destabilize the keystone.
 
 #### Phase D — Drivers, opcode tables & hardware integration (next major milestone, after C)
 
+> **Phase D is expanded into a sequenced program in
+> [`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md)** — the pre-driver hardening gate
+> (turn on the already-written `sanitize_cfront.sh` + red-team the numerical wraps), the **asm / C /
+> C++ layering** model (a driver is mostly *verified C* with first-class MMIO, a thin *trusted-asm*
+> floor of ASM1/2/3 + the boot/IRQ edges still to build, and *C++ orchestration only at the G8
+> boundary*), and the **bring-up dependency ladder** (a *polled* UART needs nothing new and already
+> ships; HPET/ACPI/SMBIOS/TCG/TPM/PCI/USB/e1000/paging/VMs are independent / after / out-of-scope,
+> and the firmware specs are verified *parser-kernel* opportunities, never implementation targets).
+> The next code slice is the `bcir.portio` MLIR op (SEG8.2), after the hardening gate.
+
 The Hardware Description Layer. With verifiable C in hand:
 
 - **Import Linux kernel tables** — register maps, driver structures, PCIe/ACPI data — into BCIR
