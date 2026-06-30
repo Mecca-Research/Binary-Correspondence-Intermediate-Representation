@@ -696,12 +696,16 @@ def test_link_flag_derivation_dual_rail():
     assert library_for_callee("gsl_sf_erf") == "-lgsl"       # any gsl_*
     assert library_for_callee("Sleef_expf1_u10") == "-lsleef"  # #63 SLEEF (the vectorized-exp wrap's callee)
     assert library_for_callee("Sleef_sinf1_u10") == "-lsleef"  # any Sleef_*
+    assert library_for_callee("erfcxf") == "-lcerf"          # #64 libcerf (the scaled-erfc wrap's callee)
+    assert library_for_callee("erfcx") == "-lcerf"           # the bare/double erfcx too (a symbol libm lacks)
+    assert library_for_callee("erfcf") == "-lm"              # ... but erfcf/erfc/erf are still libm (not shadowed)
     assert library_for_callee("totally_unknown_fn") is None  # unknown-callee policy: None (no invented -l)
     # dedup + STABLE sort (reproducible): a set with two libs always yields the same ordered line.
     assert format_link_flags(sorted({"-lm", "-lcblas"})) == "-lcblas -lm"
     assert format_link_flags(sorted({"-lm", "-lfftw3"})) == "-lfftw3 -lm"
     assert format_link_flags(sorted({"-lm", "-llapack"})) == "-llapack -lm"
     assert format_link_flags(sorted({"-lm", "-lsleef"})) == "-lm -lsleef"
+    assert format_link_flags(sorted({"-lm", "-lcerf"})) == "-lcerf -lm"
 
     # (b) end-to-end derivation over real units (oracle rail).
     cases = {

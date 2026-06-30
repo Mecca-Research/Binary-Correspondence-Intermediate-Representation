@@ -931,6 +931,66 @@ def emit_sleef_exp_c(n: int, fn_name: str = "bcir_vexp") -> str:
     )
 
 
+def emit_cerf_erfcx_c(n: int, fn_name: str = "bcir_erfcx") -> str:
+    """Area-B breadth (SEG2): wrap a TRUSTED external libcerf (the complex/scaled error-function library)
+    SCALED COMPLEMENTARY ERROR FUNCTION `erfcx` through the `c.call.libm:` FFI edge -- "integrate, don't
+    reinvent", the SIXTH Area-B library after B5's BLAS sgemm (a matmul), B2's FFTW (a spectral transform),
+    #61's LAPACK sgesv (a linear solve), #62's GSL (statistics), and #63's SLEEF (a fast vectorized libm).
+    libcerf's distinctive domain is NUMERICALLY-ROBUST SPECIAL FUNCTIONS (the error-function family without
+    overflow across the full real line), so this does not overlap the existing wraps. The kernel maps
+    `out[i] = erfcx(data[i]) = exp(data[i]^2) * erfc(data[i])` over a dense unit-stride float[`n`] array.
+
+    BCIR owns the CALLING side: it fixes the dense contiguous (unit-stride) layout and (with the A1.1 Q8
+    bridge at the boundary) the precision, and DELEGATES the special function to libcerf when linked
+    (`-DBCIR_USE_CERF -lcerf`), with a portable reference fallback (the naive `expf(x*x)*erfcf(x)` per
+    element, -lm) selected by the preprocessor when it is not. BOTH paths compute the IDENTICAL erfcx (to
+    float round-off) WITHIN the bounded test envelope (|x| <= 3, where exp(x^2) <= exp(9) never overflows),
+    so the same source is correct linked or standalone -- CI needs no libcerf installed. The win is on the
+    calling side (the elementwise loop / layout / quant) + delegation to a trusted library, not a
+    reimplemented special function.
+
+    CAPABILITY (the function choice): `erfcx(x) = e^{x^2}*erfc(x)` is a function libm does NOT provide --
+    the naive `expf(x*x)*erfcf(x)` OVERFLOWS for moderately large x (exp(x^2) blows past float range around
+    |x| >~ 9, past double range around |x| >~ 26), yet erfcx stays finite/well-scaled across the whole real
+    line. The linked path calls libcerf `erfcxf` -- the float SCALAR form (`float erfcxf(float)`) from
+    `<cerf.h>` -- which is robust there (no overflow). So unlike #63's SLEEF exp (which duplicates libm
+    `expf`), this wrap ADDS A CAPABILITY: libcerf's full-real-line robustness lies OUTSIDE the bounded
+    correctness envelope, exactly as SLEEF's vectorization speed lies outside its correctness check. The
+    special function stays fully OFF the deterministic legality rail (libcerf/libm are opaque/trusted, like
+    any external edge), exactly as the activation/attention `expf`. `n` is baked in (a planned claim knows
+    its length); n >= 1 (an elementwise map needs at least one lane). The contract: `data`/`out` are dense
+    `float[n]` (out may alias data for an in-place map; both paths read data[i] before writing out[i])."""
+    if n < 1:
+        raise ValueError(f"cerf erfcx length must be >= 1; got {n}")
+    return (
+        f"/* BCIR -> external trusted libcerf scaled complementary error function via the c.call.libm: edge "
+        f"(integrate, don't reinvent; a SIXTH library -- libcerf's numerically-robust-special-function "
+        f"domain). out[i] = erfcx(data[i]) = exp(data[i]^2)*erfc(data[i]) over a dense unit-stride "
+        f"float[{n}]; erfcxf (scalar f32, no overflow on the full real line) when linked (-lcerf), portable "
+        f"naive expf(x*x)*erfcf(x) fallback otherwise (-lm) -- both compute the identical erfcx to float "
+        f"round-off within |x| <= 3 (the bounded test envelope, where exp(x^2) never overflows). erfcx is a "
+        f"symbol libm LACKS, so this adds a capability (libcerf's full-range robustness lies outside the "
+        f"envelope). BCIR owns the calling side (the elementwise layout + the Q8<->f32 boundary); the "
+        f"special function is trusted (off the deterministic rail, like the G1 activation expf). */\n"
+        "#include <stddef.h>\n"
+        "#if defined(BCIR_USE_CERF)\n"
+        "  #include <cerf.h>\n"
+        "  #define BCIR_ERFCX_CERF 1\n"
+        "#else\n"
+        "  #include <math.h>\n"
+        "  #define BCIR_ERFCX_CERF 0\n"
+        "#endif\n"
+        f"void {fn_name}(const float *data, float *out) {{\n"
+        f"  for (size_t i = 0; i < {n}; ++i)\n"
+        f"#if BCIR_ERFCX_CERF\n"
+        f"    out[i] = erfcxf(data[i]);                          /* c.call.libm:erfcxf -- the trusted robust special function */\n"
+        f"#else\n"
+        f"    out[i] = expf(data[i]*data[i]) * erfcf(data[i]);   /* c.call.libm:expf, c.call.libm:erfcf -- the portable naive twin (-lm) */\n"
+        f"#endif\n"
+        f"}}\n"
+    )
+
+
 def emit_sycl_saxpy_c(n: int, fn_name: str = "bcir_saxpy") -> str:
     """SYCL backend differential oracle: emit a SINGLE-SOURCE C++ SAXPY kernel ``out[i] = a*x[i] + y[i]`` over
     a dense unit-stride ``float[n]`` -- a SYCL device ``parallel_for`` when compiled with a SYCL toolchain
