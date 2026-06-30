@@ -85,6 +85,11 @@ run_fc -bcir-gem-matmul-cost "${T}/gem_matmul_cost.mlir"
 echo "[passes] gem-matmul-cost analytic-parity negatives (declared compute/mem != the recomputed roofline)"
 "${BO}" -bcir-gem-matmul-cost -verify-diagnostics -split-input-file "${T}/gem_matmul_cost_neg.mlir" \
   && echo "  PASS gem_matmul_cost_neg.mlir" || { echo "  FAIL gem_matmul_cost_neg.mlir"; fail=1; }
+echo "[passes] gem-activation-cost (G1: recompute the activation roofline (cost_of) parity-check + annotate; informs-only, never gates legality)"
+run_fc -bcir-gem-activation-cost "${T}/gem_activation_cost.mlir"
+echo "[passes] gem-activation-cost analytic-parity negatives (declared compute/mem != the recomputed roofline)"
+"${BO}" -bcir-gem-activation-cost -verify-diagnostics -split-input-file "${T}/gem_activation_cost_neg.mlir" \
+  && echo "  PASS gem_activation_cost_neg.mlir" || { echo "  FAIL gem_activation_cost_neg.mlir"; fail=1; }
 echo "[passes] lower-gem-matmul (gem.matmul plan -> concrete tiled gem.block sequence)"
 run_fc -bcir-lower-gem-matmul "${T}/lower_gem_matmul.mlir"
 echo "[passes] lower-gem-matmul-buffer (gem.matmul_buffer -> tiled scf.for nest, C += A*B)"
