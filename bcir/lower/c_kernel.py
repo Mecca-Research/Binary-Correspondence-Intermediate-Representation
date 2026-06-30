@@ -454,6 +454,81 @@ def emit_fftw_fft_c(n: int, fn_name: str = "bcir_fft") -> str:
     )
 
 
+def emit_fftw_fft2_c(n0: int, n1: int, fn_name: str = "bcir_fft2") -> str:
+    """SEG2.2: wrap a TRUSTED external FFTW 2-D complex FFT through the `c.call.libm:` FFI edge -- the 2-D
+    analog of `emit_fftw_fft_c` (a genuinely NEW numerical capability: a 2-D spectral transform, the kernel
+    under image/convolution spectral methods, not a 1-D transform), on the SAME FFTW library and the SAME
+    `-lfftw3` link rule (`fftwf_*` already maps there -- no registry change). BCIR owns the CALLING side: it
+    fixes the interleaved complex, ROW-MAJOR layout (element `(r,c)`'s Re at `2*(r*n1+c)`, Im at
+    `2*(r*n1+c)+1` -- exactly FFTW's `fftwf_complex` row-major layout) and (with the A1.1 Q8 bridge at the
+    boundary) the precision, and DELEGATES the transform to FFTW's plan API (`fftwf_plan_dft_2d` +
+    `fftwf_execute` + `fftwf_destroy_plan`) when linked (`-DBCIR_USE_FFTW -lfftw3`), with a portable
+    reference DFT (the naive O((n0*n1)^2) double sum over (k0,k1)) selected by the preprocessor when it is
+    not. BOTH paths compute the IDENTICAL forward transform (FFTW's FFTW_FORWARD == the
+    `e^{-2*pi*i*(j0*k0/n0 + j1*k1/n1)}` sign convention, UNNORMALIZED -- no 1/N), so the same source is
+    correct linked or standalone -- the win is on the calling side (layout / quant), not a reimplemented FFT.
+    `n0` (rows, the FIRST/OUTER/slowest dim) and `n1` (cols, the SECOND/INNER/fastest dim) are baked in (a
+    planned claim knows its shape). The interface is a float[2*n0*n1] in -> float[2*n0*n1] out, interleaved
+    complex row-major, exactly the `fftwf_complex` memory layout (so the wrapped call is a pointer cast, no
+    copy)."""
+    if n0 < 1:
+        raise ValueError(f"fft2 rows (n0) must be >= 1; got {n0}")
+    if n1 < 1:
+        raise ValueError(f"fft2 cols (n1) must be >= 1; got {n1}")
+    return (
+        f"/* BCIR -> external trusted 2-D FFT via the c.call.libm: edge (integrate, don't reinvent). "
+        f"forward complex DFT of an {n0}x{n1} array; interleaved row-major layout, element (r,c) Re at "
+        f"2*(r*n1+c), Im at +1. FFTW fftwf_plan_dft_2d(FFTW_FORWARD) when linked, naive O((n0*n1)^2) "
+        f"reference DFT otherwise -- both compute the identical transform; BCIR owns the calling side "
+        f"(layout + the Q8<->f32 boundary). */\n"
+        "#include <stddef.h>\n"
+        "#if defined(BCIR_USE_FFTW)\n"
+        "  #include <fftw3.h>\n"
+        "  #define BCIR_FFT2_FFTW 1\n"
+        "#else\n"
+        "  #include <math.h>\n"
+        "  #define BCIR_FFT2_FFTW 0\n"
+        "#endif\n"
+        f"void {fn_name}(const float *in, float *out) {{\n"
+        f"#if BCIR_FFT2_FFTW\n"
+        f"  /* The trusted external kernel. `in`/`out` are interleaved complex row-major == fftwf_complex\n"
+        f"     layout; the plan is created/executed/destroyed around the single transform (n0={n0} rows\n"
+        f"     OUTER, n1={n1} cols INNER, baked in). */\n"
+        f"  fftwf_complex *fin = (fftwf_complex *)(void *)in;\n"
+        f"  fftwf_complex *fout = (fftwf_complex *)out;\n"
+        f"  fftwf_plan plan = fftwf_plan_dft_2d({n0}, {n1}, fin, fout, FFTW_FORWARD, FFTW_ESTIMATE);\n"
+        f"  fftwf_execute(plan);                  /* c.call.libm:fftwf_execute */\n"
+        f"  fftwf_destroy_plan(plan);\n"
+        f"#else\n"
+        f"  /* Portable reference DFT: out[(j0,j1)] = sum_(k0,k1) in[(k0,k1)] *\n"
+        f"     exp(-2*pi*i*(j0*k0/n0 + j1*k1/n1)) -- the SAME forward transform FFTW computes (UNNORMALIZED),\n"
+        f"     so linked and standalone agree to float round-off. */\n"
+        f"  const float two_pi = 6.28318530717958647692f;\n"
+        f"  for (size_t j0 = 0; j0 < {n0}; ++j0) {{\n"
+        f"    for (size_t j1 = 0; j1 < {n1}; ++j1) {{\n"
+        f"      float re = 0.0f, im = 0.0f;\n"
+        f"      for (size_t k0 = 0; k0 < {n0}; ++k0) {{\n"
+        f"        for (size_t k1 = 0; k1 < {n1}; ++k1) {{\n"
+        f"          /* reduced phase per dimension: stable for large dims (matches (j*k)%n) */\n"
+        f"          float ang = -two_pi * ((float)((j0 * k0) % {n0}) / (float){n0}\n"
+        f"                                 + (float)((j1 * k1) % {n1}) / (float){n1});\n"
+        f"          float c = cosf(ang), s = sinf(ang);                          /* c.call.libm:cosf/sinf */\n"
+        f"          size_t kb = 2 * (k0 * {n1} + k1);\n"
+        f"          float xr = in[kb], xi = in[kb + 1];\n"
+        f"          re += xr * c - xi * s;\n"
+        f"          im += xr * s + xi * c;\n"
+        f"        }}\n"
+        f"      }}\n"
+        f"      size_t ob = 2 * (j0 * {n1} + j1);\n"
+        f"      out[ob] = re;\n"
+        f"      out[ob + 1] = im;\n"
+        f"    }}\n"
+        f"  }}\n"
+        f"#endif\n"
+        f"}}\n"
+    )
+
+
 def emit_lapack_solve_c(n: int, nrhs: int = 1, fn_name: str = "bcir_solve") -> str:
     """B-breadth (#61): wrap a TRUSTED external LAPACK dense linear solve through the `c.call.libm:` FFI edge
     -- "integrate, don't reinvent", a THIRD distinct kernel class (a direct SOLVER, not a matmul or a
