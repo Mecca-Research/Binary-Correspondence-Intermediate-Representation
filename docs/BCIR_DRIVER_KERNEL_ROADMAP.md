@@ -92,7 +92,7 @@ this tier as small as possible; every line here is unverified.**
 | Port-I/O (**ASM2**, `c.portio.in/out.{b,w,l}`; MLIR `bcir.portio`) | ✅ **have** | x86 `in`/`out`, isolated `__ioport` I/O space, barriered. Non-x86 → honest diagnostic. MLIR twin `bcir.portio` lowers to `llvm.inline_asm` (SEG8.2, **landed**), byte-identical to the cfront templates. |
 | Memory fences (**ASM3**, `c.fence[.acquire/.release]`; MLIR `bcir.barrier`) | ✅ **have** | Per-ISA `mfence`/`dmb`/`fence`, `memory_order`-parameterized (SEG6/7). |
 | **Entry / reset stub + stack setup before C** | ❌ **missing** | A `bcir.entry` naked-function edge (no prologue, sets `sp`, jumps to C `main`). The genuine floor of bring-up. |
-| **Control-register / MSR access** (CR0/CR3/CR4, `rdmsr`/`wrmsr`) | ❌ **missing as a typed edge** | Expressible today only as a *raw* ASM1 blob; deserves a typed `c.creg`/`c.msr` edge (a small per-ISA table, like ASM2). |
+| **Control-register access** (CR0/CR2/CR3/CR4/CR8) | ✅ **have (MLIR rail, D1.3)** | `bcir.creg_read`/`bcir.creg_write` lower to `llvm.inline_asm "mov %crN, $0"` / `"mov $0, %crN"`. **MSR access** (`rdmsr`/`wrmsr`) is the remaining typed sysreg edge; the cfront-rail twin (`c.creg`/`c.msr`) is a later increment (today cfront expresses these as a raw ASM1 blob). |
 | **Descriptor-table loads** (`lgdt`/`lidt`/`ltr`) + segment reloads | ❌ **missing** | Raw-asm only today. |
 | **Interrupt entry trampoline** (full-frame save/restore + `iret`) | ❌ **missing — largest new surface** | Needs the currently-rejected `asm goto` *or* a dedicated trampoline op. The ISR *body* is verified C; only the entry/`iret` shim is asm. |
 
@@ -246,9 +246,11 @@ discipline + a CI-green draft PR per the established cadence):
   law rail as it already is in cfront emit: the ops take the resolved integer register address and lower
   to `llvm.inttoptr` + a **volatile** `llvm.load`/`llvm.store` (mirroring the cfront
   `*(volatile T*)(intaddr)` emit; `volatile` set via the generated setter so it is LLVM-20/22 stable).
-- **D1.3** — the **boot/CPU-state asm edges** *as drivers demand them* (not speculatively): entry/
-  reset stub + stack init; typed control-register/MSR edges; `lgdt`/`lidt`. The interrupt
-  trampoline (the largest new surface) lands only when going interrupt-driven (RUNG 1).
+- **D1.3** — the **boot/CPU-state asm edges**: the typed **control-register** edge
+  (`bcir.creg_read`/`bcir.creg_write` for CR0/CR2/CR3/CR4/CR8) is ✅ **landed** (CR3 is the paging
+  gateway, the most foundational of these). The remainder land *as a driver demands them* (not
+  speculatively): MSR access (`rdmsr`/`wrmsr`); entry/reset stub + stack init; `lgdt`/`lidt`. The
+  interrupt trampoline (the largest new surface) lands only when going interrupt-driven (RUNG 1).
 
 ### Phase 2 — The first driver, formalized, then the ladder
 - **D2.1** — promote the existing polled UART (`cfront_driver_uart.c` + `uart_regs.h`) into a real

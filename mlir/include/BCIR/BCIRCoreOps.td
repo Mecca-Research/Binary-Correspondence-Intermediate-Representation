@@ -291,4 +291,38 @@ def BCIR_VolatileStoreOp : BCIR_Op<"volatile_store"> {
   let assemblyFormat = "$value `,` $addr attr-dict `:` type($value) `,` type($addr)";
 }
 
+def BCIR_CRegReadOp : BCIR_Op<"creg_read"> {
+  let summary = "Read an x86-64 control register (boot/CPU-state asm edge, D1.3)";
+  // A control-register read (CR0/CR2/CR3/CR4/CR8) is a TRUSTED OPAQUE EFFECT EDGE -- there is no C
+  // value-semantics for it, so it is the irreducible-assembly tier (BCIR_DRIVER_KERNEL_ROADMAP.md Part
+  // II Tier 1), like `bcir.asm`/`bcir.portio`. Unlike those two it has NO cfront dual-rail twin (the
+  // cfront rail expresses CR access only as a raw `c.asm` blob), so the template is authored DIRECTLY
+  // in LLVM-IR inline-asm syntax (`$0` operand, single-`%` register) -- empirically the exact form
+  // clang emits for `__asm__("mov %%cr3, %0" : "=r"(v))`. x86-only.
+  //
+  //   * `reg`    -- which control register (a `#bcir.ctrl_reg` enum: cr0/cr2/cr3/cr4/cr8).
+  //   * result   -- the 64-bit register value (control registers are 64-bit in long mode).
+  //
+  // LOWERING (`-convert-bcir-to-llvm`): `llvm.inline_asm has_side_effects "mov %<reg>, $0", "=r"`,
+  // returning i64. `has_side_effects` is ALWAYS set (a control-register read is not a pure value --
+  // CR2 holds the faulting address, CR3 the live page-table base; it must never be reordered/elided).
+  let arguments = (ins BCIR_CtrlRegAttr:$reg);
+  let results = (outs I64:$value);
+  let assemblyFormat = "$reg attr-dict `->` type($value)";
+}
+
+def BCIR_CRegWriteOp : BCIR_Op<"creg_write"> {
+  let summary = "Write an x86-64 control register (boot/CPU-state asm edge, D1.3)";
+  // The void counterpart of `bcir.creg_read`. A control-register WRITE has system-wide effects (writing
+  // CR3 reloads the page tables + flushes the TLB; CR0/CR4 toggle paging/protection/feature bits), so it
+  // is conservatively side-effecting AND carries a `~{memory}` clobber. x86-only.
+  //
+  //   * `value`  -- the 64-bit value to load into the register.
+  //   * `reg`    -- which control register (a `#bcir.ctrl_reg` enum).
+  //
+  // LOWERING: `llvm.inline_asm has_side_effects "mov $0, %<reg>", "r,~{memory}"`, no result.
+  let arguments = (ins I64:$value, BCIR_CtrlRegAttr:$reg);
+  let assemblyFormat = "$reg `,` $value attr-dict `:` type($value)";
+}
+
 #endif // BCIR_CORE_OPS

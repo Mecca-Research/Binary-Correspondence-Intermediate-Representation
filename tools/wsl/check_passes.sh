@@ -183,6 +183,19 @@ run_fc -convert-bcir-to-llvm "${T}/volatile_mmio.mlir"
 echo "[passes] bcir.volatile_load/store op negatives (the device-register address must be a signless integer)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/volatile_mmio_verify_neg.mlir" \
   && echo "  PASS volatile_mmio_verify_neg.mlir" || { echo "  FAIL volatile_mmio_verify_neg.mlir"; fail=1; }
+echo "[passes] bcir.creg_read/write round-trip (D1.3: x86-64 control-register access parses/prints identically)"
+if [ -n "${FC}" ]; then
+  "${BO}" "${T}/creg_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/creg_roundtrip.mlir" \
+    && echo "  PASS creg_roundtrip.mlir" || { echo "  FAIL creg_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" "${T}/creg_roundtrip.mlir" >/dev/null 2>/tmp/pe \
+    && echo "  RUN-ONLY creg_roundtrip.mlir" || { echo "  FAIL creg_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+fi
+echo "[passes] bcir.creg_read/write -> llvm.inline_asm (D1.3 lowering: mov %crN,\$0 / mov \$0,%crN; LLVM-IR asm syntax, side-effecting)"
+run_fc -convert-bcir-to-llvm "${T}/creg.mlir"
+echo "[passes] bcir.creg_read/write op negatives (the control-register value must be an i64)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/creg_verify_neg.mlir" \
+  && echo "  PASS creg_verify_neg.mlir" || { echo "  FAIL creg_verify_neg.mlir"; fail=1; }
 echo "[passes] cache-contention (G4: recompute the cache-line/bank-conflict CONTENTION signal; informs-only, never gates legality)"
 run_fc -bcir-cache-contention "${T}/cache_contention.mlir"
 echo "[passes] cache-contention op verifier negatives (the frozen analytic model: waste/conflict/q8-sum/cost consistency)"

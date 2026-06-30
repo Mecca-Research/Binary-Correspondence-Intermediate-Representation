@@ -106,6 +106,16 @@ def BCIR_PortDir : BCIR_Enum<"PortDir", "x86 port-mapped I/O direction (ASM2)", 
   I32EnumAttrCase<"In", 0, "in">, I32EnumAttrCase<"Out", 1, "out">]>;
 def BCIR_PortDirAttr : BCIR_EnumAttr<BCIR_PortDir, "port_dir">;
 
+// --- x86 control register (boot/CPU-state asm edge, D1.3) ---
+// The named x86-64 control registers; the enum value is the register NUMBER (CR2/CR3/CR4 are 2/3/4;
+// CR8 is the long-mode task-priority register). The lowering renders the keyword `crN` into the
+// `mov %crN, $0` / `mov $0, %crN` inline-asm template.
+def BCIR_CtrlReg : BCIR_Enum<"CtrlReg", "x86-64 control register", [
+  I32EnumAttrCase<"CR0", 0, "cr0">, I32EnumAttrCase<"CR2", 2, "cr2">,
+  I32EnumAttrCase<"CR3", 3, "cr3">, I32EnumAttrCase<"CR4", 4, "cr4">,
+  I32EnumAttrCase<"CR8", 8, "cr8">]>;
+def BCIR_CtrlRegAttr : BCIR_EnumAttr<BCIR_CtrlReg, "ctrl_reg">;
+
 // --- Precision contract ---
 def BCIR_PrecisionAttr : BCIR_Attr<"Precision", "precision"> {
   let summary = "Numerical precision and tolerance contract";
