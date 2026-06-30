@@ -87,6 +87,16 @@ jobs:
       - name: Freestanding C StreamPack runtime (no-libc + Python->C ABI parity)
         run: bash tools/c/check_runtime.sh
 
+      - name: cfront twin sanitizer sweep (ASan/UBSan/LSan over the C compiler's own lexer/parser/lowering/emit)
+        # Runs tools/c/sanitize_cfront.sh -- the ASan+UBSan+LSan harness over the bcir_cfront C twin
+        # (every cfront_*.c fixture + a bounded 300-valid/400-malformed fuzz campaign + the adversarial
+        # Bug-1/2/A/B fixtures), so a memory bug INSIDE the compiler -- including the SEG6/7 fence + the
+        # c.asm lowering -- is caught, not just rail-output divergence. The runner has clang+libclang-rt
+        # and gcc, so both ASan engines + clang's stricter UBSan-trap run; the script self-skips a missing
+        # engine and fails LOUD only if NONE ran. Valgrind (the slow ~20x stage) is dropped here so the
+        # step stays well under a minute; ASan/UBSan/leak remain always-on.
+        run: SANITIZE_SKIP_VALGRIND=1 bash tools/c/sanitize_cfront.sh
+
       - name: StreamPack C decoder fuzz (libFuzzer + ASan/UBSan on the trust boundary)
         run: FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
 
