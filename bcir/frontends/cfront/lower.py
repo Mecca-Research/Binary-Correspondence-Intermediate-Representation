@@ -1103,6 +1103,10 @@ class _FuncLowerer:
                 if node.ident in _IMAG_UNIT:                  # <complex.h> imaginary unit (unless shadowed)
                     t = self._temp(scalar("float _Complex"), "imag_unit")
                     return self._emit(f"c.cconst:{node.ident}", Opcode.LOAD, (), (t,))
+                if node.ident in self._MEMORDER:              # SEG6.1: a `memory_order_*` / `__ATOMIC_*`
+                    val = self._MEMORDER[node.ident]          # constant (unless shadowed by a real decl) ->
+                    t = self._temp(scalar("int", self.abi), f"k{val}")   # an int const, like an IntLit
+                    return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(val,))
             return self._lookup(node.ident, node.pos)[0]
         if isinstance(node, cast.StringLit):                  # a string value -> the global pointer
             return self._string_ptr(node.value)
@@ -1773,15 +1777,50 @@ class _FuncLowerer:
     # fence rw,rw; acquire -> lfence/dmb ishld/fence r,rw; release -> sfence/dmb ishst/fence rw,w). The full
     # fence keeps the BACKWARD-COMPATIBLE op string `c.fence` (so the existing __atomic_thread_fence /
     # __sync_synchronize claims -- and the C-twin parity corpus -- are unchanged, no digest/parity churn); only
-    # the lighter kinds get the new op strings. `__sync_synchronize`, the GCC/Clang `__atomic_thread_fence`,
-    # and the C11 `<stdatomic.h>` `atomic_thread_fence` are all SEQ_CST full fences. The x86-conventional
-    # `_mm_{m,l,s}fence` intrinsic NAMES encode the kind directly, so the kind is read off the name -- no
-    # `memory_order` argument is parsed (the order constants are not recognized constants in this subset).
+    # the lighter kinds get the new op strings. `__sync_synchronize` is an unconditional SEQ_CST full fence.
+    # SEG6.1 -- the order-taking `__atomic_thread_fence(order)` (GCC/Clang) and `atomic_thread_fence(order)`
+    # (C11 `<stdatomic.h>`) forms NOW parse their `memory_order` ARGUMENT and route to the kind it implies
+    # (acquire/release fold to the lighter op strings; seq_cst/acq_rel/relaxed and any non-constant order fold
+    # conservatively to the full `c.fence` -- a stronger fence never under-synchronizes). The bare `_FENCE`
+    # entry below is the FALLBACK (no-arg) op for these names: a degenerate `atomic_thread_fence()` with no
+    # argument keeps the full fence. The x86-conventional `_mm_{m,l,s}fence` intrinsic NAMES encode the kind
+    # directly (they take no order argument), so their kind is read off the name.
     _FENCE = {"__atomic_thread_fence": "c.fence", "__sync_synchronize": "c.fence",
-              "atomic_thread_fence": "c.fence",                  # C11 <stdatomic.h> -- seq_cst full fence
+              "atomic_thread_fence": "c.fence",                  # C11 <stdatomic.h> -- order-parameterized
               "_mm_mfence": "c.fence",                           # x86 mfence -- full (load+store) fence
               "_mm_lfence": "c.fence.acquire",                   # x86 lfence -- load (acquire) fence
               "_mm_sfence": "c.fence.release"}                   # x86 sfence -- store (release) fence
+    # The order-taking fence forms (SEG6.1): these parse `node.args[0]` as a `memory_order` and route to the
+    # kind it implies. The no-arg forms (`__sync_synchronize`, `_mm_*`) are NOT in this set and keep `_FENCE`.
+    _FENCE_ORDERED = frozenset({"__atomic_thread_fence", "atomic_thread_fence"})
+    # The C11 `memory_order_*` constants AND the GCC/Clang `__ATOMIC_*` macro spellings (they share the same
+    # integer values). A `memory_order` arg spelled as one of these named constants folds to its value.
+    _MEMORDER = {"memory_order_relaxed": 0, "memory_order_consume": 1, "memory_order_acquire": 2,
+                 "memory_order_release": 3, "memory_order_acq_rel": 4, "memory_order_seq_cst": 5,
+                 "__ATOMIC_RELAXED": 0, "__ATOMIC_CONSUME": 1, "__ATOMIC_ACQUIRE": 2,
+                 "__ATOMIC_RELEASE": 3, "__ATOMIC_ACQ_REL": 4, "__ATOMIC_SEQ_CST": 5}
+    # order value -> fence-kind op string. acquire(2)/consume(1) -> a load (acquire) fence; release(3) -> a
+    # store (release) fence; seq_cst(5)/acq_rel(4)/relaxed(0) -> the full fence (a sound over-approximation --
+    # a stronger fence never under-synchronizes, so acq_rel and relaxed both conservatively fold to full).
+    _ORDER_KIND = {0: "c.fence", 1: "c.fence.acquire", 2: "c.fence.acquire", 3: "c.fence.release",
+                   4: "c.fence", 5: "c.fence"}
+
+    def _fence_order_kind(self, arg_node) -> str:
+        """Resolve a `memory_order` ARGUMENT AST node to a fence-kind op string (SEG6.1). An integer literal
+        uses its value; a named `memory_order_*` / `__ATOMIC_*` constant uses its mapped value; anything else
+        (a runtime variable, an unrecognized name, a non-constant expression) folds conservatively to the
+        FULL fence (`c.fence`) -- sound (a stronger fence never under-synchronizes) and never crashes."""
+        if isinstance(arg_node, cast.IntLit):
+            order = arg_node.value
+        elif (isinstance(arg_node, cast.Name) and arg_node.ident in self._MEMORDER
+              and arg_node.ident not in self.env
+              and arg_node.ident not in self.func_rets):         # the constant ONLY when NOT shadowed by a real
+            order = self._MEMORDER[arg_node.ident]               #   decl OR a same-named function -- EXACTLY
+            #   _rvalue's precedence (an env local, then a func name -> a funcptr value, only THEN the _MEMORDER
+            #   constant), so the kind rail never disagrees with the value rail on a shadowed name.
+        else:
+            order = 5                                            # non-constant / shadowed / unknown -> seq_cst (full)
+        return self._ORDER_KIND.get(order, "c.fence")            # an out-of-range int folds to full too
     # Compare-and-swap -> the CMPXCHG opcode: a 3-read claim (ptr, expected, desired). The `val`
     # form returns the pre-swap value, the `bool` form returns whether the swap happened.
     _CMPXCHG = {"__sync_val_compare_and_swap": "c.cmpxchg.val",
@@ -1807,7 +1846,14 @@ class _FuncLowerer:
         # the decoupled GGG/scatter tail), so it stays SCALAR-shaped -- the lane law (R6) admits
         # lane A for SCALAR, and the atomic/barriered hazard discharges R5.
         if node.callee in self._FENCE and node.callee not in self.func_rets:
-            op = self._FENCE[node.callee]                # c.fence | c.fence.acquire | c.fence.release (the KIND)
+            # SEG6.1: the order-taking forms (`__atomic_thread_fence`/`atomic_thread_fence`) route by their
+            # `memory_order` ARGUMENT (read off the ORIGINAL AST node -- the arg was already evaluated into
+            # `actuals` above, emitting the same const claim the C twin emits, so parity is preserved); the
+            # no-arg forms (`__sync_synchronize`, `_mm_{m,l,s}fence`) encode their KIND in the name.
+            if node.callee in self._FENCE_ORDERED and node.args:
+                op = self._fence_order_kind(node.args[0])
+            else:
+                op = self._FENCE[node.callee]            # c.fence | c.fence.acquire | c.fence.release (the KIND)
             t = self._temp(scalar("uint32_t"), "fence")
             self._emit(op, Opcode.BARRIER, (), (), lane=Lane.A, hazard="barriered")
             return t

@@ -202,6 +202,27 @@ off the legality value-path); `verify.verify_barrier_ordering` checks a realized
 respects the fence, *advisory* and out of the frontend verdict like R21. It is a safe
 no-op on any module carrying no barriered claim.
 
+**Order-parameterized memory fences (SEG6.1).** The cfront recognizes the
+memory-fence intrinsics and lowers them to `barriered` `BARRIER` claims whose
+**kind** rides the op string — `c.fence` (full / seq_cst), `c.fence.acquire` (load
+fence), `c.fence.release` (store fence) — which `emit.py` realizes as the per-ISA
+hardware barrier behind `--target` (x86 `mfence`/`lfence`/`sfence`; aarch64 `dmb
+ish`/`ishld`/`ishst`; riscv64 `fence rw,rw`/`r,rw`/`rw,w`). The order-taking forms
+`__atomic_thread_fence(order)` (GCC/Clang) and `atomic_thread_fence(order)` (C11
+`<stdatomic.h>`) now **parse their `memory_order` argument** and route to the kind it
+implies, recognizing both the C11 `memory_order_*` constants and the GCC `__ATOMIC_*`
+macro spellings (which share the integer values relaxed=0, consume=1, acquire=2,
+release=3, acq_rel=4, seq_cst=5): `acquire`/`consume` → `c.fence.acquire`, `release`
+→ `c.fence.release`, and `seq_cst`/`acq_rel`/`relaxed` — plus any **non-constant** or
+unrecognized order — fold conservatively to the full `c.fence` (a stronger fence never
+under-synchronizes, so the fold is sound and never crashes the lowering). The
+`acquire`/`release`/`seq_cst` orderings carry end-to-end to the MLIR `BCIR_MemOrdering`
+enum and lower to `llvm.fence acquire`/`release`/`seq_cst`
+(`mlir/test/passes/memory_ordering.mlir`); the BCIR↔LLVM ordering map is the identity
+mirrored by `bcir/lower/memory_model.py`. The full-fence op string stays the
+backward-compatible `c.fence` so the existing `__atomic_thread_fence(5)` /
+`__sync_synchronize` claims and the C-twin parity corpus are unchanged.
+
 ## 11. Rewrite laws (the building-blocks engine)
 
 Lane promotion (`GGG→UX→U(k)→U`), tile formation, layout (`AoS→SoA→AoSoA`),

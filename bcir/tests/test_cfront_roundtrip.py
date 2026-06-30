@@ -292,6 +292,9 @@ def test_roundtrip_smoke_and_exclusion_set_is_pinned():
     # the whole corpus is accounted for (included + excluded == corpus), and the counts are pinned so a
     # coverage regression (a fixture sliding from included into excluded) is visible in the diff.
     assert len(included) + len(excluded) == len(_CORPUS), (len(included), len(excluded), len(_CORPUS))
-    assert len(included) == 62, (f"included-set size changed from the pinned 62 to {len(included)} -- a "
+    # 63 since SEG6.1: `cfront_atomic.c` now round-trips (was excluded). Its emit contains
+    # `__atomic_thread_fence(__ATOMIC_SEQ_CST)`; the `__ATOMIC_*` / `memory_order_*` constants are now
+    # recognized on re-parse (lower.py `_rvalue`), so the emitted unit re-parses cleanly -- a coverage gain.
+    assert len(included) == 63, (f"included-set size changed from the pinned 63 to {len(included)} -- a "
                                  f"fixture moved across the round-trip boundary; re-classify + re-pin. "
                                  f"included={sorted(included)}")
