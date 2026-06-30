@@ -60,10 +60,14 @@ surfaces a small number of genuine, cheap, high-leverage gaps. Ranked:
 order-parameterized **fences** have full dual-rail parity (`test_c_cfront_barrier.py`,
 `test_fence_order_edge_cases_dual_rail`, 29 barrier tests, the MLIR `memory_ordering.mlir`, and
 per-ISA assemble-on-native gating); the **`bcir.asm` MLIR op (SEG8.1)** is FileCheck-gated
-(round-trip + `-convert-bcir-to-llvm` lowering + verifier negatives) — though note it is checked as
-*text*, never assembled+run, so it carries **moderate** residual risk if a driver leans hard on
-inline-asm edges (a future "assemble the emitted `llvm.inline_asm` and smoke-run it" step would
-close it).
+(round-trip + `-convert-bcir-to-llvm` lowering + verifier negatives) **and** now
+**assemble-smoke-tested** — `tools/wsl/check_asm_lowering.sh` pipes the lowered IR through
+`mlir-translate-20 --mlir-to-llvmir | llc-20 -filetype=obj` (a real `.o`, exit 0) and greps the
+emitted asm for the expected instruction, covering `bcir.asm`/`bcir.portio`/`bcir.creg_*`/the
+volatile MMIO ops. (This closed a real masking bug: the GCC `%w1`/`=a,Nd` portio templates
+text-checked but `llc` rejected them — the lowering now emits the LLVM-IR `${N:mod}` /
+`={ax},N{dx}` forms, GCC-template translation runs in `bcir.asm`, and a `+` read-write output is
+rejected at lowering.)
 
 **Phase-0 exit criterion:** H1 + H2 merged and green (H3 folded into H1). H4/H5 may run in parallel
 or after; they do not gate drivers.
@@ -89,7 +93,7 @@ this tier as small as possible; every line here is unverified.**
 | Edge | Status | Notes |
 |---|---|---|
 | Inline asm (**ASM1**, `c.asm` / `c.asm.volatile`; MLIR `bcir.asm`) | ✅ **have** | The general escape hatch; `"memory"`/volatile ⇒ `barriered`. MLIR twin lowers to `llvm.inline_asm` (SEG8.1). |
-| Port-I/O (**ASM2**, `c.portio.in/out.{b,w,l}`; MLIR `bcir.portio`) | ✅ **have** | x86 `in`/`out`, isolated `__ioport` I/O space, barriered. Non-x86 → honest diagnostic. MLIR twin `bcir.portio` lowers to `llvm.inline_asm` (SEG8.2, **landed**), byte-identical to the cfront templates. |
+| Port-I/O (**ASM2**, `c.portio.in/out.{b,w,l}`; MLIR `bcir.portio`) | ✅ **have** | x86 `in`/`out`, isolated `__ioport` I/O space, barriered. Non-x86 → honest diagnostic. MLIR twin `bcir.portio` lowers to `llvm.inline_asm` (SEG8.2, **landed**), in LLVM-IR `${N:mod}` / `={ax},N{dx}` form (the post-clang-frontend translation of the cfront GCC templates), **assemble-smoke-tested** through `llc`. |
 | Memory fences (**ASM3**, `c.fence[.acquire/.release]`; MLIR `bcir.barrier`) | ✅ **have** | Per-ISA `mfence`/`dmb`/`fence`, `memory_order`-parameterized (SEG6/7). |
 | **Entry / reset stub + stack setup before C** | ❌ **missing** | A `bcir.entry` naked-function edge (no prologue, sets `sp`, jumps to C `main`). The genuine floor of bring-up. |
 | **Control-register access** (CR0/CR2/CR3/CR4/CR8) | ✅ **have (MLIR rail, D1.3)** | `bcir.creg_read`/`bcir.creg_write` lower to `llvm.inline_asm "mov %crN, $0"` / `"mov $0, %crN"`. **MSR access** (`rdmsr`/`wrmsr`) is the remaining typed sysreg edge; the cfront-rail twin (`c.creg`/`c.msr`) is a later increment (today cfront expresses these as a raw ASM1 blob). |
@@ -237,11 +241,16 @@ discipline + a CI-green draft PR per the established cadence):
   emitted *as* inline asm, reusing the SEG8.1 `bcir.asm` → `llvm.inline_asm` lowering (same generic
   attribute-list builder, so it compiles on LLVM-20 *and* the CI's LLVM-22). A `#bcir.port_dir`
   direction enum (`in`/`out`) + a `{8,16,32}`-bit width (b/w/l); `in` = 1 operand (port) + 1 result,
-  `out` = 2 operands (value, port) + 0 results. The lowering emits the six templates **byte-identical**
-  to the cfront `_PORTIO_IN_ASM` / `_PORTIO_OUT_ASM` with constraints `"=a,Nd"` (in) / `"a,Nd"` (out),
-  always `has_side_effects`. Op + verifier + FileCheck round-trip/lowering/negatives
-  (`mlir/test/passes/portio_roundtrip.mlir`, `portio.mlir`, `portio_verify_neg.mlir`), dual-rail with
-  the cfront `c.portio.*` claim. (Like `bcir.asm`, the oracle→MLIR emitter wiring is a later increment.)
+  `out` = 2 operands (value, port) + 0 results. The lowering emits the six templates in **LLVM-IR
+  operand syntax** (`inb ${1:w}, ${0:b}` … / `outb ${0:b}, ${1:w}` …) with constraints `"={ax},N{dx}"`
+  (in) / `"{ax},N{dx}"` (out), always `has_side_effects`. The fully-qualified forms are what LLVM’s x86
+  backend needs — cfront’s GCC `%w1`/`=a,Nd` spellings are correct on the C→clang rail but `llc` rejects
+  them on this MLIR→LLVM path, so the MLIR rail emits clang’s post-frontend translation directly. Op +
+  verifier + FileCheck round-trip/lowering/negatives **and an assemble-smoke-test** (the lowered IR is
+  piped through `mlir-translate-20 | llc-20` to a real `.o`, asserting `inb %dx, %al` etc.;
+  `mlir/test/passes/portio_roundtrip.mlir`, `portio.mlir`, `portio_verify_neg.mlir`,
+  `asm_lowering_smoke.mlir`), dual-rail with the cfront `c.portio.*` claim. (Like `bcir.asm`, the
+  oracle→MLIR emitter wiring is a later increment.)
 - **D1.2** — ✅ **landed.** `bcir.volatile_load` / `bcir.volatile_store` so MMIO is first-class in the
   law rail as it already is in cfront emit: the ops take the resolved integer register address and lower
   to `llvm.inttoptr` + a **volatile** `llvm.load`/`llvm.store` (mirroring the cfront

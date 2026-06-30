@@ -157,6 +157,9 @@ run_fc -convert-bcir-to-llvm "${T}/inline_asm.mlir"
 echo "[passes] bcir.asm op verifier negatives (arg/constraint count + result/out count)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/inline_asm_verify_neg.mlir" \
   && echo "  PASS inline_asm_verify_neg.mlir" || { echo "  FAIL inline_asm_verify_neg.mlir"; fail=1; }
+echo "[passes] bcir.asm -> llvm LOWERING negatives (the '+' read-write output reject + multi-output + exotic-GCC-syntax rejects)"
+"${BO}" -convert-bcir-to-llvm -verify-diagnostics -split-input-file "${T}/inline_asm_lower_neg.mlir" \
+  && echo "  PASS inline_asm_lower_neg.mlir" || { echo "  FAIL inline_asm_lower_neg.mlir"; fail=1; }
 echo "[passes] bcir.portio round-trip (ASM2: x86 port-I/O edge parses/prints identically -- in.{b,l} read + out.{b,l} void write)"
 if [ -n "${FC}" ]; then
   "${BO}" "${T}/portio_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/portio_roundtrip.mlir" \
@@ -165,7 +168,7 @@ else
   "${BO}" "${T}/portio_roundtrip.mlir" >/dev/null 2>/tmp/pe \
     && echo "  RUN-ONLY portio_roundtrip.mlir" || { echo "  FAIL portio_roundtrip.mlir"; cat /tmp/pe; fail=1; }
 fi
-echo "[passes] bcir.portio -> llvm.inline_asm (ASM2 lowering: x86 in/out template + =a,Nd / a,Nd constraints, side-effecting; byte-identical to cfront)"
+echo "[passes] bcir.portio -> llvm.inline_asm (ASM2 lowering: x86 in/out \${N:mod} template + ={ax},N{dx} / {ax},N{dx} constraints, side-effecting; LLVM-IR-correct, assembles via llc)"
 run_fc -convert-bcir-to-llvm "${T}/portio.mlir"
 echo "[passes] bcir.portio op verifier negatives (width {8,16,32} + in/out operand/result arity + value width)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/portio_verify_neg.mlir" \
@@ -196,6 +199,10 @@ run_fc -convert-bcir-to-llvm "${T}/creg.mlir"
 echo "[passes] bcir.creg_read/write op negatives (the control-register value must be an i64)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/creg_verify_neg.mlir" \
   && echo "  PASS creg_verify_neg.mlir" || { echo "  FAIL creg_verify_neg.mlir"; fail=1; }
+echo "[passes] ASSEMBLE-SMOKE-TEST (anti-masking: portio/asm/creg/volatile lowerings piped through mlir-translate-20 | llc-20 -- a real .o + the expected instruction, not just FileCheck text)"
+# Source the harness so it shares ${BO}; it returns nonzero on any assemble failure (and skips cleanly
+# when llc-20/mlir-translate-20 are absent, like the FileCheck guard). Fold its result into ${fail}.
+if . "${ROOT}/tools/wsl/check_asm_lowering.sh"; then :; else fail=1; fi
 echo "[passes] cache-contention (G4: recompute the cache-line/bank-conflict CONTENTION signal; informs-only, never gates legality)"
 run_fc -bcir-cache-contention "${T}/cache_contention.mlir"
 echo "[passes] cache-contention op verifier negatives (the frozen analytic model: waste/conflict/q8-sum/cost consistency)"

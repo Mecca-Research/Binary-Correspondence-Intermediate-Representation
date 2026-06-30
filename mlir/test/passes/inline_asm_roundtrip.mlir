@@ -23,7 +23,7 @@ func.func @asm_fence() {
 // the single result is the value the asm writes back. Round-trips byte-identically.
 // CHECK-LABEL: func.func @asm_mov
 func.func @asm_mov(%dst: i32, %a: i32) -> i32 {
-  // CHECK: %{{.*}} = bcir.asm "movl $1, $0" outs ["=r"] ins ["r"] clobbers [](%arg0, %arg1) : (i32, i32) -> i32
-  %r = bcir.asm "movl $1, $0" outs ["=r"] ins ["r"] clobbers [] (%dst, %a) : (i32, i32) -> i32
+  // CHECK: %{{.*}} = bcir.asm "movl %1, %0" outs ["=r"] ins ["r"] clobbers [](%arg0, %arg1) : (i32, i32) -> i32
+  %r = bcir.asm "movl %1, %0" outs ["=r"] ins ["r"] clobbers [] (%dst, %a) : (i32, i32) -> i32
   return %r : i32
 }

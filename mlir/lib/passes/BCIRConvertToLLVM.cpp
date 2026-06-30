@@ -33,6 +33,97 @@
 using namespace mlir;
 
 namespace bcir {
+
+// Translate a GCC extended-asm operand-syntax template to LLVM-IR `$`-syntax. The cfront rail
+// emits GCC templates (the C->clang path is correct for them), but the MLIR->LLVM path feeds the
+// template straight to `llvm.inline_asm`, which uses LLVM-IR operand syntax. `llc` REJECTS the GCC
+// forms (`%w1` reads as a literal register: "invalid register name"); the `$`-forms assemble. The
+// bounded, cfront-scoped rule set (all confirmed against clang/llc):
+//   `%%`              -> `%`              (literal percent)
+//   `%<letter><N>`    -> `${N:<letter>}`  (size-modified operand, e.g. `%w1` -> `${1:w}`)
+//   `%<N>`            -> `$N`             (bare operand, INCLUDING multi-digit: `%10` -> `$10`)
+//   a literal `$`     -> `$$`             (LLVM reserves `$` for operands, so escape input `$`)
+// EXOTIC GCC forms cfront never emits -- `%[name]` (named operands), `%P`/`%c`/`%a`/... (non-size
+// operand modifiers), `%=` -- are REJECTED via `emitErr` rather than mistranslated. `emitErr` takes
+// the offending fragment and returns failure (the caller wires it to `op.emitError`); a std::nullopt
+// return means a diagnostic was already emitted.
+//
+// Standalone (no MLIR Op dependency beyond the error callback) so it is unit-testable: the result is
+// a pure function of the input string + the rejection of exotic forms.
+inline std::optional<std::string>
+translateGccAsmTemplate(StringRef tmpl,
+                        const std::function<LogicalResult(const Twine &)> &emitErr) {
+  std::string out;
+  out.reserve(tmpl.size());
+  for (size_t i = 0, n = tmpl.size(); i < n;) {
+    char c = tmpl[i];
+    if (c == '$') {
+      // Escape a literal `$` so LLVM does not read it as an operand reference.
+      out += "$$";
+      ++i;
+      continue;
+    }
+    if (c != '%') {
+      out += c;
+      ++i;
+      continue;
+    }
+    // c == '%': decode the GCC operand form.
+    if (i + 1 >= n) {
+      (void)emitErr("bcir.asm: unsupported GCC asm operand syntax (trailing '%')"
+                    " (translate or use $-form)");
+      return std::nullopt;
+    }
+    char d = tmpl[i + 1];
+    if (d == '%') {
+      // `%%` -> `%`.
+      out += '%';
+      i += 2;
+      continue;
+    }
+    auto isDigit = [](char x) { return x >= '0' && x <= '9'; };
+    auto isLetter = [](char x) {
+      return (x >= 'a' && x <= 'z') || (x >= 'A' && x <= 'Z');
+    };
+    if (isDigit(d)) {
+      // `%<digits>` -> `$<digits>` (bare operand, multi-digit allowed).
+      size_t j = i + 1;
+      while (j < n && isDigit(tmpl[j]))
+        ++j;
+      out += '$';
+      out += tmpl.substr(i + 1, j - (i + 1));
+      i = j;
+      continue;
+    }
+    if (isLetter(d)) {
+      // A size modifier (`%w1`, `%b0`, `%k0`) MUST be `<single letter><digits>` -> `${digits:letter}`.
+      // A letter not followed by a digit is an operand MODIFIER we cannot translate (`%P`, `%c`,
+      // `%a`, ...) -- REJECT it rather than mistranslate.
+      size_t j = i + 2;
+      if (j >= n || !isDigit(tmpl[j])) {
+        (void)emitErr(Twine("bcir.asm: unsupported GCC asm operand modifier '%") + Twine(d) +
+                      "' (translate or use $-form)");
+        return std::nullopt;
+      }
+      size_t k = j;
+      while (k < n && isDigit(tmpl[k]))
+        ++k;
+      out += "${";
+      out += tmpl.substr(j, k - j); // the operand index
+      out += ':';
+      out += d; // the size letter
+      out += '}';
+      i = k;
+      continue;
+    }
+    // `%[name]` (named operand), `%=` (unique id), or any other exotic form -- REJECT.
+    (void)emitErr(Twine("bcir.asm: unsupported GCC asm operand syntax '%") + Twine(d) +
+                  "' (translate or use $-form)");
+    return std::nullopt;
+  }
+  return out;
+}
+
 namespace {
 struct ComputeOpLowering : public OpConversionPattern<ComputeOp> {
   using OpConversionPattern<ComputeOp>::OpConversionPattern;
@@ -115,6 +206,16 @@ struct AsmOpLowering : public OpConversionPattern<AsmOp> {
       return op.emitError(
           "bcir.asm: multi-output inline asm lowering is a follow-on (SEG8.x)");
 
+    // A read-write "+" output is NOT a write-only result: it ties an input via a matching
+    // constraint. Lowering it as-is yields `llvm.inline_asm ... "+r,r" %x : (i32) -> i32`, which
+    // opt/llc REJECT ("inline asm without outputs must return void", since "+" is read-write, not a
+    // "=" output). The full "+" handling (passing the tied input + a matching constraint) is the same
+    // follow-on as multi-output (SEG8.x); reject it cleanly here rather than ship invalid LLVM.
+    for (Attribute a : op.getOutConstraints())
+      if (cast<StringAttr>(a).getValue().starts_with("+"))
+        return op.emitError(
+            "bcir.asm: read-write '+' output lowering is a follow-on (SEG8.x)");
+
     Type resTy; // null -> void (no result)
     if (numOut == 1) {
       resTy = getTypeConverter()->convertType(op.getResult(0).getType());
@@ -143,9 +244,20 @@ struct AsmOpLowering : public OpConversionPattern<AsmOp> {
     SmallVector<Type, 1> resultTypes;
     if (resTy)
       resultTypes.push_back(resTy);
+
+    // Translate the user's GCC operand syntax (`%0`, `%w1`, `%%`) to LLVM-IR `$`-syntax before
+    // storing it as `asm_string` -- the MLIR->LLVM path feeds the template to `llvm.inline_asm` (LLVM
+    // operand syntax), and `llc` rejects the GCC forms. Constraints are left ALONE: the existing
+    // bcir.asm tests use plain `=r`/`r`, which allocate fine; no cfront c.asm path emits `=a`-style
+    // register-class constraints (portio's qualified constraints are handled in PortioOpLowering).
+    std::optional<std::string> translated = translateGccAsmTemplate(
+        op.getAsmTemplate(),
+        [&](const Twine &msg) { return op.emitError(msg); });
+    if (!translated)
+      return failure();
     SmallVector<NamedAttribute, 3> asmAttrs = {
         rewriter.getNamedAttr("asm_string",
-                              rewriter.getStringAttr(op.getAsmTemplate())),
+                              rewriter.getStringAttr(*translated)),
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr(constraints)),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
@@ -167,31 +279,37 @@ struct PortioOpLowering : public OpConversionPattern<PortioOp> {
   matchAndRewrite(PortioOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     // ASM2 -> llvm.inline_asm (the x86 `in`/`out` instruction behind a volatile `call asm`). The
-    // template strings + constraint strings are BYTE-IDENTICAL to the cfront rail's _PORTIO_IN_ASM /
-    // _PORTIO_OUT_ASM (bcir/frontends/cfront/emit.py): the accumulator is `%b0/%w0/%k0` (al/ax/eax)
-    // and the port is `%w1` (the 16-bit dx, the `Nd` immediate-or-dx constraint). A READ writes the
-    // accumulator (constraint "=a,Nd", one result); a WRITE reads it (constraint "a,Nd", no result).
-    // The single LLVM constraint string is the output(s) then the input(s), comma-joined -- exactly
-    // as AsmOpLowering builds it.
+    // template + constraint strings are the LLVM-IR-correct forms (VERIFIED to assemble through
+    // `llc`): the accumulator is `${0:b}`/`${0:w}`/`${0:k}` (al/ax/eax) and the port is `${1:w}` (the
+    // 16-bit dx). The cfront rail's `_PORTIO_IN_ASM`/`_PORTIO_OUT_ASM` carry the GCC spellings
+    // (`%w1`/`%b0`), which are correct on the C->clang rail but which `llc` rejects on this MLIR->LLVM
+    // path ("invalid register name" / "couldn't allocate output register"); clang's frontend does the
+    // `%b0`->`${0:b}` / `=a`->`={ax}` translation, and the MLIR rail (no frontend) emits the qualified
+    // forms directly. A READ writes the accumulator (constraint "={ax},N{dx}", one result); a WRITE
+    // reads it (constraint "{ax},N{dx}", no result). The single LLVM constraint string is the
+    // output(s) then the input(s), comma-joined -- exactly as AsmOpLowering builds it.
     int64_t width = static_cast<int64_t>(op.getWidth());
     bool isIn = op.getDirection() == PortDir::In;
 
-    // The 6 templates, keyed (direction, width). KEPT BYTE-IDENTICAL to cfront's _PORTIO_IN_ASM /
-    // _PORTIO_OUT_ASM (the values inside the Python string literals): the size modifier is byte/word/
-    // long (b/w/l) on the accumulator, `%w1` forces the port to 16-bit dx.
+    // The 6 templates, keyed (direction, width), in LLVM-IR operand syntax: the size modifier is
+    // byte/word/long (b/w/k) on the accumulator operand `${0:...}`, `${1:w}` forces the port to 16-bit
+    // dx. These assemble to `inb %dx, %al` / `outb %al, %dx` etc. (confirmed via llc -filetype=asm).
     StringRef asmTemplate;
     if (isIn) {
-      asmTemplate = (width == 8)    ? "inb %w1, %b0"
-                    : (width == 16) ? "inw %w1, %w0"
-                                    : "inl %w1, %k0";
+      asmTemplate = (width == 8)    ? "inb ${1:w}, ${0:b}"
+                    : (width == 16) ? "inw ${1:w}, ${0:w}"
+                                    : "inl ${1:w}, ${0:k}";
     } else {
-      asmTemplate = (width == 8)    ? "outb %b0, %w1"
-                    : (width == 16) ? "outw %w0, %w1"
-                                    : "outl %k0, %w1";
+      asmTemplate = (width == 8)    ? "outb ${0:b}, ${1:w}"
+                    : (width == 16) ? "outw ${0:w}, ${1:w}"
+                                    : "outl ${0:k}, ${1:w}";
     }
-    // Constraint string: in -> "=a,Nd" (output "=a", then input "Nd"); out -> "a,Nd" (two inputs, no
-    // output). Byte-identical to the cfront `"=a" (result) : "Nd" (port)` / `"a" (value), "Nd" (port)`.
-    StringRef constraints = isIn ? "=a,Nd" : "a,Nd";
+    // Constraint string: in -> "={ax},N{dx}" (output "={ax}", then input "N{dx}"); out ->
+    // "{ax},N{dx}" (two inputs, no output). The fully-qualified register names are what LLVM's x86
+    // backend needs: the GCC `=a`/`Nd` short forms fail register allocation ("couldn't allocate
+    // output register for constraint 'a'"); clang's frontend does this `=a`->`={ax}`, `Nd`->`N{dx}`
+    // translation, which the frontend-less MLIR rail must emit directly.
+    StringRef constraints = isIn ? "={ax},N{dx}" : "{ax},N{dx}";
 
     // Result type: an `in` returns the type-converted i{width}; an `out` is void (no result). The LLVM
     // `call asm` operand list is the type-converted operands in order (in: just the port; out: value
