@@ -88,6 +88,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRGemMatmulCostPass.cpp # recompute the B1 matmul roofline (matmul.py::cost_of) parity + annotate (informs-only)
   lib/passes/BCIRGemActivationCostPass.cpp # recompute the G1 activation roofline (activation.py::cost_of) parity + annotate (informs-only)
   lib/passes/BCIRGemConvCostPass.cpp   # recompute the G7 conv roofline (conv.py::cost_of, a structured matmul) parity + annotate (informs-only)
+  lib/passes/BCIRGemAttentionCostPass.cpp # recompute the G7 attention roofline (attention.py::cost_of, two summed matmuls) parity + annotate (informs-only)
   lib/passes/BCIRLowerGemMatmulPass.cpp # lower gem.matmul plan -> tiled gem.block sequence
   lib/passes/BCIRLowerGemMatmulBufferPass.cpp # lower gem.matmul_buffer -> tiled scf.for nest (C += A*B)
   lib/passes/BCIRLowerGemActivationPass.cpp # lower gem.activation plan -> lane-width gem.block stripes (G1)
