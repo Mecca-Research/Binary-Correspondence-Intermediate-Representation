@@ -131,12 +131,25 @@ struct AsmOpLowering : public OpConversionPattern<AsmOp> {
     ValueRange inputs = adaptor.getArgs().drop_front(numOut);
 
     // asm is conservatively side-effecting (a volatile / "memory"-clobber form is an ordering
-    // fence); never align-stack; default (AT&T) asm dialect; no per-operand attrs.
+    // fence); never align-stack; default (AT&T) asm dialect; no per-operand attrs. Build via the
+    // GENERIC attribute-list builder (TypeRange, ValueRange, ArrayRef<NamedAttribute>) rather than a
+    // positional InlineAsmOp::build: the positional signature is NOT stable across LLVM versions
+    // (LLVM >= 21 inserts a `tail_call_kind` parameter the LLVM-20 form lacks, so a fixed positional
+    // call matches no overload on one of the two toolchains), whereas the generic builder is
+    // identical on both. Only the attributes we set are present; is_align_stack / asm_dialect /
+    // tail_call_kind stay absent -- Operation::create fills any default-valued attr -- so the result
+    // is byte-identical to the old explicit form on LLVM-20 and well-formed on LLVM >= 21.
+    SmallVector<Type, 1> resultTypes;
+    if (resTy)
+      resultTypes.push_back(resTy);
+    SmallVector<NamedAttribute, 3> asmAttrs = {
+        rewriter.getNamedAttr("asm_string",
+                              rewriter.getStringAttr(op.getAsmTemplate())),
+        rewriter.getNamedAttr("constraints", rewriter.getStringAttr(constraints)),
+        rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
+    };
     auto newOp = rewriter.create<LLVM::InlineAsmOp>(
-        op.getLoc(), resTy, inputs,
-        /*asm_string=*/op.getAsmTemplate(), /*constraints=*/constraints,
-        /*has_side_effects=*/true, /*is_align_stack=*/false,
-        /*asm_dialect=*/LLVM::AsmDialectAttr(), /*operand_attrs=*/ArrayAttr());
+        op.getLoc(), TypeRange(resultTypes), inputs, asmAttrs);
 
     if (numOut == 0)
       rewriter.eraseOp(op);
