@@ -161,6 +161,50 @@ law, parity-gate. Throttled, parallel to C/driver work.*
   operad 2-cells** (this is the concrete use for the proposed 2-cell rewrite algebra in §1) — autodiff becomes a
   traceable, content-addressed transformation over the claim graph, reusing the e-graph + the SourceMap. Oracle
   prototype → MLIR law.
+  - **B3 Phase 1 — the closed-set closure guarantee, FORMALIZED + machine-PROVEN**
+    (`bcir/kbcir/autodiff.py` closure helpers, `bcir/tests/test_autodiff_closure.py`). The B3 oracle is
+    reverse-mode AD as content-addressed local graph rewrites over a CLOSED primitive set; this slice turns the
+    property the upcoming `gem.autodiff` law op relies on from an honest docstring comment into a VERIFIED,
+    documented guarantee: **the adjoint operator set is CLOSED** —
+    **`d/dx : ClosedSet → DAG(ClosedSet)`**. Differentiating any expression built from the closed set
+    `{const, var, neg, add, sub, mul, div, dot, select}` produces a gradient DAG that stays in the SAME set;
+    the adjoint never introduces a foreign op kind (no `exp`/`log`, no new functional primitive, no escape).
+    The proof is a **real check, not a hardcoded list**: the closed set is DERIVED from `autodiff._ARITY`
+    (single source of truth), and for every differentiable primitive the check **applies that primitive's
+    symbolic VJP rule** (`_BACKWARD_SYM`) to symbolic adjoint + primal inputs on a real `Tape`, **walks every
+    node the rule emits, and observes** the op kinds — so it trips if any rule ever emitted a foreign op. The
+    **per-primitive adjoint → emitted-closed-set-ops** table (the closure statement, OBSERVED not asserted):
+
+    | primitive | VJP (adjoint) rule | emitted closed-set ops |
+    |-----------|--------------------|------------------------|
+    | `neg`    | `grad_a = −gz`                                              | `neg` |
+    | `add`    | `grad_a = grad_b = gz` (pass-through)                       | *(none — routes the adjoint)* |
+    | `sub`    | `grad_a = gz ; grad_b = −gz`                                | `neg` |
+    | `mul`    | `grad_a = gz·b ; grad_b = gz·a`                             | `mul` |
+    | `div`    | `grad_a = gz/b ; grad_b = −(gz·a)/(b·b)`                    | `div, mul, neg` |
+    | `dot`    | `grad_uᵢ = gz·vᵢ ; grad_vᵢ = gz·uᵢ`                         | `mul` |
+    | `select` | `grad_a = select(cond,gz,0) ; grad_b = select(cond,0,gz)`   | `select, const` |
+
+    (every emitted op is in the closed set, so every cell ⊆ `{const,var,neg,add,sub,mul,div,dot,select}`.) The
+    same closure is proven for the **numeric** twin `_BACKWARD` (tied to the proven-closed symbolic DAG by
+    checking the float rule computes exactly the symbolic DAG's value, so it has no separate vocabulary to
+    escape into) and is shown to **survive repeated differentiation** — because `_BACKWARD_SYM` emits only
+    closed-set nodes, the gradient DAG is itself differentiable by the same machinery, so reverse-over-reverse
+    (the **Hessian, and any higher order**) never leaves the vocabulary. **Registry completeness** is asserted
+    as a **bijection**: every differentiable primitive has exactly one rule and every rule maps to a real
+    primitive (no missing rule, no orphan/dead rule, no leaf with a rule) — for BOTH `_BACKWARD` and
+    `_BACKWARD_SYM`. And the closed set is forced to a **single source of truth**: `autodiff.CLOSED_SET`
+    (derived from `_ARITY`) is asserted equal to `lower/autodiff_kernel.py::_LOWERABLE` (the set the G6
+    C-kernel emitter enforces), so the closure proof and the lowering can never silently diverge on what the
+    closed vocabulary is. **Why it matters for `gem.autodiff`:** **closure + hash-consing ⇒ a CANONICAL FORM**
+    — closure bounds the op kinds to a fixed, finite alphabet and the content-addressed `Tape` interns
+    structurally-identical subgraphs to one node, so the gradient of a given expression is a single,
+    deterministic, fixed-vocabulary DAG. That is exactly what lets a future `gem.autodiff` law op **serialize
+    and verify** a gradient as a closed-alphabet graph, never having to anticipate an open-ended set of emitted
+    ops. Oracle-only, pure-Python (no MLIR, no C twin); de-risks the `gem.autodiff` law op. **Honest caveat:**
+    `select`'s adjoint uses the a.e. (almost-everywhere) convention shared with JAX/PyTorch — it stays in the
+    closed set by routing the adjoint through a `select` node and dropping the measure-zero boundary delta, the
+    same boundary caveat the `autodiff` honest-limitation note (b) already pins.
   - **M1 — loss-function library BUILT** (`bcir/kbcir/losses.py`, `bcir/tests/test_losses.py`). The loss head
     that turns the existing matmul + activation + autodiff + SGD into trainable supervised models (forward →
     loss → backward → param grads, end-to-end). It implements a **two-path design forced by the autodiff
