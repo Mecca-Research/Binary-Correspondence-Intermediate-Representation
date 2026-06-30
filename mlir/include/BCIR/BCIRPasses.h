@@ -91,6 +91,20 @@ std::unique_ptr<mlir::Pass> createGemMatmulCostPass();
 // two-truth quarantine the sibling cost passes -gem-matmul-cost / -cache-contention / -layout-pivot
 // keep; -bcir-verify never reads these).
 std::unique_ptr<mlir::Pass> createGemActivationCostPass();
+// -bcir-gem-conv-cost: recompute the G7 conv ROOFLINE COST for each gem.conv plan op
+// (port of bcir/kbcir/conv.py::cost_of). A 2-D single-group conv is a STRUCTURED MATMUL
+// priced through the matmul roofline (NO bespoke term): cost_of calls matmul.cost_of on the
+// equivalent im2col gemm dims (gemm_m = out_h*out_w, gemm_n = out_c, gemm_k = in_c*kh*kw) at
+// the resolved tile -- compute = ceilDiv(M*N*K, vector_width*fma), mem = ceilDiv(a_reads +
+// b_reads + c_traffic, mem_unit*mem_channels), bottleneck = max(compute, mem) (the im2col
+// strategy prices at the chosen inner matmul tile; direct is the UNTILED whole gemm). Pinning
+// the x86-avx512 reference constants for CI-host-independence, parity-check the declared
+// compute/mem/bottleneck (the analytic parity the op verifier deliberately omits), and annotate
+// the recomputed roofline (a cost producer, NOT a lowering: the op is NOT erased). INFORMS-ONLY:
+// the recomputed roofline informs the plan's cost but NEVER gates legality (the same two-truth
+// quarantine the sibling cost passes -gem-matmul-cost / -gem-activation-cost / -cache-contention /
+// -layout-pivot keep; -bcir-verify never reads these).
+std::unique_ptr<mlir::Pass> createGemConvCostPass();
 // -bcir-lower-gem-matmul: lower each gem.matmul plan record into its concrete
 // tiled realization -- one gem.block descriptor per tile of the tiled iteration
 // space, emitted in the plan's loop_order; erases the matmul (a genuine lowering).

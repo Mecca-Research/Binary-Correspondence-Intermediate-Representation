@@ -169,6 +169,61 @@ def test_law_rail_rejects_an_inconsistent_conv_plan():
         f"the rejection must cite the structured-matmul consistency, got:\n{proc.stderr}"
 
 
+# --- the -bcir-gem-conv-cost cost-producer parity arm (mirrors test_activation_law_parity) --------
+# The SIBLING cost pass to the lowering above: -bcir-gem-conv-cost RECOMPUTES the conv roofline (port
+# of conv.py::cost_of -- a conv IS a structured matmul priced through matmul.cost_of on its im2col
+# gemm dims, NO bespoke term) and parity-checks the declared compute/mem/bottleneck, annotating
+# kbcir.* INFORMS-ONLY -- a cost PRODUCER (the op is NOT erased), not a lowering. This is the EXACT
+# analog of -bcir-gem-matmul-cost / -bcir-gem-activation-cost (their *_law_parity.py); the three cost
+# passes are a tight family. The same oracle-pinned IR (_conv_mlir / _oracle_plan) drives both rails.
+
+
+def test_law_rail_reproduces_oracle_conv_roofline_via_bcir_opt():
+    """Drive `bcir-opt -bcir-gem-conv-cost` over the oracle-pinned gem.conv IR and assert the law
+    recomputes the SAME compute/mem/bottleneck the oracle's cost_of computed (conv.py, == matmul.cost_of
+    on the im2col gemm dims), and annotates the INFORMS-ONLY quarantine record (kbcir.informs_only =
+    true). The recomputed roofline is host-independent because the oracle target is pinned to avx512
+    (the C++ pass pins the same x86-avx512 reference constants). A cost producer, NOT a lowering: the
+    carrier op is NOT erased (cf. -bcir-lower-gem-conv above, which ERASES the plan into its tiles)."""
+    bo = _find_bcir_opt()
+    if not bo:
+        return  # the MLIR toolchain is not built in this environment (the oracle-only CI job)
+    for case in _CASES:
+        p = _oracle_plan(*case)
+        proc = subprocess.run([bo, "-bcir-gem-conv-cost"], input=_conv_mlir(p),
+                              capture_output=True, text=True)
+        assert proc.returncode == 0, f"{case}: cost rail rejected the oracle roofline:\n{proc.stderr}"
+        out = proc.stdout
+        line = next(l for l in out.splitlines() if "@cv " in l)
+        assert f'kbcir.compute_cost = {p["compute"]} : i64' in line, f"{case}: compute != oracle\n{line}"
+        assert f'kbcir.mem_cost = {p["mem"]} : i64' in line, f"{case}: mem != oracle\n{line}"
+        assert f'kbcir.bottleneck = {p["bottleneck"]} : i64' in line, f"{case}: bottleneck != oracle\n{line}"
+        # the INFORMS-ONLY quarantine record: the recomputed roofline informs the plan, never gates legality.
+        assert "kbcir.informs_only = true" in line, f"{case}: missing the informs-only quarantine flag\n{line}"
+        # a cost producer, NOT a lowering: the carrier op is NOT erased.
+        assert "bcir.gem.conv" in out, f"{case}: the conv op must NOT be erased (it is a producer)"
+
+
+def test_cost_rail_rejects_an_inconsistent_conv_roofline():
+    """The headline parity gate, end-to-end on the cost rail: a gem.conv whose declared compute_cost is
+    NOT the recomputed roofline (the analytic cost the op verifier deliberately omits, but bottleneck ==
+    max keeps it op-level well-formed) is REJECTED by -bcir-gem-conv-cost (the dual-rail R13 parity the
+    oracle's cost_of enforces). Self-skips without bcir-opt."""
+    bo = _find_bcir_opt()
+    if not bo:
+        return
+    p = _oracle_plan(*_CASES[0])
+    assert p["compute"] == 16  # sanity: the oracle's recomputed compute for the small conv (gemm 9x3x18)
+    bad = dict(p)
+    bad["compute"] = 9999                  # a wrong compute term...
+    bad["bottleneck"] = 9999               # ...with a matching bottleneck so the OP verifier still admits it
+    proc = subprocess.run([bo, "-bcir-gem-conv-cost"], input=_conv_mlir(bad),
+                          capture_output=True, text=True)
+    assert proc.returncode != 0, "the cost rail must reject a non-cost_of compute term"
+    assert "compute_cost 9999 != the recomputed roofline compute 16" in proc.stderr, \
+        f"the rejection must cite the recomputed roofline compute, got:\n{proc.stderr}"
+
+
 def _find_bcir_opt():
     env = os.environ.get("BCIR_OPT")
     if env and os.path.exists(env):
