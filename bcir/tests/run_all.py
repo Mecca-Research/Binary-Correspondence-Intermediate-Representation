@@ -187,6 +187,7 @@ _MODULES = [
     "bcir.tests.test_precision",
     "bcir.tests.test_quantize",
     "bcir.tests.test_matmul",
+    "bcir.tests.test_matmul_law_parity",
     "bcir.tests.test_activation",
     "bcir.tests.test_activation_law_parity",
     "bcir.tests.test_conv",

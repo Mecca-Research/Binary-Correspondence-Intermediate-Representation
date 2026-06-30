@@ -70,6 +70,16 @@ std::unique_ptr<mlir::Pass> createAllocPoolPass();
 std::unique_ptr<mlir::Pass> createBatchPass();
 std::unique_ptr<mlir::Pass> createSchedulePass();
 std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
+// -bcir-gem-matmul-cost: recompute the B1 matmul ROOFLINE COST for each gem.matmul
+// plan op (port of bcir/kbcir/matmul.py::cost_of) -- compute = ceilDiv(M*N*K,
+// vector_width*fma), mem = ceilDiv(a_reads + b_reads + c_traffic, mem_unit*mem_channels),
+// bottleneck = max(compute, mem) -- pinning the x86-avx512 reference constants for
+// CI-host-independence, parity-check the declared compute/mem/bottleneck (the analytic
+// parity the op verifier deliberately omits), and annotate the recomputed roofline (a cost
+// producer, NOT a lowering: the op is NOT erased). INFORMS-ONLY: the recomputed roofline
+// informs the plan's cost but NEVER gates legality (the same two-truth quarantine the
+// sibling cost passes -cache-contention / -layout-pivot keep; -bcir-verify never reads these).
+std::unique_ptr<mlir::Pass> createGemMatmulCostPass();
 // -bcir-lower-gem-matmul: lower each gem.matmul plan record into its concrete
 // tiled realization -- one gem.block descriptor per tile of the tiled iteration
 // space, emitted in the plan's loop_order; erases the matmul (a genuine lowering).

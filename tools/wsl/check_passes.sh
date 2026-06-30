@@ -80,6 +80,11 @@ else
   "${BO}" ${GEM} "${T}/gem_corpus.mlir" >/dev/null 2>/tmp/pe \
     && echo "  RUN-ONLY gem_corpus.mlir" || { echo "  FAIL gem_corpus.mlir"; cat /tmp/pe; fail=1; }
 fi
+echo "[passes] gem-matmul-cost (B1: recompute the matmul roofline (cost_of) parity-check + annotate; informs-only, never gates legality)"
+run_fc -bcir-gem-matmul-cost "${T}/gem_matmul_cost.mlir"
+echo "[passes] gem-matmul-cost analytic-parity negatives (declared compute/mem != the recomputed roofline)"
+"${BO}" -bcir-gem-matmul-cost -verify-diagnostics -split-input-file "${T}/gem_matmul_cost_neg.mlir" \
+  && echo "  PASS gem_matmul_cost_neg.mlir" || { echo "  FAIL gem_matmul_cost_neg.mlir"; fail=1; }
 echo "[passes] lower-gem-matmul (gem.matmul plan -> concrete tiled gem.block sequence)"
 run_fc -bcir-lower-gem-matmul "${T}/lower_gem_matmul.mlir"
 echo "[passes] lower-gem-matmul-buffer (gem.matmul_buffer -> tiled scf.for nest, C += A*B)"

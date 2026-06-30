@@ -85,6 +85,7 @@ add_mlir_dialect_library(MLIRBCIR
   lib/passes/BCIRPromotePass.cpp     # GGG->UX opt-law
   lib/passes/BCIRConvertToLLVM.cpp   # compute/barrier -> LLVM dialect
   lib/passes/BCIRGEMPasses.cpp       # classify / batch / schedule / lower
+  lib/passes/BCIRGemMatmulCostPass.cpp # recompute the B1 matmul roofline (matmul.py::cost_of) parity + annotate (informs-only)
   lib/passes/BCIRLowerGemMatmulPass.cpp # lower gem.matmul plan -> tiled gem.block sequence
   lib/passes/BCIRLowerGemMatmulBufferPass.cpp # lower gem.matmul_buffer -> tiled scf.for nest (C += A*B)
   lib/passes/BCIRLowerGemActivationPass.cpp # lower gem.activation plan -> lane-width gem.block stripes (G1)

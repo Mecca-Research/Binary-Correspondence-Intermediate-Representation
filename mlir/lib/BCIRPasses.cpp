@@ -61,6 +61,7 @@ void registerBCIRPasses() {
   ::mlir::registerPass([] { return createBatchPass(); });
   ::mlir::registerPass([] { return createSchedulePass(); });
   ::mlir::registerPass([] { return createLowerToLLVMPass(); });
+  ::mlir::registerPass([] { return createGemMatmulCostPass(); });
   ::mlir::registerPass([] { return createLowerGemMatmulPass(); });
   ::mlir::registerPass([] { return createLowerGemMatmulBufferPass(); });
   ::mlir::registerPass([] { return createLowerGemActivationPass(); });
