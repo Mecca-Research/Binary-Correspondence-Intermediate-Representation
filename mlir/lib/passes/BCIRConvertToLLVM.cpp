@@ -230,6 +230,47 @@ struct PortioOpLowering : public OpConversionPattern<PortioOp> {
   }
 };
 
+struct VolatileLoadOpLowering : public OpConversionPattern<VolatileLoadOp> {
+  using OpConversionPattern<VolatileLoadOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(VolatileLoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // First-class MMIO read -> llvm.inttoptr(addr) + a VOLATILE llvm.load. Mirrors the cfront emit
+    // `*(volatile T *)(intaddr)`. `volatile` is set via the generated setter (not a positional builder
+    // arg) so it is stable across LLVM versions (the LoadOp builder gained params over 20->22).
+    Type resTy = getTypeConverter()->convertType(op.getValue().getType());
+    if (!resTy)
+      return rewriter.notifyMatchFailure(op, "result type not convertible");
+    auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value ptr =
+        rewriter.create<LLVM::IntToPtrOp>(op.getLoc(), ptrTy, adaptor.getAddr());
+    auto load = rewriter.create<LLVM::LoadOp>(op.getLoc(), resTy, ptr);
+    load.setVolatile_(true);
+    rewriter.replaceOp(op, load.getResult());
+    return success();
+  }
+};
+
+struct VolatileStoreOpLowering : public OpConversionPattern<VolatileStoreOp> {
+  using OpConversionPattern<VolatileStoreOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(VolatileStoreOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // First-class MMIO write -> llvm.inttoptr(addr) + a VOLATILE llvm.store. The void counterpart of
+    // VolatileLoadOpLowering (`*(volatile T *)(intaddr) = value`); `volatile` set via the setter.
+    auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value ptr =
+        rewriter.create<LLVM::IntToPtrOp>(op.getLoc(), ptrTy, adaptor.getAddr());
+    auto store =
+        rewriter.create<LLVM::StoreOp>(op.getLoc(), adaptor.getValue(), ptr);
+    store.setVolatile_(true);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct ConvertToLLVMPass
     : public PassWrapper<ConvertToLLVMPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConvertToLLVMPass)
@@ -246,12 +287,14 @@ struct ConvertToLLVMPass
   void runOnOperation() override {
     LLVMConversionTarget target(getContext());
     target.addLegalOp<ModuleOp>();
-    target.addIllegalOp<ComputeOp, BarrierOp, AsmOp, PortioOp>();
+    target.addIllegalOp<ComputeOp, BarrierOp, AsmOp, PortioOp, VolatileLoadOp,
+                        VolatileStoreOp>();
 
     LLVMTypeConverter typeConverter(&getContext());
     RewritePatternSet patterns(&getContext());
     patterns.add<ComputeOpLowering, BarrierOpLowering, AsmOpLowering,
-                 PortioOpLowering>(typeConverter, &getContext());
+                 PortioOpLowering, VolatileLoadOpLowering,
+                 VolatileStoreOpLowering>(typeConverter, &getContext());
 
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns))))

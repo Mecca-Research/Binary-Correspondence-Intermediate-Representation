@@ -254,4 +254,41 @@ def BCIR_PortioOp : BCIR_Op<"portio"> {
   let hasVerifier = 1;
 }
 
+def BCIR_VolatileLoadOp : BCIR_Op<"volatile_load"> {
+  let summary = "Ordered volatile load from a device register (first-class MMIO read, H lane)";
+  // The law-rail twin of the cfront MMIO read (a `volatile`-qualified register access:
+  // bcir/frontends/cfront/lower.py marks the resource `domain=Domain.MMIO, access="volatile"`,
+  // and emit.py renders the ordered volatile load `*(volatile T *)(ptr + off)`). Until now the MLIR
+  // rail carried MMIO only as the `Domain.MMIO` enum value on a claim/resource, with device access
+  // riding the barrier/hazard machinery; this op makes the MMIO ACCESSOR first-class, as it already is
+  // in cfront emit. It is the LOWERED accessor -- the post-bounds-check device read -- so it takes the
+  // resolved integer register ADDRESS, mirroring the cfront emit layer (`*(volatile T*)(intaddr)`); the
+  // RID/extent/bounds contract (R3) lives at the `bcir.claim`/`bcir.load` layer, exactly as in cfront
+  // (the claim carries the isolation law; the emit is a raw ordered volatile access).
+  //
+  //   * `$addr`  -- the device-register address (a signless integer, e.g. an i64 physical address).
+  //   * `$value` -- the loaded value (the register's natural width: i8/i16/i32/i64/...).
+  //
+  // LOWERING (`-convert-bcir-to-llvm`): `llvm.inttoptr $addr` -> `llvm.load volatile` of the (type-
+  // converted) result type. `volatile` is ALWAYS set (a device read must never be elided, duplicated,
+  // or reordered with other volatile accesses -- the MMIO guarantee, matching the cfront `volatile`).
+  let arguments = (ins AnySignlessInteger:$addr);
+  let results = (outs AnyType:$value);
+  let assemblyFormat = "$addr attr-dict `:` type($addr) `->` type($value)";
+}
+
+def BCIR_VolatileStoreOp : BCIR_Op<"volatile_store"> {
+  let summary = "Ordered volatile store to a device register (first-class MMIO write, H lane)";
+  // The law-rail twin of the cfront MMIO write (emit.py renders `*(volatile T *)(ptr + off) = value`).
+  // The void counterpart of `bcir.volatile_load`: the LOWERED MMIO write accessor, taking the value and
+  // the resolved integer register address (the RID/bounds contract is the `bcir.claim` layer, as in
+  // cfront). LOWERING: `llvm.inttoptr $addr` -> `llvm.store volatile $value`. `volatile` is ALWAYS set
+  // (a device write must never be elided/duplicated/reordered with other volatile accesses).
+  //
+  //   * `$value` -- the value to write (the register's natural width).
+  //   * `$addr`  -- the device-register address (a signless integer).
+  let arguments = (ins AnyType:$value, AnySignlessInteger:$addr);
+  let assemblyFormat = "$value `,` $addr attr-dict `:` type($value) `,` type($addr)";
+}
+
 #endif // BCIR_CORE_OPS

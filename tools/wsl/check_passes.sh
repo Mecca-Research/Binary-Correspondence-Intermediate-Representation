@@ -170,6 +170,19 @@ run_fc -convert-bcir-to-llvm "${T}/portio.mlir"
 echo "[passes] bcir.portio op verifier negatives (width {8,16,32} + in/out operand/result arity + value width)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/portio_verify_neg.mlir" \
   && echo "  PASS portio_verify_neg.mlir" || { echo "  FAIL portio_verify_neg.mlir"; fail=1; }
+echo "[passes] bcir.volatile_load/store round-trip (first-class MMIO: ordered volatile device-register access parses/prints identically)"
+if [ -n "${FC}" ]; then
+  "${BO}" "${T}/volatile_mmio_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/volatile_mmio_roundtrip.mlir" \
+    && echo "  PASS volatile_mmio_roundtrip.mlir" || { echo "  FAIL volatile_mmio_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" "${T}/volatile_mmio_roundtrip.mlir" >/dev/null 2>/tmp/pe \
+    && echo "  RUN-ONLY volatile_mmio_roundtrip.mlir" || { echo "  FAIL volatile_mmio_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+fi
+echo "[passes] bcir.volatile_load/store -> llvm.inttoptr + volatile llvm.load/store (MMIO lowering; mirrors the cfront *(volatile T*)(intaddr) emit)"
+run_fc -convert-bcir-to-llvm "${T}/volatile_mmio.mlir"
+echo "[passes] bcir.volatile_load/store op negatives (the device-register address must be a signless integer)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/volatile_mmio_verify_neg.mlir" \
+  && echo "  PASS volatile_mmio_verify_neg.mlir" || { echo "  FAIL volatile_mmio_verify_neg.mlir"; fail=1; }
 echo "[passes] cache-contention (G4: recompute the cache-line/bank-conflict CONTENTION signal; informs-only, never gates legality)"
 run_fc -bcir-cache-contention "${T}/cache_contention.mlir"
 echo "[passes] cache-contention op verifier negatives (the frozen analytic model: waste/conflict/q8-sum/cost consistency)"
