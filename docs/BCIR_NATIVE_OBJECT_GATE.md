@@ -8,7 +8,10 @@
 > native-isel experiment if one is ever taken.
 
 Pairs with `BCIR_MASTER_ROADMAP.md` §5.5 (native backend — gated)
-("Native backend — only if warranted ⛔ DEFERRED").
+("Native backend — only if warranted ⛔ DEFERRED"). The deeper feasibility/cost
+analysis and the phased build roadmap (the cost model behind this gate) live in
+`BCIR_NATIVE_BACKEND_FEASIBILITY.md`: this doc owns the GO/STOP *criteria*, that one
+owns the *cost model and the development plan*.
 
 ## 1. The decision
 
