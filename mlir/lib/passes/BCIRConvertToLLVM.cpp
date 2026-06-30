@@ -22,6 +22,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/Twine.h"
 
 #include <algorithm>
 #include <array>
@@ -271,6 +272,55 @@ struct VolatileStoreOpLowering : public OpConversionPattern<VolatileStoreOp> {
   }
 };
 
+struct CRegReadOpLowering : public OpConversionPattern<CRegReadOp> {
+  using OpConversionPattern<CRegReadOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(CRegReadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // Control-register read -> llvm.inline_asm "mov %<reg>, $0", "=r". LLVM-IR inline-asm syntax ($0
+    // operand, single-% register) -- the exact form clang emits; built via the same generic
+    // attribute-list InlineAsmOp builder as AsmOpLowering (version-stable). has_side_effects always.
+    Type resTy = getTypeConverter()->convertType(op.getValue().getType());
+    if (!resTy)
+      return rewriter.notifyMatchFailure(op, "result type not convertible");
+    std::string tmpl =
+        (Twine("mov %") + stringifyCtrlReg(op.getReg()) + ", $0").str();
+    SmallVector<NamedAttribute, 3> attrs = {
+        rewriter.getNamedAttr("asm_string", rewriter.getStringAttr(tmpl)),
+        rewriter.getNamedAttr("constraints", rewriter.getStringAttr("=r")),
+        rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
+    };
+    auto newOp = rewriter.create<LLVM::InlineAsmOp>(
+        op.getLoc(), TypeRange{resTy}, ValueRange{}, attrs);
+    rewriter.replaceOp(op, newOp.getRes());
+    return success();
+  }
+};
+
+struct CRegWriteOpLowering : public OpConversionPattern<CRegWriteOp> {
+  using OpConversionPattern<CRegWriteOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(CRegWriteOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // Control-register write -> llvm.inline_asm "mov $0, %<reg>", "r,~{memory}" (a CR write reloads page
+    // tables / toggles paging+protection -- a system-wide memory effect, hence the ~{memory} clobber);
+    // no result. has_side_effects always.
+    std::string tmpl =
+        (Twine("mov $0, %") + stringifyCtrlReg(op.getReg())).str();
+    SmallVector<NamedAttribute, 3> attrs = {
+        rewriter.getNamedAttr("asm_string", rewriter.getStringAttr(tmpl)),
+        rewriter.getNamedAttr("constraints", rewriter.getStringAttr("r,~{memory}")),
+        rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
+    };
+    rewriter.create<LLVM::InlineAsmOp>(op.getLoc(), TypeRange{},
+                                       ValueRange{adaptor.getValue()}, attrs);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct ConvertToLLVMPass
     : public PassWrapper<ConvertToLLVMPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConvertToLLVMPass)
@@ -288,13 +338,14 @@ struct ConvertToLLVMPass
     LLVMConversionTarget target(getContext());
     target.addLegalOp<ModuleOp>();
     target.addIllegalOp<ComputeOp, BarrierOp, AsmOp, PortioOp, VolatileLoadOp,
-                        VolatileStoreOp>();
+                        VolatileStoreOp, CRegReadOp, CRegWriteOp>();
 
     LLVMTypeConverter typeConverter(&getContext());
     RewritePatternSet patterns(&getContext());
     patterns.add<ComputeOpLowering, BarrierOpLowering, AsmOpLowering,
                  PortioOpLowering, VolatileLoadOpLowering,
-                 VolatileStoreOpLowering>(typeConverter, &getContext());
+                 VolatileStoreOpLowering, CRegReadOpLowering,
+                 CRegWriteOpLowering>(typeConverter, &getContext());
 
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns))))

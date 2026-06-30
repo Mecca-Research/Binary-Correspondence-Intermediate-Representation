@@ -441,6 +441,32 @@ The address constraint is `AnySignlessInteger` (a non-integer address is rejecte
 `mlir/test/passes/volatile_mmio_roundtrip.mlir`, `volatile_mmio.mlir`,
 `volatile_mmio_verify_neg.mlir`.)
 
+**`bcir.creg_read` / `bcir.creg_write` — x86-64 control-register access (boot/CPU-state
+asm edge, D1.3).** Reading/writing a control register (`CR0`/`CR2`/`CR3`/`CR4`/`CR8`) has
+no C value-semantics — it is the **irreducible-assembly** tier (a trusted opaque effect
+edge, like `bcir.asm`/`bcir.portio`). **Unlike** those two, it has **no cfront dual-rail
+twin** (the cfront rail expresses control-register access only as a raw `c.asm` blob), so
+the template is authored **directly in LLVM-IR inline-asm syntax** (`$0` operand,
+single-`%` register) — empirically the exact form clang emits for
+`__asm__("mov %%cr3, %0" : "=r"(v))`. (This is the LLVM-IR-correct syntax; `bcir.asm` and
+`bcir.portio` instead store cfront's GCC C-asm templates verbatim, which is correct on the
+cfront C→clang rail — a follow-up could translate GCC operand syntax to `${N:mod}` for the
+MLIR→LLVM path, which is currently text-checked but never assembled.) x86-only.
+
+- `bcir.creg_read <crN> -> i64` — `reg` is a `#bcir.ctrl_reg` enum
+  (`cr0`/`cr2`/`cr3`/`cr4`/`cr8`); the result is the 64-bit register value (control
+  registers are 64-bit in long mode, verifier-enforced).
+- `bcir.creg_write <crN>, $value : i64` — the void counterpart.
+
+The lowering (`-convert-bcir-to-llvm`) emits `llvm.inline_asm has_side_effects` with
+`"mov %<crN>, $0"`, `"=r"` for a read (returns `i64`) and `"mov $0, %<crN>"`,
+`"r,~{memory}"` for a write (no result; the `~{memory}` clobber models the system-wide
+effect — a `CR3` write reloads the page tables and flushes the TLB, `CR0`/`CR4` toggle
+paging/protection). `has_side_effects` is **always** set (a control register is not a pure
+value: `CR2` holds the faulting address, `CR3` the live page-table base). Built via the
+**same generic attribute-list `InlineAsmOp` builder** as `bcir.asm` (LLVM-20/22 stable).
+(Tests: `mlir/test/passes/creg_roundtrip.mlir`, `creg.mlir`, `creg_verify_neg.mlir`.)
+
 ## 12. Lowering contracts
 
 BCIR-4 → BCIR-5 lowering is governed by R12: each lowered op preserves the BCIR
