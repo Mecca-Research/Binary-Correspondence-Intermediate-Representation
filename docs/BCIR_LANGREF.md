@@ -184,6 +184,24 @@ exit code (the parity gate in `tools/c/check_runtime.sh`). The remaining §5.12 
 is the bounds-promotion of array parameters under a dominating-bound proof and the
 offline ML policy table.
 
+**Barriers are first-class ordering edges (ASM3b).** A `barriered`-hazard claim is
+not only un-reorderable itself — it *fences other claims*. No claim may be reordered
+across a barrier, and a producer→consumer pair spanning one does **not** receive the
+deforestation (fusion) cost discount. This is enforced in the optimizer, not the
+verdict laws: `bundle._conflict` treats a barriered claim as conflicting with every
+other claim (so `find_bundles` / `_legal_reorder` never move a claim past it), and
+`realize.fused_candidates` skips the ×0.75 memory deforestation factor when the
+consumer is barriered or a shared operand was produced by a barriered producer (the
+fence forces the intermediate to materialize). The MLIR cost model
+(`BCIRCostModel.h::fusedColumns`) mirrors the discount-skip **byte-for-byte** — an
+oracle/MLIR divergence here would be an R13 breach — pinned by
+`mlir/test/passes/cost_model_barrier.mlir`. The scope is **every** `barriered` claim:
+memory fences, MMIO loads/stores, port-I/O, and volatile/`"memory"`-clobber inline
+asm. This is a **structural** property, **not** a new verdict R-law (barriers stay
+off the legality value-path); `verify.verify_barrier_ordering` checks a realized plan
+respects the fence, *advisory* and out of the frontend verdict like R21. It is a safe
+no-op on any module carrying no barriered claim.
+
 ## 11. Rewrite laws (the building-blocks engine)
 
 Lane promotion (`GGG→UX→U(k)→U`), tile formation, layout (`AoS→SoA→AoSoA`),

@@ -522,6 +522,23 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 > forbid the optimizer/scheduler from reordering other claims across a fence) is the next slice (ASM3b). See
 > `docs/CFRONT_GUIDE.md`.
 
+> **Barriers as first-class ordering edges (ASM3b)** — ✅ a **`barriered`-hazard claim now fences OTHER
+> claims**, not just itself: it is a first-class ordering edge no claim may be reordered across, and a
+> producer→consumer pair spanning it does **not** get the deforestation (fusion) cost discount. Two oracle
+> guards wire the fence into the *existing* bundle/cost machinery: (1) `bundle._conflict` makes a barriered
+> claim conflict with **every** other claim, so `find_bundles` / `_legal_reorder` never bundle or reorder a
+> claim across it (a hard reorder fence); (2) `realize.fused_candidates` **skips** the ×0.75 memory
+> deforestation factor when the consumer is barriered **or** a shared operand was produced by a barriered
+> producer (the fence forces the intermediate to materialize). The scope is **all `barriered` claims** —
+> memory fences (`c.fence*`), MMIO loads/stores (`Domain.MMIO`), port-I/O (`c.portio.*`), and
+> volatile/`"memory"`-clobber inline asm — so MMIO/port-I/O/asm ordering is really enforced, not just the
+> fence intrinsic. **R13 parity:** the MLIR cost model (`BCIRCostModel.h::fusedColumns`) mirrors guard (2)
+> byte-for-byte (`mlir/test/passes/cost_model_barrier.mlir`). A **structural invariant**
+> (`verify.verify_barrier_ordering`) verifies a realized plan respects the fence — checked **out of** the
+> frontend verdict, like the R21 lifetime advisory; it is **NOT a new verdict R-law** (barriers stay off the
+> legality value-path, per the ASM1/ASM2/ASM3 precedent). A **safe no-op** on the existing corpus (a module
+> with no barriered claim gets neither guard — pinned scores intact). See `docs/CFRONT_GUIDE.md`.
+
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
 register-map header now ingests through L7 → L5 → an R1–R18-clean plan with `bcir-explain`,
 behaviour-equivalent to Clang. Next: **Phase D** — the first real driver behind a `channel.json`

@@ -243,10 +243,24 @@ _mm_sfence();                      //                   store (release) fence ->
   fence for the **host's own native arch** (`gcc -c` / `clang -c`, assemble-only) and asserts the emit
   **text** for non-native targets without assembling — real assembled coverage on every CI lane (x86 lanes
   assemble `mfence`/`lfence`/`sfence`; the aarch64 lane assembles `dmb ish`/`ishld`/`ishst`).
-- **Cross-claim ordering enforcement is a follow-on.** ASM3 is a frontend emit/recognition slice: it gives
-  the fence typed kinds + native emit. Making `barriered` *forbid* the optimizer/scheduler from reordering
-  or fusing **other** claims across a fence is the next slice (ASM3b), in the realizer / bundler / GEM
-  scheduler — untouched here.
+- **Cross-claim ordering enforcement (ASM3b) — done.** ASM3 is a frontend emit/recognition slice (typed
+  fence kinds + native emit); **ASM3b** makes `barriered` *forbid* the optimizer from reordering or fusing
+  **other** claims across the edge. A `barriered`-hazard claim is now a **first-class ordering edge**:
+  - **No reorder across it.** `bundle._conflict` treats a barriered claim as conflicting with *every* other
+    claim, so `find_bundles` / `_legal_reorder` never bundle a barriered claim and never move any claim past
+    one (a hard reorder fence — independent of any data hazard).
+  - **No fusion across it.** `realize.fused_candidates` **skips** the ×0.75 memory deforestation discount
+    when the consumer is `barriered` **or** a shared operand was produced by a `barriered` producer — the
+    fence forces the intermediate to materialize, so the producer→consumer round-trip is not elided. The
+    MLIR cost model (`BCIRCostModel.h::fusedColumns`) mirrors this byte-for-byte for **R13 parity** (the
+    FileCheck twin is `mlir/test/passes/cost_model_barrier.mlir`).
+  - **Scope: all `barriered` claims** — memory fences (`c.fence*`), MMIO loads/stores (`Domain.MMIO`),
+    port-I/O (`c.portio.*`), and volatile/`"memory"`-clobber inline asm — so real MMIO/port-I/O/asm ordering
+    is enforced, not just the fence intrinsic.
+  - **A structural property, not a verdict R-law.** `verify.verify_barrier_ordering(module, plan)` verifies
+    a realized plan never schedules a claim across a barrier — checked **out of** the frontend verdict
+    (`CompileResult.is_clean`), exactly like the R21 lifetime advisory; barriers stay off the legality
+    value-path. It is a **safe no-op** on any module with no barriered claim (neither guard fires).
 
 ## What's supported
 

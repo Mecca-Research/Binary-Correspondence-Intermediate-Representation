@@ -266,6 +266,7 @@ fusedColumns(Operation *root, const Cap &h,
   llvm::DenseSet<StringRef> produced;
   llvm::DenseMap<StringRef, int> version;
   llvm::StringSet<> seen;
+  llvm::DenseSet<StringRef> barrProd; // rids written by a barriered producer (ASM3b)
 
   for (ClaimOp c : claims) {
     int32_t pid = phaseId.lookup(c.getPhase());
@@ -273,6 +274,7 @@ fusedColumns(Operation *root, const Cap &h,
       produced.clear();
       version.clear();
       seen.clear();
+      barrProd.clear();
       curPhase = pid;
       havePhase = true;
     }
@@ -299,14 +301,22 @@ fusedColumns(Operation *root, const Cap &h,
       sig += "@";
       sig += std::to_string(version.lookup(rd));
     }
+    bool barriered = c.getHazard() == HazardMode::Barriered; // ASM3b ordering fence
     bool cse = !col.reads.empty() && seen.count(sig);
     bool defo = false;
+    bool defoFenced = false; // a shared read was produced by a barriered producer (ASM3b)
     if (!cse)
       for (StringRef rd : col.reads)
         if (produced.count(rd)) {
           defo = true;
-          break;
+          if (barrProd.count(rd))
+            defoFenced = true;
         }
+    // ASM3b: a barriered claim is a first-class ordering edge -- no fusion across it. Skip the
+    // deforestation discount when the consumer is barriered OR a shared operand was produced by a
+    // barriered producer (mirrors realize.fused_candidates byte-for-byte for R13 parity).
+    if (defo && (barriered || defoFenced))
+      defo = false;
     if (cse || defo) {
       Factor f = cse ? cseFactor(static_cast<int>(col.reads.size()),
                                  static_cast<int>(writes.size()))
@@ -321,6 +331,9 @@ fusedColumns(Operation *root, const Cap &h,
       version[w] = version.lookup(w) + 1;
     for (StringRef w : writes)
       produced.insert(w);
+    if (barriered) // ASM3b: a barriered producer fences its writes (no downstream deforest credit)
+      for (StringRef w : writes)
+        barrProd.insert(w);
     cols.push_back(std::move(col));
   }
   return cols;
@@ -343,6 +356,7 @@ fusedColumnsFromClaims(ArrayRef<ClaimOp> claims, const Cap &h,
   llvm::DenseSet<StringRef> produced;
   llvm::DenseMap<StringRef, int> version;
   llvm::StringSet<> seen;
+  llvm::DenseSet<StringRef> barrProd; // rids written by a barriered producer (ASM3b)
   for (ClaimOp c : claims) {
     Column col;
     col.claim = c;
@@ -369,14 +383,21 @@ fusedColumnsFromClaims(ArrayRef<ClaimOp> claims, const Cap &h,
       sig += "@";
       sig += std::to_string(version.lookup(rd));
     }
+    bool barriered = c.getHazard() == HazardMode::Barriered; // ASM3b ordering fence
     bool cse = !col.reads.empty() && seen.count(sig);
     bool defo = false;
+    bool defoFenced = false; // a shared read was produced by a barriered producer (ASM3b)
     if (!cse)
       for (StringRef rd : col.reads)
         if (produced.count(rd)) {
           defo = true;
-          break;
+          if (barrProd.count(rd))
+            defoFenced = true;
         }
+    // ASM3b: skip the deforestation discount across a barriered ordering edge (consumer barriered or
+    // a shared operand produced by a barriered producer) -- mirrors realize.fused_candidates.
+    if (defo && (barriered || defoFenced))
+      defo = false;
     if (cse || defo) {
       Factor f = cse ? cseFactor(static_cast<int>(col.reads.size()),
                                  static_cast<int>(col.writes.size()))
@@ -391,6 +412,9 @@ fusedColumnsFromClaims(ArrayRef<ClaimOp> claims, const Cap &h,
       version[wsym] = version.lookup(wsym) + 1;
     for (StringRef wsym : col.writes)
       produced.insert(wsym);
+    if (barriered) // ASM3b: a barriered producer fences its writes
+      for (StringRef wsym : col.writes)
+        barrProd.insert(wsym);
     cols.push_back(std::move(col));
   }
   return cols;
