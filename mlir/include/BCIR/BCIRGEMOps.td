@@ -349,6 +349,56 @@ def BCIR_GEMMatmulBufferOp : BCIR_Op<"gem.matmul_buffer", []> {
   let hasVerifier = 1;
 }
 
+def BCIR_GEMAutodiffOp : BCIR_Op<"gem.autodiff", [Symbol]> {
+  let summary = "Serialized closed-set forward autodiff DAG (the B3 content-addressed differentiable graph as a law object)";
+  // The law-rail record of the B3 reverse-mode-AD oracle (bcir/kbcir/autodiff.py). Slice 5 PROVED that B3's
+  // differentiable expression DAG is a CLOSED SET, content-addressed (hash-consed) DAG over a FIXED vocabulary
+  // {const,var,neg,add,sub,mul,div,dot,select} (autodiff.CLOSED_SET / _ARITY / differentiable_ops): differentiating
+  // any expression in that set produces a gradient DAG that STAYS in the same set, no foreign op kind ever appears.
+  // That closure is exactly what lets the law rail carry the forward autodiff DAG as a FIRST-CLASS op with a
+  // fixed-vocabulary structural verifier. This op SERIALIZES one such forward Tape (the hash-consed Node list) so it
+  // round-trips through bcir-opt and is checked against the closed vocabulary + per-op arity + DAG index bounds.
+  //
+  // THE ENCODING (parallel per-node arrays, mirroring how gem.activation carries DenseI64ArrayAttr:$shape; the node
+  // count is opcodes.size()). A Tape Node (nid, op, args, const) is serialized positionally -- node i is described by
+  // the i-th entry of each array, and operands reference STRICTLY EARLIER nodes (the Tape interns operands before
+  // their users, so the array is already topological/acyclic):
+  //   * n_inputs   -- the number of `var` leaves (function inputs); a var's slot must be < n_inputs.
+  //   * opcodes    -- per node, the op kind as a fixed int code (the closed vocabulary):
+  //                     0=const 1=var 2=neg 3=add 4=sub 5=mul 6=div 7=dot 8=select  (mirrors autodiff._ARITY order).
+  //   * arities    -- per node, its operand count. Fixed for every op (neg=1; add/sub/mul/div/dot... see _ARITY) EXCEPT
+  //                   `dot`, which is VARIADIC (2k operands: k u-ids then k v-ids), so the arity is carried per node.
+  //   * arg_base   -- per node, the offset into the flat `args` array where this node's operands begin.
+  //   * args       -- the FLATTENED operand node-indices: node i's operands are args[arg_base[i] : arg_base[i]+arities[i]].
+  //   * consts     -- per node a payload (integer, matching the dialect's all-integer attr idiom): for a `const` node its
+  //                   integer/Q-fixed value; for a `var` node its input SLOT in [0, n_inputs); a sentinel -1 for every
+  //                   non-leaf op (which carries no payload). (B3's oracle keeps float const values; the law serializes
+  //                   the STRUCTURE -- op/operands/leaf-slot -- and carries the const as an integer payload. See the
+  //                   caveat: a float const value is out of scope for this structural law object.)
+  //   * output     -- the result node index (the function's value), in [0, node_count).
+  //
+  // This is a LAW OBJECT: the DAG is fully serialized in attrs (like a constant/declarative op), so it carries NO SSA
+  // operands -- exactly like the sibling attribute-carrying gem plan ops (gem.matmul/activation/conv). No lowering and
+  // no cost pass yet (Phase 2a is the op + its closed-set verifier + round-trip; the lowering/cost pass is the next
+  // slice). hasVerifier enforces the CLOSED-SET LAW (the slice's core value), NOT a new globally-numbered R-law -- it is
+  // the structural well-formedness check the sibling gem ops run inline: (1) every opcode is in the closed vocabulary;
+  // (2) each node's arity matches _ARITY for its op (the variadic `dot` carries an even 2k arity); (3) every operand
+  // index references a STRICTLY EARLIER node (< the node's own position -> acyclic + topological), a var's slot is in
+  // [0, n_inputs), and `output` is a valid node index; (4) per-node consistency (a const/var leaf carries a payload, a
+  // non-leaf carries the -1 sentinel; the parallel arrays are equal length and `args` has exactly sum(arities) entries).
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    I64Attr:$n_inputs,
+    DenseI64ArrayAttr:$opcodes,
+    DenseI64ArrayAttr:$arities,
+    DenseI64ArrayAttr:$arg_base,
+    DenseI64ArrayAttr:$args,
+    DenseI64ArrayAttr:$consts,
+    I64Attr:$output);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
 def BCIR_GEMLaneSegmentOp : BCIR_Op<"gem.lane_segment", [Symbol]> {
   let summary = "Lane-specialized GEM executable segment";
   let arguments = (ins

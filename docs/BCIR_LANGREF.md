@@ -258,6 +258,46 @@ manifest pins identity. A frozen memory module's generation + content fingerprin
 chain into that manifest (`manifest_for(..., memory=…)`), so an admissible
 (saturated) extraction is itself part of a plan's commit hash.
 
+**`bcir.gem.autodiff` — the closed-set autodiff DAG as a law object (B3).** The
+same content-addressed / hash-consed machinery underwrites a *differentiable* DAG:
+B3 (`bcir/kbcir/autodiff.py`) models reverse-mode AD as local backward rewrites
+over an expression DAG built from a **closed vocabulary**
+`{const, var, neg, add, sub, mul, div, dot, select}` (`autodiff.CLOSED_SET`,
+derived from `_ARITY` as the single source of truth). The closure property —
+differentiating any expression in that set produces a gradient DAG that stays in
+the *same* set, no foreign op kind ever appears — is what lets the MLIR law rail
+carry the forward DAG as a **first-class serialized op** with a fixed-vocabulary
+verifier. `bcir.gem.autodiff` is an attribute-carrying (no-SSA-operand) plan op,
+exactly like the sibling `gem.matmul`/`activation` plan records. It serializes one
+hash-consed forward `Tape` as **parallel per-node arrays** (the node count =
+`opcodes.size()`):
+
+- `n_inputs` — the number of `var` leaves (function inputs);
+- `opcodes` — per node, the op kind as a fixed code (`0=const 1=var 2=neg 3=add
+  4=sub 5=mul 6=div 7=dot 8=select`, mirroring `_ARITY`'s order);
+- `arities` — per node, its operand count (fixed by `_ARITY` except the **variadic
+  `dot`**, an even `2k` operands carried per node);
+- `arg_base` + `args` — the flattened operand node-indices; node `i`'s operands are
+  `args[arg_base[i] : arg_base[i]+arities[i]]`;
+- `consts` — per node a payload: a `const`'s integer value, a `var`'s input slot in
+  `[0, n_inputs)`, or the `-1` sentinel for a non-leaf;
+- `output` — the result node index.
+
+Its verifier (`hasVerifier`) is the **closed-set law** — the op-level structural
+well-formedness check the sibling gem ops run inline, **not** a new
+globally-numbered R-law: (1) *closed vocabulary* — every opcode is in
+`{const..select}` (a foreign code is rejected, the law the closure proof
+underwrites); (2) *arity* — each node's operand count matches `_ARITY` (the
+variadic `dot` carries an even `2k` arity); (3) *DAG / index bounds* — every
+operand index references a **strictly earlier** node (`< i`, guaranteeing
+acyclicity + topological order; no forward / out-of-range refs), a `var`'s slot is
+in `[0, n_inputs)`, and `output` is a valid node index; (4) *payload consistency* —
+a leaf carries a payload, a non-leaf the `-1` sentinel, and the parallel arrays are
+equal length with `args` holding exactly `sum(arities)` operands. (Phase 2a: the op
++ verifier + round-trip only; the lowering/cost pass is a follow-up. The op carries
+the DAG *structure* — op/operands/leaf-slot — with the `const` value as an integer
+payload; a float `const` value is out of scope for this structural law object.)
+
 ## 12. Lowering contracts
 
 BCIR-4 → BCIR-5 lowering is governed by R12: each lowered op preserves the BCIR

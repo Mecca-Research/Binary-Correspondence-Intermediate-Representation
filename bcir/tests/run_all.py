@@ -201,6 +201,7 @@ _MODULES = [
     "bcir.tests.test_autodiff",
     "bcir.tests.test_autodiff_closure",
     "bcir.tests.test_autodiff_kernel",
+    "bcir.tests.test_autodiff_law",
     "bcir.tests.test_losses",
     "bcir.tests.test_optimizers",
     "bcir.tests.test_training",
