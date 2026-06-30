@@ -193,6 +193,16 @@ outb(value, 0x60);                 // write u8  to an I/O port    -> outw, outl 
 - **Deferred.** String/block I/O (`insb`/`outsb` …), the paused `*_p` variants (`inb_p`/`outb_p`), and any
   non-integer port/value are out of this slice (a non-integer port or value is an honest diagnostic).
 
+> **Python-rail-only (C-twin gap).** Inline asm (ASM1) and port-mapped I/O (ASM2) are a **Python-frontend-only**
+> feature today: the C twin (`runtime/c/bcir_cfront.c`) does **not** parse inline assembly or port I/O at all.
+> So H1's C-twin sanitizer / fuzz sweep — the malformed-input robustness coverage the rest of the C subset gets
+> — does **not** reach `_asm_stmt` / `_portio`. That robustness is instead covered on the Python rail by the
+> dedicated red-team `bcir/tests/test_cfront_asm_portio_redteam.py`, which feeds malformed / adversarial asm +
+> portio snippets through `compile_unit` / `diagnose` and asserts each one either lowers cleanly or raises a
+> clean cfront diagnostic (`CParseError` / `CLexError` / `CPPError` / `CLowerError`), never an uncaught internal
+> Python exception. (The cfront fuzz corruptor `cfuzz.py` likewise has no asm/portio vocabulary — extending it
+> is a follow-up; the red-team is the primary robustness gate for these paths.)
+
 ## Hardware barriers (ASM3)
 
 The memory-fence intrinsic was already a recognized `barriered` claim; ASM3 deepens it the same way ASM2

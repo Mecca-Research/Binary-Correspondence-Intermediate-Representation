@@ -166,6 +166,7 @@ _MODULES = [
     "bcir.tests.test_c_cfront",
     "bcir.tests.test_c_cfront_asm",
     "bcir.tests.test_c_cfront_portio",
+    "bcir.tests.test_cfront_asm_portio_redteam",
     "bcir.tests.test_ir_structural_parity",
     "bcir.tests.test_cfront_roundtrip",
     "bcir.tests.test_c_channel",
