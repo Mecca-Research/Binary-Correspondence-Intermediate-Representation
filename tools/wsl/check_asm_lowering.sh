@@ -75,6 +75,8 @@ if [ "${asm_smoke_fail}" -eq 0 ]; then
   check_instr "creg_write cr3" 'mov[a-z]?[[:space:]]+%[a-z0-9]+, %cr3'
   check_instr "volatile_load"  'movl[[:space:]]+\(%rdi\), %eax'
   check_instr "volatile_store" 'movl[[:space:]]+%edi, \(%rsi\)'
+  check_instr "msr_read rdmsr" 'rdmsr'
+  check_instr "msr_write wrmsr" 'wrmsr'
 fi
 
 if [ "${asm_smoke_fail}" -eq 0 ]; then

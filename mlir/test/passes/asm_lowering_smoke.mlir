@@ -66,3 +66,14 @@ llvm.func @volatile_store(%val: i32, %addr: i64) {
   bcir.volatile_store %val, %addr : i32, i64
   llvm.return
 }
+
+// --- bcir.msr_read / bcir.msr_write (x86-64 model-specific register; assembles to `rdmsr` / `wrmsr`,
+// with the runtime index marshalled to ECX and the i64 value reassembled/split across EDX:EAX) ---
+llvm.func @msr_read(%idx: i32) -> i64 {
+  %v = bcir.msr_read %idx : i32 -> i64
+  llvm.return %v : i64
+}
+llvm.func @msr_write(%idx: i32, %val: i64) {
+  bcir.msr_write %idx, %val : i32, i64
+  llvm.return
+}

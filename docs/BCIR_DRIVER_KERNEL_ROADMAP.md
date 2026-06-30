@@ -64,7 +64,8 @@ per-ISA assemble-on-native gating); the **`bcir.asm` MLIR op (SEG8.1)** is FileC
 **assemble-smoke-tested** — `tools/wsl/check_asm_lowering.sh` pipes the lowered IR through
 `mlir-translate-20 --mlir-to-llvmir | llc-20 -filetype=obj` (a real `.o`, exit 0) and greps the
 emitted asm for the expected instruction, covering `bcir.asm`/`bcir.portio`/`bcir.creg_*`/the
-volatile MMIO ops. (This closed a real masking bug: the GCC `%w1`/`=a,Nd` portio templates
+volatile MMIO ops/`bcir.msr_*` (`rdmsr`/`wrmsr`). (This closed a real masking bug: the GCC
+`%w1`/`=a,Nd` portio templates
 text-checked but `llc` rejected them — the lowering now emits the LLVM-IR `${N:mod}` /
 `={ax},N{dx}` forms, GCC-template translation runs in `bcir.asm`, and a `+` read-write output is
 rejected at lowering.)
@@ -96,7 +97,8 @@ this tier as small as possible; every line here is unverified.**
 | Port-I/O (**ASM2**, `c.portio.in/out.{b,w,l}`; MLIR `bcir.portio`) | ✅ **have** | x86 `in`/`out`, isolated `__ioport` I/O space, barriered. Non-x86 → honest diagnostic. MLIR twin `bcir.portio` lowers to `llvm.inline_asm` (SEG8.2, **landed**), in LLVM-IR `${N:mod}` / `={ax},N{dx}` form (the post-clang-frontend translation of the cfront GCC templates), **assemble-smoke-tested** through `llc`. |
 | Memory fences (**ASM3**, `c.fence[.acquire/.release]`; MLIR `bcir.barrier`) | ✅ **have** | Per-ISA `mfence`/`dmb`/`fence`, `memory_order`-parameterized (SEG6/7). |
 | **Entry / reset stub + stack setup before C** | ❌ **missing** | A `bcir.entry` naked-function edge (no prologue, sets `sp`, jumps to C `main`). The genuine floor of bring-up. |
-| **Control-register access** (CR0/CR2/CR3/CR4/CR8) | ✅ **have (MLIR rail, D1.3)** | `bcir.creg_read`/`bcir.creg_write` lower to `llvm.inline_asm "mov %crN, $0"` / `"mov $0, %crN"`. **MSR access** (`rdmsr`/`wrmsr`) is the remaining typed sysreg edge; the cfront-rail twin (`c.creg`/`c.msr`) is a later increment (today cfront expresses these as a raw ASM1 blob). |
+| **Control-register access** (CR0/CR2/CR3/CR4/CR8) | ✅ **have (MLIR rail, D1.3)** | `bcir.creg_read`/`bcir.creg_write` lower to `llvm.inline_asm "mov %crN, $0"` / `"mov $0, %crN"`. The cfront-rail twin (`c.creg`/`c.msr`) is a later increment (today cfront expresses these as a raw ASM1 blob). |
+| **Model-specific-register access** (`rdmsr`/`wrmsr`) | ✅ **have (MLIR rail, D1.4)** | `bcir.msr_read`/`bcir.msr_write` take a runtime `i32` MSR index (→`ECX`) and a clean `i64` value; the read is a multi-output `rdmsr` (`={ax},={dx}`) reassembled to i64, the write splits the i64 across `EDX:EAX` into `wrmsr`. Both `has_side_effects` + `~{memory}`, assemble-smoke-checked. |
 | **Descriptor-table loads** (`lgdt`/`lidt`/`ltr`) + segment reloads | ❌ **missing** | Raw-asm only today. |
 | **Interrupt entry trampoline** (full-frame save/restore + `iret`) | ❌ **missing — largest new surface** | Needs the currently-rejected `asm goto` *or* a dedicated trampoline op. The ISR *body* is verified C; only the entry/`iret` shim is asm. |
 
@@ -257,9 +259,14 @@ discipline + a CI-green draft PR per the established cadence):
   `*(volatile T*)(intaddr)` emit; `volatile` set via the generated setter so it is LLVM-20/22 stable).
 - **D1.3** — the **boot/CPU-state asm edges**: the typed **control-register** edge
   (`bcir.creg_read`/`bcir.creg_write` for CR0/CR2/CR3/CR4/CR8) is ✅ **landed** (CR3 is the paging
-  gateway, the most foundational of these). The remainder land *as a driver demands them* (not
-  speculatively): MSR access (`rdmsr`/`wrmsr`); entry/reset stub + stack init; `lgdt`/`lidt`. The
-  interrupt trampoline (the largest new surface) lands only when going interrupt-driven (RUNG 1).
+  gateway, the most foundational of these).
+- **D1.4** — the typed **model-specific-register** edge (`bcir.msr_read`/`bcir.msr_write` →
+  `rdmsr`/`wrmsr`) is ✅ **landed**: a runtime `i32` MSR index (→`ECX`) and a clean `i64` value
+  (the `EDX:EAX` split is handled in the lowering — multi-output `rdmsr` reassembled, `wrmsr`
+  fed the split halves), `has_side_effects` + `~{memory}`, assemble-smoke-checked. The remaining
+  boot edges land *as a driver demands them* (not speculatively): entry/reset stub + stack init;
+  `lgdt`/`lidt`. The interrupt trampoline (the largest new surface) lands only when going
+  interrupt-driven (RUNG 1).
 
 ### Phase 2 — The first driver, formalized, then the ladder
 - **D2.1** — promote the existing polled UART (`cfront_driver_uart.c` + `uart_regs.h`) into a real
@@ -290,6 +297,7 @@ the warranted path is the resident compiler finishing BCIR-emitted freestanding 
   is independent / after / out-of-scope, and the firmware/security specs are *parser-kernel*
   opportunities, not implementation targets. The post-UART work is the RUNG 1→7 ladder.
 - **Next code slice:** the Phase-0 hardening gate (D0.1 sanitizer-in-CI, D0.2 Area-B red-team), the
-  `bcir.portio` op (D1.1), and the `bcir.volatile_load/store` MMIO ops (D1.2) are all **landed**; next
-  is D1.3 (the boot/CPU-state asm edges — entry/reset stub, control-reg/MSR, `lgdt`/`lidt`) *as a driver
-  demands them*, then Phase 2's first channel-backed UART driver.
+  `bcir.portio` op (D1.1), the `bcir.volatile_load/store` MMIO ops (D1.2), the control-register edge
+  (D1.3), and the MSR edge (D1.4) are all **landed**; the remaining boot edges (entry/reset stub +
+  stack init, `lgdt`/`lidt`) land *as a driver demands them*, then Phase 2's first channel-backed
+  UART driver.
