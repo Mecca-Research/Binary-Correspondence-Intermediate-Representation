@@ -239,7 +239,7 @@ This is where BCIR's existing ML substrate matters. The repository already has d
 
 #### Incremental API-call training sessions
 
-Yes, a new kind of incremental training loop is possible:
+A new kind of incremental training loop is possible:
 
 1. **Seed.** Start with a small BCIR model or routing policy and a baseline eval set.
 2. **Generate.** Ask GPT meta-agents for batches of tasks, solutions, critiques, and adversarial variants under strict schemas.
