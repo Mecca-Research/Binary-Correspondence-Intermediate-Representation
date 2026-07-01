@@ -206,6 +206,73 @@ GPT as stochastic teacher / planner / tool user
 
 In short: BCIR can substantially change GPT's **effective capabilities** by changing everything around the call. It can distill repeated GPT successes into BCIR-owned models and deterministic policies. It cannot directly change GPT's base model; any trusted long-term capability must eventually become a BCIR artifact that is replayable, measurable, and gated.
 
+### 3.8 GPT L2/L3 meta-agents as cloud teachers for BCIR model training
+
+The next step beyond "GPT helps write code" is a **cloud-teacher training loop**: GPT L2/L3 meta-agents generate tasks, data, labels, critiques, curriculum steps, and repair traces through API calls; BCIR turns those calls into typed training episodes; BCIR trains its own neural networks, routers, optimizers, and endpoint models on the resulting corpus; deterministic gates decide what survives.
+
+This is a real training architecture, but it is not magic gradient access to GPT. The API call is an **inference-time teacher/sample generator**, not a differentiable layer inside BCIR's optimizer. The learnable weights that change are the BCIR-owned student models, prompt/tool policies, retrieval rankers, Q8 tables, or hosted fine-tuned models where product support permits.
+
+A concrete session ABI should look like this:
+
+```text
+TrainingSession(gen_id, objective, budget, policy, target_model)
+  -> Episode(seed, prompt_pack, retrieved_context, tool_manifest, expected_schema)
+  -> GPT teacher calls: propose / solve / critique / adversarial_mutate / grade
+  -> BCIR validation: schema -> verifier -> oracle/law parity -> tests -> telemetry
+  -> Dataset record: state, action, answer, critique, label, confidence, costs, failures, provenance
+  -> Student update: train/eval/freeze candidate BCIR model or policy
+  -> Promotion gate: held-out evals + replay + regret + provenance + two-truth quarantine
+```
+
+The generated dataset should be multi-channel rather than a flat text dump:
+
+| Channel | What GPT meta-agents generate | BCIR consumer | Gate before use |
+|---|---|---|---|
+| Task synthesis | New LLVM/MLIR/BCIR exercises, malformed IR, hardware scenarios, edge cases | Training corpus evals, repair agents, verifier tests | Deduplicate, license/provenance tag, run verifier/toolchain where possible |
+| Teacher solutions | Candidate MLIR, C kernels, plans, explanations, expected outputs | Student code/action models and retrieval answerers | Compile/run/compare; reject unverifiable answers |
+| Critic labels | Failure diagnosis, risk tags, routing recommendations, fix hints | Diagnostic classifiers, agent routers, prompt-pack selectors | Agreement with tests, human review for high-impact labels |
+| Adversarial mutations | Counterexamples, fuzz seeds, prompt-injection cases, malicious tool inputs | Red-team evals and guardrails | Sandbox; never promote directly to trusted corpus |
+| Policy traces | Which tools, context packs, schemas, and specialists worked | K_BCIR-style routing/ranking policies | Replay on held-out traces and cost/regret gates |
+| Numeric/model data | Toy supervised datasets, synthetic traces, curriculum schedules | `bcir.kbcir.training`, losses, optimizers, transformer/recurrent/classical modules | Separate synthetic from measured data; require eval improvement |
+
+This is where BCIR's existing ML substrate matters. The repository already has deterministic datasets/mini-batches, losses, optimizers, supervised training loops, quantization, classical models, recurrent models, transformer blocks, autodiff kernels, and C lowerings. GPT meta-agents can fill the missing *experience stream*: they can manufacture and label workloads, propose curriculum orderings, create adversarial examples, and explain failures. BCIR then trains and freezes the students.
+
+#### Incremental API-call training sessions
+
+Yes, a new kind of incremental training loop is possible:
+
+1. **Seed.** Start with a small BCIR model or routing policy and a baseline eval set.
+2. **Generate.** Ask GPT meta-agents for batches of tasks, solutions, critiques, and adversarial variants under strict schemas.
+3. **Validate.** Run BCIR tools, tests, law/oracle parity, and human review for high-impact categories.
+4. **Train.** Update a BCIR student model on accepted records. For neural students this is ordinary gradient training; for policies it may be bandit/regret optimization; for prompt/tool packs it may be eval-driven selection.
+5. **Evaluate.** Re-run held-out evals and macro-evals; measure cost, latency, correctness, tool use, and replay stability.
+6. **Freeze.** If the candidate beats the prior under the promotion rule, freeze weights/tables/prompts/schema versions with a provenance digest.
+7. **Bootstrap.** Use the improved student to filter, route, or critique the next generation of GPT calls, reducing cost and increasing sample quality.
+
+The novel part is not that GPT is being trained incrementally. The novelty is **frontier-inference bootstrapping**: repeated GPT calls create a growing, validated experience buffer; BCIR students learn from that buffer; improved BCIR students make the next teacher-call campaign cheaper, more targeted, and more rigorous. That is a credible path to new BCIR-native AI capabilities.
+
+#### How far this can go
+
+High-confidence targets:
+
+- BCIR-specific coding/repair agents trained on verified patches and failing traces.
+- Retrieval rankers that select the best `docs/`, `bcir/`, `mlir/`, and `llvm-training/` context packs.
+- Tool routers that choose oracle vs law vs training-corpus vs telemetry specialists.
+- Diagnostic models that classify verifier failures, C-front fallback causes, parity drift, and environment limitations.
+- Cost-prior and policy models that propose candidate K_BCIR search orders while exact search/verifier gates preserve correctness.
+- Synthetic workload generators for fuzzing, parity tests, and curriculum learning.
+- Small endpoint models: classifiers, routers, summarizers, kernel-shape advisors, and compiler-action policies.
+
+Lower-confidence or research-only targets:
+
+- Large general-purpose BCIR foundation models trained mainly from GPT outputs. Synthetic-only corpora can inherit teacher blind spots, collapse diversity, and become expensive quickly.
+- Autonomous self-improving systems without human review. They may optimize eval loopholes rather than real capability.
+- Using GPT labels as legality. That violates the two-truth quarantine; only BCIR verifier/law/tool evidence can decide legality.
+
+OpenAI's model-optimization guide frames evals, prompt engineering, and fine-tuning as a continuous feedback loop, and the agent-improvement cookbook shows traces plus human/model feedback becoming reusable evals and Codex-ready harness changes. BCIR can generalize that pattern from "improve the agent harness" to "produce a typed training stream for BCIR-owned students," as long as every record carries provenance and every promotion is replay-gated.
+
+Sources: OpenAI model optimization guide (<https://developers.openai.com/api/docs/guides/model-optimization>), agent improvement loop cookbook (<https://developers.openai.com/cookbook/examples/agents_sdk/agent_improvement_loop>), and macro evals for agentic systems (<https://developers.openai.com/cookbook/examples/partners/macro_evals_for_agentic_systems/macro_evals_for_agentic_systems>).
+
 ## 4. Proposed architecture
 
 ```text
@@ -310,12 +377,14 @@ Required gates:
 Scope:
 
 - Use GPT to propose workloads, features, candidate policies, synthetic labels, and experiment plans.
+- Run incremental cloud-teacher training sessions: GPT meta-agents generate typed episodes; BCIR validates them; BCIR-owned students train on accepted records; promotion freezes deterministic artifacts.
 - Feed outputs into BCIR training/calibration organs as explicitly tagged synthetic evidence.
 - Promote only deterministic frozen artifacts after replay, regret, parity, and provenance gates.
 
 Value:
 
 - Uses GPT calls to bootstrap new model-development datasets and policy searches without pretending GPT is in the hot path.
+- Enables frontier-inference bootstrapping: current GPT capabilities manufacture a validated experience buffer that trains narrower, cheaper, BCIR-owned models and agents.
 - Lets BCIR become a compiler substrate for AI model training/inference experiments.
 
 Required gates:
@@ -323,6 +392,7 @@ Required gates:
 - Synthetic-vs-measured data separation.
 - Two-truth quarantine: learned confidence never becomes legality.
 - Frozen Q8/code artifacts for L1 or below.
+- Held-out evals and macro-evals to prevent self-generated data from overfitting the teacher's blind spots.
 
 ### Version 4: ChatGPT-hosted BCIR Workbench
 
@@ -342,6 +412,26 @@ Required gates:
 - Sandbox compilers and hardware tools.
 - Clear user approval for writes and expensive runs.
 
+### Version 5: BCIR-trained endpoint models
+
+Scope:
+
+- Serve BCIR-owned student models as endpoints for narrow compiler/AI tasks: retrieval ranking, diagnostic classification, tool routing, workload synthesis, and kernel-shape advice.
+- Use GPT meta-agents as cloud teachers during training, then route easy/high-confidence production calls to the cheaper BCIR endpoint and reserve GPT for hard cases, critique, and curriculum generation.
+- Export endpoint artifacts with model card, dataset provenance, eval suite, quantization record, latency/cost envelope, and rollback plan.
+
+Value:
+
+- Turns API-call bootstrapping into deployable BCIR-owned AI services rather than a permanent dependency on every GPT call.
+- Creates a ladder from GPT-assisted data generation to auditable BCIR inference endpoints.
+
+Required gates:
+
+- Shadow-mode deployment before live routing.
+- Confidence/uncertainty thresholds that escalate to GPT or human review.
+- Drift monitoring and periodic replay against frozen evals.
+- Clear separation of endpoint predictions from BCIR legality verdicts.
+
 ## 6. Recommended next implementation steps
 
 1. Create a narrow `bcir.tools` Python facade for structured operations already supported by the CLI.
@@ -351,7 +441,9 @@ Required gates:
 5. Add mutating patch workflows only after read-only tools are stable.
 6. Design the ChatGPT Apps UI around structured artifacts, not free-form logs.
 7. Keep all OpenAI-derived recommendations outside BCIR legality until they are frozen, replayed, and accepted by deterministic gates.
+8. Define a `TrainingSession`/`Episode` schema for GPT-generated data with provenance, teacher model ID, prompt pack hash, validation result, and promotion status.
+9. Start with narrow students (retrieval ranker, diagnostic classifier, tool router) before attempting larger neural endpoint models.
 
 ## 7. Core conclusion
 
-ChatGPT can integrate deeply with BCIR as an orchestrator, researcher, teacher, patch author, trace critic, UI host, and meta-learning proposer. It should not be integrated as a verifier, hot-path planner, or unmediated source of truth. The correct architecture is a layered one: OpenAI APIs expand exploration and interaction; BCIR's oracle/law/parity system decides what becomes part of the machine.
+ChatGPT can integrate deeply with BCIR as an orchestrator, researcher, teacher, patch author, trace critic, UI host, cloud-teacher data generator, and meta-learning proposer. The frontier model can bootstrap new BCIR neural networks and endpoint models by producing validated training episodes, but it should not be integrated as a verifier, hot-path planner, unmediated source of truth, or hidden gradient oracle. The correct architecture is a layered one: OpenAI APIs expand exploration and synthesize experience; BCIR's oracle/law/parity/training system decides what becomes a frozen, replayable machine artifact.
