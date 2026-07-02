@@ -41,6 +41,7 @@ from bcir.kbcir.unsupervised import (EmbeddingTable, MinMaxScaler, StandardScale
                                      reconstruction_error, standard_scaler_fit,
                                      standard_scaler_transform)
 from bcir.lower.c_kernel import emit_kmeans_assign_c
+from bcir.tests._convergence import assert_converged
 
 
 # ============================================================================================================
@@ -556,11 +557,25 @@ def test_autoencoder_training_drives_reconstruction_loss_down():
             out.append(z)
         return out
 
-    p0 = [rng.uniform(-0.5, 0.5) for _ in names]
+    # POSITIVE init: the data is positive (the +0.3 offset), so a positive encoder init keeps every relu unit
+    # active -- a symmetric +/-0.5 init strands a dead unit and plateaus at ~1.5e-2 instead of converging.
+    p0 = [rng.uniform(0.1, 0.6) for _ in names]
     res = train(model, p0, Dataset(tuple(rows), tuple(ys)), loss="mse", optimizer="adam",
-                epochs=200, lr=0.03, seed=1, param_names=names)
-    assert res.train_loss[-1] < res.train_loss[0], (res.train_loss[0], res.train_loss[-1])   # loss decreases
-    assert res.train_loss[-1] < 0.5 * res.train_loss[0], (res.train_loss[0], res.train_loss[-1])   # by >= 2x
+                epochs=400, lr=0.05, seed=1, param_names=names)
+    # the shared convergence gate (the audit finding: the old gate required only a 2x drop while the measured
+    # run achieved 70x -- a lax gate is not a convergence demo). The data is exactly rank-2 + a positive
+    # offset, so near-ZERO reconstruction is achievable and is now asserted ABSOLUTELY (measured ~1e-8).
+    assert_converged(res.train_loss, final_below=1e-6, max_ratio=0.01, name="E6 autoencoder")
+
+
+def test_kmeans_reaches_a_fixpoint():
+    # E6 K-means FIXPOINT (the audit gap): convergence was previously INFERRED from the inertia plateau;
+    # assert the fixpoint itself -- one more Lloyd iteration changes NEITHER the centroids NOR the labels.
+    X, n, nf = _two_cluster_toy()
+    c8, l8 = kmeans_fit(X, n, nf, k=2, init_indices=[0, 5], n_iter=8)
+    c9, l9 = kmeans_fit(X, n, nf, k=2, init_indices=[0, 5], n_iter=9)
+    assert l8 == l9, (l8, l9)
+    assert all(abs(a - b) < 1e-12 for a, b in zip(c8, c9)), (c8, c9)
 
 
 def test_kmeans_inertia_strictly_decreases_before_convergence():
