@@ -409,9 +409,13 @@ drop-in loading of a modern open-weight chat model.
 
 ### 7.4 A staged implementation path
 
-1. **Manifest-only ingestion** — `ModelManifest` records for a small Gemma/Qwen model:
-   architecture, license, tokenizer ref, weight shards, hashes, dtype, parameter count, context
-   length, required kernels. *(Build this before any weight loading or decode kernels.)*
+1. ✅ **Manifest-only ingestion — LANDED** (`bcir/frontends/models/manifest.py`,
+   `test_model_manifest.py`): `ModelManifest` records — architecture, license, tokenizer ref,
+   weight-shard inventory + streamed sha256 hashes, dtype census, parameter count, context
+   length — built from the safetensors HEADERS + config only (the weight bytes are hashed for
+   integrity, never interpreted), deterministic (canonical-JSON digest, ingestion-order-free),
+   JSON round-tripping, loud on malformed shards. Dep-free stdlib. *(Built before any weight
+   loading or decode kernels, per the contract.)*
 2. **Tokenizer parity** — round-trip tests + chat-template fixtures before touching weights.
 3. **Reference decode** — a slow, dependency-light Python reference for one small dense decoder
    layer from the existing matmul/activation/attention pieces plus the missing RMSNorm/RoPE/KV
