@@ -7,13 +7,13 @@
 > consolidation; their unique content is folded in here). It pairs with the docs that
 > stay separate because they are **normative reference / evidence / governance**, not
 > roadmap:
-> - [`BCIR_LANGREF.md`](BCIR_LANGREF.md) — the IR language + R1–R18 law spec (normative).
+> - [`BCIR_LANGREF.md`](BCIR_LANGREF.md) — the IR language + R1–R21 law spec (normative).
 > - [`BCIR_STREAMPACK_ABI.md`](BCIR_STREAMPACK_ABI.md) — the frozen binary ABI (v1 + append-only v2).
 > - [`PARITY.md`](PARITY.md) — the active oracle↔law cross-map (dual-rail enforcement).
 > - [`BCIR_NATIVE_OBJECT_GATE.md`](BCIR_NATIVE_OBJECT_GATE.md) — the native-isel decision gate.
 > - [`HARDWARE_VALIDATION.md`](HARDWARE_VALIDATION.md) — what is measured vs blocked on real silicon.
 > - [`CLANG_COMPARISON.md`](CLANG_COMPARISON.md) — the measured BCIR-vs-Clang evidence.
-> - [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) — the dated snapshot + changelog.
+> - [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) — the honest current-state snapshot.
 > - [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md) — the dated 7-pillar honest-state map of the
 >   "C-as-Macro-Assembly + IR-owns-everything + bare-metal-AI" thesis vs what is built (+ the prioritized gap backlog).
 > - [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) — the C↔C++ hand-off boundary (Pillar 5d): the contract
@@ -38,6 +38,8 @@
 >   `runtime/c/bcir_telemetry_frame.{c,h}`, byte-identical), CRC reused (`bcir_crc32`/`zlib.crc32`) —
 >   off the legality path.
 > - [`BCIR_Repo_Structure.md`](BCIR_Repo_Structure.md) — directory layout + build entry points.
+> - [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md) — how it was built: the development method,
+>   the PR-era arc (#2–#607), and the condensed dated changelog (dev-step notes live there, not here).
 
 ---
 
@@ -81,7 +83,7 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 | Oracle conformance tests (`python -m bcir.tests.run_all`) | see **[`docs/STATUS.md`](STATUS.md)** (generated count — single source of truth), incl. the generated differential (now incl. a compose-rail metamorphic campaign) + verifier + fuzz |
 | Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
 | GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
-| Verifier laws | **R1–R18** all first-class in `-bcir-verify` (R1–R17 dual-rail with the Python oracle + the `-bcir-lower-to-llvm` checkpoint; **R18** compositional call-graph integrity — callee resolution + no recursion — for the `kbcir.func/call/cond` family). R13 also **recomputes** the manifest digest + cross-checks `m_theta` against the IR |
+| Verifier laws | **R1–R21** all first-class in `-bcir-verify` (see [`STATUS.md`](STATUS.md) for the generated 21/21 coverage table). R1–R17 dual-rail with the Python oracle + the `-bcir-lower-to-llvm` checkpoint; **R18** compositional call-graph integrity; **R19/R20** (timing/CDC) + **R21** (pointer lifetime) ride optional claim metadata, vacuous over the scalar/C subset. R13 also **recomputes** the manifest digest + cross-checks `m_theta` against the IR |
 | Named pass pipelines | `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm` / `bcir-aot` with verifier checkpoints |
 | Θ context op | `bcir.kbcir.theta` — the C++ plan matches the oracle under **hot** Θ (matmul hot 1159168), not just cool |
 | Six-target capability matrix | all six TARGETS cross-checked on the MLIR rail (`target_matrix.mlir`) — the law plans per-target from the capability seeds alone |
@@ -174,8 +176,8 @@ of the last cycle. Each stage is bit-exact against the oracle and gated by
   per TARGET; `-bcir-plan`/`-overlap`/`-rcsp-plan` recompute the oracle's per-target
   result from the capability alone — avx512/sve/rvv 16→7808, avx2 8→9472, neon 4→12800,
   ptx 32→6976; the GPU's coalesced gather halves histogram (266240 vs 528384).
-- **Verifier R1–R18**, negative-tested per law (R1–R17 dual-rail on the Python oracle + the
-  MLIR rail; **R18** — compositional call-graph integrity — on the MLIR rail), plus a verifier
+- **Verifier R1–R21**, negative-tested per law (R19/R20 timing + R21 lifetime promoted to
+  first-class in the §5.14 arc; they stay vacuous without their optional metadata), plus a verifier
   *differential* (`gen_illegal_module` + `run_verifier_campaign`) that fault-injects each
   law and confirms the verifier catches it.
 - **C23 where it pays:** `_BitInt(N)` exact-width Q-fixed lane kernels (the place a
@@ -492,127 +494,17 @@ call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C att
 | L7 | preprocessor — object/function/variadic `#define` (+ `#`/`##`, `__VA_ARGS__`/`__VA_OPT__`), `#if`/`#ifdef`/`#elifdef`, predefined macros (`__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), `#line`, `_Pragma`, `#include`, C23 `#embed` (→ const globals) | ✅ |
 | L8 | ABI — struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked against Clang's `sizeof`/`offsetof` | ✅ |
 
-> **Inline assembly (ASM1)** — GNU `asm`/`__asm__` (basic + extended) is an **ISA-neutral trusted opaque
-> effect edge** (the `c.asm:` / `c.asm.volatile:` sibling of `c.call.libm.void:`): the template is re-emitted
-> **verbatim**, BCIR owns only the calling side (operands + constraints + clobbers + ordering), volatile/basic
-> asm is never DCE'd and a `"memory"`-clobber / `volatile` asm is an ordering barrier. Per-ISA *semantic*
-> modeling (port-I/O intrinsics, hardware barriers) is **ASM2 / ASM3** — see `docs/CFRONT_GUIDE.md`.
+**The trusted asm-edge + law-catch-up slices (all landed — build detail in
+[`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md); user-facing contracts in
+[`CFRONT_GUIDE.md`](CFRONT_GUIDE.md) + [`BCIR_LANGREF.md`](BCIR_LANGREF.md)):**
 
-> **Port-mapped I/O (ASM2)** — the six `inb`/`inw`/`inl` / `outb`/`outw`/`outl` intrinsics (ordinary CALLs,
-> no new syntax) lower to a **typed, isolated, barriered I/O-port edge** (`c.portio.in.{b,w,l}:` /
-> `c.portio.out.{b,w,l}:`) carrying width + direction: **isolated** under the I/O address space (a dedicated
-> `__ioport` MMIO resource — a port access never aliases normal memory), **`barriered`** (volatile + ordered
-> — two port ops never reorder/fuse/eliminate), and off the legality value-path. Writes use the Linux
-> `out*(value, port)` convention (pinned + tested). The IR is **ISA-neutral**; the per-ISA `in`/`out`
-> instruction is emitted behind `--target` — x86 (`x86_64`/`i386`/`x86_64-windows`) emits the real
-> instruction as `__asm__ __volatile__` (`<asm/io.h>` `"=a"`/`"a"`/`"Nd"` constraints, reusing the ASM1
-> machinery); a non-x86 target (`aarch64`/`riscv64`) has **no port I/O** → an honest unsupported diagnostic
-> (LLVM fallback). **Honest boundary:** executing `in`/`out` is privileged (ring-0 / iopl), so the emitted
-> asm is **assembled** (`gcc -c`/`clang -c`), never run — see `docs/CFRONT_GUIDE.md`.
-
-> **Hardware barriers (ASM3)** — the memory-fence intrinsic (already a recognized `barriered` claim) gets
-> **typed kinds** + **real per-ISA assembly emit behind `--target`**, mirroring ASM2. `__sync_synchronize` /
-> `__atomic_thread_fence` / the C11 `atomic_thread_fence` + `_mm_mfence` are **full (seq_cst)** fences (op
-> **`c.fence`**, kept backward-compatible so the parity digest is unchanged); `_mm_lfence` is the **load
-> (acquire)** fence (`c.fence.acquire`) and `_mm_sfence` the **store (release)** fence (`c.fence.release`) —
-> the kind read off the intrinsic NAME (the `_mm_*` intrinsics take no argument; the order-taking
-> `*_thread_fence(order)` forms parse their `memory_order` in **SEG6.1**, below). The portable
-> `__atomic_thread_fence(__ATOMIC_SEQ_CST)` emit is replaced by the real barrier behind `--target` — x86
-> `mfence`/`lfence`/`sfence`, aarch64 `dmb ish`/`ishld`/`ishst`, riscv64 `fence rw,rw`/`r,rw`/`rw,w`, always
-> with the required `"memory"` compiler-barrier clobber. **Every ISA has a fence**, so a target outside the
-> three families keeps the portable emit as an honest default (no unsupported-diagnostic path, unlike port
-> I/O). **Per-ISA assemble, host-arch-gated:** barriers can't be cross-assembled, so the gate assembles each
-> fence for the **host's own native arch** (`gcc -c`/`clang -c`) and asserts the emit text for non-native
-> targets — real assembled coverage on every CI lane (x86 lanes assemble `mfence`/`lfence`/`sfence`; the
-> aarch64 lane assembles the `dmb ish` family). Cross-claim ordering **enforcement** (making `barriered`
-> forbid the optimizer/scheduler from reordering other claims across a fence) is the next slice (ASM3b). See
-> `docs/CFRONT_GUIDE.md`.
-
-> **Barriers as first-class ordering edges (ASM3b)** — ✅ a **`barriered`-hazard claim now fences OTHER
-> claims**, not just itself: it is a first-class ordering edge no claim may be reordered across, and a
-> producer→consumer pair spanning it does **not** get the deforestation (fusion) cost discount. Two oracle
-> guards wire the fence into the *existing* bundle/cost machinery: (1) `bundle._conflict` makes a barriered
-> claim conflict with **every** other claim, so `find_bundles` / `_legal_reorder` never bundle or reorder a
-> claim across it (a hard reorder fence); (2) `realize.fused_candidates` **skips** the ×0.75 memory
-> deforestation factor when the consumer is barriered **or** a shared operand was produced by a barriered
-> producer (the fence forces the intermediate to materialize). The scope is **all `barriered` claims** —
-> memory fences (`c.fence*`), MMIO loads/stores (`Domain.MMIO`), port-I/O (`c.portio.*`), and
-> volatile/`"memory"`-clobber inline asm — so MMIO/port-I/O/asm ordering is really enforced, not just the
-> fence intrinsic. **R13 parity:** the MLIR cost model (`BCIRCostModel.h::fusedColumns`) mirrors guard (2)
-> byte-for-byte (`mlir/test/passes/cost_model_barrier.mlir`). A **structural invariant**
-> (`verify.verify_barrier_ordering`) verifies a realized plan respects the fence — checked **out of** the
-> frontend verdict, like the R21 lifetime advisory; it is **NOT a new verdict R-law** (barriers stay off the
-> legality value-path, per the ASM1/ASM2/ASM3 precedent). A **safe no-op** on the existing corpus (a module
-> with no barriered claim gets neither guard — pinned scores intact). See `docs/CFRONT_GUIDE.md`.
-
-> **Order-parameterized memory fences (SEG6.1)** — ✅ the fence surface is **widened to the
-> order-parameterized form**: `__atomic_thread_fence(order)` (GCC/Clang) and `atomic_thread_fence(order)`
-> (C11 `<stdatomic.h>`) now **parse their `memory_order` argument** instead of dropping it, recognizing both
-> the `memory_order_*` constants and the `__ATOMIC_*` macro spellings (shared ints relaxed=0…seq_cst=5).
-> The order routes to the fence **kind**: `acquire`/`consume` → `c.fence.acquire`, `release` →
-> `c.fence.release`, and `seq_cst`/`acq_rel`/`relaxed` — plus any **non-constant** or unrecognized order —
-> fold conservatively to the full `c.fence` (a stronger fence never under-synchronizes; sound and never
-> crashes). So `atomic_thread_fence(memory_order_acquire)` correctly lowers to the **load** fence (`lfence`
-> / `dmb ishld` / `fence r,rw`) rather than the full `mfence`. `acquire`/`release`/`seq_cst` carry
-> **end-to-end** to the MLIR `BCIR_MemOrdering` enum and lower to `llvm.fence acquire`/`release`/`seq_cst`
-> (`mlir/test/passes/memory_ordering.mlir`; the BCIR↔LLVM map is the identity in
-> `bcir/lower/memory_model.py`). The full-fence op string stays `c.fence`, so `__atomic_thread_fence(5)` /
-> `__sync_synchronize` and the **C-twin parity corpus are unchanged** (the C twin `bcir_cfront.c` fence
-> handling is a separate slice, **SEG7**, now landed — below). See `docs/CFRONT_GUIDE.md`.
-
-> **C-twin order-parameterized fence parity (SEG7)** — ✅ the byte-identical C reimplementation
-> (`runtime/c/bcir_cfront.c`) that backs the **dual-rail digest parity gate** now mirrors SEG6.1's lowering
-> exactly, so the parity covers acquire/release/seq_cst **symmetrically**. The `atomic_kind` table gains the
-> C11 `atomic_thread_fence` and the x86 `_mm_mfence`/`_mm_lfence`/`_mm_sfence` intrinsic names (kinds read
-> off the name); the identifier→rvalue path resolves an **unshadowed** `memory_order_*` / `__ATOMIC_*` name
-> to an int const claim **identical to a same-valued integer literal** (the same env→func→constant shadow
-> precedence as the oracle's `_rvalue`); the order-taking forms (`__atomic_thread_fence` /
-> `atomic_thread_fence`) **route the fence kind by the first argument's order value** (mirroring
-> `_fence_order_kind`: integer or unshadowed named order → `_ORDER_KIND`, anything else → full `c.fence`),
-> evaluating the arg's const claim **before** choosing the op so the `[const, fence]` claim sequence matches
-> on both rails. The C twin's fence **emit stays portable** (`__atomic_thread_fence(__ATOMIC_ACQUIRE/RELEASE/
-> SEQ_CST)`) — per-ISA fence asm is **Python-only by design**. The dual-rail digest gate
-> (`bcir/tests/test_c_cfront.py`, `tools/c/check_runtime.sh`) verifies the Python oracle and the C twin
-> produce **byte-identical** claims for the ordered fences via the extended `runtime/c/cfront_atomic.c`
-> corpus. See `docs/CFRONT_GUIDE.md`.
-
-> **Inline asm on the MLIR law rail (SEG8.1)** — ✅ the ASM1 inline-asm edge gets a **first-class MLIR law
-> op**, `bcir.asm`, closing the gap where inline asm was **cfront-only** (the MLIR rail had `bcir.barrier`
-> for fences but nothing for inline asm). `bcir.asm` is the MLIR-rail twin of the cfront `c.asm:` /
-> `c.asm.volatile:` claim (`lower.py::_asm_stmt` + `AsmInfo`): it carries the template **verbatim**
-> (`asm_template`, named to dodge the C++ `template` keyword), `is_volatile`, the `out_constraints` /
-> `in_constraints` / `clobbers` string arrays, and the outputs-then-inputs SSA operands (one result per
-> output) — the closest sibling op being `bcir.barrier`. Its `hasVerifier` is the op-level structural check
-> (`args == out + in`, `results == out`), like the merged `gem.autodiff` law op — and like `gem.autodiff`,
-> it does **not** need the Python oracle's MLIR emitter to produce it yet (the oracle→MLIR wiring is a later
-> increment). The `-convert-bcir-to-llvm` lowering emits `llvm.inline_asm` with a **single** LLVM constraint
-> string (out, then in, then each clobber as a `~{...}` entry, comma-joined — e.g. `"=r,r,~{memory}"`),
-> `has_side_effects`, default (AT&T) dialect; the LLVM `call asm` operand list is the **inputs only** (a
-> write-only `"="` output is the *result*). **Scoped first slice:** 0 or 1 result, write-only `"="` outputs;
-> multi-output (LLVM returns a struct needing `extractvalue`) and read-write `"+"` outputs are a clean
-> follow-on (SEG8.x) — the lowering rejects `results > 1` with an honest diagnostic rather than shipping a
-> wrong unpack. This establishes exactly the `llvm.inline_asm` lowering that the **SEG8.2** port-I/O op
-> (`bcir.portio`, the per-ISA x86 `in`/`out` edge emitted *as* inline asm) reuses. Tests:
-> `mlir/test/passes/inline_asm_roundtrip.mlir` (byte-identical round-trip), `inline_asm.mlir` (the LLVM
-> lowering + constraint string), `inline_asm_verify_neg.mlir` (the two count laws); wired into
-> `tools/wsl/check_passes.sh`. See `docs/BCIR_LANGREF.md`.
-
-> **Port-mapped I/O on the MLIR law rail (SEG8.2)** — ✅ the ASM2 port-I/O edge gets a **first-class MLIR
-> law op**, `bcir.portio`, the close analog of `bcir.asm` and the law-rail twin of the cfront
-> `c.portio.in.{b,w,l}:` / `c.portio.out.{b,w,l}:` claim (`lower.py::_portio` + `emit.py::_portio_stmt`).
-> It carries a `#bcir.port_dir` **direction** enum (`in` read / `out` void write) and a `{8,16,32}`-bit
-> **width** (the GCC b/w/l modifier): `in` = one operand (the port) + one result (the read value); `out` =
-> two operands (value, then port — the Linux `out(value, port)` order) + no result. Its `hasVerifier` is the
-> op-level structural check (width ∈ {8,16,32}; the per-direction operand/result arity; the value width =
-> the op width). The `-convert-bcir-to-llvm` lowering **reuses** the `bcir.asm` `llvm.inline_asm` path — the
-> **same generic attribute-list builder**, so it compiles on LLVM-20 *and* the CI's LLVM-22 (whose positional
-> `InlineAsmOp` builder gained a `tail_call_kind` param) — selecting the six x86 templates **byte-identical**
-> to cfront's `_PORTIO_IN_ASM` (`inb %w1, %b0` / `inw %w1, %w0` / `inl %w1, %k0`) / `_PORTIO_OUT_ASM`
-> (`outb %b0, %w1` / `outw %w0, %w1` / `outl %k0, %w1`) with constraints `"=a,Nd"` (in) / `"a,Nd"` (out),
-> always `has_side_effects` (port I/O is volatile, like the cfront `__volatile__`). It is **x86-only** (the
-> cfront claim raises on non-x86) and, like `bcir.asm`, does **not** need the oracle's MLIR emitter yet.
-> Tests: `mlir/test/passes/portio_roundtrip.mlir`, `portio.mlir`, `portio_verify_neg.mlir`; wired into
-> `tools/wsl/check_passes.sh`. See `docs/BCIR_LANGREF.md`.
+| Slice | What it is | Where |
+|---|---|---|
+| ASM1 | GNU inline asm as an ISA-neutral **trusted opaque effect edge** (`c.asm[.volatile]:` — template re-emitted verbatim, BCIR owns operands/constraints/clobbers/ordering; volatile/`"memory"` ⇒ barrier) | cfront both rails |
+| ASM2 | Port-mapped I/O intrinsics (`inb/inw/inl`, `outb/outw/outl`) → typed, isolated, barriered `c.portio.*` edges on the dedicated `__ioport` MMIO resource; per-ISA x86 emit behind `--target`, honest unsupported diagnostic elsewhere; assembled, never executed (ring-0) | cfront both rails |
+| ASM3 / ASM3b | Memory fences with **typed kinds** (full/acquire/release) + real per-ISA emit (x86 `mfence/lfence/sfence`, aarch64 `dmb ish*`, riscv64 `fence …`); a `barriered` claim is a **first-class ordering edge** — no bundle/reorder across it, no deforestation discount through it (MLIR cost model mirrors byte-for-byte) | cfront + `-bcir-verify` structural invariant |
+| SEG6.1 / SEG7 | `atomic_thread_fence(memory_order)` **order-parameterized** on both rails — the order routes to the fence kind, carries end-to-end to `#bcir.mem_ordering` → `llvm.fence` | dual-rail parity-gated |
+| SEG8.1 / SEG8.2 | `bcir.asm` + `bcir.portio` **first-class MLIR law ops** lowering through `llvm.inline_asm` (LLVM-IR operand syntax, assemble-smoke-tested through `mlir-translate | llc` to a real `.o`) | `mlir/` + `check_asm_lowering.sh` |
 
 With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
 register-map header now ingests through L7 → L5 → an R1–R18-clean plan with `bcir-explain`,
@@ -834,6 +726,10 @@ full ABI/object generation, conformance suites, and integration with a resident 
 toolchain — **not** the BCIR optimizer (that is already complete on the MLIR/C++ law rail). We
 complete it **systematically, one PR-sized chunk at a time**, in four phases.
 
+> *(Slice-level build history for this section — the per-landing notes, fuzzer-found bug
+> lists, and follow-on ladders — is summarized in [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md);
+> what remains below is the standing contract + the still-open work.)*
+>
 > #### Recently closed + a designed-but-deferred gap
 > ✅ The **comma operator** `a, b` in a primary parenthesized expression (`#comma`, dual-rail) — isolated to
 > `( ... )` so call-args / initializer-element separator commas are unaffected.
@@ -1942,10 +1838,8 @@ item; it stays vision until the native backend (§5.5) and a hosted environment 
 The C frontend (§5.9) now lowers a wide C surface **dual-rail** (oracle + the `bcir_cfront.c` twin),
 but two seams have opened between the frontend and the **law rail**:
 
-1. The generated status reports verifier laws **R1–R18**, yet the model already carries *optional*
-   **timing** metadata for **R19/R20** and *optional* **lifetime** metadata for **R21**, enforced in the
-   Python oracle (and R21 in the C twin, advisory). Timing and pointer-lifetime laws are **emerging beyond
-   the stable MLIR law table**.
+1. ✅ *(closed)* The emerging **R19/R20** (timing) and **R21** (lifetime) laws have been **promoted to
+   first-class** — the generated status now reports **R1–R21** (Phase 1 below, landed).
 2. The frontend lowers several **law-bearing** C semantics (volatile, atomic RMW/CAS, indirect calls,
    pointer extent/provenance, call ABI) that have **no first-class MLIR representation** — they live only
    in `lower.py` / `bcir_cfront.c`. *C frontend evolution has outpaced MLIR representation.*
@@ -1989,7 +1883,7 @@ Ordered, dependency-gated — each phase de-risks or enables the next:
   proof of unknown extents** (BCIR never fabricates a bound it cannot recover).* This pins the contract that
   R21 (Phase 1) and the driver release (Phase 3) build on.
 
-#### Phase 1 — Promote the emerging laws to first-class (R19 / R20 / R21)
+#### Phase 1 — Promote the emerging laws to first-class (R19 / R20 / R21) — ✅ LANDED
 
 The logic is already proven: `verify_timing` (R19 synchronous-timing legality, R20 clock-domain-crossing) and
 `verify_lifetime` (R21 use-after-free / double-free) run in the oracle; R21 also runs in the C twin
@@ -2151,8 +2045,7 @@ In recommended order — each is gated by the generated differential harness + F
 16. **➡ THE MLIR CATCH-UP + FREESTANDING-C23-DRIVER ARC (§5.14).** The consolidated next arc that closes
     the "law trails the oracle" gap and ships the first externally-usable compiler deliverable, in
     dependency order: **Phase 0** hygiene — honest test tiers + an explicit `c-runtime` CI gate (E) and a
-    user-facing naked-pointer-policy doc (D, the source already enforces it); **Phase 1** — promote
-    **R19/R20/R21** from emerging model laws to first-class (the a–f artifacts: `#bcir.timing`/`#bcir.lifetime`
+    user-facing naked-pointer-policy doc (D, the source already enforces it); **Phase 1 (✅ landed)** — **R19/R20/R21** promoted from emerging model laws to first-class (the a–f artifacts: `#bcir.timing`/`#bcir.lifetime`
     attrs, the C++ verifier laws, LangRef, negative FileCheck, the C dual-rail, and `gen_status` → R1–R21);
     **Phase 2** — extend MLIR for the **law-bearing** C semantics only (volatile/atomic ops, indirect-call
     callee type+effect, pointer extent-provenance, the ABI contract op — *not* storage-class / initializer /
@@ -2235,8 +2128,8 @@ and law-authored:
 - **CT5 — learning organs:** the L1–L3 learned stack (bayescal / portfolio / MoE gate /
   accelerator / softdp / regret / e-graph / two-truth / operad), each frozen to Q8.
 
-The implementation arrived in phases (a condensed history; the dated detail lives in
-`REPO_CURRENT_STATE_AUDIT.md`): the StreamPack freeze + freestanding C runtime; the
+The implementation arrived in phases (the condensed history + dated changelog live in
+[`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md)): the StreamPack freeze + freestanding C runtime; the
 compiled `bcir-opt` on LLVM 18/19 with R1–R17; the learning/intelligence organs; the
 oracle optimization pass (hot/cold locked); the MLIR-native GEM pipeline; the calibration
 loop; the portable C23 kernel backend; the measured Clang comparison; the generated

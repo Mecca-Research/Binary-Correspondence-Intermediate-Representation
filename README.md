@@ -76,6 +76,7 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 - [`docs/PARITY.md`](docs/PARITY.md) — the Python (`bcir/`) ↔ MLIR (`mlir/`) lockstep contract.
 - [`docs/STATUS.md`](docs/STATUS.md) — the generated single source of truth for counts (tests, ODS ops, passes, verifier-law coverage); prose links here rather than hard-coding numbers.
 - [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md) — how the repo is organized and why.
+- [`docs/DEVELOPMENT_HISTORY.md`](docs/DEVELOPMENT_HISTORY.md) — how it was built: the development method, the PR-era arc, and the condensed changelog.
 - [`docs/CFRONT_GUIDE.md`](docs/CFRONT_GUIDE.md) — the `bcir-cfront` C-frontend user guide: the CLI, diagnostics, the target ABI matrix, the fallback contract, and the supported subset + limits. The frontend lowers a wide C surface **dual-rail** (oracle + the `bcir_cfront.c` twin) — including the full array-compound-literal surface (1-D + multi-dim, scalar + aggregate-element), computed goto (`goto *p` / `&&L`), and function-pointer local variables — all Clang-equivalence + fuzzer gated (`_Decimal32/64/128` is **blocked**: Clang 18 cannot compile it).
 
 The Python package is the **executable conformance oracle**; the MLIR dialect is

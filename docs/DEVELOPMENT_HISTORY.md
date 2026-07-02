@@ -1,0 +1,267 @@
+<!-- allow-retired-paths -->
+# BCIR Development History
+
+> **Purpose.** The single summary of *how BCIR was built*: the development method, the
+> era-by-era PR arc, and the condensed changelog. It consolidates the detailed
+> development-step notes that used to be scattered across the docs — the dated changelog
+> formerly in [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md), the PR-arc
+> section formerly in [`ONBOARDING_DEEP_DIVE.md`](ONBOARDING_DEEP_DIVE.md), and the
+> slice-by-slice build notes formerly embedded in the roadmaps. Roadmap docs now describe
+> *what exists and what is next*; this doc records *how it got here*. For current counts
+> (tests, ops, passes, laws) see the generated [`STATUS.md`](STATUS.md) — nothing here is
+> a live count. Sources: the GitHub PR record (#2–#607; the local clone's history is
+> shallow and starts at PR #560) and the pre-consolidation doc revisions in git history.
+
+---
+
+## 1. The development method
+
+BCIR was developed almost entirely by AI coding agents under a single human operator,
+across ~606 pull requests (#2–#607) between 2026-04-23 and 2026-07-01. Two agent fleets
+are visible in the branch names: **OpenAI Codex** (`codex/*` branches — the initial
+scaffolding, the `llvm-training/` corpus, and the closing integration-research docs) and
+**Claude Code** (`claude/*` branches — the long engineering arcs, one long-lived session
+branch per arc emitting dozens-to-hundreds of sequential PRs). The recurring process
+patterns:
+
+1. **Prototype-then-port (dual/triple-rail).** Every capability is prototyped in the
+   Python oracle (`bcir/`), then ported to a production rail — the MLIR/C++ law
+   (`mlir/`) for plan-time decisions, or C (`runtime/c/`) for the runtime and the
+   plug-in C compiler — locked together by parity gates (bit-exact scores,
+   byte-identical artifacts, an FNV-1a structural digest). The rule was made an explicit
+   non-negotiable in PR #266 ("stop extending the prototype as if it were the product")
+   and codified in the `PARITY.md` twin ledger (#357), which also records intentional
+   non-ports (the two-truth line).
+2. **PR-sized slices inside named ladders.** Nearly every PR is one gateable slice of a
+   pre-declared program: L1–L8 (the cfront ladder), Phase 2/3/4 (C language /
+   preprocessor / toolchain), RT1–RT7 (security red-team), G1–G8 (the vision-gap
+   program), A1/B1–B5 (the AI substrate), M1–M3 + E1–E7 (ML tiers), T1–T4 (telemetry),
+   ASM1–ASM3b (trusted asm edges), SEG1–SEG8 with D0/D1 and H1–H5 sub-slices (the
+   driver arc), RUNG 0–7 (driver bring-up). Roadmap docs define the ladder before the
+   slices land; PR titles carry the slice IDs.
+3. **Verification-first PRs, a ratcheting test count.** Every substantive PR body ends
+   with a Verification section quoting exact gate outputs. The conformance-test ratchet
+   is visible across PR bodies: 25 (#153) → 91 (#163) → 468 (#212) → 631 (#260) →
+   824 (#428) → 1009 (#534) → 1466 (#570) → ~1795 (#604).
+4. **Generated, adversarial verification over curated pins.** Curated worked examples
+   were systematically replaced by generated differentials: the Python↔MLIR plan
+   differential, verifier fault-injection campaigns (every law must catch its own
+   injected violation), a three-way C-frontend fuzzer (C twin vs oracle vs Clang),
+   libFuzzer+ASan/UBSan on every trust-boundary decoder, and sanitizer sweeps over the
+   whole fixture corpus.
+5. **Non-disturbance for new laws.** New optional semantics (R17 accuracy, R19/R20
+   timing, R21 lifetime) ship *vacuous-by-default*: the entire existing corpus must
+   verify byte-identically with the new law wired in, proving the addition cannot
+   perturb existing plans, scores, or digests.
+6. **Generated status + docs governance (since #260).** After repeated count drift,
+   `docs/STATUS.md` became a generated artifact with a CI drift gate
+   (`tools/docs/gen_status.py --check`), joined by a broken-link checker, a
+   retired-path checker, and a hot/cold import-quarantine gate. Prose links to
+   STATUS.md instead of hard-coding numbers.
+7. **Reconciliation waves.** When the plan fell behind the code, a docs PR reconciled
+   it: #212/#225 (15 docs → one master roadmap), #260 (governance), #357–#358 (parity
+   ledger + honest repositioning), #510 (the §5.14 arc), #513 (the onboarding
+   deep-dive), #539/#555 (the vision-alignment audit + scorecard), #592/#594
+   (feasibility + driver roadmaps) — and this consolidation.
+8. **Red-team + honesty culture.** Dedicated adversarial slices (RT1–RT7, the Area-B
+   numerical red-team, asm/port-I/O malformed-input red-team); fuzzer-found miscompiles
+   itemized per PR (#428–#449); "execution honesty" work replacing shape-only tests
+   with real execution (JVM `.class` assembly + run; "assemble-smoke" anti-masking
+   gates on the asm-edge lowerings); expensive directions put behind written GO/STOP
+   gates (the native-object gate #224, the #592 feasibility verdict *against* a general
+   native backend); false wins retracted; modeled numbers labeled modeled; "measured"
+   never claimed from synthetic telemetry.
+
+---
+
+## 2. The PR arc (eras)
+
+### #2–#12 — the one-day C++ skeleton (2026-04-23)
+The first incarnation, Codex-generated in a single day: a modular CMake build, a
+textual BCIR tokenizer/parser/AST, registry type forms (the U/UX/T/GGG/A/H lane
+enums), an aggregated ROP verifier, macro/MAP surface lowering, a GEM runtime with
+deterministic controls and telemetry, golden fixtures + CI. Later retired.
+
+### #13–#31 — the LLVM-first seed (2026-05-26/27)
+BCIR re-expressed as hand-authored LLVM `.ll` master-reference modules: a 64-byte claim
+schema, ops, registry lookup, a GEM executor and worklist, StreamPack/batch scheduling
+seeds, and a `bcir-as` assembler, validated by `llvm-as`/`opt` scripts (`runtime/llvm/`,
+also later retired — its teaching value survives in `llvm-training/` as
+explicitly-bannered historical material).
+
+### #32–#152 — the `llvm-training/` corpus (2026-05-28 → 06-06)
+PR #32 (the first Claude Code PR) founded the agent-context LLVM/MLIR curriculum; a
+~115-PR Codex wave built it out: 20 chaptered modules, the pitfalls catalog, ~42
+exercises, CI example verifiers and tripwires, then the deterministic autograder,
+declarative exercise manifests, the provider-neutral eval runner, the dataset exporter,
+and the secure submission harness. This era explains the repo description
+("LLVM AI agent training included"); the corpus is explicitly *not* part of the IR.
+
+### #153–#161 — the BCIR Stack pivot (2026-06-07/08)
+The founding of the current architecture. **PR #153**: the repo restructure — a
+runnable Python **K_BCIR oracle** (`bcir/`) realizing
+`K_BCIR(G|H,Θ) = min_π Σ Tᵢ⊗fᵢ(π)`, the **MLIR/IRDL dialect law** (`mlir/`), the
+LangRef/Blueprint/PARITY doc set, the `mlir-rail-validate` CI job, and the legacy C++
+`ir/` tree retired. Then in quick succession: `bcir-opt` becomes a real compiler
+(#158), the frozen StreamPack ABI + WASM/stackify (#159), the freestanding C StreamPack
+runtime + `!bcir.token` async + the memory model (#160), and data-driven per-target
+codegen via `llc` for aarch64/riscv64/nvptx/bpf/x86-64 with a portable C fallback (#161).
+
+### #163–#211 — verifier completion + the intelligence layer (2026-06-12 → 06-16)
+PR #163 completed verifier laws R1–R12 on both rails ("the project's largest
+correctness gap: optimized output was trusted, not proven"). RCSP/Pareto constrained
+planning (#175) and the numbered Phases 12–26 followed: duration-aware scheduling +
+StreamPack v2, physics-anchored calibration, R13 policy provenance + the regret ledger,
+the soft-DP temperature dial, the MDL retune law, the Bayesian/conformal cost model,
+the GNN MoE gate, the propose-verify search accelerator, provenance manifest +
+deterministic replay, the e-graph building-blocks engine + the L1 cost throttle, the
+memory-module fixpoint, the two-truth quarantine, and the enriched-operad memory
+interface. Plus: the MLIR-native GEM pipeline (#196), the closed calibration loop
+(#197), the portable C23 kernel backend (#198), the first measured gather-avoidance
+wins (~6.5×/16×, #200–#201), the adaptive "smart layer" + R14/R15/R16 (#205–#208),
+`kbcir.precision` (#209), and fusion/CSE/deforestation (#210–#211).
+
+### #212–#253 — the C++ optimizer-core port; LLVM 22 (2026-06-16/17)
+The measured BCIR-vs-Clang comparison (match on dense, 6–14× wins on intent) + the
+master roadmap (#212); the optimizer core ported to C++ MLIR passes in five steps
+(`-bcir-cost-model` → fusion/CSE → `-bcir-plan` → `-bcir-overlap` →
+`-bcir-rcsp-plan`, #215–#221); the six-target capability matrix pinned on the MLIR
+rail (#223); C23 `_BitInt`/`#embed` + the native-object decision gate (#224); the docs
+consolidation into one master roadmap (#225); the C executor/encoder, R17 compensated
+precision, bundle optimization, proof-carrying records (#226–#228); compositional
+semantics + the Tier-2 passes (cim/dvfs/schedule-eft/alloc-pool/async/power-rail/
+replay) + the R18 call-graph law (#229–#242); the move to LLVM/MLIR 22 with
+conda-forge local validation (#243–#246); generative fault injection for all 18 laws
+(#247–#248); shared PlanAnalysis, per-op verifiers, IRDL fidelity (#249–#253).
+
+### #254–#262 — hardware-agnostic + governance day (2026-06-18)
+One day of strategic PRs: the last law-rail gaps closed (#254); ARM/Raspberry-Pi-5
+first-class with a native aarch64 CI job (#255); a 5.8× faster quick test chain
+(#256–#257); the heterogeneous hardware channels (#258); the dependency-ordered
+plug-in-compiler roadmap — C frontend → drivers → ML → frontends → ecosystem (#259);
+docs governance — generated STATUS.md + link/retired-path CI (#260); test tiers, perf
+budgets, import quarantine (#261); the channel-plugin boundary (#262).
+
+### #263–#510 — the cfront arc (~250 PRs, 2026-06-18 → 06-25)
+The largest arc: the dual-rail C compiler. The oracle-side MVP with the six-artifact
+gate (#263) and ladder stages L5–L8 (#264–#265); the recorded course correction
+porting the frontend to a production C twin (`runtime/c/bcir_cfront.c`, #266); the
+C compile→execute loop closing with no Python, real register-map and UART drivers
+end-to-end (#267–#275); the `bcir-cc` driver (#276–#277); the Phase-2 language waves
+(#278–#303); the Phase-3 preprocessor (#304–#312); strings/floats/libm (#313–#324);
+Phase-4 Clang-grade diagnostics, the target-ABI matrix, IPO/alias analysis, the LLVM
+fallback contract, fuzzing, the driver CLI + user guide (#325–#339); the C-twin parity
+backfill ending in the PARITY twin ledger (#340–#357); the honest repositioning as a
+*freestanding driver-subset C23 compiler candidate* (#358); scalable IR with no fixed
+caps (#359/#365); the type/expression breadth waves through `_Complex` (#360–#427);
+the differential-fuzzer bug-hunt (#428–#449, ~21 real miscompiles found and gated);
+layout completion — `alignas`, anonymous members, zero-width bitfields (#450–#465);
+the emerging laws R19/R20 (timing) + R21 (lifetime) and the §5.12 bounds-quarantine
+naked-pointer track (#468–#485); VLAs, lvalue-as-value, computed goto, the full
+array-compound-literal surface + the fourth (storage-extent) parity axis (#486–#509);
+and the §5.14 MLIR-catch-up + driver-release plan (#510).
+
+### #511–#555 — ML/AI substrate, red-team, vision audit + gap program (2026-06-25 → 06-28)
+The ML/AI integration roadmap (#511); the 512-PR onboarding deep-dive (#513);
+**R19/R20/R21 promoted to first-class laws — the generated status reports R1–R21**
+(#514–#515); CI parallelization (#516–#518); the AI-substrate slices — A1 per-group
+quantization certified by R17, B1/B5 `gem.matmul` + the trusted BLAS edge, B3
+reverse-mode autodiff as content-addressed graph rewrites, the C23 `_BitInt` frontend
+(#519–#530); memory-stress + GCC↔Clang differential + emit→re-parse idempotence gates
+(#531–#533); the **security red-team RT1–RT7** — 13 real use-after-frees fixed, parser
+DoS depth guards, telemetry-stream integrity, the structural per-claim digest + R1.1,
+StreamPack on-wire R10/R11 enforcement (#534–#538); the **vision-alignment audit**
+(#539) whose gap backlog drove the **G1–G8 program** (#540–#554): `gem.activation`/
+`conv`/`attention` claims, the SoA↔AoS layout pivot, the cache/bank-contention
+predictor, the baked-weights inference emitter, the forward/backward training kernel +
+SGD, the C↔C++ hand-off seam — then the G-series MLIR law ports (conformance
+956 → 1235).
+
+### #556–#604 — breadth: Area-B, SYCL, telemetry, ML tiers, the asm/driver rail (2026-06-28 → 06-30)
+Area-B library wraps (LAPACK, GSL, SLEEF; later libcerf `erfcx` and 2-D FFTW); the
+SYCL SPIR-V channel with resident dispatch + differential oracle; the **T1–T4
+telemetry pipeline** (signal-provider registry, the CRC-sealed UART frame ABI
+dual-rail, derived metrics + plan-cost sensitivity, OTLP/Prometheus/Redfish export);
+**ML Tier-1 M1–M3** (losses, momentum/RMSprop/Adam, the training loop — BCIR trains
+logistic regression and an MLP end-to-end, #570) and **E1–E7 breadth** (OLS, PCA, a
+full Transformer block, RNN/LSTM/GRU, classical-ML predict wraps, unsupervised +
+pipeline, the language-placement capstone, #571–#577); **ASM1–ASM3b** (inline asm as
+an ISA-neutral trusted opaque edge, port-mapped I/O, per-ISA fences, barriers as
+first-class ordering edges); the **SEG series** — gem cost/parity passes on MLIR, the
+machine-proven closed-set autodiff DAG + `gem.autodiff` law op, order-parameterized
+fences dual-rail, the native-backend feasibility verdict (#592: do *not* build a
+general register-machine backend), `bcir.asm` → `llvm.inline_asm` (#593); the
+**driver/kernel roadmap** (#594) and its slices — the pre-driver hardening gate
+(sanitizer sweep into CI, Area-B numerical red-team) and the D1 driver ops
+(`bcir.portio`, `bcir.volatile_load/store`, `bcir.creg_read/write`, `bcir.msr_read/
+write`) with an "actually assembles" smoke gate (#595–#603); final hardening — the
+`c.asm`/`c.portio` red-team, ML-convergence gates for the E-series demos, and
+execution-validating the stackify JVM target (#602–#604).
+
+### #605–#607 — integration research (2026-07-01)
+Codex-authored research: `OPENAI_BCIR_INTEGRATION_RESEARCH.md` (OpenAI
+Responses/Agents/Apps-MCP surfaces mapped onto BCIR's oracle/law/corpus structure,
+staged V0–V5 proposals), merged serially and deepened by direct commits. Its
+open-weight-model material now lives in
+[`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](BCIR_ML_AI_INTEGRATION_ROADMAP.md) §7, and this
+docs consolidation followed.
+
+---
+
+## 3. Condensed dated changelog
+
+The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-06-25,
+~90 entries) lived in `REPO_CURRENT_STATE_AUDIT.md` and remain in its git history
+(`git log -p -- docs/REPO_CURRENT_STATE_AUDIT.md`). The condensed arc:
+
+- **2026-04-23:** the one-day C++ skeleton (#2–#12).
+- **2026-05-26 → 06-06:** the LLVM-first seed (#13–#31); the `llvm-training/` corpus
+  build-out (#32–#152).
+- **2026-06-07 → 06-08:** the BCIR Stack pivot — oracle + law + PARITY; `bcir-opt`
+  real passes; the frozen StreamPack ABI; the freestanding C runtime; per-target
+  codegen (#153–#161).
+- **2026-06-12 → 06-15:** verifier R1–R12 both rails; Phases 12–26 (calibration, R13
+  provenance + regret, soft-DP, MDL, Bayesian/conformal, MoE gate, accelerator,
+  replay, e-graph, memory fixpoint, two-truth, operad); the GEM MLIR pipeline; the
+  closed calibration loop; the C23 kernel backend; the measured gather wins; the
+  adaptive smart layer + R14–R16.
+- **2026-06-16 → 06-17:** the Clang comparison + master roadmap; the optimizer-core
+  C++ port (five steps, bit-exact); the six-target matrix; the C
+  executor/encoder + R17 + bundle + proof records; compositional semantics + Tier-2
+  passes + R18; LLVM/MLIR 22; fault-injection for all laws; the docs consolidation
+  into one master roadmap.
+- **2026-06-18:** ARM first-class; channels; the plug-in-compiler roadmap; docs
+  governance (generated STATUS + gates); test tiers; the cfront arc opens — L1–L8 on
+  the oracle, the production C twin, the no-Python compile→execute loop, register-map
+  + UART drivers end-to-end, `bcir-cc`, and the first Phase-2 language waves.
+- **2026-06-19 → 06-25:** the C-surface completion campaign (preprocessor,
+  diagnostics, ABI matrix, IPO, fallback contract, fuzzing; floats/`_Complex`/
+  variadics/`_Generic`/`typeof`/VLAs/computed-goto/compound literals; the fuzzer
+  bug-hunt; R19–R21 seeded vacuous; the bounds-quarantine track; the storage-extent
+  parity axis; `_Decimal*` honestly blocked), closed by the §5.14 plan (#510).
+- **2026-06-25 → 06-28:** the ML/AI roadmap; the onboarding deep-dive; **R19–R21
+  promoted to first-class (R1–R21)**; the A1/B1/B3/B5 AI-substrate slices; the RT1–RT7
+  security red-team; the vision-alignment audit + the G1–G8 gap program (conformance
+  956 → 1235).
+- **2026-06-28 → 06-30:** telemetry T1–T4; SYCL resident dispatch; ML Tier-1 M1–M3 +
+  breadth E1–E7; ASM1–ASM3b; SEG1–SEG8 (gem cost passes, the autodiff closure proof +
+  law op, Area-B to six libraries, dual-rail ordered fences, the asm-edge law ops with
+  assemble-smoke gates); the driver/kernel roadmap + pre-driver hardening; the
+  close-out red-team and convergence-gate slices.
+- **2026-07-01:** the OpenAI + BCIR integration research (#605–#607); this docs
+  consolidation (changelog extraction, the open-weight-track move, staleness fixes).
+
+---
+
+## 4. Where the detailed notes live now
+
+- **Per-landing detail:** the GitHub PR record (#2–#607; PR bodies carry Verification
+  sections with exact gate outputs), `git log`, and the pre-consolidation revisions of
+  `REPO_CURRENT_STATE_AUDIT.md` / `BCIR_MASTER_ROADMAP.md` /
+  `BCIR_ML_AI_INTEGRATION_ROADMAP.md` (recoverable via git).
+- **Current state:** [`STATUS.md`](STATUS.md) (generated counts),
+  [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) (the honest snapshot),
+  [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md) (the dated pillar audit).
+- **What's next:** [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) and its
+  companions ([`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](BCIR_ML_AI_INTEGRATION_ROADMAP.md),
+  [`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md)).

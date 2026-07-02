@@ -121,7 +121,7 @@ The repo is now a **single BCIR realization**:
 
 - **`bcir/` (oracle) + `mlir/` (law).** A runnable Python conformance oracle that
   realizes the full `K_BCIR(G|H,Θ)` optimizer, GEM hydration + execution, LLVM
-  lowering (clang AOT + lli JIT), the R1–R12 verifier subset, the M5 event
+  lowering (clang AOT + lli JIT), the R1–R21 verifier reference, the M5 event
   transduction layer, the ROP/MAP front-ends, and the CT1–CT5 tracks — paired with
   the MLIR dialect family as the law: the TableGen/ODS ops, the **compiled
   `bcir-opt`** that parses/verifies the pretty corpus, and the IRDL portability
@@ -154,7 +154,7 @@ The normative + steering documents that govern the single tree above:
 
 | Doc | Purpose |
 |-----|---------|
-| `BCIR_LANGREF.md` | Normative language reference: levels, verifier laws (R1–R18), the K_BCIR equation. |
+| `BCIR_LANGREF.md` | Normative language reference: levels, verifier laws (R1–R21), the K_BCIR equation. |
 | `BCIR_MASTER_ROADMAP.md` | The single master roadmap: positioning, current state, the MLIR/C/C++ placement map, and the next build steps (incl. §5.14, the MLIR-catch-up + freestanding-C23-driver arc and the emerging timing/lifetime laws R19/R20/R21). |
 | `BCIR_ML_AI_INTEGRATION_ROADMAP.md` | The ML/AI integration companion roadmap: expands the master roadmap's Phase M/L into one dependency-ordered program (C inference substrate → tensor ops as claims → data/memory organs → language reach → ML-guided hardware → higher cognition). |
 | `OPENAI_BCIR_INTEGRATION_RESEARCH.md` | OpenAI/ChatGPT integration research and proposal versions: maps Responses API, Agents SDK, Apps SDK, MCP, Codex-style loops, and BCIR oracle/law/training boundaries. |
