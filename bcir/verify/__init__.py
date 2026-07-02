@@ -1171,6 +1171,54 @@ def verify_lifetime(module: Module) -> list[Diagnostic]:
     return diags
 
 
+def verify_shape(module: Module) -> list[Diagnostic]:
+    """R22 -- the SHAPE-CONSISTENCY law over `gem.*` tensor claims (D2, ML/AI roadmap §8.2: the
+    R19-R21 six-artifact promotion applied to the "structurally valid tensors" guarantee). On the
+    model rail a gem claim's tensor rides its written resource, so the checkable structure is the
+    producer->consumer SEAM: a gem claim writing a resource that a later gem claim in the same phase
+    reads hands over ONE tensor -- both ends must declare the same element extent (`count`). This is
+    exactly the adjacency contract the fusion optimizer prices (`matmul_activation`: the activation
+    consumes the matmul's full m*n product). Vacuous for a module with no gem seam (the entire
+    scalar / C-frontend corpus) -- the non-disturbance invariant, like R19/R20/R21. The MLIR rail
+    carries the same law structurally over the gem op shape attrs (`verifyR22` in `-bcir-verify`)."""
+    diags: list[Diagnostic] = []
+    for ph in module.phases:
+        writer: dict[int, "Claim"] = {}
+        for claim in ph.claims:
+            if claim.op.startswith("gem."):
+                for rid in claim.rd:
+                    prod = writer.get(rid)
+                    if prod is not None and prod.count != claim.count:
+                        diags.append(Diagnostic(
+                            "R22",
+                            f"claim {claim.id}: gem seam over RID {rid} is shape-inconsistent -- "
+                            f"producer claim {prod.id} hands over {prod.count} elements, the "
+                            f"consumer declares {claim.count}",
+                        ))
+            for rid in claim.wr:
+                if claim.op.startswith("gem."):
+                    writer[rid] = claim
+                else:
+                    writer.pop(rid, None)         # a non-gem rewrite breaks the tensor seam
+    return diags
+
+
+# Dtype-compatibility (R23) has no structural surface on the Python model rail (a model Claim
+# carries no dtype; the activation kind rides the op string) -- the structural R23 law lives on
+# the MLIR rail, where the gem ops carry `dtype` attrs (`verifyR23`). The oracle-side R23 surface
+# is the SPEC level below (`verify_ml_spec`), which promotes the E3-E6 checkers' dtype rules.
+def verify_ml_spec(family: str, errors: list[str]) -> list[Diagnostic]:
+    """R22/R23 -- the ML tensor-claim SPEC laws (D2): promotes the op-level
+    `check_transformer` / `check_recurrent` / `check_classical` / `check_unsupervised` validators
+    to the numbered law surface. A dtype-compatibility message becomes **R23**; every other
+    (shape / extent / kind) message becomes **R22**. The checkers themselves stay in `kbcir`
+    (cost-side, importing no verifier -- the two-truth quarantine); the CALLER runs the checker
+    and passes its messages here, so the sanctioned import direction is preserved and THIS
+    function owns the law numbering."""
+    return [Diagnostic("R23" if ("dtype" in msg or "f32" in msg) else "R22", f"{family}: {msg}")
+            for msg in errors]
+
+
 def verify_barrier_ordering(module: Module, result) -> list[Diagnostic]:
     """ASM3b structural invariant (NOT a verdict R-law): a `barriered`-hazard claim is a first-class
     ordering edge -- no claim may be scheduled across it within its phase. The bundle optimizer
@@ -1228,6 +1276,7 @@ def verify_smart_lowering(module: Module, pack=None, dvfs_plan=None,
     diags += verify_accuracy(module)
     diags += verify_timing(module)          # R19/R20 over optional claim.timing -- vacuous without it
     diags += verify_lifetime(module)        # R21 over optional claim.lifetime -- vacuous without it
+    diags += verify_shape(module)           # R22 over gem.* tensor seams -- vacuous without them
     return diags
 
 

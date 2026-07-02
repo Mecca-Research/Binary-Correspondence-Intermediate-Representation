@@ -498,10 +498,16 @@ The audit finds five deepening moves, all quarantine-compatible:
   itself* is priced, scheduled, budgeted (RCSP: "train within this power cap"), overlapped,
   and replayable (R13 manifest per epoch). The autodiff closure proof is the enabler: the
   gradient DAG has a fixed vocabulary, so it hydrates to a StreamPack like any program.
-- **D2 — Shape/dtype as the next R-laws (R22/R23 candidates).** Today `check_transformer`/
-  `check_classical`-style checkers are op-level and advisory. Promote shape consistency and
-  dtype compatibility to first-class laws with negative MLIR cases — the same six-artifact
-  promotion R19–R21 used. This is the "structurally valid tensors" guarantee (§8.4) made law.
+- ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/
+  `check_classical`-style checkers were op-level and advisory; shape consistency and dtype
+  compatibility are now numbered laws via the R19–R21 six-artifact pattern: **R22** checks the
+  `gem.*` producer→consumer SEAM on both rails (oracle `verify.verify_shape` over the count
+  handover; MLIR `verifyR22` over matmul→activation extent, the fusion adjacency contract) and
+  **R23** the dtype handover (conv/attention→activation on MLIR; the E3–E6 quarantine dtype rules
+  at the spec level via `verify.verify_ml_spec`, which promotes every checker message to R22/R23).
+  Negative MLIR cases in `verify_shape_dtype.mlir`; oracle suite `test_shape_dtype_laws.py`;
+  `gen_status` sweeps R1–R23. Vacuous-by-default (non-disturbance). This is the "structurally
+  valid tensors" guarantee (§8.4) made law.
 - **D3 — Learned cost-model priors at L1.** The accel ranker precedent generalizes: train
   priors for tile size / loop order / channel choice offline, freeze to Q8 tables keyed by
   (op-shape-class, channel), and let exact search verify — proposals can only reduce search,
@@ -630,7 +636,7 @@ D2 (shape/dtype law), and the §8.6 intent loop.
 |---|---|---|
 | Wrap-not-import (8.1) | **Confirmed optimal**; keep, extend breadth | existing R17 + independent verifiers |
 | Training as planned graphs (D1) | Feasible now (oracle→law port) | six-artifact + parity |
-| Shape/dtype laws (D2) | Feasible now | R19–R21 promotion pattern |
+| Shape/dtype laws (D2) | ✅ Landed (R22/R23) | R19–R21 promotion pattern |
 | Learned cost priors (D3) | Feasible now | accel-certificate pattern (0 mismatches) |
 | Resident calibloop service (8.3) | Feasible now (host); measured win still rig-gated | perf_budget + provenance |
 | Summary-artifact law (8.4) | Feasible now — mostly codifying existing discipline | replay gate + idempotence |

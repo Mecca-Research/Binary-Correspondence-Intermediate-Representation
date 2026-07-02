@@ -144,7 +144,7 @@ twin `bcir_cfront.c`; the bounds decision is part of the R13 digest, so a one-ra
 is a hard parity failure). The engineering trail is
 [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5.12.
 
-## 10. Verifier laws (R1–R21)
+## 10. Verifier laws (R1–R23)
 
 R1 registry uniqueness · R2 registry resolution · R3 domain legality ·
 R4 phase-DAG legality · R5 hazard legality · R6 lane legality · R7 bounds
@@ -172,7 +172,7 @@ swaps are never silent. Encoded as IR via the `bcir.verify.*` op family. The
 runnable full set lives in `bcir/verify`, one entry point per correspondence
 artifact — `verify(module)` R1–R8(static), `verify_plan` R8–R9, `verify_pack`
 R10–R11, `verify_lowering` R12, `verify_provenance` R13 — and the MLIR-native
-`-bcir-verify` pass enforces the structurally checkable form of all of R1–R21
+`-bcir-verify` pass enforces the structurally checkable form of all of R1–R23
 on the dialect.
 
 **Timing + lifetime laws (R19/R20/R21).** Three further laws over the
@@ -196,12 +196,32 @@ it), now carried on the dialect as the `#bcir.timing` / `#bcir.lifetime` attribu
   is a use-after-free, a `free` of an already-freed resource is a double-free, and a
   write (reassignment / `alloc`) re-validates.
 
-R19/R20/R21 are now **first-class `-bcir-verify` MLIR laws**, dual-rail with the
+**Shape + dtype laws (R22/R23) — the D2 promotion.** The E3–E6 `check_*` validators'
+"structurally valid tensors" guarantee, made law over the `gem.*` tensor claims:
+
+- **R22 (shape consistency)** — a producer→consumer **gem seam** hands over one
+  tensor, so both ends must agree: on the MLIR rail, a `gem.activation` adjacent to a
+  `gem.matmul` (the fusion contract) must declare a shape extent equal to the matmul's
+  `m*n`; on the oracle rail, `verify.verify_shape` checks the written→read `count`
+  handover between gem claims. Spec-level shape/extent/kind rules from the E3–E6
+  checkers ride the same number via `verify.verify_ml_spec`.
+- **R23 (dtype compatibility)** — the dtype handover at a gem seam: an activation
+  epilogue adjacent to a `gem.conv` / `gem.attention` must declare the producer's
+  dtype; the E3–E6 quarantine dtype rules (a transcendental needs `f32`) ride the
+  same number at the spec level (`verify_ml_spec`). The model-rail `Claim` carries no
+  dtype, so structural R23 is MLIR-side by design.
+
+Both are **vacuous by default** (no gem seam / no spec checked — the whole scalar /
+C-frontend corpus is untouched), with negative `-verify-diagnostics` cases in
+`mlir/test/passes/verify_shape_dtype.mlir` and the oracle suite in
+`bcir/tests/test_shape_dtype_laws.py`.
+
+R19/R20/R21 are **first-class `-bcir-verify` MLIR laws**, dual-rail with the
 oracle's `verify.verify_timing` / `verify.verify_lifetime` (run through
-`verify.verify_smart_lowering` alongside R14–R17), each with a negative
+`verify.verify_smart_lowering` alongside R14–R17 and R22), each with a negative
 `-verify-diagnostics` case in `mlir/test/passes/verify_timing_lifetime.mlir`, so the
 generated status ([`STATUS.md`](STATUS.md)) now reports the first-class set as
-**R1–R21**. R21 detection runs on both driver rails; it is *advisory* by default
+**R1–R23**. R21 detection runs on both driver rails; it is *advisory* by default
 (surfaced, never gates), and the `bcir-cc` / `bcir-cfront` drivers expose a `--r21`
 policy — `advisory` (default) · `fallback` (route the unit to the LLVM backend,
 exit 2) · `reject` (a hard verify error, exit 1) — so a detected use-after-free /

@@ -407,7 +407,9 @@ def transformer_block_via_bridge(x: list[float], spec: TransformerBlockSpec, par
 
 
 # ============================================================================================================
-# 7. Op-level well-formedness (mirrors check_attention; NOT a new global R-law).
+# 7. Op-level well-formedness (mirrors check_attention). D2: promoted to the R22/R23 law surface
+# via verify.verify_ml_spec (the CALLER passes these messages -- no verifier import here, the
+# two-truth quarantine holds).
 # ============================================================================================================
 
 _DTYPES = ("f32", "i32")

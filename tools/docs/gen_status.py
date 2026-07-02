@@ -60,15 +60,16 @@ def runtime_c() -> list[str]:
 
 
 def verifier_laws() -> list[tuple[str, bool]]:
-    """R1..R21 with whether each has a negative `-verify-diagnostics` case in the law tests.
+    """R1..R23 with whether each has a negative `-verify-diagnostics` case in the law tests.
 
     Detected directly from the committed `mlir/test/passes/verify*.mlir` tree (no hand-listed
-    exceptions): a law is "covered" iff its `Rn` tag appears in a negative case. All 21 currently
-    do, including R1 (`verify_laws.mlir`), R18 (`verify_callgraph.mlir`), and the timing/lifetime
-    laws R19/R20/R21 (`verify_timing_lifetime.mlir`).
+    exceptions): a law is "covered" iff its `Rn` tag appears in a negative case. All currently
+    do, including R1 (`verify_laws.mlir`), R18 (`verify_callgraph.mlir`), the timing/lifetime
+    laws R19/R20/R21 (`verify_timing_lifetime.mlir`), and the gem shape/dtype seam laws
+    R22/R23 (`verify_shape_dtype.mlir`).
     """
     neg = "".join(_read(os.path.relpath(f, ROOT)) for f in _glob("mlir/test/passes/verify*.mlir"))
-    return [(f"R{i}", bool(re.search(rf"\bR{i}\b", neg))) for i in range(1, 22)]
+    return [(f"R{i}", bool(re.search(rf"\bR{i}\b", neg))) for i in range(1, 24)]
 
 
 def channels() -> list[tuple[str, str]]:

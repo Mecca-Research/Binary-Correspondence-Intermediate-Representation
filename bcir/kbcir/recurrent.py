@@ -648,7 +648,8 @@ def temporal_dependence(jac_block: list[float], n_out: int, n_in: int) -> float:
 
 
 # ============================================================================================================
-# Op-level well-formedness (mirrors check_transformer; NOT a new global R-law).
+# Op-level well-formedness (mirrors check_transformer). D2: promoted to the R22/R23 law surface
+# via verify.verify_ml_spec (caller-passed messages; no verifier import here).
 # ============================================================================================================
 
 _DTYPES = ("f32", "i32")
