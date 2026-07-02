@@ -1964,10 +1964,15 @@ with per-file `--fallback` and real register-map / UART / DMA fixtures (§5.9). 
 **multi-file driver project** building through `bcir-cc` with a verified claim graph, an **R1–R18 (now
 R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted C/object artifacts**, and
 **behaviour-equivalence** where runnable. The gap is *infrastructure + breadth*, not the optimizer:
-- **Robust multi-file mode** — today each file compiles independently (no linking, no project verdict). Add
-  project-level orchestration + a per-project verdict (clean / partial-fallback) over a file set.
-- **Compile-database support** — consume `compile_commands.json` (per-file flags / `-I` / `-D`).
-- **Dependency output** — `-M` / `-MM` / `-MF` (`.d` files) for build-system integration.
+- ◑ **Robust multi-file mode** — the ORACLE driver now orchestrates a project: multiple files per
+  invocation with a per-project verdict line (CLEAN / PARTIAL-FALLBACK / DIRTY over the file set,
+  `--project`, automatic for multi-file runs). *Next:* the `bcir-cc` C-twin port + linking.
+- ✅ **Compile-database support** — `bcir-cfront -p` consumes `compile_commands.json` (a directory or
+  the file), compiling every entry with its own `-I`/`-D`/`-U`/`-std`/`--target` flags (both the
+  `arguments` and `command` entry forms; entry `-I` resolves against the entry directory).
+- ✅ **Dependency output** — `-M` / `-MM` / `-MF` / `-MT`: make rules from the preprocessor's resolved
+  on-disk includes (`Preprocessor.dep_paths`); the two spellings agree because `<system>` headers are
+  modeled intrinsically. (`test_cfront_cli.py` project-orchestration cases.)
 - **More real fixtures** — Linux UAPI / CMSIS-style headers, and **PCIe / NVMe / ACPI register-map
   ingestion** — the breadth that exercises Phase 2's volatile/atomic/ABI laws on real driver headers.
 - **The native-object path** (`BCIR_NATIVE_OBJECT_GATE.md`) for emitted `.o` artifacts where the gate allows.
