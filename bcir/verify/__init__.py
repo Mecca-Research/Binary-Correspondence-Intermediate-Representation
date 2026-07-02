@@ -202,9 +202,11 @@ def verify(module: Module) -> list[Diagnostic]:
             # SEES the masked metadata it previously skipped: a masked claim with no bounds verify is a
             # promotion the backend would emit without a guard (a silent loss of the check).
             if claim.bounds == "masked" and claim.verify != "bounds":
+                why = (f" (extent provenance: {claim.bounds_provenance})"
+                       if claim.bounds_provenance else "")
                 diags.append(Diagnostic(
                     "R7", f"claim {claim.id}: masked (runtime-bounds-checked) access must carry a "
-                          f"'bounds' verify contract, not {claim.verify!r}"))
+                          f"'bounds' verify contract, not {claim.verify!r}{why}"))
             if claim.bounds != "strict":
                 continue
             if claim.stride_class in _DATA_DEPENDENT:

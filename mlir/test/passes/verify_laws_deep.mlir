@@ -405,7 +405,7 @@ bcir.module @r14_pim_nonreduce {
   bcir.claim @add attributes {
     claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A, @B], writes = [@C], count = 1024 : i64,
     lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
-    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<masked>
   } { %i = bcir.index_range 0 to 1024 step 1 }
   // expected-error @+1 {{R14: pim dispatch illegal for non-reduction op 'vector.add' (claim @add)}}
   bcir.gem.lane_segment @seg0 { claim = @add, phase = @p0, lane = #bcir.lane<u>, width = 16 : i32, opcode = "vector.add", reads = [@A, @B], writes = [@C], fence_before = [], fence_after = [], dispatch = "pim" }
@@ -423,7 +423,7 @@ bcir.module @r14_pim_reduce_ok {
   bcir.claim @reduce attributes {
     claim_id = 1 : i32, phase = @p0, op = "reduce.gather", reads = [@TABLE], writes = [@ACC], count = 1024 : i64,
     lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
-    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<masked>
   } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.gem.lane_segment @seg0 { claim = @reduce, phase = @p0, lane = #bcir.lane<u>, width = 1 : i32, opcode = "reduce.gather", reads = [@TABLE], writes = [@ACC], fence_before = [], fence_after = [], dispatch = "pim" }
 }
@@ -441,7 +441,7 @@ bcir.module @r15_clock_range {
   bcir.claim @add attributes {
     claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A, @B], writes = [@C], count = 1024 : i64,
     lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
-    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<masked>
   } { %i = bcir.index_range 0 to 1024 step 1 }
   // expected-error @+1 {{R15: clock_q8 1000 out of legal range [64, 512]}}
   bcir.gem.lane_segment @seg0 { claim = @add, phase = @p0, lane = #bcir.lane<u>, width = 16 : i32, opcode = "vector.add", reads = [@A, @B], writes = [@C], fence_before = [], fence_after = [], clock_q8 = 1000 : i32 }
@@ -459,7 +459,7 @@ bcir.module @r15_pim_overclock {
   bcir.claim @reduce attributes {
     claim_id = 1 : i32, phase = @p0, op = "reduce.gather", reads = [@TABLE], writes = [@ACC], count = 1024 : i64,
     lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
-    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<masked>
   } { %i = bcir.index_range 0 to 1024 step 1 }
   // expected-error @+1 {{R15: pim (memory-bound) segment must not overclock (clock_q8 320 > 256)}}
   bcir.gem.lane_segment @seg0 { claim = @reduce, phase = @p0, lane = #bcir.lane<u>, width = 1 : i32, opcode = "reduce.gather", reads = [@TABLE], writes = [@ACC], fence_before = [], fence_after = [], dispatch = "pim", clock_q8 = 320 : i32 }
@@ -489,7 +489,7 @@ bcir.module @r16_r15_ok {
   bcir.claim @copy attributes {
     claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@SMALL], writes = [@DST], count = 64 : i64,
     lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
-    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<masked>
   } { %i = bcir.index_range 0 to 64 step 1 }
   bcir.gem.lane_segment @seg0 { claim = @copy, phase = @p0, lane = #bcir.lane<u>, width = 8 : i32, opcode = "vector.add", reads = [@SMALL], writes = [@DST], fence_before = [], fence_after = [], clock_q8 = 128 : i32 }
 }

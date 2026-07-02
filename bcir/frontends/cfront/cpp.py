@@ -87,6 +87,8 @@ class Preprocessor:
         self._presumed = 0                         # presumed line of the *next* line (#line sets it)
         self._incstack: list = []                 # active #include sites: (including_file, line), outer-first
         self.linemap: list = []                   # per output line: (file, line, include-stack snapshot)
+        self.dep_paths: list = []                 # on-disk headers resolved by _resolve, in first-hit order
+                                                  #   (the -M/-MM dependency-output source, Phase 3)
 
     # --- public ---
     def process(self, text: str, name: str = "<source>") -> str:
@@ -116,6 +118,7 @@ class Preprocessor:
             if os.path.isfile(p):
                 with open(p, encoding="utf-8") as f:
                     text = f.read()
+                self.dep_paths.append(p)          # first on-disk hit -> a build dependency (-M/-MM)
                 break
         self._disk_cache[target] = text
         return text

@@ -1933,9 +1933,12 @@ From the C-semantics audit, the eight candidate areas split cleanly under the fi
   opaque dispatch currently declares **no effects**, so the R18 reachability check and the
   effect/commutation footprint cannot analyze it; give the indirect call a declared signature + a
   conservative effect set.
-- **Pointer provenance / extent** → carry the `masked` vs `assumed_safe` bounds decision into the IR as a
-  first-class **bounds-provenance** signal, so R7/R21 can see *why* an access is checked vs trusted. (Today
-  the plan-level provenance manifest R13 is first-class, but pointer-level provenance is frontend-only.)
+- ✅ **Pointer provenance / extent** → **LANDED**: the `bounds_provenance` signal rides the claim on both
+  rails (`Claim.bounds_provenance` + the `OptionalAttr` on `bcir.claim`, ""-default / digest-excluded) --
+  `declared_extent` / `recovered_count` / `snapshot_extent` for the masked promotions, `mmio_register` /
+  `string_literal` / `unknown_extent` for the trusted cases -- stamped by the cfront lowering at the
+  `_access_bounds` decision, surfaced by R7's masked-needs-guard diagnostic (that clause is now
+  **dual-railed**: it was oracle-only; `verify_bounds_provenance.mlir`, `test_bounds_provenance.py`).
 - **Target ABI / calling convention** → the call ABI is **backend-delegated** (`abi.py` computes
   sizes/offsets, the emitter materializes the frame). For a verifiable cross-target object path, model it as
   a `lower_contract`-style **ABI contract op** (R12 already models ISA/packet lowering contracts; extend to
@@ -1961,10 +1964,15 @@ with per-file `--fallback` and real register-map / UART / DMA fixtures (§5.9). 
 **multi-file driver project** building through `bcir-cc` with a verified claim graph, an **R1–R18 (now
 R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted C/object artifacts**, and
 **behaviour-equivalence** where runnable. The gap is *infrastructure + breadth*, not the optimizer:
-- **Robust multi-file mode** — today each file compiles independently (no linking, no project verdict). Add
-  project-level orchestration + a per-project verdict (clean / partial-fallback) over a file set.
-- **Compile-database support** — consume `compile_commands.json` (per-file flags / `-I` / `-D`).
-- **Dependency output** — `-M` / `-MM` / `-MF` (`.d` files) for build-system integration.
+- ◑ **Robust multi-file mode** — the ORACLE driver now orchestrates a project: multiple files per
+  invocation with a per-project verdict line (CLEAN / PARTIAL-FALLBACK / DIRTY over the file set,
+  `--project`, automatic for multi-file runs). *Next:* the `bcir-cc` C-twin port + linking.
+- ✅ **Compile-database support** — `bcir-cfront -p` consumes `compile_commands.json` (a directory or
+  the file), compiling every entry with its own `-I`/`-D`/`-U`/`-std`/`--target` flags (both the
+  `arguments` and `command` entry forms; entry `-I` resolves against the entry directory).
+- ✅ **Dependency output** — `-M` / `-MM` / `-MF` / `-MT`: make rules from the preprocessor's resolved
+  on-disk includes (`Preprocessor.dep_paths`); the two spellings agree because `<system>` headers are
+  modeled intrinsically. (`test_cfront_cli.py` project-orchestration cases.)
 - **More real fixtures** — Linux UAPI / CMSIS-style headers, and **PCIe / NVMe / ACPI register-map
   ingestion** — the breadth that exercises Phase 2's volatile/atomic/ABI laws on real driver headers.
 - **The native-object path** (`BCIR_NATIVE_OBJECT_GATE.md`) for emitted `.o` artifacts where the gate allows.

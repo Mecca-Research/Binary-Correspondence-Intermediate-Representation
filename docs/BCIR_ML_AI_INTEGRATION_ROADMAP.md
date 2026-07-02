@@ -409,9 +409,13 @@ drop-in loading of a modern open-weight chat model.
 
 ### 7.4 A staged implementation path
 
-1. **Manifest-only ingestion** — `ModelManifest` records for a small Gemma/Qwen model:
-   architecture, license, tokenizer ref, weight shards, hashes, dtype, parameter count, context
-   length, required kernels. *(Build this before any weight loading or decode kernels.)*
+1. ✅ **Manifest-only ingestion — LANDED** (`bcir/frontends/models/manifest.py`,
+   `test_model_manifest.py`): `ModelManifest` records — architecture, license, tokenizer ref,
+   weight-shard inventory + streamed sha256 hashes, dtype census, parameter count, context
+   length — built from the safetensors HEADERS + config only (the weight bytes are hashed for
+   integrity, never interpreted), deterministic (canonical-JSON digest, ingestion-order-free),
+   JSON round-tripping, loud on malformed shards. Dep-free stdlib. *(Built before any weight
+   loading or decode kernels, per the contract.)*
 2. **Tokenizer parity** — round-trip tests + chat-template fixtures before touching weights.
 3. **Reference decode** — a slow, dependency-light Python reference for one small dense decoder
    layer from the existing matmul/activation/attention pieces plus the missing RMSNorm/RoPE/KV
@@ -492,12 +496,18 @@ wraps own the leaf kernels); the two are complements, not alternatives.
 The §2 program stops at "tensor ops as claims + wrapped kernels + a Python training loop."
 The audit finds five deepening moves, all quarantine-compatible:
 
-- **D1 — Training as a planned graph, not a Python loop.** Promote the M3 loop's *step* to
-  first-class claims (`gem.train_step`: forward→loss→backward→optimizer as a composed region
-  tree), so epochs become phases, mini-batches become planned streams, and the *training run
-  itself* is priced, scheduled, budgeted (RCSP: "train within this power cap"), overlapped,
-  and replayable (R13 manifest per epoch). The autodiff closure proof is the enabler: the
-  gradient DAG has a fixed vocabulary, so it hydrates to a StreamPack like any program.
+- ◑ **D1 — Training as a planned graph, not a Python loop. FIRST SLICE LANDED**
+  (`bcir/kbcir/train_graph.py`, `test_train_graph.py`): one training step is six chained
+  first-class claim phases (forward `gem.matmul` → `gem.activation` → `gem.loss` →
+  `reduce.loss_mean` → `gem.autodiff` → `gem.opt_step`) — law-clean under R1–R22, priced by the
+  tropical optimizer (realized in stage order), composed over steps via `kbcir.compose` (a run
+  is a `Seq`; series-summed cost), RCSP-budget-feasible-or-not BEFORE execution,
+  R13-deterministic, and structurally bridged to the M3 loop (`steps_for` = epochs ×
+  batches/epoch = one update claim per optimizer step). *Next:* hydrate the planned step to a
+  StreamPack and wire the GEM executor to run it (execution today stays `training.train` — the
+  plan is its verification shadow), then the per-epoch R13 manifest + overlap. The autodiff
+  closure proof is the enabler: the gradient DAG has a fixed vocabulary, so it hydrates to a
+  StreamPack like any program.
 - ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/
   `check_classical`-style checkers were op-level and advisory; shape consistency and dtype
   compatibility are now numbered laws via the R19–R21 six-artifact pattern: **R22** checks the

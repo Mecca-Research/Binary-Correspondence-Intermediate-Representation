@@ -70,3 +70,59 @@ def test_cli_unknown_target_is_rejected():
         src = _write(d, "ok.c", "int f(void){ return 0; }\n")
         rc, out, err = _cli(["--target", "sparc-solaris", src])
         assert rc == 2 and "unknown --target" in err
+
+
+# --- Phase 3 project orchestration: multi-file verdict, compile database, dependency output ---
+
+def test_cli_project_verdict_clean_over_multiple_files():
+    with tempfile.TemporaryDirectory() as d:
+        a = _write(d, "a.c", "unsigned f(unsigned x){ return x + 1u; }\n")
+        b = _write(d, "b.c", "unsigned g(unsigned x){ return x * 2u; }\n")
+        rc, out, err = _cli([a, b])
+        assert rc == 0, err
+        assert "project: CLEAN (2 files)" in out, out
+
+
+def test_cli_project_verdict_partial_fallback():
+    # one clean unit + one outside the subset under --fallback: the project verdict names the split
+    # and the exit code keeps the per-unit fallback contract (2).
+    with tempfile.TemporaryDirectory() as d:
+        a = _write(d, "a.c", "unsigned f(unsigned x){ return x + 1u; }\n")
+        b = _write(d, "b.c", "unsigned k(void);\nunsigned g = k();\nunsigned h(void){ return g; }\n")
+        rc, out, err = _cli(["--fallback", a, b])
+        assert rc == 2, (rc, err)
+        assert "PARTIAL-FALLBACK (1/2" in out, out
+
+
+def test_cli_dep_output_lists_header_dependencies():
+    # -M prints a make rule naming the unit and every on-disk header the preprocessor resolved;
+    # -MF writes the same rules to a file (build-system integration, Phase 3).
+    with tempfile.TemporaryDirectory() as d:
+        _write(d, "regs.h", "typedef unsigned int reg32;\n")
+        u = _write(d, "u.c", '#include "regs.h"\nreg32 f(reg32 x){ return x; }\n')
+        rc, out, err = _cli(["-M", u])
+        assert rc == 0, err
+        line = [ln for ln in out.splitlines() if ln.startswith("u.o:")][0]
+        assert u in line and os.path.join(d, "regs.h") in line, line
+        df = os.path.join(d, "u.d")
+        rc, out, err = _cli(["-MF", df, u])
+        assert rc == 0 and os.path.exists(df)
+        with open(df, encoding="utf-8") as f:
+            assert "regs.h" in f.read()
+
+
+def test_cli_compile_database_drives_per_entry_flags():
+    # -p compile_commands.json: every entry compiles with ITS OWN flags -- one entry uses the
+    # "arguments" form (with a -D the source requires), the other the "command" string form.
+    with tempfile.TemporaryDirectory() as d:
+        a = _write(d, "a.c", "#if NEED != 2\n#error need NEED=2\n#endif\n"
+                             "unsigned f(unsigned x){ return x + NEED; }\n")
+        b = _write(d, "b.c", "unsigned g(unsigned x){ return x * 3u; }\n")
+        db = [
+            {"directory": d, "file": "a.c", "arguments": ["cc", "-c", "-DNEED=2", "a.c"]},
+            {"directory": d, "file": "b.c", "command": "cc -c b.c"},
+        ]
+        _write(d, "compile_commands.json", json.dumps(db))
+        rc, out, err = _cli(["-p", d])
+        assert rc == 0, (err, out)
+        assert "project: CLEAN (2 files)" in out, out

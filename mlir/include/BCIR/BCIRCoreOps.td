@@ -40,6 +40,12 @@ defvar BCIR_ClaimAttrs = (ins
   // vacuous over it (the non-disturbance invariant -- existing IR parses and verifies unchanged).
   OptionalAttr<BCIR_TimingAttr>:$timing,
   OptionalAttr<BCIR_LifetimeAttr>:$lifetime,
+  // §5.14 Phase 2: the EXTENT-PROVENANCE signal -- WHY the bounds contract is what it is
+  // (declared_extent | recovered_count | snapshot_extent | mmio_register | string_literal |
+  // unknown_extent), mirroring model.graph.Claim.bounds_provenance. Carried so R7 (and the
+  // debugger/ML layer) can see checked-vs-trusted WITH the reason; DIGEST-EXCLUDED from R13
+  // and absent by default (non-disturbance -- all existing IR parses and hashes unchanged).
+  OptionalAttr<StrAttr>:$bounds_provenance,
   // §5.14 Phase 2: the VOLATILE qualifier on the contract-carrying claim rail (bcir.claim /
   // bcir.load / bcir.store) -- distinct from bcir.volatile_load/store, which are the LOWERED
   // integer-address MMIO accessors. This bit rides the RID/contract layer so the ORDERING LAW

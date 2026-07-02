@@ -101,6 +101,12 @@ class Claim:
                                      # vacuous default (no R19/R20 constraint -- the whole scalar subset)
     lifetime: Optional["Lifetime"] = None  # OPTIONAL pointer-lifetime annotation (§5.12); None = the vacuous
                                      # default (no R21 use-after-free / double-free constraint)
+    bounds_provenance: str = ""      # OPTIONAL extent-provenance signal (§5.14 Phase 2): WHY the bounds
+                                     # contract is what it is -- "declared_extent" (local/static array of
+                                     # known shape) | "recovered_count" (malloc/calloc stable count) |
+                                     # "snapshot_extent" (pure count expression snapshotted at the alloc) |
+                                     # "mmio_register" | "string_literal" | "unknown_extent". "" = unset
+                                     # (the vacuous default; digest-excluded from R13).
     volatile: bool = False           # OPTIONAL volatile qualifier (§5.14 Phase 2): a volatile-qualified
                                      # access (MMIO) the ordering law sees STRUCTURALLY -- R5 requires an
                                      # ordered hazard, and the optimizer fences it like `barriered` (never

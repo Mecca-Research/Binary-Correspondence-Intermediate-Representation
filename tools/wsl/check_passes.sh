@@ -202,6 +202,9 @@ echo "[passes] bcir.atomic_rmw/atomic_cas op negatives (kind set, integer discip
 echo "[passes] R5 volatile-claim law (§5.14 Phase 2: is_volatile on the claim rail requires an ordered hazard; positive + negative)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_volatile.mlir" \
   && echo "  PASS verify_volatile.mlir" || { echo "  FAIL verify_volatile.mlir"; fail=1; }
+echo "[passes] R7 masked clause + extent-provenance (SS5.14 Phase 2: masked needs the bounds verify contract, provenance surfaced; dual-railed from the oracle)"
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_bounds_provenance.mlir" \
+  && echo "  PASS verify_bounds_provenance.mlir" || { echo "  FAIL verify_bounds_provenance.mlir"; fail=1; }
 echo "[passes] R22/R23 gem shape/dtype seam laws (D2 promotion: matmul->activation extent + conv/attention->activation dtype; negatives + a legal seam)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_shape_dtype.mlir" \
   && echo "  PASS verify_shape_dtype.mlir" || { echo "  FAIL verify_shape_dtype.mlir"; fail=1; }
