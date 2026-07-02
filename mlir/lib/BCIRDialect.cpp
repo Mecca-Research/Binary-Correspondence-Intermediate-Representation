@@ -854,6 +854,46 @@ static ::mlir::LogicalResult verifyMmioAccess(::mlir::Operation *op,
   return verifyMmioAccess(*this, getValue().getType(), getAddr().getType());
 }
 
+// Shared address discipline for the first-class atomic accessors (bcir.atomic_rmw / atomic_cas):
+// >= 32 bits, mirroring verifyMmioAccess (a too-narrow address must not be silently zero-extended
+// into the object pointer by the inttoptr lowering). Op-level structural checks, NOT a new
+// globally-numbered R-law -- the ordering LAW (R5) lives on the claim rail.
+static ::mlir::LogicalResult verifyAtomicAddr(::mlir::Operation *op, ::mlir::Type addrTy) {
+  auto ait = ::mlir::dyn_cast<::mlir::IntegerType>(addrTy);
+  if (!ait || ait.getWidth() < 32)
+    return op->emitOpError()
+           << "the object address must be an integer of at least pointer width (>= 32 bits; got "
+           << addrTy << ")";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult AtomicRMWOp::verify() {
+  ::llvm::StringRef k = getKind();
+  if (k != "add" && k != "sub" && k != "xor" && k != "exchange")
+    return emitOpError() << "unknown atomic_rmw kind '" << k
+                         << "' (one of add|sub|xor|exchange, the cfront atomic families)";
+  if (!::mlir::isa<::mlir::IntegerType>(getValue().getType()))
+    return emitOpError() << "the RMW value must be an integer (the cfront atomic families are "
+                            "integer-typed; got " << getValue().getType() << ")";
+  if (getValue().getType() != getResult().getType())
+    return emitOpError() << "the RMW result must have the value type (fetch/old-value semantics; got "
+                         << getResult().getType() << " vs " << getValue().getType() << ")";
+  return verifyAtomicAddr(*this, getAddr().getType());
+}
+
+::mlir::LogicalResult AtomicCASOp::verify() {
+  if (!::mlir::isa<::mlir::IntegerType>(getExpected().getType()))
+    return emitOpError() << "the CAS comparand must be an integer (got "
+                         << getExpected().getType() << ")";
+  if (getExpected().getType() != getDesired().getType())
+    return emitOpError() << "the CAS expected/desired operands must have the same type (got "
+                         << getExpected().getType() << " vs " << getDesired().getType() << ")";
+  if (getExpected().getType() != getResult().getType())
+    return emitOpError() << "the CAS result must have the comparand type (old-value semantics; got "
+                         << getResult().getType() << " vs " << getExpected().getType() << ")";
+  return verifyAtomicAddr(*this, getAddr().getType());
+}
+
 void BCIRDialect::initialize() {
   addOperations<
 #define GET_OP_LIST

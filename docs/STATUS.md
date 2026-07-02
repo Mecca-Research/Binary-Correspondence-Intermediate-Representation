@@ -6,15 +6,15 @@
 
 | Metric | Value |
 |---|---|
-| Python conformance tests (`python -m bcir.tests.run_all`) | **1846** across 146 files |
-| MLIR ODS ops (`mlir/include/BCIR/*.td`) | **102** |
+| Python conformance tests (`python -m bcir.tests.run_all`) | **1863** across 148 files |
+| MLIR ODS ops (`mlir/include/BCIR/*.td`) | **104** |
 | Registered `-bcir-*` passes | **37** |
-| MLIR FileCheck tests (`mlir/test/`) | **94** (170 `expected-error` negatives) |
+| MLIR FileCheck tests (`mlir/test/`) | **99** (179 `expected-error` negatives) |
 | Runtime C components (`runtime/c/`) | **233** |
-| Verifier laws | **R1–R21** (21/21 covered) |
+| Verifier laws | **R1–R23** (23/23 covered) |
 | Hardware channels | **9** (cpu, fpga, gpu, memory, storage) |
 
-## Verifier law coverage (R1–R21)
+## Verifier law coverage (R1–R23)
 
 Each law is a first-class `-bcir-verify` check with a negative `-verify-diagnostics` `.mlir`
 case (the table below is computed from `mlir/test/passes/verify*.mlir`). R1 (RID uniqueness)
@@ -26,9 +26,9 @@ R18 in `verify_callgraph.mlir`). R19/R20 (synchronous timing / clock-domain cros
 to absent, so they are vacuous over the entire scalar/C subset (the non-disturbance invariant) —
 their negative cases live in `verify_timing_lifetime.mlir`.
 
-| R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15 | R16 | R17 | R18 | R19 | R20 | R21 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15 | R16 | R17 | R18 | R19 | R20 | R21 | R22 | R23 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ## Hardware channel / target matrix
 

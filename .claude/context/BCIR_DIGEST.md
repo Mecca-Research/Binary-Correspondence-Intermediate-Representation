@@ -43,8 +43,8 @@ DEFERRED behind gate; measured-vs-modeled honesty (the one deferred result: meas
 
 **llvm-training/** — separate 612-file agent context pack (NOT the IR): 20 modules, bcir-mapping/,
 42 exercises + autograder (7 executable-registered), 42-record dataset, EVAL 30/30 answer key.
-24 files carry retired-material banners (they reference the removed early LLVM-IR-schema runtime tree). Stale: its README "Seed
-(~40 files)" table; tools/README semantic-only marker spelling.
+24 files carry retired-material banners (they reference the removed early LLVM-IR-schema runtime tree). README sizing
+table + tools/README marker spelling fixed 2026-07-02.
 
 **History (PRs #2–#607, 2026-04-23→07-01, ~606 PRs; see docs/DEVELOPMENT_HISTORY.md).**
 #2–12 C++ skeleton (1 day) → #13–31 LLVM-first seed → #32–152 llvm-training → **#153 pivot**

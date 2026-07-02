@@ -312,16 +312,18 @@ rails).
 
 ### 5.2 — Could migrate down — and the gate for each
 
-- **The `gem.*` Python planners → MLIR cost passes.** The Python `plan_matmul`/`plan_activation`/…
-  oracles could be fully subsumed by the MLIR CostVector passes. **Gate:** the oracle is kept as the
-  conformance reference (PARITY discipline) — it migrates only when the MLIR pass is proven
-  byte-identical and the oracle's role as the cheap-iteration prototype is no longer needed. Today
-  the split (oracle prototype + law op) is deliberate, not debt.
-- **The autodiff *closed-set* DAG → C/MLIR.** A concrete forward+backward DAG already lowers to C
-  (`emit_autodiff_kernel_c`). It could become an MLIR `gem.autodiff` law op. **Gate:** Criterion 3 —
+- **The `gem.*` Python planners → MLIR cost passes.** The MLIR CostVector passes
+  (`-bcir-gem-{matmul,activation,conv,attention}-cost`) are **built**; what remains is the policy
+  decision to *subsume* the Python `plan_matmul`/`plan_activation`/… oracles entirely. **Gate:** the
+  oracle is kept as the conformance reference (PARITY discipline) — it migrates only when the MLIR
+  pass is proven byte-identical and the oracle's role as the cheap-iteration prototype is no longer
+  needed. Today the split (oracle prototype + law op) is deliberate, not debt.
+- **The autodiff *closed-set* DAG → C/MLIR. ✅ landed.** A concrete forward+backward DAG lowers to C
+  (`emit_autodiff_kernel_c`) **and** the MLIR `gem.autodiff` law op exists (`BCIRGEMOps.td`, carrying
+  the serialized closed-set DAG). **Gate (stands for any extension):** Criterion 3 —
   this is sound *only* for the closed primitive set; the moment a VJP needs a transcendental, closure
-  breaks and the seed treatment (M1/E4 Tier B) is required. So the migration covers the closed-set
-  core only.
+  breaks and the seed treatment (M1/E4 Tier B) is required. So the lowered surface covers the
+  closed-set core only.
 - **The Area-B `*_reference` fallbacks → broader library breadth.** LAPACK/GSL/FFTW/SLEEF wraps are
   in; ATLAS/OpenBLAS and additional kernels are the remaining Area-B breadth (the active frontier per
   the roadmap §6 and the audit backlog). **Gate:** each new wrap needs the R17 bridge at the seam + a

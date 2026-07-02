@@ -1,4 +1,4 @@
-//===- BCIRVerifyPass.cpp - the -bcir-verify semantic laws R1-R21 -*- C++ -*-===//
+//===- BCIRVerifyPass.cpp - the -bcir-verify semantic laws R1-R23 -*- C++ -*-===//
 //
 // Part of the modular BCIR MLIR pass library (split out of the former monolithic
 // BCIRPasses.cpp). Shared helpers live in BCIRPassSupport.h; registration in
@@ -196,11 +196,11 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
 
   StringRef getArgument() const final { return "bcir-verify"; }
   StringRef getDescription() const final {
-    return "Verify the BCIR semantic laws R1-R21: registry, domain, phase DAG, "
+    return "Verify the BCIR semantic laws R1-R23: registry, domain, phase DAG, "
            "hazard, lane, bounds, cost, plan, provenance, generation, lowering, "
            "policy provenance, CIM/PIM dispatch, DVFS clock, allocator placement, "
            "accuracy contract, compositional call graph, synchronous timing, "
-           "clock-domain crossing, pointer lifetime.";
+           "clock-domain crossing, pointer lifetime, gem shape/dtype seams.";
   }
 
   void runOnOperation() override {
@@ -386,6 +386,15 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         c.emitError("R5: claim ")
             << c.getSymName()
             << " atomic semantics require an atomic/barriered hazard";
+        ok = false;
+      }
+      // §5.14 Phase 2: a VOLATILE access (MMIO) must carry an ordered hazard -- volatility is
+      // an ordering/legality signal, never cosmetic. Mirrors verify.verify() R5 on the oracle;
+      // vacuous unless a claim opts into `is_volatile` (non-disturbance).
+      if (c.getIsVolatile() && !hazardOrdered(c.getHazard())) {
+        c.emitError("R5: claim ")
+            << c.getSymName()
+            << " volatile access requires an atomic/barriered hazard";
         ok = false;
       }
     });
@@ -1325,6 +1334,49 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             freed.erase(ref.getValue());
       }
     }
+
+    // R22/R23: shape-consistency + dtype-compatibility over the gem.* tensor ops (D2 -- the
+    // ML/AI-roadmap promotion, the same six-artifact pattern as R19-R21). The op-level verifiers
+    // (BCIRDialect.cpp) reject a malformed SINGLE op at parse time; the LAW checks the
+    // producer->consumer SEAM no op verifier can see -- the adjacency contract
+    // -bcir-fuse-matmul-activation fuses on (R22: the activation epilogue consumes the matmul's
+    // full m*n product) and the dtype handover from a conv/attention producer to its activation
+    // epilogue (R23). Vacuous for IR with no adjacent gem pair (the non-disturbance invariant).
+    // Oracle twins: verify.verify_shape (R22, the gem count seam) + verify.verify_ml_spec
+    // (R22/R23, the E3-E6 spec rules).
+    root->walk([&](GEMActivationOp act) {
+      Operation *prev = act->getPrevNode();
+      if (!prev)
+        return;
+      int64_t extent = 1;
+      for (int64_t d : act.getShape())
+        extent *= d;
+      if (auto mm = dyn_cast<GEMMatmulOp>(prev)) {
+        if (extent != mm.getM() * mm.getN()) {
+          act.emitError("R22: gem.activation ")
+              << act.getSymName() << " consumes the adjacent gem.matmul @" << mm.getSymName()
+              << " but declares a shape extent of " << extent
+              << " elements != the matmul's m*n = " << mm.getM() * mm.getN();
+          ok = false;
+        }
+      } else if (auto cv = dyn_cast<GEMConvOp>(prev)) {
+        if (cv.getDtype() != act.getDtype()) {
+          act.emitError("R23: gem.activation ")
+              << act.getSymName() << " consumes the adjacent gem.conv @" << cv.getSymName()
+              << " but declares dtype '" << act.getDtype() << "' != the producer's '"
+              << cv.getDtype() << "'";
+          ok = false;
+        }
+      } else if (auto at = dyn_cast<GEMAttentionOp>(prev)) {
+        if (at.getDtype() != act.getDtype()) {
+          act.emitError("R23: gem.activation ")
+              << act.getSymName() << " consumes the adjacent gem.attention @" << at.getSymName()
+              << " but declares dtype '" << act.getDtype() << "' != the producer's '"
+              << at.getDtype() << "'";
+          ok = false;
+        }
+      }
+    });
 
     // R11: generation validity -- pack tags match the live registry maxima; a
     // mismatch is a stale pack that must rehydrate (patch/repack/replan).

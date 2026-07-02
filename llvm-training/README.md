@@ -233,12 +233,13 @@ and per-file commands.
 
 | Stage | Files | Size | Purpose |
 |---|---|---|---|
-| Seed (current) | ~40 | ~150 KB | Foundations + syntax + pitfalls + grammar |
-| Curated (target) | ~200 | ~50-200 MB | Add instr encyclopedia, metadata, MLIR overview, toolchain, exercises |
-| Training corpus (stage 2) | 100k+ | 10-100 GB | Paired (source, IR), (IR, opt-IR), (IR, asm) examples for fine-tuning. Out of scope here. |
+| Seed (historical) | ~40 | ~150 KB | Foundations + syntax + pitfalls + grammar |
+| Curated (current) | ~612 | ~3.8 MB | 20 chapters + instruction encyclopedia, metadata, MLIR overview, toolchain, 42 exercises + autograder, dataset schema/splits, EVAL answer key, bcir-mapping |
+| Training corpus (stage 2) | 100k+ | 10-100 GB | Paired (source, IR), (IR, opt-IR), (IR, asm) examples for fine-tuning. Out of scope here — but the exercise/autograder/dataset-schema substrate above is what an export would build on. |
 
-The curated target plateaus around 100-200 MB because quality and
-indexability matter more than raw volume for an agent-context repo.
+The curated stage stays small (a few MB of dense text, well under the 100-200 MB
+ceiling) because quality and indexability matter more than raw volume for an
+agent-context repo.
 
 Recent advanced paths: agents doing non-foundational LLVM work should start
 with [`RECIPES.md`](RECIPES.md) for task-based routes, then jump directly to

@@ -72,9 +72,11 @@ assemblers. Their honesty state is made explicit:
   `to_jvm` / `to_cil` / `to_wasm` mnemonics under each VM's stack semantics over a fuzz corpus
   of expression trees and checks they all reproduce the direct evaluation — far stronger than
   the single pinned-string check in `test_stackify.py`.
-- **CIL — documented skip.** No `ilasm`/`mono`/`dotnet` in CI, so `to_cil` is validated for
-  semantics (above) but not yet assembled+run on a real CLR; the test skips cleanly and names
-  where the `ilasm`+run check lands when a CLR toolchain is present.
+- **CIL — execution-validated.** The same test module wraps the actual `to_cil()` mnemonics in
+  a minimal `.il` unit (static `float32 run()` + an `.entrypoint` printing it), **assembles it
+  with the real `ilasm` and runs it under `mono`**, comparing stdout to the same StackOp
+  oracle — the exact mirror of the JVM harness. The oracle CI job installs `mono-devel`, so
+  the gate runs on every CI push; without a CLR toolchain it remains a clean documented skip.
 - **WASM — already execution-validated** via the **resident** `clang --target=wasm32 →
   wasm-ld → node` path in `lower/wasm.py` (`bcir/tests/test_wasm.py`), which is path (1), not
   this `to_wasm` text encoder. That path stays the warranted, resident-compiler route.

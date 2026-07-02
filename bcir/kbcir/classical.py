@@ -528,7 +528,8 @@ def nb_predict_via_bridge(model: GaussianNbModel, x: list[float], group_size: in
 
 
 # ============================================================================================================
-# Op-level well-formedness (mirrors check_recurrent; NOT a new global R-law).
+# Op-level well-formedness (mirrors check_recurrent). D2: promoted to the R22/R23 law surface
+# via verify.verify_ml_spec (caller-passed messages; no verifier import here).
 # ============================================================================================================
 
 _DTYPES = ("f32", "i32")

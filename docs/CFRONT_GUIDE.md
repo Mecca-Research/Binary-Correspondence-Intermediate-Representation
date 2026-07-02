@@ -93,6 +93,29 @@ fail. Without `--fallback`, an unsupported construct is a normal diagnostic.
 fb.c: fallback to LLVM backend: lower: static initializer is not a constant expression
 ```
 
+## Pointer-bounds policy (§5.12)
+
+What the compiler does with every array / pointer indexing, normatively:
+
+- **Recoverable extent → checked.** A local or static array with a known declared shape, and a
+  `malloc`/`calloc` pointer whose element count is recoverable (a stable count variable, or a
+  side-effect-free count expression snapshotted once into a hidden immutable local at the
+  allocation), promote from `assumed_safe` to **`masked`**: the emit carries
+  `a[BCIR_CHK(rid, i, N, "<func>:<array>")]`. In-bounds the guard is transparent
+  (behaviour-identical to the raw access); out-of-bounds it quarantines — the weak default handler
+  records the provenance (site, index, extent) into a ring readable via `bcir_quarantine_report`
+  and aborts fail-fast, while a strong override (the debugger / ML-layer seam) may record and
+  recover through the decide-audit ring.
+- **Not recoverable → `assumed_safe` (trusted).** A pointer parameter without a provable bound, a
+  struct-member array (today), and an MMIO register access stay unguarded — zero overhead, trusted
+  to land in their allocation.
+- **Never fabricated.** BCIR does not invent a bound it cannot recover — there is no silent
+  "proof"; an unprovable case stays trusted or routes to the LLVM backend under `--fallback`.
+
+Both rails promote identically (the R13 digest includes the bounds decision, so a one-rail split is
+a hard test failure), and `bcir-cc --emit-c` output containing a masked access is self-contained:
+it pulls in `bcir_quarantine.h` and compiles + links against `runtime/c/bcir_quarantine.c`.
+
 ## Pointer-lifetime policy (R21, §5.12)
 
 The frontend stamps lifetime events on `malloc`/`calloc` (alloc) and `free` (free), so the R21 law

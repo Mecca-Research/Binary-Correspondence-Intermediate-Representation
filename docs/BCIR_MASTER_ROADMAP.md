@@ -1861,27 +1861,27 @@ deterministic production law.
 
 Ordered, dependency-gated — each phase de-risks or enables the next:
 
-#### Phase 0 — Hygiene (cheap, parallelizable, de-risks everything after)
+#### Phase 0 — Hygiene (cheap, parallelizable, de-risks everything after) — ✅ LANDED
 
-- **(E) Honest test tiers + an explicit C-runtime CI gate.** The local `run_all --tier quick` "19 failures
-  (skip:no-cc)" are **not** a compiler-core or discovery bug: the quick tier *deliberately* hides the
-  toolchain (`bcir/tests/run_all.py` monkey-patches `shutil.which` so the pure-Python oracle/law/parity
+- **(E) Honest test tiers + an explicit C-runtime CI gate. ✅ LANDED.** The local `run_all --tier quick`
+  "failures (skip:no-cc)" were never a compiler-core or discovery bug: the quick tier *deliberately* hides
+  the toolchain (`bcir/tests/run_all.py` monkey-patches `shutil.which` so the pure-Python oracle/law/parity
   coverage runs with no compiler installed), while `tools/c/check_runtime.sh` uses the shell's `command -v`
   and **CI already runs `BCIR_THOROUGH=1`** (all tools visible) — so behaviour-equivalence *does* run in CI.
-  The action is **legibility**, not discovery: (1) a behaviour-equivalence check with no compiler must report
-  a clean **SKIP**, never a FAIL, in the quick tier (the 19 are mislabeled skips — `_CC is None` →
-  `skip:no-cc` should not count against the suite); (2) document the tier ladder
-  (`quick` = pure-Python, `c-runtime`/`thorough` = +toolchain) in the contributor docs; (3) add an explicit
-  **`c-runtime` CI job** running `check_runtime.sh` + `run_all --tier c-runtime` so full C runtime checks are
-  their own *named* gate, not only folded inside `thorough`.
-- **(D) Document the naked-pointer policy (user-facing).** The source already *enforces* it —
+  The legibility fixes are in: (1) a behaviour-equivalence check with no compiler reports a clean **SKIP**,
+  never a FAIL, in the quick tier; (2) the tier ladder is named and documented
+  (`run_all --tier {quick,c-runtime,silicon-degrade,thorough}`); (3) CI carries explicit
+  **`c-runtime` + `c-runtime-arm64` jobs** running `check_runtime.sh` + the c-runtime tier, so full C
+  runtime checks are their own *named* gate, not only folded inside `thorough`.
+- **(D) Document the naked-pointer policy (user-facing). ✅ LANDED.** The source already *enforces* it —
   `lower.py::_access_bounds` (the `assumed_safe → masked` promotion), `_bind_extent`
-  (malloc/calloc extent recovery), the `BCIR_CHK` runtime quarantine — and §5.12 describes it internally, but
-  it is **not user-facing**. Add a normative policy block to `BCIR_LANGREF.md` + `CFRONT_GUIDE.md`: *known /
-  recoverable extent → **checked / quarantined** (`masked`); unknown naked pointer → **`assumed_safe`**
-  (trusted, no runtime check); `malloc`/`free` → optional **R21** advisory lifetime diagnostics; **no silent
-  proof of unknown extents** (BCIR never fabricates a bound it cannot recover).* This pins the contract that
-  R21 (Phase 1) and the driver release (Phase 3) build on.
+  (malloc/calloc extent recovery), the `BCIR_CHK` runtime quarantine — and §5.12 describes it internally.
+  The normative user-facing policy block now lives in `BCIR_LANGREF.md` (§3–9, "The naked-pointer policy")
+  + `CFRONT_GUIDE.md` ("Pointer-bounds policy"): *known / recoverable extent → **checked / quarantined**
+  (`masked`); unknown naked pointer → **`assumed_safe`** (trusted, no runtime check); `malloc`/`free` →
+  optional **R21** advisory lifetime diagnostics; **no silent proof of unknown extents** (BCIR never
+  fabricates a bound it cannot recover).* This pins the contract that R21 (Phase 1) and the driver
+  release (Phase 3) build on.
 
 #### Phase 1 — Promote the emerging laws to first-class (R19 / R20 / R21) — ✅ LANDED
 
@@ -1916,12 +1916,19 @@ From the C-semantics audit, the eight candidate areas split cleanly under the fi
 **Add MLIR representation (these affect law):**
 - **Object lifetime** → the R21 `#bcir.lifetime` attribute (lands in Phase 1; the frontend already emits
   `Lifetime("alloc"/"free")` on malloc/free).
-- **Volatile access** → first-class. Today only a string tag `access="volatile"` on a resource; lift it to a
-  `volatile` qualifier on `bcir.load`/`bcir.store` — a **legality/ordering** signal (MMIO must not be
-  reordered, fused, or elided), not cosmetic.
-- **Atomic RMW / CAS** → first-class ops. Today opcode-named `c.atomic.*` claims (string dispatch); lift to
-  MLIR ops carrying the existing `#bcir.mem_ordering` attr so the **ordering law** sees them structurally.
-  (Fence ordering is *already* first-class — `bcir.barrier` + `mem_ordering` — keep it.)
+- ✅ **Volatile access** → first-class, **LANDED**: the `volatile` qualifier rides the claim rail
+  (`Claim.volatile` + the `is_volatile` claim attr on `bcir.claim`/`bcir.load`/`bcir.store`, digest-excluded
+  / false-default for non-disturbance), R5 now requires an ordered hazard on a volatile claim (both rails),
+  the bundle optimizer fences it like `barriered` on both rails (this also closed a live oracle↔law
+  divergence: `-bcir-bundle` had never honored the ASM3b barrier fence), and the cfront MMIO lowering
+  stamps it (`test_volatile_atomic_law.py`, `verify_volatile.mlir`).
+- ✅ **Atomic RMW / CAS** → first-class ops, **LANDED**: `bcir.atomic_rmw` (`add|sub|xor|exchange`) +
+  `bcir.atomic_cas` (strong/`weak`) carry the existing `#bcir.mem_ordering` attr (absent = seq_cst; CAS
+  failure ordering derived per the LLVM strongest-failure rule) and lower to `llvm.atomicrmw`/`llvm.cmpxchg`
+  (`atomic_ops*.mlir`, roundtrip + lowering + negatives). The cfront `c.atomic.*`/`c.c11atom.*`/`c.cmpxchg.*`
+  claims remain the frontend spelling; wiring the oracle emitter to produce the new ops is the next
+  increment (the D1.1 portio precedent). (Fence ordering was *already* first-class —
+  `bcir.barrier` + `mem_ordering` — kept.)
 - **Function pointers / indirect calls** → model the **callee type + effect** on the indirect-call claim. An
   opaque dispatch currently declares **no effects**, so the R18 reachability check and the
   effect/commutation footprint cannot analyze it; give the indirect call a declared signature + a
@@ -2026,26 +2033,32 @@ In recommended order — each is gated by the generated differential harness + F
     `&var` / `&s.member` / `&s->member` / `&*p` / `&arr[i]` lower on both rails (and fixed two silent
     oracle miscompiles of `&s->member` / `&*p`), byte-exact vs Clang on x86-64 + aarch64, fuzzer-clean.
     Unblocks **C11 `atomic_compare_exchange`** and `&`-out-params. (Member-array / array-of-structs element
-    address + a pointer/array member remain a both-rails follow-on.) **Next ➡** C11 compare-exchange now
-    that `&` is available.
-14. ◑ **Naked-pointer safety promotion (§5.12).** ✅ The **lifetime law R21** (use-after-free / double-free
-    over an optional `Claim.lifetime`, oracle prototype) landed -- vacuous/additive, non-disturbance proven
-    over the 841-test corpus (`test_lifetime_laws.py`). **Next ➡** the **bounds-promotion pass**
-    (`assumed_safe → strict`/`masked` where an extent is recoverable -- a local/static array's known shape,
-    or an array param with a sibling count -- so R7 statically proves it or a `verify=bounds` guard is
-    emitted; cost already modeled by the 12th axis), the **frontend opt-in** that annotates malloc/free, and
-    the MLIR port. `--fallback`/quarantine for the unprovable.
+    address + a pointer/array member remain a both-rails follow-on.) ✅ **C11
+    `atomic_compare_exchange_strong/weak` landed** (`cfront_cmpxchg11.c`, both rails — `lower.py` +
+    the `bcir_cfront.c` twin). **Next ➡** the remaining address-of forms (member-array /
+    array-of-structs element address + a pointer/array member).
+14. ◑ **Naked-pointer safety promotion (§5.12).** ✅ Landed since: the **lifetime law R21** (dual-rail,
+    load-bearing for C heap code, promoted first-class with the `#bcir.lifetime` MLIR attr — §5.14
+    Phase 1); the **bounds-promotion metadata step** (`assumed_safe → masked` for known-extent
+    local/static arrays); the **`BCIR_CHK` runtime quarantine** + debugger trace surface + recovery
+    override; **recovered `malloc`/`calloc` extents** (stable names *and* pure-expression snapshot
+    counts); and the **malloc/free frontend annotation** (see the ✅ trail in §5.12). **Next ➡**
+    `realloc` rebind + array-param-with-sibling-count extents (under a dominating-bound proof),
+    struct-member arrays, and the IR-level **bounds-provenance** signal (§5.14 Phase 2).
+    `--fallback`/quarantine for the unprovable.
 15. ◑ **RTL/synchronous-timing track, step 1 (§5.11).** **Oracle prototype DONE** (`Timing` +
     `verify_timing` R19/R20, `test_timing_laws.py`): the **non-disturbance proof holds** — the whole
     thorough corpus (834 tests, incl. the C-compiler fixtures + the provenance digest) verifies
     byte-identically with R19/R20 wired in, since no existing claim opts into timing, establishing the
-    additive seam. **Next ➡** port `Timing`/R19/R20 to the MLIR `#bcir.timing` `OptionalAttr` +
-    `BCIRVerifyPass.cpp` (parity-gated), then steps 2–5 of §5.11 (critical-path context factor + `sync`-axis
+    additive seam. ✅ **The MLIR port landed** (§5.14 Phase 1: the `#bcir.timing` attr,
+    `verifyR19/R20` in `BCIRVerifyPass.cpp`, `verify_timing_lifetime.mlir` negatives, parity-gated).
+    **Next ➡** steps 2–5 of §5.11 (critical-path context factor + `sync`-axis
     CDC, `-bcir-schedule-clocked`, CDC over `!bcir.token`, the x86/aarch64 then FPGA/ASIC channel interp).
 16. **➡ THE MLIR CATCH-UP + FREESTANDING-C23-DRIVER ARC (§5.14).** The consolidated next arc that closes
     the "law trails the oracle" gap and ships the first externally-usable compiler deliverable, in
-    dependency order: **Phase 0** hygiene — honest test tiers + an explicit `c-runtime` CI gate (E) and a
-    user-facing naked-pointer-policy doc (D, the source already enforces it); **Phase 1 (✅ landed)** — **R19/R20/R21** promoted from emerging model laws to first-class (the a–f artifacts: `#bcir.timing`/`#bcir.lifetime`
+    dependency order: **Phase 0 (✅ landed)** hygiene — honest test tiers + the explicit `c-runtime` CI
+    gate (E) and the user-facing naked-pointer-policy doc (D, `BCIR_LANGREF.md` + `CFRONT_GUIDE.md`);
+    **Phase 1 (✅ landed)** — **R19/R20/R21** promoted from emerging model laws to first-class (the a–f artifacts: `#bcir.timing`/`#bcir.lifetime`
     attrs, the C++ verifier laws, LangRef, negative FileCheck, the C dual-rail, and `gen_status` → R1–R21);
     **Phase 2** — extend MLIR for the **law-bearing** C semantics only (volatile/atomic ops, indirect-call
     callee type+effect, pointer extent-provenance, the ABI contract op — *not* storage-class / initializer /
@@ -2087,9 +2100,9 @@ In recommended order — each is gated by the generated differential harness + F
   decode/upgrade path), an external replay-CLI contract (a third party can re-check a record
   without the producing build), and certificate upgrade tests across schema revisions.
 - **1.0** (☐): stable language/ABI policy; no known Python↔C++ divergence (generated +
-  fuzzed); ≥2 real hardware targets with measured evidence; R1–R17 dual-rail symmetry
-  (§5.1.1); one external frontend; published benchmark methodology; upgrade tests; a
-  clear native-backend decision (the gate, §5.5).
+  fuzzed); ≥2 real hardware targets with measured evidence; R1–R21 dual-rail symmetry
+  (✅ already holds — §5.1.1 + §5.14 Phase 1); one external frontend; published benchmark
+  methodology; upgrade tests; a clear native-backend decision (the gate, §5.5).
 
 ---
 

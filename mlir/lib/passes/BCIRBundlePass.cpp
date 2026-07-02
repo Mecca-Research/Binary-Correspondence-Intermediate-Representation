@@ -44,6 +44,15 @@ using namespace mlir;
 namespace bcir {
 namespace {
 
+// ASM3b + §5.14 Phase 2 (mirrors bundle._conflict's fence clause): a `barriered` claim is an
+// ordering fence and a VOLATILE access (MMIO) must never be reordered/bundled across anything --
+// both conflict with every other claim, so no bundle ever forms across them. This closes a live
+// oracle<->law divergence: the Python bundle._conflict has fenced `barriered` since ASM3b, but
+// this pass's RAW/WAR/WAW check did not.
+static bool fenced(ClaimOp c) {
+  return c.getHazard() == HazardMode::Barriered || c.getIsVolatile();
+}
+
 // RAW/WAR/WAW between two claims' read/write symbol sets (mirrors bundle._conflict).
 static bool conflict(ArrayRef<StringRef> ar, ArrayRef<StringRef> aw,
                      ArrayRef<StringRef> br, ArrayRef<StringRef> bw) {
@@ -166,10 +175,10 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
         });
         SmallVector<unsigned> indep;
         for (unsigned m : members) {
-          bool ok = true;
+          bool ok = !fenced(claims[m].claim);   // a fenced claim joins no bundle
           for (unsigned k : indep)
-            if (conflict(claims[m].reads, claims[m].writes, claims[k].reads,
-                         claims[k].writes)) {
+            if (!ok || conflict(claims[m].reads, claims[m].writes,
+                                claims[k].reads, claims[k].writes)) {
               ok = false;
               break;
             }
@@ -186,6 +195,25 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
         if (!seenSets.insert(sig).second)
           continue;
 
+        // §5.14 Phase 2 / ASM3b parity with bundle._legal_reorder: making the members
+        // contiguous moves them across every column inside the member span -- illegal across
+        // a FENCE (a barriered/volatile claim never has another claim reordered across it).
+        // Skip the re-price when a fenced claim sits inside the span: detection stands, only
+        // the reorder gain is forfeited (the oracle's per-permutation legality check rejects
+        // exactly those orders).
+        bool fencedInSpan = false;
+        if (haveCost) {
+          unsigned lo = ~0u, hi = 0;
+          for (unsigned m : indep) {
+            unsigned c = colOf.lookup(claims[m].claim.getOperation());
+            lo = std::min(lo, c);
+            hi = std::max(hi, c);
+          }
+          for (unsigned c = lo + 1; c < hi; ++c)
+            if (fenced(cols[c].claim))
+              fencedInSpan = true;
+        }
+
         // The joint-reorder re-price: reorder the cost columns so the members are
         // contiguous and re-run the shortest path for every intra-bundle ordering (the
         // members are mutually independent, so every permutation is legal). gain is the
@@ -193,7 +221,7 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
         int64_t gain = 0;
         int searched = 0;
         SmallVector<int64_t> bestOrder;
-        if (haveCost && indep.size() <= 6) {
+        if (haveCost && indep.size() <= 6 && !fencedInSpan) {
           SmallVector<unsigned> memCol;
           for (unsigned m : indep)
             memCol.push_back(colOf.lookup(claims[m].claim.getOperation()));
@@ -223,7 +251,7 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
           claim->setAttr("kbcir.bundle", b.getI64IntegerAttr(bundleIdx));
           claim->setAttr("kbcir.bundle_shared",
                          FlatSymbolRefAttr::get(&getContext(), kv.first));
-          if (haveCost && indep.size() <= 6) {
+          if (haveCost && indep.size() <= 6 && !fencedInSpan) {
             claim->setAttr("kbcir.bundle_gain", b.getI64IntegerAttr(gain));
             claim->setAttr("kbcir.bundle_order", b.getI64ArrayAttr(bestOrder));
             claim->setAttr("kbcir.bundle_searched", b.getI64IntegerAttr(searched));

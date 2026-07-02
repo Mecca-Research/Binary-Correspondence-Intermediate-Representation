@@ -118,7 +118,33 @@ hard score, with equality at `T = 0`) is a verifier obligation under R9
   bandwidth knee, or the `!bcir.token` DAG (pipelined phases, ABI v2
   double-buffer contracts).
 
-## 10. Verifier laws (R1–R21)
+### The naked-pointer policy (normative, §4)
+
+C-frontend pointers enter the registry-first model (§4) as pointer *resources*, and every
+dereference lowers to a load/store claim carrying a `bounds` strength. The policy is:
+
+- **Known / recoverable extent → checked (`masked`).** An indexed access whose extent the
+  frontend can recover — a local/static array's declared shape, or a `malloc`/`calloc`
+  element count (a stable name, or a side-effect-free expression snapshotted at the
+  allocation) — is promoted `assumed_safe → masked` and carries the `verify=bounds`
+  contract (R7), discharged at runtime by the `BCIR_CHK` quarantine guard: transparent
+  in-bounds; out-of-bounds, a provenance-recorded quarantine (abort by default; a strong
+  override may recover only through the recorded two-truth decide, §14).
+- **Unknown naked pointer → `assumed_safe` (trusted).** No runtime check is emitted; the
+  access is trusted to land in its allocation.
+- **`malloc`/`free` → optional R21 lifetime diagnostics.** Allocation/free events are
+  stamped so R21 (§10) surfaces use-after-free / double-free — advisory by default,
+  promotable to a fallback/reject verdict (`--r21`,
+  [`CFRONT_GUIDE.md`](CFRONT_GUIDE.md)).
+- **No silent proof of unknown extents.** BCIR never fabricates a bound it cannot
+  recover; the unprovable keeps the `--fallback`/quarantine contract.
+
+Both rails enforce this identically (oracle `lower.py::_access_bounds`/`_bind_extent`,
+twin `bcir_cfront.c`; the bounds decision is part of the R13 digest, so a one-rail split
+is a hard parity failure). The engineering trail is
+[`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5.12.
+
+## 10. Verifier laws (R1–R23)
 
 R1 registry uniqueness · R2 registry resolution · R3 domain legality ·
 R4 phase-DAG legality · R5 hazard legality · R6 lane legality · R7 bounds
@@ -146,7 +172,7 @@ swaps are never silent. Encoded as IR via the `bcir.verify.*` op family. The
 runnable full set lives in `bcir/verify`, one entry point per correspondence
 artifact — `verify(module)` R1–R8(static), `verify_plan` R8–R9, `verify_pack`
 R10–R11, `verify_lowering` R12, `verify_provenance` R13 — and the MLIR-native
-`-bcir-verify` pass enforces the structurally checkable form of all of R1–R21
+`-bcir-verify` pass enforces the structurally checkable form of all of R1–R23
 on the dialect.
 
 **Timing + lifetime laws (R19/R20/R21).** Three further laws over the
@@ -170,12 +196,32 @@ it), now carried on the dialect as the `#bcir.timing` / `#bcir.lifetime` attribu
   is a use-after-free, a `free` of an already-freed resource is a double-free, and a
   write (reassignment / `alloc`) re-validates.
 
-R19/R20/R21 are now **first-class `-bcir-verify` MLIR laws**, dual-rail with the
+**Shape + dtype laws (R22/R23) — the D2 promotion.** The E3–E6 `check_*` validators'
+"structurally valid tensors" guarantee, made law over the `gem.*` tensor claims:
+
+- **R22 (shape consistency)** — a producer→consumer **gem seam** hands over one
+  tensor, so both ends must agree: on the MLIR rail, a `gem.activation` adjacent to a
+  `gem.matmul` (the fusion contract) must declare a shape extent equal to the matmul's
+  `m*n`; on the oracle rail, `verify.verify_shape` checks the written→read `count`
+  handover between gem claims. Spec-level shape/extent/kind rules from the E3–E6
+  checkers ride the same number via `verify.verify_ml_spec`.
+- **R23 (dtype compatibility)** — the dtype handover at a gem seam: an activation
+  epilogue adjacent to a `gem.conv` / `gem.attention` must declare the producer's
+  dtype; the E3–E6 quarantine dtype rules (a transcendental needs `f32`) ride the
+  same number at the spec level (`verify_ml_spec`). The model-rail `Claim` carries no
+  dtype, so structural R23 is MLIR-side by design.
+
+Both are **vacuous by default** (no gem seam / no spec checked — the whole scalar /
+C-frontend corpus is untouched), with negative `-verify-diagnostics` cases in
+`mlir/test/passes/verify_shape_dtype.mlir` and the oracle suite in
+`bcir/tests/test_shape_dtype_laws.py`.
+
+R19/R20/R21 are **first-class `-bcir-verify` MLIR laws**, dual-rail with the
 oracle's `verify.verify_timing` / `verify.verify_lifetime` (run through
-`verify.verify_smart_lowering` alongside R14–R17), each with a negative
+`verify.verify_smart_lowering` alongside R14–R17 and R22), each with a negative
 `-verify-diagnostics` case in `mlir/test/passes/verify_timing_lifetime.mlir`, so the
 generated status ([`STATUS.md`](STATUS.md)) now reports the first-class set as
-**R1–R21**. R21 detection runs on both driver rails; it is *advisory* by default
+**R1–R23**. R21 detection runs on both driver rails; it is *advisory* by default
 (surfaced, never gates), and the `bcir-cc` / `bcir-cfront` drivers expose a `--r21`
 policy — `advisory` (default) · `fallback` (route the unit to the LLVM backend,
 exit 2) · `reject` (a hard verify error, exit 1) — so a detected use-after-free /
@@ -183,6 +229,25 @@ double-free can gate the production compile, with the two rails drawing the same
 exit code (the parity gate in `tools/c/check_runtime.sh`). The remaining §5.12 work
 is the bounds-promotion of array parameters under a dominating-bound proof and the
 offline ML policy table.
+
+**Volatile & atomic ordering are structural (§5.14 Phase 2, first pair).** A
+volatile-qualified access is a first-class **`volatile` qualifier on the claim rail**
+(`Claim.volatile` / the MLIR `is_volatile` claim attr — distinct from
+`bcir.volatile_load/store`, the lowered integer-address MMIO accessors), not a
+resource string tag: **R5 requires an ordered (atomic/barriered) hazard on a volatile
+claim**, and the optimizer fences it exactly like `barriered` (`bundle._conflict` /
+`-bcir-bundle` never reorder or bundle across it). The C frontend stamps it on every
+MMIO access (`domain=MMIO, hazard=barriered, volatile=true`), so the law holds by
+construction; the qualifier is digest-excluded (R13) and false by default
+(non-disturbance). Atomic RMW/CAS are likewise **first-class MLIR ops** —
+`bcir.atomic_rmw` (`add|sub|xor|exchange`) and `bcir.atomic_cas` (strong/`weak`) —
+carrying the existing `#bcir.mem_ordering` attr (absent = `seq_cst`; a CAS derives
+its failure ordering by the LLVM strongest-failure rule) and lowering to
+`llvm.atomicrmw` / `llvm.cmpxchg`, lifting the cfront `c.atomic.*` / `c.c11atom.*` /
+`c.cmpxchg.*` opcode-string claims into structures the ordering law sees
+(`atomic_ops*.mlir`, `verify_volatile.mlir`, `test_volatile_atomic_law.py`). The
+remaining Phase 2 areas — indirect-call callee type+effect, pointer
+extent-provenance, the ABI contract op — are the next increments.
 
 **Barriers are first-class ordering edges (ASM3b).** A `barriered`-hazard claim is
 not only un-reorderable itself — it *fences other claims*. No claim may be reordered

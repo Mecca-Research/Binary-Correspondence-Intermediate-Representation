@@ -38,6 +38,7 @@ from bcir.kbcir.transformer import (TransformerBlockParams, TransformerBlockSpec
                                     softmax_rowsum_residual, transformer_block_reference,
                                     transformer_block_via_bridge)
 from bcir.lower.c_kernel import emit_layernorm_c
+from bcir.tests._convergence import assert_converged
 
 
 def _vec(rng, n, lo=-0.5, hi=0.5):
@@ -538,8 +539,8 @@ def test_transformer_block_training_drives_loss_down():
     names = [f"r{j}" for j in range(dm)] + ["b"]
     res = train(model, [0.0] * (dm + 1), Dataset(tuple(feats), tuple(ys)), loss="mse", optimizer="adam",
                 epochs=150, lr=0.05, seed=1, param_names=names)
-    assert res.train_loss[-1] < res.train_loss[0], (res.train_loss[0], res.train_loss[-1])   # loss decreases
-    assert res.train_loss[-1] < 1e-3, res.train_loss[-1]          # the linear readout is exactly learnable
+    # the shared convergence gate: decreased + absolute threshold + substantial drop (not "down a bit").
+    assert_converged(res.train_loss, final_below=1e-3, max_ratio=0.1, name="E3 transformer readout")
 
 
 if __name__ == "__main__":

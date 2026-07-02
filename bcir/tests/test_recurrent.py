@@ -44,6 +44,7 @@ from bcir.kbcir.recurrent import (GruParams, LstmParams, RnnParams,
                                   sigmoid_prime_from_value, tanh_prime_from_value,
                                   temporal_dependence)
 from bcir.lower.c_kernel import emit_lstm_cell_c
+from bcir.tests._convergence import assert_converged
 
 
 def _vec(rng, n, lo=-0.5, hi=0.5):
@@ -262,8 +263,8 @@ def test_tier_a_end_to_end_training_drives_loss_down():
     names = ["r0", "r1", "r2"]
     res = train(model, [0.0, 0.0, 0.0], ds, loss="mse", optimizer="sgd", epochs=40,
                 batch_size=8, lr=0.3, seed=1, param_names=names)
-    assert res.train_loss[-1] < res.train_loss[0], (res.train_loss[0], res.train_loss[-1])
-    assert res.train_loss[-1] < 1e-2, res.train_loss[-1]       # the linear readout is exactly learnable
+    # the shared convergence gate: decreased + absolute threshold + substantial drop.
+    assert_converged(res.train_loss, final_below=1e-2, name="E4 Tier-A readout")
 
 
 # ============================================================================================================
@@ -690,8 +691,93 @@ def test_tier_b_lstm_readout_training_drives_loss_down():
     names = [f"r{j}" for j in range(dh)] + ["b"]
     res = train(model, [0.0] * (dh + 1), Dataset(tuple(feats), tuple(ys)), loss="mse", optimizer="adam",
                 epochs=120, lr=0.05, seed=1, param_names=names)
-    assert res.train_loss[-1] < res.train_loss[0], (res.train_loss[0], res.train_loss[-1])   # loss decreases
-    assert res.train_loss[-1] < 1e-2, res.train_loss[-1]          # the linear readout is exactly learnable
+    # the shared convergence gate: decreased + absolute threshold + substantial drop.
+    assert_converged(res.train_loss, final_below=1e-2, name="E4 Tier-B LSTM readout")
+
+
+def test_tier_b_gru_readout_training_drives_loss_down():
+    # E4 Tier-B GRU CONVERGENCE: the GRU previously had forward + analytic-gradient evidence but NO training
+    # gate of any kind (the audit gap). Exactly the LSTM pattern: the GRU forward is the (fixed) feature
+    # extractor -- its final hidden state -- and the M3 loop fits a linear readout, MSE dropping to ~0. The
+    # transcendental gates are frozen OUTSIDE the Tape; only the closed-set readout trains.
+    from bcir.kbcir.training import Dataset, train
+
+    rng = random.Random(0xE4C1)
+    di, dh, T = 2, 3, 4
+    p = _gru_params(rng, di, dh)
+    coef = [0.5, -0.35, 0.2]
+    feats, ys = [], []
+    for _ in range(24):
+        seq = _vec(rng, T * di, -0.8, 0.8)
+        hT = gru_unroll(seq, [0.0] * dh, p)
+        feats.append(tuple(hT))
+        ys.append(sum(coef[j] * hT[j] for j in range(dh)) + 0.05)
+
+    def model(tape, names, X):
+        r = [tape.var(nm) for nm in names]
+        out = []
+        for row in X:
+            pred = r[dh]
+            for j in range(dh):
+                pred = tape.add(pred, tape.mul(r[j], tape.const(row[j])))
+            out.append(pred)
+        return out
+
+    names = [f"r{j}" for j in range(dh)] + ["b"]
+    res = train(model, [0.0] * (dh + 1), Dataset(tuple(feats), tuple(ys)), loss="mse", optimizer="adam",
+                epochs=120, lr=0.05, seed=1, param_names=names)
+    assert_converged(res.train_loss, final_below=1e-2, name="E4 Tier-B GRU readout")
+
+
+def test_tier_a_rnn_weights_train_end_to_end():
+    # E4 Tier-A WEIGHT training (the audit gap): the BPTT weight gradients were FD-verified
+    # (test_tier_a_bptt_matches_finite_difference_wrt_weights) but never consumed by an optimizer -- the
+    # readout convergence test bakes the RNN weights as tape.const. Here the RNN weights THEMSELVES are
+    # tape.var: labels come from a teacher relu-RNN under a FIXED sum readout, and a differently-initialized
+    # student trains its wx/wh/b through the unrolled DAG (literal BPTT through time) until the loss
+    # collapses -- the recurrent weights, not a readout, do the learning. Positive inputs + positive biases
+    # keep every unit off the relu kink, exactly as the headline FD tests do.
+    from bcir.kbcir.training import Dataset, train
+
+    rng = random.Random(0xE4C2)
+    di, dh, T = 1, 2, 3
+    teacher = RnnParams(_vec(rng, dh * di, 0.3, 0.7), _vec(rng, dh * dh, 0.1, 0.3),
+                        _vec(rng, dh, 0.1, 0.3), di, dh)
+    seqs, ys = [], []
+    for _ in range(24):
+        s = [rng.uniform(0.4, 1.0) for _ in range(T * di)]
+        hT = rnn_relu_reference(s, [0.0] * dh, teacher)
+        seqs.append(tuple(s))
+        ys.append(hT[0] + hT[1])                                  # the FIXED readout: sum of the final state
+
+    names = ([f"wx{i}" for i in range(dh * di)] + [f"wh{i}" for i in range(dh * dh)]
+             + [f"b{i}" for i in range(dh)])
+
+    def model(tape, param_names, X):
+        w = {nm: tape.var(nm) for nm in param_names}
+        zero = tape.const(0.0)
+        out = []
+        for row in X:
+            h = [tape.const(0.0) for _ in range(dh)]
+            for t in range(T):
+                xc = [tape.const(row[t * di + j]) for j in range(di)]
+                new_h = []
+                for o in range(dh):
+                    z = w[f"b{o}"]
+                    for j in range(di):
+                        z = tape.add(z, tape.mul(w[f"wx{o * di + j}"], xc[j]))
+                    for k in range(dh):
+                        z = tape.add(z, tape.mul(w[f"wh{o * dh + k}"], h[k]))
+                    new_h.append(tape.select(z, z, zero))         # relu (closed-set)
+                h = new_h
+            out.append(tape.add(h[0], h[1]))                      # fixed sum readout: no readout params
+        return out
+
+    p0 = [rng.uniform(0.35, 0.65) for _ in names]                 # a different (positive) init from the teacher
+    res = train(model, p0, Dataset(tuple(seqs), tuple(ys)), loss="mse", optimizer="adam",
+                epochs=200, batch_size=8, lr=0.05, seed=1, param_names=names)
+    assert list(res.params) != list(p0)                           # the gradient genuinely flowed into the weights
+    assert_converged(res.train_loss, final_below=1e-3, max_ratio=0.1, name="E4 Tier-A RNN weights")
 
 
 if __name__ == "__main__":

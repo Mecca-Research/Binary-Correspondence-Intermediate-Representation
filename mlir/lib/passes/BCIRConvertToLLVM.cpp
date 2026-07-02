@@ -390,6 +390,86 @@ struct VolatileStoreOpLowering : public OpConversionPattern<VolatileStoreOp> {
   }
 };
 
+// Maps the optional #bcir.mem_ordering to the LLVM atomic ordering for an RMW/CAS access:
+// ABSENT = seq_cst (the C11/`__sync` default, the bcir.barrier precedent); unordered/monotonic
+// clamp to monotonic (LLVM requires an atomic access ordering >= monotonic).
+static LLVM::AtomicOrdering atomicOrdering(std::optional<MemOrdering> o) {
+  if (!o)
+    return LLVM::AtomicOrdering::seq_cst;
+  switch (*o) {
+  case MemOrdering::Unordered:
+  case MemOrdering::Monotonic: return LLVM::AtomicOrdering::monotonic;
+  case MemOrdering::Acquire:   return LLVM::AtomicOrdering::acquire;
+  case MemOrdering::Release:   return LLVM::AtomicOrdering::release;
+  case MemOrdering::AcqRel:    return LLVM::AtomicOrdering::acq_rel;
+  default:                     return LLVM::AtomicOrdering::seq_cst;
+  }
+}
+
+// The LLVM strongest-failure-ordering rule for cmpxchg: the failure ordering is never a release
+// and never stronger than success (release -> monotonic, acq_rel -> acquire, else success).
+static LLVM::AtomicOrdering casFailureOrdering(LLVM::AtomicOrdering success) {
+  switch (success) {
+  case LLVM::AtomicOrdering::release: return LLVM::AtomicOrdering::monotonic;
+  case LLVM::AtomicOrdering::acq_rel: return LLVM::AtomicOrdering::acquire;
+  default:                            return success;
+  }
+}
+
+struct AtomicRMWOpLowering : public OpConversionPattern<AtomicRMWOp> {
+  using OpConversionPattern<AtomicRMWOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(AtomicRMWOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // First-class atomic RMW -> llvm.inttoptr(addr) + llvm.atomicrmw <kind>, the structural twin
+    // of the cfront `c.atomic.*` / `c.c11atom.fetch_*` lowering (`__atomic_fetch_*` semantics).
+    LLVM::AtomicBinOp bin;
+    StringRef k = op.getKind();
+    if (k == "add")
+      bin = LLVM::AtomicBinOp::add;
+    else if (k == "sub")
+      bin = LLVM::AtomicBinOp::sub;
+    else if (k == "xor")
+      bin = LLVM::AtomicBinOp::_xor;
+    else if (k == "exchange")
+      bin = LLVM::AtomicBinOp::xchg;
+    else
+      return rewriter.notifyMatchFailure(op, "unknown atomic_rmw kind");
+    auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value ptr =
+        rewriter.create<LLVM::IntToPtrOp>(op.getLoc(), ptrTy, adaptor.getAddr());
+    rewriter.replaceOpWithNewOp<LLVM::AtomicRMWOp>(
+        op, bin, ptr, adaptor.getValue(), atomicOrdering(op.getOrdering()));
+    return success();
+  }
+};
+
+struct AtomicCASOpLowering : public OpConversionPattern<AtomicCASOp> {
+  using OpConversionPattern<AtomicCASOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(AtomicCASOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // First-class CAS -> llvm.inttoptr(addr) + llvm.cmpxchg (+ weak) + extractvalue[0] (the OLD
+    // value, `c.cmpxchg.val` semantics). `weak` set via the setter (version-stable, like the
+    // volatile setters in the MMIO lowerings).
+    auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value ptr =
+        rewriter.create<LLVM::IntToPtrOp>(op.getLoc(), ptrTy, adaptor.getAddr());
+    LLVM::AtomicOrdering succ = atomicOrdering(op.getOrdering());
+    auto cas = rewriter.create<LLVM::AtomicCmpXchgOp>(
+        op.getLoc(), ptr, adaptor.getExpected(), adaptor.getDesired(), succ,
+        casFailureOrdering(succ));
+    if (op.getWeak())
+      cas.setWeak(true);
+    Value old = rewriter.create<LLVM::ExtractValueOp>(op.getLoc(), cas.getRes(),
+                                                      ArrayRef<int64_t>{0});
+    rewriter.replaceOp(op, old);
+    return success();
+  }
+};
+
 struct CRegReadOpLowering : public OpConversionPattern<CRegReadOp> {
   using OpConversionPattern<CRegReadOp>::OpConversionPattern;
 
@@ -531,14 +611,15 @@ struct ConvertToLLVMPass
     LLVMConversionTarget target(getContext());
     target.addLegalOp<ModuleOp>();
     target.addIllegalOp<ComputeOp, BarrierOp, AsmOp, PortioOp, VolatileLoadOp,
-                        VolatileStoreOp, CRegReadOp, CRegWriteOp, MsrReadOp,
-                        MsrWriteOp>();
+                        VolatileStoreOp, AtomicRMWOp, AtomicCASOp, CRegReadOp,
+                        CRegWriteOp, MsrReadOp, MsrWriteOp>();
 
     LLVMTypeConverter typeConverter(&getContext());
     RewritePatternSet patterns(&getContext());
     patterns.add<ComputeOpLowering, BarrierOpLowering, AsmOpLowering,
                  PortioOpLowering, VolatileLoadOpLowering,
-                 VolatileStoreOpLowering, CRegReadOpLowering,
+                 VolatileStoreOpLowering, AtomicRMWOpLowering,
+                 AtomicCASOpLowering, CRegReadOpLowering,
                  CRegWriteOpLowering, MsrReadOpLowering, MsrWriteOpLowering>(
         typeConverter, &getContext());
 
