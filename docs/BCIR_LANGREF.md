@@ -118,6 +118,32 @@ hard score, with equality at `T = 0`) is a verifier obligation under R9
   bandwidth knee, or the `!bcir.token` DAG (pipelined phases, ABI v2
   double-buffer contracts).
 
+### The naked-pointer policy (normative, §4)
+
+C-frontend pointers enter the registry-first model (§4) as pointer *resources*, and every
+dereference lowers to a load/store claim carrying a `bounds` strength. The policy is:
+
+- **Known / recoverable extent → checked (`masked`).** An indexed access whose extent the
+  frontend can recover — a local/static array's declared shape, or a `malloc`/`calloc`
+  element count (a stable name, or a side-effect-free expression snapshotted at the
+  allocation) — is promoted `assumed_safe → masked` and carries the `verify=bounds`
+  contract (R7), discharged at runtime by the `BCIR_CHK` quarantine guard: transparent
+  in-bounds; out-of-bounds, a provenance-recorded quarantine (abort by default; a strong
+  override may recover only through the recorded two-truth decide, §14).
+- **Unknown naked pointer → `assumed_safe` (trusted).** No runtime check is emitted; the
+  access is trusted to land in its allocation.
+- **`malloc`/`free` → optional R21 lifetime diagnostics.** Allocation/free events are
+  stamped so R21 (§10) surfaces use-after-free / double-free — advisory by default,
+  promotable to a fallback/reject verdict (`--r21`,
+  [`CFRONT_GUIDE.md`](CFRONT_GUIDE.md)).
+- **No silent proof of unknown extents.** BCIR never fabricates a bound it cannot
+  recover; the unprovable keeps the `--fallback`/quarantine contract.
+
+Both rails enforce this identically (oracle `lower.py::_access_bounds`/`_bind_extent`,
+twin `bcir_cfront.c`; the bounds decision is part of the R13 digest, so a one-rail split
+is a hard parity failure). The engineering trail is
+[`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5.12.
+
 ## 10. Verifier laws (R1–R21)
 
 R1 registry uniqueness · R2 registry resolution · R3 domain legality ·

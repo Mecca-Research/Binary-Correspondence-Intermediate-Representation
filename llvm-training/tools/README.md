@@ -154,8 +154,9 @@ manifest. `verify-invalid-fixtures.sh` performs the broader expected-failure
 sweep: every `.invalid.ll.txt` fixture, plus the sentinel, must remain rejected
 by `llvm-as` or by the verifier pass if assembly succeeds. A fixture that is
 intentionally semantic-only, such as poison-prone IR accepted by LLVM
-verification, must include `; verify-invalid-fixtures: semantic-only` so the
-script can distinguish it from an accidentally valid parser/verifier fixture.
+verification, must include the exact marker line
+`; llvm-training-invalid-kind: semantic-only` (the string the script greps for)
+so it can be distinguished from an accidentally valid parser/verifier fixture.
 
 `verify-manifest.sh` is intentionally separate from IR verification. It compares
 the checked-in Markdown table in `../examples/README.md` to the discovered set of
