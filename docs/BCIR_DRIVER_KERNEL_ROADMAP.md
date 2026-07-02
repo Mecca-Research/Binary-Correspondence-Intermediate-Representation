@@ -304,70 +304,6 @@ the warranted path is the resident compiler finishing BCIR-emitted freestanding 
 
 ---
 
-## Part V — Kernel feasibility audit: adaptive drivers, multi-backend microkernels, and the Linux compatibility plan (2026-07-02)
-
-> A feasibility audit extending Parts I–IV toward the modular-AI-microkernel vision. It
-> draws on three research inputs: the Linux kernel implementation-patterns analysis (UEFI
-> dual-entry boot, memblock→buddy allocators, APIC/x2APIC per-CPU vector tables, PCIe
-> hierarchical enumeration, NVMe per-CPU queues, xHCI ring management, `sched_class` +
-> sched-ext/BPF pluggable scheduling, per-CPU cache-aligned state), the Phase-4
-> toolchain/POSIX research (IEEE Std 1003.1-2024 incorporation, musl-libc adaptation,
-> graph-native syscalls, compatibility-layer engineering with measured 5–15% optimized
-> overhead), and the C23 self-assembly analysis. Verdicts are conservative; the honest
-> calibration from the research itself is kept in view: a complete independent
-> toolchain + POSIX implementation is a **3–5 year, 15–25-engineer** program — so this
-> plan is sliced to ride BCIR's existing rails and defer everything else.
-
-### V.1 How tropical optimization creates adaptive drivers and intelligent kernels
-
-A BCIR driver is **a compiler with a persistent plan cache**, and "adaptive" means
-*replanning under measured Θ*, never inference on the hot path:
-
-1. **The driver's decisions are cost-model decisions.** Queue depth, interrupt coalescing
-   window, batch size, ring sizing, DMA burst length, polling-vs-interrupt mode, DVFS
-   clock, and core-vs-PIM offload are all *realization choices over the same claim graph*
-   — priced on the 12-d vector (sync = coalescing latency, fabric = DMA traffic, power/
-   thermal = the Θ coupling), selected by the min-plus/RCSP planner, and frozen into the
-   device's **generation-tagged plan table**. The R15/R14 laws already legalize the
-   clock/offload half of this.
-2. **The adaptation loop is the calibration loop, per channel.** telemetry ring → Θ fold →
-   `rescore_plan` → replan when the certificate shows a win → new frozen table generation
-   (R13). The regret ledger + MDL ΔL trigger decide *when* recalibration is worth it. This
-   is "intelligent" behavior with a deterministic hot path — the same two-truth shape as
-   everything else in BCIR.
-3. **The kernel-side precedent is sched-ext/BPF.** Linux itself now accepts pluggable,
-   verifier-checked scheduling policies as BPF programs. BCIR's `codegen_object_c` already
-   emits **real eBPF ELF objects** — so a *learned-then-frozen* scheduling/IO policy can be
-   compiled by BCIR and installed into a stock Linux kernel today (Track A below), long
-   before any freestanding kernel exists. This is the lowest-risk demonstration of an
-   "intelligent kernel component" and should be the first V-series code slice.
-
-### V.2 Multi-backend microkernels — the honest triage
-
-The ambition — kernels that move between GCC, Clang, WASM, JVM, CLI/.NET, IDL/CORBA, SPIR,
-SGML/XML/PMML, SDL, and various IRs — divides into three technically distinct categories:
-
-| Category | Members | BCIR mechanism | Status / verdict |
-|---|---|---|---|
-| **Execution backends** (a plan lowers to them) | C→GCC/Clang, LLVM IR, eBPF, WASM, JVM, CIL/.NET, SPIR-V/SYCL, PTX | one StreamPack/plan, many emitters: the C23 emitter, `emit_kernel_ll`, `codegen_object_c` (ELF/eBPF), `lower/wasm.py` (executed under node), stackify→JVM (**execution-validated**), stackify→CIL (text-only, honest skip), the SYCL channel | **Feasible and mostly real.** The portable artifact is the StreamPack; per-backend cost profiles are channels. Remaining: CIL execution validation when a runtime is available; SPIR-V beyond SYCL. |
-| **Interface/serialization standards** (not backends) | IDL/CORBA (OMG), SGML/XML (ISO 8879 / W3C), PMML (DMG), SDL (ITU-T Z.100) | the ETL/parse/binary rail: BCIR **emits verified parser/marshaller kernels** that consume or produce these formats (the same shape as the ACPI/SMBIOS/TPM verdict in Part III). PMML additionally maps to §7's `ModelManifest` as a model-exchange import. | **Feasible as parser-kernel targets; wrong to treat as execution backends.** CORBA ORB or a .NET CLR are runtimes BCIR should *talk to*, not *be*. |
-| **Foreign IR bridges** | MLIR dialects, SPIR, other compiler IRs | the law rail already lives inside MLIR; conversion passes are the native mechanism | Feasible per-dialect, on demand, behind the same filter as §5.14 Phase 2 (only law-bearing semantics get representation). |
-
-The unifying claim is real: because the *plan* is target-neutral and the *cost profiles* are
-per-channel data, one microkernel definition genuinely retargets — this is what the
-six-target capability matrix already proves at kernel scale. What Part V adds is treating
-**each backend as a channel with its own calibration artifact**, so the planner chooses the
-backend (JVM vs WASM vs native) the way it chooses a lane width today.
-
-### V.3 The driver-is-a-compiler loop (hardware↔software intimacy, technically)
-
-The intimacy is the closed loop, all of whose stages exist:
-
-```
-vendor register map (.
-
----
-
 ## Part V — BCIR kernel feasibility audit + the Linux compatibility plan (2026-07-02)
 
 > A feasibility audit answering the second-part questions: can BCIR's tropical optimizer +
@@ -410,8 +346,14 @@ the learned choice off the legality path (a mis-learned batch size is slower, ne
 **Is it real?** The *substrate* is real (planner, Θ, RCSP budgets, the resident-calibloop
 design, the barriered MMIO/port-I/O/fence edges). The *adaptive loop on a device* is the
 measured-replan result, which stays **rig-gated** (Part I H5 / master roadmap §5.4) — feasible
-and staged, not demonstrated. **Verdict: feasible; the first slice is the D2.1 channel-backed
-UART re-planning its poll loop under measured Θ, degrade-honest in CI.**
+and staged, not demonstrated. **The kernel-side precedent is sched-ext/BPF:** Linux itself now accepts pluggable,
+verifier-checked scheduling policies as BPF programs, and BCIR's `codegen_object_c` already
+emits **real eBPF ELF objects** — so a *learned-then-frozen* scheduling/IO policy can be
+compiled by BCIR and installed into a stock Linux kernel today, long before any freestanding
+kernel exists. **Verdict: feasible; the first slices are (a) a BCIR-compiled frozen policy
+installed via sched-ext/eBPF on stock Linux (lowest-risk "intelligent kernel component"
+demo), and (b) the D2.1 channel-backed UART re-planning its poll loop under measured Θ,
+degrade-honest in CI.**
 
 ### V.2 The multi-backend hub (GCC / Clang / WASM / JVM / CLI / SPIR-V / IDL / markup / IRs)
 
@@ -426,16 +368,20 @@ the plan:
 | JVM bytecode | ◑ stackify emitter, **execution-validated** (`.class` run) | a real class-file backend is a larger slice | stack-machine map is clean |
 | CLI / .NET (CIL) | ◑ stackify emitter, **documented skip** (no ilasm in CI) | assemble+run gate when a toolchain is available | same stack-machine map as JVM |
 | SPIR-V | ◑ SYCL channel (differential oracle; scalar C++ fallback in CI) | the GPU-compute lowering; real device path needs a `-fsycl` toolchain | modeled |
-| IDL / CORBA, SDL, SGML/XML/PMML | ⬜ none | these are **interface/serialization description** layers, not compute backends — the right BCIR role is the ETL/parse rail (emit a *verified parser/marshaller kernel* that consumes the schema), exactly the firmware-table posture of Part III | parser-kernel, not codegen |
+| IDL / CORBA, SDL, SGML/XML/PMML | ⬜ none | these are **interface/serialization description** layers, not compute backends — the right BCIR role is the ETL/parse rail (emit a *verified parser/marshaller kernel* that consumes the schema), exactly the firmware-table posture of Part III; PMML additionally maps to §7's `ModelManifest` as a model-exchange import | parser-kernel, not codegen |
+| Foreign IR bridges (MLIR dialects, SPIR, other IRs) | ✅ the law rail lives inside MLIR | conversion passes, per-dialect on demand, behind the §5.14 Phase-2 filter (only law-bearing semantics get representation) | native mechanism |
 
 **The technical enabler for "optimize all layers above":** because the driver is a compiler
 and the communication with hardware is a *typed, costed claim edge* (MMIO/port-I/O/DMA), the
 layers above (a libc call, a syscall node, a language runtime) can be modeled as claims in the
 *same* graph and co-optimized — the toolchain research's "graph-native syscalls" idea
 (syscall = a graph node with input/result/error edges, so independent syscalls parallelize) is
-exactly a BCIR claim with rd/wr edges and a phase DAG. **Verdict: the hub is architecturally
-sound and partially real; JVM/CIL/SPIR-V real backends are separable slices, and the
-markup/IDL family belongs on the parser-kernel rail, not the codegen rail.**
+exactly a BCIR claim with rd/wr edges and a phase DAG. The unifying move: treat **each execution backend as a channel with its own calibration
+artifact**, so the planner chooses the backend (JVM vs WASM vs native) the way it chooses a
+lane width today — the six-target capability matrix already proves this retargeting at
+kernel scale. **Verdict: the hub is architecturally sound and partially real; JVM/CIL/SPIR-V
+real backends are separable slices, and the markup/IDL family belongs on the parser-kernel
+rail, not the codegen rail.**
 
 ### V.3 Does each driver need its own ISA/firmware-tailored ML layer?
 
