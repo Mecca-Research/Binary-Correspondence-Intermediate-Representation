@@ -240,12 +240,12 @@ bcir.module @r10_lane_alias {
   bcir.claim @cu attributes {
     claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A], writes = [@C], count = 64 : i64,
     lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
-    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<masked>
   } { %i = bcir.index_range 0 to 64 step 1 }
   bcir.claim @ct attributes {
     claim_id = 2 : i32, phase = @p0, op = "linalg.matmul", reads = [@C], writes = [@B], count = 64 : i64,
     lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32,
-    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<masked>
   } { %i = bcir.index_range 0 to 64 step 1 }
   // expected-error @+1 {{R10: segment seg_u (lane u) and segment @seg_t (lane t) have a cross-lane write alias on @C in phase @p0 without an ordering fence (a fence_after on one naming @C paired with a fence_before on the other) -- an isolation violation}}
   bcir.gem.lane_segment @seg_u { claim = @cu, phase = @p0, lane = #bcir.lane<u>, width = 16 : i32, opcode = "vector.add", reads = [@A], writes = [@C], fence_before = [], fence_after = [] }
@@ -268,12 +268,12 @@ bcir.module @r10_lane_alias_fenced_ok {
   bcir.claim @cu attributes {
     claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A], writes = [@C], count = 64 : i64,
     lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
-    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<masked>
   } { %i = bcir.index_range 0 to 64 step 1 }
   bcir.claim @ct attributes {
     claim_id = 2 : i32, phase = @p0, op = "linalg.matmul", reads = [@C], writes = [@B], count = 64 : i64,
     lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32,
-    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<masked>
   } { %i = bcir.index_range 0 to 64 step 1 }
   bcir.gem.lane_segment @seg_u { claim = @cu, phase = @p0, lane = #bcir.lane<u>, width = 16 : i32, opcode = "vector.add", reads = [@A], writes = [@C], fence_before = [], fence_after = [@C] }
   bcir.gem.lane_segment @seg_t { claim = @ct, phase = @p0, lane = #bcir.lane<t>, width = 16 : i32, opcode = "linalg.matmul", reads = [@C], writes = [@B], fence_before = [@C], fence_after = [] }
@@ -295,12 +295,12 @@ bcir.module @r10_lone_fence_insufficient {
   bcir.claim @cu attributes {
     claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@A], writes = [@C], count = 64 : i64,
     lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
-    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<masked>
   } { %i = bcir.index_range 0 to 64 step 1 }
   bcir.claim @ct attributes {
     claim_id = 2 : i32, phase = @p0, op = "linalg.matmul", reads = [@C], writes = [@B], count = 64 : i64,
     lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32,
-    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<none>, bounds = #bcir.bounds<masked>
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<masked>
   } { %i = bcir.index_range 0 to 64 step 1 }
   // a LONE fence_before on the writer is NOT a release/acquire pair -> still flagged.
   // expected-error @+1 {{R10: segment seg_u (lane u) and segment @seg_t (lane t) have a cross-lane write alias on @C in phase @p0 without an ordering fence (a fence_after on one naming @C paired with a fence_before on the other) -- an isolation violation}}

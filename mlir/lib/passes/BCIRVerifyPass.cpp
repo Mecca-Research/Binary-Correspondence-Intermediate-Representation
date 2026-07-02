@@ -439,6 +439,18 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       return n;
     };
     root->walk([&](ClaimOp c) {
+      // §5.12 item 4, dual-railed (previously oracle-only) + the §5.14 Phase 2 extent-provenance
+      // signal: a masked (runtime-bounds-checked) access must DECLARE the bounds verify contract
+      // -- a promotion the backend would emit without a guard is a silent loss of the check. The
+      // provenance (WHY the access is checked) is surfaced in the diagnostic when carried.
+      if (c.getBounds() == Bounds::Masked && c.getVerify() != Verify::Bounds) {
+        auto err = c.emitError("R7: claim ");
+        err << c.getSymName()
+            << " masked (runtime-bounds-checked) access must carry a 'bounds' verify contract";
+        if (auto bp = c.getBoundsProvenance())
+          err << " (extent provenance: " << *bp << ")";
+        ok = false;
+      }
       if (c.getBounds() != Bounds::Strict)
         return;
       StrideClass sc = c.getStrideClass();

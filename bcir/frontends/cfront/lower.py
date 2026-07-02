@@ -625,6 +625,8 @@ class _FuncLowerer:
         # §5.12 recoverable extents: a pointer local bound to malloc(N*sizeof(T)) / calloc(N, sizeof(T)) carries
         # a RECOVERED element-count -> its `p[i]` accesses promote to `masked` (runtime-bounds-checked against N).
         self.ptr_extent: dict[int, int] = {}           # pointer rid -> the count VARIABLE's rid (re-emitted by name)
+        self.ptr_extent_kind: dict[int, str] = {}      # pointer rid -> extent-provenance kind (§5.14 Phase 2:
+                                                       #   "recovered_count" stable-Name | "snapshot_extent")
         self._mut_assigned: dict[str, int] = {}        # name -> TOTAL assignments incl. decl-init (pointer gate)
         self._mut_body: dict[str, int] = {}            # name -> NON-decl-init assignments only (count gate)
         self._mut_addr: set[str] = set()               # names whose address is taken anywhere (`&x`)
@@ -693,12 +695,13 @@ class _FuncLowerer:
     def _emit(self, op: str, opcode: Opcode, rd: tuple, wr: tuple, *, imm: tuple = (),
               lane=Lane.U, stride=StrideClass.SCALAR, count: int = 1, domain=Domain.RAM,
               bounds: str = "strict", hazard: str = "unique", lifetime=None,
-              volatile: bool = False) -> int:
+              volatile: bool = False, bounds_provenance: str = "") -> int:
         self.cid[0] += 1
         self.block_stack[-1].append(Claim(
             id=self.cid[0], opcode=opcode, lane=lane, stride_class=stride, count=count,
             rd=tuple(rd), wr=tuple(wr), imm=tuple(imm), domain=domain, op=op, bounds=bounds,
-            hazard=hazard, lifetime=lifetime, volatile=volatile))
+            hazard=hazard, lifetime=lifetime, volatile=volatile,
+            bounds_provenance=bounds_provenance))
         return wr[0] if wr else -1
 
     def _storage(self, ct: CType, name: str) -> int:
@@ -1334,6 +1337,24 @@ class _FuncLowerer:
                 return "masked"                       # a malloc/calloc pointer with a recovered element count
         return "assumed_safe"
 
+    def _bounds_provenance(self, lv: "_LV") -> str:
+        """WHY the access's bounds contract is what it is -- the §5.14 Phase 2 extent-provenance
+        signal, carried first-class on the claim so R7 (and the debugger/ML layer) can see checked
+        vs trusted WITH the reason. Mirrors `_access_bounds` case-for-case: the masked promotions
+        report their extent source; the trusted cases report why no extent was recoverable."""
+        if self._mmio(lv.rid):
+            return "mmio_register"
+        if lv.rid in self.str_globals:
+            return "string_literal"
+        if lv.kind == "mem" and lv.idx is not None and not lv.member:
+            rt = self.rtypes.get(lv.rid)
+            if rt is not None and rt.kind == "array" and rt.count:
+                return "declared_extent"
+            if lv.rid in self.ptr_extent:
+                return self.ptr_extent_kind.get(lv.rid, "recovered_count")
+            return "unknown_extent"
+        return ""                                     # a scalar / member / non-indexed access: no extent story
+
     def _alloc_count_node(self, call, pointee_size: int):
         """The element-COUNT AST node of a recoverable `malloc(N*sizeof(T))` / `malloc(sizeof(T)*N)` /
         `calloc(N, sizeof(T))` / `malloc(N)` (1-byte pointee) -- N, where the size operand is `sizeof(T)`
@@ -1386,6 +1407,7 @@ class _FuncLowerer:
             if (ct.kind == "scalar" and not getattr(ct, "is_float", False)
                     and self._mut_body.get(count.ident, 0) == 0 and count.ident not in self._mut_addr):
                 self.ptr_extent[p_rid] = rid
+                self.ptr_extent_kind[p_rid] = "recovered_count"
             return                                                         # a Name is captured by name or not at all
         if _is_pure(count):                                                # an EXPRESSION count -> snapshot it
             v = self._rvalue(count)
@@ -1395,6 +1417,7 @@ class _FuncLowerer:
                 self._ext_ctr += 1
                 self._emit("c.copy", Opcode.ADD, (v,), (ext,))
                 self.ptr_extent[p_rid] = ext
+                self.ptr_extent_kind[p_rid] = "snapshot_extent"
 
     def _load_unit(self, lv: "_LV") -> int:
         if lv.bit_width:
@@ -1407,7 +1430,7 @@ class _FuncLowerer:
             rd = (lv.rid,) if lv.idx is None else (lv.rid, lv.idx)
             mmio = self._mmio(lv.rid)
             return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=(lv.byte_off, ub),
-                              domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv),
+                              domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv), bounds_provenance=self._bounds_provenance(lv),
                               lane=Lane.H if mmio else Lane.U, hazard="barriered" if mmio else "unique", volatile=mmio)
         unit_ct = lv.ct
         t = self._temp(unit_ct, "ld")
@@ -1423,7 +1446,7 @@ class _FuncLowerer:
         else:
             imm = (lv.byte_off,) if lv.byte_off else ()
         return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=imm,
-                          domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv),
+                          domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv), bounds_provenance=self._bounds_provenance(lv),
                           lane=Lane.H if mmio else Lane.U,
                           hazard="barriered" if mmio else "unique", volatile=mmio)
 
@@ -1446,7 +1469,7 @@ class _FuncLowerer:
                 imm = imm + (0,)                              # keep (off,size,bool_flag,stride): pad the flag slot
             imm = imm + (lv.stride,)                          # (0 == not a _Bool field) so stride is always imm[3]
         self._emit("c.store", Opcode.STORE, rd, (), imm=imm,
-                   domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv),
+                   domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv), bounds_provenance=self._bounds_provenance(lv),
                    lane=Lane.H if mmio else Lane.U,
                    hazard="barriered" if mmio else "unique", volatile=mmio)
 

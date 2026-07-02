@@ -1933,9 +1933,12 @@ From the C-semantics audit, the eight candidate areas split cleanly under the fi
   opaque dispatch currently declares **no effects**, so the R18 reachability check and the
   effect/commutation footprint cannot analyze it; give the indirect call a declared signature + a
   conservative effect set.
-- **Pointer provenance / extent** → carry the `masked` vs `assumed_safe` bounds decision into the IR as a
-  first-class **bounds-provenance** signal, so R7/R21 can see *why* an access is checked vs trusted. (Today
-  the plan-level provenance manifest R13 is first-class, but pointer-level provenance is frontend-only.)
+- ✅ **Pointer provenance / extent** → **LANDED**: the `bounds_provenance` signal rides the claim on both
+  rails (`Claim.bounds_provenance` + the `OptionalAttr` on `bcir.claim`, ""-default / digest-excluded) --
+  `declared_extent` / `recovered_count` / `snapshot_extent` for the masked promotions, `mmio_register` /
+  `string_literal` / `unknown_extent` for the trusted cases -- stamped by the cfront lowering at the
+  `_access_bounds` decision, surfaced by R7's masked-needs-guard diagnostic (that clause is now
+  **dual-railed**: it was oracle-only; `verify_bounds_provenance.mlir`, `test_bounds_provenance.py`).
 - **Target ABI / calling convention** → the call ABI is **backend-delegated** (`abi.py` computes
   sizes/offsets, the emitter materializes the frame). For a verifiable cross-target object path, model it as
   a `lower_contract`-style **ABI contract op** (R12 already models ISA/packet lowering contracts; extend to
