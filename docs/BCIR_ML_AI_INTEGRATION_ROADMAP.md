@@ -441,3 +441,203 @@ Gemma/Qwen dense model through the manifest → tokenizer → reference-decode �
 ladder, lowered into BCIR kernels and exposed as a guarded endpoint. After that, heavier models
 are an engineering problem (sharding, KV memory, kernel performance, safety operations), not a
 conceptual mismatch.
+
+---
+
+## 8. Feasibility audit — the deeper-integration program (2026-07-02)
+
+> A technical audit answering: why wrap numerical libraries instead of adopting a full ML
+> framework; how BCIR goes deeper than §2 currently proposes; how telemetry stays
+> instant/minimal-overhead and feeds recursive learning; how *all* operations feed one
+> recursive-optimization ecosystem without degrading cached learned artifacts; and how BCIR
+> becomes a vertically-integrated model-creation/training/deployment system and an AI
+> metaprogramming ecosystem. Verdicts are conservative and every mechanism is named against
+> existing machinery. Draws on the C23 self-assembly analysis (typeof/`_BitInt`/`#embed`/
+> `constexpr` compile-time training structures) from the prior-project research corpus.
+
+### 8.1 Why wrapping beats importing a full ML library (the technical case)
+
+**The mechanism.** An Area-B wrap is a *claim* whose op string names a trusted external
+kernel (`c.call.libm:cblas_sgemm`, `:fftwf_plan_dft_2d`, `:LAPACKE_sgels`, …). That one edge
+buys, mechanically:
+1. **A typed, costed seam.** The claim carries shape/stride/dtype and a 12-d cost vector, so
+   the K_BCIR planner prices *around* the kernel — layout (SoA↔AoS pivot), tiling, prefetch,
+   fusion of producers/consumers, channel placement, and Θ-feasibility — exactly the things a
+   framework's opaque executor decides internally and invisibly.
+2. **A certified numerical boundary.** The R17 Q8↔f32↔Q8 bridge bounds the *only* error BCIR
+   introduces (the input round-trip); the kernel interior is trusted-exact, and an
+   *independent verifier* (normal-equation residual, eigen residual, …) checks the result
+   without re-deriving the algorithm.
+3. **Deterministic linkage + portability.** `linkflags.py`/`bcir_lib_for_callee` derive
+   `-lblas/-lfftw3/-llapack/…` from the claim graph itself, and every wrap ships a portable
+   fallback (normal equations, Jacobi eig) so CI needs no vendor library.
+4. **Legality isolation.** The wrap can never become a verdict: it is off the legality path
+   by construction (the two-truth line), so importing a numerical bug cannot corrupt R-law
+   verification.
+
+**Versus a full framework (XLA/TF/PyTorch).** A framework import would bring its own graph
+representation, scheduler, memory planner, and runtime — precisely the organs BCIR *is*.
+The result would be two planners fighting over the same decisions with no shared cost model,
+a dependency mass that breaks the dependency-free-oracle and freestanding-C properties, and
+an opaque legality story. The E5/E7 research finding generalizes this: the *iterative/
+combinatorial* halves (framework training loops, autotuners) are a poor fit for the
+fixed-shape claim model and belong outside; the *fixed-shape* halves (kernels) are exactly
+what claims express. **Verdict: the wrap-and-optimize-the-calling-side route is the optimized
+route for kernel interiors** — with one honest caveat: wraps alone do not give whole-graph
+ML optimization. That is what B1's tensor-ops-as-claims provides (BCIR owns the graph,
+wraps own the leaf kernels); the two are complements, not alternatives.
+
+### 8.2 Going deeper than the current proposal
+
+The §2 program stops at "tensor ops as claims + wrapped kernels + a Python training loop."
+The audit finds five deepening moves, all quarantine-compatible:
+
+- **D1 — Training as a planned graph, not a Python loop.** Promote the M3 loop's *step* to
+  first-class claims (`gem.train_step`: forward→loss→backward→optimizer as a composed region
+  tree), so epochs become phases, mini-batches become planned streams, and the *training run
+  itself* is priced, scheduled, budgeted (RCSP: "train within this power cap"), overlapped,
+  and replayable (R13 manifest per epoch). The autodiff closure proof is the enabler: the
+  gradient DAG has a fixed vocabulary, so it hydrates to a StreamPack like any program.
+- **D2 — Shape/dtype as the next R-laws (R22/R23 candidates).** Today `check_transformer`/
+  `check_classical`-style checkers are op-level and advisory. Promote shape consistency and
+  dtype compatibility to first-class laws with negative MLIR cases — the same six-artifact
+  promotion R19–R21 used. This is the "structurally valid tensors" guarantee (§8.4) made law.
+- **D3 — Learned cost-model priors at L1.** The accel ranker precedent generalizes: train
+  priors for tile size / loop order / channel choice offline, freeze to Q8 tables keyed by
+  (op-shape-class, channel), and let exact search verify — proposals can only reduce search,
+  never change the optimum.
+- **D4 — E-graph rule synthesis (the operad 2-cell algebra).** Learn *candidate* rewrites
+  from liked/unliked pair statistics; each learned rule is admitted only with a machine-
+  checkable equivalence certificate (the egraph extract cost proof), keeping learning out of
+  legality.
+- **D5 — The LLM dialect (§7.3)** — the ceiling-raiser: embedding/RMSNorm/RoPE/GQA/KV-cache
+  ops as claims makes decode scheduling a K_BCIR problem (prefill/decode split ≈ phase
+  structure; paged KV ≈ registry-first resources with generations; continuous batching ≈
+  wave scheduling). BCIR's scheduler vocabulary already matches the shape of the problem.
+
+### 8.3 Telemetry: instant reads, minimal overhead, on the learning loop
+
+**Already built and load-bearing:** the preallocated `TelemetryRing` (fixed 56-byte `<7q>`
+records, `pack_into`, non-blocking drop-and-count — a write is a bounded store, never an
+allocation or a lock); the zero-copy shared-memory ring with a validated header (forged
+headers rejected); reject-don't-clamp ingest (`sanitize_events` + integrity witness); and
+**uncertainty-gated sensing** (`sensing.py`: sample only where per-path cost variance or
+ranker confidence says measurement pays — the single most important overhead lever).
+
+**The policy this audit fixes:** (1) L0 writes are fixed-cost ring stores only — no
+formatting, no branching beyond the mask, drop-and-count under pressure (backpressure must
+never propagate into the hot path); (2) *reading* is never on the hot path — drains happen at
+L2 checkpoints (phase barriers, plan boundaries) or on a separate consumer (the D2.1 UART
+frame path); (3) sampling rate is itself a planned, priced decision (the sensing gate),
+budgeted through the existing verification/`compile` axes and enforced by `perf_budget`
+regression gates; (4) provenance tags ride every record so synthetic never masquerades as
+measured. **Feedback wiring (exists, needs closing at scale):** ring → Θ folding
+(calibrators) → replan → `CalibrationCertificate` (win ≥ 0) → regret ledger → MDL ΔL trigger
+→ retrain/refreeze → R13 generation bump. Every arrow is implemented; the missing piece is
+running the loop *continuously* (calibloop as a resident service per channel) rather than
+push-button — a Phase-E1 slice.
+
+### 8.4 One recursive ecosystem without degraded loss (the cached-artifact validity law)
+
+The question — how can *all* operations feed recursive reinforced learning while cached
+summary learning tensors stay structurally valid — is answered by generalizing the discipline
+BCIR already applies to every learned organ:
+
+1. **Every cached learned artifact is a frozen, generation-tagged, fingerprinted object**
+   (the FrozenCalibrator/FrozenGate/FrozenRanker/CalibratedProfile pattern): content-addressed
+   (FNV, the operad index), schema-versioned, R13-witnessed. A "summary tensor" (a distilled
+   dataset, a compressed experience buffer, a teacher-trace digest) enters the ecosystem only
+   as such an artifact — never as mutable state.
+2. **Structural validity is checkable, not assumed:** shape/dtype law (D2) on the artifact's
+   declared schema; the **idempotence gate** from the memory module (`Lim(Res(U))`:
+   re-resolving a saturated artifact must be a fixpoint — if re-summarizing a summary changes
+   it, it was not converged and is refused admission); and strictly-validating `from_json`
+   loaders that reject forged or drifted artifacts.
+3. **No silent replacement — supersession with a gate.** A new generation replaces the old
+   only through the replay gate (counterfactual no-regression on held-out episodes under the
+   frozen neutral judge) — the mechanism that already gates portfolio and MoE promotion.
+   Generations are append-only lineage (the provenance DAG), so degradation is *diagnosable*
+   (diff two generations) and *reversible* (roll back a generation), never compounding.
+4. **Degradation detection is the regret ledger's job:** hindsight regret against the frozen
+   judge accumulates per artifact; the MDL boundary `Σ regretᵢ/bestᵢ > (k/2)·ln N` is the
+   trigger to retrain from rawer data (the anti-collapse valve against summarizing summaries
+   of summaries — teacher-blind-spot inheritance is bounded by always keeping the raw-episode
+   tier retrievable and periodically re-distilling from it, not from the cache).
+5. **The two-truth quarantine is the global stability theorem:** because no graded artifact
+   can become a legality verdict, a degraded learned cache can at worst make plans *slower*,
+   never *wrong* — the ecosystem can afford aggressive recursion because its failure mode is
+   bounded to cost, not correctness.
+
+### 8.5 The vertically-integrated system (data → dataset → model → training → deployment)
+
+Feasible as a staged bootstrap; every seam exists, ordered by how much new machinery each
+source needs:
+
+| Rung | Source | Lands through | Status |
+|---|---|---|---|
+| 1 | **Telemetry** (self-supervised: cost, schedule, thermal) | ring → episodes → calibrators/rankers | **real today** — the only fully-closed loop |
+| 2 | **Built-in tables** (Unicode DB → the F1 tokenizer; Q8/ISA/training tables via `#embed`) | frozen compile-time datasets (the C23 `#embed`/`constexpr` self-assembly pattern) | ABI machinery exists; F1 unstarted |
+| 3 | **User input / intent** (ROP/MAP/C sources, CLI episodes) | frontends → claim graphs + provenance | frontends real; intent-mining unstarted |
+| 4 | **RAG / vector store** | Phase C2: materialized HAM + operad content-address as the key; HDF5/LMDB persistence | priced-but-not-materialized |
+| 5 | **Wikipedia / web scraping** | the ETL rail (parse/FSM/binary) + C1 streaming, with license/provenance tags and the reject-don't-clamp ingest posture | ETL seed exists; scale organs are Phase C |
+| 6 | **Frontier-model APIs** (cloud teachers) | typed TrainingSession/Episode records, schema-gated (`OPENAI_BCIR_INTEGRATION_RESEARCH.md` §3.8) | designed, unbuilt |
+| 7 | **Local open weights + trainer models** | §7 manifest → tokenizer parity → reference decode → quantized artifact ladder | designed, unbuilt |
+
+The integration law: **every source produces the same thing** — provenance-tagged, typed
+episodes/artifacts that the deterministic gates (schema → verifier → parity → replay) admit
+or reject. Model creation (§2 Phase B primitives + D1 training graphs), training (M1–M3
+generalized to planned graphs), and deployment (`api.build_artifact` → R12-attested kernels;
+§7 endpoints) then share one artifact pipeline. **Verdict: feasible; the binding constraints
+are the Phase-C data organs and (for rungs 6–7) the serving/eval harness — not the IR.**
+
+### 8.6 AI metaprogramming: user intent forging data structures
+
+The mechanism is **intent → claim-graph synthesis under law**:
+- The *target language* already exists: registry-first Resources (whose `layout` soa/aos/
+  aosoa/blocked, `access` flat/ham, tiering and priority ARE data-structure decisions the
+  cost model prices) + compose region trees + the rewrite algebra.
+- The *search space* is the e-graph + operad 2-cells (equivalence-preserving rewrites with
+  extraction certificates); the *proposal policy* is learned (MoE gate / ranker class,
+  frozen); the *objective* is K_BCIR itself; the *boundary* is the verifier — a synthesized
+  structure that fails R-laws simply does not exist.
+- On the C rail, the C23 self-assembly toolkit from the prior-project analysis (typeof-generic
+  module templates, `_BitInt` exact-width state, `constexpr` rule tables, `#embed` baked
+  corpora) is the compile-time materialization of a chosen structure.
+
+So "user intent forges data structure pathways" = an intent frontend (natural language or
+declarative spec → goal graph, the instruction-compiler pattern) + a learned proposer emitting
+candidate Resource/Claim graphs + verify-plan-measure selecting the winner and freezing it
+with provenance. Each stage exists or has a named precedent; the net-new piece is the intent
+frontend and the proposer training corpus (which rungs 3/6 of §8.5 supply). **Feasible as a
+Phase-F-adjacent track; the quarantine keeps synthesis proposals from ever self-certifying.**
+
+### 8.7 Erasing the line between programming and intelligence
+
+The unification is not rhetorical — it is the claim graph as the *single representation* for
+both: a program is a claim graph whose realization is chosen by optimization; a model is a
+claim graph whose parameters are chosen by optimization. Traditional layers (MLPs, attention
+heads, recurrent cells) integrate as **first-class claims** (G1/G7/E3/E4 already are),
+scheduled, fused, placed, budgeted, and verified identically to any other computation — and
+conversely, ordinary code becomes *differentiable through selection* (softdp's `dF/dw = E[C]`
+makes the compiler's own choices a gradient surface). The two-truth split is what makes the
+identity safe: legality stays classical on both sides; choice-under-cost is graded on both
+sides. What to build to make it real rather than latent: D1 (training as planned graphs),
+D2 (shape/dtype law), and the §8.6 intent loop.
+
+### 8.8 Verdicts + sequencing
+
+| Proposal | Verdict | Gate |
+|---|---|---|
+| Wrap-not-import (8.1) | **Confirmed optimal**; keep, extend breadth | existing R17 + independent verifiers |
+| Training as planned graphs (D1) | Feasible now (oracle→law port) | six-artifact + parity |
+| Shape/dtype laws (D2) | Feasible now | R19–R21 promotion pattern |
+| Learned cost priors (D3) | Feasible now | accel-certificate pattern (0 mismatches) |
+| Resident calibloop service (8.3) | Feasible now (host); measured win still rig-gated | perf_budget + provenance |
+| Summary-artifact law (8.4) | Feasible now — mostly codifying existing discipline | replay gate + idempotence |
+| Data organs at scale (8.5 rungs 4–5) | Phase C, real engineering | C1/C2 slices |
+| Cloud-teacher + open-weight rungs (8.5 rungs 6–7) | Designed; gated on serving/eval harness | §7.4 ladder |
+| Intent-synthesis ecosystem (8.6) | Horizon (Phase F-adjacent); seed slices possible now | quarantine + certificates |
+| Rule synthesis (D4) | Research-side | equivalence certificates |
+
+Ordering: **D2 → D1 → D3 → resident calibloop → 8.4 codification → C1/C2 → 8.6 seed** —
+each PR-sized, oracle-first, parity-gated, per the house discipline.
