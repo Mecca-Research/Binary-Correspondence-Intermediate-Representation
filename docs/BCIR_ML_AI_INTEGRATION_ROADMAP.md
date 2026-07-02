@@ -78,8 +78,8 @@ audit (do not rebuild any of this — extend it):
 
 **The deterministic spine (the body's reflexes).** BCIR-0..5; the claim graph; K_BCIR (`-bcir-cost-model`,
 `-bcir-plan`, `-bcir-rcsp`, the min-plus shortest path + Pareto); GEM (`bcir/gem/execute.py`, the phase-ordered
-wave executor); the R1–R18 verifier (dual-rail MLIR/C++/C + Python) with R19/R20/R21 emerging
-([`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5.14). **Reusable as-is.**
+wave executor); the **R1–R21** verifier (dual-rail MLIR/C++/C + Python; R19/R20/R21 first-class since the
+[`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5.14 promotion). **Reusable as-is.**
 
 **The learned organs already present (CT5, all Python, all freeze to Q8).** Each has a named growth axis —
 this is what *"continuous development at every level"* means concretely:
@@ -161,322 +161,24 @@ law, parity-gate. Throttled, parallel to C/driver work.*
   operad 2-cells** (this is the concrete use for the proposed 2-cell rewrite algebra in §1) — autodiff becomes a
   traceable, content-addressed transformation over the claim graph, reusing the e-graph + the SourceMap. Oracle
   prototype → MLIR law.
-  - **B3 Phase 1 — the closed-set closure guarantee, FORMALIZED + machine-PROVEN**
-    (`bcir/kbcir/autodiff.py` closure helpers, `bcir/tests/test_autodiff_closure.py`). The B3 oracle is
-    reverse-mode AD as content-addressed local graph rewrites over a CLOSED primitive set; this slice turns the
-    property the upcoming `gem.autodiff` law op relies on from an honest docstring comment into a VERIFIED,
-    documented guarantee: **the adjoint operator set is CLOSED** —
-    **`d/dx : ClosedSet → DAG(ClosedSet)`**. Differentiating any expression built from the closed set
-    `{const, var, neg, add, sub, mul, div, dot, select}` produces a gradient DAG that stays in the SAME set;
-    the adjoint never introduces a foreign op kind (no `exp`/`log`, no new functional primitive, no escape).
-    The proof is a **real check, not a hardcoded list**: the closed set is DERIVED from `autodiff._ARITY`
-    (single source of truth), and for every differentiable primitive the check **applies that primitive's
-    symbolic VJP rule** (`_BACKWARD_SYM`) to symbolic adjoint + primal inputs on a real `Tape`, **walks every
-    node the rule emits, and observes** the op kinds — so it trips if any rule ever emitted a foreign op. The
-    **per-primitive adjoint → emitted-closed-set-ops** table (the closure statement, OBSERVED not asserted):
+  - **Landed so far — the M/E build record.** The Phase-B ML substrate below is **BUILT**: each slice an
+    oracle-first, parity-gated, PR-sized landing, all **off the legality path** (no verifier touched, no
+    `Diagnostic` emitted), pure-Python oracle + emitted-C twins gated in `tools/c/check_runtime.sh`,
+    deterministic given the seed. The per-slice build narratives are summarized in
+    [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md); the definitive detail is the code + tests.
 
-    | primitive | VJP (adjoint) rule | emitted closed-set ops |
-    |-----------|--------------------|------------------------|
-    | `neg`    | `grad_a = −gz`                                              | `neg` |
-    | `add`    | `grad_a = grad_b = gz` (pass-through)                       | *(none — routes the adjoint)* |
-    | `sub`    | `grad_a = gz ; grad_b = −gz`                                | `neg` |
-    | `mul`    | `grad_a = gz·b ; grad_b = gz·a`                             | `mul` |
-    | `div`    | `grad_a = gz/b ; grad_b = −(gz·a)/(b·b)`                    | `div, mul, neg` |
-    | `dot`    | `grad_uᵢ = gz·vᵢ ; grad_vᵢ = gz·uᵢ`                         | `mul` |
-    | `select` | `grad_a = select(cond,gz,0) ; grad_b = select(cond,0,gz)`   | `select, const` |
-
-    (every emitted op is in the closed set, so every cell ⊆ `{const,var,neg,add,sub,mul,div,dot,select}`.) The
-    same closure is proven for the **numeric** twin `_BACKWARD` (tied to the proven-closed symbolic DAG by
-    checking the float rule computes exactly the symbolic DAG's value, so it has no separate vocabulary to
-    escape into) and is shown to **survive repeated differentiation** — because `_BACKWARD_SYM` emits only
-    closed-set nodes, the gradient DAG is itself differentiable by the same machinery, so reverse-over-reverse
-    (the **Hessian, and any higher order**) never leaves the vocabulary. **Registry completeness** is asserted
-    as a **bijection**: every differentiable primitive has exactly one rule and every rule maps to a real
-    primitive (no missing rule, no orphan/dead rule, no leaf with a rule) — for BOTH `_BACKWARD` and
-    `_BACKWARD_SYM`. And the closed set is forced to a **single source of truth**: `autodiff.CLOSED_SET`
-    (derived from `_ARITY`) is asserted equal to `lower/autodiff_kernel.py::_LOWERABLE` (the set the G6
-    C-kernel emitter enforces), so the closure proof and the lowering can never silently diverge on what the
-    closed vocabulary is. **Why it matters for `gem.autodiff`:** **closure + hash-consing ⇒ a CANONICAL FORM**
-    — closure bounds the op kinds to a fixed, finite alphabet and the content-addressed `Tape` interns
-    structurally-identical subgraphs to one node, so the gradient of a given expression is a single,
-    deterministic, fixed-vocabulary DAG. That is exactly what lets a future `gem.autodiff` law op **serialize
-    and verify** a gradient as a closed-alphabet graph, never having to anticipate an open-ended set of emitted
-    ops. Oracle-only, pure-Python (no MLIR, no C twin); de-risks the `gem.autodiff` law op. **Honest caveat:**
-    `select`'s adjoint uses the a.e. (almost-everywhere) convention shared with JAX/PyTorch — it stays in the
-    closed set by routing the adjoint through a `select` node and dropping the measure-zero boundary delta, the
-    same boundary caveat the `autodiff` honest-limitation note (b) already pins.
-  - **M1 — loss-function library BUILT** (`bcir/kbcir/losses.py`, `bcir/tests/test_losses.py`). The loss head
-    that turns the existing matmul + activation + autodiff + SGD into trainable supervised models (forward →
-    loss → backward → param grads, end-to-end). It implements a **two-path design forced by the autodiff
-    closure property** (`bcir/kbcir/autodiff.py`'s docstring, boundary (a): a primitive whose VJP needs
-    exp/log breaks the closed set `{const,var,neg,add,sub,mul,div,dot,select}`):
-    - **Closed-set loss (MSE)** — built ENTIRELY into the `Tape` as `(1/n)·dot(e, e)` with `e_i = pred_i −
-      target_i` (sub + dot + scale), so the EXISTING `autodiff.grad` differentiates and
-      `lower/autodiff_kernel.py::emit_autodiff_kernel_c` lowers the whole model→loss DAG for free (verified:
-      grad == finite-difference; lowered to C, matched the oracle to round-off).
-    - **Transcendental losses (softmax-CE, BCE-with-logits)** — the forward value needs `log`/`exp` (the libm
-      side, like `activation.py`), so each returns `(loss_value, grad_logits)` with the famous CLOSED-FORM
-      gradient that lives in the closed set (`softmax(logits) − onehot`; `sigmoid(logits) − target`, reusing
-      the G1 `softmax_reference`/`sigmoid_reference`). That vector SEEDS the model's backward, so the
-      parameter gradient never carries a transcendental. Numerically stable forms: log-sum-exp (subtract
-      `max`) for softmax-CE, `max(z,0) − z·y + log(1+exp(−|z|))` for BCE. A `hinge` (SVM) `(value, grad)` is
-      included on the same seed path. This unlocks **logistic regression** (BCE) and **multiclass
-      classification** (softmax-CE); MSE unlocks the regression head. Pure-Python oracle, off the legality
-      path (a loss is cost/optimization-side, never an R-law verdict).
-  - **M2 — adaptive optimizers BUILT** (`bcir/lower/optimizers.py`, `bcir/tests/test_optimizers.py`). The
-    minimal SGD (`autodiff_kernel.py::emit_sgd_step_c`, `params[i] -= lr·grad[i]`) generalized into the
-    standard adaptive family — **momentum (heavy-ball)**, **RMSprop**, **Adam (with bias correction)** — as a
-    reference oracle (pure Python, side-effect-free `(params, state) → (params′, state′)`) + an emitted C
-    step that mirrors `emit_sgd_step_c` (an in-place `void` over the param vector + state buffers, compiled
-    and run by a tempdir harness). The exact conventions: momentum `v = β·v + g; p −= lr·v` (raw grad into
-    the decayed velocity, β=0 ⇒ plain SGD); RMSprop `s = β·s + (1−β)·g²; p −= lr·g/(√s + ε)`; Adam
-    `t += 1; m = β₁m + (1−β₁)g; v = β₂v + (1−β₂)g²; m̂ = m/(1−β₁ᵗ); v̂ = v/(1−β₂ᵗ); p −= lr·m̂/(√v̂ + ε)`
-    (the **bias correction** — the t-dependent divisors — is the distinctive feature and matters most in the
-    first few steps; `t` round-trips as state, `int *t` in the C step). **Which ride libm `sqrtf`** (the
-    honest `c.call.libm:` edge): SGD and momentum are **pure arithmetic** (`<stddef.h>` only, no `-lm`);
-    **RMSprop and Adam need a square root** → `#include <math.h>`, `sqrtf`, link `-lm` (the harness links it
-    for those two only). Verified: each reference step matches an independent hand computation (Adam's bias
-    correction pinned at t=1 AND t=2); the emitted C step matches the reference to float round-off over
-    several steps (Adam's m/v/t state round-trips); each optimizer drives a convex MSE (a linear model, known
-    minimum at (w,b)=(2,1)) to ~0 with near-monotone descent, and Adam's per-coordinate scaling beats plain
-    SGD on an ill-conditioned variant. Off the legality path (cost/optimization-side, never an R-law verdict;
-    touches no verifier, emits no `Diagnostic`). **One step is the primitive** — M3 wires the repeated loop.
-  - **M3 — training loop BUILT** (`bcir/kbcir/training.py`, `bcir/tests/test_training.py`). The
-    epoch / mini-batch TRAINING LOOP that composes the trio into end-to-end supervised learning: a
-    `Dataset(X, y)` abstraction, a DETERMINISTIC seed-keyed shuffle (`minibatches`, a stdlib LCG — no numpy,
-    no `random`), a disjoint `train_val_split`, eval metrics (`accuracy` argmax/threshold, `mse_metric`,
-    `binary_f1` with the full confusion matrix), an `EarlyStop` patience hook, and
-    `train(model, params0, dataset, *, loss, optimizer, epochs, batch_size, lr, val, metrics, early_stop,
-    seed) -> TrainResult`. **How it composes** (the same two-path split M1 is forced into by the autodiff
-    closure): the `model` callable builds a fresh `Tape` forward per batch; for a **closed-set loss (MSE)**
-    the loop builds `mse(...)` INTO the Tape and the EXISTING `autodiff.grad` gives `dL/dparam` directly (no
-    seed); for a **transcendental loss (BCE, softmax-CE)** the loop takes M1's closed-form `grad_logits` and
-    CHAINS it — `dL/dparam = Σ_k grad_logits[k]·d(logit_k)/dparam` (run `grad` on each logit, scale by the
-    seed) — so the transcendental lives only in the monitored loss value, never in the parameter gradient.
-    The per-parameter gradient then drives the M2 optimizer rule selected by name (`"adam"` + hypers), the
-    loop managing its per-param state (velocity / squared-grad EMA / Adam's m,v,t) across steps. It is the
-    oracle GENERALIZATION of `autodiff_kernel.oracle_train` (the single-DAG forward→backward→SGD reference) to
-    epochs / mini-batch / arbitrary M1 loss / arbitrary M2 optimizer / held-out val / metrics / early stop.
-    Verified: `minibatches` is a deterministic full-coverage permutation (ragged last batch); the metrics
-    match a hand-computed confusion matrix; **logistic regression** (BCE + Adam on a linearly-separable set)
-    reaches **100% train + 100% val accuracy** in ≤ 40 epochs with a near-monotone loss and identical
-    final loss/params across same-seed runs; a **2-layer MLP** (hidden relu via the closed-set `select`,
-    BCE + Adam) on a NON-linearly-separable XOR set reaches **100% train accuracy**, clearing the **linear
-    model's ceiling (~0.51) by +0.49** — the hidden layer learns the nonlinearity; softmax-CE multiclass and
-    the MSE closed-set regression converge too; early stop fires when val plateaus. Off the legality path
-    (cost/optimization-side, never an R-law verdict; touches no verifier, emits no `Diagnostic`; the model
-    graphs stay in the closed lowerable primitive set). Pure-Python oracle, deterministic given the seed.
-  - **Tier-1 trio (M1–M3) COMPLETE: BCIR trains logistic regression + an MLP end-to-end.** M1 (loss head) +
-    M2 (adaptive optimizers) + M3 (the training loop) close the loop that turns BCIR's existing matmul +
-    activation + reverse-mode autodiff into supervised learning — forward → loss → backward → optimizer step,
-    over epochs and mini-batches, to high accuracy on toy datasets — entirely as a pure-Python oracle off the
-    legality path. The capstone demonstration trains **logistic regression** (the BCE closed-form seed path)
-    and a **small MLP** (the hidden relu, clearing a linear ceiling) end-to-end and deterministically.
-  - **E1 — OLS (ordinary least squares) BUILT** (`bcir/kbcir/ols.py`, `bcir/tests/test_ols.py`; the emitted C
-    twin `bcir/lower/c_kernel.py::emit_lapack_ols_c`). The first of an ML-breadth series, built on the **exact
-    Area-B "integrate, don't reinvent" wrap pattern** the `linsolve` (LAPACK `sgesv`) / BLAS / FFTW / GSL /
-    SLEEF kernels use. OLS **generalizes the square dense solve to overdetermined linear regression**: given
-    `A` (m×n, m≥n) and `b`, find `x` minimizing `‖A·x − b‖₂` (the line/plane of best fit). The source of truth
-    `ols_reference` forms the **normal equations** `G = AᵀA`, `c = Aᵀb` and **REUSES `linsolve.solve_reference`**
-    for the inner square solve; `normal_equation_residual` is an *independent* verifier (`max|Aᵀ(A·x − b)|` — the
-    optimality condition `AᵀA x = Aᵀb`, ~0 at the optimum even when `‖A·x−b‖ > 0` on an inconsistent system);
-    `ols_via_bridge` is the Q8↔f32↔Q8 round-trip then reference. **Honest conditioning note:** the normal
-    equations *square* `cond(A)` (less stable), so the emitted C path delegates to LAPACK's **QR-based `sgels`**
-    (better conditioned, ~`cond(A)`) when linked (`-DBCIR_USE_LAPACK -llapack` — `LAPACKE_sgels` rides the
-    *existing* `LAPACKE_*`→`-llapack` rule, **no linkflags change**), with the portable normal-equations
-    fallback otherwise (CI needs no LAPACK); they agree to float round-off on a **well-conditioned** system. The
-    R17 bridge bound is the **input round-trip alone**; the solve is trusted/exact. Verified: recovers a known
-    `x` on a consistent overdetermined system (e.g. fits `y = 2x + 1`), is optimal on an inconsistent one, the
-    bridge tracks the reference within the R17 bound, the fallback **compiles + runs + recovers** the known `x`
-    (the `#ols` runtime probe), and the module **touches no verifier / emits no `Diagnostic`** (off the legality
-    path). Pure-Python oracle, deterministic.
-  - **E2 — PCA (principal component analysis) BUILT** (`bcir/kbcir/pca.py`, `bcir/tests/test_pca.py`; the
-    emitted C twin `bcir/lower/c_kernel.py::emit_lapack_eigh_c`). The second ML-breadth slice, built on the same
-    **Area-B "integrate, don't reinvent" wrap pattern** as E1. PCA **generalizes the OLS shape "form a symmetric
-    matrix then SOLVE" into "form a symmetric matrix then EIGENDECOMPOSE"**: given data `X` (m samples × n
-    features), `pca_reference` **centers** each feature, forms the **symmetric sample covariance** `C =
-    (1/(m−ddof))·Xcᵀ·Xc` (ddof=1 default), and **eigendecomposes** `C` for the principal directions
-    (eigenvectors) and explained variances (eigenvalues), sorted **descending** (largest variance first). Where
-    E1 *reused* the trusted square solve, the symmetric eig is **net-new** (nothing existed to reuse): the
-    deterministic **Jacobi rotation** algorithm (`_jacobi_eigh`) is the trusted-eig source of truth — the analog
-    of E1 leaning on Gaussian elimination. Two *independent* verifiers (recomputed directly from `C` and the
-    eigenpairs, not via the eig path): `eigen_residual` (`max|C·v − λ·v|` — the defining eigen equation, ~0) and
-    `orthonormality_residual` (`max|VᵀV − I|` — the components are orthonormal), with a `trace_residual`
-    total-variance check (Σλ ≈ trace(C)); `pca_via_bridge` is the Q8↔f32↔Q8 input round-trip then reference.
-    **Honest note:** the emitted C path delegates to LAPACK's **`ssyev`** (Householder + implicit-QR /
-    divide-and-conquer) when linked (`-DBCIR_USE_LAPACK -llapack` — `LAPACKE_ssyev` rides the *existing*
-    `LAPACKE_*`→`-llapack` rule, **no linkflags change**), with the portable **Jacobi** fallback otherwise (CI
-    needs no LAPACK); the two differ in *realization* but agree to float round-off on **well-separated**
-    eigenvalues (a degenerate/repeated eigenvalue makes the eigenVECTORS non-unique — any orthonormal basis of
-    the eigenspace is valid — so tests use **distinct** eigenvalues). A deterministic **sign convention**
-    (largest-magnitude entry positive) is applied in both the Python and the C path so they are byte-comparable.
-    The R17 bridge bound is the **input round-trip alone**; the eig is trusted/exact. Verified: recovers known
-    eigenpairs of a hand-built spectrum and the dominant direction of a spread dataset, the two residuals are
-    ~0, eigenvalues descending and Σλ ≈ trace, the fallback **compiles + runs + recovers** `diag(5,3,1)` (the
-    `#pca` runtime probe), and the module **touches no verifier / emits no `Diagnostic`** (off the legality
-    path). Pure-Python oracle, deterministic.
-  - **E3 — full TRANSFORMER ENCODER BLOCK BUILT** (`bcir/kbcir/transformer.py`, `bcir/tests/test_transformer.py`;
-    the emitted C twin `bcir/lower/c_kernel.py::emit_layernorm_c`). The third ML-breadth slice — and a
-    **structurally different** one: where E1/E2 each *wrapped one external LAPACK kernel*, a Transformer block is
-    a **COMPOSITION** of ops BCIR already ships, so it mirrors the **G7 single-head attention** (`attention.py`),
-    NOT the LAPACK-wrap pattern. `attention.py`'s own docstring named the deferred follow-up — *"Multi-head,
-    batched, masked/causal attention … are the deferred follow-up"* — and **this is that follow-up.** The
-    canonical **POST-LN** block (`transformer_block_reference`) is `x1 = LayerNorm(x + MultiHeadAttention(x))`,
-    `out = LayerNorm(x1 + FeedForward(x1))`, with a one-line **PRE-LN** variant (`pre_ln=True`). It **REUSES**,
-    never reinvents: `attention.scores_reference` (the scaled `Q·Kᵀ/√d_k` per head), `activation.softmax_reference`
-    (the existing stable last-axis softmax), and `matmul.matmul_reference` (every projection / `A·V` / feed-forward
-    GEMM). **The ONE net-new numeric primitive is LayerNorm** — `layernorm_reference` (per-row over the feature
-    axis: `mean`, **population** `var` (÷dim), `out = γ·(x−mean)/√(var+eps) + β`), whose `sqrt` is the only new
-    transcendental, riding the trusted `c.call.libm:sqrtf` edge (`-lm`, **already mapped** —
-    `library_for_callee("sqrtf") == "-lm"`, **no linkflags change**). `causal_mask` is an additive `-inf`
-    upper-triangle mask (`exp(-inf)=0`, the diagonal always kept so no all-masked row → NaN);
-    `multihead_attention_reference` projects→splits→per-head masked attention→concat→`W_o`, **batch a simple
-    outer loop**; `feedforward_reference` is `act(x·W1+b1)·W2+b2` (relu/gelu). **Independent verifiers** (recomputed
-    off the block code path): `layernorm_stats` (a γ=1/β=0 row has mean≈0/var≈1), the causal-mask property (the
-    post-softmax weights for j>i are **exactly 0**), `multihead_concat_residual` (multi-head == concat of
-    **independently-computed** per-head attentions then `W_o`, ≈0), softmax rows sum to 1, the dense block ==
-    a naive from-scratch composition to float round-off, and the **zero-weight identity** (all sublayer weights 0
-    ⇒ the block reduces to `LayerNorm(LayerNorm(x))`). `transformer_block_via_bridge` is the Q8↔f32↔Q8 input
-    round-trip (optionally weights too) then the trusted block; the R17 bridge bound is the **input round-trip
-    alone** (the matmuls are exact, softmax/sqrt ride the trusted libm edge). The only NEW C kernel is
-    `emit_layernorm_c` — the matmul/softmax/single-head-attention C twins (`emit_attention_c`, the matmul
-    emitters) **already exist**, so the rest of the block composes already-tested twins. Verified: the layernorm
-    kernel **compiles + runs + normalizes** rows to mean≈0/var≈1 (the `#layernorm` runtime probe), and the module
-    **touches no verifier / emits no `Diagnostic`** (off the legality path, AST-inspected). Pure-Python oracle,
-    deterministic.
-  - **E4 — RNN / LSTM / GRU recurrent cells BUILT** (`bcir/kbcir/recurrent.py`, `bcir/tests/test_recurrent.py`;
-    the emitted C twin `bcir/lower/c_kernel.py::emit_lstm_cell_c`). The fourth ML-breadth slice — and a
-    **TWO-TIER** design *forced by the B3 autodiff's CLOSED primitive set* `{const, var, neg, add, sub, mul, div,
-    dot, select}` (no transcendentals), exactly mirroring **M1's two-path losses** (closed-set MSE built into the
-    Tape vs. a transcendental loss that supplies a closed-form gradient SEED). Because `relu(x) = select(x, x, 0)`
-    is in the closed set but `tanh`/`sigmoid` are not, a recurrent cell splits the same way:
-    - **Tier A — the closed-set relu-RNN, trainable end-to-end via the EXISTING `unroll_scan` + `grad` (= literal
-      BPTT).** An Elman RNN `h_t = relu(W_h·h_{t-1} + W_x·x_t + b)` is built from ONLY closed primitives (`dot`
-      matmuls, `add`, `relu = select(z, z, 0)`); folding the step over a sequence (an explicit **vector-carry
-      unroll** — the same finite composition the scalar `autodiff.unroll_scan` builds, cited verbatim) yields one
-      output DAG whose `autodiff.grad` over a scalar readout **IS backprop-through-time**, just as `unroll_scan`'s
-      docstring states (`d(final_carry)/d(input) == reverse-mode AD over the unrolled DAG == BPTT`). **THE HEADLINE
-      GATE:** the BPTT gradient (w.r.t. the inputs *and* the weights) matches `finite_difference_grad` via
-      `gradients_match` — a real trainable recurrent net whose BPTT is the existing reverse-mode AD, verified by
-      finite differences (inputs kept off the relu kink so the a.e. select-derivative equals the FD). A tiny
-      end-to-end run (reusing `training.py`) drives a loss down. The single-hidden-unit recurrence is folded by
-      `autodiff.unroll_scan` **verbatim**, pinning the vector unroll is the same composition.
-    - **Tier B — LSTM and GRU cells (transcendental `tanh`/`sigmoid` gates), the M1 closed-form-SEED treatment.** A
-      NUMERIC forward reference (`lstm_cell_reference`: `f/i/o = σ(·)`, `g = tanh(·)`, `c = f⊙c_prev + i⊙g`,
-      `h = o⊙tanh(c)`; `gru_cell_reference`: `z/r = σ(·)`, `n = tanh(W_n x + r⊙(U_n h_prev) + b_n)`,
-      `h = (1−z)⊙n + z⊙h_prev` — the canonical PyTorch GRU) riding the trusted libm edge, plus **closed-form
-      analytic gradients** (`lstm_cell_grads` / `gru_cell_grads`) built from the gate derivatives `σ' = σ(1−σ)`,
-      `tanh' = 1 − tanh²` — the seed, exactly like `losses.py`'s `*_grad_logits`. Verified: the forward against a
-      **hand-computed** small example; the analytic Jacobians against **CENTRAL finite differences** (numeric,
-      since tanh/sigmoid aren't closed Tape primitives) to ~1e-11. **Independent verifiers:** the BPTT-vs-FD gate
-      (Tier A); gate-range checks (every σ ∈ (0,1), every tanh ∈ (−1,1)); a **temporal-dependence** check
-      (`∂h_T/∂x_0 ≠ 0` — genuine memory across time). The Q8↔f32↔Q8 bridges (`lstm_via_bridge` / `gru_via_bridge`)
-      round-trip the INPUT sequence then run the trusted forward, so the SOLE certified error is the R17 input
-      bound (mirrors the transformer/attention bridge). The new C kernel `emit_lstm_cell_c` emits a portable LSTM
-      cell using `tanhf` + the `expf`-based guarded sigmoid — the `c.call.libm:` edge (`-lm`, **already mapped** —
-      `library_for_callee("tanhf") == library_for_callee("expf") == "-lm"`, **no linkflags change**); it
-      **compiles + runs + matches** the hand-computed forward (the `#lstm` runtime probe). `check_recurrent` is the
-      op-level shape/dtype well-formedness checker (positive dims; dtype preserved; the quarantine rule that
-      LSTM/GRU need f32) — NOT a new R-law (mirrors `check_transformer`). The module **touches no verifier / emits
-      no `Diagnostic`** (off the legality path, AST-inspected). Pure-Python oracle, deterministic.
-  - **E5 — classical-ML PREDICT wraps BUILT** (`bcir/kbcir/classical.py`, `bcir/tests/test_classical.py`; the
-    emitted C twins `bcir/lower/c_kernel.py::emit_svm_rbf_predict_c` + `::emit_tree_predict_c`). The fifth
-    ML-breadth slice — KNN / decision tree / SVM / Naive-Bayes **PREDICT path**. **THE RESEARCH FINDING (the
-    train-vs-predict split — E7 cites this):** classical ML splits SHARPLY into two halves with OPPOSITE structure.
-    - **TRAINING is the poor-fit half → library/Python.** Decision-tree INDUCTION (the greedy recursive split
-      search over the data), the SVM dual **QUADRATIC-PROGRAM** solve, Naive-Bayes FITTING (per-class mean/variance
-      estimation): these are ITERATIVE / COMBINATORIAL optimization — no fixed dataflow, data-dependent control
-      flow, convergence loops, variable-length intermediate structures. That is a **poor fit for BCIR's fixed-shape,
-      planned-claim model** — it belongs in scikit-learn / libsvm, NOT as a BCIR claim. BCIR does not try to own it.
-    - **PREDICT is the good-fit half → the baked-model fixed-shape kernel BCIR wraps.** Once trained the model is a
-      FIXED, BAKED set of constants (tree thresholds; SVM support vectors + dual coeffs `αᵢ·yᵢ` + bias; Gaussian-NB
-      per-class log-prior + mean/var; the KNN training set), so PREDICT is a deterministic, fixed-shape kernel —
-      exactly the **G5 baked-weights inference pattern** (`bcir/lower/inference.py::emit_inference_kernel_c`) plus
-      the **Area-B "integrate, don't reinvent"** discipline. BCIR owns the CALLING side (the row-major layout, the
-      baked params, the Q8 feature boundary = the R17 input bound); the transcendentals ride the trusted
-      `c.call.libm:` edge (RBF-SVM `exp` → `expf`, Gaussian-NB `log` → `logf`, both `-lm` — **already mapped, no
-      linkflags change**); the rest is **exact** arithmetic. Each predictor: a plain-float reference (the source of
-      truth), an INDEPENDENT verifier, and a `*_via_bridge` Q8 round-trip of the FEATURE vector.
-    - **KNN** (`knn_classify` / `knn_regress`) ranks on the **SQUARED** Euclidean distance — ranking on squared
-      distance is IDENTICAL to ranking on distance (sqrt is monotone), so classification needs **NO transcendental**;
-      `k` smallest (tie-break: lowest index), majority vote (tie-break: lowest class id) / neighbour-mean. The
-      independent verifier recomputes the k nearest by an O(n²) selection (vs one sort) and confirms the same
-      neighbour set. **DECISION TREE** (`tree_predict`) traverses the baked flat-array tree (`feature`/`threshold`/
-      `left`/`right`/`leaf_value`, leaf ⇔ `feature == -1`) — EXACT comparisons, NO transcendental; the verifier is a
-      separate recursive traversal + a structural leaf-reachability check. **SVM** — `svm_decision_linear` =
-      `Σᵢ αᵢyᵢ·(SVᵢ·x) + b` (exact dot products), `svm_decision_rbf` = `Σᵢ αᵢyᵢ·exp(−γ‖x−SVᵢ‖²) + b` (the `exp`
-      on the libm edge); `svm_predict = sign(decision)`. **libsvm** is the canonical library in the framing, but the
-      decision function is emitted DIRECTLY (it IS libsvm's `svm_predict`) — self-contained, no libsvm dependency.
-      **GAUSSIAN-NB** (`nb_predict`) = `argmax_c [ log_prior[c] − ½ Σⱼ ((xⱼ−μ)²/σ² + log(2π·σ²)) ]`; the
-      `log(2π·σ²)` normaliser is **DATA-INDEPENDENT → PRECOMPUTED / BAKED** (`baked_log_norm`), so the predict
-      kernel's only `log` is a bake-time constant — at runtime nothing logs. The Q8↔f32↔Q8 bridges round-trip the
-      INPUT feature then run the trusted predict, so the SOLE certified error is the **R17 input bound** (mirrors
-      E1–E4). The two new C kernels show the Area-B pattern covers **both** halves: `emit_svm_rbf_predict_c`
-      (transcendental — only `expf` on the `c.call.libm:` edge, `-lm`, already mapped) and `emit_tree_predict_c`
-      (EXACT — pure comparisons + a leaf return, NO transcendental, NO libm); both **compile + run + match** the
-      reference (the `#classical` `#svm` / `#tree` runtime probes). `check_classical` is the op-level shape/dtype
-      well-formedness checker (positive extents; dtype preserved; the quarantine rule that the RBF-SVM `exp` /
-      Gaussian-NB `log` need f32 while KNN / tree / linear-SVM are exact and may be i32) — NOT a new R-law (mirrors
-      `check_recurrent`). The module **touches no verifier / emits no `Diagnostic`** (off the legality path,
-      AST-inspected). Pure-Python oracle, deterministic.
-  - **E6 — unsupervised + pipeline BUILT** (`bcir/kbcir/unsupervised.py`, `bcir/tests/test_unsupervised.py`; the
-    emitted C twin `bcir/lower/c_kernel.py::emit_kmeans_assign_c`). The sixth ML-breadth slice — **K-means
-    clustering, the preprocessing scalers, cross-validation folds, a small autoencoder, and an embedding
-    lookup** — which **REUSES** BCIR's existing pieces rather than reinventing them (the Area-B discipline). It
-    carries forward the E5 **FIT vs PREDICT/TRANSFORM split**: the FIT/TRAIN half (Lloyd's iteration, a scaler's
-    statistical pass) is bounded-iterative/statistical, while the PREDICT/TRANSFORM step over a BAKED model is a
-    deterministic fixed-shape kernel = the **G5 baked-weights pattern**.
-    - **K-means** — `kmeans_assign` is the nearest-centroid **PREDICT kernel**: it **REUSES**
-      `classical.squared_distance` (E5's exact squared Euclidean) and takes the argmin — ranking on squared
-      distance is IDENTICAL to ranking on distance (`sqrt` monotone), so it needs **NO transcendental** (exact;
-      tie-break lowest index). `kmeans_fit` is the bounded, DETERMINISTIC **Lloyd's iteration** (fixed
-      `init_indices` + fixed `n_iter`: assign → recompute each centroid as its assigned-points' mean), with
-      **deterministic empty-cluster handling** (keep the previous centroid — no `0/0`). `kmeans_inertia` is the
-      objective `Σᵢ ‖Xᵢ − centroid[labelᵢ]‖²`, whose INDEPENDENT verifier is its defining property: inertia is
-      **MONOTONE NON-INCREASING** across Lloyd iterations (a test runs the fit for increasing `n_iter` and
-      asserts it never rises).
-    - **Scalers** — **FIT produces a baked transform, TRANSFORM is the exact kernel.** `StandardScaler` bakes
-      per-feature `(mean, std)` with `std = sqrt(population variance)` — the `sqrt` is the **only**
-      transcendental and it is at FIT time, so `standard_scaler_transform` `(x−mean)/std` is **exact division**.
-      Independent verifier: standardized training data has per-feature mean ≈ 0 / std ≈ 1 (recomputed directly).
-      `MinMaxScaler` bakes `(min, max)`; `minmax_transform` `(x−mn)/(mx−mn)` is exact (guarded `mx > mn`);
-      verifier: standardized data lies in `[0, 1]`. A constant feature (std 0 / `mx == mn`) is rejected.
-    - **CV folds** — `k_fold_indices` partitions `[0, n)` into `n_folds` balanced index lists, **REUSING** the
-      M3 `training._lcg_permutation` (the deterministic LCG Fisher-Yates shuffle — no new RNG). Independent
-      verifier: the folds are a **genuine partition** (pairwise DISJOINT + their union is exactly `{0,…,n−1}`)
-      with sizes differing by ≤ 1.
-    - **Autoencoder** — a **COMPOSITION**: `autoencoder_forward` encodes `h = act(x @ W_enc + b_enc)` and decodes
-      `recon = h @ W_dec + b_dec`, **REUSING** `matmul.matmul_reference` + the G1 `activation` references;
-      `reconstruction_error` is the MSE, **REUSING** M1 `losses.mse_value`. Independent verifier: with TIED
-      IDENTITY weights (`W_enc = W_dec = I`, zero bias, `relu` on positive inputs) the reconstruction equals the
-      input (error ≈ 0), while a real bottleneck has error > 0.
-    - **Embedding lookup** — `embedding_lookup` gathers the rows of a baked `n_vocab × dim` table
-      (`out[t] = table[ids[t]]`), exact; verifier: the lookup equals the direct row slice, and an out-of-range
-      id raises.
-    - Each input-consuming kernel has a `*_via_bridge` Q8 round-trip (the **R17 input bound**). The one new C
-      kernel `emit_kmeans_assign_c` emits the nearest-centroid argmin — **EXACT** (pure subtract/multiply/add +
-      comparisons, returns an `int` cluster id), **NO transcendental, NO libm** (it needs no `-lm` — **no
-      linkflags change**), so the C-vs-oracle check is **integer-exact** (the same argmin); it **compiles + runs
-      + matches** (the `#kmeans` runtime probe). `check_unsupervised` is the op-level shape/dtype well-formedness
-      checker (positive extents; dtype preserved; the quarantine rule that a transcendental-activation
-      autoencoder needs f32 while K-means assign / scaler transform / embedding are exact) — NOT a new R-law
-      (mirrors `check_classical`). The module **touches no verifier / emits no `Diagnostic`** (off the legality
-      path, AST-inspected). Pure-Python oracle, deterministic.
-  - **E7 — the ML language-placement analysis (the CAPSTONE)** ([`ML_LANGUAGE_PLACEMENT_ANALYSIS.md`](ML_LANGUAGE_PLACEMENT_ANALYSIS.md)).
-    The doc-only capstone of the E-series: it classifies **every** ML/numeric component into a four-language
-    hierarchy — **Python / C / MLIR / C++** — with the determining reason, plus a migration map. The thesis: a
-    component's genuine language is fixed by **five criteria** (legality/cost two-truth quarantine; the
-    train-vs-predict / fit-vs-transform split; exact-vs-transcendental closure; the planned-tensor-claim cost
-    model; the C++ performance/runtime boundary), and the dominant pattern is the **train/predict split** crossed
-    with the **exact/transcendental** and **legality/cost** axes. The clean hierarchy: **Python** = the oracle /
-    source of truth + the iterative/combinatorial TRAIN/FIT halves (tree induction, the SVM dual QP, K-means'
-    Lloyd, the gradient loop, the autodiff Tape, the planners + cost model, the bridges); **C** = the dual-rail
-    verifier twin + the fixed-shape PREDICT/INFERENCE/TRANSFORM kernels (`emit_*_c`, the G5 baked-weights pattern)
-    + the `c.call.libm:` edge (exp/log/tanh/sqrt) + the five Area-B wraps (BLAS/LAPACK/FFTW/GSL/SLEEF); **MLIR** =
-    the law rail (the `gem.*` tensor-op claims + R1–R21 + CostVectors); **C++** = the G8 boundary (the hand-off
-    orchestrator scaffold + the SYCL `-fsycl` single-source backend). Cites the E5 `classical.py` / E6
-    `unsupervised.py` docstrings verbatim (they name "the research finding the E7 capstone cites"). Doc-only;
-    every ML module is verified off the legality path.
+    | Slice | What shipped | Where |
+    |---|---|---|
+    | B3 Phase 1 | Reverse-mode autodiff as content-addressed rewrites over a **closed primitive set** `{const, var, neg, add, sub, mul, div, dot, select}`, the closure **machine-proven** (no adjoint rule ever emits a foreign op, so reverse-over-reverse stays in-vocabulary — the canonical-form property the `gem.autodiff` law op relies on) | `bcir/kbcir/autodiff.py`, `bcir/tests/test_autodiff_closure.py` |
+    | M1 | The loss head: closed-set MSE built into the `Tape`; transcendental losses (softmax-CE, BCE-with-logits, hinge) return closed-form **gradient seeds** so a parameter gradient never carries a transcendental | `bcir/kbcir/losses.py` |
+    | M2 | Adaptive optimizers — momentum, RMSprop, Adam (bias-corrected) — as a side-effect-free reference oracle + emitted C steps (RMSprop/Adam ride the trusted libm `sqrtf` edge; SGD/momentum are pure arithmetic) | `bcir/lower/optimizers.py` |
+    | M3 | The epoch / mini-batch training loop (deterministic LCG shuffle, train/val split, metrics, early stop) — **the Tier-1 trio (M1–M3) is complete: BCIR trains logistic regression and a small MLP end-to-end** | `bcir/kbcir/training.py` |
+    | E1 / E2 | OLS + PCA on the Area-B "integrate, don't reinvent" wrap pattern (LAPACK `sgels` / `ssyev` when linked, portable normal-equations / Jacobi fallbacks, independent optimality/eigen verifiers, R17 input bridges) | `bcir/kbcir/ols.py`, `bcir/kbcir/pca.py` |
+    | E3 | A full Transformer encoder block (multi-head, batched, causal-masked, POST-/PRE-LN) **composed** from the existing attention/softmax/matmul references; LayerNorm is the one net-new primitive | `bcir/kbcir/transformer.py` |
+    | E4 | RNN / LSTM / GRU — a two-tier design forced by the autodiff closure: a closed-set relu-RNN trainable end-to-end via the existing `unroll_scan` + `grad` (literal BPTT, finite-difference-verified), and LSTM/GRU cells with closed-form gate gradients on the libm edge | `bcir/kbcir/recurrent.py` |
+    | E5 | Classical-ML **PREDICT** wraps (KNN / decision tree / SVM / Gaussian-NB) — **the train-vs-predict research finding E7 cites**: training (tree induction, the SVM dual QP, NB fitting) is iterative/combinatorial and stays library/Python-side; predict over a **baked** model is the fixed-shape G5 kernel pattern BCIR owns | `bcir/kbcir/classical.py` |
+    | E6 | Unsupervised + the data pipeline: K-means (deterministic Lloyd, exact assign kernel), Standard/MinMax scalers, CV folds, an autoencoder, embedding lookup — all reusing E5/M1/M3 pieces | `bcir/kbcir/unsupervised.py` |
+    | E7 | The language-placement **capstone**: every ML/numeric component classified into the Python / C / MLIR / C++ hierarchy by five criteria (two-truth, train-vs-predict, exact-vs-transcendental, planned-claim cost, the C++ boundary) | [`ML_LANGUAGE_PLACEMENT_ANALYSIS.md`](ML_LANGUAGE_PLACEMENT_ANALYSIS.md) |
 - **B4 — Hybrid tropical + selective gradient.** Reframe training: the **tropical planner finds the structure**
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and
@@ -640,3 +342,102 @@ Each slice deepens master-roadmap **Phase M**; the data/driver/cognition phases 
 proves out. The order is **A → B → (C ∥ D) → E → F**, with B throttled-parallel to the ongoing C-frontend /
 freestanding-driver work (§5.14), and the two-truth quarantine + prototype-then-port discipline applied at
 every step.
+
+---
+
+## 7. Open-weight model ingestion (GLM / Gemma / Qwen) — the LLM-serving horizon
+
+> Moved here from `OPENAI_BCIR_INTEGRATION_RESEARCH.md` (which now covers only the OpenAI
+> product-surface integration): open weights are an **ML/AI-substrate** program, not an OpenAI
+> integration. They change the problem from "GPT as a remote teacher" to "the model is an artifact
+> BCIR may own, inspect, quantize, place, and serve." BCIR is conceptually well suited to this —
+> its core job is turning a semantic computation into a legal, costed, target-aware realization
+> with telemetry and replay — but BCIR currently has **ML primitives and small-model
+> training/inference** (§2 Phase B), not a full LLM runtime that can load modern checkpoint
+> formats. This section is a **horizon track** in the same spirit as Phase F: named for order,
+> gated behind the Phase B/C substrate.
+
+### 7.1 Model-family fit
+
+| Open-weight family | Fit for BCIR now | Why | Main difficulty |
+|---|---|---|---|
+| GLM-5.2-class heavy models | Research / cluster-scale target | Strong open-weight coding/agent model; useful as a local teacher or high-end endpoint if the deployment stack already exists | Very large memory/KV-cache, tensor/expert parallelism, long-context attention, production scheduler, tokenizer/checkpoint compatibility, safety and license review |
+| Gemma 4-class models | Best practical first target | Open weights for responsible commercial use; positioned for advanced reasoning/agentic workloads and optimized deployment across hardware classes | Exact tokenizer, weight-layout importer, attention/RoPE/norm kernels, quantization and eval harness |
+| Qwen open-weight models | Practical first/second target, especially coder/agent variants | Widely used open-weight coding/reasoning models with deployment recipes; smaller dense/MoE variants realistic for local or hosted BCIR endpoints | Architecture variants, chat templates, tokenizer edge cases, MoE/expert routing, license/version matrix |
+
+The practical recommendation: **start with a smaller Gemma/Qwen dense instruct model**, prove the
+checkpoint → BCIR manifest → quantized inference → telemetry → eval loop, then add larger
+Qwen/Gemma variants, and treat GLM-5.2-class models as a scale-out target once BCIR has sharding,
+KV-cache management, and production serving.
+
+Sources: GLM-5.2 announcement (<https://z.ai/blog/glm-5.2>), GLM-5 repository
+(<https://github.com/zai-org/GLM-5>), Gemma 4 model overview (<https://ai.google.dev/gemma/docs/core>),
+Google DeepMind Gemma 4 page (<https://deepmind.google/models/gemma/gemma-4/>), Gemma open-weight
+library (<https://github.com/google-deepmind/gemma>), Qwen3 announcement
+(<https://qwenlm.github.io/blog/qwen3/>), Qwen3.5 announcement (<https://qwen.ai/blog?id=qwen3.5>),
+Qwen3.6 repository (<https://github.com/QwenLM/Qwen3.6>).
+
+### 7.2 What BCIR already has (the §1/§2 substrate, restated for this track)
+
+- **Tensor/math primitives:** matmul, activation, softmax, attention, transformer block references,
+  layernorm, recurrent models, classical models, quantization, losses, optimizers, autodiff.
+- **Training scaffolding:** deterministic datasets/mini-batches, train/validation splits, supervised
+  training loops, metrics, early stopping, optimizer state (the M1–M3 trio).
+- **Lowering paths:** C kernels, LLVM/JIT/AOT hooks, SYCL dispatch, WASM, specialist lowerings,
+  target/channel descriptions.
+- **Optimization and placement:** K_BCIR cost vectors, target profiles, RCSP, telemetry,
+  calibration, regret, portfolio routing, provenance manifests.
+- **Safety/correctness gates:** the R-laws, the two-truth quarantine, parity discipline, fuzzing,
+  replay, C/LLVM equivalence checks, telemetry integrity, docs/training separation.
+
+Enough for **small BCIR-native endpoint models** and **pieces of LLM inference** — not yet for
+drop-in loading of a modern open-weight chat model.
+
+### 7.3 What is missing to plug in open weights
+
+| Missing layer | What must be built | Why it matters |
+|---|---|---|
+| Checkpoint importer | Load `safetensors`/GGUF/HF shard layouts; map tensor names/shapes/dtypes to a BCIR `ModelManifest`; validate hashes/licenses | A trustworthy bridge from external weights into content-addressed artifacts |
+| Tokenizer + chat-template rail | BPE/SentencePiece compatibility, special/tool-call tokens, chat templates, detokenization tests | An LLM endpoint is wrong if tokenization or prompt formatting drifts from the model contract |
+| LLM graph dialect | First-class ops for embedding, RMSNorm/LayerNorm variants, RoPE/ALiBi, grouped-query attention, sliding-window attention, MoE routing, KV-cache read/write, logits head, sampling | The E3 transformer is an oracle composition, not a complete modern decoder-only LLM dialect |
+| KV-cache + serving runtime | Paged KV cache, prefill/decode split, continuous batching, speculative-decoding hooks, streaming tokens, cancellation, multi-session state | Production endpoints are dominated by decode scheduling and KV memory, not one-shot matmul |
+| Quantization formats | Weight-only int4/int8, activation quantization, per-channel/per-group scales, GGUF/AWQ/GPTQ/FP8-style adapters, accuracy-law (R17) extensions | Open models are practical only when quantized and accuracy-bounded |
+| Parallel placement | Tensor/pipeline/expert parallelism, CPU/GPU/NPU offload, a multi-device channel cost model | GLM-class models require scale-out; even smaller models benefit from heterogeneous placement |
+| Kernel library | Fused QKV, attention kernels, RoPE, RMSNorm, gated MLP/SwiGLU/GELU, dequantized GEMM, MoE dispatch, logits/sampling kernels | The existing references need production kernels and law parity |
+| Endpoint API | An OpenAI-compatible `/v1/chat/completions` or Responses-like adapter, streaming, tool-calling schema, structured outputs, auth/quota/rate limits | Makes BCIR-owned models usable by existing agent tooling |
+| Eval + safety harness | Per-model eval packs, jailbreak/prompt-injection tests, license/safety metadata, red-team corpora, hallucination/faithfulness checks | Open weights remove provider-side guardrails; BCIR must own the deployment safety envelope |
+
+### 7.4 A staged implementation path
+
+1. **Manifest-only ingestion** — `ModelManifest` records for a small Gemma/Qwen model:
+   architecture, license, tokenizer ref, weight shards, hashes, dtype, parameter count, context
+   length, required kernels. *(Build this before any weight loading or decode kernels.)*
+2. **Tokenizer parity** — round-trip tests + chat-template fixtures before touching weights.
+3. **Reference decode** — a slow, dependency-light Python reference for one small dense decoder
+   layer from the existing matmul/activation/attention pieces plus the missing RMSNorm/RoPE/KV
+   primitives (the E3 pattern, extended).
+4. **Quantized inference artifact** — import a tiny/small model subset, quantize, run
+   deterministic prompt fixtures, record accuracy/perplexity drift (R17 discipline).
+5. **C/MLIR law rail** — ODS ops + verification for the LLM-specific ops; oracle↔law parity as
+   always (the prototype-then-port discipline, §3).
+6. **Serving endpoint** — streaming decode, schema-constrained tool-call output, telemetry frames,
+   replay manifests.
+7. **Scale-out** — continuous batching, paged KV, multi-device placement, expert/tensor
+   parallelism for larger Qwen/Gemma and eventually GLM-class models.
+8. **Fine-tune/adapt** — LoRA/QLoRA-style adapters as first-class artifacts before full-parameter
+   training; adapters frozen with the same provenance and eval gates as kernels.
+
+**Endpoint gates (when models serve production traffic):** shadow-mode deployment before live
+routing; confidence/uncertainty thresholds that escalate to a frontier model or human review;
+drift monitoring + periodic replay against frozen evals; and the hard separation of endpoint
+predictions from BCIR legality verdicts (the two-truth quarantine, §0).
+
+### 7.5 Bottom line
+
+BCIR is **architecturally well suited** to open weights — it already thinks in typed graphs,
+lowering, costed placement, telemetry, quantization, parity, and provenance — but it is **not yet
+a plug-and-play LLM inference engine**. The credible path is not GLM-first; it is a small
+Gemma/Qwen dense model through the manifest → tokenizer → reference-decode → quantized-artifact
+ladder, lowered into BCIR kernels and exposed as a guarded endpoint. After that, heavier models
+are an engineering problem (sharding, KV memory, kernel performance, safety operations), not a
+conceptual mismatch.

@@ -2,8 +2,9 @@
 # BCIR Repository Deep Dive — Onboarding Synthesis
 
 A single-document, up-to-speed synthesis of the **Binary Correspondence Intermediate
-Representation** repo: what it is, how every subsystem works, how it was built (the
-512-PR arc), its current state, and the ordered next development steps. It is a
+Representation** repo: what it is, how every subsystem works, its current state, and
+the ordered next development steps. (How it was built — the PR-by-PR arc — lives in
+`docs/DEVELOPMENT_HISTORY.md`.) It is a
 *reading* of the tree as it stands — the normative law remains `docs/BCIR_LANGREF.md`
 + the `mlir/` dialect; the live counts remain `docs/STATUS.md` (generated). Where this
 doc and those disagree, they win.
@@ -240,7 +241,7 @@ rail. `Q8 = 256` is the universal quantization unit.
 
 ## 6. The verifier laws (`bcir/verify/`, `mlir/lib/passes/BCIRVerifyPass.cpp`)
 
-**R1–R18 are first-class on both rails** (Python oracle + `-bcir-verify`), each with a
+**R1–R21 are first-class on both rails** (Python oracle + `-bcir-verify`), each with a
 negative `-verify-diagnostics` MLIR case:
 
 | | | |
@@ -254,7 +255,7 @@ negative `-verify-diagnostics` MLIR case:
 
 **R19/R20/R21 are *emerging model laws*** — enforced on the oracle rail today (R21 also
 advisory in the C twin) but **beyond the stable MLIR law table**, so `gen_status.py` still
-reports R1–R18 first-class. They are driven by optional, None-defaulting claim metadata
+reports R1–R21 first-class. They are driven by optional, None-defaulting claim metadata
 (the non-disturbance invariant), excluded from the R13 digest, and run separately from the
 pass/fail verdict — so adding them changes no existing score, plan, or verdict:
 - **R19** synchronous-timing legality (internal consistency of an optional `Timing` block).
@@ -376,115 +377,51 @@ hands off via a graceful **`--fallback`** route-to-LLVM contract.
 
 ---
 
-## 10. The development history (the 512-PR arc)
+## 10. The development history
 
-The repo is heavily agent-driven (OpenAI Codex for the training corpus; Claude Code for the
-system) with a disciplined, high-cadence rhythm. The arc, oldest → newest:
-
-- **#2–#101** — *genesis + pivot.* A complete C++ BCIR compiler skeleton built in one day,
-  then a pivot to "LLVM-IR as the semantic source of truth" (a 64-byte `BcirClaimV1`, the
-  `runtime/llvm/` seed), then a large CI-gated `llvm-training/` agent corpus. Ends mid-thrash
-  on a deep MLIR bridge.
-- **#102–#201** — *the real system begins.* PR **#153** restructures the repo and realizes
-  the central equation as a runnable optimizer (the Python oracle + the MLIR/IRDL dialect
-  law + `PARITY.md`; `vector_add = 7808` is pinned). The legacy C++ `ir/` skeleton is
-  **retired** (#157). The verifier grows 4→**R1–R13** ("proven, not trusted," #163), the
-  TMSAO generalization adds the constrained series-parallel equation + RCSP + GEM
-  wave-overlap, and the full learning roadmap lands (temperature dial, MDL retune, Bayesian/
-  conformal cost model, MoE gate, search accelerator) — all "learn offline, freeze to the
-  certified rail." First measured wins: gather avoidance ~6.5–16×, budget feasibility as a
-  correctness property.
-- **#202–#301** — *port to the law rail + open the C frontier.* The entire deterministic
-  optimizer is ported to **C++23 on the MLIR rail, bit-exact** ("recompute, don't trust");
-  generated adversarial differential parity replaces curated pins; laws grow to **R1–R18**;
-  a full no-Python StreamPack round-trip + a `bcir-cc` C compiler appear; BCIR goes
-  hardware-agnostic with ARM first-class and the heterogeneous channel architecture. The
-  MLIR toolchain moves to gating **LLVM 22** (obtained via **conda-forge** when CI's
-  `apt.llvm.org` egress was blocked — #246).
-- **#302–#401** — *the C frontend, completed + hardened.* The preprocessor, lexer/parser
-  literal/float/libm surface, and a "Phase-4 general replacement compiler" (Clang-grade
-  diagnostics, an ABI matrix, optimizer-correctness analyses, fuzzing). A long bug-hunt:
-  *compiling and running* the emitted C against Clang surfaces a tail of latent miscompiles
-  (scope leaks, signedness in an unsigned value model), each fixed and locked behind a new
-  differential gate.
-- **#402–#501** — *near-complete C11/C23.* The 4-byte→8-byte pointer model closed; variadics,
-  `_Generic`, `typeof`, `_Complex`, VLAs, computed goto; a differential fuzzer that found
-  ~18+ distinct bugs; and three **forward tracks** seeded (RTL/synchronous-timing R19/R20,
-  the naked-pointer R21 safety system, "C as a substrate") — all *additive, vacuous,
-  digest-excluded*.
-- **#502–#512** — *the close.* The entire array-compound-literal surface completed dual-rail
-  (with three pre-existing silent miscompiles on the *regular* declarator path fixed first —
-  "the literal guard never comes off an unproven foundation"); a **fourth parity axis
-  (storage-extent)** added to the harness; then the pivot to forward planning — roadmap
-  §5.14 (the MLIR-catch-up + freestanding-C23-driver arc, release 0.3b) and the ML/AI
-  integration roadmap (Phase A–F). **#512 is the most recent PR** (2026-06-26).
-
-The connective tissue across all 512: **oracle-first prototyping, bit-exact parity gates,
-generated adversarial differentials, gains-only opt-in additions that never disturb the
-pinned spine, and an unusual culture of intellectual honesty** — retracting false wins,
-re-diagnosing prior PRs, and letting negative findings redirect the roadmap.
+The repo is heavily agent-driven (OpenAI Codex for the training corpus; Claude Code for
+the system) with a disciplined, high-cadence rhythm — 600+ PRs in roughly a month. The
+era-by-era arc (genesis → the oracle/law restructure → the optimizer port to the MLIR
+rail → the C-frontend campaign → the vision-alignment gap closure → the telemetry/ML/
+driver arcs) and the condensed dated changelog live in
+[`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md). The connective tissue across all of
+it: **oracle-first prototyping, bit-exact parity gates, generated adversarial
+differentials, gains-only opt-in additions that never disturb the pinned spine, and an
+unusual culture of intellectual honesty** — retracting false wins, re-diagnosing prior
+PRs, and letting negative findings redirect the roadmap.
 
 ---
 
-## 11. Current state & verification (validated this session)
+## 11. Current state & verification
 
-Everything below was *run*, not inferred. The repo is in a healthy, fully-green state.
+The repo maintains a fully-green, multi-rail CI: the Python conformance suite (live
+count in [`STATUS.md`](STATUS.md)) on x86-64 **and** native arm64, the C runtime gate
+(`tools/c/check_runtime.sh` + sanitizer sweep + libFuzzer campaigns), the LLVM-training
+corpus validators (examples / invalid-fixtures / autograder / dataset), the full MLIR
+rail on the latest LLVM release (build, ODS corpus, pass FileCheck suite, IRDL
+round-trip, bytecode round-trip), and the docs-governance gates (generated-status
+drift, links, retired paths, import quarantine). The build scripts are
+version-agnostic (they pick the highest installed `/usr/lib/llvm-*`); when a sandbox
+cannot reach apt.llvm.org, `tools/local/` provides the conda-forge MLIR-22 rail.
 
-| Check | Result |
-|---|---|
-| Python conformance suite (`BCIR_THOROUGH=1 python -m bcir.tests.run_all`) | **878 passed, 0 failed** |
-| (default `quick` tier) | 859 passed; the 19 "failures" are `skip:no-cc` artifacts of the tier's deliberate compiler gate — **not real failures** |
-| LLVM-training: examples / invalid-fixtures / opaque-pointers / bcir-mapping / csv-schema / manifests / dataset | all **pass** |
-| LLVM-training autograder self-test (`grade-exercises.py --self-test`) | **700/700 (100%)**, full confidence |
-| LLVM-training autograder unit tests | **14/14 OK** |
-| EVAL self-test (`llvm-training/EVAL.md`, 30 questions + path prompts) | answered **30/30**, band 27–30 (see §12) |
-
-**The MLIR rail — previously skipped, now fully validated.** This environment ships LLVM 18
-with no MLIR tools by default; LLVM 22 (CI's gating version) is pulled from `apt.llvm.org`,
-which this environment's egress policy **denies**. Ubuntu noble's own (allowed) mirror
-carries the full **LLVM/MLIR 20.1.2** toolkit, and the repo's build scripts are
-version-agnostic (they pick the highest installed `/usr/lib/llvm-*`), so installing it
-unblocks the entire rail:
-
-| MLIR-rail check | Result on LLVM/MLIR 20.1.2 |
-|---|---|
-| `bcir-opt` build (`tools/wsl/build_mlir.sh`) | builds; all 25 `-bcir-*` passes registered |
-| ODS generators (`tblgen_check.sh`) | pass |
-| pretty-ODS corpus + FileCheck (`check_ods_examples.sh`) | pass |
-| verify/promote/lower passes (`check_passes.sh`) | pass |
-| MLIR-bytecode round-trip (`check_bytecode.sh`) | pass |
-| IRDL projection on stock `mlir-opt` (`check_corpus.sh`) | pass |
-| training MLIR tiers (`verify-mlir-examples.sh --require-tools`) | **Tier 4** reached (mlir-translate→llvm-as→opt-verify), expected `bcir.unlowered` conversion-failure demonstrated |
-
-> The exact-version path to LLVM 22 in this environment is **conda-forge** (`mlir=22`,
-> the same workaround CI history used in PR #246) — but the rail validates identically on
-> 20, since the MLIR verifier "has only tightened since LLVM 19" and the dialect already
-> carries the `SymbolTable` traits that constraint requires.
-
-**The single genuinely-deferred result in the whole repo** is a *measured* (not modeled)
-bare-metal replan win: the software path is push-button (`tools/silicon/measure_replan.sh`
-prints `rig-ready: YES/NO`) and CI-exercised in degrade mode, lighting up the moment a host
-with PMU + RAPL + a userspace cpufreq governor runs the runbook. This is the "intelligence
-ahead of substrate" risk and the top differentiator (`docs/HARDWARE_VALIDATION.md`).
+**The single genuinely-deferred result in the whole repo** is a *measured* (not
+modeled) bare-metal replan win: the software path is push-button
+(`tools/silicon/measure_replan.sh` prints `rig-ready: YES/NO`) and CI-exercised in
+degrade mode, lighting up the moment a host with PMU + RAPL + a userspace cpufreq
+governor runs the runbook. This is the "intelligence ahead of substrate" risk and the
+top differentiator (`docs/HARDWARE_VALIDATION.md`).
 
 ---
 
-## 12. LLVM training — completion record
+## 12. LLVM training — the corpus
 
-The `llvm-training/` corpus is a context/reference pack (not fine-tuning data) that teaches
-agents LLVM/MLIR/BCIR mechanics before they touch the IR: 00–19 chaptered lessons, a recipe
-index, ~42 exercises (write/repair/predict/review/MLIR/backend-JIT/binary-analysis/
-BCIR-lowering families) + templates, a deterministic stdlib autograder with per-exercise
-JSON manifests and tiered MLIR validation (0–4), a `bcir-mapping/` guide, and a 30-question
-EVAL self-test.
-
-Completion evidence (this session): the full verification suite is green (§11), the
-autograder self-test scores 100% with full confidence, and the EVAL self-test was answered
-**30/30** — grounded in the actual corpus files (not memory), with concrete IR claims
-spot-checked against the live LLVM/MLIR 20.1.2 toolchain (e.g. the array-of-structs GEP
-`getelementptr inbounds %Entry, ptr %base, i64 %index, i32 1` assembles with `llvm-as`; the
-HAM-hint prefetch `immarg` literals pass `opt -passes=verify`). The completed self-test is
-preserved at `llvm-training/eval/EVAL_COMPLETED.md`.
+The `llvm-training/` corpus is a context/reference pack (not fine-tuning data) that
+teaches agents LLVM/MLIR/BCIR mechanics before they touch the IR: 00–19 chaptered
+lessons, a recipe index, ~42 exercises (write/repair/predict/review/MLIR/backend-JIT/
+binary-analysis/BCIR-lowering families) + templates, a deterministic stdlib autograder
+with per-exercise JSON manifests and tiered MLIR validation (0–4), a `bcir-mapping/`
+guide, and a 30-question EVAL self-test (a completed 30/30 answer key is preserved at
+`llvm-training/eval/EVAL_COMPLETED.md`). All of it is verified by its own CI job.
 
 ---
 
@@ -499,11 +436,10 @@ The roadmap is **dependency-ordered** — building out of order creates debt.
 0. **Hygiene** — honest test tiers + an explicit `c-runtime` CI gate (label the `skip:no-cc`
    quick-tier results correctly); document the naked-pointer policy in LangRef + the
    C-frontend guide.
-1. **Promote R19/R20/R21 to first-class** — the six R14–R18-pattern artifacts, each
-   parity-gated: (a) `#bcir.timing` + `#bcir.lifetime` `OptionalAttr` on `bcir.claim`;
-   (b) `verifyR19/R20/R21` in `BCIRVerifyPass.cpp`; (c) LangRef §10 sections; (d) a negative
-   FileCheck case; (e) promote the C-twin R21 advisory → verdict; (f) widen `gen_status.py`
-   from `range(1,19)` to `range(1,22)` so status reports **R1–R21**.
+1. ✅ **Promote R19/R20/R21 to first-class — LANDED.** The timing + lifetime laws are now
+   first-class on the MLIR rail (`#bcir.timing`/`#bcir.lifetime` attrs, `BCIRVerifyPass`
+   R1–R21, negative FileCheck cases in `verify_timing_lifetime.mlir`), and the generated
+   [`STATUS.md`](STATUS.md) reports **R1–R21** (21/21 covered).
 2. **Extend MLIR for the *law-bearing* C semantics only** (the filter: a feature gets MLIR
    only if it affects effects/aliasing/lifetime/provenance/ABI/volatile-atomic ordering/
    timing/target/verification/cost). **Add:** object lifetime (the R21 attr), volatile
@@ -534,9 +470,12 @@ ML ops) runs throttled-parallel, never blocking the keystone.
   tokenizer; the BFD object backbone; the L3 meta-policy closing on itself, staying graded +
   human-actuated).
 
-**The first concrete, gateable slices**: A1 (`_BitInt(N)` end-to-end + the unsequenced
-fusion signal) + B1 (one `gem.matmul` op, oracle + MLIR law, K_BCIR choosing the tile/loop) +
-B5 (wrap one BLAS `gemm` through `c.call.libm`) + C1 (a column-oriented streaming buffer).
+**Progress**: the first slices (A1 `_BitInt(N)` + fusion attributes, B1 `gem.matmul` +
+MLIR law, B5 BLAS `gemm` wrap) are **done**, as are the ML Tier-1 trio (M1–M3: losses /
+adaptive optimizers / the training loop) and the breadth series (E1–E7: OLS, PCA,
+transformer block, recurrent cells, classical-ML predict, unsupervised + pipeline,
+language-placement capstone). The active frontier is Area-B calling-side tuning and the
+C1 streaming slice (see `docs/BCIR_ML_AI_INTEGRATION_ROADMAP.md` §6).
 
 **Deferred (gated):** the measured real-silicon replan win (§5.4, top differentiator); native
 isel (§5.5, behind the GO/STOP gate); and the learned organs / offline calibration / generators
