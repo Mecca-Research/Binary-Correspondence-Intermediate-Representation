@@ -15,10 +15,14 @@ emits the wrong opcode for some other expression would pass. This module closes 
      only knows the CORRECT float mnemonics, so a bad mnemonic from ``to_jvm`` fails to assemble -- the JVM's
      own verifier + execution semantics are the ground truth, not another copy of our own code.
 
-CIL stays a DOCUMENTED skip: ilasm/mono/dotnet are not installed here, so the CIL path is validated for
-SEMANTICS (differential, above) but not yet assembled+run on a real CLR. The WASM clang->wasm-ld->node path is
-already execution-validated in ``test_wasm.py`` (a distinct, resident-compiler path); the stackify ``to_wasm``
-TEXT encoder is covered by the differential here.
+  3. A REAL-CLR EXECUTION check (gated on ``ilasm`` + ``mono``): wrap the actual ``to_cil()`` mnemonics in a
+     minimal ``.il`` compilation unit (a static ``float32 run()`` + an ``.entrypoint`` printing it), assemble
+     with the real ``ilasm``, and RUN it under mono, comparing stdout to the same StackOp oracle -- the exact
+     mirror of the JVM harness. The CLR's own assembler + execution semantics are the ground truth. Without a
+     CLR toolchain this is a clean documented skip (the differential above still validates the semantics).
+
+The WASM clang->wasm-ld->node path is already execution-validated in ``test_wasm.py`` (a distinct,
+resident-compiler path); the stackify ``to_wasm`` TEXT encoder is covered by the differential here.
 """
 
 import random
@@ -305,13 +309,81 @@ def test_jvm_real_execution_over_a_small_fuzz_corpus():
         assert abs(got - oracle) < 1e-3, (got, oracle, expr, vals)
 
 
-def test_cil_stackify_execution_is_gated_on_toolchain():
-    # CIL execution-validation needs ilasm/mono/dotnet, none of which is installed here, so this path is a
-    # DOCUMENTED skip: to_cil() is validated for SEMANTICS by test_three_text_encoders_execute_consistently, but
-    # not yet assembled+run on a real CLR. When a CLR toolchain is present, the ilasm+run check lands here.
-    if not (which("ilasm") or which("mono") or which("dotnet")):
+def _build_il(cil_program, class_name="BcirStackTest"):
+    """Wrap the actual to_cil() mnemonics in a minimal runnable .il unit: static float32 run() = the program,
+    plus an .entrypoint Main that prints run() via the invariant culture (so the float parses back)."""
+    n_locals = 1 + max((int(ln.rsplit(".", 1)[1]) for ln in cil_program
+                        if ln.startswith(("ldloc.", "stloc."))), default=0)
+    body = "\n".join(f"    {ln}" for ln in cil_program)
+    locals_init = ", ".join(["float32"] * n_locals)
+    return f"""
+.assembly extern mscorlib {{}}
+.assembly {class_name} {{}}
+.method static float32 run() cil managed
+{{
+    .maxstack 8
+    .locals init ({locals_init})
+{body}
+    ret
+}}
+.method static void Main() cil managed
+{{
+    .entrypoint
+    .maxstack 2
+    call float32 run()
+    call void [mscorlib]System.Console::WriteLine(float32)
+    ret
+}}
+"""
+
+
+def _run_on_cil(cil_program):
+    """Assemble the actual to_cil() mnemonics via the real ilasm and RUN the .exe under mono. The CLR's own
+    assembler + verifier + execution are the ground truth (a bad to_cil() mnemonic fails to assemble)."""
+    import os
+    import subprocess
+    import tempfile
+    d = tempfile.mkdtemp()
+    il = os.path.join(d, "BcirStackTest.il")
+    exe = os.path.join(d, "BcirStackTest.exe")
+    with open(il, "w", encoding="utf-8") as fh:
+        fh.write(_build_il(cil_program))
+    p = subprocess.run(["ilasm", "/exe", f"/output:{exe}", il], capture_output=True, text=True, timeout=60)
+    if p.returncode != 0 or not os.path.exists(exe):
+        raise RuntimeError(f"ilasm exited {p.returncode}: {p.stdout.strip()} {p.stderr.strip()}")
+    p = subprocess.run(["mono", exe], capture_output=True, text=True, timeout=60)
+    if p.returncode != 0:
+        raise RuntimeError(f"mono exited {p.returncode}: {p.stderr.strip()}")
+    return float(p.stdout.strip().replace(",", "."))   # tolerate a non-invariant decimal separator
+
+
+def test_cil_stackify_assembles_and_executes_on_real_clr():
+    # H5 honesty capstone, CIL half: assemble the actual to_cil() output via the real ilasm and RUN it on the
+    # CLR (mono), mirroring the JVM check. Without a CLR toolchain this is a clean documented skip -- the
+    # cross-encoder differential above still validates the encoder semantics.
+    if not (which("ilasm") and which("mono")):
         return  # honest documented skip -- no CLR toolchain in this environment
-    assert True  # (reserved: assemble to_cil() via ilasm and run; unreachable in this container)
+    ops = (assign(0, Const(2.0)) + assign(1, Const(3.0)) + assign(2, Const(4.0))
+           + stackify(BinOp("mul", BinOp("add", Local(0), Local(1)), Local(2))))   # (2+3)*4 = 20
+    oracle = _interp_stackops(ops)
+    assert abs(oracle - 20.0) < 1e-9
+    got = _run_on_cil(to_cil(ops))
+    assert abs(got - oracle) < 1e-4, (got, oracle)
+
+
+def test_cil_real_execution_over_a_small_fuzz_corpus():
+    # the real CLR agrees with the StackOp oracle across several distinct expressions (not just the headline).
+    if not (which("ilasm") and which("mono")):
+        return  # documented skip without a CLR toolchain
+    rng = random.Random(0x2B3C)
+    for _ in range(6):
+        nloc = rng.randint(1, 3)
+        vals = {i: round(rng.uniform(-4.0, 4.0), 2) for i in range(nloc)}
+        expr = _rand_expr(rng, nloc, depth=2)
+        prog = _program_for(expr, vals)
+        oracle = _interp_stackops(prog)
+        got = _run_on_cil(to_cil(prog))
+        assert abs(got - oracle) < 1e-3, (got, oracle, expr, vals)
 
 
 if __name__ == "__main__":

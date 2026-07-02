@@ -33,14 +33,16 @@ jobs:
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
-      - name: Install lowering toolchain (clang/lld/llvm for AOT/JIT/WASM tests; node for WASM)
+      - name: Install lowering toolchain (clang/lld/llvm for AOT/JIT/WASM tests; node for WASM; mono for CIL)
         # Caches the INSTALLED file tree (not just the .debs), so a warm run restores it in seconds
         # and skips apt's dpkg unpack/configure entirely -- the remaining install-time floor. Pinned
         # to v1.6.1 by commit SHA (supply-chain). Bump `version` to invalidate the cache.
+        # mono-devel supplies ilasm + the mono runtime so the stackify CIL emit is ASSEMBLED AND
+        # EXECUTED on a real CLR (test_stackify_exec.py), closing the H5 "documented skip".
         uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
         with:
-          packages: clang lld llvm nodejs libclang-rt-18-dev
-          version: train-${{ runner.arch }}-v1
+          packages: clang lld llvm nodejs libclang-rt-18-dev mono-devel
+          version: train-${{ runner.arch }}-v2
 
       - name: BCIR oracle (Python conformance tests)
         run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all
