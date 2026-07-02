@@ -186,6 +186,22 @@ run_fc -convert-bcir-to-llvm "${T}/volatile_mmio.mlir"
 echo "[passes] bcir.volatile_load/store op negatives (the device-register address must be a signless integer)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/volatile_mmio_verify_neg.mlir" \
   && echo "  PASS volatile_mmio_verify_neg.mlir" || { echo "  FAIL volatile_mmio_verify_neg.mlir"; fail=1; }
+echo "[passes] bcir.atomic_rmw/atomic_cas round-trip (§5.14 Phase 2: first-class atomics -- kind, #bcir.mem_ordering, weak all survive print->parse)"
+if [ -n "${FC}" ]; then
+  "${BO}" "${T}/atomic_ops_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/atomic_ops_roundtrip.mlir" \
+    && echo "  PASS atomic_ops_roundtrip.mlir" || { echo "  FAIL atomic_ops_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+else
+  "${BO}" "${T}/atomic_ops_roundtrip.mlir" >/dev/null 2>/tmp/pe \
+    && echo "  RUN-ONLY atomic_ops_roundtrip.mlir" || { echo "  FAIL atomic_ops_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+fi
+echo "[passes] bcir.atomic_rmw/atomic_cas -> llvm.atomicrmw/cmpxchg (§5.14 Phase 2 lowering: inttoptr + mapped ordering, seq_cst default, derived CAS failure ordering, weak flag)"
+run_fc -convert-bcir-to-llvm "${T}/atomic_ops.mlir"
+echo "[passes] bcir.atomic_rmw/atomic_cas op negatives (kind set, integer discipline, old-value result typing, >=32-bit address)"
+"${BO}" -verify-diagnostics -split-input-file "${T}/atomic_ops_verify_neg.mlir" \
+  && echo "  PASS atomic_ops_verify_neg.mlir" || { echo "  FAIL atomic_ops_verify_neg.mlir"; fail=1; }
+echo "[passes] R5 volatile-claim law (§5.14 Phase 2: is_volatile on the claim rail requires an ordered hazard; positive + negative)"
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_volatile.mlir" \
+  && echo "  PASS verify_volatile.mlir" || { echo "  FAIL verify_volatile.mlir"; fail=1; }
 echo "[passes] bcir.creg_read/write round-trip (D1.3: x86-64 control-register access parses/prints identically)"
 if [ -n "${FC}" ]; then
   "${BO}" "${T}/creg_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/creg_roundtrip.mlir" \

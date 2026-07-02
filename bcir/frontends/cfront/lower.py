@@ -692,12 +692,13 @@ class _FuncLowerer:
 
     def _emit(self, op: str, opcode: Opcode, rd: tuple, wr: tuple, *, imm: tuple = (),
               lane=Lane.U, stride=StrideClass.SCALAR, count: int = 1, domain=Domain.RAM,
-              bounds: str = "strict", hazard: str = "unique", lifetime=None) -> int:
+              bounds: str = "strict", hazard: str = "unique", lifetime=None,
+              volatile: bool = False) -> int:
         self.cid[0] += 1
         self.block_stack[-1].append(Claim(
             id=self.cid[0], opcode=opcode, lane=lane, stride_class=stride, count=count,
             rd=tuple(rd), wr=tuple(wr), imm=tuple(imm), domain=domain, op=op, bounds=bounds,
-            hazard=hazard, lifetime=lifetime))
+            hazard=hazard, lifetime=lifetime, volatile=volatile))
         return wr[0] if wr else -1
 
     def _storage(self, ct: CType, name: str) -> int:
@@ -1407,7 +1408,7 @@ class _FuncLowerer:
             mmio = self._mmio(lv.rid)
             return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=(lv.byte_off, ub),
                               domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv),
-                              lane=Lane.H if mmio else Lane.U, hazard="barriered" if mmio else "unique")
+                              lane=Lane.H if mmio else Lane.U, hazard="barriered" if mmio else "unique", volatile=mmio)
         unit_ct = lv.ct
         t = self._temp(unit_ct, "ld")
         rd = (lv.rid,) if lv.idx is None else (lv.rid, lv.idx)
@@ -1424,7 +1425,7 @@ class _FuncLowerer:
         return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=imm,
                           domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv),
                           lane=Lane.H if mmio else Lane.U,
-                          hazard="barriered" if mmio else "unique")
+                          hazard="barriered" if mmio else "unique", volatile=mmio)
 
     def _write(self, lv: "_LV", v: int) -> None:
         if lv.bit_width:                                     # read-modify-write the storage unit
@@ -1447,7 +1448,7 @@ class _FuncLowerer:
         self._emit("c.store", Opcode.STORE, rd, (), imm=imm,
                    domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv),
                    lane=Lane.H if mmio else Lane.U,
-                   hazard="barriered" if mmio else "unique")
+                   hazard="barriered" if mmio else "unique", volatile=mmio)
 
     def _compound_literal(self, node: "cast.CompoundLiteral") -> tuple[int, CType]:
         """Materialize a compound literal `(type){init}` as an anonymous local and initialize it, exactly

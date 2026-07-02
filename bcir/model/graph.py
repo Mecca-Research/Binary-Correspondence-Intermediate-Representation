@@ -101,6 +101,12 @@ class Claim:
                                      # vacuous default (no R19/R20 constraint -- the whole scalar subset)
     lifetime: Optional["Lifetime"] = None  # OPTIONAL pointer-lifetime annotation (§5.12); None = the vacuous
                                      # default (no R21 use-after-free / double-free constraint)
+    volatile: bool = False           # OPTIONAL volatile qualifier (§5.14 Phase 2): a volatile-qualified
+                                     # access (MMIO) the ordering law sees STRUCTURALLY -- R5 requires an
+                                     # ordered hazard, and the optimizer fences it like `barriered` (never
+                                     # reordered / fused / bundled / elided). Digest-excluded (R13's
+                                     # hash_module folds a fixed field list), so the False default is
+                                     # non-disturbing over the whole existing corpus.
 
     def io_rids(self) -> tuple[int, ...]:
         return tuple(self.rd) + tuple(self.wr)

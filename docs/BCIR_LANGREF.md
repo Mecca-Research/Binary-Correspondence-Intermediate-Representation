@@ -210,6 +210,25 @@ exit code (the parity gate in `tools/c/check_runtime.sh`). The remaining §5.12 
 is the bounds-promotion of array parameters under a dominating-bound proof and the
 offline ML policy table.
 
+**Volatile & atomic ordering are structural (§5.14 Phase 2, first pair).** A
+volatile-qualified access is a first-class **`volatile` qualifier on the claim rail**
+(`Claim.volatile` / the MLIR `is_volatile` claim attr — distinct from
+`bcir.volatile_load/store`, the lowered integer-address MMIO accessors), not a
+resource string tag: **R5 requires an ordered (atomic/barriered) hazard on a volatile
+claim**, and the optimizer fences it exactly like `barriered` (`bundle._conflict` /
+`-bcir-bundle` never reorder or bundle across it). The C frontend stamps it on every
+MMIO access (`domain=MMIO, hazard=barriered, volatile=true`), so the law holds by
+construction; the qualifier is digest-excluded (R13) and false by default
+(non-disturbance). Atomic RMW/CAS are likewise **first-class MLIR ops** —
+`bcir.atomic_rmw` (`add|sub|xor|exchange`) and `bcir.atomic_cas` (strong/`weak`) —
+carrying the existing `#bcir.mem_ordering` attr (absent = `seq_cst`; a CAS derives
+its failure ordering by the LLVM strongest-failure rule) and lowering to
+`llvm.atomicrmw` / `llvm.cmpxchg`, lifting the cfront `c.atomic.*` / `c.c11atom.*` /
+`c.cmpxchg.*` opcode-string claims into structures the ordering law sees
+(`atomic_ops*.mlir`, `verify_volatile.mlir`, `test_volatile_atomic_law.py`). The
+remaining Phase 2 areas — indirect-call callee type+effect, pointer
+extent-provenance, the ABI contract op — are the next increments.
+
 **Barriers are first-class ordering edges (ASM3b).** A `barriered`-hazard claim is
 not only un-reorderable itself — it *fences other claims*. No claim may be reordered
 across a barrier, and a producer→consumer pair spanning one does **not** receive the

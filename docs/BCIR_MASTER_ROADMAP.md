@@ -1916,12 +1916,19 @@ From the C-semantics audit, the eight candidate areas split cleanly under the fi
 **Add MLIR representation (these affect law):**
 - **Object lifetime** → the R21 `#bcir.lifetime` attribute (lands in Phase 1; the frontend already emits
   `Lifetime("alloc"/"free")` on malloc/free).
-- **Volatile access** → first-class. Today only a string tag `access="volatile"` on a resource; lift it to a
-  `volatile` qualifier on `bcir.load`/`bcir.store` — a **legality/ordering** signal (MMIO must not be
-  reordered, fused, or elided), not cosmetic.
-- **Atomic RMW / CAS** → first-class ops. Today opcode-named `c.atomic.*` claims (string dispatch); lift to
-  MLIR ops carrying the existing `#bcir.mem_ordering` attr so the **ordering law** sees them structurally.
-  (Fence ordering is *already* first-class — `bcir.barrier` + `mem_ordering` — keep it.)
+- ✅ **Volatile access** → first-class, **LANDED**: the `volatile` qualifier rides the claim rail
+  (`Claim.volatile` + the `is_volatile` claim attr on `bcir.claim`/`bcir.load`/`bcir.store`, digest-excluded
+  / false-default for non-disturbance), R5 now requires an ordered hazard on a volatile claim (both rails),
+  the bundle optimizer fences it like `barriered` on both rails (this also closed a live oracle↔law
+  divergence: `-bcir-bundle` had never honored the ASM3b barrier fence), and the cfront MMIO lowering
+  stamps it (`test_volatile_atomic_law.py`, `verify_volatile.mlir`).
+- ✅ **Atomic RMW / CAS** → first-class ops, **LANDED**: `bcir.atomic_rmw` (`add|sub|xor|exchange`) +
+  `bcir.atomic_cas` (strong/`weak`) carry the existing `#bcir.mem_ordering` attr (absent = seq_cst; CAS
+  failure ordering derived per the LLVM strongest-failure rule) and lower to `llvm.atomicrmw`/`llvm.cmpxchg`
+  (`atomic_ops*.mlir`, roundtrip + lowering + negatives). The cfront `c.atomic.*`/`c.c11atom.*`/`c.cmpxchg.*`
+  claims remain the frontend spelling; wiring the oracle emitter to produce the new ops is the next
+  increment (the D1.1 portio precedent). (Fence ordering was *already* first-class —
+  `bcir.barrier` + `mem_ordering` — kept.)
 - **Function pointers / indirect calls** → model the **callee type + effect** on the indirect-call claim. An
   opaque dispatch currently declares **no effects**, so the R18 reachability check and the
   effect/commutation footprint cannot analyze it; give the indirect call a declared signature + a

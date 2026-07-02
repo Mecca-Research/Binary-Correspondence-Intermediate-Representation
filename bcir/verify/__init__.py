@@ -138,6 +138,14 @@ def verify(module: Module) -> list[Diagnostic]:
                     f"claim {claim.id}: atomic lane A requires an atomic/barriered "
                     f"hazard contract",
                 ))
+            # §5.14 Phase 2: a VOLATILE access (MMIO) must carry an ordered hazard -- volatility is
+            # an ordering/legality signal, not a cosmetic tag. Vacuous unless a claim opts in.
+            if claim.volatile and claim.hazard == "unique":
+                diags.append(Diagnostic(
+                    "R5",
+                    f"claim {claim.id}: volatile access requires an atomic/barriered "
+                    f"hazard contract",
+                ))
         # CT2 decoupling soundness: the GGG/random tail executes decoupled from the
         # wave order, so a same-phase conflict touching a sparse claim loses its
         # implicit serialization -- both ends must carry an ordered hazard contract.

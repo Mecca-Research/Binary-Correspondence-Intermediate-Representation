@@ -388,6 +388,15 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             << " atomic semantics require an atomic/barriered hazard";
         ok = false;
       }
+      // §5.14 Phase 2: a VOLATILE access (MMIO) must carry an ordered hazard -- volatility is
+      // an ordering/legality signal, never cosmetic. Mirrors verify.verify() R5 on the oracle;
+      // vacuous unless a claim opts into `is_volatile` (non-disturbance).
+      if (c.getIsVolatile() && !hazardOrdered(c.getHazard())) {
+        c.emitError("R5: claim ")
+            << c.getSymName()
+            << " volatile access requires an atomic/barriered hazard";
+        ok = false;
+      }
     });
     for (auto &entry : claimsByPhase) {
       auto &group = entry.second;

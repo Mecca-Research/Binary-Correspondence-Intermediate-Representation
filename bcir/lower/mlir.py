@@ -83,6 +83,8 @@ class ClaimView:
     selected: str          # the oracle's chosen candidate name
     score: int             # the oracle's per-claim cost (effective cost . weights)
     width: int             # the chosen lane geometry (segment width)
+    volatile: bool = False  # SS5.14 Phase 2: the volatile qualifier, emitted as `is_volatile = true`
+                            # ONLY when set (so the existing corpus stays byte-identical)
 
 
 @dataclass(frozen=True)
@@ -143,7 +145,7 @@ def plan_view(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF,
             count=claim.count, reads=tuple(claim.rd), writes=tuple(claim.wr),
             domain=claim.domain, hazard=claim.hazard, verify=claim.verify,
             bounds=claim.bounds, paths=tuple(paths), selected=sel.name,
-            score=score, width=sel.width))
+            score=score, width=sel.width, volatile=claim.volatile))
         prev_cand = sel
 
     if total != result.score:
@@ -260,7 +262,8 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
             f"stride_class = #bcir.stride_class<{_STRIDE_SPELL[cv.stride_class]}>, "
             f"stride_k = {cv.stride_k} : i32, domain = #bcir.domain<{_DOMAIN_SPELL[cv.domain]}>, "
             f"hazard = #bcir.hazard<{cv.hazard}>, verify = #bcir.verify<{cv.verify}>, "
-            f"bounds = #bcir.bounds<{cv.bounds}> }} "
+            f"bounds = #bcir.bounds<{cv.bounds}>"
+            + (", is_volatile = true" if cv.volatile else "") + " } "
             f"{{ %i = bcir.index_range 0 to {cv.count} step 1 }}")
     # the K_BCIR plan: candidate paths + per-claim min-plus select.
     L.append("  bcir.kbcir.plan @plan0 {")

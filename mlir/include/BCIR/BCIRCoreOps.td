@@ -39,7 +39,15 @@ defvar BCIR_ClaimAttrs = (ins
   // model.graph Timing/Lifetime. Absent for the entire scalar/C subset, so R19/R20/R21 are
   // vacuous over it (the non-disturbance invariant -- existing IR parses and verifies unchanged).
   OptionalAttr<BCIR_TimingAttr>:$timing,
-  OptionalAttr<BCIR_LifetimeAttr>:$lifetime);
+  OptionalAttr<BCIR_LifetimeAttr>:$lifetime,
+  // §5.14 Phase 2: the VOLATILE qualifier on the contract-carrying claim rail (bcir.claim /
+  // bcir.load / bcir.store) -- distinct from bcir.volatile_load/store, which are the LOWERED
+  // integer-address MMIO accessors. This bit rides the RID/contract layer so the ORDERING LAW
+  // sees volatility structurally: R5 requires an ordered hazard on a volatile claim, and the
+  // optimizer fences it exactly like `barriered` (-bcir-bundle never reorders/bundles across
+  // it). Mirrors model.graph.Claim.volatile (DIGEST-EXCLUDED from R13, like timing/lifetime);
+  // defaulted false so all existing IR parses and hashes unchanged (non-disturbance).
+  DefaultValuedAttr<BoolAttr, "false">:$is_volatile);
 
 def BCIR_ModuleOp : BCIR_Op<"module",
     [IsolatedFromAbove, NoTerminator, SymbolTable, Symbol]> {
@@ -319,6 +327,68 @@ def BCIR_VolatileStoreOp : BCIR_Op<"volatile_store"> {
   // side-effecting), `$value` is a scalar hardware-register type, `$addr` is >= pointer-width.
   let arguments = (ins AnyType:$value, AnySignlessInteger:$addr);
   let assemblyFormat = "$value `,` $addr attr-dict `:` type($value) `,` type($addr)";
+  let hasVerifier = 1;
+}
+
+def BCIR_AtomicRMWOp : BCIR_Op<"atomic_rmw"> {
+  let summary = "First-class atomic read-modify-write (A lane, §5.14 Phase 2)";
+  // The law-rail twin of the cfront atomic RMW claims -- `c.atomic.{add,sub,xor}` (the GCC
+  // `__atomic_fetch_*` family) and `c.c11atom.{fetch_add,fetch_sub,fetch_xor,exchange}` (C11
+  // `<stdatomic.h>`) -- which until now reached MLIR only as opcode-named `bcir.claim` STRING
+  // dispatch. This op lifts the RMW to a first-class structure carrying the existing
+  // `#bcir.mem_ordering` attr, so the ordering law sees the atomicity structurally (the §5.14
+  // Phase 2 contract). Like `bcir.volatile_load`, it is the LOWERED accessor: it takes the
+  // resolved integer ADDRESS; the RID/extent/bounds contract stays at the `bcir.claim` layer.
+  //
+  //   * `$kind`     -- the RMW operation, one of {add, sub, xor, exchange} (verifier-checked;
+  //                    a string like ComputeOp's `$kind`, matching the cfront claim suffixes --
+  //                    no model-integer enum exists for RMW kinds, so a string avoids inventing
+  //                    an unparitied integer encoding).
+  //   * `$addr`     -- the resolved object address (signless integer, >= 32 bits).
+  //   * `$value`    -- the operand (an INTEGER: the cfront atomic families are integer-typed).
+  //   * `$ordering` -- OPTIONAL #bcir.mem_ordering; ABSENT means seq_cst (the C11/`__sync`
+  //                    default and the `bcir.barrier` precedent). unordered/monotonic clamp to
+  //                    monotonic at the LLVM lowering (an RMW must be at least monotonic).
+  //   * `$result`   -- the OLD value (fetch semantics), same type as `$value`.
+  //
+  // LOWERING (`-convert-bcir-to-llvm`): `llvm.inttoptr $addr` -> `llvm.atomicrmw <kind>` with
+  // the mapped ordering. DCE/CSE SAFETY: NO `Pure` trait by design (an atomic RMW is a
+  // side-effecting synchronization access -- the same discipline as the volatile/asm-edge ops).
+  let arguments = (ins StrAttr:$kind, AnySignlessInteger:$addr, AnyType:$value,
+                       OptionalAttr<BCIR_MemOrderingAttr>:$ordering);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $kind $value `,` $addr attr-dict `:` type($value) `,` type($addr) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def BCIR_AtomicCASOp : BCIR_Op<"atomic_cas"> {
+  let summary = "First-class atomic compare-and-swap (A lane, §5.14 Phase 2)";
+  // The law-rail twin of the cfront CAS claims -- `c.cmpxchg.{val,bool}` (`__sync_*_compare_and_swap`)
+  // and `c.c11atom.cas_{strong,weak}` (C11 `atomic_compare_exchange_*`) -- lifted from opcode-named
+  // string dispatch to a first-class op carrying `#bcir.mem_ordering`. Same LOWERED-accessor stance
+  // as `bcir.atomic_rmw` (resolved integer address; the RID contract stays on `bcir.claim`).
+  //
+  //   * `$addr`     -- the resolved object address (signless integer, >= 32 bits).
+  //   * `$expected` / `$desired` -- the comparand and the replacement (INTEGERS, same type).
+  //   * `$ordering` -- OPTIONAL success ordering (absent = seq_cst); the failure ordering is
+  //                    DERIVED per the LLVM strongest-failure rule (release -> monotonic,
+  //                    acq_rel -> acquire, else the success ordering) -- never stronger than
+  //                    success, never a release on failure.
+  //   * `$weak`     -- a `cas_weak` (spurious failure allowed; the cfront `_weak` suffix).
+  //   * `$result`   -- the OLD value (the `c.cmpxchg.val` form; a boolean success form is a
+  //                    follow-on comparison in the consumer, exactly as cfront lowers it).
+  //
+  // LOWERING: `llvm.inttoptr $addr` -> `llvm.cmpxchg` (+ weak flag) -> `llvm.extractvalue [0]`.
+  // NO `Pure` trait (side-effecting synchronization access).
+  let arguments = (ins AnySignlessInteger:$addr, AnyType:$expected, AnyType:$desired,
+                       OptionalAttr<BCIR_MemOrderingAttr>:$ordering, UnitAttr:$weak);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    (`weak` $weak^)? $expected `,` $desired `,` $addr attr-dict
+    `:` type($expected) `,` type($desired) `,` type($addr) `->` type($result)
+  }];
   let hasVerifier = 1;
 }
 
