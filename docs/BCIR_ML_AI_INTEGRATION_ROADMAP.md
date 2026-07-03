@@ -560,10 +560,18 @@ The audit finds five deepening moves, all quarantine-compatible:
   Negative MLIR cases in `verify_shape_dtype.mlir`; oracle suite `test_shape_dtype_laws.py`;
   `gen_status` sweeps R1–R23. Vacuous-by-default (non-disturbance). This is the "structurally
   valid tensors" guarantee (§8.4) made law.
-- **D3 — Learned cost-model priors at L1.** The accel ranker precedent generalizes: train
-  priors for tile size / loop order / channel choice offline, freeze to Q8 tables keyed by
-  (op-shape-class, channel), and let exact search verify — proposals can only reduce search,
-  never change the optimum.
+- ◑ **D3 — Learned cost-model priors at L1. FIRST SLICE LANDED** (`kbcir/tile_prior.py`,
+  `test_tile_prior.py`): the accel-ranker precedent generalized to the L1 tile search — a
+  logistic prior over CHEAP tile features (no `cost_of` to rank), trained offline on the exact
+  search's own choices under the (calibrated) `TargetProfile`, frozen to a Q8 integer table,
+  used only to ORDER `plan_matmul`'s search with a PROOF-gated early exit (the compute term is
+  tile-independent, so a cache-fitting candidate at the bottleneck floor is unbeatable).
+  `TilePriorCertificate` is the safety witness: guided == exhaustive on (fits_cache,
+  bottleneck) over held-out shapes, mismatches 0, **71% fewer nodes costed** (gate ≥40%); under
+  a bandwidth-starved calibration the proof never fires and the search honestly degenerates to
+  exhaustive (still exact). Calibloop wiring is by construction — train against the measured
+  profile the loop froze; `plan_matmul` itself untouched (opt-in, vacuous by default). *Next:*
+  channel-choice priors + per-shape-class tables persisted alongside the calibloop's cal_gen.
 - **D4 — E-graph rule synthesis (the operad 2-cell algebra).** Learn *candidate* rewrites
   from liked/unliked pair statistics; each learned rule is admitted only with a machine-
   checkable equivalence certificate (the egraph extract cost proof), keeping learning out of

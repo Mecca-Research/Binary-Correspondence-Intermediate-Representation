@@ -1,0 +1,200 @@
+"""D3 (ML/AI roadmap §8.2): LEARNED COST-MODEL PRIORS AT L1 -- tile/loop-order proposals.
+
+The accel-ranker precedent (`kbcir.accel`) generalized one level down, to the L1 tile
+search: `plan_matmul` enumerates every (loop order x tile_m x tile_n x tile_k) candidate
+and costs each one. This module learns WHICH candidates tend to be optimal -- a logistic
+prior over CHEAP shape/tile features (no `cost_of` call needed to rank), trained OFFLINE on
+the exact search's own choices under the calibrated cost model, frozen to a Q8 integer
+table -- and uses it only to ORDER the search:
+
+    guided_plan_matmul = evaluate candidates in the prior's order, keep the best, and
+    STOP at the first PROVABLY-unbeatable one (admissible early exit: the compute term is
+    tile-independent, so a cache-fitting candidate whose mem term <= its compute term
+    already sits on the bottleneck floor -- nothing later can score lower).
+
+So the prior can only REDUCE SEARCH (fewer `cost_of` evaluations), never change the
+optimum: the early exit fires only on a proof, and with a useless prior the guided search
+degenerates to the exhaustive one. `TilePriorCertificate` is the safety witness (the
+AccelCertificate pattern): over a case family, the guided optimum's (fits_cache,
+bottleneck) must EQUAL the exhaustive optimum's on every shape -- mismatches MUST be 0 --
+and the recorded node counts quantify the reduction. Cost-equal tie-breaks remain a free
+choice (the same freedom the optimizer already has); both searches stay fully
+deterministic.
+
+The calibloop wiring is BY CONSTRUCTION, not by hook: the prior trains against whatever
+`TargetProfile` the caller passes -- hand it the microbench-calibrated profile the
+resident calibloop froze and the proposals follow the measured cost model; the exact
+search underneath (same profile) still verifies every choice. `plan_matmul` itself is
+untouched -- the prior is opt-in (non-disturbance, vacuous by default).
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+
+from .cost import TargetProfile
+from .matmul import _LOOP_ORDERS, TilePlan, _cache_budget_elems, _divisor_tiles, cost_of
+
+Q8 = 256
+
+
+def shape_class(M: int, N: int, K: int) -> tuple[int, int, int]:
+    """The op-shape-class key: log2 buckets per dimension (the D3 table key)."""
+    return (M.bit_length(), N.bit_length(), K.bit_length())
+
+
+def candidates_for(M: int, N: int, K: int) -> list[tuple[int, int, int, str]]:
+    """The exact search space of plan_matmul, as (tm, tn, tk, loop_order) tuples, in the
+    exhaustive enumeration order."""
+    return [(tm, tn, tk, lo)
+            for lo in _LOOP_ORDERS
+            for tm in _divisor_tiles(M)
+            for tn in _divisor_tiles(N)
+            for tk in _divisor_tiles(K)]
+
+
+def tile_features(M: int, N: int, K: int, tm: int, tn: int, tk: int, lo: str,
+                  target: TargetProfile) -> list[float]:
+    """CHEAP candidate features -- pure arithmetic on the shape/tile/budget, NO cost_of
+    call (ordering must be cheaper than what it saves)."""
+    budget = _cache_budget_elems(target)
+    ws = tm * tk + tk * tn + tm * tn
+    return [1.0 if ws <= budget else 0.0,
+            min(2.0, ws / max(1, budget)),
+            math.log2(max(1, tm * tn * tk)) / 30.0,
+            tm / M, tn / N, tk / K,
+            _LOOP_ORDERS.index(lo) / 2.0,
+            1.0]
+
+
+@dataclass
+class LearnedTilePrior:
+    """A logistic model over tile features predicting P(candidate is the exact choice).
+    The float training half; freeze() is what ships."""
+
+    w: list = field(default_factory=lambda: [0.0] * 8)
+
+    def _p(self, feats):
+        z = sum(wi * xi for wi, xi in zip(self.w, feats))
+        return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, z))))
+
+    def freeze(self) -> "FrozenTilePrior":
+        return FrozenTilePrior(wq=tuple(round(v * Q8) for v in self.w))
+
+
+@dataclass(frozen=True)
+class FrozenTilePrior:
+    """The Q8-frozen prior: a deterministic INTEGER ordering of the tile-search space,
+    keyed by nothing but the candidate's cheap features (so one table serves every
+    shape class it was trained over)."""
+
+    wq: tuple
+
+    def order(self, M: int, N: int, K: int, target: TargetProfile) -> list:
+        cands = candidates_for(M, N, K)
+        scored = []
+        for i, (tm, tn, tk, lo) in enumerate(cands):
+            feats = tile_features(M, N, K, tm, tn, tk, lo, target)
+            z = sum(self.wq[k] * round(feats[k] * Q8) for k in range(len(self.wq))) >> 8
+            scored.append((-z, i))                   # higher z = try first; index tie-break
+        return [cands[i] for _, i in sorted(scored)]
+
+
+def prior_samples(shapes: list, target: TargetProfile) -> list:
+    """Offline training data from the EXACT search under the (calibrated) cost model:
+    per shape, the exhaustive optimum's (fits, bottleneck) marks every score-equal
+    candidate positive, the rest negative."""
+    samples = []
+    for (M, N, K) in shapes:
+        best = _exhaustive(M, N, K, target)[0]
+        for (tm, tn, tk, lo) in candidates_for(M, N, K):
+            compute, mem, fits = cost_of(M, N, K, tm, tn, tk, target)
+            label = 1.0 if (fits == best.fits_cache and max(compute, mem) == best.bottleneck) \
+                else 0.0
+            samples.append((tile_features(M, N, K, tm, tn, tk, lo, target), label))
+    return samples
+
+
+def train_tile_prior(samples: list, epochs: int = 200, lr: float = 0.5) -> LearnedTilePrior:
+    """Deterministic logistic-regression SGD (the train_ranker recipe)."""
+    p = LearnedTilePrior()
+    for _ in range(epochs):
+        for feats, label in samples:
+            err = p._p(feats) - label
+            p.w = [wi - lr * err * xi for wi, xi in zip(p.w, feats)]
+    return p
+
+
+def _plan_of(M, N, K, tm, tn, tk, lo, target) -> TilePlan:
+    compute, mem, fits = cost_of(M, N, K, tm, tn, tk, target)
+    return TilePlan(tm, tn, tk, lo, compute, mem, max(compute, mem), fits)
+
+
+def _exhaustive(M: int, N: int, K: int, target: TargetProfile) -> tuple[TilePlan, int]:
+    """plan_matmul's search, instrumented: (the optimum, nodes costed)."""
+    best = None
+    n = 0
+    for (tm, tn, tk, lo) in candidates_for(M, N, K):
+        cand = _plan_of(M, N, K, tm, tn, tk, lo, target)
+        n += 1
+        key = (not cand.fits_cache, cand.bottleneck, -(tm * tn * tk), lo)
+        if best is None or key < (not best.fits_cache, best.bottleneck,
+                                  -(best.tile_m * best.tile_n * best.tile_k), best.loop_order):
+            best = cand
+    return best, n
+
+
+def guided_plan_matmul(M: int, N: int, K: int, target: TargetProfile,
+                       prior: FrozenTilePrior) -> tuple[TilePlan, int]:
+    """The prior-ORDERED search with the admissible early exit. Returns (plan, nodes
+    costed). The exit is a PROOF, not a heuristic: compute is tile-independent, so a
+    cache-fitting candidate with mem <= compute sits on the bottleneck floor -- no
+    remaining candidate can beat (fits_cache, bottleneck). Worst case (prior useless):
+    every node is costed and the result is the exhaustive optimum's score anyway."""
+    best = None
+    n = 0
+    for (tm, tn, tk, lo) in prior.order(M, N, K, target):
+        cand = _plan_of(M, N, K, tm, tn, tk, lo, target)
+        n += 1
+        key = (not cand.fits_cache, cand.bottleneck, -(tm * tn * tk), lo)
+        if best is None or key < (not best.fits_cache, best.bottleneck,
+                                  -(best.tile_m * best.tile_n * best.tile_k), best.loop_order):
+            best = cand
+        if best.fits_cache and best.mem_cost <= best.compute_cost:
+            break                                    # provably unbeatable: bottleneck floor
+    return best, n
+
+
+@dataclass(frozen=True)
+class TilePriorCertificate:
+    """The safety witness (the AccelCertificate pattern): over the case family the guided
+    optimum's (fits_cache, bottleneck) equals the exhaustive one's on EVERY shape --
+    mismatches MUST be 0 -- and the node counts quantify the search reduction."""
+
+    checked: int
+    mismatches: int
+    nodes_exhaustive: int
+    nodes_guided: int
+
+    @property
+    def admitted(self) -> bool:
+        return self.checked >= 1 and self.mismatches == 0
+
+    @property
+    def reduction(self) -> float:
+        return 1.0 - self.nodes_guided / max(1, self.nodes_exhaustive)
+
+
+def tile_prior_certificate(shapes: list, prior: FrozenTilePrior,
+                           target: TargetProfile) -> TilePriorCertificate:
+    checked = mism = ne = ng = 0
+    for (M, N, K) in shapes:
+        exact, n_ex = _exhaustive(M, N, K, target)
+        guided, n_gd = guided_plan_matmul(M, N, K, target, prior)
+        checked += 1
+        ne += n_ex
+        ng += n_gd
+        if (guided.fits_cache, guided.bottleneck) != (exact.fits_cache, exact.bottleneck):
+            mism += 1
+    return TilePriorCertificate(checked=checked, mismatches=mism,
+                                nodes_exhaustive=ne, nodes_guided=ng)
