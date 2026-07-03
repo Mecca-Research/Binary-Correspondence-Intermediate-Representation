@@ -38,3 +38,55 @@ int bcir_embedding(const double *table, int vocab, int dim, const int *ids, int 
   }
   return 0;
 }
+
+/* the shared per-query-row GQA arithmetic: scores (masked to the first `keep` positions) ->
+ * stable softmax -> A @ V_g -- ONE code path for the full and the cached entry points, so
+ * the naive-vs-cached kernel invariant is bitwise by construction. */
+static void gqa_row(const double *qh, const double *k_rows, const double *v_rows, int t_len,
+                    int keep, int n_kv_heads, int g, int d_k, double sc, double *s,
+                    double *o) {
+  for (int j = 0; j < t_len; j++) {
+    if (j >= keep) { s[j] = -INFINITY; continue; }   /* the causal mask: exp(-inf) == 0 */
+    const double *kj = k_rows + ((size_t)j * n_kv_heads + g) * d_k;
+    double acc = 0.0;                                /* ascending-index, the oracle order */
+    for (int c = 0; c < d_k; c++) acc += qh[c] * kj[c];
+    s[j] = acc * sc;
+  }
+  double m = s[0];                                   /* stable softmax over the row */
+  for (int j = 1; j < t_len; j++) if (s[j] > m) m = s[j];
+  double sum = 0.0;
+  for (int j = 0; j < t_len; j++) { s[j] = exp(s[j] - m); sum += s[j]; }
+  if (sum == 0.0) sum = 1.0;                         /* mirrors the oracle's `or 1.0` */
+  for (int j = 0; j < t_len; j++) s[j] /= sum;
+  for (int c = 0; c < d_k; c++) {                    /* A @ V_g, ascending j like matmul */
+    double acc = 0.0;
+    for (int j = 0; j < t_len; j++) acc += s[j] * v_rows[((size_t)j * n_kv_heads + g) * d_k + c];
+    o[c] = acc;
+  }
+}
+
+int bcir_gqa_attention(const double *q, const double *k, const double *v, int seq,
+                       int n_heads, int n_kv_heads, int d_k, double *scores, double *out) {
+  if (n_kv_heads < 1 || n_kv_heads > n_heads || n_heads % n_kv_heads) return -1;
+  int group = n_heads / n_kv_heads;
+  double sc = 1.0 / sqrt((double)d_k);
+  for (int h = 0; h < n_heads; h++) {
+    int g = h / group;                               /* the shared kv head */
+    for (int i = 0; i < seq; i++)
+      gqa_row(q + ((size_t)i * n_heads + h) * d_k, k, v, seq, i + 1, n_kv_heads, g, d_k, sc,
+              scores, out + ((size_t)i * n_heads + h) * d_k);
+  }
+  return 0;
+}
+
+int bcir_gqa_attention_row(const double *q_row, const double *k_rows, const double *v_rows,
+                           int t_len, int n_heads, int n_kv_heads, int d_k,
+                           double *scores, double *out) {
+  if (n_kv_heads < 1 || n_kv_heads > n_heads || n_heads % n_kv_heads) return -1;
+  int group = n_heads / n_kv_heads;
+  double sc = 1.0 / sqrt((double)d_k);
+  for (int h = 0; h < n_heads; h++)                  /* the i == t_len-1 row, incrementally */
+    gqa_row(q_row + (size_t)h * d_k, k_rows, v_rows, t_len, t_len, n_kv_heads, h / group,
+            d_k, sc, scores, out + (size_t)h * d_k);
+  return 0;
+}

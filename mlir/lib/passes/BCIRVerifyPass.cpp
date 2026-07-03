@@ -1484,6 +1484,54 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R22/R23 over the GQA/KV-cache pair (rung 5's remaining ops): rope -> gqa_attention rides
+    // the same d_k handover as plain attention; kv_cache -> gqa_attention must agree on the
+    // SHARED head geometry (n_kv_heads and d_k -- a cache sized for different heads is exactly
+    // the paged-serving lie the seam exists to catch) and the dtype must hand over (R23).
+    // Vacuous with no adjacent pair. Oracle twin: decode.py (KVCache feeds the head loop).
+    root->walk([&](GEMGqaAttentionOp gq) {
+      Operation *prev = gq->getPrevNode();
+      if (!prev)
+        return;
+      if (auto rp = dyn_cast<GEMRopeOp>(prev)) {
+        if (static_cast<int64_t>(gq.getDK()) != static_cast<int64_t>(rp.getDim())) {
+          gq.emitError("R22: gem.gqa_attention ")
+              << gq.getSymName() << " consumes the adjacent gem.rope @" << rp.getSymName()
+              << " but declares d_k = " << gq.getDK() << " != the rotated dim = " << rp.getDim();
+          ok = false;
+        }
+        if (rp.getDtype() != gq.getDtype()) {
+          gq.emitError("R23: gem.gqa_attention ")
+              << gq.getSymName() << " consumes the adjacent gem.rope @" << rp.getSymName()
+              << " but declares dtype '" << gq.getDtype() << "' != the producer's '"
+              << rp.getDtype() << "'";
+          ok = false;
+        }
+      }
+      if (auto kc = dyn_cast<GEMKvCacheOp>(prev)) {
+        if (static_cast<int64_t>(gq.getNKvHeads()) != static_cast<int64_t>(kc.getNKvHeads())) {
+          gq.emitError("R22: gem.gqa_attention ")
+              << gq.getSymName() << " reads the adjacent gem.kv_cache @" << kc.getSymName()
+              << " but declares n_kv_heads = " << gq.getNKvHeads()
+              << " != the cache's " << kc.getNKvHeads();
+          ok = false;
+        }
+        if (static_cast<int64_t>(gq.getDK()) != static_cast<int64_t>(kc.getDK())) {
+          gq.emitError("R22: gem.gqa_attention ")
+              << gq.getSymName() << " reads the adjacent gem.kv_cache @" << kc.getSymName()
+              << " but declares d_k = " << gq.getDK() << " != the cache's " << kc.getDK();
+          ok = false;
+        }
+        if (kc.getDtype() != gq.getDtype()) {
+          gq.emitError("R23: gem.gqa_attention ")
+              << gq.getSymName() << " reads the adjacent gem.kv_cache @" << kc.getSymName()
+              << " but declares dtype '" << gq.getDtype() << "' != the cache's '"
+              << kc.getDtype() << "'";
+          ok = false;
+        }
+      }
+    });
+
     // R11: generation validity -- pack tags match the live registry maxima; a
     // mismatch is a stale pack that must rehydrate (patch/repack/replan).
     uint64_t regMapGen = 0, regDataGen = 0;

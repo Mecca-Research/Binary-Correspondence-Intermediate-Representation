@@ -26,9 +26,9 @@ def _toy_weights(spec: DecoderSpec, seed: int = 0x7E57) -> DecoderWeights:
     def t(n):
         return tuple(rng.uniform(-0.3, 0.3) for _ in range(n))
 
-    d, f = spec.d_model, spec.d_ff
+    d, f, kvd = spec.d_model, spec.d_ff, spec.kv_dim
     layers = tuple(
-        LayerWeights(g_attn=t(d), w_q=t(d * d), w_k=t(d * d), w_v=t(d * d), w_o=t(d * d),
+        LayerWeights(g_attn=t(d), w_q=t(d * d), w_k=t(d * kvd), w_v=t(d * kvd), w_o=t(d * d),
                      g_ff=t(d), w1=t(d * f), b1=t(f), w2=t(f * d), b2=t(d))
         for _ in range(spec.n_layers))
     emb = EmbeddingTable(table=t(spec.vocab_size * d), n_vocab=spec.vocab_size, dim=d)
@@ -104,6 +104,57 @@ def test_the_ladder_ties_manifest_tokenizer_and_decode_together():
     new = reference_decode(prompt, spec, w, max_new=4)
     assert len(new) == 4 and all(0 <= t < spec.vocab_size for t in new)
     assert new == decode_with_kv_cache(prompt, spec, w, max_new=4)
+
+
+def test_gqa_cached_decode_is_the_gqa_naive_decode_bit_for_bit():
+    """Rung 5's GQA primitive rides the SAME twin gate as MHA: with n_kv_heads < n_heads
+    (shared K/V head groups, a narrower cache), incremental decode still emits the naive
+    full-recompute ids exactly."""
+    gqa = DecoderSpec(vocab_size=264, d_model=8, n_heads=4, n_layers=2, d_ff=16,
+                      n_kv_heads=2)
+    w = _toy_weights(gqa, seed=0x69A)
+    assert check_decoder_weights(gqa, w) == []                   # kv-narrow w_k/w_v fit
+    for prompt in ([7], [1, 2, 3], [260, 259, 104, 33]):
+        naive = reference_decode(prompt, gqa, w, max_new=6)
+        cached = decode_with_kv_cache(prompt, gqa, w, max_new=6)
+        assert len(naive) == 6
+        assert naive == cached, (prompt, naive, cached)
+    # the cache is genuinely NARROWER under GQA -- the memory saving is the point.
+    from bcir.frontends.models.decode import KVCache
+    assert len(KVCache(gqa).k[0]) == 2 < gqa.n_heads
+
+
+def test_gqa_with_all_kv_heads_reproduces_mha_bit_for_bit():
+    """The regression tie: n_kv_heads == n_heads is EXACTLY multi-head attention -- same
+    weights, same ids, bit for bit (so the GQA rewrite cannot have moved the MHA path)."""
+    import dataclasses
+    w = _toy_weights(SPEC)
+    explicit = dataclasses.replace(SPEC, n_kv_heads=SPEC.n_heads)
+    assert (reference_decode([1, 2, 3], SPEC, w, max_new=5)
+            == reference_decode([1, 2, 3], explicit, w, max_new=5))
+    assert (decode_with_kv_cache([1, 2, 3], SPEC, w, max_new=5)
+            == decode_with_kv_cache([1, 2, 3], explicit, w, max_new=5))
+
+
+def test_gqa_spec_and_reference_validate_head_grouping():
+    """n_heads must split into whole kv-head groups -- on the spec AND on the primitive."""
+    try:
+        DecoderSpec(vocab_size=8, d_model=8, n_heads=4, n_layers=1, d_ff=4, n_kv_heads=3)
+        raise AssertionError("4 heads over 3 kv heads must be rejected")
+    except ValueError as e:
+        assert "divisible" in str(e)
+    from bcir.frontends.models.decode import gqa_attention_reference
+    try:
+        gqa_attention_reference([0.0] * 8, [0.0] * 6, [0.0] * 6, 1, 4, 3, 2)
+        raise AssertionError("the primitive must reject ragged head groups")
+    except ValueError as e:
+        assert "divisible" in str(e)
+    # and the GQA param count is genuinely smaller (narrower w_k/w_v), still census-exact.
+    mha = DecoderSpec(vocab_size=64, d_model=8, n_heads=4, n_layers=2, d_ff=16)
+    gqa = DecoderSpec(vocab_size=64, d_model=8, n_heads=4, n_layers=2, d_ff=16, n_kv_heads=2)
+    d, kvd = 8, gqa.kv_dim
+    assert kvd == 4
+    assert decoder_param_count(mha) - decoder_param_count(gqa) == 2 * 2 * d * (d - kvd)
 
 
 def test_lying_weight_shapes_are_reported():

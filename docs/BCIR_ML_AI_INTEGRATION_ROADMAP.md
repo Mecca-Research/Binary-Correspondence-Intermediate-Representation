@@ -447,13 +447,23 @@ drop-in loading of a modern open-weight chat model.
    tighter than Q4), and a greedy flip is *recorded, never hidden* (`ids_match`). Real-weight
    ingestion (a released tiny checkpoint through manifest → tokenizer → decode → quantize)
    is the remaining half, gated on rung 5's law rail for the LLM ops.
-5. ◑ **C/MLIR law rail — FIRST SLICE LANDED** (`verify_llm_ops.mlir`): ODS ops for the rung-3
+5. ✅ **C/MLIR law rail — COMPLETE** (`verify_llm_ops.mlir`): ODS ops for the rung-3
    decoder's LLM-specific stages — `bcir.gem.embedding` / `bcir.gem.rmsnorm` / `bcir.gem.rope` —
    with op-level laws (positive extents; `gamma_len == dim`; RoPE's **even-dim** pairing law; the
    f32 libm-edge quarantine rule on rmsnorm/rope) and the D2 adjacency seams in `-bcir-verify`:
    embedding→rmsnorm extent + dtype handover (R22/R23), rope→attention head-width `d_k == dim` +
    dtype (R22/R23) — exactly the chain `decoder_layer_reference` composes, with negatives.
-   *Landed too:* the **C-twin decode kernels** (`runtime/c/bcir_decode.c` — rmsnorm/rope/embedding, kernel-for-kernel with the oracle references, differential-gated to ≤1e-12 in `test_decode_c_kernels.py`; the embedding twin refuses an out-of-range id exactly where the oracle raises). *Remaining:* GQA/KV-cache ops.
+   *Landed too:* the **C-twin decode kernels** (`runtime/c/bcir_decode.c` — rmsnorm/rope/embedding, kernel-for-kernel with the oracle references, differential-gated to ≤1e-12 in `test_decode_c_kernels.py`; the embedding twin refuses an out-of-range id exactly where the oracle raises).
+   *And the closing slice — GQA/KV-cache on all three rails:* the oracle grew
+   `DecoderSpec.n_kv_heads` + `gqa_attention_reference` (query head h reads kv head
+   h // group; the KV cache holds `kv_heads` lanes — the memory saving IS the point), gated
+   GQA-cached == GQA-naive **bit-for-bit** plus the `n_kv_heads == n_heads` MHA regression
+   tie; the law rail grew `bcir.gem.gqa_attention` (whole-head-group divisibility law, f32
+   softmax quarantine) + `bcir.gem.kv_cache` (`pos <= capacity` paging law) with
+   rope→gqa d_k and kv_cache→gqa head-geometry R22/R23 seams + negatives; the C rail grew
+   `bcir_gqa_attention` / `bcir_gqa_attention_row` (≤1e-12 differential vs the oracle;
+   ragged-group refusal parity; the cached row equals the full recompute's last row
+   **bitwise** — one shared kernel path). **Rung 4's real-weight ingestion is now unblocked.**
 6. **Serving endpoint** — streaming decode, schema-constrained tool-call output, telemetry frames,
    replay manifests.
 7. **Scale-out** — continuous batching, paged KV, multi-device placement, expert/tensor

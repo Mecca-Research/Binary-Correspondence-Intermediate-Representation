@@ -403,6 +403,45 @@ using namespace bcir;
   return ::mlir::success();
 }
 
+::mlir::LogicalResult GEMGqaAttentionOp::verify() {
+  // Rung 5: grouped-query attention's op-level law (mirrors DecoderSpec/gqa_attention_reference):
+  // positive extents; n_kv_heads in [1, n_heads] and dividing n_heads (whole head groups); f32
+  // (the softmax rides the libm edge -- the gem.attention quarantine rule).
+  if (static_cast<int64_t>(getSeqLen()) < 1 || static_cast<int64_t>(getDK()) < 1 ||
+      static_cast<int64_t>(getNHeads()) < 1)
+    return emitOpError() << "gqa_attention: seq_len, d_k and n_heads must all be >= 1";
+  int64_t nh = static_cast<int64_t>(getNHeads()), nkv = static_cast<int64_t>(getNKvHeads());
+  if (nkv < 1 || nkv > nh)
+    return emitOpError() << "gqa_attention: n_kv_heads " << nkv << " must be in [1, n_heads "
+                         << nh << "]";
+  if (nh % nkv != 0)
+    return emitOpError() << "gqa_attention: n_heads " << nh << " not divisible by n_kv_heads "
+                         << nkv << " (GQA shares whole head groups)";
+  if (getDtype() != "f32")
+    return emitOpError() << "gqa_attention: contains a softmax (a transcendental; the libm edge "
+                            "returns float), so it needs f32, got '" << getDtype() << "'";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult GEMKvCacheOp::verify() {
+  // Rung 5: the KV cache's op-level law (mirrors decode.py::KVCache): positive lane extents,
+  // a non-negative position that never exceeds a nonzero capacity, and a known dtype (the
+  // cached rows are POST-RoPE floats -> f32).
+  if (static_cast<int64_t>(getNLayers()) < 1 || static_cast<int64_t>(getNKvHeads()) < 1 ||
+      static_cast<int64_t>(getDK()) < 1)
+    return emitOpError() << "kv_cache: n_layers, n_kv_heads and d_k must all be >= 1";
+  if (static_cast<int64_t>(getCapacity()) < 0 || static_cast<int64_t>(getPos()) < 0)
+    return emitOpError() << "kv_cache: capacity and pos must be >= 0";
+  if (static_cast<int64_t>(getCapacity()) > 0 &&
+      static_cast<int64_t>(getPos()) > static_cast<int64_t>(getCapacity()))
+    return emitOpError() << "kv_cache: pos " << getPos() << " exceeds capacity "
+                         << getCapacity() << " (an over-full cache is the paging lie)";
+  if (getDtype() != "f32")
+    return emitOpError() << "kv_cache: dtype must be f32 (the cached rows are post-RoPE floats), "
+                            "got '" << getDtype() << "'";
+  return ::mlir::success();
+}
+
 ::mlir::LogicalResult GEMContentionOp::verify() {
   // The G4 cache-line/bank-conflict CONTENTION signal (mirrors bcir/kbcir/cache_predict.py::CachePredictor;
   // the op-level analytic-model well-formedness check gem.conv/attention validate inline -- NO new globally-

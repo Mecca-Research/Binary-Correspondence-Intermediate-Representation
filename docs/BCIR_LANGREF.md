@@ -230,6 +230,22 @@ pair; negatives in `mlir/test/passes/verify_llm_ops.mlir`; oracle twin
 `bcir/frontends/models/decode.py` (`decoder_layer_reference` composes exactly this
 chain).
 
+The rung's remaining ops complete the same discipline: **`bcir.gem.gqa_attention`**
+(grouped-query attention — `n_heads` query heads over `n_kv_heads` shared K/V heads;
+`n_kv_heads == n_heads` is plain MHA) and **`bcir.gem.kv_cache`** (the per-layer,
+per-kv-head roped K/V row store; `capacity = 0` is the unbounded reference posture).
+Op-level laws: `n_kv_heads` must divide `n_heads` and sit in `[1, n_heads]` (GQA
+shares **whole** head groups — the constraint `DecoderSpec` enforces oracle-side);
+GQA is `f32` (its softmax rides the libm edge); a nonzero-capacity cache refuses
+`pos > capacity` (the paged-serving over-fill lie). Seam laws: a
+`rope → gqa_attention` pair rides the plain-attention `d_k` handover (R22) + dtype
+(R23); a `kv_cache → gqa_attention` pair must agree on the shared head geometry
+(`n_kv_heads` and `d_k`, R22) and the dtype (R23). Oracle twins:
+`gqa_attention_reference` and `KVCache`/`decode_with_kv_cache` (bit-for-bit against
+naive recompute); C twins: `runtime/c/bcir_decode.c::bcir_gqa_attention` /
+`bcir_gqa_attention_row` (the cached row is the full recompute's last row **bitwise**,
+one shared kernel path).
+
 R19/R20/R21 are **first-class `-bcir-verify` MLIR laws**, dual-rail with the
 oracle's `verify.verify_timing` / `verify.verify_lifetime` (run through
 `verify.verify_smart_lowering` alongside R14–R17 and R22), each with a negative
