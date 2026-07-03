@@ -453,7 +453,7 @@ drop-in loading of a modern open-weight chat model.
    f32 libm-edge quarantine rule on rmsnorm/rope) and the D2 adjacency seams in `-bcir-verify`:
    embedding→rmsnorm extent + dtype handover (R22/R23), rope→attention head-width `d_k == dim` +
    dtype (R22/R23) — exactly the chain `decoder_layer_reference` composes, with negatives.
-   *Remaining:* GQA/KV-cache ops + the C-twin kernels (prototype-then-port).
+   *Landed too:* the **C-twin decode kernels** (`runtime/c/bcir_decode.c` — rmsnorm/rope/embedding, kernel-for-kernel with the oracle references, differential-gated to ≤1e-12 in `test_decode_c_kernels.py`; the embedding twin refuses an out-of-range id exactly where the oracle raises). *Remaining:* GQA/KV-cache ops.
 6. **Serving endpoint** — streaming decode, schema-constrained tool-call output, telemetry frames,
    replay manifests.
 7. **Scale-out** — continuous batching, paged KV, multi-device placement, expert/tensor
