@@ -599,8 +599,20 @@ The audit finds five deepening moves, all quarantine-compatible:
   bottleneck) over held-out shapes, mismatches 0, **71% fewer nodes costed** (gate ≥40%); under
   a bandwidth-starved calibration the proof never fires and the search honestly degenerates to
   exhaustive (still exact). Calibloop wiring is by construction — train against the measured
-  profile the loop froze; `plan_matmul` itself untouched (opt-in, vacuous by default). *Next:*
-  channel-choice priors + per-shape-class tables persisted alongside the calibloop's cal_gen.
+  profile the loop froze; `plan_matmul` itself untouched (opt-in, vacuous by default).
+  ✅ **Slice 3 LANDED**: channel-choice priors + per-shape-class tables
+  (`kbcir/channel_prior.py`, `test_channel_prior.py`) — the tower's per-channel `optimize()`
+  pricing (what `plan_calling_side`/`orchestrate` run exhaustively) gets the same L1 layer:
+  a per-`shape_class` TABLE of exhaustively-verified winning channels answers a trained class
+  with **zero** pricings (measured **83% fewer** per-channel optimize() runs over held-out
+  shapes, gate ≥50%); a miss prices every suitable channel (prior-ordered — the Q8 logistic
+  over profile constants is an anytime warm-start, exactness never delegated); the
+  `ChannelPriorCertificate` proves guided == exhaustive with mismatches 0 and a **poisoned
+  table is caught, not trusted**; the envelope (kind `bcir.channel_prior`) ties to the
+  tower's (name, cal_gen) pairs — a recalibrated channel refuses STALE, a re-towered load
+  refuses retrain, a newer schema refuses upgrade. `plan_calling_side` untouched (opt-in).
+  *Next:* wiring the table into `orchestrate` behind an opt-in flag, and per-channel
+  calibrated profiles (cal_gen ≥ 1) so class winners genuinely diverge across the tower.
 - **D4 — E-graph rule synthesis (the operad 2-cell algebra).** Learn *candidate* rewrites
   from liked/unliked pair statistics; each learned rule is admitted only with a machine-
   checkable equivalence certificate (the egraph extract cost proof), keeping learning out of
