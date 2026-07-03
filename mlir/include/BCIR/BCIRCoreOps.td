@@ -40,6 +40,12 @@ defvar BCIR_ClaimAttrs = (ins
   // vacuous over it (the non-disturbance invariant -- existing IR parses and verifies unchanged).
   OptionalAttr<BCIR_TimingAttr>:$timing,
   OptionalAttr<BCIR_LifetimeAttr>:$lifetime,
+  // §5.14 Phase 2: the declared INDIRECT-CALLEE SIGNATURE ("ret(param, ...)") on a
+  // c.call.indirect / c.call.imember dispatch claim, mirroring model.graph.Claim.callee_sig --
+  // so R18 and the effect/commutation analysis see the callee TYPE instead of a fully opaque
+  // edge (the conservative global effect set is the oracle-side half of the same record).
+  // DIGEST-EXCLUDED from R13; absent by default (non-disturbance).
+  OptionalAttr<StrAttr>:$callee_sig,
   // §5.14 Phase 2: the EXTENT-PROVENANCE signal -- WHY the bounds contract is what it is
   // (declared_extent | recovered_count | snapshot_extent | mmio_register | string_literal |
   // unknown_extent), mirroring model.graph.Claim.bounds_provenance. Carried so R7 (and the

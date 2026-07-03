@@ -90,6 +90,84 @@ def test_train_graph_touches_no_verifier_and_emits_no_diagnostic():
     assert not any("verify" in m for m in imported), sorted(imported)
 
 
+# --- D1 step 2: the plan IS the execution path -------------------------------------------------
+
+def _toy_logistic(n=24, nf=4, seed=0xD1E2):
+    import random
+    rng = random.Random(seed)
+    X, y = [], []
+    for _ in range(n):
+        cls = rng.random() < 0.5
+        base = 1.0 if cls else -1.0
+        X.append([base + rng.uniform(-0.4, 0.4) for _ in range(nf)])
+        y.append(1.0 if cls else 0.0)
+    return X, y
+
+
+def test_hydrated_pack_carries_the_plan_with_r10_r11_clean():
+    from bcir.kbcir.train_graph import hydrate_train_step, train_step_module
+    from bcir.verify import verify_pack
+    spec = TrainStepSpec()
+    pack, result = hydrate_train_step(spec, AVX, COOL)
+    assert len(pack.segments) == N_STAGES and pack.provenance_ok()
+    assert verify_pack(train_step_module(spec), pack) == []
+    assert [seg.claim_id for seg in pack.segments] == [s.claim_id for s in result.steps]
+
+
+def test_executor_dispatches_the_planned_stage_order():
+    from bcir.kbcir.train_graph import train_planned
+    spec = TrainStepSpec()
+    X, y = _toy_logistic()
+    run = train_planned(spec, X, y, [0.0] * spec.n_params, epochs=1, lr=0.5, h=AVX, theta=COOL)
+    assert run.exec_orders and all(o == [1, 2, 3, 4, 5, 6] for o in run.exec_orders)
+    assert [seg.claim_id for seg in run.pack.segments] == run.exec_orders[0]
+
+
+def test_one_executed_step_matches_an_independent_reference():
+    # the GEM-dispatched kernels compute EXACTLY the closed-form logistic step.
+    import math
+    from bcir.kbcir.train_graph import train_planned
+    spec = TrainStepSpec(n_features=2, batch=4)
+    X = [[0.5, -0.2], [1.0, 0.3], [-0.7, 0.9], [0.1, -1.1]]
+    y = [1.0, 1.0, 0.0, 0.0]
+    w0 = [0.1, -0.2, 0.05]
+    run = train_planned(spec, X, y, w0, epochs=1, lr=0.3, h=AVX, theta=COOL)
+    # the reference step, computed independently of the executor path
+    z = [sum(X[i][j] * w0[j] for j in range(2)) + w0[2] for i in range(4)]
+    act = [1.0 / (1.0 + math.exp(-v)) for v in z]
+    g = [sum((act[i] - y[i]) * X[i][j] for i in range(4)) / 4 for j in range(2)]
+    g.append(sum(act[i] - y[i] for i in range(4)) / 4)
+    want = [w0[j] - 0.3 * g[j] for j in range(3)]
+    assert all(abs(a - b) < 1e-12 for a, b in zip(run.weights, want)), (run.weights, want)
+
+
+def test_planned_training_genuinely_converges():
+    # THE HEADLINE: real training where every step is dispatched by the GEM executor over the
+    # planned claim graph -- gated by the shared convergence gate, like every E-demo.
+    from bcir.kbcir.train_graph import train_planned
+    from bcir.tests._convergence import assert_converged
+    spec = TrainStepSpec()
+    X, y = _toy_logistic()
+    run = train_planned(spec, X, y, [0.0] * spec.n_params, epochs=120, lr=0.8, h=AVX, theta=COOL)
+    assert_converged(run.losses, final_below=0.05, max_ratio=0.1, name="D1 planned training")
+
+
+def test_per_epoch_manifests_are_distinct_and_replayable():
+    from bcir.kbcir.provenance import replay
+    from bcir.kbcir.train_graph import train_planned, train_step_module
+    spec = TrainStepSpec()
+    X, y = _toy_logistic()
+    run = train_planned(spec, X, y, [0.0] * spec.n_params, epochs=3, lr=0.5, h=AVX, theta=COOL)
+    digests = [m.digest for m in run.manifests]
+    assert len(set(digests)) == 3                              # the epoch tag moves the digest
+    assert run.manifests[0].diff(run.manifests[1]) == ["artifacts"]
+    m = train_step_module(spec)
+    for e, man in enumerate(run.manifests):                    # each epoch replays exactly
+        arts = (("epoch", e), ("topo_gen", run.pack.topo_gen),
+                ("map_gen", run.pack.map_gen), ("data_gen", run.pack.data_gen))
+        assert replay(man, m, AVX, COOL, artifacts=arts).score > 0
+
+
 if __name__ == "__main__":
     import sys
 

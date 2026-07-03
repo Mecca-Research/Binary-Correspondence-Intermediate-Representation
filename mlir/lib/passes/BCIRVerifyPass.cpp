@@ -388,6 +388,17 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             << " atomic semantics require an atomic/barriered hazard";
         ok = false;
       }
+      // §5.14 Phase 2 (indirect-call effect): a dispatch claim's DECLARED callee signature,
+      // when carried, must be well-formed "ret(params)" -- a malformed record would poison the
+      // R18/commutation consumers silently. Vacuous when absent (the opaque-edge default).
+      if (auto sig = c.getCalleeSig()) {
+        if (!sig->contains("(")) {
+          c.emitError("R18: claim ")
+              << c.getSymName() << " malformed indirect-callee signature '" << *sig
+              << "' (expected 'ret(params)')";
+          ok = false;
+        }
+      }
       // §5.14 Phase 2: a VOLATILE access (MMIO) must carry an ordered hazard -- volatility is
       // an ordering/legality signal, never cosmetic. Mirrors verify.verify() R5 on the oracle;
       // vacuous unless a claim opts into `is_volatile` (non-disturbance).

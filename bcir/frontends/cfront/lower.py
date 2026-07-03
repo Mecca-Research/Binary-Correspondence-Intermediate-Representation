@@ -473,6 +473,19 @@ def _flatten_block(block: list) -> list:
     return out
 
 
+def callee_signature(fct) -> str:
+    """The declared indirect-callee signature "ret(param, ...)" (§5.14 Phase 2) rendered from a
+    funcptr CType -- the type record the R18 well-formedness check and the effect/commutation
+    analysis consume. "" when the type is unknown (the claim stays a fully opaque edge)."""
+    if fct is None or getattr(fct, "kind", "") != "funcptr":
+        return ""
+
+    def nm(ct):
+        return "void" if ct is None else (ct.name or ct.kind)
+
+    return f"{nm(fct.of)}({', '.join(nm(p) for p in fct.params)})"
+
+
 def own_footprint(lf, shared_min: int = 900000) -> tuple:
     """The function's *own* alias/effect footprint over shared (module-scope) resources -- the global
     rids it reads and writes directly (callee effects are folded in by the caller). Writes come from
@@ -695,13 +708,14 @@ class _FuncLowerer:
     def _emit(self, op: str, opcode: Opcode, rd: tuple, wr: tuple, *, imm: tuple = (),
               lane=Lane.U, stride=StrideClass.SCALAR, count: int = 1, domain=Domain.RAM,
               bounds: str = "strict", hazard: str = "unique", lifetime=None,
-              volatile: bool = False, bounds_provenance: str = "") -> int:
+              volatile: bool = False, bounds_provenance: str = "",
+              callee_sig: str = "") -> int:
         self.cid[0] += 1
         self.block_stack[-1].append(Claim(
             id=self.cid[0], opcode=opcode, lane=lane, stride_class=stride, count=count,
             rd=tuple(rd), wr=tuple(wr), imm=tuple(imm), domain=domain, op=op, bounds=bounds,
             hazard=hazard, lifetime=lifetime, volatile=volatile,
-            bounds_provenance=bounds_provenance))
+            bounds_provenance=bounds_provenance, callee_sig=callee_sig))
         return wr[0] if wr else -1
 
     def _storage(self, ct: CType, name: str) -> int:
@@ -1297,7 +1311,8 @@ class _FuncLowerer:
         ret_ct = fct.of if (fct is not None and fct.kind == "funcptr") else None
         t = self._temp(self._call_result_ct(ret_ct), f"icall_{m.field}")   # a signed member return reads back signed
         return self._emit(f"c.call.imember:{m.field}", Opcode.GEM_DISPATCH,
-                          (base_rid, *actuals), (t,), imm=(1 if m.arrow else 0,))
+                          (base_rid, *actuals), (t,), imm=(1 if m.arrow else 0,),
+                          callee_sig=callee_signature(fct))
 
     # --- memory read/write, with bitfield (mask/shift) + MMIO (ordered) handling ---
     def _read(self, lv: "_LV") -> int:
@@ -1865,7 +1880,8 @@ class _FuncLowerer:
         if node.callee in self.env and self.env[node.callee][1].kind == "funcptr":
             fptr, fpct = self.env[node.callee]              # the funcptr CType carries its return type in `.of`
             t = self._temp(self._call_result_ct(fpct.of), f"icall_{node.callee}")   # a signed return reads back signed
-            return self._emit("c.call.indirect", Opcode.GEM_DISPATCH, (fptr, *actuals), (t,))
+            return self._emit("c.call.indirect", Opcode.GEM_DISPATCH, (fptr, *actuals), (t,),
+                              callee_sig=callee_signature(fpct))
         # Atomics run on the A lane. A scalar atomic counter is a single-location RMW (not on
         # the decoupled GGG/scatter tail), so it stays SCALAR-shaped -- the lane law (R6) admits
         # lane A for SCALAR, and the atomic/barriered hazard discharges R5.

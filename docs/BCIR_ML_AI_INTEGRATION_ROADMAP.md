@@ -416,7 +416,14 @@ drop-in loading of a modern open-weight chat model.
    integrity, never interpreted), deterministic (canonical-JSON digest, ingestion-order-free),
    JSON round-tripping, loud on malformed shards. Dep-free stdlib. *(Built before any weight
    loading or decode kernels, per the contract.)*
-2. **Tokenizer parity** — round-trip tests + chat-template fixtures before touching weights.
+2. ✅ **Tokenizer parity — LANDED** (`bcir/frontends/models/tokenizer.py`,
+   `test_model_tokenizer.py`): a dep-free byte-level BPE reference (the HF `tokenizer.json`
+   shape: byte alphabet, rank-based merges, specials never split), LOSSLESS round-trip over
+   arbitrary unicode by construction, golden ids over a hand-computed mini fixture, the
+   Gemma-style chat template as a pinned named fixture, and the tokenizer sha256 tied into
+   `ModelManifest.tokenizer_digest` (the wrong tokenizer for a model is detected by hash).
+   Byte-for-byte parity against a specific released model lands when its real tokenizer.json
+   is ingested (the loader accepts the real shape; the exact pre-tokenizer regex is per-model).
 3. **Reference decode** — a slow, dependency-light Python reference for one small dense decoder
    layer from the existing matmul/activation/attention pieces plus the missing RMSNorm/RoPE/KV
    primitives (the E3 pattern, extended).
@@ -503,9 +510,14 @@ The audit finds five deepening moves, all quarantine-compatible:
   tropical optimizer (realized in stage order), composed over steps via `kbcir.compose` (a run
   is a `Seq`; series-summed cost), RCSP-budget-feasible-or-not BEFORE execution,
   R13-deterministic, and structurally bridged to the M3 loop (`steps_for` = epochs ×
-  batches/epoch = one update claim per optimizer step). *Next:* hydrate the planned step to a
-  StreamPack and wire the GEM executor to run it (execution today stays `training.train` — the
-  plan is its verification shadow), then the per-epoch R13 manifest + overlap. The autodiff
+  batches/epoch = one update claim per optimizer step). ✅ **Step 2 LANDED**: `hydrate_train_step` lowers the
+  selected realization to a StreamPack (R10 provenance / R11 tags clean, segments == the plan's
+  realized order) and `train_planned` runs REAL training with the GEM executor dispatching the
+  six numeric stage kernels per step — one executed step matches the closed-form logistic
+  reference to 1e-12, the run converges under the shared gate, and every epoch commits a
+  replayable ProvenanceManifest (epoch + pack generations as artifact tags; digests distinct,
+  `diff` == artifacts, `replay` exact). *Next:* the binary StreamPack rail (encode the pack and
+  execute via `runtime/c/bcir_exec`) + overlap/EFT scheduling of the stage streams. The autodiff
   closure proof is the enabler: the gradient DAG has a fixed vocabulary, so it hydrates to a
   StreamPack like any program.
 - ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/

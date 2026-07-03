@@ -8,6 +8,8 @@ C/MLIR law rail, serving) build on this record. Dep-free (stdlib only), oracle-s
 
 from .manifest import (ModelManifest, ShardRecord, build_manifest, manifest_from_json,
                        parse_safetensors_header, shard_digest)
+from .tokenizer import Tokenizer, bytes_to_unicode, load_tokenizer, render_chat
 
-__all__ = ["ModelManifest", "ShardRecord", "build_manifest", "manifest_from_json",
-           "parse_safetensors_header", "shard_digest"]
+__all__ = ["ModelManifest", "ShardRecord", "Tokenizer", "build_manifest", "bytes_to_unicode",
+           "load_tokenizer", "manifest_from_json", "parse_safetensors_header", "render_chat",
+           "shard_digest"]

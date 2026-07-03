@@ -101,6 +101,11 @@ class Claim:
                                      # vacuous default (no R19/R20 constraint -- the whole scalar subset)
     lifetime: Optional["Lifetime"] = None  # OPTIONAL pointer-lifetime annotation (§5.12); None = the vacuous
                                      # default (no R21 use-after-free / double-free constraint)
+    callee_sig: str = ""             # OPTIONAL declared indirect-callee signature (§5.14 Phase 2):
+                                     # "ret(param, ...)" on a c.call.indirect / c.call.imember dispatch
+                                     # claim, so R18 + the effect/commutation analysis see the callee
+                                     # TYPE instead of a fully opaque edge. "" = unset (vacuous;
+                                     # digest-excluded from R13).
     bounds_provenance: str = ""      # OPTIONAL extent-provenance signal (§5.14 Phase 2): WHY the bounds
                                      # contract is what it is -- "declared_extent" (local/static array of
                                      # known shape) | "recovered_count" (malloc/calloc stable count) |

@@ -196,12 +196,24 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
     #     commutation/independence. Each function's own footprint is folded with its callees'
     #     (transitively, recursion-guarded) so a wrapper inherits what it calls. ---
     _own = {name: own_footprint(lf, _SHARED_RID) for name, lf in lowered.functions.items()}
+    # §5.14 Phase 2 (indirect-call effect): a function that DISPATCHES through a function pointer
+    # (c.call.indirect / c.call.imember) may reach any module-scope global through the unknown
+    # callee, so its footprint conservatively includes EVERY shared rid -- without this, commute()
+    # would wrongly reorder an indirect dispatcher past a global writer. The declared callee TYPE
+    # rides the claim (`callee_sig`); the effect set is the conservative half of the same record.
+    _all_shared = frozenset(rid for rid in lowered.resources if rid >= _SHARED_RID)
+    _dispatches = {name: any(c.op == "c.call.indirect" or c.op.startswith("c.call.imember")
+                             for c in lf.claims)
+                   for name, lf in lowered.functions.items()}
 
     def _folded(name: str, seen: frozenset) -> tuple:
         if name not in _own or name in seen:
             return frozenset(), frozenset()                # external/opaque callee or a recursion guard
         seen = seen | {name}
         reads, writes = set(_own[name][0]), set(_own[name][1])
+        if _dispatches.get(name):
+            reads |= _all_shared
+            writes |= _all_shared
         for callee, _actuals in lowered.functions[name].calls:
             cr, cw = _folded(callee, seen)
             reads |= cr
