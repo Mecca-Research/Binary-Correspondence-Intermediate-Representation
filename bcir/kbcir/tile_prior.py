@@ -198,3 +198,42 @@ def tile_prior_certificate(shapes: list, prior: FrozenTilePrior,
             mism += 1
     return TilePriorCertificate(checked=checked, mismatches=mism,
                                 nodes_exhaustive=ne, nodes_guided=ng)
+
+
+# --- D3 slice 2: the PERSISTED prior table, generation-tied to the calibloop ------------------
+
+PRIOR_KIND = "bcir.tile_prior"
+PRIOR_SCHEMA = 1
+
+
+def save_tile_prior(prior: FrozenTilePrior, *, target_name: str, cal_gen: int) -> str:
+    """Serialize a frozen prior as a self-describing envelope (the 0.4b decision-record
+    pattern), GENERATION-TIED to the calibration table it was trained under: `cal_gen` is
+    the microbench table's generation (`CalibratedProfile.cal_gen`), so a persisted prior
+    names exactly which measured cost model produced its training labels."""
+    import json  # noqa: PLC0415
+    return json.dumps({"kind": PRIOR_KIND, "schema": PRIOR_SCHEMA,
+                       "target": target_name, "cal_gen": int(cal_gen),
+                       "wq": list(prior.wq)}, indent=2, sort_keys=True)
+
+
+def load_tile_prior(text: str, *, expect_target: str, expect_cal_gen: int) -> FrozenTilePrior:
+    """Decode a persisted prior and REFUSE a stale one: a prior trained under another
+    calibration generation (or target) proposes orderings from a cost model that no longer
+    holds -- it must retrain, never silently apply (the calibloop's generation discipline;
+    exact search would still keep the OPTIMUM safe, but a stale prior's search reduction is
+    an unearned claim)."""
+    import json  # noqa: PLC0415
+    d = json.loads(text)
+    if d.get("kind") != PRIOR_KIND:
+        raise ValueError(f"not a {PRIOR_KIND} document (kind={d.get('kind')!r})")
+    if int(d.get("schema", 0)) > PRIOR_SCHEMA:
+        raise ValueError(f"tile-prior schema v{d.get('schema')} is newer than this build's "
+                         f"v{PRIOR_SCHEMA}; upgrade BCIR to load this prior")
+    if d.get("target") != expect_target:
+        raise ValueError(f"tile prior was trained for target {d.get('target')!r}, "
+                         f"not {expect_target!r} -- retrain")
+    if int(d.get("cal_gen", -1)) != int(expect_cal_gen):
+        raise ValueError(f"tile prior is STALE: trained under cal_gen {d.get('cal_gen')}, "
+                         f"the live table is cal_gen {expect_cal_gen} -- retrain")
+    return FrozenTilePrior(wq=tuple(int(v) for v in d["wq"]))
