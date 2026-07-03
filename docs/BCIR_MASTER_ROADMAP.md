@@ -2104,7 +2104,8 @@ In recommended order — each is gated by the generated differential harness + F
   (`run_all --tier {quick,c-runtime,silicon-degrade,thorough}`); and the **hardware-channel plugin
   boundary** (`bcir/channel_plugin.py` — a `channel.json` manifest format so FPGA/NVMe/HBM-PIM
   extensions register without touching the core).
-- **0.3b — freestanding-C23-driver compiler + the law catch-up** (**◑ TAG-READY on the law core**, §5.14):
+- **0.3b — freestanding-C23-driver compiler + the law catch-up** (**✅ TAGGED `v0.3b`** — see
+  [`RELEASE_NOTES_0.3b.md`](RELEASE_NOTES_0.3b.md); §5.14):
   ✅ R19/R20/R21 promoted to first-class verifier laws (generated status reports **R1–R21**); ✅ MLIR
   representation for the law-bearing C semantics the frontend lowers — **§5.14 Phase 2 COMPLETE**
   (volatile/atomic ops, indirect-call effect, pointer extent-provenance, ABI contract); ✅ a **multi-file
