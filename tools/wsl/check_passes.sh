@@ -202,6 +202,9 @@ echo "[passes] bcir.atomic_rmw/atomic_cas op negatives (kind set, integer discip
 echo "[passes] R5 volatile-claim law (§5.14 Phase 2: is_volatile on the claim rail requires an ordered hazard; positive + negative)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_volatile.mlir" \
   && echo "  PASS verify_volatile.mlir" || { echo "  FAIL verify_volatile.mlir"; fail=1; }
+echo "[passes] R12 call-ABI contract (SS5.14 Phase 2 last area: named target matrix + truthful pointer/long sizes; negatives + a legal record)"
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_abi_contract.mlir" \
+  && echo "  PASS verify_abi_contract.mlir" || { echo "  FAIL verify_abi_contract.mlir"; fail=1; }
 echo "[passes] R18 indirect-callee signature (SS5.14 Phase 2: a carried callee_sig must be well-formed; vacuous when absent)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_callee_sig.mlir" \
   && echo "  PASS verify_callee_sig.mlir" || { echo "  FAIL verify_callee_sig.mlir"; fail=1; }

@@ -1942,10 +1942,13 @@ From the C-semantics audit, the eight candidate areas split cleanly under the fi
   `string_literal` / `unknown_extent` for the trusted cases -- stamped by the cfront lowering at the
   `_access_bounds` decision, surfaced by R7's masked-needs-guard diagnostic (that clause is now
   **dual-railed**: it was oracle-only; `verify_bounds_provenance.mlir`, `test_bounds_provenance.py`).
-- **Target ABI / calling convention** → the call ABI is **backend-delegated** (`abi.py` computes
-  sizes/offsets, the emitter materializes the frame). For a verifiable cross-target object path, model it as
-  a `lower_contract`-style **ABI contract op** (R12 already models ISA/packet lowering contracts; extend to
-  the call ABI).
+- ✅ **Target ABI / calling convention** → **LANDED — Phase 2 is COMPLETE**: every compile now records a
+  per-function **`AbiContract`** (target + per-parameter (name, size, align) + the return slot — the layout
+  facts the emitter materialized the frame from) and runs the **R12 call-ABI law** over it (advisory
+  `CompileResult.abi_diagnostics`): the record must agree with the laid-out CTypes AND the target data model
+  (pointer-kind == pointer_size, `long` == long_size; LLP64/ILP32 record their own facts). The MLIR rail
+  carries the same record as **`bcir.abi_contract`** with the matching `-bcir-verify` R12 clause against the
+  normative 5-target matrix (`verify_abi_contract.mlir`, `test_abi_contract.py`).
 
 **Keep frontend-only (these do NOT affect law — do not mirror in MLIR):**
 - **Storage / linkage** → flattened to RID-addressed resources (decoupled from C storage class; a linkage tag
