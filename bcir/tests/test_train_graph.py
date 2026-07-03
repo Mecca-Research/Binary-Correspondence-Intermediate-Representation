@@ -184,3 +184,33 @@ if __name__ == "__main__":
             print(f"FAIL {name}: {e!r}")
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
+
+
+def test_pipelined_run_respects_raw_and_overlaps_the_metrics_tail():
+    """D1 step 5: over the multi-step run module the token DAG keeps the weight-critical
+    path exact -- step i+1's forward starts at or after step i's update (RAW on W) -- while
+    the METRICS tail (reduce) genuinely overlaps the update on another domain."""
+    from bcir.kbcir.train_graph import schedule_train_run
+    spec = TrainStepSpec()
+    cert, sched = schedule_train_run(spec, 4, AVX, COOL)
+    assert cert.admitted, cert
+    for s in range(3):
+        upd = sched.slot_of(s * 10 + 6)
+        fwd_next = sched.slot_of((s + 1) * 10 + 1)
+        red = sched.slot_of(s * 10 + 4)
+        assert fwd_next.start >= upd.finish, (s, fwd_next, upd)     # RAW on W: never violated
+        assert red.start < upd.finish, (s, red, upd)                # the metrics tail overlaps
+        assert red.domain != upd.domain                             # ... on its own domain
+
+
+def test_overlap_win_is_real_and_scales_with_steps():
+    """The certificate's three disciplines order (pipelined <= barriered <= serial), the win
+    is real (measured ~34% makespan reduction, gate at 25%), and it scales linearly with the
+    step count (each step contributes the same loss-tail overlap)."""
+    from bcir.kbcir.train_graph import schedule_train_run
+    spec = TrainStepSpec()
+    c1, _ = schedule_train_run(spec, 1, AVX, COOL)
+    c8, _ = schedule_train_run(spec, 8, AVX, COOL)
+    assert c1.admitted and c8.admitted
+    assert c8.pipelined <= 0.75 * c8.barriered, (c8.pipelined, c8.barriered)
+    assert c8.overlap_win == 8 * c1.overlap_win > 0                 # per-step win, exactly

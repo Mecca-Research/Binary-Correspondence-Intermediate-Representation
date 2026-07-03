@@ -137,16 +137,33 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[reduce] minimal witness: {len(red.phases)} phase(s), {nclaims} claim(s)")
             return 0
         if args.replay:
-            with open(args.replay, encoding="utf-8") as f:
-                record = DecisionRecord.from_json(f.read())
+            # The 0.4b EXTERNAL replay contract (stable across builds; a third party with any
+            # BCIR whose schema version >= the record's can re-check it). Exit codes:
+            #   0 -- reproduced bit-for-bit;
+            #   3 -- decoded but DIVERGED (the mismatches are listed);
+            #   4 -- the record cannot be checked HERE: undecodable / a newer schema, or it
+            #        names a different module/target than this invocation (a usage error,
+            #        never reported as a divergence).
+            # One machine-readable `replay-verdict:` line always prints first.
+            try:
+                with open(args.replay, encoding="utf-8") as f:
+                    record = DecisionRecord.from_json(f.read())
+            except (OSError, ValueError, KeyError) as e:
+                print(f"replay-verdict: undecodable ({e})")
+                return 4
+            if record.module_name != module.name or record.target not in (h.name, args.target):
+                print(f"replay-verdict: undecodable (the record is for module "
+                      f"{record.module_name!r} on {record.target!r}; this invocation is "
+                      f"{module.name!r} on {h.name!r})")
+                return 4
             rr = replay(record, module, h, theta, policy, joint=args.bundle)
             if rr.reproduced:
-                print(f"[replay] reproduced bit-for-bit (digest {record.digest})")
-            else:
-                print(f"[replay] DIVERGED ({len(rr.mismatches)}):")
-                for m in rr.mismatches:
-                    print(f"  {m}")
-            return 0 if rr.reproduced else 1
+                print(f"replay-verdict: reproduced digest={record.digest}")
+                return 0
+            print(f"replay-verdict: diverged mismatches={len(rr.mismatches)}")
+            for m in rr.mismatches:
+                print(f"  {m}")
+            return 3
         record = explain(module, h, theta, policy, target_name=h.name, joint=args.bundle)
         if args.explain or args.bundle:
             print(explain_text(record))

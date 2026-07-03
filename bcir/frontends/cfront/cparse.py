@@ -248,6 +248,7 @@ class _Parser:
         # global. `_attributes()` returns {} when the next token is not an attribute, so this is a no-op
         # before a typedef / enum / struct / plain type -- NON-DISTURBANCE for every existing item.
         lead = self._attributes()
+        self.storage = set()                               # per-item storage-class record (see _type_spec)
         if self.at("IDENT", "typedef"):                        # a type alias (resolved at parse time)
             self._typedef(unit)
             return
@@ -279,7 +280,7 @@ class _Parser:
             if fn is not None:                                 # None == a prototype (recorded in protos)
                 unit.funcs.append(fn)
         else:                                                  # a file-scope global variable
-            unit.globals.append(self._global(tref, name))
+            unit.globals.append(self._global(tref, name, extern="extern" in self.storage))
 
     def _typedef(self, unit: cast.Unit) -> None:
         """`typedef <type> <name>;` -- register `name` -> the aliased type (resolved at parse time,
@@ -391,7 +392,7 @@ class _Parser:
             return ops.get(node.op, 0)
         raise CParseError("unsupported constant enum initializer")
 
-    def _global(self, tref: cast.TypeRef, name: str) -> cast.Global:
+    def _global(self, tref: cast.TypeRef, name: str, extern: bool = False) -> cast.Global:
         init: tuple = ()
         if self.at("OP", "="):
             self.nxt()
@@ -426,7 +427,7 @@ class _Parser:
                                           f"function (not a constant expression)",
                                           pos=self.peek().pos)
         self.eat("PUNCT", ";")
-        return cast.Global(type=tref, name=name, init=init)
+        return cast.Global(type=tref, name=name, init=init, extern_decl=extern)
 
     def _aggregate_body(self, kind: str, tag: str, attrs: dict) -> cast.Aggregate:
         self.eat("PUNCT", "{")
@@ -529,7 +530,8 @@ class _Parser:
                 quals.append(w)
                 self.nxt()
             elif w in ("static", "extern", "_Thread_local", "thread_local", "inline"):
-                self.nxt()                                # storage/inline ignored
+                self.storage.add(w)                       # recorded (linkable emit reads `extern`);
+                self.nxt()                                # otherwise storage/inline ignored
             elif w in ("struct", "union"):
                 aggregate = w
                 self.nxt()

@@ -38,6 +38,10 @@ Options (a cc-compatible subset):
     --emit-link-flags  print just the linker flags this unit's external-call edges need (B1), one
                     space-separated line (e.g. `-lm`); empty for a pure-integer unit. For build-system
                     consumption. Mirrors bcir-cc --emit-link-flags byte-for-byte (dual-rail parity).
+    --linkable      emit the LINKABLE artifact (Phase 3): functions with EXTERNAL linkage under
+                    their real names + file-scope global definitions/declarations, so two emitted
+                    TUs link to each other (and to any host object). Opt-in; the default --emit
+                    stays static/bcir_-prefixed (self-contained beside the source).
 """
 from __future__ import annotations
 
@@ -129,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     files: list[str] = []
     std = "c23"
     pp_only = show_explain = selfcheck = syntax_only = emit_json = fallback = False
-    emit_link_flags = dep_only = project_verdict = False
+    emit_link_flags = dep_only = project_verdict = linkable = False
     dep_file: str | None = None
     dep_target: str | None = None
     compdb: str | None = None
@@ -146,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
             selfcheck = True
         elif a == "--emit-link-flags":
             emit_link_flags = True
+        elif a == "--linkable":
+            linkable = True
         elif a == "--project":
             project_verdict = True
         elif a == "-fsyntax-only":
@@ -338,6 +344,19 @@ def main(argv: list[str] | None = None) -> int:
         if selfcheck:
             out.append(emit_selfcheck(r))
             outcomes.append("clean" if r.is_clean else "dirty")
+            continue
+        if linkable:                                 # Phase 3: the externally-linkable artifact
+            from .emit import emit_linkable  # noqa: PLC0415
+            try:
+                out.append(emit_linkable(r.lowered, r.emitted))
+            except ValueError as e:
+                sys.stderr.write(f"{path}: linkable emit error: {e}\n")
+                outcomes.append("dirty")
+                rc = 1
+                continue
+            outcomes.append("clean" if r.is_clean else "dirty")
+            if not r.is_clean:
+                rc = 1
             continue
         out.append(f"=== {path} ===")
         out.append(f"functions: {list(r.lowered.functions)}")

@@ -1975,14 +1975,19 @@ R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted
   `--project`, automatic for multi-file runs). The `bcir-cc` C twin is byte/exit-code identical to
   the oracle (a hard error 1 dominates a fallback 2), gated in `check_runtime.sh` (#project);
   compile-database (`-p`) / `-M` dependency rules stay oracle-side (build-system glue, not law).
-  ◑ **Linking (first slice, oracle)** — file-scope PROTOTYPES parse; a prototyped-but-undefined
-  callee is a TYPED cross-TU edge (`c.call.tu:`, R18-opaque like libm, verbatim emit + `extern`
-  declaration, NO -l derived); a same-unit prototype is a forward declaration (definition wins);
-  and the two-TU binary is real — the bcir-EMITTED caller object host-links against the callee TU
-  with the derived `--emit-link-flags` and behaves exactly like the reference build
-  (`test_cfront_link.py`). *Next:* the C-twin port (prototypes in `bcir_cfront.c`) and a linkable
-  emission mode (non-static exported functions + emitted global definitions) so two EMITTED
-  objects link to each other.
+  ✅ **Linking — DUAL-RAIL + the linkable artifact.** File-scope PROTOTYPES parse on BOTH rails
+  (`bcir_cfront.c` ports the oracle: the prototype table + rendered `extern` prelude + the
+  single-pass definition-wins rewrite); a prototyped-but-undefined callee is a TYPED cross-TU edge
+  (`c.call.tu:`, R18-opaque like libm, verbatim emit, NO -l derived); and the opt-in **linkable
+  emission mode** (`--linkable`, `emit_linkable`) re-renders the unit with EXTERNAL linkage —
+  non-static real-name definitions, unprefixed in-unit calls, file-scope global
+  definitions/declarations, derived `#include`s (+ the quarantine header when a masked access
+  needs it) — so **two EMITTED TUs link to each other** with no original source in the image,
+  behavior-equivalent to the reference build (`test_cfront_link.py`; `check_runtime.sh` #link).
+  *Remaining (named):* source-`static` honoring and non-integer-constant global initializers
+  (the C-twin linkable emit has since LANDED too — `bcir-cc --linkable`, functions-only first
+  slice, gated emitted-to-emitted in `check_runtime.sh` #link; global definitions stay
+  oracle-side).
 - ✅ **Compile-database support** — `bcir-cfront -p` consumes `compile_commands.json` (a directory or
   the file), compiling every entry with its own `-I`/`-D`/`-U`/`-std`/`--target` flags (both the
   `arguments` and `command` entry forms; entry `-I` resolves against the entry directory).
@@ -2102,8 +2107,12 @@ In recommended order — each is gated by the generated differential harness + F
   initial + C fuzzing, and a generated-status + broken-link + retired-path doc-governance CI
   gate (`tools/docs/`, see [`docs/STATUS.md`](STATUS.md)).
 - **0.3 — measured adaptive compiler** (◑): real-hardware CT4 evidence (§5.4) + durable
-  telemetry (schema registry, backpressure, a live broker in CI behind a fake producer)
-  + compile-time/peak-memory regression budgets. *Landed:* the non-flaky perf-budget gate
+  telemetry + compile-time/peak-memory regression budgets. *Durable telemetry LANDED:*
+  the schema-tagged `DurableLog` (a self-describing JSONL header — kind + schema version +
+  the documented field list; unknown kinds / newer schemas / lying headers refuse loudly)
+  behind the LIVE `Broker` with a fake producer in the suite, ring **backpressure counted,
+  never silent** (`test_telemetry.py`). What keeps 0.3 open is real-hardware CT4 evidence
+  (rig-gated). *Landed:* the non-flaky perf-budget gate
   (`bcir.perf_budget` + `tools/perf/check_budgets.py`) now carries the five **Clang-comparison
   budgets** (dense streaming / dense L1 *match bands*; gather / reduction / strided *win floors*) —
   strict on correctness + measurement validity, perf floors/bands bare-metal-only, the documented
@@ -2124,14 +2133,19 @@ In recommended order — each is gated by the generated differential harness + F
   deliverable.
 - **0.4a — proof-carrying (mechanism)** (✅): replay records + per-claim certificates +
   `bcir.run --explain`/`--replay`/`--reduce` are implemented and tested (§5.3.2).
-- **0.4b — proof-carrying (contract)** (◑): a *stable* certificate schema (versioned, with a
+- **0.4b — proof-carrying (contract)** (✅): a *stable* certificate schema (versioned, with a
   decode/upgrade path), an external replay-CLI contract (a third party can re-check a record
   without the producing build), and certificate upgrade tests across schema revisions.
   *Landed:* the schema half — every `DecisionRecord` serializes as a self-describing envelope
   (`kind: bcir.decision_record`, `schema: 2`); `from_json` decodes ANY known revision (a bare
   pre-envelope v1 document upgrades through the `_UPGRADES` chain and still replays bit-for-bit),
   and an unknown NEWER schema or wrong kind fails loudly — a certificate is never silently
-  misread (`test_proof.py` upgrade suite). *Remaining:* the external replay-CLI contract.
+  misread (`test_proof.py` upgrade suite). *Landed too:* the **external replay-CLI contract** —
+  `bcir.run <program> --replay FILE` re-checks any record whose schema ≤ the build's, with a
+  STABLE machine contract: one `replay-verdict:` line + exit 0 (reproduced bit-for-bit) /
+  3 (decoded but diverged, mismatches listed) / 4 (undecodable, newer schema, or a record
+  naming a different module/target — a usage error, never a bogus divergence). Driven as a
+  real subprocess in the suite. **0.4b is COMPLETE.**
 - **1.0** (☐): stable language/ABI policy; no known Python↔C++ divergence (generated +
   fuzzed); ≥2 real hardware targets with measured evidence; R1–R21 dual-rail symmetry
   (✅ already holds — §5.1.1 + §5.14 Phase 1); one external frontend; published benchmark

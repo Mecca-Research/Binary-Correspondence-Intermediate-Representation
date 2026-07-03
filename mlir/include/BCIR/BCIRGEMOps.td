@@ -426,4 +426,55 @@ def BCIR_GEMLaneSegmentOp : BCIR_Op<"gem.lane_segment", [Symbol]> {
   let hasVerifier = 1;
 }
 
+def BCIR_GEMEmbeddingOp : BCIR_Op<"gem.embedding", [Symbol]> {
+  let summary = "Planned GEM embedding lookup: a pure row gather from a vocab x dim table (open-weight rung 5)";
+  // The law-rail record of the rung-3 decoder's embedding stage (bcir/kbcir/unsupervised.py::
+  // embedding_lookup -- EXACT, a row gather, no arithmetic, no transcendental). The op carries the
+  // table shape (vocab_size x dim), the gathered id count (n_ids -> the output is n_ids x dim), and
+  // the dtype. hasVerifier enforces the op-level shape law (positive extents; a known dtype); the
+  // R22/R23 SEAM to an adjacent consumer (gem.rmsnorm) lives in -bcir-verify, exactly the D2
+  // adjacency discipline. Oracle twin: frontends/models/decode.py (embedding_lookup).
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    I64Attr:$vocab_size, I64Attr:$dim, I64Attr:$n_ids,
+    StrAttr:$dtype);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
+def BCIR_GEMRMSNormOp : BCIR_Op<"gem.rmsnorm", [Symbol]> {
+  let summary = "Planned GEM RMSNorm: the Gemma/Llama-family per-row normalizer (open-weight rung 5)";
+  // The law-rail record of rmsnorm_reference (kbcir/transformer_grads.py): y = x / rms(x) * gamma per
+  // row, rms = sqrt(mean(x^2) + eps) -- no mean subtraction, no beta. The sqrt rides the trusted libm
+  // edge (the quarantine posture of every oracle reference), so the dtype is f32 -- never i32
+  // (mirrors the gem.attention softmax rule). rows x dim in, rows x dim out; gamma has dim entries
+  // (gamma_len carried for the verifier to cross-check). R22/R23 seams to an adjacent gem.embedding
+  // producer live in -bcir-verify. Oracle twin: rmsnorm_reference.
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    I64Attr:$rows, I64Attr:$dim, I64Attr:$gamma_len,
+    StrAttr:$dtype);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
+def BCIR_GEMRopeOp : BCIR_Op<"gem.rope", [Symbol]> {
+  let summary = "Planned GEM rotary position embedding: norm-preserving channel-pair rotation (open-weight rung 5)";
+  // The law-rail record of rope_reference (kbcir/transformer_grads.py): row r has each channel pair
+  // (2k, 2k+1) rotated by theta_k = (pos_offset + r) * base^(-2k/dim). The LOAD-BEARING op law:
+  // `dim` must be EVEN (the rotation pairs channels; an odd dim has no legal pairing) -- the same
+  // constraint DecoderSpec validates oracle-side. base must be positive; position 0 is the identity;
+  // every rotation preserves the pair norm (orthogonality -- why rope_grad is the inverse rotation).
+  // cos/sin ride the trusted libm edge -> dtype f32. The R22 seam to an adjacent gem.attention
+  // consumer (d_k == rope dim) lives in -bcir-verify. Oracle twin: rope_reference.
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    I64Attr:$rows, I64Attr:$dim,
+    DefaultValuedAttr<I64Attr, "10000">:$base,
+    DefaultValuedAttr<I64Attr, "0">:$pos_offset,
+    StrAttr:$dtype);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
 #endif // BCIR_GEM_OPS

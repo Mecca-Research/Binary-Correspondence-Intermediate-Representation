@@ -237,3 +237,39 @@ def test_cerf_link_flag_rule():
     assert library_for_callee("expf") == "-lm"                     # libm still maps (the erfcx fallback's twin)
     assert library_for_callee("free") == NO_FLAG                   # libc-implicit, known (not unknown)
     assert library_for_callee("totally_unknown_fn") is None        # unknown-callee policy unchanged
+
+
+def test_h2_redteam_the_naive_reference_genuinely_dies_out_of_range():
+    """The H2 finding, pinned as fact: the definitional exp(x^2)*erfc(x) form RAISES
+    (OverflowError) for |x| > ~26.6 on BOTH signs -- so every consumer that leaves the
+    |x| <= 3 comfort zone needs the full-range reference, not the naive one."""
+    for x in (27.0, -27.0, 100.0):
+        try:
+            erfcx_reference([x])
+            raise AssertionError(f"naive erfcx must overflow at x={x}")
+        except OverflowError:
+            pass
+    assert erfcx_reference([26.0, -26.0])[0] > 0.0           # ... and -26/+26 still work
+
+
+def test_h2_redteam_full_range_reference_holds_the_whole_line():
+    """The closure: erfcx_reference_full agrees with the naive form to <=1e-10 relative
+    across the overlap window (8..25 -- past the old |x|<=3 comfort zone), stays finite,
+    positive, strictly decreasing and ~1/(x*sqrt(pi)) out to x=1e6 where naive dies, and
+    returns the correctly-rounded inf only where the true VALUE exceeds double range."""
+    import math
+    from bcir.kbcir.cerf_kernels import erfcx_reference_full
+    window = [8.0, 10.0, 12.0, 16.0, 20.0, 25.0]
+    full = erfcx_reference_full(window)
+    naive = erfcx_reference(window)
+    for f, nv in zip(full, naive):
+        assert abs(f - nv) <= 1e-10 * nv, (f, nv)
+    tail = erfcx_reference_full([27.0, 30.0, 100.0, 1e3, 1e6])
+    assert all(t > 0.0 and math.isfinite(t) for t in tail)
+    assert all(a > b for a, b in zip(tail, tail[1:]))        # strictly decreasing
+    for x, t in zip([27.0, 30.0, 100.0, 1e3, 1e6], tail):
+        assert abs(t - 1.0 / (x * math.sqrt(math.pi))) <= 0.01 * t, (x, t)
+    neg = erfcx_reference_full([-20.0, -26.0, -26.9, -100.0])
+    assert abs(neg[0] - erfcx_reference([-20.0])[0]) <= 1e-12 * neg[0]
+    assert math.isfinite(neg[1]) and neg[1] > 1e290          # the last finite sliver
+    assert neg[2] == math.inf and neg[3] == math.inf         # the VALUE exceeds double range

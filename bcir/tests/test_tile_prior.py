@@ -69,6 +69,36 @@ def test_the_frozen_table_is_deterministic_and_integer():
     assert cert.admitted and cert.mismatches == 0
 
 
+def test_persisted_prior_round_trips_and_refuses_staleness():
+    """D3 slice 2: the frozen table persists as a self-describing envelope tied to the
+    calibration generation; a stale cal_gen / wrong target / newer schema refuses LOUDLY
+    (a stale prior's search reduction is an unearned claim); the round-tripped prior keeps
+    the certificate admitted."""
+    import json
+    from bcir.kbcir.tile_prior import load_tile_prior, save_tile_prior
+    pri = _frozen()
+    text = save_tile_prior(pri, target_name=AVX.name, cal_gen=3)
+    d = json.loads(text)
+    assert d["kind"] == "bcir.tile_prior" and d["schema"] == 1 and d["cal_gen"] == 3
+    back = load_tile_prior(text, expect_target=AVX.name, expect_cal_gen=3)
+    assert back == pri
+    cert = tile_prior_certificate(HELD_OUT[:3], back, AVX)
+    assert cert.admitted and cert.mismatches == 0
+    for kwargs, msg in ((dict(expect_target=AVX.name, expect_cal_gen=4), "STALE"),
+                        (dict(expect_target="other-host", expect_cal_gen=3), "retrain")):
+        try:
+            load_tile_prior(text, **kwargs)
+            raise AssertionError(f"must refuse: {msg}")
+        except ValueError as e:
+            assert msg in str(e)
+    newer = json.dumps({**d, "schema": 99})
+    try:
+        load_tile_prior(newer, expect_target=AVX.name, expect_cal_gen=3)
+        raise AssertionError("a newer schema must be refused")
+    except ValueError as e:
+        assert "newer" in str(e)
+
+
 if __name__ == "__main__":
     import sys
 

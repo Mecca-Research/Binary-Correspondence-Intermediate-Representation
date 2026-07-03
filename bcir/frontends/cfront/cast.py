@@ -343,6 +343,8 @@ class Global:
     type: TypeRef
     name: str
     init: tuple = ()                # initializer element expressions (for an array/scalar)
+    extern_decl: bool = False       # `extern T g;` -- a DECLARATION of another TU's definition
+                                    #   (the linkable emit prints `extern ...;`, never a definition)
 
 
 @dataclass

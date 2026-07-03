@@ -234,3 +234,67 @@ def train_planned(spec: TrainStepSpec, X: list, y: list, w0: list, *, epochs: in
                        ("map_gen", pack.map_gen), ("data_gen", pack.data_gen))))
     return PlannedTrainRun(weights=list(st["w"]), losses=losses, manifests=tuple(manifests),
                            pack=pack, exec_orders=exec_orders)
+
+
+# --- D1 step 5: overlap/EFT scheduling of the stage streams (software pipelining) --------------
+
+from ..gem.schedule import GemSchedule, durations_from, execute_tokens, schedule_eft  # noqa: E402
+
+
+def train_run_module(spec: TrainStepSpec, steps: int) -> Module:
+    """The MULTI-STEP training run as ONE module: steps x six stage claims (fresh ids/phases
+    per step) over the SAME resources, so the token DAG (`gem.async_plan`) carries the TRUE
+    dependencies -- step i+1's forward awaits step i's weight update (RAW on W), while step
+    i's METRICS TAIL (per-example loss + reduce) sits off the weight-critical path and may
+    overlap step i's backward and the next step's forward. Software pipelining falls out of
+    the dependency structure; no scheduler special case."""
+    if steps < 1:
+        raise ValueError(f"train_run_module needs steps >= 1; got {steps}")
+    m = Module(name=f"train_run_{steps}x_{spec.activation}_{spec.loss}_{spec.optimizer}")
+    for r in _resources(spec).values():
+        m.add_resource(r)
+    prev: tuple[int, ...] = ()
+    pid = 0
+    for s in range(steps):
+        for stage in _step_claims(spec, base_id=s * 10):
+            m.add_phase(Phase(phase_id=pid, deps=prev, claims=list(stage)))
+            prev = (pid,)
+            pid += 1
+    return m
+
+
+@dataclass(frozen=True)
+class PipelineCertificate:
+    """The D1 step-5 witness: the priced makespans of the SAME planned run under the three
+    disciplines -- serial (no overlap: the sum of every stage's duration), phase-barriered
+    EFT (`schedule_eft`), and token-DAG pipelined (`execute_tokens`). The pipelined makespan
+    can only improve on the barriers (its degenerate case), and the barriers on serial."""
+
+    steps: int
+    serial: int
+    barriered: int
+    pipelined: int
+
+    @property
+    def overlap_win(self) -> int:
+        return self.barriered - self.pipelined         # >= 0: what the token DAG buys
+
+    @property
+    def admitted(self) -> bool:
+        return 0 < self.pipelined <= self.barriered <= self.serial
+
+
+def schedule_train_run(spec: TrainStepSpec, steps: int, h: HProfile, theta: Theta,
+                       policy: Policy = PERF) -> tuple[PipelineCertificate, GemSchedule]:
+    """Price + place a multi-step training run: optimize the run module (per-claim step
+    costs -> durations), schedule it phase-barriered AND token-pipelined, and certify the
+    overlap win. Returns (certificate, the pipelined schedule)."""
+    m = train_run_module(spec, steps)
+    result = optimize(m, h, theta, policy)
+    dur = durations_from(result)
+    serial = sum(dur.values())
+    barriered = schedule_eft(m, dur, target=h)
+    pipelined = execute_tokens(m, dur, target=h)
+    cert = PipelineCertificate(steps=steps, serial=serial, barriered=barriered.makespan,
+                               pipelined=pipelined.makespan)
+    return cert, pipelined

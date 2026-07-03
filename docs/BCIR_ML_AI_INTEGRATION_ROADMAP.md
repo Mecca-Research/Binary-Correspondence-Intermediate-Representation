@@ -447,8 +447,13 @@ drop-in loading of a modern open-weight chat model.
    tighter than Q4), and a greedy flip is *recorded, never hidden* (`ids_match`). Real-weight
    ingestion (a released tiny checkpoint through manifest → tokenizer → decode → quantize)
    is the remaining half, gated on rung 5's law rail for the LLM ops.
-5. **C/MLIR law rail** — ODS ops + verification for the LLM-specific ops; oracle↔law parity as
-   always (the prototype-then-port discipline, §3).
+5. ◑ **C/MLIR law rail — FIRST SLICE LANDED** (`verify_llm_ops.mlir`): ODS ops for the rung-3
+   decoder's LLM-specific stages — `bcir.gem.embedding` / `bcir.gem.rmsnorm` / `bcir.gem.rope` —
+   with op-level laws (positive extents; `gamma_len == dim`; RoPE's **even-dim** pairing law; the
+   f32 libm-edge quarantine rule on rmsnorm/rope) and the D2 adjacency seams in `-bcir-verify`:
+   embedding→rmsnorm extent + dtype handover (R22/R23), rope→attention head-width `d_k == dim` +
+   dtype (R22/R23) — exactly the chain `decoder_layer_reference` composes, with negatives.
+   *Landed too:* the **C-twin decode kernels** (`runtime/c/bcir_decode.c` — rmsnorm/rope/embedding, kernel-for-kernel with the oracle references, differential-gated to ≤1e-12 in `test_decode_c_kernels.py`; the embedding twin refuses an out-of-range id exactly where the oracle raises). *Remaining:* GQA/KV-cache ops.
 6. **Serving endpoint** — streaming decode, schema-constrained tool-call output, telemetry frames,
    replay manifests.
 7. **Scale-out** — continuous batching, paged KV, multi-device placement, expert/tensor
@@ -547,9 +552,14 @@ The audit finds five deepening moves, all quarantine-compatible:
   differential gate: per-epoch losses + trained weights == `train_planned` to ≤1e-12, the
   first step's dispatch order is the executor's [1..6], and the C curve passes the SAME shared
   convergence gate as the oracle run — **training as a C artifact, no Python in the loop**.
-  *Next:* overlap/EFT scheduling of the stage streams. The autodiff closure proof is the
-  enabler: the gradient DAG has a fixed vocabulary, so it hydrates to a StreamPack like any
-  program.
+  ✅ **Step 5 LANDED**: overlap/EFT scheduling of the stage streams (`train_run_module` +
+  `schedule_train_run` + `PipelineCertificate`) — the multi-step run as ONE module whose token
+  DAG carries the true dependencies, so step i's METRICS tail (loss + reduce) overlaps its
+  backward/update and the next step's forward on another domain while the weight-critical RAW
+  chain stays exact; certified three ways (pipelined ≤ barriered ≤ serial; measured ~34%
+  makespan reduction, the win exactly linear in steps). *Next:* mini-batch streams within a
+  step. The autodiff closure proof is the enabler: the gradient DAG has a fixed vocabulary, so
+  it hydrates to a StreamPack like any program.
 - ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/
   `check_classical`-style checkers were op-level and advisory; shape consistency and dtype
   compatibility are now numbered laws via the R19–R21 six-artifact pattern: **R22** checks the
