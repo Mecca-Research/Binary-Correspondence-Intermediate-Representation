@@ -1979,15 +1979,20 @@ R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted
   (`bcir_cfront.c` ports the oracle: the prototype table + rendered `extern` prelude + the
   single-pass definition-wins rewrite); a prototyped-but-undefined callee is a TYPED cross-TU edge
   (`c.call.tu:`, R18-opaque like libm, verbatim emit, NO -l derived); and the opt-in **linkable
-  emission mode** (`--linkable`, `emit_linkable`) re-renders the unit with EXTERNAL linkage —
-  non-static real-name definitions, unprefixed in-unit calls, file-scope global
-  definitions/declarations, derived `#include`s (+ the quarantine header when a masked access
-  needs it) — so **two EMITTED TUs link to each other** with no original source in the image,
-  behavior-equivalent to the reference build (`test_cfront_link.py`; `check_runtime.sh` #link).
-  *Remaining (named):* source-`static` honoring and non-integer-constant global initializers
-  (the C-twin linkable emit has since LANDED too — `bcir-cc --linkable`, functions-only first
-  slice, gated emitted-to-emitted in `check_runtime.sh` #link; global definitions stay
-  oracle-side).
+  emission mode** (`--linkable`, `emit_linkable`) re-renders the unit under its REAL names with
+  its SOURCE linkage — **source-`static` functions and globals keep `static`** (internal linkage
+  honored on BOTH rails: two TUs may each carry a same-named static helper and still link —
+  `check_runtime.sh` #link's source-static sub-case), everything else exports; unprefixed
+  in-unit calls, file-scope global definitions/declarations with **constant initializers
+  rendered past the integer slice** (signed integers, float spellings suffix-kept, and
+  string-initialized char arrays sized from the LITERAL — which also fixed the latent
+  tuple-length mis-sizing of `char s[] = "..."` globals), derived `#include`s (+ the quarantine
+  header when a masked access needs it) — so **two EMITTED TUs link to each other** with no
+  original source in the image, behavior-equivalent to the reference build
+  (`test_cfront_link.py`; `check_runtime.sh` #link). *Remaining (named):* address-constant
+  (`&x`) and constant-arithmetic global initializers (need the §5.9 constant-expression
+  evaluator; the linkable emit still refuses them LOUDLY); C-twin file-scope global rendering
+  (global definitions stay oracle-side by design).
 - ✅ **Compile-database support** — `bcir-cfront -p` consumes `compile_commands.json` (a directory or
   the file), compiling every entry with its own `-I`/`-D`/`-U`/`-std`/`--target` flags (both the
   `arguments` and `command` entry forms; entry `-I` resolves against the entry directory).

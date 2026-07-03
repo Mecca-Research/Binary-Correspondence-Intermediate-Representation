@@ -325,6 +325,9 @@ class Func:
                                     #   on the definition. The hint is value-neutral (no effect on computed
                                     #   results), so the emit DROPS it; recorded here only as a fusion-
                                     #   legality signal (default False == every existing function, untouched).
+    static_fn: bool = False         # source `static` on the definition (internal linkage). The default
+                                    #   emit is static regardless; the LINKABLE emit keeps `static` only
+                                    #   when this is set (source-static honoring).
 
 
 @dataclass(frozen=True)
@@ -345,6 +348,8 @@ class Global:
     init: tuple = ()                # initializer element expressions (for an array/scalar)
     extern_decl: bool = False       # `extern T g;` -- a DECLARATION of another TU's definition
                                     #   (the linkable emit prints `extern ...;`, never a definition)
+    static_storage: bool = False    # source `static` (internal linkage) -- the linkable emit keeps
+                                    #   the definition file-local instead of exporting it
 
 
 @dataclass

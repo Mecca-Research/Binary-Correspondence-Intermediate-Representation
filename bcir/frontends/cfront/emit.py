@@ -135,12 +135,14 @@ def _funcptr_decl(ct: CType, name: str) -> str:
 def emit_linkable(lowered, emitted: dict) -> str:
     """The LINKABLE artifact (Phase 3 linking): the unit's emitted functions re-rendered with
     EXTERNAL linkage -- definitions non-static under their REAL names, in-unit calls unprefixed
-    -- plus the unit's file-scope globals (a definition with its integer-constant initializer;
-    `extern T g;` stays a declaration), so two emitted TUs link TO EACH OTHER (and to any host
-    object). The default emit stays `static bcir_`-prefixed (self-contained beside the source);
-    this mode is opt-in (`--linkable`). First slice: every function exports (source `static` is
-    not yet honored) and only integer-constant global initializers render -- a non-constant-
-    foldable initializer raises rather than mislowers."""
+    -- plus the unit's file-scope globals (a definition with its constant initializer: integers,
+    signed integers, float and string spellings; `extern T g;` stays a declaration), so two
+    emitted TUs link TO EACH OTHER (and to any host object). SOURCE LINKAGE IS HONORED: a
+    source-`static` function or global keeps `static` (internal linkage, real name -- two TUs
+    may each carry a same-named static helper); everything else exports. The default emit stays
+    `static bcir_`-prefixed (self-contained beside the source); this mode is opt-in
+    (`--linkable`). A non-renderable initializer (&x, arithmetic, sizeof) raises rather than
+    mislowers."""
     names = list(lowered.functions)
     parts: list[str] = ["#include <stdint.h>"]            # the emitted temps are int32_t/uint32_t/...
     if any("BCIR_CHK" in emitted[n] for n in names):      # a masked (bounds-promoted) access references
@@ -156,25 +158,31 @@ def emit_linkable(lowered, emitted: dict) -> str:
     if callees - {"malloc", "calloc", "realloc", "free"} and any(
             op.startswith(("c.call.libm:", "c.call.libm.void:")) for op in ops):
         parts.append("#include <math.h>")                 # the remaining libm edges
-    for gname, ct, vals, is_extern in lowered.globals_decl:
+    for gname, ct, vals, is_extern, is_static in lowered.globals_decl:
         if is_extern:
             parts.append(f"extern {_cname(ct.of) if ct.kind == 'array' else _cname(ct)} {gname}"
                          + (f"[{ct.count}];" if ct.kind == "array" else ";"))
             continue
         if vals is None:
-            raise ValueError(f"linkable emit: global {gname!r} has a non-integer-constant "
-                             f"initializer (unsupported in the first slice)")
-        if ct.kind == "array":
-            parts.append(f"{_cname(ct.of)} {gname}[{ct.count or len(vals)}] = "
-                         + "{" + ", ".join(str(v) for v in vals) + "};")
+            raise ValueError(f"linkable emit: global {gname!r} has a non-renderable constant "
+                             f"initializer (unsupported in this slice)")
+        kw = "static " if is_static else ""                       # source `static` stays file-local
+        if ct.kind == "array" and len(vals) == 1 and vals[0].startswith('"'):
+            parts.append(f'{kw}{_cname(ct.of)} {gname}[{ct.count}] = {vals[0]};')   # string init
+        elif ct.kind == "array":
+            parts.append(f"{kw}{_cname(ct.of)} {gname}[{ct.count or len(vals)}] = "
+                         + "{" + ", ".join(vals) + "};")
         elif vals:
-            parts.append(f"{_cname(ct)} {gname} = {vals[0]};")
+            parts.append(f"{kw}{_cname(ct)} {gname} = {vals[0]};")
         else:
-            parts.append(f"{_cname(ct)} {gname};")                # tentative definition (zero-init)
+            parts.append(f"{kw}{_cname(ct)} {gname};")            # tentative definition (zero-init)
     for name in names:
         text = emitted[name]
         for fn in names:                                          # unprefix every in-unit call site
             text = text.replace(f"bcir_{fn}(", f"{fn}(")
+        if lowered.functions[name].static_fn:                     # source `static` honored: keep the
+            parts.append(text)                                    # definition's internal linkage
+            continue
         lines = [ln[len("static "):] if ln.startswith("static ") else ln   # the definition line is the
                  for ln in text.splitlines()]                              # only UNINDENTED `static `
         parts.append("\n".join(lines))

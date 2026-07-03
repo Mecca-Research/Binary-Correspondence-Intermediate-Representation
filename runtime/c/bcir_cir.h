@@ -156,6 +156,9 @@ typedef struct bcir_func {
   uint8_t  reproducible;      /* a C23 `[[reproducible]]`/`[[unsequenced]]` hint is on the definition --
                                * a fusion-legality signal. The hint is value-neutral, so the emit drops it
                                * (it is never re-spelled); recorded only for the dual-rail repro= summary. */
+  uint8_t  static_fn;         /* source `static` on the definition (internal linkage). The default emit
+                               * is static regardless; --linkable keeps `static` only when this is set
+                               * (source-static honoring, the oracle's LoweredFunc.static_fn twin). */
   uint32_t return_rid; uint8_t has_return;
   char (*calls)[BCIR_CIR_NAME]; int n_calls, cap_calls;   /* callee names (R18 call graph) */
   bcir_static *statics; int n_statics, cap_statics;       /* static locals */
