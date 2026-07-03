@@ -516,10 +516,15 @@ The audit finds five deepening moves, all quarantine-compatible:
   six numeric stage kernels per step — one executed step matches the closed-form logistic
   reference to 1e-12, the run converges under the shared gate, and every epoch commits a
   replayable ProvenanceManifest (epoch + pack generations as artifact tags; digests distinct,
-  `diff` == artifacts, `replay` exact). *Next:* the binary StreamPack rail (encode the pack and
-  execute via `runtime/c/bcir_exec`) + overlap/EFT scheduling of the stage streams. The autodiff
-  closure proof is the enabler: the gradient DAG has a fixed vocabulary, so it hydrates to a
-  StreamPack like any program.
+  `diff` == artifacts, `replay` exact). ✅ **Step 3 LANDED**: the binary StreamPack rail
+  (`test_train_pack_exec.py`) — the hydrated train-step pack encodes to the binary ABI
+  (`bcir.abi.encode`) and executes through the C executor (`runtime/c/bcir_exec.c`) with the
+  oracle's exact dispatch order / phase order / per-phase telemetry, and the C order equals the
+  claim order every executed step of a real convergent `train_planned` run used — one step of
+  training is a no-Python hot artifact. *Next:* overlap/EFT scheduling of the stage streams +
+  per-claim C stage kernels (the numeric twins) behind `bcir_exec`'s kernel callback. The
+  autodiff closure proof is the enabler: the gradient DAG has a fixed vocabulary, so it
+  hydrates to a StreamPack like any program.
 - ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/
   `check_classical`-style checkers were op-level and advisory; shape consistency and dtype
   compatibility are now numbered laws via the R19–R21 six-artifact pattern: **R22** checks the
