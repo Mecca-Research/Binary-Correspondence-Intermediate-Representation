@@ -424,9 +424,18 @@ drop-in loading of a modern open-weight chat model.
    `ModelManifest.tokenizer_digest` (the wrong tokenizer for a model is detected by hash).
    Byte-for-byte parity against a specific released model lands when its real tokenizer.json
    is ingested (the loader accepts the real shape; the exact pre-tokenizer regex is per-model).
-3. **Reference decode** — a slow, dependency-light Python reference for one small dense decoder
-   layer from the existing matmul/activation/attention pieces plus the missing RMSNorm/RoPE/KV
-   primitives (the E3 pattern, extended).
+3. ✅ **Reference decode — LANDED** (`bcir/frontends/models/decode.py`, `test_model_decode.py`):
+   a slow, dependency-light dense-decoder reference (the Gemma/Llama pre-norm shape) COMPOSED
+   from the existing oracle pieces — `embedding_lookup` → per layer [`rmsnorm_reference` →
+   Q/K/V `matmul_reference` → `rope_reference` per head → causal `scores_reference` +
+   `softmax_reference` → W_o + residual → RMSNorm → `feedforward_reference` + residual] →
+   final RMSNorm → tied-embedding logits → greedy argmax. Two decode paths, one truth:
+   naive full recompute AND the incremental **KV-cache twin** emit the same ids BIT-FOR-BIT
+   (the E3 reference-vs-realization pattern); causality pinned (a later token never moves an
+   earlier row, exactly); and the ladder ties — the synthetic model's shard census (rung 1
+   `param_count`) equals `decoder_param_count(spec)` and the manifest carries the rung-2
+   tokenizer digest that encoded the decoded prompt. Byte parity against a released
+   checkpoint lands when its real weights are ingested (rung 4's quantized artifact).
 4. **Quantized inference artifact** — import a tiny/small model subset, quantize, run
    deterministic prompt fixtures, record accuracy/perplexity drift (R17 discipline).
 5. **C/MLIR law rail** — ODS ops + verification for the LLM-specific ops; oracle↔law parity as
