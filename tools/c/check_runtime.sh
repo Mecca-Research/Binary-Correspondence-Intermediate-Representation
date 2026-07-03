@@ -666,6 +666,37 @@ case "${proj_seen}" in *"CLEAN"*) case "${proj_seen}" in *"PARTIAL-FALLBACK"*) c
   *) echo "  FAIL: project gate never reached CLEAN"; exit 1 ;;
 esac
 
+# Phase 3 LINKING (#link): a file-scope PROTOTYPE makes a cross-TU call a typed external edge
+# (c.call.tu:, R18-opaque, extern-declared in the emitted prelude, NO -l derived), and the bcir-cc
+# EMITTED caller object host-links against the callee TU with the DERIVED --emit-link-flags and
+# behaves exactly like the all-original reference build. A same-unit prototype stays a forward
+# declaration (definition wins: the call is a real R18 edge). Both rails accept the caller (rc 0).
+echo "[c-runtime] Phase 3 linking (bcir-cc prototypes): emitted caller + host linker == reference (#link)"
+mkdir -p "${tmp}/link"
+printf 'double scale(double x);\nint main(void) { double v = scale(16.0); return (int)v; }\n' > "${tmp}/link/main.c"
+printf '#include <math.h>\ndouble scale(double x) { return sqrt(x) + 1.0; }\n' > "${tmp}/link/lib.c"
+"${CC}" -std=c11 "${tmp}/link/main.c" "${tmp}/link/lib.c" -o "${tmp}/link/ref" -lm \
+  || { echo "  FAIL: reference build"; exit 1; }
+"${tmp}/link/ref"; ref_rc=$?
+lflags="$("${tmp}/bcir-cc" --emit-link-flags "${tmp}/link/lib.c")" || { echo "  FAIL: link flags"; exit 1; }
+{ echo '#include <stdint.h>'; "${tmp}/bcir-cc" --emit-c "${tmp}/link/main.c"; \
+  echo 'int main(void){ return (int)bcir_main(); }'; } > "${tmp}/link/main_emit.c" \
+  || { echo "  FAIL: bcir-cc --emit-c (prototyped caller)"; exit 1; }
+grep -q "extern double scale(double);" "${tmp}/link/main_emit.c" \
+  || { echo "  FAIL: emitted prelude lacks the extern declaration"; exit 1; }
+# shellcheck disable=SC2086
+"${CC}" -std=c11 "${tmp}/link/main_emit.c" "${tmp}/link/lib.c" -o "${tmp}/link/prog" ${lflags} \
+  || { echo "  FAIL: emitted caller did not link"; exit 1; }
+"${tmp}/link/prog"; bcir_rc=$?
+python3 -m bcir.frontends.cfront -o /dev/null "${tmp}/link/main.c" >/dev/null 2>&1; py_rc=$?
+[ "${ref_rc}" = "${bcir_rc}" ] && [ "${ref_rc}" = "5" ] && [ "${py_rc}" = "0" ] \
+  && echo "  PASS linking (ref=${ref_rc} == bcir=${bcir_rc}; oracle accepts the caller)" \
+  || { echo "  FAIL: linking (ref=${ref_rc} bcir=${bcir_rc} oracle=${py_rc})"; exit 1; }
+printf 'unsigned g(unsigned x);\nunsigned f(unsigned y) { return g(y) + 1u; }\nunsigned g(unsigned x) { return x * 2u; }\n' > "${tmp}/link/fwd.c"
+"${tmp}/bcir-cc" --emit-claimgraph "${tmp}/link/fwd.c" | grep -q "c.call:g" \
+  && echo "  PASS forward declaration stays a real R18 edge (definition wins)" \
+  || { echo "  FAIL: forward declaration did not rewrite to c.call:g"; exit 1; }
+
 # Module-scope effect / commutation analysis (#effects, the C twin of pipeline.own_footprint +
 # commute): per function the global names it reads/writes (callee effects folded in transitively),
 # then the pairwise commute matrix (two readers commute; a writer conflicts with any reader/writer of

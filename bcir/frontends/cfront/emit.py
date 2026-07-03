@@ -132,6 +132,55 @@ def _funcptr_decl(ct: CType, name: str) -> str:
     return f"{ret} (*{name})({plist})"
 
 
+def emit_linkable(lowered, emitted: dict) -> str:
+    """The LINKABLE artifact (Phase 3 linking): the unit's emitted functions re-rendered with
+    EXTERNAL linkage -- definitions non-static under their REAL names, in-unit calls unprefixed
+    -- plus the unit's file-scope globals (a definition with its integer-constant initializer;
+    `extern T g;` stays a declaration), so two emitted TUs link TO EACH OTHER (and to any host
+    object). The default emit stays `static bcir_`-prefixed (self-contained beside the source);
+    this mode is opt-in (`--linkable`). First slice: every function exports (source `static` is
+    not yet honored) and only integer-constant global initializers render -- a non-constant-
+    foldable initializer raises rather than mislowers."""
+    names = list(lowered.functions)
+    parts: list[str] = ["#include <stdint.h>"]            # the emitted temps are int32_t/uint32_t/...
+    if any("BCIR_CHK" in emitted[n] for n in names):      # a masked (bounds-promoted) access references
+        parts.append('#include "bcir_quarantine.h"')      # the quarantine ABI -- link bcir_quarantine.c
+    ops = [c.op for lf in lowered.functions.values() for c in lf.claims]
+    callees = {op.split(":", 1)[1] for op in ops if op.startswith(("c.call.libm:",
+                                                                   "c.call.libm.void:",
+                                                                   "c.call.extern:"))}
+    if callees & {"malloc", "calloc", "realloc", "free"}:
+        parts.append("#include <stdlib.h>")
+    if any(op.startswith("c.call.extern:") for op in ops):
+        parts.append("#include <stdio.h>")                # the printf/scanf-family edges
+    if callees - {"malloc", "calloc", "realloc", "free"} and any(
+            op.startswith(("c.call.libm:", "c.call.libm.void:")) for op in ops):
+        parts.append("#include <math.h>")                 # the remaining libm edges
+    for gname, ct, vals, is_extern in lowered.globals_decl:
+        if is_extern:
+            parts.append(f"extern {_cname(ct.of) if ct.kind == 'array' else _cname(ct)} {gname}"
+                         + (f"[{ct.count}];" if ct.kind == "array" else ";"))
+            continue
+        if vals is None:
+            raise ValueError(f"linkable emit: global {gname!r} has a non-integer-constant "
+                             f"initializer (unsupported in the first slice)")
+        if ct.kind == "array":
+            parts.append(f"{_cname(ct.of)} {gname}[{ct.count or len(vals)}] = "
+                         + "{" + ", ".join(str(v) for v in vals) + "};")
+        elif vals:
+            parts.append(f"{_cname(ct)} {gname} = {vals[0]};")
+        else:
+            parts.append(f"{_cname(ct)} {gname};")                # tentative definition (zero-init)
+    for name in names:
+        text = emitted[name]
+        for fn in names:                                          # unprefix every in-unit call site
+            text = text.replace(f"bcir_{fn}(", f"{fn}(")
+        lines = [ln[len("static "):] if ln.startswith("static ") else ln   # the definition line is the
+                 for ln in text.splitlines()]                              # only UNINDENTED `static `
+        parts.append("\n".join(lines))
+    return "\n".join(parts) + "\n"
+
+
 def emit_function(lf: LoweredFunc) -> str:
     """The lowered function as standalone C, named `bcir_<name>` (so it can sit beside the original).
     Walks the structured body tree, so `if`/`while`/`return` emit real C control flow; mutable named

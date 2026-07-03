@@ -121,6 +121,13 @@ typedef struct {
                                                       * lines for direct funcptr-param declarators (which
                                                       * have no source typedef to print), emitted as a
                                                       * prelude before the function bodies */
+  char tudefs[4096]; size_t tudefs_w;                /* Phase 3 linking: `extern RET NAME(PARAMS);` lines
+                                                      * rendered at each PROTOTYPE, emitted as a prelude so
+                                                      * the emitted TU compiles standalone and the host
+                                                      * LINKER resolves the cross-TU callee */
+  struct { char name[BCIR_CIR_NAME]; bcir_ctype ret; } *protos;   /* prototype table: callee -> return
+                                                      * type (for call-result typing); grows geometrically */
+  int n_protos, cap_protos;
   /* §5.12 per-function mutation pre-pass (the C twin of _mut_assigned / _mut_addr): over the whole
    * function body, the number of assignments to each NAME and whether its address is ever taken (`&x`).
    * Drives extent-stability -- a recovered count / a bound pointer is trusted only when STABLE (assigned
@@ -1952,6 +1959,34 @@ static uint32_t p_call(CC *c, const tok *name) {
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
     return t;                                         /* not added to fn->calls (opaque to R18) */
+  }
+  if(!rt){                                            /* Phase 3 LINKING: a PROTOTYPED cross-TU callee */
+    const bcir_ctype *ptt=NULL;
+    for(int k=0;k<c->n_protos;k++)
+      if((int)strlen(c->protos[k].name)==name->n && !strncmp(c->protos[k].name,name->s,(size_t)name->n)){
+        ptt=&c->protos[k].ret; break; }
+    if(ptt){
+      /* A typed external edge the host LINKER resolves from a sibling object: like a libm edge it is
+       * opaque to the in-unit R18 call graph (NOT added to fn->calls) and emits verbatim (external
+       * linkage) with the prototype's extern declaration in the prelude; unlike libm it derives no -l
+       * flag. Result typing mirrors the defined-callee ladder below (the oracle's _call_result_ct). */
+      if(ptt->kind==1){ fail(c,"aggregate return through a prototype is not supported"); return temp(c,4); }
+      char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.tu:%.*s",name->n,name->s);
+      if(ptt->kind==0 && ptt->size==0){               /* a void cross-TU callee -> a bare statement */
+        bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+        if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
+        return temp(c,4);                             /* a void result -- never read */
+      }
+      uint32_t t = ptt->is_complex ? tempc(c,ptt->size)
+                 : ptt->is_float   ? tempf(c,ptt->size)
+                 : (ptt->kind==0 && ptt->bit_width>0) ? tempbi(c,ptt->bit_width,ptt->signd)
+                 : (ptt->kind==0 && ptt->size==8) ? tempi(c,8,ptt->signd)
+                 : (ptt->kind==0 && ptt->size<=4 && ptt->signd) ? tempi(c,4,1)
+                 : temp(c,4);
+      bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+      if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
+      return t;
+    }
   }
   uint32_t t;
   if(rt && rt->kind==1){                              /* a struct/union RETURN: a by-value aggregate temp
@@ -4375,7 +4410,31 @@ static int p_func(CC *c, bcir_func *fn) {
       idcpy(pp->name,&pn);pp->rid=rid;pp->type=ty;}
     if(is(c,",")){c->i++;continue;} break;
   }
-  if(!eat(c,")"))return 1; if(!eat(c,"{"))return 1;
+  if(!eat(c,")"))return 1;
+  if(is(c,";")){                       /* a PROTOTYPE `T name(params);` (Phase 3 linking): record the
+    * signature for call typing + render the extern declaration -- a cross-TU callee the host LINKER
+    * resolves. A same-unit definition WINS: the unit-end rewrite in bcir_cfront_compile_target turns
+    * its tu-calls back into ordinary R18 edges. Returns 2 (the unit loop discards the scratch fn). */
+    c->i++;
+    if(c->n_protos>=c->cap_protos){ int nc=c->cap_protos?c->cap_protos*2:8;
+      void *np=realloc(c->protos,(size_t)nc*sizeof *c->protos);
+      if(!np){fail(c,"oom");return 1;} c->protos=np; c->cap_protos=nc; }
+    snprintf(c->protos[c->n_protos].name,BCIR_CIR_NAME,"%s",fn->name);
+    c->protos[c->n_protos].ret=fn->ret; c->n_protos++;
+    char rets[64]; ctype_str(&fn->ret,rets,sizeof rets);
+    char sig[512]; size_t sw=0;                       /* the fpdefs clamped-offset idiom (see above) */
+    #define TU_OFF (sw<sizeof sig?sw:sizeof sig)
+    sw+=snprintf(sig+TU_OFF,sizeof sig-TU_OFF,"extern %s %s(",rets,fn->name);
+    for(int k=0;k<fn->n_params;k++){ char ps[64]; ctype_str(&fn->params[k].type,ps,sizeof ps);
+      sw+=snprintf(sig+TU_OFF,sizeof sig-TU_OFF,"%s%s",k?", ":"",ps); }
+    if(fn->variadic) sw+=snprintf(sig+TU_OFF,sizeof sig-TU_OFF,"%s...",fn->n_params?", ":"");
+    sw+=snprintf(sig+TU_OFF,sizeof sig-TU_OFF,"%s);\n",(fn->n_params||fn->variadic)?"":"void");
+    #undef TU_OFF
+    if(sw<sizeof sig && c->tudefs_w+sw<sizeof c->tudefs){
+      memcpy(c->tudefs+c->tudefs_w,sig,sw); c->tudefs_w+=sw; }
+    return 2;
+  }
+  if(!eat(c,"{"))return 1;
   scan_mutations(c,c->i);   /* §5.12 extent-stability pre-pass over the body (cursor is just past `{`) */
   for(int k=0;k<c->n_vlaext;k++){          /* §5.12 resolve the deferred VLA-param extent bindings: bind `a` to
     * `n` ONLY when `n` is STABLE -- unmutated in the body and not address-taken (the _bind_extent stable-Name
@@ -4777,6 +4836,13 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+14);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+w,on-w,");\n"); }
+    else if(!strncmp(cl->op,"c.call.tu:",10)){      /* a PROTOTYPED cross-TU callee (Phase 3 linking):
+                                                     * verbatim, external linkage -- the prelude declares
+                                                     * it; the host LINKER resolves it */
+      if(cl->n_wr==0) w+=snprintf(o+w,on-w,"%s(",cl->op+10);
+      else w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+10);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+w,on-w,");\n"); }
     else if(!strncmp(cl->op,"c.call.builtin:",15)){  /* a GCC/Clang integer builtin -> emitted verbatim */
       w+=snprintf(o+w,on-w,"%s %s = __builtin_%s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+15);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
@@ -4870,6 +4936,7 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
   sdef *sv_s=c.s; int sv_cs=c.cap_s; tdef *sv_td=c.td; int sv_ctd=c.cap_td;
   econst *sv_ec=c.ec; int sv_cec=c.cap_ec; gvar *sv_gv=c.gv; int sv_cgv=c.cap_gv;
   venv *sv_env=c.env; int sv_cenv=c.cap_env;
+  void *sv_pr=c.protos; int sv_cpr=c.cap_protos;   /* the prototype table survives the memset (reused) */
   /* free any PRIOR unit before the entry memset zeroes out->unit.funcs: a reused `out` (a static result
    * compiled again without an intervening bcir_cfront_free) would otherwise leak its previous function
    * array + every per-func sub-array. bcir_cfront_free is a no-op on a zero-initialised out (funcs=NULL,
@@ -4878,6 +4945,7 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
   memset(&c,0,sizeof c); memset(out,0,sizeof *out);
   c.s=sv_s; c.cap_s=sv_cs; c.td=sv_td; c.cap_td=sv_ctd; c.ec=sv_ec; c.cap_ec=sv_cec;
   c.gv=sv_gv; c.cap_gv=sv_cgv; c.env=sv_env; c.cap_env=sv_cenv;
+  c.protos=sv_pr; c.cap_protos=sv_cpr;              /* n_protos stays 0 from the memset (fresh unit) */
   c.abi = bcir_abi_by_name(target);     /* the target data model (NULL name -> host LP64) */
   if(!c.abi){ snprintf(out->diag,sizeof out->diag,"unknown target '%s'",target?target:""); return 1; }
   c.rid=100; c.cid=1000; c.unit=&out->unit;
@@ -4907,7 +4975,14 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
     }
     bcir_func *fn=&out->unit.funcs[out->unit.n_funcs]; /* res/claims/params/calls/statics grow lazily */
     c.rid=100+out->unit.n_funcs*1000; c.cid=1000+out->unit.n_funcs*1000;
-    if(p_func(&c,fn)){snprintf(out->diag,sizeof out->diag,"%s",c.err);
+    int pfr=p_func(&c,fn);
+    if(pfr==2){                             /* a PROTOTYPE: recorded in c.protos/c.tudefs, no function --
+                                             * discard the scratch fn (params were collected into it) */
+      free(fn->res); free(fn->claims); free(fn->params); free(fn->calls); free(fn->statics);
+      memset(fn,0,sizeof *fn);
+      continue;
+    }
+    if(pfr){snprintf(out->diag,sizeof out->diag,"%s",c.err);
       /* free the in-progress (uncounted) func's sub-arrays: it was never folded into n_funcs, so
        * bcir_cfront_free's `i<n_funcs` loop would never reach it -> a per-parse-failure leak. */
       free(fn->res); free(fn->claims); free(fn->params); free(fn->calls); free(fn->statics);
@@ -4917,6 +4992,26 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
     out->unit.n_funcs++;
   }
   if(c.failed){snprintf(out->diag,sizeof out->diag,"%s",c.err);return 1;}
+  /* Phase 3 linking, DEFINITION WINS: a call lowered `c.call.tu:` (its callee was only a prototype at
+   * the call site -- the parser is single-pass) whose callee IS defined in this unit is an ordinary
+   * in-unit call after all: rewrite the op back (`c.call:` / `c.call.void:` by result arity) and record
+   * the R18 edge. The extern declaration already rendered stays in the prelude: it declares the
+   * unprefixed external name, which the emitted unit neither defines nor references -- harmless. */
+  for(int i=0;i<out->unit.n_funcs;i++){ bcir_func *f=&out->unit.funcs[i];
+    for(size_t k2=0;k2<f->n_claims;k2++){ bcir_claim *cl=&f->claims[k2];
+      if(strncmp(cl->op,"c.call.tu:",10)) continue;
+      int def=-1;
+      for(int j=0;j<out->unit.n_funcs;j++)
+        if(!strcmp(out->unit.funcs[j].name,cl->op+10)){def=j;break;}
+      if(def<0) continue;                              /* genuinely cross-TU: the linker's job */
+      char callee[BCIR_CIR_NAME]; snprintf(callee,sizeof callee,"%s",cl->op+10);
+      snprintf(cl->op,sizeof cl->op,"%s%s",cl->n_wr?"c.call:":"c.call.void:",callee);
+      if(f->n_calls>=f->cap_calls){ int nc=f->cap_calls?f->cap_calls*2:8;
+        char (*np)[BCIR_CIR_NAME]=realloc(f->calls,(size_t)nc*sizeof *np);
+        if(!np){snprintf(out->diag,sizeof out->diag,"oom");return 1;} f->calls=np; f->cap_calls=nc; }
+      snprintf(f->calls[f->n_calls++],BCIR_CIR_NAME,"%s",callee);
+    }
+  }
   out->ok=bcir_verify_unit(&out->unit,out->diag,sizeof out->diag);
   /* C.2 verified-C attestation: stamp the emitted C with its R-law status + R13 digest + the unit's
    * derived link flags (B1; so --emit-c is self-describing about what it links -- a comment, stripped
@@ -4935,6 +5030,8 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
     lflags[0]?lflags:"-");
   if(c.fpdefs_w && w<sizeof out->emitted-c.fpdefs_w-1)   /* synthesized funcptr-param typedefs (prelude) */
     w+=snprintf(out->emitted+w,sizeof out->emitted-w,"%.*s",(int)c.fpdefs_w,c.fpdefs);
+  if(c.tudefs_w && w<sizeof out->emitted-c.tudefs_w-1)   /* extern declarations for cross-TU callees */
+    w+=snprintf(out->emitted+w,sizeof out->emitted-w,"%.*s",(int)c.tudefs_w,c.tudefs);
   for(int i=0;i<out->unit.n_funcs && w<sizeof out->emitted-256;i++){
     w+=emit_func(&out->unit.funcs[i],out->emitted+w,sizeof out->emitted-w);
     if(i+1<out->unit.n_funcs) w+=snprintf(out->emitted+w,sizeof out->emitted-w,"\n");

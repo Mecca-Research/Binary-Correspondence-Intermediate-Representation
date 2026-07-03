@@ -86,6 +86,73 @@ def test_the_two_tu_binary_links_with_derived_flags_and_behaves():
     assert rc_bcir == rc_ref == 5, (rc_bcir, rc_ref)     # sqrt(16)+1 == 5: behaviour equivalence
 
 
+def test_linkable_emit_links_two_emitted_tus():
+    """THE PHASE-3 CLOSER: BOTH TUs re-rendered by the linkable emit (external linkage, real
+    names, derived includes) link TO EACH OTHER -- no original source in the final image --
+    and the binary behaves exactly like the all-original reference build."""
+    cc = _cc()
+    if cc is None:
+        return
+    from bcir.frontends.cfront.emit import emit_linkable
+    caller = compile_unit(_MAIN, check_clang=False)
+    callee = compile_unit(_LIB, check_clang=False)
+    with tempfile.TemporaryDirectory() as tmp:
+        m = os.path.join(tmp, "m.c")
+        li = os.path.join(tmp, "l.c")
+        with open(m, "w", encoding="utf-8") as f:
+            f.write(emit_linkable(caller.lowered, caller.emitted))
+        with open(li, "w", encoding="utf-8") as f:
+            f.write(emit_linkable(callee.lowered, callee.emitted))
+        prog = os.path.join(tmp, "prog")
+        r = subprocess.run([cc, "-std=c11", "-Wall", "-Werror", m, li, "-o", prog, "-lm"],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr                    # self-contained, warning-free
+        assert subprocess.run([prog]).returncode == 5
+
+
+def test_linkable_globals_define_declare_and_reject_nonconstant():
+    from bcir.frontends.cfront.emit import emit_linkable
+    user = compile_unit("extern unsigned base;\n"
+                        "unsigned scaled(unsigned x) { return base * x + 1u; }\n",
+                        check_clang=False)
+    definer = compile_unit("unsigned base = 7u;\nunsigned tab[3] = {1u, 2u, 3u};\n"
+                           "unsigned peek(void) { return tab[0] + base; }\n",
+                           check_clang=False)
+    u_text = emit_linkable(user.lowered, user.emitted)
+    d_text = emit_linkable(definer.lowered, definer.emitted)
+    assert "extern unsigned int base;" in u_text              # a declaration, never a definition
+    assert "unsigned int base = 7;" in d_text                 # the defining TU renders the value
+    assert "unsigned int tab[3] = {1, 2, 3};" in d_text
+    assert "unsigned int scaled(unsigned int x)" in u_text    # non-static, real name
+    assert "static" not in u_text.replace("static_assert", "")
+    cc = _cc()
+    if cc is not None:                                        # the pair genuinely links + runs
+        with tempfile.TemporaryDirectory() as tmp:
+            a = os.path.join(tmp, "a.c")
+            b = os.path.join(tmp, "b.c")
+            main = os.path.join(tmp, "main.c")
+            for path, text in ((a, u_text), (b, d_text)):
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
+            with open(main, "w", encoding="utf-8") as f:
+                f.write("extern unsigned scaled(unsigned);\n"
+                        "int main(void){ return (int)scaled(6u); }\n")
+            prog = os.path.join(tmp, "prog")
+            from bcir.tests.test_c_executor import _RUNTIME_C
+            r = subprocess.run([cc, "-std=c11", "-I", _RUNTIME_C, main, a, b,
+                                os.path.join(_RUNTIME_C, "bcir_quarantine.c"), "-o", prog],
+                               capture_output=True, text=True)   # the documented contract: a masked
+            assert r.returncode == 0, r.stderr                   # access links bcir_quarantine.c
+            assert subprocess.run([prog]).returncode == 43    # 7*6+1
+    # a non-integer-constant initializer must fail LOUDLY in linkable mode, never mislower.
+    fl = compile_unit("double dv = 1.5;\ndouble geto(void) { return dv; }\n", check_clang=False)
+    try:
+        emit_linkable(fl.lowered, fl.emitted)
+        raise AssertionError("a non-integer-constant global initializer must be rejected")
+    except ValueError as e:
+        assert "dv" in str(e)
+
+
 if __name__ == "__main__":
     import sys
 

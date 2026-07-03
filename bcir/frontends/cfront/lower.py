@@ -572,6 +572,9 @@ class LoweredUnit:
     aggregates: dict                      # tag -> CType
     compose_functions: dict               # name -> compose.Function
     resources: dict                       # rid -> Resource (whole unit)
+    globals_decl: tuple = ()              # (name, CType, folded-int init tuple | None, extern) --
+                                          #   what the LINKABLE emit renders (definitions with
+                                          #   integer-constant inits; extern -> a declaration)
 
 
 # the rid `_call` returns for a void callee -- never read as a value (a void call is a statement); the
@@ -2453,10 +2456,13 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
 
     genv: dict[str, tuple] = {}                            # file-scope globals: name -> (rid, CType)
     gres: dict[int, Resource] = {}
+    gdecls: list = []                                      # the linkable emit's global surface
     for gi, g in enumerate(unit.globals):
         ct = _resolve_member_type(g.type, aggregates, abi)
-        if g.init and ct.kind == "array" and ct.count == 0:
+        ct_src = ct                                       # the SOURCE-shaped type (a scalar stays a
+        if g.init and ct.kind == "array" and ct.count == 0:   # scalar in the linkable declaration)
             ct = array(ct.of, len(g.init))                # `T name[] = {...}` -> sized from the init
+            ct_src = ct
         elif g.init and ct.kind != "array":
             ct = array(ct, len(g.init))
         rid = _check_band_rid(900000 + gi)                # guard the reserved I/O-port rid (belt + suspenders)
@@ -2464,6 +2470,15 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
                              shape=(ct.count or len(g.init) or 1,), access="ro",
                              data_gen=1, name=g.name)
         genv[g.name] = (rid, ct)
+        vals: list = []                                    # fold integer-literal inits (linkable emit)
+        for el in g.init:
+            if isinstance(el, cast.IntLit):
+                vals.append(el.value)
+            else:
+                vals = None
+                break
+        gdecls.append((g.name, ct_src, tuple(vals) if vals is not None else None,
+                       getattr(g, "extern_decl", False)))
 
     functions: dict[str, LoweredFunc] = {}
     compose_functions: dict[str, compose.Function] = {}
@@ -2489,7 +2504,8 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         compose_functions[lf.name] = compose.Function(lf.name, lf.region)
     entry = unit.funcs[-1].name if unit.funcs else ""
     return LoweredUnit(functions=functions, entry=entry, aggregates=aggregates,
-                       compose_functions=compose_functions, resources=resources)
+                       compose_functions=compose_functions, resources=resources,
+                       globals_decl=tuple(gdecls))
 
 
 def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:
