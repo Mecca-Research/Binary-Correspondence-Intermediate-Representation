@@ -71,21 +71,55 @@ class DecisionRecord:
             for dc in self.decisions]
         d["certificates"] = [
             {**asdict(c), "claim_ids": list(c.claim_ids)} for c in self.certificates]
-        return json.dumps(d, indent=2, sort_keys=True)
+        # The 0.4b STABLE-SCHEMA envelope: kind + schema version wrap the payload, so a record
+        # is self-describing on disk and a decoder can upgrade (or refuse) by version alone.
+        return json.dumps({"kind": RECORD_KIND, "schema": SCHEMA_VERSION, "record": d},
+                          indent=2, sort_keys=True)
 
     @staticmethod
     def from_json(text: str) -> "DecisionRecord":
+        """Decode ANY known schema revision (the 0.4b decode/upgrade path): a bare legacy
+        payload (v1, pre-envelope) is upgraded in place via the `_UPGRADES` chain; an
+        envelope at the current version decodes directly; an UNKNOWN (newer) version fails
+        LOUDLY -- a certificate must never be silently misread."""
         d = json.loads(text)
+        if "schema" not in d:                          # v1: the bare, unversioned payload
+            version, payload = 1, d
+        else:
+            if d.get("kind") != RECORD_KIND:
+                raise ValueError(f"not a {RECORD_KIND} document (kind={d.get('kind')!r})")
+            version, payload = int(d["schema"]), d["record"]
+        if version > SCHEMA_VERSION:
+            raise ValueError(f"decision-record schema v{version} is newer than this build's "
+                             f"v{SCHEMA_VERSION}; upgrade BCIR to re-check this record")
+        while version < SCHEMA_VERSION:                # chain upgrades one revision at a time
+            payload = _UPGRADES[version](payload)
+            version += 1
         decisions = tuple(
             ClaimDecision(dc["claim_id"], dc["op"], dc["chosen"], dc["width"], dc["score"],
                           tuple(tuple(c) for c in dc["candidates"]))
-            for dc in d["decisions"])
+            for dc in payload["decisions"])
         certs = tuple(
             RewriteCertificate(c["kind"], tuple(c["claim_ids"]), c["detail"], c["gain"],
                                c["searched"])
-            for c in d["certificates"])
-        return DecisionRecord(d["module_name"], d["target"], d["theta"], d["policy"],
-                              d["digest"], d["total_score"], decisions, certs)
+            for c in payload["certificates"])
+        return DecisionRecord(payload["module_name"], payload["target"], payload["theta"],
+                              payload["policy"], payload["digest"], payload["total_score"],
+                              decisions, certs)
+
+
+RECORD_KIND = "bcir.decision_record"
+SCHEMA_VERSION = 2
+
+
+def _upgrade_1_to_2(payload: dict) -> dict:
+    """v1 -> v2: the payload FIELDS are unchanged -- v2 only added the self-describing
+    envelope (kind + schema) around them. Every future revision adds its own upgrader here
+    and bumps SCHEMA_VERSION; from_json chains them, so any old record stays decodable."""
+    return payload
+
+
+_UPGRADES = {1: _upgrade_1_to_2}
 
 
 def _theta_label(theta: Theta) -> str:

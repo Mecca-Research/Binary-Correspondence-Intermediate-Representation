@@ -37,6 +37,48 @@ def test_record_round_trips_through_json():
     assert DecisionRecord.from_json(rec.to_json()) == rec
 
 
+def test_records_are_versioned_self_describing_envelopes():
+    """0.4b (the stable certificate schema): a serialized record carries its kind + schema
+    version, so a decoder can upgrade -- or refuse -- by version alone."""
+    import json
+    from bcir.kbcir.proof import RECORD_KIND, SCHEMA_VERSION
+    d = json.loads(explain(vector_add(), AVX, COOL, target_name="x86_avx512").to_json())
+    assert d["kind"] == RECORD_KIND == "bcir.decision_record"
+    assert d["schema"] == SCHEMA_VERSION == 2
+    assert d["record"]["module_name"] == "vec_add"       # the payload sits under the envelope
+
+
+def test_a_legacy_v1_record_upgrades_and_replays():
+    """The decode/UPGRADE path: a bare pre-envelope (v1) document -- exactly what an older
+    build wrote -- decodes through the upgrade chain to the identical record and still
+    replays bit-for-bit. Old certificates never rot."""
+    import json
+    rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
+    v1_text = json.dumps(json.loads(rec.to_json())["record"], indent=2, sort_keys=True)
+    assert "schema" not in json.loads(v1_text)           # genuinely the old bare shape
+    upgraded = DecisionRecord.from_json(v1_text)
+    assert upgraded == rec
+    assert replay(upgraded, vector_add(), AVX, COOL).reproduced
+
+
+def test_an_unknown_schema_fails_loudly_never_misreads():
+    import json
+    rec = json.loads(explain(vector_add(), AVX, COOL, target_name="x86_avx512").to_json())
+    rec["schema"] = 99                                   # a future revision this build lacks
+    try:
+        DecisionRecord.from_json(json.dumps(rec))
+        raise AssertionError("a newer schema must be refused")
+    except ValueError as e:
+        assert "newer" in str(e)
+    rec["schema"] = 2
+    rec["kind"] = "not.a.record"                         # the wrong document kind
+    try:
+        DecisionRecord.from_json(json.dumps(rec))
+        raise AssertionError("a wrong kind must be refused")
+    except ValueError as e:
+        assert "bcir.decision_record" in str(e)
+
+
 def test_replay_reproduces_from_the_same_inputs():
     rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
     rr = replay(rec, vector_add(), AVX, COOL)

@@ -350,3 +350,6 @@ class Unit:
     aggregates: dict = field(default_factory=dict)   # tag -> Aggregate
     funcs: list = field(default_factory=list)        # Func, in order
     globals: list = field(default_factory=list)      # Global, in order
+    protos: dict = field(default_factory=dict)       # name -> (ret TypeRef, (param TypeRef, ...)) --
+                                                     #   file-scope function PROTOTYPES (Phase 3 linking:
+                                                     #   a cross-TU callee, or an in-unit forward decl)

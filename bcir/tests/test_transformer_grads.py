@@ -192,6 +192,80 @@ def test_block_weights_train_end_to_end_through_the_transcendental_tail():
     assert_converged(losses, final_below=3e-4, max_ratio=0.01, name="E3 block-weight tail")
 
 
+def test_attention_projection_grads_match_finite_differences():
+    """The follow-on ff_ln_tail_grads named: closed-form gradients of the masked multi-head
+    attention block's projections (w_q/w_k/w_v/w_o) AND the block input, checked against
+    central finite differences through J = <c, mha(x)> where the forward is the INDEPENDENT
+    transformer.multihead_attention_reference (cross-implementation check; measured worst
+    FD gap ~4e-10, gate 1e-5)."""
+    from bcir.kbcir.transformer import (TransformerBlockSpec, _MHAParams, causal_mask,
+                                        multihead_attention_reference)
+    from bcir.kbcir.transformer_grads import mha_projection_grads
+    rng = random.Random(0xA77)
+    seq, dm, nh = 3, 4, 2
+    spec = TransformerBlockSpec(d_model=dm, n_heads=nh, d_ff=4, seq_len=seq, batch=1)
+    x = _vec(rng, seq * dm)
+    mask = causal_mask(seq)
+    params = {k: _vec(rng, dm * dm) for k in ("w_q", "w_k", "w_v", "w_o")}
+    c = _vec(rng, seq * dm)
+
+    def fwd(p, xv):
+        return multihead_attention_reference(
+            xv, spec, _MHAParams(p["w_q"], p["w_k"], p["w_v"], p["w_o"]), mask)
+
+    g = mha_projection_grads(x, seq, dm, nh, params["w_q"], params["w_k"], params["w_v"],
+                             params["w_o"], c, mask)
+    for name, p in params.items():
+        for k in range(len(p)):
+            def J(v, name=name, k=k):
+                q = {n2: list(w) for n2, w in params.items()}
+                q[name][k] = v[0]
+                y = fwd(q, x)
+                return sum(c[i] * y[i] for i in range(seq * dm))
+            assert abs(g[name][k] - _fd_grad(J, [p[k]], 0)) < 1e-5, (name, k)
+    for k in range(seq * dm):                                # the block-input gradient too
+        def Jx(v, k=k):
+            x2 = list(x)
+            x2[k] = v[0]
+            y = fwd(params, x2)
+            return sum(c[i] * y[i] for i in range(seq * dm))
+        assert abs(g["x"][k] - _fd_grad(Jx, [x[k]], 0)) < 1e-5, k
+
+
+def test_attention_projections_train_end_to_end():
+    """THE HEADLINE: block-weight fine-tuning through the FULL attention block -- a student's
+    four projections recover a teacher's masked-MHA function via the closed-form gradients,
+    gated by the shared convergence gate (measured 0.31 -> 9.2e-7 over 400 epochs, lr 2.0)."""
+    from bcir.kbcir.transformer import (TransformerBlockSpec, _MHAParams, causal_mask,
+                                        multihead_attention_reference)
+    from bcir.kbcir.transformer_grads import mha_projection_grads
+    rng = random.Random(0xA77)
+    seq, dm, nh = 3, 4, 2
+    n = seq * dm
+    spec = TransformerBlockSpec(d_model=dm, n_heads=nh, d_ff=4, seq_len=seq, batch=1)
+    x = _vec(rng, n)
+    mask = causal_mask(seq)
+    teacher = {k: _vec(rng, dm * dm) for k in ("w_q", "w_k", "w_v", "w_o")}
+
+    def fwd(p):
+        return multihead_attention_reference(
+            x, spec, _MHAParams(p["w_q"], p["w_k"], p["w_v"], p["w_o"]), mask)
+
+    y = fwd(teacher)
+    student = {k: _vec(rng, dm * dm, -0.3, 0.3) for k in ("w_q", "w_k", "w_v", "w_o")}
+    losses = []
+    for _ in range(400):
+        out = fwd(student)
+        losses.append(sum((out[i] - y[i]) ** 2 for i in range(n)) / n)
+        gout = [2.0 * (out[i] - y[i]) / n for i in range(n)]
+        g = mha_projection_grads(x, seq, dm, nh, student["w_q"], student["w_k"],
+                                 student["w_v"], student["w_o"], gout, mask)
+        for k in student:
+            student[k] = [w - 2.0 * gg for w, gg in zip(student[k], g[k])]
+    assert_converged(losses, final_below=1e-5, max_ratio=1e-4,
+                     name="attention-projection fine-tuning")
+
+
 def test_transformer_grads_touches_no_verifier():
     import bcir.kbcir.transformer_grads as tg
     tree = ast.parse(open(tg.__file__, encoding="utf-8").read())

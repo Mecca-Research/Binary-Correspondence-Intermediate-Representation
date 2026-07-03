@@ -436,8 +436,17 @@ drop-in loading of a modern open-weight chat model.
    `param_count`) equals `decoder_param_count(spec)` and the manifest carries the rung-2
    tokenizer digest that encoded the decoded prompt. Byte parity against a released
    checkpoint lands when its real weights are ingested (rung 4's quantized artifact).
-4. **Quantized inference artifact** — import a tiny/small model subset, quantize, run
-   deterministic prompt fixtures, record accuracy/perplexity drift (R17 discipline).
+4. ✅ **Quantized inference artifact — LANDED** (`bcir/frontends/models/quantized.py`,
+   `test_model_quantized.py`): the Q8↔float32 bridge wrapped around the trusted rung-3
+   decoder (the `attention_via_bridge` pattern) — the artifact IS the reference decoder over
+   per-group round-tripped weights, so the sole certified error is the R17-bounded weight
+   quantization (≤1 ULP per value at each group's grid). The drift discipline: a
+   deterministic `DriftRecord` per prompt fixture — both paths' greedy ids, max teacher-forced
+   logit drift along the float trajectory, mean-NLL (perplexity proxy) under both models,
+   the R17 stamp. Measured on the synthetic fixture: Q8 ~2.7e-3 max logit drift (~20×
+   tighter than Q4), and a greedy flip is *recorded, never hidden* (`ids_match`). Real-weight
+   ingestion (a released tiny checkpoint through manifest → tokenizer → decode → quantize)
+   is the remaining half, gated on rung 5's law rail for the LLM ops.
 5. **C/MLIR law rail** — ODS ops + verification for the LLM-specific ops; oracle↔law parity as
    always (the prototype-then-port discipline, §3).
 6. **Serving endpoint** — streaming decode, schema-constrained tool-call output, telemetry frames,
@@ -530,10 +539,17 @@ The audit finds five deepening moves, all quarantine-compatible:
   (`bcir.abi.encode`) and executes through the C executor (`runtime/c/bcir_exec.c`) with the
   oracle's exact dispatch order / phase order / per-phase telemetry, and the C order equals the
   claim order every executed step of a real convergent `train_planned` run used — one step of
-  training is a no-Python hot artifact. *Next:* overlap/EFT scheduling of the stage streams +
-  per-claim C stage kernels (the numeric twins) behind `bcir_exec`'s kernel callback. The
-  autodiff closure proof is the enabler: the gradient DAG has a fixed vocabulary, so it
-  hydrates to a StreamPack like any program.
+  training is a no-Python hot artifact. ✅ **Step 4 LANDED**: the train step COMPUTES in C
+  (`runtime/c/bcir_train.c` + `test_train.c`, gated by `test_train_c_kernels.py`) — the six
+  numeric stage kernels (kernel-for-kernel twins of `_step_kernels`: ascending-index sums, the
+  guarded two-branch sigmoid, the eps-clamped BCE) behind `bcir_exec`'s per-claim callback,
+  the whole loop (epochs × batches → dispatch → compute) in C over the binary pack. The
+  differential gate: per-epoch losses + trained weights == `train_planned` to ≤1e-12, the
+  first step's dispatch order is the executor's [1..6], and the C curve passes the SAME shared
+  convergence gate as the oracle run — **training as a C artifact, no Python in the loop**.
+  *Next:* overlap/EFT scheduling of the stage streams. The autodiff closure proof is the
+  enabler: the gradient DAG has a fixed vocabulary, so it hydrates to a StreamPack like any
+  program.
 - ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/
   `check_classical`-style checkers were op-level and advisory; shape consistency and dtype
   compatibility are now numbered laws via the R19–R21 six-artifact pattern: **R22** checks the
@@ -544,10 +560,18 @@ The audit finds five deepening moves, all quarantine-compatible:
   Negative MLIR cases in `verify_shape_dtype.mlir`; oracle suite `test_shape_dtype_laws.py`;
   `gen_status` sweeps R1–R23. Vacuous-by-default (non-disturbance). This is the "structurally
   valid tensors" guarantee (§8.4) made law.
-- **D3 — Learned cost-model priors at L1.** The accel ranker precedent generalizes: train
-  priors for tile size / loop order / channel choice offline, freeze to Q8 tables keyed by
-  (op-shape-class, channel), and let exact search verify — proposals can only reduce search,
-  never change the optimum.
+- ◑ **D3 — Learned cost-model priors at L1. FIRST SLICE LANDED** (`kbcir/tile_prior.py`,
+  `test_tile_prior.py`): the accel-ranker precedent generalized to the L1 tile search — a
+  logistic prior over CHEAP tile features (no `cost_of` to rank), trained offline on the exact
+  search's own choices under the (calibrated) `TargetProfile`, frozen to a Q8 integer table,
+  used only to ORDER `plan_matmul`'s search with a PROOF-gated early exit (the compute term is
+  tile-independent, so a cache-fitting candidate at the bottleneck floor is unbeatable).
+  `TilePriorCertificate` is the safety witness: guided == exhaustive on (fits_cache,
+  bottleneck) over held-out shapes, mismatches 0, **71% fewer nodes costed** (gate ≥40%); under
+  a bandwidth-starved calibration the proof never fires and the search honestly degenerates to
+  exhaustive (still exact). Calibloop wiring is by construction — train against the measured
+  profile the loop froze; `plan_matmul` itself untouched (opt-in, vacuous by default). *Next:*
+  channel-choice priors + per-shape-class tables persisted alongside the calibloop's cal_gen.
 - **D4 — E-graph rule synthesis (the operad 2-cell algebra).** Learn *candidate* rewrites
   from liked/unliked pair statistics; each learned rule is admitted only with a machine-
   checkable equivalence certificate (the egraph extract cost proof), keeping learning out of

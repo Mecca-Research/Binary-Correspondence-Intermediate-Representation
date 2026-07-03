@@ -1975,7 +1975,14 @@ R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted
   `--project`, automatic for multi-file runs). The `bcir-cc` C twin is byte/exit-code identical to
   the oracle (a hard error 1 dominates a fallback 2), gated in `check_runtime.sh` (#project);
   compile-database (`-p`) / `-M` dependency rules stay oracle-side (build-system glue, not law).
-  *Next:* linking.
+  ◑ **Linking (first slice, oracle)** — file-scope PROTOTYPES parse; a prototyped-but-undefined
+  callee is a TYPED cross-TU edge (`c.call.tu:`, R18-opaque like libm, verbatim emit + `extern`
+  declaration, NO -l derived); a same-unit prototype is a forward declaration (definition wins);
+  and the two-TU binary is real — the bcir-EMITTED caller object host-links against the callee TU
+  with the derived `--emit-link-flags` and behaves exactly like the reference build
+  (`test_cfront_link.py`). *Next:* the C-twin port (prototypes in `bcir_cfront.c`) and a linkable
+  emission mode (non-static exported functions + emitted global definitions) so two EMITTED
+  objects link to each other.
 - ✅ **Compile-database support** — `bcir-cfront -p` consumes `compile_commands.json` (a directory or
   the file), compiling every entry with its own `-I`/`-D`/`-U`/`-std`/`--target` flags (both the
   `arguments` and `command` entry forms; entry `-I` resolves against the entry directory).
@@ -2104,7 +2111,8 @@ In recommended order — each is gated by the generated differential harness + F
   (`run_all --tier {quick,c-runtime,silicon-degrade,thorough}`); and the **hardware-channel plugin
   boundary** (`bcir/channel_plugin.py` — a `channel.json` manifest format so FPGA/NVMe/HBM-PIM
   extensions register without touching the core).
-- **0.3b — freestanding-C23-driver compiler + the law catch-up** (**◑ TAG-READY on the law core**, §5.14):
+- **0.3b — freestanding-C23-driver compiler + the law catch-up** (**✅ TAGGED `v0.3b`** — see
+  [`RELEASE_NOTES_0.3b.md`](RELEASE_NOTES_0.3b.md); §5.14):
   ✅ R19/R20/R21 promoted to first-class verifier laws (generated status reports **R1–R21**); ✅ MLIR
   representation for the law-bearing C semantics the frontend lowers — **§5.14 Phase 2 COMPLETE**
   (volatile/atomic ops, indirect-call effect, pointer extent-provenance, ABI contract); ✅ a **multi-file
@@ -2116,9 +2124,14 @@ In recommended order — each is gated by the generated differential harness + F
   deliverable.
 - **0.4a — proof-carrying (mechanism)** (✅): replay records + per-claim certificates +
   `bcir.run --explain`/`--replay`/`--reduce` are implemented and tested (§5.3.2).
-- **0.4b — proof-carrying (contract)** (☐): a *stable* certificate schema (versioned, with a
+- **0.4b — proof-carrying (contract)** (◑): a *stable* certificate schema (versioned, with a
   decode/upgrade path), an external replay-CLI contract (a third party can re-check a record
   without the producing build), and certificate upgrade tests across schema revisions.
+  *Landed:* the schema half — every `DecisionRecord` serializes as a self-describing envelope
+  (`kind: bcir.decision_record`, `schema: 2`); `from_json` decodes ANY known revision (a bare
+  pre-envelope v1 document upgrades through the `_UPGRADES` chain and still replays bit-for-bit),
+  and an unknown NEWER schema or wrong kind fails loudly — a certificate is never silently
+  misread (`test_proof.py` upgrade suite). *Remaining:* the external replay-CLI contract.
 - **1.0** (☐): stable language/ABI policy; no known Python↔C++ divergence (generated +
   fuzzed); ≥2 real hardware targets with measured evidence; R1–R21 dual-rail symmetry
   (✅ already holds — §5.1.1 + §5.14 Phase 1); one external frontend; published benchmark
