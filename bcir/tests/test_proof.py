@@ -150,3 +150,41 @@ def test_mlir_replay_recheck_is_in_sync():
     rr = replay(bad, vector_add(), AVX, COOL)
     assert not rr.reproduced
     assert any("9999" in m for m in rr.mismatches)
+
+
+def test_the_external_replay_cli_contract():
+    """0.4b's second half: the CLI contract a third party re-checks records through --
+    exit 0 reproduced / 3 diverged / 4 undecodable-or-mismatched, one machine-readable
+    `replay-verdict:` line first, stable across builds (the record self-describes via the
+    schema envelope). Driven as a real subprocess, the way a third party would."""
+    import json
+    import os
+    import subprocess
+    import sys
+    import tempfile
+    rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
+    env = {**os.environ, "PYTHONPATH": os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", ".."))}
+
+    def cli(record_text, program="vector_add"):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "rec.json")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(record_text)
+            r = subprocess.run([sys.executable, "-m", "bcir.run", program,
+                                "--target", "x86_avx512", "--replay", path],
+                               capture_output=True, text=True, env=env)
+        verdicts = [ln for ln in r.stdout.splitlines() if ln.startswith("replay-verdict:")]
+        assert len(verdicts) == 1, r.stdout + r.stderr
+        return r.returncode, verdicts[0]
+
+    rc, line = cli(rec.to_json())
+    assert rc == 0 and "reproduced" in line, (rc, line)
+    tampered = json.loads(rec.to_json())
+    tampered["record"]["total_score"] = 1                   # a lying score must DIVERGE
+    rc, line = cli(json.dumps(tampered))
+    assert rc == 3 and "diverged" in line, (rc, line)
+    rc, line = cli("{not json")
+    assert rc == 4 and "undecodable" in line, (rc, line)
+    rc, line = cli(rec.to_json(), program="matmul_tiled")   # wrong module: usage error,
+    assert rc == 4 and "undecodable" in line, (rc, line)    # never a bogus divergence

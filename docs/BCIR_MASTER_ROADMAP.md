@@ -2127,14 +2127,19 @@ In recommended order — each is gated by the generated differential harness + F
   deliverable.
 - **0.4a — proof-carrying (mechanism)** (✅): replay records + per-claim certificates +
   `bcir.run --explain`/`--replay`/`--reduce` are implemented and tested (§5.3.2).
-- **0.4b — proof-carrying (contract)** (◑): a *stable* certificate schema (versioned, with a
+- **0.4b — proof-carrying (contract)** (✅): a *stable* certificate schema (versioned, with a
   decode/upgrade path), an external replay-CLI contract (a third party can re-check a record
   without the producing build), and certificate upgrade tests across schema revisions.
   *Landed:* the schema half — every `DecisionRecord` serializes as a self-describing envelope
   (`kind: bcir.decision_record`, `schema: 2`); `from_json` decodes ANY known revision (a bare
   pre-envelope v1 document upgrades through the `_UPGRADES` chain and still replays bit-for-bit),
   and an unknown NEWER schema or wrong kind fails loudly — a certificate is never silently
-  misread (`test_proof.py` upgrade suite). *Remaining:* the external replay-CLI contract.
+  misread (`test_proof.py` upgrade suite). *Landed too:* the **external replay-CLI contract** —
+  `bcir.run <program> --replay FILE` re-checks any record whose schema ≤ the build's, with a
+  STABLE machine contract: one `replay-verdict:` line + exit 0 (reproduced bit-for-bit) /
+  3 (decoded but diverged, mismatches listed) / 4 (undecodable, newer schema, or a record
+  naming a different module/target — a usage error, never a bogus divergence). Driven as a
+  real subprocess in the suite. **0.4b is COMPLETE.**
 - **1.0** (☐): stable language/ABI policy; no known Python↔C++ divergence (generated +
   fuzzed); ≥2 real hardware targets with measured evidence; R1–R21 dual-rail symmetry
   (✅ already holds — §5.1.1 + §5.14 Phase 1); one external frontend; published benchmark
