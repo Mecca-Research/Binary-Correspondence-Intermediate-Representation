@@ -267,6 +267,14 @@ echo "[c-runtime] bcir-cc compiler driver: compile a driver (sibling header) + e
        "${C}/bcir_verify.c" "${C}/bcir_runtime.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" -o "${tmp}/bcir-cc" \
   || { echo "  FAIL: bcir-cc build"; exit 1; }
 ccsum="$("${tmp}/bcir-cc" "${C}/cfront_driver_uart.c")" || { echo "  FAIL: bcir-cc compile"; echo "${ccsum}"; exit 1; }
+# Phase 3 breadth: the CMSIS-style GPIO fixture (__IO macro, RESERVED pads, write-only BSRR,
+# RCC gate-first) must ALSO compile clean through the C rail -- real header shapes, not just
+# the synthetic UART block.
+gpsum="$("${tmp}/bcir-cc" "${C}/cfront_driver_gpio.c")" || { echo "  FAIL: bcir-cc gpio compile"; echo "${gpsum}"; exit 1; }
+case "${gpsum}" in
+  *ok=1*) echo "  PASS bcir-cc CMSIS gpio fixture (${gpsum##*: })" ;;
+  *) echo "  FAIL: bcir-cc gpio: ${gpsum}"; exit 1 ;;
+esac
 case "${ccsum}" in
   *ok=1*) echo "  PASS bcir-cc compile (${ccsum##*: })" ;;
   *) echo "  FAIL: bcir-cc compile: ${ccsum}"; exit 1 ;;
