@@ -12,9 +12,9 @@
 > [`BCIR_NATIVE_OBJECT_GATE.md`](BCIR_NATIVE_OBJECT_GATE.md) (native isel stays gated),
 > [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](BCIR_ML_AI_INTEGRATION_ROADMAP.md) (the parallel ML arc), and
 > [`BCIR_UART_DRIVER_BLUEPRINT.md`](BCIR_UART_DRIVER_BLUEPRINT.md) — the **full execution-ready
-> blueprint for Phase D slice 1** (the 16550 driver program: normative device model from eight
-> vendor documents, variant matrix, field-errata research, and build slices U0–U7 with laws,
-> tests, gates and ML placement already decided).
+> blueprint for Phase D slice 1** (the 16550/16750 driver program: normative device model from
+> thirteen vendor documents, variant + capability matrices, field-errata research, and build
+> slices U0–U9 with laws, tests, gates and ML placement already decided).
 
 ## 0. The one-paragraph orientation
 

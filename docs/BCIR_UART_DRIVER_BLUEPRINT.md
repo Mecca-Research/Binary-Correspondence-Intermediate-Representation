@@ -1,7 +1,7 @@
 # BCIR UART-16550 Driver — the full build blueprint
 
 > **What this document is.** The complete, execution-ready engineering blueprint for the first
-> BCIR ML-compiled device driver: a 16550-family UART driver built registry-first, verified by
+> BCIR ML-compiled device driver: a 16550/16750-family UART driver built registry-first, verified by
 > the R-laws, priced by K_BCIR, tuned by frozen learned priors, and closed-loop-retuned from its
 > own telemetry. It is written so that an implementing model (or engineer) can build every slice
 > **without doing any high-level planning**: the device model is normative and sourced, every
@@ -13,11 +13,18 @@
 > a full program. It builds ONLY on machinery that is already merged (referenced by file path
 > throughout); nothing here requires new core-IR invention beyond the named law additions.
 >
-> **Sources.** Normative device facts were extracted from eight vendor documents:
+> **Sources.** Normative device facts were extracted from thirteen vendor documents:
 > TI/NSC **PC16550D** datasheet (SNLS378C, the canonical silicon), TI **TL16C550C** (SLLS177I)
 > and **TL16C550D** (SLLS597E) (autoflow-control ACEs), Exar **ST16C550** (rev 5.0.1),
-> Microsemi **Core16550 v3.4** handbook (APB FPGA IP) + the earlier Rev-4 handbook, and AMD/Xilinx
-> **AXI UART 16550**: DS748 (v1.01a) + **PG143** (v2.0 product guide). Field-reality quirks
+> Microsemi **Core16550 v3.4** handbook (APB FPGA IP) + the earlier Rev-4 handbook, AMD/Xilinx
+> **AXI UART 16550**: DS748 (v1.01a) + **PG143** (v2.0 product guide) — and, for the 16750
+> (64-byte-class) family extension (§1.8/§1.9, §2.1, slices U8/U9): TI **TL16C750E**
+> (SLLSF10, Dec 2019 — the *enhanced* 750: 128-byte FIFOs, EFR/TCR/TLR/AFR, fractional
+> divisor, sleep, IrDA, RS-485), CAST **H16750S** soft-IP datasheets ×3 (generic ASIC,
+> Altera-optimized, Xilinx-optimized — content-identical apart from implementation tables), and
+> Lattice **UART 16550 IP User Guide** (FPGA-IPUG-02100-1.4, 2024). The *classic* TL16C750
+> facts (FCR[5] 64-byte mode, 1/16/32/56 triggers, IIR[5] indicator) were verified by web
+> research against the TI datasheet corpus and TI E2E (§3 sources). Field-reality quirks
 > (§3) come from the Linux 8250 driver corpus and public errata discussion; chip-lot-level
 > errata sheets are explicitly **deferred to vendor support** (§9).
 
@@ -25,8 +32,11 @@
 
 ## 0. How to use this document (for the implementing model)
 
-- Build the slices **in order** (U0 → U7). Each slice is one PR-sized commit and is
-  independently gated; do not start slice N+1 until slice N's gates are green.
+- Build the slices **in order** (U0 → U9). Each slice is one PR-sized commit and is
+  independently gated; do not start slice N+1 until slice N's gates are green. U0–U7 are the
+  16550 core program; U8–U9 are the 16750-family increment (they extend, never rewrite, the
+  core — a U8/U9 change that forces edits to U2's driver logic beyond capability dispatch is a
+  design violation, stop and re-read §1.8/§1.9).
 - Every slice section has: **Goal · Files · Design (already decided) · Tests · Gates · Commit.**
   "Design" is normative — do not re-derive it, and do not substitute alternatives.
 - Follow the house disciplines (they are restated in §10 with file-path anchors): the
@@ -194,6 +204,121 @@ RTS→CTS, OUT1→RI, OUT2→DCD), interrupts still operate. This is the driver'
 end-to-end self-test path — U2's `uart_selftest` uses it (write a pattern, read it back, check
 MSR mirrors) and the simulator must implement it.
 
+### 1.8 The classic 16750 extension (64-byte mode — TL16C750, verified by research)
+
+The classic TL16C750 is a 16550 with one added mode. Everything in §1.1–§1.7 holds; the deltas
+(these are what the `tl16c750` placement record encodes, and what U8's laws police):
+
+- **64-byte FIFO enable = FCR[5]**, and a write to FCR[5] is **protected by LCR[7]=1** (plain
+  DLAB — *not* the 0xBF enhanced key of §1.9). With FCR[5]=0 the part is exactly a 16550
+  (16-byte mode). The canonical sequence to switch: set LCR[7]=1 → write FCR with bit5 (and
+  bit0=1) → clear LCR[7]. This is a *second* protected register write hiding under DLAB —
+  the U1 DLAB-bracket law's "only DLL/DLM/LCR inside a bracket" rule gets a per-variant
+  exception: on `has_64byte` placements, **FCR joins the bracket whitelist** (law 6, U8).
+- **RX trigger levels in 64-byte mode: 1 / 16 / 32 / 56** (FCR[7:6] = 00/01/10/11). TI's
+  encoding — note the NXP SC16C750B second-source uses **16/32/56/60**, a real cross-vendor
+  fork on the same FCR bits (§2.1 hazard H-G). 16-byte mode keeps 1/4/8/14.
+- **IIR[5] reads back 1 when 64-byte mode is enabled** (with FIFOs on, IIR[7:5] = 111) — the
+  only register evidence of the mode; `uart_probe` (U9) uses it to verify the FCR[5] write
+  took, and it distinguishes a real 750 from a 550 that silently ignored bit5.
+- **MCR[5] = AFE** exactly as TL16C550C/D (§1.6 semantics carry over, trigger table swapped);
+  the auto-RTS hysteresis operates on the 64-byte trigger levels when the mode is on.
+- Character timeout, overrun, THRE/TEMT, loopback, divisor: unchanged from §1.1–§1.4.
+
+### 1.9 The enhanced-16750 register model (TL16C750E-class; SLLSF10)
+
+The 2019 TL16C750E shares the *name* 16750 but is a different, larger device: **128-byte**
+FIFOs, an enhanced register file, and — critically — **different FCR trigger encodings than
+the classic 750** (hazard H-F). It is pin-compatible with the TL16C550D, and its extended
+register set follows the 16C650/16C752 lineage. Normative model (the `tl16c750e` placement):
+
+**Extended register file and its three access keys** (all stateful; U8's key-bracket law):
+
+| Key state | Registers exposed |
+|---|---|
+| `LCR = 0xBF` (the *enhanced key* — a value, not a bit) | EFR, Xon1, Xon2, Xoff1, Xoff2 |
+| `EFR[4]=1` (a **write enable**, set while under the 0xBF key) | makes IER[7:4], FCR[5:4], MCR[7:5] writable at their normal addresses |
+| `EFR[4]=1` **and** `MCR[6]=1` | TCR, TLR (at slots 6/7, displacing MSR/SCR reads) |
+| `LCR[7:5] = 100` (LCR[7]=1, LCR ≠ 0xBF) | AFR at slot 2 |
+| `LCR[7]=1, LCR ≠ 0xBF, EFR[4]=1, MCR ≠ 0bx1x0x1xx` | DLF (fractional divisor) |
+
+- **FCR**: bit0 enable, bit1/bit2 FIFO resets, bit3 DMA mode — as §1.1. **Bits 5:4 = TX
+  trigger** (16/32/64/120 spaces; writable only when EFR[4]=1) and **bits 7:6 = RX trigger
+  1/4/120/124 characters** — *neither* matches the classic 750 encodings (H-F).
+- **TLR** (programmable triggers, granularity 8): TLR[7:4] = RX trigger N/8, TLR[3:0] = TX
+  trigger N/8, each 8..120; a zero nibble falls back to the FCR selectable levels. Writable
+  only under `EFR[4]=1 ∧ MCR[6]=1`.
+- **TCR** (auto-RTS hysteresis pair): TCR[3:0] = HALT level, TCR[7:4] = RESUME level, each in
+  bytes ×8 (0..120 per the prose; the datasheet's own table says "(0 to 60)" — a copy-paste
+  from the 64-byte 16C752 lineage, hazard H-J). **HALT > RESUME is a software law — the
+  hardware does not check it** (the datasheet says so explicitly), and TCR must be programmed
+  before enabling auto-RTS. Auto-RTS on this part is **EFR[6]=1** (and auto-CTS **EFR[7]=1**),
+  *not* MCR[5] — MCR[5] here is **Xon-any** (H-F again: same bit, different meaning per part).
+- **Fractional divisor (DLF)**: divisor = ref / (prescaler × baud_divider × baud), where
+  prescaler ∈ {1,4} (MCR[7], EFR[4]-gated) and baud_divider ∈ {16,8} (DLF[7]). DLF[5:0] is a
+  6-bit fraction the field table defines as x/64 — but the datasheet's own worked formula says
+  `DLF = ROUND(frac × 128)`, which cannot fit 6 bits. **Datasheet self-contradiction (H-I).
+  Resolution rule: the field width wins — program `ROUND(frac × 64)`; the U9 selftest measures
+  the achieved baud on the sim (and later silicon) and the measured-baud gate is the arbiter;
+  if silicon disagrees, escalate to TI E2E (vendor support, §9).** DLL/DLH/DLF must not be
+  written after sleep mode is armed (IER[4]=1) — the sleep-write law (U8).
+- **Sleep mode**: armed by `EFR[4]=1 ∧ IER[4]=1`; entered when RX idle ∧ TX FIFO+shift empty ∧
+  no pending interrupts (never entered with RX data held); clocks stop; wake on RX edge, modem
+  input change, or a TX FIFO write. Divisor writes during sleep are forbidden (TI note).
+- **IIR additions**: IIR[4] = Xoff/special-char detected (priority 5, above only CTS/RTS),
+  IIR[5] = CTS/RTS low→high change (priority 6) — **on the classic 750 the same IIR[5] means
+  "64-byte mode on"** (H-F). IIR[7:6] mirror FCR[0].
+- **IER additions** (EFR[4]-gated writes): IER[4] sleep, IER[5] Xoff, IER[6] RTS, IER[7] CTS.
+  Re-enabling IER[1] fires a fresh THRE interrupt if the TX FIFO is below threshold.
+- **FIFO Ready register** (read slot 7 when MCR[2]=1, loopback off): bit0 = TX has ≥ trigger
+  spaces, bit4 = RX at/above trigger or timeout — a *polled* trigger status that saves an IIR
+  round-trip; U9's drain loop may use it where the placement record says it exists.
+- **AFR** (slot 2 under `LCR[7:5]=100`): bit1 IREN (IrDA), bit2 485EN (auto-DTR RS-485 driver
+  enable), bit3 485LG, bit4 RCVEN (receiver listen; **clearing RCVEN kills the character
+  timeout interrupt even in RS-232 mode** — a sharp edge worth its own negative test), bits
+  7:5 DLY (0–15 bit-times of DTR hold — the field is 3 bits, the prose says 0–15: sibling of
+  H-J; same resolution rule). AFR resets to 0x10 (RCVEN on).
+- **Reset quirks**: LCR resets to **0x1D** (not 0x00); **DLL, DLH, SPR, Xon1/2, Xoff1/2 are
+  NOT cleared by RESET** — they hold prior values across a soft reset, so init must write them
+  all, never trust reset state (H-M). IIR=0x01, FCR=0x00, EFR=0x00, TCR/TLR=0x00, MSR low
+  nibble cleared.
+- **Software flow control** (Xon/Xoff engine, EFR[3:0], special-char detect EFR[5]): modeled
+  in the registry for completeness; implementation **deferred** (§9) — the hardware-flow path
+  (TCR/EFR[6]) subsumes its role in this program.
+
+### 1.10 The soft-IP 16750/16550 clones (CAST H16750S; Lattice UART 16550)
+
+Soft cores break the "one part number = one register model" assumption *at synthesis time* —
+the registry must therefore record **capabilities, not part names** (this is the design reason
+`UartPlacement` grows capability fields in U8):
+
+- **CAST H16750S** (claims 100% TL16C750 software compatibility, with documented exceptions):
+  FIFO size is a **synthesis constant** (8/16/32/64/128/256); FCR[5] means "**alternate FIFO
+  size** enable" — with the alternate size set at synthesis (it can be *smaller* than 16); the
+  four trigger encodings scale as **1 byte / ¼ / ½ / ⅞ of the configured FIFO size** — so on a
+  64-byte build the levels are 1/16/32/56 (matching TI), but on a 256-byte build they are
+  1/64/128/224: trigger levels are **data, not constants**. Divisor **0x0000 is illegal**; the
+  BRG resets to 0x0001 and no output is generated until programmed (the U1 divisor law gets a
+  citable hardware anchor). Sleep/low-power modes are **not modeled**. The output data bus
+  always shows the last selected register (reads of write-only slots return stale data, not
+  0). IrDA optional. Reads/writes are fully synchronous to one input clock (no RCLK).
+- **Lattice UART 16550 IP** (PC16550D-compatible core, LMMI or APB host interface):
+  **no SCR** — slot 7 is reserved, reads return 0 (§3.1's SCR probe would misclassify this
+  part as a 16450-era device; the probe must consult the placement record first, H-L);
+  **FCR[0] is not implemented** (FIFOs are always on) and **FCR[3] DMA is not implemented** —
+  FCR writes carry only the resets and trigger bits, and the FCR-gating law (H-C) is *vacuous
+  by capability flag*, not by silence; IIR[7:6] fixed at 11; **reset values are synthesis
+  attributes** — LCR format, FCR trigger (default 4), the DLR divisor (preloaded from the
+  configured baud), and *even IER enables* can be nonzero at reset (an interrupt can be
+  pending immediately out of reset) — so the driver's init must write IER/FCR/LCR explicitly
+  and never assume the §1.1 reset column (H-D generalized); RBR read on an empty FIFO returns
+  the **last** byte again (no error indication); THR occupancy is invisible (only
+  LSR.thr_empty exists) — the TX law "burst 16 only from empty" is *mandatory*, not an
+  optimization, on this part; APB register stride is 4 bytes (offset ×4) vs LMMI stride 1 —
+  the H-A stride hazard inside one product; writing either divisor byte reloads the baud
+  counter immediately (mid-bracket divisor writes glitch the line — the §1.4 idle rule
+  covers it).
+
 ---
 
 ## 2. The variant matrix (what the registry must parameterize)
@@ -226,6 +351,59 @@ MSR mirrors) and the simulator must implement it.
 - **H-E (readable FCR)**: never *rely* on reading FCR even where possible — the portable driver
   shadows its last FCR write in RAM (a plain struct field, not a device read).
 
+### 2.1 The 16750-family extension matrix (slices U8/U9)
+
+| Axis | TL16C750 (classic) | TL16C750E (SLLSF10) | CAST H16750S | Lattice 16550 IP |
+|---|---|---|---|---|
+| FIFO depth | 16 or 64 (FCR[5]) | **128 fixed** | **synthesis: 8–256**; FCR[5] = alternate size | 16 fixed |
+| RX trigger encodings | 1/4/8/14; 64-byte: **1/16/32/56** | **1/4/120/124** | 1 / ¼ / ½ / ⅞ **of FIFO size** | 1/4/8/14 (reset = attribute) |
+| TX trigger | none | FCR[5:4]: 16/32/64/120 (EFR[4]-gated) + TLR | none | none |
+| Programmable triggers (TLR) | no | **yes** (×8 granularity, key-gated) | no | no |
+| 64-byte/alt-mode enable | FCR[5], **DLAB-protected** | n/a (always 128) | FCR[5] (alternate synth size) | n/a |
+| Mode readback | **IIR[5]=1** in 64-byte mode | IIR[5] = **CTS/RTS change int.** | per TL16C750 claim | IIR[7:6]=11 fixed |
+| Hardware autoflow | MCR[5] AFE (+MCR[1]) | **EFR[6] auto-RTS / EFR[7] auto-CTS + TCR hysteresis** | MCR[5] AFE per 750 | none (synthesis flow-control signals only) |
+| MCR[5] meaning | AFE | **Xon-any** | AFE | reserved |
+| Fractional divisor | no | **DLF** (6-bit, ÷16/÷8 select, MCR[7] prescaler) | no | no |
+| Divisor 0 | "not recommended" | disables UART | **illegal; BRG min 0x0001** | divisor preloaded at synthesis |
+| Sleep mode | IER[4]-class (750 lineage) | EFR[4]∧IER[4], wake on RX/modem/TX-write | **not modeled** | no |
+| Extended regs | none | EFR/Xon/Xoff (LCR=0xBF), TCR/TLR (MCR[6]), AFR (LCR[7:5]=100), DLF, FIFO Rdy | none | none |
+| SCR | yes | yes (not reset) | yes | **absent (reserved)** |
+| Reset honesty | §1.1 tables | LCR=**0x1D**; DLL/DLH/SPR/Xon/Xoff **not reset** | BRG=0x0001 | **all reset values are synthesis attributes** (IER may be ≠0) |
+
+**Hazards added by the family** (U8's laws exist for these):
+- **H-F (name ≠ model)**: "16750" covers at least three incompatible register models — classic
+  (FCR[5]/DLAB, 1/16/32/56), 750E (FCR[7:6]=1/4/120/124 + TLR, autoflow moved to EFR[6:7],
+  MCR[5]/IIR[5] re-purposed), and synthesis-parametric soft cores. **A trigger byte or autoflow
+  enable compiled for one is wrong — sometimes silently — on the others.** → trigger encodings
+  and flow-control mechanism become *data in the placement record* (U8); the driver never
+  hard-codes an FCR trigger pattern.
+- **H-G (second-source fork)**: TI classic 64-byte triggers 1/16/32/56 vs NXP SC16C750B
+  16/32/56/60 on identical FCR bits. → the placement record carries the *byte values*, and the
+  U5/U9 prior's feature is the byte value, not the encoding index.
+- **H-H (stateful access keys)**: LCR=0xBF, EFR[4], MCR[6], LCR[7:5]=100 form a *nested key
+  system*; an interrupted or interleaved key sequence leaves the register file in a mode where
+  ordinary accesses hit extended registers (a worse version of H-B). → U8 law: key sequences
+  are straight-line critical sections (the DLAB-bracket law generalized to a *key-bracket*
+  law); every bracket must restore LCR and MCR[6] before it ends.
+- **H-I (datasheet self-contradiction, DLF)**: x/64 field definition vs ×128 worked formula.
+  → resolution rule in §1.9 (field width wins; measured-baud selftest is the arbiter; escalate
+  to vendor on silicon disagreement). Never copy the ×128 formula.
+- **H-J (copy-paste ranges)**: TCR table "(0 to 60)" vs prose 0–120 ×8; AFR DLY 3 bits vs
+  "0–15 bit times". → same resolution rule (field width × granularity wins); both get negative
+  tests pinning the resolved reading.
+- **H-K (synthesis-parametric FIFO)**: H16750S trigger levels are fractions of an invisible
+  synthesis constant; software cannot discover the depth from registers. → FIFO depth is a
+  *required field* of the placement record (attested by the RegMap contract), never probed.
+- **H-L (absent classic registers)**: Lattice has no SCR and no FCR[0]/FCR[3]; the §3.1 probe
+  sequence would misclassify it. → `uart_probe` consults placement capabilities before running
+  legacy identification; the probe result must *agree* with the record (disagreement is a
+  law-shaped runtime error, not a silent fallback).
+- **H-M (reset-state lies)**: 750E's non-reset DLL/DLH/SPR/Xon/Xoff and LCR=0x1D; Lattice's
+  attribute-defined resets (nonzero IER possible). → the U2 init already writes every register
+  it depends on; U8 extends the rule: **on enhanced parts, init also writes EFR, TCR, TLR, DLF
+  and re-latches Xon/Xoff before enabling any flow control** — no register the driver reads a
+  decision from may be left at "reset" value.
+
 ---
 
 ## 3. Field-reality quirks (research; not in any datasheet)
@@ -255,12 +433,29 @@ From the Linux 8250 driver corpus and public errata discussions — these harden
    IIR sample. (Matters for the deferred IRQ slice; documented now.)
 6. **Chip-lot errata sheets** (specific date-code silicon bugs) are **not publicly indexed** —
    deferred to vendor support (§9). The defensive-sequencing rules above are the mitigation.
+7. **Linux's 16750 handling confirms the classic-750 model** (§1.8): `serial_reg.h` defines
+   `UART_FCR7_64BYTE = 0x20` ("Go into 64 byte mode") and the `PORT_16750` entry in
+   `8250_port.c` carries `UART_CAP_AFE` (MCR[5] autoflow) — and the kernel needed a dedicated
+   fix for TL16C750 auto-RTS behavior (see the linux-serial patch below), evidence that AFE
+   hysteresis details bite real drivers. The implementing model should treat the kernel's
+   64-byte-mode DLAB dance in `serial8250_do_set_termios` as a cross-check for U8's law 6,
+   and re-verify these identifiers against the current kernel tree at build time (they are
+   cited from research, not vendored).
+8. **750E-class RX anomalies get reported in the field** (TI E2E: an RX buffer read issue
+   thread on the TL16C750E) — reinforcing the blueprint rule that `uart_probe`/selftest verify
+   *observed* register behavior against the placement record instead of trusting the part
+   number (H-L's runtime-agreement rule).
 
 Sources: [Linux 8250 THRE-test patch discussion](https://patchew.org/linux/20260224121639.579404-1-alban.bedel@lht.dlh.de/),
 [Serial Programming / 8250 UART Programming (Wikibooks)](https://en.wikibooks.org/wiki/Serial_Programming/8250_UART_Programming),
 [Linux 8250 Kconfig (quirk inventory)](https://github.com/torvalds/linux/blob/master/drivers/tty/serial/8250/Kconfig),
 [8250_dw.c (DesignWare busy quirk)](https://github.com/torvalds/linux/blob/master/drivers/tty/serial/8250/8250_dw.c),
-[Linux 8250 core (UART_BUG_* flags)](https://docs.huihoo.com/doxygen/linux/kernel/3.7/8250_8c_source.html).
+[Linux 8250 core (UART_BUG_* flags)](https://docs.huihoo.com/doxygen/linux/kernel/3.7/8250_8c_source.html),
+[TI E2E: TL16C750 FCR bit-5 64-byte enable thread](https://e2e.ti.com/support/interface-group/interface/f/interface-forum/404525/p-n-tl16c750-uart-setting-the-64-byte-fifo-enable-fcr-register-bit-5),
+[TI TL16C750 product page (classic datasheet)](https://www.ti.com/product/TL16C750),
+[NXP SC16C750B datasheet (the 16/32/56/60 fork)](https://www.nxp.com/docs/en/data-sheet/SC16C750B.pdf),
+[linux-serial: TL16C750 RTS/CTS autoflow fix](https://www.spinics.net/lists/linux-serial/msg22072.html),
+[TI E2E: TL16C750E RX buffer read issue](https://e2e.ti.com/support/interface-group/interface/f/interface-forum/1019065/tl16c750e-rx-buffer-read-issue).
 
 ---
 
@@ -334,9 +529,34 @@ class UartPlacement:
     has_modem: bool      # modem lines wired (H-NOMSR)
     ref_clk_hz: int      # the baud reference the divisor law uses
     irq_level: bool      # level-sensitive interrupt output (AXI) vs pin
+    # -- 16750-family capability fields (U8; every U0-era placement takes the defaults,
+    #    so U8 is non-disturbing by construction — H-F/H-K/H-L are encoded HERE) --
+    fifo_depth: int = 16          # 16 | 64 | 128 | synthesis value (H-K: data, never probed)
+    rx_triggers: tuple = (1, 4, 8, 14)   # BYTE VALUES per FCR[7:6] encoding (H-F/H-G)
+    rx_triggers_alt: tuple = ()   # 64-byte/alternate-mode byte values, () = no alt mode
+    tx_triggers: tuple = ()       # FCR[5:4] TX trigger spaces (750E), () = none
+    mode64_key: str = ""          # "" | "dlab" (classic 750: FCR[5] under LCR[7]=1)
+    flow_mech: str = "none"       # "none" | "mcr5_afe" | "efr_tcr" (750E) — the U6/U9 dispatch
+    has_tlr: bool = False         # programmable ×8 triggers behind EFR[4]+MCR[6]
+    has_frac_divisor: bool = False  # DLF present (750E)
+    has_sleep: bool = False       # EFR[4]&IER[4] sleep mode
+    has_scr: bool = True          # False on Lattice (H-L: probe must consult this)
+    fcr_impl_mask: int = 0xFF     # which FCR bits exist (Lattice: ~(bit0|bit3))
+    reset_honest: bool = True     # False when reset values are synthesis attributes /
+                                  # registers survive reset (Lattice, 750E DLL/DLH; H-M)
 
 UART16550: tuple[UartReg, ...]          # THE normative table (from §1.1)
-PLACEMENTS: dict[str, UartPlacement]    # the three §2 placements
+PLACEMENTS: dict[str, UartPlacement]    # U0: the three §2 placements.
+# U8 adds: "tl16c750" (mode64_key="dlab", rx_triggers_alt=(1,16,32,56)),
+# "tl16c750e" (fifo_depth=128, rx_triggers=(1,4,120,124), tx_triggers=(16,32,64,120),
+#              flow_mech="efr_tcr", has_tlr/has_frac_divisor/has_sleep=True,
+#              reset_honest=False),
+# "h16750s_64" (a chosen synthesis point: fifo_depth=64, rx_triggers_alt=(1,16,32,56)),
+# "lattice16550_lmmi" + "lattice16550_apb" (has_scr=False, fcr_impl_mask=0xC6,
+#              reset_honest=False; the APB one is stride=4).
+# The extended registers (EFR/TCR/TLR/DLF/AFR/Xon/Xoff/FIFORdy) enter UART16750E as a
+# second normative table with a `key` column (the §1.9 access-key states) — same UartReg
+# shape plus `key: str`; emit_header renders them only for placements whose caps need them.
 
 def emit_header(placement: UartPlacement) -> str
     # deterministic C header: one `#define UART_<REG>_OFF` per register (stride/base applied),
@@ -556,7 +776,10 @@ prior over cheap features orders the candidates; the exact search verifies (mism
 telemetry (U4) disagrees with the assumed arrival class, certifying the win.
 
 **Files.** `bcir/kbcir/uart_prior.py` — copy the `tile_prior.py` structure function-for-function:
-`uart_features(spec, cand, target)` (trigger/16, burst/16, batch/16, arrival-class one-hots,
+`uart_features(spec, cand, target)` (trigger/16, burst/16, batch/16 — **normalize by the
+placement's `fifo_depth`, and feed trigger *byte values*, never FCR encoding indices (H-F/H-G);
+U9 widens the candidate space, the feature shape is fixed here so the envelope schema survives**,
+arrival-class one-hots,
 autoflow flag [the §1.6 asymmetry: with AFE at trigger≤8 the drain-to-empty rule makes small
 batches expensive], MMIO cost ratio from the profile, bias),
 `prior_samples/train_uart_prior/FrozenUartPrior.order/guided_plan_service` (admissible early
@@ -582,7 +805,10 @@ priced model actually chooses — pin after measuring) with win > 0 recorded.
 **Goal.** §1.6 as driver capability: on `has_afe` placements enable AFE per the MCR5+MCR1 rule
 and encode the drain-to-empty consequence in the plan (U5 feature already carries the flag);
 on non-AFE `has_modem` placements implement software RTS/CTS with the documented one-char race
-window; on `!has_modem` placements both are compile-time absent.
+window; on `!has_modem` placements both are compile-time absent. **Dispatch on
+`placement.flow_mech`, not on part names** — U6 implements `"mcr5_afe"` and the software
+fallback; the `"efr_tcr"` arm (750E) lands in U9 behind the same dispatch point, so U9 adds a
+case, not a rewrite.
 **Files.** extend `uart_driver.c` (`uart_flow_enable`, the drain-to-empty variant of
 `uart_rx_drain`), `sim16550.c` (auto-RTS/auto-CTS per the §1.6 timing: deassert at trigger,
 reassert per trigger class; CTS mid-stop-bit rule), tests (`test_autoflow_rts_hysteresis_matches_spec`
@@ -600,6 +826,94 @@ certificate means), update `BCIR_DRIVER_KERNEL_ROADMAP.md` Part IV (slice 1 DONE
 and `BCIR_MASTER_ROADMAP.md` Phase D, regenerate STATUS.
 **Commit.** `devices: U7 -- the proof-carrying UART driver artifact + docs`
 
+### U8 — The 16750-family registry + laws (the second program increment begins)
+
+**Goal.** §1.8/§1.9/§1.10 and §2.1 as data and law: the five new placements, the extended
+register table with access keys, the capability fields (the `UartPlacement` defaults make this
+non-disturbing to U0–U7 — prove it, don't assert it), and three new law clauses. **No driver
+code changes in this slice** (that is U9); U8 is registry + laws + negatives only, the same
+U0→U1 layering.
+
+**Files.** `uart_model.py` (the capability fields + `UART16750E` keyed table + five placements +
+`emit_header` rendering of extended registers and trigger-byte-value enums), `uart_laws.py` +
+`BCIRVerifyPass.cpp` + `verify_uart_protocol.mlir` negatives + LangRef paragraph, tests
+appended to `test_uart_model.py`/`test_uart_laws.py` (already registered).
+
+**The new laws** (message shapes normative; all keyed on placement capabilities — vacuous on
+`pc16550d`-class records and on all non-UART code):
+6. **Key bracket** (generalizes law 1, hazards H-B/H-H): each key state (`LCR=0xBF`,
+   `EFR[4]=1`, `MCR[6]=1`, `LCR[7:5]=100`, and classic DLAB when `mode64_key=="dlab"`) opens a
+   bracket that must be straight-line, must close by restoring the key register, and admits
+   only the registers §1.9's table exposes under that key —
+   `R3-uart: <REG> access requires key <KEY> (open: <KEYS>)` /
+   `R3-uart: key bracket <KEY> not closed`. On `mode64_key=="dlab"` placements FCR joins the
+   DLAB-bracket whitelist (§1.8) — pin with a positive test that the classic 64-byte-enable
+   sequence is law-clean and a negative that the same sequence on `pc16550d` still fires law 1.
+7. **Trigger legality** (H-F/H-G/H-K): a trigger byte value programmed into FCR/TLR must be a
+   member of the placement's `rx_triggers`/`rx_triggers_alt`/`tx_triggers`/TLR range —
+   `R3-uart: trigger 56 is not reachable on <placement> (has: 1/4/120/124)`. TLR values must
+   be ≡ 0 (mod 8) and ≤ `fifo_depth − 8`; TCR must satisfy HALT > RESUME (the hardware-unchecked
+   software law, H-J): `R3-uart: TCR halt 32 must exceed resume 48`.
+8. **Sleep/divisor exclusion** (§1.9): a DLL/DLM/DLF store while IER[4]=1 is armed on a
+   `has_sleep` placement — `R3-uart: divisor write while sleep mode is armed`; plus the DLF
+   resolution pin: the header emits `UART_DLF_FRAC_DEN 64` with the H-I comment block, and a
+   golden test greps the ×64 (never ×128) constant.
+
+**Tests.** Per placement: header generation determinism + offsets (Lattice APB stride-4 vs
+LMMI stride-1 from one record pair); tampered-contract catches on the new fields (lie about
+`fifo_depth`, `rx_triggers`, `has_scr` — each caught); law 6/7/8 positives + negatives on both
+rails; **the non-disturbance sweep re-run**: the whole existing corpus AND the U2 driver
+compile with zero new diagnostics (U8 may not disturb the 16550 program).
+**Gates.** Suite + registry guard; `check_passes.sh` (extended stanza); doc gates.
+**Commit.** `devices: U8 -- the 16750-family registry (capabilities as data) + key/trigger/sleep laws`
+
+### U9 — The 16750-family driver, sim, and plan-space extension
+
+**Goal.** Capability-dispatched driver support: classic 64-byte mode, 750E enhanced init +
+TCR/TLR autoflow + fractional divisor + sleep arm/disarm, Lattice absent-register honesty —
+running against the sim extended with per-placement profiles, and the U5 prior re-frozen over
+the widened candidate space.
+
+**Design (the load-bearing decisions).**
+- `uart_state` gains `caps` (a const pointer to the placement record's C mirror — emitted by
+  U0's header generator) and `efr_shadow`/`tcr_shadow`/`tlr_shadow` (H-E generalized: no
+  extended register is ever read back for a decision).
+- `uart_probe` order: consult caps → legacy §3.1 probe **only where caps say the registers
+  exist** (H-L) → verify observed evidence against caps (IIR[5] after a 64-byte enable on
+  classic 750; IIR[7:6] fixed on Lattice; FIFO Rdy behavior on 750E) → disagreement returns a
+  distinct law-shaped error (`caps_mismatch`), never a silent fallback (§3.8).
+- `uart_init` extensions, strictly appended to the §1.4 sequence: on `flow_mech=="efr_tcr"`,
+  an LCR=0xBF bracket writes EFR[4]=1 (+EFR[6]/[7] as requested), then TCR (HALT>RESUME from
+  the plan), TLR under MCR[6], then keys restored *before* IER is written (the §1.4 step-7
+  position is unchanged — key brackets never enclose IER). On `has_frac_divisor`, DLF is
+  written inside the same DLAB bracket as DLL/DLM using the ×64 rule. On `mode64_key=="dlab"`,
+  the FCR-with-bit5 write happens inside the DLAB bracket (law 6 already admits it). Sleep is
+  armed only by an explicit `uart_sleep_arm()` — never during init — and `uart_sleep_arm`
+  refuses (error code) if called before init completed (the DLF/DLL write-before-sleep rule).
+- `sim16550.c` gains a `sim_profile` selected by placement name: FIFO depth, trigger tables,
+  key-state machine (0xBF/EFR[4]/MCR[6]/AFR key), TCR hysteresis auto-RTS (deassert at HALT,
+  reassert at RESUME — byte-exact), 750E reset quirks (LCR=0x1D, surviving DLL/DLH), Lattice
+  absences (slot 7 reads 0, FCR bit0/bit3 writes ignored, RBR-on-empty returns last byte).
+  The sim stays one file; profiles are data tables, not #ifdef forks.
+- U5 prior: candidate space per placement = caps trigger byte values × burst ∈ {1..fifo_depth
+  powers of 2} × batch — the envelope's `target` field already ties placement+cal_gen, so a
+  750E prior cannot be loaded for a Lattice plan (staleness refusals already pinned in U5).
+  Re-measure, re-pin the node-reduction gate (the U5 numbers do not carry over — bigger space).
+- **The performance thesis this increment proves**: at 128-deep FIFOs the plan chooses trigger
+  120/124 + TLR fine-tuning and the services/byte gate tightens ~8× vs the 16-byte program —
+  measure and pin (§6 additions).
+
+**Tests** (`test_uart_driver.py` + `test_uart_prior.py` extensions): sim-profile fidelity per
+placement (the §1.8–§1.10 deltas each pinned: 64-byte trigger points, IIR[5] readback, TCR
+hysteresis byte-exact, DLF measured baud on the PG143-style vector, sleep entry refuses with
+RX data held, Lattice stale-RBR + missing-SCR), driver init transcript per placement (claim
+order asserted as in U2), `caps_mismatch` fires when the sim is deliberately mis-profiled,
+autoflow `"efr_tcr"` arm end-to-end, prior certificate re-admitted per placement with
+mismatches 0.
+**Gates.** Full suite; `check_runtime.sh` `#uartdrv` extended per placement; `check_passes.sh`;
+doc gates; measured-then-pinned services/byte + node-reduction numbers.
+**Commit.** `devices: U9 -- 16750-family driver + sim profiles + the widened, re-certified plan space`
+
 ---
 
 ## 6. Performance model and gates (what "MAX performance" means, measurably)
@@ -615,6 +929,9 @@ All measured on the deterministic sim (char-tick clock), so the numbers are exac
 | Tail latency under timeout | unbounded staleness at trigger>1 without timeout | ≤ 4 char-times | sim-measured exactly 4 ticks (spec), pinned |
 | Prior-guided planning | exhaustive candidate walk | guided, exact optimum | mismatches == 0, node reduction ≥ pinned |
 | Measured replan (L2) | stale plan under wrong arrival class | re-planned | certificate win ≥ 0, > 0 on the bursty script |
+| 64/128-deep FIFO batching (U9) | 16-deep services/byte | trigger 56 (classic 750) / 120–124+TLR (750E) | services/byte ratio vs 16-deep pinned after measuring (expect ~4×/~8×) |
+| Fractional divisor (U9) | integer-divisor baud error (≤3% law) | DLF ×64 trim | measured baud error ≤ 0.5% on the sim vector; the ×64-not-×128 constant pinned by golden test (H-I) |
+| TCR hysteresis vs drain-to-empty (U9) | AFE drain-to-empty stall (§1.6) | RESUME-level reassert | RTS reassert at exactly the RESUME byte count in the sim, throughput ≥ AFE baseline |
 
 The honest boundary, stated in every doc: these are *simulated-device* wins (MMIO cost = model,
 time = char-ticks). Real-silicon numbers wait for the rig (§9) — the same discipline as the
@@ -644,6 +961,15 @@ source per the §1.1 ladder with bit0 active-low; FIFO-enabled bits reflect FCR0
 clears OE/PE/FE/BI (head-of-FIFO error bits latch into LSR at the read that exposes them).
 The sim identifies as a 16550A (IIR[7:6]=11 after FCR enable) and has a functional SCR.
 
+U9 extends the same single sim with per-placement **profiles** (data tables, no #ifdef forks):
+FIFO depth + trigger byte tables from the placement record; the §1.9 key-state machine
+(LCR=0xBF / EFR[4] / MCR[6] / LCR[7:5]=100) with extended registers reachable only under their
+keys; TCR HALT/RESUME auto-RTS byte-exact; classic-750 FCR[5]-under-DLAB with IIR[5] readback;
+750E reset quirks (LCR=0x1D, DLL/DLH/SPR/Xon/Xoff surviving reset); Lattice absences (slot 7
+reads 0, FCR bits 0/3 ignored, RBR-on-empty repeats the last byte, synthesis-attribute reset
+values including a nonzero IER profile). Sleep mode: armed per §1.9, entry refused while RX
+data is held, wake on RX edge / modem change / THR write — all in char-ticks.
+
 ## 9. Deferred items (and why)
 
 | Item | Why deferred | Unblocks when |
@@ -651,8 +977,14 @@ The sim identifies as a 16550A (IIR[7:6]=11 after FCR enable) and has a function
 | Interrupt/ISR claim model + IRQ-driven driver | BCIR has no event-triggered phase model; polled slice needs none (roadmap Part 0 finding). Design note: THRE-as-hint rule (§3.2) is already written so the IRQ port cannot regress. | after U7; needs an `event.irq` phase-trigger design on the IR |
 | Bus-master DMA | not in the 16550 family (pins only); platform DMA engines are their own drivers | a DMA-engine registry model |
 | Real-silicon measurement (PMU/RAPL, a physical UART) | rig-gated, same as CT4 | `HARDWARE_VALIDATION.md` runbook rig |
-| Chip-lot errata sheets (date-code silicon bugs) | not publicly indexed | **vendor support** (TI/Exar/Microsemi/AMD contacts) |
-| 16750/64-byte-FIFO + sleep modes, Exar EFR feature set | out of the 550 contract; H-B law already fences the EFR hazard | a future variant record |
+| Chip-lot errata sheets (date-code silicon bugs) | not publicly indexed | **vendor support** (TI/Exar/Microsemi/AMD/CAST/Lattice contacts) |
+| ~~16750/64-byte-FIFO + sleep modes~~ | **no longer deferred — §1.8/§1.9/§2.1, slices U8/U9** | — |
+| Xon/Xoff software flow + special-char detect (EFR[3:0]/[5], MCR[5] Xon-any) | protocol-heavy; hardware flow (TCR/EFR[6:7]) covers the program's need; modeled in the registry, unimplemented | a U10-class slice if a target needs in-band flow |
+| IrDA SIR encode/decode (AFR[1], H16750S option) | pulse-shaping layer below the register model; no sim fidelity source for optical timing | vendor IrDA test vectors |
+| RS-485 auto-DTR timing validation (AFR[2:3], DLY) | modeled in the registry; DLY field-width ambiguity (H-J sibling) needs silicon | the rig + **vendor support** on the DLY range |
+| NXP SC16C750B 60-trigger fork on real parts | researched (H-G), no first-party PDF in the doc set | an NXP datasheet pass or silicon |
+| H16750S synthesis points other than 64-deep | one point (h16750s_64) proves the parametric-FIFO machinery; the record scheme covers the rest by data | a consumer with a different build |
+| DLF ×64-vs-×128 silicon confirmation (H-I) | datasheet self-contradiction; sim pins the ×64 reading | **vendor support** (TI E2E) or the rig's measured-baud check |
 | OS integration (termios/tty) | Phase D slice 1 is freestanding | the POSIX layer track |
 
 ## 10. Process requirements (restated, with anchors)
@@ -690,3 +1022,10 @@ The sim identifies as a 16550A (IIR[7:6]=11 after FCR enable) and has a function
 - [ ] U6: autoflow hysteresis matches §1.6 per trigger level; software-flow race ≤ 1 char.
 - [ ] U7: the proof-carrying artifact (manifest + contracts + DecisionRecord + prior envelope +
       log) replays via the 0.4b CLI contract; docs updated; STATUS regenerated.
+- [ ] U8: five family placements generate + contracts catch capability lies; laws 6/7/8 fire on
+      negatives on both rails; the DLF ×64 constant pinned; the whole corpus AND the U2 driver
+      show zero new diagnostics (non-disturbance measured).
+- [ ] U9: per-placement sim profiles pass their §1.8–§1.10 fidelity pins; init transcripts
+      law-clean per placement; `caps_mismatch` fires on a mis-profiled sim; the `efr_tcr`
+      autoflow arm runs end-to-end; the widened prior re-certified (mismatches 0) and the
+      64/128-deep services/byte + fractional-baud gates pinned from fresh measurements.
