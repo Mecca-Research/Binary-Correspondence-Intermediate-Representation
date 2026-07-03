@@ -88,3 +88,41 @@ def erfcx_via_bridge(data: list[float], group_size: int, bits: int) -> list[floa
     the wrapped kernel is exact."""
     dq = dequantize(quantize_per_group(data, group_size, bits))
     return erfcx_reference(dq)
+
+
+def erfcx_reference_full(data: list[float]) -> list[float]:
+    """The H2 red-team closure: erfcx over the WHOLE real line, where the naive definitional
+    form (`exp(x^2) * erfc(x)`) genuinely dies -- it raises OverflowError for |x| > ~26.6
+    (exp(x^2) exceeds double range) even though erfcx itself stays finite and well-scaled for
+    every positive x (that finiteness is libcerf's whole capability claim, previously never
+    validated past |x| <= 3). Piecewise, all stdlib:
+
+      x >= 8     -- the asymptotic series  erfcx(x) = 1/(x sqrt(pi)) * sum_n (-1)^n
+                    (2n-1)!!/(2 x^2)^n  (8 terms; ~1e-11 relative at x=8, tighter beyond;
+                    at x=4 the truncation is only ~6e-7, so the switchover sits at 8);
+      -26 <= x<8 -- the naive definitional form (exp(x^2) tame: exp(676) ~ 1e293 fits);
+      x < -26    -- erfcx(x) ~ 2 exp(x^2) EXCEEDS double range below ~-26.6: math.inf is the
+                    correctly-rounded double of the true VALUE (not an error); the [-26.6,
+                    -26) sliver stays finite and takes the naive branch's math via erfc.
+    """
+    n = len(data)
+    if n < 1:
+        raise ValueError("cerf erfcx: need at least one element")
+    out = []
+    for v in data:
+        x = float(v)
+        if x >= 8.0:
+            inv2x2 = 1.0 / (2.0 * x * x)
+            term, s, sign, dfact = 1.0, 1.0, -1.0, 1.0
+            for k in range(1, 9):                    # (2k-1)!! / (2x^2)^k, alternating
+                dfact *= 2 * k - 1
+                term *= inv2x2
+                s += sign * dfact * term
+                sign = -sign
+            out.append(s / (x * math.sqrt(math.pi)))
+        else:
+            try:
+                out.append(math.exp(x * x) * math.erfc(x))
+            except OverflowError:                    # x < ~-26.6: the VALUE > 1.8e308
+                out.append(math.inf)
+    return out
