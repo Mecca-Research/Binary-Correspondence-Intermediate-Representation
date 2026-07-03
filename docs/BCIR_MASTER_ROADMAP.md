@@ -1984,8 +1984,10 @@ R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted
   definitions/declarations, derived `#include`s (+ the quarantine header when a masked access
   needs it) — so **two EMITTED TUs link to each other** with no original source in the image,
   behavior-equivalent to the reference build (`test_cfront_link.py`; `check_runtime.sh` #link).
-  *Remaining (named):* the C-twin linkable emit, source-`static` honoring, non-integer-constant
-  global initializers.
+  *Remaining (named):* source-`static` honoring and non-integer-constant global initializers
+  (the C-twin linkable emit has since LANDED too — `bcir-cc --linkable`, functions-only first
+  slice, gated emitted-to-emitted in `check_runtime.sh` #link; global definitions stay
+  oracle-side).
 - ✅ **Compile-database support** — `bcir-cfront -p` consumes `compile_commands.json` (a directory or
   the file), compiling every entry with its own `-I`/`-D`/`-U`/`-std`/`--target` flags (both the
   `arguments` and `command` entry forms; entry `-I` resolves against the entry directory).

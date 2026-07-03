@@ -71,6 +71,8 @@ static const char *USAGE =
   "                 riscv64-linux, x86_64-windows, i386-linux\n"
   "  --fallback     total compile: a construct outside the supported subset exits 2 with\n"
   "                 'fallback to LLVM backend: <phase>: <reason>' instead of a hard error\n"
+  "  --linkable     emit the LINKABLE artifact (Phase 3): external-linkage real-name\n"
+  "                 definitions + derived #includes, so two emitted TUs link to each other\n"
   "  --project      print the per-PROJECT verdict line over the compiled file set -- CLEAN /\n"
   "                 PARTIAL-FALLBACK / DIRTY; printed automatically for a multi-file invocation\n"
   "                 (the compile-database half of project mode, -p, stays on the Python rail)\n"
@@ -80,6 +82,63 @@ static const char *USAGE =
   "  --emit-effects per-function module-scope effect footprints + the commutation matrix\n"
   "  --emit-link-flags  the linker flags the unit's external-call edges need (one space-separated\n"
   "                 line, e.g. -lm; empty for a pure-integer unit) -- for build-system consumption\n";
+
+/* naive whole-text replace (pat -> rep, rep no longer than pat) into `out`. */
+static void cc_replace_all(const char *in, const char *pat, const char *rep, char *out, size_t on) {
+  size_t pl = strlen(pat), rl = strlen(rep), w = 0;
+  while (*in) {
+    if (!strncmp(in, pat, pl)) {
+      if (w + rl < on) { memcpy(out + w, rep, rl); w += rl; }
+      in += pl;
+    } else if (w + 1 < on) out[w++] = *in++;
+    else in++;
+  }
+  out[w] = 0;
+}
+
+/* Phase 3 linking: re-render the emitted unit with EXTERNAL linkage (the C twin of the oracle's
+ * emit_linkable): definitions non-static under their REAL names (the unindented `static ` of a
+ * definition line is stripped; body statics are indented and untouched), in-unit calls
+ * unprefixed, and the derived #includes prepended (stdint always; stdlib/stdio/math by the
+ * unit's external-call edges; the quarantine header when a masked access needs it). FIRST-SLICE
+ * parity with the oracle: functions only -- file-scope global DEFINITIONS stay oracle-side. */
+static void cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
+  int need_math = 0, need_stdlib = 0, need_stdio = 0;
+  for (int f = 0; f < r->unit.n_funcs; f++)
+    for (size_t k = 0; k < r->unit.funcs[f].n_claims; k++) {
+      const char *op = r->unit.funcs[f].claims[k].op;
+      if (!strncmp(op, "c.call.libm:", 12) || !strncmp(op, "c.call.libm.void:", 17)) {
+        const char *nm = strchr(op + 7, ':') + 1;
+        if (!strcmp(nm, "malloc") || !strcmp(nm, "calloc") || !strcmp(nm, "realloc") ||
+            !strcmp(nm, "free")) need_stdlib = 1;
+        else need_math = 1;
+      } else if (!strncmp(op, "c.call.extern:", 14)) need_stdio = 1;
+    }
+  fputs("#include <stdint.h>\n", outf);
+  if (strstr(r->emitted, "BCIR_CHK")) fputs("#include \"bcir_quarantine.h\"\n", outf);
+  if (need_stdlib) fputs("#include <stdlib.h>\n", outf);
+  if (need_stdio) fputs("#include <stdio.h>\n", outf);
+  if (need_math) fputs("#include <math.h>\n", outf);
+  static char ba[sizeof ((bcir_cfront_result *)0)->emitted], bb[sizeof ba];
+  const char *cur = r->emitted;
+  char *nxt = ba;
+  for (int f = 0; f < r->unit.n_funcs; f++) {        /* unprefix every in-unit call/def name */
+    char pat[BCIR_CIR_NAME + 8], rep[BCIR_CIR_NAME + 2];
+    snprintf(pat, sizeof pat, "bcir_%s(", r->unit.funcs[f].name);
+    snprintf(rep, sizeof rep, "%s(", r->unit.funcs[f].name);
+    cc_replace_all(cur, pat, rep, nxt, sizeof ba);
+    cur = nxt;
+    nxt = (nxt == ba) ? bb : ba;
+  }
+  const char *s = cur;                               /* strip the unindented definition `static ` */
+  while (*s) {
+    const char *nl = strchr(s, '\n');
+    size_t len = nl ? (size_t)(nl - s) + 1 : strlen(s);
+    if (!strncmp(s, "static ", 7)) fwrite(s + 7, 1, len - 7, outf);
+    else fwrite(s, 1, len, outf);
+    s += len;
+  }
+}
 
 static void dirof(const char *path, char *out, size_t cap) {
   const char *s = strrchr(path, '/');
@@ -107,7 +166,7 @@ int main(int argc, char **argv) {
   const char *files[256]; int nfiles = 0;
   const char *std = "c23", *out_path = NULL, *target = NULL;
   int pp_only = 0, emit_c = 0, emit_cg = 0, emit_pack = 0, emit_fx = 0, emit_lf = 0, fallback = 0;
-  int project = 0;
+  int project = 0, linkable = 0;
   r21_policy r21 = R21_ADVISORY;
 
   for (int i = 1; i < argc; i++) {
@@ -127,6 +186,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--emit-effects")) emit_fx = 1;
     else if (!strcmp(a, "--emit-link-flags")) emit_lf = 1;
     else if (!strcmp(a, "--emit-c")) emit_c = 1;
+    else if (!strcmp(a, "--linkable")) linkable = 1;
     else if (!strcmp(a, "--emit-claimgraph")) emit_cg = 1;
     else if (!strcmp(a, "--emit-pack")) emit_pack = 1;
     else if (!strcmp(a, "-o")) { if (++i < argc) out_path = argv[i]; }
@@ -214,6 +274,9 @@ int main(int argc, char **argv) {
        * Python rail (bcir-cfront --emit-link-flags); parity gated in check_runtime.sh. */
       char lflags[256]; bcir_cfront_link_flags(&r.unit, lflags, sizeof lflags);
       fprintf(outf, "%s\n", lflags);
+      n_clean++;
+    } else if (linkable) {
+      cc_emit_linkable(&r, outf);                    /* Phase 3: the externally-linkable artifact */
       n_clean++;
     } else if (emit_c) {
       /* §5.12: a masked (bounds-promoted) access emits `a[BCIR_CHK(...)]`, which references the

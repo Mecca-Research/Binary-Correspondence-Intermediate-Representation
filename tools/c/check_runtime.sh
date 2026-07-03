@@ -704,6 +704,17 @@ printf 'unsigned g(unsigned x);\nunsigned f(unsigned y) { return g(y) + 1u; }\nu
 "${tmp}/bcir-cc" --emit-claimgraph "${tmp}/link/fwd.c" | grep -q "c.call:g" \
   && echo "  PASS forward declaration stays a real R18 edge (definition wins)" \
   || { echo "  FAIL: forward declaration did not rewrite to c.call:g"; exit 1; }
+# ... and the LINKABLE artifact (the C twin of the oracle's emit_linkable): BOTH TUs re-rendered
+# by bcir-cc --linkable (external linkage, real names, derived includes) link TO EACH OTHER --
+# no original source in the image -- and behave exactly like the reference build.
+"${tmp}/bcir-cc" --linkable "${tmp}/link/main.c" > "${tmp}/link/main_lk.c" || { echo "  FAIL: --linkable main"; exit 1; }
+"${tmp}/bcir-cc" --linkable "${tmp}/link/lib.c" > "${tmp}/link/lib_lk.c" || { echo "  FAIL: --linkable lib"; exit 1; }
+"${CC}" -std=c11 "${tmp}/link/main_lk.c" "${tmp}/link/lib_lk.c" -o "${tmp}/link/prog_lk" -lm \
+  || { echo "  FAIL: two --linkable TUs did not link"; exit 1; }
+"${tmp}/link/prog_lk"; lk_rc=$?
+[ "${lk_rc}" = "${ref_rc}" ] \
+  && echo "  PASS linkable artifact (two emitted TUs link to each other; rc=${lk_rc} == ref)" \
+  || { echo "  FAIL: linkable artifact rc=${lk_rc} != ref=${ref_rc}"; exit 1; }
 
 # Module-scope effect / commutation analysis (#effects, the C twin of pipeline.own_footprint +
 # commute): per function the global names it reads/writes (callee effects folded in transitively),
