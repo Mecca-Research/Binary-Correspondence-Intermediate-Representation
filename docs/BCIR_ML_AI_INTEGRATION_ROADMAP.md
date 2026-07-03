@@ -567,9 +567,18 @@ The audit finds five deepening moves, all quarantine-compatible:
   DAG carries the true dependencies, so step i's METRICS tail (loss + reduce) overlaps its
   backward/update and the next step's forward on another domain while the weight-critical RAW
   chain stays exact; certified three ways (pipelined ≤ barriered ≤ serial; measured ~34%
-  makespan reduction, the win exactly linear in steps). *Next:* mini-batch streams within a
-  step. The autodiff closure proof is the enabler: the gradient DAG has a fixed vocabulary, so
-  it hydrates to a StreamPack like any program.
+  makespan reduction, the win exactly linear in steps). ✅ **Step 6 LANDED**: mini-batch
+  STREAMS within a step (`train_stream_module` + `schedule_stream_step` + `StreamCertificate`)
+  — one step's batch split into equal micro-batch streams over disjoint RID bands sharing only
+  the read-only W (read-read never conflicts, so the token DAG overlaps the streams with ZERO
+  scheduler change: both forwards start at t=0 on different domains), per-stream mean
+  gradients combine (`reduce.grad_mean`, awaits every stream) into exactly ONE weight update
+  (the single-update law; numerically, mean-of-equal-split-means == the full-batch gradient
+  ≤1e-12 — ragged micro-batches refuse loudly). The autodiff closure proof was the enabler:
+  the streamed step hydrates to an R10/R11-clean StreamPack like any program; certified
+  pipelined ≤ barriered ≤ serial with ≥25% makespan win at 4 streams (measured ~61%, pinned
+  at the house headroom discipline). *Next:* executing the streamed step through the C rail
+  (per-stream kernel state), and stream-count as a plan decision priced by K_BCIR.
 - ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/
   `check_classical`-style checkers were op-level and advisory; shape consistency and dtype
   compatibility are now numbered laws via the R19–R21 six-artifact pattern: **R22** checks the
