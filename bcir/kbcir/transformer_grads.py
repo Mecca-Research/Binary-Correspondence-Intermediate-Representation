@@ -205,6 +205,91 @@ def ff_ln_tail_grads(h: list[float], rows: int, d_model: int, d_ff: int,
     return {"W1": dW1, "b1": db1, "W2": dW2, "b2": db2, "gamma": dgamma, "beta": dbeta}
 
 
+# --- the attention-projection backward: the FULL block's weights now receive gradients ---------
+
+def _t(m: list[float], rows: int, cols: int) -> list[float]:
+    """Row-major transpose (a pure reshaping, mirroring attention._transpose)."""
+    out = [0.0] * (rows * cols)
+    for i in range(rows):
+        for j in range(cols):
+            out[j * rows + i] = m[i * cols + j]
+    return out
+
+
+def mha_projection_grads(x: list[float], seq: int, d_model: int, n_heads: int,
+                         w_q: list[float], w_k: list[float], w_v: list[float],
+                         w_o: list[float], gout: list[float],
+                         mask: list[float] | None = None) -> dict:
+    """Closed-form gradients of the masked multi-head attention block's PROJECTION weights
+    {"w_q","w_k","w_v","w_o"} and the block input {"x"} -- the follow-on `ff_ln_tail_grads`
+    names, closing the block: EVERY transformer weight can now receive a gradient. The
+    forward is exactly `transformer.multihead_attention_reference` for one sequence
+    (Q/K/V projections -> per-head scaled scores + additive mask -> softmax -> A@V ->
+    concat -> W_o); the backward composes the EXISTING adjoints (softmax_grad; matmul
+    adjoints are the two transposed products; the additive mask is a constant, so it
+    contributes identity on the scores and nothing to any parameter). Intermediates are
+    recomputed (the oracle favors clarity over caching)."""
+    from .attention import AttentionSpec, scores_reference   # noqa: PLC0415 -- local: no cycle
+    from .matmul import matmul_reference                     # noqa: PLC0415
+    if d_model % n_heads:
+        raise ValueError(f"d_model {d_model} not divisible by n_heads {n_heads}")
+    n = seq * d_model
+    if len(x) != n or len(gout) != n:
+        raise ValueError("mha_projection_grads: bad shapes")
+    if mask is not None and len(mask) != seq * seq:
+        raise ValueError("mha_projection_grads: mask must be seq*seq")
+    dk = d_model // n_heads
+    spec = AttentionSpec(seq, dk)
+    sc = spec.scale
+
+    def split(m, h):
+        return [m[i * d_model + h * dk + t] for i in range(seq) for t in range(dk)]
+
+    q = matmul_reference(x, w_q, seq, d_model, d_model)      # forward, recomputed
+    k = matmul_reference(x, w_k, seq, d_model, d_model)
+    v = matmul_reference(x, w_v, seq, d_model, d_model)
+    concat = [0.0] * n
+    heads = []                                               # per head: (Ah, Qh, Kh, Vh)
+    for h in range(n_heads):
+        qh, kh, vh = split(q, h), split(k, h), split(v, h)
+        s = scores_reference(qh, kh, spec)
+        if mask is not None:
+            s = [s[i] + float(mask[i]) for i in range(seq * seq)]
+        a = softmax_reference(s, axis_len=seq)
+        ctx = matmul_reference(a, vh, seq, dk, seq)
+        for i in range(seq):
+            concat[i * d_model + h * dk:i * d_model + (h + 1) * dk] = ctx[i * dk:(i + 1) * dk]
+        heads.append((a, qh, kh, vh))
+
+    dWo = matmul_reference(_t(concat, seq, d_model), gout, d_model, d_model, seq)
+    dC = matmul_reference(gout, _t(w_o, d_model, d_model), seq, d_model, d_model)
+    dQ = [0.0] * n
+    dK = [0.0] * n
+    dV = [0.0] * n
+    for h in range(n_heads):
+        a, qh, kh, vh = heads[h]
+        dch = split(dC, h)
+        da = matmul_reference(dch, _t(vh, seq, dk), seq, seq, dk)      # dA = dC @ V^T
+        dvh = matmul_reference(_t(a, seq, seq), dch, seq, dk, seq)     # dV = A^T @ dC
+        ds = softmax_grad(a, da, axis_len=seq)                         # through the softmax rows
+        dqh = [sc * g for g in matmul_reference(ds, kh, seq, dk, seq)]        # dQ = sc * dS @ K
+        dkh = [sc * g for g in matmul_reference(_t(ds, seq, seq), qh, seq, dk, seq)]  # dK = sc*dS^T@Q
+        for i in range(seq):
+            for t in range(dk):
+                dQ[i * d_model + h * dk + t] = dqh[i * dk + t]
+                dK[i * d_model + h * dk + t] = dkh[i * dk + t]
+                dV[i * d_model + h * dk + t] = dvh[i * dk + t]
+    xt = _t(x, seq, d_model)
+    dWq = matmul_reference(xt, dQ, d_model, d_model, seq)
+    dWk = matmul_reference(xt, dK, d_model, d_model, seq)
+    dWv = matmul_reference(xt, dV, d_model, d_model, seq)
+    dx1 = matmul_reference(dQ, _t(w_q, d_model, d_model), seq, d_model, d_model)
+    dx2 = matmul_reference(dK, _t(w_k, d_model, d_model), seq, d_model, d_model)
+    dx3 = matmul_reference(dV, _t(w_v, d_model, d_model), seq, d_model, d_model)
+    dx = [dx1[i] + dx2[i] + dx3[i] for i in range(n)]
+    return {"w_q": dWq, "w_k": dWk, "w_v": dWv, "w_o": dWo, "x": dx}
+
+
 __all__ = ["softmax_grad", "layernorm_grad", "rmsnorm_reference", "rmsnorm_grad",
            "rope_reference", "rope_grad", "ff_ln_tail_reference", "ff_ln_tail_grads",
-           "softmax_reference"]
+           "mha_projection_grads", "softmax_reference"]
