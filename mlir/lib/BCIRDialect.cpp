@@ -894,6 +894,19 @@ static ::mlir::LogicalResult verifyAtomicAddr(::mlir::Operation *op, ::mlir::Typ
   return verifyAtomicAddr(*this, getAddr().getType());
 }
 
+::mlir::LogicalResult AbiContractOp::verify() {
+  auto sizes = getParamSizes();
+  auto aligns = getParamAligns();
+  if (sizes.size() != aligns.size())
+    return emitOpError() << "param_sizes (" << sizes.size() << ") and param_aligns ("
+                         << aligns.size() << ") must agree in length";
+  for (size_t i = 0; i < sizes.size(); ++i)
+    if (sizes[i] <= 0 || aligns[i] <= 0)
+      return emitOpError() << "parameter " << i
+                           << " has a non-positive size/align (cannot be laid out)";
+  return ::mlir::success();
+}
+
 void BCIRDialect::initialize() {
   addOperations<
 #define GET_OP_LIST

@@ -24,7 +24,7 @@ from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
 from ...verify import (Diagnostic, cfront_unit_claim_ids_unique, verify, verify_lifetime,
                        verify_plan)
-from .abi import HOST, target as resolve_target
+from .abi import abi_contract_for, verify_abi_contract, HOST, target as resolve_target
 from .clex import CLexError
 from .cparse import CParseError, parse_unit, parse_with_recovery
 from .cpp import CPPError, preprocess
@@ -65,6 +65,10 @@ class CompileResult:
     #     frontend pass/fail (`is_clean`), exactly as R19/R20 timing are advisory. Empty == no dangling access.
     lowering_diagnostics: list = field(default_factory=list)  # §5.12 item 4: cfront-emit lowering faithfulness
     #     (every masked claim discharged by a runtime guard). ADVISORY, like lifetime_diagnostics. Empty == ok.
+    abi_contracts: dict = field(default_factory=dict)         # fn -> abi.AbiContract (§5.14 Phase 2: the recorded
+    #     call-ABI layout facts -- the R12 lowering-contract pattern extended to the call ABI)
+    abi_diagnostics: list = field(default_factory=list)       # the R12 call-ABI law over those contracts
+    #     (contract vs laid-out CTypes vs the target data model). ADVISORY, like the laws above. Empty == ok.
     r18_ok: bool = True
     equivalence: str = "skip"                         # match | MISMATCH | skip:<reason>
     target: str = HOST.name                           # the target ABI the unit was laid out for
@@ -182,6 +186,13 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
         # the K_BCIR kernel) -- the emit must HONOR the masked bounds metadata. ADVISORY (out of is_clean),
         # so it cannot couple to the cross-rail `ok` parity; it runs on EVERY compile (user + fuzzer code),
         # surfacing a masked claim the backend emitted without its runtime guard.
+        # §5.14 Phase 2 (the last area): record the CALL-ABI contract the emitter materialized the
+        # frame from, and run its R12 law -- the recorded facts must agree with the laid-out CTypes
+        # AND the target data model (pointer-kind == pointer_size, `long` == long_size). ADVISORY.
+        contract = abi_contract_for(lf, abi)
+        res.abi_contracts[name] = contract
+        res.abi_diagnostics += [Diagnostic("R12", f"{name}: {m}")
+                                for m in verify_abi_contract(contract, lf, abi)]
         res.lowering_diagnostics += [Diagnostic(d.law, f"{name}: {d.message}")
                                      for d in verify_cfront_lowering(lf, res.emitted[name])]
 

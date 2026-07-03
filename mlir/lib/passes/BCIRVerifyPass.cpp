@@ -1358,6 +1358,39 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     }
 
+    // R12 (call-ABI contract, §5.14 Phase 2 -- the last area): a bcir.abi_contract must name a
+    // target from the NORMATIVE data-model matrix and declare that target's pointer/long sizes
+    // truthfully -- the same lowering-contract discipline R12 applies to ISA/packet lowering,
+    // extended to the call ABI. Mirrors the oracle's verify_abi_contract; vacuous when no
+    // contract op is present (the whole existing corpus).
+    {
+      struct DM { const char *name; int ptr; int lng; };
+      static const DM kMatrix[] = {{"x86_64-linux", 8, 8},   {"aarch64-linux", 8, 8},
+                                   {"riscv64-linux", 8, 8},  {"x86_64-windows", 8, 4},
+                                   {"i386-linux", 4, 4}};
+      root->walk([&](AbiContractOp a) {
+        const DM *hit = nullptr;
+        for (const DM &d : kMatrix)
+          if (a.getTarget() == d.name)
+            hit = &d;
+        if (!hit) {
+          a.emitError("R12: abi_contract ")
+              << a.getSymName() << " names an unknown target '" << a.getTarget()
+              << "' (the normative matrix: x86_64-linux, aarch64-linux, riscv64-linux, "
+                 "x86_64-windows, i386-linux)";
+          ok = false;
+          return;
+        }
+        if (a.getPointerSize() != hit->ptr || a.getLongSize() != hit->lng) {
+          a.emitError("R12: abi_contract ")
+              << a.getSymName() << " declares pointer_size=" << a.getPointerSize()
+              << "/long_size=" << a.getLongSize() << " but target '" << a.getTarget()
+              << "' has pointer_size=" << hit->ptr << "/long_size=" << hit->lng;
+          ok = false;
+        }
+      });
+    }
+
     // R22/R23: shape-consistency + dtype-compatibility over the gem.* tensor ops (D2 -- the
     // ML/AI-roadmap promotion, the same six-artifact pattern as R19-R21). The op-level verifiers
     // (BCIRDialect.cpp) reject a malformed SINGLE op at parse time; the LAW checks the

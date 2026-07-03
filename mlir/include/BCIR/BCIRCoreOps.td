@@ -404,6 +404,32 @@ def BCIR_AtomicCASOp : BCIR_Op<"atomic_cas"> {
   let hasVerifier = 1;
 }
 
+def BCIR_AbiContractOp : BCIR_Op<"abi_contract", [Symbol]> {
+  let summary = "The per-function call-ABI contract (§5.14 Phase 2, the R12 pattern on the call ABI)";
+  // The law-rail twin of abi.AbiContract (bcir/frontends/cfront/abi.py): the layout facts the
+  // emitter materialized a function's frame from -- the target data model (named against the
+  // NORMATIVE 5-entry matrix), the per-parameter (size, align) in C order, and the return slot.
+  // R12 already models ISA/packet lowering contracts; this op extends the same discipline to the
+  // call ABI so a cross-target object path is VERIFIABLE: the -bcir-verify R12 clause checks the
+  // declared pointer_size/long_size against the named target's data model (a contract claiming
+  // x86_64-windows with long_size 8 is a lie the law catches). The oracle records + checks the
+  // same contract per compile (CompileResult.abi_contracts / abi_diagnostics); the cfront->MLIR
+  // emitter wiring is a later increment (the portio/atomics precedent).
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,                 // the function the contract belongs to
+    StrAttr:$target,                          // TargetABI.name, e.g. "x86_64-linux"
+    I32Attr:$pointer_size,
+    I32Attr:$long_size,
+    DenseI64ArrayAttr:$param_sizes,
+    DenseI64ArrayAttr:$param_aligns,
+    DefaultValuedAttr<I64Attr, "0">:$ret_size,
+    DefaultValuedAttr<I64Attr, "0">:$ret_align);
+  let assemblyFormat = "$sym_name attr-dict";
+  // Parse-time structural well-formedness: the two param arrays agree in length and every
+  // size/align is positive (a zero-size parameter cannot be laid out).
+  let hasVerifier = 1;
+}
+
 def BCIR_CRegReadOp : BCIR_Op<"creg_read"> {
   let summary = "Read an x86-64 control register (boot/CPU-state asm edge, D1.3)";
   // A control-register read (CR0/CR2/CR3/CR4/CR8) is a TRUSTED OPAQUE EFFECT EDGE -- there is no C

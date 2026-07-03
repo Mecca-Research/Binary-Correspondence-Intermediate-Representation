@@ -73,3 +73,59 @@ def target(name: str) -> TargetABI:
     if name not in TARGETS:
         raise KeyError(f"unknown target {name!r}; choose from {', '.join(sorted(TARGETS))}")
     return TARGETS[name]
+
+
+# --- §5.14 Phase 2 (the last area): the per-function CALL-ABI CONTRACT ---------------------------
+#
+# The call ABI was backend-delegated: abi.py computes sizes/offsets, the emitter materializes the
+# frame, and nothing RECORDS the layout facts a cross-target object path would have to verify.
+# The contract is that record -- the R12 lowering-contract pattern extended to the call ABI --
+# and `verify_abi_contract` is its law: the recorded facts must agree with the target's data
+# model (a pointer-kind parameter is pointer_size; a `long` scalar is long_size; the laid-out
+# CType facts match the record). Advisory on the compile path (CompileResult.abi_diagnostics,
+# like the lifetime/lowering laws); the MLIR rail carries the same record as bcir.abi_contract
+# with the matching -bcir-verify R12 clause.
+
+@dataclass(frozen=True)
+class AbiContract:
+    """One function's call-ABI record: (name, size, align) per parameter in C order, and the
+    return slot's (size, align) -- (0, 0) for void. `target` names the TargetABI it was laid
+    out for (the normative 5-entry matrix)."""
+
+    fn: str
+    target: str
+    params: tuple                    # ((name, size, align), ...) in C order
+    ret: tuple                       # (size, align); (0, 0) for void
+
+
+def abi_contract_for(lf, abi: TargetABI) -> AbiContract:
+    """Record the contract from an already-lowered function (the laid-out CTypes)."""
+    params = tuple((nm, ct.size, ct.align) for nm, _rid, ct in lf.params)
+    ret = (0, 0) if lf.ret_type is None or lf.ret_type.size == 0 else         (lf.ret_type.size, lf.ret_type.align)
+    return AbiContract(fn=lf.name, target=abi.name, params=params, ret=ret)
+
+
+def verify_abi_contract(contract: AbiContract, lf, abi: TargetABI) -> list[str]:
+    """The R12-tagged call-ABI law: the recorded contract must agree with BOTH the laid-out
+    CTypes and the target's data model. Returns message strings (the pipeline wraps them)."""
+    msgs: list[str] = []
+    if contract.target != abi.name:
+        msgs.append(f"contract target {contract.target!r} != the unit target {abi.name!r}")
+        return msgs
+    if len(contract.params) != len(lf.params):
+        msgs.append(f"contract arity {len(contract.params)} != {len(lf.params)} parameters")
+        return msgs
+    for (cn, csz, cal), (nm, _rid, ct) in zip(contract.params, lf.params):
+        if cn != nm or csz != ct.size or cal != ct.align:
+            msgs.append(f"parameter {nm!r}: contract ({cn!r}, {csz}, {cal}) != laid-out "
+                        f"({nm!r}, {ct.size}, {ct.align})")
+        if ct.kind in ("pointer", "funcptr") and csz != abi.pointer_size:
+            msgs.append(f"parameter {nm!r}: a pointer-kind parameter must be the target's "
+                        f"pointer size {abi.pointer_size}, contract says {csz}")
+        if ct.kind == "scalar" and ct.name in ("long", "unsigned long") and csz != abi.long_size:
+            msgs.append(f"parameter {nm!r}: a `long` parameter must be the target's long size "
+                        f"{abi.long_size}, contract says {csz}")
+    want_ret = (0, 0) if lf.ret_type is None or lf.ret_type.size == 0 else         (lf.ret_type.size, lf.ret_type.align)
+    if contract.ret != want_ret:
+        msgs.append(f"return slot: contract {contract.ret} != laid-out {want_ret}")
+    return msgs
