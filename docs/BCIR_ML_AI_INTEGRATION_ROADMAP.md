@@ -436,8 +436,17 @@ drop-in loading of a modern open-weight chat model.
    `param_count`) equals `decoder_param_count(spec)` and the manifest carries the rung-2
    tokenizer digest that encoded the decoded prompt. Byte parity against a released
    checkpoint lands when its real weights are ingested (rung 4's quantized artifact).
-4. **Quantized inference artifact** — import a tiny/small model subset, quantize, run
-   deterministic prompt fixtures, record accuracy/perplexity drift (R17 discipline).
+4. ✅ **Quantized inference artifact — LANDED** (`bcir/frontends/models/quantized.py`,
+   `test_model_quantized.py`): the Q8↔float32 bridge wrapped around the trusted rung-3
+   decoder (the `attention_via_bridge` pattern) — the artifact IS the reference decoder over
+   per-group round-tripped weights, so the sole certified error is the R17-bounded weight
+   quantization (≤1 ULP per value at each group's grid). The drift discipline: a
+   deterministic `DriftRecord` per prompt fixture — both paths' greedy ids, max teacher-forced
+   logit drift along the float trajectory, mean-NLL (perplexity proxy) under both models,
+   the R17 stamp. Measured on the synthetic fixture: Q8 ~2.7e-3 max logit drift (~20×
+   tighter than Q4), and a greedy flip is *recorded, never hidden* (`ids_match`). Real-weight
+   ingestion (a released tiny checkpoint through manifest → tokenizer → decode → quantize)
+   is the remaining half, gated on rung 5's law rail for the LLM ops.
 5. **C/MLIR law rail** — ODS ops + verification for the LLM-specific ops; oracle↔law parity as
    always (the prototype-then-port discipline, §3).
 6. **Serving endpoint** — streaming decode, schema-constrained tool-call output, telemetry frames,

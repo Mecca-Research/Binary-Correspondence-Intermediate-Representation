@@ -211,6 +211,7 @@ _MODULES = [
     "bcir.tests.test_model_manifest",
     "bcir.tests.test_model_tokenizer",
     "bcir.tests.test_model_decode",
+    "bcir.tests.test_model_quantized",
     "bcir.tests.test_recurrent",
     "bcir.tests.test_classical",
     "bcir.tests.test_unsupervised",
