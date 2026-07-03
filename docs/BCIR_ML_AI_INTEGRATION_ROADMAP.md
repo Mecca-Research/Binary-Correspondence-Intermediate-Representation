@@ -416,7 +416,14 @@ drop-in loading of a modern open-weight chat model.
    integrity, never interpreted), deterministic (canonical-JSON digest, ingestion-order-free),
    JSON round-tripping, loud on malformed shards. Dep-free stdlib. *(Built before any weight
    loading or decode kernels, per the contract.)*
-2. **Tokenizer parity** — round-trip tests + chat-template fixtures before touching weights.
+2. ✅ **Tokenizer parity — LANDED** (`bcir/frontends/models/tokenizer.py`,
+   `test_model_tokenizer.py`): a dep-free byte-level BPE reference (the HF `tokenizer.json`
+   shape: byte alphabet, rank-based merges, specials never split), LOSSLESS round-trip over
+   arbitrary unicode by construction, golden ids over a hand-computed mini fixture, the
+   Gemma-style chat template as a pinned named fixture, and the tokenizer sha256 tied into
+   `ModelManifest.tokenizer_digest` (the wrong tokenizer for a model is detected by hash).
+   Byte-for-byte parity against a specific released model lands when its real tokenizer.json
+   is ingested (the loader accepts the real shape; the exact pre-tokenizer regex is per-model).
 3. **Reference decode** — a slow, dependency-light Python reference for one small dense decoder
    layer from the existing matmul/activation/attention pieces plus the missing RMSNorm/RoPE/KV
    primitives (the E3 pattern, extended).

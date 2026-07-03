@@ -80,6 +80,7 @@ class ModelManifest:
     context_length: int = 0
     vocab_size: int = 0
     tokenizer_ref: str = ""                 # e.g. the tokenizer.json/model path or hub id
+    tokenizer_digest: str = ""              # sha256 of the tokenizer file (rung-2 parity tie)
     license: str = ""
     source: str = ""                        # where the shards came from (path / hub id)
 
@@ -101,7 +102,8 @@ def manifest_from_json(text: str) -> ModelManifest:
 
 
 def build_manifest(shard_paths: list[str], config: dict, *, name: str = "",
-                   tokenizer_ref: str = "", license: str = "",  # noqa: A002 -- the manifest field
+                   tokenizer_ref: str = "", tokenizer_path: str | None = None,
+                   license: str = "",  # noqa: A002 -- the manifest field
                    source: str = "") -> ModelManifest:
     """Ingest a model MANIFEST-FIRST: parse every shard's header (dtype/shape census +
     parameter count), hash every shard's bytes, and take architecture/context/vocab from the
@@ -134,6 +136,7 @@ def build_manifest(shard_paths: list[str], config: dict, *, name: str = "",
         context_length=int(config.get("max_position_embeddings", 0) or 0),
         vocab_size=int(config.get("vocab_size", 0) or 0),
         tokenizer_ref=tokenizer_ref,
+        tokenizer_digest=shard_digest(tokenizer_path) if tokenizer_path else "",
         license=license or str(config.get("license", "") or ""),
         source=source,
     )
