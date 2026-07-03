@@ -552,9 +552,14 @@ The audit finds five deepening moves, all quarantine-compatible:
   differential gate: per-epoch losses + trained weights == `train_planned` to ≤1e-12, the
   first step's dispatch order is the executor's [1..6], and the C curve passes the SAME shared
   convergence gate as the oracle run — **training as a C artifact, no Python in the loop**.
-  *Next:* overlap/EFT scheduling of the stage streams. The autodiff closure proof is the
-  enabler: the gradient DAG has a fixed vocabulary, so it hydrates to a StreamPack like any
-  program.
+  ✅ **Step 5 LANDED**: overlap/EFT scheduling of the stage streams (`train_run_module` +
+  `schedule_train_run` + `PipelineCertificate`) — the multi-step run as ONE module whose token
+  DAG carries the true dependencies, so step i's METRICS tail (loss + reduce) overlaps its
+  backward/update and the next step's forward on another domain while the weight-critical RAW
+  chain stays exact; certified three ways (pipelined ≤ barriered ≤ serial; measured ~34%
+  makespan reduction, the win exactly linear in steps). *Next:* mini-batch streams within a
+  step. The autodiff closure proof is the enabler: the gradient DAG has a fixed vocabulary, so
+  it hydrates to a StreamPack like any program.
 - ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/
   `check_classical`-style checkers were op-level and advisory; shape consistency and dtype
   compatibility are now numbered laws via the R19–R21 six-artifact pattern: **R22** checks the
