@@ -520,3 +520,51 @@ class KafkaSink(TelemetrySink):
                 "KafkaSink.connect requires kafka-python (pip install kafka-python)"
             ) from exc
         return cls(KafkaProducer(bootstrap_servers=bootstrap_servers), topic)
+
+
+# --- durable telemetry (release rung 0.3): the schema-tagged persistent log ----------------------
+
+TELEMETRY_LOG_KIND = "bcir.telemetry_log"
+TELEMETRY_LOG_SCHEMA = 1
+_SCHEMA_FIELDS = {1: ("segment_id", "claim_id", "cycles", "bytes", "misses",
+                      "thermal", "voltage", "utilization", "provenance")}
+
+
+class DurableLog(TelemetrySink):
+    """The DURABLE half of the telemetry story (release rung 0.3): an append-only JSONL sink
+    whose FIRST line is a self-describing header -- kind, schema version, and the exact field
+    list that version carries -- so a stream written today decodes under any later build (the
+    0.4b envelope discipline applied to telemetry). Every event line is a full DataDNA record;
+    `load_durable_log` refuses an unknown kind or a NEWER schema loudly (a telemetry stream is
+    never silently misread) and replays the records back as DataDNA."""
+
+    def __init__(self, path: str):
+        self.path = path
+        with open(path, "w") as f:                    # a fresh log per run: header first
+            f.write(json.dumps({"kind": TELEMETRY_LOG_KIND, "schema": TELEMETRY_LOG_SCHEMA,
+                                "fields": list(_SCHEMA_FIELDS[TELEMETRY_LOG_SCHEMA])},
+                               sort_keys=True) + "\n")
+
+    def emit(self, event: DataDNA) -> None:
+        with open(self.path, "a") as f:
+            f.write(json.dumps(event.to_dict(), sort_keys=True) + "\n")
+
+
+def load_durable_log(path: str) -> list[DataDNA]:
+    """Decode a durable telemetry log: validate the header (kind + a schema this build knows +
+    the field list that schema documents), then replay every record. Refusals are LOUD."""
+    with open(path, encoding="utf-8") as f:
+        lines = [ln for ln in f.read().splitlines() if ln.strip()]
+    if not lines:
+        raise ValueError("durable telemetry log is empty (no header)")
+    head = json.loads(lines[0])
+    if head.get("kind") != TELEMETRY_LOG_KIND:
+        raise ValueError(f"not a {TELEMETRY_LOG_KIND} stream (kind={head.get('kind')!r})")
+    version = int(head.get("schema", 0))
+    if version > TELEMETRY_LOG_SCHEMA:
+        raise ValueError(f"telemetry-log schema v{version} is newer than this build's "
+                         f"v{TELEMETRY_LOG_SCHEMA}; upgrade BCIR to read this stream")
+    want = _SCHEMA_FIELDS.get(version)
+    if want is None or tuple(head.get("fields", ())) != want:
+        raise ValueError(f"telemetry-log header lies about schema v{version}'s fields")
+    return [DataDNA(**json.loads(ln)) for ln in lines[1:]]

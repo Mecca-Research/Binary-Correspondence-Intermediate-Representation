@@ -116,3 +116,51 @@ def test_rehydrate_decision():
     assert rehydrate_decide(1, 4, 1, 4, Theta(thermal=80)) == "replan"  # thermal drift >= 40
     assert rehydrate_decide(1, 4, 1, 4, Theta(thermal=25)) == "patch"   # 20 <= drift < 40
     assert rehydrate_decide(1, 4, 1, 4, cool) == "keep"     # in sync
+
+
+def test_durable_log_round_trips_behind_the_live_broker():
+    """Release rung 0.3 (durable telemetry): a fake producer publishes through the LIVE
+    Broker to BOTH a small TelemetryRing (backpressure: the overflow is COUNTED, never
+    silent) and the schema-tagged DurableLog; the log replays every record bit-for-bit
+    under the header's declared schema."""
+    import os
+    import tempfile
+    from bcir.telemetry import Broker, DataDNA, DurableLog, TelemetryRing, load_durable_log
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "run.jsonl")
+        broker = Broker()
+        ring = broker.subscribe(TelemetryRing(capacity=8))
+        broker.subscribe(DurableLog(path))
+        events = [DataDNA(f"seg{i}", i, cycles=i * 10, thermal=i % 100,
+                          provenance=f"p{i}") for i in range(24)]
+        for e in events:                                     # the fake producer
+            broker.emit(e)
+        back = load_durable_log(path)
+        assert [b.to_dict() for b in back] == [e.to_dict() for e in events]   # durable, exact
+        st = ring.stats
+        assert st.written == 24 and st.dropped == 16         # backpressure counted, not hidden
+
+
+def test_durable_log_refuses_foreign_and_newer_streams():
+    import json
+    import os
+    import tempfile
+    from bcir.telemetry import (TELEMETRY_LOG_KIND, DataDNA, DurableLog, load_durable_log)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "t.jsonl")
+        DurableLog(path).emit(DataDNA("s", 1))
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        head = json.loads(lines[0])
+        assert head["kind"] == TELEMETRY_LOG_KIND and head["schema"] == 1
+        for bad_head, msg in ((dict(head, schema=99), "newer"),
+                              (dict(head, kind="not.telemetry"), TELEMETRY_LOG_KIND),
+                              (dict(head, fields=["wrong"]), "lies")):
+            bad = os.path.join(d, "bad.jsonl")
+            with open(bad, "w", encoding="utf-8") as f:
+                f.write(json.dumps(bad_head) + "\n" + "\n".join(lines[1:]))
+            try:
+                load_durable_log(bad)
+                raise AssertionError(f"must refuse: {msg}")
+            except ValueError as e:
+                assert msg in str(e)

@@ -2107,8 +2107,12 @@ In recommended order — each is gated by the generated differential harness + F
   initial + C fuzzing, and a generated-status + broken-link + retired-path doc-governance CI
   gate (`tools/docs/`, see [`docs/STATUS.md`](STATUS.md)).
 - **0.3 — measured adaptive compiler** (◑): real-hardware CT4 evidence (§5.4) + durable
-  telemetry (schema registry, backpressure, a live broker in CI behind a fake producer)
-  + compile-time/peak-memory regression budgets. *Landed:* the non-flaky perf-budget gate
+  telemetry + compile-time/peak-memory regression budgets. *Durable telemetry LANDED:*
+  the schema-tagged `DurableLog` (a self-describing JSONL header — kind + schema version +
+  the documented field list; unknown kinds / newer schemas / lying headers refuse loudly)
+  behind the LIVE `Broker` with a fake producer in the suite, ring **backpressure counted,
+  never silent** (`test_telemetry.py`). What keeps 0.3 open is real-hardware CT4 evidence
+  (rig-gated). *Landed:* the non-flaky perf-budget gate
   (`bcir.perf_budget` + `tools/perf/check_budgets.py`) now carries the five **Clang-comparison
   budgets** (dense streaming / dense L1 *match bands*; gather / reduction / strided *win floors*) —
   strict on correctness + measurement validity, perf floors/bands bare-metal-only, the documented
