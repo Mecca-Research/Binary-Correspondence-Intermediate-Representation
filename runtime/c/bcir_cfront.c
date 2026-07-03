@@ -5026,6 +5026,12 @@ static void vn_base(const char *op, char *out){
   snprintf(out,BCIR_CIR_NAME,"%s",op);
 }
 
+/* strdup is C23/POSIX, not C11 -- under the documented -std=c11 fallback build an implicit
+ * declaration would truncate the returned pointer (and the later free() crashes). Local twin. */
+static char *vn_strdup(const char *s){
+  size_t n=strlen(s)+1; char *r=malloc(n); if(r)memcpy(r,s,n); return r;
+}
+
 /* a small growable byte string (the per-function record buffer + the value-number scratch). */
 typedef struct { char *s; size_t n, cap; } sbuf;
 static void sb_add(sbuf *b, const char *p, size_t k){
@@ -5077,7 +5083,7 @@ static void vn_of(vnctx *v, uint32_t rid, int depth, sbuf *out);
 static void vn_claim(vnctx *v, int ci, int depth, sbuf *out){
   if(v->memo[ci]){ sb_str(out,v->memo[ci]); return; }
   if(depth>BCIR_VN_MAXDEPTH){ sb_str(out,"cyc"); return; }
-  v->memo[ci]=strdup("cyc");                 /* cycle guard: a loop-carried rid resolves to "cyc" */
+  v->memo[ci]=vn_strdup("cyc");                 /* cycle guard: a loop-carried rid resolves to "cyc" */
   const bcir_claim *cl=&v->f->claims[ci];
   char base[BCIR_CIR_NAME]; vn_base(cl->op,base);
   /* gather the vns of this claim's reads -- POSITIONAL, except sorted for a commutative op */
@@ -5088,7 +5094,7 @@ static void vn_claim(vnctx *v, int ci, int depth, sbuf *out){
   for(int k=0;k<np;k++){ if(k)sb_str(&me,","); sb_str(&me,parts[k]); }
   sb_str(&me,")");
   for(int k=0;k<np;k++) free(ps[k].s);
-  free(v->memo[ci]); v->memo[ci]=me.s?me.s:strdup("");
+  free(v->memo[ci]); v->memo[ci]=me.s?me.s:vn_strdup("");
   sb_str(out,v->memo[ci]);
 }
 static void vn_of(vnctx *v, uint32_t rid, int depth, sbuf *out){
@@ -5136,7 +5142,7 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
     sb_str(&rec,"|");
     int dl=snprintf(nb,sizeof nb,"%d",(int)cl->domain); sb_add(&rec,nb,(size_t)dl);
     for(int k=0;k<np;k++) free(ps[k].s);
-    recs[r]=rec.s?rec.s:strdup("");
+    recs[r]=rec.s?rec.s:vn_strdup("");
   }
   sort_strs(recs,nc);
   for(int r=0;r<nc;r++){ emit(ctx,recs[r],strlen(recs[r])); emit(ctx,"\n",1); free(recs[r]); }
@@ -5166,7 +5172,7 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
       sbuf s={0,0,0};
       if(cl->n_rd){ vn_of(&vl,cl->rd[0],0,&s); sb_str(&s,"->"); vn_of(&vl,cl->rd[cl->n_rd-1],0,&s); }
       else sb_str(&s,"?->?");
-      sp[si++]=s.s?s.s:strdup(""); }
+      sp[si++]=s.s?s.s:vn_strdup(""); }
     sort_strs(sp,nst);
     for(int k=0;k<nst;k++){ if(k)sb_str(&anc,";"); sb_str(&anc,sp[k]); free(sp[k]); }
     free(sp);

@@ -20,6 +20,12 @@
  *     --emit-pack      emit the entry function's hydrated StreamPack (binary; use -o)
  *     --emit-link-flags  emit just the linker flags the unit's external-call edges need (one line,
  *                      space-separated, e.g. `-lm`), for build-system consumption (B1)
+ *     --project        print the per-PROJECT verdict line (CLEAN / PARTIAL-FALLBACK / DIRTY) over
+ *                      the compiled file set; automatic for a multi-file invocation. The verdict
+ *                      string, bucket rules and exit codes (a hard error 1 DOMINATES a fallback 2)
+ *                      are byte/value-identical to the Python rail (bcir-cfront). The other half of
+ *                      Phase 3 project mode -- compile_commands.json (-p) and -M dependency rules --
+ *                      stays on the Python rail for now (build-system glue, not law).
  *===----------------------------------------------------------------------===*/
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,12 +65,15 @@ static void cc_r21_count(const char *funcname, const char *kind, void *ctx) {
 
 static const char *USAGE =
   "usage: bcir-cc [-I dir] [-D name[=val]] [-U name] [-std=c23] [-E] [-o out]\n"
-  "               [--target abi] [--fallback] [--emit-c] [--emit-claimgraph] [--emit-pack]\n"
-  "               [--emit-link-flags] file.c ...\n"
+  "               [--target abi] [--fallback] [--project] [--emit-c] [--emit-claimgraph]\n"
+  "               [--emit-pack] [--emit-link-flags] file.c ...\n"
   "  --target abi   data model to lay out for: x86_64-linux (default), aarch64-linux,\n"
   "                 riscv64-linux, x86_64-windows, i386-linux\n"
   "  --fallback     total compile: a construct outside the supported subset exits 2 with\n"
   "                 'fallback to LLVM backend: <phase>: <reason>' instead of a hard error\n"
+  "  --project      print the per-PROJECT verdict line over the compiled file set -- CLEAN /\n"
+  "                 PARTIAL-FALLBACK / DIRTY; printed automatically for a multi-file invocation\n"
+  "                 (the compile-database half of project mode, -p, stays on the Python rail)\n"
   "  --r21 <policy> how a detected use-after-free / double-free (R21, §5.12) gates the compile:\n"
   "                 advisory (default; surfaced, never gates) | fallback (route to LLVM, exit 2)\n"
   "                 | reject (hard verify error, exit 1)\n"
@@ -98,6 +107,7 @@ int main(int argc, char **argv) {
   const char *files[256]; int nfiles = 0;
   const char *std = "c23", *out_path = NULL, *target = NULL;
   int pp_only = 0, emit_c = 0, emit_cg = 0, emit_pack = 0, emit_fx = 0, emit_lf = 0, fallback = 0;
+  int project = 0;
   r21_policy r21 = R21_ADVISORY;
 
   for (int i = 1; i < argc; i++) {
@@ -106,6 +116,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--target")) { if (++i < argc) target = argv[i]; }
     else if (!strncmp(a, "--target=", 9)) target = a + 9;
     else if (!strcmp(a, "--fallback")) fallback = 1;
+    else if (!strcmp(a, "--project")) project = 1;
     else if (!strcmp(a, "--r21") || !strncmp(a, "--r21=", 6)) {
       const char *v = a[5] == '=' ? a + 6 : (++i < argc ? argv[i] : "");
       if (!strcmp(v, "advisory")) r21 = R21_ADVISORY;
@@ -145,11 +156,14 @@ int main(int argc, char **argv) {
     fprintf(stderr, "bcir-cc: cannot open output '%s'\n", out_path); return 2;
   }
 
-  int rc = 0;
+  /* Per-project outcome tally (Phase 3): every file lands in exactly one bucket, and the exit
+   * code keeps the per-unit rules -- a hard error (1) DOMINATES a fallback (2), so a fallback
+   * path never overwrites an earlier rc=1. Parity: bcir/frontends/cfront/__main__.py `outcomes`. */
+  int rc = 0, n_clean = 0, n_fallback = 0, n_dirty = 0;
   for (int fi = 0; fi < nfiles; fi++) {
     const char *path = files[fi];
     static char raw[1 << 16]; FILE *fp = fopen(path, "rb");
-    if (!fp) { fprintf(stderr, "bcir-cc: cannot open '%s'\n", path); rc = 2; continue; }
+    if (!fp) { fprintf(stderr, "bcir-cc: cannot open '%s'\n", path); if (rc != 1) rc = 2; n_dirty++; continue; }
     size_t n = fread(raw, 1, sizeof raw - 1, fp); raw[n] = 0; fclose(fp);
 
     char base[1024]; dirof(path, base, sizeof base);
@@ -164,20 +178,20 @@ int main(int argc, char **argv) {
     if (bcir_cpp_run_ex(raw, path, dirs, ndirs, alldefs, nalldef, src, sizeof src, cpperr, sizeof cpperr)) {
       /* --fallback: a construct outside the supported subset routes to the LLVM backend (rc 2),
        * the C twin of pipeline.compile_with_fallback (which classifies the rejecting phase). */
-      if (fallback) { fprintf(stderr, "%s: fallback to LLVM backend: preprocess: %s\n", path, cpperr); rc = 2; continue; }
-      fprintf(stderr, "%s: preprocessor error: %s\n", path, cpperr); rc = 1; continue;
+      if (fallback) { fprintf(stderr, "%s: fallback to LLVM backend: preprocess: %s\n", path, cpperr); if (rc != 1) rc = 2; n_fallback++; continue; }
+      fprintf(stderr, "%s: preprocessor error: %s\n", path, cpperr); rc = 1; n_dirty++; continue;
     }
-    if (pp_only) { fputs(src, outf); continue; }
+    if (pp_only) { fputs(src, outf); n_clean++; continue; }
 
     static bcir_cfront_result r;
     if (bcir_cfront_compile_target(src, target, &r) != 0) {
       /* free the partial unit on the compile-error path too (the success path frees at the loop foot): `r`
        * is a reused static, so a skipped free here would leak the in-progress unit across files (the next
        * call's entry memset zeroes out->unit.funcs without freeing it). */
-      if (fallback) { fprintf(stderr, "%s: fallback to LLVM backend: compile: %s\n", path, r.diag); rc = 2; bcir_cfront_free(&r); continue; }
-      fprintf(stderr, "%s: parse error: %s\n", path, r.diag); rc = 1; bcir_cfront_free(&r); continue;
+      if (fallback) { fprintf(stderr, "%s: fallback to LLVM backend: compile: %s\n", path, r.diag); if (rc != 1) rc = 2; n_fallback++; bcir_cfront_free(&r); continue; }
+      fprintf(stderr, "%s: parse error: %s\n", path, r.diag); rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
     }
-    if (!r.ok) { fprintf(stderr, "%s: verify error: %s\n", path, r.diag); rc = 1; bcir_cfront_free(&r); continue; }
+    if (!r.ok) { fprintf(stderr, "%s: verify error: %s\n", path, r.diag); rc = 1; n_dirty++; bcir_cfront_free(&r); continue; }
 
     /* R21 lifetime policy (§5.12): a detected use-after-free / double-free routes the unit to the
      * LLVM backend (fallback, rc 2) or hard-rejects it (rc 1) under a non-advisory policy. The
@@ -187,8 +201,8 @@ int main(int argc, char **argv) {
       r21_count_ctx lc = {0, "", ""};
       bcir_verify_lifetime(&r.unit, cc_r21_count, &lc);
       if (lc.count > 0) {
-        if (r21 == R21_FALLBACK) { fprintf(stderr, "%s: fallback to LLVM backend: lifetime: R21 %s in %s\n", path, lc.kind, lc.func); rc = 2; }
-        else { fprintf(stderr, "%s: lifetime error: R21 %s in %s\n", path, lc.kind, lc.func); rc = 1; }
+        if (r21 == R21_FALLBACK) { fprintf(stderr, "%s: fallback to LLVM backend: lifetime: R21 %s in %s\n", path, lc.kind, lc.func); if (rc != 1) rc = 2; n_fallback++; }
+        else { fprintf(stderr, "%s: lifetime error: R21 %s in %s\n", path, lc.kind, lc.func); rc = 1; n_dirty++; }
         bcir_cfront_free(&r);
         continue;
       }
@@ -200,6 +214,7 @@ int main(int argc, char **argv) {
        * Python rail (bcir-cfront --emit-link-flags); parity gated in check_runtime.sh. */
       char lflags[256]; bcir_cfront_link_flags(&r.unit, lflags, sizeof lflags);
       fprintf(outf, "%s\n", lflags);
+      n_clean++;
     } else if (emit_c) {
       /* §5.12: a masked (bounds-promoted) access emits `a[BCIR_CHK(...)]`, which references the
        * bounds-quarantine runtime ABI. Make the driver's output a self-contained translation unit by
@@ -208,9 +223,11 @@ int main(int argc, char **argv) {
       if (strstr(r.emitted, "BCIR_CHK"))
         fputs("#include \"bcir_quarantine.h\"\n", outf);
       fputs(r.emitted, outf);
+      n_clean++;
     } else if (emit_fx) {
       static char fx[8192]; bcir_cfront_effects(&r.unit, fx, sizeof fx);
       fputs(fx, outf);
+      n_clean++;
     } else if (emit_cg) {
       char sum[256]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);
       fprintf(outf, "%s\n", sum);
@@ -221,18 +238,37 @@ int main(int argc, char **argv) {
                   fn->claims[c].lane, (int)fn->claims[c].domain);
       }
       bcir_verify_lifetime(&r.unit, cc_r21_print, outf);   /* R21 advisory (§5.12), additive to the call graph */
+      n_clean++;
     } else if (emit_pack) {
       const bcir_func *f = &r.unit.funcs[r.unit.n_funcs - 1];   /* the entry function */
       static bcir_plan_step steps[8192]; bcir_plan plan;
-      if (bcir_plan_func(f, steps, 8192, &plan) != BCIR_OK) { fprintf(stderr, "%s: plan error\n", path); rc = 1; }
+      if (bcir_plan_func(f, steps, 8192, &plan) != BCIR_OK) { fprintf(stderr, "%s: plan error\n", path); rc = 1; n_dirty++; }
       else { static uint8_t pack[1 << 20]; size_t plen = 0;
-        if (bcir_hydrate(f, &plan, pack, sizeof pack, &plen) != BCIR_OK) { fprintf(stderr, "%s: hydrate error\n", path); rc = 1; }
-        else fwrite(pack, 1, plen, outf); }
+        if (bcir_hydrate(f, &plan, pack, sizeof pack, &plen) != BCIR_OK) { fprintf(stderr, "%s: hydrate error\n", path); rc = 1; n_dirty++; }
+        else { fwrite(pack, 1, plen, outf); n_clean++; } }
     } else {
       char sum[256]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);
       fprintf(outf, "%s: %s\n", path, sum);
+      n_clean++;
     }
     bcir_cfront_free(&r);
+  }
+
+  /* The per-PROJECT verdict (Phase 3): one line over the whole compiled file set. CLEAN = every
+   * unit compiled clean; PARTIAL-FALLBACK = no failure but >=1 unit routed to LLVM (--fallback /
+   * --r21=fallback); DIRTY = >=1 unit failed. Printed automatically for a multi-file invocation,
+   * or on request (--project). BYTE-IDENTICAL to the Python rail (bcir-cfront, __main__.py);
+   * parity gated in check_runtime.sh (#project). */
+  if (project || nfiles > 1) {
+    int n = n_clean + n_fallback + n_dirty;
+    if (n_dirty) {
+      if (n_fallback) fprintf(outf, "project: DIRTY (%d/%d failed, %d fell back)\n", n_dirty, n, n_fallback);
+      else fprintf(outf, "project: DIRTY (%d/%d failed)\n", n_dirty, n);
+    } else if (n_fallback) {
+      fprintf(outf, "project: PARTIAL-FALLBACK (%d/%d routed to the LLVM backend)\n", n_fallback, n);
+    } else {
+      fprintf(outf, "project: CLEAN (%d file%s)\n", n, n == 1 ? "" : "s");
+    }
   }
 
   if (outf != stdout) fclose(outf);

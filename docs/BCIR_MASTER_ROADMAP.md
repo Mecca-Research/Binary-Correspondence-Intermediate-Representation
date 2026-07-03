@@ -1970,9 +1970,12 @@ with per-file `--fallback` and real register-map / UART / DMA fixtures (§5.9). 
 **multi-file driver project** building through `bcir-cc` with a verified claim graph, an **R1–R18 (now
 R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted C/object artifacts**, and
 **behaviour-equivalence** where runnable. The gap is *infrastructure + breadth*, not the optimizer:
-- ◑ **Robust multi-file mode** — the ORACLE driver now orchestrates a project: multiple files per
+- ◑ **Robust multi-file mode** — BOTH drivers now orchestrate a project: multiple files per
   invocation with a per-project verdict line (CLEAN / PARTIAL-FALLBACK / DIRTY over the file set,
-  `--project`, automatic for multi-file runs). *Next:* the `bcir-cc` C-twin port + linking.
+  `--project`, automatic for multi-file runs). The `bcir-cc` C twin is byte/exit-code identical to
+  the oracle (a hard error 1 dominates a fallback 2), gated in `check_runtime.sh` (#project);
+  compile-database (`-p`) / `-M` dependency rules stay oracle-side (build-system glue, not law).
+  *Next:* linking.
 - ✅ **Compile-database support** — `bcir-cfront -p` consumes `compile_commands.json` (a directory or
   the file), compiling every entry with its own `-I`/`-D`/`-U`/`-std`/`--target` flags (both the
   `arguments` and `command` entry forms; entry `-I` resolves against the entry directory).
@@ -2101,13 +2104,16 @@ In recommended order — each is gated by the generated differential harness + F
   (`run_all --tier {quick,c-runtime,silicon-degrade,thorough}`); and the **hardware-channel plugin
   boundary** (`bcir/channel_plugin.py` — a `channel.json` manifest format so FPGA/NVMe/HBM-PIM
   extensions register without touching the core).
-- **0.3b — freestanding-C23-driver compiler + the law catch-up** (☐, §5.14): R19/R20/R21 promoted to
-  first-class verifier laws (generated status reports **R1–R21**); MLIR representation for the law-bearing C
-  semantics the frontend already lowers (volatile/atomic ops, indirect-call effect, pointer extent-provenance,
-  ABI contract); a **multi-file driver project** building through `bcir-cc` with an R1–R21-clean claim graph,
-  per-file fallback, emitted C/object artifacts, and behaviour-equivalence where runnable (compile-database +
-  dependency output + real UAPI/CMSIS/PCIe/NVMe/ACPI fixtures); the naked-pointer policy documented
-  user-facing; and an explicit `c-runtime` CI gate. The first externally-usable BCIR compiler deliverable.
+- **0.3b — freestanding-C23-driver compiler + the law catch-up** (**◑ TAG-READY on the law core**, §5.14):
+  ✅ R19/R20/R21 promoted to first-class verifier laws (generated status reports **R1–R21**); ✅ MLIR
+  representation for the law-bearing C semantics the frontend lowers — **§5.14 Phase 2 COMPLETE**
+  (volatile/atomic ops, indirect-call effect, pointer extent-provenance, ABI contract); ✅ a **multi-file
+  driver project** building through `bcir-cc` with an R1–R21-clean claim graph, per-file fallback and the
+  per-project verdict line — dual-rail, byte/exit-code identical (`check_runtime.sh` #project); ✅
+  compile-database + dependency output (oracle-side); ✅ the naked-pointer policy documented user-facing;
+  ✅ the `c-runtime` CI tier. *Remaining breadth (post-tag):* linking, real UAPI/CMSIS/PCIe/NVMe/ACPI
+  fixtures, native-object artifacts where the gate allows. The first externally-usable BCIR compiler
+  deliverable.
 - **0.4a — proof-carrying (mechanism)** (✅): replay records + per-claim certificates +
   `bcir.run --explain`/`--replay`/`--reduce` are implemented and tested (§5.3.2).
 - **0.4b — proof-carrying (contract)** (☐): a *stable* certificate schema (versioned, with a
