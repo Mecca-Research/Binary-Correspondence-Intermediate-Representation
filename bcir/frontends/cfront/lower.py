@@ -542,6 +542,8 @@ class LoweredFunc:
     statics: list = field(default_factory=list)     # (rid, name, CType, init) static-storage locals
     globals_used: dict = field(default_factory=dict)   # rid -> name (file-scope globals referenced)
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {0}`
+    tu_protos: dict = field(default_factory=dict)   # cross-TU callee -> (ret CType, (param CType, ...))
+                                          #   -- prototyped, not defined here; the emit declares them
     variadic: bool = False                # a trailing `...` after the named params (variadic function)
     reproducible: bool = False            # a C23 `[[reproducible]]`/`[[unsequenced]]` hint is on the
                                           #   definition -- a fusion-legality signal (the hint is value-
@@ -606,10 +608,12 @@ def _check_band_rid(rid: int) -> int:
 class _FuncLowerer:
     def __init__(self, func: cast.Func, aggregates: dict, base_rid: int, cid: list,
                  genv: dict | None = None, gres: dict | None = None, strctr: list | None = None,
-                 func_rets: dict | None = None, abi=None):
+                 func_rets: dict | None = None, abi=None, protos: dict | None = None):
         self.func = func
         self.abi = abi or HOST            # the target data model for laying out user types (long/ptr)
         self.func_rets = func_rets or {}  # callee name -> return CType (for void / wide / float returns)
+        self.protos = protos or {}        # PROTOTYPED cross-TU callee -> (ret CType, (param CType, ...))
+        self.tu_used: dict = {}           # the tu callees THIS function actually calls (for the emit decl)
         self.aggregates = aggregates
         self.rid = base_rid
         self.cid = cid                    # shared mutable [next_claim_id]
@@ -1976,6 +1980,19 @@ class _FuncLowerer:
             t = self._temp(bt, "blt")                  # the op carries the suffix (the `__builtin_` is re-added
             return self._emit(f"c.call.builtin:{node.callee[len('__builtin_'):]}",  # in emit; the op buffer is small)
                               Opcode.GEM_DISPATCH, actuals, (t,))
+        if node.callee in self.protos and node.callee not in self.func_rets:
+            # Phase 3 LINKING: a PROTOTYPED cross-TU callee -- a TYPED external edge the host LINKER
+            # resolves from a sibling object. Like a libm edge it is opaque to the in-unit R18 call
+            # graph (not appended to self.calls) and emits VERBATIM (no bcir_ rename -- external
+            # linkage); unlike libm it derives NO -l flag (linkflags: a sibling TU, not a library).
+            # The emit declares the recorded signature so the emitted TU compiles standalone.
+            ret_ct, param_cts = self.protos[node.callee]
+            self.tu_used[node.callee] = (ret_ct, param_cts)
+            if ret_ct.name == "void":
+                self._emit(f"c.call.tu:{node.callee}", Opcode.GEM_DISPATCH, actuals, ())
+                return _VOID_RID
+            t = self._temp(self._call_result_ct(ret_ct), f"tu_{node.callee}")
+            return self._emit(f"c.call.tu:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
         self.calls.append((node.callee, actuals))      # a defined-in-unit callee: a real R18 edge
         ret_ct = self.func_rets.get(node.callee)
         if ret_ct is not None and ret_ct.name == "void":   # a void callee -> a bare call statement, no
@@ -2357,6 +2374,7 @@ class _FuncLowerer:
                            vla_locals=list(self.vla_locals),
                            statics=list(self.statics), globals_used=gnames,
                            zero_init_locals=set(self.zero_init), variadic=self.func.variadic,
+                           tu_protos=dict(self.tu_used),
                            reproducible=getattr(self.func, "reproducible", False),
                            ptr_extent=dict(self.ptr_extent),
                            asm_meta=dict(self.asm_meta), target=self.abi.name)
@@ -2455,9 +2473,15 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     # pre-scan every function's return type (forward references resolve too), so a call can be typed
     # by its callee: a void call emits a bare statement, a wide/float return keeps its real type.
     func_rets = {fn.name: _resolve_member_type(fn.ret, aggregates, abi) for fn in unit.funcs}
+    # PROTOTYPED cross-TU callees (Phase 3 linking): a prototype whose definition is in this unit is
+    # just a forward declaration (the definition wins); the rest resolve at LINK time.
+    protos = {name: (_resolve_member_type(ret, aggregates, abi),
+                     tuple(_resolve_member_type(p, aggregates, abi) for p in params))
+              for name, (ret, params) in unit.protos.items() if name not in func_rets}
     for idx, fn in enumerate(unit.funcs):
         lf = _FuncLowerer(fn, aggregates, base_rid=100 + idx * 1000, cid=cid,
-                          genv=genv, gres=gres, strctr=strctr, func_rets=func_rets, abi=abi).lower()
+                          genv=genv, gres=gres, strctr=strctr, func_rets=func_rets, abi=abi,
+                          protos=protos).lower()
         functions[fn.name] = lf
         resources.update(lf.resources)
     for lf in functions.values():                          # regions need every callee's param rids

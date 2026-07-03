@@ -181,7 +181,13 @@ def emit_function(lf: LoweredFunc) -> str:
         parts.append("...")
     sig_params = ", ".join(parts) or "void"
     ret = _cname(lf.ret_type)
-    return (f"static {ret} bcir_{lf.name}({sig_params})\n{{\n"
+    # Phase 3 linking: declare every PROTOTYPED cross-TU callee this function calls, so the
+    # emitted TU compiles standalone and the host LINKER resolves the symbol from a sibling object.
+    tu_decls = [f"extern {_cname(rct)} {callee}("
+                + (", ".join(_cname(p) for p in pcts) or "void") + ");"
+                for callee, (rct, pcts) in sorted(lf.tu_protos.items())]
+    head = ("\n".join(tu_decls) + "\n" if tu_decls else "")
+    return (head + f"static {ret} bcir_{lf.name}({sig_params})\n{{\n"
             + "\n".join(decls + body) + "\n}")
 
 
@@ -408,6 +414,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     if c.op.startswith("c.call.extern:"):                    # a printf/scanf-family external variadic call
         callee = c.op.split(":", 1)[1]                       # emitted verbatim against <stdio.h>, returns int
         return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})", "int")
+    if c.op.startswith("c.call.tu:"):                        # a PROTOTYPED cross-TU callee (Phase 3 linking):
+        callee = c.op.split(":", 1)[1]                       # verbatim, external linkage -- the emitted TU
+        if not c.wr:                                         # declares it; the host LINKER resolves it
+            return f"{callee}({', '.join(ref(r) for r in c.rd)});"
+        rt = lf.rid_types.get(c.wr[0])
+        return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})",
+                      _cname(rt) if rt is not None else None)
     if c.op.startswith("c.call.builtin:"):                   # a GCC/Clang integer builtin -> verbatim
         callee = "__builtin_" + c.op.split(":", 1)[1]        # the op stores the suffix; re-add the prefix
         rt = lf.rid_types.get(c.wr[0])

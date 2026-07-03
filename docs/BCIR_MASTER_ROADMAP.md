@@ -1975,7 +1975,14 @@ R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted
   `--project`, automatic for multi-file runs). The `bcir-cc` C twin is byte/exit-code identical to
   the oracle (a hard error 1 dominates a fallback 2), gated in `check_runtime.sh` (#project);
   compile-database (`-p`) / `-M` dependency rules stay oracle-side (build-system glue, not law).
-  *Next:* linking.
+  ◑ **Linking (first slice, oracle)** — file-scope PROTOTYPES parse; a prototyped-but-undefined
+  callee is a TYPED cross-TU edge (`c.call.tu:`, R18-opaque like libm, verbatim emit + `extern`
+  declaration, NO -l derived); a same-unit prototype is a forward declaration (definition wins);
+  and the two-TU binary is real — the bcir-EMITTED caller object host-links against the callee TU
+  with the derived `--emit-link-flags` and behaves exactly like the reference build
+  (`test_cfront_link.py`). *Next:* the C-twin port (prototypes in `bcir_cfront.c`) and a linkable
+  emission mode (non-static exported functions + emitted global definitions) so two EMITTED
+  objects link to each other.
 - ✅ **Compile-database support** — `bcir-cfront -p` consumes `compile_commands.json` (a directory or
   the file), compiling every entry with its own `-I`/`-D`/`-U`/`-std`/`--target` flags (both the
   `arguments` and `command` entry forms; entry `-I` resolves against the entry directory).

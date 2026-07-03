@@ -177,6 +177,7 @@ _MODULES = [
     "bcir.tests.test_provenance_twin",
     "bcir.tests.test_ir_structural_parity",
     "bcir.tests.test_cfront_roundtrip",
+    "bcir.tests.test_cfront_link",
     "bcir.tests.test_c_channel",
     "bcir.tests.test_cpp_handoff",
     "bcir.tests.test_memory_model",

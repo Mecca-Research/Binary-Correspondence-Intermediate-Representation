@@ -260,8 +260,10 @@ class _Parser:
             self.i = save                                      # a struct *type* (func ret / global)
         tref = self._type_spec()
         tref, name = self._declarator(tref)
-        if self.at("PUNCT", "("):                              # a function definition
-            unit.funcs.append(self._func_body(tref, name, reproducible=bool(lead.get("reproducible"))))
+        if self.at("PUNCT", "("):                              # a function definition (or a prototype)
+            fn = self._func_body(tref, name, reproducible=bool(lead.get("reproducible")))
+            if fn is not None:                                 # None == a prototype (recorded in protos)
+                unit.funcs.append(fn)
         else:                                                  # a file-scope global variable
             unit.globals.append(self._global(tref, name))
 
@@ -694,6 +696,10 @@ class _Parser:
         elif self.at("IDENT", "void"):
             self.nxt()
         self.eat("PUNCT", ")")
+        if self.at("PUNCT", ";"):                      # a PROTOTYPE (`T name(params);`): record the
+            self.nxt()                                 # signature -- a cross-TU callee (Phase 3 linking)
+            self.unit.protos[name] = (ret, tuple(p.type for p in params))   # or an in-unit forward decl
+            return None
         body = self._block()
         return cast.Func(ret=ret, name=name, params=tuple(params), body=body, variadic=variadic,
                          reproducible=reproducible)
