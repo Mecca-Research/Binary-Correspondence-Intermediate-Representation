@@ -41,6 +41,20 @@ _MAX_DEPTH = 50
 
 
 # type-start keywords (a statement beginning with one of these is a declaration).
+def ast_walk(node):
+    """Yield `node` and every cast-node reachable from it (dataclass fields, tuples/lists) --
+    a generic expression-tree walk for structural guards (e.g. no-call-in-global-init)."""
+    import dataclasses  # noqa: PLC0415
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, (tuple, list)):
+            stack.extend(cur)
+        elif dataclasses.is_dataclass(cur) and not isinstance(cur, type):
+            yield cur
+            stack.extend(getattr(cur, f.name) for f in dataclasses.fields(cur))
+
+
 _TYPE_KW = frozenset({"void", "_Bool", "bool", "char", "short", "int", "long", "unsigned",
                       "signed", "float", "double", "_Complex", "complex", "const", "volatile",
                       "static", "extern", "inline", "_Thread_local", "thread_local", "struct", "union",
@@ -400,6 +414,17 @@ class _Parser:
                 init = tuple(slots.get(i, cast.IntLit(0)) for i in range(n))   # gaps zero-fill (§6.7.10)
             else:
                 init = (self._expr(),)
+            # C 6.7.10: a file-scope initializer must be a CONSTANT expression -- a CALL in it
+            # is invalid C (gcc/clang: "initializer element is not constant"). Reject it here
+            # rather than mislower: before prototypes landed this was caught incidentally (the
+            # `T k(void);` line was a parse error); now the prototype parses, so guard the
+            # construct itself. Routes to fallback under --fallback like any rejected form.
+            for el in init:
+                for node in ast_walk(el):
+                    if isinstance(node, (cast.CallExpr, cast.CallMember)):
+                        raise CParseError(f"file-scope initializer of {name!r} calls a "
+                                          f"function (not a constant expression)",
+                                          pos=self.peek().pos)
         self.eat("PUNCT", ";")
         return cast.Global(type=tref, name=name, init=init)
 
