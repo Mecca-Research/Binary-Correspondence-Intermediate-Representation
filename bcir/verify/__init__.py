@@ -138,6 +138,15 @@ def verify(module: Module) -> list[Diagnostic]:
                     f"claim {claim.id}: atomic lane A requires an atomic/barriered "
                     f"hazard contract",
                 ))
+            # §5.14 Phase 2 (indirect-call effect): a dispatch claim's DECLARED callee signature,
+            # when carried, must be well-formed "ret(params)" -- a malformed record would poison the
+            # R18/commutation consumers silently. Vacuous when absent (the opaque-edge default).
+            if claim.callee_sig and "(" not in claim.callee_sig:
+                diags.append(Diagnostic(
+                    "R18",
+                    f"claim {claim.id}: malformed indirect-callee signature "
+                    f"{claim.callee_sig!r} (expected 'ret(params)')",
+                ))
             # §5.14 Phase 2: a VOLATILE access (MMIO) must carry an ordered hazard -- volatility is
             # an ordering/legality signal, not a cosmetic tag. Vacuous unless a claim opts in.
             if claim.volatile and claim.hazard == "unique":

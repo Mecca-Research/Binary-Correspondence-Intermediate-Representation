@@ -1929,10 +1929,13 @@ From the C-semantics audit, the eight candidate areas split cleanly under the fi
   claims remain the frontend spelling; wiring the oracle emitter to produce the new ops is the next
   increment (the D1.1 portio precedent). (Fence ordering was *already* first-class —
   `bcir.barrier` + `mem_ordering` — kept.)
-- **Function pointers / indirect calls** → model the **callee type + effect** on the indirect-call claim. An
-  opaque dispatch currently declares **no effects**, so the R18 reachability check and the
-  effect/commutation footprint cannot analyze it; give the indirect call a declared signature + a
-  conservative effect set.
+- ✅ **Function pointers / indirect calls** → **LANDED**: the dispatch claim (`c.call.indirect` /
+  `c.call.imember`) carries the **declared callee signature** (`Claim.callee_sig` +- the `callee_sig`
+  claim attr, ""-default / digest-excluded), well-formedness guarded by an **R18 clause on both rails**
+  (`verify_callee_sig.mlir`, `test_indirect_effect.py`); and the **conservative effect set** is live --
+  a function containing a dispatch conservatively reads+writes every module-scope global in its
+  `CompileResult.effects` footprint, so `commute()` no longer reorders a dispatcher past a global
+  writer (the unsoundness this closed), while dispatch-free functions keep exact footprints.
 - ✅ **Pointer provenance / extent** → **LANDED**: the `bounds_provenance` signal rides the claim on both
   rails (`Claim.bounds_provenance` + the `OptionalAttr` on `bcir.claim`, ""-default / digest-excluded) --
   `declared_extent` / `recovered_count` / `snapshot_extent` for the masked promotions, `mmio_register` /

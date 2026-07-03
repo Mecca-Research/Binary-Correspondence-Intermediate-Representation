@@ -86,6 +86,7 @@ class ClaimView:
     volatile: bool = False  # SS5.14 Phase 2: the volatile qualifier, emitted as `is_volatile = true`
                             # ONLY when set (so the existing corpus stays byte-identical)
     bounds_provenance: str = ""  # SS5.14 Phase 2: the extent-provenance signal, emitted only when set
+    callee_sig: str = ""    # SS5.14 Phase 2: the declared indirect-callee signature, emitted when set
 
 
 @dataclass(frozen=True)
@@ -147,7 +148,7 @@ def plan_view(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF,
             domain=claim.domain, hazard=claim.hazard, verify=claim.verify,
             bounds=claim.bounds, paths=tuple(paths), selected=sel.name,
             score=score, width=sel.width, volatile=claim.volatile,
-            bounds_provenance=claim.bounds_provenance))
+            bounds_provenance=claim.bounds_provenance, callee_sig=claim.callee_sig))
         prev_cand = sel
 
     if total != result.score:
@@ -266,7 +267,8 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
             f"hazard = #bcir.hazard<{cv.hazard}>, verify = #bcir.verify<{cv.verify}>, "
             f"bounds = #bcir.bounds<{cv.bounds}>"
             + (", is_volatile = true" if cv.volatile else "")
-            + (f", bounds_provenance = \"{cv.bounds_provenance}\"" if cv.bounds_provenance else "") + " } "
+            + (f", bounds_provenance = \"{cv.bounds_provenance}\"" if cv.bounds_provenance else "")
+            + (f", callee_sig = \"{cv.callee_sig}\"" if cv.callee_sig else "") + " } "
             f"{{ %i = bcir.index_range 0 to {cv.count} step 1 }}")
     # the K_BCIR plan: candidate paths + per-claim min-plus select.
     L.append("  bcir.kbcir.plan @plan0 {")
