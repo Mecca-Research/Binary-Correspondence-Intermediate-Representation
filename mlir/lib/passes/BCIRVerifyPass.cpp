@@ -1434,6 +1434,56 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R22/R23 over the rung-5 LLM decode chain (open-weight ladder §7.4) -- the SAME adjacency
+    // discipline extended to the decoder's stages. embedding -> rmsnorm: the normalizer's rows*dim
+    // extent must equal the gather's n_ids*dim (R22) and the dtype must hand over (R23);
+    // rope -> attention: the attention's d_k must equal the rope's rotated dim (R22 -- RoPE is
+    // applied per head, so a d_k mismatch means the rotation straddled head boundaries) and the
+    // dtype must hand over (R23). Vacuous for IR with no adjacent pair (non-disturbance).
+    // Oracle twin: frontends/models/decode.py (decoder_layer_reference composes exactly this chain).
+    root->walk([&](GEMRMSNormOp rn) {
+      Operation *prev = rn->getPrevNode();
+      if (!prev)
+        return;
+      if (auto emb = dyn_cast<GEMEmbeddingOp>(prev)) {
+        if (static_cast<int64_t>(rn.getRows()) * rn.getDim() !=
+            static_cast<int64_t>(emb.getNIds()) * emb.getDim()) {
+          rn.emitError("R22: gem.rmsnorm ")
+              << rn.getSymName() << " consumes the adjacent gem.embedding @" << emb.getSymName()
+              << " but declares an extent of " << rn.getRows() * rn.getDim()
+              << " elements != the gather's n_ids*dim = " << emb.getNIds() * emb.getDim();
+          ok = false;
+        }
+        if (emb.getDtype() != rn.getDtype()) {
+          rn.emitError("R23: gem.rmsnorm ")
+              << rn.getSymName() << " consumes the adjacent gem.embedding @" << emb.getSymName()
+              << " but declares dtype '" << rn.getDtype() << "' != the producer's '"
+              << emb.getDtype() << "'";
+          ok = false;
+        }
+      }
+    });
+    root->walk([&](GEMAttentionOp at2) {
+      Operation *prev = at2->getPrevNode();
+      if (!prev)
+        return;
+      if (auto rp = dyn_cast<GEMRopeOp>(prev)) {
+        if (static_cast<int64_t>(at2.getDK()) != static_cast<int64_t>(rp.getDim())) {
+          at2.emitError("R22: gem.attention ")
+              << at2.getSymName() << " consumes the adjacent gem.rope @" << rp.getSymName()
+              << " but declares d_k = " << at2.getDK() << " != the rotated dim = " << rp.getDim();
+          ok = false;
+        }
+        if (rp.getDtype() != at2.getDtype()) {
+          at2.emitError("R23: gem.attention ")
+              << at2.getSymName() << " consumes the adjacent gem.rope @" << rp.getSymName()
+              << " but declares dtype '" << at2.getDtype() << "' != the producer's '"
+              << rp.getDtype() << "'";
+          ok = false;
+        }
+      }
+    });
+
     // R11: generation validity -- pack tags match the live registry maxima; a
     // mismatch is a stale pack that must rehydrate (patch/repack/replan).
     uint64_t regMapGen = 0, regDataGen = 0;

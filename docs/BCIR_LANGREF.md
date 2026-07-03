@@ -216,6 +216,20 @@ C-frontend corpus is untouched), with negative `-verify-diagnostics` cases in
 `mlir/test/passes/verify_shape_dtype.mlir` and the oracle suite in
 `bcir/tests/test_shape_dtype_laws.py`.
 
+The same R22/R23 adjacency discipline extends to the **rung-5 LLM decode ops**
+(open-weight ladder §7.4: `bcir.gem.embedding`, `bcir.gem.rmsnorm`, `bcir.gem.rope` —
+the law-rail records of the rung-3 reference decoder's stages). Op-level laws:
+positive extents everywhere; `gamma_len == dim` on the normalizer; RoPE's `dim` must
+be **even** (the rotation pairs channels `2k/2k+1`); rmsnorm/rope are `f32` (their
+sqrt/cos/sin ride the trusted libm edge — the attention-softmax quarantine rule).
+Seam laws: an `embedding → rmsnorm` pair must agree on the gathered extent
+(`rows*dim == n_ids*dim`, R22) and hand the dtype over (R23); a `rope → attention`
+pair must agree on the head width (`d_k == rope dim`, R22 — a mismatch means the
+rotation straddled head boundaries) and the dtype (R23). Vacuous with no adjacent
+pair; negatives in `mlir/test/passes/verify_llm_ops.mlir`; oracle twin
+`bcir/frontends/models/decode.py` (`decoder_layer_reference` composes exactly this
+chain).
+
 R19/R20/R21 are **first-class `-bcir-verify` MLIR laws**, dual-rail with the
 oracle's `verify.verify_timing` / `verify.verify_lifetime` (run through
 `verify.verify_smart_lowering` alongside R14–R17 and R22), each with a negative

@@ -447,8 +447,13 @@ drop-in loading of a modern open-weight chat model.
    tighter than Q4), and a greedy flip is *recorded, never hidden* (`ids_match`). Real-weight
    ingestion (a released tiny checkpoint through manifest → tokenizer → decode → quantize)
    is the remaining half, gated on rung 5's law rail for the LLM ops.
-5. **C/MLIR law rail** — ODS ops + verification for the LLM-specific ops; oracle↔law parity as
-   always (the prototype-then-port discipline, §3).
+5. ◑ **C/MLIR law rail — FIRST SLICE LANDED** (`verify_llm_ops.mlir`): ODS ops for the rung-3
+   decoder's LLM-specific stages — `bcir.gem.embedding` / `bcir.gem.rmsnorm` / `bcir.gem.rope` —
+   with op-level laws (positive extents; `gamma_len == dim`; RoPE's **even-dim** pairing law; the
+   f32 libm-edge quarantine rule on rmsnorm/rope) and the D2 adjacency seams in `-bcir-verify`:
+   embedding→rmsnorm extent + dtype handover (R22/R23), rope→attention head-width `d_k == dim` +
+   dtype (R22/R23) — exactly the chain `decoder_layer_reference` composes, with negatives.
+   *Remaining:* GQA/KV-cache ops + the C-twin kernels (prototype-then-port).
 6. **Serving endpoint** — streaming decode, schema-constrained tool-call output, telemetry frames,
    replay manifests.
 7. **Scale-out** — continuous batching, paged KV, multi-device placement, expert/tensor

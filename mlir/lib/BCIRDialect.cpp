@@ -356,6 +356,53 @@ using namespace bcir;
   return ::mlir::success();
 }
 
+::mlir::LogicalResult GEMEmbeddingOp::verify() {
+  // Rung 5 (open-weight ladder): the embedding gather's op-level shape law (mirrors the oracle's
+  // EmbeddingTable validation): positive table/gather extents, a known dtype. The gather is EXACT
+  // (no arithmetic), so both dtypes are legal.
+  if (static_cast<int64_t>(getVocabSize()) < 1 || static_cast<int64_t>(getDim()) < 1 ||
+      static_cast<int64_t>(getNIds()) < 1)
+    return emitOpError() << "embedding: vocab_size, dim and n_ids must all be >= 1";
+  ::llvm::StringRef dtype = getDtype();
+  if (dtype != "f32" && dtype != "i32")
+    return emitOpError() << "embedding: dtype '" << dtype << "' is not a known dtype (f32|i32)";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult GEMRMSNormOp::verify() {
+  // Rung 5: RMSNorm's op-level law (mirrors rmsnorm_reference's validation): positive extents,
+  // gamma sized to the row width, and f32 -- the rms sqrt rides the trusted libm edge (the same
+  // quarantine rule as the attention softmax).
+  if (static_cast<int64_t>(getRows()) < 1 || static_cast<int64_t>(getDim()) < 1)
+    return emitOpError() << "rmsnorm: rows and dim must be >= 1";
+  if (static_cast<int64_t>(getGammaLen()) != static_cast<int64_t>(getDim()))
+    return emitOpError() << "rmsnorm: gamma has " << getGammaLen() << " entries, want dim = "
+                         << getDim();
+  if (getDtype() != "f32")
+    return emitOpError() << "rmsnorm: dtype must be f32 (the rms sqrt rides the libm edge), got '"
+                         << getDtype() << "'";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult GEMRopeOp::verify() {
+  // Rung 5: RoPE's op-level law (mirrors rope_reference / DecoderSpec): dim must be EVEN -- the
+  // rotation pairs channels (2k, 2k+1); an odd dim has no legal pairing -- base positive,
+  // pos_offset non-negative, and f32 (cos/sin ride the libm edge).
+  if (static_cast<int64_t>(getRows()) < 1 || static_cast<int64_t>(getDim()) < 1)
+    return emitOpError() << "rope: rows and dim must be >= 1";
+  if (static_cast<int64_t>(getDim()) % 2 != 0)
+    return emitOpError() << "rope: dim must be EVEN (the rotation pairs channels 2k/2k+1), got "
+                         << getDim();
+  if (static_cast<int64_t>(getBase()) < 1)
+    return emitOpError() << "rope: base must be >= 1, got " << getBase();
+  if (static_cast<int64_t>(getPosOffset()) < 0)
+    return emitOpError() << "rope: pos_offset must be >= 0, got " << getPosOffset();
+  if (getDtype() != "f32")
+    return emitOpError() << "rope: dtype must be f32 (cos/sin ride the libm edge), got '"
+                         << getDtype() << "'";
+  return ::mlir::success();
+}
+
 ::mlir::LogicalResult GEMContentionOp::verify() {
   // The G4 cache-line/bank-conflict CONTENTION signal (mirrors bcir/kbcir/cache_predict.py::CachePredictor;
   // the op-level analytic-model well-formedness check gem.conv/attention validate inline -- NO new globally-
