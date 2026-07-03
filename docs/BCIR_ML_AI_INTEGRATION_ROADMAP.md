@@ -503,9 +503,14 @@ The audit finds five deepening moves, all quarantine-compatible:
   tropical optimizer (realized in stage order), composed over steps via `kbcir.compose` (a run
   is a `Seq`; series-summed cost), RCSP-budget-feasible-or-not BEFORE execution,
   R13-deterministic, and structurally bridged to the M3 loop (`steps_for` = epochs ×
-  batches/epoch = one update claim per optimizer step). *Next:* hydrate the planned step to a
-  StreamPack and wire the GEM executor to run it (execution today stays `training.train` — the
-  plan is its verification shadow), then the per-epoch R13 manifest + overlap. The autodiff
+  batches/epoch = one update claim per optimizer step). ✅ **Step 2 LANDED**: `hydrate_train_step` lowers the
+  selected realization to a StreamPack (R10 provenance / R11 tags clean, segments == the plan's
+  realized order) and `train_planned` runs REAL training with the GEM executor dispatching the
+  six numeric stage kernels per step — one executed step matches the closed-form logistic
+  reference to 1e-12, the run converges under the shared gate, and every epoch commits a
+  replayable ProvenanceManifest (epoch + pack generations as artifact tags; digests distinct,
+  `diff` == artifacts, `replay` exact). *Next:* the binary StreamPack rail (encode the pack and
+  execute via `runtime/c/bcir_exec`) + overlap/EFT scheduling of the stage streams. The autodiff
   closure proof is the enabler: the gradient DAG has a fixed vocabulary, so it hydrates to a
   StreamPack like any program.
 - ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/
