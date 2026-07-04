@@ -240,6 +240,29 @@ def multihead_attention_reference(x: list[float], spec: "TransformerBlockSpec", 
 # 3. Feed-forward -- REUSES matmul.matmul_reference + the existing activation references.
 # ============================================================================================================
 
+def swiglu_reference(x: list[float], rows: int, d_model: int, d_ff: int,
+                     w_gate: list[float], w_up: list[float],
+                     w_down: list[float]) -> list[float]:
+    """The GATED-SiLU feed-forward (the Llama/Gemma MLP): ``out = (silu(x @ Wg) * (x @ Wu)) @ Wd``
+    -- three matmuls and an elementwise gate, all reusing ``matmul.matmul_reference``; silu(v) =
+    v * sigmoid(v) with the guarded two-branch sigmoid (kbcir/recurrent.py -- the libm exp edge,
+    the same quarantine posture as gelu). NO biases (the Llama MLP has none). ``x`` is
+    rows x d_model; ``w_gate``/``w_up`` are d_model x d_ff; ``w_down`` is d_ff x d_model.
+    Returns a fresh rows x d_model buffer. Validates the weight shapes."""
+    from .matmul import matmul_reference
+    from .recurrent import sigmoid
+    if len(x) != rows * d_model:
+        raise ValueError(f"swiglu: x has {len(x)} values, want rows*d_model = {rows * d_model}")
+    for nm, w, want in (("w_gate", w_gate, d_model * d_ff), ("w_up", w_up, d_model * d_ff),
+                        ("w_down", w_down, d_ff * d_model)):
+        if len(w) != want:
+            raise ValueError(f"swiglu: {nm} has {len(w)} values, want {want}")
+    g = matmul_reference(x, w_gate, rows, d_ff, d_model)
+    u = matmul_reference(x, w_up, rows, d_ff, d_model)
+    h = [g[i] * sigmoid(g[i]) * u[i] for i in range(rows * d_ff)]   # silu(g) * u, elementwise
+    return matmul_reference(h, w_down, rows, d_model, d_ff)
+
+
 def feedforward_reference(x: list[float], rows: int, d_model: int, d_ff: int,
                           W1: list[float], b1: list[float], W2: list[float], b2: list[float],
                           activation: str = "relu") -> list[float]:

@@ -44,12 +44,14 @@ def quantize_decoder_weights(w: DecoderWeights, group_size: int, bits: int) -> D
                      w1=_roundtrip(lw.w1, group_size, bits),
                      b1=_roundtrip(lw.b1, group_size, bits),
                      w2=_roundtrip(lw.w2, group_size, bits),
-                     b2=_roundtrip(lw.b2, group_size, bits))
+                     b2=_roundtrip(lw.b2, group_size, bits),
+                     w_gate=_roundtrip(lw.w_gate, group_size, bits))
         for lw in w.layers)
     emb = EmbeddingTable(table=_roundtrip(w.embedding.table, group_size, bits),
                          n_vocab=w.embedding.n_vocab, dim=w.embedding.dim)
     return DecoderWeights(embedding=emb, layers=layers,
-                          g_final=_roundtrip(w.g_final, group_size, bits))
+                          g_final=_roundtrip(w.g_final, group_size, bits),
+                          lm_head=_roundtrip(w.lm_head, group_size, bits))
 
 
 @dataclass(frozen=True)

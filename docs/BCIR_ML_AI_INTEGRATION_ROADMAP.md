@@ -444,9 +444,20 @@ drop-in loading of a modern open-weight chat model.
    deterministic `DriftRecord` per prompt fixture — both paths' greedy ids, max teacher-forced
    logit drift along the float trajectory, mean-NLL (perplexity proxy) under both models,
    the R17 stamp. Measured on the synthetic fixture: Q8 ~2.7e-3 max logit drift (~20×
-   tighter than Q4), and a greedy flip is *recorded, never hidden* (`ids_match`). Real-weight
-   ingestion (a released tiny checkpoint through manifest → tokenizer → decode → quantize)
-   is the remaining half, gated on rung 5's law rail for the LLM ops.
+   tighter than Q4), and a greedy flip is *recorded, never hidden* (`ids_match`). ✅ **The
+   real-weight half LANDED** (`safetensors_io.py` + `hf_ingest.py`, `test_model_ingest.py`):
+   the tensor READER decodes F64/F32/F16/BF16 exactly (dep-free struct; lying byte spans
+   refuse by tensor name), and the HF-Llama layout mapping — Linear `[out, in]` transpose,
+   the **rotate_half → interleaved RoPE out-channel permutation** (the llama.cpp conversion
+   identity), gated-SiLU MLP (`activation="silu_gate"` + `w_gate`, no biases), untied
+   `lm_head` — is gated by an INDEPENDENT HF-semantics decoder written from the paper
+   conventions: the ingested checkpoint through the rung-3 reference emits the SAME greedy
+   ids, the naive-vs-cached twin gate holds on real-layout weights, the census ties
+   (`decoder_param_count` == the shard's element count, now gated-MLP/untied-head aware),
+   and the Q8 bridge quantizes the ingested weights unchanged. A RELEASED checkpoint runs
+   the same path via the asset gate (`BCIR_HF_MODEL_DIR`, e.g. Maykeye/TinyLLama-v0 —
+   HF downloads are blocked from the build sandbox, so real-silicon-trained ids parity is
+   a maintainer-side one-liner, the rig-gate pattern).
 5. ✅ **C/MLIR law rail — COMPLETE** (`verify_llm_ops.mlir`): ODS ops for the rung-3
    decoder's LLM-specific stages — `bcir.gem.embedding` / `bcir.gem.rmsnorm` / `bcir.gem.rope` —
    with op-level laws (positive extents; `gamma_len == dim`; RoPE's **even-dim** pairing law; the

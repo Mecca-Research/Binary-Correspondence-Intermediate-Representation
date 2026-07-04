@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from ...kbcir.activation import softmax_reference
 from ...kbcir.attention import AttentionSpec, scores_reference
 from ...kbcir.matmul import matmul_reference
-from ...kbcir.transformer import causal_mask, feedforward_reference
+from ...kbcir.transformer import causal_mask, feedforward_reference, swiglu_reference
 from ...kbcir.transformer_grads import rmsnorm_reference, rope_reference
 from ...kbcir.unsupervised import EmbeddingTable, embedding_lookup
 
@@ -49,6 +49,8 @@ class DecoderSpec:
     rope_base: float = 10000.0
     activation: str = "gelu"
     n_kv_heads: int = 0                 # 0 == n_heads (MHA); the Llama/Gemma GQA knob
+    tied_embeddings: bool = True        # False == a separate lm_head (the Llama choice); the
+                                        #   logits then read lm_head, not the embedding table
 
     def __post_init__(self) -> None:
         if min(self.vocab_size, self.d_model, self.n_heads, self.n_layers, self.d_ff) < 1:
@@ -57,8 +59,8 @@ class DecoderSpec:
             raise ValueError(f"d_model {self.d_model} not divisible by n_heads {self.n_heads}")
         if (self.d_model // self.n_heads) % 2:
             raise ValueError("d_k must be even (RoPE rotates channel pairs)")
-        if self.activation not in ("relu", "gelu"):
-            raise ValueError(f"activation must be relu|gelu; got {self.activation!r}")
+        if self.activation not in ("relu", "gelu", "silu_gate"):
+            raise ValueError(f"activation must be relu|gelu|silu_gate; got {self.activation!r}")
         if self.n_kv_heads < 0 or self.n_kv_heads > self.n_heads:
             raise ValueError(f"n_kv_heads {self.n_kv_heads} must be in [0, n_heads]")
         if self.n_kv_heads and self.n_heads % self.n_kv_heads:
@@ -96,6 +98,8 @@ class LayerWeights:
     b1: tuple              # d_ff
     w2: tuple              # d_ff x d_model
     b2: tuple              # d_model
+    w_gate: tuple = ()     # d_model x d_ff -- the gated-SiLU MLP's gate projection
+                           #   (silu_gate only; empty for relu/gelu, every existing layer)
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,8 @@ class DecoderWeights:
     embedding: EmbeddingTable
     layers: tuple            # tuple[LayerWeights, ...]
     g_final: tuple           # d_model
+    lm_head: tuple = ()      # vocab x d_model -- the UNTIED logits head (empty == tied to the
+                             #   embedding table, the Gemma choice; every existing model)
 
 
 def check_decoder_weights(spec: DecoderSpec, w: DecoderWeights) -> list[str]:
@@ -120,12 +126,21 @@ def check_decoder_weights(spec: DecoderSpec, w: DecoderWeights) -> list[str]:
         msgs.append(f"{len(w.layers)} layers, spec says {spec.n_layers}")
     if len(w.g_final) != d:
         msgs.append(f"g_final has {len(w.g_final)} entries, want {d}")
+    gated = spec.activation == "silu_gate"
     want = {"g_attn": d, "w_q": d * d, "w_k": d * kvd, "w_v": d * kvd, "w_o": d * d,
-            "g_ff": d, "w1": d * f, "b1": f, "w2": f * d, "b2": d}
+            "g_ff": d, "w1": d * f, "w2": f * d,
+            # the Llama MLP has NO biases and a gate projection; relu/gelu is the inverse
+            "b1": 0 if gated else f, "b2": 0 if gated else d,
+            "w_gate": d * f if gated else 0}
     for li, lw in enumerate(w.layers):
         for name, n in want.items():
             if len(getattr(lw, name)) != n:
                 msgs.append(f"layer {li}: {name} has {len(getattr(lw, name))} entries, want {n}")
+    head = len(getattr(w, "lm_head", ()))
+    if spec.tied_embeddings and head:
+        msgs.append(f"lm_head has {head} entries but the spec ties the embeddings")
+    if not spec.tied_embeddings and head != spec.vocab_size * d:
+        msgs.append(f"lm_head has {head} entries, want vocab*d = {spec.vocab_size * d}")
     return msgs
 
 
@@ -133,11 +148,36 @@ def decoder_param_count(spec: DecoderSpec) -> int:
     """The parameter count the spec implies -- the manifest tie (rung 1's `param_count` over
     a shard census of these tensors must equal it)."""
     d, f, kvd = spec.d_model, spec.d_ff, spec.kv_dim
-    per_layer = 2 * d + 2 * d * d + 2 * d * kvd + d * f + f + f * d + d
-    return spec.vocab_size * d + spec.n_layers * per_layer + d
+    if spec.activation == "silu_gate":                     # gate+up+down, NO biases
+        mlp = 3 * d * f
+    else:                                                  # up+down with biases
+        mlp = d * f + f + f * d + d
+    per_layer = 2 * d + 2 * d * d + 2 * d * kvd + mlp
+    head = 0 if spec.tied_embeddings else spec.vocab_size * d
+    return spec.vocab_size * d + spec.n_layers * per_layer + d + head
 
 
 # --- the shared row arithmetic (BOTH decode paths call these on identical values) -----------
+
+def _ff(h2: list, rows: int, spec: DecoderSpec, lw: LayerWeights) -> list:
+    """The layer's MLP: the gated-SiLU form (silu_gate -- gate/up/down, no biases) or the
+    classic two-matmul feed-forward (relu/gelu). One dispatch point, both decode paths."""
+    if spec.activation == "silu_gate":
+        return swiglu_reference(h2, rows, spec.d_model, spec.d_ff,
+                                list(lw.w_gate), list(lw.w1), list(lw.w2))
+    return feedforward_reference(h2, rows, spec.d_model, spec.d_ff, list(lw.w1), list(lw.b1),
+                                 list(lw.w2), list(lw.b2), activation=spec.activation)
+
+
+def _head_logits(h_row: list, w: DecoderWeights) -> list:
+    """The next-token logits row: the TIED embedding table, or the untied lm_head (same
+    [vocab x d] row-major layout, so both read through `_tied_logits`)."""
+    if w.lm_head:
+        emb = w.embedding
+        return _tied_logits(h_row, EmbeddingTable(table=tuple(w.lm_head),
+                                                  n_vocab=emb.n_vocab, dim=emb.dim))
+    return _tied_logits(h_row, w.embedding)
+
 
 def _split_head(rows: list, n: int, h: int, n_heads: int, d_k: int) -> list:
     """Head h's n x d_k slice of an n x (n_heads*d_k) projection (a pure gather)."""
@@ -228,8 +268,7 @@ def decoder_layer_reference(x: list, seq: int, spec: DecoderSpec, lw: LayerWeigh
     attn = matmul_reference(concat, lw.w_o, seq, d, d)
     x = [x[i] + attn[i] for i in range(seq * d)]                  # residual
     h2 = rmsnorm_reference(x, seq, d, list(lw.g_ff))
-    ff = feedforward_reference(h2, seq, d, spec.d_ff, list(lw.w1), list(lw.b1),
-                               list(lw.w2), list(lw.b2), activation=spec.activation)
+    ff = _ff(h2, seq, spec, lw)
     return [x[i] + ff[i] for i in range(seq * d)]                 # residual
 
 
@@ -246,7 +285,7 @@ def next_token_logits(ids: list, spec: DecoderSpec, w: DecoderWeights) -> list:
     """The tied-embedding logits of the LAST position (the next-token distribution's scores)."""
     hfin = decoder_forward_reference(ids, spec, w)
     d = spec.d_model
-    return _tied_logits(hfin[(len(ids) - 1) * d:len(ids) * d], w.embedding)
+    return _head_logits(hfin[(len(ids) - 1) * d:len(ids) * d], w)
 
 
 def reference_decode(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int,
@@ -320,8 +359,7 @@ class KVCache:
             attn = matmul_reference(concat, lw.w_o, 1, d, d)
             x_row = [x_row[i] + attn[i] for i in range(d)]
             h2 = rmsnorm_reference(x_row, 1, d, list(lw.g_ff))
-            ff = feedforward_reference(h2, 1, d, spec.d_ff, list(lw.w1), list(lw.b1),
-                                       list(lw.w2), list(lw.b2), activation=spec.activation)
+            ff = _ff(h2, 1, spec, lw)
             x_row = [x_row[i] + ff[i] for i in range(d)]
         self.pos += 1
         return rmsnorm_reference(x_row, 1, d, list(w.g_final))
@@ -341,7 +379,7 @@ def decode_with_kv_cache(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights,
         hrow = cache._step_row(w.embedding.row(int(tid)), spec, w)
     out: list = []
     for _ in range(max_new):
-        nxt = _argmax(_tied_logits(hrow, w.embedding))
+        nxt = _argmax(_head_logits(hrow, w))
         out.append(nxt)
         if eos_id is not None and nxt == eos_id:
             break
