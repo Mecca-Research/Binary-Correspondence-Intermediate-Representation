@@ -689,7 +689,15 @@ The audit finds five deepening moves, all quarantine-compatible:
   wrapped-gemm score is memory-dominated, linear in the output budget) — per-class
   divergence requires the L3 tile/cache model (`cost_of`'s cache-fitting term), the
   named follow-on. **D3's planned slices are COMPLETE** (L3-model divergence recorded
-  as future work).
+  as future work). **D3 generalizes to the driver catalog (2026-07-04):** the
+  tile_prior/channel_prior recipe (Q8-frozen prior over cheap features, trained on the
+  exhaustive optimizer's own choices, certificate-gated guided==exhaustive with
+  mismatches 0, staleness-refused) is now the **ML-seam-per-device-class mandate** — every
+  driver blueprint (Part IX of the driver roadmap) carries a §7 ML placement card with its
+  device's learned prior (UART trigger/burst shipped; interrupt-affinity, timer-drift,
+  DMA-batching, NVMe queue-depth, cache admit/evict, NIC ITR-coalescing, xHCI scheduling,
+  GPU occupancy, IOMMU IOTLB-prefetch, FS readahead). A driver with no ML placement card is
+  a transliterated Linux driver, not a BCIR driver.
 - **D4 — E-graph rule synthesis (the operad 2-cell algebra).** Learn *candidate* rewrites
   from liked/unliked pair statistics; each learned rule is admitted only with a machine-
   checkable equivalence certificate (the egraph extract cost proof), keeping learning out of
