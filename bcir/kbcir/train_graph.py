@@ -538,3 +538,43 @@ def train_streamed(spec: TrainStepSpec, streams: int, X: list, y: list, w0: list
                        ("map_gen", pack.map_gen), ("data_gen", pack.data_gen))))
     return PlannedTrainRun(weights=list(st["w"]), losses=losses, manifests=tuple(manifests),
                            pack=pack, exec_orders=exec_orders)
+
+
+# --- D1 step 8: the stream COUNT is a plan decision ---------------------------------------------
+
+
+@dataclass(frozen=True)
+class StreamPlan:
+    """The D1.8 witness: the swept (streams -> pipelined makespan) frontier and the
+    CHOSEN count -- the optimizer picks the stream count from the cost model; the
+    caller stops passing a knob. Ties break to FEWER streams (when concurrency buys
+    nothing, the simpler plan wins)."""
+
+    streams: int
+    swept: tuple                       # ((streams, pipelined_makespan), ...) sweep order
+    certificate: StreamCertificate     # the chosen count's full D1.6 certificate
+
+    @property
+    def admitted(self) -> bool:
+        return (self.certificate.admitted
+                and all(self.certificate.pipelined <= mk for _, mk in self.swept))
+
+
+def plan_stream_count(spec: TrainStepSpec, h: HProfile, theta: Theta,
+                      policy: Policy = PERF, *, max_streams: int | None = None) -> StreamPlan:
+    """D1 step 8: sweep every divisor of the batch (equal micro-batches -- the
+    single-update law's precondition) up to `max_streams`, price each streamed step
+    through the D1.6 machinery, and CHOOSE the argmin pipelined makespan. Strict `<`
+    keeps the first minimum, so ties break to fewer streams."""
+    cap = max_streams if max_streams is not None else spec.batch
+    divisors = [s for s in range(1, spec.batch + 1) if spec.batch % s == 0 and s <= cap]
+    if not divisors:
+        raise ValueError(f"plan_stream_count: no admissible stream count <= {cap}")
+    swept: list = []
+    best: tuple = ()
+    for s in divisors:
+        cert, _ = schedule_stream_step(spec, s, h, theta, policy)
+        swept.append((s, cert.pipelined))
+        if not best or cert.pipelined < best[1].pipelined:
+            best = (s, cert)
+    return StreamPlan(streams=best[0], swept=tuple(swept), certificate=best[1])
