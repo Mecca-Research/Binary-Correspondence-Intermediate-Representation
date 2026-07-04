@@ -553,6 +553,23 @@ MUST author a `DeviceManifest` in U0 and route its buffer programming through
 
 ## Part VII — Remaining-gaps audit (2026-07-04): what is still open before the next driver/kernel analysis
 
+> **Wave-13 status flips (same day):** A1+B1 **LANDED** (event phases on both rails —
+> `Phase.event` / `bcir.phase`'s `event` attr, the EV1–EV3 laws in `kbcir/events.py` +
+> the R3/EV seam in `-bcir-verify`, the U4 16550 RX fixture; the interrupt-context
+> ordering seam is EV3). A2 **LANDED** (`kbcir/dma.py`: descriptor rings compiled from
+> `StridedView` pairs — two-pointer byte walk, coalescing/merge/scatter; D-R3-priced
+> with a fragmentation premium; `dma_transfer_module` composes D-R2+D-R3+D-R4+A1+B1
+> into one law-clean module). A3 **LANDED** (`paged_kv.py`: page-claim wiring; eviction
+> as a registry act + scheduled claim; admission as appending phases, hash-identical to
+> upfront). A4 **LANDED** (`&x` address constants render as the linker's relocation;
+> `sizeof`/`_Alignof` fold in global initializers against the CHOSEN ABI's layout
+> oracle; forward refs still refuse). A5 **LANDED** (D1.8 `plan_stream_count` — the
+> non-monotonic frontier measured, 2 streams beats 1/4/8 on the house fixture; D3.4
+> `orchestrate_guided` + certificate — and the RECORDED uniformity finding: gemm class
+> winners cannot diverge by size under the L2 linear cost model; the L3 tile/cache
+> model is the named follow-on). B2–B4 remain standing rules / rig-gated, as designed.
+> The table below is preserved as the audit of record.
+
 Taken after wave 12 (rung-6 serving complete: streaming + `TokenDFA` schema constraint;
 rung-7 opened: paged KV as registry resources, continuous batching measured as wave
 scheduling). This is the ranked inventory of what remains for the IR and for driver/kernel

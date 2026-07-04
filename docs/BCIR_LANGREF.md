@@ -103,7 +103,17 @@ hard score, with equality at `T = 0`) is a verifier obligation under R9
 - **Claim law (§5).** The primitive object is the *claim*, not the instruction:
   `op + resources + contract + phase + cost + verification + ≥1 legal realization`.
 - **Phase DAG (§6).** Execution order is a phase graph (acyclic), not textual
-  order.
+  order. A phase may carry an **event source** (`Phase.event`, Part VII A1): a
+  non-empty source names the interrupt/event that TRIGGERS the phase — first-class
+  asynchronous entry. The EV laws govern it on both rails (`kbcir/events.py`, the
+  R3/EV seam in `-bcir-verify`): **EV1** an event phase declares no phase deps
+  (hazards + masking order it, never program order); **EV2** the source must be armed
+  by an explicit `irq.unmask:<src>` claim in the program flow (enablement is a claim
+  over the controller resource, never implicit); **EV3** (the interrupt-context
+  ordering seam) a resource written by an event phase may be touched by program
+  claims only inside a masked window (`irq.mask:<src>` … `irq.unmask:<src>`) or as a
+  `Lane.A` atomic. `event` defaults to `""` and is digest-excluded — the entire
+  pre-A1 corpus is untouched (non-disturbance, measured).
 - **Lane law (§7).** Lanes are execution-geometry types: `U` unit/stride, `UX`
   cacheline-local, `T` tile, `GGG` gather/scatter (always legal, must be
   minimized), `A` atomic, `H` hazard/provenance.

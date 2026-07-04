@@ -520,6 +520,10 @@ drop-in loading of a modern open-weight chat model.
    scheduler machinery. *Remaining (rung 7):* page-claim wiring (decode claims
    reading/writing their pages directly), page eviction/reuse, mid-flight session
    admission, multi-device placement, expert/tensor parallelism, speculative decoding.
+   *Wave-13 (A3) flip:* page-claim wiring, eviction (registry act + scheduled claim,
+   live-session refusal), and mid-flight admission (appending phases, hash-identical to
+   upfront) **LANDED** — remaining: windowed-attention eviction, page reuse across
+   sessions, multi-device placement, expert/tensor parallelism, speculative decoding.
 8. **Fine-tune/adapt** — LoRA/QLoRA-style adapters as first-class artifacts before full-parameter
    training; adapters frozen with the same provenance and eval gates as kernels.
 
@@ -588,7 +592,7 @@ wraps own the leaf kernels); the two are complements, not alternatives.
 The §2 program stops at "tensor ops as claims + wrapped kernels + a Python training loop."
 The audit finds five deepening moves, all quarantine-compatible:
 
-- ◑ **D1 — Training as a planned graph, not a Python loop. FIRST SLICE LANDED**
+- ✅ **D1 — Training as a planned graph, not a Python loop. STEPS 1–8 COMPLETE**
   (`bcir/kbcir/train_graph.py`, `test_train_graph.py`): one training step is six chained
   first-class claim phases (forward `gem.matmul` → `gem.activation` → `gem.loss` →
   `reduce.loss_mean` → `gem.autodiff` → `gem.opt_step`) — law-clean under R1–R22, priced by the
@@ -635,9 +639,13 @@ The audit finds five deepening moves, all quarantine-compatible:
   (`bcir_stream_kernel` + `test_train_stream.c`: the binary stream pack through `bcir_exec`,
   per-stream micro-batch state, mean-of-means combine). The differential closes THREE ways
   ≤1e-12: C == train_streamed == train_planned (the split identity end-to-end in C), and the
-  first step's dispatch order is exactly the per-stream bands → combine → update. *Next:*
-  stream-count as a plan decision priced by K_BCIR (the certificate already prices it;
-  promote it to a planner choice).
+  first step's dispatch order is exactly the per-stream bands → combine → update.
+  ✅ **Step 8 LANDED (wave 13)**: the stream count IS a plan decision —
+  `plan_stream_count` sweeps every batch divisor through the D1.6 certificate machinery
+  and chooses the argmin pipelined makespan (ties to fewer streams). Measured on the
+  house fixture the frontier is genuinely non-monotonic (1×=296, 2×=274, 4×=380, 8×=614
+  — 2 streams wins), so the choice is real; the `StreamPlan` witness pins
+  chosen ≤ every swept point and never-worse-than-unstreamed. **D1 is COMPLETE.**
 - ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/
   `check_classical`-style checkers were op-level and advisory; shape consistency and dtype
   compatibility are now numbered laws via the R19–R21 six-artifact pattern: **R22** checks the
@@ -648,7 +656,7 @@ The audit finds five deepening moves, all quarantine-compatible:
   Negative MLIR cases in `verify_shape_dtype.mlir`; oracle suite `test_shape_dtype_laws.py`;
   `gen_status` sweeps R1–R23. Vacuous-by-default (non-disturbance). This is the "structurally
   valid tensors" guarantee (§8.4) made law.
-- ◑ **D3 — Learned cost-model priors at L1. FIRST SLICE LANDED** (`kbcir/tile_prior.py`,
+- ✅ **D3 — Learned cost-model priors at L1. SLICES 1–4 LANDED** (`kbcir/tile_prior.py`,
   `test_tile_prior.py`): the accel-ranker precedent generalized to the L1 tile search — a
   logistic prior over CHEAP tile features (no `cost_of` to rank), trained offline on the exact
   search's own choices under the (calibrated) `TargetProfile`, frozen to a Q8 integer table,
@@ -670,8 +678,18 @@ The audit finds five deepening moves, all quarantine-compatible:
   table is caught, not trusted**; the envelope (kind `bcir.channel_prior`) ties to the
   tower's (name, cal_gen) pairs — a recalibrated channel refuses STALE, a re-towered load
   refuses retrain, a newer schema refuses upgrade. `plan_calling_side` untouched (opt-in).
-  *Next:* wiring the table into `orchestrate` behind an opt-in flag, and per-channel
-  calibrated profiles (cal_gen ≥ 1) so class winners genuinely diverge across the tower.
+  ✅ **Slice 4 LANDED (wave 13)**: `orchestrate_guided` wires the table into the TOWER
+  pass (opt-in — `channels.orchestrate` untouched): a gemm claim whose declared dims hit
+  the table pins its verified winner into a REDUCED tower (a hit prices ONE channel;
+  ≥30% fewer whole-module `optimize()` runs measured); any miss falls back to the full
+  tower; the `OrchestratePriorCertificate` compares guided vs exhaustive placements
+  CLAIM FOR CLAIM (mismatches must be 0 — a poisoned table changes placements and is
+  CAUGHT). Calibrated (cal_gen 1) towers hold every law incl. staleness. The RECORDED
+  finding: gemm class winners stay tower-uniform under the L2 linear cost model (the
+  wrapped-gemm score is memory-dominated, linear in the output budget) — per-class
+  divergence requires the L3 tile/cache model (`cost_of`'s cache-fitting term), the
+  named follow-on. **D3's planned slices are COMPLETE** (L3-model divergence recorded
+  as future work).
 - **D4 — E-graph rule synthesis (the operad 2-cell algebra).** Learn *candidate* rewrites
   from liked/unliked pair statistics; each learned rule is admitted only with a machine-
   checkable equivalence certificate (the egraph extract cost proof), keeping learning out of
