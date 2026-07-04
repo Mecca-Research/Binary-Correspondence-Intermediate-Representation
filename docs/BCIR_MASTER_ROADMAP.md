@@ -387,6 +387,14 @@ BCIR-native instruction selection stays deferred behind the documented decision 
 GO criteria (G1 no resident backend + G2 measured ≥2× economics) are unmet. Revisit for
 a bare PIM/CIM controller or a driver-resident eBPF JIT under a latency SLA.
 
+> **Wave-14 machine-code audit** (`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`): the gate
+> survived the full HAL/ABI/ISA audit untouched — every missing machine-code tool lands
+> on the NATIVE side of the resident-compiler boundary (MC-track: disassembler + hex
+> dump + listing, peek/poke, ROP v2 registry assembly with macros, carry-as-data,
+> HAM/semantic-swap composition, pack-level linking + symbol section, the RuntimeChannel
+> v2 HAL hook vtable, POSIX compat completion). None of them is instruction selection;
+> the Clang/native split is exactly the designed one.
+
 ### 5.6 Stays Python (the quarantine)
 
 The learned organs (`bayescal`, `softdp`, `moegate` training, `calibrate` SGD, `regret`

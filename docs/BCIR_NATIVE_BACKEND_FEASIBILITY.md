@@ -13,6 +13,11 @@ Pairs with: `BCIR_NATIVE_OBJECT_GATE.md` (the decision gate) and `BCIR_MASTER_RO
 
 ---
 
+> **Cross-ref (wave 14):** the machine-code/HAL/ABI/ISA gap audit
+> (`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`) confirmed this document's boundary: the missing
+> tools (disassembler/lister, hex dump, pack-level linker, peek/poke, ROP v2) are all
+> NATIVE-side plan/artifact tools, not codegen — the gate below is unaffected.
+
 ## 1. What "native backend" means here
 
 "Native backend" = **BCIR emits machine code (a real `.o` / executable) directly, without LLVM/clang** —
