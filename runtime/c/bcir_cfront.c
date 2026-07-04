@@ -737,6 +737,7 @@ static long long ce_primary(CC *c){
   if(isk(c,T_INT))return adv(c).v;
   if(is(c,"(")){c->i++;long long v=ce_expr(c,0);eat(c,")");return v;}
   if(is(c,"-")){c->i++;return -ce_primary(c);}
+  if(is(c,"+")){c->i++;return ce_primary(c);}
   if(is(c,"~")){c->i++;return ~ce_primary(c);}
   if(is(c,"!")){c->i++;return !ce_primary(c);}
   if(isk(c,T_ID)){int e=find_enum(c,pk(c)->s,pk(c)->n);if(e>=0){c->i++;return c->ec[e].val;}}
@@ -744,8 +745,12 @@ static long long ce_primary(CC *c){
 }
 static long long ce_expr(CC *c,int minp){
   if(ENTER_REC(c)){ LEAVE_REC(c); return 0; }   /* depth guard: ce_expr<->ce_primary `(...)` cycle */
-  struct{const char*t;int p;}P[]={{"|",1},{"^",2},{"&",3},{"<<",5},{">>",5},
-    {"+",6},{"-",6},{"*",7},{"/",7},{"%",7},{0,0}};
+  /* the SS5.9 integer constant-expression evaluator (the oracle's _const_eval twin): full C
+   * precedence over ||, &&, bit ops, equality, relational, shift, arithmetic -- both sides of
+   * a logical op evaluate (a constant expression has no side effects to short-circuit away). */
+  struct{const char*t;int p;}P[]={{"||",1},{"&&",2},{"|",3},{"^",4},{"&",5},
+    {"==",6},{"!=",6},{"<=",7},{">=",7},{"<",7},{">",7},{"<<",8},{">>",8},
+    {"+",9},{"-",9},{"*",10},{"/",10},{"%",10},{0,0}};
   long long lhs=ce_primary(c);
   for(;;){int p=-1;const char*op=0;
     for(int i=0;P[i].t;i++) if(is(c,P[i].t)){p=P[i].p;op=P[i].t;break;}
@@ -753,7 +758,15 @@ static long long ce_expr(CC *c,int minp){
     lhs = !strcmp(op,"+")?lhs+rhs:!strcmp(op,"-")?lhs-rhs:!strcmp(op,"*")?lhs*rhs:
           !strcmp(op,"/")?(rhs?lhs/rhs:0):!strcmp(op,"%")?(rhs?lhs%rhs:0):
           !strcmp(op,"&")?lhs&rhs:!strcmp(op,"|")?lhs|rhs:!strcmp(op,"^")?lhs^rhs:
-          !strcmp(op,"<<")?lhs<<rhs:lhs>>rhs;
+          !strcmp(op,"<<")?lhs<<rhs:!strcmp(op,">>")?lhs>>rhs:
+          !strcmp(op,"==")?lhs==rhs:!strcmp(op,"!=")?lhs!=rhs:
+          !strcmp(op,"<=")?lhs<=rhs:!strcmp(op,">=")?lhs>=rhs:
+          !strcmp(op,"<")?lhs<rhs:!strcmp(op,">")?lhs>rhs:
+          !strcmp(op,"&&")?(lhs&&rhs):(lhs||rhs);
+  }
+  if(minp==0&&is(c,"?")){                        /* the ternary (right-assoc, lowest precedence) */
+    c->i++; long long a=ce_expr(c,0); if(!eat(c,":")){LEAVE_REC(c);return 0;}
+    long long b=ce_expr(c,0); lhs = lhs?a:b;
   }
   LEAVE_REC(c); return lhs;
 }
