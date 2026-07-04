@@ -1,6 +1,6 @@
-"""Rung 6, first slice (`frontends/models/serve.py`): the serving seam.
+"""Rung 6 (`frontends/models/serve.py`): the serving seam.
 
-`generate()` `generate()` emits `decode_with_kv_cache`'s ids BIT-FOR-BIT while
+SLICE 1: `generate()` emits `decode_with_kv_cache`'s ids BIT-FOR-BIT while
 recording the flight -- one valid DataDNA frame per token through a Broker into a
 DurableLog that round-trips, a live `gem.kv_cache`-shaped record obeying the MLIR op's
 paging law, ONE R13 manifest per generation (replayable; distinct prompts -> distinct
@@ -10,7 +10,13 @@ hydrates like any program. SentencePiece: a synthetic `tokenizer.model` written 
 for-byte in the protobuf wire format loads dep-free; score-based merges, byte fallback
 and control pieces pin the llama.cpp semantics; decode(encode(x)) == x for arbitrary
 UTF-8. The closer ties rungs 2+4+6: TEXT in -> SP encode -> an ingested HF-layout
-checkpoint generates -> SP decode -> text out, proof-carrying."""
+checkpoint generates -> SP decode -> text out, proof-carrying.
+
+SLICE 2: `generate_stream` yields the SAME generation token-by-token ("token" events,
+then one terminal "done" carrying the batch result -- `generate` is the stream drained,
+so equivalence is by construction and pinned here anyway); a `TokenDFA` schema masks
+the argmax (every constrained id is admitted by the walked state; the mask genuinely
+bites; the identity DFA changes nothing; deadlock and malformed DFAs refuse loudly)."""
 
 import json
 import os
@@ -18,8 +24,9 @@ import struct
 import tempfile
 
 from bcir.frontends.models.decode import DecoderSpec, decode_with_kv_cache
-from bcir.frontends.models.serve import (SessionCertificate, certify_session,
-                                         decode_session_module, generate)
+from bcir.frontends.models.serve import (SessionCertificate, TokenDFA, certify_session,
+                                         check_token_dfa, decode_session_module,
+                                         generate, generate_stream)
 from bcir.frontends.models.spm import load_sentencepiece
 from bcir.tests.test_model_spm import _write_sp_model
 from bcir.kbcir import TARGETS
@@ -85,6 +92,79 @@ def test_the_session_module_is_law_clean_and_the_log_replays():
     assert rep.score > 0
     r2 = generate([5, 2, 8], SPEC, w, 4, h=AVX, theta=COOL)
     assert r2.manifest.digest != r.manifest.digest                    # prompt-distinct
+
+
+def test_the_stream_is_generate_token_by_token():
+    """SLICE 2, streaming: the "token" events carry generate()'s ids/frames one-by-one
+    in order; the terminal "done" event IS the batch result (same ids, same frames, the
+    SAME manifest digest -- one code path, zero drift); eos truncates the stream to one
+    token event, with the pinned eos law (emitted, never fed back) intact."""
+    w = _toy_weights(SPEC)
+    batch = generate([3, 9, 1], SPEC, w, 5, h=AVX, theta=COOL)
+    events = list(generate_stream([3, 9, 1], SPEC, w, 5, h=AVX, theta=COOL))
+    toks, done = events[:-1], events[-1]
+    assert [e.kind for e in toks] == ["token"] * 5 and done.kind == "done"
+    assert [e.token for e in toks] == batch.ids
+    assert [e.index for e in toks] == list(range(5)) and done.index == 5
+    assert [e.frame for e in toks] == batch.frames == done.result.frames
+    assert done.result.ids == batch.ids
+    assert done.result.manifest.digest == batch.manifest.digest
+    assert done.result.kv_record == batch.kv_record
+    ev = list(generate_stream([3, 9, 1], SPEC, w, 5, h=AVX, theta=COOL,
+                              eos_id=batch.ids[0]))
+    assert [e.kind for e in ev] == ["token", "done"]                  # eos stops the stream
+    assert ev[0].token == batch.ids[0]
+    assert ev[-1].result.kv_record["pos"] == 3                        # eos never fed back
+    try:
+        generate_stream([], SPEC, w, 5, h=AVX, theta=COOL)
+        raise AssertionError("expected the empty-prompt refusal AT THE CALL")
+    except ValueError as e:
+        assert "non-empty" in str(e)                                  # eager, not lazy
+
+
+def test_schema_constrained_emission_obeys_the_dfa_and_refuses_deadlock():
+    """SLICE 2, schema constraint: the identity DFA (whole vocab, one state) changes
+    NOTHING (the mask is a mask, not a sampler); a biting DFA forces every emitted id
+    into the walked state's allowed set and genuinely diverges from the free ids; the
+    manifest gains ("constrained", 1); a deadlock state refuses mid-walk; malformed
+    DFAs (edge-less allowed token, ghost target, off-vocab id) refuse AT THE CALL."""
+    w = _toy_weights(SPEC)
+    free = generate([3, 9, 1], SPEC, w, 4, h=AVX, theta=COOL)
+    every = tuple(range(SPEC.vocab_size))
+    identity = TokenDFA(allowed=(every,), edges=({t: 0 for t in every},))
+    assert check_token_dfa(identity, SPEC.vocab_size) == []
+    same = generate([3, 9, 1], SPEC, w, 4, h=AVX, theta=COOL, schema=identity)
+    assert same.ids == free.ids                                       # the mask never bit
+    assert dict(same.manifest.artifacts)["constrained"] == 1
+    assert "constrained" not in dict(free.manifest.artifacts)         # slice-1 pins intact
+    # a 2-state alternator that EXCLUDES the free path's first pick: the mask must bite.
+    a, b = sorted(t for t in (0, 1, 2) if t != free.ids[0])[:2]
+    biting = TokenDFA(allowed=((a, b), (b,)), edges=({a: 1, b: 1}, {b: 0}))
+    assert check_token_dfa(biting, SPEC.vocab_size) == []
+    forced = generate([3, 9, 1], SPEC, w, 4, h=AVX, theta=COOL, schema=biting)
+    assert forced.ids != free.ids and forced.ids[0] in (a, b)
+    state = biting.start                                              # re-walk: every id admitted
+    for tid in forced.ids:
+        assert tid in biting.allowed[state], (tid, state)
+        state = biting.edges[state][tid]
+    dead = TokenDFA(allowed=((a,), ()), edges=({a: 1}, {}))
+    assert check_token_dfa(dead, SPEC.vocab_size) == []               # well-formed, yet...
+    try:
+        generate([3, 9, 1], SPEC, w, 4, h=AVX, theta=COOL, schema=dead)
+        raise AssertionError("expected the deadlock refusal")
+    except ValueError as e:
+        assert "deadlock" in str(e) and "refuses" in str(e)
+    for bad, needle in ((TokenDFA(allowed=((a,),), edges=({},)), "no edge"),
+                        (TokenDFA(allowed=((a,),), edges=({a: 7},)), "does not exist"),
+                        (TokenDFA(allowed=((10 ** 6,),), edges=({10 ** 6: 0},)), "vocab"),
+                        (TokenDFA(allowed=((a,), (b,)), edges=({a: 0},)), "edge maps")):
+        assert check_token_dfa(bad, SPEC.vocab_size), needle
+        assert any(needle in m for m in check_token_dfa(bad, SPEC.vocab_size)), needle
+        try:
+            generate([3, 9, 1], SPEC, w, 2, h=AVX, theta=COOL, schema=bad)
+            raise AssertionError(f"expected the {needle!r} refusal")
+        except ValueError as e:
+            assert "TokenDFA rejected" in str(e)
 
 
 def test_text_in_text_out_ties_rungs_2_4_and_6():

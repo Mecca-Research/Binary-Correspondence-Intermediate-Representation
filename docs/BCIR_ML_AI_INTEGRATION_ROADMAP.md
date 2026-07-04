@@ -482,7 +482,7 @@ drop-in loading of a modern open-weight chat model.
    `bcir_gqa_attention` / `bcir_gqa_attention_row` (≤1e-12 differential vs the oracle;
    ragged-group refusal parity; the cached row equals the full recompute's last row
    **bitwise** — one shared kernel path). **Rung 4's real-weight ingestion is now unblocked.**
-6. ◑ **Serving endpoint — FIRST SLICE LANDED** (`serve.py`, `test_model_serve.py`):
+6. ✅ **Serving endpoint — COMPLETE (both slices)** (`serve.py`, `test_model_serve.py`):
    `generate()` as a PLANNED, PROOF-CARRYING artifact — the D5 statement made concrete.
    The session module's phase structure IS the prefill/decode split (one batched prefill
    claim, then one decode claim per token serialized by its true TOK/KV read-write hazards
@@ -494,10 +494,32 @@ drop-in loading of a modern open-weight chat model.
    `gem.kv_cache`-shaped record obeying the paging law, and ONE R13 manifest per generation
    (prompt/ids digests as artifacts; `replay` reproduces the plan; distinct prompts →
    distinct digests). The wave-10 closer ties rungs 2+4+6: TEXT → SP encode → an ingested
-   HF-layout checkpoint → generate → SP decode → TEXT. *Remaining (rung 6):* streaming/
-   chunked emission, schema-constrained tool-call output, batched multi-session serving.
-7. **Scale-out** — continuous batching, paged KV, multi-device placement, expert/tensor
-   parallelism for larger Qwen/Gemma and eventually GLM-class models.
+   HF-layout checkpoint → generate → SP decode → TEXT.
+   *SECOND SLICE LANDED (rung 6 now ✅):* **streaming emission** — `generate_stream`
+   yields one "token" `StreamEvent` per id the moment it is minted (frame already through
+   the Broker), then one terminal "done" event carrying the full `GenerationResult`;
+   `generate()` is the stream DRAINED (one code path — pinned: same ids, same frames, the
+   SAME manifest digest). And **schema-constrained output** — a `TokenDFA` (per-state
+   allowed token sets + edges) masks the argmax (lowest-id tie-break, the `_argmax`
+   determinism law); the identity DFA changes nothing, a biting DFA provably diverges,
+   deadlock refuses mid-walk, malformed DFAs refuse at the call (`check_token_dfa`), and
+   a constrained generation carries the `("constrained", 1)` manifest artifact.
+7. ◑ **Scale-out — OPENER LANDED** (`paged_kv.py`, `test_paged_kv.py`): **paged KV as
+   registry-first resources with generations** — `PagedKV` pages are Resources (rid band
+   7000+p) whose `data_gen` bumps per write, so **R11 already speaks KV**: a StreamPack
+   hydrated over the pages goes stale the moment another token lands (pinned). Pages are
+   allocated as wave-11 `StridedView`s against a `DeviceManifest` bank — **D-R4 live at
+   the serving layer** (a 15-row page vs the 16-native bank refuses at construction; it
+   caught the first draft of the tests). The `gem.kv_cache` capacity law runs live
+   ("pos 17 exceeds capacity 16 … the paging lie" at runtime), and the ids stay
+   `decode_with_kv_cache`'s bit-for-bit because the numerics ride the proven `KVCache` —
+   paging is a registry story. **Continuous batching IS wave scheduling**, measured then
+   pinned: `batched_sessions_module` merges N sessions (disjoint rid bands, shared
+   read-only WTS — the `train_stream_module` recipe) and `BatchCertificate` shows the
+   token-pipelined makespan strictly beating the phase-barriered one with ZERO new
+   scheduler machinery. *Remaining (rung 7):* page-claim wiring (decode claims
+   reading/writing their pages directly), page eviction/reuse, mid-flight session
+   admission, multi-device placement, expert/tensor parallelism, speculative decoding.
 8. **Fine-tune/adapt** — LoRA/QLoRA-style adapters as first-class artifacts before full-parameter
    training; adapters frozen with the same provenance and eval gates as kernels.
 
