@@ -577,8 +577,15 @@ The audit finds five deepening moves, all quarantine-compatible:
   ≤1e-12 — ragged micro-batches refuse loudly). The autodiff closure proof was the enabler:
   the streamed step hydrates to an R10/R11-clean StreamPack like any program; certified
   pipelined ≤ barriered ≤ serial with ≥25% makespan win at 4 streams (measured ~61%, pinned
-  at the house headroom discipline). *Next:* executing the streamed step through the C rail
-  (per-stream kernel state), and stream-count as a plan decision priced by K_BCIR.
+  at the house headroom discipline). ✅ **Step 7 LANDED**: the streamed step EXECUTES on both
+  rails — the oracle's `train_streamed` (per-stream kernels + gradient combine + the single
+  update dispatched by the GEM executor over the streamed claim graph) and the C twin
+  (`bcir_stream_kernel` + `test_train_stream.c`: the binary stream pack through `bcir_exec`,
+  per-stream micro-batch state, mean-of-means combine). The differential closes THREE ways
+  ≤1e-12: C == train_streamed == train_planned (the split identity end-to-end in C), and the
+  first step's dispatch order is exactly the per-stream bands → combine → update. *Next:*
+  stream-count as a plan decision priced by K_BCIR (the certificate already prices it;
+  promote it to a planner choice).
 - ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/
   `check_classical`-style checkers were op-level and advisory; shape consistency and dtype
   compatibility are now numbered laws via the R19–R21 six-artifact pattern: **R22** checks the
