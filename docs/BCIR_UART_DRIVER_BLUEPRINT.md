@@ -497,7 +497,11 @@ not a redesign. This keeps `gen_status`'s R-table stable and honors non-disturba
 **Goal.** A single normative 16550 model that generates the vendor-style headers for every
 placement, plus a compile-time RegMap contract verified like the R12 ABI contract — so a driver
 binary *attests which register map it was laid out for* and a placement mismatch is caught by
-law, not by debugging.
+law, not by debugging. **(Since hardened: the RegMapContract is the MMIO specialization of the
+repo-wide `DeviceManifest` (D-R1, driver/kernel roadmap Part VI). A 16550 has no memory-tier
+banks, so U0 needs no distance matrix — but any DMA-bearing device blueprint MUST author a
+`bcir/kbcir/device_manifest.py::DeviceManifest` here and route buffer programming through
+`StridedView`s; the D-R1..D-R6 rule card is a design axiom for every future U0.)**
 
 **Files.**
 - `bcir/frontends/devices/__init__.py` — new package (dep-free stdlib; exports below).
@@ -988,6 +992,13 @@ data is held, wake on RX edge / modem change / THR write — all in char-ticks.
 | OS integration (termios/tty) | Phase D slice 1 is freestanding | the POSIX layer track |
 
 ## 10. Process requirements (restated, with anchors)
+
+0. **The D-R rule card** (driver/kernel roadmap Part VI) governs every slice: one attested
+   manifest per device build; discovery may VETO, never STEER (`uart_probe`'s `caps_mismatch`
+   is this law); memory-tier crossings are explicit `mem.move.*` casts (MMIO register I/O
+   stays under R3); movement is priced from manifest distances; allocation currency is the
+   full-stride `StridedView` with native-tile divisibility (R22 on the law rail); the driver
+   seam accepts StreamPacks, never instructions.
 
 1. **Six-artifact law pattern** for every law: LangRef text, oracle law + tests, MLIR clause +
    `-verify-diagnostics` negatives, C twin where the C rail lowers it, `check_passes.sh` stanza,

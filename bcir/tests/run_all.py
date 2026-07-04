@@ -119,6 +119,7 @@ _MODULES = [
     "bcir.tests.test_calibloop",
     "bcir.tests.test_tile_prior",
     "bcir.tests.test_channel_prior",
+    "bcir.tests.test_device_manifest",
     "bcir.tests.test_bayescal",
     "bcir.tests.test_moegate",
     "bcir.tests.test_accel",

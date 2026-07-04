@@ -512,3 +512,39 @@ year / 15–25 engineer program and is explicitly **beyond this request** — th
 *initial plan and feasibility verdict*, sequenced so the highest-value, most-BCIR-shaped work
 (hardware-table export, the first adaptive driver, the POSIX skeleton) lands first and each
 step is independently useful even if the full independent kernel is never completed.
+
+## Part VI — The hardened driver seam (2026-07-04): six principles analyzed, four laws landed
+
+Six proposed hardening principles for the driver/compiler boundary were audited against the
+build. Two are **superseded by construction** (BCIR's core thesis already is the stronger
+form); four had genuine gaps, now closed as the **D-R rules** with machinery
+(`bcir/kbcir/device_manifest.py`, `bcir.device_manifest` on the law rail,
+`test_device_manifest.py`, `verify_device_manifest.mlir`).
+
+| # | Proposed principle | Verdict vs the build | Where it lives now |
+|---|---|---|---|
+| P1 | Static Hardware Schema / Device Manifest (no runtime discovery that changes execution logic; banks + interconnect + distance as immutable types) | **Gap → D-R1 LANDED.** `TargetProfile`/`CHANNELS`/`CalibratedProfile` were already static and frozen, and the UART blueprint's `UartPlacement` already said "capabilities are data, attested, never probed" — but no single exported artifact bundled banks + interconnect + distances as one digestable type object. | `DeviceManifest` (banks, Q8 distance matrix, `cal_gen`/target tie, sha256 digest, envelope with the house refusals incl. TAMPERED); `bcir.device_manifest` op + verifier. **The discovery law**: `probe_agree` — observed facts may **veto** (refuse to run), never **steer** (reroute/resize/substitute); the UART `caps_mismatch` rule, promoted repo-wide. |
+| P2 | Memory-bank typing (SRAM/HBM/DRAM as distinct IR types; moves need an explicit Cast/DMA op) | **Gap → D-R2 LANDED.** `Domain` already typed resources (RAM/VRAM/NVM/MMIO/CXL/HBM) and the cost model priced tiers — but nothing FORBADE an implicit cross-tier operand. | `check_bank_moves`: a claim spanning two **memory tiers** must be an explicit `mem.move.*` with exactly one source + one destination. **MMIO is exempt by measurement**: the real GPIO fixture mixes MMIO/RAM in 8 plain load/store claims *by design* — register I/O is the R3 rail's ordering law, not a DMA move. The law is **vacuous over the entire existing corpus** (pinned: train step, streamed step, decode session, the GPIO driver). |
+| P3 | Distance-aware op-codes (near vs far moves priced by the cost model) | **Gap → D-R3 LANDED.** `gather_penalty`/`mem_channels`/tier factors priced *classes* of access; no pairwise bank distance existed. | The manifest's Q8 matrix + `move_cost` (bytes × pairwise distance — near HBM-peer < far SRAM→HBM, staying put free, pinned) + `move_claim` minting `mem.move.near` / `mem.move.far` op-codes that land in the destination domain. |
+| P4 | Strided buffer views only (no generic malloc; full dimensional stride vector; native-tile validation — 15×15 vs 16 refused; zero-copy DMA from stride info) | **Gap → D-R4 LANDED** (the view + tile law; DMA programming is U-track work). The R21 lifetime laws policed malloc/free and `plan_matmul`'s divisor tiles couldn't *produce* a 15×15 — but nothing REFUSED one submitted from outside, and no stride-vector-only allocation currency existed. | `StridedView` (a request without its full per-dimension stride vector cannot be spelled) + `check_strided_view` (coverage, positivity, bank capacity, offset alignment, **native-tile divisibility** — 15×15 vs 16-native refuses at plan time) + the **R22 seam on the law rail**: a `gem.matmul` adjacent to a `bcir.device_manifest` must submit native-tile-multiple tiles. Zero-copy DMA programming from the stride vector = the UART/dma U-track's job (the blueprint's §1.5 deferral holds until a DMA-bearing device lands). |
+| P5 | Command buffers only (pre-compiled graphs, fence/semaphore barriers, fused dispatch) | **SUPERSEDED by construction.** This is BCIR's core thesis: the **StreamPack IS the command buffer** (a pre-compiled execution graph with R10 provenance + R11 generation staleness), **phases/deps ARE the fences** (the compiler states dependencies; `async_plan`'s awaits are the token fences), and `bcir_sp_execute(pack, …, kernel_fn, ctx)` **IS the fused dispatch packet** (graph + config + kernels in one call; there is no single-claim submission API to misuse — the D1 steps 3–7 and the 0.4b replay contract are the proof chain). | No change needed. Documented here as the standing law: *the driver seam accepts packs, never instructions*. |
+| P6 | Raw firmware-ISA passthrough (ISA definition language; compiler-side register allocation; driver places the blob) | **SUPERSEDED in pattern; the accelerator half is deferred with a named unblock.** The ISA-definition-language idea is already the house method twice over: **TableGen/ODS defines the op law** (compiler and verifier consume one definition), and the UART blueprint's `uart_model.py → emit_header` generates the register ISA from ONE normative table both rails consume. The binary StreamPack is the "blob" for the BCIR executor. Deterministic register allocation against a *foreign* accelerator ISA is exactly the gated native-object work (`BCIR_NATIVE_OBJECT_GATE.md`) — it enters via a `HardwareChannel` whose `modeled=False` accelerator lands with a real ISA table, not before. | The channel registry + the native-object gate carry it; nothing to build until real accelerator silicon/an ISA doc arrives (the rig-gate pattern). |
+
+**The D-R rule card (normative for every future BCIR driver, U-track included):**
+- **D-R1** — one attested `DeviceManifest` per device build; discovery may veto, never steer.
+- **D-R2** — memory tiers are types; crossing them is an explicit `mem.move.*` cast; MMIO
+  register I/O stays under R3.
+- **D-R3** — data movement is priced from the manifest's distance matrix, never guessed.
+- **D-R4** — allocation currency is the `StridedView` (full stride vector, bank-fitting,
+  aligned, native-tile-divisible); fragmentation is a plan-time refusal (R22 on the rail).
+- **D-R5** *(standing, was already true)* — the driver seam accepts StreamPacks, never
+  instructions; fences are phase deps; dispatch is fused by construction.
+- **D-R6** *(standing, was already true)* — one normative table generates both rails' ISA
+  view (ODS for ops; `uart_model.py`-style generators for device registers); foreign-ISA
+  passthrough waits at the native-object gate.
+
+**U-track integration note.** The UART blueprint's U0 `RegMapContract` is now understood as
+the MMIO specialization of D-R1's manifest; U2's driver state gains nothing (no memory-tier
+banks on a 16550), but any DMA-bearing device blueprint (the next driver research phase)
+MUST author a `DeviceManifest` in U0 and route its buffer programming through
+`StridedView`s — the blueprint template inherits D-R1..D-R6 as design axioms.
