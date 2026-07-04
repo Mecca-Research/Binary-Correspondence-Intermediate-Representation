@@ -733,6 +733,22 @@ grep -q "^uint32_t fa(uint32_t x)" "${tmp}/link/sa_lk.c" \
 [ "${st_rc}" = "112" ] \
   && echo "  PASS source-static honoring (same-named statics per TU; rc=${st_rc})" \
   || { echo "  FAIL: source-static honoring rc=${st_rc} != 112"; exit 1; }
+# ... review-hardened edges: (1) the static-forward-declaration idiom -- the tudefs prelude
+# re-keys `extern` -> `static` for a kept-static function, so the artifact compiles (C11
+# 6.2.2p7); (2) a `_BitInt(N)` return spelling carries parens BEFORE the name -- the static
+# keeper must still find the function name (grep-only: host cc under -std=c11 has no _BitInt).
+printf 'static int r(int v);\nint s(int x) { return r(x); }\nstatic int r(int x) { return x + 1; }\n' > "${tmp}/link/sp.c"
+"${tmp}/bcir-cc" --linkable "${tmp}/link/sp.c" > "${tmp}/link/sp_lk.c" || { echo "  FAIL: --linkable sp"; exit 1; }
+grep -q "^static int32_t r(int32_t);" "${tmp}/link/sp_lk.c" \
+  || { echo "  FAIL: static prototype should re-key its extern prelude to static"; exit 1; }
+"${CC}" -std=c11 -Wall -Werror -c "${tmp}/link/sp_lk.c" -o "${tmp}/link/sp_lk.o" \
+  && echo "  PASS static forward declaration (extern prelude re-keyed; artifact compiles)" \
+  || { echo "  FAIL: static-forward-declaration artifact did not compile"; exit 1; }
+printf 'static _BitInt(13) bh(int x) { return (_BitInt(13))(x + 1); }\nint bu(int y) { return (int)bh(y); }\n' > "${tmp}/link/sb2.c"
+"${tmp}/bcir-cc" --linkable "${tmp}/link/sb2.c" > "${tmp}/link/sb2_lk.c" || { echo "  FAIL: --linkable sb2"; exit 1; }
+grep -q "^static _BitInt(13) bh(" "${tmp}/link/sb2_lk.c" \
+  && echo "  PASS _BitInt-return static keeps its static (multi-paren name scan)" \
+  || { echo "  FAIL: a _BitInt return spelling defeated the static keeper"; exit 1; }
 
 # Module-scope effect / commutation analysis (#effects, the C twin of pipeline.own_footprint +
 # commute): per function the global names it reads/writes (callee effects folded in transitively),

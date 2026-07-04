@@ -193,6 +193,38 @@ def test_linkable_honors_source_static_functions_and_globals():
         assert subprocess.run([prog]).returncode == 112   # fa(2)=2*3+5=11, fb(1)=101
 
 
+def test_linkable_static_forward_declaration_and_pointer_string_table():
+    """Review-hardened edges: (1) the C static-forward-declaration idiom -- a static callee
+    DEFINED AFTER its caller -- must yield a compilable artifact (the emit forward-declares
+    every kept-static function); (2) a pointer-element string table (`char *tab[] = {..}`)
+    must NOT take the char-array string path (it would size the array from the string bytes
+    and mis-render) -- it refuses loudly, and the array keeps its init-tuple count."""
+    from bcir.frontends.cfront.emit import emit_linkable
+    fwd = compile_unit("static int r(int v);\nint s(int x) { return r(x); }\n"
+                       "static int r(int x) { return x + 1; }\n", check_clang=False)
+    text = emit_linkable(fwd.lowered, fwd.emitted)
+    assert "static int r(int);" in text                       # the forward declaration
+    cc = _cc()
+    if cc is not None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "fwd.c")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            r = subprocess.run([cc, "-std=c11", "-Wall", "-Werror", "-c", path,
+                                "-o", os.path.join(tmp, "fwd.o")],
+                               capture_output=True, text=True)
+            assert r.returncode == 0, r.stderr
+    ptab = compile_unit('char *tab[] = {"hi"};\nunsigned f4(void) { return 3u; }\n',
+                        check_clang=False)
+    _, ct, vals, _, _ = [g for g in ptab.lowered.globals_decl if g[0] == "tab"][0]
+    assert ct.count == 1 and vals is None                     # tuple-sized, not string-sized
+    try:
+        emit_linkable(ptab.lowered, ptab.emitted)
+        raise AssertionError("a pointer-element string table must be rejected")
+    except ValueError as e:
+        assert "tab" in str(e)
+
+
 def test_linkable_renders_float_negative_and_string_initializers():
     """The renderer past the first slice: float spellings (suffix kept), signed integer
     constants, and string-initialized char arrays (sized from the LITERAL, not the init

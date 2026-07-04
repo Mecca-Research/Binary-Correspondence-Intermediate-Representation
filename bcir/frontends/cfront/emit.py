@@ -176,6 +176,14 @@ def emit_linkable(lowered, emitted: dict) -> str:
             parts.append(f"{kw}{_cname(ct)} {gname} = {vals[0]};")
         else:
             parts.append(f"{kw}{_cname(ct)} {gname};")            # tentative definition (zero-init)
+    for name in names:                                    # forward-declare every kept-static
+        lf = lowered.functions[name]                      # function: a static callee may be
+        if not lf.static_fn:                              # DEFINED after its caller (the C
+            continue                                      # static-forward-declaration idiom)
+        ps = ", ".join(_cname(p[2]) for p in lf.params) or "void"
+        if lf.variadic:
+            ps = (ps + ", ...") if ps != "void" else "..."
+        parts.append(f"static {_cname(lf.ret_type)} {name}({ps});")
     for name in names:
         text = emitted[name]
         for fn in names:                                          # unprefix every in-unit call site

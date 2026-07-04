@@ -2465,8 +2465,15 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     for gi, g in enumerate(unit.globals):
         ct = _resolve_member_type(g.type, aggregates, abi)
         ct_src = ct                                       # the SOURCE-shaped type (a scalar stays a
-        is_string = (len(g.init) == 1 and isinstance(g.init[0], cast.StringLit))
-        if is_string and ct.kind == "array":              # `char s[] = "..."` -- sized from the LITERAL
+        # a string init is only the CHARACTER-ARRAY form when the element is a character-code
+        # scalar of the literal's unit width -- `char *tab[] = {"hi"}` (a pointer table) must
+        # NOT take this path (it would size the array from the string bytes and mis-render);
+        # it falls through to vals=None and the linkable emit refuses it loudly.
+        is_string = (len(g.init) == 1 and isinstance(g.init[0], cast.StringLit)
+                     and ct.kind == "array" and ct.of is not None
+                     and ct.of.kind == "scalar"
+                     and ct.of.size == str_elem_size(split_lit_prefix(g.init[0].value)[0]))
+        if is_string:                                     # `char s[] = "..."` -- sized from the LITERAL
             if ct.count == 0:                             # (decoded code units + the NUL), not the init
                 ct = array(ct.of, _str_bytes(g.init[0].value) + 1)   # tuple length (which is 1)
                 ct_src = ct
