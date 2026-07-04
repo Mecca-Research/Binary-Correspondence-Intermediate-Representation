@@ -258,23 +258,37 @@ def _str_bytes(spelling: str) -> int:
     return n
 
 
-def _fold_const(node) -> int:
+def _fold_const(node, resolve=None) -> int:
     """A `static` local's / file-scope global's initializer must be a constant expression (it
     is baked into the C declaration). The §5.9 integer constant-expression evaluator: literals,
     arithmetic/bit/shift, comparisons, logical &&/|| (a constant expression has no side effects
     to short-circuit away), unary +/-/~/!, and the ternary. Enumerators arrive pre-folded to
-    IntLit by the parser; `sizeof` stays out (the ABI is chosen at lower time, but the fold may
-    run at either -- keep the two _const_eval/_fold_const vocabularies identical). A missing
-    init zero-initializes."""
+    IntLit by the parser. `sizeof(type)` / `_Alignof(type)` fold ONLY when a `resolve`
+    (TypeRef -> CType) callback is passed -- the ABI is chosen at LOWER time, so the
+    GLOBAL-initializer site (which has the resolved ABI in hand) passes one, while the
+    parse-time `_const_eval` and the static-local site keep the sizeof-free vocabulary
+    (the latter so the freestanding C twin's ce_expr stays vocabulary-identical -- global
+    rendering is oracle-side by design, so no parity is at stake there). A missing init
+    zero-initializes."""
     if node is None:
         return 0
     if isinstance(node, cast.IntLit):
         return node.value
+    if isinstance(node, cast.SizeOf) and resolve is not None:
+        if node.type is not None:
+            return resolve(node.type).size                 # the CHOSEN ABI's answer (Part VII A4)
+        if isinstance(node.expr, cast.StringLit):
+            prefix, _ = split_lit_prefix(node.expr.value)
+            return (_str_bytes(node.expr.value) + 1) * str_elem_size(prefix)
+        raise CLowerError("sizeof over a non-type operand is not a constant initializer "
+                          "in this slice (no scope at global-init time)")
+    if isinstance(node, cast.AlignOf) and resolve is not None:
+        return resolve(node.type).align
     if isinstance(node, cast.Unary) and node.op in ("-", "~", "!", "+"):
-        v = _fold_const(node.operand)
+        v = _fold_const(node.operand, resolve)
         return {"-": -v, "~": ~v, "!": int(not v), "+": v}[node.op]
     if isinstance(node, cast.Binary):
-        a, b = _fold_const(node.lhs), _fold_const(node.rhs)
+        a, b = _fold_const(node.lhs, resolve), _fold_const(node.rhs, resolve)
         ops = {"+": a + b, "-": a - b, "*": a * b, "/": a // b if b else 0,
                "%": a % b if b else 0, "&": a & b, "|": a | b, "^": a ^ b,
                "<<": a << b, ">>": a >> b,
@@ -285,7 +299,8 @@ def _fold_const(node) -> int:
             raise CLowerError(f"non-constant operator {node.op!r} in a constant initializer")
         return ops[node.op]
     if isinstance(node, cast.Ternary):
-        return _fold_const(node.then) if _fold_const(node.cond) else _fold_const(node.els)
+        return (_fold_const(node.then, resolve) if _fold_const(node.cond, resolve)
+                else _fold_const(node.els, resolve))
     raise CLowerError("static initializer is not a constant expression")
 
 
@@ -2372,6 +2387,11 @@ class _FuncLowerer:
         body = self.block_stack[0]
         claims = _flatten_block(body)
         touched = {r for c in claims for r in (tuple(c.rd) + tuple(c.wr))}
+        if self.last_return is not None:
+            touched.add(self.last_return)                 # a BARE `return g;` reaches a global
+                                                          # with ZERO claims -- it must still be
+                                                          # pulled in and NAMED (else it renders
+                                                          # as the raw rid temp)
         for rid in touched & set(self.gres):                  # pull in referenced global resources
             if rid == _IO_PORT_RID:
                 # belt + suspenders: NEVER let a (guarded-impossible) global/string-band collision overwrite
@@ -2515,10 +2535,18 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
                 vals.append(("-" if el.op == "-" else "") + el.operand.value)
             elif isinstance(el, cast.StringLit) and is_string:
                 vals.append(el.value)                      # spelling incl. quotes (char-array init)
+            elif (isinstance(el, cast.Unary) and el.op == "&"
+                  and isinstance(el.operand, cast.Name) and el.operand.ident in genv):
+                # Part VII A4: an ADDRESS CONSTANT (&x of a file-scope object declared
+                # earlier in the unit) -- the platform linker resolves the relocation;
+                # the rendering is just the name. Forward references stay refused
+                # (genv accumulates in declaration order -- conservative, recorded).
+                vals.append(f"&{el.operand.ident}")
             else:
-                try:                                       # the §5.9 constant-expression evaluator:
-                    vals.append(str(_fold_const(el)))      # (3*4+1) << 2, comparisons, ternaries...
-                except CLowerError:                        # &x / sizeof: not renderable in this
+                try:                                       # the §5.9 constant-expression evaluator
+                    vals.append(str(_fold_const(          # WITH the chosen ABI's layout oracle:
+                        el, lambda tr: _resolve_member_type(tr, aggregates, abi))))
+                except CLowerError:                        # anything else: not renderable in this
                     vals = None                            # slice -- the linkable emit raises
                     break
         gdecls.append((g.name, ct_src, tuple(vals) if vals is not None else None,

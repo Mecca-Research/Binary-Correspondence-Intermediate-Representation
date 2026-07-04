@@ -144,15 +144,40 @@ def test_linkable_globals_define_declare_and_reject_nonconstant():
                                capture_output=True, text=True)   # the documented contract: a masked
             assert r.returncode == 0, r.stderr                   # access links bcir_quarantine.c
             assert subprocess.run([prog]).returncode == 43    # 7*6+1
-    # a non-renderable constant initializer must fail LOUDLY in linkable mode, never mislower.
-    # (&base is a legal C address constant -- honestly outside this slice's renderer.)
+    # Part VII A4: &x ADDRESS CONSTANTS and sizeof-bearing initializers now RENDER --
+    # the SS5.9 evaluator consults the chosen ABI's layout oracle (sizeof folds at
+    # LOWER time, where the ABI lives) and an address constant is the linker's
+    # relocation, rendered by name. A bare `return g;` (zero claims) names the global
+    # too (the raw-rid mis-render this test flushed out). Forward-referencing address
+    # constants (illegal C: use before declaration) still refuse LOUDLY.
     fl = compile_unit("unsigned base = 7u;\nunsigned *pp = &base;\n"
+                      "unsigned sz = sizeof(unsigned) * 4u;\n"
                       "unsigned geto(void) { return base; }\n", check_clang=False)
+    a4 = emit_linkable(fl.lowered, fl.emitted)
+    assert "unsigned int * pp = &base;" in a4                 # the relocation, by name
+    assert "unsigned int sz = 16;" in a4                      # sizeof folded on the ABI
+    assert "return base;" in a4                               # the bare global return
+    if cc is not None:                                        # ... and it genuinely runs
+        with tempfile.TemporaryDirectory() as tmp:
+            unit = os.path.join(tmp, "unit.c")
+            main = os.path.join(tmp, "main.c")
+            with open(unit, "w", encoding="utf-8") as f:
+                f.write(a4)
+            with open(main, "w", encoding="utf-8") as f:
+                f.write("extern unsigned *pp;\nextern unsigned sz;\n"
+                        "int main(void){ return (int)(*pp + sz); }\n")
+            prog = os.path.join(tmp, "prog")
+            r = subprocess.run([cc, "-std=c11", "-Wall", "-Werror", main, unit,
+                                "-o", prog], capture_output=True, text=True)
+            assert r.returncode == 0, r.stderr
+            assert subprocess.run([prog]).returncode == 23    # *(&base) + 4*sizeof = 7+16
+    fwd = compile_unit("unsigned *qq = &later;\nunsigned later = 3u;\n"
+                       "unsigned geti(void) { return later; }\n", check_clang=False)
     try:
-        emit_linkable(fl.lowered, fl.emitted)
-        raise AssertionError("a non-renderable global initializer must be rejected")
+        emit_linkable(fwd.lowered, fwd.emitted)
+        raise AssertionError("a forward-referencing address constant must refuse")
     except ValueError as e:
-        assert "pp" in str(e)
+        assert "qq" in str(e)
 
 
 def test_linkable_honors_source_static_functions_and_globals():
