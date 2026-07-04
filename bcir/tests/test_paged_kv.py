@@ -13,7 +13,8 @@ rung-7 thesis: continuous batching is wave scheduling over the merged claim grap
 from bcir.frontends.models.decode import DecoderSpec, decode_with_kv_cache
 from bcir.frontends.models.paged_kv import (BatchCertificate, PagedKV,
                                             batched_sessions_module, certify_batch,
-                                            generate_paged, paged_session_module)
+                                            generate_paged, paged_session_module,
+                                            schedule_eviction)
 from bcir.kbcir import TARGETS
 from bcir.kbcir.cost import Theta
 from bcir.kbcir.device_manifest import check_strided_view
@@ -123,6 +124,90 @@ def test_continuous_batching_is_wave_scheduling():
     solo, _ = certify_batch(SPEC, ((3, 4),), AVX, COOL)
     assert solo.admitted and solo.overlap_win == 0                # nothing to overlap
     assert sched.makespan == cert.pipelined
+
+
+def test_page_claim_wiring_makes_page_hazards_visible():
+    """A3: the wired session module threads page RIDs through the claims -- the
+    prefill writes page 0 (the 3-token prompt fits in it), the first decode step reads
+    only page 0, the last one reads both and writes page 1. R-law clean, hydrates."""
+    from bcir.gem.streampack import hydrate
+    from bcir.kbcir.realize import optimize
+    from bcir.verify import verify, verify_pack
+    w = _toy_weights(SPEC)
+    _, kv = generate_paged([3, 9, 1], SPEC, w, 29, man=_MAN, bank="hbm0", page_size=16)
+    m = paged_session_module(SPEC, 3, 29, kv)
+    assert verify(m) == [], verify(m)
+    claims = {c.op: c for p in m.phases for c in p.claims if not p.event}
+    decodes = [c for p in m.phases for c in p.claims if c.op == "gem.decode_step"]
+    assert 7000 in claims["gem.prefill"].wr and 7001 not in claims["gem.prefill"].wr
+    assert 7000 in decodes[0].rd and 7001 not in decodes[0].rd    # pos 3: page 0 only
+    assert decodes[0].wr[-1] == 7000
+    assert {7000, 7001} <= set(decodes[-1].rd)                    # pos 31: both pages
+    assert decodes[-1].wr[-1] == 7001
+    pack = hydrate(m, optimize(m, AVX, COOL), plan=m.name)
+    assert verify_pack(m, pack) == []
+
+
+def test_eviction_is_a_registry_act_and_a_scheduled_claim():
+    """A3: evicting a live session refuses (full-context attention still reads every
+    page -- the numerics lie); a completed session evicts (map_gen bumps, the view
+    frees, writing through it afterwards refuses, double-evict refuses); the hydrated
+    pack goes R11-stale as 'rehydrate: repack'; and `schedule_eviction` appends the
+    same act as a lawful kv.evict claim."""
+    from bcir.gem.streampack import hydrate
+    from bcir.kbcir.realize import optimize
+    from bcir.verify import verify, verify_pack
+    w = _toy_weights(SPEC)
+    live = PagedKV(SPEC, 32, 16, _MAN, "hbm0")
+    row = w.embedding.row(1)
+    live.step_row(row, SPEC, w)
+    try:
+        live.evict(0)
+        raise AssertionError("expected the live-session refusal")
+    except ValueError as e:
+        assert "numerics lie" in str(e)
+    _, kv = generate_paged([3, 9, 1], SPEC, w, 29, man=_MAN, bank="hbm0", page_size=16)
+    m1 = paged_session_module(SPEC, 3, 29, kv)
+    pack = hydrate(m1, optimize(m1, AVX, COOL), plan=m1.name)
+    assert verify_pack(m1, pack) == []
+    view = kv.evict(0)
+    assert view is not None and kv.views[0] is None
+    assert kv.pages[0].map_gen == 1
+    stale = verify_pack(paged_session_module(SPEC, 3, 29, kv), pack)
+    assert any(d.law == "R11" and "map_gen" in d.message and "repack" in d.message
+               for d in stale), stale
+    for act, needle in ((lambda: kv.evict(0), "already evicted"),
+                        (lambda: kv.step_row(row, SPEC, w), "exceeds capacity")):
+        try:
+            act()
+            raise AssertionError(f"expected the {needle!r} refusal")
+        except ValueError as e:
+            assert needle in str(e), (needle, str(e))
+    m2 = schedule_eviction(paged_session_module(SPEC, 3, 29, kv), kv, 1)
+    assert verify(m2) == [], verify(m2)
+    tail = m2.phases[-1]
+    assert tail.claims[0].op == "kv.evict:1" and tail.claims[0].rd == (7001,)
+    assert tail.deps == (m2.phases[-2].phase_id,)                 # scheduled AFTER the tail
+
+
+def test_admission_is_appending_phases():
+    """A3: a session admitted to a LIVE 2-session batch produces the IDENTICAL claim
+    graph to the 3-session batch built upfront (hash_module equality -- the strongest
+    pin available), so the wave-scheduling certificate is unchanged by WHEN a session
+    arrived; the admitted module still certifies pipelined < barriered."""
+    from bcir.frontends.models.paged_kv import admit_session
+    from bcir.kbcir.provenance import hash_module
+    from bcir.verify import verify
+    grown = batched_sessions_module(SPEC, ((3, 4), (2, 5)))
+    admit_session(grown, SPEC, 4, 3)
+    upfront = batched_sessions_module(SPEC, ((3, 4), (2, 5), (4, 3)))
+    assert hash_module(grown) == hash_module(upfront)
+    assert verify(grown) == [], verify(grown)
+    cert, _ = certify_batch(SPEC, (), AVX, COOL, module=grown)
+    assert cert.admitted and cert.pipelined < cert.barriered
+    up_cert, _ = certify_batch(SPEC, ((3, 4), (2, 5), (4, 3)), AVX, COOL)
+    assert (cert.serial, cert.barriered, cert.pipelined) == (
+        up_cert.serial, up_cert.barriered, up_cert.pipelined)
 
 
 if __name__ == "__main__":
