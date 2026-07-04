@@ -549,6 +549,8 @@ class LoweredFunc:
                                           #   definition -- a fusion-legality signal (the hint is value-
                                           #   neutral, so the emit drops it). Default False == every
                                           #   un-annotated function, undisturbed.
+    static_fn: bool = False               # source `static` on the definition -- the linkable emit keeps
+                                          #   the rendered definition `static` (internal linkage honored)
     ptr_extent: dict = field(default_factory=dict)      # §5.12: pointer rid -> recovered extent (count) variable rid
     asm_meta: dict = field(default_factory=dict)        # ASM1: claim id -> AsmInfo (the verbatim inline-asm payload
                                                         #   the emitter reconstructs the `__asm__(...)` statement from)
@@ -572,9 +574,11 @@ class LoweredUnit:
     aggregates: dict                      # tag -> CType
     compose_functions: dict               # name -> compose.Function
     resources: dict                       # rid -> Resource (whole unit)
-    globals_decl: tuple = ()              # (name, CType, folded-int init tuple | None, extern) --
-                                          #   what the LINKABLE emit renders (definitions with
-                                          #   integer-constant inits; extern -> a declaration)
+    globals_decl: tuple = ()              # (name, CType, rendered-init str tuple | None, extern,
+                                          #   static) -- what the LINKABLE emit renders (definitions
+                                          #   with constant inits: ints, signed ints, float/string
+                                          #   spellings; extern -> a declaration; static -> kept
+                                          #   file-local). None == not renderable in this slice.
 
 
 # the rid `_call` returns for a void callee -- never read as a value (a void call is a statement); the
@@ -2379,6 +2383,7 @@ class _FuncLowerer:
                            zero_init_locals=set(self.zero_init), variadic=self.func.variadic,
                            tu_protos=dict(self.tu_used),
                            reproducible=getattr(self.func, "reproducible", False),
+                           static_fn=getattr(self.func, "static_fn", False),
                            ptr_extent=dict(self.ptr_extent),
                            asm_meta=dict(self.asm_meta), target=self.abi.name)
 
@@ -2460,7 +2465,19 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     for gi, g in enumerate(unit.globals):
         ct = _resolve_member_type(g.type, aggregates, abi)
         ct_src = ct                                       # the SOURCE-shaped type (a scalar stays a
-        if g.init and ct.kind == "array" and ct.count == 0:   # scalar in the linkable declaration)
+        # a string init is only the CHARACTER-ARRAY form when the element is a character-code
+        # scalar of the literal's unit width -- `char *tab[] = {"hi"}` (a pointer table) must
+        # NOT take this path (it would size the array from the string bytes and mis-render);
+        # it falls through to vals=None and the linkable emit refuses it loudly.
+        is_string = (len(g.init) == 1 and isinstance(g.init[0], cast.StringLit)
+                     and ct.kind == "array" and ct.of is not None
+                     and ct.of.kind == "scalar"
+                     and ct.of.size == str_elem_size(split_lit_prefix(g.init[0].value)[0]))
+        if is_string:                                     # `char s[] = "..."` -- sized from the LITERAL
+            if ct.count == 0:                             # (decoded code units + the NUL), not the init
+                ct = array(ct.of, _str_bytes(g.init[0].value) + 1)   # tuple length (which is 1)
+                ct_src = ct
+        elif g.init and ct.kind == "array" and ct.count == 0:   # scalar in the linkable declaration)
             ct = array(ct.of, len(g.init))                # `T name[] = {...}` -> sized from the init
             ct_src = ct
         elif g.init and ct.kind != "array":
@@ -2470,15 +2487,25 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
                              shape=(ct.count or len(g.init) or 1,), access="ro",
                              data_gen=1, name=g.name)
         genv[g.name] = (rid, ct)
-        vals: list = []                                    # fold integer-literal inits (linkable emit)
-        for el in g.init:
+        vals: list = []                                    # render CONSTANT inits (linkable emit):
+        for el in g.init:                                  # ints, signed ints, float/string spellings
             if isinstance(el, cast.IntLit):
-                vals.append(el.value)
-            else:
-                vals = None
+                vals.append(str(el.value))
+            elif isinstance(el, cast.FloatLit):
+                vals.append(el.value)                      # the source spelling, suffix included
+            elif (isinstance(el, cast.Unary) and el.op in ("-", "+")
+                  and isinstance(el.operand, cast.IntLit)):
+                vals.append(str(-el.operand.value if el.op == "-" else el.operand.value))
+            elif (isinstance(el, cast.Unary) and el.op in ("-", "+")
+                  and isinstance(el.operand, cast.FloatLit)):
+                vals.append(("-" if el.op == "-" else "") + el.operand.value)
+            elif isinstance(el, cast.StringLit) and is_string:
+                vals.append(el.value)                      # spelling incl. quotes (char-array init)
+            else:                                          # &x / arithmetic / sizeof: not renderable
+                vals = None                                # in this slice -- the linkable emit raises
                 break
         gdecls.append((g.name, ct_src, tuple(vals) if vals is not None else None,
-                       getattr(g, "extern_decl", False)))
+                       getattr(g, "extern_decl", False), getattr(g, "static_storage", False)))
 
     functions: dict[str, LoweredFunc] = {}
     compose_functions: dict[str, compose.Function] = {}

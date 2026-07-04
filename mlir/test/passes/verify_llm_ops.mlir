@@ -51,3 +51,56 @@ bcir.module @legal_decode_chain {
   bcir.gem.rmsnorm @n2 { rows = 3 : i64, dim = 8 : i64, gamma_len = 8 : i64, dtype = "f32" }
   bcir.gem.rope @p2 { rows = 3 : i64, dim = 4 : i64, pos_offset = 0 : i64, dtype = "f32" }
 }
+
+// -----
+
+// (5 -- NEGATIVE, op law) GQA with ragged head groups: 4 query heads cannot share 3 kv
+// heads (whole-group sharing only -- the same law DecoderSpec enforces oracle-side).
+bcir.module @gqa_ragged_groups {
+  // expected-error @+1 {{gqa_attention: n_heads 4 not divisible by n_kv_heads 3 (GQA shares whole head groups)}}
+  bcir.gem.gqa_attention @g { seq_len = 4 : i64, d_k = 2 : i64, n_heads = 4 : i64,
+                              n_kv_heads = 3 : i64, dtype = "f32" }
+}
+
+// -----
+
+// (6 -- NEGATIVE, op law) an over-full KV cache: pos 9 rows in a capacity-8 cache is the
+// paging lie a serving runtime must never tell.
+bcir.module @kv_overfull {
+  // expected-error @+1 {{kv_cache: pos 9 exceeds capacity 8 (an over-full cache is the paging lie)}}
+  bcir.gem.kv_cache @c { n_layers = 2 : i64, n_kv_heads = 2 : i64, d_k = 2 : i64,
+                         capacity = 8 : i64, pos = 9 : i64, dtype = "f32" }
+}
+
+// -----
+
+// (7 -- NEGATIVE, R22) the gqa_attention after a kv_cache lies about the shared head
+// geometry: the cache holds 2 kv lanes, the consumer declares 4.
+bcir.module @kv_head_lie {
+  bcir.gem.kv_cache @c2 { n_layers = 2 : i64, n_kv_heads = 2 : i64, d_k = 2 : i64, dtype = "f32" }
+  // expected-error @+1 {{R22: gem.gqa_attention g2 reads the adjacent gem.kv_cache @c2 but declares n_kv_heads = 4 != the cache's 2}}
+  bcir.gem.gqa_attention @g2 { seq_len = 4 : i64, d_k = 2 : i64, n_heads = 4 : i64,
+                               n_kv_heads = 4 : i64, dtype = "f32" }
+}
+
+// -----
+
+// (8 -- NEGATIVE, R22) the gqa_attention after a rope lies about the head width, exactly
+// like plain attention (the rotation would straddle head boundaries).
+bcir.module @gqa_rope_dk_lie {
+  bcir.gem.rope @p3 { rows = 4 : i64, dim = 2 : i64, dtype = "f32" }
+  // expected-error @+1 {{R22: gem.gqa_attention g3 consumes the adjacent gem.rope @p3 but declares d_k = 4 != the rotated dim = 2}}
+  bcir.gem.gqa_attention @g3 { seq_len = 4 : i64, d_k = 4 : i64, n_heads = 2 : i64,
+                               n_kv_heads = 2 : i64, dtype = "f32" }
+}
+
+// -----
+
+// (9 -- POSITIVE) the legal cached GQA pair: the cache and its consumer agree on the kv
+// lanes and head width (n_kv_heads == n_heads is plain MHA riding the same op).
+bcir.module @legal_gqa_chain {
+  bcir.gem.kv_cache @c3 { n_layers = 2 : i64, n_kv_heads = 2 : i64, d_k = 2 : i64,
+                          capacity = 16 : i64, pos = 5 : i64, dtype = "f32" }
+  bcir.gem.gqa_attention @g4 { seq_len = 5 : i64, d_k = 2 : i64, n_heads = 4 : i64,
+                               n_kv_heads = 2 : i64, dtype = "f32" }
+}

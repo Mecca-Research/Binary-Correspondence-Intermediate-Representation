@@ -276,11 +276,13 @@ class _Parser:
         tref = self._type_spec()
         tref, name = self._declarator(tref)
         if self.at("PUNCT", "("):                              # a function definition (or a prototype)
-            fn = self._func_body(tref, name, reproducible=bool(lead.get("reproducible")))
+            fn = self._func_body(tref, name, reproducible=bool(lead.get("reproducible")),
+                                 static="static" in self.storage)
             if fn is not None:                                 # None == a prototype (recorded in protos)
                 unit.funcs.append(fn)
         else:                                                  # a file-scope global variable
-            unit.globals.append(self._global(tref, name, extern="extern" in self.storage))
+            unit.globals.append(self._global(tref, name, extern="extern" in self.storage,
+                                             static="static" in self.storage))
 
     def _typedef(self, unit: cast.Unit) -> None:
         """`typedef <type> <name>;` -- register `name` -> the aliased type (resolved at parse time,
@@ -392,7 +394,8 @@ class _Parser:
             return ops.get(node.op, 0)
         raise CParseError("unsupported constant enum initializer")
 
-    def _global(self, tref: cast.TypeRef, name: str, extern: bool = False) -> cast.Global:
+    def _global(self, tref: cast.TypeRef, name: str, extern: bool = False,
+                static: bool = False) -> cast.Global:
         init: tuple = ()
         if self.at("OP", "="):
             self.nxt()
@@ -427,7 +430,8 @@ class _Parser:
                                           f"function (not a constant expression)",
                                           pos=self.peek().pos)
         self.eat("PUNCT", ";")
-        return cast.Global(type=tref, name=name, init=init, extern_decl=extern)
+        return cast.Global(type=tref, name=name, init=init, extern_decl=extern,
+                           static_storage=static)
 
     def _aggregate_body(self, kind: str, tag: str, attrs: dict) -> cast.Aggregate:
         self.eat("PUNCT", "{")
@@ -530,8 +534,8 @@ class _Parser:
                 quals.append(w)
                 self.nxt()
             elif w in ("static", "extern", "_Thread_local", "thread_local", "inline"):
-                self.storage.add(w)                       # recorded (linkable emit reads `extern`);
-                self.nxt()                                # otherwise storage/inline ignored
+                self.storage.add(w)                       # recorded (linkable emit reads `extern` and
+                self.nxt()                                # `static`); otherwise storage/inline ignored
             elif w in ("struct", "union"):
                 aggregate = w
                 self.nxt()
@@ -703,7 +707,8 @@ class _Parser:
                             bit_width=base.bit_width), name
 
     # --- functions ---
-    def _func_body(self, ret: cast.TypeRef, name: str, reproducible: bool = False) -> cast.Func:
+    def _func_body(self, ret: cast.TypeRef, name: str, reproducible: bool = False,
+                   static: bool = False) -> cast.Func:
         self.eat("PUNCT", "(")
         params = []
         variadic = False
@@ -729,7 +734,7 @@ class _Parser:
             return None
         body = self._block()
         return cast.Func(ret=ret, name=name, params=tuple(params), body=body, variadic=variadic,
-                         reproducible=reproducible)
+                         reproducible=reproducible, static_fn=static)
 
     # --- statements ---
     def _block(self) -> tuple:

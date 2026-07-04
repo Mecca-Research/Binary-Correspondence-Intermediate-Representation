@@ -168,24 +168,6 @@ def test_per_epoch_manifests_are_distinct_and_replayable():
         assert replay(man, m, AVX, COOL, artifacts=arts).score > 0
 
 
-if __name__ == "__main__":
-    import sys
-
-    mod = sys.modules[__name__]
-    tests = sorted(n for n in dir(mod) if n.startswith("test_") and callable(getattr(mod, n)))
-    passed = failed = 0
-    for name in tests:
-        try:
-            getattr(mod, name)()
-            passed += 1
-            print(f"PASS {name}")
-        except Exception as e:  # noqa: BLE001
-            failed += 1
-            print(f"FAIL {name}: {e!r}")
-    print(f"\n{passed} passed, {failed} failed")
-    sys.exit(1 if failed else 0)
-
-
 def test_pipelined_run_respects_raw_and_overlaps_the_metrics_tail():
     """D1 step 5: over the multi-step run module the token DAG keeps the weight-critical
     path exact -- step i+1's forward starts at or after step i's update (RAW on W) -- while
@@ -214,3 +196,100 @@ def test_overlap_win_is_real_and_scales_with_steps():
     assert c1.admitted and c8.admitted
     assert c8.pipelined <= 0.75 * c8.barriered, (c8.pipelined, c8.barriered)
     assert c8.overlap_win == 8 * c1.overlap_win > 0                 # per-step win, exactly
+
+
+def test_stream_step_is_law_clean_hydrates_and_updates_once():
+    """D1 step 6: the STREAMED step (micro-batch streams within one step) is R-law clean,
+    hydrates to an R10/R11-clean StreamPack like any program (the autodiff-closure enabler),
+    keeps exactly ONE weight-update claim (mean-of-equal-split-means == the batch mean), and
+    its combine genuinely awaits every stream's gradient."""
+    from bcir.gem.streampack import hydrate
+    from bcir.kbcir.train_graph import train_stream_module
+    from bcir.verify import verify_pack
+    spec = TrainStepSpec()                                   # batch 8
+    m = train_stream_module(spec, 4)                         # 4 streams x micro-batch 2
+    assert verify(m) == [], verify(m)
+    assert verify_smart_lowering(m) == []
+    claims = [c for ph in m.phases for c in ph.claims]
+    w_writers = [c for c in claims if 2 in c.wr]             # rid 2 == the shared W
+    assert len(w_writers) == 1 and w_writers[0].op == "gem.opt_step:sgd"
+    combine = [c for c in claims if c.op == "reduce.grad_mean"]
+    assert len(combine) == 1
+    assert combine[0].rd == tuple(s * 10 + 8 for s in range(4))   # every stream's GRAD
+    result = optimize(m, AVX, COOL)
+    pack = hydrate(m, result, plan=m.name)
+    assert pack.provenance_ok()
+    assert verify_pack(m, pack) == []
+    # validation: ragged micro-batches refuse loudly.
+    try:
+        train_stream_module(spec, 3)                         # 8 % 3 != 0
+        raise AssertionError("ragged micro-batches must be rejected")
+    except ValueError as e:
+        assert "divisible" in str(e)
+
+
+def test_stream_step_overlaps_streams_and_serializes_only_on_the_update():
+    """The token DAG runs the streams CONCURRENTLY (disjoint RID bands; W is read-shared,
+    and read-read never conflicts): with 2 streams both forwards start at t=0 on different
+    domains, the combine starts only after every stream's backward, and the single update
+    is last. The certificate's win is real -- measured ~61% makespan reduction with
+    4 streams; gate at 25% (the measured-then-pinned discipline)."""
+    from bcir.kbcir.train_graph import schedule_stream_step
+    spec = TrainStepSpec()
+    cert, sched = schedule_stream_step(spec, 2, AVX, COOL)
+    assert cert.admitted, cert
+    f0, f1 = sched.slot_of(1), sched.slot_of(11)             # both streams' forwards
+    assert f0.start == 0 and f1.start == 0                   # truly concurrent from t=0
+    assert f0.domain != f1.domain
+    comb, upd = sched.slot_of(21), sched.slot_of(22)
+    for s in (0, 1):
+        assert comb.start >= sched.slot_of(s * 10 + 5).finish    # awaits every backward
+    assert upd.start >= comb.finish                          # the single update is last
+    c4, _ = schedule_stream_step(spec, 4, AVX, COOL)
+    assert c4.admitted
+    assert c4.pipelined <= 0.75 * c4.barriered, (c4.pipelined, c4.barriered)
+
+
+def test_streamed_gradients_average_to_the_full_batch_gradient():
+    """The single-update law's numeric half: splitting a batch into equal micro-batches and
+    averaging the per-stream MEAN gradients equals the full-batch mean gradient (<= 1e-12
+    -- float summation order differs, exact in real arithmetic). The logistic/BCE gradient
+    is the same closed form train_planned executes."""
+    import random
+    from bcir.kbcir.recurrent import sigmoid
+    rng = random.Random(0xD16)
+    nf, b, streams = 4, 8, 4
+    X = [[rng.uniform(-1, 1) for _ in range(nf)] for _ in range(b)]
+    y = [float(rng.randint(0, 1)) for _ in range(b)]
+    w = [rng.uniform(-0.5, 0.5) for _ in range(nf + 1)]
+
+    def grad(rows, ys):                                      # the closed-form mean gradient
+        n = len(rows)
+        act = [sigmoid(sum(r[j] * w[j] for j in range(nf)) + w[nf]) for r in rows]
+        g = [sum((act[i] - ys[i]) * rows[i][j] for i in range(n)) / n for j in range(nf)]
+        g.append(sum(act[i] - ys[i] for i in range(n)) / n)
+        return g
+
+    full = grad(X, y)
+    mb = b // streams
+    parts = [grad(X[s * mb:(s + 1) * mb], y[s * mb:(s + 1) * mb]) for s in range(streams)]
+    combined = [sum(p[j] for p in parts) / streams for j in range(nf + 1)]
+    assert all(abs(a - c) <= 1e-12 for a, c in zip(full, combined))
+
+
+if __name__ == "__main__":
+    import sys
+
+    mod = sys.modules[__name__]
+    tests = sorted(n for n in dir(mod) if n.startswith("test_") and callable(getattr(mod, n)))
+    passed = failed = 0
+    for name in tests:
+        try:
+            getattr(mod, name)()
+            passed += 1
+            print(f"PASS {name}")
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            print(f"FAIL {name}: {e!r}")
+    print(f"\n{passed} passed, {failed} failed")
+    sys.exit(1 if failed else 0)

@@ -447,13 +447,23 @@ drop-in loading of a modern open-weight chat model.
    tighter than Q4), and a greedy flip is *recorded, never hidden* (`ids_match`). Real-weight
    ingestion (a released tiny checkpoint through manifest → tokenizer → decode → quantize)
    is the remaining half, gated on rung 5's law rail for the LLM ops.
-5. ◑ **C/MLIR law rail — FIRST SLICE LANDED** (`verify_llm_ops.mlir`): ODS ops for the rung-3
+5. ✅ **C/MLIR law rail — COMPLETE** (`verify_llm_ops.mlir`): ODS ops for the rung-3
    decoder's LLM-specific stages — `bcir.gem.embedding` / `bcir.gem.rmsnorm` / `bcir.gem.rope` —
    with op-level laws (positive extents; `gamma_len == dim`; RoPE's **even-dim** pairing law; the
    f32 libm-edge quarantine rule on rmsnorm/rope) and the D2 adjacency seams in `-bcir-verify`:
    embedding→rmsnorm extent + dtype handover (R22/R23), rope→attention head-width `d_k == dim` +
    dtype (R22/R23) — exactly the chain `decoder_layer_reference` composes, with negatives.
-   *Landed too:* the **C-twin decode kernels** (`runtime/c/bcir_decode.c` — rmsnorm/rope/embedding, kernel-for-kernel with the oracle references, differential-gated to ≤1e-12 in `test_decode_c_kernels.py`; the embedding twin refuses an out-of-range id exactly where the oracle raises). *Remaining:* GQA/KV-cache ops.
+   *Landed too:* the **C-twin decode kernels** (`runtime/c/bcir_decode.c` — rmsnorm/rope/embedding, kernel-for-kernel with the oracle references, differential-gated to ≤1e-12 in `test_decode_c_kernels.py`; the embedding twin refuses an out-of-range id exactly where the oracle raises).
+   *And the closing slice — GQA/KV-cache on all three rails:* the oracle grew
+   `DecoderSpec.n_kv_heads` + `gqa_attention_reference` (query head h reads kv head
+   h // group; the KV cache holds `kv_heads` lanes — the memory saving IS the point), gated
+   GQA-cached == GQA-naive **bit-for-bit** plus the `n_kv_heads == n_heads` MHA regression
+   tie; the law rail grew `bcir.gem.gqa_attention` (whole-head-group divisibility law, f32
+   softmax quarantine) + `bcir.gem.kv_cache` (`pos <= capacity` paging law) with
+   rope→gqa d_k and kv_cache→gqa head-geometry R22/R23 seams + negatives; the C rail grew
+   `bcir_gqa_attention` / `bcir_gqa_attention_row` (≤1e-12 differential vs the oracle;
+   ragged-group refusal parity; the cached row equals the full recompute's last row
+   **bitwise** — one shared kernel path). **Rung 4's real-weight ingestion is now unblocked.**
 6. **Serving endpoint** — streaming decode, schema-constrained tool-call output, telemetry frames,
    replay manifests.
 7. **Scale-out** — continuous batching, paged KV, multi-device placement, expert/tensor
@@ -557,9 +567,18 @@ The audit finds five deepening moves, all quarantine-compatible:
   DAG carries the true dependencies, so step i's METRICS tail (loss + reduce) overlaps its
   backward/update and the next step's forward on another domain while the weight-critical RAW
   chain stays exact; certified three ways (pipelined ≤ barriered ≤ serial; measured ~34%
-  makespan reduction, the win exactly linear in steps). *Next:* mini-batch streams within a
-  step. The autodiff closure proof is the enabler: the gradient DAG has a fixed vocabulary, so
-  it hydrates to a StreamPack like any program.
+  makespan reduction, the win exactly linear in steps). ✅ **Step 6 LANDED**: mini-batch
+  STREAMS within a step (`train_stream_module` + `schedule_stream_step` + `StreamCertificate`)
+  — one step's batch split into equal micro-batch streams over disjoint RID bands sharing only
+  the read-only W (read-read never conflicts, so the token DAG overlaps the streams with ZERO
+  scheduler change: both forwards start at t=0 on different domains), per-stream mean
+  gradients combine (`reduce.grad_mean`, awaits every stream) into exactly ONE weight update
+  (the single-update law; numerically, mean-of-equal-split-means == the full-batch gradient
+  ≤1e-12 — ragged micro-batches refuse loudly). The autodiff closure proof was the enabler:
+  the streamed step hydrates to an R10/R11-clean StreamPack like any program; certified
+  pipelined ≤ barriered ≤ serial with ≥25% makespan win at 4 streams (measured ~61%, pinned
+  at the house headroom discipline). *Next:* executing the streamed step through the C rail
+  (per-stream kernel state), and stream-count as a plan decision priced by K_BCIR.
 - ✅ **D2 — Shape/dtype as first-class R-laws (R22/R23). LANDED.** `check_transformer`/
   `check_classical`-style checkers were op-level and advisory; shape consistency and dtype
   compatibility are now numbered laws via the R19–R21 six-artifact pattern: **R22** checks the
@@ -580,8 +599,20 @@ The audit finds five deepening moves, all quarantine-compatible:
   bottleneck) over held-out shapes, mismatches 0, **71% fewer nodes costed** (gate ≥40%); under
   a bandwidth-starved calibration the proof never fires and the search honestly degenerates to
   exhaustive (still exact). Calibloop wiring is by construction — train against the measured
-  profile the loop froze; `plan_matmul` itself untouched (opt-in, vacuous by default). *Next:*
-  channel-choice priors + per-shape-class tables persisted alongside the calibloop's cal_gen.
+  profile the loop froze; `plan_matmul` itself untouched (opt-in, vacuous by default).
+  ✅ **Slice 3 LANDED**: channel-choice priors + per-shape-class tables
+  (`kbcir/channel_prior.py`, `test_channel_prior.py`) — the tower's per-channel `optimize()`
+  pricing (what `plan_calling_side`/`orchestrate` run exhaustively) gets the same L1 layer:
+  a per-`shape_class` TABLE of exhaustively-verified winning channels answers a trained class
+  with **zero** pricings (measured **83% fewer** per-channel optimize() runs over held-out
+  shapes, gate ≥50%); a miss prices every suitable channel (prior-ordered — the Q8 logistic
+  over profile constants is an anytime warm-start, exactness never delegated); the
+  `ChannelPriorCertificate` proves guided == exhaustive with mismatches 0 and a **poisoned
+  table is caught, not trusted**; the envelope (kind `bcir.channel_prior`) ties to the
+  tower's (name, cal_gen) pairs — a recalibrated channel refuses STALE, a re-towered load
+  refuses retrain, a newer schema refuses upgrade. `plan_calling_side` untouched (opt-in).
+  *Next:* wiring the table into `orchestrate` behind an opt-in flag, and per-channel
+  calibrated profiles (cal_gen ≥ 1) so class winners genuinely diverge across the tower.
 - **D4 — E-graph rule synthesis (the operad 2-cell algebra).** Learn *candidate* rewrites
   from liked/unliked pair statistics; each learned rule is admitted only with a machine-
   checkable equivalence certificate (the egraph extract cost proof), keeping learning out of

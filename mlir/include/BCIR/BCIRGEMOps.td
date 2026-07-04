@@ -477,4 +477,41 @@ def BCIR_GEMRopeOp : BCIR_Op<"gem.rope", [Symbol]> {
   let hasVerifier = 1;
 }
 
+def BCIR_GEMGqaAttentionOp : BCIR_Op<"gem.gqa_attention", [Symbol]> {
+  let summary = "Planned GEM grouped-query attention: n_heads query heads over n_kv_heads shared K/V heads (open-weight rung 5)";
+  // The law-rail record of gqa_attention_reference (frontends/models/decode.py): causal
+  // scaled-dot-product attention where query head h reads kv head h / (n_heads / n_kv_heads);
+  // n_kv_heads == n_heads is exactly multi-head attention. The LOAD-BEARING op law: n_kv_heads
+  // must divide n_heads (GQA shares WHOLE head groups -- the same constraint DecoderSpec
+  // validates oracle-side) and sit in [1, n_heads]. The softmax rides the trusted libm edge ->
+  // dtype f32 (the gem.attention quarantine rule). The R22 seam to an adjacent gem.rope producer
+  // (d_k == rope dim) and gem.kv_cache producer (head/width agreement) live in -bcir-verify.
+  // C twin: runtime/c/bcir_decode.c::bcir_gqa_attention.
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    I64Attr:$seq_len, I64Attr:$d_k, I64Attr:$n_heads, I64Attr:$n_kv_heads,
+    StrAttr:$dtype);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
+def BCIR_GEMKvCacheOp : BCIR_Op<"gem.kv_cache", [Symbol]> {
+  let summary = "Planned GEM KV cache: the per-layer, per-kv-head roped K/V row store (open-weight rung 5)";
+  // The law-rail record of decode.py::KVCache: n_layers x n_kv_heads lanes of d_k-wide rows, K
+  // stored POST-RoPE at absolute positions (an appended row never re-rotates), grown one row per
+  // decoded token. `pos` is the rows cached so far; `capacity` (0 == unbounded, the reference
+  // posture) bounds it when a serving runtime pages the cache -- pos must never exceed a nonzero
+  // capacity (the op-level law). The R22 seam to an adjacent gem.gqa_attention consumer
+  // (n_kv_heads / d_k agreement -- a cache sized for different heads is the lie the seam
+  // catches) lives in -bcir-verify. C twin: bcir_gqa_attention_row (the cached-row step).
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    I64Attr:$n_layers, I64Attr:$n_kv_heads, I64Attr:$d_k,
+    DefaultValuedAttr<I64Attr, "0">:$capacity,
+    DefaultValuedAttr<I64Attr, "0">:$pos,
+    StrAttr:$dtype);
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
 #endif // BCIR_GEM_OPS

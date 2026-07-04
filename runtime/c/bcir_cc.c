@@ -96,12 +96,33 @@ static void cc_replace_all(const char *in, const char *pat, const char *rep, cha
   out[w] = 0;
 }
 
-/* Phase 3 linking: re-render the emitted unit with EXTERNAL linkage (the C twin of the oracle's
- * emit_linkable): definitions non-static under their REAL names (the unindented `static ` of a
- * definition line is stripped; body statics are indented and untouched), in-unit calls
+/* Phase 3 linking: re-render the emitted unit under its REAL names with SOURCE linkage (the C
+ * twin of the oracle's emit_linkable): a source-`static` definition KEEPS its `static` (internal
+ * linkage honored -- two TUs may each carry a same-named static helper); every other definition's
+ * unindented `static ` is stripped (body statics are indented and untouched); in-unit calls are
  * unprefixed, and the derived #includes prepended (stdint always; stdlib/stdio/math by the
- * unit's external-call edges; the quarantine header when a masked access needs it). FIRST-SLICE
- * parity with the oracle: functions only -- file-scope global DEFINITIONS stay oracle-side. */
+ * unit's external-call edges; the quarantine header when a masked access needs it). Parity note:
+ * functions only -- file-scope global DEFINITIONS stay oracle-side (per the roadmap split). */
+static int cc_linkable_static_fn(const bcir_cfront_result *r, const char *line, size_t len) {
+  /* Does this unindented line name a SOURCE-static function directly before some '('? The
+   * definition line is `static RET NAME(` and the tudefs prelude line is `extern RET NAME(`
+   * -- but a RET spelling may itself carry parens (`_BitInt(13)`), so try EVERY '(' and
+   * match the identifier before it against the unit's static functions (a parameter NAME is
+   * never followed by '(', so the scan cannot false-positive on parameter lists). */
+  for (const char *par = memchr(line, '(', len); par;
+       par = memchr(par + 1, '(', len - (size_t)(par + 1 - line))) {
+    const char *b = par;
+    while (b > line && ((b[-1] >= 'a' && b[-1] <= 'z') || (b[-1] >= 'A' && b[-1] <= 'Z') ||
+                        (b[-1] >= '0' && b[-1] <= '9') || b[-1] == '_')) b--;
+    if (b == par) continue;
+    for (int f = 0; f < r->unit.n_funcs; f++)
+      if (r->unit.funcs[f].static_fn &&
+          strlen(r->unit.funcs[f].name) == (size_t)(par - b) &&
+          !strncmp(b, r->unit.funcs[f].name, (size_t)(par - b))) return 1;
+  }
+  return 0;
+}
+
 static void cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
   int need_math = 0, need_stdlib = 0, need_stdio = 0;
   for (int f = 0; f < r->unit.n_funcs; f++)
@@ -130,12 +151,21 @@ static void cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
     cur = nxt;
     nxt = (nxt == ba) ? bb : ba;
   }
-  const char *s = cur;                               /* strip the unindented definition `static ` */
+  const char *s = cur;                               /* strip the unindented definition `static ` --
+                                                      * except a SOURCE-static function's (kept) */
   while (*s) {
     const char *nl = strchr(s, '\n');
     size_t len = nl ? (size_t)(nl - s) + 1 : strlen(s);
-    if (!strncmp(s, "static ", 7)) fwrite(s + 7, 1, len - 7, outf);
-    else fwrite(s, 1, len, outf);
+    if (!strncmp(s, "static ", 7) && !cc_linkable_static_fn(r, s, len))
+      fwrite(s + 7, 1, len - 7, outf);
+    else if (!strncmp(s, "extern ", 7) && cc_linkable_static_fn(r, s, len)) {
+      /* the tudefs prelude declared this SOURCE-static function `extern` (the prototype was
+       * parsed before its definition); the kept-static definition would then violate C11
+       * 6.2.2p7 ("static declaration follows non-static") -- re-key the declaration to
+       * `static` (same 7 bytes), the static-forward-declaration idiom the source used. */
+      fputs("static ", outf);
+      fwrite(s + 7, 1, len - 7, outf);
+    } else fwrite(s, 1, len, outf);
     s += len;
   }
 }

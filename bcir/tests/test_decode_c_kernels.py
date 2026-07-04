@@ -63,13 +63,71 @@ def test_decode_kernels_match_the_oracle_references():
         assert r.returncode == 3, r.returncode
 
 
+def test_gqa_kernel_matches_the_oracle_and_the_cached_row_is_bitwise():
+    """Rung 5's GQA + KV-cache twins: (1) bcir_gqa_attention differential vs
+    gqa_attention_reference (GQA and the n_kv_heads == n_heads MHA regression case);
+    (2) the ragged head-group refusal (exit 3) exactly where the oracle raises; (3) the
+    KV-cached row twin emits the full recompute's LAST row BITWISE (%.17g-identical --
+    one shared code path in the kernel, the naive-vs-cached invariant at kernel level)."""
+    if _cc() is None:
+        return
+    from bcir.frontends.models.decode import gqa_attention_reference
+    rng = random.Random(0x69A2)
+    seq, nh, nkv, dk = 4, 4, 2, 2
+    q = [rng.uniform(-1.0, 1.0) for _ in range(seq * nh * dk)]
+    k = [rng.uniform(-1.0, 1.0) for _ in range(seq * nkv * dk)]
+    v = [rng.uniform(-1.0, 1.0) for _ in range(seq * nkv * dk)]
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = _build(tmp)
+        feed = (f"gqa {seq} {nh} {nkv} {dk}\n" + " ".join(repr(x) for x in q) + "\n"
+                + " ".join(repr(x) for x in k) + "\n" + " ".join(repr(x) for x in v) + "\n")
+        got = _run(exe, feed)
+        want = gqa_attention_reference(q, k, v, seq, nh, nkv, dk)
+        assert len(got) == len(want) == seq * nh * dk
+        assert all(abs(a - b) <= 1e-12 for a, b in zip(got, want))
+        # the MHA regression case rides the same kernel (n_kv_heads == n_heads).
+        kf = [rng.uniform(-1.0, 1.0) for _ in range(seq * nh * dk)]
+        vf = [rng.uniform(-1.0, 1.0) for _ in range(seq * nh * dk)]
+        feed = (f"gqa {seq} {nh} {nh} {dk}\n" + " ".join(repr(x) for x in q) + "\n"
+                + " ".join(repr(x) for x in kf) + "\n" + " ".join(repr(x) for x in vf) + "\n")
+        got = _run(exe, feed)
+        want = gqa_attention_reference(q, kf, vf, seq, nh, nh, dk)
+        assert all(abs(a - b) <= 1e-12 for a, b in zip(got, want))
+        # ragged head groups refuse (exit 3), exactly where the oracle raises.
+        k3 = [rng.uniform(-1.0, 1.0) for _ in range(seq * 3 * dk)]
+        bad = (f"gqa {seq} {nh} 3 {dk}\n" + " ".join(repr(x) for x in q) + "\n"
+               + " ".join(repr(x) for x in k3) + "\n" + " ".join(repr(x) for x in k3) + "\n")
+        r = subprocess.run([exe], input=bad, capture_output=True, text=True)
+        assert r.returncode == 3, r.returncode
+        # the KV-cached row is the full recompute's last row, BITWISE (%.17g string equality).
+        full = subprocess.run([exe], input=(f"gqa {seq} {nh} {nkv} {dk}\n"
+                                            + " ".join(repr(x) for x in q) + "\n"
+                                            + " ".join(repr(x) for x in k) + "\n"
+                                            + " ".join(repr(x) for x in v) + "\n"),
+                              capture_output=True, text=True)
+        q_last = q[(seq - 1) * nh * dk:]
+        rowr = subprocess.run([exe], input=(f"gqa_row {seq} {nh} {nkv} {dk}\n"
+                                            + " ".join(repr(x) for x in q_last) + "\n"
+                                            + " ".join(repr(x) for x in k) + "\n"
+                                            + " ".join(repr(x) for x in v) + "\n"),
+                              capture_output=True, text=True)
+        assert full.returncode == 0 and rowr.returncode == 0
+        assert full.stdout.split()[-nh * dk:] == rowr.stdout.split()   # bitwise, not epsilon
+
+
 if __name__ == "__main__":
     import sys
 
-    try:
-        test_decode_kernels_match_the_oracle_references()
-        print("PASS test_decode_kernels_match_the_oracle_references")
-        sys.exit(0)
-    except Exception as e:  # noqa: BLE001
-        print(f"FAIL: {e!r}")
-        sys.exit(1)
+    mod = sys.modules[__name__]
+    tests = sorted(n for n in dir(mod) if n.startswith("test_") and callable(getattr(mod, n)))
+    passed = failed = 0
+    for name in tests:
+        try:
+            getattr(mod, name)()
+            passed += 1
+            print(f"PASS {name}")
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            print(f"FAIL {name}: {e!r}")
+    print(f"\n{passed} passed, {failed} failed")
+    sys.exit(1 if failed else 0)

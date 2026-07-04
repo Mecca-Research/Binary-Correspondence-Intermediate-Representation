@@ -125,6 +125,9 @@ typedef struct {
                                                       * rendered at each PROTOTYPE, emitted as a prelude so
                                                       * the emitted TU compiles standalone and the host
                                                       * LINKER resolves the cross-TU callee */
+  int saw_static;                                    /* p_type_base scanned a `static` since p_func last
+                                                      * reset it -- captured as fn->static_fn right after
+                                                      * the return-type parse (source-static honoring) */
   struct { char name[BCIR_CIR_NAME]; bcir_ctype ret; } *protos;   /* prototype table: callee -> return
                                                       * type (for call-result typing); grows geometrically */
   int n_protos, cap_protos;
@@ -473,7 +476,11 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
         if(p_type(c,&inner,&isi)) return 1; if(!eat(c,")")) return 1;
         int vol=ty->is_volatile; *ty=inner; ty->is_atomic=1; if(vol)ty->is_volatile=1; *sidx=isi; seen=1; break; }
       ty->is_atomic=1; continue; }
-    if(is(c,"const")||is(c,"static")||is(c,"inline")||is(c,"extern")
+    if(is(c,"static")){c->saw_static=1;c->i++;continue;}   /* recorded: p_func captures it right after
+                                                            * its return-type parse (source-static
+                                                            * honoring in --linkable); block-scope
+                                                            * statics peek the token BEFORE p_type. */
+    if(is(c,"const")||is(c,"inline")||is(c,"extern")
        ||is(c,"_Thread_local")||is(c,"thread_local")){c->i++;continue;}  /* storage class / qualifier */
     if(is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")){       /* typeof(type-name) / typeof(var) */
       c->i++; if(!eat(c,"(")) return 1;
@@ -4301,7 +4308,10 @@ static uint32_t p_stmt_expr(CC *c){
 
 static int p_func(CC *c, bcir_func *fn) {
   c->fn=fn; c->nenv=0; c->n_vlaext=0;
+  c->saw_static=0;                                 /* fresh for THIS definition's return type (a prior
+                                                    * body's block-static must not leak into the flag) */
   bcir_ctype rt;int rsi;if(p_type(c,&rt,&rsi))return 1; fn->ret=rt;
+  fn->static_fn=(uint8_t)(c->saw_static!=0);       /* source `static` on the definition (linkable emit) */
   tok nm=adv(c); snprintf(fn->name,sizeof fn->name,"%.*s",nm.n,nm.s);
   if(!eat(c,"("))return 1;
   if(!is(c,")")) for(;;){

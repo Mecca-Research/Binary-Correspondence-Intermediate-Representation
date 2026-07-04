@@ -715,6 +715,40 @@ printf 'unsigned g(unsigned x);\nunsigned f(unsigned y) { return g(y) + 1u; }\nu
 [ "${lk_rc}" = "${ref_rc}" ] \
   && echo "  PASS linkable artifact (two emitted TUs link to each other; rc=${lk_rc} == ref)" \
   || { echo "  FAIL: linkable artifact rc=${lk_rc} != ref=${ref_rc}"; exit 1; }
+# ... and SOURCE-STATIC HONORING on the twin: two TUs each carrying a SAME-NAMED static helper
+# keep `static` in the --linkable rendering (internal linkage), so the pair still links into
+# one binary -- a stripped-static (exported) rendering would be a duplicate-symbol link error.
+printf 'static unsigned mix(unsigned x) { return x * 3u; }\nunsigned fa(unsigned x) { return mix(x) + 5u; }\n' > "${tmp}/link/sa.c"
+printf 'static unsigned mix(unsigned x) { return x + 100u; }\nunsigned fb(unsigned x) { return mix(x); }\n' > "${tmp}/link/sb.c"
+printf 'extern unsigned fa(unsigned);\nextern unsigned fb(unsigned);\nint main(void){ return (int)(fa(2u) + fb(1u)); }\n' > "${tmp}/link/smain.c"
+"${tmp}/bcir-cc" --linkable "${tmp}/link/sa.c" > "${tmp}/link/sa_lk.c" || { echo "  FAIL: --linkable sa"; exit 1; }
+"${tmp}/bcir-cc" --linkable "${tmp}/link/sb.c" > "${tmp}/link/sb_lk.c" || { echo "  FAIL: --linkable sb"; exit 1; }
+grep -q "static uint32_t mix(uint32_t x)" "${tmp}/link/sa_lk.c" \
+  || { echo "  FAIL: source-static helper lost its static in the linkable rendering"; exit 1; }
+grep -q "^uint32_t fa(uint32_t x)" "${tmp}/link/sa_lk.c" \
+  || { echo "  FAIL: the exported function should be non-static under its real name"; exit 1; }
+"${CC}" -std=c11 -Wall -Werror "${tmp}/link/smain.c" "${tmp}/link/sa_lk.c" "${tmp}/link/sb_lk.c" \
+  -o "${tmp}/link/prog_st" || { echo "  FAIL: same-named statics did not link"; exit 1; }
+"${tmp}/link/prog_st"; st_rc=$?
+[ "${st_rc}" = "112" ] \
+  && echo "  PASS source-static honoring (same-named statics per TU; rc=${st_rc})" \
+  || { echo "  FAIL: source-static honoring rc=${st_rc} != 112"; exit 1; }
+# ... review-hardened edges: (1) the static-forward-declaration idiom -- the tudefs prelude
+# re-keys `extern` -> `static` for a kept-static function, so the artifact compiles (C11
+# 6.2.2p7); (2) a `_BitInt(N)` return spelling carries parens BEFORE the name -- the static
+# keeper must still find the function name (grep-only: host cc under -std=c11 has no _BitInt).
+printf 'static int r(int v);\nint s(int x) { return r(x); }\nstatic int r(int x) { return x + 1; }\n' > "${tmp}/link/sp.c"
+"${tmp}/bcir-cc" --linkable "${tmp}/link/sp.c" > "${tmp}/link/sp_lk.c" || { echo "  FAIL: --linkable sp"; exit 1; }
+grep -q "^static int32_t r(int32_t);" "${tmp}/link/sp_lk.c" \
+  || { echo "  FAIL: static prototype should re-key its extern prelude to static"; exit 1; }
+"${CC}" -std=c11 -Wall -Werror -c "${tmp}/link/sp_lk.c" -o "${tmp}/link/sp_lk.o" \
+  && echo "  PASS static forward declaration (extern prelude re-keyed; artifact compiles)" \
+  || { echo "  FAIL: static-forward-declaration artifact did not compile"; exit 1; }
+printf 'static _BitInt(13) bh(int x) { return (_BitInt(13))(x + 1); }\nint bu(int y) { return (int)bh(y); }\n' > "${tmp}/link/sb2.c"
+"${tmp}/bcir-cc" --linkable "${tmp}/link/sb2.c" > "${tmp}/link/sb2_lk.c" || { echo "  FAIL: --linkable sb2"; exit 1; }
+grep -q "^static _BitInt(13) bh(" "${tmp}/link/sb2_lk.c" \
+  && echo "  PASS _BitInt-return static keeps its static (multi-paren name scan)" \
+  || { echo "  FAIL: a _BitInt return spelling defeated the static keeper"; exit 1; }
 
 # Module-scope effect / commutation analysis (#effects, the C twin of pipeline.own_footprint +
 # commute): per function the global names it reads/writes (callee effects folded in transitively),

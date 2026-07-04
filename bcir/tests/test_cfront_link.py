@@ -144,13 +144,111 @@ def test_linkable_globals_define_declare_and_reject_nonconstant():
                                capture_output=True, text=True)   # the documented contract: a masked
             assert r.returncode == 0, r.stderr                   # access links bcir_quarantine.c
             assert subprocess.run([prog]).returncode == 43    # 7*6+1
-    # a non-integer-constant initializer must fail LOUDLY in linkable mode, never mislower.
-    fl = compile_unit("double dv = 1.5;\ndouble geto(void) { return dv; }\n", check_clang=False)
+    # a non-renderable constant initializer must fail LOUDLY in linkable mode, never mislower.
+    # (&base is a legal C address constant -- honestly outside this slice's renderer.)
+    fl = compile_unit("unsigned base = 7u;\nunsigned *pp = &base;\n"
+                      "unsigned geto(void) { return base; }\n", check_clang=False)
     try:
         emit_linkable(fl.lowered, fl.emitted)
-        raise AssertionError("a non-integer-constant global initializer must be rejected")
+        raise AssertionError("a non-renderable global initializer must be rejected")
     except ValueError as e:
-        assert "dv" in str(e)
+        assert "pp" in str(e)
+
+
+def test_linkable_honors_source_static_functions_and_globals():
+    """Source-`static` honoring: each TU keeps its OWN same-named static helper (internal
+    linkage, real name) and a static global stays file-local -- the two TUs still link into
+    one binary, which a stripped-static (exported) rendering could not do (duplicate symbol)."""
+    from bcir.frontends.cfront.emit import emit_linkable
+    tu_a = compile_unit("static unsigned mix(unsigned x) { return x * 3u; }\n"
+                        "static unsigned seed = 5u;\n"
+                        "unsigned fa(unsigned x) { return mix(x) + seed; }\n",
+                        check_clang=False)
+    tu_b = compile_unit("static unsigned mix(unsigned x) { return x + 100u; }\n"
+                        "unsigned fb(unsigned x) { return mix(x); }\n",
+                        check_clang=False)
+    a_text = emit_linkable(tu_a.lowered, tu_a.emitted)
+    b_text = emit_linkable(tu_b.lowered, tu_b.emitted)
+    assert "static unsigned int mix(unsigned int x)" in a_text    # static KEPT, real name
+    assert "static unsigned int seed = 5;" in a_text              # file-local global
+    assert "\nunsigned int fa(unsigned int x)" in a_text          # the export is non-static
+    assert "static unsigned int mix(unsigned int x)" in b_text
+    cc = _cc()
+    if cc is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        a = os.path.join(tmp, "a.c")
+        b = os.path.join(tmp, "b.c")
+        main = os.path.join(tmp, "main.c")
+        for path, text in ((a, a_text), (b, b_text)):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        with open(main, "w", encoding="utf-8") as f:
+            f.write("extern unsigned fa(unsigned);\nextern unsigned fb(unsigned);\n"
+                    "int main(void){ return (int)(fa(2u) + fb(1u)); }\n")
+        prog = os.path.join(tmp, "prog")
+        r = subprocess.run([cc, "-std=c11", "-Wall", "-Werror", main, a, b, "-o", prog],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr        # two same-named statics link CLEANLY
+        assert subprocess.run([prog]).returncode == 112   # fa(2)=2*3+5=11, fb(1)=101
+
+
+def test_linkable_static_forward_declaration_and_pointer_string_table():
+    """Review-hardened edges: (1) the C static-forward-declaration idiom -- a static callee
+    DEFINED AFTER its caller -- must yield a compilable artifact (the emit forward-declares
+    every kept-static function); (2) a pointer-element string table (`char *tab[] = {..}`)
+    must NOT take the char-array string path (it would size the array from the string bytes
+    and mis-render) -- it refuses loudly, and the array keeps its init-tuple count."""
+    from bcir.frontends.cfront.emit import emit_linkable
+    fwd = compile_unit("static int r(int v);\nint s(int x) { return r(x); }\n"
+                       "static int r(int x) { return x + 1; }\n", check_clang=False)
+    text = emit_linkable(fwd.lowered, fwd.emitted)
+    assert "static int r(int);" in text                       # the forward declaration
+    cc = _cc()
+    if cc is not None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "fwd.c")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            r = subprocess.run([cc, "-std=c11", "-Wall", "-Werror", "-c", path,
+                                "-o", os.path.join(tmp, "fwd.o")],
+                               capture_output=True, text=True)
+            assert r.returncode == 0, r.stderr
+    ptab = compile_unit('char *tab[] = {"hi"};\nunsigned f4(void) { return 3u; }\n',
+                        check_clang=False)
+    _, ct, vals, _, _ = [g for g in ptab.lowered.globals_decl if g[0] == "tab"][0]
+    assert ct.count == 1 and vals is None                     # tuple-sized, not string-sized
+    try:
+        emit_linkable(ptab.lowered, ptab.emitted)
+        raise AssertionError("a pointer-element string table must be rejected")
+    except ValueError as e:
+        assert "tab" in str(e)
+
+
+def test_linkable_renders_float_negative_and_string_initializers():
+    """The renderer past the first slice: float spellings (suffix kept), signed integer
+    constants, and string-initialized char arrays (sized from the LITERAL, not the init
+    tuple) all render -- and the artifact is host-compilable stand-alone."""
+    from bcir.frontends.cfront.emit import emit_linkable
+    r = compile_unit("double dv = 1.5;\ndouble nv = -2.5;\nint off = -7;\n"
+                     "char msg[] = \"hi\";\nfloat fs = 0.5f;\n"
+                     "unsigned fz(unsigned x) { return x + 1u; }\n", check_clang=False)
+    text = emit_linkable(r.lowered, r.emitted)
+    assert "double dv = 1.5;" in text
+    assert "double nv = -2.5;" in text
+    assert "int off = -7;" in text
+    assert 'char msg[3] = "hi";' in text                  # 2 code units + the NUL
+    assert "float fs = 0.5f;" in text                     # the source spelling, suffix included
+    cc = _cc()
+    if cc is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "g.c")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write(text)
+        r2 = subprocess.run([cc, "-std=c11", "-Wall", "-Werror", "-c", src,
+                             "-o", os.path.join(tmp, "g.o")], capture_output=True, text=True)
+        assert r2.returncode == 0, r2.stderr
 
 
 if __name__ == "__main__":
