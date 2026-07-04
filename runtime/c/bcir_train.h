@@ -47,6 +47,35 @@ typedef struct bcir_train_state {
  * An id outside 1..6 is a no-op returning 0 (the oracle's kernels.get semantics). */
 int bcir_train_kernel(const bcir_exec_item *item, void *ctx);
 
+/* --- D1 step 7: the STREAMED step (kbcir/train_graph.py train_stream_module) ------------- */
+
+/* The streamed-step state (the C twin of train_streamed's `st`): `streams` micro-batch lanes
+ * of mb rows each over per-stream buffers, ONE shared weight vector and ONE combined
+ * gradient. Flat row-major layouts: X is streams x mb x nf; z/act/lossv are streams x mb;
+ * loss is streams; grad is streams x (nf+1); w and gradc are nf+1. Caller-owned. */
+typedef struct bcir_stream_state {
+  int nf;            /* n_features */
+  int mb;            /* micro-batch rows per stream (batch / streams) */
+  int streams;
+  double lr;
+  double *X;         /* streams x mb x nf */
+  double *y;         /* streams x mb */
+  double *w;         /* nf+1 (SHARED) */
+  double *z;         /* streams x mb */
+  double *act;       /* streams x mb */
+  double *lossv;     /* streams x mb */
+  double *loss;      /* streams (each stream's mean BCE) */
+  double *grad;      /* streams x (nf+1) (per-stream mean gradients) */
+  double *gradc;     /* nf+1 (the combined mean-of-means gradient) */
+} bcir_stream_state;
+
+/* The streamed per-claim callback (`bcir_exec_fn`; ctx = bcir_stream_state*): claim ids are
+ * train_stream_module's bands -- stream s stage k = s*10 + k (k in 1..5), the gradient
+ * combine = streams*10 + 1, the SINGLE sgd update = streams*10 + 2. Same arithmetic order
+ * as the oracle's _stream_kernels (ascending-index sums; mean of the stream means). An id
+ * outside the bands is a no-op returning 0. */
+int bcir_stream_kernel(const bcir_exec_item *item, void *ctx);
+
 #ifdef __cplusplus
 }
 #endif

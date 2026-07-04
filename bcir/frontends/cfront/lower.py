@@ -259,19 +259,33 @@ def _str_bytes(spelling: str) -> int:
 
 
 def _fold_const(node) -> int:
-    """A `static` local's initializer must be a constant expression (it is baked into the C
-    declaration). Fold the integer-constant subset; a missing init zero-initializes."""
+    """A `static` local's / file-scope global's initializer must be a constant expression (it
+    is baked into the C declaration). The §5.9 integer constant-expression evaluator: literals,
+    arithmetic/bit/shift, comparisons, logical &&/|| (a constant expression has no side effects
+    to short-circuit away), unary +/-/~/!, and the ternary. Enumerators arrive pre-folded to
+    IntLit by the parser; `sizeof` stays out (the ABI is chosen at lower time, but the fold may
+    run at either -- keep the two _const_eval/_fold_const vocabularies identical). A missing
+    init zero-initializes."""
     if node is None:
         return 0
     if isinstance(node, cast.IntLit):
         return node.value
-    if isinstance(node, cast.Unary) and node.op in ("-", "~"):
+    if isinstance(node, cast.Unary) and node.op in ("-", "~", "!", "+"):
         v = _fold_const(node.operand)
-        return -v if node.op == "-" else ~v
+        return {"-": -v, "~": ~v, "!": int(not v), "+": v}[node.op]
     if isinstance(node, cast.Binary):
         a, b = _fold_const(node.lhs), _fold_const(node.rhs)
-        return {"+": a + b, "-": a - b, "*": a * b, "&": a & b, "|": a | b,
-                "^": a ^ b, "<<": a << b, ">>": a >> b}.get(node.op, 0)
+        ops = {"+": a + b, "-": a - b, "*": a * b, "/": a // b if b else 0,
+               "%": a % b if b else 0, "&": a & b, "|": a | b, "^": a ^ b,
+               "<<": a << b, ">>": a >> b,
+               "<": int(a < b), "<=": int(a <= b), ">": int(a > b), ">=": int(a >= b),
+               "==": int(a == b), "!=": int(a != b),
+               "&&": int(bool(a) and bool(b)), "||": int(bool(a) or bool(b))}
+        if node.op not in ops:
+            raise CLowerError(f"non-constant operator {node.op!r} in a constant initializer")
+        return ops[node.op]
+    if isinstance(node, cast.Ternary):
+        return _fold_const(node.then) if _fold_const(node.cond) else _fold_const(node.els)
     raise CLowerError("static initializer is not a constant expression")
 
 
@@ -2501,9 +2515,12 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
                 vals.append(("-" if el.op == "-" else "") + el.operand.value)
             elif isinstance(el, cast.StringLit) and is_string:
                 vals.append(el.value)                      # spelling incl. quotes (char-array init)
-            else:                                          # &x / arithmetic / sizeof: not renderable
-                vals = None                                # in this slice -- the linkable emit raises
-                break
+            else:
+                try:                                       # the §5.9 constant-expression evaluator:
+                    vals.append(str(_fold_const(el)))      # (3*4+1) << 2, comparisons, ternaries...
+                except CLowerError:                        # &x / sizeof: not renderable in this
+                    vals = None                            # slice -- the linkable emit raises
+                    break
         gdecls.append((g.name, ct_src, tuple(vals) if vals is not None else None,
                        getattr(g, "extern_decl", False), getattr(g, "static_storage", False)))
 

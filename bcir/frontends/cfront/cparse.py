@@ -368,7 +368,9 @@ class _Parser:
             name = self.eat("IDENT").text
             if self.at("OP", "="):
                 self.nxt()
-                value = self._const_eval(self._binary(0))
+                value = self._const_eval(self._ternary())   # the full conditional-expression
+                                                            # level (C 6.7.2.2: an enum value
+                                                            # is a constant-expression)
             self.enums[name] = value
             value += 1
             if self.at("PUNCT", ","):
@@ -376,23 +378,35 @@ class _Parser:
         self.eat("PUNCT", "}")
 
     def _const_eval(self, node) -> int:
-        """Fold a constant enum initializer (integer literals, prior enumerators, basic arithmetic)."""
+        """Fold an integer constant expression (the §5.9 evaluator): integer literals, prior
+        enumerators, arithmetic/bit/shift, COMPARISONS, logical &&/|| (both sides evaluate --
+        a constant expression has no side effects to short-circuit away), and the ternary.
+        `sizeof` stays out ON PURPOSE: the target ABI is chosen at LOWER time, so folding it
+        at parse would bake the wrong data model into the enum/global value."""
         if isinstance(node, cast.IntLit):
             return node.value
         if isinstance(node, cast.Name):
             if node.ident in self.enums:
                 return self.enums[node.ident]
-            raise CParseError(f"non-constant enum initializer {node.ident!r}")
+            raise CParseError(f"non-constant initializer {node.ident!r}")
         if isinstance(node, cast.Unary):
             v = self._const_eval(node.operand)
-            return {"-": -v, "~": ~v, "!": int(not v)}.get(node.op, v)
+            return {"-": -v, "~": ~v, "!": int(not v), "+": v}.get(node.op, v)
         if isinstance(node, cast.Binary):
             a, b = self._const_eval(node.lhs), self._const_eval(node.rhs)
             ops = {"+": a + b, "-": a - b, "*": a * b, "/": a // b if b else 0,
                    "%": a % b if b else 0, "&": a & b, "|": a | b, "^": a ^ b,
-                   "<<": a << b, ">>": a >> b}
-            return ops.get(node.op, 0)
-        raise CParseError("unsupported constant enum initializer")
+                   "<<": a << b, ">>": a >> b,
+                   "<": int(a < b), "<=": int(a <= b), ">": int(a > b), ">=": int(a >= b),
+                   "==": int(a == b), "!=": int(a != b),
+                   "&&": int(bool(a) and bool(b)), "||": int(bool(a) or bool(b))}
+            if node.op not in ops:
+                raise CParseError(f"unsupported constant-expression operator {node.op!r}")
+            return ops[node.op]
+        if isinstance(node, cast.Ternary):
+            return (self._const_eval(node.then) if self._const_eval(node.cond)
+                    else self._const_eval(node.els))
+        raise CParseError("unsupported constant initializer")
 
     def _global(self, tref: cast.TypeRef, name: str, extern: bool = False,
                 static: bool = False) -> cast.Global:

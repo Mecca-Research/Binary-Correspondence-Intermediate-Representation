@@ -424,3 +424,117 @@ def schedule_stream_step(spec: TrainStepSpec, streams: int, h: HProfile, theta: 
     cert = StreamCertificate(streams=streams, serial=serial, barriered=barriered.makespan,
                              pipelined=pipelined.makespan)
     return cert, pipelined
+
+
+# --- D1 step 7: the STREAMED step EXECUTES (oracle now; the C rail twins it) --------------------
+
+
+def _stream_kernels(spec: TrainStepSpec, streams: int, st: dict) -> dict[int, "object"]:
+    """The streamed step's numeric kernels, keyed by `train_stream_module`'s claim ids
+    (stream s stage k = s*10 + k; combine = streams*10 + 1; update = streams*10 + 2).
+    Per-stream state lives in lists indexed by stream; W and the combined gradient are
+    shared -- the resources of the streamed claim graph, materialized (the step-2 pattern)."""
+    import math
+
+    nf, mb = spec.n_features, spec.batch // streams
+
+    def forward(s):                                  # s*10+1: z_s = X_s @ w + bias
+        def k():
+            for i in range(mb):
+                st["z"][s][i] = (sum(st["X"][s][i][j] * st["w"][j] for j in range(nf))
+                                 + st["w"][nf])
+        return k
+
+    def activation(s):                               # s*10+2: act_s = sigmoid(z_s)
+        def k():
+            for i in range(mb):
+                st["act"][s][i] = sigmoid(st["z"][s][i])
+        return k
+
+    def loss_vec(s):                                 # s*10+3: per-example BCE
+        def k():
+            eps = 1e-12
+            for i in range(mb):
+                a = min(max(st["act"][s][i], eps), 1.0 - eps)
+                yv = st["y"][s][i]
+                st["lossv"][s][i] = -(yv * math.log(a) + (1.0 - yv) * math.log(1.0 - a))
+        return k
+
+    def reduce_mean(s):                              # s*10+4: loss_s = mean(lossv_s)
+        def k():
+            st["loss"][s] = sum(st["lossv"][s]) / mb
+        return k
+
+    def backward(s):                                 # s*10+5: the stream's exact mean gradient
+        def k():
+            for j in range(nf):
+                st["grad"][s][j] = sum((st["act"][s][i] - st["y"][s][i]) * st["X"][s][i][j]
+                                       for i in range(mb)) / mb
+            st["grad"][s][nf] = sum(st["act"][s][i] - st["y"][s][i] for i in range(mb)) / mb
+        return k
+
+    def combine():                                   # streams*10+1: mean of the stream means
+        for j in range(nf + 1):
+            st["gradc"][j] = sum(st["grad"][s][j] for s in range(streams)) / streams
+
+    def update():                                    # streams*10+2: the SINGLE sgd step
+        for j in range(nf + 1):
+            st["w"][j] -= st["lr"] * st["gradc"][j]
+
+    kernels: dict = {}
+    for s in range(streams):
+        kernels[s * 10 + 1] = forward(s)
+        kernels[s * 10 + 2] = activation(s)
+        kernels[s * 10 + 3] = loss_vec(s)
+        kernels[s * 10 + 4] = reduce_mean(s)
+        kernels[s * 10 + 5] = backward(s)
+    kernels[streams * 10 + 1] = combine
+    kernels[streams * 10 + 2] = update
+    return kernels
+
+
+def train_streamed(spec: TrainStepSpec, streams: int, X: list, y: list, w0: list, *,
+                   epochs: int, lr: float, h: HProfile, theta: Theta,
+                   policy: Policy = PERF) -> PlannedTrainRun:
+    """REAL training on the STREAMED planned path (D1 step 7): every full batch splits into
+    `streams` equal micro-batches (stream s takes rows [s*mb, (s+1)*mb) -- the split the C
+    twin reproduces), the GEM executor dispatches the per-stream stage kernels + the
+    gradient combine + the SINGLE weight update in the streamed claim graph's phase order,
+    and each epoch commits an R13 manifest tagged with the stream count. The trajectory
+    matches `train_planned` to float round-off (mean-of-equal-split-means == the batch
+    mean; only the summation ORDER differs)."""
+    m = train_stream_module(spec, streams)           # validates streams/batch divisibility
+    result = optimize(m, h, theta, policy)
+    pack = hydrate(m, result, plan=m.name)
+    b, mb = spec.batch, spec.batch // streams
+    n = len(X)
+    st = {"X": [[[0.0] * spec.n_features for _ in range(mb)] for _ in range(streams)],
+          "y": [[0.0] * mb for _ in range(streams)],
+          "z": [[0.0] * mb for _ in range(streams)],
+          "act": [[0.0] * mb for _ in range(streams)],
+          "lossv": [[0.0] * mb for _ in range(streams)],
+          "loss": [0.0] * streams,
+          "grad": [[0.0] * spec.n_params for _ in range(streams)],
+          "gradc": [0.0] * spec.n_params,
+          "w": list(w0), "lr": lr}
+    kernels = _stream_kernels(spec, streams, st)
+    losses: list = []
+    manifests: list = []
+    exec_orders: list = []
+    for e in range(epochs):
+        epoch_losses = []
+        for lo in range(0, n - b + 1, b):            # full batches only, deterministic order
+            for s in range(streams):
+                for i in range(mb):
+                    st["X"][s][i] = list(X[lo + s * mb + i])
+                    st["y"][s][i] = float(y[lo + s * mb + i])
+            r: ExecResult = execute(m, kernels)
+            exec_orders.append(list(r.order))
+            epoch_losses.append(sum(st["loss"]) / streams)   # == the full-batch mean loss
+        losses.append(sum(epoch_losses) / max(1, len(epoch_losses)))
+        manifests.append(build_manifest(
+            m, h, theta, policy,
+            artifacts=(("epoch", e), ("streams", streams), ("topo_gen", pack.topo_gen),
+                       ("map_gen", pack.map_gen), ("data_gen", pack.data_gen))))
+    return PlannedTrainRun(weights=list(st["w"]), losses=losses, manifests=tuple(manifests),
+                           pack=pack, exec_orders=exec_orders)

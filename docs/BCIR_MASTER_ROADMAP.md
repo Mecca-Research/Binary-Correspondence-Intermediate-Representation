@@ -1555,8 +1555,13 @@ hard-compiler infrastructure (Phases 3–4); (C) hard caps.
    `signed` == `signed int`, no base keyword -- was an oracle/twin divergence, the twin treated `signed` as
    a pure modifier and fell back; it now finalizes as `signed int` like `unsigned`, a following base still
    overriding the width; byte-exact vs Clang on x86-64 + aarch64). *Remaining:* non-integer
-   `alignas`/`aligned` (`alignas(type-name)`, `aligned(expr)`); non-constant `enum` / `static` initializers
-   (need a real constant-expression evaluator); VLAs (`T a[n]`); computed `goto *p` (label-as-value `&&L`).
+   `alignas`/`aligned` (`alignas(type-name)`, `aligned(expr)`); VLAs (`T a[n]`); computed `goto *p`
+   (label-as-value `&&L`). *Landed:* the **§5.9 integer constant-expression evaluator** — enum
+   initializers, `case` labels, static-local and file-scope-global initializers fold
+   arithmetic/bit/shift, comparisons, logical `&&`/`||` and the ternary on BOTH rails
+   (`cparse._const_eval`/`lower._fold_const` == the twin's `ce_expr`;
+   `test_cfront_constexpr.py` + `check_runtime.sh` #cexpr; the linkable emit renders the folded
+   value; `sizeof` deferred on purpose — the ABI is chosen at lower time).
 7. **Remaining float types** — `_Decimal32/64/128` (the last float follow-on). `_Imaginary` is out of
    scope by parity (Clang doesn't implement it).
 

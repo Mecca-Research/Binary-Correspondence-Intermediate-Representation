@@ -75,3 +75,86 @@ int bcir_train_kernel(const bcir_exec_item *item, void *ctx) {
   }
   return 0;
 }
+
+/* --- D1 step 7: the streamed step's kernels (train_stream_module's claim-id bands) ------- */
+
+static void sk_forward(bcir_stream_state *st, int s) {     /* s*10+1: z_s = X_s @ w + bias */
+  for (int i = 0; i < st->mb; i++) {
+    double acc = 0.0;
+    const double *row = st->X + ((size_t)s * st->mb + i) * st->nf;
+    for (int j = 0; j < st->nf; j++) acc += row[j] * st->w[j];
+    st->z[(size_t)s * st->mb + i] = acc + st->w[st->nf];
+  }
+}
+
+static void sk_activation(bcir_stream_state *st, int s) {  /* s*10+2 */
+  for (int i = 0; i < st->mb; i++) {
+    size_t o = (size_t)s * st->mb + i;
+    st->act[o] = tr_sigmoid(st->z[o]);
+  }
+}
+
+static void sk_loss_vec(bcir_stream_state *st, int s) {    /* s*10+3: per-example BCE */
+  const double eps = 1e-12;
+  for (int i = 0; i < st->mb; i++) {
+    size_t o = (size_t)s * st->mb + i;
+    double a = st->act[o];
+    if (a < eps) a = eps;
+    if (a > 1.0 - eps) a = 1.0 - eps;
+    double yv = st->y[o];
+    st->lossv[o] = -(yv * log(a) + (1.0 - yv) * log(1.0 - a));
+  }
+}
+
+static void sk_reduce_mean(bcir_stream_state *st, int s) { /* s*10+4: loss_s = mean */
+  double acc = 0.0;
+  for (int i = 0; i < st->mb; i++) acc += st->lossv[(size_t)s * st->mb + i];
+  st->loss[s] = acc / st->mb;
+}
+
+static void sk_backward(bcir_stream_state *st, int s) {    /* s*10+5: the stream's mean grad */
+  double *g = st->grad + (size_t)s * (st->nf + 1);
+  for (int j = 0; j < st->nf; j++) {
+    double acc = 0.0;
+    for (int i = 0; i < st->mb; i++) {
+      size_t o = (size_t)s * st->mb + i;
+      acc += (st->act[o] - st->y[o]) * st->X[o * st->nf + j];
+    }
+    g[j] = acc / st->mb;
+  }
+  double acc = 0.0;
+  for (int i = 0; i < st->mb; i++) {
+    size_t o = (size_t)s * st->mb + i;
+    acc += st->act[o] - st->y[o];
+  }
+  g[st->nf] = acc / st->mb;
+}
+
+static void sk_combine(bcir_stream_state *st) {            /* streams*10+1: mean of means */
+  for (int j = 0; j <= st->nf; j++) {
+    double acc = 0.0;
+    for (int s = 0; s < st->streams; s++) acc += st->grad[(size_t)s * (st->nf + 1) + j];
+    st->gradc[j] = acc / st->streams;
+  }
+}
+
+static void sk_update(bcir_stream_state *st) {             /* streams*10+2: the SINGLE step */
+  for (int j = 0; j <= st->nf; j++) st->w[j] -= st->lr * st->gradc[j];
+}
+
+int bcir_stream_kernel(const bcir_exec_item *item, void *ctx) {
+  bcir_stream_state *st = (bcir_stream_state *)ctx;
+  long long id = (long long)item->claim_id;
+  if (id == (long long)st->streams * 10 + 1) { sk_combine(st); return 0; }
+  if (id == (long long)st->streams * 10 + 2) { sk_update(st); return 0; }
+  int s = (int)(id / 10), k = (int)(id % 10);
+  if (s < 0 || s >= st->streams || k < 1 || k > 5) return 0;   /* the kernels.get miss */
+  switch (k) {
+  case 1: sk_forward(st, s); break;
+  case 2: sk_activation(st, s); break;
+  case 3: sk_loss_vec(st, s); break;
+  case 4: sk_reduce_mean(st, s); break;
+  case 5: sk_backward(st, s); break;
+  }
+  return 0;
+}
