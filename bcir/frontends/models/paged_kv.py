@@ -28,9 +28,21 @@ Three moves, each riding something already proven:
     and it falls out of the EXISTING scheduler with zero new machinery: continuous
     batching IS wave scheduling over the merged claim graph (measured-then-pinned).
 
-Deferred to later rung-7 slices (recorded, not hidden): page-claim wiring (decode claims
-reading/writing their page resources directly), page eviction/reuse policy, admission
-of new sessions mid-flight. Cost-side module: imports no verifier (two-truth)."""
+RUNG-7 SLICE 2 (Part VII A3, this file too): the page-claim WIRING --
+`paged_session_module` now threads the page RIDs through the claims themselves (the
+prefill claim writes the pages it fills; decode step t reads every page up to its
+position and writes the page owning its row), so the token DAG sees page-level
+hazards. That is what makes the other two moves fall out: EVICTION is a scheduled
+claim (`PagedKV.evict` is the registry act -- map_gen bumps, the view frees, a live
+session refuses because full-context attention still reads every page;
+`schedule_eviction` appends the same act as a `kv.evict:<p>` claim), and ADMISSION is
+appending phases (`admit_session` joins a new session to a LIVE batched module --
+claim-identical to having built it upfront, pinned by hash_module equality).
+
+Deferred to later rung-7 slices (recorded, not hidden): windowed-attention eviction
+(evicting pages a numerics-visible attention window no longer reads), page REUSE
+across sessions (the freed view re-entering an allocator). Cost-side module: imports
+no verifier (two-truth)."""
 
 from __future__ import annotations
 
@@ -97,9 +109,40 @@ class PagedKV:
                 f"kv_cache: pos {self.cache.pos + 1} exceeds capacity {self.capacity} "
                 "(an over-full cache is the paging lie)")
         p = self.page_of(self.cache.pos)
+        if self.views[p] is None:
+            raise ValueError(f"kv_cache: page {p} was evicted; writing through a freed "
+                             "view is the use-after-free shape")
         out = self.cache._step_row(x_row, spec, w)
         self.pages[p] = replace(self.pages[p], data_gen=self.pages[p].data_gen + 1)
         return out
+
+    def evict(self, p: int):
+        """A3: eviction as a REGISTRY act. Refused while the session is live -- rung-3
+        attention is full-context, so every page is still read (evicting one would be a
+        numerics lie); legal once pos == capacity. The page's map_gen bumps (the remap
+        generation -- R11's other currency, so hydrated packs go stale as 'rehydrate:
+        repack') and the StridedView frees for reuse. Returns the freed view."""
+        if not 0 <= p < self.n_pages:
+            raise ValueError(f"kv.evict: no page {p} (0..{self.n_pages - 1})")
+        if self.cache.pos < self.capacity:
+            raise ValueError(
+                f"kv.evict: page {p} refused at pos {self.cache.pos} < capacity "
+                f"{self.capacity} -- full-context attention still reads every page; "
+                "eviction before completion is a numerics lie")
+        if self.views[p] is None:
+            raise ValueError(f"kv.evict: page {p} already evicted (the double-free shape)")
+        view, self.views[p] = self.views[p], None
+        self.pages[p] = replace(self.pages[p], map_gen=self.pages[p].map_gen + 1)
+        return view
+
+    def evict_claim(self, p: int, cid: int) -> Claim:
+        """The SAME act as a scheduled claim (`kv.evict:<p>` reads and writes the page
+        -- invalidation is a write), so eviction takes its place in the token DAG like
+        any other work."""
+        rid = self.pages[p].rid
+        return Claim(id=cid, opcode=Opcode.STORE, lane=Lane.U,
+                     stride_class=StrideClass.SCALAR, count=1, rd=(rid,), wr=(rid,),
+                     op=f"kv.evict:{p}", domain=self.pages[p].domain)
 
 
 def generate_paged(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int,
@@ -128,13 +171,80 @@ def generate_paged(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_n
 def paged_session_module(spec: DecoderSpec, prompt_len: int, max_new: int,
                          kv: PagedKV) -> Module:
     """The decode-session module JOINED with the live page resources at their CURRENT
-    data_gens: a pack hydrated from this module is R11-stale the moment any page takes
-    another write. (The page-claim wiring -- decode claims reading/writing their pages
-    directly -- is the next rung-7 slice; the resources already carry the truth.)"""
+    generations -- and WIRED (A3): the prefill claim writes the pages it fills; decode
+    step t reads every page up to its position (full-context attention touches the
+    whole cache) and writes the page owning row prompt_len + t. The token DAG now sees
+    page-level hazards, which is what makes eviction schedulable and admission
+    appendable. A pack hydrated from this module is R11-stale the moment any page
+    takes another write (data_gen) or is evicted (map_gen)."""
     m = decode_session_module(spec, prompt_len, max_new)
     for r in kv.pages:
         m.add_resource(r)
+    base = kv.pages[0].rid
+
+    def page_of(pos: int) -> int:
+        return min(pos // kv.page_size, kv.n_pages - 1)
+
+    t = 0
+    for ph in m.phases:
+        for c in ph.claims:
+            if c.op == "gem.prefill":
+                c.wr = tuple(c.wr) + tuple(
+                    base + i for i in range(page_of(prompt_len - 1) + 1))
+            elif c.op == "gem.decode_step":
+                pos = prompt_len + t
+                t += 1
+                c.rd = tuple(c.rd) + tuple(base + i for i in range(page_of(pos) + 1))
+                c.wr = tuple(c.wr) + (base + page_of(pos),)
     return m
+
+
+def schedule_eviction(m: Module, kv: PagedKV, p: int, *, cid: int = 0) -> Module:
+    """A3: eviction takes its place in the SCHEDULE -- one appended phase, dependent on
+    the module's last phase, carrying `kv.evict:<p>`. (The registry act itself is
+    `PagedKV.evict`; this is its planned shadow.)"""
+    last = m.phases[-1].phase_id if m.phases else 0
+    cid = cid or (900 + p)
+    m.add_phase(Phase(phase_id=last + 1, deps=(last,) if m.phases else (),
+                      claims=[kv.evict_claim(p, cid)]))
+    return m
+
+
+def _add_session(m: Module, spec: DecoderSpec, s: int, prompt_len: int,
+                 max_new: int) -> None:
+    """One session's resources + prefill->decode chain, appended to `m` (phase ids
+    continue from the module's tail -- which is why building upfront and admitting
+    mid-flight produce the IDENTICAL graph)."""
+    if prompt_len < 1 or max_new < 0:
+        raise ValueError(f"session {s} needs prompt_len >= 1 and max_new >= 0")
+    o, base = s * 10, 1000 * s
+    cap = prompt_len + max_new
+    tok, kvr, logi = o + 1, o + 3, o + 4
+    for r in (Resource(rid=tok, domain=Domain.RAM, shape=(cap,), name=f"TOK{s}"),
+              Resource(rid=kvr, domain=Domain.RAM,
+                       shape=(cap, max(1, spec.n_layers * spec.kv_dim)),
+                       name=f"KV{s}"),
+              Resource(rid=logi, domain=Domain.RAM, shape=(spec.vocab_size,),
+                       name=f"LOGITS{s}")):
+        m.add_resource(r)
+    pid = len(m.phases)
+    prev: tuple = ()
+    prefill = Claim(id=base + 1, opcode=Opcode.T_MACC, lane=Lane.T,
+                    stride_class=StrideClass.TILE,
+                    count=max(1, prompt_len * spec.n_layers), rd=(tok, _WTS),
+                    wr=(kvr,), op="gem.prefill", domain=Domain.RAM,
+                    bounds="assumed_safe")
+    m.add_phase(Phase(phase_id=pid, deps=prev, claims=[prefill]))
+    prev = (pid,)
+    pid += 1
+    for t in range(max_new):
+        dec = Claim(id=base + 100 + t, opcode=Opcode.T_MACC, lane=Lane.T,
+                    stride_class=StrideClass.TILE, count=max(1, spec.n_layers),
+                    rd=(tok, _WTS, kvr), wr=(kvr, logi, tok),
+                    op="gem.decode_step", domain=Domain.RAM, bounds="assumed_safe")
+        m.add_phase(Phase(phase_id=pid, deps=prev, claims=[dec]))
+        prev = (pid,)
+        pid += 1
 
 
 def batched_sessions_module(spec: DecoderSpec, sessions: tuple) -> Module:
@@ -149,37 +259,20 @@ def batched_sessions_module(spec: DecoderSpec, sessions: tuple) -> Module:
     m = Module(name=f"batched_sessions_{len(sessions)}x")
     m.add_resource(Resource(rid=_WTS, domain=Domain.RAM,
                             shape=(max(1, spec.n_layers),), name="WTS"))
-    pid = 0
     for s, (prompt_len, max_new) in enumerate(sessions):
-        if prompt_len < 1 or max_new < 0:
-            raise ValueError(f"session {s} needs prompt_len >= 1 and max_new >= 0")
-        o, base = s * 10, 1000 * s
-        cap = prompt_len + max_new
-        tok, kvr, logi = o + 1, o + 3, o + 4
-        for r in (Resource(rid=tok, domain=Domain.RAM, shape=(cap,), name=f"TOK{s}"),
-                  Resource(rid=kvr, domain=Domain.RAM,
-                           shape=(cap, max(1, spec.n_layers * spec.kv_dim)),
-                           name=f"KV{s}"),
-                  Resource(rid=logi, domain=Domain.RAM, shape=(spec.vocab_size,),
-                           name=f"LOGITS{s}")):
-            m.add_resource(r)
-        prev: tuple = ()
-        prefill = Claim(id=base + 1, opcode=Opcode.T_MACC, lane=Lane.T,
-                        stride_class=StrideClass.TILE,
-                        count=max(1, prompt_len * spec.n_layers), rd=(tok, _WTS),
-                        wr=(kvr,), op="gem.prefill", domain=Domain.RAM,
-                        bounds="assumed_safe")
-        m.add_phase(Phase(phase_id=pid, deps=prev, claims=[prefill]))
-        prev = (pid,)
-        pid += 1
-        for t in range(max_new):
-            dec = Claim(id=base + 100 + t, opcode=Opcode.T_MACC, lane=Lane.T,
-                        stride_class=StrideClass.TILE, count=max(1, spec.n_layers),
-                        rd=(tok, _WTS, kvr), wr=(kvr, logi, tok),
-                        op="gem.decode_step", domain=Domain.RAM, bounds="assumed_safe")
-            m.add_phase(Phase(phase_id=pid, deps=prev, claims=[dec]))
-            prev = (pid,)
-            pid += 1
+        _add_session(m, spec, s, prompt_len, max_new)
+    return m
+
+
+def admit_session(m: Module, spec: DecoderSpec, prompt_len: int, max_new: int) -> Module:
+    """A3: mid-flight admission IS appending phases. Session s joins a LIVE batched
+    module as a fresh rid band + its own prefill->decode chain; no existing phase or
+    claim changes, and the result is CLAIM-IDENTICAL to having built the batch upfront
+    (pinned by hash_module equality in the tests) -- so the scheduler's overlap story
+    is unchanged by WHEN a session arrived."""
+    s = (len(m.resources) - 1) // 3            # sessions so far (3 rids each + WTS)
+    _add_session(m, spec, s, prompt_len, max_new)
+    m.name = f"batched_sessions_{s + 1}x"
     return m
 
 
@@ -206,11 +299,12 @@ class BatchCertificate:
 
 
 def certify_batch(spec: DecoderSpec, sessions: tuple, h: HProfile, theta: Theta,
-                  policy: Policy = PERF) -> tuple:
+                  policy: Policy = PERF, *, module: Module | None = None) -> tuple:
     """Price + place one batch of sessions: optimize the merged module (per-claim costs
     -> durations), schedule it barriered AND token-pipelined, certify the win. Returns
-    (certificate, the pipelined schedule)."""
-    m = batched_sessions_module(spec, sessions)
+    (certificate, the pipelined schedule). Pass `module` to certify a LIVE (e.g.
+    mid-flight-admitted) module instead of rebuilding from `sessions`."""
+    m = module if module is not None else batched_sessions_module(spec, sessions)
     result = optimize(m, h, theta, policy)
     dur = durations_from(result)
     barriered = schedule_eft(m, dur, target=h)

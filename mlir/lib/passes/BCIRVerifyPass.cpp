@@ -27,7 +27,9 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 
 using namespace mlir;
@@ -424,6 +426,101 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
                   << entry.first << " without an atomic/barriered hazard";
               ok = false;
             }
+          }
+        }
+      }
+    }
+
+    // R3/EV (driver roadmap Part VII A1+B1): EVENT PHASES -- first-class asynchronous
+    // entry. EV1: an event phase (non-empty `event` source) declares no phase deps --
+    // its trigger is the event, never program order. EV2: every named source is ARMED
+    // by an explicit irq.unmask:<src> claim in a program phase (enablement is a claim
+    // over the controller resource, never implicit). EV3 (the interrupt-context
+    // ordering seam): a resource WRITTEN by an event phase may be touched by program
+    // claims only inside a masked window (irq.mask:<src> .. irq.unmask:<src>; program
+    // phases walked in id order, claims in textual order -- the same first-slice bound
+    // as the oracle) or by a Lane::A atomic claim. Mirrors kbcir/events.py
+    // check_event_phases; vacuous when no phase carries an event source.
+    {
+      constexpr StringLiteral kMask("irq.mask:"), kUnmask("irq.unmask:");
+      SmallVector<PhaseOp> eventPhases, programPhases;
+      for (StringRef name : phases) {
+        PhaseOp p = phaseOps[name];
+        if (!p.getEvent().empty())
+          eventPhases.push_back(p);
+        else
+          programPhases.push_back(p);
+      }
+      if (!eventPhases.empty()) {
+        for (PhaseOp p : eventPhases) {
+          if (!p.getDeps().empty()) {
+            p.emitError("R3: EV1: event phase @")
+                << p.getSymName() << " (source '" << p.getEvent()
+                << "') declares phase deps -- asynchronous entry has no program-order "
+                   "predecessor (hazards + masking order it)";
+            ok = false;
+          }
+        }
+        llvm::sort(programPhases,
+                   [](PhaseOp a, PhaseOp b) { return a.getId() < b.getId(); });
+        std::set<std::string> armed;
+        for (PhaseOp p : programPhases)
+          for (ClaimOp c : claimsByPhase.lookup(p.getSymName()))
+            if (c.getOp().starts_with(kUnmask))
+              armed.insert(c.getOp().drop_front(kUnmask.size()).str());
+        std::set<std::string> seenSources;
+        for (PhaseOp p : eventPhases) {
+          std::string src = p.getEvent().str();
+          if (seenSources.insert(src).second && !armed.count(src)) {
+            p.emitError("R3: EV2: event source '")
+                << src << "' is never armed -- enablement must be an explicit "
+                << kUnmask << src << " claim in the program flow, never implicit";
+            ok = false;
+          }
+        }
+        std::map<std::string, std::set<std::string>> handlerWrites;
+        for (PhaseOp p : eventPhases)
+          for (ClaimOp c : claimsByPhase.lookup(p.getSymName()))
+            for (Attribute a : c.getWrites())
+              if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
+                handlerWrites[ref.getValue().str()].insert(p.getEvent().str());
+        std::set<std::string> masked;
+        for (PhaseOp p : programPhases) {
+          for (ClaimOp c : claimsByPhase.lookup(p.getSymName())) {
+            StringRef opName = c.getOp();
+            if (opName.starts_with(kMask)) {
+              masked.insert(opName.drop_front(kMask.size()).str());
+              continue;
+            }
+            if (opName.starts_with(kUnmask)) {
+              masked.erase(opName.drop_front(kUnmask.size()).str());
+              continue;
+            }
+            if (c.getLane() == Lane::A) // single-claim atomicity: the other legal shape
+              continue;
+            auto touch = [&](ArrayAttr refs) {
+              for (Attribute a : refs) {
+                auto ref = dyn_cast<FlatSymbolRefAttr>(a);
+                if (!ref)
+                  continue;
+                auto it = handlerWrites.find(ref.getValue().str());
+                if (it == handlerWrites.end())
+                  continue;
+                for (const std::string &src : it->second) {
+                  if (!masked.count(src)) {
+                    c.emitError("R3: EV3: claim ")
+                        << c.getSymName() << " touches @" << ref.getValue()
+                        << ", which the '" << src
+                        << "' handler writes, outside a masked window -- mask the "
+                           "source around it or make the touch a Lane.A atomic (the "
+                           "interrupted flow must order against the handler)";
+                    ok = false;
+                  }
+                }
+              }
+            };
+            touch(c.getReads());
+            touch(c.getWrites());
           }
         }
       }

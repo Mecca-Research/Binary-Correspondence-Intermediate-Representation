@@ -2004,10 +2004,13 @@ R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted
   tuple-length mis-sizing of `char s[] = "..."` globals), derived `#include`s (+ the quarantine
   header when a masked access needs it) — so **two EMITTED TUs link to each other** with no
   original source in the image, behavior-equivalent to the reference build
-  (`test_cfront_link.py`; `check_runtime.sh` #link). *Remaining (named):* address-constant
-  (`&x`) and constant-arithmetic global initializers (need the §5.9 constant-expression
-  evaluator; the linkable emit still refuses them LOUDLY); C-twin file-scope global rendering
-  (global definitions stay oracle-side by design).
+  (`test_cfront_link.py`; `check_runtime.sh` #link). *Remaining (named):* ✅ **CLOSED (wave 13)** — address-constant
+  (`&x`) global initializers render as the linker's relocation (forward references still
+  refuse: use before declaration is not C), and `sizeof`/`_Alignof` fold inside global
+  initializers against the CHOSEN ABI's layout oracle (`_fold_const`'s opt-in `resolve`
+  callback — the parse-time and static-local vocabularies stay sizeof-free, so the C twin's
+  `ce_expr` parity is untouched). Still by design: C-twin file-scope global rendering
+  (global definitions stay oracle-side).
 - ✅ **Compile-database support** — `bcir-cfront -p` consumes `compile_commands.json` (a directory or
   the file), compiling every entry with its own `-I`/`-D`/`-U`/`-std`/`--target` flags (both the
   `arguments` and `command` entry forms; entry `-I` resolves against the entry directory).

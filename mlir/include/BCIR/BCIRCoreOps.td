@@ -114,7 +114,13 @@ def BCIR_ResourceOp : BCIR_Op<"resource", [Symbol]> {
 
 def BCIR_PhaseOp : BCIR_Op<"phase", [Symbol]> {
   let summary = "A scheduling phase with explicit dependency edges (LangRef Sec. 6)";
-  let arguments = (ins SymbolNameAttr:$sym_name, I32Attr:$id, FlatSymbolRefArrayAttr:$deps);
+  // `event` (driver roadmap Part VII A1): "" = an ordinary program-ordered phase (the
+  // entire pre-A1 corpus -- non-disturbance); non-"" names the interrupt/event source
+  // that TRIGGERS this phase asynchronously. The EV laws in -bcir-verify order it
+  // against the program flow (no phase deps; explicit irq.unmask arming; masked-window
+  // or atomic touches of handler-written resources).
+  let arguments = (ins SymbolNameAttr:$sym_name, I32Attr:$id, FlatSymbolRefArrayAttr:$deps,
+                       DefaultValuedAttr<StrAttr, "\"\"">:$event);
   let assemblyFormat = "$sym_name attr-dict";
 }
 

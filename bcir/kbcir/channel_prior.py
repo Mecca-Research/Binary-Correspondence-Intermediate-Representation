@@ -245,3 +245,83 @@ def load_channel_prior(path: str, expect_channels: list):
     table = {tuple(int(v) for v in k.split(",")): name
              for k, name in doc.get("table", {}).items()}
     return prior, table
+
+
+# --- D3.4: the table wired into orchestrate (opt-in) + the tower certificate --------------------
+
+
+def orchestrate_guided(module, channels: list, theta: Theta, policy: Policy = PERF, *,
+                       table: dict, dims: dict):
+    """D3.4: the per-shape-class table wired into the TOWER pass -- opt-in, so
+    `channels.orchestrate` itself stays untouched (the module's own non-disturbance
+    precedent). `dims` maps a gemm claim id to its (M, N, K) -- dimensions the module's
+    author already knows. Every gemm claim whose class HITS the table pins its verified
+    winner into a REDUCED tower; channels that suit the module's OTHER claims always
+    stay (their placement remains the exhaustive greedy pass); ANY miss falls back to
+    the full tower (exactness is never delegated to the learned layer). Returns
+    (plan, n_channels_priced): the win is fewer whole-module optimize() runs -- the
+    dominant cost of `orchestrate` -- and the certificate below is the safety witness
+    (a poisoned table CHANGES PLACEMENTS and is caught, mismatches must be 0)."""
+    from ..channels import orchestrate
+    from .realize import _flatten
+    keep: set = set()
+    full = False
+    for _, claim in _flatten(module):
+        if claim.id in dims:
+            M, N, K = dims[claim.id]
+            hit = table.get(shape_class(M, N, K))
+            suits = {ch.name for ch in channels if channel_suits(claim, ch)}
+            if hit is not None and hit in suits:
+                keep.add(hit)                          # the certified winner, pinned
+            else:
+                full = True                            # a miss prices the whole tower
+        else:
+            keep.update(ch.name for ch in channels if channel_suits(claim, ch))
+    tower = channels if full else [ch for ch in channels if ch.name in keep]
+    if not tower:
+        tower = channels
+    return orchestrate(module, tower, theta, policy), len(tower)
+
+
+@dataclass(frozen=True)
+class OrchestratePriorCertificate:
+    """The tower-pass safety witness (the ChannelPriorCertificate recipe one level up):
+    over fixture modules, guided placements must equal the full-tower placements CLAIM
+    FOR CLAIM (`mismatches` MUST be 0); the reduction in whole-module optimize() runs
+    is the earned win."""
+
+    checked: int
+    mismatches: int
+    priced_guided: int
+    priced_exhaustive: int
+
+    @property
+    def admitted(self) -> bool:
+        return self.checked >= 1 and self.mismatches == 0
+
+    @property
+    def reduction(self) -> float:
+        if self.priced_exhaustive == 0:
+            return 0.0
+        return 1.0 - self.priced_guided / self.priced_exhaustive
+
+
+def orchestrate_prior_certificate(fixtures: list, channels: list, theta: Theta,
+                                  policy: Policy = PERF, *,
+                                  table: dict) -> OrchestratePriorCertificate:
+    """Certify the wiring over `fixtures` (a list of (module, dims) pairs): run the
+    guided pass and the exhaustive pass, compare every placement's chosen channel."""
+    from ..channels import orchestrate
+    checked = mismatches = pg = pe = 0
+    for module, dims in fixtures:
+        guided, priced = orchestrate_guided(module, channels, theta, policy,
+                                            table=table, dims=dims)
+        exact = orchestrate(module, channels, theta, policy)
+        pg += priced
+        pe += len(channels)
+        for a, b in zip(guided.placements, exact.placements):
+            checked += 1
+            if (a.claim_id, a.channel) != (b.claim_id, b.channel):
+                mismatches += 1
+    return OrchestratePriorCertificate(checked=checked, mismatches=mismatches,
+                                       priced_guided=pg, priced_exhaustive=pe)

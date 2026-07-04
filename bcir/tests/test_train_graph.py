@@ -277,6 +277,26 @@ def test_streamed_gradients_average_to_the_full_batch_gradient():
     assert all(abs(a - c) <= 1e-12 for a, c in zip(full, combined))
 
 
+def test_d1_8_the_stream_count_is_a_plan_decision():
+    """D1 step 8: the optimizer CHOOSES the stream count from the cost model -- the
+    sweep covers every batch divisor, the chosen count's pipelined makespan is the
+    swept minimum (measured here: the frontier is genuinely non-monotonic, so the
+    choice is a real decision, not a formality), it never loses to the unstreamed
+    step, and max_streams caps the sweep honestly."""
+    from bcir.kbcir.train_graph import plan_stream_count
+    spec = TrainStepSpec(batch=8)
+    plan = plan_stream_count(spec, AVX, COOL)
+    assert [s for s, _ in plan.swept] == [1, 2, 4, 8]            # every divisor priced
+    assert plan.admitted
+    assert plan.certificate.streams == plan.streams
+    assert plan.certificate.pipelined == min(mk for _, mk in plan.swept)
+    assert plan.certificate.pipelined <= dict(plan.swept)[1]     # never worse than 1x
+    assert len({mk for _, mk in plan.swept}) > 1                 # the sweep discriminates
+    capped = plan_stream_count(spec, AVX, COOL, max_streams=2)
+    assert capped.streams in (1, 2)
+    assert [s for s, _ in capped.swept] == [1, 2]
+
+
 if __name__ == "__main__":
     import sys
 
