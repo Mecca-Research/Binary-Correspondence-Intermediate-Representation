@@ -424,6 +424,13 @@ drop-in loading of a modern open-weight chat model.
    `ModelManifest.tokenizer_digest` (the wrong tokenizer for a model is detected by hash).
    Byte-for-byte parity against a specific released model lands when its real tokenizer.json
    is ingested (the loader accepts the real shape; the exact pre-tokenizer regex is per-model).
+   ✅ **The SentencePiece half LANDED** (`spm.py`, `test_model_spm.py`): `tokenizer.model`
+   decodes dep-free (a minimal protobuf wire reader for the fields SentencePiece writes,
+   unknown fields skipped by wire type), and the Llama-family SCORE-based BPE encodes —
+   merges walk EXISTING intermediate pieces only (the real merge-chain law, pinned), byte
+   fallback through the `<0xXX>` alphabet round-trips arbitrary UTF-8, control pieces never
+   leak into decode, and the file sha ties to the rung-1 manifest. A real released
+   `tokenizer.model` runs via the `BCIR_HF_MODEL_DIR` asset gate.
 3. ✅ **Reference decode — LANDED** (`bcir/frontends/models/decode.py`, `test_model_decode.py`):
    a slow, dependency-light dense-decoder reference (the Gemma/Llama pre-norm shape) COMPOSED
    from the existing oracle pieces — `embedding_lookup` → per layer [`rmsnorm_reference` →
@@ -475,8 +482,20 @@ drop-in loading of a modern open-weight chat model.
    `bcir_gqa_attention` / `bcir_gqa_attention_row` (≤1e-12 differential vs the oracle;
    ragged-group refusal parity; the cached row equals the full recompute's last row
    **bitwise** — one shared kernel path). **Rung 4's real-weight ingestion is now unblocked.**
-6. **Serving endpoint** — streaming decode, schema-constrained tool-call output, telemetry frames,
-   replay manifests.
+6. ◑ **Serving endpoint — FIRST SLICE LANDED** (`serve.py`, `test_model_serve.py`):
+   `generate()` as a PLANNED, PROOF-CARRYING artifact — the D5 statement made concrete.
+   The session module's phase structure IS the prefill/decode split (one batched prefill
+   claim, then one decode claim per token serialized by its true TOK/KV read-write hazards
+   — the RAW chain is the autoregression); it is R-law clean and hydrates to an
+   R10/R11-clean StreamPack like any program. The `SessionCertificate` prices the split
+   (batched prefill ≤ token-by-token, measured 3×, gated ≥2×). Execution emits
+   `decode_with_kv_cache`'s ids BIT-FOR-BIT with the flight recorder on: one schema-valid
+   DataDNA frame per token through a Broker into a DurableLog that round-trips, a live
+   `gem.kv_cache`-shaped record obeying the paging law, and ONE R13 manifest per generation
+   (prompt/ids digests as artifacts; `replay` reproduces the plan; distinct prompts →
+   distinct digests). The wave-10 closer ties rungs 2+4+6: TEXT → SP encode → an ingested
+   HF-layout checkpoint → generate → SP decode → TEXT. *Remaining (rung 6):* streaming/
+   chunked emission, schema-constrained tool-call output, batched multi-session serving.
 7. **Scale-out** — continuous batching, paged KV, multi-device placement, expert/tensor
    parallelism for larger Qwen/Gemma and eventually GLM-class models.
 8. **Fine-tune/adapt** — LoRA/QLoRA-style adapters as first-class artifacts before full-parameter
