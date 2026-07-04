@@ -620,3 +620,38 @@ here. Items are ranked within each bucket.
 of every collected datasheet), then A2 (unlocks the DMA half, including the 16750's DMA
 signaling), with B2 tripping automatically as fixtures land. A3/A4/A5 proceed independently
 on the ML/compiler tracks and gate nothing in the driver queue.
+
+---
+
+## Part VIII — The machine-code / HAL / ABI audit (2026-07-04): the MC-track
+
+Wave 14 audited BCIR's machine-code capabilities against the classic HAL/ISA frame
+(Microchip MCU16 HAL, the LinuxCNC HAL Handbook, two ISA texts, the x86 opcode
+reference) with a three-rail repo sweep. The full audit — executive verdicts V1–V9, the
+machine-model characterization, the toolchain and ABI ledgers, and the ranked gap
+register — lives in **[`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md)**.
+
+The headline verdicts:
+
+- **No dedicated HAL backend is needed** — the registry/channel/manifest stack IS the
+  HAL's schema + facade layers; the missing parts are resident drivers (runtime),
+  a BSP-style name-binding table, and the `halcmd`-class operator tools.
+- **HAL functions migrate into the BCIR ABI as `RuntimeChannel` v2** — an append-only,
+  versioned hook vtable (open/claim, map, submit, sync, event delivery) with POSIX
+  backing; laws stay compile-time, hooks observe-and-refuse (D-R1 at runtime).
+- **The BCIR "ISA" is the claim vocabulary + StreamPack encoding** — no registers, no
+  flags, no branch opcodes *by design*; the honest boundaries are the emit-only control
+  tree (erased before planning) and affine-only addressing.
+- **Toolchain**: loader/codec/verifier/compiler-driver are native and dual-rail; object
+  code rides the resident compiler (gate intact); **disassembler, hex dump, pack-level
+  linker, and peek/poke are the missing native tools**.
+
+**The MC-track** (ranked; S/M/L = effort): MC1 disassembler + hex dump + listing (S) →
+MC2 peek/poke with R11-governed pokes (S) → MC3 ROP v2 registry assembly with macros +
+the BSP binding table (M) → MC4 carry-as-data + typed predicates (M) → MC6 HAM/semantic
+swap composed from the wave-13 machinery (M) → MC7 pack-level linking + symbol section
+(M) → MC8 RuntimeChannel v2 hook vtable, designed alongside the deep-driver analysis (L)
+→ MC9 POSIX compat completion (M). MC5 (CFG-aware planning) is parked until a driver
+fixture forces it. **Sequencing into the deep-driver phase:** MC1–MC3 first (the tools
+driver bring-up uses daily), MC8's hook list derived from the first real driver's needs
+— exactly as Part VII derived A1/A2 from the datasheets.
