@@ -1532,6 +1532,38 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R22 over the DEVICE-MANIFEST seam (Phase D hardening, D-R4's tiling law on the law
+    // rail): a gem.matmul ADJACENT to a bcir.device_manifest submits tiles the hardware can
+    // actually schedule -- every tile extent must be a MULTIPLE of the device's native tile
+    // (the max over banks: a tile the widest bank cannot slice fragments somewhere). A 15x15
+    // tile against a 16-native device is runtime fragmentation, refused at compile time.
+    // Vacuous with no adjacent pair (non-disturbance). Oracle twin: check_strided_view.
+    root->walk([&](GEMMatmulOp mm) {
+      Operation *prev = mm->getPrevNode();
+      if (!prev)
+        return;
+      if (auto dev = dyn_cast<DeviceManifestOp>(prev)) {
+        int64_t native = 1;
+        for (int64_t t : dev.getNativeTiles())
+          native = std::max(native, t);
+        if (native <= 1)
+          return;
+        const int64_t tiles[3] = {static_cast<int64_t>(mm.getTileM()),
+                                  static_cast<int64_t>(mm.getTileN()),
+                                  static_cast<int64_t>(mm.getTileK())};
+        const char *names[3] = {"tile_m", "tile_n", "tile_k"};
+        for (int i = 0; i < 3; ++i)
+          if (tiles[i] % native != 0) {
+            mm.emitError("R22: gem.matmul ")
+                << mm.getSymName() << " submits " << names[i] << " = " << tiles[i]
+                << " against the adjacent bcir.device_manifest @" << dev.getSymName()
+                << " whose native tile is " << native
+                << " (runtime fragmentation is a compile-time refusal)";
+            ok = false;
+          }
+      }
+    });
+
     // R11: generation validity -- pack tags match the live registry maxima; a
     // mismatch is a stale pack that must rehydrate (patch/repack/replan).
     uint64_t regMapGen = 0, regDataGen = 0;

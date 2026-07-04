@@ -246,6 +246,20 @@ naive recompute); C twins: `runtime/c/bcir_decode.c::bcir_gqa_attention` /
 `bcir_gqa_attention_row` (the cached row is the full recompute's last row **bitwise**,
 one shared kernel path).
 
+The **driver-seam hardening laws** (Phase D, the D-R rules) ride the same numbers:
+**`bcir.device_manifest`** is the static hardware schema (D-R1) — bank names/tiers/
+capacities/native tiles + the row-major Q8 interconnect distance matrix, verified
+internally consistent (parallel arrays; positive capacities/tiles; a square,
+zero-diagonal, positive-off-diagonal, **symmetric** distance matrix — an interconnect
+is a metric). The seam law: a `gem.matmul` adjacent to a manifest must submit tiles
+that are **multiples of the device's native tile** (R22 — a 15×15 tile against a
+16-native device is runtime fragmentation, refused at compile time). Discovery is
+veto-not-steer by construction: no adaptive re-planning op exists. Oracle twins:
+`kbcir/device_manifest.py` (`check_device_manifest`, `check_strided_view`,
+`check_bank_moves` — memory-tier crossings need an explicit `mem.move.*`; MMIO exempt,
+its ordering is the R3 rail — and `probe_agree`); negatives in
+`mlir/test/passes/verify_device_manifest.mlir`.
+
 R19/R20/R21 are **first-class `-bcir-verify` MLIR laws**, dual-rail with the
 oracle's `verify.verify_timing` / `verify.verify_lifetime` (run through
 `verify.verify_smart_lowering` alongside R14–R17 and R22), each with a negative

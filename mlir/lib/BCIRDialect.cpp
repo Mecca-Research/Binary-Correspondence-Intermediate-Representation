@@ -993,6 +993,51 @@ static ::mlir::LogicalResult verifyAtomicAddr(::mlir::Operation *op, ::mlir::Typ
   return ::mlir::success();
 }
 
+::mlir::LogicalResult DeviceManifestOp::verify() {
+  // D-R1: the static hardware schema's internal consistency (the oracle twin is
+  // check_device_manifest). Bank arrays parallel; capacities/tiles positive; the distance
+  // matrix square, zero-diagonal, positive off-diagonal, and SYMMETRIC (a metric).
+  auto count = [](llvm::StringRef csv) {
+    return csv.empty() ? size_t(0) : size_t(csv.count(',') + 1);
+  };
+  size_t n = count(getBanks());
+  if (n < 1)
+    return emitOpError() << "manifest: no banks";
+  if (count(getDomains()) != n)
+    return emitOpError() << "manifest: " << n << " banks but " << count(getDomains())
+                         << " domains";
+  auto caps = getCapacities();
+  auto tiles = getNativeTiles();
+  if (caps.size() != n || tiles.size() != n)
+    return emitOpError() << "manifest: " << n << " banks but " << caps.size()
+                         << " capacities / " << tiles.size() << " native_tiles";
+  for (size_t i = 0; i < n; ++i) {
+    if (caps[i] < 1)
+      return emitOpError() << "bank " << i << ": capacity must be >= 1, got " << caps[i];
+    if (tiles[i] < 1)
+      return emitOpError() << "bank " << i << ": native_tile must be >= 1, got " << tiles[i];
+  }
+  auto d = getDistance();
+  if (d.size() != n * n)
+    return emitOpError() << "manifest: distance has " << d.size() << " entries, want "
+                         << n * n;
+  for (size_t i = 0; i < n; ++i)
+    for (size_t j = 0; j < n; ++j) {
+      int64_t v = d[i * n + j];
+      if (i == j && v != 0)
+        return emitOpError() << "distance[" << i << "][" << i
+                             << "] must be 0 (staying put is free), got " << v;
+      if (i != j && v < 1)
+        return emitOpError() << "distance[" << i << "][" << j << "] must be >= 1 Q8, got "
+                             << v;
+      if (v != d[j * n + i])
+        return emitOpError() << "distance[" << i << "][" << j << "] " << v
+                             << " != distance[" << j << "][" << i << "] " << d[j * n + i]
+                             << " (asymmetric)";
+    }
+  return ::mlir::success();
+}
+
 void BCIRDialect::initialize() {
   addOperations<
 #define GET_OP_LIST

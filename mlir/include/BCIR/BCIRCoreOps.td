@@ -430,6 +430,29 @@ def BCIR_AbiContractOp : BCIR_Op<"abi_contract", [Symbol]> {
   let hasVerifier = 1;
 }
 
+def BCIR_DeviceManifestOp : BCIR_Op<"device_manifest", [Symbol]> {
+  let summary = "The driver seam's static hardware schema: banks + Q8 interconnect distances (D-R1)";
+  // The law-rail twin of kbcir/device_manifest.py::DeviceManifest -- the immutable type object
+  // the compiler plans against: bank names/tiers/capacities/native tiles as parallel arrays and
+  // the row-major Q8 pairwise distance matrix. hasVerifier enforces internal consistency (array
+  // lengths agree; capacities/tiles positive; the distance matrix square, zero-diagonal,
+  // positive off-diagonal, SYMMETRIC -- an interconnect is a metric). The NATIVE-TILE seam to an
+  // adjacent gem.matmul lives in -bcir-verify (R22: a 15x15 tile against a 16-native device is
+  // runtime fragmentation, refused at compile time). Discovery law (D-R1): a runtime probe may
+  // VETO a manifest (caps mismatch -> refuse), never STEER -- there is no adaptive re-planning
+  // op on purpose. Oracle twin: check_device_manifest / probe_agree.
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    StrAttr:$device,
+    StrAttr:$banks,                           // comma-joined bank names (positional key)
+    StrAttr:$domains,                         // comma-joined tier names (RAM/HBM/VRAM/NVM/CXL)
+    DenseI64ArrayAttr:$capacities,            // bytes, one per bank
+    DenseI64ArrayAttr:$native_tiles,          // 1 == untiled, one per bank
+    DenseI64ArrayAttr:$distance);             // row-major n*n Q8 multipliers
+  let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
+}
+
 def BCIR_CRegReadOp : BCIR_Op<"creg_read"> {
   let summary = "Read an x86-64 control register (boot/CPU-state asm edge, D1.3)";
   // A control-register read (CR0/CR2/CR3/CR4/CR8) is a TRUSTED OPAQUE EFFECT EDGE -- there is no C
