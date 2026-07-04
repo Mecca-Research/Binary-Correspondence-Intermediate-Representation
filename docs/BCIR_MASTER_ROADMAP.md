@@ -573,6 +573,16 @@ destabilize the keystone.
 > and the firmware specs are verified *parser-kernel* opportunities, never implementation targets).
 > The `bcir.portio` MLIR op (SEG8.2) is **landed** (the x86 port-I/O law-rail twin reusing the `bcir.asm`
 > → `llvm.inline_asm` path); the next code slice is `bcir.volatile_load/store` (D1.2), after the hardening gate.
+> **The driver SEAM is now hardened (Part VI of the driver roadmap, 2026-07-04):** six proposed
+> hardening principles audited — command-buffer-only dispatch and ISA-definition passthrough were
+> already BCIR's construction (the StreamPack is the command buffer; ODS/table generators are the
+> ISA language); the four with gaps landed as the **D-R rules**: the attested `DeviceManifest`
+> (`kbcir/device_manifest.py` + `bcir.device_manifest` on the law rail — banks, Q8 interconnect
+> distances, digest, veto-not-steer `probe_agree`), the bank-typing law (`check_bank_moves`:
+> memory-tier crossings need an explicit `mem.move.near/far`; MMIO exempt under R3; corpus-vacuous
+> by measurement), distance-priced moves (`move_cost`), and strided-view-only allocation with the
+> native-tile fragmentation refusal (`StridedView`/`check_strided_view` + the R22 gem.matmul seam:
+> a 15×15 tile against a 16-native device is a compile-time error).
 
 The Hardware Description Layer. With verifiable C in hand:
 
