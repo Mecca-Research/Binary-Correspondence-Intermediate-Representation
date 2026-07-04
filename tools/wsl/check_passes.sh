@@ -211,6 +211,9 @@ echo "[passes] R22/R23 rung-5 LLM decode ops (embedding/rmsnorm/rope/gqa_attenti
 echo "[passes] Phase D driver-seam hardening (bcir.device_manifest: asymmetric/free-hop interconnect lies; the R22 native-tile fragmentation seam; a legal pair)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_device_manifest.mlir" \
   && echo "  PASS verify_device_manifest.mlir" || { echo "  FAIL verify_device_manifest.mlir"; fail=1; }
+echo "[passes] Part VII A1+B1 event phases (EV1 deps-on-asynchronous-entry, EV2 unarmed source, EV3 unmasked touch of a handler-written resource; the lawful U4 fixture)"
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_event_phases.mlir" \
+  && echo "  PASS verify_event_phases.mlir" || { echo "  FAIL verify_event_phases.mlir"; fail=1; }
 echo "[passes] R18 indirect-callee signature (SS5.14 Phase 2: a carried callee_sig must be well-formed; vacuous when absent)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_callee_sig.mlir" \
   && echo "  PASS verify_callee_sig.mlir" || { echo "  FAIL verify_callee_sig.mlir"; fail=1; }

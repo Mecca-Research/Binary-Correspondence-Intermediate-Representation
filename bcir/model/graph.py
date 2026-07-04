@@ -130,6 +130,13 @@ class Phase:
     phase_id: int
     deps: tuple[int, ...] = ()
     claims: list[Claim] = field(default_factory=list)
+    event: str = ""                  # OPTIONAL event source (driver roadmap Part VII A1): "" = an
+                                     # ordinary program-ordered phase (the entire existing corpus);
+                                     # non-"" names the interrupt/event source that TRIGGERS this
+                                     # phase -- asynchronous entry, checked by
+                                     # `kbcir.events.check_event_phases` (EV1-EV3). Digest-excluded
+                                     # (R13's hash_module folds a fixed field list), so the default
+                                     # is non-disturbing over every existing module.
 
 
 @dataclass
