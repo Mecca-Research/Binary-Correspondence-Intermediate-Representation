@@ -591,6 +591,17 @@ destabilize the keystone.
 > by measurement), distance-priced moves (`move_cost`), and strided-view-only allocation with the
 > native-tile fragmentation refusal (`StridedView`/`check_strided_view` + the R22 gem.matmul seam:
 > a 15×15 tile against a 16-native device is a compile-time error).
+> **The full driver catalog + build order is now Part IX of the driver roadmap (2026-07-04):**
+> the per-driver blueprint contract (the UART U0–U9 pattern generalized — every device gets its
+> own `BCIR_<DEVICE>_DRIVER_BLUEPRINT.md` authored in its own research session), the
+> **ML-seam-per-device-class mandate** (every hardware class gets a learned prior on the D3
+> tile/channel-prior recipe — the reason BCIR builds drivers at all), the **BCIR-IPC track**
+> (Linux IPC slimmed to a registry-first io_uring-shaped ring substrate — IPC-R1..IPC-R4 —
+> carrying JIT microkernels + a modular, measured POSIX shim with a Linux-Master-Kernel
+> fallback), and the phased build order (waves D0 boot → D1 substrate → D2 discovery → D3
+> interrupts → D4 time → D5 PCIe → D6 DMA/IOMMU → D7 BCIR-IPC → D8 storage → D9 filesystems →
+> D10 networking → D11 USB → D12 security/TPM → D13 virt/SEV-SNP → D14 display → D15 GPU
+> compute, with arch backends and firmware/DDR scoped out of the driver waves).
 
 The Hardware Description Layer. With verifiable C in hand:
 

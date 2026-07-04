@@ -15,6 +15,14 @@
 > blueprint for Phase D slice 1** (the 16550/16750 driver program: normative device model from
 > thirteen vendor documents, variant + capability matrices, field-errata research, and build
 > slices U0–U9 with laws, tests, gates and ML placement already decided).
+>
+> **Structure:** Parts I–V are the original bring-up/placement/ordering analysis; Part VI is
+> the hardened driver seam (D-R1..D-R6); Part VII the remaining-gaps audit (A/B tracks, now
+> landed); Part VIII the machine-code/HAL/ABI/ISA audit (the MC-track); and **Part IX the
+> comprehensive driver catalog** — the per-driver blueprint contract, the
+> ML-seam-per-device-class mandate, the **BCIR-IPC track** (Linux IPC slimmed to a
+> registry-first ring substrate for JIT microkernels + modular POSIX compat), and the full
+> phased build order (waves D0–D15 + arch/firmware scoping).
 
 ## 0. The one-paragraph orientation
 
@@ -655,3 +663,261 @@ swap composed from the wave-13 machinery (M) → MC7 pack-level linking + symbol
 fixture forces it. **Sequencing into the deep-driver phase:** MC1–MC3 first (the tools
 driver bring-up uses daily), MC8's hook list derived from the first real driver's needs
 — exactly as Part VII derived A1/A2 from the datasheets.
+
+---
+
+## Part IX — The comprehensive driver catalog + build order + BCIR-IPC (2026-07-04)
+
+This part upgrades the uploaded "Binary Correspondence Driver Roadmap and Comprehensive
+Driver Catalog" into the BCIR frame, with three additions the catalog left open: the
+**per-driver blueprint contract** (the UART pattern, generalized so every future driver
+is authored the same way), the **ML-seam-per-device-class mandate** (each hardware class
+gets its own learned prior — the reason BCIR builds drivers at all), and the **BCIR-IPC
+track** (the Linux-IPC research folded into a registry-first IPC that carries JIT
+microkernels + modular POSIX compat). The catalog then sequences every named device into
+build waves in dependency order.
+
+> **Standing frame (unchanged from Parts I–VIII).** A BCIR driver is a *lowering backend +
+> a small hot execution core*, not a runtime object subsystem: portable claims lower to
+> device-native packets/register writes, then execute under phase ordering, hazard rules,
+> and R11 generation guards. Higher drivers compile into the registries the lower ones
+> stabilize — which is exactly why order matters. The wave-11..13 machinery makes this
+> concrete: DeviceManifest + StridedView (D-R1..D-R4), event phases (A1/B1), and DMA
+> descriptor rings (A2) are the substrate every device backend below compiles into.
+
+### IX.1 The per-driver blueprint contract (generalize the UART U0–U9 pattern)
+
+Every driver in the catalog is built in **its own research session** that first produces a
+`BCIR_<DEVICE>_DRIVER_BLUEPRINT.md` (the UART one is the worked reference —
+`BCIR_UART_DRIVER_BLUEPRINT.md`, 1042 lines, slices U0–U9). A blueprint is **normative
+before any code**: it decides the design so the implementing session does not re-derive
+it. Required sections, mirroring the UART blueprint's shape:
+
+| § | Section | What it fixes |
+|---|---|---|
+| 0 | How to use (slice order, gates, house disciplines) | The build contract |
+| 1 | **Normative device model** (register file / command format / descriptor layout, sourced from the spec PDFs) | The single source of truth for the generator, laws, sim, tests |
+| 2 | **Variant matrix** (what the registry parameterizes across chip revisions) | One logical model, N placements |
+| 3 | Field-reality quirks (errata not in any datasheet) | The traps |
+| 4 | Architecture map — how each piece lands on **existing** BCIR machinery (table below) | No new subsystems |
+| 5 | Build slices (`D<dev>0..N`, each one PR-sized commit, independently gated) | The increment plan |
+| 6 | Performance model + measured-then-pinned gates (what "max performance" means, numerically) | The win, measured |
+| 7 | **ML placement card** (the device's learned prior — §IX.2) | The optimization seam |
+| 8 | Simulated-device behavioral contract (the sim the tests pin) | Hardware-free CI |
+| 9 | Deferred items + why | Honest scope |
+| 10 | Process requirements (six-artifact law, two-truth, prototype-then-port, registry registration, non-disturbance) | The house rules |
+| 11 | Acceptance checklist (definition of done) | The gate |
+
+**The architecture map — every driver lowers onto machinery that already exists** (this is
+why "no dedicated HAL backend" holds, Part VIII V1):
+
+| Driver concern | BCIR machinery it compiles into | Anchor |
+|---|---|---|
+| Register file / MMIO block | `RegMapContract` (UART U0) + `DeviceManifest` banks; MMIO domain under R3 | `device_manifest.py`; `uart_regs.h` |
+| Device discovery / attestation | `DeviceManifest` digest + `probe_agree` (**D-R1** veto-not-steer) | `device_manifest.py:234` |
+| Interrupts / ISR dispatch | **Event phases** (A1) + EV1–EV3 masking/ordering laws | `kbcir/events.py` |
+| DMA / scatter-gather | `dma_descriptors` + `dma_transfer_module` (**A2**, D-R2/D-R3/D-R4-composed) | `kbcir/dma.py` |
+| Memory mapping across banks/devices | `StridedView` (**D-R4**) + allocator tiers + HAM/semantic-swap (**MC6**) | `device_manifest.py`; `allocator.py` |
+| Cost planning / device selection | `optimize` (K_BCIR) + `orchestrate` (tower) + learned priors (**D3**) | `realize.py`; `channels.py` |
+| Deployment (the "JIT microkernel") | `hydrate` → StreamPack → `bcir_exec` → **RuntimeChannel v2** (MC8) | `gem/streampack.py`; `bcir_exec.h` |
+| Command/response marshalling (TPM/NVMe) | StreamPack-ABI-style bounded length-prefixed records | `abi/streampack_abi.py` |
+| Config/name binding (BSP) | ROP v2 binding table (**MC3**) — logical name → RID/claim recipe | Part VIII MC3 |
+
+**A driver blueprint that needs a NEW subsystem is a design error** — stop and check
+whether the concern maps onto the table above. The only sanctioned new machinery for the
+whole catalog is the **BCIR-IPC substrate** (§IX.3) and the **RuntimeChannel v2 hook
+vtable** (Part VIII MC8), because those are the runtime half BCIR genuinely lacks today.
+
+### IX.2 The ML-seam-per-device-class mandate (why BCIR builds drivers)
+
+Every device class gets **its own learned prior** — the same recipe D3 already ships
+(`tile_prior.py` / `channel_prior.py`): a Q8-frozen logistic/table prior over *cheap*
+features, trained offline on the exhaustive optimizer's own choices, gated by a
+certificate (**guided == exhaustive, mismatches 0**), staleness-refused when the device
+`cal_gen` bumps. This is section §7 of every blueprint and is non-negotiable — a driver
+with no ML placement card is a transliterated Linux driver, not a BCIR driver.
+
+| Device class | The learned prior (features → decision) | Precedent |
+|---|---|---|
+| UART family | RX trigger level + TX burst size (fill vs latency) | **Shipped** (UART U5) |
+| Interrupt controllers (IOAPIC/GIC/PLIC) | IRQ→CPU affinity + coalescing threshold (latency × load) | new; mirrors channel_prior |
+| Timers (HPET/TSC/RTC) | Per-device frequency-error + cross-device sync offset (PTP-style skew model) | new; a drift regressor |
+| DMA engines | SG batch size + descriptor coalescing (setup cost vs fragmentation — extends A2's `dma_cost`) | A2 pricing |
+| NVMe / storage | Queue depth + submission batching + read-ahead per workload class | new; tile_prior recipe |
+| Block layer / cache | Hot/cold admission + eviction prior (ties directly to **MC6 semantic swap**) | MC6 |
+| Network (e1000/virtio/mlx5) | Interrupt-coalescing timer (ITR) + ring size + RSS hash steering (throughput vs tail latency) | new |
+| USB/xHCI | Transfer-ring scheduling + endpoint polling interval | new |
+| GPU compute (CUDA/RDNA) | Kernel launch config + occupancy + memory-tier placement — **D3's home turf** (the tile/channel prior generalizes directly) | **D3 core** |
+| IOMMU | IOTLB prefetch depth + domain-sharing prior | new |
+| Filesystems (ext4/FAT32) | Readahead window + allocation-locality prior | new |
+
+The certificate discipline means a mis-learned prior is **caught, never trusted** (a
+poisoned table changes placements → the guided-vs-exhaustive diff is nonzero → refused),
+so the ML seam adds performance without ever risking a correctness verdict (two-truth).
+
+### IX.3 The BCIR-IPC track — Linux IPC research, slimmed and registry-first
+
+**The research question restated:** guide BCIR IPC by Linux best practices; adopt what
+serves max performance; drop the legacy kernel bloat; keep only ~2–3 generations of
+backward support; reach JIT microkernels + modular POSIX compat. Where full compat is
+infeasible natively, keep a dedicated Linux Master Kernel and migrate drivers behind a
+communication interface.
+
+**The Linux IPC inventory, triaged** (from Linux Device Drivers / IPC Linux / the syscall
+references):
+
+| Linux mechanism | Verdict for BCIR | Why |
+|---|---|---|
+| **io_uring** (SQ/CQ shared-memory rings) | **ADOPT as the ONE primitive** | Structurally identical to BCIR's `bcir_exec` submission + telemetry-ring completion + event-phase signal — BCIR already *is* an io_uring-shaped machine |
+| POSIX IPC (`mq_*`, `sem_*`, `shm_*`, fd-based) | **ADOPT the model, reimplement native** | Clean fd lifecycle; maps to registry resources + generations |
+| AF_UNIX sockets (STREAM/DGRAM/SEQPACKET, SCM_RIGHTS fd passing) | **ADOPT (the workhorse)** | The local-IPC transport apps expect; fd passing = capability handoff |
+| `eventfd`/`signalfd`/`timerfd`/`pidfd` | **ADOPT ("everything is an fd")** | Uniform readiness; `eventfd` ≈ an event-phase completion flag |
+| `futex` | **ADOPT (the sync primitive)** | Userspace-fast; the one blocking primitive under the rings |
+| `mmap` / `memfd` shared memory | **ADOPT (zero-copy)** | The registry's shared-region story |
+| **System V IPC** (msg/sem/shm, keyed) | **DROP** | Leaky global lifecycle, keyed namespace, no fd — the canonical legacy bloat |
+| **Real-time + legacy signals** | **REPLACE with event phases (A1)** | Unreliable delivery, tiny payload, reentrancy hazards → EV1–EV3 give ordered, typed async entry |
+| ptrace / legacy `/proc` IPC surfaces | **DROP / Master-Kernel-only** | Debug/legacy; not on the hot path |
+| Namespaces / cgroups / seccomp | **Microkernel-scope, not IPC** | Isolation belongs to the microkernel model, layered on capabilities |
+
+**The core insight:** BCIR's StreamPack + event phases + the generation-tagged registry
+*are already an IPC substrate*. io_uring is a submission-ring + completion-ring shared-
+memory ABI — the same shape as `bcir_exec`'s calling convention (Part VIII §5.2) plus the
+telemetry ring plus event-phase completion (A1). So BCIR-IPC is not a new subsystem to
+invent; it is **one primitive (the ring) expressed as registry resources + event phases,
+with a thin measured POSIX shim on top.**
+
+**The BCIR-IPC laws** (new, IPC-R1..IPC-R4 — to be authored as a six-artifact set in their
+own wave, vacuous over the existing corpus by the non-disturbance discipline):
+
+- **IPC-R1 — a channel is a resource pair.** An IPC channel is a (submission-ring,
+  completion-ring) pair of registry resources with an owner and a generation; cross-
+  microkernel reads are R11-generation-checked (R11 extended across address spaces — a
+  stale peer view refuses, never races).
+- **IPC-R2 — message passing is an explicit claim.** No implicit shared state: a message
+  or ownership transfer is a claim (the `mem.move.*` shape), and handing a buffer across a
+  channel bumps its `data_gen` (the receiver's stale pack refuses — zero-copy handoff with
+  a proof, not a hope).
+- **IPC-R3 — notification is an event phase.** No signals: readiness/completion is an
+  event phase (A1), delivery ordered by EV3 against the interrupted flow. `eventfd` and
+  friends are the fd view of the same event source.
+- **IPC-R4 — the POSIX shim is measured and loadable.** Modular POSIX backward compat is a
+  loadable translation layer, not kernel bloat: hot syscalls (measured via telemetry)
+  lower to native BCIR-IPC claim recipes; the cold legacy tail delegates (Strategy 3).
+
+**The three-strategy ladder** (the user's framing, made operational):
+
+1. **Adopt-and-slim (default).** Reimplement the *modern* Linux IPC subset (fd-based POSIX
+   IPC, io_uring rings, futex, the `*fd` family, AF_UNIX) as native BCIR-IPC registry +
+   event-phase constructs under IPC-R1..IPC-R4. Frozen as a new ABI artifact (a `BCIR-IPC`
+   wire format alongside StreamPack `BSPK` and telemetry `BTLM`). This is where max
+   performance lives — no context switch to a monolith, generation-guarded zero-copy.
+2. **Abstract-away (compat surface).** Keep the POSIX *interface* apps expect, backed by
+   the Strategy-1 substrate through the C23 subset + the R12 ABI + the IR rules — legacy
+   `read`/`write`/`sendmsg`/`epoll_wait` become claim recipes. Backward compat is a shim
+   layer, bounded to ~2–3 generations, not a legacy kernel.
+3. **Linux Master Kernel (fallback).** Where true native compat is infeasible or not worth
+   it, keep a dedicated Linux kernel as a peer; BCIR microkernels talk to it over a
+   communication interface (a virtio-style transport or a shared io_uring), migrating
+   drivers one at a time while the Linux side retains the full legacy IPC pipeline.
+
+**The recommendation:** Strategy 1 for everything modern and hot; Strategy 2 for the POSIX
+surface applications require; Strategy 3 only for the long cold tail. The BCIR advantage
+is that it can **measure** which syscalls/drivers are hot (the telemetry ring already
+exists) and migrate/native-ize *only those*, leaving the cold legacy tail on the Master
+Kernel indefinitely — a data-driven migration, not a big-bang rewrite.
+
+**JIT microkernels, defined precisely.** A BCIR "microkernel" is a **StreamPack** (the hot
+artifact) plus its event-phase handlers plus its RuntimeChannel v2 binding. "JIT" = the
+pack is *hydrated on demand* from the planned claim graph and *replanned on measured cost*
+(the L2 measured-replan path already exists, `kbcir/calibrate.py`). IPC between two
+microkernels is a shared registry channel (IPC-R1) with generation-guarded handoff
+(IPC-R2) and event-phase signaling (IPC-R3) — no syscall, no trap into a monolith. A
+**driver microkernel** is exactly this: a device's lowered pack + its ISR event phases +
+its RuntimeChannel binding, deployed and replaced as one versioned artifact.
+
+### IX.4 Answers to the catalog's open questions
+
+- **"What other legacy BUS systems do we need drivers for?"** Beyond ISA/port-I/O
+  (shipped): **LPC / eSPI** (the TPM, SuperIO, and embedded-controller transport — eSPI is
+  the modern LPC replacement, keep it, treat raw LPC as ~2-generation legacy),
+  **SMBus / I²C** (SPD/SPD5 DIMM info, sensors, battery, PD controllers), **SPI** (boot
+  flash, TPM-over-SPI), and **PCI Conventional** as *enumeration-legacy only* (folded into
+  the PCIe ECAM walk — no separate conventional-PCI device stack). The companion specs the
+  catalog flagged are confirmed required: **AHCI** (the SATA host-controller programming
+  model) and **ATA/ACS** (the command set) travel with any SATA driver.
+- **"What other network drivers do we need?"** Beyond **e1000/e1000e** (the baseline):
+  **virtio-net first** (the highest-value target — every VM and cloud instance; it is also
+  the natural Strategy-3 transport to a Linux Master Kernel), then **igb/igc** (2.5 GbE
+  client/embedded), **r8169** (Realtek consumer ubiquity), and **mlx5** (datacenter /
+  RDMA, the high-throughput ceiling), all over a shared **MDIO/MII PHY** abstraction.
+  The **ITU telecom framers** (HDLC/E1/T1/SONET) are a niche subdriver class — low
+  priority, scoped separately, not on the critical path.
+- **Processor "drivers" (FPGA, ARM, RISC-V, AMD, CUDA, RDNA, IA-32/64).** These are
+  **architecture backends**, not device drivers (the catalog's own note) — they are BCIR
+  **channels + codegen targets**, already partly present (`arm64_neon`/`sve`, `riscv_rvv`,
+  `nvidia_ptx` channels; x86/aarch64/riscv64/bpf codegen). They enter through the channel
+  registry + native-object gate, not the driver waves. The FPGA track (AXI-UART + bitstream
+  manager) is a genuine device driver and sits in the embedded wave.
+- **Firmware-scope, not drivers.** DDR4/DDR5 (memory-controller training — the OS consumes
+  the trained ACPI/UEFI map + optionally reads SPD over SMBus); UEFI PI (platform-init
+  architecture — reference unless BCIR replaces firmware). BCIR boots as a **UEFI
+  application** and calls `ExitBootServices` (a loader stub, in scope).
+- **Subdriver-scope, not standalone drivers.** DisplayPort 2.1 and HDMI 2.1b/2.2 are
+  connector protocols *inside* the GPU modeset/display-engine driver (link training +
+  bandwidth negotiation + feature flags), not separate drivers. HID Usage Tables are a
+  **data dictionary** consumed by the USB-HID class driver, not a driver.
+- **Toolchain-scope.** The System V AMD64 ABI and the AArch64 PCS are not drivers but are
+  required for correct BC23 codegen — already modeled by the R12 `TargetABI` matrix
+  (Part VIII §5.3).
+
+### IX.5 The build order — driver waves in dependency order
+
+Each row is a driver (or driver family) that gets its own blueprint + research session
+before its build slices. Waves are strictly ordered by the dependency facts in Part III;
+within a wave, items are independent. `[fw]` = firmware-scope reference, `[sub]` =
+subdriver, `[arch]` = architecture backend (channel, not a driver wave), `[net]` = network.
+
+| Wave | Driver / module | Depends on | ML seam (§7) | Primary spec anchor |
+|---|---|---|---|---|
+| **D0 Boot** | UEFI boot handoff (loader stub, ExitBootServices) | — | boot-path timing | UEFI 2.11 |
+| **D0 Boot** | UART 16550/16750 console (polled → IRQ) | ISA edge (done) | trigger/burst — **shipped** | PC16550D (U0–U9 done) |
+| **D1 Substrate** | Physical memory manager + region registry (BCIR RES) | — | region-placement (allocator heat) | BCIR/BDI regions |
+| **D1 Substrate** | Virtual memory + page tables + TLB shootdown (BCIR VM) | PMM | mapping-locality prior | Intel SDM / AMD64 paging |
+| **D2 Discovery** | ACPI static-table parser (RSDP→XSDT→MADT/MCFG/HPET/SRAT/FADT; minimal AML policy) | VM | — (parser) | ACPI 6.6 |
+| **D2 Discovery** | SMBIOS parser | — | — (parser) | SMBIOS 3.9.0 |
+| **D3 Interrupts** | Local APIC / x2APIC (+ per-arch: GIC for ARM, PLIC/CLINT/AIA for RISC-V) | ACPI MADT | IPI-affinity prior | Intel SDM APIC; GICv3/4; RISC-V AIA |
+| **D3 Interrupts** | I/O APIC (82093AA) + MSI/MSI-X interrupt allocator | LAPIC, ACPI | IRQ→CPU affinity + coalescing prior | 82093AA; PCIe base |
+| **D4 Time** | HPET (+ TSC/LAPIC-timer policy, RTC/CMOS wall clock) — synchronized across devices | Interrupts, ACPI HPET | drift/skew (PTP-style) prior | IA-PC HPET 1.0a |
+| **D5 Bus** | PCIe config + enumeration (ECAM via MCFG); BAR sizing; capability parse | ACPI MCFG, interrupts | — (enumeration) | PCIe base; ACPI MCFG |
+| **D6 DMA** | DMA allocator + mapping API (bounce buffers first) | PCIe, VM | SG-batch prior (extends A2) | (A2 machinery; IOMMU overview) |
+| **D6 DMA** | IOMMU (AMD-Vi / Intel VT-d) — device isolation, per-device address spaces | DMA, PCIe | IOTLB-prefetch + domain-share prior | AMD IOMMU; VT-d |
+| **D7 IPC** | **BCIR-IPC substrate** (rings as resources, IPC-R1..R4) + POSIX shim (Strategy 1/2) | VM, event phases | hot-syscall migration prior | Linux IPC research (§IX.3) |
+| **D8 Storage** | Block layer (queueing + cache + barriers) | DMA, interrupts | cache admit/evict prior (**MC6**) | NVMe/SATA interfaces |
+| **D8 Storage** | NVMe admin + I/O queues (submit/completion rings) | PCIe, MSI-X, DMA | queue-depth + read-ahead prior | NVMe 2.0d → 2.3 |
+| **D8 Storage** | SATA/AHCI + ATA/ACS command set (compatibility) | DMA, PCIe | — | SATA 3.5 + AHCI + ACS |
+| **D9 FS** | GPT + MBR parsers → FAT32 (ESP) → ext2/3/4 (+ exFAT optional) | Block layer | readahead + alloc-locality prior | GPT (UEFI); fatgen103; ext4 kernel doc |
+| **D10 Net** | e1000/e1000e; then **virtio-net**, igb/igc, r8169, mlx5 over MDIO/MII | PCIe, MSI-X, DMA, IOMMU | ITR-coalescing + ring-size + RSS prior | Intel e1000e; virtio; mlx5 |
+| **D11 USB** | xHCI host controller → USB enumeration → USB-HID class | PCIe, MSI-X, DMA | transfer-ring + poll-interval prior | xHCI 1.2b; HID Usage Tables 1.7 |
+| **D12 Security** | TPM 2.0 driver (CRB/TIS via ACPI) + event-log parser; TCG PFP mapping → CC verification contracts | ACPI, LPC/SPI | — (marshaller) | TCG PC Client PFP; TPM 2.0; CC PP |
+| **D13 Virt** | SEV-SNP guest/hypervisor interface; BCIR virtual machines (VMCS/VMCB builders, virtio device models) | VM, IOMMU, IPC | — | AMD SEV-SNP ABI; Intel SDM VMX |
+| **D14 Display** | GOP/framebuffer console (initial) → GPU modeset + connector mgmt (DP 2.1 / HDMI 2.1b `[sub]`) → BCIR-Wayland compositor | PCIe, DMA, VM | modeset-config + bandwidth prior | UEFI GOP; DP 2.1; HDMI announce |
+| **D15 Compute** | CUDA backend (claims → native queue/command graph); RDNA3 backend (AQL/PM4) | PCIe, DMA, IOMMU, display | **occupancy/tile prior — D3 core** | CUDA guide; RDNA3 ISA |
+| **D-embedded** | FPGA track: AXI-UART 16550 + FPGA manager / bitstream loader | UART, PCIe | — | AMD PG143 AXI-UART |
+| **legacy-bus** | LPC/eSPI, SMBus/I²C, SPI (feed TPM/SPD/sensors) | ACPI | — | (platform buses) |
+| **[arch]** | x86-64, ARM (GIC/A-profile), RISC-V, AMD64 backends — **channels, not driver waves** | native-object gate | K_BCIR tile/channel prior | Intel SDM; ARM ARM; RISC-V; AMD64 |
+| **[fw]** | DDR4/5 (consume trained map + SPD), UEFI PI — **firmware-scope reference** | — | — | JEDEC; UEFI PI 1.9 |
+
+**Critical-path facts to pin** (unchanged from Part III, extended): interrupts (D3) gate
+every interrupt-driven device; PCIe enumeration (D5) is strictly before any PCIe device
+(D8/D10/D11/D15); DMA + IOMMU (D6) gate every DMA-capable device; the **BCIR-IPC substrate
+(D7) gates the microkernel deployment model** for everything above it (drivers become
+JIT microkernels only once the ring substrate exists); the block layer (D8) gates
+filesystems (D9); GPU modeset (D14) contains DP/HDMI as subdrivers and precedes GPU
+compute's display interop (D15).
+
+**Spec-currency note** (from the catalog, adopted): target the newest publicly-referenceable
+revisions — UEFI 2.11, ACPI 6.6, SMBIOS 3.9.0, PCIe (revision-index anchor; base through
+7.0), NVMe 2.3 set, SATA 3.5 + AHCI + ACS, xHCI 1.2b, HID 1.7, DP 2.1, HDMI 2.1b/2.2
+(announcement-anchored), TPM PC Client PFP 1.06. Because a BCIR driver is *compiled*, a
+newer optional capability is added as new claim forms + backend lowering rules — never a
+driver rewrite.
