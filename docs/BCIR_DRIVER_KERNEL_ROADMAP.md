@@ -548,3 +548,58 @@ the MMIO specialization of D-R1's manifest; U2's driver state gains nothing (no 
 banks on a 16550), but any DMA-bearing device blueprint (the next driver research phase)
 MUST author a `DeviceManifest` in U0 and route its buffer programming through
 `StridedView`s — the blueprint template inherits D-R1..D-R6 as design axioms.
+
+---
+
+## Part VII — Remaining-gaps audit (2026-07-04): what is still open before the next driver/kernel analysis
+
+Taken after wave 12 (rung-6 serving complete: streaming + `TokenDFA` schema constraint;
+rung-7 opened: paged KV as registry resources, continuous batching measured as wave
+scheduling). This is the ranked inventory of what remains for the IR and for driver/kernel
+hardening, bucketed by what it **blocks** — the next research phase authors device
+blueprints from collected datasheets, and each blueprint class has a named prerequisite
+here. Items are ranked within each bucket.
+
+### A. IR-side gaps (buildable now; no hardware required)
+
+| # | Gap | What exists / what's missing | Blocks | Anchors |
+|---|---|---|---|---|
+| A1 | **IRQ/event phase model** — the largest missing IR concept for drivers. | The phase DAG is program-ordered; the interrupt trampoline is a named Tier-1 asm edge (Part II) and the PIC/APIC rung is sequenced (Part III rung 1) — but there is no first-class *asynchronous entry*: a phase whose dependency is an EVENT source rather than another phase, with the R-law that event phases touch resources only through the same hazard discipline (mask/unmask as explicit claims; no implicit state shared with the interrupted flow). | Every interrupt-driven blueprint — the 16550/16750 IIR/ISR dispatch (blueprint U4) is the first fixture waiting. | Part III rung 1; `BCIR_UART_DRIVER_BLUEPRINT.md` U4. |
+| A2 | **DMA programming from `StridedView`s** — D-R4's deferred half. | `mem.move.*` op-codes exist and are priced (D-R3), and the stride vector already carries everything a scatter-gather descriptor needs — but nothing lowers a `mem.move` to a descriptor-ring program. The IR shape (a `dma.program` claim consuming a src/dst view pair + a completion tied to A1's event model) can be designed before hardware arrives. | Every DMA-bearing blueprint: 16750 DMA-mode signaling, e1000 descriptor rings, NVMe queues (Part III AFTER list). | `kbcir/device_manifest.py` (`move_claim`); blueprint §1.5 deferral; Part VI P4. |
+| A3 | **Rung-7 page-claim wiring.** | `PagedKV` pages carry live generations (R11 speaks KV), but decode claims do not yet read/write their page RIDs directly. Wiring them in lets the token DAG see page-level hazards — which makes **eviction a scheduled claim** and **mid-flight session admission an append of phases to a live module**, not new machinery. | Rung-7 slices 2+ (serving scale-out); nothing driver-side. | `frontends/models/paged_kv.py` (docstring deferrals); `test_paged_kv.py`. |
+| A4 | **Const-expr tail: `&x` address constants + `sizeof`.** | The §5.9 integer evaluator landed on both rails (wave 9). Address-constant global initializers still refuse LOUDLY in linkable emit (an address is not an integer — needs a relocation story), and `sizeof` inside constant expressions is deferred because ABI layout is chosen at **lower** time (the evaluator would need the lowering's layout oracle). | Linkable completeness edge cases; some real UAPI headers. | `BCIR_MASTER_ROADMAP.md` §5.9 + Phase-3 *Remaining (named)*. |
+| A5 | **D1.8 + D3.4 (ML-side, not driver-blocking).** | D1.8: the optimizer should CHOOSE the stream count from the cost model (today the caller passes `streams`). D3.4: orchestrate wiring + calibrated per-channel profiles so class winners genuinely diverge. | Training-graph polish; cost-model fidelity. | `kbcir/train_graph.py`; `kbcir/channel_prior.py`. |
+
+### B. Driver/kernel hardening gaps (law-side)
+
+| # | Gap | Status | Anchors |
+|---|---|---|---|
+| B1 | **Interrupt-context ordering seam.** §5.14's volatile/atomic ops carry the single-claim MMIO law (R3 rail); what's missing is the *cross-claim* seam for interrupt context — the law that an event phase's MMIO claims order against the interrupted flow's (A1 is the prerequisite; the law lands with it). | Open, paired with A1. | §5.14; Part VI P2 (MMIO exemption). |
+| B2 | **Re-measure the D-R2 exemption corpus when DMA lands.** The MMIO exemption is *measured* (8 by-design MMIO/RAM mixes in the GPIO fixture; corpus-vacuous pinned). A DMA-bearing driver adds genuinely new mixing patterns — the exemption set must be re-measured then, not assumed. | Standing rule; trips automatically (the pin fails loudly if the corpus shifts). | `test_device_manifest.py` (corpus-vacuousness pin). |
+| B3 | **Manifest lifecycle beyond `cal_gen`.** The DeviceManifest refuses STALE/tampered at load; there is no story yet for hot-plug / suspend-resume (device-state generation bumps as R11-style staleness). Low urgency until a hot-pluggable fixture exists. | Deferred with a named unblock (a hot-plug-capable blueprint). | `kbcir/device_manifest.py` (envelope refusals). |
+| B4 | **`probe_agree` distance coverage.** The veto covers capacity/tile/ghost-bank lies; probing the *distance matrix* (measured latency vs the pinned Q8 entries) is rig-gated — it needs real multi-bank silicon. | Rig-gated (CT4 pattern). | Part VI P1; `HARDWARE_VALIDATION.md`. |
+
+### C. Rig-gated / maintainer one-liners (not build work)
+
+- **v0.3b tag push**: `git tag -a v0.3b 37d0b6a -m "BCIR 0.3b" && git push origin v0.3b`
+  (tag pushes 403 from the build sandbox).
+- **Asset-gated real-file runs**: `BCIR_HF_MODEL_DIR=<dir> python -m bcir.tests.test_model_ingest`
+  and `... test_model_spm` — now exercising real trained weights AND a real SentencePiece
+  tokenizer through the full serving path (HF downloads are proxy-blocked in the sandbox).
+- **Native-object gate** (`BCIR_NATIVE_OBJECT_GATE.md`): foreign-ISA register allocation
+  waits for a real accelerator ISA table (Part VI P6).
+- **Real-silicon calibration** (`HARDWARE_VALIDATION.md`): measured-then-pinned distance
+  matrices, PMU/RAPL replan — lights up when a bare-metal rig runs the runbook.
+
+### D. By-design refusals (documented policy — NOT gaps)
+
+- **C-twin file-scope global rendering** stays oracle-side: global *definitions* are the
+  oracle's job; the twin consumes them (Phase-3 linking design).
+- **Foreign-ISA passthrough** enters only through the native-object gate (D-R6).
+- **Discovery may veto, never steer** (D-R1): no runtime adaptation is coming; refusal IS
+  the feature.
+
+**Reading order for the next phase.** A1 → B1 first (they unlock the interrupt-driven half
+of every collected datasheet), then A2 (unlocks the DMA half, including the 16750's DMA
+signaling), with B2 tripping automatically as fixtures land. A3/A4/A5 proceed independently
+on the ML/compiler tracks and gate nothing in the driver queue.
