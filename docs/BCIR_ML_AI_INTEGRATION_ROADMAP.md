@@ -698,6 +698,14 @@ The audit finds five deepening moves, all quarantine-compatible:
   DMA-batching, NVMe queue-depth, cache admit/evict, NIC ITR-coalescing, xHCI scheduling,
   GPU occupancy, IOMMU IOTLB-prefetch, FS readahead). A driver with no ML placement card is
   a transliterated Linux driver, not a BCIR driver.
+  **Contrast with Triton (`BCIR_TRITON_COMPARATIVE_ANALYSIS.md`, 2026-07-04):** this
+  learned-AND-proven cost layer is the sharpest differentiator against Triton, whose schedule
+  selection is empirical `@triton.autotune` benchmark search with no shipped cost model — but
+  the honest framing is *complementary, not dominant*: BCIR's certificate proves optimality
+  relative to BCIR's own analytical model, whereas Triton's `do_bench` measures real hardware
+  latency (ground truth). The recommended synthesis is to use TritonBench/Proton as an
+  empirical **calibration** harness that sharpens K_BCIR (a KPerfIR-style analytical≈measured
+  law), not to adopt autotuning.
 - **D4 — E-graph rule synthesis (the operad 2-cell algebra).** Learn *candidate* rewrites
   from liked/unliked pair statistics; each learned rule is admitted only with a machine-
   checkable equivalence certificate (the egraph extract cost proof), keeping learning out of
