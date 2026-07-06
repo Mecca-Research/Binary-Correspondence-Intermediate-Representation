@@ -524,7 +524,27 @@ drop-in loading of a modern open-weight chat model.
    live-session refusal), and mid-flight admission (appending phases, hash-identical to
    upfront) **LANDED** — remaining: windowed-attention eviction, page reuse across
    sessions, multi-device placement, expert/tensor parallelism, speculative decoding.
-8. **Fine-tune/adapt** — LoRA/QLoRA-style adapters as first-class artifacts before full-parameter
+8. ◑ **Whole-model reference — THE LADDER CAPSTONE, PLANNED** (`BCIR_WHOLE_MODEL_REFERENCE.md`):
+   the milestone that **composes rungs 1–7 into one dependency-free, whole-model artifact with an
+   end-to-end round-trip gate** — the `train → export → run-standalone → verify-bit-exact` loop
+   BCIR has the pieces for but has never assembled. The machinery is imported from
+   `karpathy/llama2.c` (whose C side is inference-only — the value is the *composition* discipline,
+   not a "C trainer") and reshaped proof-carrying: the numerics are **already covered** (the
+   decode rail + its `bcir_decode.c` twins own RMSNorm/RoPE/GQA/KV-cache/SwiGLU; `spm.py` owns the
+   BPE; `quantize.py` owns group-quant math), so the four **genuinely-new** slices are the ones
+   BCIR lacks — **WMR-1** a whole-model C driver (`runtime/c/bcir_llama.c` composing the existing
+   kernels + the missing driver half: projection matmuls, FF, logits head, layer loop, weight
+   struct, CLI; bit-exact vs `decode.py`); **WMR-2** the first weight-*export* path
+   (`frontends/models/weights_io.py` — a compact self-describing checkpoint wrapped in a
+   `ModelManifest` + generation tag + CRC, with a C reader; BCIR ingests safetensors read-only
+   today); **WMR-3** seeded temperature/top-p/top-k samplers at the `_argmax` site (only greedy +
+   the `TokenDFA` mask exist), replayable into the `DataDNA` provenance; **WMR-4** the persisted
+   int8/Q8_0 format + an int8 C runtime under the R17 accuracy law (feeding the AMD roadmap's
+   MXFP/NF4 migration — one quant format, many consumers). Two-truth: the C artifact is the port,
+   the Python decoder the oracle; nothing lands as an unverified copy. This is where **D1
+   (training) and the decode/serve rail (inference) finally meet in a single verifiable
+   deliverable**; rung 9 (fine-tune) builds on it.
+9. **Fine-tune/adapt** — LoRA/QLoRA-style adapters as first-class artifacts before full-parameter
    training; adapters frozen with the same provenance and eval gates as kernels.
 
 **Endpoint gates (when models serve production traffic):** shadow-mode deployment before live
@@ -537,10 +557,12 @@ predictions from BCIR legality verdicts (the two-truth quarantine, §0).
 BCIR is **architecturally well suited** to open weights — it already thinks in typed graphs,
 lowering, costed placement, telemetry, quantization, parity, and provenance — but it is **not yet
 a plug-and-play LLM inference engine**. The credible path is not GLM-first; it is a small
-Gemma/Qwen dense model through the manifest → tokenizer → reference-decode → quantized-artifact
-ladder, lowered into BCIR kernels and exposed as a guarded endpoint. After that, heavier models
-are an engineering problem (sharding, KV memory, kernel performance, safety operations), not a
-conceptual mismatch.
+Gemma/Qwen dense model through the manifest → tokenizer → reference-decode → quantized-artifact →
+**whole-model reference** (rung 8, `BCIR_WHOLE_MODEL_REFERENCE.md`) ladder, lowered into BCIR
+kernels and exposed as a guarded endpoint. The whole-model reference is the capstone that proves
+the ladder composes end-to-end (`train → export → run-standalone → verify`); after that, heavier
+models are an engineering problem (sharding, KV memory, kernel performance, safety operations),
+not a conceptual mismatch.
 
 ---
 
