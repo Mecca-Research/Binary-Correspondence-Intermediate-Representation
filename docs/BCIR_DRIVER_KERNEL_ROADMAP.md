@@ -631,6 +631,10 @@ on the ML/compiler tracks and gate nothing in the driver queue.
 
 ---
 
+## Part VIII-A — The AMD AI driver/kernel roadmap (2026-07-05)
+
+The AMD AI-inference driver strategy — bootstrap AMD's ROCm/XDNA stack via interop-not-fork, ride the resident AMDGPU-LLVM (GPU) and Peano/MLIR-AIE (NPU) backends, call real kernels through on-call Triton + AITER/CK, and own only BCIR's unique layer (K_BCIR cost, certificate-gated priors, `-bcir-verify`, StreamPack provenance, event-phase/DMA IR) — is developed in full in **[`BCIR_AMD_AI_DRIVER_ROADMAP.md`](BCIR_AMD_AI_DRIVER_ROADMAP.md)**: a 10-layer vertical stack, a 7-phase build order (deferred Linux-inheritance Phase 0 → device manifests/profiles → ROCm runtime binding → BCIR-Triton on-call compiler → BCIR enhancement layer → XDNA NPU class + hybrid router → serving/framework interop), the three device classes (CDNA/RDNA-iGPU/XDNA-NPU, never one), a per-project interop ledger (vLLM/SGLang/Lemonade/GAIA/TurnkeyML/TokenSpeed/Digest AI/Unsloth/torchtitan/bitsandbytes/LlamaIndex), and the PyTorch/JAX/TF supplement boundary. It refines the D15 CUDA/RDNA3 compute row below with the honest state (BCIR has no `amdgcn` codegen today; the AMD channel is a thin routing seam).
+
 ## Part VIII — The machine-code / HAL / ABI audit (2026-07-04): the MC-track
 
 Wave 14 audited BCIR's machine-code capabilities against the classic HAL/ISA frame
