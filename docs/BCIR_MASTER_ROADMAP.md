@@ -14,6 +14,7 @@
 > - [`HARDWARE_VALIDATION.md`](HARDWARE_VALIDATION.md) — what is measured vs blocked on real silicon.
 > - [`CLANG_COMPARISON.md`](CLANG_COMPARISON.md) — the measured BCIR-vs-Clang evidence.
 > - [`BCIR_TRITON_COMPARATIVE_ANALYSIS.md`](BCIR_TRITON_COMPARATIVE_ANALYSIS.md) — BCIR vs Triton (the fork/interop/migrate decision: do NOT fork, interop + migrate the Linear-Layout F₂ algebra / MXFP numerics / tile-peephole passes; Triton is aligned with the resident-compiler gate, broader-vs-deeper positioning).
+> - [`BCIR_AMD_AI_DRIVER_ROADMAP.md`](BCIR_AMD_AI_DRIVER_ROADMAP.md) — the AMD AI-inference driver/kernel roadmap (inherit-and-enhance AMD's ROCm/XDNA stack via interop-not-fork; three device classes CDNA/RDNA/XDNA; BCIR-Triton on-call compiler; per-project interop ledger; PyTorch/JAX/TF supplement boundary).
 > - [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) — the honest current-state snapshot.
 > - [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md) — the dated 7-pillar honest-state map of the
 >   "C-as-Macro-Assembly + IR-owns-everything + bare-metal-AI" thesis vs what is built (+ the prioritized gap backlog).
