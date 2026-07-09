@@ -606,6 +606,18 @@ destabilize the keystone.
 > interrupts → D4 time → D5 PCIe → D6 DMA/IOMMU → D7 BCIR-IPC → D8 storage → D9 filesystems →
 > D10 networking → D11 USB → D12 security/TPM → D13 virt/SEV-SNP → D14 display → D15 GPU
 > compute, with arch backends and firmware/DDR scoped out of the driver waves).
+> **The OS ambition is now Part X of the driver roadmap — `BCIR-Linux`, the kernel/driver oracle
+> (2026-07-08):** the §0 stance is corrected (BCIR *is* venturing into kernel/OS work — an
+> AI-powered JIT micro/unikernel factory + RTOS deployments — while the firmware *standards*
+> UEFI/ACPI/SMBIOS/TPM stay parser/marshaller targets, not implementation targets). BCIR-Linux is
+> the live-substrate analogue of the Python oracle: an **eBPF soft-fork** (observe + veto +
+> telemetry, mapping the real BTLM ring + `calibrate.py` replan onto `BPF_MAP_TYPE_RINGBUF`, and
+> eBPF's observe-only envelope onto the existing `probe_agree` veto-not-steer law) → a **dual-domain
+> hard-fork** (Control + Fabric domains; grounded in IHK/McKernel, Intel mOS, Xenomai, DPDK/SPDK,
+> carved *dynamically* not via forked `setup.c`) → a **JIT micro/unikernel factory** (reframed as
+> AOT-specialize + content-addressed cache via provenance/`replay` + the GraphSeed generator +
+> Firecracker-style snapshot-clone, LLM offline — not per-phase LLVM). Carries a real-vs-proposed
+> honesty ledger and the L0–L5 build ladder; two-truth and the resident-compiler gate still hold.
 
 The Hardware Description Layer. With verifiable C in hand:
 

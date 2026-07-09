@@ -18,19 +18,41 @@
 >
 > **Structure:** Parts I–V are the original bring-up/placement/ordering analysis; Part VI is
 > the hardened driver seam (D-R1..D-R6); Part VII the remaining-gaps audit (A/B tracks, now
-> landed); Part VIII the machine-code/HAL/ABI/ISA audit (the MC-track); and **Part IX the
+> landed); Part VIII the machine-code/HAL/ABI/ISA audit (the MC-track); **Part IX the
 > comprehensive driver catalog** — the per-driver blueprint contract, the
 > ML-seam-per-device-class mandate, the **BCIR-IPC track** (Linux IPC slimmed to a
 > registry-first ring substrate for JIT microkernels + modular POSIX compat), and the full
-> phased build order (waves D0–D15 + arch/firmware scoping).
+> phased build order (waves D0–D15 + arch/firmware scoping); and **Part X the BCIR-Linux
+> kernel/driver oracle** — the third rail that develops the OS ambition (the eBPF soft-fork →
+> the dual-domain hard-fork → the JIT micro/unikernel factory), with an explicit real-vs-proposed
+> honesty ledger and the L0–L5 build ladder.
 
 ## 0. The one-paragraph orientation
 
-BCIR is the **planning + verification brain that emits verified kernels** — it is *not* a
-bootloader, an OS, or firmware. For drivers that means BCIR **emits a verified driver/parser
-kernel** and the resident compiler finishes it to a freestanding object; BCIR never *implements*
-UEFI/ACPI/SMBIOS/TPM. Read every section below through that lens. Two corrections fall straight
-out of it and frame the whole roadmap:
+> **The stance, corrected (2026-07-08).** An earlier version of this paragraph read *"BCIR is
+> the planning + verification brain that emits verified kernels — it is not a bootloader, an OS,
+> or firmware… BCIR never implements UEFI/ACPI/SMBIOS/TPM."* That was **too strong** and is
+> narrowed here. BCIR's founding ambition is a **vertically integrated** stack — a modern AI
+> compiler fused with an operating system: an **AI-powered JIT micro/unikernel factory with
+> real-time-OS deployments**. The project deliberately did **not** stop at the IR/compiler level;
+> **kernel and driver development is in scope by design** — that is *why* this roadmap exists. The
+> correct, narrower reading of the old stance is: **BCIR-the-IR/verifier does not hand-reimplement
+> a firmware *standard* as monolithic firmware.** For the named specs that scoping still holds and
+> is right — UEFI/ACPI/SMBIOS/TPM are each at heart a byte-level data structure, so BCIR **emits a
+> verified parser/marshaller kernel** that consumes the structure while the resident compiler
+> finishes it to a freestanding object; BCIR does not *become* UEFI. But **the OS itself is a
+> target** — realized not by bolting a kernel onto the IR in-tree, but through a **third rail,
+> `BCIR-Linux` — the kernel/driver oracle (Part X)**, the live-substrate analogue of the Python
+> oracle: the place where kernel/driver hypotheses are prototyped, measured, and proven on a real
+> bootable Linux before the winners are ported into the verified BCIR rails.
+
+BCIR is the **planning + verification brain that emits verified kernels** and — through the
+BCIR-Linux oracle rail (Part X) — grows into the OS around them. For **drivers** that means BCIR
+**emits a verified driver/parser kernel** and the resident compiler finishes it to a freestanding
+object; for the firmware **standards** (UEFI/ACPI/SMBIOS/TPM) it emits a verified
+parser/marshaller, never the firmware. Read the driver sections below through that lens. Two
+corrections fall straight out of it and frame the **driver ladder**; a third (Part X) frames the
+**OS ambition**:
 
 1. **A *polled* UART needs essentially no platform infrastructure.** It is the canonical "first
    thing that works" precisely because it needs no interrupts, no timers, no ACPI, no PCI, no
@@ -45,9 +67,18 @@ out of it and frame the whole roadmap:
    implement the firmware. This is exactly what the K_BCIR verifier + the StreamPack ABI are built
    for (bounded indexing, length-prefixed records, R1–R21 legality).
 
+3. **The OS ambition is realized on a research rail, not bolted onto the IR.** The kernel/OS
+   work (scheduling, IRQ routing, DMA, core isolation, IPC, the JIT unikernel factory) cannot be
+   proven by a pure-Python numeric oracle — it needs a *live kernel substrate*. **Part X** stands
+   that substrate up as **BCIR-Linux, the kernel/driver oracle**: an eBPF *soft-fork* (observe +
+   veto + telemetry on a running kernel) that graduates to a dual-domain *hard-fork* (a Control
+   Domain + a bare-metal Fabric Domain) feeding a JIT micro/unikernel factory — the exact
+   prototype-then-port discipline the Python oracle already uses, applied to the kernel.
+
 The work therefore sequences as: **(Part I) a cheap pre-driver hardening gate → (Part II) the
 asm/C/C++ layering that says where each line of a driver lives → (Part III) the dependency ladder
-that orders everything after the UART → (Part IV) the concrete slice plan.**
+that orders everything after the UART → (Part IV) the concrete slice plan → (Part X) the
+BCIR-Linux oracle rail that grows the drivers into an OS.**
 
 ---
 
@@ -830,6 +861,15 @@ is that it can **measure** which syscalls/drivers are hot (the telemetry ring al
 exists) and migrate/native-ize *only those*, leaving the cold legacy tail on the Master
 Kernel indefinitely — a data-driven migration, not a big-bang rewrite.
 
+**→ Part X develops Strategy 3 into a full research rail.** The "Linux Master Kernel" named
+here is doc-only today (the roadmaps flag it as unverified). **Part X** promotes it from a
+vague fallback into **BCIR-Linux, the kernel/driver oracle** — with the honest capability
+envelope of each stage nailed down: an eBPF *soft-fork* (observe + veto + telemetry, no fork),
+then a dual-domain *hard-fork* (the Master Kernel becomes the **Control Domain**; the migrated
+drivers run on a bare-metal **Fabric Domain**), then the JIT micro/unikernel factory that
+deploys the migrated drivers as versioned artifacts. The BCIR-IPC laws (IPC-R1..R4) and the
+64-byte SQE ring are the substrate that rail prototypes.
+
 **JIT microkernels, defined precisely.** A BCIR "microkernel" is a **StreamPack** (the hot
 artifact) plus its event-phase handlers plus its RuntimeChannel v2 binding. "JIT" = the
 pack is *hydrated on demand* from the planned claim graph and *replanned on measured cost*
@@ -925,3 +965,263 @@ revisions — UEFI 2.11, ACPI 6.6, SMBIOS 3.9.0, PCIe (revision-index anchor; ba
 (announcement-anchored), TPM PC Client PFP 1.06. Because a BCIR driver is *compiled*, a
 newer optional capability is added as new claim forms + backend lowering rules — never a
 driver rewrite.
+
+---
+
+## Part X — BCIR-Linux: the kernel/driver oracle (the third rail) (2026-07-08)
+
+> **What this part is.** The design note for the OS ambition the §0 stance correction affirms.
+> It answers the user's fork question — *export Linux features into BCIR directly, or fork Linux
+> into a `BCIR-Linux` research distro?* — and lays out the staged path: an **eBPF soft-fork**
+> (observe + veto + telemetry on a running kernel), a **dual-domain hard-fork** (a Control Domain
+> + a bare-metal Fabric Domain), and the **JIT micro/unikernel factory** that deploys workloads
+> onto the Fabric. Every claim is tagged **REAL** (anchored to existing repo code) or **PROPOSED**
+> (roadmap-only), and every stage carries the honest capability envelope the research surfaced —
+> because the fastest way to discredit an OS ambition is to overstate what a tool can already do.
+
+### X.0 The third-rail thesis
+
+BCIR is a **dual-rail-plus** system: a **Python oracle** (`bcir/`) proves the numerics by
+construction, an **MLIR law rail** (`-bcir-verify`, R1–R23) freezes them, and **C twins**
+(`runtime/c/`) port them bit-for-bit. The oracle is *reference*, not the shipped artifact; the
+verified emissions are what ships. That is the **prototype-then-port** discipline.
+
+Kernel and driver behaviour — scheduling, interrupt routing, DMA timing, core isolation, IPC ring
+dynamics — **cannot be proven by a pure-Python numeric oracle.** It needs a *live, bootable kernel*
+to run against. So the OS ambition gets its own reference rail:
+
+> **BCIR-Linux is the kernel/driver oracle.** A real, bootable Linux research distribution where
+> kernel/driver hypotheses are **prototyped, measured, and proven**, then ported into the verified
+> BCIR rails — exactly as the Python oracle is the reference for numerics. **Two-truth still
+> governs the boundary** (`twotruth.py:99`): measurements taken on BCIR-Linux **inform** cost,
+> priors, and migration order; they **never** become the legality verdict. The **resident-compiler
+> gate** still holds: BCIR-Linux prototypes behaviour; the shipped drivers are still C23/LLVM IR
+> with isel handed to clang/llc — never hand-rolled asm baked into a fork.
+
+### X.1 The two pathways — and the recommendation
+
+| Pathway | What it is | Cost | Verdict |
+|---|---|---|---|
+| **A — export Linux into BCIR (in-tree)** | Reimplement each Linux mechanism as a native BCIR claim/law directly in `bcir/`. Highest purity; the destination state. | Slowest; you **cannot measure kernel dynamics** until very late, so migration order is guesswork. | The **destination**, not the starting point. |
+| **B — the `BCIR-Linux` fork (the oracle)** | Fork Linux into a parallel research distro; use it as the live substrate to **measure** which mechanisms are hot and **prototype** their BCIR replacements, then port the winners into rail A. | A real (research-grade) maintenance tax on the fork. | **Recommended as the oracle rail.** It is the Python-oracle pattern applied to the kernel. |
+
+**They are not mutually exclusive — B feeds A.** BCIR already **measures** which syscalls/drivers
+are hot (the telemetry ring is real, below), so the migration is **data-driven**: port the hot
+tail into rail A, leave the cold legacy tail on the fork indefinitely. This is precisely the
+Strategy-1/2/3 ladder of §IX.3, now given a substrate. **Process discipline:** all of this happens
+**in the development/coding environment and is fully tested there before any change is pushed to
+the GitHub repos** — the fork is a research artifact, not a shipping branch.
+
+### X.2 Phase L0 — the eBPF soft-fork (observe + veto + telemetry, *no fork yet*)
+
+eBPF turns a stock Linux kernel into a **live, programmable substrate without forking it** — the
+cheapest possible way to prove the telemetry and policy loop before committing to a fork. The
+research pinned the honest envelope, and it lands on a discipline BCIR **already enforces**:
+
+> **eBPF is an *observe + policy-veto* substrate (allow / deny / errno / kill), NOT a *redirect*
+> substrate.** This is not a limitation to fight — it **is** BCIR's existing `probe_agree`
+> **veto-not-steer** law (`device_manifest.py:234`: *"the runtime REFUSES — it never reroutes,
+> resizes, or substitutes… veto, do not adapt"*) and the two-truth quarantine, expressed in
+> kernel space. eBPF is the kernel-side embodiment of veto-not-steer.
+
+Three L0 prototypes, each with its honest capability note:
+
+- **L0.1 — the telemetry ring (the strongest, most real).** A `BPF_MAP_TYPE_RINGBUF` (Linux 5.8+,
+  lockless MPSC, `mmap`-able to userspace) drains into the **already-built BTLM telemetry frame**
+  (`runtime/c/bcir_telemetry_frame.h:68` — the `"BTLM"` magic; the `TelemetryRing`,
+  `bcir/telemetry.py:339`, `_FMT="<7q"` at `:357`; ABI in `docs/TELEMETRY_FRAME_ABI.md`), which
+  **`kbcir/calibrate.py` already consumes** to drive measured replan (`rehydrate_decide`
+  `calibrate.py:220`, `calibrate_and_replan` `:241`). The BTLM record already carries
+  `cycles / bytes / misses / thermal / voltage / utilization`. So the loop **BPF ringbuf → BTLM
+  frame → `calibrate.py`** is a *wiring of existing parts* — **only the BPF producer is new.**
+  *Honesty:* "near-zero overhead" is marketing — it is **low-but-nonzero** (submit-side
+  notification cost); and PMU cache-miss counters are a **multiplexed** hardware resource that
+  must be normalized (read enabled/running time), not read for free.
+- **L0.2 — syscall observation + generation-tag veto.** `fentry`/tracepoint hooks on
+  `sys_enter_write` / `sys_enter_sendto` **read** the arguments and validate them against a
+  generation tag in a BPF hash map. *Honesty correction:* the original sketch said "determine
+  whether to allow or **redirect** the call" — eBPF **cannot redirect**. What it can do is
+  **allow/deny/errno/kill** via seccomp-BPF, BPF LSM (5.7+), `bpf_override_return` (needs
+  `CONFIG_BPF_KPROBE_OVERRIDE` + the target on the `ALLOW_ERROR_INJECTION` allowlist; forces an
+  early errno, cannot rewrite arguments or reroute), or `bpf_send_signal`. A **generation-tag
+  mismatch → veto** is exactly **R11 stale-pack across address spaces** (the §IX.3 IPC-R1 rule): a
+  stale peer view is **refused, never raced**. Reframe "redirect" → **"veto on a generation-tag
+  mismatch."**
+- **L0.3 — event-phase prototyping (IPC-R3).** `bpf_perf_event_output` + bounded BPF tail calls
+  (≤33 deep) emit structured events to prototype the **A1 event-phase** shape (`events.py:63` —
+  typed, ordered async entry). *Honesty:* eBPF **cannot** "override async signal-delivery vectors";
+  `bpf_send_signal` only *enqueues* a signal delivered at the normal return-to-userland boundary,
+  and the program runs in kernel context, not as an in-process event loop. L0.3 **prototypes the
+  event-phase shape as observation**; the real A1 delivery machinery is a hard-fork item (L2/L3).
+
+**L0 exit criterion:** the eBPF layer proves the BTLM telemetry can **predict workload types**
+well enough to feed `calibrate.py`'s measured-replan. *Only then* is the hard fork justified.
+*Anchor note:* BCIR already **emits real `EM_BPF` (247) ELF objects** through its codegen path
+(`bcir/codegen/targets.py:44`) — the byte-level eBPF emitter is REAL; a *driver-resident eBPF JIT*
+as an end-product stays gated/deferred.
+
+### X.3 Phase L1–L3 — the dual-domain hard-fork (Control + Fabric)
+
+When L0 proves the telemetry predicts workloads, the fork gutting begins. **`Control Domain` and
+`Fabric Domain` are NEW proposed concepts** (zero occurrences in the repo today — introduced here,
+not existing surfaces):
+
+- **Control Domain** = the stock Linux master kernel, a **minority** of CPU cores, hosting the
+  legacy monolithic drivers (the §IX.3 Strategy-3 fallback, made concrete).
+- **Fabric Domain** = the remaining cores, **stripped of Linux task scheduling**, put in a
+  permanent bare-metal poll state, managed by **BCIR-IPC ring-buffer polling engines**.
+
+This is **multikernel / multi-OS** territory with strong, citable prior art — the design is
+**grounded, not speculative** — but the *packaging* matters, and the research flagged one real
+correction:
+
+| Prior art | What it proves | Closeness |
+|---|---|---|
+| **IHK/McKernel** (RIKEN) — ran in **production on Fugaku / Oakforest-PACS** | Boots a from-scratch **lightweight kernel on cores carved from Linux**, partitions physical memory, and **offloads the non-hot syscalls back to Linux** over an inter-kernel messaging layer. | **The single best template.** |
+| **Intel mOS** | Modified Linux keeps a minority of cores; one or more Lightweight Kernels own the rest. | Direct map of Control + Fabric. |
+| **Pisces / Kitten / Hobbes** (Sandia) | A boot loader **carves cores + RAM into reserved memory and boots a second kernel image** — the closest analog to the boot-carve mechanism. | Closest to the carve. |
+| **Xenomai / Dovetail (I-pipe)**, RTAI, RTLinux | The **dual-domain RT twin**: a real-time co-kernel runs *alongside* Linux with Linux demoted to the low-priority "idle" domain; a two-stage interrupt pipeline routes IRQs out-of-band first. | The RT domain-routing template. |
+| **DPDK / SPDK** | The **Fabric polling-engine runtime model**: VFIO device passthrough + busy-poll descriptor rings + hugepages, kernel bypassed on the hot path. | The Fabric's runtime discipline. |
+| **Barrelfish** (multikernel), **Popcorn Linux** (replicated-kernel), **FusedOS** | "No shared kernel state across domains" theory; boot-path surgery precedents. | Foundational theory. |
+
+> **Honesty correction — carve dynamically, not by hacking `setup.c`.** The original sketch said
+> *"modify `arch/x86/kernel/setup.c` / e820 / memblock to statically carve at early boot."* That is
+> the **crudest** form of the idea, and the production systems deliberately **rejected** it:
+> **IHK/McKernel carves dynamically via CPU hotplug + memory hot-remove with no reboot**, and
+> **mOS explicitly deprecated boot-time LWK designation** in favour of a runtime `lwkctl`. A forked
+> `setup.c`/e820/memblock path carries a **permanent maintenance tax** (that surface churns every
+> kernel release; Barrelfish, Popcorn, and FusedOS all stalled partly on rebase pain). **Recommended
+> path:** (1) start from **stock-Linux isolation** — `isolcpus` + `nohz_full` + `rcu_nocbs` +
+> `memmap=`/reserved-memory + VFIO/DPDK — which already buys **~80–90 % of a bare-metal core with
+> ZERO fork**; (2) fork *past* it only for the honest residual gap (the ~1 Hz residual tick, IPIs,
+> TLB-shootdowns, and the fact that you still cannot boot a *second* kernel there); (3) carve
+> **dynamically, IHK-style**, not statically. And note the standing counter-argument: mainline moved
+> **away** from dual-kernel toward single-kernel **PREEMPT_RT** — the fork must be justified against
+> that baseline, not assumed.
+
+**Baking in the native 64-byte SQE ring.** The Fabric replaces the Linux VFS for *internal*
+comms with a **64-byte `bcir_ipc_sqe`** submission/completion ring baked into the kernel's core
+execution context. The io_uring `struct io_uring_sqe` **is exactly 64 bytes** — the apt anchor and
+the right template (io_uring is *already* an SQ/CQ shared-memory ring that bypasses much of the VFS
+path). *Honesty:* `bcir_ipc_sqe`, the SQE ring, and IPC-R1..R4 are **PROPOSED** (doc-only today —
+no struct exists; do not conflate with the generic "NVMe SQE header" ETL decoder in
+`bcir/etl/binary.py`, which is an example record parser, not an IPC ring). This ring is BCIR-IPC's
+**D7** deliverable (§IX.5), prototyped on the BCIR-Linux rail.
+
+### X.4 Phase L4 — the JIT micro/unikernel factory
+
+The deployment engine: per compute phase, produce a **tailored** kernel image packed with only the
+device registers + algorithms that phase needs, and hot-deploy it onto a Fabric core with direct
+hardware access. The four-step loop, grounded and corrected:
+
+1. **Workload ingestion — REAL in shape.** Compute requirements are declared as **BCIR IR** (a
+   planned claim graph). This is what BCIR already does.
+2. **Live calibration loop — PARTIALLY REAL.** `calibrate.py` reads thermal / memory-pressure /
+   utilization / voltage out of the BTLM ring today (`calibrate.py:220`,`:241`). *Honest gap:*
+   there is **no dedicated PCIe-bandwidth signal** — memory pressure is currently proxied by cache
+   `misses`; a **bandwidth telemetry field** is a PROPOSED BTLM extension. The calibrator is an
+   EWMA/linear stand-in, not a trained heavy model — call it *measured calibration*, not a learned
+   cost model.
+3. **JIT lowering — the main risk, reframed.** `calibrate.py` triggers an embedded LLVM/MLIR
+   pipeline that compiles the tailored image.
+   > **Honesty correction — AOT-specialize + cache + clone, don't JIT per phase.** Full per-phase
+   > JIT of a kernel-sized module through LLVM is **seconds, not milliseconds** — incompatible with
+   > hot-swap. The historical ancestor is **Henry Massalin's Synthesis kernel (1992)** — runtime
+   > kernel code generation (factor invariants / collapse layers / executable data structures) — and
+   > it is also the cautionary tale: it **never productionized**. The grounded design is: **AOT-
+   > specialize** a finite catalog of phase-shapes, keep them in a **content-addressed cache**, and
+   > **snapshot-clone** per phase (Firecracker's CoW `MAP_PRIVATE` restore is ~28 ms; clones
+   > <10 ms). This maps **exactly** onto BCIR machinery that already exists or is already proposed:
+   > the cache **is** `provenance.replay` + the **GraphSeed** `(seed, generator)→Module` descriptor
+   > (game-optimization roadmap slice **G7**) — a specialized-kernel *family*, replayable bit-for-bit
+   > (`provenance.py:200`); the snapshot-clone deploy **is** StreamPack **hydrate-on-demand**
+   > (`streampack.py:66`, BSPK ABI `streampack_abi.py:34`/`:186`). **Unikraft** is the build-time
+   > specialization template (link only the micro-libraries the workload needs); **Copy-and-Patch**
+   > (~100× faster than LLVM `-O0`) is the fast-codegen backend if runtime codegen is truly required;
+   > any *true* runtime JIT stays confined to **eBPF-style verifiable slices**, with the heavy/LLM
+   > model **offline**, designing and pruning the catalog — **never on the per-phase critical path.**
+4. **Deployment via hypervisor — PROPOSED, with a proven template.** A stripped **KVM** /
+   `memfd_create` sandbox hot-deploys the image onto a Fabric core with **direct, DMA-capable
+   hardware access** (VFIO/SR-IOV passthrough under the IOMMU), communicating over IPC-R1 ring
+   pairs. **Firecracker** is the template (≤125 ms cold boot; the minimal device model; `memfd`
+   guest memory; snapshot/restore + CoW clone are the boot-latency mitigation). *Honesty:* `KVM`,
+   `memfd`, and "unikernel" are **PROPOSED** (in-repo: `KVM` is named once as a validation host,
+   `memfd` is a §IX.3 "ADOPT" item, "unikernel" appears nowhere) — introduce them as new design
+   concepts, not existing BCIR surfaces.
+
+**RTOS deployments.** The bare-metal Fabric cores are, in effect, an **RTOS partition** —
+Xenomai's co-kernel and HermitCore/Hermit (a Rust unikernel that runs bare-metal beside Linux in a
+multi-kernel setup) are the templates. *Honest tension:* **JIT and hard-real-time cannot coexist on
+the same core in the same phase** — JIT is the archetype of an unbounded, non-deterministic
+operation (variable latency, page faults, cache/TLB pollution). The reconciliation is **compile at
+phase boundaries only** (an admission-control / mode-change *before* the RT phase begins), then run
+the **pre-materialized, never-recompiled** image during the hard-RT steady state.
+
+### X.5 The real-vs-proposed honesty ledger
+
+The load-bearing artifact of this part: what BCIR-Linux can lean on as **built** vs what it must
+**build**. (Ported forward from the repo audit; anchors verified.)
+
+| Surface | Status | Anchor |
+|---|---|---|
+| **BTLM telemetry frame ABI** (magic, 22-B header + 56-B `<7q>` records + CRC-32) | **REAL** | `runtime/c/bcir_telemetry_frame.h:68`; `docs/TELEMETRY_FRAME_ABI.md` |
+| **`TelemetryRing`** (the ring the BPF producer drains into) | **REAL** | `bcir/telemetry.py:339`, `:357` |
+| **Measured-replan loop** (`calibrate.py` reads thermal/misses/util/voltage) | **REAL** (EWMA/linear, not a heavy model) | `bcir/kbcir/calibrate.py:220`, `:241` |
+| **A1/B1 event phases** (typed, ordered async entry) | **REAL** | `bcir/kbcir/events.py:63`, `:41`, `:48` |
+| **`probe_agree` veto-not-steer law** (the eBPF-envelope anchor) | **REAL** | `bcir/kbcir/device_manifest.py:234` |
+| **Two-truth quarantine** (measurements inform, never decide) | **REAL** | `bcir/kbcir/twotruth.py:99` |
+| **StreamPack + generation tags + BSPK ABI + `replay()`** (the snapshot-clone anchor) | **REAL** | `bcir/gem/streampack.py:66`; `bcir/abi/streampack_abi.py:34`,`:186`; `bcir/kbcir/provenance.py:200` |
+| **Real `EM_BPF` ELF-object emission** (byte-level eBPF emitter) | **REAL** | `bcir/codegen/targets.py:44` |
+| **BCIR-IPC** — `bcir_ipc_sqe`, 64-byte SQE, SQ/CQ rings, IPC-R1..R4 | **PROPOSED** (doc-only; D7) | `§IX.3` |
+| **"Linux Master Kernel"** as a peer | **PROPOSED** (Strategy-3 fallback; self-flagged unverified) | `§IX.3`; flagged in game-opt roadmap |
+| **Control Domain / Fabric Domain** | **PROPOSED (new concepts)** — zero repo occurrences | — |
+| **JIT unikernel factory; KVM/`memfd` deploy; driver-resident eBPF JIT; GraphSeed generator; PCIe-bandwidth telemetry field** | **PROPOSED** | this part; game-opt roadmap **G7** |
+
+### X.6 The build ladder — L0–L5 (all on the BCIR-Linux rail, tested before any repo push)
+
+| Wave | Deliverable | Grounded on | Honest note |
+|---|---|---|---|
+| **L0** | **eBPF soft-fork:** BPF `RINGBUF` → BTLM → `calibrate.py`; `fentry`/tracepoint observe + seccomp/LSM veto; A1 event-phase prototyping | BPF ringbuf (5.8+); the REAL BTLM + `calibrate.py` loop; `probe_agree` | Observe + veto only. Exit = telemetry predicts workloads. |
+| **L1** | **Zero-fork bare-metal baseline:** `isolcpus`+`nohz_full`+`rcu_nocbs`+`memmap=`+VFIO/DPDK poll core | DPDK/SPDK; stock isolation | Gets ~80–90 % of a bare-metal core with **no fork**; the baseline to justify forking past. |
+| **L2** | **BCIR-IPC substrate:** the 64-byte SQE ring + IPC-R1..R4, prototyped on the rail (= driver-order **D7**) | io_uring 64-B SQE; §IX.3 | The SQE ring/laws are PROPOSED today. |
+| **L3** | **Dynamic dual-domain carve:** Control + Fabric via CPU-hotplug + memory-hot-remove (IHK-style), **not** static `setup.c` | IHK/McKernel, mOS, Pisces/Kitten; Xenomai routing | Research-grade, multi-year. Carve dynamically. |
+| **L4** | **JIT factory:** AOT-specialize + content-addressed cache (GraphSeed/`replay`) + snapshot-clone deploy (Firecracker-style) + VFIO passthrough | Unikraft; Firecracker; provenance/replay; G7 | LLM offline; Copy-and-Patch if runtime codegen needed; not per-phase LLVM. |
+| **L5** | **RTOS partition:** phase-boundary compile; pre-materialized, never-recompiled RT images on Fabric cores | Xenomai; Hermit; RT-unikernel research | JIT and hard-RT never share a core in a phase. |
+
+**Relationship to the driver build order (§IX.5).** BCIR-Linux does **not** replace the D0–D15
+driver waves — it is the **substrate they are prototyped and measured on**. D7 (BCIR-IPC) is L2;
+the "drivers become JIT microkernels once the ring substrate exists" gate (§IX.5) is exactly the
+L2→L4 transition; and the migrated drivers are the payloads the L4 factory deploys onto the L3
+Fabric.
+
+### X.7 Risks & honesty flags
+
+1. **eBPF cannot redirect.** Its envelope is observe + allow/deny/errno/kill — never reroute.
+   Presenting L0 as a "syscall redirector" overstates it; it is a **veto** layer (which is the
+   correct `probe_agree`/two-truth discipline anyway). *(X.2)*
+2. **Static `setup.c`/e820 carving is the crude form.** The production multikernels carve
+   **dynamically** (hotplug + hot-remove, no reboot). A forked boot path is a permanent rebase tax;
+   prefer the IHK-style dynamic carve. *(X.3)*
+3. **Per-phase JIT unikernel compile is seconds, not milliseconds.** Massalin's Synthesis (1992)
+   is the ancestor *and* the warning (never productionized). Reframe as AOT-specialize +
+   content-addressed cache (GraphSeed/`replay`) + snapshot-clone (Firecracker); keep the heavy/LLM
+   model offline. *(X.4)*
+4. **JIT ⊥ hard-real-time on the same core in the same phase.** Compile at phase boundaries; run
+   pre-materialized images in the RT steady state. *(X.4)*
+5. **The "Linux Master Kernel" is a fallback, not a shipped peer** — the roadmaps self-flag it as
+   unverified. BCIR-Linux makes it concrete *as a research rail*, not as an existing component. *(X.1)*
+6. **Busy-poll Fabric cores burn 100 % CPU/energy regardless of load** (the DPDK/SPDK cost) — a
+   real power/thermal charge the `cost.py` model (power/thermal axes) must price, and a reason the
+   Fabric is a *dedicated-workload* deployment, not the default. *(X.3)*
+7. **PREEMPT_RT is the single-kernel counter-argument.** Mainline moved away from dual-kernel RT;
+   the dual-domain fork must earn its keep against a PREEMPT_RT baseline. *(X.3)*
+8. **Two-truth and the resident-compiler gate still hold.** BCIR-Linux measurements **inform**,
+   never legislate; shipped drivers stay C23/LLVM IR with isel deferred to clang/llc. The fork is a
+   *reference oracle*, never a licence to hand-roll asm or let a measurement decide legality. *(X.0)*
+
+**Net:** the OS ambition is real and well-precedented — the novelty is the *packaging*
+(IHK/McKernel-style dynamic multikernel carving + a DPDK-style Fabric poll engine + Xenomai-style
+domain routing + a Unikraft/Firecracker specialization-and-clone factory, all wired to BCIR's
+existing BTLM telemetry, `calibrate.py` replan, provenance/replay, and two-truth). BCIR-Linux is
+the rail that lets the project **measure its way to that OS** instead of guessing — the kernel/driver
+oracle standing beside the Python numeric oracle.
