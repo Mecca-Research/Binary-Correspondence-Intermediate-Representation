@@ -29,23 +29,6 @@
 
 ## 0. The one-paragraph orientation
 
-> **The stance, corrected (2026-07-08).** An earlier version of this paragraph read *"BCIR is
-> the planning + verification brain that emits verified kernels — it is not a bootloader, an OS,
-> or firmware… BCIR never implements UEFI/ACPI/SMBIOS/TPM."* That was **too strong** and is
-> narrowed here. BCIR's founding ambition is a **vertically integrated** stack — a modern AI
-> compiler fused with an operating system: an **AI-powered JIT micro/unikernel factory with
-> real-time-OS deployments**. The project deliberately did **not** stop at the IR/compiler level;
-> **kernel and driver development is in scope by design** — that is *why* this roadmap exists. The
-> correct, narrower reading of the old stance is: **BCIR-the-IR/verifier does not hand-reimplement
-> a firmware *standard* as monolithic firmware.** For the named specs that scoping still holds and
-> is right — UEFI/ACPI/SMBIOS/TPM are each at heart a byte-level data structure, so BCIR **emits a
-> verified parser/marshaller kernel** that consumes the structure while the resident compiler
-> finishes it to a freestanding object; BCIR does not *become* UEFI. But **the OS itself is a
-> target** — realized not by bolting a kernel onto the IR in-tree, but through a **third rail,
-> `BCIR-Linux` — the kernel/driver oracle (Part X)**, the live-substrate analogue of the Python
-> oracle: the place where kernel/driver hypotheses are prototyped, measured, and proven on a real
-> bootable Linux before the winners are ported into the verified BCIR rails.
-
 BCIR is the **planning + verification brain that emits verified kernels** and — through the
 BCIR-Linux oracle rail (Part X) — grows into the OS around them. For **drivers** that means BCIR
 **emits a verified driver/parser kernel** and the resident compiler finishes it to a freestanding
