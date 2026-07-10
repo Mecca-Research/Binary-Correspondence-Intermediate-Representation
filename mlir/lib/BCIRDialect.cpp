@@ -446,7 +446,7 @@ using namespace bcir;
   // The G4 cache-line/bank-conflict CONTENTION signal (mirrors bcir/kbcir/cache_predict.py::CachePredictor;
   // the op-level analytic-model well-formedness check gem.conv/attention validate inline -- NO new globally-
   // numbered R-law). It is INFORMS-ONLY: the recomputed signal rides the CONTENTION cost axis and NEVER gates
-  // legality (the two-truth quarantine -- the R1-R16 verifier reads only R8/R9, never CONTENTION).
+  // legality (the two-truth quarantine -- the R1-R23 verifier never reads CONTENTION).
   //
   // (1) positive access shape + frozen geometry.
   int64_t stride = static_cast<int64_t>(getStride()), eb = static_cast<int64_t>(getElemBytes()),

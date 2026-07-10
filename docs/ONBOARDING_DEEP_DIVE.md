@@ -230,7 +230,8 @@ rail. `Q8 = 256` is the universal quantization unit.
 - **Frontends (CT3)** — `rop.py` (registry-first declarative), `map.py` (macro-assembly),
   and the `cfront/` C frontend (see §7).
 - **Lowering (BCIR-5)** — *one portable artifact, many backends*: `llvm.py` emits legal
-  SSA-only LLVM IR run via clang AOT or `lli` JIT; `wasm.py` compiles to wasm32 + runs via
+  SSA-only LLVM IR for the single-claim elementwise subset, run via clang AOT or `lli` JIT;
+  `wasm.py` compiles the same subset to wasm32 + runs via
   node; `c_kernel.py` emits portable C23 (with `_BitInt(N)` Q-fixed lanes, compensated
   reductions, the `restrict` non-aliasing contract); `mlir.py` is the **Python→law bridge**
   (`to_mlir` emits the exact pass-corpus surface so parity is *generated*, not curated);
@@ -241,7 +242,8 @@ rail. `Q8 = 256` is the universal quantization unit.
 
 ## 6. The verifier laws (`bcir/verify/`, `mlir/lib/passes/BCIRVerifyPass.cpp`)
 
-**R1–R21 are first-class on both rails** (Python oracle + `-bcir-verify`), each with a
+**R1–R23 are first-class on the current verifier law rail** (Python oracle checks the
+applicable semantic subset and `-bcir-verify` carries the complete numbered set), each with a
 negative `-verify-diagnostics` MLIR case:
 
 | | | |
@@ -252,12 +254,12 @@ negative `-verify-diagnostics` MLIR case:
 | R10 stream provenance | R11 generation validity | R12 lowering legality + MOPC support-preservation |
 | R13 policy provenance (recomputes the FNV digest + cross-checks every component vs the IR) | R14 CIM/PIM dispatch | R15 DVFS clock |
 | R16 allocator placement | R17 accuracy contract (forces compensated realization) | R18 compositional call-graph (no recursion) |
+| R19 synchronous-timing consistency | R20 clock-domain crossing | R21 pointer lifetime |
+| R22 GEM native-tile shape seam | R23 GEM dtype/quantization seam | — |
 
-**R19/R20/R21 are *emerging model laws*** — enforced on the oracle rail today (R21 also
-advisory in the C twin) but **beyond the stable MLIR law table**, so `gen_status.py` still
-reports R1–R21 first-class. They are driven by optional, None-defaulting claim metadata
-(the non-disturbance invariant), excluded from the R13 digest, and run separately from the
-pass/fail verdict — so adding them changes no existing score, plan, or verdict:
+**R19/R20/R21 are first-class optional-metadata laws.** Their `None` defaults preserve the
+non-disturbance invariant, and the metadata is excluded from the R13 digest, so adding the
+law machinery changes no unrelated score or plan:
 - **R19** synchronous-timing legality (internal consistency of an optional `Timing` block).
 - **R20** clock-domain-crossing (a RAW dep across clock domains must be synchronized).
 - **R21** pointer-lifetime: use-after-free / double-free over an optional `Lifetime`
@@ -273,7 +275,7 @@ report `skip:no-cc`), `c-runtime`, `silicon-degrade`, `thorough` (CI mode via
 ## 7. The MLIR dialect — the law (`mlir/`)
 
 The ODS/TableGen family is the normative IR; `bcir-opt` is a real `mlir-opt` clone that
-parses it, runs the R1–R18 laws, and **recomputes** the K_BCIR optimizer core from first
+parses it, runs the R1–R23 laws, and **recomputes** the K_BCIR optimizer core from first
 principles, FileCheck-pinned to the oracle's constants.
 
 - **Encoding** — the whole IR is a **nested symbol-table tree**, not SSA dataflow.
@@ -282,11 +284,11 @@ principles, FileCheck-pinned to the oracle's constants.
   symbol carrying all contract attributes + `FlatSymbolRef` operands. A `Symbol` op may
   not produce an SSA result (an MLIR-22 verifier constraint), so the legacy handle types
   are vestigial — resources/paths/packs are addressed by name.
-- **Op families** (~85 ops across 10 layered `.td` files): Core (BCIR-0..2), Target, Mem
+- **Op families** (see the generated [`STATUS.md`](STATUS.md) static inventory): Core (BCIR-0..2), Target, Mem
   (CT1), KBCIR (BCIR-3 planning), GEM (BCIR-4), Trace, Verify (R-laws as IR certificates),
   Opt, LoweringContract (M3/BCIR-5), the M5 Event/Transducer/Parse/BinaryFormat families,
   and Async.
-- **Passes + pipelines** (25 registered `-bcir-*` flags) — the canonical order is **verify
+- **Passes + pipelines** (static count in generated [`STATUS.md`](STATUS.md)) — the canonical order is **verify
   → promote/optimize → lower**. `BCIRCostModel.h` is the header-only C++23 port of the cost
   algebra shared by `-bcir-cost-model / -plan / -rcsp* / -overlap / -compose`; a per-module
   `PlanAnalysis` is computed *once* and shared. `-convert-bcir-to-llvm` is intentionally
@@ -300,7 +302,8 @@ principles, FileCheck-pinned to the oracle's constants.
   cross-map; *recompute-from-first-principles* (the law reproduces 7808/528384/126976/9472
   from the claim + capability alone); two genuinely distinct algorithms over one cost model
   (`differential.law_select` ↔ `-bcir-select-realization`); a generated adversarial campaign
-  (≥1500 modules, shrinking on mismatch); 68 `expected-error` negatives; and a
+  (≥1500 modules, shrinking on mismatch); the negative-fixture inventory in
+  [`STATUS.md`](STATUS.md); and a
   **byte-identical provenance digest** (the law re-derives the oracle's content hashes from
   the IR alone — the strongest parity claim).
 
@@ -438,18 +441,18 @@ The roadmap is **dependency-ordered** — building out of order creates debt.
    C-frontend guide.
 1. ✅ **Promote R19/R20/R21 to first-class — LANDED.** The timing + lifetime laws are now
    first-class on the MLIR rail (`#bcir.timing`/`#bcir.lifetime` attrs, `BCIRVerifyPass`
-   R1–R21, negative FileCheck cases in `verify_timing_lifetime.mlir`), and the generated
-   [`STATUS.md`](STATUS.md) reports **R1–R21** (21/21 covered).
+   R1–R23, with negative FileCheck cases), and the generated
+   [`STATUS.md`](STATUS.md) reports the static **R1–R23** negative-fixture inventory.
 2. **Extend MLIR for the *law-bearing* C semantics only** (the filter: a feature gets MLIR
    only if it affects effects/aliasing/lifetime/provenance/ABI/volatile-atomic ordering/
    timing/target/verification/cost). **Add:** object lifetime (the R21 attr), volatile
    access, atomic RMW/CAS (`#bcir.mem_ordering`), function-pointer/indirect-call effect set,
    pointer extent-provenance, and a target ABI/calling-convention `lower_contract`. **Keep
    frontend-only:** storage/linkage, C initializer semantics, source-location spelling.
-3. **Ship the freestanding-C23-driver release** — multi-file project mode + per-project
+3. **Prepare the draft freestanding-C23-driver release** — multi-file project mode + per-project
    verdict, `compile_commands.json`, dependency output (`-M/-MM/-MF`), real
-   UAPI/CMSIS/PCIe/NVMe/ACPI register-map fixtures, R1–R21 clean with per-file fallback +
-   emitted C/object artifacts. **The first externally-usable BCIR compiler deliverable.**
+   UAPI/CMSIS/PCIe/NVMe/ACPI register-map fixtures, R1–R23 clean where applicable with per-file fallback +
+   emitted C/object artifacts. The package remains `0.2.0` until those release criteria are met.
 
 **The strategic frontend arc** (§5.7): Phase C (the solid C frontend + a *generalized*
 self-verifying C backend for an arbitrary claim graph — the keystone) → Phase D (drivers /

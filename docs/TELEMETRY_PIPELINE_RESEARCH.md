@@ -213,12 +213,14 @@ mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 a
   **Two-truth**: export is read-only egress of the graded L2/L3 signal — it emits no `Diagnostic`, touches
   neither `bcir/verify` nor the cost DIMS, and is never an R-law verdict.
 
-**Pipeline status: T1–T4 all built.** The telemetry/monitoring pipeline is complete end-to-end —
-T1 (signal-provider registry) → T2 (UART telemetry frame) → T3 (derived metrics + sensitivity) →
-T4 (export adapters) — all pure-Python (T2 dual-rail with a C twin), all strictly on the
-*cost/optimization* side of the two-truth quarantine.
+**Pipeline status: the T1–T4 data contracts are built; operational transports are not.** T1 is
+the signal-provider registry, T2 is a UART-suitable frame **codec** (not UART egress), T3 derives
+metrics and sensitivity, and T4 serializes Prometheus/OpenMetrics, OTLP-JSON, and Redfish-shaped
+data. There is no channel-backed UART sender, HTTP/Prometheus host, OTLP gRPC/HTTP client,
+Redfish/BMC client, or live provider transport. The implemented pieces are pure Python (T2 also
+has a C twin) and remain strictly on the *cost/optimization* side of the two-truth quarantine.
 
-Everything above is the *cost/optimization* side. The legality verdict (R1–R21) never reads telemetry.
+Everything above is the *cost/optimization* side. The legality verdict (R1–R23) never reads telemetry.
 
 ## Sources
 NVML/DCGM <https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html>;

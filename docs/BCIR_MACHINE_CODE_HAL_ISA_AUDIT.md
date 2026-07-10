@@ -82,9 +82,9 @@ deliberately not a register machine:
 
 | Stage | State | Anchor |
 |---|---|---|
-| Text emission — LLVM IR / C23 / MLIR dialect / stack-VM mnemonics | **Native, complete** (R12 polices the legal instruction surface: 10 result ops + 4 stmt ops) | `lower/llvm.py:46`, `lower/c_kernel.py:56`, `lower/mlir.py:182`, `lower/stackify.py:87-115`, `verify/__init__.py:617-619` |
+| Text emission — LLVM IR / C23 / MLIR dialect / stack-VM mnemonics | **Mixed scope**: LLVM IR is a single-claim elementwise subset; MLIR AOT preparation is partial; C and stack emitters have their separately documented subsets | `lower/llvm.py`, `lower/c_kernel.py`, `lower/mlir.py`, `lower/stackify.py` |
 | Object emission | **Done via resident compiler**: `codegen` (llc → ELF/PTX), `codegen_object_c` (clang → ELF, `e_machine`-verified for eBPF 247 / x86-64 62 / aarch64 183) | `codegen/codegen.py:36-186` |
-| Execution | AOT (clang), JIT (`lli`), WASM (clang+wasm-ld+node), JVM/CIL (execution-validated in tests) | `lower/jit.py:29`, `lower/wasm.py:35` |
+| Execution | Single-claim elementwise AOT (clang), JIT (`lli`), and WASM (clang+wasm-ld+node); JVM/CIL bounded stack subsets are execution-validated in tests | `lower/jit.py`, `lower/wasm.py` |
 | Binary artifact (the BCIR "object code") | **StreamPack, frozen v1 + append-only v2/v3**, dual-rail codec, CRC + R10/R11 semantic trust boundary, adversarial corruptor harness | `abi/streampack_abi.py`, `runtime/c/bcir_runtime.h:46-107`, `tools/c/streampack_corrupt.py` |
 | Loader | **Done, dual-rail, freestanding** (no-libc C validate/walk/execute) | `bcir_runtime.h:46-90`, `bcir_exec.c:33` |
 | Compiler driver | **bcir-cc** (Python-free: cpp → cfront → plan → hydrate → `--emit-pack`), `--linkable`, `--emit-link-flags` | `runtime/c/bcir_cc.c:126-341` |

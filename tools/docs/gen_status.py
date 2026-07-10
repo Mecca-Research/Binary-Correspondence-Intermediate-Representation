@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate docs/STATUS.md from the code -- the single source of truth for counts + coverage.
+"""Generate docs/STATUS.md from the code -- the single source of truth for static inventories.
 
 The repo changes too fast for hand-maintained numbers (the 580 vs 615 vs 631 / R17 vs R18 drift).
 Everything here is computed from the tree, so prose never has to carry an exact count again:
@@ -98,17 +98,18 @@ def render() -> str:
     a("     link here rather than hard-code counts (the 580/615/631 + R17/R18 drift this prevents). -->\n")
     a("| Metric | Value |")
     a("|---|---|")
-    a(f"| Python conformance tests (`python -m bcir.tests.run_all`) | **{ntests}** across {nfiles} files |")
-    a(f"| MLIR ODS ops (`mlir/include/BCIR/*.td`) | **{ods_ops()}** |")
-    a(f"| Registered `-bcir-*` passes | **{registered_passes()}** |")
-    a(f"| MLIR FileCheck tests (`mlir/test/`) | **{ntd}** ({nneg} `expected-error` negatives) |")
-    a(f"| Runtime C components (`runtime/c/`) | **{len(cfiles)}** |")
-    a(f"| Verifier laws | **R1–{last_law}** ({sum(1 for _, ok in laws if ok)}/{len(laws)} covered) |")
-    a(f"| Hardware channels | **{len(chans)}** ({', '.join(kinds)}) |")
+    a(f"| Static Python `test_*` function inventory | **{ntests}** across {nfiles} files |")
+    a(f"| Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **{ods_ops()}** |")
+    a(f"| Static registered-pass inventory | **{registered_passes()}** |")
+    a(f"| Static MLIR fixture inventory (`mlir/test/`) | **{ntd}** files; {nneg} `expected-error` markers |")
+    a(f"| Static runtime C source/header inventory (`runtime/c/`) | **{len(cfiles)}** files |")
+    a(f"| Verifier-law negative-fixture tag inventory | **R1–{last_law}** ({sum(1 for _, ok in laws if ok)}/{len(laws)} present) |")
+    a(f"| Registered hardware-channel inventory | **{len(chans)}** ({', '.join(kinds)}) |")
     a("")
-    a(f"## Verifier law coverage (R1–{last_law})\n")
-    a("Each law is a first-class `-bcir-verify` check with a negative `-verify-diagnostics` `.mlir`")
-    a("case (the table below is computed from `mlir/test/passes/verify*.mlir`). R1 (RID uniqueness)")
+    a(f"## Verifier-law negative-fixture inventory (R1–{last_law})\n")
+    a("This is a static inventory, not evidence that the suite was executed. A check mark means the")
+    a("law tag appears in a negative `-verify-diagnostics` fixture under")
+    a("`mlir/test/passes/verify*.mlir`. R1 (RID uniqueness)")
     a("and R18 (call-graph integrity) are *additionally* construction-enforced on the oracle rail")
     a("(dict-keyed registry; `plan_composite` raises), so a malformed module can't even be built")
     a("there — but both still carry MLIR negative cases for hand-written IR (R1 in `verify_laws.mlir`,")

@@ -54,7 +54,7 @@ pathway selection over the legal candidate DAG:
 
 **The non-negotiables (what keeps this engineering, not dreaming).** Every layer below obeys:
 1. **The two-truth quarantine** (LangRef §13, `bcir/kbcir/twotruth.py`, `verify_quarantine` R13). *Classical
-   truth `v`* — binary legality (R1–R21); there is no "0.7 legal." *Graded truth `(v,w)`* — a value with
+   truth `v`* — binary legality (R1–R23); there is no "0.7 legal." *Graded truth `(v,w)`* — a value with
    confidence `w∈[0,1]`, the learned/measured machinery (softdp posterior, bayescal interval, regret evidence)
    that answers *which legal plan is best*, never *whether a plan is legal*. Graded may **inform** but never
    **become** a verdict; the only sanctioned crossing is an explicit `decide()` at a frozen threshold.
@@ -78,7 +78,8 @@ audit (do not rebuild any of this — extend it):
 
 **The deterministic spine (the body's reflexes).** BCIR-0..5; the claim graph; K_BCIR (`-bcir-cost-model`,
 `-bcir-plan`, `-bcir-rcsp`, the min-plus shortest path + Pareto); GEM (`bcir/gem/execute.py`, the phase-ordered
-wave executor); the **R1–R21** verifier (dual-rail MLIR/C++/C + Python; R19/R20/R21 first-class since the
+wave executor); the **R1–R23** verifier law rail (with the C frontend carrying its scoped subset;
+R19/R20/R21 first-class since the
 [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5.14 promotion). **Reusable as-is.**
 
 **The learned organs already present (CT5, all Python, all freeze to Q8).** Each has a named growth axis —
@@ -436,7 +437,7 @@ drop-in loading of a modern open-weight chat model.
    from the existing oracle pieces — `embedding_lookup` → per layer [`rmsnorm_reference` →
    Q/K/V `matmul_reference` → `rope_reference` per head → causal `scores_reference` +
    `softmax_reference` → W_o + residual → RMSNorm → `feedforward_reference` + residual] →
-   final RMSNorm → tied-embedding logits → greedy argmax. Two decode paths, one truth:
+   final RMSNorm → tied or untied logits → greedy argmax. Two decode paths, one truth:
    naive full recompute AND the incremental **KV-cache twin** emit the same ids BIT-FOR-BIT
    (the E3 reference-vs-realization pattern); causality pinned (a later token never moves an
    earlier row, exactly); and the ladder ties — the synthetic model's shard census (rung 1
@@ -461,10 +462,9 @@ drop-in loading of a modern open-weight chat model.
    conventions: the ingested checkpoint through the rung-3 reference emits the SAME greedy
    ids, the naive-vs-cached twin gate holds on real-layout weights, the census ties
    (`decoder_param_count` == the shard's element count, now gated-MLP/untied-head aware),
-   and the Q8 bridge quantizes the ingested weights unchanged. A RELEASED checkpoint runs
-   the same path via the asset gate (`BCIR_HF_MODEL_DIR`, e.g. Maykeye/TinyLLama-v0 —
-   HF downloads are blocked from the build sandbox, so real-silicon-trained ids parity is
-   a maintainer-side one-liner, the rig-gate pattern).
+   and the Q8 bridge quantizes the ingested weights unchanged. The always-on real-model gate
+   pins Maykeye/TinyLLama-v0 by immutable revision, byte length, and SHA-256; validates its
+   SentencePiece ids; and records float/Q8 drift and NLL without hiding either.
 5. ✅ **C/MLIR law rail — COMPLETE** (`verify_llm_ops.mlir`): ODS ops for the rung-3
    decoder's LLM-specific stages — `bcir.gem.embedding` / `bcir.gem.rmsnorm` / `bcir.gem.rope` —
    with op-level laws (positive extents; `gamma_len == dim`; RoPE's **even-dim** pairing law; the
@@ -524,26 +524,19 @@ drop-in loading of a modern open-weight chat model.
    live-session refusal), and mid-flight admission (appending phases, hash-identical to
    upfront) **LANDED** — remaining: windowed-attention eviction, page reuse across
    sessions, multi-device placement, expert/tensor parallelism, speculative decoding.
-8. ◑ **Whole-model reference — THE LADDER CAPSTONE, PLANNED** (`BCIR_WHOLE_MODEL_REFERENCE.md`):
-   the milestone that **composes rungs 1–7 into one dependency-free, whole-model artifact with an
-   end-to-end round-trip gate** — the `train → export → run-standalone → verify-bit-exact` loop
-   BCIR has the pieces for but has never assembled. The machinery is imported from
-   `karpathy/llama2.c` (whose C side is inference-only — the value is the *composition* discipline,
-   not a "C trainer") and reshaped proof-carrying: the numerics are **already covered** (the
-   decode rail + its `bcir_decode.c` twins own RMSNorm/RoPE/GQA/KV-cache/SwiGLU; `spm.py` owns the
-   BPE; `quantize.py` owns group-quant math), so the four **genuinely-new** slices are the ones
-   BCIR lacks — **WMR-1** a whole-model C driver (`runtime/c/bcir_llama.c` composing the existing
-   kernels + the missing driver half: projection matmuls, FF, logits head, layer loop, weight
-   struct, CLI; bit-exact vs `decode.py`); **WMR-2** the first weight-*export* path
-   (`frontends/models/weights_io.py` — a compact self-describing checkpoint wrapped in a
-   `ModelManifest` + generation tag + CRC, with a C reader; BCIR ingests safetensors read-only
-   today); **WMR-3** seeded temperature/top-p/top-k samplers at the `_argmax` site (only greedy +
-   the `TokenDFA` mask exist), replayable into the `DataDNA` provenance; **WMR-4** the persisted
-   int8/Q8_0 format + an int8 C runtime under the R17 accuracy law (feeding the AMD roadmap's
-   MXFP/NF4 migration — one quant format, many consumers). Two-truth: the C artifact is the port,
-   the Python decoder the oracle; nothing lands as an unverified copy. This is where **D1
-   (training) and the decode/serve rail (inference) finally meet in a single verifiable
-   deliverable**; rung 9 (fine-tune) builds on it.
+8. ◑ **Whole-model reference — GREEDY Q8 CAPSTONE LANDED.** WMR-1, WMR-2, and WMR-4 now
+   compose into one gate: `weights_io.py` deterministically exports the fixed-header BCIRQ8 v1
+   artifact; `bcir_q8_model.c` validates and loads it; `bcir_llama.c` composes RMSNorm, RoPE,
+   GQA/KV cache, projection matmuls, residuals, SwiGLU, and tied/untied heads; and `bcir-llama`
+   consumes verified token ids. `tools/models/run_real_model_gate.py` downloads only the three
+   checksum-pinned files for Maykeye/TinyLLama-v0, verifies the exact prompt ids and float token
+   635, exports group-32 Q8, and requires Python/C generated-id parity plus ≤1e-9 logit error
+   (currently exact). The deterministic report carries compactness, drift, and NLL delta; source
+   assets and derived weights are never committed or uploaded. See
+   [`BCIRQ8_FORMAT.md`](BCIRQ8_FORMAT.md) and [`THIRD_PARTY_MODELS.md`](THIRD_PARTY_MODELS.md).
+   **Still open:** WMR-3 seeded temperature/top-p/top-k sampling, raw-text tokenization in the C
+   executable, production batching/parallelism, and a trained-model export directly from BCIR's
+   own trainer. The C artifact remains the realization and the Python decoder the oracle.
 9. **Fine-tune/adapt** — LoRA/QLoRA-style adapters as first-class artifacts before full-parameter
    training; adapters frozen with the same provenance and eval gates as kernels.
 
@@ -554,15 +547,11 @@ predictions from BCIR legality verdicts (the two-truth quarantine, §0).
 
 ### 7.5 Bottom line
 
-BCIR is **architecturally well suited** to open weights — it already thinks in typed graphs,
-lowering, costed placement, telemetry, quantization, parity, and provenance — but it is **not yet
-a plug-and-play LLM inference engine**. The credible path is not GLM-first; it is a small
-Gemma/Qwen dense model through the manifest → tokenizer → reference-decode → quantized-artifact →
-**whole-model reference** (rung 8, `BCIR_WHOLE_MODEL_REFERENCE.md`) ladder, lowered into BCIR
-kernels and exposed as a guarded endpoint. The whole-model reference is the capstone that proves
-the ladder composes end-to-end (`train → export → run-standalone → verify`); after that, heavier
-models are an engineering problem (sharding, KV memory, kernel performance, safety operations),
-not a conceptual mismatch.
+BCIR now has a dependency-light, end-to-end **small Llama greedy-Q8 reference path**, not a
+production chat-serving engine. The pinned checkpoint → tokenizer ids → float oracle → compact
+artifact → standalone C → parity-report chain proves the ladder composes. Remaining production
+work is sharding, batching, accelerators, sampling, raw-text C tokenization, endpoint safety, and
+larger architecture coverage; those are engineering programs rather than an unproven artifact seam.
 
 ---
 
@@ -716,7 +705,7 @@ The audit finds five deepening moves, all quarantine-compatible:
   exhaustive optimizer's own choices, certificate-gated guided==exhaustive with
   mismatches 0, staleness-refused) is now the **ML-seam-per-device-class mandate** — every
   driver blueprint (Part IX of the driver roadmap) carries a §7 ML placement card with its
-  device's learned prior (UART trigger/burst shipped; interrupt-affinity, timer-drift,
+  device's learned prior (UART trigger/burst is planned in U5, not shipped; interrupt-affinity, timer-drift,
   DMA-batching, NVMe queue-depth, cache admit/evict, NIC ITR-coalescing, xHCI scheduling,
   GPU occupancy, IOMMU IOTLB-prefetch, FS readahead). A driver with no ML placement card is
   a transliterated Linux driver, not a BCIR driver.

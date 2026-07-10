@@ -203,7 +203,7 @@ bounded encoder:
 - A **general** BCIR-native backend is an LLVM-scale, permanent-maintenance undertaking that would
   *lose* to LLVM on schedule quality and *duplicate* what it does well. **Do not build it.** This is the
   considered, measured position, not an absence of ambition.
-- BCIR's value is the **planning + verification brain** (K_BCIR cost algebra, the R1–R21 verifier, the
+- BCIR's value is the **planning + verification brain** (K_BCIR cost algebra, the R1–R23 verifier, the
   StreamPack ABI, the dual-rail conformance net) layered *above* a world-class backend it gets for free.
   The asm edges already preserve native instructions; nothing is lost to "cycling back to Clang."
 - The **feasible, bounded** native slice — a time-boxed, table-driven, RA-free direct encoder for **one**

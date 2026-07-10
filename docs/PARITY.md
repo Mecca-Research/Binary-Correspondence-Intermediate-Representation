@@ -77,7 +77,7 @@ accuracy, contention, verification`.
 | bundle (joint) optimization | `kbcir.bundle.optimize_bundled` (jointly reorder input-sharing claims; bounded, dependency-preserving; `BundleCertificate` per gain) | **`-bcir-bundle`** (`BCIRBundlePass.cpp`, C++): detects input-sharing bundles and reorders the cost columns, re-pricing each legal intra-bundle order via the shared `PlanAnalysis` min-plus; annotates `kbcir.bundle_gain` / `bundle_order` (`bundle.mlir`, `bundle_reorder.mlir`) — the real matmul gain the pairwise shortest path misses |
 | proof-carrying records | `kbcir.proof` (`explain`/`replay`/`reduce`; `DecisionRecord` = R13 digest + per-claim rationale + rewrite certificates) | CLI `bcir.run --explain/--replay/--reduce`; replays bit-for-bit from the same inputs or diffs (`test_proof.py`) |
 | deterministic executor | `gem.execute` (topological phase order, ascending claim id within a phase, per-phase telemetry) | **C** `runtime/c/bcir_exec.c` (`bcir_sp_execute`): freestanding, Python↔C dispatch-order + telemetry parity (`test_c_executor.py`, `check_runtime.sh`) + libFuzzer (`fuzz_exec.c`) |
-| verifier differential (illegal modules) | `kbcir.differential.{gen_illegal_module, check_verifier, gen_illegal_plan, check_plan_verifier, _artifact_law_misses, run_verifier_campaign}` — fault-inject one law and confirm the verifier flags it, covering **all 18 laws** across the oracle's verify entry points: module/claim **R2–R8** (`verify`), plan **R9** (`verify_plan`), pack **R10/R11** (`verify_pack`), lowering **R12** (`verify_lowering`), provenance **R13** (`verify_provenance`), smart-lowering **R14–R16** (`verify_cim/dvfs/allocator`), accuracy **R17** (`verify_accuracy`). **R1** (RID uniqueness) and **R18** (call-graph integrity) are enforced *by construction* (dict-keyed registry; `plan_composite` raises on undefined-callee/recursion), so they are asserted as guards rather than diagnostic-injected. | **`-bcir-verify` implements R1–R18 first-class** (`BCIRVerifyPass.cpp`), each with a negative `-verify-diagnostics` `.mlir` case (`verify_laws{,_deep}.mlir`, `verify_accuracy.mlir`, `verify_callgraph.mlir`); only a *structure-aware fuzz campaign over the dialect* (vs the oracle) remains future work |
+| verifier differential (illegal modules) | `kbcir.differential.{gen_illegal_module, check_verifier, gen_illegal_plan, check_plan_verifier, _artifact_law_misses, run_verifier_campaign}` — the original differential fault-injects the scoped R1–R18 oracle entry points (R1/R18 construction guards included). R19–R23 use their dedicated optional-metadata/GEM seam tests. | **`-bcir-verify` implements the current R1–R23 set** (`BCIRVerifyPass.cpp`), with negative `-verify-diagnostics` fixtures under `mlir/test/passes/verify*.mlir`; generated `STATUS.md` inventories tags but does not claim execution |
 | overlap law net (the C++ port's net) | `kbcir.differential.check_overlap` + `gem.overlap.price_scheduled` (R9: makespan + gain == serial == score, 0 ≤ makespan ≤ serial) | `bcir.kbcir.scheduled_price` VerifyPass R9 — the invariant the deterministic-optimizer-core C++ port must reproduce |
 | trust-boundary fuzz | `kbcir.fuzz` (`run_fuzz`, seeded by `gen_module`): StreamPack codec, ROP/MAP/ETL front-ends, calibration JSON, the MLIR emitter — valid round-trip + graceful malformed rejection | *(host fuzz; C/C++ libFuzzer + ASan/UBSan is the toolchain-rail remainder)* |
 | real-silicon energy/thermal | `bcir.silicon.{rapl_available, read_rapl_uj, RaplSampler, read_thermal_millideg, thermal_pressure, silicon_dna}` (RAPL package energy + on-die temp; honest `None` in a sandbox) | *(host capability; the physical drivers of Θ.thermal/power that flip vec16→vec8)* |
@@ -88,7 +88,7 @@ accuracy, contention, verification`.
 | widened corpus (real workloads) | `examples.{matmul_tiled, scan, multi_histogram}` (`examples.CORPUS`) — real tiled matmul / multi-stage scan / map-reduce histogram | `mlir/test/passes/gem_corpus.mlir` (the GEM select pipeline on the AVX-512 profile, FileCheck-pinned scores) |
 | six-target capability matrix | `kbcir.differential.emit_target_matrix` (`MATRIX` programs × the six TARGETS, each with its `bcir.target.capability` seeds); `bcir/tests/test_target_matrix.py` | `bcir-opt -bcir-plan -bcir-overlap -bcir-rcsp-plan` on `mlir/test/passes/target_matrix.mlir` recomputes the oracle's per-target plan score / makespan+gain / constrained optimum **from the capability alone** (avx512/sve/rvv 7808, avx2 9472, neon 12800, ptx 6976; GPU gather 266240 vs 528384; `--emit-matrix`, drift-gated) |
 | memory tier id | `kbcir.cost.MemTier` | `BCIR_MemTier` (`BCIRAttrs.td`) |
-| lowering (AOT) | `lower.llvm` (clang) | `bcir.target.lower_contract` |
+| partial LLVM AOT/JIT subset | `lower.llvm` (clang/lli; exactly one 2-read/1-write add/sub/mul claim, otherwise reject) | `bcir.target.lower_contract`; not arbitrary-graph lowering |
 | C kernel backend (C23) | `lower.c_kernel` (`emit_kernel_c` / `emit_header_c` / `emit_selfcheck_c` / `compile_and_run_c`) + `verify.verify_c_lowering` | `bcir.target.lower_contract` (R12: selected width → loop — a *floor* at the full hardware lane (idiomatic loop), a *cap* when sub-maximal (a thermal/power throttle); `restrict`, bounds tail, precision; portable C23 for any resident toolchain) |
 | library facade (embeddable) | `bcir.api` (`build_artifact` / `compile_kernel` / `KernelArtifact`) | *(host library surface)* plan → C source + ABI header + metadata + R12 attestation + provenance digest; AOT or driver-embedded |
 | bare-metal calibration | `runtime/c/bcir_microbench.c` + `kbcir.microbench.calibrate_native` | feeds the frozen `CalibratedProfile` schema with real cache latency (closes the loop's conservative half) |
@@ -123,7 +123,7 @@ accuracy, contention, verification`.
 | WASM (Phase 7) | `lower.wasm` (clang→wasm + node) | per-target `bcir.target.lower_contract` |
 | stackify (Phase 7) | `lower.stackify` (→ wasm/jvm/cil) | foundation for `bcir.target.lower_contract` encoders |
 | C runtime (Phase 8) | `runtime/c/bcir_runtime.{h,c}` decodes `abi.streampack_abi` | `runtime/c/bcir_streampack.h` (C23: `restrict`/`[[nodiscard]]`/frozen-ABI `static_assert`; fuzzed under libFuzzer+ASan/UBSan via `runtime/c/fuzz_streampack.c`) |
-| named pass pipelines | `bcir.run` CLI stages | **MLIR** `registerBCIRPipelines`: `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm` / `bcir-aot` (verifier-checkpointed) |
+| named pass pipelines | `bcir.run` CLI stages | **MLIR** `registerBCIRPipelines`: `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm`; `bcir-aot` is verifier-checkpointed **partial AOT preparation** and may leave mixed BCIR/GEM/LLVM IR |
 | live state Θ (cost coupling) | `kbcir.cost.Theta` + `weights()` fold | `bcir.kbcir.theta` op (thermal/power/...) — `-bcir-plan`/`-bcir-overlap` apply the multiplicative thermal coupling under hot Θ (matmul hot 1159168; `theta_hot.mlir`) |
 | async tokens (Phase 8) | `gem.async_tokens` (fork/await plan) | `bcir.async.fork` / `bcir.async.await` (`!bcir.token`) |
 | memory model (Phase 8) | `lower.memory_model` (hazard→ordering) | `BCIR_MemOrdering` + barrier `ordering` → `llvm.fence` |
@@ -240,12 +240,15 @@ modules. When the MLIR toolchain is available, the `mlir/examples` + `mlir/test/
 corpus round-trips through `bcir-opt` / stock `mlir-opt` and must carry the same
 constants, and `mlir/test/passes/gem_corpus.mlir` recomputes the widened corpus.
 
-The verifier laws are negative-tested **per law on both rails**: the oracle in
-`bcir/tests/test_verify.py` (R1–R13 across module/plan/pack/lowering/provenance
-artifacts) and the dialect in `mlir/test/passes/verify_laws.mlir` (R1–R7) +
-`verify_laws_deep.mlir` (R8–R13) via `-bcir-verify -verify-diagnostics`. The
-pretty ODS corpus must stay clean under the full `-bcir-verify`
-(`tools/wsl/check_passes.sh`, CI `mlir-rail-validate`).
+The current **R1–R23** MLIR law set is negative-tested per law with
+`-bcir-verify -verify-diagnostics`: `verify_laws.mlir` (R1–R7),
+`verify_laws_deep.mlir` (R8–R16), `verify_accuracy.mlir` (R17),
+`verify_callgraph.mlir` (R18), `verify_timing_lifetime.mlir` (R19–R21), and
+`verify_shape_dtype.mlir` (R22–R23). The Python oracle covers each applicable surface
+through its verifier and dedicated timing/lifetime/GEM-seam tests; the C frontend's
+documented twin remains scoped to R1–R18. Generated `STATUS.md` is a static fixture
+inventory, not an execution claim. The pretty ODS corpus must also stay clean under the
+full `-bcir-verify` (`tools/wsl/check_passes.sh`, CI `mlir-rail-validate`).
 
 The **GEM pipeline passes** carry the same dual-rail discipline:
 `mlir/test/passes/gem_passes.mlir` FileCheck-pins the recomputed plan (the

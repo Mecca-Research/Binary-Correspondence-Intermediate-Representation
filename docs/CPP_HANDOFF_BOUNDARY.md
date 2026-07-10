@@ -32,7 +32,7 @@
 ## Why a boundary at all
 
 BCIR's deterministic rail is **single-node by design**. Its whole value proposition —
-the R1–R21 laws, the provenance digest, the byte-identical Python↔C parity, the
+the R1–R23 laws, the provenance digest, the byte-identical Python↔C parity, the
 two-truth quarantine — rests on a *statically known, bounded, deterministic* graph that
 freezes to a self-contained artifact (the StreamPack, BCIR's "WASM analog"; see
 [`BCIR_STREAMPACK_ABI.md`](BCIR_STREAMPACK_ABI.md)). Two whole classes of real ML work
@@ -61,7 +61,7 @@ Everything the rail is already good at — unchanged:
   edges, and shapes are fixed at build time.
 - **Deterministic inference (G5)** and the **bounded training slice (G6)** — the forward
   pass and the bounded backward pass that lower to the freestanding C kernels.
-- **All R-laws + provenance.** R1–R21 verification, the R13 provenance digest, R10/R11
+- **All R-laws + provenance.** R1–R23 verification, the R13 provenance digest, R10/R11
   StreamPack semantics, the R17 Q8↔f32↔Q8 bridge — the verdict-bearing legality path.
 - **The frozen artifact production.** The C/IR rail *emits* the StreamPack (via
   `bcir_encode.c` / `bcir/abi`) — the serialized, CRC-sealed, self-contained executable.
@@ -157,7 +157,7 @@ only the dispatcher.
    ┌─────────────────────────────┴──────────────────────────────┴──────────────────┐
    │           BELOW THE LINE  —  C / IR  (L0/L1, deterministic: the authority)      │
    │   bcir_sp_verify_semantic (R10/R11 + range)   bcir_sp_for_each_segment (kernels)│
-   │   single-node, known-shape, R1–R21 + provenance, byte-identical Python↔C parity │
+   │   single-node, known-shape, R1–R23 + provenance, byte-identical Python↔C parity │
    └────────────────────────────────────────────────────────────────────────────────┘
 ```
 

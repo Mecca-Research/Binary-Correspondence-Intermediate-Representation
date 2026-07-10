@@ -19,14 +19,15 @@ executable conformance oracle that must agree with these definitions
 > - **Named pipelines (verifier-checkpointed)** — `registerBCIRPipelines` wires the
 >   passes into declared input/output-level pipelines: `bcir-audit` (verify ->
 >   cost/plan/overlap), `bcir-optimize` (claims+H -> coupled plan), `bcir-hydrate`
->   (plan -> StreamPack), `bcir-lower-llvm`, and `bcir-aot` (verify -> hydrate ->
->   LLVM). A `bcir.kbcir.theta` op carries the runtime state so `-bcir-plan`/`-overlap`
+>   (plan -> StreamPack), `bcir-lower-llvm`, and `bcir-aot` (partial AOT preparation
+>   that may produce mixed BCIR/GEM/LLVM dialect IR). A `bcir.kbcir.theta` op carries
+>   the runtime state so `-bcir-plan`/`-overlap`
 >   apply the hot-Theta thermal coupling (`test/passes/theta_hot.mlir`).
 > - **Modular pass library (C++23)** — `bcir-opt` is a real compiler, not a parser.
 >   The passes are one translation unit per group under `lib/passes/`
 >   (`BCIRVerifyPass`, `BCIRPromotePass`, `BCIRConvertToLLVM`, `BCIRGEMPasses`,
 >   `BCIRSelectPass`, `BCIRRcspPass`), sharing `lib/passes/BCIRPassSupport.h`;
->   `lib/BCIRPasses.cpp` is registration-only. `-bcir-verify` (R1–R16),
+>   `lib/BCIRPasses.cpp` is registration-only. `-bcir-verify` (R1–R23),
 >   `-bcir-promote-lanes` (GGG→UX), `-convert-bcir-to-llvm` (compute/barrier → LLVM).
 >   Tests in `test/passes/`, gated by `tools/wsl/check_passes.sh`. The C/C++/MLIR
 >   placement map + roadmap is `docs/BCIR_MASTER_ROADMAP.md`.
@@ -143,7 +144,7 @@ executable conformance oracle that must agree with these definitions
 
 ```
 Track A (ODS):   include/BCIR/*.td + passes/*.td + CMakeLists.txt -> bcir-opt
-                 full dialect, pretty syntax, R1-R12 verifier, optimizer.
+                 full dialect, pretty syntax, current R1-R23 verifier, optimizer.
 Track B (IRDL):  irdl/bcir.irdl.mlir -> stock mlir-opt --irdl-file=...
                  pure-data structural projection, generic syntax, portability proof.
 ```
@@ -162,7 +163,7 @@ Track B (IRDL):  irdl/bcir.irdl.mlir -> stock mlir-opt --irdl-file=...
 | `include/BCIR/BCIRKBCIROps.td` | BCIR-3 | `kbcir.policy/path/plan/select` |
 | `include/BCIR/BCIRGEMOps.td` | BCIR-4 | `gem.stream_pack/lane_segment/prefetch/block` |
 | `include/BCIR/BCIRTraceOps.td` | cross | `trace.note` |
-| `include/BCIR/BCIRVerifyOps.td` | M1 | `verify.*` (R1–R12 as IR) |
+| `include/BCIR/BCIRVerifyOps.td` | M1 | `verify.*` witness/contract ops; `-bcir-verify` enforces the current R1–R23 law set |
 | `include/BCIR/BCIROptOps.td` | M2 | `opt.*` (rewrite/layout/mem laws as IR) |
 | `include/BCIR/BCIRLoweringContractOps.td` | M3 | `isa.*` / `packet.*` / `target.lower_contract` |
 | `include/BCIR/BCIREventOps.td` | M5 | `event.stream/kind/emit/consume` |

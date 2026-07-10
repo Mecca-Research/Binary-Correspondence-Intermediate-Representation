@@ -1,6 +1,6 @@
 /* uart_regs.h -- a vendor-style memory-mapped UART register map (CMSIS-flavored).
  *
- * Phase D: this is the kind of header a real SoC vendor ships. The driver beside it
+ * Phase D compiler fixture: this has the shape of a header a real SoC vendor ships. The source beside it
  * (cfront_driver_uart.c) includes it and is driven END-TO-END through the BCIR plug-in C
  * compiler with no Python:  bcir_cpp (the #include + #defines)  ->  bcir_cfront (lex / parse /
  * lower / verify)  ->  claim graph  ->  bcir_plan  ->  bcir_hydrate  ->  bcir_exec.
