@@ -95,7 +95,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["spdx", "file"],
       "properties": {
-        "spdx": {"const": "Apache-2.0"},
+        "spdx": {"const": "LicenseRef-BCIR-NC-1.0"},
         "file": {"const": "LICENSE"}
       }
     },

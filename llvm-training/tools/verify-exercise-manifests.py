@@ -230,8 +230,8 @@ def validate_manifest(path: Path, data: Any, repo_root: Path, errors: list[str])
         errors.append(f"{path}: invalid tool_absence_policy")
     if data.get("difficulty") not in {"beginner", "intermediate", "advanced"}:
         errors.append(f"{path}: invalid difficulty")
-    if data.get("license") != "Apache-2.0":
-        errors.append(f"{path}: license must be Apache-2.0")
+    if data.get("license") != "LicenseRef-BCIR-NC-1.0":
+        errors.append(f"{path}: license must be LicenseRef-BCIR-NC-1.0")
     if data.get("determinism") not in {"deterministic", "toolchain_dependent", "review_rubric"}:
         errors.append(f"{path}: invalid determinism")
     timeout = data.get("timeout_seconds")

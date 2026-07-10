@@ -81,3 +81,15 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 
 The Python package is the **executable conformance oracle**; the MLIR dialect is
 the **law** it must agree with. LLVM/Clang are backends, not the conceptual center.
+
+## License
+
+This project is licensed under the **BCIR Non-Commercial License, Version 1.0**
+(`LicenseRef-BCIR-NC-1.0`) — see [`LICENSE`](LICENSE) for the full terms.
+
+The code is open and free for **open-source use, development, modification,
+free redistribution, and private use**. **Commercial use, commercial
+distribution, and patent use are not permitted** without explicit prior
+written permission from Mecca-Research; contact the maintainers through this
+repository to request a commercial license. No trademark rights are granted,
+and the software is provided without warranty or liability.
