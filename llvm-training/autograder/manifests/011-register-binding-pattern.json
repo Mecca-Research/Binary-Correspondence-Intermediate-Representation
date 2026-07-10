@@ -65,7 +65,7 @@
     "llvm-training"
   ],
   "difficulty": "intermediate",
-  "license": "Apache-2.0",
+  "license": "LicenseRef-BCIR-NC-1.0",
   "determinism": "deterministic",
   "timeout_seconds": 10
 }

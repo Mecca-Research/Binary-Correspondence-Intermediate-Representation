@@ -35,4 +35,8 @@ When this repo and the LangRef disagree, the LangRef wins.
 
 ## License
 
-This repository inherits Apache-2.0 from the parent BCIR project.
+This repository inherits the BCIR Non-Commercial License, Version 1.0
+(`LicenseRef-BCIR-NC-1.0`) from the parent BCIR project — see the root
+[`LICENSE`](../LICENSE). Noncommercial and open-source use, modification, and
+free redistribution are permitted; commercial use, patent use, and commercial
+distribution require explicit prior written permission from Mecca-Research.

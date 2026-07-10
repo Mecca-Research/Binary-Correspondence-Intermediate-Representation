@@ -11,7 +11,7 @@ version = "0.2.0"
 description = "Binary Correspondence Intermediate Representation — the executable conformance oracle"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = { text = "LicenseRef-BCIR-NC-1.0" }  # BCIR Non-Commercial License v1.0 — see LICENSE
 keywords = ["compiler", "mlir", "intermediate-representation", "optimization", "bcir"]
 # The oracle is deterministic and dependency-free by design (pure-Python, integer/Q-fixed
 # hot-path math). Keep `dependencies` empty — a third-party dep on the oracle rail is a

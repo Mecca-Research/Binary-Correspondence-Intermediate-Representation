@@ -278,7 +278,10 @@ real instances were fixed.
 
 ## License & attribution
 
-Apache-2.0 (matches the BCIR repo). See [`NOTICE.md`](NOTICE.md) for source attribution.
+BCIR Non-Commercial License v1.0, `LicenseRef-BCIR-NC-1.0` (matches the BCIR repo —
+see the root [`LICENSE`](../LICENSE)). Free for noncommercial, open-source, and
+private use; commercial use or distribution requires written permission from
+Mecca-Research. See [`NOTICE.md`](NOTICE.md) for source attribution.
 
 ## Advanced chapter navigation
 
