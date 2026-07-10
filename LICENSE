@@ -42,9 +42,10 @@
       and distribution as defined by Sections 1 through 11 of this
       document.
 
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License. For this Work the
-      Licensor is Mecca-Research and the BCIR contributors.
+      "Licensor" shall mean Mecca-Research, the steward of the Work
+      that is granting the License. Contributors other than
+      Mecca-Research are "Contributors" as defined below and are not
+      part of the Licensor.
 
       "Legal Entity" shall mean the union of the acting entity and all
       other entities that control, are controlled by, or are under common
@@ -95,19 +96,30 @@
       monetary compensation, or other financial gain. Noncommercial
       Purposes include, without limitation:
 
-      (a) personal and private use, study, and experimentation;
+      (a) personal and private use, study, and experimentation, except
+          when undertaken in the ordinary course of, or for the benefit
+          of, a for-profit business operation;
 
-      (b) research, teaching, and other academic or educational use;
+      (b) research, teaching, and other academic or educational use,
+          except when undertaken in the ordinary course of, or for the
+          benefit of, a for-profit business operation;
 
       (c) development of, use in, contribution to, and distribution as
-          part of open-source software projects, provided that the
-          project (including any part of the Work or Derivative Works it
-          contains) is made available to the public free of charge and
-          is not sold, licensed for a fee, or otherwise commercially
-          exploited; and
+          part of open-source software projects, provided that (i) the
+          project (including any part of the Work or Derivative Works
+          it contains) is made available to the public free of charge
+          and is not sold, licensed for a fee, or otherwise
+          commercially exploited, and (ii) the portions of the project
+          consisting of the Work or Derivative Works remain governed
+          exclusively by this License notwithstanding any other license
+          applied to the project as a whole, are identified as such,
+          and are accompanied by a copy of this License as required by
+          Section 5; and
 
       (d) evaluation of the Work for the purpose of deciding whether to
-          seek a Commercial License under Section 4.
+          seek a Commercial License under Section 4, for a cumulative
+          period not to exceed ninety (90) days and in non-production
+          environments only.
 
       "Commercial Purpose" shall mean any purpose that is not a
       Noncommercial Purpose. Commercial Purposes include, without
@@ -119,6 +131,12 @@
       that are sold or otherwise monetized; and any use of the Work or
       Derivative Works in the ordinary course of a for-profit business
       operation, whether or not a fee is charged for the Work itself.
+      In case of any overlap between the enumerated Noncommercial
+      Purposes and the enumerated Commercial Purposes, the enumeration
+      in this definition of Commercial Purpose prevails, except for
+      purposes expressly permitted by clauses (a) through (d) of the
+      definition of Noncommercial Purpose, each as limited by its own
+      stated exceptions and conditions.
 
    2. Grant of Copyright License. Subject to the terms and conditions of
       this License, each Contributor hereby grants to You a worldwide,
@@ -152,6 +170,17 @@
       unless You have first obtained explicit prior written permission
       from the Licensor in the form of a separate commercial license
       agreement (a "Commercial License").
+
+      The prohibition in this Section 4 applies whether the Work or
+      Derivative Works are exploited alone or as a component of, in
+      combination with, or as a dependency of any other work, product,
+      or service, including where the Work is obtained separately by
+      the end user rather than distributed by You. Distributing,
+      offering, or marketing for a Commercial Purpose any work,
+      product, or service that is designed to link to, load, depend
+      on, or otherwise operate with the Work likewise requires a
+      Commercial License, notwithstanding that such work may not
+      itself constitute a Derivative Work.
 
       To request a Commercial License, contact Mecca-Research through
       the project repository:
@@ -189,7 +218,14 @@
           different terms that would grant recipients rights broader
           than, or restrict rights narrower than, those granted herein;
           You may not charge a fee for the Work or Derivative Works
-          themselves or for access to them; and
+          themselves or for access to them. You may distribute the
+          Work or Derivative Works as an identified component of a
+          larger work whose other components carry different license
+          terms, provided that the larger work is distributed free of
+          charge for Noncommercial Purposes, the portions consisting
+          of the Work or Derivative Works remain governed exclusively
+          by this License, and no term of the larger work's license
+          purports to grant broader rights in those portions; and
 
       (f) You may add Your own copyright statement to Your modifications
           and Your own attribution notices, provided that such
@@ -200,9 +236,10 @@
       otherwise, any Contribution intentionally submitted for inclusion
       in the Work by You to the Licensor shall be under the terms and
       conditions of this License, without any additional terms or
-      conditions, and You grant the Licensor the right to license the
-      Work, including Your Contribution, under Commercial Licenses
-      pursuant to Section 4. Notwithstanding the above, nothing herein
+      conditions, and You grant the Licensor a perpetual, irrevocable
+      right — surviving any termination of Your rights under this
+      License — to license the Work, including Your Contribution, under
+      Commercial Licenses pursuant to Section 4. Notwithstanding the above, nothing herein
       shall supersede or modify the terms of any separate license
       agreement You may have executed with Licensor regarding such
       Contributions.
@@ -243,8 +280,8 @@
       Your rights under this License for the Work as of the date the
       violation begins. Rights terminated under this Section may be
       reinstated only by explicit written permission from the Licensor.
-      Sections 3, 7, 8, 9, and 11 survive any termination of this
-      License.
+      Sections 1, 3, 6, 7, 8, 9, 10, and 11 survive any termination
+      of this License.
 
    11. Miscellaneous. This License constitutes the entire agreement
       between the parties with respect to the Work licensed hereunder.
@@ -257,13 +294,18 @@
 
    END OF TERMS AND CONDITIONS
 
-   APPENDIX: How to apply the BCIR Non-Commercial License to your work.
+   APPENDIX: How to mark files in this Work as covered by this License.
 
-      To apply this License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "[]"
-      replaced with your own identifying information. (Don't include
-      the brackets!) The text should be enclosed in the appropriate
-      comment syntax for the file format.
+      This License is specific to the BCIR project: the Licensor,
+      commercial-licensing contact, and canonical License location
+      named in the Terms above all refer to this repository, so this
+      text is not suitable for application to unrelated works as-is.
+      To mark a source file within this Work (or a Derivative Work) as
+      covered, attach the following boilerplate notice, with the
+      fields enclosed by brackets "[]" replaced with the applicable
+      identifying information. (Don't include the brackets!) The text
+      should be enclosed in the appropriate comment syntax for the
+      file format.
 
    Copyright [yyyy] [name of copyright owner]
 
@@ -274,8 +316,9 @@
 
        https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation/blob/main/LICENSE
 
-   Commercial use, patent use, and commercial distribution require
-   explicit prior written permission from the copyright owner.
+   Commercial use and commercial distribution require explicit prior
+   written permission from the Licensor, and patent use requires a
+   separate written license from the relevant rights holder(s).
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
