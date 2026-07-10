@@ -11,8 +11,8 @@ host (or sandbox) exposes:
     present, the discrete scaling steps + governor. SETTING frequency needs a
     `userspace` governor + privilege; we report whether actuation is possible rather
     than pretend. (Read; actuation gated.)
-  * **OS counters** (`resource.getrusage`, `time.*_ns`): real page faults, context
-    switches, and CPU-/wall-nanoseconds to feed the telemetry ring. Hardware PMU
+  * **OS counters** (`resource.getrusage` when available, plus `time.*_ns` everywhere):
+    real page faults, context switches, and CPU-/wall-nanoseconds to feed the telemetry ring. Hardware PMU
     counters (`perf_event_open`) are used when available and degrade gracefully when
     the guest exposes no PMU (common in cloud VMs).
 
@@ -24,9 +24,13 @@ reports the real/unavailable split for honest provenance.
 from __future__ import annotations
 
 import os
-import resource
 import time
 from dataclasses import dataclass
+
+try:  # POSIX-only; timers remain available on Windows and other minimal hosts.
+    import resource as _resource
+except ImportError:  # pragma: no cover - exercised on native Windows
+    _resource = None
 
 from .kbcir.cost import MemTier
 
@@ -160,17 +164,19 @@ class CounterSampler:
     def __init__(self):
         self._w = time.perf_counter_ns()
         self._c = time.process_time_ns()
-        self._r = resource.getrusage(resource.RUSAGE_SELF)
+        self._r = (_resource.getrusage(_resource.RUSAGE_SELF)
+                   if _resource is not None else None)
 
     def lap(self) -> Counters:
         w, c = time.perf_counter_ns(), time.process_time_ns()
-        r = resource.getrusage(resource.RUSAGE_SELF)
+        r = (_resource.getrusage(_resource.RUSAGE_SELF)
+             if _resource is not None else None)
         out = Counters(
             wall_ns=w - self._w, cpu_ns=c - self._c,
-            minor_faults=r.ru_minflt - self._r.ru_minflt,
-            major_faults=r.ru_majflt - self._r.ru_majflt,
-            vol_ctx=r.ru_nvcsw - self._r.ru_nvcsw,
-            invol_ctx=r.ru_nivcsw - self._r.ru_nivcsw)
+            minor_faults=(r.ru_minflt - self._r.ru_minflt) if r is not None and self._r is not None else 0,
+            major_faults=(r.ru_majflt - self._r.ru_majflt) if r is not None and self._r is not None else 0,
+            vol_ctx=(r.ru_nvcsw - self._r.ru_nvcsw) if r is not None and self._r is not None else 0,
+            invol_ctx=(r.ru_nivcsw - self._r.ru_nivcsw) if r is not None and self._r is not None else 0)
         self._w, self._c, self._r = w, c, r
         return out
 
@@ -448,15 +454,17 @@ def sample_into_ring(ring, claim_id: int, work) -> Counters:
     """Run `work()` once, measure it, and write one record into the zero-copy
     telemetry ring. When a hardware PMU is present, the real cycle + cache-miss
     counts are used (`misses` carries L*-miss counts); otherwise `cycles` = measured
-    CPU nanoseconds and `misses` = page faults. The kernel writes, the consumer
-    `drain()`s the same buffer -- a real measured signal."""
+    CPU nanoseconds, falling back to measured wall nanoseconds when the host CPU clock
+    is too coarse to move during short work (notably Windows), and `misses` = page
+    faults. The raw ``Counters`` delta remains unchanged. The kernel writes, the
+    consumer `drain()`s the same buffer -- a real measured signal."""
     from .telemetry import DataDNA
     sampler = CounterSampler()
     hw = read_hw_counters(work)              # runs work() iff a PMU is present
     if hw is None:
         work()                              # no PMU: run once under OS counters
     c = sampler.lap()
-    cycles = hw.cycles if hw else c.cpu_ns
+    cycles = hw.cycles if hw else (c.cpu_ns if c.cpu_ns > 0 else c.wall_ns)
     misses = hw.cache_misses if hw else (c.minor_faults + c.major_faults)
     ring.write(DataDNA(segment_id="", claim_id=claim_id, cycles=cycles, bytes=0,
                        misses=misses, thermal=0, voltage=0,
@@ -479,6 +487,7 @@ def summary() -> dict:
         "dvfs_actuatable": fq.actuatable,
         "hw_pmu": perf_counters_available(),
         "os_counters": True,
+        "rusage_counters": _resource is not None,
         "rapl_energy": rapl_available(),
         "thermal_zone": read_thermal_millideg() is not None,
     }

@@ -67,3 +67,51 @@ def test_unknown_tier_is_rejected():
         assert e.code == 2
     else:
         raise AssertionError("unknown tier should raise SystemExit(2)")
+
+
+def test_versioned_and_windows_tool_names_are_gated_by_family():
+    calls = []
+
+    def fake_which(cmd, *args, **kwargs):
+        calls.append(cmd)
+        return f"/tools/{cmd}"
+
+    saved_real, saved_which = R._REAL_WHICH, R.shutil.which
+    try:
+        R._REAL_WHICH = fake_which
+        R._apply_tier("quick")
+        for name in ("clang-20", "llvm-link-22.exe", "/opt/llvm/bin/llc-19", "gcc.exe"):
+            assert R.shutil.which(name) is None
+        assert R.shutil.which("python.exe") == "/tools/python.exe"
+        R._apply_tier("thorough")
+        assert R.shutil.which("clang-20") == "/tools/clang-20"
+    finally:
+        R._REAL_WHICH = saved_real
+        R.shutil.which = saved_which
+        os.environ.pop("BCIR_TIER", None)
+        os.environ.pop("BCIR_THOROUGH", None)
+
+
+def test_pool_context_uses_spawn_when_fork_is_unavailable():
+    saved_methods, saved_context = R.multiprocessing.get_all_start_methods, R.multiprocessing.get_context
+    seen = []
+    try:
+        R.multiprocessing.get_all_start_methods = lambda: ["spawn"]
+        R.multiprocessing.get_context = lambda method: seen.append(method) or method
+        assert R._pool_context() == "spawn"
+        assert seen == ["spawn"]
+    finally:
+        R.multiprocessing.get_all_start_methods = saved_methods
+        R.multiprocessing.get_context = saved_context
+
+
+def test_explicit_clang_check_reports_no_compiler_honestly():
+    from bcir.frontends.cfront import pipeline
+
+    saved = pipeline.shutil.which
+    try:
+        pipeline.shutil.which = lambda *_args, **_kwargs: None
+        result = pipeline.compile_unit("int f(int x){return x+1;}", check_clang=True)
+        assert result.equivalence == "skip:no-cc"
+    finally:
+        pipeline.shutil.which = saved

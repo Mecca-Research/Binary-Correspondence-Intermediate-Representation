@@ -27,6 +27,7 @@ from bcir.kbcir.cost import ACCURACY, COMPUTE, MEMORY, CostVector, TargetProfile
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound
 from bcir.lower.c_kernel import emit_activation_kernel_c, emit_relu_kernel_c
 from bcir.model import Claim, Domain, Lane, Opcode, StrideClass
+from bcir.toolchain import host_link_args
 
 _HOST = TargetProfile.for_host()
 
@@ -216,7 +217,7 @@ def _compile_run_activation(kind, x, axis_len=None):
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "a")
         # -lm: the trusted libm edge (expf/tanhf), exactly as the B5 wrap links cblas.
-        bld = subprocess.run([cc, "-std=c11", "-O2", src, "-lm", "-o", exe],
+        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
                              capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)

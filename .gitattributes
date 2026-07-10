@@ -1,0 +1,60 @@
+* text=auto eol=lf
+
+# Source, build, test, IR, configuration, and documentation files are LF on every host.
+*.sh text eol=lf
+*.py text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.cc text eol=lf
+*.cpp text eol=lf
+*.cxx text eol=lf
+*.ll text eol=lf
+*.mlir text eol=lf
+*.td text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.csv text eol=lf
+
+# Native Windows command files retain the platform's conventional line ending.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary artifacts must never be line-ending normalized.
+*.bin binary
+*.bc binary
+*.o binary
+*.obj binary
+*.a binary
+*.lib binary
+*.so binary
+*.dll binary
+*.dylib binary
+*.exe binary
+*.wasm binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.xz binary
+*.tar binary
+*.safetensors binary
+*.gguf binary
+*.onnx binary
+*.model binary
+*.pt binary
+*.pth binary
+*.npy binary
+*.npz binary
+*.7z binary
+*.bz2 binary
+*.zst binary

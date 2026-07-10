@@ -79,6 +79,8 @@ branch. The emitted C is the in-place twin (it updates ``params`` + the state bu
 
 from __future__ import annotations
 
+from ..toolchain import host_link_args
+
 import math
 
 # Re-exposed from the existing emitter so the module is the single optimizer surface (we do NOT redefine the C
@@ -405,7 +407,8 @@ def compile_and_run_optimizer_c(opt: str, params, grads, lr, steps, *, workdir=N
         link = ["-lm"] if spec["libm"] else []
         build = None
         for std in ("-std=c23", "-std=c2x", "-std=c11"):
-            build = subprocess.run([cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe, *link],
+            build = subprocess.run(host_link_args(
+                [cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe, *link]),
                                    capture_output=True, text=True)
             if build.returncode == 0:
                 break

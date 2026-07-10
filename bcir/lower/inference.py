@@ -53,6 +53,8 @@ follow-up (kept separate, exactly as matmul.py / activation.py kept their MLIR w
 
 from __future__ import annotations
 
+from ..toolchain import host_link_args
+
 import struct
 from dataclasses import dataclass, field
 
@@ -442,7 +444,8 @@ def compile_and_run_inference_c(model: InferenceModel, x: list[float], fn_name: 
                 f.write(blob)
         build = None
         for std in ("-std=c23", "-std=c2x", "-std=c11"):
-            build = subprocess.run([cc, std, "-O2", "-Wall", "-Wextra", src, "-lm", "-o", exe],
+            build = subprocess.run(host_link_args(
+                [cc, std, "-O2", "-Wall", "-Wextra", src, "-lm", "-o", exe]),
                                    capture_output=True, text=True)
             if build.returncode == 0:
                 break

@@ -2,10 +2,11 @@
 
 import shutil
 
-from bcir.examples import vector_add
+from bcir.examples import fused_chain, histogram_gather, scan_chain, vector_add
 from bcir.kbcir import optimize
 from bcir.kbcir.cost import TargetProfile, Theta
 from bcir.lower import compile_and_run, emit_kernel_ll
+from bcir.run import main as run_main
 
 
 def _result():
@@ -39,3 +40,38 @@ def test_lowering_compiles_and_runs():
     ok, out = compile_and_run(module, res, fn_name="bcir_kernel")
     assert ok, out
     assert "OK" in out
+
+
+def _assert_rejected(module):
+    result = optimize(module, TargetProfile.x86_avx512(), Theta.cool())
+    try:
+        emit_kernel_ll(module, result)
+    except NotImplementedError as exc:
+        assert "single-claim elementwise LLVM AOT/JIT subset" in str(exc)
+    else:
+        raise AssertionError("partial LLVM lowering silently accepted an unsupported graph")
+
+
+def test_multi_claim_graphs_are_rejected_instead_of_truncated():
+    _assert_rejected(fused_chain(32))
+    _assert_rejected(scan_chain(32))
+
+
+def test_multi_claim_graph_is_rejected_even_if_realization_omits_a_claim():
+    module = fused_chain(32)
+    result = optimize(module, TargetProfile.x86_avx512(), Theta.cool())
+    result.steps = result.steps[:1]
+    try:
+        emit_kernel_ll(module, result)
+    except NotImplementedError as exc:
+        assert "found 2" in str(exc)
+    else:
+        raise AssertionError("partial realization hid an executable graph claim")
+
+
+def test_unsupported_single_claim_is_rejected():
+    _assert_rejected(histogram_gather(32))
+
+
+def test_requested_unsupported_cli_lowering_exits_nonzero():
+    assert run_main(["fused_chain", "--emit-llvm"]) == 1

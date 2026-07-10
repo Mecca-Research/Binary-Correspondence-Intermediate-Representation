@@ -9,4 +9,4 @@ int  a_qual(int x)  { _Atomic int a = x; a += 3; a *= 2; a -= 1; return a; }
 int  a_paren(int x) { _Atomic(int) a = x * 2; a |= 1; a ^= 5; return a; }
 long a_long(long x) { _Atomic long a = x; a <<= 1; a += 100; return a; }
 int  a_const(int x) { const _Atomic int a = x * 3 + 7; return a + 1; }
-int  a_ptr(int x)   { int v = x; _Atomic(int) *p = &v; *p += 4; return v + *p; }
+int  a_ptr(int x)   { _Atomic(int) v = x; _Atomic(int) *p = &v; *p += 4; return v + *p; }

@@ -11,9 +11,9 @@ reports PASS/FAIL. Usable two ways:
     python -m pytest bcir/tests                         # if pytest is installed (same tests)
 
 The suite is dominated by independent compile-and-run tests, so by default it runs the
-``test_*`` callables across all cores (a fork pool; ``-j N`` / ``$BCIR_JOBS`` / ``-j1`` to
-override). A forked worker inherits the applied tier + already-imported modules, so the
-capability gate and per-process build caches carry over with no re-setup.
+``test_*`` callables across all cores (``fork`` where available, otherwise ``spawn``;
+``-j N`` / ``$BCIR_JOBS`` / ``-j1`` to override). Every worker applies the selected
+tier before importing a test module, so capability gating is identical on every host.
 
 Named tiers are an *escalating capability ladder* — each adds what the previous
 exposes (``quick`` ⊂ ``c-runtime`` ⊂ ``silicon-degrade`` ⊂ ``thorough``). They work
@@ -31,6 +31,7 @@ import concurrent.futures
 import importlib
 import multiprocessing
 import os
+import re
 import shutil
 import sys
 import traceback
@@ -62,6 +63,7 @@ TIERS: dict[str, dict[str, object]] = {
     "thorough":        {"visible": frozenset(_ALL_TOOLCHAIN),      "thorough": True},
 }
 _DEFAULT_TIER = "quick"
+_REAL_WHICH = shutil.which
 
 
 def resolve_tier(argv: list[str] | None = None) -> str:
@@ -93,17 +95,21 @@ def _apply_tier(tier: str) -> None:
     module-level `BCIR_THOROUGH` reads (campaign sizes) see the right value."""
     spec = TIERS[tier]
     os.environ["BCIR_TIER"] = tier
+    shutil.which = _REAL_WHICH                         # idempotent across repeated tier changes
     if spec["thorough"]:
         os.environ["BCIR_THOROUGH"] = "1"
+    else:
+        os.environ.pop("BCIR_THOROUGH", None)
     visible: frozenset[str] = spec["visible"]  # type: ignore[assignment]
     hidden = _ALL_TOOLCHAIN - visible
     if not hidden:
         return                                                  # thorough: nothing gated
-    _orig_which = shutil.which
-
     def _gated_which(cmd, *args, **kwargs):
-        return None if os.path.basename(str(cmd)) in hidden \
-            else _orig_which(cmd, *args, **kwargs)
+        base = os.path.basename(str(cmd)).lower()
+        if base.endswith(".exe"):
+            base = base[:-4]
+        family = re.sub(r"-\d+$", "", base)
+        return None if family in hidden else _REAL_WHICH(cmd, *args, **kwargs)
 
     shutil.which = _gated_which
 
@@ -280,6 +286,7 @@ _MODULES = [
     "bcir.tests.test_silicon_runbook",
     "bcir.tests.test_clang_compare",
     "bcir.tests.test_tiers",
+    "bcir.tests.test_toolchain",
     "bcir.tests.test_perf_budget",
     "bcir.tests.test_import_quarantine",
     "bcir.tests.test_registry_complete",
@@ -308,9 +315,7 @@ def _collect_tests() -> list[tuple[str, str]]:
 
 
 def _run_one(pair: tuple[str, str]) -> tuple[str, str, str | None]:
-    """Run one test function and return (module, test, traceback-or-None). Runs in a forked worker
-    that inherits the parent's applied tier + already-imported modules (so import is instant and the
-    `shutil.which` capability gate is already in effect)."""
+    """Run one test function and return (module, test, traceback-or-None)."""
     modname, name = pair
     try:
         getattr(importlib.import_module(modname), name)()
@@ -319,10 +324,21 @@ def _run_one(pair: tuple[str, str]) -> tuple[str, str, str | None]:
     return modname, name, None
 
 
+def _worker_init(tier: str) -> None:
+    """Apply capability gating before a forked or spawned worker imports tests."""
+    _apply_tier(tier)
+
+
+def _pool_context():
+    """Use cheap fork inheritance where supported and portable spawn elsewhere."""
+    method = "fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn"
+    return multiprocessing.get_context(method)
+
+
 def _resolve_jobs() -> int:
     """Worker count: ``-j N`` / ``--jobs N`` argv > ``$BCIR_JOBS`` > all cores. The suite is dominated
     by independent compile-and-run tests, so running across cores is a ~Ncores win at every tier; the
-    fork is cheap. ``-j1`` (or ``BCIR_JOBS=1``) forces the historic serial path; ``-j0``/``auto`` ==
+    process pool is cheap. ``-j1`` (or ``BCIR_JOBS=1``) forces the historic serial path; ``-j0``/``auto`` ==
     all cores. Out-of-range values clamp to ``[1, cpu]``."""
     val: str | None = None
     argv = sys.argv[1:]
@@ -354,7 +370,7 @@ def main() -> int:
     _apply_tier(tier)                       # gate the toolchain BEFORE importing test modules
     jobs = _resolve_jobs()
     print(f"[run_all] tier={tier} — {_TIER_BLURB[tier]}  (jobs={jobs})\n")
-    pairs = _collect_tests()                # imports every module in the parent (warms fork inheritance)
+    pairs = _collect_tests()                # stable discovery; fork also benefits from the warm imports
     passed = failed = 0
 
     def _report(modname: str, name: str, tb: str | None) -> None:
@@ -370,14 +386,16 @@ def main() -> int:
         for pair in pairs:                  # the historic serial path, unchanged
             _report(*_run_one(pair))
     else:
-        # Fork so workers inherit the applied tier + already-imported modules (no re-import, no
-        # re-gate). ProcessPoolExecutor workers are NON-daemonic, so a test that spawns its own pool
-        # still works. `.map` preserves submission order for a stable, diff-friendly log; chunksize=1
+        # Fork where available; otherwise spawn. The initializer installs the tier gate before any
+        # worker test import. ProcessPoolExecutor workers are NON-daemonic, so a test that spawns its
+        # own pool still works. `.map` preserves submission order for a stable log; chunksize=1
         # dispatches one test at a time so a worker that frees up pulls the next -- natural load
         # balancing for the very uneven per-test compile cost (the C twin's build cache is a
         # worker-process global, so it is still built once per worker).
-        ctx = multiprocessing.get_context("fork")
-        with concurrent.futures.ProcessPoolExecutor(max_workers=jobs, mp_context=ctx) as pool:
+        ctx = _pool_context()
+        with concurrent.futures.ProcessPoolExecutor(
+                max_workers=jobs, mp_context=ctx,
+                initializer=_worker_init, initargs=(tier,)) as pool:
             for res in pool.map(_run_one, pairs, chunksize=1):
                 _report(*res)
 

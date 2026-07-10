@@ -30,6 +30,8 @@ import shutil
 import subprocess
 import tempfile
 
+from bcir.toolchain import host_link_args
+
 from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
 from bcir.kbcir.pca import (center_columns, covariance_matrix, eigen_residual,
                             orthonormality_residual, pca_reference, pca_via_bridge,
@@ -290,7 +292,7 @@ def _run_eigh_kernel(cc, kernel, c, n, define=None, libs=None):
         if libs:
             cmd += libs
         cmd += ["-lm", "-o", exe]                              # -lm: sqrtf/fabsf/copysignf in the Jacobi path
-        bld = subprocess.run(cmd, capture_output=True, text=True)
+        bld = subprocess.run(host_link_args(cmd), capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout + out.stderr

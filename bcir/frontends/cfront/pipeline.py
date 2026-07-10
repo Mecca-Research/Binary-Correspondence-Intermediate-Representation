@@ -22,6 +22,7 @@ from ...kbcir.compose import Effect, plan_composite, summarize
 from ...kbcir.cost import Theta
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
+from ...toolchain import host_link_args
 from ...verify import (Diagnostic, cfront_unit_claim_ids_unique, verify, verify_lifetime,
                        verify_plan)
 from .abi import abi_contract_for, verify_abi_contract, HOST, target as resolve_target
@@ -384,7 +385,8 @@ def _equivalence(source: str, lowered: LoweredUnit) -> str:
         with open(src, "w", encoding="utf-8") as f:
             f.write(harness)
         for std in ("-std=c23", "-std=c2x", "-std=c17"):
-            b = subprocess.run([cc, std, "-O1", src, "-o", exe, "-lm"],   # -lm: <math.h> calls link
+            b = subprocess.run(host_link_args(
+                [cc, std, "-O1", src, "-o", exe, "-lm"]),   # -lm: logical edge; omitted for the Windows CRT
                                capture_output=True, text=True)
             if b.returncode == 0:
                 break

@@ -18,6 +18,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
 PROGRAM="${PROGRAM:-vector_add}"
+PYTHON="${BCIR_PYTHON:-python3}"
 REQUIRE_REAL=0
 [ "${1:-}" = "--require-real" ] && REQUIRE_REAL=1
 
@@ -26,7 +27,7 @@ echo "[silicon] capability probe (the three real signals the measured replan is 
 # host exposes ALL THREE -- a hardware PMU (perf_event_open), RAPL energy, and a cpufreq
 # userspace governor. The probe enumerates each, names what is missing, and prints whether
 # the host is rig-ready; the measured number itself still comes only from the real loop below.
-python3 - <<'PY'
+"${PYTHON}" - <<'PY'
 import bcir.silicon as s
 pmu = bool(s.perf_counters_available())
 rapl = bool(s.rapl_available())
@@ -46,7 +47,7 @@ else:
 PY
 
 echo "[silicon] measured replan (bcir.run --silicon):"
-out="$(python3 -m bcir.run "${PROGRAM}" --silicon 2>&1)" || { echo "  FAIL: --silicon errored"; echo "${out}"; exit 1; }
+out="$("${PYTHON}" -m bcir.run "${PROGRAM}" --silicon 2>&1)" || { echo "  FAIL: --silicon errored"; echo "${out}"; exit 1; }
 echo "${out}" | sed -n 's/^/  /p' | grep -E "silicon|win=" || true
 
 # Parse the provenance + win the loop certified.

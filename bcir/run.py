@@ -30,13 +30,17 @@ def main(argv: list[str] | None = None) -> int:
                    help="cost-model target (defaults to the host's architecture)")
     p.add_argument("--theta", default="cool", choices=sorted(_THETAS))
     p.add_argument("--policy", default="latency", choices=sorted(POLICIES))
-    p.add_argument("--emit-llvm", action="store_true", help="print the lowered LLVM IR")
+    p.add_argument("--emit-llvm", action="store_true",
+                   help="print LLVM IR for the single-claim elementwise subset")
     p.add_argument("--emit-mlir", action="store_true",
                    help="print the GEM-pipeline BCIR-MLIR for the selected plan (the law "
                         "rail recomputes the min-plus score; see bcir.kbcir.differential)")
-    p.add_argument("--run", action="store_true", help="compile+run the lowering via clang (AOT)")
-    p.add_argument("--jit", action="store_true", help="JIT-run the lowering via lli (in-process)")
-    p.add_argument("--wasm", action="store_true", help="compile to WASM and run via node (self-checking)")
+    p.add_argument("--run", action="store_true",
+                   help="compile+run the single-claim elementwise subset via clang (AOT)")
+    p.add_argument("--jit", action="store_true",
+                   help="JIT-run the single-claim elementwise subset via lli")
+    p.add_argument("--wasm", action="store_true",
+                   help="compile the single-claim elementwise subset to WASM and run via node")
     p.add_argument("--schedule", action="store_true", help="print the CT2 concurrent wave schedule")
     p.add_argument("--budget", metavar="DIM=CAP[,DIM=CAP...]",
                    help="constrained (RCSP) selection, e.g. thermal=700,power=700")
@@ -66,7 +70,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="soft (log-sum-exp) plan distribution at temperature T "
                         "(T=0 reproduces the tropical optimizer exactly)")
     p.add_argument("--codegen", metavar="TARGET",
-                   help="per-target codegen via llc (aarch64|riscv64|nvptx64|bpf|x86_64|c|all)")
+                   help="single-claim elementwise codegen via llc "
+                        "(aarch64|riscv64|nvptx64|bpf|x86_64|c|all)")
     p.add_argument("--emit-c", action="store_true",
                    help="print the portable C23 kernel for the selected realization")
     p.add_argument("--run-c", action="store_true",
@@ -405,6 +410,7 @@ def main(argv: list[str] | None = None) -> int:
                     return 1
         except NotImplementedError as exc:
             print(f"[lower] {exc}")
+            return 1
 
     if args.codegen:
         from .codegen import codegen, codegen_all, codegen_c
@@ -415,11 +421,16 @@ def main(argv: list[str] | None = None) -> int:
                 items = [("c", codegen_c(module, result))]
             else:
                 items = [(args.codegen, codegen(module, result, args.codegen))]
+            failed = False
             for name, r in items:
                 size = len(r.artifact) if isinstance(r.artifact, (bytes, str)) and r.artifact else 0
                 print(f"[codegen] {name}: {'OK' if r.ok else 'FAILED'} ({r.message[:60]}{' %dB' % size if size else ''})")
+                failed = failed or not r.ok
+            if failed:
+                return 1
         except NotImplementedError as exc:
             print(f"[codegen] {exc}")
+            return 1
     return 0
 
 

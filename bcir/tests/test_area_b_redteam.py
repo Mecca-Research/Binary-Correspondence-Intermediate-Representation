@@ -49,6 +49,7 @@ from bcir.kbcir.gsl_kernels import GSL_STATS, stats_reference
 from bcir.kbcir.linsolve import residual, solve_reference
 from bcir.kbcir.matmul import matmul_reference
 from bcir.kbcir.vecmath import exp_reference
+from bcir.toolchain import host_link_args
 from bcir.lower.c_kernel import (
     emit_blas_gemm_c,
     emit_cerf_erfcx_c,
@@ -94,7 +95,7 @@ def _run_elementwise_kernel(cc, kernel, fn, lits):
         src = os.path.join(d, "s.c")
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "s")
-        bld = subprocess.run([cc, "-std=c11", "-O2", src, "-lm", "-o", exe],
+        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
                              capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
@@ -187,7 +188,7 @@ def test_cerf_linked_path_is_robust_only_if_libcerf_is_present():
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "p.c")
         open(src, "w").write("#include <cerf.h>\nint main(void){return (int)erfcxf(0.0f)*0;}\n")
-        if subprocess.run([cc, src, "-lcerf", "-lm", "-o", os.path.join(d, "p")],
+        if subprocess.run(host_link_args([cc, src, "-lcerf", "-lm", "-o", os.path.join(d, "p")]),
                           capture_output=True).returncode == 0:
             libs = ["-lcerf"]
     if not libs:
@@ -204,7 +205,8 @@ def test_cerf_linked_path_is_robust_only_if_libcerf_is_present():
         src = os.path.join(d, "s.c")
         open(src, "w").write(emit_cerf_erfcx_c(n, "verfcx") + main)
         exe = os.path.join(d, "s")
-        bld = subprocess.run([cc, "-std=c11", "-O2", "-DBCIR_USE_CERF", src, *libs, "-lm", "-o", exe],
+        bld = subprocess.run(host_link_args(
+            [cc, "-std=c11", "-O2", "-DBCIR_USE_CERF", src, *libs, "-lm", "-o", exe]),
                              capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
@@ -294,7 +296,7 @@ def test_lapack_fallback_solves_well_conditioned_but_not_a_singular_system():
         src = os.path.join(d, "s.c")
         open(src, "w").write(emit_lapack_solve_c(n, nrhs, "solve") + main)
         exe = os.path.join(d, "s")
-        bld = subprocess.run([cc, "-std=c11", "-O2", src, "-lm", "-o", exe],
+        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
                              capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
@@ -457,7 +459,8 @@ def test_blas_fallback_nan_propagation_compiles_and_runs():
         src = os.path.join(d, "g.c")
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "g")
-        bld = subprocess.run([cc, "-std=c11", "-O2", src, "-lm", "-o", exe], capture_output=True, text=True)
+        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+                             capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout + out.stderr
@@ -564,7 +567,8 @@ def test_fftw2d_fallback_nan_propagation_compiles_and_runs():
         src = os.path.join(d, "f.c")
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "f")
-        bld = subprocess.run([cc, "-std=c11", "-O2", src, "-lm", "-o", exe], capture_output=True, text=True)
+        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+                             capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout + out.stderr

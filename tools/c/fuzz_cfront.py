@@ -56,6 +56,8 @@ _C = os.path.join(_ROOT, "runtime", "c")
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from bcir.toolchain import host_link_args  # noqa: E402
+
 _PMAX = 1 << 14                 # the max |value| the driver feeds a wide-signed (int/long) parameter
 _ARRSZ = 8                      # the backing array length for a pointer parameter (accesses masked `& 7u`)
 _CMP = ["<", ">", "<=", ">=", "==", "!=", "&&", "||"]
@@ -924,7 +926,8 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
     with open(cpath, "w") as fh:
         fh.write(harness)
     for std in ("c23", "c2x", "c17"):                           # -ffp-contract=off: no FMA, so float is exact
-        b = subprocess.run([cc, f"-std={std}", "-O2", "-ffp-contract=off", cpath, "-o", epath, "-lm"],
+        b = subprocess.run(host_link_args(
+            [cc, f"-std={std}", "-O2", "-ffp-contract=off", cpath, "-o", epath, "-lm"]),
                            capture_output=True, text=True)
         if b.returncode == 0:
             break

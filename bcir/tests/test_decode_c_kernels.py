@@ -13,13 +13,14 @@ import tempfile
 from bcir.kbcir.transformer_grads import rmsnorm_reference, rope_reference
 from bcir.kbcir.unsupervised import EmbeddingTable, embedding_lookup
 from bcir.tests.test_c_executor import _RUNTIME_C, _cc
+from bcir.toolchain import host_link_args
 
 
 def _build(tmp):
     exe = os.path.join(tmp, "test_decode")
-    r = subprocess.run([_cc(), "-std=c11", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
+    r = subprocess.run(host_link_args([_cc(), "-std=c11", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
                         os.path.join(_RUNTIME_C, "test_decode.c"),
-                        os.path.join(_RUNTIME_C, "bcir_decode.c"), "-o", exe, "-lm"],
+                        os.path.join(_RUNTIME_C, "bcir_decode.c"), "-o", exe, "-lm"]),
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     return exe

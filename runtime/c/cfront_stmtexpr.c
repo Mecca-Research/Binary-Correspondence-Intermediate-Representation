@@ -19,3 +19,15 @@ int se_nest(int x)     { return ({ int a = ({ int b = x; b + 1; }); a * 2; }); }
 int se_scope(int x)    { int y = 100; int r = ({ int y = x; y * 2; }); return r + y; }
 /* a VOID statement expression: the last item is a control-flow statement, so the value is discarded */
 int se_void(int x)     { int n = 0; ({ if (x & 1) n = x * 2; else { n = x + 1; } }); return n; }
+
+/* Clang's GNU rule: a bare terminal bitfield retains its DECLARED type once the statement expression
+ * ceases to be a bitfield expression. Ordinary reads and enclosing expressions still promote normally. */
+struct se_bits { unsigned u : 3; signed int s : 3; };
+unsigned se_bf_declared(unsigned v) { struct se_bits b; b.u=v; return -({ b.u; }); }
+int se_bf_regular(unsigned v)       { struct se_bits b; b.u=v; return -(b.u); }
+int se_bf_cast(unsigned v)          { struct se_bits b; b.u=v; return -({ (int)b.u; }); }
+int se_bf_expr(unsigned v)          { struct se_bits b; b.u=v; return -({ b.u + 0; }); }
+int se_bf_comma(unsigned v)         { struct se_bits b; b.u=v; return -({ (0, b.u); }); }
+unsigned se_bf_paren(unsigned v)    { struct se_bits b; b.u=v; return -({ (b.u); }); }
+unsigned se_bf_arrow(unsigned v)    { struct se_bits b, *p=&b; p->u=v; return -({ p->u; }); }
+int se_bf_signed(int v)             { struct se_bits b; b.s=v; return -({ b.s; }); }

@@ -17,14 +17,26 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from functools import wraps
 
 from bcir.frontends.cfront import compile_unit
 from bcir.model import Domain
+from bcir.toolchain import host_link_args
 from bcir.verify import cfront_structural_digest
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
 _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+
+
+def _requires_cc(test):
+    """Capability guard for tests whose assertion is specifically Clang equivalence."""
+    @wraps(test)
+    def guarded():
+        if not _CC:
+            return
+        return test()
+    return guarded
 
 # Bounds-quarantine support (§5.12): the emit of a `masked` array access uses BCIR_CHK(rid, idx, N, "site")
 # for a READ and BCIR_CHK_W(...) for a WRITE -- a READ may clamp an OOB index, a WRITE never clamps (its
@@ -250,7 +262,12 @@ def _seed_params(entry):
         if ct.kind in ("pointer", "array"):
             decls.append(f"  static {_cname(ct.of)} buf{i}[256];")
             setup.append(f"    for(unsigned k=0;k<sizeof buf{i}/4;k++) ((uint32_t*)buf{i})[k]=rng();")
-            args.append(f"buf{i}")
+            # The original multidimensional-array parameter adjusts to a pointer-to-row
+            # (for example ``uint32_t (*)[8]``), while the verified-C rail deliberately
+            # flattens it to ``uint32_t *``. A void-object-pointer argument converts to
+            # both exact parameter types without the incompatible-pointer diagnostic that
+            # Clang 22 promoted to an error; the same aligned backing bytes reach each rail.
+            args.append(f"(void *)buf{i}")
         elif ct.is_aggregate:
             decls.append(f"  {ct.kind} {ct.name} a{i};")
             inits = "".join(f"    a{i}.{fn}=(rng()&{(1 << bw) - 1}u);\n" if bw
@@ -325,7 +342,8 @@ int main(void){{
         c, e = os.path.join(d, "e.c"), os.path.join(d, "e")
         open(c, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run([cc, f"-std={std}", "-O2", c, "-o", e, "-lm"],   # -lm: <math.h> links
+            b = subprocess.run(host_link_args(
+                [cc, f"-std={std}", "-O2", c, "-o", e, "-lm"]),   # logical libm; omitted for Windows CRT
                                capture_output=True, text=True)
             if b.returncode == 0:
                 break
@@ -386,7 +404,8 @@ int main(void){{
         c, e = os.path.join(d, "a.c"), os.path.join(d, "a")
         open(c, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run([cc, f"-std={std}", "-O2", c, "-o", e, "-lm"],   # -lm: <math.h> links
+            b = subprocess.run(host_link_args(
+                [cc, f"-std={std}", "-O2", c, "-o", e, "-lm"]),   # logical libm; omitted for Windows CRT
                                capture_output=True, text=True)
             if b.returncode == 0:
                 break
@@ -533,7 +552,7 @@ int main(void){{
         for idx, cc in enumerate(compilers):
             e = os.path.join(d, f"o{idx}")
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([cc, f"-std={std}", "-O2", c, "-o", e, "-lm"],
+                b = subprocess.run(host_link_args([cc, f"-std={std}", "-O2", c, "-o", e, "-lm"]),
                                    capture_output=True, text=True)
                 if b.returncode == 0:
                     break
@@ -1412,15 +1431,18 @@ def test_stmtexpr_dual_rail():
     whose value is the last (expression) statement. The prefix statements lower inline; the result is the
     last expression's value. The twin (no AST) lowers the prefix in place, then rolls the last statement
     back (the typeof speculative undo) and re-parses it as the value. Covers the temporary idiom, the
-    safe-max macro, embedding in a larger expression, a loop inside, nesting, and scope shadowing.
-    Differential == Clang on BOTH emits."""
+    safe-max macro, embedding in a larger expression, a loop inside, nesting, scope shadowing, and
+    Clang's declared-bitfield exception for only a bare terminal member (parentheses/arrow included;
+    casts, arithmetic, and comma expressions retain ordinary promotion). Differential == Clang on BOTH emits."""
     fx = "cfront_stmtexpr.c"
     src = open(os.path.join(_C, fx), encoding="utf-8").read()
     oracle_summary, r, entry = _oracle(src)
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["se_simple", "se_max", "se_embed", "se_loop", "se_nest", "se_scope", "se_void"]
+    funcs = ["se_simple", "se_max", "se_embed", "se_loop", "se_nest", "se_scope", "se_void",
+             "se_bf_declared", "se_bf_regular", "se_bf_cast", "se_bf_expr", "se_bf_comma", "se_bf_paren",
+             "se_bf_arrow", "se_bf_signed"]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -1433,7 +1455,18 @@ def test_stmtexpr_dual_rail():
     if(se_nest_s(a)!=bcir_se_nest(a)){puts("nest");return 1;}
     if(se_scope_s(a)!=bcir_se_scope(a)){puts("scope");return 1;}
     if(se_void_s(a)!=bcir_se_void(a)){puts("void");return 1;}
+    if(se_bf_declared_s((unsigned)a)!=bcir_se_bf_declared((unsigned)a)){puts("bf-declared");return 1;}
+    if(se_bf_regular_s((unsigned)a)!=bcir_se_bf_regular((unsigned)a)){puts("bf-regular");return 1;}
+    if(se_bf_cast_s((unsigned)a)!=bcir_se_bf_cast((unsigned)a)){puts("bf-cast");return 1;}
+    if(se_bf_expr_s((unsigned)a)!=bcir_se_bf_expr((unsigned)a)){puts("bf-expr");return 1;}
+    if(se_bf_comma_s((unsigned)a)!=bcir_se_bf_comma((unsigned)a)){puts("bf-comma");return 1;}
+    if(se_bf_paren_s((unsigned)a)!=bcir_se_bf_paren((unsigned)a)){puts("bf-paren");return 1;}
+    if(se_bf_arrow_s((unsigned)a)!=bcir_se_bf_arrow((unsigned)a)){puts("bf-arrow");return 1;}
+    if(se_bf_signed_s(a)!=bcir_se_bf_signed(a)){puts("bf-signed");return 1;}
   }
+  if(se_bf_declared_s(5u)!=4294967291u || se_bf_regular_s(5u)!=-5 ||
+     se_bf_cast_s(5u)!=-5 || se_bf_expr_s(5u)!=-5 || se_bf_comma_s(5u)!=-5 ||
+     se_bf_paren_s(5u)!=4294967291u || se_bf_arrow_s(5u)!=4294967291u){puts("bf-values");return 1;}
   puts("MATCH");return 0;}"""
     with tempfile.TemporaryDirectory() as d:
         exe = _build_frontend(d)
@@ -1778,7 +1811,8 @@ def test_long_double_dual_rail():
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath, "-lm"],
+                b = subprocess.run(host_link_args(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath, "-lm"]),
                                    capture_output=True, text=True)
                 if b.returncode == 0:
                     break
@@ -2040,7 +2074,8 @@ int main(void){{
         c, e = os.path.join(d, "disp.c"), os.path.join(d, "disp")
         open(c, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e, "-lm"],   # -lm: <math.h> links
+            b = subprocess.run(host_link_args(
+                [_CC, f"-std={std}", "-O2", c, "-o", e, "-lm"]),   # logical libm; omitted for Windows CRT
                                capture_output=True, text=True)
             if b.returncode == 0:
                 break
@@ -3799,6 +3834,7 @@ def test_cfront_lowering_faithfulness_is_a_self_check():
     assert dropped and dropped[0].law == "R12", dropped                                # one guard dropped -> flagged
 
 
+@_requires_cc
 def test_native_vla_lowering_and_unsupported_forms():
     """§5.9 native VLAs: a 1-D stack VLA `T a[n]` (runtime size) is lowered FAITHFULLY -- the size is evaluated
     once and snapshotted, the array is declared IN-BODY (`T a[__ext];`, a real stack array -- no heap, no leak)
@@ -3834,6 +3870,7 @@ def test_native_vla_lowering_and_unsupported_forms():
         pass
 
 
+@_requires_cc
 def test_vla_sizeof_is_runtime():
     """§5.9 (#vlasizeof): `sizeof a` of a 1-D stack VLA is a RUNTIME value -- the snapshot extent times the
     element size, emitted as `(size_t)((size_t)__bcir_extK * sizeof(elem))`. `sizeof a[0]` (an element) stays
@@ -3856,6 +3893,7 @@ def test_vla_sizeof_is_runtime():
         assert r2.equivalence == want and r2.is_clean, (src2, r2.equivalence)
 
 
+@_requires_cc
 def test_vla_function_parameters_recover_masked_bounds():
     """§5.9 (#vlaparam): a VLA function parameter `T a[n]` decays to a pointer (C), but the runtime extent `n`
     (a prior in-scope integer parameter) is RECOVERED and bound via ptr_extent so the param's `a[i]` promotes
@@ -3880,6 +3918,7 @@ def test_vla_function_parameters_recover_masked_bounds():
     assert compile_unit(src2, check_clang=True).equivalence == "match"
 
 
+@_requires_cc
 def test_multidim_vla_lowering():
     """§5.9 (#vlamd): a multi-dimensional stack VLA `T a[m][n]` (2-D + 3-D) is lowered FAITHFULLY -- each dim
     is snapshotted once, the array is declared IN-BODY as a flat `T a[__ext_total];` sized by the runtime
@@ -3906,6 +3945,7 @@ def test_multidim_vla_lowering():
         pass
 
 
+@_requires_cc
 def test_lvalue_assignment_as_value_extended_forms():
     """§5.9 (#lvassignexpr): an assignment whose target is an ARRAY ELEMENT `a[i]`, a pointer DEREF `*p`, or a
     NESTED member `o.in.x` -- used as a VALUE (`(a[i]=v)+1`, `(*p=v)*2`, chained `a[0]=b[0]=v`) -- yields the
@@ -3933,6 +3973,7 @@ def test_lvalue_assignment_as_value_extended_forms():
         pass
 
 
+@_requires_cc
 def test_narrow_compound_assignment_as_value_is_the_stored_value():
     """§5.9 (#narrowcompound): the value of a COMPOUND assignment `lv OP= rhs` used as a value is the STORED
     (narrowed) value, not the raw binop result. For a sub-int target (`unsigned char`/`unsigned short` member,
@@ -3955,6 +3996,7 @@ def test_narrow_compound_assignment_as_value_is_the_stored_value():
     assert narrow == full + 1, (full, narrow)         # the narrow target re-reads the stored (truncated) value
 
 
+@_requires_cc
 def test_bitfield_assignment_as_value():
     """§5.9 (#bfassignexpr): a BITFIELD member assignment used as a VALUE -- `(s.bits = v) + 1`, compound
     `(s.bits += v) * 2`, signed `(s.c = v)` -- yields the masked / sign-extended STORED field (a re-read via
@@ -3968,6 +4010,7 @@ def test_bitfield_assignment_as_value():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+@_requires_cc
 def test_array_of_structs_field_assignment_as_value():
     """§5.9 (#aosassignexpr): the LAST lvalue-as-value form -- an array-of-structs element field `(a[i].f = v)`
     or a member-array element `(s.arr[i] = v)` used as a value. The lvalue is a STRIDED member (index + element
@@ -3982,6 +4025,7 @@ def test_array_of_structs_field_assignment_as_value():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+@_requires_cc
 def test_signed_function_pointer_return():
     """§5.9 (#signedfnptr): a call through a function-pointer (a funcptr struct member / dispatch, or a funcptr
     param) whose target returns a SIGNED type now types the call RESULT by the return type -- a signed sub-int
@@ -3996,6 +4040,7 @@ def test_signed_function_pointer_return():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+@_requires_cc
 def test_address_of_follow_ons():
     """§5.10 item 1 follow-on (#addroffollow): a PLAIN-base array-of-structs element-field address
     `&arr[i].field` (the indexed base is a bare array/pointer param or a local array, not a struct member) and
@@ -4015,6 +4060,7 @@ def test_address_of_follow_ons():
         pass
 
 
+@_requires_cc
 def test_incdec_as_expression_value():
     """§5.10 item 5 (#incdecexpr): `++`/`--` in EXPRESSION position -> a read-modify-write yielding the OLD
     value (postfix) or the NEW value (prefix). The lvalue is resolved ONCE. Covers a named local, member,
@@ -4032,6 +4078,7 @@ def test_incdec_as_expression_value():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+@_requires_cc
 def test_array_compound_literal_1d_scalar():
     """§5.10 item 4 (#arrcomplit): a 1-D SCALAR-element array compound literal lowers on both rails -- indexed,
     sized+zero-fill, signed-element. Both rails emit the per-element init as a MASKED subscript (a `BCIR_CHK`
@@ -4045,6 +4092,7 @@ def test_array_compound_literal_1d_scalar():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+@_requires_cc
 def test_multidim_scalar_array_complit_lowers():
     """§5.10 item 4 (#arrcomplit): a MULTI-DIM SCALAR-element array compound literal `(T[A][B]){{..},{..}}[i][j]`
     (including an INFERRED outer dim `(T[][N]){...}` and a SIGNED leaf). Both rails rebuild it as the FLAT
@@ -4065,6 +4113,7 @@ def test_multidim_scalar_array_complit_lowers():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+@_requires_cc
 def test_aggregate_array_complit_lowers():
     """§5.10 item 4 (#arrcomplit): a 1-D AGGREGATE-element array compound literal `(struct P[]){...}[i].field`
     lowers on BOTH rails -- the INFERRED form `(struct P[]){...}` (count from the init), the EXPLICIT form
@@ -4083,6 +4132,7 @@ def test_aggregate_array_complit_lowers():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+@_requires_cc
 def test_multidim_aggregate_complit_lowers():
     """§5.10 item 4 (#arrcomplit): a MULTI-DIM AGGREGATE-element array compound literal
     `(struct P[A][B]){{{..},{..}},{{..},{..}}}[i][j].field` lowers on BOTH rails -- the FIXED-dims form, the
@@ -4109,6 +4159,7 @@ def test_multidim_aggregate_complit_lowers():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+@_requires_cc
 def test_multidim_array_braceinit():
     """§5.10 (#localmdinit): a REGULAR multi-dimensional local array with a NESTED-brace initializer
     `T a[A][B] = {{..},{..}}` (2-D + 3-D + a PARTIAL init that exercises the `= {0}` zero baseline). The
@@ -4124,6 +4175,7 @@ def test_multidim_array_braceinit():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+@_requires_cc
 def test_inferred_and_aos_local_array():
     """§5.10 (#aoslocal): a REGULAR local array decl with a brace initializer -- the INFERRED-size form
     `T a[] = {...}` (the outer count comes from the initializer; an under-sized `a[0]` would let the
@@ -4142,6 +4194,7 @@ def test_inferred_and_aos_local_array():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+@_requires_cc
 def test_computed_goto():
     """§5.10 item 6 (#computedgoto): the GNU label-as-value `&&L` (a `void *`) and the indirect `goto *p`.
     A void* holds a taken label address; `goto *p` dispatches. Both rails lower to the GNU forms (which Clang
@@ -4154,6 +4207,7 @@ def test_computed_goto():
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
 
+@_requires_cc
 def test_function_pointer_local_variable():
     """§5.10 (#fnptrlocal): a function-pointer LOCAL VARIABLE `RET (*f)(P) = fn;` -- declared, called (an
     indirect call), reassigned, value-selected, and with a signed return. The oracle parsed it; the twin's

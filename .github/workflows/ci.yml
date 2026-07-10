@@ -113,6 +113,41 @@ jobs:
         # only under BCIR_BAREMETAL (unset here), so a loaded shared runner never flakes the gate.
         run: python3 tools/perf/check_budgets.py --trend build/perf/trend.jsonl
 
+  host-portability:
+    name: Host portability (${{ matrix.os }}, Python 3.12)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Quick tier (portable process pool; spawn on Windows)
+        run: python -m bcir.tests.run_all --tier quick -j 2
+
+      - name: Focused host adaptation checks
+        run: python -c "from bcir.tests import test_silicon as s, test_tiers as t, test_toolchain as h; s.test_counter_sampler_degrades_without_posix_rusage(); t.test_versioned_and_windows_tool_names_are_gated_by_family(); t.test_pool_context_uses_spawn_when_fork_is_unavailable(); [getattr(h, n)() for n in sorted(dir(h)) if n.startswith('test_')]"
+
+      - name: Clang statement-expression/bitfield differential
+        run: |
+          clang --version
+          python -c "from bcir.tests.test_c_cfront import test_stmtexpr_dual_rail; test_stmtexpr_dual_rail()"
+
+      - name: LLVM training aggregate CMake gate
+        run: |
+          cmake -S llvm-training -B build/llvm-training
+          cmake --build build/llvm-training --target llvm-training-check
+
+      - name: Tests leave tracked sources unchanged
+        run: git diff --exit-code
+
   llvm-training:
     name: LLVM training corpus
     runs-on: ubuntu-latest

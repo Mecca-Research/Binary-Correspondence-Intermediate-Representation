@@ -1278,7 +1278,10 @@ class _FuncLowerer:
                 # discarded its post/pre distinction. Defer to the backend rather than diverge / guess wrong.
                 raise CLowerError("assignment as a statement-expression value")
             if isinstance(last, cast.ExprStmt):
-                val = self._rvalue(last.expr)
+                if isinstance(last.expr, cast.Member):
+                    val = self._read(self._lvalue(last.expr), declared_bitfield_type=True)
+                else:
+                    val = self._rvalue(last.expr)
             else:                                         # a non-expression last stmt -> void (rarely used)
                 self._stmt(last)
                 val = _VOID_RID
@@ -1355,7 +1358,7 @@ class _FuncLowerer:
                           callee_sig=callee_signature(fct))
 
     # --- memory read/write, with bitfield (mask/shift) + MMIO (ordered) handling ---
-    def _read(self, lv: "_LV") -> int:
+    def _read(self, lv: "_LV", *, declared_bitfield_type: bool = False) -> int:
         if lv.kind == "var":
             return lv.rid
         unit = self._load_unit(lv)
@@ -1365,7 +1368,10 @@ class _FuncLowerer:
             # values), so an UNSIGNED sub-int bitfield reads as a SIGNED int -- `bf < x` is a signed compare,
             # not an unsigned one. A full-width (== 32) unsigned bitfield stays unsigned; a WIDE bitfield
             # (> 32 bits, in a long-long unit) keeps its declared 64-bit type -- int/unsigned can't hold it.
-            rt = (lv.ct if lv.bit_width > 32
+            # Clang's GNU statement-expression rule is the deliberate exception:
+            # a bare terminal bitfield retains its declared type after ceasing to be
+            # a bitfield expression. Thus `-({ s.u; })` is unsigned, unlike `-(s.u)`.
+            rt = (lv.ct if declared_bitfield_type or lv.bit_width > 32
                   else scalar("int" if (signed or lv.bit_width < 32) else "uint32_t", self.abi))
             t = self._temp(rt, "bf")
             return self._emit("c.bf.get", Opcode.ADD, (unit,), (t,),

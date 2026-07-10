@@ -12,6 +12,7 @@ from ..model import Module, Opcode
 from ..kbcir.realize import RealizationResult
 from ..lower.c_kernel import emit_kernel_c
 from ..lower.llvm import _find_elementwise, emit_kernel_ll
+from ..toolchain import resolve_llvm_tools
 from .targets import CODEGEN_TARGETS, CodegenTarget
 
 _C_OP = {Opcode.ADD: "+", Opcode.SUB: "-", Opcode.MUL: "*"}
@@ -39,9 +40,11 @@ def codegen(module: Module, result: RealizationResult, target_name: str,
     if target_name not in CODEGEN_TARGETS:
         return CodegenResult(False, target_name, None, f"unknown target {target_name!r}")
     tgt = CODEGEN_TARGETS[target_name]
-    llc = _tool("llc", "llc-18")
-    if llc is None:
-        return CodegenResult(False, target_name, None, "llc not found")
+    requested = ("llc", "llvm-objdump") if tgt.filetype == "obj" else ("llc",)
+    llvm = resolve_llvm_tools(*requested, pipeline=f"{target_name} codegen")
+    if not llvm.ok:
+        return CodegenResult(False, target_name, None, llvm.message)
+    llc = llvm.paths["llc"]
 
     created = workdir is None
     workdir = workdir or tempfile.mkdtemp(prefix="bcir-codegen-")
@@ -63,10 +66,8 @@ def codegen(module: Module, result: RealizationResult, target_name: str,
         if tgt.filetype == "obj":
             with open(out, "rb") as f:
                 data = f.read()
-            objdump = _tool("llvm-objdump", "llvm-objdump-18")
-            fmt = ""
-            if objdump:
-                fmt = subprocess.run([objdump, "-f", out], capture_output=True, text=True).stdout
+            objdump = llvm.paths["llvm-objdump"]
+            fmt = subprocess.run([objdump, "-f", out], capture_output=True, text=True).stdout
             ok = (not tgt.object_format) or (tgt.object_format in fmt)
             return CodegenResult(ok, target_name, data,
                                  f"{len(data)} bytes, format ok" if ok

@@ -30,6 +30,7 @@ import tempfile
 
 from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound
+from bcir.toolchain import host_link_args
 from bcir.kbcir.vecmath import exp_reference, exp_via_bridge
 from bcir.lower.c_kernel import emit_sleef_exp_c
 from bcir.model import Claim, Domain, Lane, Opcode, StrideClass
@@ -47,7 +48,7 @@ def _sleef_link():
         open(src, "w").write("#include <sleef.h>\n"
                              "int main(void){return (int)Sleef_expf1_u10(0.0f)*0;}\n")
         for lib in (["-lsleef"],):
-            if subprocess.run([cc, src, *lib, "-lm", "-o", os.path.join(d, "p")],
+            if subprocess.run(host_link_args([cc, src, *lib, "-lm", "-o", os.path.join(d, "p")]),
                               capture_output=True).returncode == 0:
                 return lib
     return None
@@ -161,7 +162,7 @@ def _run_exp_kernel(cc, kernel, data, define=None, libs=None):
         if libs:
             cmd += libs
         cmd += ["-lm", "-o", exe]                          # -lm: expf in the fallback path
-        bld = subprocess.run(cmd, capture_output=True, text=True)
+        bld = subprocess.run(host_link_args(cmd), capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout + out.stderr
