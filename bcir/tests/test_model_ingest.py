@@ -18,8 +18,9 @@ import tempfile
 
 from bcir.frontends.models.decode import (check_decoder_weights, decode_with_kv_cache,
                                           decoder_param_count, reference_decode)
-from bcir.frontends.models.hf_ingest import (ingest_checkpoint, rope_interleave_order,
-                                             spec_from_config, weights_from_tensors)
+from bcir.frontends.models.hf_ingest import (ingest_checkpoint, ingest_checkpoint_with_report,
+                                             rope_interleave_order, spec_from_config,
+                                             weights_from_tensors)
 from bcir.frontends.models.safetensors_io import decode_tensor, load_tensors
 
 _CONFIG = {"vocab_size": 64, "hidden_size": 8, "num_attention_heads": 4,
@@ -91,6 +92,7 @@ def _hf_decode(config: dict, tensors: dict, prompt: list, max_new: int) -> list:
     d = config["hidden_size"]
     nh, nkv = config["num_attention_heads"], config["num_key_value_heads"]
     dk, group, base = d // nh, nh // nkv, config["rope_theta"]
+    norm_eps = float(config.get("rms_norm_eps", 1e-6))
 
     def lin(x_rows, wname):                            # y = x @ W^T, W is [out, in]
         (out_d, in_d), w = tensors[wname]
@@ -101,7 +103,7 @@ def _hf_decode(config: dict, tensors: dict, prompt: list, max_new: int) -> list:
         (_,), g = (tensors[gname][0], tensors[gname][1])
         out = []
         for row in x_rows:
-            r = math.sqrt(sum(v * v for v in row) / len(row) + 1e-6)
+            r = math.sqrt(sum(v * v for v in row) / len(row) + norm_eps)
             out.append([row[i] / r * g[i] for i in range(len(row))])
         return out
 
@@ -250,11 +252,13 @@ def test_a_real_released_checkpoint_ingests_when_present():
     model_dir = os.environ.get("BCIR_HF_MODEL_DIR", "")
     if not model_dir or not os.path.isfile(os.path.join(model_dir, "model.safetensors")):
         return                                          # the asset gate (like the rig gates)
-    spec, w = ingest_checkpoint(model_dir)
+    spec, w, report = ingest_checkpoint_with_report(model_dir)
     assert check_decoder_weights(spec, w) == []
     from bcir.frontends.models.manifest import build_manifest
     man = build_manifest([os.path.join(model_dir, "model.safetensors")], {})
-    assert man.param_count == decoder_param_count(spec)          # the census tie, REAL
+    assert report.decoder_element_count == decoder_param_count(spec)
+    assert report.decoder_element_count + report.auxiliary_element_count == \
+        report.shard_element_count == man.param_count            # the census tie, REAL
     prompt = [1, 306, 4658]                                      # ids only (no tokenizer)
     naive = reference_decode(prompt, spec, w, max_new=4)
     assert decode_with_kv_cache(prompt, spec, w, max_new=4) == naive
@@ -262,6 +266,62 @@ def test_a_real_released_checkpoint_ingests_when_present():
     from bcir.frontends.models.decode import next_token_logits
     logits = next_token_logits(prompt, spec, w)
     assert all(math.isfinite(v) for v in logits)
+
+
+def test_ingest_report_allowlists_and_validates_rotary_auxiliaries():
+    config = dict(_CONFIG, rms_norm_eps=1e-5)
+    tensors = _hf_tensors(config)
+    dk = config["hidden_size"] // config["num_attention_heads"]
+    expected = [config["rope_theta"] ** (-(2.0 * i) / dk) for i in range(dk // 2)]
+    aux_names = []
+    for li in range(config["num_hidden_layers"]):
+        name = f"model.layers.{li}.self_attn.rotary_emb.inv_freq"
+        tensors[name] = ((dk // 2,), list(expected))
+        aux_names.append(name)
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "config.json"), "w", encoding="utf-8") as f:
+            json.dump(config, f)
+        _write_shard(os.path.join(tmp, "model.safetensors"), tensors)
+        spec, w, report = ingest_checkpoint_with_report(tmp)
+    assert spec.rms_norm_eps == 1e-5
+    assert check_decoder_weights(spec, w) == []
+    assert report.auxiliary_tensors == tuple(aux_names)
+    assert report.decoder_element_count == decoder_param_count(spec)
+    assert report.auxiliary_element_count == config["num_hidden_layers"] * (dk // 2)
+    assert report.decoder_element_count + report.auxiliary_element_count == report.shard_element_count
+    assert reference_decode([1, 2, 3], spec, w, max_new=3) == \
+        _hf_decode(config, tensors, [1, 2, 3], 3)       # non-default epsilon, independent twin
+
+
+def test_ingest_apis_reject_unknown_or_lying_auxiliary_tensors():
+    def write_and_ingest(tensors, *, with_report=True):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "config.json"), "w", encoding="utf-8") as f:
+                json.dump(_CONFIG, f)
+            _write_shard(os.path.join(tmp, "model.safetensors"), tensors)
+            return (ingest_checkpoint_with_report(tmp) if with_report
+                    else ingest_checkpoint(tmp))
+
+    unknown = _hf_tensors(_CONFIG)
+    unknown["model.unexpected.weight"] = ((1,), [0.0])
+    try:
+        write_and_ingest(unknown)
+        raise AssertionError("unknown unused tensors must not disappear from a strict census")
+    except ValueError as exc:
+        assert "not allowlisted" in str(exc) and "unexpected" in str(exc)
+    try:
+        write_and_ingest(unknown, with_report=False)
+        raise AssertionError("the compatibility tuple API must reject unknown tensors too")
+    except ValueError as exc:
+        assert "not allowlisted" in str(exc) and "unexpected" in str(exc)
+
+    bad_rotary = _hf_tensors(_CONFIG)
+    bad_rotary["model.layers.0.self_attn.rotary_emb.inv_freq"] = ((1,), [0.5])
+    try:
+        write_and_ingest(bad_rotary)
+        raise AssertionError("a rotary auxiliary inconsistent with rope_base must fail")
+    except ValueError as exc:
+        assert "rope_base" in str(exc)
 
 
 if __name__ == "__main__":

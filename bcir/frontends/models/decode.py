@@ -8,7 +8,7 @@ pre-norm shape), COMPOSED from the existing oracle references -- not reinvented:
     -> causal scaled-dot-product attention (attention.scores_reference + causal_mask
        + softmax_reference + matmul_reference) -> W_o + residual
     -> rmsnorm_reference -> feedforward_reference (transformer) + residual ]
-    ->  final rmsnorm_reference  ->  TIED-embedding logits  ->  greedy argmax.
+    ->  final rmsnorm_reference  ->  tied or untied head logits  ->  greedy argmax.
 
 Two decode paths, one truth: `reference_decode` recomputes the full context every step (the
 obviously-correct naive reference), and `decode_with_kv_cache` is the incremental KV-cache
@@ -23,6 +23,7 @@ dep-free stdlib; this module pulls in the kbcir reference kernels. Cost-side: im
 verifier (two-truth)."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from ...kbcir.activation import softmax_reference
@@ -51,6 +52,7 @@ class DecoderSpec:
     n_kv_heads: int = 0                 # 0 == n_heads (MHA); the Llama/Gemma GQA knob
     tied_embeddings: bool = True        # False == a separate lm_head (the Llama choice); the
                                         #   logits then read lm_head, not the embedding table
+    rms_norm_eps: float = 1e-6          # checkpoint-declared RMSNorm epsilon
 
     def __post_init__(self) -> None:
         if min(self.vocab_size, self.d_model, self.n_heads, self.n_layers, self.d_ff) < 1:
@@ -66,6 +68,8 @@ class DecoderSpec:
         if self.n_kv_heads and self.n_heads % self.n_kv_heads:
             raise ValueError(f"n_heads {self.n_heads} not divisible by "
                              f"n_kv_heads {self.n_kv_heads} (GQA shares whole head groups)")
+        if not math.isfinite(self.rms_norm_eps) or self.rms_norm_eps <= 0.0:
+            raise ValueError(f"rms_norm_eps must be finite and > 0; got {self.rms_norm_eps!r}")
 
     @property
     def d_k(self) -> int:
@@ -169,7 +173,7 @@ def _ff(h2: list, rows: int, spec: DecoderSpec, lw: LayerWeights) -> list:
                                  list(lw.w2), list(lw.b2), activation=spec.activation)
 
 
-def _head_logits(h_row: list, w: DecoderWeights) -> list:
+def head_logits(h_row: list, w: DecoderWeights) -> list:
     """The next-token logits row: the TIED embedding table, or the untied lm_head (same
     [vocab x d] row-major layout, so both read through `_tied_logits`)."""
     if w.lm_head:
@@ -177,6 +181,11 @@ def _head_logits(h_row: list, w: DecoderWeights) -> list:
         return _tied_logits(h_row, EmbeddingTable(table=tuple(w.lm_head),
                                                   n_vocab=emb.n_vocab, dim=emb.dim))
     return _tied_logits(h_row, w.embedding)
+
+
+# Private compatibility alias retained for serve/paged-KV callers from earlier rungs.  New
+# code imports the public function so tied-vs-untied selection has one implementation point.
+_head_logits = head_logits
 
 
 def _split_head(rows: list, n: int, h: int, n_heads: int, d_k: int) -> list:
@@ -256,7 +265,7 @@ def decoder_layer_reference(x: list, seq: int, spec: DecoderSpec, lw: LayerWeigh
     -> residual -> RMSNorm -> FF -> residual. Composed from the existing references (see the
     module docstring); returns a fresh seq x d_model buffer."""
     d, nh, dk, kvh, kvd = spec.d_model, spec.n_heads, spec.d_k, spec.kv_heads, spec.kv_dim
-    h = rmsnorm_reference(x, seq, d, list(lw.g_attn))
+    h = rmsnorm_reference(x, seq, d, list(lw.g_attn), eps=spec.rms_norm_eps)
     q = matmul_reference(h, lw.w_q, seq, d, d)
     k = matmul_reference(h, lw.w_k, seq, kvd, d)                  # seq x kv_dim (GQA: narrower)
     v = matmul_reference(h, lw.w_v, seq, kvd, d)
@@ -267,7 +276,7 @@ def decoder_layer_reference(x: list, seq: int, spec: DecoderSpec, lw: LayerWeigh
     concat = gqa_attention_reference(q_r, k_r, v, seq, nh, kvh, dk)
     attn = matmul_reference(concat, lw.w_o, seq, d, d)
     x = [x[i] + attn[i] for i in range(seq * d)]                  # residual
-    h2 = rmsnorm_reference(x, seq, d, list(lw.g_ff))
+    h2 = rmsnorm_reference(x, seq, d, list(lw.g_ff), eps=spec.rms_norm_eps)
     ff = _ff(h2, seq, spec, lw)
     return [x[i] + ff[i] for i in range(seq * d)]                 # residual
 
@@ -278,14 +287,14 @@ def decoder_forward_reference(ids: list, spec: DecoderSpec, w: DecoderWeights) -
     x = embedding_lookup(w.embedding, ids, spec.d_model)
     for lw in w.layers:
         x = decoder_layer_reference(x, seq, spec, lw)
-    return rmsnorm_reference(x, seq, spec.d_model, list(w.g_final))
+    return rmsnorm_reference(x, seq, spec.d_model, list(w.g_final), eps=spec.rms_norm_eps)
 
 
 def next_token_logits(ids: list, spec: DecoderSpec, w: DecoderWeights) -> list:
-    """The tied-embedding logits of the LAST position (the next-token distribution's scores)."""
+    """The selected head's logits at the LAST position (the next-token distribution's scores)."""
     hfin = decoder_forward_reference(ids, spec, w)
     d = spec.d_model
-    return _head_logits(hfin[(len(ids) - 1) * d:len(ids) * d], w)
+    return head_logits(hfin[(len(ids) - 1) * d:len(ids) * d], w)
 
 
 def reference_decode(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int,
@@ -326,7 +335,7 @@ class KVCache:
         group = nh // kvh
         sc = AttentionSpec(self.pos + 1, dk).scale               # 1/sqrt(d_k), like the naive path
         for li, lw in enumerate(w.layers):
-            h = rmsnorm_reference(x_row, 1, d, list(lw.g_attn))
+            h = rmsnorm_reference(x_row, 1, d, list(lw.g_attn), eps=spec.rms_norm_eps)
             q = matmul_reference(h, lw.w_q, 1, d, d)
             k = matmul_reference(h, lw.w_k, 1, kvd, d)
             v = matmul_reference(h, lw.w_v, 1, kvd, d)
@@ -358,11 +367,11 @@ class KVCache:
                 concat[hd * dk:(hd + 1) * dk] = ctx
             attn = matmul_reference(concat, lw.w_o, 1, d, d)
             x_row = [x_row[i] + attn[i] for i in range(d)]
-            h2 = rmsnorm_reference(x_row, 1, d, list(lw.g_ff))
+            h2 = rmsnorm_reference(x_row, 1, d, list(lw.g_ff), eps=spec.rms_norm_eps)
             ff = _ff(h2, 1, spec, lw)
             x_row = [x_row[i] + ff[i] for i in range(d)]
         self.pos += 1
-        return rmsnorm_reference(x_row, 1, d, list(w.g_final))
+        return rmsnorm_reference(x_row, 1, d, list(w.g_final), eps=spec.rms_norm_eps)
 
 
 def decode_with_kv_cache(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int,
@@ -379,7 +388,7 @@ def decode_with_kv_cache(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights,
         hrow = cache._step_row(w.embedding.row(int(tid)), spec, w)
     out: list = []
     for _ in range(max_new):
-        nxt = _argmax(_head_logits(hrow, w))
+        nxt = _argmax(head_logits(hrow, w))
         out.append(nxt)
         if eos_id is not None and nxt == eos_id:
             break

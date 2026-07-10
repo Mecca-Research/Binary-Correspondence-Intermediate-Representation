@@ -22,8 +22,8 @@ from dataclasses import dataclass
 from ...kbcir.precision import quantization_error_bound
 from ...kbcir.quantize import dequantize, quantize_per_group
 from ...kbcir.unsupervised import EmbeddingTable
-from .decode import (DecoderSpec, DecoderWeights, LayerWeights, _tied_logits,
-                     decoder_forward_reference, reference_decode)
+from .decode import (DecoderSpec, DecoderWeights, LayerWeights, decoder_forward_reference,
+                     head_logits, reference_decode)
 
 
 def _roundtrip(values, group_size: int, bits: int) -> tuple:
@@ -76,7 +76,7 @@ class DriftRecord:
 def _step_logits(ids: list, spec: DecoderSpec, w: DecoderWeights) -> list:
     hfin = decoder_forward_reference(ids, spec, w)
     d = spec.d_model
-    return _tied_logits(hfin[(len(ids) - 1) * d:len(ids) * d], w.embedding)
+    return head_logits(hfin[(len(ids) - 1) * d:len(ids) * d], w)
 
 
 def _nll_of(logits: list, chosen: int) -> float:

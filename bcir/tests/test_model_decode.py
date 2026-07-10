@@ -175,6 +175,49 @@ def test_lying_weight_shapes_are_reported():
         assert "even" in str(e)
 
 
+def test_public_head_logits_uses_untied_head_and_ignores_embedding_at_readout():
+    import dataclasses
+    from bcir.frontends.models.decode import head_logits
+    spec = dataclasses.replace(SPEC, tied_embeddings=False)
+    base = _toy_weights(spec)
+    head = tuple(((i % 17) - 8) * 0.01 for i in range(spec.vocab_size * spec.d_model))
+    w = dataclasses.replace(base, lm_head=head)
+    h = [0.2, -0.3, 0.5, 0.7, -0.1, 0.4, -0.6, 0.8]
+    got = head_logits(h, w)
+    # Match the decoder/C runtime's specified ascending-k accumulation. Python 3.12
+    # deliberately changed built-in sum(float_iterable) to a compensated algorithm,
+    # so using sum() here made the oracle depend on the test runner's Python version.
+    want = []
+    for v in range(spec.vocab_size):
+        value = 0.0
+        for k in range(spec.d_model):
+            value += h[k] * head[v * spec.d_model + k]
+        want.append(value)
+    assert got == want
+
+    changed_embedding = EmbeddingTable(
+        table=tuple(value + 10.0 for value in base.embedding.table),
+        n_vocab=base.embedding.n_vocab, dim=base.embedding.dim)
+    assert head_logits(h, dataclasses.replace(w, embedding=changed_embedding)) == got
+
+
+def test_checkpoint_rms_norm_epsilon_drives_both_decode_paths():
+    import dataclasses
+    w = _toy_weights(SPEC)
+    larger_eps = dataclasses.replace(SPEC, rms_norm_eps=1e-2)
+    prompt = [1, 2, 3]
+    assert decoder_forward_reference(prompt, SPEC, w) != \
+        decoder_forward_reference(prompt, larger_eps, w)
+    assert reference_decode(prompt, larger_eps, w, max_new=5) == \
+        decode_with_kv_cache(prompt, larger_eps, w, max_new=5)
+    for bad in (0.0, -1e-6, float("inf"), float("nan")):
+        try:
+            dataclasses.replace(SPEC, rms_norm_eps=bad)
+            raise AssertionError(f"invalid RMSNorm epsilon accepted: {bad!r}")
+        except ValueError as exc:
+            assert "rms_norm_eps" in str(exc)
+
+
 if __name__ == "__main__":
     import sys
 
