@@ -1,0 +1,29 @@
+{
+  "schema": "bcir.model_pins.v1",
+  "models": {
+    "tinyllama-v0": {
+      "repository": "Maykeye/TinyLLama-v0",
+      "revision": "298338802ab94432b917bcce11382aa151aee50f",
+      "license": "Apache-2.0",
+      "files": {
+        "config.json": {
+          "bytes": 498,
+          "sha256": "92d9f842bbff69a6646eb69472d5f342ad832e718c079bf04d605ae4a4634dfd"
+        },
+        "model.safetensors": {
+          "bytes": 9251608,
+          "sha256": "c302246d91e2854ff350e52a79938a818c203186c2f0671213ce372a0289cd91"
+        },
+        "tokenizer.model": {
+          "bytes": 534194,
+          "sha256": "ab1b681ec7fc02fed5edd3026687d7a692a918c4dd8e150ca2e3994a6229843b"
+        }
+      },
+      "prompt": "Once upon a time,",
+      "prompt_ids": [1, 4612, 2619, 260, 647, 31844],
+      "expected_first_token_id": 635,
+      "decoder_elements": 4621376,
+      "auxiliary_elements": 16
+    }
+  }
+}

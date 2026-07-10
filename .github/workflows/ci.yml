@@ -89,6 +89,23 @@ jobs:
       - name: Freestanding C StreamPack runtime (no-libc + Python->C ABI parity)
         run: bash tools/c/check_runtime.sh
 
+      - name: Cache the immutable TinyLlama source checkpoint
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bcir/models/tinyllama-v0/298338802ab94432b917bcce11382aa151aee50f
+          key: bcir-tinyllama-v0-298338802ab94432b917bcce11382aa151aee50f-c302246d91e2854f-ab1b681ec7fc02fe
+
+      - name: Pinned real-model BCIRQ8 -> standalone C parity gate
+        timeout-minutes: 20
+        run: python3 tools/models/run_real_model_gate.py --output-dir build/model-gate
+
+      - name: Upload deterministic real-model parity report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bcir-real-model-parity-report
+          path: build/model-gate/parity-report.json
+          if-no-files-found: error
+
       - name: cfront twin sanitizer sweep (ASan/UBSan/LSan over the C compiler's own lexer/parser/lowering/emit)
         # Runs tools/c/sanitize_cfront.sh -- the ASan+UBSan+LSan harness over the bcir_cfront C twin
         # (every cfront_*.c fixture + a bounded 300-valid/400-malformed fuzz campaign + the adversarial

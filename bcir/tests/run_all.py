@@ -227,6 +227,7 @@ _MODULES = [
     "bcir.tests.test_model_decode",
     "bcir.tests.test_model_quantized",
     "bcir.tests.test_model_ingest",
+    "bcir.tests.test_model_weights_io",
     "bcir.tests.test_model_spm",
     "bcir.tests.test_model_serve",
     "bcir.tests.test_paged_kv",
