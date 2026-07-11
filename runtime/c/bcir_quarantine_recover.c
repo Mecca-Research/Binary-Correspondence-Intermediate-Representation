@@ -46,8 +46,11 @@ size_t bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent, con
     int proposed = policy_lookup(site, &confidence_milli);
 
     int admitted = confidence_milli >= g_threshold_milli;     /* (3) decide: collapse at the frozen threshold */
-    int action = (admitted && proposed == BCIR_RECOVER_CLAMP) ? BCIR_RECOVER_CLAMP : BCIR_RECOVER_ABORT;
-    size_t recovered = (action == BCIR_RECOVER_CLAMP && extent) ? (size_t)(extent - 1) : 0;
+    /* A clamp needs a valid in-bounds target: with extent==0 (e.g. a zero-length array or a recovered
+     * extent that came out 0) there is NO in-bounds index, so clamping to 0 would itself be out of bounds.
+     * Force ABORT in that case rather than returning the OOB index 0. */
+    int action = (admitted && proposed == BCIR_RECOVER_CLAMP && extent) ? BCIR_RECOVER_CLAMP : BCIR_RECOVER_ABORT;
+    size_t recovered = (action == BCIR_RECOVER_CLAMP) ? (size_t)(extent - 1) : 0;
 
     bcir_decide_record_event(rid, index, extent, site,        /* (4) RECORD the crossing -- never silent */
                              confidence_milli, g_threshold_milli, admitted, action, recovered);

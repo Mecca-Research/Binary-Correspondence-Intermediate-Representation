@@ -208,6 +208,12 @@ def decode(data: bytes) -> StreamPack:
     for _ in range(nseg):
         name = r.s(); claim_id = r.u64(); phase_id = r.u32(); lane = Lane(r.u8())
         width = r.u32(); _stride_k = r.u32(); opcode = r.s()
+        # Range gate: width must be a nonzero power of two (docs/BCIR_STREAMPACK_ABI.md, "BCIR_ERR_WIDTH").
+        # The C runtime (bcir_runtime.c seg_range_ok) rejects a non-power-of-two width at decode time; the
+        # oracle enforces the same law so a CRC-valid but width-corrupt pack is never accepted here while
+        # the deployed runtime refuses it (rail symmetry, like the Lane(...) and dispatch-code raises).
+        if width == 0 or (width & (width - 1)):
+            raise AbiError(f"segment width must be a nonzero power of two, got {width}")
         reads = r.u32_array(); writes = r.u32_array()
         prefetch = r.s() or None
         fb = r.s_array(); fa = r.s_array()
