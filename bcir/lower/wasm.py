@@ -16,6 +16,7 @@ from shutil import which
 
 from ..model import Module
 from ..kbcir.realize import RealizationResult
+from ..toolchain import resolve_llvm_tools
 from .llvm import emit_kernel_ll
 
 
@@ -39,10 +40,10 @@ def compile_to_wasm(
     workdir: str | None = None,
 ) -> tuple[bool, bytes | None, str]:
     """Compile the lowered kernel to a .wasm module. Returns (ok, bytes, message)."""
-    clang = _tool("clang")
-    wasm_ld = _tool("wasm-ld", "wasm-ld-18")
-    if clang is None or wasm_ld is None:
-        return False, None, "missing clang / wasm-ld for the WASM path"
+    llvm = resolve_llvm_tools("clang", "wasm-ld", pipeline="WASM")
+    if not llvm.ok:
+        return False, None, llvm.message
+    clang, wasm_ld = (llvm.paths[name] for name in ("clang", "wasm-ld"))
 
     created = workdir is None
     workdir = workdir or tempfile.mkdtemp(prefix="bcir-wasm-")
@@ -51,7 +52,7 @@ def compile_to_wasm(
         wasm = os.path.join(workdir, "kernel.wasm")
         with open(ll, "w") as f:
             f.write(emit_kernel_ll(module, result, fn_name))
-        cmd = [clang, "--target=wasm32", "-nostdlib", "-O2",
+        cmd = [clang, "--target=wasm32", f"-fuse-ld={wasm_ld}", "-nostdlib", "-O2",
                "-Wl,--no-entry", f"-Wl,--export={fn_name}", "-Wl,--export-memory",
                ll, "-o", wasm]
         r = subprocess.run(cmd, capture_output=True, text=True)

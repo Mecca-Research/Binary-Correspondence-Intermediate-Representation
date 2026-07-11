@@ -6,7 +6,7 @@
 // the global pass registry so `bcir-opt` exposes the CLI flags. Registering via the
 // factory callback keeps each pass struct private to its own TU.
 //
-//   -bcir-verify            R1-R16 semantic laws            (BCIRVerifyPass.cpp)
+//   -bcir-verify            R1-R23 semantic laws            (BCIRVerifyPass.cpp)
 //   -bcir-promote-lanes     GGG->UX opt-law rewrite         (BCIRPromotePass.cpp)
 //   -convert-bcir-to-llvm   compute/barrier -> LLVM dialect (BCIRConvertToLLVM.cpp)
 //   -bcir-classify-lanes /  the GEM pipeline                (BCIRGEMPasses.cpp)
@@ -24,7 +24,7 @@
 //   bcir-optimize    classify -> cost-model -> plan        (claims+H -> coupled plan)
 //   bcir-hydrate     classify -> select -> batch -> schedule -> lower  (plan -> StreamPack)
 //   bcir-lower-llvm  verify -> convert-bcir-to-llvm        (-> LLVM dialect)
-//   bcir-aot         verify -> hydrate -> convert-bcir-to-llvm  (the full AOT path)
+//   bcir-aot         partial AOT preparation; mixed BCIR/GEM/LLVM dialect IR
 //
 //===----------------------------------------------------------------------===//
 
@@ -88,11 +88,11 @@ void registerBCIRPipelines() {
     pm.addPass(createLowerToLLVMPass());
   };
 
-  // Read-only analysis + the R1-R16 verifier checkpoint up front: recompute the cost
+  // Read-only analysis + the R1-R23 verifier checkpoint up front: recompute the cost
   // model, the coupled plan, and the scheduled price (no IR lowering).
   static PassPipelineRegistration<> audit(
       "bcir-audit",
-      "Verify (R1-R16) then recompute cost/plan/overlap annotations (read-only).",
+      "Verify (R1-R23) then recompute cost/plan/overlap annotations (read-only).",
       [](OpPassManager &pm) {
         pm.addPass(createVerifyPass());
         pm.addPass(createClassifyLanesPass());
@@ -126,9 +126,11 @@ void registerBCIRPipelines() {
         pm.addPass(createConvertToLLVMPass());
       });
 
-  // the full AOT path: verify -> hydrate -> LLVM dialect.
+  // Partial AOT preparation: hydration and conversion intentionally leave
+  // unsupported BCIR/GEM operations in the mixed-dialect result.
   static PassPipelineRegistration<> aot(
-      "bcir-aot", "Full AOT: verify -> GEM hydrate -> LLVM dialect.",
+      "bcir-aot",
+      "Partial AOT preparation producing mixed BCIR/GEM/LLVM dialect IR.",
       [hydrate](OpPassManager &pm) {
         pm.addPass(createVerifyPass());
         hydrate(pm);

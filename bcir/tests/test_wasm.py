@@ -6,6 +6,7 @@ from bcir.examples import vector_add
 from bcir.kbcir import optimize
 from bcir.kbcir.cost import TargetProfile, Theta
 from bcir.lower.wasm import compile_to_wasm, is_valid_wasm, run_wasm_node
+from bcir.toolchain import resolve_llvm_tools
 
 
 def _result():
@@ -20,7 +21,7 @@ def test_is_valid_wasm_header():
 
 
 def test_compiles_to_valid_wasm():
-    if not which("clang") or not (which("wasm-ld") or which("wasm-ld-18")):
+    if not resolve_llvm_tools("clang", "wasm-ld", pipeline="WASM test").ok:
         return  # skip cleanly without the wasm toolchain
     m, res = _result()
     ok, data, msg = compile_to_wasm(m, res, fn_name="bcir_kernel")
@@ -29,7 +30,7 @@ def test_compiles_to_valid_wasm():
 
 
 def test_wasm_runs_and_self_checks_via_node():
-    if not which("node") or not which("clang") or not (which("wasm-ld") or which("wasm-ld-18")):
+    if not which("node") or not resolve_llvm_tools("clang", "wasm-ld", pipeline="WASM test").ok:
         return  # skip cleanly without node + the wasm toolchain
     m, res = _result()
     ok, out = run_wasm_node(m, res, fn_name="bcir_kernel")

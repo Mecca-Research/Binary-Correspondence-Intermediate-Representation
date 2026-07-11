@@ -20,6 +20,7 @@ from bcir.kbcir.cost import TargetProfile, Theta
 from bcir.kbcir.train_graph import TrainStepSpec, train_planned
 from bcir.tests.test_c_executor import _RUNTIME_C, _cc
 from bcir.tests.test_train_graph import _toy_logistic
+from bcir.toolchain import host_link_args
 
 AVX = TargetProfile.x86_avx512()
 COOL = Theta.cool()
@@ -29,8 +30,8 @@ def _build(tmp):
     exe = os.path.join(tmp, "test_train")
     srcs = [os.path.join(_RUNTIME_C, f)
             for f in ("test_train.c", "bcir_train.c", "bcir_exec.c", "bcir_runtime.c")]
-    r = subprocess.run([_cc(), "-std=c11", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
-                        *srcs, "-o", exe, "-lm"], capture_output=True, text=True)
+    r = subprocess.run(host_link_args([_cc(), "-std=c11", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
+                        *srcs, "-o", exe, "-lm"]), capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     return exe
 
@@ -124,8 +125,8 @@ def test_c_streamed_training_matches_both_oracle_paths():
         srcs = [os.path.join(_RUNTIME_C, f)
                 for f in ("test_train_stream.c", "bcir_train.c", "bcir_exec.c",
                           "bcir_runtime.c")]
-        r = subprocess.run([_cc(), "-std=c11", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
-                            *srcs, "-o", exe, "-lm"], capture_output=True, text=True)
+        r = subprocess.run(host_link_args([_cc(), "-std=c11", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
+                            *srcs, "-o", exe, "-lm"]), capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         pack_path = os.path.join(tmp, "stream.pack")
         with open(pack_path, "wb") as f:

@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(LLVMTrainingQualityGates NONE)
 
 find_program(BASH_EXECUTABLE bash REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(TRAINING_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 set(TOOLS_DIR "${TRAINING_ROOT}/tools")
 set(OPTIONAL_RUNNER "${TOOLS_DIR}/run-if-tools.sh")
@@ -16,7 +17,7 @@ endfunction()
 
 function(add_optional_training_target target label script)
   add_custom_target(${target}
-    COMMAND "${OPTIONAL_RUNNER}" "${label}" ${ARGN} --
+    COMMAND "${BASH_EXECUTABLE}" "${OPTIONAL_RUNNER}" "${label}" ${ARGN} --
             "${BASH_EXECUTABLE}" "${TOOLS_DIR}/${script}"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
     USES_TERMINAL
@@ -25,33 +26,37 @@ endfunction()
 
 add_training_script_target(llvm-training-verify-manifest verify-manifest.sh)
 add_custom_target(llvm-training-verify-exercise-manifests
-  COMMAND "${TOOLS_DIR}/verify-exercise-manifests.py"
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-exercise-manifests.py"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
   USES_TERMINAL
   VERBATIM)
 add_custom_target(llvm-training-autograder-self-test
-  COMMAND "${TOOLS_DIR}/grade-exercises.py" --self-test --format json
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/grade-exercises.py" --self-test --format json
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
   USES_TERMINAL
   VERBATIM)
 add_custom_target(llvm-training-verify-dataset-export
-  COMMAND "${TOOLS_DIR}/verify-dataset-export.py"
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-dataset-export.py"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
   USES_TERMINAL
   VERBATIM)
 add_training_script_target(llvm-training-verify-csv-schema verify-csv-schema.sh)
 add_custom_target(llvm-training-verify-binary-analysis-evidence
-  COMMAND "${TOOLS_DIR}/verify-binary-analysis-evidence.py"
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-binary-analysis-evidence.py"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
   USES_TERMINAL
   VERBATIM)
 add_custom_target(llvm-training-check-binary-analysis-fixtures
-  COMMAND "${TOOLS_DIR}/generate-binary-analysis-fixtures.py" --check
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/generate-binary-analysis-fixtures.py" --check
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
   USES_TERMINAL
   VERBATIM)
 add_training_script_target(llvm-training-verify-opaque-pointers verify-opaque-pointers.sh)
-add_training_script_target(llvm-training-verify-mlir-examples verify-mlir-examples.sh)
+add_custom_target(llvm-training-verify-mlir-examples
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-mlir-lowering.py"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  USES_TERMINAL
+  VERBATIM)
 add_training_script_target(llvm-training-verify-bcir-mapping verify-bcir-mapping.sh)
 
 add_optional_training_target(llvm-training-verify-examples "LLVM example verifier" verify-examples.sh llvm-as opt)
@@ -62,9 +67,11 @@ add_optional_training_target(llvm-training-smoke-llc "portable llc smoke" smoke-
 add_optional_training_target(llvm-training-smoke-lli "portable lli smoke" smoke-lli.sh lli)
 add_optional_training_target(llvm-training-verify-opt-diff "LLVM opt-diff verifier" verify-opt-diff.sh opt)
 
+# Windows runners can expose Microsoft's unrelated lit.exe.  Accept the generic
+# name only when its version banner identifies LLVM lit.
 add_custom_target(llvm-training-lit
   COMMAND "${BASH_EXECUTABLE}" -c
-          "if command -v llvm-lit >/dev/null 2>&1; then exec llvm-lit -sv '${TRAINING_ROOT}/tests'; elif command -v lit >/dev/null 2>&1; then exec lit -sv '${TRAINING_ROOT}/tests'; else echo 'llvm-lit/lit not present; skipping llvm-training lit tests'; fi"
+          "if command -v llvm-lit >/dev/null 2>&1; then exec llvm-lit -sv '${TRAINING_ROOT}/tests'; elif command -v lit >/dev/null 2>&1 && lit --version 2>&1 | grep -Eq '^lit( version)? [0-9]'; then exec lit -sv '${TRAINING_ROOT}/tests'; else echo 'LLVM llvm-lit/lit not present; skipping llvm-training lit tests'; fi"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
   USES_TERMINAL
   VERBATIM)

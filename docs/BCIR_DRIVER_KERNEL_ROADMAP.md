@@ -15,6 +15,9 @@
 > blueprint for Phase D slice 1** (the 16550/16750 driver program: normative device model from
 > thirteen vendor documents, variant + capability matrices, field-errata research, and build
 > slices U0–U9 with laws, tests, gates and ML placement already decided).
+> **Current boundary:** only the driver-shaped compiler fixture/register header and generic
+> event/frame-codec infrastructure are landed. The resident/channel-backed UART, simulator,
+> IRQ service, learned U5 prior, and U0–U9 implementation are not built.
 >
 > **Structure:** Parts I–V are the original bring-up/placement/ordering analysis; Part VI is
 > the hardened driver seam (D-R1..D-R6); Part VII the remaining-gaps audit (A/B tracks, now
@@ -48,7 +51,7 @@ corrections fall straight out of it and frame the **driver ladder**; a third (Pa
    table, a log, or a command/response wire format). BCIR's relationship to all of them is the
    *same shape*: **emit a verified parser/marshaller kernel that consumes the structure** — never
    implement the firmware. This is exactly what the K_BCIR verifier + the StreamPack ABI are built
-   for (bounded indexing, length-prefixed records, R1–R21 legality).
+   for (bounded indexing, length-prefixed records, R1–R23 legality where applicable).
 
 3. **The OS ambition is realized on a research rail, not bolted onto the IR.** The kernel/OS
    work (scheduling, IRQ routing, DMA, core isolation, IPC, the JIT unikernel factory) cannot be
@@ -131,14 +134,15 @@ this tier as small as possible; every line here is unverified.**
 ### Tier 2 — C: the verifiable bulk (where most of a driver lives)
 
 **Principle:** everything expressible with C's value/memory semantics belongs in C, because that is
-exactly what BCIR lowers to a claim graph and **verifies under R1–R21**. A driver's *entire logic
-body* is here today: register protocols and read-modify-write, **MMIO accessors**, polled loops
+exactly what BCIR lowers to a claim graph and verifies. Driver-shaped compiler fixtures cover
+register protocols and read-modify-write, **MMIO accessors**, polled loops
 with bounded spins, bitfield control words, device state machines, and table parsers
 (ACPI/SMBIOS/PCI-config walks).
 
 > **MMIO is NOT a gap — it is first-class.** A `volatile`-qualified register is *not* an asm
 > escape: it is a `Domain.MMIO` resource with ordered, `barriered`, provably-RAM-disjoint volatile
-> load/store (cfront L5, shipped + parity-gated). The UART fixture proves it: `u->SR`, `u->DR`,
+> load/store (cfront L5, shipped + parity-gated). The UART compiler fixture proves that language path:
+> `u->SR`, `u->DR`,
 > `u->BRR`, `u->CR` are plain `volatile uint32_t` struct members that lower to ordered MMIO access
 > — no `c.mmio` edge needed; the volatile-qualified type *is* the edge. *The MLIR-rail MMIO gap is
 > now closed (D1.2, landed):* `bcir.volatile_load` / `bcir.volatile_store` are first-class ops that
@@ -181,7 +185,7 @@ first-class there as it already is in cfront.
 
 ### The premise correction
 
-For a **polled** UART the answer to "what infrastructure do we need first?" is **almost nothing**.
+For a future **polled** UART the answer to "what infrastructure do we need first?" is **almost nothing**.
 Every item the user named is *independent of*, *after*, or *not BCIR's job* — **none is a genuine
 prerequisite**. The named list describes an *interrupt-driven, enumerated, measured-boot* platform
 (a much later phase), not the first useful driver.
@@ -205,7 +209,7 @@ prerequisite**. The named list describes an *interrupt-driven, enumerated, measu
 
 ### The smallest prereq set for the first driver
 
-For the polled UART, the **complete** prerequisite set is exactly: **(1)** an ordered register-access
+For implementing the polled UART, the **complete** prerequisite set is exactly: **(1)** an ordered register-access
 edge (MMIO **or** port-I/O — both shipped), **(2)** a bounded poll loop (cfront L6, shipped),
 **(3)** transitively, the verifiable-C path that compiles+verifies+attests them (Phase C, done for
 this driver). **There is no fourth item.**
@@ -216,7 +220,7 @@ Each rung unlocks the next; nothing here is a UART prerequisite — it is all *u
 
 ```
 RUNG 0  (FLOOR — done)   ISA edge: ordered MMIO  -OR-  x86 port-I/O (0x3F8)
-                          └─► POLLED UART  ◄── the first useful driver (already shipped)
+                          └─► POLLED UART  ◄── next resident driver; compiler fixture only today
 
 RUNG 1  Interrupt substrate:  8259 PIC / APIC / IOAPIC  +  IDT (data table)
                           └─► unlocks every interrupt-driven device
@@ -319,7 +323,8 @@ the warranted path is the resident compiler finishing BCIR-emitted freestanding 
 - **Layering:** a driver is *mostly verified C* (Tier 2, including first-class MMIO), a *thin
   trusted-asm floor* (Tier 1: ASM1/2/3 today + the boot/IRQ edges to build), and — only above the
   per-device layer — *C++ orchestration at G8* (Tier 3).
-- **Ordering:** a polled UART needs **nothing** new; it's already shipped. Everything the user named
+- **Ordering:** a polled UART needs little new, but only its compiler fixture exists today; the
+  channel-backed resident driver remains D2.1. Everything the user named
   is independent / after / out-of-scope, and the firmware/security specs are *parser-kernel*
   opportunities, not implementation targets. The post-UART work is the RUNG 1→7 ladder.
 - **Next code slice:** the Phase-0 hardening gate (D0.1 sanitizer-in-CI, D0.2 Area-B red-team), the
@@ -618,13 +623,13 @@ here. Items are ranked within each bucket.
 | B3 | **Manifest lifecycle beyond `cal_gen`.** The DeviceManifest refuses STALE/tampered at load; there is no story yet for hot-plug / suspend-resume (device-state generation bumps as R11-style staleness). Low urgency until a hot-pluggable fixture exists. | Deferred with a named unblock (a hot-plug-capable blueprint). | `kbcir/device_manifest.py` (envelope refusals). |
 | B4 | **`probe_agree` distance coverage.** The veto covers capacity/tile/ghost-bank lies; probing the *distance matrix* (measured latency vs the pinned Q8 entries) is rig-gated — it needs real multi-bank silicon. | Rig-gated (CT4 pattern). | Part VI P1; `HARDWARE_VALIDATION.md`. |
 
-### C. Rig-gated / maintainer one-liners (not build work)
+### C. Rig-gated / release operations (not claims of completed work)
 
-- **v0.3b tag push**: `git tag -a v0.3b 37d0b6a -m "BCIR 0.3b" && git push origin v0.3b`
-  (tag pushes 403 from the build sandbox).
-- **Asset-gated real-file runs**: `BCIR_HF_MODEL_DIR=<dir> python -m bcir.tests.test_model_ingest`
-  and `... test_model_spm` — now exercising real trained weights AND a real SentencePiece
-  tokenizer through the full serving path (HF downloads are proxy-blocked in the sandbox).
+- **v0.3b release/tag:** intentionally pending. Create and push a tag only after the draft
+  release criteria are met; this repository does not claim that `v0.3b` exists.
+- **Pinned real-file gate:** `python tools/models/run_real_model_gate.py` downloads only the
+  immutable, checksum-verified TinyLlama files; `--offline` requires the cache. It exercises
+  real trained weights, SentencePiece IDs, compact Q8 export, and standalone C parity.
 - **Native-object gate** (`BCIR_NATIVE_OBJECT_GATE.md`): foreign-ISA register allocation
   waits for a real accelerator ISA table (Part VI P6).
 - **Real-silicon calibration** (`HARDWARE_VALIDATION.md`): measured-then-pinned distance
@@ -757,7 +762,7 @@ with no ML placement card is a transliterated Linux driver, not a BCIR driver.
 
 | Device class | The learned prior (features → decision) | Precedent |
 |---|---|---|
-| UART family | RX trigger level + TX burst size (fill vs latency) | **Shipped** (UART U5) |
+| UART family | RX trigger level + TX burst size (fill vs latency) | **Planned** (UART U5; not built) |
 | Interrupt controllers (IOAPIC/GIC/PLIC) | IRQ→CPU affinity + coalescing threshold (latency × load) | new; mirrors channel_prior |
 | Timers (HPET/TSC/RTC) | Per-device frequency-error + cross-device sync offset (PTP-style skew model) | new; a drift regressor |
 | DMA engines | SG batch size + descriptor coalescing (setup cost vs fragmentation — extends A2's `dma_cost`) | A2 pricing |
@@ -907,7 +912,7 @@ subdriver, `[arch]` = architecture backend (channel, not a driver wave), `[net]`
 | Wave | Driver / module | Depends on | ML seam (§7) | Primary spec anchor |
 |---|---|---|---|---|
 | **D0 Boot** | UEFI boot handoff (loader stub, ExitBootServices) | — | boot-path timing | UEFI 2.11 |
-| **D0 Boot** | UART 16550/16750 console (polled → IRQ) | ISA edge (done) | trigger/burst — **shipped** | PC16550D (U0–U9 done) |
+| **D0 Boot** | UART 16550/16750 console (polled → IRQ) | ISA edge (done) | trigger/burst — **planned** | PC16550D (U0–U9 blueprint; unbuilt) |
 | **D1 Substrate** | Physical memory manager + region registry (BCIR RES) | — | region-placement (allocator heat) | BCIR/BDI regions |
 | **D1 Substrate** | Virtual memory + page tables + TLB shootdown (BCIR VM) | PMM | mapping-locality prior | Intel SDM / AMD64 paging |
 | **D2 Discovery** | ACPI static-table parser (RSDP→XSDT→MADT/MCFG/HPET/SRAT/FADT; minimal AML policy) | VM | — (parser) | ACPI 6.6 |

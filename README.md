@@ -28,9 +28,9 @@ B(H,Θ) = live budgets (thermal cap, power cap, bandwidth)
 │   ├── gem/             GEM (BCIR-4): StreamPack hydration, deterministic + concurrent execution
 │   ├── etl/             M5 event transduction (events, FSM, parser, binary decoder)
 │   ├── frontends/       ROP (declarative) + MAP (macro-assembly) front-ends
-│   ├── lower/           BCIR-5: legal LLVM IR run AOT (clang) or JIT (lli)
-│   ├── telemetry.py     "data DNA" schema + sinks (null/list/file/Kafka)
-│   └── verify/          runnable reference of verifier laws R1–R21
+│   ├── lower/           BCIR-5: single-claim elementwise LLVM AOT/JIT subset + broader C lowering
+│   ├── telemetry.py     "data DNA" schema + local sinks (null/list/file)
+│   └── verify/          runnable reference of verifier laws R1–R23
 ├── mlir/                the IR law: TableGen/ODS dialect family + compiled bcir-opt + IRDL projection
 │   ├── include/BCIR/    *.td (enums/types/attrs/ops) + *.h
 │   ├── lib/, tools/     BCIRDialect.cpp + bcir-opt.cpp (the compiled dialect)
@@ -60,7 +60,10 @@ python -m bcir.kbcir.differential -n 5000                            # generated
 python -m bcir.kbcir.microbench --target x86_avx512 --out cal.json   # measure -> freeze a Q8 cost table
 python -m bcir.kbcir.microbench --target x86_avx512 --bayes          # Bayesian posterior + conformal +/- delta
 python -m bcir.run vector_add --tables bcir/kbcir/tables/x86_64_reference.json  # apply frozen table
-python -m bcir.tests.run_all                                         # the conformance test suite (878 tests — see docs/STATUS.md)
+python -m bcir.tests.run_all                                         # run the conformance suite; static inventory in docs/STATUS.md
+
+# Pinned real-model gate (downloads three checksum-pinned files; --offline uses the cache):
+python tools/models/run_real_model_gate.py --output-dir build/model-gate
 
 # The compiled MLIR dialect (needs libmlir-NN-dev + llvm-NN-dev):
 bash tools/wsl/build_mlir.sh            # build bcir-opt (LangRef M3)
@@ -70,11 +73,13 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 
 ## Where the law lives
 
-- [`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md) — the normative language reference (levels, laws R1–R21, the equation).
-- [`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md) — the single master roadmap: positioning, current state, the MLIR/C/C++ placement map, and the next build steps (incl. §5.14, the MLIR-catch-up + freestanding-C23-driver arc that promotes the emerging timing/lifetime laws R19/R20/R21).
+- [`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md) — the normative language reference (levels, laws R1–R23, the equation).
+- [`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md) — the single master roadmap: positioning, current state, the MLIR/C/C++ placement map, and the next build steps (including the historical §5.14 law-catch-up arc and the draft freestanding-C23-driver release).
 - [`docs/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](docs/BCIR_ML_AI_INTEGRATION_ROADMAP.md) — the ML/AI integration companion roadmap: the Phase-M/L program (C inference substrate → tensor ops as claims → data/memory organs → language reach → ML-guided hardware → higher cognition).
 - [`docs/PARITY.md`](docs/PARITY.md) — the Python (`bcir/`) ↔ MLIR (`mlir/`) lockstep contract.
-- [`docs/STATUS.md`](docs/STATUS.md) — the generated single source of truth for counts (tests, ODS ops, passes, verifier-law coverage); prose links here rather than hard-coding numbers.
+- [`docs/STATUS.md`](docs/STATUS.md) — the generated static inventory of tests, ODS ops, passes, runtime files, and verifier-law fixture tags; it does not claim those gates were executed.
+- [`docs/BCIRQ8_FORMAT.md`](docs/BCIRQ8_FORMAT.md) — the compact deterministic model wire format and standalone-C inference boundary.
+- [`docs/THIRD_PARTY_MODELS.md`](docs/THIRD_PARTY_MODELS.md) — pinned model provenance, license, and non-redistribution boundary.
 - [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md) — how the repo is organized and why.
 - [`docs/DEVELOPMENT_HISTORY.md`](docs/DEVELOPMENT_HISTORY.md) — how it was built: the development method, the PR-era arc, and the condensed changelog.
 - [`docs/CFRONT_GUIDE.md`](docs/CFRONT_GUIDE.md) — the `bcir-cfront` C-frontend user guide: the CLI, diagnostics, the target ABI matrix, the fallback contract, and the supported subset + limits. The frontend lowers a wide C surface **dual-rail** (oracle + the `bcir_cfront.c` twin) — including the full array-compound-literal surface (1-D + multi-dim, scalar + aggregate-element), computed goto (`goto *p` / `&&L`), and function-pointer local variables — all Clang-equivalence + fuzzer gated (`_Decimal32/64/128` is **blocked**: Clang 18 cannot compile it).

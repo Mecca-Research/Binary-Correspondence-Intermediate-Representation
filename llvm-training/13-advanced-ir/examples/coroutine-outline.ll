@@ -10,7 +10,12 @@ source_filename = "coroutine-outline.ll"
 declare token @llvm.coro.id(i32, ptr, ptr, ptr)
 declare ptr @llvm.coro.begin(token, ptr)
 declare i8 @llvm.coro.suspend(token, i1)
-declare i1 @llvm.coro.end(ptr, i1, token)
+
+; llvm.coro.end is intentionally not declared in this version-neutral sketch.
+; Its intrinsic signature is release-sensitive (including an i1-to-void return
+; change in LLVM 22), so a standalone known-good fixture cannot spell one call
+; that verifies across every supported LLVM major. Frontend-emitted IR should use
+; the declaration for the LLVM version that will consume it.
 
 define ptr @coroutine_outline(i1 %finish_immediately) presplitcoroutine {
 entry:
@@ -29,7 +34,6 @@ resume:
   br label %cleanup
 
 cleanup:
-  %done = call i1 @llvm.coro.end(ptr %hdl, i1 false, token none)
   br label %suspended
 
 suspended:

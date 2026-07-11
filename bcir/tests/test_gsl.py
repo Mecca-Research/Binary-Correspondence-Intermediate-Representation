@@ -30,6 +30,7 @@ from bcir.kbcir.gsl_kernels import GSL_STATS, stats_reference, stats_via_bridge
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound
 from bcir.lower.c_kernel import emit_gsl_stats_c
 from bcir.model import Claim, Domain, Lane, Opcode, StrideClass
+from bcir.toolchain import host_link_args
 
 
 def _gsl_link():
@@ -42,7 +43,7 @@ def _gsl_link():
         open(src, "w").write("#include <gsl/gsl_statistics.h>\n"
                              "int main(void){double x[2]={1,2}; return (int)gsl_stats_mean(x,1,2)*0;}\n")
         for lib in (["-lgsl", "-lgslcblas"], ["-lgsl"]):
-            if subprocess.run([cc, src, *lib, "-lm", "-o", os.path.join(d, "p")],
+            if subprocess.run(host_link_args([cc, src, *lib, "-lm", "-o", os.path.join(d, "p")]),
                               capture_output=True).returncode == 0:
                 return lib
     return None
@@ -179,7 +180,7 @@ def _run_stats_kernel(cc, kernel, data, define=None, libs=None):
         if libs:
             cmd += libs
         cmd += ["-lm", "-o", exe]                          # -lm: sqrtf in the sd fallback path
-        bld = subprocess.run(cmd, capture_output=True, text=True)
+        bld = subprocess.run(host_link_args(cmd), capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout + out.stderr

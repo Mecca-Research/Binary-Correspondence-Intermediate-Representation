@@ -167,8 +167,32 @@ payload and why it must survive lowering or optimization.
 
 ## Verification scripts to run
 
-Run the smallest set that covers the files you changed, and prefer the checked-in
-scripts over ad-hoc command loops. Execute scripts from the repository root.
+Run the smallest set that covers the files you changed while iterating, and prefer
+the checked-in scripts over ad-hoc command loops. Execute scripts from the repository root.
+
+### Required pre-PR CI-equivalence gate
+
+Before committing or publishing a PR update, inspect `.github/workflows/ci.yml`
+and map every job and matrix cell the change can affect. Run focused regressions
+and the bounded local gates supported by the development host, then use GitHub
+Actions for unavailable Python versions, operating systems, architectures, and
+toolchains. The default `python -m bcir.tests.run_all` invocation on one machine
+is not a substitute for the CI matrix. Changes to shared Python semantics, the
+runner, tool discovery, compiler harnesses, or workflows affect all oracle and
+host-portability cells even when those cells execute remotely.
+
+At minimum, run focused regressions and the complete quick oracle locally when
+the host supports them. The complete thorough oracle, generated differential/fuzz
+campaigns, C runtime and pinned model gate, LLVM training, MLIR rail, docs
+governance, Python 3.12 host matrix, and native aarch64 jobs remain required CI
+evidence when affected. Do not emulate a missing architecture on a constrained
+workstation. Hardware-only coverage absent from both the host and CI must be an
+explicit PR skip with residual risk, not a fabricated substitute. Record exact
+commands and results in the PR body, run `git diff --check`, and verify tests leave
+tracked files unchanged.
+
+After pushing, wait for the complete Actions run. A PR with a failing or still
+pending required check is not ready for handoff.
 
 | Change type | Required checks |
 |---|---|

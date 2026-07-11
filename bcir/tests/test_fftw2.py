@@ -30,6 +30,7 @@ from bcir.kbcir.fft import dft_reference                       # for the separab
 from bcir.kbcir.fft2 import dft2_reference, fft2_via_bridge
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound
 from bcir.lower.c_kernel import emit_fftw_fft2_c
+from bcir.toolchain import host_link_args
 from bcir.model import Claim, Domain, Lane, Opcode, StrideClass
 
 
@@ -209,7 +210,8 @@ def test_fallback_path_compiles_and_matches_the_reference():
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "f")
         # the fallback path needs NO FFTW lib (only -lm for cosf/sinf), exactly as the 1-D fallback.
-        bld = subprocess.run([cc, "-std=c11", "-O2", src, "-lm", "-o", exe], capture_output=True, text=True)
+        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+                             capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         got = [float(t) for t in out.stdout.split()]
@@ -238,7 +240,8 @@ def test_linked_fftw2_path_agrees_when_fftw_is_present():
         src = os.path.join(d, "f.c")
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "f")
-        bld = subprocess.run([cc, "-std=c11", "-O2", "-DBCIR_USE_FFTW", src, lib, "-lm", "-o", exe],
+        bld = subprocess.run(host_link_args(
+            [cc, "-std=c11", "-O2", "-DBCIR_USE_FFTW", src, lib, "-lm", "-o", exe]),
                              capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)

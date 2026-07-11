@@ -30,6 +30,7 @@ from bcir.kbcir.fusion import (FUSIBLE_ACTIVATIONS, NON_FUSIBLE_ACTIVATIONS, Fus
                                is_fusible_activation, optimize_fused)
 from bcir.kbcir.activation import activation_reference
 from bcir.kbcir.matmul import matmul_reference
+from bcir.toolchain import host_link_args
 from bcir.kbcir.realize import _DEFOREST_FACTOR, fused_candidates
 from bcir.lower.c_kernel import (emit_activation_kernel_c, emit_blas_gemm_c, emit_matmul_activation_c)
 from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
@@ -182,7 +183,8 @@ def _run_fused_kernel(kind, M, N, K, a, b):
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "f")
         # -lm: the trusted libm edge (expf/tanhf) for the transcendental epilogues, exactly as G1 links it.
-        bld = subprocess.run([cc, "-std=c11", "-O2", src, "-lm", "-o", exe], capture_output=True, text=True)
+        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+                             capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         return [float(t) for t in out.stdout.split()]
@@ -244,7 +246,8 @@ def test_fused_kernel_equals_the_two_pass_emitted_path():
         src = os.path.join(d, "tp.c")
         open(src, "w").write(gemm + act + main)
         exe = os.path.join(d, "tp")
-        bld = subprocess.run([cc, "-std=c11", "-O2", src, "-lm", "-o", exe], capture_output=True, text=True)
+        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+                             capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         two_pass = [float(t) for t in out.stdout.split()]

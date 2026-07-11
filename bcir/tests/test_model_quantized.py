@@ -59,6 +59,21 @@ def test_a_greedy_flip_is_recorded_never_hidden():
     assert q8.ids_match and q8.ids_f32 == q8.ids_q
 
 
+def test_untied_zero_head_controls_quantized_drift_and_nll():
+    """The drift rail must use the same tied/untied head selection as real decoding."""
+    import dataclasses
+    import math
+    from bcir.frontends.models.quantized import _step_logits
+    spec = dataclasses.replace(SPEC, tied_embeddings=False)
+    w = dataclasses.replace(W, lm_head=(0.0,) * (spec.vocab_size * spec.d_model))
+    assert _step_logits([1, 2, 3], spec, w) == [0.0] * spec.vocab_size
+    record = decode_drift_record([1, 2, 3], spec, w, group_size=8, bits=8, max_new=2)
+    assert record.ids_f32 == record.ids_q == (0, 0)       # lowest-id tie break
+    assert record.max_logit_drift == 0.0
+    assert abs(record.nll_f32 - math.log(spec.vocab_size)) < 1e-12
+    assert record.nll_q == record.nll_f32
+
+
 if __name__ == "__main__":
     import sys
 

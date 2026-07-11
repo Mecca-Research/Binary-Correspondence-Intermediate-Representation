@@ -18,9 +18,9 @@ gem/        GEM (BCIR-4): StreamPack hydration, deterministic phase executor, an
             CT2 concurrent wave scheduling + GGG decoupling + affinity
 etl/        M5 Event Transduction: events, FSM transducer, parser, binary decoder
 frontends/  CT3 front-ends: rop (declarative) + map (macro-assembly) -> claims
-lower/      BCIR-5: legal LLVM IR run AOT (clang) / CT5 JIT (lli) / portable C23 kernel
-telemetry.py CT4 "data DNA" schema + sinks (null/list/file; Kafka-ready)
-verify/     runnable LangRef verifier laws R1-R16 (R14-R16: verify_cim/dvfs/allocator)
+lower/      BCIR-5: single-claim elementwise LLVM AOT/JIT subset / portable C23 kernels
+telemetry.py CT4 "data DNA" schema + local sinks (null/list/file; no live remote transport)
+verify/     runnable LangRef verifier laws R1-R23
 silicon.py  real-signal probes: PMU + RAPL energy + on-die thermal + cpufreq (honest)
 kbcir/fuzz.py  fuzz the trust boundaries (StreamPack/ROP/MAP/ETL/JSON/MLIR), gen-seeded
 api.py      the embeddable library facade: plan -> KernelArtifact (C + ABI header + R12 attestation)
@@ -32,7 +32,7 @@ run.py      the CLI (--target/--theta/--policy/--run/--emit-c/--emit-mlir/--cali
 kbcir/differential.py  generated, adversarial Python<->MLIR parity (gen_module +
             independent law_select + check_module + shrink + run_campaign)
 lower/mlir.py  to_mlir: emit GEM-pipeline BCIR-MLIR from any oracle plan (the bridge)
-tests/      483 checks + a dependency-free runner
+tests/      dependency-free runner; generated static inventory in ../docs/STATUS.md
 ```
 
 ## Run it
@@ -43,7 +43,7 @@ python -m bcir.run vector_add --target x86_avx512 --theta cool
 python -m bcir.run vector_add --target nvidia_ptx           # GPU warp -> vec32
 python -m bcir.run vector_add --target x86_avx512 --theta hot  # replans vec16 -> vec8
 
-# Lower + compile + run the selected kernel via clang (self-checking):
+# Lower + compile + run the supported single-claim elementwise kernel via clang:
 python -m bcir.run vector_add --target x86_avx512 --run
 
 # Emit the GEM-pipeline MLIR for the plan (the law rail recomputes the score):

@@ -1,12 +1,12 @@
-# BCIR 0.3b — the freestanding-C23-driver compiler + the law catch-up
+# BCIR 0.3b draft — the freestanding-C23-driver compiler + the law catch-up
 
-*Tag `v0.3b` · 2026-07-03 · the first externally-usable BCIR compiler deliverable.*
+*Unreleased draft. The package remains version `0.2.0`; no `v0.3b` release tag is claimed.*
 
 BCIR's release ladder gates a rung on **laws landed dual-rail**, not on feature checklists.
 0.3b is the rung where the C frontend stops being a research rail and becomes a compiler a
-driver project can actually run: C source in, an **R1–R21-verified claim graph** out, on two
-independent implementations (the Python oracle and the C production rail) that must agree
-byte-for-byte wherever both speak.
+driver project can actually run: C source in, a verified claim graph out. The current MLIR law
+rail is R1–R23; the C frontend's explicitly scoped verifier remains R1–R18. The Python oracle and
+C production rail must agree byte-for-byte wherever both speak.
 
 ## What this release is
 
@@ -14,7 +14,9 @@ byte-for-byte wherever both speak.
 clock-domain crossing, and lifetime (use-after-free / double-free) verdicts moved from
 advisory checkers to numbered laws with the full six-artifact treatment (LangRef entry,
 oracle law, MLIR verifier clause, negative FileCheck case, C twin, generated status). The
-generated status reports **R1–R23** with dual-rail symmetry.
+generated status inventories **R1–R23** on the MLIR law rail. Python covers each applicable
+oracle surface; the C frontend remains explicitly scoped to R1–R18 rather than claiming
+false law-for-law symmetry beyond its subset.
 
 **§5.14 Phase 2 complete — the law-bearing C semantics have MLIR representation.** Every C
 construct the frontend lowers whose *meaning* is a law now exists on the law rail with its
@@ -56,9 +58,9 @@ derived linker flags (`--emit-link-flags`), the self-contained verified-C emit
 (`--emit-c`, bounds-quarantine runtime included when a masked access needs it), the
 naked-pointer policy documented user-facing, and the `c-runtime` CI tier.
 
-## What this release is NOT (the post-tag breadth, stated plainly)
+## What this draft release is NOT (remaining breadth, stated plainly)
 
-The rung is tagged on the **law core**. Three breadth areas remain open and are tracked in
+No tag has been created. Three breadth areas remain open and are tracked in
 the master roadmap's Phase 3 section — none of them changes a law:
 
 - **Linking** — `bcir-cc` emits verified C and derived link flags per unit; driving the
@@ -73,7 +75,7 @@ the master roadmap's Phase 3 section — none of them changes a law:
 Measurement / real-silicon replan (§5.4) remains **deferred and host-side** until a
 bare-metal rig with PMU + RAPL runs the runbook (`HARDWARE_VALIDATION.md`).
 
-## Verifying the tag
+## Verifying the release candidate
 
 ```
 python -m bcir.tests.run_all --tier c-runtime   # oracle + C byte-identity tiers

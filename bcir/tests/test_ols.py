@@ -28,6 +28,7 @@ from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
 from bcir.kbcir.ols import normal_equation_residual, ols_reference, ols_via_bridge
 from bcir.kbcir.precision import quantization_error_bound
 from bcir.lower.c_kernel import emit_lapack_ols_c
+from bcir.toolchain import host_link_args
 
 
 def _lapack_link():
@@ -265,7 +266,7 @@ def _run_ols_kernel(cc, kernel, a, b, m, n, nrhs, define=None, libs=None):
         if libs:
             cmd += libs
         cmd += ["-lm", "-o", exe]                          # -lm: fabsf in the fallback path
-        bld = subprocess.run(cmd, capture_output=True, text=True)
+        bld = subprocess.run(host_link_args(cmd), capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout + out.stderr

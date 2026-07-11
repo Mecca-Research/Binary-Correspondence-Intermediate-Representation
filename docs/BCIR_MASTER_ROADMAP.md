@@ -7,7 +7,7 @@
 > consolidation; their unique content is folded in here). It pairs with the docs that
 > stay separate because they are **normative reference / evidence / governance**, not
 > roadmap:
-> - [`BCIR_LANGREF.md`](BCIR_LANGREF.md) — the IR language + R1–R21 law spec (normative).
+> - [`BCIR_LANGREF.md`](BCIR_LANGREF.md) — the IR language + R1–R23 law spec (normative).
 > - [`BCIR_STREAMPACK_ABI.md`](BCIR_STREAMPACK_ABI.md) — the frozen binary ABI (v1 + append-only v2).
 > - [`PARITY.md`](PARITY.md) — the active oracle↔law cross-map (dual-rail enforcement).
 > - [`BCIR_NATIVE_OBJECT_GATE.md`](BCIR_NATIVE_OBJECT_GATE.md) — the native-isel decision gate.
@@ -87,8 +87,8 @@ runtime/driver; (3) a principled ML-in-compilers research vehicle.
 | Oracle conformance tests (`python -m bcir.tests.run_all`) | see **[`docs/STATUS.md`](STATUS.md)** (generated count — single source of truth), incl. the generated differential (now incl. a compose-rail metamorphic campaign) + verifier + fuzz |
 | Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
 | GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
-| Verifier laws | **R1–R21** all first-class in `-bcir-verify` (see [`STATUS.md`](STATUS.md) for the generated 21/21 coverage table). R1–R17 dual-rail with the Python oracle + the `-bcir-lower-to-llvm` checkpoint; **R18** compositional call-graph integrity; **R19/R20** (timing/CDC) + **R21** (pointer lifetime) ride optional claim metadata, vacuous over the scalar/C subset. R13 also **recomputes** the manifest digest + cross-checks `m_theta` against the IR |
-| Named pass pipelines | `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm` / `bcir-aot` with verifier checkpoints |
+| Verifier laws | **R1–R23** are first-class in `-bcir-verify` (see [`STATUS.md`](STATUS.md) for the generated static negative-fixture inventory). R1–R17 cover the original claim/plan/lowering core; **R18** is call-graph integrity; **R19/R20** timing/CDC; **R21** pointer lifetime; **R22/R23** GEM shape/dtype seams. Optional timing/lifetime metadata remains vacuous over the scalar/C subset. R13 also **recomputes** the manifest digest + cross-checks `m_theta` against the IR |
+| Named pass pipelines | `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm`; `bcir-aot` is verifier-checkpointed partial AOT preparation that may leave mixed BCIR/GEM/LLVM IR |
 | Θ context op | `bcir.kbcir.theta` — the C++ plan matches the oracle under **hot** Θ (matmul hot 1159168), not just cool |
 | Six-target capability matrix | all six TARGETS cross-checked on the MLIR rail (`target_matrix.mlir`) — the law plans per-target from the capability seeds alone |
 | C23 in the runtime + kernels | `_BitInt(N)` exact-width Q-fixed lanes + `#embed` frozen Q8 tables (both with C11 fallbacks) |
@@ -180,8 +180,9 @@ of the last cycle. Each stage is bit-exact against the oracle and gated by
   per TARGET; `-bcir-plan`/`-overlap`/`-rcsp-plan` recompute the oracle's per-target
   result from the capability alone — avx512/sve/rvv 16→7808, avx2 8→9472, neon 4→12800,
   ptx 32→6976; the GPU's coalesced gather halves histogram (266240 vs 528384).
-- **Verifier R1–R21**, negative-tested per law (R19/R20 timing + R21 lifetime promoted to
-  first-class in the §5.14 arc; they stay vacuous without their optional metadata), plus a verifier
+- **Verifier R1–R23**, with a negative fixture per law (R19/R20 timing, R21 lifetime,
+  and R22/R23 GEM shape/dtype seams; see generated status). Optional-metadata laws stay
+  vacuous when absent. A verifier
   *differential* (`gen_illegal_module` + `run_verifier_campaign`) that fault-injects each
   law and confirms the verifier catches it.
 - **C23 where it pays:** `_BitInt(N)` exact-width Q-fixed lane kernels (the place a
@@ -580,8 +581,9 @@ destabilize the keystone.
 > (turn on the already-written `sanitize_cfront.sh` + red-team the numerical wraps), the **asm / C /
 > C++ layering** model (a driver is mostly *verified C* with first-class MMIO, a thin *trusted-asm*
 > floor of ASM1/2/3 + the boot/IRQ edges still to build, and *C++ orchestration only at the G8
-> boundary*), and the **bring-up dependency ladder** (a *polled* UART needs nothing new and already
-> ships; HPET/ACPI/SMBIOS/TCG/TPM/PCI/USB/e1000/paging/VMs are independent / after / out-of-scope,
+> boundary*), and the **bring-up dependency ladder** (a *polled* UART needs little new, but only the
+> driver-shaped compiler fixture/register header are landed; the channel-backed resident driver is
+> still D2.1; HPET/ACPI/SMBIOS/TCG/TPM/PCI/USB/e1000/paging/VMs are independent / after / out-of-scope,
 > and the firmware specs are verified *parser-kernel* opportunities, never implementation targets).
 > The `bcir.portio` MLIR op (SEG8.2) is **landed** (the x86 port-I/O law-rail twin reusing the `bcir.asm`
 > → `llvm.inline_asm` path); the next code slice is `bcir.volatile_load/store` (D1.2), after the hardening gate.
@@ -728,7 +730,8 @@ the existing C twins):
   (`uint32_t (*m)[8]` — the row pointer a 2D array decays to; modeled as the equivalent multi-dim array
   param so `m[i][j]` flattens row-major to `i*8 + j`, reusing the 2D machinery; `cfront_widerow.c`) —
   the vendor-header declarator form, now lowering on both rails.
-- ✅ **Phase D — real register-map headers driven end-to-end** — vendor-style headers + drivers
+- ✅ **Phase D compiler-fixture gate — register-map headers driven end-to-end** — vendor-style
+  headers + driver-shaped source
   ingested with no hand-written claim graph, through the full `C → bcir_cpp → bcir_cfront → verify →
   emit → bcir_plan → bcir_hydrate → bcir_exec` loop, both rails agreeing and the emit
   Clang-behaviour-equivalent. Two complementary drivers cover the real-driver surface:
@@ -741,7 +744,8 @@ the existing C twins):
     function (incl. the MMIO + control-flow `uart_send`) is Clang-equivalent; the straight-line entry
     executes R9/R10–R11 clean.
 
-  Together they are the demonstration the L1–L8 + verifier/type/atomics/channel work was built toward.
+  Together they demonstrate the L1–L8 compiler surface. They are not resident drivers and do not
+  implement the UART blueprint's simulator, IRQ service, channel binding, telemetry egress, or U0–U9.
 
 > Channels are already a real plugin boundary (`bcir/channel_plugin.py`: target-profile schema,
 > runtime signal-provider contract, codegen identity, calibration artifact, execution-capability set,
@@ -1710,7 +1714,8 @@ architecture-specific rules in the lowering/driver layer":
    non-negative latency / margin / clock, a synchronous claim needs a clock, the setup/hold margin fits the
    stage latency) and **R20** (clock-domain-crossing: a RAW dependency whose producer declared a different
    `clock_domain` must be synchronized via `sync_type='mixed'` or a `barriered` hazard). **Non-disturbance
-   PROVEN:** the whole thorough corpus (834 tests, incl. the provenance digest + every optimizer/verify law)
+   PROVEN:** the thorough corpus (current static inventory in [`STATUS.md`](STATUS.md), including the
+   provenance digest + every optimizer/verify law)
    passes byte-identically with R19/R20 wired into `verify_smart_lowering` — the C compiler and every plan/
    score/verdict are unaffected, since no existing claim carries timing. *Next:* port `Timing` + R19/R20 to
    the MLIR dialect (`#bcir.timing` `OptionalAttr`) + `BCIRVerifyPass.cpp` under the parity gate.
@@ -2056,7 +2061,8 @@ R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted
   ingestion** — the breadth that exercises Phase 2's volatile/atomic/ABI laws on real driver headers.
 - **The native-object path** (`BCIR_NATIVE_OBJECT_GATE.md`) for emitted `.o` artifacts where the gate allows.
 
-This is release-ladder rung **0.3b** — the first externally-usable BCIR compiler deliverable. Measurement /
+This is the **draft** release-ladder rung **0.3b**; package version remains `0.2.0` and no
+`v0.3b` tag is claimed. Measurement /
 real-silicon measured replan stays **DEFERRED and host-side** (§5.4) — unchanged: it lights up the instant a
 bare-metal rig with PMU + RAPL + a userspace governor runs the runbook (`HARDWARE_VALIDATION.md`).
 
@@ -2135,7 +2141,8 @@ In recommended order — each is gated by the generated differential harness + F
     `--fallback`/quarantine for the unprovable.
 15. ◑ **RTL/synchronous-timing track, step 1 (§5.11).** **Oracle prototype DONE** (`Timing` +
     `verify_timing` R19/R20, `test_timing_laws.py`): the **non-disturbance proof holds** — the whole
-    thorough corpus (834 tests, incl. the C-compiler fixtures + the provenance digest) verifies
+    thorough corpus (see the generated [`STATUS.md`](STATUS.md) for the current static inventory,
+    including C-compiler fixtures + the provenance digest) verifies
     byte-identically with R19/R20 wired in, since no existing claim opts into timing, establishing the
     additive seam. ✅ **The MLIR port landed** (§5.14 Phase 1: the `#bcir.timing` attr,
     `verifyR19/R20` in `BCIRVerifyPass.cpp`, `verify_timing_lifetime.mlir` negatives, parity-gated).
@@ -2178,15 +2185,15 @@ In recommended order — each is gated by the generated differential harness + F
   (`run_all --tier {quick,c-runtime,silicon-degrade,thorough}`); and the **hardware-channel plugin
   boundary** (`bcir/channel_plugin.py` — a `channel.json` manifest format so FPGA/NVMe/HBM-PIM
   extensions register without touching the core).
-- **0.3b — freestanding-C23-driver compiler + the law catch-up** (**✅ TAGGED `v0.3b`** — see
+- **0.3b — freestanding-C23-driver compiler + the law catch-up** (**DRAFT / UNRELEASED** — see
   [`RELEASE_NOTES_0.3b.md`](RELEASE_NOTES_0.3b.md); §5.14):
-  ✅ R19/R20/R21 promoted to first-class verifier laws (generated status reports **R1–R21**); ✅ MLIR
+  ✅ R19/R20/R21 promoted to first-class verifier laws (the current law rail is **R1–R23**); ✅ MLIR
   representation for the law-bearing C semantics the frontend lowers — **§5.14 Phase 2 COMPLETE**
   (volatile/atomic ops, indirect-call effect, pointer extent-provenance, ABI contract); ✅ a **multi-file
-  driver project** building through `bcir-cc` with an R1–R21-clean claim graph, per-file fallback and the
+  driver project** building through `bcir-cc` with its scoped R1–R18-clean claim graph, per-file fallback and the
   per-project verdict line — dual-rail, byte/exit-code identical (`check_runtime.sh` #project); ✅
   compile-database + dependency output (oracle-side); ✅ the naked-pointer policy documented user-facing;
-  ✅ the `c-runtime` CI tier. *Remaining breadth (post-tag):* linking, real UAPI/CMSIS/PCIe/NVMe/ACPI
+  ✅ the `c-runtime` CI tier. *Remaining breadth before release:* linking, real UAPI/CMSIS/PCIe/NVMe/ACPI
   fixtures, native-object artifacts where the gate allows. The first externally-usable BCIR compiler
   deliverable.
 - **0.4a — proof-carrying (mechanism)** (✅): replay records + per-claim certificates +
@@ -2205,8 +2212,8 @@ In recommended order — each is gated by the generated differential harness + F
   naming a different module/target — a usage error, never a bogus divergence). Driven as a
   real subprocess in the suite. **0.4b is COMPLETE.**
 - **1.0** (☐): stable language/ABI policy; no known Python↔C++ divergence (generated +
-  fuzzed); ≥2 real hardware targets with measured evidence; R1–R21 dual-rail symmetry
-  (✅ already holds — §5.1.1 + §5.14 Phase 1); one external frontend; published benchmark
+  fuzzed); ≥2 real hardware targets with measured evidence; R1–R23 law coverage with
+  cross-rail parity on every shared surface; one external frontend; published benchmark
   methodology; upgrade tests; a clear native-backend decision (the gate, §5.5).
 
 ---

@@ -2,8 +2,9 @@
 
 > **Status: DEFERRED (correct).** BCIR does **not** hand-roll an instruction selector /
 > ELF+relocation emitter. The warranted path — emit the K_BCIR-planned kernel and let
-> the **resident compiler** finish it to a real object — is implemented and tested
-> end-to-end (eBPF, x86-64 scalar, and aarch64 / Raspberry Pi 5). This document is the *gate*: the
+> the **resident compiler** finish it to a real object — is implemented and tested for
+> the documented single-claim scalar/elementwise slice (eBPF, x86-64, and aarch64).
+> Arbitrary-graph object lowering is not claimed. This document is the *gate*: the
 > explicit criteria under which that decision would flip, and the stop criteria for a
 > native-isel experiment if one is ever taken.
 
@@ -20,7 +21,8 @@ verifier, the StreamPack ABI), not a code generator. Two ways to reach machine c
 from a plan:
 
 1. **Resident-compiler path (chosen).** Emit portable **C23** (`lower.c_kernel`) or
-   **LLVM IR** (`lower.llvm`) for the selected realization and hand it to the
+   **LLVM IR** (`lower.llvm`, currently the single-claim elementwise subset) for the
+   selected realization and hand it to the
    compiler that already lives next to the deployment — `clang`/`llc`/`lli`, a GPU
    shader compiler, an accelerator runtime. The lane width, bounds, precision, and
    non-aliasing are the K_BCIR plan; instruction selection is the resident backend's
@@ -129,8 +131,9 @@ measurement window; otherwise the deliverable is the negative result + this doc.
 
 ## 5. Current verdict
 
-Path (1) is implemented, tested, and produces real objects end-to-end
-(eBPF + x86-64 + aarch64). No seeded target meets the GO bar (every one has a resident LLVM
+Path (1) is implemented and tested for the documented single-claim scalar/elementwise
+slice, producing real objects (eBPF + x86-64 + aarch64). It is not arbitrary-graph AOT.
+No seeded target meets the GO bar (every one has a resident LLVM
 backend). **Native isel stays deferred; the gate stands.** Revisit when a deployment
 target with no resident backend (G1) and a measured ≥ 2× economics case (G2) appears —
 most plausibly a bare PIM/CIM controller or a driver-resident eBPF JIT under a latency

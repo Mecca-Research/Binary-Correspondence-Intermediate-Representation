@@ -1,11 +1,12 @@
-/* Phase D: a real driver, end-to-end through the BCIR plug-in C compiler (no Python).
+/* Phase D compiler fixture: driver-shaped source compiled end-to-end through BCIR (no Python).
  *
  * Includes a vendor-style UART register map (uart_regs.h) and drives it: volatile MMIO registers,
  * a bitfield control word, an enum mode, an overlapping-config union, object-macro bit positions,
  * and a bounded status-poll loop. bcir_cpp expands the #include + #defines; bcir_cfront lowers +
  * verifies (R1-R18) + attests (C.2); the closed loop plans / hydrates / executes the straight-line
- * entry. The two rails (Python oracle + C) must agree on the structural summary, and the emitted C
- * must be Clang-behaviour-equivalent.
+ * entry. This validates compiler semantics only: it is not a channel-backed resident UART driver
+ * and performs no host/device discovery or real UART I/O in the test suite. The two rails (Python
+ * oracle + C) must agree on the structural summary, and the emitted C must be Clang-equivalent.
  */
 #include "uart_regs.h"
 

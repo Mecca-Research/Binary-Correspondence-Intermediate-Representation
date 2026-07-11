@@ -24,7 +24,9 @@ loudly. Dep-free stdlib; cost-side (imports no verifier)."""
 from __future__ import annotations
 
 import json
+import math
 import os
+from dataclasses import dataclass
 
 from ...kbcir.unsupervised import EmbeddingTable
 from .decode import DecoderSpec, DecoderWeights, LayerWeights
@@ -47,7 +49,8 @@ def spec_from_config(config: dict) -> DecoderSpec:
         rope_base=float(config.get("rope_theta", 10000.0)),
         activation="silu_gate",
         n_kv_heads=int(config.get("num_key_value_heads", n_heads)),
-        tied_embeddings=bool(config.get("tie_word_embeddings", False)))
+        tied_embeddings=bool(config.get("tie_word_embeddings", False)),
+        rms_norm_eps=float(config.get("rms_norm_eps", 1e-6)))
 
 
 def rope_interleave_order(n_heads: int, d_k: int) -> list[int]:
@@ -129,9 +132,109 @@ def weights_from_tensors(spec: DecoderSpec, tensors: dict) -> DecoderWeights:
         lm_head=lm_head)
 
 
-def ingest_checkpoint(model_dir: str) -> tuple[DecoderSpec, DecoderWeights]:
-    """One-shot: `config.json` + `model.safetensors` in a directory -> (spec, weights)."""
+@dataclass(frozen=True)
+class IngestReport:
+    """Exact checkpoint census split into decoder parameters and validated auxiliaries."""
+
+    consumed_tensors: tuple[str, ...]
+    auxiliary_tensors: tuple[str, ...]
+    decoder_element_count: int
+    auxiliary_element_count: int
+    shard_element_count: int
+
+
+def _consumed_tensor_names(spec: DecoderSpec) -> tuple[str, ...]:
+    names = ["model.embed_tokens.weight"]
+    for li in range(spec.n_layers):
+        p = f"model.layers.{li}."
+        names.extend((p + "input_layernorm.weight",
+                      p + "self_attn.q_proj.weight",
+                      p + "self_attn.k_proj.weight",
+                      p + "self_attn.v_proj.weight",
+                      p + "self_attn.o_proj.weight",
+                      p + "post_attention_layernorm.weight",
+                      p + "mlp.gate_proj.weight",
+                      p + "mlp.up_proj.weight",
+                      p + "mlp.down_proj.weight"))
+    names.append("model.norm.weight")
+    if not spec.tied_embeddings:
+        names.append("lm_head.weight")
+    return tuple(names)
+
+
+def _rotary_aux_layer(name: str, spec: DecoderSpec) -> int | None:
+    prefix = "model.layers."
+    suffix = ".self_attn.rotary_emb.inv_freq"
+    if not (name.startswith(prefix) and name.endswith(suffix)):
+        return None
+    middle = name[len(prefix):-len(suffix)]
+    if not middle.isdigit():
+        return None
+    layer = int(middle)
+    return layer if 0 <= layer < spec.n_layers else None
+
+
+def _validate_rotary_aux(name: str, tensor: tuple, spec: DecoderSpec) -> None:
+    dtype, shape, values = tensor
+    want_n = spec.d_k // 2
+    if tuple(shape) != (want_n,):
+        raise ValueError(f"{name}: shape {tuple(shape)} != ({want_n},)")
+    expected = [spec.rope_base ** (-(2.0 * i) / spec.d_k) for i in range(want_n)]
+    # F16/BF16 storage rounds the analytical frequencies more coarsely than F32/F64.
+    rel_tol = 5e-3 if dtype in ("F16", "BF16") else 1e-6
+    for i, (actual, want) in enumerate(zip(values, expected)):
+        if not math.isfinite(actual) or not math.isclose(actual, want, rel_tol=rel_tol,
+                                                         abs_tol=1e-8):
+            raise ValueError(f"{name}[{i}]={actual!r} does not match rope_base "
+                             f"{spec.rope_base!r} (expected {want!r})")
+
+
+def _build_ingest_report(spec: DecoderSpec, tensors: dict) -> IngestReport:
+    consumed = _consumed_tensor_names(spec)
+    consumed_set = set(consumed)
+    # weights_from_tensors has already required all consumed tensors; retain a defensive
+    # report-side check so this helper remains total if reused independently.
+    missing = [name for name in consumed if name not in tensors]
+    if missing:
+        raise ValueError(f"missing consumed tensors: {missing}")
+    auxiliary: list[str] = []
+    unknown: list[str] = []
+    for name in sorted(set(tensors) - consumed_set):
+        if _rotary_aux_layer(name, spec) is not None:
+            _validate_rotary_aux(name, tensors[name], spec)
+            auxiliary.append(name)
+        else:
+            unknown.append(name)
+    if unknown:
+        raise ValueError(f"unconsumed checkpoint tensors are not allowlisted: {unknown}")
+
+    def count(names) -> int:
+        return sum(len(tensors[name][2]) for name in names)
+
+    return IngestReport(
+        consumed_tensors=consumed,
+        auxiliary_tensors=tuple(auxiliary),
+        decoder_element_count=count(consumed),
+        auxiliary_element_count=count(auxiliary),
+        shard_element_count=sum(len(tensor[2]) for tensor in tensors.values()))
+
+
+def ingest_checkpoint_with_report(model_dir: str) \
+        -> tuple[DecoderSpec, DecoderWeights, IngestReport]:
+    """Ingest one shard and return a strict, auditable tensor/element census.
+
+    Llama's per-layer ``rotary_emb.inv_freq`` buffers are the sole permitted non-parameter
+    tensors: their shape and analytical values are checked against ``rope_base``.  Unknown
+    unused tensors fail in the strict API instead of disappearing from the census.
+    """
     with open(os.path.join(model_dir, "config.json"), encoding="utf-8") as f:
         spec = spec_from_config(json.load(f))
     tensors = load_tensors(os.path.join(model_dir, "model.safetensors"))
-    return spec, weights_from_tensors(spec, tensors)
+    weights = weights_from_tensors(spec, tensors)
+    return spec, weights, _build_ingest_report(spec, tensors)
+
+
+def ingest_checkpoint(model_dir: str) -> tuple[DecoderSpec, DecoderWeights]:
+    """Compatibility tuple API with the same strict auxiliary-tensor validation."""
+    spec, weights, _report = ingest_checkpoint_with_report(model_dir)
+    return spec, weights

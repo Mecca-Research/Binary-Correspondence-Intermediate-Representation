@@ -30,6 +30,7 @@ import subprocess
 import tempfile
 
 from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
+from bcir.toolchain import host_link_args
 from bcir.kbcir.autodiff import (Tape, evaluate, finite_difference_grad, grad,
                                  gradients_match, max_grad_error, unroll_scan)
 from bcir.kbcir.precision import quantization_error_bound
@@ -580,7 +581,8 @@ def _compile_run_lstm(x, h_prev, c_prev, p):
         src = os.path.join(dd, "lc.c")
         open(src, "w").write(kernel + main)
         exe = os.path.join(dd, "lc")
-        bld = subprocess.run([cc, "-std=c11", "-O2", src, "-lm", "-o", exe], capture_output=True, text=True)
+        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+                             capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         return [float(t) for t in out.stdout.split()]

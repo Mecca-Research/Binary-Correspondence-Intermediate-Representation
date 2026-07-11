@@ -45,9 +45,10 @@ Read concretely:
   `attention` / `fused_matmul_activation` / `layout_pivot` / `contention` are first-class planned
   claims with a 12-D CostVector, the dual-semiring K_BCIR search, and `hasVerifier` op-level laws —
   a real compiler IR is the right home for structural/legality reasoning + cost.
-- **The legality verdict is dual-railed (Python ↔ C ↔ MLIR).** The R1–R21 verifier exists as a
-  Python oracle (`bcir/verify/`), a C twin (`runtime/c/bcir_verify.c`), and the MLIR `-bcir-verify`
-  law. Crucially, **no ML module touches it** — the two-truth quarantine holds (verified in §4.0).
+- **The legality verdict is multi-railed (Python ↔ C ↔ MLIR).** The current MLIR law rail is
+  R1–R23; the C frontend twin implements its explicitly scoped R1–R18 subset, while the Python
+  oracle supplies the applicable semantic checks. Crucially, **no ML module touches the verdict**
+  — the two-truth quarantine holds (verified in §4.0).
 - **The performance/runtime boundary is C++.** Where C's abstractions run out — dynamic graphs,
   distributed orchestration (the G8 hand-off), and the SYCL single-source compiler mode (`-fsycl`)
   — the kernel/dispatcher lowers to C++.
@@ -65,7 +66,7 @@ The hierarchy, in one stack:
             (The honest executable rail.)
       │   (cost/legality reasoning lifted up)
       ▼
-   MLIR     the LAW rail: the gem.* tensor-op claims + R1–R21 verifier laws + CostVectors.
+   MLIR     the LAW rail: the gem.* tensor-op claims + R1–R23 verifier laws + CostVectors.
             (Structural/legality reasoning + cost search.)
       │   (where C's abstractions run out)
       ▼
@@ -84,9 +85,9 @@ Each criterion is one axis. A component's genuine language is read off where it 
 
 ### Criterion 1 — Legality/decision path vs cost/oracle path (the two-truth quarantine)
 
-The **decision path** — the R1–R21 verifier (`bcir/verify/`, the C twin `runtime/c/bcir_verify.c`,
-the MLIR `-bcir-verify` law) — is deterministic, integer/Q8, and **dual-railed**: the Python oracle
-is the conformance reference, the C twin is byte-identical to it, the MLIR pass is the law (see
+The **decision path** — the R1–R23 MLIR law rail, applicable Python checks, and the C frontend's
+scoped R1–R18 twin — is deterministic, integer/Q8, and multi-railed: the Python oracle
+is the conformance reference where surfaces overlap, the C twin is byte-identical there, and the MLIR pass is the law (see
 [`PARITY.md`](PARITY.md)). Telemetry and learned signals inform plan *cost* (they feed `theta` and
 the CostVector) but **never** a legality verdict — a confidence can never become a verdict; a
 diagnostic never carries a confidence.
@@ -176,10 +177,10 @@ dual rail), the **fixed-shape PREDICT/INFERENCE/TRANSFORM kernels** emitted by
 the single transcendental each kernel needs (exp/log/tanh/sqrt), and the **Area-B library wraps**
 (BLAS/LAPACK/FFTW/GSL/SLEEF) where BCIR owns the *calling side* around a trusted external kernel.
 
-### MLIR — the LAW rail: `gem.*` tensor-op claims + R1–R21 verifier laws + CostVectors
+### MLIR — the LAW rail: `gem.*` tensor-op claims + R1–R23 verifier laws + CostVectors
 
 MLIR is structural/legality reasoning + cost. It holds the `gem.*` planned-tensor-op claims
-(`BCIRGEMOps.td`), the R1–R21 verifier laws (`-bcir-verify`), and the CostVector passes — the law
+(`BCIRGEMOps.td`), the R1–R23 verifier laws (`-bcir-verify`), and the CostVector passes — the law
 the Python oracle is gated against (PARITY).
 
 ### C++ — the performance/runtime boundary (G8)
@@ -220,7 +221,7 @@ plan, which is exactly the sanctioned direction. No ML kernel emits a verdict.)
 | `precision.py` — `Interval`, `accuracy_bound`, `meets_tolerance` | Python | **Python** (producer of the accuracy cost axis) ↔ **MLIR** R17 law | 1, 4 | Static ULP bounds feed the CostVector accuracy dimension; R17 is the dual-rail law. `meets_tolerance` is verifier-shaped but opt-in/cost-side. |
 | `cost.py` — 12-D `CostVector` (`DIMS`), `TargetProfile`, `MemTier` | Python | **Python** ↔ **MLIR** (12-D parity, PARITY.md) | 4 | The cost algebra is identical in both rails (PARITY pins the dimension order). Pure planning/cost. |
 | `semiring.py` — `dag_shortest_path` (min-plus), the dual semiring | Python | **Python** ↔ **MLIR** (K_BCIR `-bcir-rcsp`/`-bcir-plan`) | 4 | Min-plus shortest-path + max-plus roofline is the planner; a deterministic cost search, dual-railed. |
-| The verifier `bcir/verify/` (R1–R21, `verify()`, `Diagnostic`) | Python | **Python ⊕ C ⊕ MLIR** (the full dual/tri rail) | 1 | The legality verdict — the one component that *must* exist on every rail: Python oracle ↔ `runtime/c/bcir_verify.c` twin ↔ MLIR `-bcir-verify` law. |
+| The verifier (`bcir/verify/`, `verify()`, `Diagnostic`) | Python | **Python ⊕ scoped C ⊕ MLIR** | 1 | The legality verdict: MLIR carries R1–R23, the C frontend carries R1–R18, and Python checks each applicable oracle surface. |
 
 ### 4.2 — G-series `gem.*` ops (the planned tensor claims)
 
@@ -377,7 +378,7 @@ the answer is a clean four-tier hierarchy:
   (BLAS/LAPACK/FFTW/GSL/SLEEF). *The honest executable rail.*
 
 - **MLIR** — the law rail: the `gem.*` planned tensor-op claims (matmul/activation/conv/attention/
-  fusion/layout/contention), the R1–R21 verifier laws, and the CostVectors. *Structural/legality
+  fusion/layout/contention), the R1–R23 verifier laws, and the CostVectors. *Structural/legality
   reasoning + the dual-semiring cost search.*
 
 - **C++** — the performance/runtime boundary (G8): the dynamic-graph + distributed hand-off

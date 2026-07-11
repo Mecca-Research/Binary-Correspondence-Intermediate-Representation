@@ -138,6 +138,8 @@ typedef struct {
    * unsoundly. Reset (mut_n=0) per function. */
   mutent mut[512]; int mut_n;
   int ext_ctr;       /* §5.12 unique hidden extent-snapshot locals (`__bcir_extK`); reset per function */
+  int stmt_expr_declared_bf; /* terminal bare member of `({ ...; member; })`: Clang retains the
+                              * bitfield's declared type instead of applying ordinary promotion */
   /* §5.12 deferred VLA-parameter extent bindings (#vlaparam). A param `T a[n]` decays to a pointer and is
    * bound to the prior integer-scalar param `n` via ptr_extent -- BUT only when `n` is STABLE (unmutated,
    * not address-taken), which the body mutation pre-pass (scan_mutations) determines, and that pre-pass runs
@@ -1067,7 +1069,7 @@ static uint32_t tempptr_field(CC *c, const field *fld){
   return r;
 }
 
-static uint32_t emit_member(CC *c, venv *base, const field *fld) {
+static uint32_t emit_member(CC *c, venv *base, const field *fld, int declared_bf) {
   /* the BITFIELD unit temp is sized to a power of 2 >= its byte span (a packed field that straddles into
    * bits >= 32 needs a 64-bit unit); the load reads only `access_bytes` (the spanned bytes). */
   int usz = fld->bit_w ? (fld->access_bytes<=4?4:8) : fld->size;
@@ -1090,7 +1092,8 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld) {
      *                 matching Clang's `s.wide + s.wide == _BitInt(N)`); a standard wide field keeps its
      *                 declared 64-bit type. So a `_BitInt(N<=32)` bitfield promotes to int just like a
      *                 standard one -- VERIFIED == Clang via the `_Generic` differential. */
-    if(fld->bit_width>0 && fld->bit_w>32) t=tempbi(c,fld->bit_width,fld->signd);   /* WIDE `_BitInt(N)` bitfield */
+    if(declared_bf) t=fld->bit_width>0?tempbi(c,fld->bit_width,fld->signd):tempi(c,fld->size,fld->signd);
+    else if(fld->bit_width>0 && fld->bit_w>32) t=tempbi(c,fld->bit_width,fld->signd);   /* WIDE `_BitInt(N)` bitfield */
     else t=tempi(c,fld->bit_w>32?fld->size:4,(fld->signd||fld->bit_w<32)?1:0);
     bcir_claim *g=new_claim(c,"c.bf.get",BCIR_OP_ADD);if(!g)return t;
     g->n_rd=1;g->rd[0]=u;g->n_wr=1;g->wr[0]=t;g->n_imm=3;g->imm[0]=fld->bit_off;g->imm[1]=fld->bit_w;g->imm[2]=fld->signd;}
@@ -1626,13 +1629,13 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
         return t;
       }
       if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){    /* another pointer hop: load it, recurse */
-        ptr=emit_member(c,&b,&mf); psidx=mf.ptee_sidx; pfld=mf; continue;
+        ptr=emit_member(c,&b,&mf,0); psidx=mf.ptee_sidx; pfld=mf; continue;
       }
       if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);
         field sub; if(elem_field(c,&mf,&sub)) return emit_member_index_field(c,&b,&mf,ix,&sub);
         if(c->failed) return 0;
         return emit_member_index(c,&b,&mf,ix); }
-      return emit_member(c,&b,&mf);                   /* terminal member load through the loaded pointer */
+      return emit_member(c,&b,&mf,c->stmt_expr_declared_bf); /* terminal member load through the loaded pointer */
     }
     return ptr;                                       /* no further postfix: the pointer value itself */
   }
@@ -2186,13 +2189,13 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
     }
     field mf=member_descend(c,S->f[fi]);        /* nested `o.in.v` -> one flattened-offset load */
     if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* deref-through a loaded pointer field (#fieldderef) */
-      uint32_t ptr=emit_member(c,v,&mf);        /* load the pointer field, then chain through the loaded ptr */
+      uint32_t ptr=emit_member(c,v,&mf,0);      /* load the pointer field, then chain through the loaded ptr */
       return postfix_ptr_chain(c,ptr,mf.ptee_sidx,mf); }
     if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);   /* s.arr[i] / s.m[i][j] load */
       field sub; if(elem_field(c,&mf,&sub)) return emit_member_index_field(c,v,&mf,ix,&sub);   /* arr[i].field */
       if(c->failed) return 0;
       return emit_member_index(c,v,&mf,ix); }
-    return emit_member(c,v,&mf);
+    return emit_member(c,v,&mf,c->stmt_expr_declared_bf);
   }
   if(is(c,"[")){                                /* L3: base[i] / m[i][j] (row-major flatten) */
     uint32_t idxs[3]; int ni=0;
@@ -3006,11 +3009,11 @@ static int lv_assign_value(CC *c, uint32_t *out){
     if(is_eq){                                         /* plain: store rhs, then RELOAD the same member */
       c->i++; uint32_t rhs=p_assign(c);
       if(f.bit_w) store_member_bf(c,v,&f,rhs); else store_member(c,v,&f,rhs);   /* a nested bitfield: bf.set */
-      *out=emit_member(c,v,&f);                         /* reload: a bitfield re-reads via bf.get (#bfassignexpr) */
+      *out=emit_member(c,v,&f,0);                       /* reload: a bitfield re-reads via bf.get (#bfassignexpr) */
       return 1;
     }
     char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = stored */
-    uint32_t cur=emit_member(c,v,&f); uint32_t rhs=p_assign(c);
+    uint32_t cur=emit_member(c,v,&f,0); uint32_t rhs=p_assign(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
     bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
@@ -3019,7 +3022,7 @@ static int lv_assign_value(CC *c, uint32_t *out){
      * member (#narrowcompound); a full-width leaf needs no re-read (oracle: lv.ct.size < rt.size). A BITFIELD
      * narrows to its BIT width (the byte-size test misses it) -- always RE-READ it. */
     const bcir_resource *trr=res_of(c->fn,tmp);
-    *out = (f.bit_w || (int)f.size < (int)(trr?trr->elem_bytes:4)) ? emit_member(c,v,&f) : tmp;
+    *out = (f.bit_w || (int)f.size < (int)(trr?trr->elem_bytes:4)) ? emit_member(c,v,&f,0) : tmp;
     return 1;
   }
   c->i=save; return 0;
@@ -3167,14 +3170,14 @@ static int incdec_value(CC *c, uint32_t *out){
     if(f.is_ptr || f.arr_count || f.sidx>=0){ c->i=save; return 0; }   /* a non-scalar leaf -> fallback */
     if(!incdec_settle(c,prefix,save)){                    /* a deeper lvalue / not stepped -> roll back */
       c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
-    uint32_t cur=emit_member(c,v,&f);                     /* read OLD (a fresh declared temp -- no snapshot) */
+    uint32_t cur=emit_member(c,v,&f,0);                   /* read OLD (a fresh declared temp -- no snapshot) */
     uint32_t one=incdec_emit_const1(c);
     uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
     bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
     if(f.bit_w) store_member_bf(c,v,&f,nw); else store_member(c,v,&f,nw);
     if(!prefix){ *out=cur; return 1; }                    /* postfix: the OLD value */
     const bcir_resource *nr=res_of(c->fn,nw);             /* prefix: the STORED new value -- re-read if it */
-    *out = (f.bit_w || (int)f.size < (int)(nr?nr->elem_bytes:4)) ? emit_member(c,v,&f) : nw;   /* narrows */
+    *out = (f.bit_w || (int)f.size < (int)(nr?nr->elem_bytes:4)) ? emit_member(c,v,&f,0) : nw;   /* narrows */
     return 1;
   }
 
@@ -3249,10 +3252,10 @@ static uint32_t p_assign(CC *c){
     if(op->n==1 && op->s[0]=='='){                  /* plain: store rhs, then RE-READ -> the converted value */
       c->i++; uint32_t rhs=p_assign(c);             /* right-associative: p->x = s.y = v */
       if(mf.bit_w) store_member_bf(c,mbase,&mf,rhs); else store_member(c,mbase,&mf,rhs);   /* a bitfield: bf.set */
-      return emit_member(c,mbase,&mf);              /* reload: a bitfield re-reads via bf.get (#bfassignexpr) */
+      return emit_member(c,mbase,&mf,0);            /* reload: a bitfield re-reads via bf.get (#bfassignexpr) */
     }
     char ch=op->s[0]; c->i++;                       /* compound `OP=`: read-once, binop, store, value = stored */
-    uint32_t cur=emit_member(c,mbase,&mf);          /* read FIRST (matches the oracle's claim order) */
+    uint32_t cur=emit_member(c,mbase,&mf,0);        /* read FIRST (matches the oracle's claim order) */
     uint32_t rhs=p_assign(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
@@ -3265,7 +3268,7 @@ static uint32_t p_assign(CC *c){
      * the full underlying type, so the byte-size test misses it) -- always RE-READ it (oracle:
      * narrows = lv.bit_width or lv.ct.size < rt.size). */
     const bcir_resource *trr=res_of(c->fn,tmp);
-    return (mf.bit_w || (int)mf.size < (int)(trr?trr->elem_bytes:4)) ? emit_member(c,mbase,&mf) : tmp;
+    return (mf.bit_w || (int)mf.size < (int)(trr?trr->elem_bytes:4)) ? emit_member(c,mbase,&mf,0) : tmp;
   }
   { uint32_t v; if(lv_assign_value(c,&v)) return v; }   /* a[i]/ *p/o.in.x = rhs (store + reload) as a VALUE */
   return p_cond(c);
@@ -3737,11 +3740,11 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
   field f=member_descend(c,S->f[fi]);
   venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=1;   /* base = the loaded pointer */
   if(f.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){  /* another pointer hop: load it, recurse */
-    uint32_t nptr=emit_member(c,&b,&f); store_through_ptr(c,nptr,f.ptee_sidx,f); return;
+    uint32_t nptr=emit_member(c,&b,&f,0); store_through_ptr(c,nptr,f.ptee_sidx,f); return;
   }
   uint32_t val;                                        /* terminal member store through the loaded pointer */
   if(is_compound_op(&c->t[c->i])){ char ch=c->t[c->i].s[0]; c->i++;
-    uint32_t cur=emit_member(c,&b,&f); uint32_t rhs=p_expr(c);
+    uint32_t cur=emit_member(c,&b,&f,0); uint32_t rhs=p_expr(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
     bcir_claim *bb=new_claim(c,op,oc); if(bb){bb->n_rd=2;bb->rd[0]=cur;bb->rd[1]=rhs;bb->n_wr=1;bb->wr[0]=tmp;}
@@ -4153,7 +4156,7 @@ static void p_stmt_inner(CC *c) {
       if(fi<0){fail(c,"unknown field");return;}
       field f=member_descend(c,S->f[fi]);         /* nested `o.in.v` -> one flattened-offset store */
       if(f.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* store deref-through a loaded pointer field (#fieldderef) */
-        uint32_t ptr=emit_member(c,v,&f);         /* load the pointer field, then store through the loaded ptr */
+        uint32_t ptr=emit_member(c,v,&f,0);       /* load the pointer field, then store through the loaded ptr */
         store_through_ptr(c,ptr,f.ptee_sidx,f); eat(c,";"); return; }
       if(f.arr_count && is(c,"[")){               /* s.arr[i] / s.m[i][j] = expr  /  OP= expr */
         uint32_t idx=member_arr_index(c,&f); uint32_t aval;
@@ -4177,7 +4180,7 @@ static void p_stmt_inner(CC *c) {
         /* compound assignment to a member:  r->field OP= expr  (the set/clear-bits driver idiom; a
          * bitfield field reads via c.bf.get, a plain member via a plain load). */
         char ch=c->t[c->i].s[0]; c->i++;
-        uint32_t cur=emit_member(c,v,&f);          /* the current field value (loaded first) */
+        uint32_t cur=emit_member(c,v,&f,0);        /* the current field value (loaded first) */
         uint32_t rhs=p_expr(c);
         const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
         uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
@@ -4263,6 +4266,31 @@ static void p_stmt_inner(CC *c) {
   if(p_incdec(c)){eat(c,";");return;}    /* ++i / i++ / --i / i-- as a statement */
   (void)p_expr(c);eat(c,";");
 }
+/* True when [start,end) is exactly an identifier followed by one or more `.`/`->` member hops,
+ * modulo parentheses around the whole expression. This intentionally excludes arithmetic, casts,
+ * comma expressions, calls, and indexing: those contexts apply normal integer promotion. */
+static int bare_member_tokens(CC *c, int start, int end){
+  while(end>start && tok_is(&c->t[end-1],";")) end--;
+  for(;;){
+    if(end-start<3 || !tok_is(&c->t[start],"(") || !tok_is(&c->t[end-1],")")) break;
+    int depth=0, wraps=1;
+    for(int i=start;i<end;i++){
+      if(tok_is(&c->t[i],"(")) depth++;
+      else if(tok_is(&c->t[i],")")) depth--;
+      if(depth==0 && i<end-1){wraps=0;break;}
+    }
+    if(!wraps || depth!=0) break;
+    start++; end--;
+  }
+  if(start>=end || c->t[start].k!=T_ID) return 0;
+  int i=start+1, hops=0;
+  while(i<end && (tok_is(&c->t[i],".")||tok_is(&c->t[i],"->"))){
+    if(i+1>=end || c->t[i+1].k!=T_ID) return 0;
+    hops++; i+=2;
+  }
+  return hops>0 && i==end;
+}
+
 /* `({ s1; ...; e; })` -- a GCC statement expression (the C twin of cast.StmtExpr): a compound statement
  * in its own scope whose VALUE is the last statement (an expression statement). No AST, so the prefix
  * statements lower in place (p_stmt) and the LAST statement is then rolled back -- the speculative
@@ -4272,6 +4300,7 @@ static uint32_t p_stmt_expr(CC *c){
   c->i++; c->i++;                        /* consume `(` then `{` */
   int env_mark=c->nenv;                  /* a statement expression is a scope: its locals do not leak */
   int last_save=-1;
+  int last_end=-1;
   size_t snap_res=c->fn->n_res, snap_cl=c->fn->n_claims;
   uint32_t snap_rid=c->rid, snap_cid=c->cid, snap_clctr=c->cl_ctr;
   int snap_ncalls=c->fn->n_calls, snap_nenv=c->nenv, snap_nstr=g_nstr;
@@ -4279,7 +4308,7 @@ static uint32_t p_stmt_expr(CC *c){
     last_save=c->i;                      /* remember the start + the lowering state before each statement */
     snap_res=c->fn->n_res; snap_cl=c->fn->n_claims; snap_rid=c->rid; snap_cid=c->cid; snap_clctr=c->cl_ctr;
     snap_ncalls=c->fn->n_calls; snap_nenv=c->nenv; snap_nstr=g_nstr;
-    p_stmt(c);
+    p_stmt(c); last_end=c->i;
   }
   /* is the LAST statement a VALUE expression statement (so the `({...})` yields it), or a statement-form
    * (an `if`/loop/`{`/label/declaration) -> a VOID statement expression (used in a discarded context)? */
@@ -4313,7 +4342,10 @@ static uint32_t p_stmt_expr(CC *c){
       else if(c->t[k].k==T_ID && (tok_is(&c->t[k+1],"++")||tok_is(&c->t[k+1],"--"))
               && (tok_is(&c->t[k+2],";")||tok_is(&c->t[k+2],"}"))) bare=1;        /* a++; / a-- ; */
       if(bare){ fail(c,"assignment as a statement-expression value"); return temp(c,4); } }
+    int saved_declared_bf=c->stmt_expr_declared_bf;
+    c->stmt_expr_declared_bf=bare_member_tokens(c,last_save,last_end);
     result=p_expr(c); if(is(c,";")) c->i++;
+    c->stmt_expr_declared_bf=saved_declared_bf;
   }
   eat(c,"}"); c->nenv=env_mark; eat(c,")");   /* pop the scope, close `)` */
   return result;

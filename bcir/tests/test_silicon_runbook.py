@@ -12,15 +12,29 @@ fabricated number). These tests gate that the path never silently rots.
 
 import os
 import subprocess
+import sys
 
 from bcir.kbcir import TARGETS
 from bcir.kbcir.calibloop import measured_replan
 from bcir.examples import vector_add
 from bcir.silicon import cpufreq_info, perf_counters_available, rapl_available
+from bcir.toolchain import host_bash
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _RUNBOOK = os.path.join(_ROOT, "tools", "silicon", "measure_replan.sh")
 AVX = TARGETS["x86_avx512"]
+
+
+def _runbook(*args: str):
+    """Run with a real shell. On Windows, avoid the legacy WSL launcher and use
+    Git for Windows' Bash; hosts with no Bash capability skip this shell-only gate."""
+    bash = host_bash()
+    if bash is None:
+        return None
+    env = os.environ.copy()
+    env["BCIR_PYTHON"] = sys.executable
+    return subprocess.run([bash, _RUNBOOK, *args], capture_output=True, text=True, cwd=_ROOT,
+                          env=env)
 
 
 def _rig_ready() -> bool:
@@ -33,7 +47,9 @@ def _rig_ready() -> bool:
 def test_runbook_runs_end_to_end_and_is_honest():
     """The runbook completes; on a rig it reports a MEASURED win, otherwise it degrades to
     a synthetic run (never a fabricated number) and exits 0."""
-    r = subprocess.run(["bash", _RUNBOOK], capture_output=True, text=True, cwd=_ROOT)
+    r = _runbook()
+    if r is None:
+        return
     assert r.returncode == 0, r.stdout + r.stderr
     out = r.stdout
     assert "capability probe" in out and "measured replan" in out and "verdict" in out
@@ -48,7 +64,9 @@ def test_runbook_probe_enumerates_the_three_rig_signals():
     """The capability probe names each of the three gating signals (PMU + RAPL + userspace
     governor) and prints an explicit rig-ready verdict -- so the requirement to fire the
     measured win is crisply specified, never implicit."""
-    r = subprocess.run(["bash", _RUNBOOK], capture_output=True, text=True, cwd=_ROOT)
+    r = _runbook()
+    if r is None:
+        return
     assert r.returncode == 0, r.stdout + r.stderr
     out = r.stdout
     assert "PMU (perf_event_open)" in out
@@ -66,8 +84,9 @@ def test_rig_fires_exactly_when_all_three_signals_are_present():
     """`--require-real` is the gate: it passes iff the host is rig-ready (all three signals),
     and fails honestly otherwise -- the measured win fires the moment, and only the moment, a
     bare-metal host with PMU + RAPL + a userspace governor runs the runbook."""
-    r = subprocess.run(["bash", _RUNBOOK, "--require-real"], capture_output=True, text=True,
-                       cwd=_ROOT)
+    r = _runbook("--require-real")
+    if r is None:
+        return
     if _rig_ready():
         assert r.returncode == 0 and "MEASURED replan win" in r.stdout
     else:
@@ -79,8 +98,9 @@ def test_runbook_require_real_fails_without_a_rig():
     so a CI/sandbox run can never masquerade as a measured result."""
     if perf_counters_available():
         return  # on a real rig this would pass; not assertable here
-    r = subprocess.run(["bash", _RUNBOOK, "--require-real"], capture_output=True, text=True,
-                       cwd=_ROOT)
+    r = _runbook("--require-real")
+    if r is None:
+        return
     assert r.returncode == 1 and "no real signals" in r.stdout
 
 

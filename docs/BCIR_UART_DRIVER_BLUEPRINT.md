@@ -1,5 +1,11 @@
 # BCIR UART-16550 Driver — the full build blueprint
 
+> **Implementation status (2026-07-10): blueprint, not a landed driver.** The repository
+> contains a vendor-style register header and bounded polling source used as a C-compiler
+> fixture, plus generic event-phase and telemetry-frame codec tests. It does **not** contain
+> a channel-backed UART driver, device simulator, IRQ service, learned trigger/burst prior,
+> or the U0–U9 program described below. Unchecked slices remain future work.
+>
 > **What this document is.** The complete, execution-ready engineering blueprint for the first
 > BCIR ML-compiled device driver: a 16550/16750-family UART driver built registry-first, verified by
 > the R-laws, priced by K_BCIR, tuned by frozen learned priors, and closed-loop-retuned from its

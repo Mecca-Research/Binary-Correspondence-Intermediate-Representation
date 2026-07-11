@@ -25,6 +25,7 @@ from bcir.kbcir.attention import (AttentionSpec, attention_realize, attention_re
                                   attention_via_bridge, bottleneck, check_attention, cost_of,
                                   cost_vector, plan_attention, scores_reference)
 from bcir.kbcir.cost import ACCURACY, COMPUTE, MEMORY, CostVector, TargetProfile
+from bcir.toolchain import host_link_args
 
 _HOST = TargetProfile.for_host()
 
@@ -236,7 +237,8 @@ def _compile_run_attention(q, k, v, seq, d):
         open(src, "w").write(kernel + main)
         exe = os.path.join(dd, "att")
         # -lm: the trusted libm edge (the softmax expf), exactly as the activation/gemm wraps link.
-        bld = subprocess.run([cc, "-std=c11", "-O2", src, "-lm", "-o", exe], capture_output=True, text=True)
+        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+                             capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         return [float(t) for t in out.stdout.split()]

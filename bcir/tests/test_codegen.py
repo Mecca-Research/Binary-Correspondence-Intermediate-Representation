@@ -7,6 +7,7 @@ from bcir.codegen import CODEGEN_TARGETS, codegen, codegen_c, emit_c_source
 from bcir.examples import vector_add
 from bcir.kbcir import optimize
 from bcir.kbcir.cost import TargetProfile, Theta
+from bcir.toolchain import resolve_llvm_tools
 
 # target name -> the keyword that appears in `llc --version` when its backend is built in.
 _ARCH_KW = {"x86_64": "x86-64", "aarch64": "aarch64", "riscv64": "riscv64",
@@ -19,10 +20,10 @@ def _result():
 
 
 def _llc_version_text():
-    llc = which("llc") or which("llc-18")
-    if not llc:
+    tools = resolve_llvm_tools("llc", pipeline="codegen test")
+    if not tools.ok:
         return None
-    return subprocess.run([llc, "--version"], capture_output=True, text=True).stdout
+    return subprocess.run([tools.paths["llc"], "--version"], capture_output=True, text=True).stdout
 
 
 def test_machine_targets_produce_artifacts():

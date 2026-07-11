@@ -138,15 +138,17 @@ plugin; `registry_for_channel` maps `energy_source`→power provider. It is stri
 surfaces a graded 0..100 signal to feed `theta`, and touches neither `bcir/verify` nor the
 cost-vector DIMS — the two-truth quarantine, applied to measurement.
 
-**UART telemetry frame (T2) — BUILT (cost-side only).** The embedded telemetry tap now has a
-framed, CRC-sealed, resync-able transport ([`TELEMETRY_FRAME_ABI.md`](TELEMETRY_FRAME_ABI.md),
+**Transport-neutral telemetry frame (T2) — BUILT; UART egress is not built.** The embedded
+telemetry tap now has a framed, CRC-sealed, resync-able byte codec
+([`TELEMETRY_FRAME_ABI.md`](TELEMETRY_FRAME_ABI.md),
 `bcir/telemetry_frame.py`): a producer drains `TelemetryRing` and emits self-delimiting frames
 (`"BTLM"` magic | version | seq | timestamp | the ring's 56-byte `<7q>` records | CRC-32) over a
 byte egress; the host decoder reuses the RT3 gate (`sanitize_events`/`TelemetryIntegrity`),
 resyncs on magic, and bounds a corrupt byte to one frame. It is dual-rail (a freestanding C twin
 `runtime/c/bcir_telemetry_frame.{c,h}` pinned byte-identical to the Python reference, CRC reused
 from `bcir_runtime.c`), mirroring the StreamPack discipline. Egress-over-UART (`out` → `uart_send`)
-is a documented adapter, not a hardware dependency. Strictly cost-side: a frame carries graded
+is a documented adapter, not an implemented channel-backed UART driver or live transport.
+Strictly cost-side: a frame carries graded
 L2/L3 data, never a verdict/`Diagnostic`, and touches neither `bcir/verify` nor the cost DIMS.
 
 **Derived metrics + plan-cost sensitivity (T3) — BUILT (cost-side only).** The telemetry pipeline
@@ -182,13 +184,14 @@ exposition bytes+JSON (the testable contract); HTTP/gRPC/protobuf transport is a
 adapter. Two-truth: read-only egress of the graded signal — no `Diagnostic`, touches neither
 `bcir/verify` nor the cost DIMS, never a verdict.
 
-**Telemetry pipeline (T1–T4) — COMPLETE (cost-side only; never a verdict).** With T4 the
-telemetry/monitoring pipeline is built end-to-end: **T1** vendor-neutral signal-provider registry →
-**T2** framed CRC-sealed UART transport (dual-rail with a C twin) → **T3** derived metrics + plan-cost
-sensitivity → **T4** Prometheus/OTLP/Redfish export adapters. Every stage is pure-Python (T2 also a
-freestanding C twin), strictly on the *cost/optimization* side of the two-truth quarantine: telemetry
-may inform `theta` / cost calibration but is never — and can never become — an R-law legality verdict;
-the decision path (`bcir/verify`, R1–R21) reads no telemetry.
+**Telemetry data contracts (T1–T4) — BUILT; live delivery — NOT BUILT.** T1 is the
+vendor-neutral signal-provider registry; T2 is a framed CRC-sealed codec suitable for UART
+(dual-rail with a C twin), not a UART transport; T3 derives metrics and plan-cost sensitivity;
+T4 serializes Prometheus/OpenMetrics, OTLP-JSON, and Redfish-shaped data. No UART egress,
+HTTP/Prometheus host, OTLP transport, Redfish/BMC client, or live provider transport is present.
+The implemented stages remain on the *cost/optimization* side of the two-truth quarantine:
+telemetry may inform `theta` / cost calibration but is never an R-law legality verdict; the
+decision path (`bcir/verify`, R1–R23) reads no telemetry.
 
 ### Pillar 4 — tropical / lifting / linearization / precision
 
@@ -353,7 +356,7 @@ the decision path (`bcir/verify`, R1–R21) reads no telemetry.
     ops, the Area-B wraps, the M-trio, and E1–E6) into a four-language hierarchy — **Python** (the oracle + the
     iterative/combinatorial TRAIN/FIT halves + the autodiff Tape + the planners/cost model + the bridges), **C**
     (the dual-rail verifier twin + the fixed-shape PREDICT/INFERENCE/TRANSFORM `emit_*_c` kernels + the
-    `c.call.libm:` edge + the Area-B BLAS/LAPACK/FFTW/GSL/SLEEF wraps), **MLIR** (the `gem.*` law rail + R1–R21 +
+    `c.call.libm:` edge + the Area-B BLAS/LAPACK/FFTW/GSL/SLEEF wraps), **MLIR** (the `gem.*` law rail + R1–R23 +
     CostVectors), **C++** (the G8 boundary — the hand-off scaffold + the SYCL `-fsycl` backend) — with the
     determining criterion and a migration map. The dominant pattern is the train/predict (fit/transform) split
     crossed with the exact/transcendental and legality/cost axes; it confirms the two-truth quarantine (no ML

@@ -1,6 +1,6 @@
 # BCIR Repository Current State Audit
 
-> Audited 2026-07-01 against the `bcir/` (oracle) + `mlir/` (law) + `runtime/c` (C rail)
+> Audited 2026-07-10 against the `bcir/` (oracle) + `mlir/` (law) + `runtime/c` (C rail)
 > tree — after the vision-alignment gap-closure program (tensor ops, bare-metal
 > inference/training kernels), the R19–R21 law promotion, the telemetry T1–T4 pipeline,
 > the ML Tier-1 trio + breadth slices (M1–M3, E1–E7), and the asm/driver arc
@@ -22,8 +22,9 @@
     ROP/MAP front-ends + the **cfront C frontend** (full preprocessor, 5-target ABI
     matrix, atomics/fences/inline-asm/port-I/O edges, VLAs, `_BitInt`, `_Complex`,
     variadics), M5 ETL, telemetry/calibration (T1–T4: signal registry, UART frame ABI,
-    derived metrics, OTLP/Prometheus/Redfish export), StreamPack ABI (v1 frozen,
-    v2/v3 append-only), the **R1–R21** verifier, lowering (clang AOT / lli JIT / WASM /
+    derived metrics, and OTLP/Prometheus/Redfish serialization adapters), StreamPack ABI
+    (v1 frozen, v2/v3 append-only), the **R1–R23** verifier, lowering (the single-claim
+    elementwise LLVM AOT/JIT/WASM subset /
     stackify / per-target llc / portable C23 kernels / Area-B library wraps), the
     Phase 13–26 learned organs (calibration, portfolio + replay gate, MoE gate, search
     accelerator, soft optimizer, regret ledger, provenance manifest, e-graph +
@@ -35,13 +36,14 @@
     hard-coded number here, which is what the 580/615/631 drift came from).
   - **`mlir/`** — the law: the ODS/TableGen dialect family (op count in
     [`STATUS.md`](STATUS.md)), the compiled `bcir-opt` with `-bcir-verify`
-    (**R1–R21**), the full deterministic optimizer core in C++23 (`-bcir-cost-model`
+    (**R1–R23**), the full deterministic optimizer core in C++23 (`-bcir-cost-model`
     cost+fusion/CSE → `-bcir-plan` coupled min-plus → `-bcir-overlap` (max,+) →
     `-bcir-rcsp`/`-bcir-rcsp-plan` constrained search, plus the bundle/compose/
     schedule/async/power/allocator passes and the gem tensor-op cost + lowering
     passes), the asm-edge law ops lowering to `llvm.inline_asm`
     (assemble-smoke-tested through `llc`), named pass pipelines
-    (`bcir-audit`/`-optimize`/`-hydrate`/`-lower-llvm`/`-aot`), and the IRDL
+    (`bcir-audit`/`-optimize`/`-hydrate`/`-lower-llvm`; `bcir-aot` is partial AOT
+    preparation that leaves unsupported BCIR/GEM operations in mixed-dialect IR), and the IRDL
     projection for stock `mlir-opt`. Validated in CI on the latest LLVM/MLIR
     release — LLVM 22, gating (`mlir-rail-validate`).
 - **`runtime/c/`** — the production C rail (component count in
@@ -61,8 +63,8 @@
 1. The oracle runs the whole correspondence chain end to end, deterministically
    (integer/Q-fixed), with worked-example parity pinned (`vector_add` AVX-512
    cool Θ → vec16, score **7808**; under a 700 thermal/power cap → vec8, **9472**).
-2. Verifier laws **R1–R21** run on both rails and are negative-tested per law
-   (`bcir/verify` and the MLIR `-bcir-verify` pass; coverage table generated in
+2. Verifier laws **R1–R23** run on the law rail and have a negative fixture per law
+   (`bcir/verify` and the MLIR `-bcir-verify` pass; static negative-fixture inventory generated in
    [`STATUS.md`](STATUS.md)). R19/R20 (timing) and R21 (lifetime) ride optional claim
    metadata and are vacuous over the scalar/C subset — the non-disturbance invariant.
 3. The **entire deterministic optimizer core is MLIR-native and cross-checked against
@@ -86,10 +88,11 @@
    naive vec16 violates it). The library façade (`bcir.api`) packages a plan as a
    deployable, R12-attested artifact.
 8. The **C compiler rail is a freestanding driver-subset C23 compiler candidate**:
-   real register-map/UART/DMA driver fixtures ingest end-to-end (`C → bcir_cpp →
+   register-map/UART/DMA *compiler fixtures* ingest end-to-end (`C → bcir_cpp →
    bcir_cfront → verify → plan → hydrate → exec`, no Python), with Clang-grade
    diagnostics, a `--fallback` route-to-LLVM contract, and a differential fuzzer that
-   has flushed ~21 real frontend bugs into permanent gates.
+   has flushed ~21 real frontend bugs into permanent gates. These fixtures validate
+   compilation; they are not resident device drivers.
 
 ## Confirmed limitations
 
@@ -116,14 +119,19 @@
    hard-compiler work (master roadmap §5.9–§5.10). `_Decimal*` is blocked on a
    reference compiler that can compile it. `runtime/cpp/` dynamic-graph and
    distributed orchestration are stubs pending multi-node hardware.
+6. **There is no resident UART driver or live telemetry transport.** The UART register
+   header/polling source is a compiler fixture; the channel-backed driver, UART simulator,
+   IRQ service, and U0–U9 program remain planned. Telemetry has a registry, codecs, metrics,
+   and deterministic serialization, but no UART egress, HTTP/Prometheus host, OTLP transport,
+   Redfish/BMC client, or live provider transport.
 
 ## Recommended next milestones (see [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5–6 for detail)
 
 1. **Measured real-silicon calibration** (§5.4) — the single most valuable next
    result; everything is staged for a rig.
-2. **The freestanding-C23-driver release 0.3b** (§5.14 Phase 3) — multi-file driver
+2. **The draft freestanding-C23-driver release 0.3b** (§5.14 Phase 3) — multi-file driver
    projects through `bcir-cc` (compile-database, dependency output, real
-   UAPI/CMSIS/PCIe/NVMe/ACPI fixtures), on the now-first-class R1–R21 law table.
+   UAPI/CMSIS/PCIe/NVMe/ACPI fixtures), on the now-first-class R1–R23 law table.
 3. **The driver ladder** ([`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md))
    — promote the polled UART into a channel-backed driver (D2.1), then climb
    interrupts → timers → table parsers → PCI enumeration.

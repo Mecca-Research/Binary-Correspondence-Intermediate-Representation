@@ -297,6 +297,120 @@ def test_d1_8_the_stream_count_is_a_plan_decision():
     assert [s for s, _ in capped.swept] == [1, 2]
 
 
+# --- specification-faithful numerics and tail batches ---------------------------------------
+
+def test_train_step_spec_rejects_unsupported_or_incoherent_choices():
+    for kwargs, needle in (
+            ({"n_features": 0}, "n_features"),
+            ({"batch": 0}, "batch"),
+            ({"activation": "softmax"}, "activation"),
+            ({"loss": "hinge"}, "loss"),
+            ({"activation": "relu", "loss": "bce"}, "sigmoid"),
+            ({"optimizer": "lion"}, "optimizer")):
+        try:
+            TrainStepSpec(**kwargs)
+            raise AssertionError(f"expected TrainStepSpec refusal for {kwargs}")
+        except ValueError as exc:
+            assert needle in str(exc), (kwargs, exc)
+
+
+def test_activation_loss_logit_gradients_match_finite_difference():
+    from bcir.kbcir.train_graph import _activation_and_derivative, _loss_and_dz
+    eps = 1e-6
+    for activation, loss in (("sigmoid", "bce"), ("relu", "mse"),
+                             ("sigmoid", "mse"), ("tanh", "mse"), ("gelu", "mse")):
+        for z, target in ((-0.7, 0.2), (0.4, 0.8)):
+            def value(at):
+                pred = _activation_and_derivative(activation, at)[0]
+                return _loss_and_dz(loss, activation, at, pred, target)[0]
+            pred = _activation_and_derivative(activation, z)[0]
+            analytic = _loss_and_dz(loss, activation, z, pred, target)[1]
+            numeric = (value(z + eps) - value(z - eps)) / (2.0 * eps)
+            assert abs(analytic - numeric) <= 2e-7 * max(1.0, abs(analytic), abs(numeric)), \
+                (activation, loss, z, analytic, numeric)
+
+
+def test_stateful_optimizer_resources_and_reference_trajectories():
+    from bcir.kbcir.train_graph import _OptimizerRuntime
+    from bcir.lower.optimizers import adam_step, momentum_step, rmsprop_step, sgd_step
+    grads = ([0.2, -0.4, 0.1], [-0.3, 0.5, -0.2], [0.1, 0.2, -0.6])
+    for name in ("sgd", "momentum", "rmsprop", "adam"):
+        runtime = _OptimizerRuntime(name, 3)
+        got = [0.5, -0.25, 0.75]
+        want = list(got)
+        state1 = state2 = None
+        step = 0
+        for grad in grads:
+            runtime.update(got, list(grad), 0.05)
+            if name == "sgd":
+                want = sgd_step(want, grad, 0.05)
+            elif name == "momentum":
+                if state1 is None:
+                    state1 = [0.0] * 3
+                want, state1 = momentum_step(want, grad, state1, 0.05)
+            elif name == "rmsprop":
+                if state1 is None:
+                    state1 = [0.0] * 3
+                want, state1 = rmsprop_step(want, grad, state1, 0.05)
+            else:
+                if state1 is None:
+                    state1 = [0.0] * 3
+                if state2 is None:
+                    state2 = [0.0] * 3
+                want, state1, state2, step = adam_step(want, grad, state1, state2,
+                                                        step, 0.05)
+            assert got == want
+
+        module = train_step_module(TrainStepSpec(n_features=2, optimizer=name))
+        names = {resource.name for resource in module.resources.values()}
+        update = next(c for phase in module.phases for c in phase.claims if c.id == 6)
+        if name == "sgd":
+            assert not (names & {"VELOCITY", "SQ_AVG", "ADAM_M", "ADAM_V", "ADAM_STEP"})
+        elif name == "momentum":
+            assert "VELOCITY" in names and 90_001 in update.rd and 90_001 in update.wr
+        elif name == "rmsprop":
+            assert "SQ_AVG" in names and 90_001 in update.rd and 90_001 in update.wr
+        else:
+            assert {"ADAM_M", "ADAM_V", "ADAM_STEP"} <= names
+            assert {90_001, 90_002, 90_003} <= set(update.rd) & set(update.wr)
+        assert verify(module) == [], verify(module)
+
+
+def test_nondefault_spec_changes_real_training_not_only_provenance():
+    from bcir.kbcir.train_graph import train_planned
+    X = [[0.5, -0.2], [1.0, 0.3], [-0.7, 0.9], [0.1, -1.1]]
+    y = [1.0, 1.0, 0.0, 0.0]
+    w0 = [0.1, -0.2, 0.05]
+    default = train_planned(TrainStepSpec(2, 4), X, y, w0, epochs=2, lr=0.03,
+                            h=AVX, theta=COOL)
+    alternate = train_planned(TrainStepSpec(2, 4, "tanh", "mse", "adam"), X, y, w0,
+                              epochs=2, lr=0.03, h=AVX, theta=COOL)
+    assert alternate.weights != default.weights
+    assert alternate.losses != default.losses
+
+
+def test_planned_tail_executes_and_streamed_tail_is_exact_or_refuses_before_training():
+    from bcir.kbcir.train_graph import train_planned, train_streamed
+    spec = TrainStepSpec(n_features=2, batch=4, activation="tanh", loss="mse",
+                         optimizer="adam")
+    X = [[0.2, -0.1], [0.4, 0.3], [-0.2, 0.5], [0.1, -0.4], [0.7, 0.2], [0.3, -0.2]]
+    y = [0.1, 0.7, 0.3, 0.8, 0.2, 0.6]
+    w0 = [0.1, -0.2, 0.05]
+    planned = train_planned(spec, X, y, w0, epochs=2, lr=0.01, h=AVX, theta=COOL)
+    streamed = train_streamed(spec, 2, X, y, w0, epochs=2, lr=0.01, h=AVX, theta=COOL)
+    assert len(planned.exec_orders) == len(streamed.exec_orders) == 4   # full + tail, twice
+    assert all(abs(a - b) <= 1e-12 for a, b in zip(planned.weights, streamed.weights))
+    assert all(abs(a - b) <= 1e-12 for a, b in zip(planned.losses, streamed.losses))
+
+    original = list(w0)
+    try:
+        train_streamed(spec, 2, X[:5], y[:5], w0, epochs=1, lr=0.01, h=AVX, theta=COOL)
+        raise AssertionError("a remainder of one cannot split into two equal streams")
+    except ValueError as exc:
+        assert "remainder" in str(exc) and "no training" in str(exc)
+    assert w0 == original
+
+
 if __name__ == "__main__":
     import sys
 

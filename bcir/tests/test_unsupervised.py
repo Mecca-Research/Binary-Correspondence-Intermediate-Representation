@@ -31,6 +31,8 @@ import shutil
 import subprocess
 import tempfile
 
+from bcir.toolchain import host_link_args
+
 from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
 from bcir.kbcir.precision import quantization_error_bound
 from bcir.kbcir.unsupervised import (EmbeddingTable, MinMaxScaler, StandardScaler,
@@ -427,7 +429,7 @@ def _compile_run(kernel, main, libm):
         if libm:
             cmd.append("-lm")
         cmd += ["-o", exe]
-        bld = subprocess.run(cmd, capture_output=True, text=True)
+        bld = subprocess.run(host_link_args(cmd), capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         return [int(t) for t in out.stdout.split()]

@@ -374,8 +374,10 @@ if grep -q "kbcir.plan_score = 7808" <<<"${audit_out}" \
   echo "  PASS bcir-audit (verify + cost/plan/overlap = 7808)"
 else echo "  FAIL bcir-audit"; cat /tmp/pe; fail=1; fi
 aot_out="$("${BO}" -bcir-aot "${EX}" 2>/tmp/pe)"
-if grep -q "llvm.fadd" <<<"${aot_out}" && grep -q "kbcir.lowered = true" <<<"${aot_out}"; then
-  echo "  PASS bcir-aot (verify -> hydrate -> LLVM: llvm.fadd + lowered)"
+if grep -q "llvm.fadd" <<<"${aot_out}" \
+   && grep -q "kbcir.lowered = true" <<<"${aot_out}" \
+   && grep -q "bcir.gem.lane_segment" <<<"${aot_out}"; then
+  echo "  PASS bcir-aot (partial preparation: LLVM plus residual GEM IR)"
 else echo "  FAIL bcir-aot"; cat /tmp/pe; fail=1; fi
 for pl in bcir-optimize bcir-hydrate bcir-lower-llvm; do
   "${BO}" -${pl} "${EX}" >/dev/null 2>/tmp/pe \

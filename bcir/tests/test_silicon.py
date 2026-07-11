@@ -12,7 +12,10 @@ import tempfile
 import time
 from shutil import which
 
+import bcir.silicon as silicon
+
 from bcir.silicon import (
+    Counters,
     CounterSampler,
     HwSample,
     cache_topology,
@@ -45,6 +48,7 @@ def test_summary_reports_the_real_signal_split():
     s = summary()
     assert "cache_levels" in s and "dvfs_actuatable" in s and "hw_pmu" in s
     assert s["os_counters"] is True                       # always real
+    assert s["rusage_counters"] is (silicon._resource is not None)
 
 
 def test_real_cache_tier_map_when_sys_is_present():
@@ -79,9 +83,9 @@ def test_allocator_with_the_real_tier_map_is_gains_only():
 def test_ring_is_fed_by_real_os_counters():
     ring = TelemetryRing(capacity=16)
     delta = sample_into_ring(ring, claim_id=42, work=lambda: sum(range(200000)))
-    assert delta.cpu_ns > 0                              # real measured CPU time
+    assert delta.wall_ns > 0 and delta.cpu_ns >= 0       # both are genuine timer deltas
     rec = ring.read_one()
-    assert rec.claim_id == 42 and rec.cycles > 0         # the real signal reached the ring
+    assert rec.claim_id == 42 and rec.cycles > 0         # CPU or wall signal reached the ring
 
 
 def test_counter_sampler_measures_real_deltas():
@@ -89,6 +93,41 @@ def test_counter_sampler_measures_real_deltas():
     _ = [i * i for i in range(500000)]
     c = s.lap()
     assert c.wall_ns > 0 and c.cpu_ns >= 0               # genuine timer deltas
+
+
+def test_counter_sampler_degrades_without_posix_rusage():
+    saved = silicon._resource
+    silicon._resource = None
+    try:
+        s = CounterSampler()
+        _ = sum(range(10000))
+        c = s.lap()
+        assert c.wall_ns > 0 and c.cpu_ns >= 0
+        assert (c.minor_faults, c.major_faults, c.vol_ctx, c.invol_ctx) == (0, 0, 0, 0)
+        assert summary()["rusage_counters"] is False
+    finally:
+        silicon._resource = saved
+
+
+def test_ring_uses_wall_delta_when_the_host_cpu_clock_is_too_coarse():
+    """A short Windows sample may truthfully report cpu_ns == 0; telemetry still carries
+    the measured nonzero wall delta rather than fabricating a CPU tick or a zero cycle."""
+    from unittest import mock
+
+    class CoarseCpuSampler:
+        def lap(self):
+            return Counters(wall_ns=73, cpu_ns=0, minor_faults=0, major_faults=0,
+                            vol_ctx=0, invol_ctx=0)
+
+    calls = []
+    ring = TelemetryRing(capacity=4)
+    with mock.patch.object(silicon, "CounterSampler", CoarseCpuSampler), \
+            mock.patch.object(silicon, "read_hw_counters", return_value=None):
+        delta = sample_into_ring(ring, claim_id=9, work=lambda: calls.append("work"))
+    rec = ring.read_one()
+    assert calls == ["work"]
+    assert delta.cpu_ns == 0 and delta.wall_ns == 73
+    assert rec.claim_id == 9 and rec.cycles == 73
 
 
 # --- MEASURED gain #1: the zero-copy ring beats serialization --------------------

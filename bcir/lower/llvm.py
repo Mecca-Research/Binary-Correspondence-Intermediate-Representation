@@ -1,10 +1,12 @@
-"""Textual LLVM IR lowering for elementwise BCIR claims.
+"""Textual LLVM IR lowering for BCIR's single-claim elementwise subset.
 
 This realizes LangRef Milestones 5-7 "in miniature": the K_BCIR-selected lane
 width becomes a real per-lane LLVM kernel (`<W x float>` vector loads/adds/stores
 for U/UX lanes, scalar for width 1), which clang compiles and runs on the host
-today. The emitter only produces standard SSA instructions -- no
-constant-expression-over-SSA, no invented opcodes.
+today. This is deliberately a partial LLVM AOT/JIT backend: it accepts exactly
+one selected, executable 2-read/1-write add/sub/mul claim and rejects arbitrary
+graphs instead of silently truncating them. The emitter only produces standard
+SSA instructions -- no constant-expression-over-SSA, no invented opcodes.
 """
 
 from __future__ import annotations
@@ -15,28 +17,51 @@ import tempfile
 
 from ..model import Module, Opcode
 from ..kbcir.realize import Candidate, RealizationResult
+from ..toolchain import resolve_llvm_tools
 
 _FOP = {Opcode.ADD: ("fadd", "+"), Opcode.SUB: ("fsub", "-"), Opcode.MUL: ("fmul", "*")}
 _IOP = {Opcode.ADD: "add", Opcode.SUB: "sub", Opcode.MUL: "mul"}  # integer (e.g. eBPF)
+_NON_EXECUTABLE = {Opcode.NOP, Opcode.PHASE_ENTER, Opcode.PHASE_LEAVE, Opcode.PROV_NOTE}
 
 
 def find_elementwise(module: Module, result: RealizationResult) -> tuple:
-    """Return (claim, candidate) for the single 2-read/1-write elementwise claim.
+    """Return the one supported selected executable claim and its candidate.
 
     Public: `bcir.verify.verify_lowering` (law R12) uses the same selection
     contract to check the emitted kernel against the K_BCIR-chosen realization.
+    Bookkeeping-only claims are ignored; every executable graph claim counts,
+    including unsupported operations and barriers. This prevents an arbitrary
+    graph from being misrepresented by lowering only its first selected convenient
+    node when a malformed or partial realization omits another claim.
     """
     by_claim = result.by_claim()
+    executable = []
     for ph in module.phases:
         for claim in ph.claims:
-            if claim.opcode in _FOP and len(claim.rd) == 2 and len(claim.wr) == 1:
-                cand = by_claim.get(claim.id)
-                if cand is not None:
-                    return claim, cand
-    raise NotImplementedError(
-        "LLVM lowering currently supports a single 2-read elementwise binary claim "
-        "(e.g. vector_add); this module has none selected."
-    )
+            cand = by_claim.get(claim.id)
+            if claim.opcode not in _NON_EXECUTABLE:
+                executable.append((claim, cand))
+
+    if len(executable) != 1:
+        raise NotImplementedError(
+            "the single-claim elementwise LLVM AOT/JIT subset requires exactly one "
+            f"selected executable claim; found {len(executable)}"
+        )
+
+    claim, cand = executable[0]
+    if cand is None:
+        raise NotImplementedError(
+            "the single-claim elementwise LLVM AOT/JIT subset requires its "
+            f"executable claim {claim.id} to have a selected realization"
+        )
+    if claim.opcode not in _FOP or len(claim.rd) != 2 or len(claim.wr) != 1:
+        raise NotImplementedError(
+            "the single-claim elementwise LLVM AOT/JIT subset supports only a "
+            "2-read/1-write add, sub, or mul claim; "
+            f"claim {claim.id} is {claim.opcode.name.lower()} with "
+            f"{len(claim.rd)} reads and {len(claim.wr)} writes"
+        )
+    return claim, cand
 
 
 # Back-compat alias (pre-R12 internal name).
@@ -148,9 +173,10 @@ def compile_and_run(
     Returns (ok, combined_output). ok is True only if clang built the program and
     it printed OK with exit code 0.
     """
-    clang = _which("clang")
-    if clang is None:
-        return False, "clang not found on PATH"
+    llvm = resolve_llvm_tools("clang", pipeline="AOT")
+    if not llvm.ok:
+        return False, llvm.message
+    clang = llvm.paths["clang"]
 
     created = workdir is None
     workdir = workdir or tempfile.mkdtemp(prefix="bcir-lower-")
@@ -173,8 +199,3 @@ def compile_and_run(
         if created:
             import shutil
             shutil.rmtree(workdir, ignore_errors=True)
-
-
-def _which(name: str) -> str | None:
-    from shutil import which
-    return which(name)

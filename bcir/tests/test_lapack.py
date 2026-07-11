@@ -25,6 +25,7 @@ from bcir.kbcir.linsolve import residual, solve_reference, solve_via_bridge
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound
 from bcir.lower.c_kernel import emit_lapack_solve_c
 from bcir.model import Claim, Domain, Lane, Opcode, StrideClass
+from bcir.toolchain import host_link_args
 
 
 def _lapack_link():
@@ -209,7 +210,7 @@ def _run_solve_kernel(cc, kernel, a, b, n, nrhs, define=None, libs=None):
         if libs:
             cmd += libs
         cmd += ["-lm", "-o", exe]                          # -lm: fabsf in the fallback path
-        bld = subprocess.run(cmd, capture_output=True, text=True)
+        bld = subprocess.run(host_link_args(cmd), capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout + out.stderr

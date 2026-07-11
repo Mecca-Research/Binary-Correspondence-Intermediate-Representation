@@ -20,6 +20,7 @@ import tempfile
 from bcir.frontends.cfront import compile_unit
 from bcir.frontends.cfront.linkflags import format_link_flags
 from bcir.tests.test_c_executor import _cc
+from bcir.toolchain import host_link_args
 
 _MAIN = "double scale(double x);\nint main(void) { double v = scale(16.0); return (int)v; }\n"
 _LIB = "#include <math.h>\ndouble scale(double x) { return sqrt(x) + 1.0; }\n"
@@ -69,7 +70,7 @@ def test_the_two_tu_binary_links_with_derived_flags_and_behaves():
         with open(main_ref, "w", encoding="utf-8") as f:
             f.write(_MAIN)
         ref = os.path.join(tmp, "ref")
-        r = subprocess.run([cc, "-std=c11", main_ref, lib, "-o", ref, "-lm"],
+        r = subprocess.run(host_link_args([cc, "-std=c11", main_ref, lib, "-o", ref, "-lm"]),
                            capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         rc_ref = subprocess.run([ref]).returncode
@@ -104,7 +105,8 @@ def test_linkable_emit_links_two_emitted_tus():
         with open(li, "w", encoding="utf-8") as f:
             f.write(emit_linkable(callee.lowered, callee.emitted))
         prog = os.path.join(tmp, "prog")
-        r = subprocess.run([cc, "-std=c11", "-Wall", "-Werror", m, li, "-o", prog, "-lm"],
+        r = subprocess.run(host_link_args(
+            [cc, "-std=c11", "-Wall", "-Werror", m, li, "-o", prog, "-lm"]),
                            capture_output=True, text=True)
         assert r.returncode == 0, r.stderr                    # self-contained, warning-free
         assert subprocess.run([prog]).returncode == 5

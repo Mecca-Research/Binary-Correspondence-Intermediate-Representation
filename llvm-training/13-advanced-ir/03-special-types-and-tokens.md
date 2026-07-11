@@ -149,7 +149,7 @@ Key switched-resume coroutine intrinsics:
 | `llvm.coro.id` | Produces the identity `token` for one coroutine. | Presplit IR should have one identity call for the coroutine. Later passes can fill in fields such as the coroutine function address and outlined function table. |
 | `llvm.coro.begin` | Consumes the identity token and returns the coroutine frame/handle pointer. | Marks frame setup. The handle is the value used by resume/destroy operations and by later frame accesses. |
 | `llvm.coro.suspend` | Consumes a `token` from `llvm.coro.save`, or `token none`, and returns a small state code. | Marks a suspension point. The following branch or `switch` usually distinguishes suspended, resumed, and destroyed paths. |
-| `llvm.coro.end` | Consumes the coroutine handle and a result token, usually `token none`. | Marks the point where access to the frame ends and control may return to the caller/resumer. |
+| `llvm.coro.end` | Consumes the coroutine handle and version-specific trailing state. | Marks the point where access to the frame ends and control may return to the caller/resumer. Its exact signature is LLVM-version-sensitive; LLVM 22, for example, changed its return from `i1` to `void`. Use the declaration emitted by a frontend targeting the same LLVM major. |
 
 **Presplit** IR is the frontend-facing form: one coroutine-shaped function
 still contains normal control flow plus `llvm.coro.*` markers and usually
@@ -160,7 +160,10 @@ ramp function and separate resume/destroy functions rather than one
 source-like function.
 
 A minimal switched-resume outline is provided in
-[`examples/coroutine-outline.ll`](examples/coroutine-outline.ll). For a
+[`examples/coroutine-outline.ll`](examples/coroutine-outline.ll). The version-neutral fixture
+stops at the cleanup edge instead of hard-coding `llvm.coro.end`; this keeps the checked example
+valid across supported LLVM majors while the table above makes the release-sensitive boundary
+explicit. For a
 quick list of coroutine-related intrinsics, see
 [`intrinsics-quickref.md#coroutine-intrinsics`](../reference/intrinsics-quickref.md#coroutine-intrinsics).
 

@@ -29,7 +29,7 @@
 // THE TWO-TRUTH / QUARANTINE THIS PASS PRESERVES (the non-negotiable G4 discipline): the
 // recomputed signal is INFORMS-ONLY. It rides the CONTENTION cost axis and is annotated
 // as kbcir.* attrs that only INFORM plan ranking; it NEVER produces a legality verdict
-// and is NEVER read by -bcir-verify (R1-R16 read only R8/R9 -- lane legality + 12-d cost
+// and is NEVER read by -bcir-verify (the R1-R23 law set reads only the relevant structural data;
 // completeness/non-negativity -- never CONTENTION). A conflict-prone access and a
 // conflict-free one are EXACTLY as legal; this pass only moves the CONTENTION dimension.
 //

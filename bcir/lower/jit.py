@@ -11,19 +11,10 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
-from shutil import which
-
 from ..model import Module
 from ..kbcir.realize import RealizationResult
+from ..toolchain import resolve_llvm_tools
 from .llvm import emit_harness_c, emit_kernel_ll
-
-
-def _tool(*names: str) -> str | None:
-    for n in names:
-        p = which(n)
-        if p:
-            return p
-    return None
 
 
 def jit_run(
@@ -37,12 +28,10 @@ def jit_run(
     ok is True only if the linked module ran under lli and the C harness printed
     OK with exit code 0. Skips (returns False, reason) if a tool is missing.
     """
-    clang = _tool("clang")
-    llvm_link = _tool("llvm-link", "llvm-link-18")
-    lli = _tool("lli", "lli-18")
-    missing = [n for n, t in (("clang", clang), ("llvm-link", llvm_link), ("lli", lli)) if t is None]
-    if missing:
-        return False, f"missing tool(s) for JIT: {', '.join(missing)}"
+    llvm = resolve_llvm_tools("clang", "llvm-link", "lli", pipeline="JIT")
+    if not llvm.ok:
+        return False, llvm.message
+    clang, llvm_link, lli = (llvm.paths[name] for name in ("clang", "llvm-link", "lli"))
 
     created = workdir is None
     workdir = workdir or tempfile.mkdtemp(prefix="bcir-jit-")

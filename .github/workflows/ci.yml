@@ -89,6 +89,23 @@ jobs:
       - name: Freestanding C StreamPack runtime (no-libc + Python->C ABI parity)
         run: bash tools/c/check_runtime.sh
 
+      - name: Cache the immutable TinyLlama source checkpoint
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bcir/models/tinyllama-v0/298338802ab94432b917bcce11382aa151aee50f
+          key: bcir-tinyllama-v0-298338802ab94432b917bcce11382aa151aee50f-c302246d91e2854f-ab1b681ec7fc02fe
+
+      - name: Pinned real-model BCIRQ8 -> standalone C parity gate
+        timeout-minutes: 20
+        run: python3 tools/models/run_real_model_gate.py --output-dir build/model-gate
+
+      - name: Upload deterministic real-model parity report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bcir-real-model-parity-report
+          path: build/model-gate/parity-report.json
+          if-no-files-found: error
+
       - name: cfront twin sanitizer sweep (ASan/UBSan/LSan over the C compiler's own lexer/parser/lowering/emit)
         # Runs tools/c/sanitize_cfront.sh -- the ASan+UBSan+LSan harness over the bcir_cfront C twin
         # (every cfront_*.c fixture + a bounded 300-valid/400-malformed fuzz campaign + the adversarial
@@ -112,6 +129,41 @@ jobs:
         # Non-flaky by design: STRICT on correctness + measurement validity always, perf floors
         # only under BCIR_BAREMETAL (unset here), so a loaded shared runner never flakes the gate.
         run: python3 tools/perf/check_budgets.py --trend build/perf/trend.jsonl
+
+  host-portability:
+    name: Host portability (${{ matrix.os }}, Python 3.12)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Quick tier (portable process pool; spawn on Windows)
+        run: python -m bcir.tests.run_all --tier quick -j 2
+
+      - name: Focused host adaptation checks
+        run: python -c "from bcir.tests import test_silicon as s, test_tiers as t, test_toolchain as h; s.test_counter_sampler_degrades_without_posix_rusage(); t.test_versioned_and_windows_tool_names_are_gated_by_family(); t.test_pool_context_uses_spawn_when_fork_is_unavailable(); [getattr(h, n)() for n in sorted(dir(h)) if n.startswith('test_')]"
+
+      - name: Clang statement-expression/bitfield differential
+        run: |
+          clang --version
+          python -c "from bcir.tests.test_c_cfront import test_stmtexpr_dual_rail; test_stmtexpr_dual_rail()"
+
+      - name: LLVM training aggregate CMake gate
+        run: |
+          cmake -S llvm-training -B build/llvm-training
+          cmake --build build/llvm-training --target llvm-training-check
+
+      - name: Tests leave tracked sources unchanged
+        run: git diff --exit-code
 
   llvm-training:
     name: LLVM training corpus
