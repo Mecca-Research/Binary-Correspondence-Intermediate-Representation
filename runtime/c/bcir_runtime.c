@@ -88,7 +88,8 @@ uint32_t bcir_seg_write_rid(const bcir_segment_view *seg, uint16_t i) {
 
 /* The range gate over a decoded segment view (the rail-symmetry fix): lane in [0,5],
  * width a nonzero power of two, dispatch in the legal set. Mirrors the Python decoder's
- * Lane(r.u8()) raise + the unknown-dispatch-code raise. Returns BCIR_OK or BCIR_ERR_*. */
+ * Lane(r.u8()) raise, the width power-of-two raise, and the unknown-dispatch-code raise.
+ * Returns BCIR_OK or BCIR_ERR_*. */
 static bcir_status seg_range_ok(const bcir_segment_view *v) {
   if (v->lane > (uint8_t)BCIR_LANE_H) return BCIR_ERR_LANE;   /* 6 valid lanes: 0..5 */
   if (v->width == 0u || (v->width & (v->width - 1u)) != 0u) return BCIR_ERR_WIDTH;

@@ -189,10 +189,10 @@ static int expand_once(const char *line, char *out, size_t cap, int *changed) {
           while (depth) { int ak = ntok(line, &j, a, sizeof a); if (!ak) break;
             if (!strcmp(a, "(")) depth++;
             else if (!strcmp(a, ")")) { depth--; if (!depth) break; }
-            else if (!strcmp(a, ",") && depth == 1) { args[na][aw] = 0; na++; aw = 0; if (na < 16) args[na][0] = 0; continue; }
+            else if (!strcmp(a, ",") && depth == 1) { if (na < 16) { args[na][aw] = 0; na++; if (na < 16) args[na][0] = 0; } aw = 0; continue; }  /* cap at 16 args: never index args[16+] (a stack-buffer overflow) */
             if (na < 16) { if (aw && needspace(args[na][aw-1], a[0]) && aw < 1023) args[na][aw++] = ' ';
               for (int z = 0; a[z] && aw < 1023; z++) args[na][aw++] = a[z]; args[na][aw] = 0; } }
-          na++;
+          na++; if (na > 16) na = 16;   /* the final argument; clamp so substitute()/app_va never read args[16+] */
           char sub[2048]; substitute(&M[mi], args, na, sub, sizeof sub);
           if (w && needspace(prevc, sub[0])) app(out, cap, &w, " ");
           app(out, cap, &w, sub); prevc = sub[0] ? sub[strlen(sub) - 1] : prevc;

@@ -91,6 +91,7 @@ int main(int argc, char **argv) {
   int repeats = (argc > 2) ? atoi(argv[2]) : 5;
   long cal_gen = (argc > 3) ? atol(argv[3]) : 1;
   if (repeats < 1) repeats = 1;
+  if (n < 2) n = 2;   /* need >=2 elements: the Fisher-Yates loop (n-1 down to 1) underflows and pass_strided does % n */
 
   double *buf = malloc(n * sizeof *buf);
   size_t *perm = malloc(n * sizeof *perm);

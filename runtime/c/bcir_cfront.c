@@ -4643,77 +4643,84 @@ static const char *guard_idx(const bcir_func *f, const bcir_claim *cl, char *buf
 }
 static size_t emit_func(const bcir_func *f,char *o,size_t on){
   size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64],tb[80],gb[192];
+  /* Clamp the OFFSET (never form o+w / on-w once the buffer is full) for every `snprintf(o+EO,on-EO,...)`
+   * below -- the same memory-safety idiom the funcptr-typedef builder uses (see SIG_OFF above). Once
+   * `w>=on`, `o+EO` is at most one-past-the-end (a legal pointer) and `on-EO` is 0, so snprintf writes
+   * NOTHING but still returns the would-be length, keeping `w` a true running total; without this, the
+   * unbounded named-local declaration loop and deep indentation could form `o+w` past the end and
+   * underflow `on-w` to a huge size_t, writing out of bounds. Output is byte-identical whenever it fits. */
+  #define EO (w<on?w:on)
   ctype_str(&f->ret,ty,sizeof ty);
-  w+=snprintf(o+w,on-w,"static %s bcir_%s(",ty,f->name);
-  if(f->n_params==0&&!f->variadic) w+=snprintf(o+w,on-w,"void");
+  w+=snprintf(o+EO,on-EO,"static %s bcir_%s(",ty,f->name);
+  if(f->n_params==0&&!f->variadic) w+=snprintf(o+EO,on-EO,"void");
   for(int i=0;i<f->n_params;i++){char pt[64];ctype_str(&f->params[i].type,pt,sizeof pt);
-    w+=snprintf(o+w,on-w,"%s%s %s",i?", ":"",pt,f->params[i].name);}
-  if(f->variadic) w+=snprintf(o+w,on-w,"%s...",f->n_params?", ":"");   /* a trailing variadic ellipsis */
-  w+=snprintf(o+w,on-w,")\n{\n");
+    w+=snprintf(o+EO,on-EO,"%s%s %s",i?", ":"",pt,f->params[i].name);}
+  if(f->variadic) w+=snprintf(o+EO,on-EO,"%s...",f->n_params?", ":"");   /* a trailing variadic ellipsis */
+  w+=snprintf(o+EO,on-EO,")\n{\n");
   /* declare named locals up front (mutable storage -- branch merges + loop accumulators) */
   for(size_t i=0;i<f->n_res;i++){const bcir_resource *r=&f->res[i];
     if(r->is_vla) continue;   /* a stack VLA: declared IN-BODY by c.vladecl (size unknown until then), not up front */
     if(is_named_local(f,r->rid)){
       char un[BCIR_CIR_NAME]; const char *nm=uniq_local(f,r->rid,un);   /* unique vs same-named scopes */
       int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
-      if(sx>=0) w+=snprintf(o+w,on-w,"  static uint32_t %s = %lluu;\n",nm,(unsigned long long)f->statics[sx].init);
-      else if(r->is_funcptr&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s;\n",r->agg,nm);   /* a funcptr local: `__bcir_fpN f;` */
-      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+w,on-w,"  %s %s%s;\n",r->agg,nm,r->zinit?" = {0}":"");
-      else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->is_voidptr) w+=snprintf(o+w,on-w,"  void *%s[%u]%s;\n",nm,r->count,r->zinit?" = {0}":"");  /* an array of `void *` */
-      else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->agg[0]&&!r->ptr_depth) w+=snprintf(o+w,on-w,"  %s %s[%u]%s;\n",r->agg,nm,r->count,r->zinit?" = {0}":"");  /* an ARRAY-OF-STRUCTS local `struct P a[N]` */
-      else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+w,on-w,"  %s %s[%u]%s;\n",tty(f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
+      if(sx>=0) w+=snprintf(o+EO,on-EO,"  static uint32_t %s = %lluu;\n",nm,(unsigned long long)f->statics[sx].init);
+      else if(r->is_funcptr&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s %s;\n",r->agg,nm);   /* a funcptr local: `__bcir_fpN f;` */
+      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s %s%s;\n",r->agg,nm,r->zinit?" = {0}":"");
+      else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->is_voidptr) w+=snprintf(o+EO,on-EO,"  void *%s[%u]%s;\n",nm,r->count,r->zinit?" = {0}":"");  /* an array of `void *` */
+      else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->agg[0]&&!r->ptr_depth) w+=snprintf(o+EO,on-EO,"  %s %s[%u]%s;\n",r->agg,nm,r->count,r->zinit?" = {0}":"");  /* an ARRAY-OF-STRUCTS local `struct P a[N]` */
+      else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+EO,on-EO,"  %s %s[%u]%s;\n",tty(f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
       else if(r->kind==BCIR_RK_POINTER)               /* a pointer local: `T *p` (the pointee carries width/sign) */
-        w+=snprintf(o+w,on-w,"  %s%s;\n",decl_ty(f,r->rid,tb,sizeof tb),nm);
-      else w+=snprintf(o+w,on-w,"  %s %s;\n",tty(f,r->rid),nm);}}
+        w+=snprintf(o+EO,on-EO,"  %s%s;\n",decl_ty(f,r->rid,tb,sizeof tb),nm);
+      else w+=snprintf(o+EO,on-EO,"  %s %s;\n",tty(f,r->rid),nm);}}
   int depth=1, lstk[64], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
-  #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+w,on-w,"  "); }while(0)
+  #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+EO,on-EO,"  "); }while(0)
   for(size_t i=0;i<f->n_claims&&w<on-160;i++){const bcir_claim *cl=&f->claims[i];
     /* L6 control-flow markers (rendered as braces) */
-    if(!strcmp(cl->op,"c.if")){IND();w+=snprintf(o+w,on-w,"if (%s) {\n",rname(f,cl->rd[0],a));depth++;continue;}
-    if(!strcmp(cl->op,"c.else")){depth--;IND();w+=snprintf(o+w,on-w,"} else {\n");depth++;continue;}
-    if(!strcmp(cl->op,"c.endif")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");continue;}
-    if(!strcmp(cl->op,"c.loop")){IND();w+=snprintf(o+w,on-w,"while (1) {\n");depth++;
+    if(!strcmp(cl->op,"c.if")){IND();w+=snprintf(o+EO,on-EO,"if (%s) {\n",rname(f,cl->rd[0],a));depth++;continue;}
+    if(!strcmp(cl->op,"c.else")){depth--;IND();w+=snprintf(o+EO,on-EO,"} else {\n");depth++;continue;}
+    if(!strcmp(cl->op,"c.endif")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");continue;}
+    if(!strcmp(cl->op,"c.loop")){IND();w+=snprintf(o+EO,on-EO,"while (1) {\n");depth++;
       if(nls<64)lstk[nls++]=lctr++;continue;}
-    if(!strcmp(cl->op,"c.loop.test")){IND();w+=snprintf(o+w,on-w,"if (!%s) break;\n",rname(f,cl->rd[0],a));continue;}
-    if(!strcmp(cl->op,"c.cont.tgt")){IND();w+=snprintf(o+w,on-w,"__cont_%d: ;\n",nls?lstk[nls-1]:0);continue;}
-    if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");if(nls)nls--;continue;}
+    if(!strcmp(cl->op,"c.loop.test")){IND();w+=snprintf(o+EO,on-EO,"if (!%s) break;\n",rname(f,cl->rd[0],a));continue;}
+    if(!strcmp(cl->op,"c.cont.tgt")){IND();w+=snprintf(o+EO,on-EO,"__cont_%d: ;\n",nls?lstk[nls-1]:0);continue;}
+    if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");if(nls)nls--;continue;}
     if(!strcmp(cl->op,"c.vladecl")){IND();   /* a 1-D stack VLA, declared IN-BODY: `<elem> a[__bcir_extK];` */
-      w+=snprintf(o+w,on-w,"%s %s[%s];\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],a),rname(f,cl->rd[0],b));continue;}
-    if(!strcmp(cl->op,"c.ptradd")){IND();w+=snprintf(o+w,on-w,"%s += %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p += n */
-    if(!strcmp(cl->op,"c.ptrsub")){IND();w+=snprintf(o+w,on-w,"%s -= %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p -= n */
-    if(!strcmp(cl->op,"c.break")){IND();w+=snprintf(o+w,on-w,"break;\n");continue;}
-    if(!strcmp(cl->op,"c.switch")){IND();w+=snprintf(o+w,on-w,"switch (%s) {\n",rname(f,cl->rd[0],a));depth++;continue;}
-    if(!strncmp(cl->op,"c.case:",7)){IND();w+=snprintf(o+w,on-w,"case %s:\n",cl->op+7);continue;}  /* a real case label */
-    if(!strcmp(cl->op,"c.default")){IND();w+=snprintf(o+w,on-w,"default:\n");continue;}
-    if(!strcmp(cl->op,"c.endswitch")){depth--;IND();w+=snprintf(o+w,on-w,"}\n");continue;}
-    if(!strcmp(cl->op,"c.continue")){IND();w+=snprintf(o+w,on-w,"goto __cont_%d;\n",nls?lstk[nls-1]:0);continue;}
-    if(!strncmp(cl->op,"c.goto:",7)){IND();w+=snprintf(o+w,on-w,"goto %s;\n",cl->op+7);continue;}
-    if(!strcmp(cl->op,"c.cgoto")){IND();w+=snprintf(o+w,on-w,"goto *%s;\n",rname(f,cl->rd[0],a));continue;}  /* indirect jump to a label address (GNU) */
-    if(!strncmp(cl->op,"c.label:",8)){w+=snprintf(o+w,on-w,"%s:;\n",cl->op+8);continue;}
+      w+=snprintf(o+EO,on-EO,"%s %s[%s];\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],a),rname(f,cl->rd[0],b));continue;}
+    if(!strcmp(cl->op,"c.ptradd")){IND();w+=snprintf(o+EO,on-EO,"%s += %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p += n */
+    if(!strcmp(cl->op,"c.ptrsub")){IND();w+=snprintf(o+EO,on-EO,"%s -= %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p -= n */
+    if(!strcmp(cl->op,"c.break")){IND();w+=snprintf(o+EO,on-EO,"break;\n");continue;}
+    if(!strcmp(cl->op,"c.switch")){IND();w+=snprintf(o+EO,on-EO,"switch (%s) {\n",rname(f,cl->rd[0],a));depth++;continue;}
+    if(!strncmp(cl->op,"c.case:",7)){IND();w+=snprintf(o+EO,on-EO,"case %s:\n",cl->op+7);continue;}  /* a real case label */
+    if(!strcmp(cl->op,"c.default")){IND();w+=snprintf(o+EO,on-EO,"default:\n");continue;}
+    if(!strcmp(cl->op,"c.endswitch")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");continue;}
+    if(!strcmp(cl->op,"c.continue")){IND();w+=snprintf(o+EO,on-EO,"goto __cont_%d;\n",nls?lstk[nls-1]:0);continue;}
+    if(!strncmp(cl->op,"c.goto:",7)){IND();w+=snprintf(o+EO,on-EO,"goto %s;\n",cl->op+7);continue;}
+    if(!strcmp(cl->op,"c.cgoto")){IND();w+=snprintf(o+EO,on-EO,"goto *%s;\n",rname(f,cl->rd[0],a));continue;}  /* indirect jump to a label address (GNU) */
+    if(!strncmp(cl->op,"c.label:",8)){w+=snprintf(o+EO,on-EO,"%s:;\n",cl->op+8);continue;}
     if(!strcmp(cl->op,"c.return")){IND();
-      if(cl->n_rd) w+=snprintf(o+w,on-w,"return %s;\n",rname(f,cl->rd[0],a));
-      else w+=snprintf(o+w,on-w,"return;\n");continue;}
+      if(cl->n_rd) w+=snprintf(o+EO,on-EO,"return %s;\n",rname(f,cl->rd[0],a));
+      else w+=snprintf(o+EO,on-EO,"return;\n");continue;}
     IND();
     if(!strncmp(cl->op,"c.bin.",6))                       /* decl_ty: a pointer result (`p + i`) declares `T *t` */
-      w+=snprintf(o+w,on-w,"%s %s = %s %s %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
+      w+=snprintf(o+EO,on-EO,"%s %s = %s %s %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
     else if(!strncmp(cl->op,"c.labeladdr:",12))            /* `&&L` -- a label's address as a `void *` (GNU) */
-      w+=snprintf(o+w,on-w,"%s %s = &&%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),cl->op+12);
+      w+=snprintf(o+EO,on-EO,"%s %s = &&%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),cl->op+12);
     else if(!strncmp(cl->op,"c.fconst:",9))                /* a floating constant -> its literal spelling */
-      w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
+      w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
     else if(!strncmp(cl->op,"c.cconst:",9))                /* <complex.h> imaginary unit -> verbatim token */
-      w+=snprintf(o+w,on-w,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
+      w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
     else if(!strcmp(cl->op,"c.un.creal"))                  /* GNU __real__ z -- the real part (an element float) */
-      w+=snprintf(o+w,on-w,"%s %s = __real__ %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      w+=snprintf(o+EO,on-EO,"%s %s = __real__ %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
     else if(!strcmp(cl->op,"c.un.cimag"))                  /* GNU __imag__ z -- the imaginary part */
-      w+=snprintf(o+w,on-w,"%s %s = __imag__ %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      w+=snprintf(o+EO,on-EO,"%s %s = __imag__ %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
     else if(!strncmp(cl->op,"c.un.",5))                    /* `-`/`~` keep the operand width (long stays 64) */
-      w+=snprintf(o+w,on-w,"%s %s = (%s%s);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
+      w+=snprintf(o+EO,on-EO,"%s %s = (%s%s);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
     else if(!strncmp(cl->op,"c.cast:",7))                  /* (type)operand -- width / float / pointer cast */
-      w+=snprintf(o+w,on-w,"%s %s = (%s)%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),cl->op+7,rname(f,cl->rd[0],a));  /* decl_ty: a pointer-snapshot cast keeps `T *` */
+      w+=snprintf(o+EO,on-EO,"%s %s = (%s)%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),cl->op+7,rname(f,cl->rd[0],a));  /* decl_ty: a pointer-snapshot cast keeps `T *` */
     else if(!strcmp(cl->op,"c.select"))                    /* ternary: cond ? then : els -- the select's own
                                                             * (signed/unsigned) type, not a hardcoded
                                                             * uint32_t (see the c.const note below). */
-      w+=snprintf(o+w,on-w,"%s %s = (%s ? %s : %s);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),
+      w+=snprintf(o+EO,on-EO,"%s %s = (%s ? %s : %s);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),
                   rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
     else if(!strcmp(cl->op,"c.const")){
       /* declare the constant with its OWN type, not a hardcoded uint32_t: a bare integer literal (e.g.
@@ -4721,17 +4728,17 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
        * unsigned (`int32_t < uint32_t` -> unsigned) -- a miscompile. The literal's (width, signedness)
        * was already recorded on the temp (lit_int_type); render the matching type + suffix. */
       const bcir_resource *cr=res_of(f,cl->wr[0]); int cs=cr&&cr->is_signed;
-      w+=snprintf(o+w,on-w,"%s %s = %llu%s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),
+      w+=snprintf(o+EO,on-EO,"%s %s = %llu%s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),
                   (unsigned long long)cl->imm[0], cs?"":"u"); }
     else if(!strcmp(cl->op,"c.sizeof.vla"))                 /* runtime `sizeof a` of a VLA: extent × sizeof(elem).
                                                             * HARDCODE the literal `size_t` (NOT tty(), which
                                                             * returns "uint64_t" for an 8-byte unsigned scalar):
                                                             * the oracle emits literal `size_t` (scalar('size_t')),
                                                             * so the two rails would diverge byte-for-byte. */
-      w+=snprintf(o+w,on-w,"size_t %s = (size_t)((size_t)%s * %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),(long long)cl->imm[0]);
+      w+=snprintf(o+EO,on-EO,"size_t %s = (size_t)((size_t)%s * %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),(long long)cl->imm[0]);
     else if(!strcmp(cl->op,"c.copy")){
-      if(is_named_local(f,cl->wr[0])||is_global_ref(f,cl->wr[0])||is_param_ref(f,cl->wr[0])) w+=snprintf(o+w,on-w,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
-      else w+=snprintf(o+w,on-w,"%s %s = %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));   /* decl_ty: a copied pointer temp keeps `T *` */
+      if(is_named_local(f,cl->wr[0])||is_global_ref(f,cl->wr[0])||is_param_ref(f,cl->wr[0])) w+=snprintf(o+EO,on-EO,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      else w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));   /* decl_ty: a copied pointer temp keeps `T *` */
     }else if(!strcmp(cl->op,"c.load")){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;
       if(cl->n_rd==2 && cl->n_imm){       /* s.arr[i] / a[i].f: load at base + off + idx*stride, copy `es` bytes */
@@ -4739,14 +4746,14 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         long long stride=cl->n_imm>2?cl->imm[2]:es;   /* array-of-structs `arr[i].field`: stride sizeof(elem) != es */
         /* the temp carries the element's (width, signedness): memcpy es bytes into it so a signed sub-int
          * element reads sign-extended (the zero-extending uint32 form dropped the sign). */
-        w+=snprintf(o+w,on-w,"%s %s; memcpy(&%s, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld);\n",
+        w+=snprintf(o+EO,on-EO,"%s %s; memcpy(&%s, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld);\n",
           tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
-      else if(cl->n_rd==2) w+=snprintf(o+w,on-w,"%s %s = %s[%s];\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,0));  /* READ guard; decl_ty: an array-of-pointers element load is `T *` */
+      else if(cl->n_rd==2) w+=snprintf(o+EO,on-EO,"%s %s = %s[%s];\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,0));  /* READ guard; decl_ty: an array-of-pointers element load is `T *` */
       else if(cl->domain==BCIR_DOM_MMIO)
-        w+=snprintf(o+w,on-w,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
+        w+=snprintf(o+EO,on-EO,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
         /* a plain member load: memcpy fsz bytes into the typed temp so a signed sub-int member sign-extends */
-        w+=snprintf(o+w,on-w,"%s %s; memcpy(&%s, (const char *)%s%s + %lld, %lld);\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz); }  /* decl_ty: a pointer member load is `T *t` */
+        w+=snprintf(o+EO,on-EO,"%s %s; memcpy(&%s, (const char *)%s%s + %lld, %lld);\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz); }  /* decl_ty: a pointer member load is `T *t` */
     }else if(!strcmp(cl->op,"c.store")&&cl->n_rd==3){   /* L3: array element store  a[idx] = value */
       if(cl->n_imm){                      /* s.arr[i]=v / a[i].f=v: store at base + off + idx*stride */
         const bcir_resource *br=res_of(f,cl->rd[0]); const char *amp=base_amp(br);
@@ -4758,16 +4765,16 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                       :(vr&&vr->is_complex)?(es==8?"float _Complex":es>16?"long double _Complex":"double _Complex")
                       :(vr&&vr->is_float)?(es==4?"float":es>8?"long double":"double")
                       :(es==1?"uint8_t":es==2?"uint16_t":es==8?"uint64_t":"uint32_t");
-        w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld + (size_t)%s * %lld, &_v, %lld); }\n",
+        w+=snprintf(o+EO,on-EO,"{ %s _v = %s; memcpy((char *)%s%s + %lld + (size_t)%s * %lld, &_v, %lld); }\n",
           vt,rname(f,cl->rd[2],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
       else if(cl->domain==BCIR_DOM_MMIO)
-        w+=snprintf(o+w,on-w,"((volatile uint32_t *)%s)[%s] = %s;\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],d));
+        w+=snprintf(o+EO,on-EO,"((volatile uint32_t *)%s)[%s] = %s;\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],d));
       else
-        w+=snprintf(o+w,on-w,"%s[%s] = %s;\n",rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,1),rname(f,cl->rd[2],d));  /* WRITE guard: an OOB store fails-fast, never clamps */
+        w+=snprintf(o+EO,on-EO,"%s[%s] = %s;\n",rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,1),rname(f,cl->rd[2],d));  /* WRITE guard: an OOB store fails-fast, never clamps */
     }else if(!strcmp(cl->op,"c.store")){          /* L8: member store -> memcpy `size` bytes */
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->imm[0]; long long sz=cl->n_imm>1?cl->imm[1]:4;
       if(cl->domain==BCIR_DOM_MMIO)
-        w+=snprintf(o+w,on-w,"*(volatile uint32_t *)((volatile char *)%s + %lld) = %s;\n",rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
+        w+=snprintf(o+EO,on-EO,"*(volatile uint32_t *)((volatile char *)%s + %lld) = %s;\n",rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
         /* a pointer value stored into a (pointer_size) member: `_v` carries the real `T *` type so the
          * full pointer is copied -- a `uint32_t _v` would truncate the 8-byte pointer to 4. */
@@ -4779,12 +4786,12 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
           * `o->fn = g_func`): store through a GENERIC funcptr lvalue so a function NAME decays to its address
           * (a plain `memcpy(&g_func,8)` would copy the function's CODE; `void *` cannot hold a funcptr). The
           * call site reads the member's real type, and function pointers round-trip through the cast. */
-          w+=snprintf(o+w,on-w,"*(void (**)(void))((char *)%s%s + %lld) = (void (*)(void))%s;\n",
+          w+=snprintf(o+EO,on-EO,"*(void (**)(void))((char *)%s%s + %lld) = (void (*)(void))%s;\n",
                       amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
         } else if(vr && vr->kind==BCIR_RK_AGGREGATE){   /* a struct/union member set from a struct VALUE (a nested
           * `{ ... }` member, `o.p = q`): copy the whole object -- a scalar `uintN _v = <struct>` is a type
           * error, and a too-narrow `_v` would under-read it. memcpy `sz` bytes straight from the source. */
-          w+=snprintf(o+w,on-w,"memcpy((char *)%s%s + %lld, &%s, %lld);\n",
+          w+=snprintf(o+EO,on-EO,"memcpy((char *)%s%s + %lld, &%s, %lld);\n",
                       amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),sz);
         } else {
         int flag=cl->n_imm>2?cl->imm[2]:0;
@@ -4796,109 +4803,110 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                       :(vr&&vr->is_complex)?(sz==8?"float _Complex":sz>16?"long double _Complex":"double _Complex")
                       :(vr&&vr->is_float)?(sz==4?"float":sz>8?"long double":"double")
                       :(sz==1?"uint8_t":sz==2?"uint16_t":sz==8?"uint64_t":"uint32_t");
-        w+=snprintf(o+w,on-w,"{ %s _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",vt,rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); } }
+        w+=snprintf(o+EO,on-EO,"{ %s _v = %s; memcpy((char *)%s%s + %lld, &_v, %lld); }\n",vt,rname(f,cl->rd[1],b),amp,rname(f,cl->rd[0],a),off,sz); } }
     }else if(!strcmp(cl->op,"c.bf.get")){
       long long off=cl->imm[0],bw=cl->imm[1]; int wide=bw>32;      /* a WIDE bitfield needs 64-bit literals/cast */
       unsigned long long mask=bw>=64?~0ull:(1ull<<bw)-1; const char *sfx=wide?"ull":"u";
       if(cl->n_imm>2&&cl->imm[2]){                       /* a signed bitfield: sign-extend from bit bw-1 */
         unsigned long long sbit=1ull<<(bw-1); const char *cast=wide?"int64_t":"int32_t";
-        w+=snprintf(o+w,on-w,"%s %s = (%s)((((%s >> %lld) & %llu%s) ^ %llu%s) - %llu%s);\n",
+        w+=snprintf(o+EO,on-EO,"%s %s = (%s)((((%s >> %lld) & %llu%s) ^ %llu%s) - %llu%s);\n",
                     tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cast,rname(f,cl->rd[0],a),off,mask,sfx,sbit,sfx,sbit,sfx);
       } else
-        w+=snprintf(o+w,on-w,"%s %s = (%s >> %lld) & %llu%s;\n",
+        w+=snprintf(o+EO,on-EO,"%s %s = (%s >> %lld) & %llu%s;\n",
                     tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off,mask,sfx); }
     else if(!strcmp(cl->op,"c.bf.set")){          /* (old & ~(mask<<off)) | ((v & mask) << off) */
       long long off=cl->imm[0]; const bcir_resource *ur=res_of(f,cl->rd[0]); int wide=ur&&ur->elem_bytes>4;
       unsigned long long mask=cl->imm[1]>=64?~0ull:(1ull<<cl->imm[1])-1;
       unsigned long long clear=~(mask<<off)&(wide?~0ull:0xFFFFFFFFull); const char *sfx=wide?"ull":"u";
-      w+=snprintf(o+w,on-w,"%s %s = (%s & %llu%s) | ((%s & %llu%s) << %lld);\n",wide?"uint64_t":"uint32_t",
+      w+=snprintf(o+EO,on-EO,"%s %s = (%s & %llu%s) | ((%s & %llu%s) << %lld);\n",wide?"uint64_t":"uint32_t",
                   rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),clear,sfx,rname(f,cl->rd[1],b),mask,sfx,off); }
     else if(!strncmp(cl->op,"c.atomic.",9))      /* atomic RMW -> the matching builtin */
-      w+=snprintf(o+w,on-w,"uint32_t %s = __atomic_fetch_%s(%s, %s, __ATOMIC_SEQ_CST);\n",
+      w+=snprintf(o+EO,on-EO,"uint32_t %s = __atomic_fetch_%s(%s, %s, __ATOMIC_SEQ_CST);\n",
                   rname(f,cl->wr[0],d),cl->op+9,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
     else if(!strncmp(cl->op,"c.cmpxchg.",10))     /* compare-and-swap -> the __sync CAS builtin */
-      w+=snprintf(o+w,on-w,"uint32_t %s = __sync_%s_compare_and_swap(%s, %s, %s);\n",
+      w+=snprintf(o+EO,on-EO,"uint32_t %s = __sync_%s_compare_and_swap(%s, %s, %s);\n",
                   rname(f,cl->wr[0],d),cl->op+10,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
     else if(!strcmp(cl->op,"c.fence"))
-      w+=snprintf(o+w,on-w,"__atomic_thread_fence(__ATOMIC_SEQ_CST);\n");
+      w+=snprintf(o+EO,on-EO,"__atomic_thread_fence(__ATOMIC_SEQ_CST);\n");
     else if(!strcmp(cl->op,"c.fence.acquire"))    /* SEG7: order-parameterized acquire fence (PORTABLE -- the */
-      w+=snprintf(o+w,on-w,"__atomic_thread_fence(__ATOMIC_ACQUIRE);\n");   /* C twin does NO per-ISA asm) */
+      w+=snprintf(o+EO,on-EO,"__atomic_thread_fence(__ATOMIC_ACQUIRE);\n");   /* C twin does NO per-ISA asm) */
     else if(!strcmp(cl->op,"c.fence.release"))    /* SEG7: order-parameterized release fence (PORTABLE) */
-      w+=snprintf(o+w,on-w,"__atomic_thread_fence(__ATOMIC_RELEASE);\n");
+      w+=snprintf(o+EO,on-EO,"__atomic_thread_fence(__ATOMIC_RELEASE);\n");
     else if(!strncmp(cl->op,"c.c11atom.",10)){   /* C11 <stdatomic.h> generics on _Atomic objects */
       const char *fn=cl->op+10;                  /* fetch_add / fetch_sub / fetch_xor / load / store */
-      if(!strcmp(fn,"load")) w+=snprintf(o+w,on-w,"uint32_t %s = atomic_load(%s);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
-      else if(!strcmp(fn,"store")) w+=snprintf(o+w,on-w,"atomic_store(%s, %s);\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
+      if(!strcmp(fn,"load")) w+=snprintf(o+EO,on-EO,"uint32_t %s = atomic_load(%s);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      else if(!strcmp(fn,"store")) w+=snprintf(o+EO,on-EO,"atomic_store(%s, %s);\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
       else if(!strncmp(fn,"cas_",4))             /* cas_strong/weak -> _Bool atomic_compare_exchange_<...>(obj,&exp,des) */
-        w+=snprintf(o+w,on-w,"_Bool %s = atomic_compare_exchange_%s(%s, %s, %s);\n",
+        w+=snprintf(o+EO,on-EO,"_Bool %s = atomic_compare_exchange_%s(%s, %s, %s);\n",
                     rname(f,cl->wr[0],d),fn+4,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
-      else w+=snprintf(o+w,on-w,"uint32_t %s = atomic_%s(%s, %s);\n",rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
+      else w+=snprintf(o+EO,on-EO,"uint32_t %s = atomic_%s(%s, %s);\n",rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
     else if(!strcmp(cl->op,"c.addrof")){           /* &lvalue -> a pointer value (decl_ty: `T *`, `T **`, ...) */
       const char *pt=decl_ty(f,cl->wr[0],tb,sizeof tb);
       const bcir_resource *br=res_of(f,cl->rd[0]);
       const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";   /* a pointer base decays (`(char*)s`), a value
                                                                  * / array base is addressed (`(char*)&s`) */
       if(cl->n_rd==2)                              /* &base[idx] -> (T *)((char *)base + off + idx*es) */
-        w+=snprintf(o+w,on-w,"%s%s = (%s)((char *)%s%s + %lld + (size_t)%s * %lld);\n",
+        w+=snprintf(o+EO,on-EO,"%s%s = (%s)((char *)%s%s + %lld + (size_t)%s * %lld);\n",
           pt,rname(f,cl->wr[0],d),pt,amp,rname(f,cl->rd[0],a),(long long)cl->imm[0],rname(f,cl->rd[1],b),(long long)cl->imm[1]);
       else if(cl->n_imm)                           /* &member -> a typed `(T *)((char *)<amp>base + off)` */
-        w+=snprintf(o+w,on-w,"%s%s = (%s)((char *)%s%s + %lld);\n",pt,rname(f,cl->wr[0],d),pt,amp,rname(f,cl->rd[0],a),(long long)cl->imm[0]);
+        w+=snprintf(o+EO,on-EO,"%s%s = (%s)((char *)%s%s + %lld);\n",pt,rname(f,cl->wr[0],d),pt,amp,rname(f,cl->rd[0],a),(long long)cl->imm[0]);
       else
-        w+=snprintf(o+w,on-w,"%s%s = &%s;\n",pt,rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
+        w+=snprintf(o+EO,on-EO,"%s%s = &%s;\n",pt,rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
     else if(!strncmp(cl->op,"c.call.libm:",12)){   /* a <math.h> / <stdlib.h> call -> the real libc function */
       const bcir_resource *wr=res_of(f,cl->wr[0]);            /* an allocator returns `void *`, not a scalar */
       const char *rty=(wr&&wr->kind==BCIR_RK_POINTER)?"void *":tty(f,cl->wr[0]);
-      w+=snprintf(o+w,on-w,"%s %s = %s(",rty,rname(f,cl->wr[0],d),cl->op+12);
-      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
-      w+=snprintf(o+w,on-w,");\n"); }
+      w+=snprintf(o+EO,on-EO,"%s %s = %s(",rty,rname(f,cl->wr[0],d),cl->op+12);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.libm.void:",17)){   /* a void external (free) -> a verbatim call statement */
-      w+=snprintf(o+w,on-w,"%s(",cl->op+17);
-      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
-      w+=snprintf(o+w,on-w,");\n"); }
+      w+=snprintf(o+EO,on-EO,"%s(",cl->op+17);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.extern:",14)){  /* a printf/scanf-family external variadic -> verbatim */
-      w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+14);
-      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
-      w+=snprintf(o+w,on-w,");\n"); }
+      w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+14);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.tu:",10)){      /* a PROTOTYPED cross-TU callee (Phase 3 linking):
                                                      * verbatim, external linkage -- the prelude declares
                                                      * it; the host LINKER resolves it */
-      if(cl->n_wr==0) w+=snprintf(o+w,on-w,"%s(",cl->op+10);
-      else w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+10);
-      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
-      w+=snprintf(o+w,on-w,");\n"); }
+      if(cl->n_wr==0) w+=snprintf(o+EO,on-EO,"%s(",cl->op+10);
+      else w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+10);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.builtin:",15)){  /* a GCC/Clang integer builtin -> emitted verbatim */
-      w+=snprintf(o+w,on-w,"%s %s = __builtin_%s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+15);
-      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
-      w+=snprintf(o+w,on-w,");\n"); }
+      w+=snprintf(o+EO,on-EO,"%s %s = __builtin_%s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+15);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.vaarg:",13)){   /* va_arg(ap, T) -- pull the next variadic argument */
-      w+=snprintf(o+w,on-w,"%s %s = va_arg(%s, %s);\n",
+      w+=snprintf(o+EO,on-EO,"%s %s = va_arg(%s, %s);\n",
         decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),cl->op+13); }
     else if(!strncmp(cl->op,"c.call.vabuiltin:",17)){   /* va_start / va_end / va_copy -- emitted verbatim, void */
-      w+=snprintf(o+w,on-w,"%s(",cl->op+17);
-      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
-      w+=snprintf(o+w,on-w,");\n"); }
+      w+=snprintf(o+EO,on-EO,"%s(",cl->op+17);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.void:",12)){   /* a void callee -> a bare call statement */
-      w+=snprintf(o+w,on-w,"bcir_%s(",cl->op+12);
-      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
-      w+=snprintf(o+w,on-w,");\n"); }
+      w+=snprintf(o+EO,on-EO,"bcir_%s(",cl->op+12);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call:",7)){
       const bcir_resource *rr=res_of(f,cl->wr[0]);   /* a struct/union RETURN declares `struct P t = bcir_..` */
       const char *dty=(rr&&rr->kind==BCIR_RK_AGGREGATE&&rr->agg[0])?rr->agg:tty(f,cl->wr[0]);
-      w+=snprintf(o+w,on-w,"%s %s = bcir_%s(",dty,rname(f,cl->wr[0],d),cl->op+7);
-      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
-      w+=snprintf(o+w,on-w,");\n"); }
+      w+=snprintf(o+EO,on-EO,"%s %s = bcir_%s(",dty,rname(f,cl->wr[0],d),cl->op+7);
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strcmp(cl->op,"c.call.indirect")){    /* rd[0] is the function pointer; rd[1..] the args */
-      w+=snprintf(o+w,on-w,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));  /* result typed by the funcptr's return */
-      for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k>1?", ":"",rname(f,cl->rd[k],b));
-      w+=snprintf(o+w,on-w,");\n"); }
+      w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));  /* result typed by the funcptr's return */
+      for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k>1?", ":"",rname(f,cl->rd[k],b));
+      w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.imember:",15)){   /* o->fn(args): funcptr struct member */
       const char *sep=(cl->n_imm&&cl->imm[0])?"->":".";
-      w+=snprintf(o+w,on-w,"%s %s = %s%s%s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),sep,cl->op+15);  /* result typed by the funcptr's return */
-      for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+w,on-w,"%s%s",k>1?", ":"",rname(f,cl->rd[k],b));
-      w+=snprintf(o+w,on-w,");\n"); }
+      w+=snprintf(o+EO,on-EO,"%s %s = %s%s%s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),sep,cl->op+15);  /* result typed by the funcptr's return */
+      for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k>1?", ":"",rname(f,cl->rd[k],b));
+      w+=snprintf(o+EO,on-EO,");\n"); }
   }
   #undef IND
-  w+=snprintf(o+w,on-w,"}\n");
+  w+=snprintf(o+EO,on-EO,"}\n");
+  #undef EO
   return w;
 }
 
