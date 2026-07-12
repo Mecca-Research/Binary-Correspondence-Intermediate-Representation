@@ -2694,6 +2694,68 @@ def test_c_preprocessor_macros_conditionals_and_embed():
                 os.environ["SOURCE_DATE_EPOCH"] = old_epoch
 
 
+def test_c_preprocessor_driver_and_emitter_fail_closed_at_capacity_edges():
+    """Hostile/oversized source must diagnose, never overflow or compile a truncated unit."""
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        cc = _build_bcir_cc(d)
+
+        def run(name, text, *args):
+            path = os.path.join(d, name)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            return subprocess.run([cc, *args, path], capture_output=True, text=True)
+
+        # This used to memcpy 3,000 bytes into a 64-byte Macro.params slot (ASan stack OOB).
+        parameter = "p" * 3000
+        r = run("long_macro.c", f"#define F({parameter}) 1\nint f(void){{return F(0);}}\n")
+        assert r.returncode == 1 and "macro parameter is too long" in r.stderr, r.stderr
+
+        # Live invalid shifts are diagnosed without host UB; a dead && branch remains unevaluated.
+        r = run("bad_shift.c", "#if 1 << 999\nint f(void){return 1;}\n#endif\n")
+        assert r.returncode == 1 and "invalid shift in #if expression" in r.stderr, r.stderr
+        r = run("dead_shift.c", "#if 0 && (1 << 999)\ninvalid\n#endif\nint f(void){return 1;}\n")
+        assert r.returncode == 0 and "ok=1" in r.stdout, (r.stdout, r.stderr)
+        r = run("nested_dead_shift.c",
+                "#if 0\n#if 1 / 0\ninvalid\n#endif\n#endif\nint f(void){return 1;}\n")
+        assert r.returncode == 0 and "ok=1" in r.stdout, (r.stdout, r.stderr)
+
+        # Malformed directives and driver definitions fail deterministically, without reading
+        # uninitialized token buffers, overflowing atoi, or compiling a truncated -D value.
+        r = run("bad_ifdef.c", "#ifdef\n#endif\nint f(void){return 1;}\n")
+        assert r.returncode == 1 and "requires an identifier" in r.stderr, r.stderr
+        r = run("bad_line.c", "#line 999999999999999999999\nint f(void){return 1;}\n")
+        assert r.returncode == 1 and "#line number is out of range" in r.stderr, r.stderr
+        r = run("define_arg.c", "int f(void){return 1;}\n", "-D", "VALUE=" + "x" * 300)
+        assert r.returncode == 2 and "overlong -D" in r.stderr, r.stderr
+        r = run("bad_params.c", "#define F(a,) a\nint f(void){return F(1);}\n")
+        assert r.returncode == 1 and "invalid macro parameter list" in r.stderr, r.stderr
+
+        # Source and include reads are dynamic: >64 KiB source / >8 KiB header comments no longer
+        # erase the valid declaration that follows them.
+        r = run("large_source.c", "/*" + "x" * 70000 + "*/\nint f(void){return 1;}\n")
+        assert r.returncode == 0 and "ok=1" in r.stdout, (r.stdout, r.stderr)
+        header = os.path.join(d, "large.h")
+        with open(header, "w", encoding="utf-8") as f:
+            f.write("/*" + "x" * 10000 + "*/\ntypedef unsigned word;\n")
+        r = run("large_include.c", '#include "large.h"\nword f(void){return 1u;}\n')
+        assert r.returncode == 0 and "ok=1" in r.stdout, (r.stdout, r.stderr)
+
+        # Fixed public result buffers now fail explicitly instead of returning omitted text/claims.
+        r = run("pp_overflow.c", "x\n" * 40000, "-E")
+        assert r.returncode == 1 and "preprocessed output too large" in r.stderr, r.stderr
+        body = "\n".join("x += 1;" for _ in range(700))
+        r = run("emit_overflow.c", f"int f(int x){{\n{body}\nreturn x;\n}}\n", "--emit-c")
+        assert r.returncode == 1 and "emitted C exceeds" in r.stderr, r.stderr
+
+        # Empty units and unsupported pointer depth are clean errors, not funcs[-1] or truncated stars.
+        r = run("empty.c", "", "--emit-pack")
+        assert r.returncode == 1 and "no entry function" in r.stderr, r.stderr
+        r = run("deep_pointer.c", "int *****************f(void);\n")
+        assert r.returncode == 1 and "pointer nesting too deep" in r.stderr, r.stderr
+
+
 _ABI_TARGETS = ["x86_64-linux", "aarch64-linux", "riscv64-linux", "x86_64-windows", "i386-linux"]
 
 

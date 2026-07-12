@@ -25,13 +25,16 @@ extern "C" {
 typedef struct bcir_cfront_result {
   bcir_unit unit;          /* the lowered translation unit (functions + call graph) */
   int ok;                  /* R1-R8 + R18 verifier clean */
+  int emitted_ok;          /* emitted[] is complete; false means the graph is valid but its optional
+                            * verified-C text exceeded the fixed result capacity (never partial) */
   char diag[256];          /* first diagnostic (empty when ok) */
   char emitted[32768];     /* faithful emitted C for every bcir_<fn> (the C.2 output seam) */
 } bcir_cfront_result;
 
 /* Compile one C translation unit (the L1-L5 + L3/L4 subset) into the claim graph,
- * verify it (R1-R8 + R18 call-graph), and emit faithful C. Returns 0 on success,
- * nonzero on a parse/lowering error (diag set). `ok` reflects the verifier. */
+ * verify it (R1-R8 + R18 call-graph), and emit faithful C when it fits. Returns 0 on
+ * graph success, nonzero on a parse/lowering error (diag set). `ok` reflects the verifier;
+ * `emitted_ok` must be checked before consuming `emitted` (a too-large artifact is empty). */
 int bcir_cfront_compile(const char *src, bcir_cfront_result *out);
 
 /* As above, but lay the unit out for `target`'s data model (the C twin of frontends/cfront/abi.py:

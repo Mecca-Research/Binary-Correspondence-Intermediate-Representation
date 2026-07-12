@@ -1,5 +1,10 @@
 """Physics-anchored calibration tests: measure -> quantize -> freeze -> tag."""
 
+import os
+import shutil
+import subprocess
+import tempfile
+
 from bcir.examples import histogram_gather, vector_add
 from bcir.kbcir import TARGETS, optimize
 from bcir.kbcir.cost import TargetProfile, Theta
@@ -92,3 +97,20 @@ def test_every_target_accepts_a_table():
         t = calibrate_from_raw(raw, h)
         hh = t.apply(h)
         assert hh.cal_gen == 1 and hh.gather_penalty == 16 and hh.base_overhead == 8
+
+
+def test_native_microbench_rejects_overflowing_cli_sizes():
+    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        return
+    root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    source = os.path.join(root, "runtime", "c", "bcir_microbench.c")
+    with tempfile.TemporaryDirectory() as d:
+        exe = os.path.join(d, "microbench")
+        build = subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", exe],
+                               capture_output=True, text=True)
+        assert build.returncode == 0, build.stderr
+        for argv in (("18446744073709551615", "1", "1"), ("16", "-1", "1"),
+                     ("16", "1", "1", "extra")):
+            run = subprocess.run([exe, *argv], capture_output=True, text=True)
+            assert run.returncode == 2, (argv, run.stdout, run.stderr)

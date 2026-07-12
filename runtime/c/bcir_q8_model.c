@@ -9,6 +9,16 @@
 
 static const unsigned char k_magic[8] = {'B','C','I','R','Q','8',0,0};
 
+#if defined(_WIN32)
+typedef int64_t bcir_file_offset;
+#define BCIR_FSEEK _fseeki64
+#define BCIR_FTELL _ftelli64
+#else
+typedef long bcir_file_offset;
+#define BCIR_FSEEK fseek
+#define BCIR_FTELL ftell
+#endif
+
 static uint16_t rd16(const unsigned char *p) {
   return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
 }
@@ -184,7 +194,7 @@ static int canonical_tensor_at(const bcir_q8_model *m, uint32_t index,
 int bcir_q8_model_load(const char *path, bcir_q8_model *out,
                        char *error, size_t error_capacity) {
   FILE *file = NULL;
-  long signed_size;
+  bcir_file_offset signed_size;
   size_t got;
   unsigned char *p;
   uint16_t version, header_size, group_size;
@@ -204,8 +214,8 @@ int bcir_q8_model_load(const char *path, bcir_q8_model *out,
     set_error(error, error_capacity, "cannot open BCIRQ8 file");
     return -1;
   }
-  if (fseek(file, 0, SEEK_END) || (signed_size = ftell(file)) < 0 ||
-      fseek(file, 0, SEEK_SET)) {
+  if (BCIR_FSEEK(file, 0, SEEK_END) || (signed_size = BCIR_FTELL(file)) < 0 ||
+      BCIR_FSEEK(file, 0, SEEK_SET)) {
     set_error(error, error_capacity, "cannot determine BCIRQ8 file size");
     fclose(file);
     return -1;
@@ -224,10 +234,14 @@ int bcir_q8_model_load(const char *path, bcir_q8_model *out,
     return -1;
   }
   got = fread(m.storage, 1, m.storage_size, file);
-  if (got != m.storage_size || fclose(file)) {
-    set_error(error, error_capacity, "short read from BCIRQ8 file");
-    bcir_q8_model_free(&m);
-    return -1;
+  {
+    int close_error = fclose(file);
+    file = NULL;
+    if (got != m.storage_size || close_error) {
+      set_error(error, error_capacity, "short read from BCIRQ8 file");
+      bcir_q8_model_free(&m);
+      return -1;
+    }
   }
   p = m.storage;
   if (memcmp(p, k_magic, sizeof k_magic)) {

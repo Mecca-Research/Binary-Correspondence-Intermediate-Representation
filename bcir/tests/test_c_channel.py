@@ -92,7 +92,12 @@ def test_c_channel_parser_rejects_malformed():
         b = subprocess.run([_CC, "-std=c11", "-O1", "-I", _C, os.path.join(_C, "bcir_channel.c"),
                             drv, "-o", exe], capture_output=True, text=True)
         assert b.returncode == 0, b.stderr
-        for bad in ('not json', '{"kind":"cpu"}', '{"name":"x"}'):     # non-object / missing name / missing kind
+        for bad in ('not json', '{"kind":"cpu"}', '{"name":"x"}',
+                    '{"name":"x" "kind":"cpu"}',                      # missing comma
+                    '{"name":"x","kind":"cpu",}',                    # trailing comma
+                    '{"name":"x","kind":"cpu","modeled":"true"}', # wrong value type
+                    '{"name":"x","kind":"cpu"} trailing',
+                    '{"name":"' + ('x' * 80) + '","kind":"cpu"}'):
             assert subprocess.run([exe, bad]).returncode == 0, f"should reject: {bad}"
         # a well-formed minimal channel parses (returns non-zero from the probe == parse ok).
         assert subprocess.run([exe, '{"name":"x","kind":"cpu","capabilities":["universal"]}']).returncode == 1

@@ -33,6 +33,7 @@ static const char *status_name(bcir_status s) {
     case BCIR_ERR_DISPATCH:    return "BCIR_ERR_DISPATCH";
     case BCIR_ERR_PROVENANCE:  return "BCIR_ERR_PROVENANCE";
     case BCIR_ERR_STALE:       return "BCIR_ERR_STALE";
+    case BCIR_ERR_OVERFLOW:    return "BCIR_ERR_OVERFLOW";
     default:                   return "BCIR_ERR_UNKNOWN";
   }
 }

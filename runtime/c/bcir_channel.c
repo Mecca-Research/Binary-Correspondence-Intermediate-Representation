@@ -17,8 +17,9 @@ static const char *jstr(const char *p, const char *e, char *out, size_t outn) {
   p++; size_t o = 0;
   while (p < e && *p != '"') {
     char ch = *p++;
+    if ((unsigned char)ch < 0x20u) return NULL;
     if (ch == '\\' && p < e) { char esc = *p++; ch = esc == 'n' ? '\n' : esc == 't' ? '\t' : esc; }
-    if (out && o + 1 < outn) out[o++] = ch;
+    if (out) { if (o + 1 >= outn) return NULL; out[o++] = ch; }
   }
   if (p >= e) return NULL;
   if (out) out[o] = 0;
@@ -54,6 +55,8 @@ static uint32_t cap_bit(const char *s) {
 }
 
 int bcir_channel_parse(const char *json, size_t len, bcir_channel *ch, char *diag, size_t dn) {
+  if (!diag) dn = 0;
+  if (!json || !ch) { if (dn) snprintf(diag, dn, "channel.json: invalid arguments"); return 1; }
   memset(ch, 0, sizeof *ch); ch->modeled = 1;
   if (dn) diag[0] = 0;
   const char *p = json, *e = json + len;
@@ -73,7 +76,11 @@ int bcir_channel_parse(const char *json, size_t len, bcir_channel *ch, char *dia
     if (!strcmp(key, "name")) p = jstr(p, e, ch->name, sizeof ch->name);
     else if (!strcmp(key, "kind")) p = jstr(p, e, ch->kind, sizeof ch->kind);
     else if (!strcmp(key, "provenance")) p = jstr(p, e, ch->provenance, sizeof ch->provenance);
-    else if (!strcmp(key, "modeled")) { ch->modeled = (p < e && *p == 't'); p = jskip(p, e); }
+    else if (!strcmp(key, "modeled")) {
+      if ((size_t)(e-p)>=4u&&!strncmp(p,"true",4)){ch->modeled=1;p+=4;}
+      else if ((size_t)(e-p)>=5u&&!strncmp(p,"false",5)){ch->modeled=0;p+=5;}
+      else { snprintf(diag,dn,"channel.json: 'modeled' must be boolean");return 1; }
+    }
     else if (!strcmp(key, "capabilities")) {
       if (p < e && *p == '[') {
         p++;
@@ -86,14 +93,17 @@ int bcir_channel_parse(const char *json, size_t len, bcir_channel *ch, char *dia
           if (!p) { snprintf(diag, dn, "channel.json: bad capability"); return 1; }
           ch->capabilities |= cap_bit(cap);
           p = jws(p, e);
-          if (p < e && *p == ',') p++;
+          if (p < e && *p == ',') { p++; p=jws(p,e); if(p>=e||*p==']'){snprintf(diag,dn,"channel.json: trailing capability comma");return 1;} }
+          else if (p >= e || *p != ']') { snprintf(diag,dn,"channel.json: expected ',' or ']'");return 1; }
         }
       } else p = jskip(p, e);
     } else p = jskip(p, e);
     if (!p) { snprintf(diag, dn, "channel.json: parse error"); return 1; }
     p = jws(p, e);
-    if (p < e && *p == ',') p++;
+    if (p < e && *p == ',') { p++; p=jws(p,e); if(p>=e||*p=='}'){snprintf(diag,dn,"channel.json: trailing comma");return 1;} }
+    else if (p >= e || *p != '}') { snprintf(diag,dn,"channel.json: expected ',' or '}'");return 1; }
   }
+  if (jws(p,e) != e) { snprintf(diag,dn,"channel.json: trailing data");return 1; }
   if (!ch->name[0]) { snprintf(diag, dn, "channel.json: missing 'name'"); return 1; }
   if (!ch->kind[0]) { snprintf(diag, dn, "channel.json: missing 'kind'"); return 1; }
   return 0;

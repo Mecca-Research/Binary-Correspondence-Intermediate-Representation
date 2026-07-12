@@ -19,8 +19,10 @@ static void r21_print(const char *funcname, const char *kind, void *ctx) {
 
 /* the directory of `path` (for #include/#embed resolution). */
 static void dirof(const char *path, char *out, size_t cap) {
-  const char *s = strrchr(path, '/');
-  if (s) { size_t n = (size_t)(s - path); if (n >= cap) n = cap - 1; memcpy(out, path, n); out[n] = 0; }
+  const char *s = strrchr(path, '/'), *bs = strrchr(path, '\\');
+  if (!s || (bs && bs > s)) s = bs;
+  if (s) { size_t n = (size_t)(s - path); if (n == 0) n = 1; else if (n == 2 && path[1] == ':') n++;
+    if (n >= cap) n = cap - 1; memcpy(out, path, n); out[n] = 0; }
   else snprintf(out, cap, ".");
 }
 
@@ -62,6 +64,7 @@ int main(int argc, char **argv) {
     printf("%s\n", lf); bcir_cfront_free(&r); return 0; }
   if (canon) { static char cbuf[1 << 17]; bcir_cfront_canon(&r.unit, cbuf, sizeof cbuf);
     fputs(cbuf, stdout); bcir_cfront_free(&r); return 0; }
+  if (!r.emitted_ok) { printf("EMIT-ERR emitted C exceeds result capacity\n"); bcir_cfront_free(&r); return 1; }
   char sum[256]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);
   printf("%s\n", sum);
   if (!r.ok) printf("diag: %s\n", r.diag);
