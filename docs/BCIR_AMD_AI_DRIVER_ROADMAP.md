@@ -283,17 +283,18 @@ four inheritance targets and one fallback so later phases have a landing zone:
    CREATE/DESTROY_QUEUE, ALLOC/MAP/UNMAP_MEMORY_OF_GPU, SVM, CREATE/WAIT_EVENTS,
    GET/IMPORT/EXPORT_DMABUF, GET_PROCESS_APERTURES_NEW) + the **amdgpu DRM UAPI** (GEM typed
    domains, GPUVM, CS chunk model, USERQ) + the separate **`amdxdna`** NPU driver — all as future
-   **RuntimeChannel-v2 hook-vtable** binding targets (Part VIII MC8), bound as an ABI, with the
+   **RuntimeChannel direct hook-table** binding targets (Part VIII MC8), bound as an ABI, with the
    resident KMD owning the kernel side. *(Precision: AQL packets / doorbells are ROCr/HSA-runtime
    + hardware constructs, not KMD tables — inherit the ABI, bind the runtime.)*
 3. **The HSA AQL doorbell ring + Linux-6.16 user-mode queues** (MES/MQD/wptr-doorbell) as the
-   **io_uring-shaped precedent** that validates BCIR-IPC (IPC-R1..R4) and event-phase (A1/B1). Note
+   ring-shaped precedent that may inform a later BCIR-IPC adapter (IPC-R1..R4) and event-phase (A1/B1). Note
    the forward caveat: user-mode queues partially *supersede* KFD-ioctl submission, but the
    AQL/doorbell abstraction is future-proof (only the submission wrapper changes).
 4. **DMA-buf fd handoff** (KFD + amdgpu PRIME, emerging P2P) as the **IPC-R2 generation-guarded
    zero-copy** capability primitive (the substrate RCCL/RDMA ride).
 5. **The Strategy-3 "Linux Master Kernel" fallback** (wave 15): keep `amdgpu.ko`/KFD/ROCr resident
-   as a **peer over a shared io_uring/virtio transport**, migrating only measured-hot submission
+   as a peer over an initially simple `SOCK_SEQPACKET` + bounded shared-memory transport,
+   migrating only measured-hot submission
    paths off it (telemetry-ring driven), the cold tail staying on Linux indefinitely — the bridge
    that lets the AMD-compute wave run **before** the native BCIR-IPC ring substrate (driver-catalog
    D7) lands.

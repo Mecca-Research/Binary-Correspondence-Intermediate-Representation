@@ -20,17 +20,51 @@
 
 #include <stddef.h>
 
+#include "bcir_host_alloc.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Preprocess `src` into `out[0..outcap)` (NUL-terminated). `basedir` is the directory
+/*
+ * Re-entrant hosted preprocessor context. `state` is owned by the context;
+ * `allocator` and its context pointer are borrowed until destroy. Independent
+ * contexts may run concurrently. A context must be initialized before use.
+ */
+typedef struct bcir_cpp_context {
+  bcir_host_allocator allocator;
+  void *state;
+} bcir_cpp_context;
+
+/* Zero-initialize and allocate a context. NULL allocator selects libc. */
+int bcir_cpp_context_init(bcir_cpp_context *context,
+                          const bcir_host_allocator *allocator);
+
+/* Release operation scratch while preserving a reusable initialized context. */
+void bcir_cpp_context_reset(bcir_cpp_context *context);
+
+/* Release all owned state. Safe on NULL and safe to call repeatedly. */
+void bcir_cpp_context_destroy(bcir_cpp_context *context);
+
+/* Context-based forms. All input/output pointers are borrowed. */
+int bcir_cpp_run_context(bcir_cpp_context *context, const char *src,
+                         const char *basedir, char *out, size_t outcap,
+                         char *err, size_t errcap);
+int bcir_cpp_run_ex_context(bcir_cpp_context *context, const char *src,
+                            const char *srcname, const char *const *dirs,
+                            int ndirs, const char *const *defines,
+                            int ndefines, char *out, size_t outcap,
+                            char *err, size_t errcap);
+
+/* Compatibility wrapper over one process-static context. It is intentionally
+ * NON-THREAD-SAFE; concurrent callers must use bcir_cpp_run_context instead.
+ * Preprocess `src` into `out[0..outcap)` (NUL-terminated). `basedir` is the directory
  * #include/#embed resolve against (NULL/"" -> only <system> headers are no-ops, no file
  * reads). Returns 0 on success; nonzero on error with a message in `err`. */
 int bcir_cpp_run(const char *src, const char *basedir, char *out, size_t outcap,
                  char *err, size_t errcap);
 
-/* The compiler-driver entry: `srcname` is the translation unit's name for __FILE__ (NULL/"" ->
+/* NON-THREAD-SAFE compatibility wrapper. The compiler-driver entry: `srcname` is the translation unit's name for __FILE__ (NULL/"" ->
  * "<source>"); resolve `#include`/`#embed` against `dirs[0..ndirs)` (the source dir + each -I path,
  * tried in order) and seed `defines[0..ndefines)` predefined macros (each a "name body" string, e.g.
  * "WIDE 1" or "REG_BASE 0x4000"). Macros persist across nested includes. Returns 0 on success;

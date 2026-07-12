@@ -21,6 +21,13 @@ int bcir_llama_generate_greedy(const bcir_q8_model *model,
                                int32_t *generated_ids,
                                double *final_logits);
 
+/* Allocator-injected form. The allocator is borrowed for the call; all scratch
+ * is released before return, including every failure path. */
+int bcir_llama_generate_greedy_with_allocator(
+    const bcir_q8_model *model, const int32_t *prompt_ids,
+    size_t prompt_count, size_t max_new_tokens, int32_t *generated_ids,
+    double *final_logits, const bcir_host_allocator *allocator);
+
 #ifdef __cplusplus
 }
 #endif

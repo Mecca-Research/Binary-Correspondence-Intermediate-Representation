@@ -18,6 +18,7 @@
 #define BCIR_VERIFY_H
 
 #include "bcir_cir.h"
+#include "bcir_host_alloc.h"
 #include "bcir_plan.h"
 #include "bcir_runtime.h"
 
@@ -27,6 +28,11 @@ extern "C" {
 
 /* R1-R8 + R12 + R14-R17 + R18 over the unit's claim graph + call graph. 1 == clean. */
 int bcir_verify_unit(const bcir_unit *u, char *diag, size_t dn);
+
+/* Hosted allocator-injected form used by the re-entrant C frontend. The
+ * allocator is borrowed for the call; the verifier retains nothing. */
+int bcir_verify_unit_with_allocator(const bcir_unit *u, char *diag, size_t dn,
+                                    const bcir_host_allocator *allocator);
 
 /* R9: a plan realizes every claim exactly once and its total cost is the sum of step costs. */
 int bcir_verify_plan(const bcir_func *f, const bcir_plan *p, char *diag, size_t dn);

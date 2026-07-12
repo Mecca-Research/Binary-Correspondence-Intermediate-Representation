@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "bcir_host_alloc.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -67,12 +69,24 @@ typedef struct bcir_q8_model {
   unsigned char *storage;
   size_t storage_size;
   bcir_q8_tensor *tensors;
+  bcir_host_allocator _allocator;
+  uint32_t _owner_tag;
 } bcir_q8_model;
+
+void bcir_q8_model_init(bcir_q8_model *model);
 
 /* Load and fully validate a BCIRQ8 v1 file.  The loader checks the header/body/tensor
  * CRCs, every span and shape, canonical tensor inventory, and model geometry. */
 int bcir_q8_model_load(const char *path, bcir_q8_model *out,
                        char *error, size_t error_capacity);
+
+/* Allocator-injected loader. The allocator is borrowed during the call and its
+ * context must remain valid until bcir_q8_model_free releases the owned model.
+ * `out` is zero-initialized before all reported failures.  Callers must free a
+ * previously loaded model before reusing the same output object. */
+int bcir_q8_model_load_with_allocator(const char *path, bcir_q8_model *out,
+                                      char *error, size_t error_capacity,
+                                      const bcir_host_allocator *allocator);
 
 void bcir_q8_model_free(bcir_q8_model *model);
 

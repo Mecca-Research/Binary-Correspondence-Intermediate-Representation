@@ -13,6 +13,7 @@ typedef struct workspace {
   double *context, *attn, *gate, *up, *ff, *gamma, *scores, *logits;
   double *k_cache, *v_cache;
   size_t capacity;
+  bcir_host_allocator allocator;
 } workspace;
 
 static int mul_size(size_t a, size_t b, size_t *out) {
@@ -21,33 +22,45 @@ static int mul_size(size_t a, size_t b, size_t *out) {
   return 0;
 }
 
-static double *new_doubles(size_t count) {
-  if (count > SIZE_MAX / sizeof(double)) return NULL;
-  return (double *)calloc(count ? count : 1, sizeof(double));
+static double *new_doubles(workspace *w,size_t count) {
+  size_t bytes;
+  double *result;
+  if (!bcir_size_mul(count ? count : 1u,sizeof(double),&bytes)) return NULL;
+  result=(double *)bcir_host_allocate(&w->allocator,bytes);
+  if(result)memset(result,0,bytes);
+  return result;
 }
 
 static void workspace_free(workspace *w) {
-  free(w->x); free(w->h); free(w->h2); free(w->q); free(w->q_rope);
-  free(w->k); free(w->k_rope); free(w->v); free(w->context); free(w->attn);
-  free(w->gate); free(w->up); free(w->ff); free(w->gamma); free(w->scores);
-  free(w->logits); free(w->k_cache); free(w->v_cache);
+  bcir_host_allocator allocator=w->allocator;
+  bcir_host_deallocate(&allocator,w->x); bcir_host_deallocate(&allocator,w->h);
+  bcir_host_deallocate(&allocator,w->h2); bcir_host_deallocate(&allocator,w->q);
+  bcir_host_deallocate(&allocator,w->q_rope); bcir_host_deallocate(&allocator,w->k);
+  bcir_host_deallocate(&allocator,w->k_rope); bcir_host_deallocate(&allocator,w->v);
+  bcir_host_deallocate(&allocator,w->context); bcir_host_deallocate(&allocator,w->attn);
+  bcir_host_deallocate(&allocator,w->gate); bcir_host_deallocate(&allocator,w->up);
+  bcir_host_deallocate(&allocator,w->ff); bcir_host_deallocate(&allocator,w->gamma);
+  bcir_host_deallocate(&allocator,w->scores); bcir_host_deallocate(&allocator,w->logits);
+  bcir_host_deallocate(&allocator,w->k_cache); bcir_host_deallocate(&allocator,w->v_cache);
   memset(w, 0, sizeof *w);
 }
 
-static int workspace_init(workspace *w, const bcir_q8_model *m, size_t capacity) {
+static int workspace_init(workspace *w, const bcir_q8_model *m, size_t capacity,
+                          const bcir_host_allocator *allocator) {
   size_t cache_rows, cache_values;
   size_t d = m->d_model, kvd = (size_t)m->n_kv_heads * (m->d_model / m->n_heads);
   memset(w, 0, sizeof *w); w->capacity = capacity;
+  w->allocator=bcir_host_allocator_or_default(allocator);
   if (mul_size(m->n_layers, capacity, &cache_rows) ||
       mul_size(cache_rows, kvd, &cache_values)) return -1;
-  w->x = new_doubles(d); w->h = new_doubles(d); w->h2 = new_doubles(d);
-  w->q = new_doubles(d); w->q_rope = new_doubles(d);
-  w->k = new_doubles(kvd); w->k_rope = new_doubles(kvd); w->v = new_doubles(kvd);
-  w->context = new_doubles(d); w->attn = new_doubles(d);
-  w->gate = new_doubles(m->d_ff); w->up = new_doubles(m->d_ff);
-  w->ff = new_doubles(m->d_ff); w->gamma = new_doubles(d);
-  w->scores = new_doubles(capacity); w->logits = new_doubles(m->vocab_size);
-  w->k_cache = new_doubles(cache_values); w->v_cache = new_doubles(cache_values);
+  w->x = new_doubles(w,d); w->h = new_doubles(w,d); w->h2 = new_doubles(w,d);
+  w->q = new_doubles(w,d); w->q_rope = new_doubles(w,d);
+  w->k = new_doubles(w,kvd); w->k_rope = new_doubles(w,kvd); w->v = new_doubles(w,kvd);
+  w->context = new_doubles(w,d); w->attn = new_doubles(w,d);
+  w->gate = new_doubles(w,m->d_ff); w->up = new_doubles(w,m->d_ff);
+  w->ff = new_doubles(w,m->d_ff); w->gamma = new_doubles(w,d);
+  w->scores = new_doubles(w,capacity); w->logits = new_doubles(w,m->vocab_size);
+  w->k_cache = new_doubles(w,cache_values); w->v_cache = new_doubles(w,cache_values);
   if (!w->x || !w->h || !w->h2 || !w->q || !w->q_rope || !w->k || !w->k_rope ||
       !w->v || !w->context || !w->attn || !w->gate || !w->up || !w->ff ||
       !w->gamma || !w->scores || !w->logits || !w->k_cache || !w->v_cache) {
@@ -166,11 +179,10 @@ static int logits_and_argmax(const bcir_q8_model *m, const double *row,
   return (int)best;
 }
 
-int bcir_llama_generate_greedy(const bcir_q8_model *model,
-                               const int32_t *prompt_ids, size_t prompt_count,
-                               size_t max_new_tokens,
-                               int32_t *generated_ids,
-                               double *final_logits) {
+int bcir_llama_generate_greedy_with_allocator(
+    const bcir_q8_model *model,const int32_t *prompt_ids,size_t prompt_count,
+    size_t max_new_tokens,int32_t *generated_ids,double *final_logits,
+    const bcir_host_allocator *allocator) {
   workspace w;
   size_t capacity, pos, step;
   int next;
@@ -183,7 +195,7 @@ int bcir_llama_generate_greedy(const bcir_q8_model *model,
   if (prompt_count > SIZE_MAX - max_new_tokens) return -1;
   capacity = prompt_count + max_new_tokens;
   if (model->context_length && capacity > (size_t)model->context_length + 1u) return -2;
-  if (capacity > (size_t)INT32_MAX || workspace_init(&w, model, capacity)) return -3;
+  if (capacity > (size_t)INT32_MAX || workspace_init(&w, model, capacity,allocator)) return -3;
   for (pos = 0; pos < prompt_count; ++pos)
     if (step_token(model, &w, prompt_ids[pos], pos, w.h)) {
       workspace_free(&w); return -1;
@@ -200,4 +212,14 @@ int bcir_llama_generate_greedy(const bcir_q8_model *model,
     memcpy(final_logits, w.logits, (size_t)model->vocab_size * sizeof(double));
   workspace_free(&w);
   return 0;
+}
+
+int bcir_llama_generate_greedy(const bcir_q8_model *model,
+                               const int32_t *prompt_ids,size_t prompt_count,
+                               size_t max_new_tokens,int32_t *generated_ids,
+                               double *final_logits) {
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  return bcir_llama_generate_greedy_with_allocator(model,prompt_ids,prompt_count,
+                                                    max_new_tokens,generated_ids,
+                                                    final_logits,&allocator);
 }

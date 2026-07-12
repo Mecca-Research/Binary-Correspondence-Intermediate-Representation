@@ -1,0 +1,46 @@
+name: C memory deep sweep
+
+on:
+  schedule:
+    - cron: "17 4 * * 2"
+  workflow_dispatch:
+
+concurrency:
+  group: c-memory-deep-sweep
+  cancel-in-progress: false
+
+jobs:
+  deep-sweep:
+    name: Hosted C allocators, analyzers, Valgrind, and long fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install analysis runtimes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang clang-tools libclang-rt-dev valgrind cppcheck
+
+      - name: Allocator-failure sweep under ASan/UBSan/LSan
+        run: CC=clang MEMORY_DISCIPLINE_SANITIZE=1 bash tools/c/check_memory_discipline.sh
+
+      - name: Cross-analyzer sweep of hosted ownership boundaries
+        run: |
+          cppcheck --std=c11 --enable=warning,performance,portability \
+            --error-exitcode=1 --inline-suppr -I runtime/c \
+            runtime/c/bcir_cpp.c runtime/c/bcir_cfront.c runtime/c/bcir_q8_model.c runtime/c/bcir_llama.c \
+            runtime/c/bcir_runtime_channel.c runtime/c/bcir_verify.c
+          for source in bcir_cpp.c bcir_cfront.c bcir_q8_model.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c; do
+            scan-build --status-bugs clang -std=c11 -I runtime/c -c "runtime/c/${source}" \
+              -o "/tmp/${source%.c}.o"
+          done
+
+      - name: C frontend sanitizers and Valgrind
+        run: |
+          SANITIZE_N_VALID=1200 SANITIZE_M_MALFORMED=1600 \
+          SANITIZE_VG_SUBSET=30 bash tools/c/sanitize_cfront.sh
+
+      - name: Long bounded trust-boundary fuzz
+        run: FUZZ_RUNS=2000000 bash tools/c/fuzz_streampack.sh

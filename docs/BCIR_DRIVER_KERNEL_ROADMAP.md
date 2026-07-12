@@ -667,9 +667,10 @@ The headline verdicts:
 - **No dedicated HAL backend is needed** — the registry/channel/manifest stack IS the
   HAL's schema + facade layers; the missing parts are resident drivers (runtime),
   a BSP-style name-binding table, and the `halcmd`-class operator tools.
-- **HAL functions migrate into the BCIR ABI as `RuntimeChannel` v2** — an append-only,
-  versioned hook vtable (open/claim, map, submit, sync, event delivery) with POSIX
-  backing; laws stay compile-time, hooks observe-and-refuse (D-R1 at runtime).
+- **HAL functions migrate into the BCIR ABI as `RuntimeChannel` v1** — the append-only,
+  versioned direct hook vtable (open/claim, offset-based map, submit, sync/cancel,
+  event delivery, close) is landed with a resident loopback baseline. The first real
+  driver remains in-process; POSIX transport waits for a proven ownership/teardown ABI.
 - **The BCIR "ISA" is the claim vocabulary + StreamPack encoding** — no registers, no
   flags, no branch opcodes *by design*; the honest boundaries are the emit-only control
   tree (erased before planning) and affine-only addressing.
@@ -681,11 +682,11 @@ The headline verdicts:
 MC2 peek/poke with R11-governed pokes (S) → MC3 ROP v2 registry assembly with macros +
 the BSP binding table (M) → MC4 carry-as-data + typed predicates (M) → MC6 HAM/semantic
 swap composed from the wave-13 machinery (M) → MC7 pack-level linking + symbol section
-(M) → MC8 RuntimeChannel v2 hook vtable, designed alongside the deep-driver analysis (L)
+(M) → MC8 RuntimeChannel direct hook ABI (**baseline landed**; hardware binding remains) (L)
 → MC9 POSIX compat completion (M). MC5 (CFG-aware planning) is parked until a driver
 fixture forces it. **Sequencing into the deep-driver phase:** MC1–MC3 first (the tools
-driver bring-up uses daily), MC8's hook list derived from the first real driver's needs
-— exactly as Part VII derived A1/A2 from the datasheets.
+driver bring-up uses daily). MC8's baseline hook list is now executable, but the first
+real driver's needs still decide whether append-only tail hooks or a transport are warranted.
 
 ---
 
@@ -742,14 +743,15 @@ why "no dedicated HAL backend" holds, Part VIII V1):
 | DMA / scatter-gather | `dma_descriptors` + `dma_transfer_module` (**A2**, D-R2/D-R3/D-R4-composed) | `kbcir/dma.py` |
 | Memory mapping across banks/devices | `StridedView` (**D-R4**) + allocator tiers + HAM/semantic-swap (**MC6**) | `device_manifest.py`; `allocator.py` |
 | Cost planning / device selection | `optimize` (K_BCIR) + `orchestrate` (tower) + learned priors (**D3**) | `realize.py`; `channels.py` |
-| Deployment (the "JIT microkernel") | `hydrate` → StreamPack → `bcir_exec` → **RuntimeChannel v2** (MC8) | `gem/streampack.py`; `bcir_exec.h` |
+| Deployment (the "JIT microkernel") | `hydrate` → StreamPack → `bcir_exec` → **RuntimeChannel direct ABI** (MC8) | `gem/streampack.py`; `bcir_exec.h`; `bcir_runtime_channel.h` |
 | Command/response marshalling (TPM/NVMe) | StreamPack-ABI-style bounded length-prefixed records | `abi/streampack_abi.py` |
 | Config/name binding (BSP) | ROP v2 binding table (**MC3**) — logical name → RID/claim recipe | Part VIII MC3 |
 
 **A driver blueprint that needs a NEW subsystem is a design error** — stop and check
 whether the concern maps onto the table above. The only sanctioned new machinery for the
-whole catalog is the **BCIR-IPC substrate** (§IX.3) and the **RuntimeChannel v2 hook
-vtable** (Part VIII MC8), because those are the runtime half BCIR genuinely lacks today.
+whole catalog is an optional **BCIR-IPC adapter** (§IX.3) after the **RuntimeChannel direct
+hook ABI** (Part VIII MC8). The direct ABI is landed; hardware bindings and transport
+parity are the remaining runtime work.
 
 ### IX.2 The ML-seam-per-device-class mandate (why BCIR builds drivers)
 
@@ -789,25 +791,23 @@ communication interface.
 **The Linux IPC inventory, triaged** (from Linux Device Drivers / IPC Linux / the syscall
 references):
 
-| Linux mechanism | Verdict for BCIR | Why |
+| Linux mechanism | Initial verdict for BCIR | Why |
 |---|---|---|
-| **io_uring** (SQ/CQ shared-memory rings) | **ADOPT as the ONE primitive** | Structurally identical to BCIR's `bcir_exec` submission + telemetry-ring completion + event-phase signal — BCIR already *is* an io_uring-shaped machine |
-| POSIX IPC (`mq_*`, `sem_*`, `shm_*`, fd-based) | **ADOPT the model, reimplement native** | Clean fd lifecycle; maps to registry resources + generations |
-| AF_UNIX sockets (STREAM/DGRAM/SEQPACKET, SCM_RIGHTS fd passing) | **ADOPT (the workhorse)** | The local-IPC transport apps expect; fd passing = capability handoff |
-| `eventfd`/`signalfd`/`timerfd`/`pidfd` | **ADOPT ("everything is an fd")** | Uniform readiness; `eventfd` ≈ an event-phase completion flag |
-| `futex` | **ADOPT (the sync primitive)** | Userspace-fast; the one blocking primitive under the rings |
-| `mmap` / `memfd` shared memory | **ADOPT (zero-copy)** | The registry's shared-region story |
-| **System V IPC** (msg/sem/shm, keyed) | **DROP** | Leaky global lifecycle, keyed namespace, no fd — the canonical legacy bloat |
-| **Real-time + legacy signals** | **REPLACE with event phases (A1)** | Unreliable delivery, tiny payload, reentrancy hazards → EV1–EV3 give ordered, typed async entry |
-| ptrace / legacy `/proc` IPC surfaces | **DROP / Master-Kernel-only** | Debug/legacy; not on the hot path |
-| Namespaces / cgroups / seccomp | **Microkernel-scope, not IPC** | Isolation belongs to the microkernel model, layered on capabilities |
+| Unix `SOCK_SEQPACKET` | **Default control plane when IPC is justified** | Preserves message boundaries, carries explicit versioned records, and integrates with fd lifecycle without inventing framing. |
+| `memfd_create` + `mmap` | **Default bounded bulk-data plane** | Shared storage can be named by offsets and generation-tagged handles; ring capacity and saturation policy remain explicit. |
+| `eventfd` + `epoll` | **Default notification plane** | Gives ordered readiness without signal-handler reentrancy and maps cleanly to channel events. |
+| **io_uring** | **Defer until measured** | Its shape is relevant, but adopting it before a driver demonstrates queue-depth or syscall-cost need would freeze unnecessary semantics. |
+| POSIX message queues / custom futex protocol | **Defer until measured** | They add lifecycle and synchronization states not required by the direct ABI baseline. |
+| **System V IPC** (msg/sem/shm, keyed) | **Do not adopt initially** | Global keyed lifecycle conflicts with explicit ownership and generation handling. |
+| **Real-time + legacy signals** | **Replace with event phases (A1)** | Avoids unreliable tiny payloads and signal-handler reentrancy. |
+| ptrace / legacy `/proc` IPC surfaces | **Master-Kernel/debug scope** | Compatibility and debugging only; never the native hot path. |
 
-**The core insight:** BCIR's StreamPack + event phases + the generation-tagged registry
-*are already an IPC substrate*. io_uring is a submission-ring + completion-ring shared-
-memory ABI — the same shape as `bcir_exec`'s calling convention (Part VIII §5.2) plus the
-telemetry ring plus event-phase completion (A1). So BCIR-IPC is not a new subsystem to
-invent; it is **one primitive (the ring) expressed as registry resources + event phases,
-with a thin measured POSIX shim on top.**
+**The core insight:** IPC is an adapter, not the runtime core and not a cure for memory
+leaks. The allocation-free direct ABI in `runtime/c/bcir_runtime_channel.{h,c}` is the
+behavioral reference. A Linux transport is added only for privilege isolation, crash
+containment, vendor-library isolation, or multi-client sharing, and must prove parity
+with direct calls for teardown, cancellation, stale generations, queue saturation,
+peer death, and restart.
 
 **The BCIR-IPC laws** (new, IPC-R1..IPC-R4 — to be authored as a six-artifact set in their
 own wave, vacuous over the existing corpus by the non-disturbance discipline):
@@ -829,22 +829,20 @@ own wave, vacuous over the existing corpus by the non-disturbance discipline):
 
 **The three-strategy ladder** (the user's framing, made operational):
 
-1. **Adopt-and-slim (default).** Reimplement the *modern* Linux IPC subset (fd-based POSIX
-   IPC, io_uring rings, futex, the `*fd` family, AF_UNIX) as native BCIR-IPC registry +
-   event-phase constructs under IPC-R1..IPC-R4. Frozen as a new ABI artifact (a `BCIR-IPC`
-   wire format alongside StreamPack `BSPK` and telemetry `BTLM`). This is where max
-   performance lives — no context switch to a monolith, generation-guarded zero-copy.
+1. **Direct first (default).** Stabilize one resident driver in-process through the
+   RuntimeChannel hook table. Freeze no transport until ownership, cancellation,
+   backpressure, error mapping, and teardown have deterministic tests.
 2. **Abstract-away (compat surface).** Keep the POSIX *interface* apps expect, backed by
-   the Strategy-1 substrate through the C23 subset + the R12 ABI + the IR rules — legacy
+   a measured transport through the C23 subset + the R12 ABI + the IR rules — legacy
    `read`/`write`/`sendmsg`/`epoll_wait` become claim recipes. Backward compat is a shim
    layer, bounded to ~2–3 generations, not a legacy kernel.
 3. **Linux Master Kernel (fallback).** Where true native compat is infeasible or not worth
    it, keep a dedicated Linux kernel as a peer; BCIR microkernels talk to it over a
-   communication interface (a virtio-style transport or a shared io_uring), migrating
+   communication interface (initially `SOCK_SEQPACKET` plus bounded shared memory), migrating
    drivers one at a time while the Linux side retains the full legacy IPC pipeline.
 
-**The recommendation:** Strategy 1 for everything modern and hot; Strategy 2 for the POSIX
-surface applications require; Strategy 3 only for the long cold tail. The BCIR advantage
+**The recommendation:** Strategy 1 until a concrete isolation/sharing requirement appears;
+Strategy 2 for the POSIX surface applications require; Strategy 3 only for the long cold tail. The BCIR advantage
 is that it can **measure** which syscalls/drivers are hot (the telemetry ring already
 exists) and migrate/native-ize *only those*, leaving the cold legacy tail on the Master
 Kernel indefinitely — a data-driven migration, not a big-bang rewrite.
@@ -855,11 +853,11 @@ vague fallback into **BCIR-Linux, the kernel/driver oracle** — with the honest
 envelope of each stage nailed down: an eBPF *soft-fork* (observe + veto + telemetry, no fork),
 then a dual-domain *hard-fork* (the Master Kernel becomes the **Control Domain**; the migrated
 drivers run on a bare-metal **Fabric Domain**), then the JIT micro/unikernel factory that
-deploys the migrated drivers as versioned artifacts. The BCIR-IPC laws (IPC-R1..R4) and the
-64-byte SQE ring are the substrate that rail prototypes.
+deploys the migrated drivers as versioned artifacts. IPC-R1..R4 and any concrete ring
+wire format remain parked until a direct hardware driver proves the transport requirements.
 
 **JIT microkernels, defined precisely.** A BCIR "microkernel" is a **StreamPack** (the hot
-artifact) plus its event-phase handlers plus its RuntimeChannel v2 binding. "JIT" = the
+artifact) plus its event-phase handlers plus its RuntimeChannel direct binding. "JIT" = the
 pack is *hydrated on demand* from the planned claim graph and *replanned on measured cost*
 (the L2 measured-replan path already exists, `kbcir/calibrate.py`). IPC between two
 microkernels is a shared registry channel (IPC-R1) with generation-guarded handoff

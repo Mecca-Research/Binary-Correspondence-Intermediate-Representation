@@ -11,6 +11,11 @@ if [ -z "${CC}" ]; then
   exit 0
 fi
 
+echo "[c-runtime] memory classes + allocator/context/channel fault sweep"
+if CC="${CC}" bash "${ROOT}/tools/c/check_memory_discipline.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -ne 0 ]; then
+  echo "  FAIL: memory-discipline gate"; exit 1
+fi
+
 echo "[c-runtime] freestanding compile (-ffreestanding -nostdlib), C11 + C23"
 for std in c11 c23; do
   "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -c "${C}/bcir_runtime.c" -o /dev/null \

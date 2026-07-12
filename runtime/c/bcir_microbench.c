@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <time.h>
 
+#include "bcir_host_alloc.h"
+
 #define Q8 256
 
 static uint64_t g_state = 0xBC12u;
@@ -101,14 +103,16 @@ static int parse_u64(const char *s, uint64_t *out) {
   char *end; unsigned long long value;
   if(!s||!*s||*s=='-')return -1;
   errno=0;value=strtoull(s,&end,10);
-  if(errno||*end)return -1;*out=(uint64_t)value;return 0;
+  if(errno||*end)return -1;
+  *out=(uint64_t)value;return 0;
 }
 
 static int parse_i64(const char *s, int64_t *out) {
   char *end; long long value;
   if(!s||!*s)return -1;
   errno=0;value=strtoll(s,&end,10);
-  if(errno||*end)return -1;*out=(int64_t)value;return 0;
+  if(errno||*end)return -1;
+  *out=(int64_t)value;return 0;
 }
 
 int main(int argc, char **argv) {
@@ -122,10 +126,13 @@ int main(int argc, char **argv) {
   if(n>SIZE_MAX/sizeof(double)||n>SIZE_MAX/sizeof(size_t)||
      (size_t)repeats>SIZE_MAX/sizeof(uint64_t)){fprintf(stderr,"requested benchmark is too large\n");return 2;}
 
-  double *buf = malloc(n * sizeof *buf);
-  size_t *perm = malloc(n * sizeof *perm);
-  uint64_t *tmp = malloc((size_t)repeats * sizeof *tmp);
-  if (!buf || !perm || !tmp) { fprintf(stderr, "oom\n"); free(buf); free(perm); free(tmp); return 2; }
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  double *buf = (double *)bcir_host_allocate(&allocator,n * sizeof *buf);
+  size_t *perm = (size_t *)bcir_host_allocate(&allocator,n * sizeof *perm);
+  uint64_t *tmp = (uint64_t *)bcir_host_allocate(&allocator,(size_t)repeats * sizeof *tmp);
+  if (!buf || !perm || !tmp) { fprintf(stderr, "oom\n");
+    bcir_host_deallocate(&allocator,buf);bcir_host_deallocate(&allocator,perm);
+    bcir_host_deallocate(&allocator,tmp);return 2; }
 
   for (size_t i = 0; i < n; ++i) { buf[i] = (double)(i % 97); perm[i] = i; }
   for (size_t i = n - 1; i > 0; --i) {           /* seeded Fisher-Yates */
@@ -153,6 +160,7 @@ int main(int argc, char **argv) {
   printf("  \"compute_q8\": %" PRIu64 "\n", q8(t_compute, t_stream));
   printf("}\n");
 
-  free(buf); free(perm); free(tmp);
+  bcir_host_deallocate(&allocator,buf);bcir_host_deallocate(&allocator,perm);
+  bcir_host_deallocate(&allocator,tmp);
   return 0;
 }

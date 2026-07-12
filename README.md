@@ -79,6 +79,7 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 - [`docs/PARITY.md`](docs/PARITY.md) — the Python (`bcir/`) ↔ MLIR (`mlir/`) lockstep contract.
 - [`docs/STATUS.md`](docs/STATUS.md) — the generated static inventory of tests, ODS ops, passes, runtime files, and verifier-law fixture tags; it does not claim those gates were executed.
 - [`docs/BCIRQ8_FORMAT.md`](docs/BCIRQ8_FORMAT.md) — the compact deterministic model wire format and standalone-C inference boundary.
+- [`docs/C_MEMORY_DISCIPLINE.md`](docs/C_MEMORY_DISCIPLINE.md) — the enforced freestanding/hosted/driver memory classes, allocator and context contracts, direct driver ABI, and driver-gated IPC sequence.
 - [`docs/THIRD_PARTY_MODELS.md`](docs/THIRD_PARTY_MODELS.md) — pinned model provenance, license, and non-redistribution boundary.
 - [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md) — how the repo is organized and why.
 - [`docs/DEVELOPMENT_HISTORY.md`](docs/DEVELOPMENT_HISTORY.md) — how it was built: the development method, the PR-era arc, and the condensed changelog.

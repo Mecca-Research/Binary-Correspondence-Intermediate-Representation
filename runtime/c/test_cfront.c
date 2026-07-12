@@ -71,6 +71,7 @@ int main(int argc, char **argv) {
   /* R21 advisory (§5.12): print use-after-free / double-free diagnostics before the emit marker. */
   bcir_verify_lifetime(&r.unit, r21_print, NULL);
   printf("----EMIT----\n%s", r.emitted);
+  int ok = r.ok;
   bcir_cfront_free(&r);
-  return r.ok ? 0 : 1;
+  return ok ? 0 : 1;
 }

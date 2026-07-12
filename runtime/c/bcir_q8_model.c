@@ -119,10 +119,19 @@ double bcir_q8_tensor_value(const bcir_q8_model *model,
 }
 
 void bcir_q8_model_free(bcir_q8_model *model) {
+  bcir_host_allocator allocator;
   if (!model) return;
-  free(model->tensors);
-  free(model->storage);
+  if(model->_owner_tag!=0x51384d44u||!bcir_host_allocator_valid(&model->_allocator)){
+    memset(model,0,sizeof *model);return;
+  }
+  allocator=model->_allocator;
+  bcir_host_deallocate(&allocator,model->tensors);
+  bcir_host_deallocate(&allocator,model->storage);
   memset(model, 0, sizeof *model);
+}
+
+void bcir_q8_model_init(bcir_q8_model *model) {
+  if(model) memset(model,0,sizeof *model);
 }
 
 static int expect_tensor(const bcir_q8_model *m, uint16_t id, int16_t layer,
@@ -191,8 +200,9 @@ static int canonical_tensor_at(const bcir_q8_model *m, uint32_t index,
   return -1;
 }
 
-int bcir_q8_model_load(const char *path, bcir_q8_model *out,
-                       char *error, size_t error_capacity) {
+int bcir_q8_model_load_with_allocator(const char *path, bcir_q8_model *out,
+                                      char *error, size_t error_capacity,
+                                      const bcir_host_allocator *allocator) {
   FILE *file = NULL;
   bcir_file_offset signed_size;
   size_t got;
@@ -201,14 +211,17 @@ int bcir_q8_model_load(const char *path, bcir_q8_model *out,
   uint32_t endian, flags, tensor_count, entry_size, body_crc, recorded_header_crc;
   uint64_t directory_offset, directory_end, payload_offset, recorded_size;
   uint32_t i, j;
+  size_t tensor_bytes;
   bcir_q8_model m;
   memset(&m, 0, sizeof m);
+  m._allocator=bcir_host_allocator_or_default(allocator);
+  m._owner_tag=0x51384d44u;
   if (error && error_capacity) error[0] = '\0';
+  if (out) memset(out, 0, sizeof *out);
   if (!path || !out) {
     set_error(error, error_capacity, "path and output model are required");
     return -1;
   }
-  memset(out, 0, sizeof *out);
   file = fopen(path, "rb");
   if (!file) {
     set_error(error, error_capacity, "cannot open BCIRQ8 file");
@@ -227,7 +240,7 @@ int bcir_q8_model_load(const char *path, bcir_q8_model *out,
     return -1;
   }
   m.storage_size = (size_t)signed_size;
-  m.storage = (unsigned char *)malloc(m.storage_size);
+  m.storage = (unsigned char *)bcir_host_allocate(&m._allocator,m.storage_size);
   if (!m.storage) {
     set_error(error, error_capacity, "out of memory reading BCIRQ8 file");
     fclose(file);
@@ -306,18 +319,16 @@ int bcir_q8_model_load(const char *path, bcir_q8_model *out,
   memcpy(m.source_model_sha256, p + 120, 32);
   memcpy(m.source_config_sha256, p + 152, 32);
   memcpy(m.tokenizer_sha256, p + 184, 32);
-  {
-    size_t tensor_bytes;
-    if (mul_overflows_size((size_t)tensor_count, sizeof *m.tensors, &tensor_bytes)) {
-      set_error(error, error_capacity, "BCIRQ8 tensor directory is too large");
-      goto fail;
-    }
+  if (mul_overflows_size((size_t)tensor_count, sizeof *m.tensors, &tensor_bytes)) {
+    set_error(error, error_capacity, "BCIRQ8 tensor directory is too large");
+    goto fail;
   }
-  m.tensors = (bcir_q8_tensor *)calloc(tensor_count, sizeof *m.tensors);
+  m.tensors = (bcir_q8_tensor *)bcir_host_allocate(&m._allocator,tensor_bytes);
   if (!m.tensors) {
     set_error(error, error_capacity, "out of memory for BCIRQ8 tensor directory");
     goto fail;
   }
+  memset(m.tensors,0,tensor_bytes);
   for (i = 0; i < tensor_count; ++i) {
     const unsigned char *e = p + directory_offset + (uint64_t)i * entry_size;
     bcir_q8_tensor *t = &m.tensors[i];
@@ -398,4 +409,10 @@ int bcir_q8_model_load(const char *path, bcir_q8_model *out,
 fail:
   bcir_q8_model_free(&m);
   return -1;
+}
+
+int bcir_q8_model_load(const char *path, bcir_q8_model *out,
+                       char *error, size_t error_capacity) {
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  return bcir_q8_model_load_with_allocator(path,out,error,error_capacity,&allocator);
 }
