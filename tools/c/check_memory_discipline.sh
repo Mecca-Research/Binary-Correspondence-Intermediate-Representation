@@ -32,14 +32,19 @@ _write(Path(sys.argv[1]))
 PY
 
 link_args=()
+host_defines=()
 case "$(uname -s 2>/dev/null || true)" in
-  MINGW*|MSYS*|CYGWIN*) ;;
+  # UCRT deprecates portable ISO C interfaces (fopen, getenv, gmtime, and the
+  # bounded uses of strcpy/strncpy) in favor of Microsoft-only *_s variants.
+  # Keep the implementation portable and opt in explicitly for hosted Windows
+  # builds; all other diagnostics remain errors.
+  MINGW*|MSYS*|CYGWIN*) host_defines=(-D_CRT_SECURE_NO_WARNINGS) ;;
   *) link_args=(-lm) ;;
 esac
 
 "${PYTHON}" "${ROOT}/tools/c/check_memory_discipline.py"
 
-strict=(-std=c11 -Wall -Wextra -Wpedantic -Werror -I "${C}")
+strict=(-std=c11 -Wall -Wextra -Wpedantic -Werror "${host_defines[@]}" -I "${C}")
 compat_warnings=(-Wno-misleading-indentation)
 if ! "${CC_BIN}" --version 2>/dev/null | head -n 1 | grep -qi clang; then
   compat_warnings+=(-Wno-format-truncation)
