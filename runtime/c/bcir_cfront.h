@@ -17,6 +17,7 @@
 #define BCIR_CFRONT_H
 
 #include "bcir_cir.h"
+#include "bcir_host_alloc.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,21 +30,51 @@ typedef struct bcir_cfront_result {
                             * verified-C text exceeded the fixed result capacity (never partial) */
   char diag[256];          /* first diagnostic (empty when ok) */
   char emitted[32768];     /* faithful emitted C for every bcir_<fn> (the C.2 output seam) */
+  bcir_host_allocator _allocator; /* private owner used by idempotent free */
+  uint32_t _owner_tag;
 } bcir_cfront_result;
 
-/* Compile one C translation unit (the L1-L5 + L3/L4 subset) into the claim graph,
+/* Re-entrant hosted compiler context. The context owns parser caches and a
+ * per-operation scratch arena; returned results own their IR separately. */
+typedef struct bcir_cfront_context {
+  bcir_host_allocator allocator;
+  void *state;
+} bcir_cfront_context;
+
+int bcir_cfront_context_init(bcir_cfront_context *context,
+                             const bcir_host_allocator *allocator);
+void bcir_cfront_context_reset(bcir_cfront_context *context);
+void bcir_cfront_context_destroy(bcir_cfront_context *context);
+
+/* Initialize an output to the only valid empty state. Safe before every first use. */
+void bcir_cfront_result_init(bcir_cfront_result *out);
+
+/* Context-based, re-entrant entries. Inputs are borrowed; `out` must first be
+ * initialized with bcir_cfront_result_init (or be a prior result from this API).
+ * A prior owned result is released before reuse. On success `out` owns the unit
+ * until bcir_cfront_free; on failure it is empty except diag. */
+int bcir_cfront_compile_context(bcir_cfront_context *context, const char *src,
+                                bcir_cfront_result *out);
+int bcir_cfront_compile_target_context(bcir_cfront_context *context,
+                                       const char *src, const char *target,
+                                       bcir_cfront_result *out);
+
+/* NON-THREAD-SAFE compatibility wrapper over one process-static context. It
+ * initializes `out` for legacy callers; release each returned result before
+ * passing the same object to another compatibility call.
+ * Compile one C translation unit (the L1-L5 + L3/L4 subset) into the claim graph,
  * verify it (R1-R8 + R18 call-graph), and emit faithful C when it fits. Returns 0 on
  * graph success, nonzero on a parse/lowering error (diag set). `ok` reflects the verifier;
  * `emitted_ok` must be checked before consuming `emitted` (a too-large artifact is empty). */
 int bcir_cfront_compile(const char *src, bcir_cfront_result *out);
 
-/* As above, but lay the unit out for `target`'s data model (the C twin of frontends/cfront/abi.py:
+/* NON-THREAD-SAFE compatibility wrapper. As above, but lay the unit out for `target`'s data model (the C twin of frontends/cfront/abi.py:
  * one of x86_64-linux, aarch64-linux, riscv64-linux, x86_64-windows, i386-linux). `target` NULL
  * selects the host (x86_64-linux LP64); an unknown name returns nonzero with diag set. `long`, the
  * pointer, and the `size_t`-class types follow the selected model; everything else is fixed by C. */
 int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_result *out);
 
-/* Release the heap arrays the result holds. */
+/* Release every owned allocation and restore the valid empty state. Idempotent. */
 void bcir_cfront_free(bcir_cfront_result *out);
 
 /* A canonical, RID-independent structural summary of the entry function's claim graph --
@@ -65,10 +96,17 @@ void bcir_cfront_summary(const bcir_unit *u, int ok, char *buf, size_t n);
  * anchor: "ret=<return-value VN>|stores=<dest-VN->value-VN;...>". */
 uint64_t bcir_cfront_digest(const bcir_unit *u);
 
+/* Allocator-injected canonical analysis forms. The allocator is borrowed for
+ * the operation and every temporary is released before return. */
+uint64_t bcir_cfront_digest_with_allocator(const bcir_unit *u,
+                                           const bcir_host_allocator *allocator);
+
 /* The raw canonical serialization the digest hashes (text, NOT hashed) -- the byte-identity proof:
  * the Python cfront_structural_canon must equal this byte-for-byte on the corpus, so the digests
  * match. Writes the per-function sorted records, '@'-separated. */
 void bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n);
+void bcir_cfront_canon_with_allocator(const bcir_unit *u, char *buf, size_t n,
+                                      const bcir_host_allocator *allocator);
 
 /* The module-scope effect / commutation analysis (the C twin of pipeline.own_footprint + commute):
  * for each function a `fn=<name> reads=<globals|-> writes=<globals|->` line (its alias/effect
@@ -76,6 +114,8 @@ void bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n);
  * `commute <a> <b> = 0|1` line per function pair (1 iff their footprints don't conflict -- two
  * readers commute, a writer conflicts with any reader/writer of the same global). */
 void bcir_cfront_effects(const bcir_unit *u, char *buf, size_t n);
+void bcir_cfront_effects_with_allocator(const bcir_unit *u, char *buf, size_t n,
+                                        const bcir_host_allocator *allocator);
 
 /* B1: derive the linker flags a unit's external-call edges need (e.g. `c.call.libm:sqrt` -> `-lm`),
  * written as one space-separated, deduped, STABLY-SORTED line to `buf` (empty for a pure-integer

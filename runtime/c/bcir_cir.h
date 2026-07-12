@@ -143,6 +143,19 @@ typedef struct bcir_claim {
 /* A static-local variable (static storage duration: a once-only constant init). */
 typedef struct bcir_static { char name[BCIR_CIR_NAME]; long long init; } bcir_static;
 
+/* Hosted-frontend metadata retained only so verified-C emission and diagnostics can
+ * reproduce source spellings and recovered dynamic bounds. The freestanding core
+ * never allocates or consumes these arrays; bcir_cfront_result owns them. */
+typedef struct bcir_host_literal {
+  uint32_t rid;
+  char *spelling;             /* owned by the containing hosted cfront result */
+} bcir_host_literal;
+
+typedef struct bcir_ptr_extent {
+  uint32_t ptr_rid;
+  uint32_t count_rid;
+} bcir_ptr_extent;
+
 /* A function lowered to a single phase of claims over its resources. Every variable-length member
  * grows on demand (geometric realloc) -- the IR has no fixed BCIR_MAX_* ceilings, so a real
  * translation unit (any number of functions / params / calls / resources / claims) lowers. */
@@ -162,6 +175,8 @@ typedef struct bcir_func {
   uint32_t return_rid; uint8_t has_return;
   char (*calls)[BCIR_CIR_NAME]; int n_calls, cap_calls;   /* callee names (R18 call graph) */
   bcir_static *statics; int n_statics, cap_statics;       /* static locals */
+  bcir_host_literal *host_literals; int n_host_literals, cap_host_literals;
+  bcir_ptr_extent *ptr_extents; int n_ptr_extents, cap_ptr_extents;
 } bcir_func;
 
 /* A translation unit: a growable list of functions sharing struct definitions + a call graph. */

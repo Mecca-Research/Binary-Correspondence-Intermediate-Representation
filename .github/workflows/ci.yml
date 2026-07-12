@@ -116,6 +116,25 @@ jobs:
         # step stays well under a minute; ASan/UBSan/leak remain always-on.
         run: SANITIZE_SKIP_VALGRIND=1 bash tools/c/sanitize_cfront.sh
 
+      - name: Allocator-failure and direct-channel sanitizer sweep
+        run: MEMORY_DISCIPLINE_SANITIZE=1 bash tools/c/check_memory_discipline.sh
+
+      - name: Hosted C ownership static analysis
+        run: |
+          diagnostics="$(mktemp)"
+          trap 'rm -f "${diagnostics}"' EXIT
+          for source in bcir_cpp.c bcir_cfront.c bcir_q8_model.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c; do
+            : > "${diagnostics}"
+            if ! clang --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null 2>"${diagnostics}"; then
+              cat "${diagnostics}" >&2
+              exit 1
+            fi
+            if [ -s "${diagnostics}" ]; then
+              cat "${diagnostics}" >&2
+              exit 1
+            fi
+          done
+
       - name: StreamPack C decoder fuzz (libFuzzer + ASan/UBSan on the trust boundary)
         run: FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
 
@@ -151,6 +170,10 @@ jobs:
 
       - name: Focused host adaptation checks
         run: python -c "from bcir.tests import test_silicon as s, test_tiers as t, test_toolchain as h; s.test_counter_sampler_degrades_without_posix_rusage(); t.test_versioned_and_windows_tool_names_are_gated_by_family(); t.test_pool_context_uses_spawn_when_fork_is_unavailable(); [getattr(h, n)() for n in sorted(dir(h)) if n.startswith('test_')]"
+
+      - name: C memory classes, strict warnings, allocator failures, and direct channel
+        shell: bash
+        run: CC=clang bash tools/c/check_memory_discipline.sh
 
       - name: Clang statement-expression/bitfield differential
         run: |

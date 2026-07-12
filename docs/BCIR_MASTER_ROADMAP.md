@@ -397,7 +397,7 @@ a bare PIM/CIM controller or a driver-resident eBPF JIT under a latency SLA.
 > on the NATIVE side of the resident-compiler boundary (MC-track: disassembler + hex
 > dump + listing, peek/poke, ROP v2 registry assembly with macros, carry-as-data,
 > HAM/semantic-swap composition, pack-level linking + symbol section, the RuntimeChannel
-> v2 HAL hook vtable, POSIX compat completion). None of them is instruction selection;
+> direct hook ABI/hardware binding, POSIX compat completion). None of them is instruction selection;
 > the Clang/native split is exactly the designed one.
 
 ### 5.6 Stays Python (the quarantine)
@@ -602,7 +602,8 @@ destabilize the keystone.
 > own `BCIR_<DEVICE>_DRIVER_BLUEPRINT.md` authored in its own research session), the
 > **ML-seam-per-device-class mandate** (every hardware class gets a learned prior on the D3
 > tile/channel-prior recipe — the reason BCIR builds drivers at all), the **BCIR-IPC track**
-> (Linux IPC slimmed to a registry-first io_uring-shaped ring substrate — IPC-R1..IPC-R4 —
+> (direct in-process RuntimeChannel first; optional Linux `SOCK_SEQPACKET` + bounded
+> `memfd` rings + `eventfd`/`epoll` only after a driver proves the ABI — IPC-R1..IPC-R4 —
 > carrying JIT microkernels + a modular, measured POSIX shim with a Linux-Master-Kernel
 > fallback), and the phased build order (waves D0 boot → D1 substrate → D2 discovery → D3
 > interrupts → D4 time → D5 PCIe → D6 DMA/IOMMU → D7 BCIR-IPC → D8 storage → D9 filesystems →

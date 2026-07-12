@@ -1,0 +1,27 @@
+# One production C translation unit per line: <class> <file>.
+# Test/fixture files are intentionally outside this inventory.
+freestanding_core bcir_binrec.c
+freestanding_core bcir_decode.c
+freestanding_core bcir_encode.c
+freestanding_core bcir_exec.c
+freestanding_core bcir_hydrate.c
+freestanding_core bcir_plan.c
+freestanding_core bcir_provenance.c
+freestanding_core bcir_runtime.c
+freestanding_core bcir_telemetry_frame.c
+freestanding_core bcir_train.c
+
+hosted_tool bcir_cc.c
+hosted_tool bcir_cfront.c
+hosted_tool bcir_channel.c
+hosted_tool bcir_cpp.c
+hosted_tool bcir_diag.c
+hosted_tool bcir_llama.c
+hosted_tool bcir_llama_cli.c
+hosted_tool bcir_microbench.c
+hosted_tool bcir_q8_model.c
+hosted_tool bcir_quarantine.c
+hosted_tool bcir_quarantine_recover.c
+hosted_tool bcir_verify.c
+
+driver_adapter bcir_runtime_channel.c

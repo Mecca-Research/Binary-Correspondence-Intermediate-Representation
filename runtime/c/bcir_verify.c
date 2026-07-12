@@ -2,13 +2,15 @@
 #include "bcir_verify.h"
 
 #include <stdio.h>   /* snprintf for the diagnostic path (the verdict logic itself is pure) */
-#include <stdlib.h>  /* calloc/free for the R18 cycle-detection visited array (no fixed func cap) */
+#include <stdlib.h>
+#include <string.h>
 
 static int slen(const char *s){int n=0;while(s[n])n++;return n;}
 static int seq(const char *a,const char *b){int i=0;for(;a[i]&&b[i];i++)if(a[i]!=b[i])return 0;return a[i]==b[i];}
 
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid){
-  for(size_t i=0;i<f->n_res;i++) if(f->res[i].rid==rid) return &f->res[i]; return NULL;
+  for(size_t i=0;i<f->n_res;i++) if(f->res[i].rid==rid) return &f->res[i];
+  return NULL;
 }
 
 /* R6 lane legality: which lanes a declared access-pattern shape admits (mirror bcir/verify's
@@ -54,17 +56,24 @@ static int verify_func(const bcir_func *f,char *diag,size_t dn){
 
 /* --- R18 (compositional call-graph integrity) ---------------------------- */
 static int func_index(const bcir_unit *u,const char *nm){
-  for(int i=0;i<u->n_funcs;i++) if(seq(u->funcs[i].name,nm)) return i; return -1;
+  for(int i=0;i<u->n_funcs;i++) if(seq(u->funcs[i].name,nm)) return i;
+  return -1;
 }
 static int has_cycle(const bcir_unit *u,int fi,int *state){
   state[fi]=1;
   for(int k=0;k<u->funcs[fi].n_calls;k++){int ci=func_index(u,u->funcs[fi].calls[k]);
-    if(ci<0)continue; if(state[ci]==1)return 1; if(state[ci]==0&&has_cycle(u,ci,state))return 1;}
+    if(ci<0)continue;
+    if(state[ci]==1)return 1;
+    if(state[ci]==0&&has_cycle(u,ci,state))return 1;}
   state[fi]=2; return 0;
 }
 
-int bcir_verify_unit(const bcir_unit *u,char *diag,size_t dn){
+int bcir_verify_unit_with_allocator(const bcir_unit *u,char *diag,size_t dn,
+                                    const bcir_host_allocator *allocator){
+  bcir_host_allocator selected=bcir_host_allocator_or_default(allocator);
+  size_t state_count,state_bytes;
   if(dn) diag[0]=0;
+  if(!u){if(dn)snprintf(diag,dn,"invalid unit");return 0;}
   /* R1.1: claim-id uniqueness (the mirror of R1's RID uniqueness, for the claim namespace). Claim ids
    * are unit-wide unique by construction (the cid base is bumped per function); a duplicate/injected id
    * makes the claim graph ambiguous (a plan step / attestation / structural digest could bind to the
@@ -81,14 +90,23 @@ int bcir_verify_unit(const bcir_unit *u,char *diag,size_t dn){
   for(int i=0;i<u->n_funcs;i++) if(!verify_func(&u->funcs[i],diag,dn)) return 0;
   for(int i=0;i<u->n_funcs;i++) for(int k=0;k<u->funcs[i].n_calls;k++)
     if(func_index(u,u->funcs[i].calls[k])<0){snprintf(diag,dn,"R18: call to undefined function %s",u->funcs[i].calls[k]);return 0;}
-  int *state=calloc((size_t)(u->n_funcs>0?u->n_funcs:1),sizeof *state);   /* visited per func (no cap) */
+  state_count=(size_t)(u->n_funcs>0?u->n_funcs:1);
+  if(!bcir_size_mul(state_count,sizeof(int),&state_bytes)){
+    snprintf(diag,dn,"oom");return 0;}
+  int *state=(int *)bcir_host_allocate(&selected,state_bytes);   /* visited per func (no cap) */
   if(!state){snprintf(diag,dn,"oom");return 0;}
-  for(int i=0;i<u->n_funcs;i++) if(state[i]==0&&has_cycle(u,i,state)){snprintf(diag,dn,"R18: recursive call cycle");free(state);return 0;}
-  free(state);
+  memset(state,0,state_bytes);
+  for(int i=0;i<u->n_funcs;i++) if(state[i]==0&&has_cycle(u,i,state)){snprintf(diag,dn,"R18: recursive call cycle");bcir_host_deallocate(&selected,state);return 0;}
+  bcir_host_deallocate(&selected,state);
   /* R14-R16 (CIM dispatch / DVFS clock / alloc placement): the scalar C subset emits no such
    * smart-lowering decisions, so these are vacuously satisfied here. */
   (void)slen;
   return 1;
+}
+
+int bcir_verify_unit(const bcir_unit *u,char *diag,size_t dn){
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  return bcir_verify_unit_with_allocator(u,diag,dn,&allocator);
 }
 
 /* --- R9 (plan legality) -------------------------------------------------- */

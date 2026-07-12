@@ -26,7 +26,7 @@ HAL/ABI) with `file:line` anchors throughout.
 | # | Question | Verdict |
 |---|---|---|
 | V1 | **Dedicated HAL backend?** | **No new backend.** The registry/channel/manifest stack **is** the HAL's schema + facade layers *by construction* (compile-time). What's missing is not a backend but three specific HAL parts: **resident peripheral drivers** (runtime), a **BSP-style name-binding table**, and the **operator tools** (`halcmd`-class peek/poke). See §4, gaps MC2/MC8. |
-| V2 | **HAL functions → BCIR ABI?** | **Yes — as a versioned hook vtable.** `RuntimeChannel` today carries only telemetry-source descriptors (`bcir/channels.py:47-56`); the classic HAL verbs (open/claim, map, submit, sync, event delivery) belong there as a **frozen, append-only ABI** exactly like the StreamPack wire format. The laws stay compile-time (two-truth); the hooks are the runtime half. Gap MC8. |
+| V2 | **HAL functions → BCIR ABI?** | **Yes — as a versioned hook vtable.** The direct C ABI is now `bcir_runtime_channel.h`: open/claim, offset-based map, submit, sync/cancel, event, and close with append-only size/version checks. The laws stay compile-time (two-truth); a real hardware binding and any optional transport remain MC8 work. |
 | V3 | **ABI maturity / POSIX-Linux compat?** | **Five frozen artifacts exist** (§5): StreamPack v1–v3 (BSPK), the `bcir_exec` calling convention, the R12 `TargetABI` matrix (Linux LP64 ×3 + Windows LLP64 + ILP32), the Q8 tier tables, and the telemetry frame (BTLM). POSIX coupling today is **read-only** (two syscalls + sysfs/procfs + one gated DVFS write). Full backward compat still needs the device-fd lifecycle, BAR/UIO mmap, ioctl submission, eventfd/poll delivery, and errno bridging. The "unique BCIR signatures" already exist: magics + digests + generation tags on every artifact. |
 | V4 | **Hex/dump/loader, listing, mnemonics, disassembly?** | **Loader: done, dual-rail** (`bcir_sp_validate` freestanding C + Python `decode`). **Hex dump/convert, assembly listing, and the disassembler: missing entirely** — the highest-leverage, lowest-cost gap in the audit (MC1). |
 | V5 | **Peek/poke?** | **Half-built.** The *scope* half exists (TelemetryRing / DataDNA / DurableLog ≈ halscope; the shared-mmap ring is the zero-copy channel). The *interactive* half (`setp`/`getp` on live registry state, with `data_gen` bumps making R11 refuse stale packs) is missing — and the refusal law it needs **already exists** (MC2). |
@@ -126,12 +126,13 @@ probes (perf_event_open + ioctl on the counter fd, sysfs/procfs, RAPL, thermal �
 read-only; one gated DVFS write), signal registry with declared-unavailable gap
 providers, event phases + DMA descriptor rings as claims (A1/A2).
 
-Runtime HAL (the missing half): `RuntimeChannel` has **no open/alloc/map/submit/sync/
-event hooks** (`channels.py:47-56`); modeled channels have no resident driver; DMA/IRQ
-exist as claims, not as device I/O; no `/dev` access anywhere; no BAR mmap (the only mmap
-is the telemetry ring). This is not drift — it is the documented "resident drivers ⏭"
-line in `HETEROGENEOUS_CHANNELS.md` — but it is now the binding constraint for the deep
-driver phase.
+Runtime HAL: the allocation-free, append-only direct hook ABI now exists in
+`runtime/c/bcir_runtime_channel.{h,c}` with open/claim, offset-based map, submit,
+sync/cancel, event, and close plus a bounded resident loopback implementation. Modeled
+channels still have no hardware-resident driver; DMA/IRQ remain claims rather than
+device I/O, and there is still no `/dev` or BAR-mmap implementation. The first hardware
+driver must prove the direct lifetime and teardown contract before a Linux transport is
+added.
 
 ## 5. The ABI ledger (what is frozen today)
 
@@ -144,8 +145,9 @@ driver phase.
 4. **Q8 tier tables** — frozen LE blobs + `#embed` header, drift-gated.
 5. **Telemetry frame** BTLM v1 — 56-byte DataDNA records, CRC, resync-by-magic.
 
-No runtime version *negotiation* exists (frozen bytes + reject-newer is the policy) —
-adequate for artifacts; the MC8 hook vtable needs the same append-only discipline.
+Runtime hook compatibility uses `abi_version` plus `struct_size`: v1 rejects an
+incompatible major and gates append-only tail fields by size. Artifact formats retain
+their frozen-bytes/reject-newer policy.
 
 ---
 
@@ -160,7 +162,7 @@ adequate for artifacts; the MC8 hook vtable needs the same append-only disciplin
 | **MC5** | **CFG-aware planning (named boundary, not yet a build)** | Today the planner prices loops as one region with a static bound and never sees branches. Recording the options: (i) keep the boundary (dataflow stays the plan currency; branchy code is the emitter's job) — the standing position; (ii) conditional phase deps (a phase guarded by a predicate RID) — the smallest true extension, needed only when a driver blueprint demands *planned* divergent paths. Decide when a fixture forces it, not before. | L | Nothing today; revisit at the first branchy driver plan |
 | **MC6** | **HAM + semantic swap made real** | (a) Allocator consumes `Resource.priority` (today inert) as the tie-break/pinning input; (b) **swap as planned claims**: an eviction pass that mints `mem.move.*` (D-R3-priced, A2-descriptor-backed) when a hotter resource wants a full tier — the machinery all exists post-wave-13, it has never been composed; (c) HAM into placement (an access="ham" resource prefers the tier whose latency the log-model assumed). All measured-then-pinned like every cost feature. | M | Honest memory-strategy story; CXL-tier work later |
 | **MC7** | **Pack-level linking + symbol section** | Multi-pack compose: RID-band relocation (renumber with provenance), claim-id rebasing, a v4 append-only **symbol section** (name ↔ RID/claim map — today only TraceNotes tie ids to hashes). Enables multi-TU StreamPack programs and gives MC1's disassembler real names without the source module. | M | Multi-module deployment; whole-program packs |
-| **MC8** | **RuntimeChannel v2 — the HAL hook vtable (HAL→ABI migration)** | The V2 verdict made concrete: an append-only, versioned hook table on `RuntimeChannel` — `open/claim(device)`, `map(StridedView)→host view`, `submit(pack/segment)`, `sync/fence`, `event(source)→delivery` — with the POSIX backing (fd lifecycle, UIO/VFIO mmap, ioctl submit, eventfd/poll delivery, errno→`bcir_status` bridge) as the first implementation. Laws stay compile-time; hooks are runtime; probe results may **veto, never steer** (D-R1 holds at runtime too). Rig-gated pieces stay gated. | L | The deep-driver phase's runtime half; real DMA/IRQ |
+| **MC8** | **RuntimeChannel direct hook ABI; hardware binding next** | **Direct ABI landed:** append-only/versioned `open/claim`, offset-based `map`, `submit`, `sync/cancel`, `event`, `close`, generation handles, explicit bounded-ring policy, and a resident loopback baseline. **Remaining:** bind the first real driver in-process and prove ownership/teardown. Only then add an optional Linux adapter (`SOCK_SEQPACKET` control, `memfd` bounded bulk rings, `eventfd`/`epoll`) when isolation or sharing justifies it. | L | Real DMA/IRQ and transport parity |
 | **MC9** | **POSIX/Linux compat completion** | The remaining backward-compat items under MC8's umbrella: real UAPI header fixtures (today "uapi" exists only in docs — the named fixtures are CMSIS-style `uart_regs.h`/`cmsis_gpio.h`), `/dev` lifecycle, errno propagation, and the Linux-ABI conformance pins (LP64 matrix already frozen in R12). | M | Linux-resident deployments |
 
 **Reading order into the deep-driver phase**: MC1 → MC2 → MC3 (the tools the driver

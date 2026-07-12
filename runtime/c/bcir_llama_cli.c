@@ -7,6 +7,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void *cli_allocate(size_t size) {
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  return bcir_host_allocate(&allocator,size);
+}
+
+static void cli_deallocate(void *allocation) {
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  bcir_host_deallocate(&allocator,allocation);
+}
+
 static void usage(const char *argv0) {
   fprintf(stderr, "usage: %s --model FILE --prompt-ids I,J,... --max-new N "
                   "[--logits-out FILE]\n", argv0);
@@ -23,20 +33,20 @@ static int parse_prompt(const char *text, int32_t **out, size_t *count) {
   }
   text_size = strlen(text);
   if (n > SIZE_MAX / sizeof **out || text_size == SIZE_MAX) return -1;
-  *out = (int32_t *)malloc(n * sizeof **out);
-  copy = (char *)malloc(text_size + 1);
-  if (!*out || !copy) { free(*out); free(copy); return -1; }
+  *out = (int32_t *)cli_allocate(n * sizeof **out);
+  copy = (char *)cli_allocate(text_size + 1);
+  if (!*out || !copy) { cli_deallocate(*out); cli_deallocate(copy); return -1; }
   strcpy(copy, text); p = copy;
   while (*p) {
     errno = 0; value = strtol(p, &end, 10);
     if (errno || end == p || value < INT32_MIN || value > INT32_MAX ||
-        (*end && *end != ',')) { free(copy); free(*out); *out = NULL; return -1; }
+        (*end && *end != ',')) { cli_deallocate(copy); cli_deallocate(*out); *out = NULL; return -1; }
     (*out)[i++] = (int32_t)value;
     if (!*end) break;
     p = end + 1;
-    if (!*p) { free(copy); free(*out); *out = NULL; return -1; }
+    if (!*p) { cli_deallocate(copy); cli_deallocate(*out); *out = NULL; return -1; }
   }
-  free(copy); *count = i; return 0;
+  cli_deallocate(copy); *count = i; return 0;
 }
 
 static int write_f64_le(const char *path, const double *values, size_t count) {
@@ -54,7 +64,7 @@ static int write_f64_le(const char *path, const double *values, size_t count) {
 
 int main(int argc, char **argv) {
   const char *model_path = NULL, *prompt_text = NULL, *logits_path = NULL;
-  size_t max_new = 0, prompt_count = 0, i;
+  size_t max_new = 0, prompt_count = 0, i, generated_bytes, logits_bytes;
   int32_t *prompt = NULL, *generated = NULL;
   double *logits = NULL;
   bcir_q8_model model;
@@ -76,15 +86,15 @@ int main(int argc, char **argv) {
     usage(argv[0]); return 2;
   }
   if (bcir_q8_model_load(model_path, &model, error, sizeof error)) {
-    fprintf(stderr, "bcir-llama: %s\n", error); free(prompt); return 1;
+    fprintf(stderr, "bcir-llama: %s\n", error); cli_deallocate(prompt); return 1;
   }
-  if (max_new > SIZE_MAX / sizeof *generated ||
-      (size_t)model.vocab_size > SIZE_MAX / sizeof *logits) {
+  if (!bcir_size_mul(max_new,sizeof *generated,&generated_bytes) ||
+      !bcir_size_mul((size_t)model.vocab_size,sizeof *logits,&logits_bytes)) {
     fprintf(stderr, "bcir-llama: requested output is too large\n");
     rc = 1; goto done;
   }
-  generated = (int32_t *)malloc(max_new * sizeof *generated);
-  logits = (double *)malloc((size_t)model.vocab_size * sizeof *logits);
+  generated = (int32_t *)cli_allocate(generated_bytes);
+  logits = (double *)cli_allocate(logits_bytes);
   if (!generated || !logits) { fprintf(stderr, "bcir-llama: out of memory\n"); rc = 1; goto done; }
   rc = bcir_llama_generate_greedy(&model, prompt, prompt_count, max_new, generated, logits);
   if (rc) { fprintf(stderr, "bcir-llama: inference failed (%d)\n", rc); rc = 1; goto done; }
@@ -96,5 +106,6 @@ int main(int argc, char **argv) {
   }
   rc = 0;
 done:
-  free(logits); free(generated); free(prompt); bcir_q8_model_free(&model); return rc;
+  cli_deallocate(logits); cli_deallocate(generated); cli_deallocate(prompt);
+  bcir_q8_model_free(&model); return rc;
 }

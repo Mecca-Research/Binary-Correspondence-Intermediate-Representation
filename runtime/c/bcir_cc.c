@@ -32,6 +32,7 @@
 #include <string.h>
 
 #include "bcir_cfront.h"
+#include "bcir_host_alloc.h"
 #include "bcir_cpp.h"
 #include "bcir_hydrate.h"
 #include "bcir_plan.h"
@@ -174,7 +175,8 @@ static void dirof(const char *path, char *out, size_t cap) {
   const char *s = strrchr(path, '/'), *bs = strrchr(path, '\\');
   if (!s || (bs && bs > s)) s = bs;                 /* native Windows paths use backslashes */
   if (s) { size_t n = (size_t)(s - path); if (n == 0) n = 1; else if (n == 2 && path[1] == ':') n++;
-    if (n >= cap) n = cap - 1; memcpy(out, path, n); out[n] = 0; }
+    if (n >= cap) n = cap - 1;
+    memcpy(out, path, n); out[n] = 0; }
   else snprintf(out, cap, ".");
 }
 
@@ -182,24 +184,33 @@ static void dirof(const char *path, char *out, size_t cap) {
  * success, 1 when the path cannot be opened, and 2 on an allocation/read/close failure. */
 static int cc_read_file(const char *path, char **out) {
   FILE *fp=fopen(path,"rb");size_t cap=1u<<16,n=0;char *buf;
+  bcir_host_allocator allocator=bcir_host_allocator_default();
   *out=NULL;if(!fp)return 1;
-  buf=(char *)malloc(cap);if(!buf){fclose(fp);return 2;}
+  buf=(char *)bcir_host_allocate(&allocator,cap);if(!buf){fclose(fp);return 2;}
   for(;;){
     if(n==cap-1u){
-      if(cap>SIZE_MAX/2u){free(buf);fclose(fp);return 2;}
-      size_t nc=cap*2u;char *nb=(char *)realloc(buf,nc);
-      if(!nb){free(buf);fclose(fp);return 2;}buf=nb;cap=nc;
+      size_t minimum,nc;
+      if(!bcir_size_add(cap,1u,&minimum)||
+         !bcir_host_grow_capacity(cap,minimum,1u,&nc)||
+         !bcir_host_realloc_array(&allocator,(void **)&buf,cap,nc,1u,0)){
+        bcir_host_deallocate(&allocator,buf);fclose(fp);return 2;}
+      cap=nc;
     }
     size_t avail=cap-1u-n,got=fread(buf+n,1,avail,fp);n+=got;
     if(got<avail){
-      if(ferror(fp)){free(buf);fclose(fp);return 2;}
+      if(ferror(fp)){bcir_host_deallocate(&allocator,buf);fclose(fp);return 2;}
       if(feof(fp))break;
-      if(!got){free(buf);fclose(fp);return 2;}
+      if(!got){bcir_host_deallocate(&allocator,buf);fclose(fp);return 2;}
     }
   }
-  if(fclose(fp)){free(buf);return 2;}
-  if(memchr(buf,0,n)){free(buf);return 2;}             /* never compile only the prefix before an embedded NUL */
+  if(fclose(fp)){bcir_host_deallocate(&allocator,buf);return 2;}
+  if(memchr(buf,0,n)){bcir_host_deallocate(&allocator,buf);return 2;} /* never compile only the prefix before an embedded NUL */
   buf[n]=0;*out=buf;return 0;
+}
+
+static void cc_release_file(char *contents) {
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  bcir_host_deallocate(&allocator,contents);
 }
 
 /* a -D spec "NAME" / "NAME=val" -> the "name body" form bcir_cpp seeds ("NAME 1" / "NAME val"). */
@@ -304,7 +315,7 @@ int main(int argc, char **argv) {
 
     static char src[1 << 16], cpperr[256];
     int cpp_rc=bcir_cpp_run_ex(raw, path, dirs, ndirs, alldefs, nalldef, src, sizeof src, cpperr, sizeof cpperr);
-    free(raw);
+    cc_release_file(raw);
     if (cpp_rc) {
       /* --fallback: a construct outside the supported subset routes to the LLVM backend (rc 2),
        * the C twin of pipeline.compile_with_fallback (which classifies the rejecting phase). */

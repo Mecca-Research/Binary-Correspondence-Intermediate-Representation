@@ -13,6 +13,7 @@
 #include "bcir_verify.h"
 
 #include <limits.h>
+#include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -107,6 +108,10 @@ static const bcir_abi *bcir_abi_by_name(const char *name){
 typedef struct { char name[BCIR_CIR_NAME]; int assigned; int body; int addr; } mutent;
 
 typedef struct {
+  bcir_host_allocator allocator;
+  bcir_host_arena scratch;
+  jmp_buf failure_jump;
+  int jump_active;
   tok t[MAXTOK]; int nt, i;
   sdef *s; int ns, cap_s;         /* struct/union definitions (grown -- no fixed cap) */
   tdef *td; int ntd, cap_td;      /* typedef aliases (resolved at parse time) */
@@ -175,12 +180,45 @@ typedef struct {
  * The `_over` flag lets a caller bail with its own (typed) return value after a failed ENTER_REC. */
 #define ENTER_REC(c) (++(c)->depth > BCIR_MAXDEPTH ? (fail((c),"nesting too deep"), 1) : 0)
 #define LEAVE_REC(c) (--(c)->depth)
-/* Grow a CC parser-state array geometrically (no fixed cap), zeroing the fresh slots. On OOM the cap
- * is left unchanged, so the append guard (`n < cap`) stops -- a truncated unit the verifier catches. */
-#define CC_ENSURE(arr, n, cap) do { \
-  if((n) >= (cap)) { int _oc=(cap), _nc=(cap)?(cap)*2:8; void *_p=realloc((arr),(size_t)_nc*sizeof *(arr)); \
-    if(_p){ (arr)=_p; (cap)=_nc; \
-      memset((char *)(arr)+(size_t)_oc*sizeof *(arr), 0, (size_t)(_nc-_oc)*sizeof *(arr)); } } } while(0)
+/* Checked, two-phase growth. Failure leaves the original object intact and makes the
+ * translation fail; the public entry then destroys every partial result. */
+static void cc_raise_oom(CC *c) {
+  if(!c->failed){snprintf(c->err,sizeof c->err,"oom");c->failed=1;}
+  if(c->jump_active) longjmp(c->failure_jump,1);
+}
+
+static int cc_ensure(CC *c, void **allocation, int count, int *capacity, size_t element_size) {
+  size_t next;
+  if(count < *capacity) return 1;
+  if(count < 0 || !bcir_host_grow_capacity((size_t)*capacity,(size_t)count+1u,
+                                            element_size,&next) || next>(size_t)INT_MAX ||
+     !bcir_host_realloc_array(&c->allocator,allocation,(size_t)*capacity,next,
+                              element_size,1)){
+    cc_raise_oom(c);
+    return 0;
+  }
+  *capacity=(int)next;
+  return 1;
+}
+#define CC_ENSURE(c, arr, n, cap) \
+  cc_ensure((c),(void **)&(arr),(n),&(cap),sizeof *(arr))
+
+static int cc_ensure_size(CC *c, void **allocation, size_t count,
+                          size_t *capacity, size_t element_size,
+                          size_t initial_capacity) {
+  size_t next, minimum;
+  if(count < *capacity) return 1;
+  if(!bcir_size_add(count,1u,&minimum)) goto oom;
+  next=*capacity?*capacity:initial_capacity;
+  if(next<minimum && !bcir_host_grow_capacity(next,minimum,element_size,&next)) goto oom;
+  if(next<minimum || !bcir_host_realloc_array(&c->allocator,allocation,*capacity,next,
+                                               element_size,1)) goto oom;
+  *capacity=next;
+  return 1;
+oom:
+  cc_raise_oom(c);
+  return 0;
+}
 /* The active target ABI (defaults to the host LP64 model when the driver set none). */
 static const bcir_abi *cc_abi(const CC *c){ return c->abi ? c->abi : bcir_abi_host(); }
 
@@ -262,47 +300,32 @@ static int str_elem_size(const char *s, int n) {
 /* String-literal table (the C twin of the oracle's per-function string globals). It stores the full,
  * NUL-terminated spelling so the emitter can render references as the inline literal regardless of
  * length -- lifting the previous BCIR_CIR_NAME (32-byte) cap of carrying the spelling in the resource
- * name -- and so identical literals in a function share one global (dedup). Owned copies, reset per
- * compile. A host-tool concern only (the freestanding IR it emits never sees this). */
-#define BCIR_MAX_STRLITS 512
-typedef struct { uint32_t rid; char *s; const bcir_func *fn; } strent;
-static strent g_strtab[BCIR_MAX_STRLITS];
-static int g_nstr;
-
-static void strtab_reset(void) {
-  for (int k = 0; k < g_nstr; k++) { free(g_strtab[k].s); g_strtab[k].s = NULL; }
-  g_nstr = 0;
-}
+ * name -- and so identical literals in a function share one global (dedup). Copies live in the
+ * context's per-operation arena. A host-tool concern only (the freestanding IR never sees this). */
 /* The full spelling registered for a string-literal resource (by rid), or NULL if rid is not one. */
-static const char *strtab_lookup(uint32_t rid) {
-  for (int k = 0; k < g_nstr; k++) if (g_strtab[k].rid == rid) return g_strtab[k].s;
+static const char *strtab_lookup(const bcir_func *fn, uint32_t rid) {
+  for (int k = 0; k < fn->n_host_literals; k++)
+    if (fn->host_literals[k].rid == rid) return fn->host_literals[k].spelling;
   return NULL;
 }
 
 /* §5.12 recoverable extents (the C twin of LoweredFunc.ptr_extent): a pointer local bound to
  * malloc(N*sizeof(T)) / calloc(N, sizeof(T)) carries the RECOVERED element-count variable -- its `p[i]`
- * accesses promote to `masked` and emit `a[BCIR_CHK(rid, idx, <count var>, "func:ptr")]`. The map lives
- * on a file-static side table keyed by the OWNING function (whose pointer is stable from p_func through
- * emit_func) so the emitter (guard_idx, which only has a `const bcir_func *`) can read it back -- the
- * bcir_func struct carries no extra field. Reset per translation unit. */
-#define BCIR_MAX_PTREXT 256
-typedef struct { const bcir_func *fn; uint32_t ptr_rid; uint32_t cnt_rid; } ptrext_ent;
-static ptrext_ent g_ptrext[BCIR_MAX_PTREXT];
-static int g_nptrext;
-static void ptrext_reset(void) { g_nptrext = 0; }
-static void ptrext_set(const bcir_func *fn, uint32_t ptr_rid, uint32_t cnt_rid) {
-  for (int k = 0; k < g_nptrext; k++)                       /* an existing binding -> overwrite */
-    if (g_ptrext[k].fn == fn && g_ptrext[k].ptr_rid == ptr_rid) { g_ptrext[k].cnt_rid = cnt_rid; return; }
-  if (g_nptrext < BCIR_MAX_PTREXT) {
-    g_ptrext[g_nptrext].fn = fn; g_ptrext[g_nptrext].ptr_rid = ptr_rid;
-    g_ptrext[g_nptrext].cnt_rid = cnt_rid; g_nptrext++;
-  }
+ * accesses promote to `masked` and emit `a[BCIR_CHK(rid, idx, <count var>, "func:ptr")]`. The map is
+ * context-owned and keyed by the owning function. Reset per translation unit. */
+static void ptrext_set(CC *c, bcir_func *fn, uint32_t ptr_rid, uint32_t cnt_rid) {
+  for (int k = 0; k < fn->n_ptr_extents; k++)                 /* an existing binding -> overwrite */
+    if (fn->ptr_extents[k].ptr_rid == ptr_rid) { fn->ptr_extents[k].count_rid = cnt_rid; return; }
+  if(!CC_ENSURE(c,fn->ptr_extents,fn->n_ptr_extents,fn->cap_ptr_extents)) return;
+  fn->ptr_extents[fn->n_ptr_extents].ptr_rid = ptr_rid;
+  fn->ptr_extents[fn->n_ptr_extents].count_rid = cnt_rid;
+  fn->n_ptr_extents++;
 }
 /* The recovered count-variable rid bound to a pointer rid (in `fn`), or 0 if the pointer has no extent.
  * (A real rid is never 0 -- the allocator starts at 100 -- so 0 is an unambiguous "no binding".) */
 static uint32_t ptrext_get(const bcir_func *fn, uint32_t ptr_rid) {
-  for (int k = 0; k < g_nptrext; k++)
-    if (g_ptrext[k].fn == fn && g_ptrext[k].ptr_rid == ptr_rid) return g_ptrext[k].cnt_rid;
+  for (int k = 0; k < fn->n_ptr_extents; k++)
+    if (fn->ptr_extents[k].ptr_rid == ptr_rid) return fn->ptr_extents[k].count_rid;
   return 0;
 }
 
@@ -606,7 +629,7 @@ static int c23_attrs(CC *c,int *repro){
 static int p_struct_body(CC *c) {
   int is_union = is(c,"union");
   c->i++; int packed=0,aligned=0; attrs(c,&packed,&aligned);
-  CC_ENSURE(c->s, c->ns, c->cap_s);
+  CC_ENSURE(c, c->s, c->ns, c->cap_s);
   if(c->ns>=c->cap_s){ fail(c,"too many struct definitions"); return -1; }
   int my=c->ns++;                       /* claim our slot NOW: an inline aggregate member recurses into
                                          * p_struct_body and must take a LATER slot (and may realloc c->s). */
@@ -782,7 +805,7 @@ static void p_enum_body(CC *c){
   while(!is(c,"}")&&!c->failed){
     tok nm=adv(c);
     if(is(c,"=")){c->i++;val=ce_expr(c,0);}
-    CC_ENSURE(c->ec,c->nec,c->cap_ec);
+    CC_ENSURE(c,c->ec,c->nec,c->cap_ec);
     if(c->nec<c->cap_ec){idcpy(c->ec[c->nec].name,&nm);c->ec[c->nec].val=val;c->nec++;}
     val++;
     if(is(c,","))c->i++;
@@ -822,7 +845,7 @@ static void p_typedef(CC *c){
       bcir_ctype fp; memset(&fp,0,sizeof fp); fp.kind=3; fp.size=8; fp.signd=0; idcpy(fp.tag,&nm);
       fp.fp_ret_size=ty.size; fp.fp_ret_signd=(uint8_t)(ty.signd?1:0); fp.fp_ret_float=(uint8_t)(ty.is_float?1:0);
                                                          /* carry the funcptr's RETURN type via the typedef to every use */
-      CC_ENSURE(c->td,c->ntd,c->cap_td);
+      CC_ENSURE(c,c->td,c->ntd,c->cap_td);
       if(c->ntd<c->cap_td){idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=fp;c->td[c->ntd].sidx=-1;c->ntd++;}
       eat(c,";");
       return;
@@ -830,7 +853,7 @@ static void p_typedef(CC *c){
     c->i=save;                                         /* not a funcptr declarator */
   }
   tok nm=adv(c);                                      /* the alias name */
-  CC_ENSURE(c->td,c->ntd,c->cap_td);
+  CC_ENSURE(c,c->td,c->ntd,c->cap_td);
   if(c->ntd<c->cap_td){idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=ty;c->td[c->ntd].sidx=sidx;c->ntd++;}
   eat(c,";");
 }
@@ -838,10 +861,7 @@ static void p_typedef(CC *c){
 /* --- the IR builder ------------------------------------------------------ */
 static uint32_t add_res(CC *c, bcir_domain dom, int elem, int count, int vol, int kind, const char *nm) {
   bcir_func *f=c->fn;
-  if(f->n_res>=f->cap_res){                 /* grow geometrically -- no fixed resource ceiling */
-    size_t nc=f->cap_res?f->cap_res*2:16; bcir_resource *nr=realloc(f->res,nc*sizeof *nr);
-    if(!nr){fail(c,"oom");return 0;} f->res=nr; f->cap_res=nc;
-  }
+  if(!cc_ensure_size(c,(void **)&f->res,f->n_res,&f->cap_res,sizeof *f->res,16u)) return 0;
   bcir_resource *r=&f->res[f->n_res++]; memset(r,0,sizeof *r);   /* realloc slots are uninitialized */
   r->rid=c->rid++; r->domain=dom; r->elem_bytes=elem<1?1:elem; r->count=count<1?1:count;
   r->is_volatile=(uint8_t)vol; r->read_only=0; r->kind=(uint8_t)kind; r->agg[0]=0;
@@ -850,10 +870,8 @@ static uint32_t add_res(CC *c, bcir_domain dom, int elem, int count, int vol, in
 }
 static bcir_claim *new_claim(CC *c,const char *op,bcir_opcode opc) {
   bcir_func *f=c->fn;
-  if(f->n_claims>=f->cap_claims){           /* grow geometrically -- no fixed claim ceiling */
-    size_t nc=f->cap_claims?f->cap_claims*2:32; bcir_claim *ncl=realloc(f->claims,nc*sizeof *ncl);
-    if(!ncl){fail(c,"oom");return NULL;} f->claims=ncl; f->cap_claims=nc;
-  }
+  if(!cc_ensure_size(c,(void **)&f->claims,f->n_claims,&f->cap_claims,
+                     sizeof *f->claims,32u)) return NULL;
   bcir_claim *cl=&f->claims[f->n_claims++]; memset(cl,0,sizeof *cl);
   cl->id=c->cid++;cl->opcode=opc;cl->lane=BCIR_LANE_U;cl->stride=BCIR_STRIDE_SCALAR;cl->count=1;
   cl->domain=BCIR_DOM_RAM;cl->hazard=BCIR_HZ_UNIQUE;cl->bounds=BCIR_BND_STRICT;
@@ -950,9 +968,7 @@ static void lit_int_type(const char *s,int n,int *size,int *signd){
 /* record an R18 call-graph edge (callee name), growing the per-function call list on demand. */
 static void add_call(CC *c, const tok *name) {
   bcir_func *f=c->fn;
-  if(f->n_calls>=f->cap_calls){ int nc=f->cap_calls?f->cap_calls*2:8;
-    char (*np)[BCIR_CIR_NAME]=realloc(f->calls,(size_t)nc*sizeof *np);
-    if(!np){fail(c,"oom");return;} f->calls=np; f->cap_calls=nc; }
+  if(!CC_ENSURE(c,f->calls,f->n_calls,f->cap_calls)) return;
   idcpy(f->calls[f->n_calls++],name);
 }
 /* The floating size of the value in rid (4 float / 8 double), or 0 if it is not floating. Drives
@@ -963,20 +979,29 @@ static int rid_fsize(CC *c,uint32_t rid){
   return 0;
 }
 /* A string literal -> an anonymous read-only char[] global (decays to a pointer). Identical spellings
- * in the same function share one global (dedup). The full spelling is kept in g_strtab so the emit can
+ * in the same function share one resource (dedup). The full spelling is kept in result-owned metadata so emit can
  * inline it at any length; the resource name is just a short tag. */
 static uint32_t intern_string(CC *c, const char *s, int n) {
-  for (int k=0;k<g_nstr;k++)                                  /* dedup within the current function */
-    if (g_strtab[k].fn==c->fn && (int)strlen(g_strtab[k].s)==n && !memcmp(g_strtab[k].s,s,(size_t)n))
-      return g_strtab[k].rid;
+  size_t copy_size;
+  char *cp;
+  for (int k=0;k<c->fn->n_host_literals;k++)                   /* dedup within the current function */
+    if ((int)strlen(c->fn->host_literals[k].spelling)==n &&
+        !memcmp(c->fn->host_literals[k].spelling,s,(size_t)n))
+      return c->fn->host_literals[k].rid;
   int elem = str_elem_size(s,n);                              /* element width (wide/UTF prefix) */
   int nunits = str_bytes(s,n)+1;                              /* code units incl. the NUL */
-  char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"__str%d",g_nstr);
+  char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"__str%d",c->fn->n_host_literals);
   uint32_t rid = add_res(c,BCIR_DOM_RAM,elem,nunits,0,BCIR_RK_POINTER,nm);
   if (c->fn->n_res) c->fn->res[c->fn->n_res-1].read_only=1;   /* a read-only global */
-  if (g_nstr<BCIR_MAX_STRLITS) { char *cp=(char*)malloc((size_t)n+1);
-    if (cp){ memcpy(cp,s,(size_t)n); cp[n]=0;
-      g_strtab[g_nstr].rid=rid; g_strtab[g_nstr].s=cp; g_strtab[g_nstr].fn=c->fn; g_nstr++; } }
+  if(c->failed || n<0 || !bcir_size_add((size_t)n,1u,&copy_size) ||
+     !CC_ENSURE(c,c->fn->host_literals,c->fn->n_host_literals,
+                c->fn->cap_host_literals)) return rid;
+  cp=(char *)bcir_host_allocate(&c->allocator,copy_size);
+  if(!cp){cc_raise_oom(c);return rid;}
+  memcpy(cp,s,(size_t)n); cp[n]=0;
+  c->fn->host_literals[c->fn->n_host_literals].rid=rid;
+  c->fn->host_literals[c->fn->n_host_literals].spelling=cp;
+  c->fn->n_host_literals++;
   return rid;
 }
 static venv *lookup(CC *c,const tok *t){
@@ -1003,7 +1028,8 @@ static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defin
 static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx){
   size_t s_nres=c->fn->n_res, s_ncl=c->fn->n_claims;
   uint32_t s_rid=c->rid, s_cid=c->cid, s_clctr=c->cl_ctr;
-  int s_ncalls=c->fn->n_calls, s_nenv=c->nenv, s_nstr=g_nstr;
+  int s_ncalls=c->fn->n_calls, s_nenv=c->nenv;
+  int s_nstr=c->fn->n_host_literals;
   uint32_t v=p_expr(c);                                  /* parse + speculatively lower the operand */
   const bcir_resource *r=res_of(c->fn,v);                /* the produced value's type lives on its resource */
   memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1;
@@ -1030,7 +1056,12 @@ static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx){
   c->fn->n_res=s_nres; c->fn->n_claims=s_ncl;            /* roll the speculative emission fully back */
   c->rid=s_rid; c->cid=s_cid; c->cl_ctr=s_clctr;
   c->fn->n_calls=s_ncalls; c->nenv=s_nenv;
-  while(g_nstr>s_nstr){ g_nstr--; free(g_strtab[g_nstr].s); g_strtab[g_nstr].s=NULL; }
+  while(c->fn->n_host_literals>s_nstr){
+    c->fn->n_host_literals--;
+    bcir_host_deallocate(&c->allocator,
+                         c->fn->host_literals[c->fn->n_host_literals].spelling);
+    c->fn->host_literals[c->fn->n_host_literals].spelling=NULL;
+  }
   return c->failed;
 }
 /* The `_Generic` type identity (C11 §6.5.1.1, after lvalue/array decay; qualifiers ignored): int / int32_t
@@ -1476,12 +1507,12 @@ static void bind_extent(CC *c, uint32_t p_rid, const bcir_resource *pr, const to
   int pointee = (int)pr->elem_bytes;                        /* the pointee element size (`p_ct.of.size`) */
   int cstart, cend;
   uint32_t n_rid = recoverable_alloc(c, init_start, init_end, pointee, &cstart, &cend);
-  if (n_rid) { ptrext_set(c->fn, p_rid, n_rid); return; }   /* a STABLE integer-count Name -> bound BY NAME */
+  if (n_rid) { ptrext_set(c,c->fn, p_rid, n_rid); return; }   /* a STABLE integer-count Name -> bound BY NAME */
   if (cstart < 0) return;                                   /* not a recoverable alloc form at all */
   if (cend == cstart + 1 && c->t[cstart].k == T_ID) return; /* a (non-stable) bare Name -> by-name-or-nothing */
   if (!is_pure_range(c, cstart, cend)) return;              /* an impure expression count -> unmanaged */
   uint32_t ext = snapshot_extent(c, cstart, cend);          /* a pure EXPRESSION count -> SNAPSHOT it */
-  if (ext) ptrext_set(c->fn, p_rid, ext);
+  if (ext) ptrext_set(c,c->fn, p_rid, ext);
 }
 
 /* The bounds contract for an indexed access (§5.12 bounds-promotion). A LOCAL/STATIC array OBJECT -- whose
@@ -1498,7 +1529,7 @@ static bcir_bounds access_bnd(CC *c, uint32_t rid) {
    * any base with a small definite count > 1; the pointer extents (65536 / 1) are excluded here and the
    * recovered ones are masked via ptr_extent below. A string-LITERAL base stays assumed_safe (anonymous
    * read-only data -- the oracle excludes str_globals). */
-  if (r && r->count > 1 && r->count != (1u << 16) && !strtab_lookup(rid)) return BCIR_BND_MASKED;
+  if (r && r->count > 1 && r->count != (1u << 16) && !strtab_lookup(c->fn,rid)) return BCIR_BND_MASKED;
   if (ptrext_get(c->fn, rid)) return BCIR_BND_MASKED;   /* §5.12 a malloc/calloc pointer with a recovered count */
   return BCIR_BND_ASSUMED;
 }
@@ -2155,13 +2186,26 @@ static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordere
  * stay adjacent (separated by a space), so a hex/octal escape never merges with the next piece's
  * leading digit. Returns a malloc'd NUL-terminated buffer (caller frees); *out_n is its length. */
 static char *gather_strings(CC *c, tok first, int *out_n) {
-  int cap=first.n+16; char *buf=(char*)malloc((size_t)cap);
-  if(!buf){*out_n=0;return NULL;}
-  memcpy(buf,first.s,(size_t)first.n); int len=first.n;
-  while(isk(c,T_STR)){ tok nx=adv(c); int need=len+1+nx.n+1;
-    if(need>cap){ cap=need*2; char *nb=(char*)realloc(buf,(size_t)cap); if(!nb){free(buf);*out_n=0;return NULL;} buf=nb; }
+  size_t total, len;
+  int cursor;
+  char *buf;
+  if(first.n<0 || !bcir_size_add((size_t)first.n,1u,&total)){
+    cc_raise_oom(c);*out_n=0;return NULL;
+  }
+  cursor=c->i;
+  while(tat(c,cursor)->k==T_STR){
+    const tok *next=tat(c,cursor++);
+    if(next->n<0 || !bcir_size_add(total,(size_t)next->n,&total) ||
+       !bcir_size_add(total,1u,&total)){
+      cc_raise_oom(c);*out_n=0;return NULL;
+    }
+  }
+  buf=(char*)bcir_host_arena_allocate(&c->scratch,total,1u);
+  if(!buf){cc_raise_oom(c);*out_n=0;return NULL;}
+  memcpy(buf,first.s,(size_t)first.n); len=(size_t)first.n;
+  while(isk(c,T_STR)){ tok nx=adv(c);
     buf[len++]=' '; memcpy(buf+len,nx.s,(size_t)nx.n); len+=nx.n; }
-  buf[len]=0; *out_n=len; return buf;
+  buf[len]=0; *out_n=(int)len; return buf;
 }
 
 /* Apply postfix `.field` / `->field` (incl. nested `o.in.v`, a funcptr-member call `o->fn(args)`, a
@@ -2273,8 +2317,8 @@ static uint32_t p_primary(CC *c) {
   if(isk(c,T_STR)){     /* a string literal -> an anonymous read-only char[] global; value is a ptr */
     tok st=adv(c); uint32_t rid;
     if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn);   /* adjacent literals concatenate */
-      rid=intern_string(c, cb?cb:st.s, cb?cn:st.n); free(cb); }
-    else rid=intern_string(c,st.s,st.n);   /* full spelling kept in g_strtab; dedup; cap lifted */
+      rid=intern_string(c, cb?cb:st.s, cb?cn:st.n); }
+    else rid=intern_string(c,st.s,st.n);   /* full spelling kept in result-owned metadata; dedup; cap lifted */
     if(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]");
       venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type.size=1; sv.sidx=-1;
       return emit_index(c,&sv,ix); }
@@ -2303,7 +2347,7 @@ static uint32_t p_primary(CC *c) {
       int paren=0; if(is(c,"(")){c->i++;paren=1;}
       if(isk(c,T_STR)){ tok st=adv(c);                          /* sizeof a (possibly concatenated) literal */
         if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn); const char *sp=cb?cb:st.s; int sn=cb?cn:st.n;
-          size=(long long)(str_bytes(sp,sn)+1)*str_elem_size(sp,sn); free(cb); }
+          size=(long long)(str_bytes(sp,sn)+1)*str_elem_size(sp,sn); }
         else size=(long long)(str_bytes(st.s,st.n)+1)*str_elem_size(st.s,st.n); }   /* units incl. NUL × width */
       else if(isk(c,T_ID)){ tok vid=*pk(c); venv *v=lookup(c,&vid);
         int indexed = tok_is(tat(c,c->i+1),"[");   /* `sizeof a[0]` -- an element, NOT a bare name (stays static) */
@@ -2763,7 +2807,7 @@ static uint32_t p_cond(CC *c){
 
 /* --- statements + functions ---------------------------------------------- */
 static void env_add(CC *c,const tok *nm,uint32_t rid,const bcir_ctype *ty,int sidx){
-  CC_ENSURE(c->env,c->nenv,c->cap_env);
+  CC_ENSURE(c,c->env,c->nenv,c->cap_env);
   if(c->nenv>=c->cap_env)return; venv *v=&c->env[c->nenv++];
   idcpy(v->name,nm);v->rid=rid;v->type=*ty;v->sidx=sidx;
 }
@@ -3962,7 +4006,7 @@ static void p_stmt_inner(CC *c) {
           if(ty.is_bool) ar->is_bool=1; if(ty.is_plain_char) ar->is_plain_char=1; }
         { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext;vd->n_wr=1;vd->wr[0]=arid;} }
         env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
-        ptrext_set(c->fn,arid,ext);   /* §5.12 mask `a[i]` against the recovered runtime extent */
+        ptrext_set(c,c->fn,arid,ext);   /* §5.12 mask `a[i]` against the recovered runtime extent */
         if(is(c,",")){ c->i++; continue; }
         break;
       }
@@ -4002,7 +4046,7 @@ static void p_stmt_inner(CC *c) {
           if(ty.is_bool) ar->is_bool=1; if(ty.is_plain_char) ar->is_plain_char=1; }
         { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext_total;vd->n_wr=1;vd->wr[0]=arid;} }
         env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i][j]` indexes via emit_index */
-        ptrext_set(c->fn,arid,ext_total);   /* §5.12 mask `a[i][j]` against the recovered total runtime extent */
+        ptrext_set(c,c->fn,arid,ext_total);   /* §5.12 mask `a[i][j]` against the recovered total runtime extent */
         if(is(c,",")){ c->i++; continue; }
         break;
       }
@@ -4044,8 +4088,7 @@ static void p_stmt_inner(CC *c) {
       if(is_static){            /* static storage: a once-only constant init, baked into the decl */
         long long init=0; if(is(c,"=")){c->i++;init=ce_expr(c,0);}
         { bcir_func *f=c->fn;
-          if(f->n_statics>=f->cap_statics){ int nc=f->cap_statics?f->cap_statics*2:4;
-            bcir_static *ns=realloc(f->statics,(size_t)nc*sizeof *ns); if(ns){f->statics=ns;f->cap_statics=nc;} }
+          CC_ENSURE(c,f->statics,f->n_statics,f->cap_statics);
           if(f->n_statics<f->cap_statics){ idcpy(f->statics[f->n_statics].name,&nm);
             f->statics[f->n_statics].init=init; f->n_statics++; } }
       } else if(is(c,"=")){c->i++;
@@ -4312,11 +4355,13 @@ static uint32_t p_stmt_expr(CC *c){
   int last_end=-1;
   size_t snap_res=c->fn->n_res, snap_cl=c->fn->n_claims;
   uint32_t snap_rid=c->rid, snap_cid=c->cid, snap_clctr=c->cl_ctr;
-  int snap_ncalls=c->fn->n_calls, snap_nenv=c->nenv, snap_nstr=g_nstr;
+  int snap_ncalls=c->fn->n_calls, snap_nenv=c->nenv;
+  int snap_nstr=c->fn->n_host_literals;
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
     last_save=c->i;                      /* remember the start + the lowering state before each statement */
     snap_res=c->fn->n_res; snap_cl=c->fn->n_claims; snap_rid=c->rid; snap_cid=c->cid; snap_clctr=c->cl_ctr;
-    snap_ncalls=c->fn->n_calls; snap_nenv=c->nenv; snap_nstr=g_nstr;
+    snap_ncalls=c->fn->n_calls; snap_nenv=c->nenv;
+    snap_nstr=c->fn->n_host_literals;
     p_stmt(c); last_end=c->i;
   }
   /* is the LAST statement a VALUE expression statement (so the `({...})` yields it), or a statement-form
@@ -4335,7 +4380,12 @@ static uint32_t p_stmt_expr(CC *c){
   else {                                  /* a value: roll the LAST statement back and re-parse it as the expr */
     c->fn->n_res=snap_res; c->fn->n_claims=snap_cl; c->rid=snap_rid; c->cid=snap_cid; c->cl_ctr=snap_clctr;
     c->fn->n_calls=snap_ncalls; c->nenv=snap_nenv;
-    while(g_nstr>snap_nstr){ g_nstr--; free(g_strtab[g_nstr].s); g_strtab[g_nstr].s=NULL; }
+    while(c->fn->n_host_literals>snap_nstr){
+      c->fn->n_host_literals--;
+      bcir_host_deallocate(&c->allocator,
+                           c->fn->host_literals[c->fn->n_host_literals].spelling);
+      c->fn->host_literals[c->fn->n_host_literals].spelling=NULL;
+    }
     c->i=last_save;
     if(name_assign_ahead(c)){ fail(c,"assignment as a statement-expression value"); return temp(c,4); }
     /* ^ a BARE assignment terminal `({ a=b; })` falls back (matches the oracle): the `i++`/`++i` desugar
@@ -4469,8 +4519,7 @@ static int p_func(CC *c, bcir_func *fn) {
       }
     }
     env_add(c,&pn,rid,&ty,si);
-    if(fn->n_params>=fn->cap_params){ int nc=fn->cap_params?fn->cap_params*2:4;
-      bcir_param *np=realloc(fn->params,(size_t)nc*sizeof *np); if(np){fn->params=np;fn->cap_params=nc;} }
+    CC_ENSURE(c,fn->params,fn->n_params,fn->cap_params);
     if(fn->n_params<fn->cap_params){bcir_param *pp=&fn->params[fn->n_params++]; memset(pp,0,sizeof *pp);
       idcpy(pp->name,&pn);pp->rid=rid;pp->type=ty;}
     if(is(c,",")){c->i++;continue;} break;
@@ -4481,9 +4530,7 @@ static int p_func(CC *c, bcir_func *fn) {
     * resolves. A same-unit definition WINS: the unit-end rewrite in bcir_cfront_compile_target turns
     * its tu-calls back into ordinary R18 edges. Returns 2 (the unit loop discards the scratch fn). */
     c->i++;
-    if(c->n_protos>=c->cap_protos){ int nc=c->cap_protos?c->cap_protos*2:8;
-      void *np=realloc(c->protos,(size_t)nc*sizeof *c->protos);
-      if(!np){fail(c,"oom");return 1;} c->protos=np; c->cap_protos=nc; }
+    if(!CC_ENSURE(c,c->protos,c->n_protos,c->cap_protos)) return 1;
     snprintf(c->protos[c->n_protos].name,BCIR_CIR_NAME,"%s",fn->name);
     c->protos[c->n_protos].ret=fn->ret; c->n_protos++;
     char rets[64]; ctype_str(&fn->ret,rets,sizeof rets);
@@ -4507,7 +4554,7 @@ static int p_func(CC *c, bcir_func *fn) {
     * gate, evaluated now that scan_mutations has populated the mutation table). A mutated-size param stays
     * assumed_safe -- matching the oracle so the BCIR_CHK count is identical. */
     if(mut_body(c,&c->vlaext[k].cnt_tok)==0 && !mut_addr(c,&c->vlaext[k].cnt_tok))
-      ptrext_set(c->fn,c->vlaext[k].ptr_rid,c->vlaext[k].cnt_rid);
+      ptrext_set(c,c->fn,c->vlaext[k].ptr_rid,c->vlaext[k].cnt_rid);
   }
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed) p_stmt(c);
   eat(c,"}");
@@ -4580,7 +4627,7 @@ static const char *uniq_local(const bcir_func *f,uint32_t rid,char *buf){
   snprintf(buf,BCIR_CIR_NAME,"%s",r->name); return buf;
 }
 static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
-  const char *lit=strtab_lookup(rid);                /* a string literal -> its full spelling, inline */
+  const char *lit=strtab_lookup(f,rid);              /* a string literal -> its full spelling, inline */
   if(lit) return lit;                                /* (returned directly, so length is not capped) */
   return uniq_local(f,rid,buf);                      /* a named local (disambiguated) / a `t<rid>` temp */
 }
@@ -4588,17 +4635,21 @@ static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
  * scalar's true fixed-width type from its (width, signedness) -- so the backend does signed-vs-unsigned
  * and width-correct arithmetic (the old flat uint32 model did not). Non-scalar temps (pointer / address
  * paths) stay uint32 here; their declaration goes through the pointee type. */
-/* A short rotating-buffer pool for type spellings that must format a number (`_BitInt(N)`), so a single
- * statement that mentions a couple of `_BitInt` types each get a stable string. (4 slots: more than any
- * one emitted statement needs.) */
-static const char *bitint_spelling(int bit_width,int signd){
-  static char ring[4][24]; static int rr=0; char *b=ring[rr++&3];
-  snprintf(b,sizeof ring[0],"%s_BitInt(%d)",signd?"":"unsigned ",bit_width); return b; }
-static const char *tty(const bcir_func *f,uint32_t rid){
+/* Type-spelling scratch belongs to one emission operation.  Four slots are
+ * enough for every currently emitted statement and avoid the old process-global
+ * rotating buffer, which made otherwise independent contexts race. */
+typedef struct bcir_emit_type_scratch {
+  char bitint_ring[4][24];
+  unsigned next;
+} bcir_emit_type_scratch;
+static const char *bitint_spelling(bcir_emit_type_scratch *scratch,int bit_width,int signd){
+  char *b=scratch->bitint_ring[scratch->next++&3u];
+  snprintf(b,sizeof scratch->bitint_ring[0],"%s_BitInt(%d)",signd?"":"unsigned ",bit_width); return b; }
+static const char *tty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32_t rid){
   const bcir_resource *r=res_of(f,rid);
   if(!r) return "uint32_t";
   if(r->is_valist) return "va_list";   /* a variadic cursor object -- opaque, declared `va_list ap;` */
-  if(r->bit_width>0) return bitint_spelling(r->bit_width,r->is_signed);   /* C23 `_BitInt(N)` -- faithful spelling */
+  if(r->bit_width>0) return bitint_spelling(scratch,r->bit_width,r->is_signed);   /* C23 `_BitInt(N)` -- faithful spelling */
   if(r->is_complex) return r->elem_bytes==8?"float _Complex":r->elem_bytes>16?"long double _Complex":"double _Complex";
   if(r->is_float) return r->elem_bytes==4?"float":r->elem_bytes>8?"long double":"double";   /* 16/12 -> long double */
   if(r->is_bool) return "_Bool";   /* a store into a bool object normalizes any nonzero to 1 (§6.3.1.2) */
@@ -4615,7 +4666,7 @@ static const char *tty(const bcir_func *f,uint32_t rid){
  * `<pointee> *` (the pointee width/sign/float/tag ride on the resource); for everything else it is the
  * scalar `tty`. Pointer types must be composed (not static strings), so it writes into a caller buffer
  * and returns it -- byte-identical to `tty` for non-pointers, so scalar emit is unchanged. */
-static const char *decl_ty(const bcir_func *f,uint32_t rid,char *buf,size_t n){
+static const char *decl_ty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32_t rid,char *buf,size_t n){
   const bcir_resource *r=res_of(f,rid);
   if(r && r->kind==BCIR_RK_POINTER){
     const char *base = r->is_voidptr ? "void"   /* a `void *` pointee (`&&L`, void-pointee local): no width/sign */
@@ -4626,7 +4677,7 @@ static const char *decl_ty(const bcir_func *f,uint32_t rid,char *buf,size_t n){
     char stars[BCIR_MAX_PTR_DEPTH+2]; int d=r->ptr_depth?r->ptr_depth:1, si=0;   /* depth `*`s: `T**` at depth 2 */
     stars[si++]=' '; for(int k=0;k<d;k++) stars[si++]='*'; stars[si]=0;
     snprintf(buf,n,"%s%s",base,stars);
-  } else snprintf(buf,n,"%s",tty(f,rid));
+  } else snprintf(buf,n,"%s",tty(scratch,f,rid));
   return buf;
 }
 /* The `&`-or-not prefix that turns a BASE resource into a `(char *)`-castable pointer (mirrors the oracle's
@@ -4686,6 +4737,7 @@ static const char *guard_idx(const bcir_func *f, const bcir_claim *cl, char *buf
 }
 static size_t emit_func(const bcir_func *f,char *o,size_t on){
   size_t w=0; char a[BCIR_CIR_NAME],b[BCIR_CIR_NAME],d[BCIR_CIR_NAME],e[BCIR_CIR_NAME],ty[64],tb[80],gb[192];
+  bcir_emit_type_scratch type_scratch={0};
   /* Clamp the OFFSET (never form o+w / on-w once the buffer is full) for every `snprintf(o+EO,on-EO,...)`
    * below -- the same memory-safety idiom the funcptr-typedef builder uses (see SIG_OFF above). Once
    * `w>=on`, `o+EO` is at most one-past-the-end (a legal pointer) and `on-EO` is 0, so snprintf writes
@@ -4711,10 +4763,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s %s%s;\n",r->agg,nm,r->zinit?" = {0}":"");
       else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->is_voidptr) w+=snprintf(o+EO,on-EO,"  void *%s[%u]%s;\n",nm,r->count,r->zinit?" = {0}":"");  /* an array of `void *` */
       else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->agg[0]&&!r->ptr_depth) w+=snprintf(o+EO,on-EO,"  %s %s[%u]%s;\n",r->agg,nm,r->count,r->zinit?" = {0}":"");  /* an ARRAY-OF-STRUCTS local `struct P a[N]` */
-      else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+EO,on-EO,"  %s %s[%u]%s;\n",tty(f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
+      else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+EO,on-EO,"  %s %s[%u]%s;\n",tty(&type_scratch,f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
       else if(r->kind==BCIR_RK_POINTER)               /* a pointer local: `T *p` (the pointee carries width/sign) */
-        w+=snprintf(o+EO,on-EO,"  %s%s;\n",decl_ty(f,r->rid,tb,sizeof tb),nm);
-      else w+=snprintf(o+EO,on-EO,"  %s %s;\n",tty(f,r->rid),nm);}}
+        w+=snprintf(o+EO,on-EO,"  %s%s;\n",decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm);
+      else w+=snprintf(o+EO,on-EO,"  %s %s;\n",tty(&type_scratch,f,r->rid),nm);}}
   int depth=1, lstk[BCIR_MAXDEPTH+1], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+EO,on-EO,"  "); }while(0)
   for(size_t i=0;i<f->n_claims;i++){const bcir_claim *cl=&f->claims[i];
@@ -4728,7 +4780,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.cont.tgt")){IND();w+=snprintf(o+EO,on-EO,"__cont_%d: ;\n",nls?lstk[nls-1]:0);continue;}
     if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");if(nls)nls--;continue;}
     if(!strcmp(cl->op,"c.vladecl")){IND();   /* a 1-D stack VLA, declared IN-BODY: `<elem> a[__bcir_extK];` */
-      w+=snprintf(o+EO,on-EO,"%s %s[%s];\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],a),rname(f,cl->rd[0],b));continue;}
+      w+=snprintf(o+EO,on-EO,"%s %s[%s];\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],a),rname(f,cl->rd[0],b));continue;}
     if(!strcmp(cl->op,"c.ptradd")){IND();w+=snprintf(o+EO,on-EO,"%s += %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p += n */
     if(!strcmp(cl->op,"c.ptrsub")){IND();w+=snprintf(o+EO,on-EO,"%s -= %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p -= n */
     if(!strcmp(cl->op,"c.break")){IND();w+=snprintf(o+EO,on-EO,"break;\n");continue;}
@@ -4745,25 +4797,25 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else w+=snprintf(o+EO,on-EO,"return;\n");continue;}
     IND();
     if(!strncmp(cl->op,"c.bin.",6))                       /* decl_ty: a pointer result (`p + i`) declares `T *t` */
-      w+=snprintf(o+EO,on-EO,"%s %s = %s %s %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
+      w+=snprintf(o+EO,on-EO,"%s %s = %s %s %s;\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),binop_c(cl->op+6),rname(f,cl->rd[1],b));
     else if(!strncmp(cl->op,"c.labeladdr:",12))            /* `&&L` -- a label's address as a `void *` (GNU) */
-      w+=snprintf(o+EO,on-EO,"%s %s = &&%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),cl->op+12);
+      w+=snprintf(o+EO,on-EO,"%s %s = &&%s;\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),cl->op+12);
     else if(!strncmp(cl->op,"c.fconst:",9))                /* a floating constant -> its literal spelling */
-      w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
+      w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
     else if(!strncmp(cl->op,"c.cconst:",9))                /* <complex.h> imaginary unit -> verbatim token */
-      w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
+      w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+9);
     else if(!strcmp(cl->op,"c.un.creal"))                  /* GNU __real__ z -- the real part (an element float) */
-      w+=snprintf(o+EO,on-EO,"%s %s = __real__ %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      w+=snprintf(o+EO,on-EO,"%s %s = __real__ %s;\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
     else if(!strcmp(cl->op,"c.un.cimag"))                  /* GNU __imag__ z -- the imaginary part */
-      w+=snprintf(o+EO,on-EO,"%s %s = __imag__ %s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      w+=snprintf(o+EO,on-EO,"%s %s = __imag__ %s;\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
     else if(!strncmp(cl->op,"c.un.",5))                    /* `-`/`~` keep the operand width (long stays 64) */
-      w+=snprintf(o+EO,on-EO,"%s %s = (%s%s);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
+      w+=snprintf(o+EO,on-EO,"%s %s = (%s%s);\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
     else if(!strncmp(cl->op,"c.cast:",7))                  /* (type)operand -- width / float / pointer cast */
-      w+=snprintf(o+EO,on-EO,"%s %s = (%s)%s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),cl->op+7,rname(f,cl->rd[0],a));  /* decl_ty: a pointer-snapshot cast keeps `T *` */
+      w+=snprintf(o+EO,on-EO,"%s %s = (%s)%s;\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),cl->op+7,rname(f,cl->rd[0],a));  /* decl_ty: a pointer-snapshot cast keeps `T *` */
     else if(!strcmp(cl->op,"c.select"))                    /* ternary: cond ? then : els -- the select's own
                                                             * (signed/unsigned) type, not a hardcoded
                                                             * uint32_t (see the c.const note below). */
-      w+=snprintf(o+EO,on-EO,"%s %s = (%s ? %s : %s);\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),
+      w+=snprintf(o+EO,on-EO,"%s %s = (%s ? %s : %s);\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),
                   rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
     else if(!strcmp(cl->op,"c.const")){
       /* declare the constant with its OWN type, not a hardcoded uint32_t: a bare integer literal (e.g.
@@ -4771,7 +4823,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
        * unsigned (`int32_t < uint32_t` -> unsigned) -- a miscompile. The literal's (width, signedness)
        * was already recorded on the temp (lit_int_type); render the matching type + suffix. */
       const bcir_resource *cr=res_of(f,cl->wr[0]); int cs=cr&&cr->is_signed;
-      w+=snprintf(o+EO,on-EO,"%s %s = %llu%s;\n",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),
+      w+=snprintf(o+EO,on-EO,"%s %s = %llu%s;\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),
                   (unsigned long long)cl->imm[0], cs?"":"u"); }
     else if(!strcmp(cl->op,"c.sizeof.vla"))                 /* runtime `sizeof a` of a VLA: extent × sizeof(elem).
                                                             * HARDCODE the literal `size_t` (NOT tty(), which
@@ -4781,7 +4833,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+EO,on-EO,"size_t %s = (size_t)((size_t)%s * %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),(long long)cl->imm[0]);
     else if(!strcmp(cl->op,"c.copy")){
       if(is_named_local(f,cl->wr[0])||is_global_ref(f,cl->wr[0])||is_param_ref(f,cl->wr[0])) w+=snprintf(o+EO,on-EO,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
-      else w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));   /* decl_ty: a copied pointer temp keeps `T *` */
+      else w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));   /* decl_ty: a copied pointer temp keeps `T *` */
     }else if(!strcmp(cl->op,"c.load")){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;
       if(cl->n_rd==2 && cl->n_imm){       /* s.arr[i] / a[i].f: load at base + off + idx*stride, copy `es` bytes */
@@ -4790,13 +4842,13 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         /* the temp carries the element's (width, signedness): memcpy es bytes into it so a signed sub-int
          * element reads sign-extended (the zero-extending uint32 form dropped the sign). */
         w+=snprintf(o+EO,on-EO,"%s %s; memcpy(&%s, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld);\n",
-          tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
-      else if(cl->n_rd==2) w+=snprintf(o+EO,on-EO,"%s %s = %s[%s];\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,0));  /* READ guard; decl_ty: an array-of-pointers element load is `T *` */
+          tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
+      else if(cl->n_rd==2) w+=snprintf(o+EO,on-EO,"%s %s = %s[%s];\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,0));  /* READ guard; decl_ty: an array-of-pointers element load is `T *` */
       else if(cl->domain==BCIR_DOM_MMIO)
         w+=snprintf(o+EO,on-EO,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
       else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
         /* a plain member load: memcpy fsz bytes into the typed temp so a signed sub-int member sign-extends */
-        w+=snprintf(o+EO,on-EO,"%s %s; memcpy(&%s, (const char *)%s%s + %lld, %lld);\n",decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz); }  /* decl_ty: a pointer member load is `T *t` */
+        w+=snprintf(o+EO,on-EO,"%s %s; memcpy(&%s, (const char *)%s%s + %lld, %lld);\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz); }  /* decl_ty: a pointer member load is `T *t` */
     }else if(!strcmp(cl->op,"c.store")&&cl->n_rd==3){   /* L3: array element store  a[idx] = value */
       if(cl->n_imm){                      /* s.arr[i]=v / a[i].f=v: store at base + off + idx*stride */
         const bcir_resource *br=res_of(f,cl->rd[0]); const char *amp=base_amp(br);
@@ -4842,7 +4894,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                       :flag==2?(vr&&vr->elem_bytes>4?"uint64_t":"uint32_t")   /* a bitfield UNIT: `_v` is the full
                        * unit type (may be wider than the `sz` bytes written -- a packed field spans <= 8 bytes
                        * into a uint64 unit but only its `sz` spanned bytes are memcpy'd back) */
-                      :(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(f,cl->rd[1],tb,sizeof tb)
+                      :(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(&type_scratch,f,cl->rd[1],tb,sizeof tb)
                       :(vr&&vr->is_complex)?(sz==8?"float _Complex":sz>16?"long double _Complex":"double _Complex")
                       :(vr&&vr->is_float)?(sz==4?"float":sz>8?"long double":"double")
                       :(sz==1?"uint8_t":sz==2?"uint16_t":sz==8?"uint64_t":"uint32_t");
@@ -4853,10 +4905,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(cl->n_imm>2&&cl->imm[2]){                       /* a signed bitfield: sign-extend from bit bw-1 */
         unsigned long long sbit=1ull<<(bw-1); const char *cast=wide?"int64_t":"int32_t";
         w+=snprintf(o+EO,on-EO,"%s %s = (%s)((((%s >> %lld) & %llu%s) ^ %llu%s) - %llu%s);\n",
-                    tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cast,rname(f,cl->rd[0],a),off,mask,sfx,sbit,sfx,sbit,sfx);
+                    tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),cast,rname(f,cl->rd[0],a),off,mask,sfx,sbit,sfx,sbit,sfx);
       } else
         w+=snprintf(o+EO,on-EO,"%s %s = (%s >> %lld) & %llu%s;\n",
-                    tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off,mask,sfx); }
+                    tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off,mask,sfx); }
     else if(!strcmp(cl->op,"c.bf.set")){          /* (old & ~(mask<<off)) | ((v & mask) << off) */
       long long off=cl->imm[0]; const bcir_resource *ur=res_of(f,cl->rd[0]); int wide=ur&&ur->elem_bytes>4;
       unsigned long long mask=cl->imm[1]>=64?~0ull:(1ull<<cl->imm[1])-1;
@@ -4884,7 +4936,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                     rname(f,cl->wr[0],d),fn+4,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
       else w+=snprintf(o+EO,on-EO,"uint32_t %s = atomic_%s(%s, %s);\n",rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
     else if(!strcmp(cl->op,"c.addrof")){           /* &lvalue -> a pointer value (decl_ty: `T *`, `T **`, ...) */
-      const char *pt=decl_ty(f,cl->wr[0],tb,sizeof tb);
+      const char *pt=decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb);
       const bcir_resource *br=res_of(f,cl->rd[0]);
       const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";   /* a pointer base decays (`(char*)s`), a value
                                                                  * / array base is addressed (`(char*)&s`) */
@@ -4897,7 +4949,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         w+=snprintf(o+EO,on-EO,"%s%s = &%s;\n",pt,rname(f,cl->wr[0],d),rname(f,cl->rd[0],a)); }
     else if(!strncmp(cl->op,"c.call.libm:",12)){   /* a <math.h> / <stdlib.h> call -> the real libc function */
       const bcir_resource *wr=res_of(f,cl->wr[0]);            /* an allocator returns `void *`, not a scalar */
-      const char *rty=(wr&&wr->kind==BCIR_RK_POINTER)?"void *":tty(f,cl->wr[0]);
+      const char *rty=(wr&&wr->kind==BCIR_RK_POINTER)?"void *":tty(&type_scratch,f,cl->wr[0]);
       w+=snprintf(o+EO,on-EO,"%s %s = %s(",rty,rname(f,cl->wr[0],d),cl->op+12);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+EO,on-EO,");\n"); }
@@ -4906,23 +4958,23 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.extern:",14)){  /* a printf/scanf-family external variadic -> verbatim */
-      w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+14);
+      w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+14);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.tu:",10)){      /* a PROTOTYPED cross-TU callee (Phase 3 linking):
                                                      * verbatim, external linkage -- the prelude declares
                                                      * it; the host LINKER resolves it */
       if(cl->n_wr==0) w+=snprintf(o+EO,on-EO,"%s(",cl->op+10);
-      else w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+10);
+      else w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+10);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.builtin:",15)){  /* a GCC/Clang integer builtin -> emitted verbatim */
-      w+=snprintf(o+EO,on-EO,"%s %s = __builtin_%s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+15);
+      w+=snprintf(o+EO,on-EO,"%s %s = __builtin_%s(",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+15);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.vaarg:",13)){   /* va_arg(ap, T) -- pull the next variadic argument */
       w+=snprintf(o+EO,on-EO,"%s %s = va_arg(%s, %s);\n",
-        decl_ty(f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),cl->op+13); }
+        decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),cl->op+13); }
     else if(!strncmp(cl->op,"c.call.vabuiltin:",17)){   /* va_start / va_end / va_copy -- emitted verbatim, void */
       w+=snprintf(o+EO,on-EO,"%s(",cl->op+17);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
@@ -4933,17 +4985,17 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call:",7)){
       const bcir_resource *rr=res_of(f,cl->wr[0]);   /* a struct/union RETURN declares `struct P t = bcir_..` */
-      const char *dty=(rr&&rr->kind==BCIR_RK_AGGREGATE&&rr->agg[0])?rr->agg:tty(f,cl->wr[0]);
+      const char *dty=(rr&&rr->kind==BCIR_RK_AGGREGATE&&rr->agg[0])?rr->agg:tty(&type_scratch,f,cl->wr[0]);
       w+=snprintf(o+EO,on-EO,"%s %s = bcir_%s(",dty,rname(f,cl->wr[0],d),cl->op+7);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strcmp(cl->op,"c.call.indirect")){    /* rd[0] is the function pointer; rd[1..] the args */
-      w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));  /* result typed by the funcptr's return */
+      w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));  /* result typed by the funcptr's return */
       for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k>1?", ":"",rname(f,cl->rd[k],b));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.imember:",15)){   /* o->fn(args): funcptr struct member */
       const char *sep=(cl->n_imm&&cl->imm[0])?"->":".";
-      w+=snprintf(o+EO,on-EO,"%s %s = %s%s%s(",tty(f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),sep,cl->op+15);  /* result typed by the funcptr's return */
+      w+=snprintf(o+EO,on-EO,"%s %s = %s%s%s(",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),sep,cl->op+15);  /* result typed by the funcptr's return */
       for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k>1?", ":"",rname(f,cl->rd[k],b));
       w+=snprintf(o+EO,on-EO,");\n"); }
   }
@@ -4998,74 +5050,157 @@ static void p_global(CC *c){
     else (void)ce_expr(c,0);
   }
   eat(c,";");
-  CC_ENSURE(c->gv, c->ngv, c->cap_gv);
+  CC_ENSURE(c, c->gv, c->ngv, c->cap_gv);
   if(c->ngv<c->cap_gv){ idcpy(c->gv[c->ngv].name,&nm); c->gv[c->ngv].ty=ty; c->gv[c->ngv].count=count; c->ngv++; }
 }
 
 /* --- public entry -------------------------------------------------------- */
-int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_result *out) {
-  static CC c;
-  /* `c` is a reused static: preserve the grown parser-state arrays across compiles (counts reset to
-   * 0 below, the buffers are reused + grown as needed) so we neither leak per compile nor re-allocate. */
-  sdef *sv_s=c.s; int sv_cs=c.cap_s; tdef *sv_td=c.td; int sv_ctd=c.cap_td;
-  econst *sv_ec=c.ec; int sv_cec=c.cap_ec; gvar *sv_gv=c.gv; int sv_cgv=c.cap_gv;
-  venv *sv_env=c.env; int sv_cenv=c.cap_env;
-  void *sv_pr=c.protos; int sv_cpr=c.cap_protos;   /* the prototype table survives the memset (reused) */
-  /* free any PRIOR unit before the entry memset zeroes out->unit.funcs: a reused `out` (a static result
-   * compiled again without an intervening bcir_cfront_free) would otherwise leak its previous function
-   * array + every per-func sub-array. bcir_cfront_free is a no-op on a zero-initialised out (funcs=NULL,
-   * n_funcs=0 -> free(NULL)), so this is safe on the first call. */
+static void cfront_free_func(const bcir_host_allocator *allocator, bcir_func *fn) {
+  if(!fn) return;
+  for(int i=0;i<fn->n_host_literals;i++)
+    bcir_host_deallocate(allocator,fn->host_literals[i].spelling);
+  bcir_host_deallocate(allocator,fn->res);
+  bcir_host_deallocate(allocator,fn->claims);
+  bcir_host_deallocate(allocator,fn->params);
+  bcir_host_deallocate(allocator,fn->calls);
+  bcir_host_deallocate(allocator,fn->statics);
+  bcir_host_deallocate(allocator,fn->host_literals);
+  bcir_host_deallocate(allocator,fn->ptr_extents);
+  memset(fn,0,sizeof *fn);
+}
+
+void bcir_cfront_result_init(bcir_cfront_result *out) {
+  if(out) memset(out,0,sizeof *out);
+}
+
+int bcir_cfront_context_init(bcir_cfront_context *context,
+                             const bcir_host_allocator *allocator) {
+  bcir_host_allocator selected;
+  CC *state;
+  if(!context) return 1;
+  memset(context,0,sizeof *context);
+  selected=bcir_host_allocator_or_default(allocator);
+  state=(CC *)bcir_host_allocate(&selected,sizeof *state);
+  if(!state) return 1;
+  memset(state,0,sizeof *state);
+  state->allocator=selected;
+  (void)bcir_host_arena_init(&state->scratch,&selected,16384u);
+  context->allocator=selected;
+  context->state=state;
+  return 0;
+}
+
+void bcir_cfront_context_reset(bcir_cfront_context *context) {
+  CC *c;
+  bcir_host_allocator allocator;
+  bcir_host_arena scratch;
+  sdef *s; tdef *td; econst *ec; gvar *gv; venv *env; void *protos;
+  int cap_s,cap_td,cap_ec,cap_gv,cap_env,cap_protos;
+  if(!context||!context->state) return;
+  c=(CC *)context->state;
+  bcir_host_arena_reset(&c->scratch);
+  allocator=c->allocator; scratch=c->scratch;
+  s=c->s;cap_s=c->cap_s;td=c->td;cap_td=c->cap_td;ec=c->ec;cap_ec=c->cap_ec;
+  gv=c->gv;cap_gv=c->cap_gv;env=c->env;cap_env=c->cap_env;
+  protos=c->protos;cap_protos=c->cap_protos;
+  memset(c,0,sizeof *c);
+  c->allocator=allocator;c->scratch=scratch;
+  c->s=s;c->cap_s=cap_s;c->td=td;c->cap_td=cap_td;c->ec=ec;c->cap_ec=cap_ec;
+  c->gv=gv;c->cap_gv=cap_gv;c->env=env;c->cap_env=cap_env;
+  c->protos=protos;c->cap_protos=cap_protos;
+}
+
+void bcir_cfront_context_destroy(bcir_cfront_context *context) {
+  CC *c;
+  bcir_host_allocator allocator;
+  if(!context||!context->state){if(context)memset(context,0,sizeof *context);return;}
+  c=(CC *)context->state; allocator=c->allocator;
+  bcir_host_arena_destroy(&c->scratch);
+  bcir_host_deallocate(&allocator,c->s);bcir_host_deallocate(&allocator,c->td);
+  bcir_host_deallocate(&allocator,c->ec);bcir_host_deallocate(&allocator,c->gv);
+  bcir_host_deallocate(&allocator,c->env);bcir_host_deallocate(&allocator,c->protos);
+  memset(c,0,sizeof *c);bcir_host_deallocate(&allocator,c);
+  memset(context,0,sizeof *context);
+}
+
+static int cfront_failure(bcir_cfront_context *context, bcir_cfront_result *out,
+                          const char *message) {
+  char diagnostic[sizeof out->diag];
+  snprintf(diagnostic,sizeof diagnostic,"%s",message&&message[0]?message:"compile failed");
+  if(context&&context->state)((CC *)context->state)->jump_active=0;
   bcir_cfront_free(out);
-  memset(&c,0,sizeof c); memset(out,0,sizeof *out);
-  c.s=sv_s; c.cap_s=sv_cs; c.td=sv_td; c.cap_td=sv_ctd; c.ec=sv_ec; c.cap_ec=sv_cec;
-  c.gv=sv_gv; c.cap_gv=sv_cgv; c.env=sv_env; c.cap_env=sv_cenv;
-  c.protos=sv_pr; c.cap_protos=sv_cpr;              /* n_protos stays 0 from the memset (fresh unit) */
-  c.abi = bcir_abi_by_name(target);     /* the target data model (NULL name -> host LP64) */
-  if(!c.abi){ snprintf(out->diag,sizeof out->diag,"unknown target '%s'",target?target:""); return 1; }
-  c.rid=100; c.cid=1000; c.unit=&out->unit;
-  strtab_reset();                       /* fresh string-literal table per translation unit */
-  ptrext_reset();                       /* fresh §5.12 ptr_extent map per translation unit */
-  lex(&c,src);
-  if(c.tok_overflow){                     /* Bug B: more than MAXTOK tokens -> a clean fail (fallback), NOT
+  out->ok=0;out->emitted_ok=0;out->emitted[0]=0;
+  snprintf(out->diag,sizeof out->diag,"%s",diagnostic);
+  if(context&&context->state)
+    bcir_host_arena_reset(&((CC *)context->state)->scratch);
+  return 1;
+}
+
+int bcir_cfront_compile_target_context(bcir_cfront_context *context,
+                                       const char *src, const char *target,
+                                       bcir_cfront_result *out) {
+  CC *c;
+  if(!out) return 1;
+  if(!context||!context->state){
+    bcir_cfront_result_init(out);
+    snprintf(out->diag,sizeof out->diag,"uninitialized cfront context");
+    return 1;
+  }
+  bcir_cfront_free(out);
+  bcir_cfront_result_init(out);
+  bcir_cfront_context_reset(context);
+  c=(CC *)context->state;
+  out->_allocator=c->allocator;out->_owner_tag=0x42434652u;
+  if(!src) return cfront_failure(context,out,"invalid source");
+  c->abi = bcir_abi_by_name(target);     /* the target data model (NULL name -> host LP64) */
+  if(!c->abi){
+    char diagnostic[256];
+    snprintf(diagnostic,sizeof diagnostic,"unknown target '%s'",target?target:"");
+    return cfront_failure(context,out,diagnostic);
+  }
+  c->rid=100; c->cid=1000; c->unit=&out->unit;
+  if(setjmp(c->failure_jump)){
+    c->jump_active=0;
+    if(out->unit.funcs&&out->unit.n_funcs<out->unit.cap_funcs)
+      cfront_free_func(&c->allocator,&out->unit.funcs[out->unit.n_funcs]);
+    return cfront_failure(context,out,c->err);
+  }
+  c->jump_active=1;
+  lex(c,src);
+  if(c->tok_overflow){                     /* Bug B: more than MAXTOK tokens -> a clean fail (fallback), NOT
                                            * a silent truncation + partial mis-compile. The oracle has no
                                            * token cap but its recursion/size guards route the same oversized
                                            * input to fallback, so both rails agree (neither mis-compiles). */
-    snprintf(out->diag,sizeof out->diag,"input too large"); return 1; }
-  while(!isk(&c,T_END)&&!c.failed){       /* no fixed function ceiling -- the unit list grows */
+    return cfront_failure(context,out,"input too large"); }
+  while(!isk(c,T_END)&&!c->failed){       /* no fixed function ceiling -- the unit list grows */
     /* A1.3: a leading C23 `[[unsequenced]]`/`[[reproducible]]` (or any `[[...]]`) attribute precedes a
      * function/global. Consume it here and carry the value-neutral hint flag into the next p_func (the
      * emit drops it). No run -> repro stays 0, every existing item undisturbed. */
-    int lead_repro=0; c23_attrs(&c,&lead_repro);
-    if(c.failed) break;
-    if(try_top_decl(&c)) continue;       /* typedef / enum / struct|union defs, interleaved */
-    if(isk(&c,T_END)||c.failed) break;
-    if(looks_global(&c)){ p_global(&c); continue; }   /* a file-scope global (lookup table) */
-    if(out->unit.n_funcs>=out->unit.cap_funcs){       /* grow the function list geometrically */
-      int nc=out->unit.cap_funcs?out->unit.cap_funcs*2:8;
-      bcir_func *nf=realloc(out->unit.funcs,(size_t)nc*sizeof *nf);
-      if(!nf){snprintf(out->diag,sizeof out->diag,"oom");return 1;}
-      memset(nf+out->unit.cap_funcs,0,(size_t)(nc-out->unit.cap_funcs)*sizeof *nf);  /* fresh slots */
-      out->unit.funcs=nf; out->unit.cap_funcs=nc;     /* NB: grow only here, never during p_func */
-    }
+    int lead_repro=0; c23_attrs(c,&lead_repro);
+    if(c->failed) break;
+    if(try_top_decl(c)) continue;       /* typedef / enum / struct|union defs, interleaved */
+    if(isk(c,T_END)||c->failed) break;
+    if(looks_global(c)){ p_global(c); continue; }   /* a file-scope global (lookup table) */
+    if(!CC_ENSURE(c,out->unit.funcs,out->unit.n_funcs,out->unit.cap_funcs))
+      return cfront_failure(context,out,c->err);
     bcir_func *fn=&out->unit.funcs[out->unit.n_funcs]; /* res/claims/params/calls/statics grow lazily */
-    c.rid=100+out->unit.n_funcs*1000; c.cid=1000+out->unit.n_funcs*1000;
-    int pfr=p_func(&c,fn);
-    if(pfr==2){                             /* a PROTOTYPE: recorded in c.protos/c.tudefs, no function --
+    c->rid=100+out->unit.n_funcs*1000; c->cid=1000+out->unit.n_funcs*1000;
+    int pfr=p_func(c,fn);
+    if(pfr==2){                             /* a PROTOTYPE: recorded in c->protos/c->tudefs, no function --
                                              * discard the scratch fn (params were collected into it) */
-      free(fn->res); free(fn->claims); free(fn->params); free(fn->calls); free(fn->statics);
-      memset(fn,0,sizeof *fn);
+      cfront_free_func(&c->allocator,fn);
       continue;
     }
-    if(pfr){snprintf(out->diag,sizeof out->diag,"%s",c.err);
+    if(pfr){
       /* free the in-progress (uncounted) func's sub-arrays: it was never folded into n_funcs, so
        * bcir_cfront_free's `i<n_funcs` loop would never reach it -> a per-parse-failure leak. */
-      free(fn->res); free(fn->claims); free(fn->params); free(fn->calls); free(fn->statics);
-      memset(fn,0,sizeof *fn);
-      return 1;}
+      cfront_free_func(&c->allocator,fn);
+      return cfront_failure(context,out,c->err);
+    }
     fn->reproducible=(uint8_t)lead_repro;   /* the C23 hint consumed just above (A1.3); emit drops it */
     out->unit.n_funcs++;
   }
-  if(c.failed){snprintf(out->diag,sizeof out->diag,"%s",c.err);return 1;}
+  if(c->failed)return cfront_failure(context,out,c->err);
   /* Phase 3 linking, DEFINITION WINS: a call lowered `c.call.tu:` (its callee was only a prototype at
    * the call site -- the parser is single-pass) whose callee IS defined in this unit is an ordinary
    * in-unit call after all: rewrite the op back (`c.call:` / `c.call.void:` by result arity) and record
@@ -5080,20 +5215,21 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
       if(def<0) continue;                              /* genuinely cross-TU: the linker's job */
       char callee[BCIR_CIR_NAME]; snprintf(callee,sizeof callee,"%s",cl->op+10);
       snprintf(cl->op,sizeof cl->op,"%s%s",cl->n_wr?"c.call:":"c.call.void:",callee);
-      if(f->n_calls>=f->cap_calls){ int nc=f->cap_calls?f->cap_calls*2:8;
-        char (*np)[BCIR_CIR_NAME]=realloc(f->calls,(size_t)nc*sizeof *np);
-        if(!np){snprintf(out->diag,sizeof out->diag,"oom");return 1;} f->calls=np; f->cap_calls=nc; }
+      if(!CC_ENSURE(c,f->calls,f->n_calls,f->cap_calls))
+        return cfront_failure(context,out,c->err);
       snprintf(f->calls[f->n_calls++],BCIR_CIR_NAME,"%s",callee);
     }
   }
-  int emit_impossible=c.emit_overflow;
-  out->ok=bcir_verify_unit(&out->unit,out->diag,sizeof out->diag);
+  int emit_impossible=c->emit_overflow;
+  out->ok=bcir_verify_unit_with_allocator(&out->unit,out->diag,sizeof out->diag,&c->allocator);
+  if(!out->ok&&!strcmp(out->diag,"oom"))return cfront_failure(context,out,"oom");
   /* C.2 verified-C attestation: stamp the emitted C with its R-law status + R13 digest + the unit's
    * derived link flags (B1; so --emit-c is self-describing about what it links -- a comment, stripped
    * on re-parse). The link_flags line mirrors the oracle's C.2 attestation. */
   const bcir_func *entry = out->unit.n_funcs ? &out->unit.funcs[out->unit.n_funcs-1] : NULL;
   char lflags[256]; bcir_cfront_link_flags(&out->unit, lflags, sizeof lflags);
-  if(emit_impossible){out->emitted[0]=0;out->emitted_ok=0;return 0;}
+  if(emit_impossible){out->emitted[0]=0;out->emitted_ok=0;
+    c->jump_active=0;bcir_host_arena_reset(&c->scratch);return 0;}
   const size_t emit_cap=sizeof out->emitted;
   int head_n=snprintf(out->emitted,emit_cap,
     "/* BCIR verified-C attestation (C.2) -- generated by bcir_cfront, do not edit.\n"
@@ -5105,46 +5241,80 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
     " *   link_flags  %s\n */\n",
     out->ok?"clean":"DIRTY", entry?(unsigned long long)bcir_provenance_digest(entry):0ull,
     lflags[0]?lflags:"-");
-  if(head_n<0){snprintf(out->diag,sizeof out->diag,"cannot render emitted C");return 1;}
+  if(head_n<0)return cfront_failure(context,out,"cannot render emitted C");
   size_t w=(size_t)head_n;
   #define EMIT_OFF (w<emit_cap?w:emit_cap)
-  if(c.fpdefs_w){                                      /* synthesized funcptr-param typedefs (prelude) */
-    int n=snprintf(out->emitted+EMIT_OFF,emit_cap-EMIT_OFF,"%.*s",(int)c.fpdefs_w,c.fpdefs);
-    if(n<0||SIZE_MAX-w<(size_t)n){snprintf(out->diag,sizeof out->diag,"cannot render emitted C");return 1;}
+  if(c->fpdefs_w){                                      /* synthesized funcptr-param typedefs (prelude) */
+    int n=snprintf(out->emitted+EMIT_OFF,emit_cap-EMIT_OFF,"%.*s",(int)c->fpdefs_w,c->fpdefs);
+    if(n<0||SIZE_MAX-w<(size_t)n)return cfront_failure(context,out,"cannot render emitted C");
     w+=(size_t)n;
   }
-  if(c.tudefs_w){                                      /* extern declarations for cross-TU callees */
-    int n=snprintf(out->emitted+EMIT_OFF,emit_cap-EMIT_OFF,"%.*s",(int)c.tudefs_w,c.tudefs);
-    if(n<0||SIZE_MAX-w<(size_t)n){snprintf(out->diag,sizeof out->diag,"cannot render emitted C");return 1;}
+  if(c->tudefs_w){                                      /* extern declarations for cross-TU callees */
+    int n=snprintf(out->emitted+EMIT_OFF,emit_cap-EMIT_OFF,"%.*s",(int)c->tudefs_w,c->tudefs);
+    if(n<0||SIZE_MAX-w<(size_t)n)return cfront_failure(context,out,"cannot render emitted C");
     w+=(size_t)n;
   }
   for(int i=0;i<out->unit.n_funcs;i++){
     size_t n=emit_func(&out->unit.funcs[i],out->emitted+EMIT_OFF,emit_cap-EMIT_OFF);
-    if(SIZE_MAX-w<n){snprintf(out->diag,sizeof out->diag,"cannot render emitted C");return 1;}
+    if(SIZE_MAX-w<n)return cfront_failure(context,out,"cannot render emitted C");
     w+=n;
     if(i+1<out->unit.n_funcs){
       int sep=snprintf(out->emitted+EMIT_OFF,emit_cap-EMIT_OFF,"\n");
-      if(sep<0||SIZE_MAX-w<(size_t)sep){snprintf(out->diag,sizeof out->diag,"cannot render emitted C");return 1;}
+      if(sep<0||SIZE_MAX-w<(size_t)sep)return cfront_failure(context,out,"cannot render emitted C");
       w+=(size_t)sep;
     }
   }
   #undef EMIT_OFF
-  if(w>=emit_cap){out->emitted[0]=0;out->emitted_ok=0;return 0;}
+  if(w>=emit_cap){out->emitted[0]=0;out->emitted_ok=0;
+    c->jump_active=0;bcir_host_arena_reset(&c->scratch);return 0;}
   out->emitted_ok=1;
+  c->jump_active=0;
+  bcir_host_arena_reset(&c->scratch);
   return 0;
+}
+
+void bcir_cfront_free(bcir_cfront_result *out){
+  bcir_host_allocator allocator;
+  if(!out)return;
+  if(out->_owner_tag!=0x42434652u||!bcir_host_allocator_valid(&out->_allocator)){
+    memset(out,0,sizeof *out);return;
+  }
+  allocator=out->_allocator;
+  for(int i=0;i<out->unit.n_funcs;i++)cfront_free_func(&allocator,&out->unit.funcs[i]);
+  bcir_host_deallocate(&allocator,out->unit.funcs);
+  memset(out,0,sizeof *out);
+}
+
+int bcir_cfront_compile_context(bcir_cfront_context *context, const char *src,
+                                bcir_cfront_result *out) {
+  return bcir_cfront_compile_target_context(context,src,NULL,out);
+}
+
+static bcir_cfront_context *cfront_legacy_context(bcir_cfront_result *out) {
+  static bcir_cfront_context context;
+  static int initialized;
+  if(!initialized){
+    if(bcir_cfront_context_init(&context,NULL)){
+      if(out){bcir_cfront_result_init(out);snprintf(out->diag,sizeof out->diag,"oom");}
+      return NULL;
+    }
+    initialized=1;
+  }
+  return &context;
+}
+
+int bcir_cfront_compile_target(const char *src, const char *target,
+                               bcir_cfront_result *out) {
+  bcir_cfront_result_init(out);
+  bcir_cfront_context *context=cfront_legacy_context(out);
+  return context?bcir_cfront_compile_target_context(context,src,target,out):1;
 }
 
 /* The host-ABI entry (the default target): byte-identical to the layout before --target existed. */
 int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
-  return bcir_cfront_compile_target(src, NULL, out);
-}
-
-void bcir_cfront_free(bcir_cfront_result *out){
-  if(!out)return;
-  for(int i=0;i<out->unit.n_funcs;i++){ bcir_func *f=&out->unit.funcs[i];
-    free(f->res); free(f->claims); free(f->params); free(f->calls); free(f->statics); }
-  free(out->unit.funcs);
-  out->unit.funcs=NULL; out->unit.n_funcs=0; out->unit.cap_funcs=0;
+  bcir_cfront_result_init(out);
+  bcir_cfront_context *context=cfront_legacy_context(out);
+  return context?bcir_cfront_compile_context(context,src,out):1;
 }
 
 void bcir_cfront_summary(const bcir_unit *u,int ok,char *buf,size_t n){
@@ -5221,20 +5391,31 @@ static void vn_base(const char *op, char *out){
   snprintf(out,BCIR_CIR_NAME,"%s",op);
 }
 
-/* strdup is C23/POSIX, not C11 -- under the documented -std=c11 fallback build an implicit
- * declaration would truncate the returned pointer (and the later free() crashes). Local twin. */
-static char *vn_strdup(const char *s){
-  size_t z=strlen(s);if(z==SIZE_MAX)return NULL;size_t n=z+1;
-  char *r=malloc(n); if(r)memcpy(r,s,n); return r;
+static void *vn_alloc(bcir_host_arena *arena,size_t count,size_t element_size,int zero){
+  size_t bytes;void *result;
+  if(!bcir_size_mul(count,element_size,&bytes))return NULL;
+  result=bcir_host_arena_allocate(arena,bytes?bytes:1u,0u);
+  if(result&&zero)memset(result,0,bytes?bytes:1u);
+  return result;
+}
+
+/* Operation-arena string duplicate. Canonicalization has no independently
+ * owned scratch allocations; the complete arena is reset after each function. */
+static char *vn_strdup(bcir_host_arena *arena,const char *s){
+  size_t z=strlen(s),n;char *r;
+  if(!bcir_size_add(z,1u,&n))return NULL;
+  r=(char *)bcir_host_arena_allocate(arena,n,1u);if(r)memcpy(r,s,n);return r;
 }
 
 /* a small growable byte string (the per-function record buffer + the value-number scratch). */
-typedef struct { char *s; size_t n, cap; } sbuf;
+typedef struct { char *s; size_t n, cap; bcir_host_arena *arena; } sbuf;
+static sbuf sbuf_for(bcir_host_arena *arena){sbuf b={NULL,0,0,arena};return b;}
 static void sb_add(sbuf *b, const char *p, size_t k){
   if(!p||b->n==SIZE_MAX||k>SIZE_MAX-b->n-1)return;size_t need=b->n+k+1;
   if(need>b->cap){ size_t nc=b->cap?b->cap:256;
     while(nc<need){if(nc>SIZE_MAX/2){nc=need;break;}nc*=2;}
-    char *r=realloc(b->s,nc); if(!r)return; b->s=r; b->cap=nc; }
+    char *r=(char *)bcir_host_arena_allocate(b->arena,nc,1u);if(!r)return;
+    if(b->s&&b->n)memcpy(r,b->s,b->n);b->s=r;b->cap=nc; }
   memcpy(b->s+b->n,p,k); b->n+=k; b->s[b->n]=0;
 }
 static void sb_str(sbuf *b,const char *s){ if(s)sb_add(b,s,strlen(s)); }
@@ -5272,6 +5453,7 @@ typedef struct {
   int *wclaim;          /* parallel to a rid list: index of the first writer claim, or -1 */
   uint32_t *wrid; int nw;
   char **memo;          /* memo[claim] -> its value-number string (lazily built), or NULL */
+  bcir_host_arena *arena;
 } vnctx;
 static int writer_of(vnctx *v, uint32_t rid){
   for(int k=0;k<v->nw;k++) if(v->wrid[k]==rid) return v->wclaim[k]; return -1;
@@ -5281,18 +5463,17 @@ static void vn_of(vnctx *v, uint32_t rid, int depth, sbuf *out);
 static void vn_claim(vnctx *v, int ci, int depth, sbuf *out){
   if(v->memo[ci]){ sb_str(out,v->memo[ci]); return; }
   if(depth>BCIR_VN_MAXDEPTH){ sb_str(out,"cyc"); return; }
-  v->memo[ci]=vn_strdup("cyc");                 /* cycle guard: a loop-carried rid resolves to "cyc" */
+  v->memo[ci]=vn_strdup(v->arena,"cyc");        /* cycle guard: a loop-carried rid resolves to "cyc" */
   const bcir_claim *cl=&v->f->claims[ci];
   char base[BCIR_CIR_NAME]; vn_base(cl->op,base);
   /* gather the vns of this claim's reads -- POSITIONAL, except sorted for a commutative op */
   char *parts[BCIR_CLAIM_MAX_RD]; sbuf ps[BCIR_CLAIM_MAX_RD]; int np=cl->n_rd;
-  for(int k=0;k<np;k++){ ps[k]=(sbuf){0,0,0}; vn_of(v,cl->rd[k],depth+1,&ps[k]); parts[k]=ps[k].s?ps[k].s:(char*)""; }
+  for(int k=0;k<np;k++){ ps[k]=sbuf_for(v->arena); vn_of(v,cl->rd[k],depth+1,&ps[k]); parts[k]=ps[k].s?ps[k].s:(char*)""; }
   if(vn_commutative(base)) sort_strs(parts,np);
-  sbuf me={0,0,0}; sb_str(&me,base); sb_str(&me,"(");
+  sbuf me=sbuf_for(v->arena); sb_str(&me,base); sb_str(&me,"(");
   for(int k=0;k<np;k++){ if(k)sb_str(&me,","); sb_str(&me,parts[k]); }
   sb_str(&me,")");
-  for(int k=0;k<np;k++) free(ps[k].s);
-  free(v->memo[ci]); v->memo[ci]=me.s?me.s:vn_strdup("");
+  v->memo[ci]=me.s?me.s:vn_strdup(v->arena,"");
   sb_str(out,v->memo[ci]);
 }
 static void vn_of(vnctx *v, uint32_t rid, int depth, sbuf *out){
@@ -5309,19 +5490,21 @@ static void vn_of(vnctx *v, uint32_t rid, int depth, sbuf *out){
 /* Build the sorted multiset of per-claim dataflow records for one function; emit each, '\n'-joined.
  * Even a zero-real-claim function (e.g. `int read_a(void){ return a_global; }`) emits its OBSERVABLE-
  * OUTPUT anchor (ret=...|stores=...), exactly as the Python oracle does -- so the byte-identity holds. */
-static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t), void *ctx){
+static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t),
+                       void *ctx,bcir_host_arena *arena){
   if(!f||!emit)return;
   if(f->n_claims>(size_t)INT_MAX||f->n_claims>(SIZE_MAX-1)/(size_t)BCIR_CLAIM_MAX_WR){
     emit(ctx,"overflow\n",9);return;}
   /* index the non-NOP claims and the first-writer of each rid */
   int nc=0; for(size_t i=0;i<f->n_claims;i++) if(f->claims[i].opcode!=BCIR_OP_NOP) nc++;
   size_t maxw=f->n_claims*(size_t)BCIR_CLAIM_MAX_WR+1;   /* an upper bound on distinct written rids */
-  int *cidx=malloc((size_t)(nc?nc:1)*sizeof *cidx);   /* cidx[j] = original claim index of the j-th non-NOP */
-  vnctx v={f,NULL,NULL,0,NULL};
-  v.wclaim=malloc(maxw*sizeof(int)); v.wrid=malloc(maxw*sizeof(uint32_t));
-  v.memo=calloc(f->n_claims?f->n_claims:1,sizeof(char*));
+  int *cidx=(int *)vn_alloc(arena,(size_t)(nc?nc:1),sizeof *cidx,0);   /* cidx[j] = original claim index of the j-th non-NOP */
+  vnctx v={f,NULL,NULL,0,NULL,arena};
+  v.wclaim=(int *)vn_alloc(arena,maxw,sizeof(int),0);
+  v.wrid=(uint32_t *)vn_alloc(arena,maxw,sizeof(uint32_t),0);
+  v.memo=(char **)vn_alloc(arena,f->n_claims?f->n_claims:1,sizeof(char*),1);
   if(!cidx||!v.wclaim||!v.wrid||!v.memo){
-    free(cidx);free(v.wclaim);free(v.wrid);free(v.memo);emit(ctx,"oom\n",4);return;}
+    emit(ctx,"oom\n",4);return;}
   /* NB: vn indexes by ORIGINAL claim index (so memo/writer reference the real claim array). */
   int j=0;
   for(size_t i=0;i<f->n_claims;i++){ const bcir_claim *cl=&f->claims[i];
@@ -5330,14 +5513,14 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
       for(int m=0;m<v.nw;m++) if(v.wrid[m]==rid){seen=1;break;}
       if(!seen){ v.wrid[v.nw]=rid; v.wclaim[v.nw]=(int)i; v.nw++; } } }
   /* build each non-NOP claim's record */
-  char **recs=malloc((size_t)nc*sizeof *recs);
-  if(nc&&!recs){free(v.memo);free(v.wclaim);free(v.wrid);free(cidx);emit(ctx,"oom\n",4);return;}
+  char **recs=(char **)vn_alloc(arena,(size_t)nc,sizeof *recs,0);
+  if(nc&&!recs){emit(ctx,"oom\n",4);return;}
   for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
     char base[BCIR_CIR_NAME]; vn_base(cl->op,base);
     char *parts[BCIR_CLAIM_MAX_RD]; sbuf ps[BCIR_CLAIM_MAX_RD]; int np=cl->n_rd;
-    for(int k=0;k<np;k++){ ps[k]=(sbuf){0,0,0}; vn_of(&v,cl->rd[k],0,&ps[k]); parts[k]=ps[k].s?ps[k].s:(char*)""; }
+    for(int k=0;k<np;k++){ ps[k]=sbuf_for(arena); vn_of(&v,cl->rd[k],0,&ps[k]); parts[k]=ps[k].s?ps[k].s:(char*)""; }
     if(vn_commutative(base)) sort_strs(parts,np);     /* commutative: sort; else POSITIONAL */
-    sbuf rec={0,0,0}; char nb[24];
+    sbuf rec=sbuf_for(arena); char nb[24];
     sb_str(&rec,base); sb_str(&rec,"|");
     int ol=snprintf(nb,sizeof nb,"%d",(int)cl->opcode); sb_add(&rec,nb,(size_t)ol); sb_str(&rec,"|");
     for(int k=0;k<np;k++){ if(k)sb_str(&rec,","); sb_str(&rec,parts[k]); }
@@ -5345,73 +5528,77 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
     vn_imm(cl,&rec);                                  /* the semantic imm (member offset / bitfield layout) */
     sb_str(&rec,"|");
     int dl=snprintf(nb,sizeof nb,"%d",(int)cl->domain); sb_add(&rec,nb,(size_t)dl);
-    for(int k=0;k<np;k++) free(ps[k].s);
-    recs[r]=rec.s?rec.s:vn_strdup("");
+    recs[r]=rec.s?rec.s:vn_strdup(arena,"");
   }
   sort_strs(recs,nc);
-  for(int r=0;r<nc;r++){ const char *rec=recs[r]?recs[r]:"";emit(ctx,rec,strlen(rec));emit(ctx,"\n",1);free(recs[r]); }
-  free(recs);
+  for(int r=0;r<nc;r++){ const char *rec=recs[r]?recs[r]:"";emit(ctx,rec,strlen(rec));emit(ctx,"\n",1); }
 
   /* The OBSERVABLE-OUTPUT anchor (LAST-writer VN -- a use observes the most-recent prior write, which
    * is what the emitted C returns/stores). It pins what the function OUTPUTS: the RETURN value's VN
    * (catches a sink-wr redirect that turns `return t` into `return (a+b)` though no per-claim record
    * changes) and the sorted STORE (dest-VN -> value-VN) pairs (catch a dead/store-target redirect).
    * last==first for a single-write rid, so the anchor stays cross-rail byte-identical. */
-  vnctx vl={f,NULL,NULL,0,NULL};
-  vl.wclaim=malloc(maxw*sizeof(int)); vl.wrid=malloc(maxw*sizeof(uint32_t));
-  vl.memo=calloc(f->n_claims?f->n_claims:1,sizeof(char*));
+  vnctx vl={f,NULL,NULL,0,NULL,arena};
+  vl.wclaim=(int *)vn_alloc(arena,maxw,sizeof(int),0);
+  vl.wrid=(uint32_t *)vn_alloc(arena,maxw,sizeof(uint32_t),0);
+  vl.memo=(char **)vn_alloc(arena,f->n_claims?f->n_claims:1,sizeof(char*),1);
   if(!vl.wclaim||!vl.wrid||!vl.memo){
-    free(vl.memo);free(vl.wclaim);free(vl.wrid);
-    for(size_t i=0;i<f->n_claims;i++)free(v.memo[i]);
-    free(v.memo);free(v.wclaim);free(v.wrid);free(cidx);emit(ctx,"oom\n",4);return;}
+    emit(ctx,"oom\n",4);return;}
   for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
     for(int k=0;k<cl->n_wr;k++){ uint32_t rid=cl->wr[k]; int slot=-1;
       for(int m=0;m<vl.nw;m++) if(vl.wrid[m]==rid){slot=m;break;}
       if(slot<0){ vl.wrid[vl.nw]=rid; vl.wclaim[vl.nw]=(int)i; vl.nw++; }
       else vl.wclaim[slot]=(int)i; } }                /* LAST writer wins (overwrite) */
-  sbuf anc={0,0,0}; sb_str(&anc,"ret=");
+  sbuf anc=sbuf_for(arena); sb_str(&anc,"ret=");
   if(f->has_return){ vn_of(&vl,f->return_rid,0,&anc); } else sb_str(&anc,"void");
   sb_str(&anc,"|stores=");
   /* collect store (dest->value) pairs, sorted */
   int nst=0; for(int r=0;r<nc;r++) if(!strcmp(f->claims[cidx[r]].op,"c.store")) nst++;
-  if(nst){ char **sp=calloc((size_t)nst,sizeof *sp); int si=0;
+  if(nst){ char **sp=(char **)vn_alloc(arena,(size_t)nst,sizeof *sp,1); int si=0;
     if(!sp)sb_str(&anc,"oom");
     else {
     for(int r=0;r<nc;r++){ const bcir_claim *cl=&f->claims[cidx[r]];
       if(strcmp(cl->op,"c.store")) continue;
-      sbuf s={0,0,0};
+      sbuf s=sbuf_for(arena);
       if(cl->n_rd){ vn_of(&vl,cl->rd[0],0,&s); sb_str(&s,"->"); vn_of(&vl,cl->rd[cl->n_rd-1],0,&s); }
       else sb_str(&s,"?->?");
-      sp[si++]=s.s?s.s:vn_strdup(""); }
+      sp[si++]=s.s?s.s:vn_strdup(arena,""); }
     sort_strs(sp,si);
-    for(int k=0;k<si;k++){ if(k)sb_str(&anc,";"); sb_str(&anc,sp[k]); free(sp[k]); }
-    free(sp);
+    for(int k=0;k<si;k++){ if(k)sb_str(&anc,";"); sb_str(&anc,sp[k]); }
     }
   }
-  emit(ctx,anc.s?anc.s:"ret=void|stores=",anc.s?strlen(anc.s):16); emit(ctx,"\n",1); free(anc.s);
-  for(size_t i=0;i<f->n_claims;i++) free(vl.memo[i]);
-  free(vl.memo); free(vl.wclaim); free(vl.wrid);
-
-  for(size_t i=0;i<f->n_claims;i++) free(v.memo[i]);
-  free(v.memo); free(v.wclaim); free(v.wrid); free(cidx);
+  emit(ctx,anc.s?anc.s:"ret=void|stores=",anc.s?strlen(anc.s):16); emit(ctx,"\n",1);
 }
 
 /* The shared canonical serializer: invokes emit(ctx, bytes, len) for each byte of the canon (so the
  * digest and the --canon text dump are GUARANTEED to be the same bytes). One '@' line per function. */
-static void canon_walk(const bcir_unit *u, void (*emit)(void*,const char*,size_t), void *ctx){
+static void canon_walk(const bcir_unit *u, void (*emit)(void*,const char*,size_t), void *ctx,
+                       const bcir_host_allocator *allocator){
+  bcir_host_arena arena;
   if(!u||!emit)return;
-  for(int fi=0;fi<u->n_funcs;fi++){ canon_func(&u->funcs[fi],emit,ctx); emit(ctx,"@\n",2); }
+  if(!bcir_host_arena_init(&arena,allocator,4096u)){emit(ctx,"oom\n",4);return;}
+  for(int fi=0;fi<u->n_funcs;fi++){
+    canon_func(&u->funcs[fi],emit,ctx,&arena);
+    bcir_host_arena_reset(&arena);
+    emit(ctx,"@\n",2);
+  }
+  bcir_host_arena_destroy(&arena);
 }
 
 typedef struct { uint64_t h; } fnv_ctx;
 static void fnv_emit(void *vc, const char *b, size_t n){
   fnv_ctx *c=vc; for(size_t i=0;i<n;i++) c->h=(c->h^(unsigned char)b[i])*1099511628211ull;
 }
-uint64_t bcir_cfront_digest(const bcir_unit *u){
+uint64_t bcir_cfront_digest_with_allocator(const bcir_unit *u,
+                                           const bcir_host_allocator *allocator){
   fnv_ctx c={1469598103934665603ull};            /* FNV-1a offset basis (== the Python _DIGEST_OFFSET) */
   if(!u)return c.h;
-  canon_walk(u,fnv_emit,&c);
+  canon_walk(u,fnv_emit,&c,allocator);
   return c.h;
+}
+uint64_t bcir_cfront_digest(const bcir_unit *u){
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  return bcir_cfront_digest_with_allocator(u,&allocator);
 }
 
 typedef struct { char *buf; size_t cap, w; } buf_ctx;
@@ -5420,10 +5607,15 @@ static void buf_emit(void *vc, const char *b, size_t n){
 }
 /* The raw canonical serialization the digest hashes (text, NOT hashed) -- the byte-identity proof
  * (the Python cfront_structural_canon must equal this byte-for-byte on the corpus). */
-void bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n){
+void bcir_cfront_canon_with_allocator(const bcir_unit *u,char *buf,size_t n,
+                                      const bcir_host_allocator *allocator){
   if(!buf||!n)return;
-  buf_ctx c={buf,n,0}; canon_walk(u,buf_emit,&c);
+  buf_ctx c={buf,n,0};canon_walk(u,buf_emit,&c,allocator);
   if(n) buf[c.w<n?c.w:n-1]=0;
+}
+void bcir_cfront_canon(const bcir_unit *u,char *buf,size_t n){
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  bcir_cfront_canon_with_allocator(u,buf,n,&allocator);
 }
 
 /* --- module-scope effect / commutation analysis (the C twin of pipeline own_footprint + commute) ---
@@ -5477,12 +5669,17 @@ static size_t fx_print_names(char *o,size_t cap,size_t w, char names[][BCIR_CIR_
   return w;
 }
 
-void bcir_cfront_effects(const bcir_unit *u, char *buf, size_t n){
+void bcir_cfront_effects_with_allocator(const bcir_unit *u,char *buf,size_t n,
+                                        const bcir_host_allocator *allocator){
+  bcir_host_arena arena;
   if(!buf||!n)return;buf[0]=0;if(!u)return;
+  if(!bcir_host_arena_init(&arena,allocator,1024u))return;
   char names[BCIR_FX_MAXG][BCIR_CIR_NAME]; int ng=fx_globals(u,names);
   int nf=u->n_funcs; size_t af=(size_t)(nf>0?nf:1);   /* per-function footprints (any number of funcs) */
-  uint64_t *frd=calloc(af,sizeof *frd), *fwr=calloc(af,sizeof *fwr); char *seen=calloc(af,1);
-  if(!frd||!fwr||!seen){ if(n)buf[0]=0; free(frd);free(fwr);free(seen); return; }
+  uint64_t *frd=(uint64_t *)vn_alloc(&arena,af,sizeof *frd,1);
+  uint64_t *fwr=(uint64_t *)vn_alloc(&arena,af,sizeof *fwr,1);
+  char *seen=(char *)vn_alloc(&arena,af,1u,1);
+  if(!frd||!fwr||!seen){buf[0]=0;bcir_host_arena_destroy(&arena);return;}
   for(int i=0;i<nf;i++){ memset(seen,0,af); uint64_t rd=0,wr=0; fx_fold(u,i,names,ng,&rd,&wr,seen); frd[i]=rd; fwr[i]=wr; }
   size_t w=0;
   for(int i=0;i<u->n_funcs;i++){
@@ -5497,5 +5694,9 @@ void bcir_cfront_effects(const bcir_unit *u, char *buf, size_t n){
     int conflict = (wa & (rb|wb)) || (wb & (ra|wa));      /* a writes b's footprint, or vice versa */
     w+=(size_t)snprintf(buf+w,w<n?n-w:0,"commute %s %s = %d\n",u->funcs[i].name,u->funcs[j].name,conflict?0:1);
   }
-  free(frd); free(fwr); free(seen);
+  bcir_host_arena_destroy(&arena);
+}
+void bcir_cfront_effects(const bcir_unit *u,char *buf,size_t n){
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  bcir_cfront_effects_with_allocator(u,buf,n,&allocator);
 }
