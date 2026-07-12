@@ -47,6 +47,8 @@ bcir_status bcir_sp_execute(const uint8_t *BCIR_RESTRICT data, size_t len,
   st = bcir_sp_verify_semantic(data, len, 0xFFFFFFFFu, 0xFFFFFFFFu);
   if (st != BCIR_OK)
     return st;
+  if (hdr.n_segments && (!scratch || !phases))
+    return BCIR_ERR_NOSPACE;
   if (scratch_cap < (size_t)hdr.n_segments)
     return BCIR_ERR_NOSPACE;
 

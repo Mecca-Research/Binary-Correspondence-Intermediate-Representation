@@ -137,19 +137,19 @@ PY
     echo "  FAIL: ${label} leak pass tripped LeakSanitizer (an error-path leak)"; fail=1
   fi
 
-  # ----- dedicated adversarial fixtures: pin the specific Bug 1 (env-realloc UAF) + Bug 2 (sig[512]
-  # snprintf-accumulation overflow) regressions. These are SANITIZER-only fixtures (not in the dual-rail
+  # ----- dedicated adversarial fixtures: pin env-realloc UAF, signature accumulation, parser/lexer
+  # bounds, and overlong preprocessor macro parameters. These are SANITIZER-only fixtures (not in the dual-rail
   # parity FIXTURES list); each must compile through the twin with NO ASan/UBSan/leak diagnostic. They are
   # also swept by the cfront_*.c fixture loop above, but a named stage makes the regression intent explicit
   # (a FAIL here names the exact bug class) and runs them with detect_leaks=1 too. -----------------------
-  # cfront_sec_envrealloc/sigoverflow [Bug 1/2] must compile clean (rc 0); the deep-nest / lexer-tail
-  # security fixtures [Bug A/B] deliberately PARSE-ERR (rc 1: "nesting too deep" / "input too large") --
+  # cfront_sec_envrealloc/sigoverflow must compile clean (rc 0); deep-nest / lexer-tail / cppmacro
+  # deliberately return a clean error (rc 1: a bounded capacity diagnostic) --
   # the CORRECT crash-free behavior. For both, only a raw crash (rc>=128) or a sanitizer/leak diagnostic
   # is a FAIL; a clean rc-1 parse error for the deep-nest/lexer-tail pins is expected, NOT a regression.
   local sec adv_fail=0
-  for sec in cfront_sec_envrealloc.c cfront_sec_sigoverflow.c cfront_sec_deepnest.c cfront_sec_lextail.c; do
+  for sec in cfront_sec_envrealloc.c cfront_sec_sigoverflow.c cfront_sec_deepnest.c cfront_sec_lextail.c cfront_sec_cppmacro.c; do
     if [ ! -f "${C}/${sec}" ]; then
-      echo "  FAIL: ${label} adversarial fixture ${sec} is MISSING (a Bug 1/2/A/B regression pin was removed)"; adv_fail=1; fail=1; continue
+      echo "  FAIL: ${label} adversarial fixture ${sec} is MISSING (a memory-safety regression pin was removed)"; adv_fail=1; fail=1; continue
     fi
     errf="${tmp}/secerr.txt"
     ASAN_OPTIONS="halt_on_error=1:detect_leaks=1" "${bin}" "${C}/${sec}" >/dev/null 2>"${errf}"; rc=$?
@@ -157,7 +157,7 @@ PY
       echo "  FAIL: ${label} adversarial fixture ${sec} tripped the sanitizer (rc=${rc}):"; sed 's/^/    /' "${errf}" | head -25; adv_fail=1; fail=1
     fi
   done
-  [ "${adv_fail}" -eq 0 ] && echo "  PASS ${label} adversarial fixtures (cfront_sec_envrealloc.c [Bug 1], cfront_sec_sigoverflow.c [Bug 2], cfront_sec_deepnest.c [Bug A: stack-overflow guard], cfront_sec_lextail.c [Bug B: lexer-tail OOB], ASan+leak clean)"
+  [ "${adv_fail}" -eq 0 ] && echo "  PASS ${label} adversarial fixtures (env realloc, signature overflow, deep nesting, lexer tail, preprocessor macro overflow; ASan+leak clean)"
 }
 
 # ----- stage 1: clang ASan/UBSan (primary) ----------------------------------------------------------

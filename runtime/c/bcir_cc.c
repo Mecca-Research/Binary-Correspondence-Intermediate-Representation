@@ -171,16 +171,45 @@ static void cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
 }
 
 static void dirof(const char *path, char *out, size_t cap) {
-  const char *s = strrchr(path, '/');
-  if (s) { size_t n = (size_t)(s - path); if (n >= cap) n = cap - 1; memcpy(out, path, n); out[n] = 0; }
+  const char *s = strrchr(path, '/'), *bs = strrchr(path, '\\');
+  if (!s || (bs && bs > s)) s = bs;                 /* native Windows paths use backslashes */
+  if (s) { size_t n = (size_t)(s - path); if (n == 0) n = 1; else if (n == 2 && path[1] == ':') n++;
+    if (n >= cap) n = cap - 1; memcpy(out, path, n); out[n] = 0; }
   else snprintf(out, cap, ".");
 }
 
+/* Read a whole translation unit without the old 64 KiB silent truncation.  Returns 0 on
+ * success, 1 when the path cannot be opened, and 2 on an allocation/read/close failure. */
+static int cc_read_file(const char *path, char **out) {
+  FILE *fp=fopen(path,"rb");size_t cap=1u<<16,n=0;char *buf;
+  *out=NULL;if(!fp)return 1;
+  buf=(char *)malloc(cap);if(!buf){fclose(fp);return 2;}
+  for(;;){
+    if(n==cap-1u){
+      if(cap>SIZE_MAX/2u){free(buf);fclose(fp);return 2;}
+      size_t nc=cap*2u;char *nb=(char *)realloc(buf,nc);
+      if(!nb){free(buf);fclose(fp);return 2;}buf=nb;cap=nc;
+    }
+    size_t avail=cap-1u-n,got=fread(buf+n,1,avail,fp);n+=got;
+    if(got<avail){
+      if(ferror(fp)){free(buf);fclose(fp);return 2;}
+      if(feof(fp))break;
+      if(!got){free(buf);fclose(fp);return 2;}
+    }
+  }
+  if(fclose(fp)){free(buf);return 2;}
+  if(memchr(buf,0,n)){free(buf);return 2;}             /* never compile only the prefix before an embedded NUL */
+  buf[n]=0;*out=buf;return 0;
+}
+
 /* a -D spec "NAME" / "NAME=val" -> the "name body" form bcir_cpp seeds ("NAME 1" / "NAME val"). */
-static void define_spec(const char *spec, char *out, size_t cap) {
+static int define_spec(const char *spec, char *out, size_t cap) {
   const char *eq = strchr(spec, '=');
-  if (eq) snprintf(out, cap, "%.*s %s", (int)(eq - spec), spec, eq + 1);
-  else snprintf(out, cap, "%s 1", spec);
+  int n;
+  if (!spec[0] || (eq && eq == spec)) return 1;
+  if (eq) n = snprintf(out, cap, "%.*s %s", (int)(eq - spec), spec, eq + 1);
+  else n = snprintf(out, cap, "%s 1", spec);
+  return n < 0 || (size_t)n >= cap;
 }
 
 static const char *std_version(const char *std) {
@@ -202,7 +231,7 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
     if (!strcmp(a, "-E")) pp_only = 1;
-    else if (!strcmp(a, "--target")) { if (++i < argc) target = argv[i]; }
+    else if (!strcmp(a, "--target")) { if (++i < argc) target = argv[i]; else { fputs("bcir-cc: --target needs an argument\n",stderr); return 2; } }
     else if (!strncmp(a, "--target=", 9)) target = a + 9;
     else if (!strcmp(a, "--fallback")) fallback = 1;
     else if (!strcmp(a, "--project")) project = 1;
@@ -219,20 +248,30 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--linkable")) linkable = 1;
     else if (!strcmp(a, "--emit-claimgraph")) emit_cg = 1;
     else if (!strcmp(a, "--emit-pack")) emit_pack = 1;
-    else if (!strcmp(a, "-o")) { if (++i < argc) out_path = argv[i]; }
+    else if (!strcmp(a, "-o")) { if (++i < argc) out_path = argv[i]; else { fputs("bcir-cc: -o needs an argument\n",stderr); return 2; } }
     else if (!strncmp(a, "-o", 2)) out_path = a + 2;
-    else if (!strcmp(a, "-I")) { if (++i < argc && ninc < MAXD) incdirs[ninc++] = argv[i]; }
-    else if (!strncmp(a, "-I", 2)) { if (ninc < MAXD) incdirs[ninc++] = a + 2; }
-    else if (!strcmp(a, "-D")) { if (++i < argc && ndef < MAXD) { define_spec(argv[i], defbuf[ndef], 256); defs[ndef] = defbuf[ndef]; ndef++; } }
-    else if (!strncmp(a, "-D", 2)) { if (ndef < MAXD) { define_spec(a + 2, defbuf[ndef], 256); defs[ndef] = defbuf[ndef]; ndef++; } }
-    else if (!strcmp(a, "-U")) { if (++i < argc && nundef < MAXD) undefs[nundef++] = argv[i]; }
-    else if (!strncmp(a, "-U", 2)) { if (nundef < MAXD) undefs[nundef++] = a + 2; }
+    else if (!strcmp(a, "-I")) { if (++i >= argc) { fputs("bcir-cc: -I needs an argument\n",stderr); return 2; } if(ninc>=MAXD){fputs("bcir-cc: too many -I options\n",stderr);return 2;} incdirs[ninc++] = argv[i]; }
+    else if (!strncmp(a, "-I", 2)) { if(ninc>=MAXD){fputs("bcir-cc: too many -I options\n",stderr);return 2;} incdirs[ninc++] = a + 2; }
+    else if (!strcmp(a, "-D")) { if (++i >= argc) { fputs("bcir-cc: -D needs an argument\n",stderr); return 2; } if(ndef>=MAXD){fputs("bcir-cc: too many -D options\n",stderr);return 2;} if(define_spec(argv[i],defbuf[ndef],sizeof defbuf[ndef])){fputs("bcir-cc: invalid or overlong -D definition\n",stderr);return 2;} defs[ndef] = defbuf[ndef]; ndef++; }
+    else if (!strncmp(a, "-D", 2)) { if(ndef>=MAXD){fputs("bcir-cc: too many -D options\n",stderr);return 2;} if(define_spec(a+2,defbuf[ndef],sizeof defbuf[ndef])){fputs("bcir-cc: invalid or overlong -D definition\n",stderr);return 2;} defs[ndef] = defbuf[ndef]; ndef++; }
+    else if (!strcmp(a, "-U")) { if (++i >= argc) { fputs("bcir-cc: -U needs an argument\n",stderr); return 2; } if(nundef>=MAXD){fputs("bcir-cc: too many -U options\n",stderr);return 2;} undefs[nundef++] = argv[i]; }
+    else if (!strncmp(a, "-U", 2)) { if(nundef>=MAXD){fputs("bcir-cc: too many -U options\n",stderr);return 2;} undefs[nundef++] = a + 2; }
     else if (!strncmp(a, "-std=", 5)) std = a + 5;
     else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { fputs(USAGE, stdout); return 0; }
     else if (a[0] == '-') { fprintf(stderr, "bcir-cc: unknown option '%s'\n%s", a, USAGE); return 2; }
     else if (nfiles < 256) files[nfiles++] = a;
+    else { fputs("bcir-cc: too many input files\n",stderr); return 2; }
   }
   if (!nfiles) { fputs(USAGE, stderr); return 2; }
+  if(strcmp(std,"c11")&&strcmp(std,"c17")&&strcmp(std,"c18")&&strcmp(std,"c23")&&strcmp(std,"c2x")){
+    fprintf(stderr,"bcir-cc: unsupported -std=%s\n",std);return 2;
+  }
+  if(pp_only+emit_c+emit_cg+emit_pack+emit_fx+emit_lf+linkable>1){
+    fputs("bcir-cc: select only one output mode\n",stderr);return 2;
+  }
+  if(emit_pack&&(nfiles!=1||project)){
+    fputs("bcir-cc: --emit-pack requires exactly one input and cannot be combined with --project\n",stderr);return 2;
+  }
 
   /* -std seeds __STDC_VERSION__ (a -D can still override it); honour -U by dropping a -D. */
   char stdver[64]; snprintf(stdver, sizeof stdver, "__STDC_VERSION__ %s", std_version(std));
@@ -252,9 +291,8 @@ int main(int argc, char **argv) {
   int rc = 0, n_clean = 0, n_fallback = 0, n_dirty = 0;
   for (int fi = 0; fi < nfiles; fi++) {
     const char *path = files[fi];
-    static char raw[1 << 16]; FILE *fp = fopen(path, "rb");
-    if (!fp) { fprintf(stderr, "bcir-cc: cannot open '%s'\n", path); if (rc != 1) rc = 2; n_dirty++; continue; }
-    size_t n = fread(raw, 1, sizeof raw - 1, fp); raw[n] = 0; fclose(fp);
+    char *raw=NULL;int read_rc=cc_read_file(path,&raw);
+    if (read_rc) { fprintf(stderr, "bcir-cc: cannot %s '%s'\n",read_rc==1?"open":"read",path); if (rc != 1) rc = read_rc==1?2:1; n_dirty++; continue; }
 
     char base[1024]; dirof(path, base, sizeof base);
     const char *dirs[MAXD + 1]; int ndirs = 0;
@@ -265,7 +303,9 @@ int main(int argc, char **argv) {
     for (int d = 0; d < ndef && nalldef <= MAXD; d++) alldefs[nalldef++] = defs[d];
 
     static char src[1 << 16], cpperr[256];
-    if (bcir_cpp_run_ex(raw, path, dirs, ndirs, alldefs, nalldef, src, sizeof src, cpperr, sizeof cpperr)) {
+    int cpp_rc=bcir_cpp_run_ex(raw, path, dirs, ndirs, alldefs, nalldef, src, sizeof src, cpperr, sizeof cpperr);
+    free(raw);
+    if (cpp_rc) {
       /* --fallback: a construct outside the supported subset routes to the LLVM backend (rc 2),
        * the C twin of pipeline.compile_with_fallback (which classifies the rejecting phase). */
       if (fallback) { fprintf(stderr, "%s: fallback to LLVM backend: preprocess: %s\n", path, cpperr); if (rc != 1) rc = 2; n_fallback++; continue; }
@@ -282,6 +322,10 @@ int main(int argc, char **argv) {
       fprintf(stderr, "%s: parse error: %s\n", path, r.diag); rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
     }
     if (!r.ok) { fprintf(stderr, "%s: verify error: %s\n", path, r.diag); rc = 1; n_dirty++; bcir_cfront_free(&r); continue; }
+    if ((emit_c || linkable) && !r.emitted_ok) {
+      fprintf(stderr, "%s: emitted C exceeds %zu-byte result capacity\n", path, sizeof r.emitted);
+      rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
+    }
 
     /* R21 lifetime policy (§5.12): a detected use-after-free / double-free routes the unit to the
      * LLVM backend (fallback, rc 2) or hard-rejects it (rc 1) under a non-advisory policy. The
@@ -333,12 +377,14 @@ int main(int argc, char **argv) {
       bcir_verify_lifetime(&r.unit, cc_r21_print, outf);   /* R21 advisory (§5.12), additive to the call graph */
       n_clean++;
     } else if (emit_pack) {
+      if(r.unit.n_funcs==0){fprintf(stderr,"%s: pack error: translation unit has no entry function\n",path);rc=1;n_dirty++;bcir_cfront_free(&r);continue;}
       const bcir_func *f = &r.unit.funcs[r.unit.n_funcs - 1];   /* the entry function */
       static bcir_plan_step steps[8192]; bcir_plan plan;
       if (bcir_plan_func(f, steps, 8192, &plan) != BCIR_OK) { fprintf(stderr, "%s: plan error\n", path); rc = 1; n_dirty++; }
       else { static uint8_t pack[1 << 20]; size_t plen = 0;
         if (bcir_hydrate(f, &plan, pack, sizeof pack, &plen) != BCIR_OK) { fprintf(stderr, "%s: hydrate error\n", path); rc = 1; n_dirty++; }
-        else { fwrite(pack, 1, plen, outf); n_clean++; } }
+        else if(fwrite(pack, 1, plen, outf)!=plen){fprintf(stderr,"%s: output write error\n",path);rc=1;n_dirty++;}
+        else n_clean++; }
     } else {
       char sum[256]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);
       fprintf(outf, "%s: %s\n", path, sum);
@@ -364,6 +410,10 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (outf != stdout) fclose(outf);
+  int output_error=ferror(outf);
+  int finish_error=out_path?fclose(outf):fflush(outf);
+  if (output_error || finish_error) {
+    fputs("bcir-cc: output write/close error\n",stderr);rc=1;
+  }
   return rc;
 }

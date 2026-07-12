@@ -12,6 +12,7 @@
 #include "bcir_cfront.h"
 #include "bcir_verify.h"
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -125,6 +126,8 @@ typedef struct {
                                                       * rendered at each PROTOTYPE, emitted as a prelude so
                                                       * the emitted TU compiles standalone and the host
                                                       * LINKER resolves the cross-TU callee */
+  int emit_overflow;                                  /* a required prelude/body exceeded a fixed emit buffer:
+                                                      * reject cleanly, never compile a truncated C artifact */
   int saw_static;                                    /* p_type_base scanned a `static` since p_func last
                                                       * reset it -- captured as fn->static_fn right after
                                                       * the return-type parse (source-static honoring) */
@@ -167,6 +170,7 @@ typedef struct {
  * program's nesting in the fixture corpus (the deepest fixture nests only a handful of levels). The
  * Python oracle's recursion guard uses the same cap so the two rails agree on the over-deep boundary. */
 #define BCIR_MAXDEPTH 1200
+#define BCIR_MAX_PTR_DEPTH 16   /* exceeds C's minimum translation limit; keeps type spellings bounded */
 /* Enter a recursive cycle: bump depth, and on overflow record a clean parse error. Pairs with LEAVE_REC.
  * The `_over` flag lets a caller bail with its own (typed) return value after a failed ENTER_REC. */
 #define ENTER_REC(c) (++(c)->depth > BCIR_MAXDEPTH ? (fail((c),"nesting too deep"), 1) : 0)
@@ -459,6 +463,7 @@ static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the con
 static void apply_stars(CC *c, bcir_ctype *ty) {
   while(is(c,"*")){c->i++;
     while(is(c,"const")||is(c,"volatile")||is(c,"restrict")||is(c,"__restrict")||is(c,"__restrict__"))c->i++;
+    if(ty->ptr_depth>=BCIR_MAX_PTR_DEPTH){fail(c,"pointer nesting too deep");return;}
     if(ty->kind==1){ty->ptr_to_struct=1;} ty->kind=2; ty->ptr_depth++;}   /* count `*`s: `T**` -> depth 2 */
 }
 /* Parse a type SPECIFIER (the base scalar/struct/union/enum/typedef + qualifiers + the data-model size
@@ -1843,6 +1848,7 @@ static const char *bcir_extern_callee(const char *op, int *len) {
  * fixed array is exact and allocation-free. */
 void bcir_cfront_link_flags(const bcir_unit *u, char *buf, size_t cap) {
   #define BCIR_MAX_LINK_FLAGS 32
+  if(!buf||!cap)return;buf[0]=0;if(!u)return;
   const char *flags[BCIR_MAX_LINK_FLAGS]; int nf=0;
   for(int fi=0; fi<u->n_funcs; fi++){ const bcir_func *f=&u->funcs[fi];
     for(size_t ci=0; ci<f->n_claims; ci++){
@@ -2198,7 +2204,7 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
     return emit_member(c,v,&mf,c->stmt_expr_declared_bf);
   }
   if(is(c,"[")){                                /* L3: base[i] / m[i][j] (row-major flatten) */
-    uint32_t idxs[3]; int ni=0;
+    uint32_t idxs[3]={0,0,0}; int ni=0;
     while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]"); if(ni<3)idxs[ni++]=ix; }
     const bcir_resource *vr=res_of(c->fn,v->rid);    /* a multi-dim VLA -> RUNTIME dim strides (no c.const) */
     int vla=(vr && vr->vla_ndims>0);
@@ -2512,6 +2518,8 @@ static uint32_t p_unary_inner(CC *c) {
           return t;
         }
         /* a pointer one level deeper than the addressed object: */
+        if(v->type.kind==2 && (v->type.ptr_depth?v->type.ptr_depth:1)>=BCIR_MAX_PTR_DEPTH){
+          fail(c,"pointer nesting too deep");return 0;}
         uint32_t t=add_res(c,BCIR_DOM_RAM, v->type.size?v->type.size:4, 1,0,BCIR_RK_POINTER,"");  /* &p (T*) -> T** */
         if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
           tr->is_signed=(uint8_t)(v->type.signd?1:0); tr->is_float=(uint8_t)(v->type.is_float?1:0);
@@ -3893,7 +3901,8 @@ static void p_stmt_inner(CC *c) {
         #undef SIG_OFF
         /* only copy a signature that fit in `sig` (sw<=sizeof sig): a clamped (over-long) one was
          * truncated, so its `sw` overstates the bytes actually in `sig` -- never read past sig[512]. */
-        if(sw<sizeof sig && c->fpdefs_w+sw<sizeof c->fpdefs){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
+        if(sw<sizeof sig && sw<sizeof c->fpdefs-c->fpdefs_w){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
+        else c->emit_overflow=1;
         if(!eat(c,")"))return;                          /* past the parameter-type list */
         bcir_ctype fty; memset(&fty,0,sizeof fty); fty.kind=3; fty.size=8; fty.signd=0;
         fty.fp_ret_size=ret.size; fty.fp_ret_signd=(uint8_t)(ret.signd?1:0); fty.fp_ret_float=(uint8_t)(ret.is_float?1:0);
@@ -4393,7 +4402,8 @@ static int p_func(CC *c, bcir_func *fn) {
       #undef SIG_OFF
       /* only copy a signature that fit in `sig` (sw<=sizeof sig): a clamped one's `sw` overstates the
        * bytes actually in `sig`, so never read past sig[512]. */
-      if(sw<sizeof sig && c->fpdefs_w+sw<sizeof c->fpdefs){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
+      if(sw<sizeof sig && sw<sizeof c->fpdefs-c->fpdefs_w){ memcpy(c->fpdefs+c->fpdefs_w,sig,sw); c->fpdefs_w+=sw; }
+      else c->emit_overflow=1;
       if(!eat(c,")"))return 1;                        /* past the parameter-type list */
       memset(&ty,0,sizeof ty); ty.kind=3; ty.size=8; ty.signd=0;
       ty.fp_ret_size=ret.size; ty.fp_ret_signd=(uint8_t)(ret.signd?1:0); ty.fp_ret_float=(uint8_t)(ret.is_float?1:0);
@@ -4485,8 +4495,9 @@ static int p_func(CC *c, bcir_func *fn) {
     if(fn->variadic) sw+=snprintf(sig+TU_OFF,sizeof sig-TU_OFF,"%s...",fn->n_params?", ":"");
     sw+=snprintf(sig+TU_OFF,sizeof sig-TU_OFF,"%s);\n",(fn->n_params||fn->variadic)?"":"void");
     #undef TU_OFF
-    if(sw<sizeof sig && c->tudefs_w+sw<sizeof c->tudefs){
+    if(sw<sizeof sig && sw<sizeof c->tudefs-c->tudefs_w){
       memcpy(c->tudefs+c->tudefs_w,sig,sw); c->tudefs_w+=sw; }
+    else c->emit_overflow=1;
     return 2;
   }
   if(!eat(c,"{"))return 1;
@@ -4532,8 +4543,8 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
                    : ty->signd ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
                    : (ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t");
   const char *atm = ty->is_atomic ? "_Atomic " : "";
-  if(ty->kind==2){ char stars[10]; int d=ty->ptr_depth?ty->ptr_depth:1, si=0;   /* depth `*`s: `T**` -> ` **` */
-    stars[si++]=' '; for(int k=0;k<d&&si<9;k++) stars[si++]='*'; stars[si]=0;
+  if(ty->kind==2){ char stars[BCIR_MAX_PTR_DEPTH+2]; int d=ty->ptr_depth?ty->ptr_depth:1, si=0;   /* depth `*`s: `T**` -> ` **` */
+    stars[si++]=' '; for(int k=0;k<d;k++) stars[si++]='*'; stars[si]=0;
     snprintf(o,n,"%s%s%s%s%s%s",atm,ty->is_volatile?"volatile ":"",
              ty->ptr_to_struct?kw:"",ty->ptr_to_struct?" ":"",base,stars); }
   else if(ty->kind==1) snprintf(o,n,"%s %s",kw,ty->tag);
@@ -4612,8 +4623,8 @@ static const char *decl_ty(const bcir_func *f,uint32_t rid,char *buf,size_t n){
       : r->is_float ? (r->elem_bytes==4?"float":r->elem_bytes>8?"long double":"double")
       : r->elem_bytes==1?(r->is_signed?"int8_t":"uint8_t") : r->elem_bytes==2?(r->is_signed?"int16_t":"uint16_t")
       : r->elem_bytes==8?(r->is_signed?"int64_t":"uint64_t") : (r->is_signed?"int32_t":"uint32_t");
-    char stars[10]; int d=r->ptr_depth?r->ptr_depth:1, si=0;   /* depth `*`s: `T**` at depth 2 */
-    stars[si++]=' '; for(int k=0;k<d&&si<9;k++) stars[si++]='*'; stars[si]=0;
+    char stars[BCIR_MAX_PTR_DEPTH+2]; int d=r->ptr_depth?r->ptr_depth:1, si=0;   /* depth `*`s: `T**` at depth 2 */
+    stars[si++]=' '; for(int k=0;k<d;k++) stars[si++]='*'; stars[si]=0;
     snprintf(buf,n,"%s%s",base,stars);
   } else snprintf(buf,n,"%s",tty(f,rid));
   return buf;
@@ -4704,15 +4715,15 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else if(r->kind==BCIR_RK_POINTER)               /* a pointer local: `T *p` (the pointee carries width/sign) */
         w+=snprintf(o+EO,on-EO,"  %s%s;\n",decl_ty(f,r->rid,tb,sizeof tb),nm);
       else w+=snprintf(o+EO,on-EO,"  %s %s;\n",tty(f,r->rid),nm);}}
-  int depth=1, lstk[64], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
+  int depth=1, lstk[BCIR_MAXDEPTH+1], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+EO,on-EO,"  "); }while(0)
-  for(size_t i=0;i<f->n_claims&&w<on-160;i++){const bcir_claim *cl=&f->claims[i];
+  for(size_t i=0;i<f->n_claims;i++){const bcir_claim *cl=&f->claims[i];
     /* L6 control-flow markers (rendered as braces) */
     if(!strcmp(cl->op,"c.if")){IND();w+=snprintf(o+EO,on-EO,"if (%s) {\n",rname(f,cl->rd[0],a));depth++;continue;}
     if(!strcmp(cl->op,"c.else")){depth--;IND();w+=snprintf(o+EO,on-EO,"} else {\n");depth++;continue;}
     if(!strcmp(cl->op,"c.endif")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");continue;}
     if(!strcmp(cl->op,"c.loop")){IND();w+=snprintf(o+EO,on-EO,"while (1) {\n");depth++;
-      if(nls<64)lstk[nls++]=lctr++;continue;}
+      if(nls<BCIR_MAXDEPTH+1)lstk[nls++]=lctr++;continue;}
     if(!strcmp(cl->op,"c.loop.test")){IND();w+=snprintf(o+EO,on-EO,"if (!%s) break;\n",rname(f,cl->rd[0],a));continue;}
     if(!strcmp(cl->op,"c.cont.tgt")){IND();w+=snprintf(o+EO,on-EO,"__cont_%d: ;\n",nls?lstk[nls-1]:0);continue;}
     if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");if(nls)nls--;continue;}
@@ -5075,13 +5086,16 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
       snprintf(f->calls[f->n_calls++],BCIR_CIR_NAME,"%s",callee);
     }
   }
+  int emit_impossible=c.emit_overflow;
   out->ok=bcir_verify_unit(&out->unit,out->diag,sizeof out->diag);
   /* C.2 verified-C attestation: stamp the emitted C with its R-law status + R13 digest + the unit's
    * derived link flags (B1; so --emit-c is self-describing about what it links -- a comment, stripped
    * on re-parse). The link_flags line mirrors the oracle's C.2 attestation. */
   const bcir_func *entry = out->unit.n_funcs ? &out->unit.funcs[out->unit.n_funcs-1] : NULL;
   char lflags[256]; bcir_cfront_link_flags(&out->unit, lflags, sizeof lflags);
-  size_t w=snprintf(out->emitted,sizeof out->emitted,
+  if(emit_impossible){out->emitted[0]=0;out->emitted_ok=0;return 0;}
+  const size_t emit_cap=sizeof out->emitted;
+  int head_n=snprintf(out->emitted,emit_cap,
     "/* BCIR verified-C attestation (C.2) -- generated by bcir_cfront, do not edit.\n"
     " *   R1-R8 + R18  %s\n"
     " *   R9 plan / R10-R11 pack  checked in the compile->execute loop\n"
@@ -5091,14 +5105,32 @@ int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_
     " *   link_flags  %s\n */\n",
     out->ok?"clean":"DIRTY", entry?(unsigned long long)bcir_provenance_digest(entry):0ull,
     lflags[0]?lflags:"-");
-  if(c.fpdefs_w && w<sizeof out->emitted-c.fpdefs_w-1)   /* synthesized funcptr-param typedefs (prelude) */
-    w+=snprintf(out->emitted+w,sizeof out->emitted-w,"%.*s",(int)c.fpdefs_w,c.fpdefs);
-  if(c.tudefs_w && w<sizeof out->emitted-c.tudefs_w-1)   /* extern declarations for cross-TU callees */
-    w+=snprintf(out->emitted+w,sizeof out->emitted-w,"%.*s",(int)c.tudefs_w,c.tudefs);
-  for(int i=0;i<out->unit.n_funcs && w<sizeof out->emitted-256;i++){
-    w+=emit_func(&out->unit.funcs[i],out->emitted+w,sizeof out->emitted-w);
-    if(i+1<out->unit.n_funcs) w+=snprintf(out->emitted+w,sizeof out->emitted-w,"\n");
+  if(head_n<0){snprintf(out->diag,sizeof out->diag,"cannot render emitted C");return 1;}
+  size_t w=(size_t)head_n;
+  #define EMIT_OFF (w<emit_cap?w:emit_cap)
+  if(c.fpdefs_w){                                      /* synthesized funcptr-param typedefs (prelude) */
+    int n=snprintf(out->emitted+EMIT_OFF,emit_cap-EMIT_OFF,"%.*s",(int)c.fpdefs_w,c.fpdefs);
+    if(n<0||SIZE_MAX-w<(size_t)n){snprintf(out->diag,sizeof out->diag,"cannot render emitted C");return 1;}
+    w+=(size_t)n;
   }
+  if(c.tudefs_w){                                      /* extern declarations for cross-TU callees */
+    int n=snprintf(out->emitted+EMIT_OFF,emit_cap-EMIT_OFF,"%.*s",(int)c.tudefs_w,c.tudefs);
+    if(n<0||SIZE_MAX-w<(size_t)n){snprintf(out->diag,sizeof out->diag,"cannot render emitted C");return 1;}
+    w+=(size_t)n;
+  }
+  for(int i=0;i<out->unit.n_funcs;i++){
+    size_t n=emit_func(&out->unit.funcs[i],out->emitted+EMIT_OFF,emit_cap-EMIT_OFF);
+    if(SIZE_MAX-w<n){snprintf(out->diag,sizeof out->diag,"cannot render emitted C");return 1;}
+    w+=n;
+    if(i+1<out->unit.n_funcs){
+      int sep=snprintf(out->emitted+EMIT_OFF,emit_cap-EMIT_OFF,"\n");
+      if(sep<0||SIZE_MAX-w<(size_t)sep){snprintf(out->diag,sizeof out->diag,"cannot render emitted C");return 1;}
+      w+=(size_t)sep;
+    }
+  }
+  #undef EMIT_OFF
+  if(w>=emit_cap){out->emitted[0]=0;out->emitted_ok=0;return 0;}
+  out->emitted_ok=1;
   return 0;
 }
 
@@ -5108,6 +5140,7 @@ int bcir_cfront_compile(const char *src, bcir_cfront_result *out) {
 }
 
 void bcir_cfront_free(bcir_cfront_result *out){
+  if(!out)return;
   for(int i=0;i<out->unit.n_funcs;i++){ bcir_func *f=&out->unit.funcs[i];
     free(f->res); free(f->claims); free(f->params); free(f->calls); free(f->statics); }
   free(out->unit.funcs);
@@ -5115,6 +5148,8 @@ void bcir_cfront_free(bcir_cfront_result *out){
 }
 
 void bcir_cfront_summary(const bcir_unit *u,int ok,char *buf,size_t n){
+  if(!buf||!n)return;
+  if(!u||u->n_funcs<0||(u->n_funcs&& !u->funcs)){snprintf(buf,n,"invalid unit");return;}
   const bcir_func *f = u->n_funcs ? &u->funcs[u->n_funcs-1] : NULL;   /* the entry (last) */
   int mmio=0,bf=0,kn=0,binop=0,calls=0; size_t nc=0;
   if(f){
@@ -5189,17 +5224,20 @@ static void vn_base(const char *op, char *out){
 /* strdup is C23/POSIX, not C11 -- under the documented -std=c11 fallback build an implicit
  * declaration would truncate the returned pointer (and the later free() crashes). Local twin. */
 static char *vn_strdup(const char *s){
-  size_t n=strlen(s)+1; char *r=malloc(n); if(r)memcpy(r,s,n); return r;
+  size_t z=strlen(s);if(z==SIZE_MAX)return NULL;size_t n=z+1;
+  char *r=malloc(n); if(r)memcpy(r,s,n); return r;
 }
 
 /* a small growable byte string (the per-function record buffer + the value-number scratch). */
 typedef struct { char *s; size_t n, cap; } sbuf;
 static void sb_add(sbuf *b, const char *p, size_t k){
-  if(b->n+k+1>b->cap){ size_t nc=b->cap?b->cap*2:256; while(nc<b->n+k+1)nc*=2;
+  if(!p||b->n==SIZE_MAX||k>SIZE_MAX-b->n-1)return;size_t need=b->n+k+1;
+  if(need>b->cap){ size_t nc=b->cap?b->cap:256;
+    while(nc<need){if(nc>SIZE_MAX/2){nc=need;break;}nc*=2;}
     char *r=realloc(b->s,nc); if(!r)return; b->s=r; b->cap=nc; }
   memcpy(b->s+b->n,p,k); b->n+=k; b->s[b->n]=0;
 }
-static void sb_str(sbuf *b,const char *s){ sb_add(b,s,strlen(s)); }
+static void sb_str(sbuf *b,const char *s){ if(s)sb_add(b,s,strlen(s)); }
 
 /* The SEMANTIC imm component of a claim's record -- the imm fields that encode WHICH datum a claim
  * touches (a const value, a struct member byte offset, a bitfield bit-off/width/sign), so reading or
@@ -5225,7 +5263,7 @@ static void vn_imm(const bcir_claim *cl, sbuf *rec){
 /* sort an array of \0-terminated strings (small n; insertion sort, strcmp order). */
 static void sort_strs(char **a, int n){
   for(int i=1;i<n;i++){ char *t=a[i]; int j=i;
-    while(j>0 && strcmp(a[j-1],t)>0){ a[j]=a[j-1]; j--; } a[j]=t; }
+    while(j>0 && strcmp(a[j-1]?a[j-1]:"",t?t:"")>0){ a[j]=a[j-1]; j--; } a[j]=t; }
 }
 
 /* per-function value-number context: writer[rid]=claim index that first writes it, plus a memo. */
@@ -5272,6 +5310,9 @@ static void vn_of(vnctx *v, uint32_t rid, int depth, sbuf *out){
  * Even a zero-real-claim function (e.g. `int read_a(void){ return a_global; }`) emits its OBSERVABLE-
  * OUTPUT anchor (ret=...|stores=...), exactly as the Python oracle does -- so the byte-identity holds. */
 static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t), void *ctx){
+  if(!f||!emit)return;
+  if(f->n_claims>(size_t)INT_MAX||f->n_claims>(SIZE_MAX-1)/(size_t)BCIR_CLAIM_MAX_WR){
+    emit(ctx,"overflow\n",9);return;}
   /* index the non-NOP claims and the first-writer of each rid */
   int nc=0; for(size_t i=0;i<f->n_claims;i++) if(f->claims[i].opcode!=BCIR_OP_NOP) nc++;
   size_t maxw=f->n_claims*(size_t)BCIR_CLAIM_MAX_WR+1;   /* an upper bound on distinct written rids */
@@ -5279,6 +5320,8 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
   vnctx v={f,NULL,NULL,0,NULL};
   v.wclaim=malloc(maxw*sizeof(int)); v.wrid=malloc(maxw*sizeof(uint32_t));
   v.memo=calloc(f->n_claims?f->n_claims:1,sizeof(char*));
+  if(!cidx||!v.wclaim||!v.wrid||!v.memo){
+    free(cidx);free(v.wclaim);free(v.wrid);free(v.memo);emit(ctx,"oom\n",4);return;}
   /* NB: vn indexes by ORIGINAL claim index (so memo/writer reference the real claim array). */
   int j=0;
   for(size_t i=0;i<f->n_claims;i++){ const bcir_claim *cl=&f->claims[i];
@@ -5288,6 +5331,7 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
       if(!seen){ v.wrid[v.nw]=rid; v.wclaim[v.nw]=(int)i; v.nw++; } } }
   /* build each non-NOP claim's record */
   char **recs=malloc((size_t)nc*sizeof *recs);
+  if(nc&&!recs){free(v.memo);free(v.wclaim);free(v.wrid);free(cidx);emit(ctx,"oom\n",4);return;}
   for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
     char base[BCIR_CIR_NAME]; vn_base(cl->op,base);
     char *parts[BCIR_CLAIM_MAX_RD]; sbuf ps[BCIR_CLAIM_MAX_RD]; int np=cl->n_rd;
@@ -5305,7 +5349,7 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
     recs[r]=rec.s?rec.s:vn_strdup("");
   }
   sort_strs(recs,nc);
-  for(int r=0;r<nc;r++){ emit(ctx,recs[r],strlen(recs[r])); emit(ctx,"\n",1); free(recs[r]); }
+  for(int r=0;r<nc;r++){ const char *rec=recs[r]?recs[r]:"";emit(ctx,rec,strlen(rec));emit(ctx,"\n",1);free(recs[r]); }
   free(recs);
 
   /* The OBSERVABLE-OUTPUT anchor (LAST-writer VN -- a use observes the most-recent prior write, which
@@ -5316,6 +5360,10 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
   vnctx vl={f,NULL,NULL,0,NULL};
   vl.wclaim=malloc(maxw*sizeof(int)); vl.wrid=malloc(maxw*sizeof(uint32_t));
   vl.memo=calloc(f->n_claims?f->n_claims:1,sizeof(char*));
+  if(!vl.wclaim||!vl.wrid||!vl.memo){
+    free(vl.memo);free(vl.wclaim);free(vl.wrid);
+    for(size_t i=0;i<f->n_claims;i++)free(v.memo[i]);
+    free(v.memo);free(v.wclaim);free(v.wrid);free(cidx);emit(ctx,"oom\n",4);return;}
   for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
     for(int k=0;k<cl->n_wr;k++){ uint32_t rid=cl->wr[k]; int slot=-1;
       for(int m=0;m<vl.nw;m++) if(vl.wrid[m]==rid){slot=m;break;}
@@ -5326,16 +5374,19 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
   sb_str(&anc,"|stores=");
   /* collect store (dest->value) pairs, sorted */
   int nst=0; for(int r=0;r<nc;r++) if(!strcmp(f->claims[cidx[r]].op,"c.store")) nst++;
-  if(nst){ char **sp=malloc((size_t)nst*sizeof *sp); int si=0;
+  if(nst){ char **sp=calloc((size_t)nst,sizeof *sp); int si=0;
+    if(!sp)sb_str(&anc,"oom");
+    else {
     for(int r=0;r<nc;r++){ const bcir_claim *cl=&f->claims[cidx[r]];
       if(strcmp(cl->op,"c.store")) continue;
       sbuf s={0,0,0};
       if(cl->n_rd){ vn_of(&vl,cl->rd[0],0,&s); sb_str(&s,"->"); vn_of(&vl,cl->rd[cl->n_rd-1],0,&s); }
       else sb_str(&s,"?->?");
       sp[si++]=s.s?s.s:vn_strdup(""); }
-    sort_strs(sp,nst);
-    for(int k=0;k<nst;k++){ if(k)sb_str(&anc,";"); sb_str(&anc,sp[k]); free(sp[k]); }
+    sort_strs(sp,si);
+    for(int k=0;k<si;k++){ if(k)sb_str(&anc,";"); sb_str(&anc,sp[k]); free(sp[k]); }
     free(sp);
+    }
   }
   emit(ctx,anc.s?anc.s:"ret=void|stores=",anc.s?strlen(anc.s):16); emit(ctx,"\n",1); free(anc.s);
   for(size_t i=0;i<f->n_claims;i++) free(vl.memo[i]);
@@ -5348,6 +5399,7 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
 /* The shared canonical serializer: invokes emit(ctx, bytes, len) for each byte of the canon (so the
  * digest and the --canon text dump are GUARANTEED to be the same bytes). One '@' line per function. */
 static void canon_walk(const bcir_unit *u, void (*emit)(void*,const char*,size_t), void *ctx){
+  if(!u||!emit)return;
   for(int fi=0;fi<u->n_funcs;fi++){ canon_func(&u->funcs[fi],emit,ctx); emit(ctx,"@\n",2); }
 }
 
@@ -5357,6 +5409,7 @@ static void fnv_emit(void *vc, const char *b, size_t n){
 }
 uint64_t bcir_cfront_digest(const bcir_unit *u){
   fnv_ctx c={1469598103934665603ull};            /* FNV-1a offset basis (== the Python _DIGEST_OFFSET) */
+  if(!u)return c.h;
   canon_walk(u,fnv_emit,&c);
   return c.h;
 }
@@ -5368,6 +5421,7 @@ static void buf_emit(void *vc, const char *b, size_t n){
 /* The raw canonical serialization the digest hashes (text, NOT hashed) -- the byte-identity proof
  * (the Python cfront_structural_canon must equal this byte-for-byte on the corpus). */
 void bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n){
+  if(!buf||!n)return;
   buf_ctx c={buf,n,0}; canon_walk(u,buf_emit,&c);
   if(n) buf[c.w<n?c.w:n-1]=0;
 }
@@ -5424,6 +5478,7 @@ static size_t fx_print_names(char *o,size_t cap,size_t w, char names[][BCIR_CIR_
 }
 
 void bcir_cfront_effects(const bcir_unit *u, char *buf, size_t n){
+  if(!buf||!n)return;buf[0]=0;if(!u)return;
   char names[BCIR_FX_MAXG][BCIR_CIR_NAME]; int ng=fx_globals(u,names);
   int nf=u->n_funcs; size_t af=(size_t)(nf>0?nf:1);   /* per-function footprints (any number of funcs) */
   uint64_t *frd=calloc(af,sizeof *frd), *fwr=calloc(af,sizeof *fwr); char *seen=calloc(af,1);

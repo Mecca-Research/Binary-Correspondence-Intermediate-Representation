@@ -6,6 +6,7 @@
 
 void bcir_rmsnorm(const double *x, int rows, int dim, const double *gamma, double eps,
                   double *out) {
+  if (!x || !gamma || !out || rows <= 0 || dim <= 0) return;
   for (int r = 0; r < rows; r++) {
     const double *row = x + (size_t)r * dim;
     double acc = 0.0;                                /* ascending-index sum, the oracle order */
@@ -16,6 +17,7 @@ void bcir_rmsnorm(const double *x, int rows, int dim, const double *gamma, doubl
 }
 
 void bcir_rope(const double *x, int rows, int dim, double base, int pos_offset, double *out) {
+  if (!x || !out || rows <= 0 || dim <= 0 || (dim & 1) || !isfinite(base) || base <= 0.0) return;
   for (int r = 0; r < rows; r++) {
     const double *row = x + (size_t)r * dim;
     double *o = out + (size_t)r * dim;
@@ -31,6 +33,7 @@ void bcir_rope(const double *x, int rows, int dim, double base, int pos_offset, 
 
 int bcir_embedding(const double *table, int vocab, int dim, const int *ids, int n_ids,
                    double *out) {
+  if (vocab < 1 || dim < 1 || n_ids < 0 || (n_ids && (!table || !ids || !out))) return -1;
   for (int t = 0; t < n_ids; t++) {
     if (ids[t] < 0 || ids[t] >= vocab) return -1;    /* the oracle raises; the twin refuses */
     const double *src = table + (size_t)ids[t] * dim;
@@ -67,7 +70,10 @@ static void gqa_row(const double *qh, const double *k_rows, const double *v_rows
 
 int bcir_gqa_attention(const double *q, const double *k, const double *v, int seq,
                        int n_heads, int n_kv_heads, int d_k, double *scores, double *out) {
-  if (n_kv_heads < 1 || n_kv_heads > n_heads || n_heads % n_kv_heads) return -1;
+  if (seq < 0 || n_heads < 1 || d_k < 1 || n_kv_heads < 1 ||
+      n_kv_heads > n_heads || n_heads % n_kv_heads) return -1;
+  if (!seq) return 0;
+  if (!q || !k || !v || !scores || !out) return -1;
   int group = n_heads / n_kv_heads;
   double sc = 1.0 / sqrt((double)d_k);
   for (int h = 0; h < n_heads; h++) {
@@ -82,7 +88,9 @@ int bcir_gqa_attention(const double *q, const double *k, const double *v, int se
 int bcir_gqa_attention_row(const double *q_row, const double *k_rows, const double *v_rows,
                            int t_len, int n_heads, int n_kv_heads, int d_k,
                            double *scores, double *out) {
-  if (n_kv_heads < 1 || n_kv_heads > n_heads || n_heads % n_kv_heads) return -1;
+  if (t_len < 1 || n_heads < 1 || d_k < 1 || n_kv_heads < 1 ||
+      n_kv_heads > n_heads || n_heads % n_kv_heads ||
+      !q_row || !k_rows || !v_rows || !scores || !out) return -1;
   int group = n_heads / n_kv_heads;
   double sc = 1.0 / sqrt((double)d_k);
   for (int h = 0; h < n_heads; h++)                  /* the i == t_len-1 row, incrementally */

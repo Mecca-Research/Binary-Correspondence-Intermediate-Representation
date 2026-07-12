@@ -19,8 +19,10 @@
 #include "bcir_verify.h"
 
 static void dirof(const char *path, char *out, size_t cap) {
-  const char *s = strrchr(path, '/');
-  if (s) { size_t n = (size_t)(s - path); if (n >= cap) n = cap - 1; memcpy(out, path, n); out[n] = 0; }
+  const char *s = strrchr(path, '/'), *bs = strrchr(path, '\\');
+  if (!s || (bs && bs > s)) s = bs;
+  if (s) { size_t n = (size_t)(s - path); if (n == 0) n = 1; else if (n == 2 && path[1] == ':') n++;
+    if (n >= cap) n = cap - 1; memcpy(out, path, n); out[n] = 0; }
   else snprintf(out, cap, ".");
 }
 

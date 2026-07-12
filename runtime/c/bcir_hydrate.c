@@ -11,7 +11,7 @@ static size_t slen(const char *s) { size_t n = 0; while (s && s[n]) n++; return 
 typedef struct { uint8_t *p; size_t cap, n; int err; } W;
 
 static void w_bytes(W *w, const void *src, size_t n) {
-  if (w->err || w->n + n > w->cap) { w->err = 1; return; }
+  if (w->err || w->n > w->cap || n > w->cap - w->n || (!src && n)) { w->err = 1; return; }
   cp(w->p + w->n, src, n); w->n += n;
 }
 static void w_u8(W *w, uint8_t v) { w_bytes(w, &v, 1); }
@@ -22,7 +22,7 @@ static void w_u32(W *w, uint32_t v) {
 }
 static void w_u64(W *w, uint64_t v) { w_u32(w, (uint32_t)v); w_u32(w, (uint32_t)(v >> 32)); }
 static void w_str(W *w, const char *s) {           /* str := u16 len + bytes */
-  size_t n = slen(s); w_u16(w, (uint16_t)n); w_bytes(w, s, n);
+  size_t n = slen(s); if(n>UINT16_MAX){w->err=1;return;} w_u16(w, (uint16_t)n); w_bytes(w, s, n);
 }
 static void w_u32arr(W *w, const uint32_t *a, uint16_t count) {  /* u16 count + count*u32 */
   w_u16(w, count); for (uint16_t i = 0; i < count; i++) w_u32(w, a[i]);
@@ -30,6 +30,7 @@ static void w_u32arr(W *w, const uint32_t *a, uint16_t count) {  /* u16 count + 
 
 bcir_status bcir_hydrate(const bcir_func *f, const bcir_plan *plan,
                          uint8_t *buf, size_t cap, size_t *out_len) {
+  if(!f||!out_len||(!buf&&cap)||f->n_claims>UINT32_MAX)return BCIR_ERR_NOSPACE;
   W w = {buf, cap, 0, 0};
 
   /* control-flow markers (opcode NOP) are emit-only; they are not realizable segments. */

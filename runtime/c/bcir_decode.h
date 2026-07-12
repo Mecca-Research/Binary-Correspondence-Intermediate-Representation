@@ -35,8 +35,8 @@ int bcir_embedding(const double *table, int vocab, int dim, const int *ids, int 
  * softmax -> @ V_g, ascending-index accumulation everywhere (the oracle order).
  * n_kv_heads == n_heads is exactly multi-head attention. `scores` is caller-owned scratch
  * (seq doubles -- one score row at a time). out: seq x (n_heads*d_k). Returns 0, or -1 when
- * n_kv_heads is out of [1, n_heads] or does not divide n_heads (the oracle raises; the twin
- * refuses). */
+ * dimensions/pointers are invalid, n_kv_heads is out of [1, n_heads], or it does not divide
+ * n_heads (the oracle raises; the twin refuses). */
 int bcir_gqa_attention(const double *q, const double *k, const double *v, int seq,
                        int n_heads, int n_kv_heads, int d_k, double *scores, double *out);
 
@@ -46,7 +46,8 @@ int bcir_gqa_attention(const double *q, const double *k, const double *v, int se
  * call, so row t_len-1 is the current token). q_row is the roped n_heads*d_k query row.
  * Bit-for-bit the i == t_len-1 row of bcir_gqa_attention on the same buffers -- the
  * naive-vs-cached invariant at kernel level (the rung-3 twin gate, pinned in
- * test_decode_c_kernels.py). Same refusal contract. `scores`: t_len scratch doubles. */
+ * test_decode_c_kernels.py). Same refusal contract; t_len must be positive. `scores`:
+ * t_len scratch doubles. */
 int bcir_gqa_attention_row(const double *q_row, const double *k_rows, const double *v_rows,
                            int t_len, int n_heads, int n_kv_heads, int d_k,
                            double *scores, double *out);

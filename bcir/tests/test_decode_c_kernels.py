@@ -100,6 +100,9 @@ def test_gqa_kernel_matches_the_oracle_and_the_cached_row_is_bitwise():
                + " ".join(repr(x) for x in k3) + "\n" + " ".join(repr(x) for x in k3) + "\n")
         r = subprocess.run([exe], input=bad, capture_output=True, text=True)
         assert r.returncode == 3, r.returncode
+        # A zero-length cached row formerly dereferenced scores[0]; reject it before arithmetic.
+        r = subprocess.run([exe], input="gqa_row 0 1 1 1\n0\n", capture_output=True, text=True)
+        assert r.returncode == 3, (r.returncode, r.stderr)
         # the KV-cached row is the full recompute's last row, BITWISE (%.17g string equality).
         full = subprocess.run([exe], input=(f"gqa {seq} {nh} {nkv} {dk}\n"
                                             + " ".join(repr(x) for x in q) + "\n"

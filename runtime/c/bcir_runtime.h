@@ -34,7 +34,8 @@ typedef enum bcir_status {
   BCIR_ERR_WIDTH = 7,       /* a segment width that is zero or not a power of two */
   BCIR_ERR_DISPATCH = 8,    /* a v3 segment dispatch code outside the legal set */
   BCIR_ERR_PROVENANCE = 9,  /* R10: a segment claim_id has no trace note, or an unresolved prefetch */
-  BCIR_ERR_STALE = 10       /* R11: map_gen/data_gen do not match the caller's expected generation */
+  BCIR_ERR_STALE = 10,      /* R11: map_gen/data_gen do not match the caller's expected generation */
+  BCIR_ERR_OVERFLOW = 11    /* a derived size/cost cannot be represented by the public ABI */
 } bcir_status;
 
 /* zlib-compatible CRC-32 (reflected, poly 0xEDB88320). */

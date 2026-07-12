@@ -53,7 +53,7 @@ size_t bcir_tf_encode_frame(const bcir_tf_record *BCIR_TF_RESTRICT recs, uint16_
                             uint32_t seq, uint64_t ts, uint8_t *BCIR_TF_RESTRICT out,
                             size_t out_len) {
   const size_t need = bcir_tf_frame_size(n);
-  if (out_len < need) return 0;                  /* NOSPACE: the buffer was too small */
+  if (!out || (n && !recs) || out_len < need) return 0; /* invalid/NOSPACE */
 
   /* header (22 bytes): magic[4], version:u16, flags:u16, seq:u32, timestamp:u64, n:u16 */
   out[0] = 'B'; out[1] = 'T'; out[2] = 'L'; out[3] = 'M';
@@ -78,6 +78,7 @@ size_t bcir_tf_encode_frame(const bcir_tf_record *BCIR_TF_RESTRICT recs, uint16_
 
 bcir_tf_status bcir_tf_decode_frame(const uint8_t *BCIR_TF_RESTRICT buf, size_t len,
                                     bcir_tf_header *hdr, size_t *frame_len) {
+  if (!buf) return BCIR_TF_ERR_TRUNCATED;
   /* A frame is at least header + CRC (an empty, well-formed frame). */
   if (len < (size_t)BCIR_TELEMETRY_FRAME_HEADER_SIZE + BCIR_TELEMETRY_FRAME_CRC_SIZE)
     return BCIR_TF_ERR_TRUNCATED;
@@ -108,6 +109,7 @@ bcir_tf_status bcir_tf_decode_frame(const uint8_t *BCIR_TF_RESTRICT buf, size_t 
 
 bcir_tf_status bcir_tf_get_record(const uint8_t *BCIR_TF_RESTRICT buf, size_t len,
                                   uint16_t i, bcir_tf_record *out) {
+  if (!buf) return BCIR_TF_ERR_TRUNCATED;
   size_t off = (size_t)BCIR_TELEMETRY_FRAME_HEADER_SIZE
              + (size_t)i * (size_t)BCIR_TF_RECORD_SIZE;
   if (off + BCIR_TF_RECORD_SIZE > len) return BCIR_TF_ERR_TRUNCATED;
@@ -124,9 +126,9 @@ bcir_tf_status bcir_tf_get_record(const uint8_t *BCIR_TF_RESTRICT buf, size_t le
 }
 
 size_t bcir_tf_find_magic(const uint8_t *BCIR_TF_RESTRICT buf, size_t len, size_t start) {
-  if (start >= len) return len;
+  if (!buf || start >= len || len < 4u) return len;
   /* need 4 bytes for the magic */
-  for (size_t i = start; i + 4u <= len; i++) {
+  for (size_t i = start; i <= len - 4u; i++) {
     if (buf[i] == 'B' && buf[i + 1] == 'T' && buf[i + 2] == 'L' && buf[i + 3] == 'M')
       return i;
   }

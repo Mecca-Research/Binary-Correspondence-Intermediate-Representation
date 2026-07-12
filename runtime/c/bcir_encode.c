@@ -13,18 +13,22 @@ typedef struct {
   int err;
 } rcur;
 
+static int r_has(const rcur *c, size_t n) {
+  return !c->err && c->pos <= c->len && n <= c->len - c->pos;
+}
+
 static uint8_t r_u8(rcur *c) {
-  if (c->pos + 1 > c->len) { c->err = 1; return 0; }
+  if (!r_has(c, 1)) { c->err = 1; return 0; }
   return c->d[c->pos++];
 }
 static uint16_t r_u16(rcur *c) {
-  if (c->pos + 2 > c->len) { c->err = 1; return 0; }
+  if (!r_has(c, 2)) { c->err = 1; return 0; }
   uint16_t v = (uint16_t)((uint16_t)c->d[c->pos] | ((uint16_t)c->d[c->pos + 1] << 8));
   c->pos += 2; return v;
 }
 /* Borrow `n` raw bytes from the input at the cursor (bounds-checked); advance. */
 static const uint8_t *r_take(rcur *c, size_t n) {
-  if (c->pos + n > c->len) { c->err = 1; return 0; }
+  if (!r_has(c, n)) { c->err = 1; return 0; }
   const uint8_t *p = c->d + c->pos; c->pos += n; return p;
 }
 
@@ -36,21 +40,25 @@ typedef struct {
   int err;
 } wcur;
 
+static int w_has(const wcur *w, size_t n) {
+  return !w->err && w->pos <= w->cap && n <= w->cap - w->pos;
+}
+
 static void w_u8(wcur *w, uint8_t v) {
-  if (w->pos + 1 > w->cap) { w->err = 1; return; }
+  if (!w_has(w, 1)) { w->err = 1; return; }
   w->d[w->pos++] = v;
 }
 static void w_u16(wcur *w, uint16_t v) {
-  if (w->pos + 2 > w->cap) { w->err = 1; return; }
+  if (!w_has(w, 2)) { w->err = 1; return; }
   w->d[w->pos++] = (uint8_t)(v & 0xFF);
   w->d[w->pos++] = (uint8_t)((v >> 8) & 0xFF);
 }
 static void w_u32(wcur *w, uint32_t v) {
-  if (w->pos + 4 > w->cap) { w->err = 1; return; }
+  if (!w_has(w, 4)) { w->err = 1; return; }
   for (int i = 0; i < 4; i++) w->d[w->pos++] = (uint8_t)((v >> (8 * i)) & 0xFF);
 }
 static void w_bytes(wcur *w, const uint8_t *p, size_t n) {
-  if (!p || w->pos + n > w->cap) { w->err = 1; return; }
+  if ((!p && n) || !w_has(w, n)) { w->err = 1; return; }
   for (size_t i = 0; i < n; i++) w->d[w->pos++] = p[i];
 }
 
@@ -87,6 +95,7 @@ bcir_status bcir_sp_reencode(const uint8_t *BCIR_RESTRICT in, size_t in_len,
                              uint8_t *BCIR_RESTRICT out, size_t out_cap,
                              size_t *BCIR_RESTRICT out_len) {
   bcir_streampack_header hdr;
+  if (!out && out_cap) return BCIR_ERR_NOSPACE;
   bcir_status st = bcir_sp_validate(in, in_len, &hdr);
   if (st != BCIR_OK)
     return st;

@@ -42,37 +42,45 @@ typedef struct {
   int err;
 } cur;
 
+static int c_has(const cur *c, size_t n) {
+  return !c->err && c->pos <= c->len && n <= c->len - c->pos;
+}
+static void c_skip(cur *c, size_t n) {
+  if (!c_has(c, n)) c->err = 1; else c->pos += n;
+}
+
 static uint8_t c_u8(cur *c) {
-  if (c->pos + 1 > c->len) { c->err = 1; return 0; }
+  if (!c_has(c, 1)) { c->err = 1; return 0; }
   return c->d[c->pos++];
 }
 static uint16_t c_u16(cur *c) {
-  if (c->pos + 2 > c->len) { c->err = 1; return 0; }
+  if (!c_has(c, 2)) { c->err = 1; return 0; }
   uint16_t v = rd16(c->d + c->pos); c->pos += 2; return v;
 }
 static uint32_t c_u32(cur *c) {
-  if (c->pos + 4 > c->len) { c->err = 1; return 0; }
+  if (!c_has(c, 4)) { c->err = 1; return 0; }
   uint32_t v = rd32(c->d + c->pos); c->pos += 4; return v;
 }
 static uint64_t c_u64(cur *c) {
-  if (c->pos + 8 > c->len) { c->err = 1; return 0; }
+  if (!c_has(c, 8)) { c->err = 1; return 0; }
   uint64_t v = rd64(c->d + c->pos); c->pos += 8; return v;
 }
 static const char *c_str(cur *c, uint16_t *out_len) {
   uint16_t n = c_u16(c);
-  if (c->err || c->pos + n > c->len) { c->err = 1; *out_len = 0; return 0; }
+  if (!c_has(c, n)) { c->err = 1; *out_len = 0; return 0; }
   const char *p = (const char *)(c->d + c->pos);
   c->pos += n; *out_len = n; return p;
 }
 static const uint8_t *c_u32arr(cur *c, uint16_t *out_cnt) {
   uint16_t n = c_u16(c);
-  if (c->err || c->pos + (size_t)n * 4u > c->len) { c->err = 1; *out_cnt = 0; return 0; }
+  size_t bytes = (size_t)n * 4u;
+  if (!c_has(c, bytes)) { c->err = 1; *out_cnt = 0; return 0; }
   const uint8_t *p = c->d + c->pos;
-  c->pos += (size_t)n * 4u; *out_cnt = n; return p;
+  c->pos += bytes; *out_cnt = n; return p;
 }
 static void c_skip_str(cur *c) {
   uint16_t n = c_u16(c);
-  if (c->pos + n > c->len) c->err = 1; else c->pos += n;
+  c_skip(c, n);
 }
 static void c_skip_strarr(cur *c) {
   uint16_t n = c_u16(c);
@@ -99,6 +107,7 @@ static bcir_status seg_range_ok(const bcir_segment_view *v) {
 
 bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
                              bcir_streampack_header *BCIR_RESTRICT hdr) {
+  if (!data) return BCIR_ERR_TRUNCATED;
   if (len < (size_t)BCIR_STREAMPACK_HEADER_SIZE + 4u) return BCIR_ERR_TRUNCATED;
   if (data[0] != 'B' || data[1] != 'S' || data[2] != 'P' || data[3] != 'K')
     return BCIR_ERR_MAGIC;
@@ -191,8 +200,8 @@ bcir_status bcir_sp_check_generation(const uint8_t *BCIR_RESTRICT data, size_t l
 /* Skip one whole segment record (all versions), advancing the cursor. */
 static void skip_segment(cur *c, uint16_t version) {
   c_skip_str(c);                /* name */
-  c->pos += 8 + 4 + 1 + 4 + 4;  /* claim_id,u64 phase_id,u32 lane,u8 width,u32 stride_k,u32 */
-  if (c->pos > c->len) { c->err = 1; return; }
+  c_skip(c, 8 + 4 + 1 + 4 + 4); /* claim_id,u64 phase_id,u32 lane,u8 width,u32 stride_k,u32 */
+  if (c->err) return;
   c_skip_str(c);                /* opcode */
   { uint16_t n; (void)c_u32arr(c, &n); }  /* reads */
   { uint16_t n; (void)c_u32arr(c, &n); }  /* writes */
@@ -200,8 +209,7 @@ static void skip_segment(cur *c, uint16_t version) {
   c_skip_strarr(c);             /* fence_before */
   c_skip_strarr(c);             /* fence_after */
   if (version >= 3) {
-    if (c->pos + 1 > c->len) { c->err = 1; return; }
-    c->pos += 1;                /* dispatch u8 */
+    c_skip(c, 1);               /* dispatch u8 */
     c_skip_str(c);              /* channel */
   }
 }
@@ -219,8 +227,7 @@ static int trace_has_claim(const uint8_t *data, size_t body_len, size_t trace_st
   cur c; c.d = data; c.len = body_len; c.pos = trace_start; c.err = 0;
   for (uint32_t i = 0; i < n_trace && !c.err; i++) {
     uint64_t tc = c_u64(&c);    /* claim_id */
-    c.pos += 16;                /* src_hash u64 + trace_hash u64 */
-    if (c.pos > c.len) { c.err = 1; break; }
+    c_skip(&c, 16);             /* src_hash u64 + trace_hash u64 */
     if (!c.err && tc == cid) return 1;
   }
   return 0;
@@ -236,12 +243,11 @@ static int prefetch_has_name(const uint8_t *data, size_t body_len, size_t pf_sta
     if (c.err) break;
     if (str_eq(pn, nl, name, name_len)) return 1;
     /* skip the rest of this prefetch record */
-    if (c.pos + 4 > c.len) { c.err = 1; break; }
-    c.pos += 4;                 /* distance */
+    c_skip(&c, 4);              /* distance */
     { uint16_t n; (void)c_u32arr(&c, &n); }  /* targets */
     c_skip_str(&c);             /* hint */
     c_skip_str(&c);             /* pattern */
-    if (version >= 2) { if (c.pos + 1 > c.len) { c.err = 1; break; } c.pos += 1; }
+    if (version >= 2) c_skip(&c, 1);
   }
   return 0;
 }
@@ -261,8 +267,7 @@ static int prefetch_covers_read(const uint8_t *data, size_t body_len, size_t pf_
     uint16_t nl; const char *pn = c_str(&c, &nl);
     if (c.err) break;
     int is_named = str_eq(pn, nl, name, name_len);
-    if (c.pos + 4 > c.len) { c.err = 1; break; }
-    c.pos += 4;                 /* distance */
+    c_skip(&c, 4);              /* distance */
     uint16_t nt; const uint8_t *targets = c_u32arr(&c, &nt);
     if (c.err) break;
     if (is_named) {
@@ -275,7 +280,7 @@ static int prefetch_covers_read(const uint8_t *data, size_t body_len, size_t pf_
     }
     c_skip_str(&c);             /* hint */
     c_skip_str(&c);             /* pattern */
-    if (version >= 2) { if (c.pos + 1 > c.len) { c.err = 1; break; } c.pos += 1; }
+    if (version >= 2) c_skip(&c, 1);
   }
   return 0;                     /* name not found -> caller's prefetch_has_name already failed */
 }
@@ -309,8 +314,7 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   /* validate prefetch buffers (1|2) while skipping to the blocks */
   for (uint32_t i = 0; i < hdr.n_prefetches && !c.err; i++) {
     c_skip_str(&c);                /* name */
-    if (c.pos + 4 > c.len) { c.err = 1; break; }
-    c.pos += 4;                    /* distance */
+    c_skip(&c, 4);                 /* distance */
     { uint16_t n; (void)c_u32arr(&c, &n); }  /* targets */
     c_skip_str(&c);                /* hint */
     c_skip_str(&c);                /* pattern */
@@ -321,11 +325,9 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   }
   if (c.err) return BCIR_ERR_TRUNCATED;
   for (uint32_t i = 0; i < hdr.n_blocks && !c.err; i++) {
-    if (c.pos + 16 > c.len) { c.err = 1; break; }
-    c.pos += 16;                   /* base u64 + count u64 */
+    c_skip(&c, 16);                /* base u64 + count u64 */
     { uint16_t n = c_u16(&c);      /* strides u64_array */
-      if (c.pos + (size_t)n * 8u > c.len) { c.err = 1; break; }
-      c.pos += (size_t)n * 8u; }
+      c_skip(&c, (size_t)n * 8u); }
   }
   if (c.err) return BCIR_ERR_TRUNCATED;
   size_t trace_start = c.pos;

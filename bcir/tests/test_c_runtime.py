@@ -234,3 +234,27 @@ def test_c_rejects_crc_valid_semantically_corrupt_packs():
             assert fields.get("name") == code, (kind, run.stdout)
             assert fields.get("exec") == code, (kind, run.stdout)
             assert run.returncode == 1, (kind, run.stdout)
+
+
+def test_c_planner_rejects_unrepresentable_cost_instead_of_wrapping():
+    clang = which("clang")
+    if clang is None:
+        return
+    source = (
+        '#include <stdint.h>\n#include <string.h>\n#include "bcir_plan.h"\n'
+        'int main(void){bcir_claim c;bcir_func f;bcir_plan_step s;bcir_plan p;'
+        'memset(&c,0,sizeof c);memset(&f,0,sizeof f);'
+        'c.opcode=BCIR_OP_ATOMIC_ADD;c.domain=BCIR_DOM_MMIO;c.count=UINT32_MAX;'
+        'f.claims=&c;f.n_claims=1;'
+        'return bcir_plan_func(&f,&s,1,&p)==BCIR_ERR_OVERFLOW?0:1;}\n'
+    )
+    with tempfile.TemporaryDirectory() as d:
+        driver = os.path.join(d, "plan_overflow.c")
+        with open(driver, "w", encoding="utf-8") as f:
+            f.write(source)
+        exe = os.path.join(d, "plan_overflow")
+        build = subprocess.run([clang, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", _C_DIR,
+                                os.path.join(_C_DIR, "bcir_plan.c"), driver, "-o", exe],
+                               capture_output=True, text=True)
+        assert build.returncode == 0, build.stderr
+        assert subprocess.run([exe], capture_output=True).returncode == 0
