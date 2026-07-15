@@ -32,7 +32,7 @@ def test_header_declares_the_kernel_abi():
 def test_kernel_is_the_c23_backend_output():
     a = build_artifact("vector_add", target="x86_avx512", theta="hot")        # hot -> vec8
     assert a.width == 8 and "width=8" in a.kernel_c
-    assert "restrict" in a.kernel_c and "static_assert" in a.kernel_c
+    assert "restrict" in a.kernel_c and "_Static_assert" in a.kernel_c
 
 
 def test_metadata_json_excludes_source():

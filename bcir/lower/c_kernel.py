@@ -14,7 +14,7 @@ both AOT (compiled + self-checked here by `compile_and_run_c`) and driver-embedd
 self-checking `main` for the AOT path.
 
 C23 conformance (ISO/IEC 9899:2023): `restrict` on the pointer parameters
-(6.7.3.1, the aliasing guarantee), file-scope `static_assert` on the element size
+(6.7.3.1, the aliasing guarantee), file-scope `_Static_assert` on the element size
 (6.7.11), `#pragma STDC FP_CONTRACT OFF` for reproducible float results (7.12.2 --
 no fused-multiply-add contraction, so the self-check's exact compare holds),
 `<stddef.h>` `size_t` trip counts, and `<stdint.h>` `int32_t` for the FP-less
@@ -118,7 +118,7 @@ def emit_kernel_c(module: Module, result: RealizationResult, fn_name: str = "bci
         f"lane={cand.lane.name} width={w} elem={ctype} "
         f"(K_BCIR-selected; {geom}; StreamPack {seg.name if seg else '-'}). */\n"
         f"{includes}"
-        f'static_assert(sizeof({ctype}) == 4, "BCIR {ctype} kernel needs a 4-byte element");\n'
+        f'_Static_assert(sizeof({ctype}) == 4, "BCIR {ctype} kernel needs a 4-byte element");\n'
         f"{fp_pragma}\n"
     )
     sig = (f"void {fn_name}(const {ctype} *{rqual} A, const {ctype} *{rqual} B,\n"
@@ -1924,7 +1924,7 @@ def emit_gather_kernel_c(module: Module, result: RealizationResult,
         f"/* BCIR -> gather realization (cost-model-AVOIDED; pays gather_penalty). "
         f"op={claim.op or op} elem={ctype}. */\n"
         f"{includes}"
-        f'static_assert(sizeof({ctype}) == 4, "BCIR {ctype} gather needs a 4-byte element");\n'
+        f'_Static_assert(sizeof({ctype}) == 4, "BCIR {ctype} gather needs a 4-byte element");\n'
         f"{fp_pragma}\n"
         f"void {fn_name}(const {ctype} *restrict A, const {ctype} *restrict B,\n"
         f"             {ctype} *restrict C, const long *restrict idx, size_t n) {{\n"

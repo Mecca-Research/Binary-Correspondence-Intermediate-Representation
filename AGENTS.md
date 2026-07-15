@@ -46,6 +46,12 @@ resource-constrained workstations must not emulate ARM to manufacture it.
 
 During iteration, focused tests are appropriate. Before a commit or PR update:
 
+On the local development workstation, serialize heavy gates and cap parallel work
+at two workers. Use `-j 2` for the Python runner,
+`CMAKE_BUILD_PARALLEL_LEVEL=2` for builds, and
+`-DLLVM_TRAINING_LIT_JOBS=2` for the LLVM-training aggregate. Do not run the
+Python, C sanitizer/fuzzer, model, LLVM-training, or MLIR gates concurrently.
+
 1. Run focused regressions and the bounded complete quick oracle locally. Run
    broader local gates only when the host and resource budget support them.
 2. Delegate the full Python/differential/fuzz, C runtime/model, LLVM training,

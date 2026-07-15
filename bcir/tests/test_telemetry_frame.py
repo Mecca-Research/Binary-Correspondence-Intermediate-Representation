@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import zlib
 
 from bcir.telemetry import DataDNA, TelemetryIntegrity, TelemetryRing, sanitize_events
 from bcir.telemetry_frame import (CRC_SIZE, HEADER_SIZE, RECORD_STRIDE,
@@ -53,6 +54,8 @@ def _wire_batch():
                 thermal=99, voltage=0, utilization=100),
         DataDNA(segment_id="", claim_id=9223372036854775807, cycles=-1, bytes=200,
                 misses=5, thermal=40, voltage=10, utilization=30),
+        DataDNA(segment_id="", claim_id=-(1 << 63), cycles=-(1 << 63), bytes=0,
+                misses=5, thermal=40, voltage=10, utilization=30),
     ]
 
 
@@ -66,6 +69,12 @@ def test_frame_layout_constants():
     assert RECORD_STRIDE == 56                      # reuses TelemetryRing._FMT ("<7q")
     assert CRC_SIZE == 4
     assert frame_length(3) == 22 + 56 * 3 + 4 == len(encode_frame(_batch()))
+    for invalid in (-1, 1 << 16, True, 1.0):
+        try:
+            frame_length(invalid)
+            assert False, "expected frame-length range rejection"
+        except TelemetryFrameError:
+            pass
 
 
 def test_python_round_trip_preserves_records_and_meta():
@@ -93,9 +102,52 @@ def test_empty_frame_round_trips():
     assert out == [] and meta.seq == 1 and meta.timestamp == 7
 
 
-def test_drain_ring_to_frame_no_body_reencode():
-    """The producer step: drain the ring, frame the records. The 56-byte body equals the
-    ring's own record bytes (no re-encoding of the record set)."""
+def test_writer_rejects_values_it_cannot_represent_without_masking():
+    """The v1 writer never silently wraps metadata or accepts a non-i64 body field."""
+    class UnstableRecords:
+        def __init__(self, declared, actual):
+            self.declared = declared
+            self.actual = actual
+
+        def __len__(self):
+            return self.declared
+
+        def __iter__(self):
+            return iter(self.actual)
+
+    bad_calls = (
+        lambda: encode_frame([], version=2),
+        lambda: encode_frame([], version=1.0),
+        lambda: encode_frame([], seq=-1),
+        lambda: encode_frame([], seq=1 << 32),
+        lambda: encode_frame([], timestamp=-1),
+        lambda: encode_frame([], timestamp=1 << 64),
+        lambda: encode_frame([DataDNA("", 1 << 63)]),
+        lambda: encode_frame([DataDNA("", True)]),
+        lambda: encode_frame(UnstableRecords(1, _batch()[:2])),
+        lambda: encode_frame(UnstableRecords(2, _batch()[:1])),
+    )
+    for call in bad_calls:
+        try:
+            call()
+            assert False, "expected representability rejection"
+        except TelemetryFrameError:
+            pass
+
+
+def test_strict_decode_rejects_trailing_bytes():
+    frame = encode_frame(_batch(), seq=3)
+    for suffix in (b"x", encode_frame([], seq=4)):
+        try:
+            decode_frame(frame + suffix)
+            assert False, "strict one-frame decode must reject trailing bytes"
+        except TelemetryFrameError as exc:
+            assert "trailing" in str(exc)
+
+
+def test_drain_ring_to_frame_preserves_shared_record_layout():
+    """The producer step drains the ring and preserves every value in the shared
+    56-byte record schema/layout."""
     ring = TelemetryRing(capacity=8)
     recs = _batch()
     for r in recs:
@@ -167,7 +219,6 @@ def test_bad_magic_and_version_rejected():
     # a future version is rejected by the v1 gate
     bumped = bytearray(encode_frame(_batch()))
     bumped[4] = 2                                    # version u16 low byte -> 2
-    import zlib
     body = bytes(bumped[:HEADER_SIZE + len(_batch()) * RECORD_STRIDE])
     bumped[-4:] = (zlib.crc32(body) & 0xFFFFFFFF).to_bytes(4, "little")  # fix CRC so version is the only fault
     try:
@@ -175,6 +226,16 @@ def test_bad_magic_and_version_rejected():
         assert False, "expected a version rejection"
     except TelemetryFrameError as e:
         assert "version" in str(e)
+    # v1 flags are reserved and must be zero on both rails.
+    flagged = bytearray(encode_frame(_batch()))
+    flagged[6:8] = (1).to_bytes(2, "little")
+    body = bytes(flagged[:-CRC_SIZE])
+    flagged[-CRC_SIZE:] = (zlib.crc32(body) & 0xFFFFFFFF).to_bytes(4, "little")
+    try:
+        decode_frame(bytes(flagged))
+        assert False, "expected a reserved-flags rejection"
+    except TelemetryFrameError as e:
+        assert "flags" in str(e)
 
 
 def test_truncated_frame_rejected_not_crashed():
@@ -189,20 +250,42 @@ def test_truncated_frame_rejected_not_crashed():
         assert False, "expected truncation rejection"
     except TelemetryFrameError as e:
         assert "short" in str(e) or "truncated" in str(e)
+    # A magic-aligned suffix is one truncated candidate, not silently ignored.
+    assert decode_frames(b"BTLM").rejected == 1
+
+
+def test_u32_frame_sequence_continuity_and_wraparound():
+    def stream(*seqs):
+        return decode_frames(b"".join(encode_frame([], seq=s) for s in seqs))
+
+    gap = stream(10, 12)
+    assert gap.missing_frames == 1 and gap.reordered_frames == 0
+    dup = stream(10, 10)
+    assert dup.duplicate_frames == 1 and dup.missing_frames == 0
+    reorder = stream(10, 9, 11)
+    assert reorder.reordered_frames == 1 and reorder.missing_frames == 0
+    wrapped = stream(0xFFFFFFFF, 0)
+    assert (wrapped.missing_frames, wrapped.reordered_frames,
+            wrapped.duplicate_frames) == (0, 0, 0)
 
 
 # --- RT3 reuse (the host decoder reuses sanitize_events) ------------------------
 
 def test_parse_uart_frames_reuses_rt3_clean():
-    """A clean batch -> parse_uart_frames returns the records + a clean witness identical
-    to running sanitize_events on the ring records directly."""
+    """A clean batch reuses the ring path's RT3 record verdict and adds explicit
+    evidence that one BTLM frame was validated."""
     recs = _batch()
     frame = encode_frame(recs, seq=1)
     out, witness = parse_uart_frames(frame)
     assert out == recs
     assert isinstance(witness, TelemetryIntegrity)
     ref_out, ref_witness = sanitize_events(recs)
-    assert witness == ref_witness                    # same RT3 verdict as the ring path
+    assert out == ref_out
+    assert (witness.accepted, witness.rejected, witness.dropped,
+            witness.monotonic, witness.seq_span) == (
+                ref_witness.accepted, ref_witness.rejected, ref_witness.dropped,
+                ref_witness.monotonic, ref_witness.seq_span)
+    assert witness.frames_accepted == 1 and witness.frames_rejected == 0
     assert witness.clean and not witness.blind
 
 
@@ -217,14 +300,15 @@ def test_parse_uart_frames_rejects_out_of_band_record():
     assert witness.rejected == 1 and witness.accepted == len(good)
 
 
-def test_parse_uart_frames_surfaces_dropped_frames_into_witness():
-    """A corrupt frame is a lost batch: parse_uart_frames carries the frame-level drop
-    into witness.dropped (the eviction analogue the ring surfaces)."""
+def test_parse_uart_frames_surfaces_rejected_frames_without_guessing_record_loss():
+    """A corrupt frame has an unknown record count, so it is a frame rejection rather
+    than a guessed record-level ring drop."""
     f1 = encode_frame(_batch(), seq=1)
     bad = bytearray(encode_frame(_batch(), seq=2))
     bad[HEADER_SIZE] ^= 0xFF
     out, witness = parse_uart_frames(f1 + bytes(bad))
-    assert witness.dropped == 1                      # the corrupt frame -> a drop
+    assert witness.frames_accepted == 1 and witness.frames_rejected == 1
+    assert witness.dropped == 0                      # no invented record-loss count
     assert witness.accepted == len(_batch())
 
 
@@ -232,10 +316,22 @@ def test_parse_uart_frames_blind_on_empty_stream():
     """An empty / all-dropped stream is BLIND (the suppression signal), not a silent no-op."""
     out, witness = parse_uart_frames(b"")
     assert out == [] and witness.blind
-    # a stream of only corrupt frames is also blind, with the drops counted
+    # a stream of only corrupt frames is also blind, with frame rejection counted
     bad = bytearray(encode_frame(_batch(), seq=1)); bad[HEADER_SIZE] ^= 0xFF
     out2, w2 = parse_uart_frames(bytes(bad))
-    assert out2 == [] and w2.blind and w2.dropped == 1
+    assert (out2 == [] and w2.blind and w2.frames_accepted == 0
+            and w2.frames_rejected == 1 and w2.dropped == 0)
+
+
+def test_parse_uart_frames_surfaces_frame_sequence_anomalies():
+    frames = b"".join((encode_frame([], seq=4), encode_frame([], seq=6),
+                       encode_frame([], seq=6), encode_frame([], seq=5)))
+    _, witness = parse_uart_frames(frames)
+    assert witness.frames_accepted == 4
+    assert witness.frames_missing == 1
+    assert witness.frames_duplicated == 1
+    assert witness.frames_reordered == 1
+    assert not witness.frame_monotonic and not witness.clean
 
 
 def test_parse_uart_frames_reorder_surfaces_non_monotonic():
@@ -338,14 +434,17 @@ def test_c_rejects_corrupt_frame():
         good = encode_frame(_batch(), seq=1)
         bad_crc = bytearray(good); bad_crc[HEADER_SIZE] ^= 0xFF
         bad_magic = b"XXXX" + good[4:]
-        for bad in (b"", b"BTLM", good[:HEADER_SIZE], good[:-1], bytes(bad_crc), bad_magic):
+        flagged = bytearray(good)
+        flagged[6:8] = (1).to_bytes(2, "little")
+        flagged[-CRC_SIZE:] = (zlib.crc32(flagged[:-CRC_SIZE]) & 0xFFFFFFFF).to_bytes(4, "little")
+        for bad in (b"", b"BTLM", good[:HEADER_SIZE], good[:-1], bytes(bad_crc),
+                    bad_magic, bytes(flagged), good + b"trailing"):
             ip = os.path.join(tmp, "bad.bin")
             with open(ip, "wb") as f:
                 f.write(bad)
             r = subprocess.run([exe, ip], capture_output=True, text=True)
-            assert r.returncode in (0, 1), (bad[:8], r.returncode, r.stderr)
-            if r.returncode == 1:
-                assert "ERR" in r.stdout, r.stdout
+            assert r.returncode == 1, (bad[:8], r.returncode, r.stdout, r.stderr)
+            assert "ERR" in r.stdout, r.stdout
 
 
 def _run_all():
