@@ -1,2284 +1,328 @@
 # BCIR Master Roadmap
 
-> **Status: the single, current, authoritative roadmap.** This document consolidates
-> and supersedes the former strategy/blueprint/plan notes — `BCIR_STRATEGY_AND_ROADMAP.md`,
-> `BCIR_LOWERING_PLAN.md`, `BCIR_BLUEPRINT.md`, `BCIR_Codex_Blueprint.md`,
-> `BCIR_Full_LLVM_Build_Blueprint.md`, and `BCIR_LLVM_IR.md` (all removed in the
-> consolidation; their unique content is folded in here). It pairs with the docs that
-> stay separate because they are **normative reference / evidence / governance**, not
-> roadmap:
-> - [`BCIR_LANGREF.md`](BCIR_LANGREF.md) — the IR language + R1–R23 law spec (normative).
-> - [`BCIR_STREAMPACK_ABI.md`](BCIR_STREAMPACK_ABI.md) — the frozen binary ABI (v1 + append-only v2).
-> - [`PARITY.md`](PARITY.md) — the active oracle↔law cross-map (dual-rail enforcement).
-> - [`BCIR_NATIVE_OBJECT_GATE.md`](BCIR_NATIVE_OBJECT_GATE.md) — the native-isel decision gate.
-> - [`HARDWARE_VALIDATION.md`](HARDWARE_VALIDATION.md) — what is measured vs blocked on real silicon.
-> - [`CLANG_COMPARISON.md`](CLANG_COMPARISON.md) — the measured BCIR-vs-Clang evidence.
-> - [`BCIR_TRITON_COMPARATIVE_ANALYSIS.md`](BCIR_TRITON_COMPARATIVE_ANALYSIS.md) — BCIR vs Triton (the fork/interop/migrate decision: do NOT fork, interop + migrate the Linear-Layout F₂ algebra / MXFP numerics / tile-peephole passes; Triton is aligned with the resident-compiler gate, broader-vs-deeper positioning).
-> - [`BCIR_AMD_AI_DRIVER_ROADMAP.md`](BCIR_AMD_AI_DRIVER_ROADMAP.md) — the AMD AI-inference driver/kernel roadmap (inherit-and-enhance AMD's ROCm/XDNA stack via interop-not-fork; three device classes CDNA/RDNA/XDNA; BCIR-Triton on-call compiler; per-project interop ledger; PyTorch/JAX/TF supplement boundary).
-> - [`BCIR_WHOLE_MODEL_REFERENCE.md`](BCIR_WHOLE_MODEL_REFERENCE.md) — the open-weight ladder's rung-8 capstone: a dependency-free whole-model artifact composing rungs 1–7 into one train→export→run-standalone→verify loop (the machinery worth importing from llama2.c, reshaped proof-carrying; WMR-1..WMR-4 build slices).
-> - [`BCIR_GAME_OPTIMIZATION_ROADMAP.md`](BCIR_GAME_OPTIMIZATION_ROADMAP.md) — legendary game optimizations (Doom BSP/fixed-point, Quake fast-rsqrt, Elite seed-gen, Crash streaming, Factorio prefetch + fork/COW, RCT asm, seL4) mapped to GEM/K_BCIR/StreamPack under the **exact-vs-approximate honesty split**: exact bit/layout/search tricks become value-invariant realizations (much already built); the approximate family rides a NEW two-truth-quarantined rel-error contract or is do-not-import — never "perfect accuracy". G1–G11 build slices (headed by the shift strength-reduction rewrite with the signed-divide bias guard).
-> - [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) — the honest current-state snapshot.
-> - [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md) — the dated 7-pillar honest-state map of the
->   "C-as-Macro-Assembly + IR-owns-everything + bare-metal-AI" thesis vs what is built (+ the prioritized gap backlog).
-> - [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) — the C↔C++ hand-off boundary (Pillar 5d): the contract
->   for when work exceeds the deterministic single-node C/IR rail and crosses to C++ (dynamic graph topology +
->   distributed MPI/NCCL orchestration), with a compilable, round-trip-tested seam scaffold (`runtime/cpp/`).
-> - [`SYCL_INTEROP.md`](SYCL_INTEROP.md) — SYCL/SPIR-V as a backend channel + a differential oracle (a SAXPY
->   `parallel_for` measured against BCIR's reference), never on the legality path; a compiler mode (`-fsycl`),
->   not a `c.call.libm:` link edge.
-> - [`TELEMETRY_PIPELINE_RESEARCH.md`](TELEMETRY_PIPELINE_RESEARCH.md) — research + scoping for the telemetry/
->   monitoring pipeline: a seven-layer survey of industry telemetry sources (NVML/DCGM, ROCm/amd-smi, RAPL,
->   hwmon, PAPI, SEGGER RTT, CoreSight, Redfish, OpenTelemetry, Synopsys SLM, proteanTecs, the SPICE probe/
->   measure/sweep metaphor) mapped to BCIR's cost dims + signal-provider/calibration surfaces, with the
->   two-truth invariant (telemetry informs plan cost, never a legality verdict) and a build order.
-> - [`SIGNAL_REGISTRY.md`](SIGNAL_REGISTRY.md) — the telemetry signal-provider registry (T1, BUILT): a
->   vendor-neutral PAPI-component registry of typed providers wrapping `bcir/silicon.py`, mapped to the
->   12-D cost vector, with honest `None`/unavailable + provenance-on-the-definition (Redfish split), a
->   `register()` plugin seam, and the channel↔provider power mapping — off the legality path.
-> - [`TELEMETRY_FRAME_ABI.md`](TELEMETRY_FRAME_ABI.md) — the frozen UART telemetry-frame wire ABI (T2,
->   BUILT): a self-delimiting, resync-able, CRC-sealed frame (magic `"BTLM"` | version | flags | seq |
->   timestamp | n | the ring's 56-byte `<7q>` records | CRC-32) a producer drains from `TelemetryRing`
->   and the host decoder reuses RT3 to validate. Dual-rail (`bcir/telemetry_frame.py` ↔
->   `runtime/c/bcir_telemetry_frame.{c,h}`, byte-identical), CRC reused (`bcir_crc32`/`zlib.crc32`) —
->   off the legality path.
-> - [`BCIR_Repo_Structure.md`](BCIR_Repo_Structure.md) — directory layout + build entry points.
-> - [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md) — how it was built: the development method,
->   the PR-era arc (#2–#607), and the condensed dated changelog (dev-step notes live there, not here).
+> **Scope:** current execution plan for package version `0.2.0`.
+>
+> This document owns cross-program order, promotion gates, and stop conditions. It does
+> not carry test counts, PR chronology, or completed-wave notes. Static inventories come
+> from generated [`STATUS.md`](STATUS.md); implementation truth is summarized in
+> [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md); the build record lives in
+> [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md). The `0.3b` release notes remain an
+> unreleased draft.
 
----
+## 1. Mission and non-negotiable invariants
 
-## 1. What BCIR is (positioning)
+BCIR is a registry-first, phase-ordered, lane-typed, cost-governed correspondence IR.
+It preserves a computation's semantic claim, legal physical realizations, selected plan,
+GEM schedule, target lowering, and provenance as one auditable chain.
 
-BCIR is a **cost-governed planning + verification layer above LLVM**, designed to live
-inside a driver/runtime — not a Clang replacement. It models what LLVM does not:
+Every program in this roadmap obeys these invariants:
 
-- **Cost as a first-class IR object** — a 12-dimensional integer/Q-fixed cost vector
-  per realization, scalarized under a policy; the optimizer is a tropical (min-plus)
-  shortest path with (max,+) wave overlap and resource-constrained search (RCSP).
-- **Θ-feasibility** — live runtime state (thermal/power/contention) changes what is
-  *legal*, not just what is fast: a thermal cap can make max-width vec16 infeasible and
-  the feasible vec8 the correct plan.
-- **A principled ML boundary** — the **two-truth quarantine** (L0–L3): learned/graded
-  machinery is quarantined off the deterministic decision/execution path and may only
-  *inform* it through frozen Q8 artifacts; it can never *become* a legality verdict.
-- **Provenance + reproducibility as obligations** — every plan carries a replayable
-  provenance manifest (R11/R13); the same inputs reproduce the same plan bit-for-bit.
+1. **Legality precedes optimization.** R1–R23 and device-specific laws reject illegal
+   candidates before K_BCIR prices them.
+2. **One semantic truth, multiple realizations.** Python is the executable oracle; MLIR is
+   the compiled law rail; C is the freestanding/hosted realization rail. A new rail earns
+   support through differential parity, not assertion.
+3. **Learning proposes; certificates dispose.** Learned or measured data may rank and
+   calibrate legal choices. It never becomes a legality verdict or steers in-flight work.
+4. **Artifacts are immutable within a generation.** Plans, StreamPacks, model weights,
+   driver programs, and learned priors are content-addressed, generation-tagged, and stale
+   on any relevant input change.
+5. **The core is platform-neutral.** Linux, Windows, POSIX, vendor runtimes, IPC, and hosted
+   allocation are adapters around the direct contracts; none becomes the definition of BCIR.
+6. **Unsupported work fails honestly.** Partial AOT, modeled channels, compiler fixtures,
+   portable fallbacks, and hardware-gated code are labeled as such.
+7. **Evidence controls promotion.** A feature needs implementation, deterministic positive
+   coverage, refusal coverage where malformed input exists, and all required CI checks.
 
-**Niche-first philosophy.** "Forcing a refactor of Clang/LLVM" is a research result,
-not a milestone. The goal is to demonstrate *on silicon* that cost-as-IR + Θ-feasibility
-+ frozen-learned planning beats LLVM on workloads LLVM handles poorly — irregular
-memory (gather/scatter avoidance), multi-target placement, and power/thermal-capped
-kernels — while *matching* LLVM on dense kernels (which it must, since it delegates
-instruction selection to the resident backend). The measured evidence is in
-`CLANG_COMPARISON.md`: **match** on dense (0.98–1.00×), **win** on intent the backend
-lacks (gather avoidance 6.0×, reduction order 14.1×, strided 1.33×), plus budget
-feasibility as a correctness win.
+The normative semantics and artifact contract are in
+[`BCIR_LANGREF.md`](BCIR_LANGREF.md). The Python↔MLIR↔C correspondence is governed by
+[`PARITY.md`](PARITY.md).
 
-**Three highest-ROI shapes:** (1) cost-governed scheduling/placement + verification
-above LLVM; (2) the planning brain of an AI-accelerator / heterogeneous-SoC
-runtime/driver; (3) a principled ML-in-compilers research vehicle.
+## 2. Architecture and current baseline
 
----
+### 2.1 IR levels
 
-## 2. Current state at a glance (measured)
+| Level | Responsibility | Current realization |
+|---|---|---|
+| BCIR-0 | Semantic claims and state transformations | Python model/frontends; MLIR BCIR dialect |
+| BCIR-1 | Shaped data, layouts, records, tensors | Resource/layout model; GEM tensor ops; binary-record/model frontends |
+| BCIR-2 | Registry and placement candidates | Registry, device manifests, memory banks, channels, generations |
+| BCIR-3 | Legal K_BCIR realization plan | Exact integer cost search, RCSP/Pareto, schedule-aware price, certified priors |
+| BCIR-4 | GEM execution and StreamPack | Hydration, wave/token scheduling, v1–v3 StreamPack, C executor |
+| BCIR-5 | Target lowering | Partial LLVM/MLIR, portable C23, WASM/JVM/CIL subsets, SYCL/SPIR-V channel, resident toolchains |
 
-| Fact | **Now** |
+### 2.2 Implementation rails
+
+| Rail | Owns | Explicit boundary |
+|---|---|---|
+| `bcir/` | Executable conformance oracle, K_BCIR, GEM, frontends, ML/reference organs | Not the production definition when a compiled law exists |
+| `mlir/` | ODS/IRDL structure, compiled verifier and transformations, target-edge lowering | `bcir-aot` is partial preparation; Python LLVM lowering accepts one supported elementwise claim |
+| `runtime/c/` | Freestanding runtime, C-front twin, hosted model/compiler tools, direct RuntimeChannel | Memory classes are explicit; no hidden platform or IPC dependency in freestanding code |
+| `runtime/cpp/` | Hosted orchestration above the C ABI | Single-node handoff is real; distributed/device-manager backends remain scaffolded |
+| LLVM/Clang/GCC/vendor stacks | General-purpose isel, register allocation, object production, vendor device/runtime internals | Consumed rather than reimplemented unless a decision gate proves a missing BCIR-owned requirement |
+
+### 2.3 Source-backed status
+
+| Area | Landed baseline | Boundary that remains |
+|---|---|---|
+| Law and optimizer | R1–R23, twelve-axis cost vectors, exact planning, RCSP/Pareto, overlap pricing, replay/provenance, frozen learned priors | Additional laws require a demonstrated semantic gap and dual-rail negative coverage |
+| GEM and StreamPack | Hydration, scheduling, execution, strict v1–v3 codecs, C/Python byte parity, operator disassembly/hexdump | Hardware command packets and per-device execution are not implied |
+| C compiler | Broad driver-oriented C23 subset, twin lowering, Clang differentials, target ABI matrix, project/link/fallback modes | Not complete ISO C23; unsupported constructs route to the resident compiler |
+| C memory/runtime | Freestanding/hosted/driver classes, allocator injection, failure tests, direct RuntimeChannel v1 | No out-of-process transport or resident hardware binding |
+| ML/reference | Tensor claims, closed-set AD, losses/optimizers/training, numerical wrappers, model ingest/tokenizer/decode, BCIRQ8, standalone-C TinyLlama parity | Not a production framework, trainer, or serving engine |
+| Telemetry | Stable signal registry, BTLM codec, continuity/ring witnesses, metrics, deterministic Prometheus/OTLP/Redfish-shaped serialization | No live HTTP/OTLP/BMC/UART transport; driver envelope/live concurrent ring remain version-zero design work |
+| Machine edge | Typed MMIO/port/fence/control-register/MSR operations, ordinary x86 long-mode entry and interrupt trampoline, real object/disassembly gates | Reset transition, paranoid NMI/IST entry, feature-specific entry policy, native CPU backend remain open |
+| Drivers/kernel | Device-manifest/event/DMA substrates, direct hook ABI, driver package and BCIR-Linux plans | No resident device driver, Linux module/fork, stable UAPI, native kernel, or native IPC is present |
+
+The exact driver boundary is maintained in
+[`kernel/BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md). Machine-code
+coverage and GO/STOP rules are maintained in
+[`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md) and
+[`BCIR_NATIVE_OBJECT_GATE.md`](BCIR_NATIVE_OBJECT_GATE.md).
+
+## 3. Dependency order
+
+```mermaid
+flowchart TD
+    A["Normative law, parity, memory discipline"] --> B["Compiler and runtime foundation"]
+    B --> C["Direct RuntimeChannel and telemetry ABI"]
+    C --> D["UART schema, simulator, and in-process driver"]
+    D --> E["Linux-hosted UART adapter"]
+    D --> F["virtio-console and virtio-blk queue/DMA proof"]
+    E --> G["BCIR UAPI v1 evidence"]
+    F --> G
+    G --> H["BCIR-Linux targeted experiments"]
+    G --> I["Native adapter and slim IPC"]
+    B --> J["ML/reference and BCIRQ8 gate"]
+    C --> K["Hardware-calibrated cost/telemetry loop"]
+    J --> K
+    K --> L["Scalable model and accelerator packages"]
+```
+
+The driver and ML programs share compiler, runtime, telemetry, artifact, and validation
+machinery. Neither may bypass the other's prerequisites: model acceleration needs real device
+packages; learned driver optimization needs stable direct behavior and trace identity.
+
+## 4. Active workstreams
+
+### 4.1 Language and compiler rail
+
+Current work is maintenance and bounded completion, not another breadth sprint:
+
+- Keep C-front twin/Clang equivalence, project linking, diagnostics, target ABI, and memory
+  discipline green while driver fixtures become real programs.
+- Add C standard-library/compiler surfaces only when a driver or model slice requires them.
+  Near-term ML-relevant gaps are `<stdbit.h>`, `<stdckdint.h>`, verifier-fed `assume`, and
+  packed sub-byte storage/compute semantics.
+- Preserve the C++ airlock: C owns stable value/resource ABI; C++ owns hosted graph and
+  distributed orchestration. Implement a backend only with an executable consumer and teardown
+  tests.
+- Place any future C++, Python, Java, Fortran, CIL, JVM, or other language roadmap under
+  [`languages/`](languages/). Use fallback/standard ABI integration before proposing a full
+  frontend.
+
+Promotion gate: twin parity, relevant Clang/GCC differentials, strict warnings, sanitizer and
+allocator-failure coverage, target-aware linking, and no expansion of the freestanding dependency
+surface.
+
+### 4.2 Machine-code and backend rail
+
+LLVM remains the resident implementation of general CPU machine-code work. BCIR currently owns
+typed target/device edges, StreamPack/operator tools, verification, and device-command assembly.
+The next sequence is:
+
+1. Complete source-module symbol resolution and a freestanding C twin for MC1 disassembly.
+2. Bind MC2 registry operations through RuntimeChannel only after a real driver resource exists.
+3. Build MC3–MC9 from the concrete UART/virtio command and lifecycle needs.
+4. Treat MC10–MC14—native isel, object/link, ABI frame, debug metadata, and binary trust—as a
+   separate backend program behind the native-object decision gate.
+5. Build MC15 telemetry identity before freezing a driver UAPI.
+
+ELF/DWARF conformance means consuming platform formats and system linkers correctly; it does not
+authorize a new general-purpose linker or debugger. See
+[`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md).
+
+### 4.3 Driver, Linux, and native-kernel rail
+
+The canonical order is evidence-first:
+
+1. Finish the version-zero driver telemetry envelope and generated signal table.
+2. Implement the 16550/16750 UART schema, assembler/verifier/simulator, polled direct driver,
+   event-driven direct driver, and deterministic replay corpus.
+3. Add the Linux-hosted UART adapter and prove direct/adapter parity.
+4. Establish the separate BCIR-Linux LTS/next rails and stock-Linux baseline.
+5. Prove queue/DMA behavior with virtio-console and virtio-blk.
+6. Freeze UAPI v1 only after UART and virtio-blk cover MMIO/event and queue/DMA lifecycles.
+7. Implement slim native IPC only after direct, Linux, and native traces agree.
+
+Driver packages reuse one authoritative device schema to generate register/packet definitions,
+assembler, decoder, verifier, simulator, RuntimeChannel binding, telemetry schema, replay corpus,
+and target-specific frozen priors. Linux and native adapters surround identical direct behavior.
+The full maturity ladder and kernel escalation policy live in
+[`kernel/BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md).
+
+### 4.4 ML and model rail
+
+The first real-model seam is proven: immutable checkpoint/tokenizer inputs produce a deterministic
+group-Q8 artifact, Python and standalone C agree on generated IDs/logits, and the parity report is
+the only uploaded artifact. The active queue is:
+
+1. Define packed INT2–INT6 storage/compute and activation-outlier policy under R17.
+2. Export analytic tensor schedules and compare them with bounded exhaustive measurements on real
+   targets; keep GEMM and fused/attention conclusions separate.
+3. Add multi-level/post-optimization AD evidence, checkpoint/rematerialization, and broader
+   control/mutation/higher-order coverage.
+4. Complete sampling, raw-text standalone tokenization, trained-model export, scalable batching,
+   device placement, and architecture coverage in that order.
+5. Materialize Phase-C data organs only behind schema/provenance and bounded-memory contracts.
+
+The detailed closure register, model ladder, and explicit production gaps are in
+[`machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md).
+
+### 4.5 Telemetry and continual optimization
+
+Telemetry is driver/kernel infrastructure, not a dashboard afterthought. The progression is:
+
+- stable signal IDs, units, kinds, and snapshot semantics;
+- strict frame and bounded-ring integrity with source/session/generation/clock/loss identity;
+- deterministic derived metrics and claim/plan/PC correlation;
+- offline replay, calibration, exhaustive-equivalence certificates, and immutable next-generation
+  artifacts;
+- activation only at quiescent generation boundaries with rollback.
+
+Live transports are adapters. Prometheus text and OTLP/Redfish-shaped JSON do not imply HTTP,
+protobuf, gRPC, BMC, or UART delivery. Normative details live in
+[`kernel/SIGNAL_REGISTRY.md`](kernel/SIGNAL_REGISTRY.md),
+[`kernel/TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md), and
+[`kernel/TELEMETRY_PIPELINE_RESEARCH.md`](kernel/TELEMETRY_PIPELINE_RESEARCH.md).
+
+## 5. Program milestones
+
+| Milestone | Current state | Exit evidence |
+|---|---|---|
+| Foundation law/parity | Landed | R1–R23 negative coverage, generated differentials, deterministic replay |
+| C/runtime memory discipline | Landed baseline | Strict hosted/freestanding builds, allocation-failure campaign, sanitizers, idempotent teardown |
+| Pre-driver machine edge | Partial landed | Ordinary x86 edge and MC1/MC2 baselines; paranoid/reset and hardware binding remain explicit |
+| UART direct package | Open | D0–D2 schema/assembler/verifier/simulator/direct parity, faults, cancellation, saturation, replay |
+| UART Linux adapter | Open | D3 direct/adapter behavioral parity and unload/restart safety |
+| virtio queue proof | Open | Character/event plus block/DMA lifecycle, reset and saturation evidence |
+| BCIR UAPI v1 | Gated | UART + virtio-blk evidence, generated ABI tests, compatibility and failure matrix |
+| BCIR-Linux experiment rails | Open | Reproducible LTS/next baselines; invasive patches only for measured stock-interface gaps |
+| Native kernel/IPC proof | Gated | Boot/memory/IRQ/PCIe/DMA prerequisites and direct/Linux/native parity |
+| Small real-model reference | Landed | Pinned source hashes, BCIRQ8 compactness, Python/C ID and logit parity |
+| Low-bit/model scaling | Partial | Versioned format, R17/error evidence, target execution, sampling/batching/placement gates |
+| Closed learned optimization loop | Partial | Real driver/model telemetry, exhaustive-equivalence certificate, quiescent activation and rollback |
+
+Milestone status is descriptive, not a test report. Exact repository inventories remain generated
+in [`STATUS.md`](STATUS.md).
+
+## 6. Release policy
+
+### 6.1 Current package
+
+`0.2.0` is the current package version. Its supported claims are the checked-in interfaces and
+explicit subsets documented by the LangRef, parity ledger, C-front guide, and current-state audit.
+No document may claim a later tag or stable driver/kernel ABI.
+
+### 6.2 Draft 0.3b
+
+[`RELEASE_NOTES_0.3b.md`](RELEASE_NOTES_0.3b.md) is an unreleased candidate definition for a
+freestanding driver-oriented C compiler/runtime milestone. It may advance only when:
+
+- the documented C subset, fallback contract, project linking, and target ABI matrix agree on both
+  rails;
+- all runtime C memory, sanitizer, fuzz, differential, and strict-warning gates pass;
+- the first direct driver package proves lifecycle and telemetry integration;
+- docs and generated inventories contain no release/version/support drift.
+
+### 6.3 Later releases
+
+Later versions are evidence-based, not date-based. A stable UAPI release follows UART and
+virtio-blk. A native-kernel release follows boot/runtime and direct/Linux/native parity. A model
+serving release follows sampling, tokenizer, batching, device, safety, and evaluation gates.
+
+## 7. Validation and publication gate
+
+Every runtime/compiler/driver/ABI change must map to the complete required CI inventory. Locally,
+run bounded focused gates and the complete supported x86 suites with at most two workers; do not use
+unbounded fuzzing, nested high-parallelism builds, or local architecture emulation. Managed CI/cloud
+owns Windows, native ARM, long fuzzing, analyzers, and future kernel matrices.
+
+Minimum publication evidence:
+
+1. Generated status, Markdown links, retired paths, import quarantine, and `git diff --check`.
+2. Quick and thorough Python suites with exact outcomes recorded.
+3. Strict C11/C23 warnings plus ASan/UBSan/LSan, allocator-failure and ownership checks.
+4. Bounded differential/fuzz campaigns with fixed seeds and deterministic regressions.
+5. MLIR ODS/IRDL/pass/assembly/object gates on the supported LLVM version.
+6. Wire-format corruption, truncation, overlap, reserved-field, CRC, and round-trip tests.
+7. Real-model gate for any change that can affect model ingest, quantization, decoding, or C math.
+8. Native Windows and ARM jobs for portability-sensitive changes.
+9. All required GitHub checks green before handoff; pending is not complete.
+
+Hardware claims additionally require the runbook in
+[`kernel/HARDWARE_VALIDATION.md`](kernel/HARDWARE_VALIDATION.md), including baselines,
+measurement validity, toolchain/profile identity, and honest degraded/skipped results.
+
+## 8. Decision boundaries
+
+- **AOT:** Python LLVM lowering remains a single-claim elementwise subset; MLIR `bcir-aot`
+  remains partial preparation. Arbitrary-graph native lowering is a separate approved program.
+- **Native backend:** use LLVM/resident toolchains until the native-object gate demonstrates a
+  repeated BCIR-owned gap with bounded scope and maintenance ownership.
+- **Vendor drivers:** inherit or wrap AMDGPU/ROCm, NVIDIA/CUDA, and other vendor stacks unless
+  measurement justifies an independently reviewed replacement effort.
+- **IPC:** direct in-process RuntimeChannel first. Process separation requires privilege isolation,
+  crash containment, vendor isolation, or multi-client sharing and must preserve behavior.
+- **Linux fork:** stock interfaces and out-of-tree adapters establish the baseline. Fork patches
+  require a measured residual gap, rollback, rebase, and upstreamability analysis.
+- **Learning:** no model inference on L0, no in-flight plan steering, no uncertified artifact
+  activation, and no learned legality.
+- **Standards:** consume ELF/DWARF/POSIX/IDL/schema ecosystems where useful; do not reimplement a
+  standard without two concrete consumers or a documented device-local need.
+- **Production claims:** a fixture, fallback, simulator, modeled channel, or one real-model parity
+  gate is not production support.
+
+## 9. Risk register
+
+| Risk | Control / stop condition |
 |---|---|
-| Oracle conformance tests (`python -m bcir.tests.run_all`) | see **[`docs/STATUS.md`](STATUS.md)** (generated count — single source of truth), incl. the generated differential (now incl. a compose-rail metamorphic campaign) + verifier + fuzz |
-| Deterministic **optimizer core** on the MLIR/C++ rail | **COMPLETE** — cost model, fusion/CSE/deforestation, min-plus plan, (max,+) overlap, per-claim + plan-level RCSP, all bit-exact vs the oracle |
-| GEM C++ passes (classify/select/batch/schedule/lower) | all implemented (`mlir/lib/passes/`) |
-| Verifier laws | **R1–R23** are first-class in `-bcir-verify` (see [`STATUS.md`](STATUS.md) for the generated static negative-fixture inventory). R1–R17 cover the original claim/plan/lowering core; **R18** is call-graph integrity; **R19/R20** timing/CDC; **R21** pointer lifetime; **R22/R23** GEM shape/dtype seams. Optional timing/lifetime metadata remains vacuous over the scalar/C subset. R13 also **recomputes** the manifest digest + cross-checks `m_theta` against the IR |
-| Named pass pipelines | `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm`; `bcir-aot` is verifier-checkpointed partial AOT preparation that may leave mixed BCIR/GEM/LLVM IR |
-| Θ context op | `bcir.kbcir.theta` — the C++ plan matches the oracle under **hot** Θ (matmul hot 1159168), not just cool |
-| Six-target capability matrix | all six TARGETS cross-checked on the MLIR rail (`target_matrix.mlir`) — the law plans per-target from the capability seeds alone |
-| C23 in the runtime + kernels | `_BitInt(N)` exact-width Q-fixed lanes + `#embed` frozen Q8 tables (both with C11 fallbacks) |
-| **Plug-in C compiler rail** (`runtime/c/`, `bcir-cc`) | **Freestanding driver-subset C23 compiler *candidate*** — a no-Python stack (preprocessor → frontend → claim-graph IR → R1–R18 verify → plan → hydrate → execute), a cc-like driver, a data-model **ABI matrix** (`--target`), a Clang-grade **diagnostics engine**, an **`--fallback`** route-to-LLVM contract, a module-scope **effect/commutation analysis** (`--emit-effects`), and real register-map / UART / DMA driver fixtures — every stage **Python↔C parity-gated**. *Not yet* a hosted C23 / Clang-GCC replacement; the remaining hard-compiler work is **§5.9** |
-| Trust-boundary fuzz | Python (`kbcir.fuzz`) + **libFuzzer + ASan/UBSan** on the StreamPack **and** ETL-binary C decoders (500k runs in CI) |
-| Native object emission | decision gate documented (DEFERRED); the warranted slice (C → resident compiler → real eBPF/x86-64 object) is closed and ELF-verified |
-| LLVM version policy | tracks the **latest LLVM/MLIR release (22), gating** (from apt.llvm.org; toolchain auto-resolved) |
-| Perf vs Clang | **measured** (`CLANG_COMPARISON.md`): match on dense, 1.3–14× on irregular memory |
-| Calibration loop | **closed on host** (microbench → `FrozenCalibrator` → R13 replan) + real-signal wiring (`bcir.silicon`); a *measured* bare-metal replan win is the one deferred item |
-
----
-
-## 3. The MLIR / C / C++ / Python placement map (the two-truth line)
-
-The port boundary is BCIR's own **L0–L3 / two-truth line** and is not negotiable:
-
-> **Deterministic + integer/Q-fixed on the decision/execution path → C++/MLIR (law)
-> or C (runtime). Graded / float / train-time → Python that *freezes* to Q8.**
-
-> ### The prototype-then-port discipline (NON-NEGOTIABLE)
->
-> The Python oracle is a **prototype rail**, not the destination. A capability is *prototyped*
-> in the oracle (cheap iteration, the conformance reference), then — **once it is validated, the
-> oracle work STOPS and the real implementation is built on the production rail**: the **MLIR/C++
-> law** for plan-time decisions, or **C in `runtime/c/`** for the runtime + the plug-in C compiler.
-> Every port is gated by a **Python↔production parity test** (oracle == law / oracle == C),
-> exactly as the optimizer core was ported to `-bcir-*` passes and GEM hydrate/execute were ported
-> to `bcir_encode.c`/`bcir_exec.c`.
->
-> **This applies to the C frontend.** The L1–L8 ladder + C.2 in `bcir/frontends/cfront/` is the
-> *prototype*. The production plug-in C compiler is **`runtime/c/bcir_cfront.c`** (the C twin),
-> built stage-by-stage with a parity gate (`bcir/tests/test_c_cfront.py`, `tools/c/check_runtime.sh`).
-> Do **not** keep extending the oracle frontend as if it were the product — port each validated
-> stage to C and let the prototype freeze. *Started:* the register-map slice (integer expressions,
-> struct/bitfield layout, volatile/MMIO) lowers identically on both rails (`claims=23 mmio=1 bf=3
-> …`); the remaining stages (arrays/calls, control flow, preprocessor, full ABI) port next.
-
-| Subsystem | Today | **Target home** | Status |
-|---|---|---|---|
-| Dialect / ODS (the law's vocabulary) | `mlir/include/BCIR/*.td` | MLIR | ✅ |
-| Verifier **R1–R13** | `-bcir-verify` + `bcir.verify` | MLIR/C++ + Python (oracle ref) | ✅ dual-rail (R13 **recomputes the provenance digest** AND **cross-checks every component hash** — `m_module`/`m_target`/`m_theta`/`m_policy` — against the in-IR module/capability/theta/policy, byte-identical to `provenance.hash_*`; trusts neither the digest nor the input identities) |
-| Verifier **R14/R15/R16** (CIM dispatch / DVFS clock / alloc placement) | `-bcir-verify` + the `-bcir-lower-to-llvm` checkpoint + oracle | MLIR/C++ + Python | ✅ **first-class `-bcir-verify` laws** (dual-rail with `verify.{verify_cim,verify_dvfs,verify_allocator}`) |
-| K_BCIR **cost model** (`_cost`, candidates, stride/tier) | `-bcir-cost-model` (C++23) | MLIR/C++ | ✅ **ported** (bit-exact: vec16 7808, gather 528384, tile 126976) |
-| K_BCIR **fusion / CSE / deforestation** | `-bcir-cost-model` | MLIR/C++ | ✅ **ported** (7808 / 5888 / 5100) |
-| K_BCIR **min-plus shortest path** (`optimize`) | `-bcir-plan` | MLIR/C++ | ✅ **ported** (per-target, hot/cool Θ) |
-| K_BCIR **overlap (max,+)** | `-bcir-overlap` | MLIR/C++ | ✅ **ported** (makespan/gain) |
-| K_BCIR **RCSP / Pareto** (per-claim + plan-level) | `-bcir-rcsp`, `-bcir-rcsp-plan` | MLIR/C++ | ✅ **ported** (9472, {16,8}@17280) |
-| **Bundle** (joint) optimization (`bundle.optimize_bundled`) | `-bcir-bundle` | MLIR/C++ | ✅ **detection + joint-reorder** — reorders the cost columns, re-prices the min-plus path, annotates `kbcir.bundle_gain`/`bundle_order` (`bundle_reorder.mlir`) |
-| **Proof-carrying record + replay** (`proof.explain` / `proof.replay`) | `-bcir-explain` / `-bcir-replay` | MLIR/C++ | ✅ **ported** — per-claim candidates weighed + chosen width/score, per-module total, as IR annotations (`explain.mlir`); plus the replay recheck that recomputes a fresh plan and diffs it against the declared `kbcir.explain_*` record (`kbcir.replay_reproduced`/`replay_mismatches` — `replay.mlir`) |
-| **Compositional** semantics (`compose.plan_composite`) | `kbcir.func` / `kbcir.call` / `kbcir.cond` + `-bcir-compose` | MLIR/C++ | ✅ **complete** — op vocabulary + **R18 call-graph law** + **`-bcir-compose`**: Seq sum / Cond max+expected / Leaf optimize / Call **inter-procedural summary** / **RCSP-constrained** under a `kbcir.budget` / **alias-effect** footprint (`kbcir.effect_reads/writes`) + sibling-call independence (`commutes_with_prev`) + **dynamic-shape** bound (`compose_dynamic`). Reproduces plan_composite's worst/expected/reused/feasible/effect/dynamic (`compose_cost`/`_summary`/`_budget`/`_effect.mlir` + a generated compose differential) |
-| GEM classify / batch / schedule / lower | `-bcir-*` passes | MLIR/C++ | ✅ |
-| **CIM/PIM dispatch + DVFS clock DECISION** (`gem.cim` / `gem.dvfs`) | `-bcir-cim` / `-bcir-dvfs` | MLIR/C++ | ✅ **recomputed** (core-vs-PIM offload cost; per-phase intensity → Q8 clock) — the law derives the decision, not just R14/R15-verifies a declared one (`cim.mlir`, `dvfs.mlir`) |
-| **EFT schedule + async pipelining + power rail** (`gem.schedule` / `gem.async_tokens`) | `-bcir-schedule-eft` / `-bcir-async` / `-bcir-power-rail` | MLIR/C++ | ✅ **ported** — phase-barriered EFT waves (LPT + earliest-finish + locality + knee), the cross-phase fork/await pipelined schedule (later-phase independent claims overlap earlier ones), AND a per-slot DVFS overlay on the placed timeline (classify+clock each slot's interval, downclock memory-bound slots — the join of EFT + DVFS); `schedule_eft.mlir`, `async.mlir`, `power_rail.mlir` |
-| **Allocator pool-plan** (`allocator.live_intervals`/`pool_plan`) | `-bcir-alloc-pool` | MLIR/C++ | ✅ **ported** — liveness-based pooling (disjoint live ranges share an arena, greedy left-edge); annotates per-resource pool_id + peak/naive/saved bytes (`alloc_pool.mlir`) |
-| GEM **hydrate** (plan → StreamPack **bytes**) | **C** `runtime/c/bcir_encode.c` + Python `abi.streampack_abi.encode` | **C** (the encoder) | ✅ **ported** — `bcir_sp_reencode` is byte-identical to the Python encoder (v1 + v2) |
-| GEM **deterministic executor** (decode → drive kernels) | **C** `runtime/c/bcir_exec.c` + Python `gem.execute` | **C** (hot path) | ✅ **ported** — Python↔C dispatch-order + telemetry parity + libFuzzer |
-| **Plug-in C compiler / frontend** (C source → claim graph) | **C** `runtime/c/bcir_cfront.c` (IR: `bcir_cir.h`) + Python prototype `bcir/frontends/cfront/` | **C** (the driver-embeddable compiler) | ✅ **the full L1–L8 ladder ported to C + Python↔C parity-gated**: **L1** integer expr, **L2** struct/bitfield layout, **L3** pointers/arrays (GEP), **L4** functions + call graph (**R18** in C), **L5** volatile/MMIO, **L6** control flow, **L7** a real C preprocessor (`bcir_cpp.c`), **L8** ABI (struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked vs Clang). A full **R1–R18 verifier** (`bcir_verify.c`: R1–R8 incl. R6 lane↔stride, R9 plan, R10–R11 StreamPack, R12, R13 provenance digest, R17, R18), **§5.8 atomics/fences** (`ATOMIC_*`/`BARRIER` on lane A), a **C.2 attestation** stamped on the emit, a **faithful C emitter** (Clang-behaviour-equivalent), and the **closed loop** `C → bcir_cpp → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` (no Python). Now also a Clang-grade **diagnostics engine** (`bcir_diag.c`), a cross-platform **data-model ABI matrix** (`--target`), an **`--fallback`** route-to-LLVM contract, a module-scope **effect/commutation analysis** (`--emit-effects`), and scalar globals (read+write). The IR now grows with no fixed `BCIR_MAX_*` ceilings (any number of functions / params / calls / resources / claims). The road to a full C23 *replacement* is the ordinary hard-compiler work in **§5.9** (full integer promotions + usual arithmetic conversions, designated/compound initializers, object/debug/unwind emission, conformance suites) |
-| StreamPack ABI **decoder** | **C** `runtime/c/bcir_runtime.c` | **C** (frozen ABI) | ✅ CRC-gated parity + libFuzzer |
-| ETL binary-record decoder | **C** `runtime/c/bcir_binrec.c` | **C** | ✅ parity + libFuzzer |
-| Portable kernel emission (C23 + `_BitInt`/`#embed`) | Python `lower.c_kernel` | C output (emitter may become C++) | ✅ |
-| Telemetry ring (zero-copy) | **C** producer + Python reader | **C** | ✅ |
-| Real-signal probes / DVFS actuation | Python `bcir.silicon`, `gem.dvfs.actuate` | **C/C++** (runtime) | read ✅; actuation gated (needs bare-metal) |
-| **Learned organs** (bayescal/softdp/moegate train/calibrate SGD/regret) | Python | **Python** (freeze to Q8) | by design — porting them violates the quarantine |
-| Enriched operad / memory-module fixpoints / two-truth | Python | **Python** unless load-bearing for plan-time caching | research-side |
-
-**One-line rule:** *anything deterministic and integer on the decision/execution path
-→ MLIR/C++ (law) or C (runtime); anything float/learned/train-time → Python that
-freezes to Q8.*
-
----
-
-## 4. What's done (the landed work)
-
-**The deterministic optimizer core is fully on the MLIR rail (C++23)** — the headline
-of the last cycle. Each stage is bit-exact against the oracle and gated by
-`check_passes.sh` + the generated differential harness:
-
-```
--bcir-cost-model (cost + fusion/CSE)  →  -bcir-plan (coupled min-plus optimize)
-   →  -bcir-overlap (max,+ M(π,Θ))  →  -bcir-rcsp / -bcir-rcsp-plan (constrained search)
-```
-
-- **Cost algebra + fusion/CSE/deforestation** recompute every claim's 12-d cost from
-  `bcir.claim` + `bcir.target.capability` (a `constexpr` tier table + the seeded
-  constants), so the law no longer trusts emitter-baked path costs.
-- **Coupled shortest path** reproduces the oracle's `optimize` on every module and, via
-  the `bcir.kbcir.theta` context op, under hot Θ too.
-- **Six-target capability matrix** (`target_matrix.mlir`): each program is emitted once
-  per TARGET; `-bcir-plan`/`-overlap`/`-rcsp-plan` recompute the oracle's per-target
-  result from the capability alone — avx512/sve/rvv 16→7808, avx2 8→9472, neon 4→12800,
-  ptx 32→6976; the GPU's coalesced gather halves histogram (266240 vs 528384).
-- **Verifier R1–R23**, with a negative fixture per law (R19/R20 timing, R21 lifetime,
-  and R22/R23 GEM shape/dtype seams; see generated status). Optional-metadata laws stay
-  vacuous when absent. A verifier
-  *differential* (`gen_illegal_module` + `run_verifier_campaign`) that fault-injects each
-  law and confirms the verifier catches it.
-- **C23 where it pays:** `_BitInt(N)` exact-width Q-fixed lane kernels (the place a
-  standard int promotes or has no type at all) and `#embed` frozen Q8 tables, both with
-  preprocessor-selected C11 fallbacks; bit-identical across `-std=c23`/`-std=c11`.
-- **Trust-boundary fuzz:** libFuzzer + ASan/UBSan on the StreamPack **and** ETL-binary
-  C decoders; the Python `kbcir.fuzz` covers the StreamPack codec, ROP/MAP/ETL
-  front-ends, `etl.binary`, calibration JSON, and the MLIR emitter.
-- **Native object gate** (`BCIR_NATIVE_OBJECT_GATE.md`): documented GO/STOP criteria;
-  the warranted slice (emit C → resident compiler → real eBPF/x86-64 ELF object) is
-  closed and ELF-verified — no hand-rolled isel.
-- **Calibration software path** closed end-to-end (`bcir.silicon` reads real PMU + RAPL
-  + on-die thermal; `kbcir.calibloop.measured_replan` trains+freezes a `LinearCalibrator`
-  and certifies the win) — it degrades honestly in a sandbox and lights up on a rig.
-- **Adaptive "smart" layer** (8 deterministic, opt-in, gains-only capabilities): RL
-  allocator, compute-in-memory dispatch (R14), persistent e-graph with telemetry pivot,
-  JIT shape specialist, uncertainty-gated sensing, zero-copy telemetry ring, fuzzy MoE
-  routing, phase-aware DVFS — all off the default plan/emit path (`test_perf` guard).
-- **Precision module** (`kbcir.precision`, opt-in): Q8-ULP error unit, integer interval
-  error bounds, a compensated Q8 reduction (bit-identical to int64-exact), stability
-  diagnostics as two-truth `Graded` signals.
-
-The earlier-cycle spine is also done: the 5 C++ GEM passes, the multi-version LLVM
-matrix, the R13 provenance manifest, the generated adversarial Python↔MLIR differential,
-the widened corpus (real tiled matmul / scan / multi-claim histogram), the StreamPack
-freeze + freestanding C decoder, the portable C23 kernel backend, and the measured
-Clang comparison.
-
----
-
-## 5. The forward roadmap (what's next)
-
-> **Vision-alignment snapshot (2026-06-28).** A dated 7-pillar audit of the
-> "C-as-Macro-Assembly / Registry-Oriented + IR-owns-the-math + bare-metal-AI" thesis is in
-> [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md). Headline: the **substrate is real**
-> (C *is* a thin registry-oriented macro-assembly target; the IR owns scheduling; the linearized
-> StreamPack + the R17 Q8↔f32↔Q8 bridge exist and are tested). **Build update (2026-06-28):** the
-> intelligence + ML-payload half is now **built and merged too** — the macro-assembly-layer
-> "Layer-1 AI" (cache/bank contention 🟢, SoA↔AoS layout pivot 🟢, matmul+activation fusion 🟢), the
-> tensor-op vocabulary (`gem.activation`/`conv`/`attention` 🟢), and the end-to-end bare-metal
-> inference (`emit_inference_kernel_c` 🟢) + training (`emit_autodiff_kernel_c` 🟢) kernels — each
-> prototyped in the oracle and **ported to the MLIR law rail**, parity-gated + CI-green (conformance
-> 956 → 1235). The C++ hand-off boundary is 🟡 SCAFFOLDED (contract + a round-trip-tested single-node
-> seam, [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) / [`runtime/cpp/`](../runtime/cpp); the
-> dynamic/distributed backends are marked stubs). What genuinely remains is **Area-B library breadth**
-> (BLAS/FFTW/LAPACK/GSL/SLEEF/libcerf through the `c.call.libm:` edge — six wraps done: matmul, FFT
-> (the FFTW wrap now covers both the **1-D** `fftwf_plan_dft_1d` and the **2-D** `fftwf_plan_dft_2d`
-> complex transform — SEG2.2, the 2-D spectral kernel under image/convolution spectral methods, on the
-> same `-lfftw3` link rule),
-> linear solve, statistics, vectorized libm, and libcerf's numerically-robust `erfcx` scaled
-> complementary error function, a special function libm lacks), the 5d distributed backends
-> (need multi-node hardware), and the Pillar-1/2 boundary items (DMA/device-isolation, a flatness law).
-
-### 5.1 Oracle → MLIR / C++ (plan-time law) — remaining ports
-
-The optimizer core is ported. What is still Python-only **and** belongs on the law rail:
-
-1. ✅ **R14 (CIM/PIM dispatch) + R15 (DVFS clock) + R16 (allocator placement) as
-   first-class `-bcir-verify` checks. DONE.** All three are now enforced by the dedicated
-   `-bcir-verify` pass (`BCIRVerifyPass.cpp`, dual-rail with `verify.{verify_cim,
-   verify_dvfs,verify_allocator}`), with positive/negative `.mlir` cases in
-   `verify_laws_deep.mlir`; they remain enforced at the `-bcir-lower-to-llvm` checkpoint
-   too (defense in depth). Verifier dual-rail symmetry is complete — every law R1–R18 is
-   checkable by `-bcir-verify` alone (R1–R17 dual-rail; **R18** call-graph integrity on the
-   MLIR rail).
-2. ✅ **The `verification` cost dimension (the 12th cost axis). DONE.** It now has a real
-   producer on both rails (`realize._verify_cost` / `BCIRCostModel.h::verifyCostFor`,
-   cross-checked by `cost_model_verify.mlir`): the cost of discharging a claim's verify
-   contract. `none`/`bounds` are free (the bounds check fuses into the access the memory
-   axis already prices, so every existing pinned score is unchanged); `exact` (recompute
-   + compare) and `hash` (digest every output) carry an O(n) cost. It is width-independent
-   (the contract is a property of the claim, not the lane), so it never perturbs the
-   per-claim selection but *is* a tradeable plan resource — an RCSP cap on `verification`
-   can make a claim infeasible (`test_verify_cost.py`). exact/hash were previously unused,
-   so this is purely additive.
-3. ✅ **A C++ `-bcir-verify` law-for-law differential. DONE.** Every law **R1–R18** now
-   has a negative `-verify-diagnostics` case in the committed `verify_laws*.mlir` /
-   `verify_accuracy.mlir` / `verify_callgraph.mlir` (run under `bcir-opt` in CI), and a coverage gate
-   (`test_verify_differential.py`) guarantees no law silently loses its toolchain-rail
-   negative case — the systematic complement to the oracle-rail `run_verifier_campaign`.
-
-**New: the accuracy contract (R17).** `verify.verify_accuracy` and the MLIR `-bcir-verify`
-R17 law (consuming the `#bcir.precision<…, exact, tol>` attr) are the dual-rail accuracy
-contract: a claim with a declared tolerance must realize within its static Q8-ULP error
-bound — a `reduce.*` over `count` terms is bounded by `count` ULP naive but 1 ULP
-compensated, so a tight tolerance forces the compensated realization.
-
-**MLIR-22 completion (2026-06-17).** The rail moved to LLVM/MLIR 22 and was made fully
-locally-validatable (true-22 via conda-forge — `tools/local/`). A dual-rail completeness scan
-confirmed the law rail now mirrors the oracle's **entire deterministic spine** (84 ODS ops,
-23 passes, **R1–R18** all first-class in `-bcir-verify` + negative-tested). Landed since:
-the **`bcir.kbcir.memory_module`** op + R13 admissibility (`saturated ∧ generation ≥ 1`;
-closes the PARITY gap that previously claimed the op); cross-pass `PlanAnalysis` sharing across
-all 9 optimizer passes; bytecode round-trip; `hasVerifier` parse-time structural checks on
-`resource`/`gem.lane_segment`/`claim`/`target.capability`; and the C++ standard at `-std=c++2c`.
-
-**Remaining law-rail gaps — CLOSED (2026-06-18).** The completeness scan's three narrow gaps
-were built and dual-rail-verified against the oracle on true MLIR 22:
-1. ✅ **Overlap re-selection sweep. DONE.** `-bcir-overlap-optimize` (`BCIROverlapPass.cpp`) ports
-   `gem/overlap.py::optimize_scheduled`: from the serial optimum it sweeps each claim once in
-   column order and adopts the legal alternative that strictly lowers the scheduled makespan
-   (first-best tie-break), re-pricing serially so R9 holds. The reusable `computeMakespan` was
-   extracted (shared with `-bcir-overlap`). Matches the oracle's `(makespan, serial)` on all 11
-   corpus programs — including the real overlap gains (fused_chain 7808<13696, matmul 253952<1015808)
-   — and is a no-op where the serial optimum is already makespan-optimal (`overlap_optimize.mlir`).
-2. ✅ **MOPC R12 support-preservation. DONE.** `bcir.target.lower_contract` carries optional
-   `source_support`/`target_support`/`discharges`; `-bcir-verify` **R12** now enforces
-   `f(Supp(J)) ⊆ Supp(J')` (identity dim-map) unless discharged — reproducing
-   `kbcir/mapping.py::dropped` (`verify_laws_deep.mlir`). The commuting-square `Λ∘Ψ = Φ` stays a
-   runtime/**differential** property (path-equivalence over inputs, not a static structural check)
-   — it is the PARITY discipline already enforced by the provenance digest + the generated parity
-   campaign, so it is not a static `-bcir-verify` law by design.
-3. ✅ **Telemetry sensing gate. DONE.** `-bcir-sense` (`BCIRSensePass.cpp`) ports
-   `kbcir/sensing.py::RegretSensor.sense`: per-segment `cv_milli = 1000·stdev/mean` over the
-   `bcir.trace.data_dna` cycles (population variance, floor-isqrt — the exact integer formula),
-   ranked by `(-cv_milli, segment)`, assigning `high`/`low`/`off` under the threshold+budget gate.
-   Matches the oracle exactly (`sense.mlir`). The a-priori `sense_by_ranker` variant stays off-rail
-   (it leans on a learned ranker margin).
-
-The law rail now mirrors the oracle's **entire deterministic spine** with no known buildable gaps:
-85 ODS ops, 25 passes, R1–R18, the optimizer core (plan / RCSP / overlap + the re-selection sweep /
-bundle / schedule), the smart-lowering laws, provenance, compose, the memory-module fixpoint, the
-MOPC support law, and the sensing gate. What remains Python-only is by-design off-rail
-(quarantine/learned organs, §5.6) or inherently host-side (measurement, fuzz, toolchain).
-
-### 5.2 Oracle → C (run-time hot path) — remaining ports
-
-The C runtime has the decoders (StreamPack, ETL-binary) and now the executor:
-
-1. ✅ **The deterministic StreamPack executor** (`gem/execute.py` → `runtime/c/bcir_exec.c`).
-   **DONE.** A freestanding `bcir_sp_execute` decodes the pack and dispatches its claims
-   in GEM order — topological phase order (first appearance in the pack), then ascending
-   claim id within a phase — invoking an optional per-claim kernel callback and collecting
-   per-phase telemetry, with no libc and caller-owned memory. Python↔C dispatch-order +
-   telemetry parity (`test_c_executor.py`, `check_runtime.sh`) and a libFuzzer + ASan/UBSan
-   harness (`fuzz_exec.c`). The StreamPack is now a no-Python hot artifact a driver runs
-   end-to-end.
-2. ✅ **The StreamPack encoder in C** (`runtime/c/bcir_encode.c`). **DONE.** A freestanding
-   `bcir_sp_reencode` parses a pack and re-serializes it through value-based write
-   primitives, **byte-identical** to `bcir.abi.encode` across the corpus and both ABI
-   versions (v1 + v2 pipeline/double-buffer tails) — the full C round-trip, so a
-   driver-resident hydrate emits the artifact with no Python and no libc. Parity gate
-   `test_c_encoder.py` + `check_runtime.sh`; libFuzzer + ASan/UBSan harness `fuzz_encode.c`.
-3. ✅ **The `precision="compensated"` C-kernel. DONE.** `lower.c_kernel.emit_compensated_
-   reduce_c` lowers the residual-carry Q8 MAC (`kbcir.precision.compensated_reduce_q8`):
-   the dropped low 8 bits are carried forward, so the result is **bit-identical to the
-   int64-exact reduction** (vs the naive per-term-truncating form, which drifts up to `n`
-   ULP). Self-check compiles + runs under C11 and C23 (`test_precision_lowering.py`).
-
-### 5.3 New deterministic features (not ports) — for C++/MLIR
-
-1. ✅ **Multi-claim bundle (joint) optimization. DONE.** `kbcir.bundle.optimize_bundled`
-   is the genuine combinatorial step beyond the pairwise coupling: it finds the clusters
-   of claims that share a read operand and jointly searches the intra-phase order
-   (bounded, exhaustive, dependency-preserving) that minimizes the plan score — recovering
-   the fusion discount the pairwise shortest path misses when sharers are interleaved.
-   Correctness-preserving (only mutually-independent same-phase claims are reordered, never
-   across a conflicting pair) and a no-op where there is nothing to join; it emits a
-   `BundleCertificate` per improving bundle (a proof-carrying search record). A real **12%
-   gain on the tiled-matmul corpus**, scores otherwise pinned (`test_bundle.py`).
-2. ✅ **Proof-carrying optimization records. DONE.** `kbcir.proof` (CLI `bcir.run
-   --explain` / `--replay FILE` / `--reduce`): `explain` builds a replayable
-   `DecisionRecord` — the R13 provenance digest + the per-claim *rationale* (the
-   candidates the optimizer weighed and the one it chose) + the bundle rewrite
-   certificates; `replay` reproduces it bit-for-bit from the same inputs (the digest gate
-   + the per-claim decisions) or reports exactly what diverged; `reduce` minimizes a module
-   to a legal witness. Round-trips through JSON (`test_proof.py`).
-3. ◑ **Compositional semantics. DEEPENED.** `kbcir.compose` extends planning past
-   straight-line kernels along the central equation's own series-parallel grain — a region
-   tree: `Seq` (series, sum cost), `Cond` (control flow: worst-case **max** over branches +
-   a probability-weighted **expected** cost), `Call`/`Function` (reuse via inline argument
-   substitution; recursion rejected for bounded compile time), and `dynamic` claims (count
-   as a static upper bound, worst-case priced — the plan holds for any actual ≤ the bound).
-   It reuses `optimize` for the leaves, so a `Leaf([vector_add])` prices to exactly 7808.
-   The deepening adds **alias/effect modeling** (`Effect`/`effect`/`independent`: the
-   read/write footprint folded through calls, and the RAW/WAR/WAW test that decides whether
-   two calls commute) and **inter-procedural summary costs** (`summarize`/`FunctionSummary`:
-   a function is planned **once** over its formals and every cost-compatible call reuses that
-   cost instead of re-planning the body — sound, because the reuse is gated on the actuals
-   matching the formals' cost-keys, else it falls back to inline; bounds compile time to
-   O(functions + call-sites)) (`test_compose.py`). On the law rail, the **func/if op family**
-   (`kbcir.func` / `kbcir.call` / `kbcir.cond`) gives the region tree first-class MLIR form
-   (`compose_ops.mlir`). The compositional cost stays the oracle's conformance reference.
-
-### 5.4 Measured real-silicon calibration (DEFERRED — the top differentiator)
-
-The software path is merged and certified on host, and now **push-button**:
-`tools/silicon/measure_replan.sh` runs the whole probe→read-PMU/RAPL/thermal→fold-Θ→
-replan→certify loop and prints the **measured** win on a rig (provenance=real) or degrades
-honestly otherwise (synthetic, no fabricated number). The probe now **enumerates the three
-gating signals** — a hardware PMU (`perf_event_open`), RAPL energy, and a cpufreq userspace
-governor — and prints an explicit **rig-ready: YES/NO** verdict that names any missing
-signal, so the requirement to fire the win is crisply specified, never implicit. It is
-**CI-exercised in degrade mode** (`test_silicon_runbook.py`: the probe enumerates all three
-signals; `--require-real` fires exactly when all three are present) so the rig path can never
-silently rot and a sandbox run can't masquerade as a measured result. The one thing no
-architecture substitutes for is the *measured* (not synthetic) replan win itself — it needs
-a bare-metal rig with `intel_pstate=passive` + a userspace governor + RAPL exposed (the
-exact rig is in `HARDWARE_VALIDATION.md`). The measured win **fires the moment** such a host
-runs the runbook; that converts "optimal-w.r.t.-a-model" into evidence and is the single most
-valuable next result once a rig is available.
-
-### 5.5 Native backend (DEFERRED — gated)
-
-BCIR-native instruction selection stays deferred behind the documented decision gate
-(`BCIR_NATIVE_OBJECT_GATE.md`): every seeded target has a resident LLVM backend, so the
-GO criteria (G1 no resident backend + G2 measured ≥2× economics) are unmet. Revisit for
-a bare PIM/CIM controller or a driver-resident eBPF JIT under a latency SLA.
-
-> **Wave-14 machine-code audit** (`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`): the gate
-> survived the full HAL/ABI/ISA audit untouched — every missing machine-code tool lands
-> on the NATIVE side of the resident-compiler boundary (MC-track: disassembler + hex
-> dump + listing, peek/poke, ROP v2 registry assembly with macros, carry-as-data,
-> HAM/semantic-swap composition, pack-level linking + symbol section, the RuntimeChannel
-> direct hook ABI/hardware binding, POSIX compat completion). None of them is instruction selection;
-> the Clang/native split is exactly the designed one.
-
-### 5.6 Stays Python (the quarantine)
-
-The learned organs (`bayescal`, `softdp`, `moegate` training, `calibrate` SGD, `regret`
-ledger, `microbench`), the offline calibration, the enriched operad / memory-module
-fixpoints, the conformance **oracle** itself, and the generators (`differential.gen_module`,
-`fuzz`) stay Python by design and emit generation-tagged frozen Q8 artifacts. Porting
-them would violate the two-truth quarantine. L2 portfolio offline learning (Bayesian
-optimization) and a production Kafka broker deployment are operational/research items
-that stay on the Python/ops side.
-
-### 5.7 The plug-in-compiler roadmap — C frontend → drivers → ML ops → C++/Python → ecosystem
-
-The next strategic arc turns BCIR from a cost-governed planning/verification layer above LLVM into a
-**plug-in compiler for whole paradigms**: a real program (C first, then Python, then C++) is parsed
-into the claim graph, planned + verified by the K_BCIR spine, lowered through the resident backend,
-and executed by GEM across the heterogeneous **channel** tower (`docs/HETEROGENEOUS_CHANNELS.md`). It
-is **dependency-ordered** — each phase unlocks the next, and building out of order (drivers before a
-*verifiable* C backend) creates technical debt. Every phase keeps the dual-rail discipline (prototype
-in the Python oracle, port to the MLIR law, lockstep) and the channel separation (each backend
-isolated, unified K_BCIR/GEM execution). The current ROP/MAP/ETL seams (`frontends.{rop,map}`,
-`bcir.binary.*`) are deliberately narrow DSL/binary front-ends; the paradigm frontends below are the
-larger effort.
-
-#### Phase C — A solid C frontend + backend (the immediate next priority; it gates Phase D)
-
-The keystone. Drivers, opcode tables, and the Hardware Description Layer all need a working,
-*verifiable* C path — generating C from BCIR and checking it against source makes importing Linux
-kernel tables / register maps / PCIe / ACPI clean; building drivers first would be debt.
-
-##### C.0 — C23 as the substrate (relearned from ISO/IEC 9899:2024; § refs verified against the text)
-
-The C path targets **C23**, not C11/C17. C23 removes the awkward/non-portable workarounds the
-per-pattern kernels lean on today (`__builtin_*`, `xxd`-generated arrays, implementation-defined
-`enum`/sign representations) and — more importantly — makes it realistic to express *the oracle
-itself*, not just kernels, in C. Two adoption tiers:
-
-**Tier 1 — main-lowering enablers (adopt as the C path is built):**
-
-| C23 feature | § | What it unlocks for the port |
-|---|---|---|
-| `_BitInt(N)` bit-precise ints | 6.2.5 / 6.7.2.5 | Exact-width Q-fixed accumulators + RID/opcode/stride bit-fields matching the StreamPack wire format (two's-complement now *guaranteed*, Annex M). |
-| `<stdckdint.h>` `ckd_add/sub/mul` | 7.20 | Overflow-checked cost accumulation in min-plus / (max,+) / RCSP — the biggest correctness win for the cost algebra; portable, replaces `__builtin_*_overflow`. |
-| `<stdbit.h>` + endian macros | 7.18 / 7.18.2 | `__STDC_ENDIAN_NATIVE__` collapses the StreamPack encode/decode `#ifdef`s to one path (Python↔C parity); `stdc_count_ones`/`bit_width`/`bit_ceil` for Pareto bitsets + buffer rounding. |
-| `enum : underlying-type` | 6.7.2.2 | ABI-stable opcode/phase/lane/kind enums (size+representation fixed for the wire format); values wider than `int`. |
-| `constexpr` objects | 6.6 / 6.7 | Opcode/policy/channel-descriptor tables + verifier-law constants validated *at translation time* (true cost-model metaprogramming). |
-| `static_assert` (1-arg) | 6.7.11 | `static_assert(sizeof(StreamHeader)==N)` / `offsetof` / `BITINT_MAXWIDTH` wire-format + width invariants. |
-| `typeof` / `typeof_unqual` | 6.7.8 | Portable generic containers (min-plus priority queue, Pareto set, CSE table) without per-type duplication. |
-| `nullptr` / `nullptr_t` | 6.3.2.4 / 7.21.2 | Unambiguous null in the pointer-heavy claim graph + `_Generic`/variadic dispatch. |
-| `[[nodiscard]] [[fallthrough]] [[maybe_unused]] [[noreturn]]` | 6.7.12 | `[[nodiscard]]` forces handling of validator `bool`s + `ckd_*` flags (laws must not be dropped); clean opcode-dispatch `switch`. |
-| `unreachable()` | 7.21.1 | Dead-path assertion after exhaustive opcode dispatch + "proven impossible by law Rk" points. |
-| `#embed` (+ `__has_embed`) | 6.10.3 | Bake calibration tables / golden StreamPacks / provenance digests into the binary — no runtime I/O (keeps the runtime freestanding + deterministic). Already used for the frozen Q8 tables, with C11 fallbacks. |
-| binary literals `0b` + digit separators `'` | 6.4.4.1 | Readable opcode/flag masks + stride/budget constants matching the Python source. |
-
-**Tier 2 — build-later advanced (turn C into a runtime/AI/metaprogramming platform):**
-
-- **A graph runtime environment in C** (`gem/` ported): `<threads.h>` + `<stdatomic.h>` for a parallel
-  RCSP/Pareto search and a concurrent e-graph fixpoint; `[[unsequenced]]`/`[[reproducible]]` (§6.7.12.7)
-  to let the host C compiler legally fuse/CSE the pure cost kernels — mirroring K_BCIR's own
-  fusion/deforestation at the C level; `call_once` (now mandatory) for one-time channel-table init.
-- **AI-style processes in C** (fixed-point inference / table-driven nets): `_BitInt(N)` exact Q-fixed
-  activations + `ckd_*` saturating MAC + `constexpr`/`#embed` quantized weight tables; `_Decimal*` /
-  IEC 60559 (`<tgmath.h>`, Annex F/H) for reproducible Bayesian/conformal calibration under the R17
-  accuracy contract.
-- **Metaprogramming**: `typeof` + `_Generic` + X-macros + `constexpr` to *generate the StreamPack
-  (de)serializer and the R1–R18 law table from one declarative spec* — the closest C gets to the
-  oracle's single-source-of-truth design.
-
-**Porting caveats (from the standard text):** `realloc(p,0)` is now **UB** (audit the arena
-allocator); `_BitInt` widths cap at `BITINT_MAXWIDTH` (§5.2.4.2.1 — probe it, don't assume ≥128);
-gate every Tier-1 header on `__STDC_VERSION__ == 202311L` (+ the per-header `__STDC_VERSION_*_H__`
-macros) with C11 fallbacks, exactly as the Q8 `#embed` path already does.
-
-##### C.1 — A usable C frontend (the *input* seam) as a **staged conformance ladder**
-
-A Clang-compatible parser + semantics for a useful C subset → the *same* claim graph the oracle
-reasons over (so R1–R18 + the cost model apply unchanged). Built as an escalating ladder of language
-stages — **each stage is only "done" when it has all six artifacts** (the dual-rail discipline,
-applied to C):
-
-1. C source fixture · 2. claim-graph golden · 3. the K_BCIR plan · 4. the emitted C output ·
-5. behaviour equivalence against Clang on a harness · 6. an R1–R18 verifier checkpoint.
-
-> **This `bcir/frontends/cfront/` ladder is the oracle PROTOTYPE.** Per the prototype-then-port
-> discipline (§3), the production plug-in C compiler is **`runtime/c/bcir_cfront.c`** (C, the
-> driver-embeddable twin). The register-map slice is already ported + Python↔C parity-gated; the
-> remaining stages port stage-by-stage. Stop extending the prototype as if it were the product.
-
-**Prototyped (the full L1–L8 ladder)** (`bcir/frontends/cfront/`, `bcir.frontends.cfront.compile_unit`) — a
-real recursive-descent C **preprocessor** + lexer/parser → the claim-graph model
-(`Resource`/`Claim`/`Phase`), the K_BCIR plan, an arbitrary-claim-graph C emitter (straight-line +
-real `if`/`while` control flow, `memcpy`-based alignment-safe member access), the `plan_composite`
-call-graph (R18) checkpoint, a `bcir-explain` artifact, the **C.2 verified-C attestation**
-(R12/R13/R17/R18 stamped on each emitted function) + a reusable self-check artifact
-(`emit_selfcheck`), and a seeded-random Clang behaviour-equivalence harness (toolchain-gated).
-`python -m bcir.frontends.cfront <file.c> [--explain|--selfcheck]`.
-
-| Stage | C surface | status |
-|---|---|---|
-| L1 | fixed-width integer expressions (`_BitInt`/`<stdint.h>`) | ✅ |
-| L2 | structs / unions / explicit layout (Clang-compatible offsets) | ✅ |
-| L3 | pointers / arrays → GEP-equivalent claim mapping | ✅ |
-| L4 | functions + the call graph → **R18** (recursion + undefined-callee rejected) | ✅ |
-| L5 | `volatile`/MMIO → `Domain.MMIO` resources (ordered/`barriered`) + bitfield mask/shift claims | ✅ (the register-map/MMIO MVP) |
-| L6 | control flow — `if`/`else` → `compose.Cond`, bounded `while` (mutable named locals) | ✅ |
-| L7 | preprocessor — object/function/variadic `#define` (+ `#`/`##`, `__VA_ARGS__`/`__VA_OPT__`), `#if`/`#ifdef`/`#elifdef`, predefined macros (`__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC__`/`__STDC_VERSION__`/`__STDC_HOSTED__`), `#line`, `_Pragma`, `#include`, C23 `#embed` (→ const globals) | ✅ |
-| L8 | ABI — struct return-by-value, `__attribute__((packed))`/`aligned`, layout cross-checked against Clang's `sizeof`/`offsetof` | ✅ |
-
-**The trusted asm-edge + law-catch-up slices (all landed — build detail in
-[`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md); user-facing contracts in
-[`CFRONT_GUIDE.md`](CFRONT_GUIDE.md) + [`BCIR_LANGREF.md`](BCIR_LANGREF.md)):**
-
-| Slice | What it is | Where |
-|---|---|---|
-| ASM1 | GNU inline asm as an ISA-neutral **trusted opaque effect edge** (`c.asm[.volatile]:` — template re-emitted verbatim, BCIR owns operands/constraints/clobbers/ordering; volatile/`"memory"` ⇒ barrier) | cfront both rails |
-| ASM2 | Port-mapped I/O intrinsics (`inb/inw/inl`, `outb/outw/outl`) → typed, isolated, barriered `c.portio.*` edges on the dedicated `__ioport` MMIO resource; per-ISA x86 emit behind `--target`, honest unsupported diagnostic elsewhere; assembled, never executed (ring-0) | cfront both rails |
-| ASM3 / ASM3b | Memory fences with **typed kinds** (full/acquire/release) + real per-ISA emit (x86 `mfence/lfence/sfence`, aarch64 `dmb ish*`, riscv64 `fence …`); a `barriered` claim is a **first-class ordering edge** — no bundle/reorder across it, no deforestation discount through it (MLIR cost model mirrors byte-for-byte) | cfront + `-bcir-verify` structural invariant |
-| SEG6.1 / SEG7 | `atomic_thread_fence(memory_order)` **order-parameterized** on both rails — the order routes to the fence kind, carries end-to-end to `#bcir.mem_ordering` → `llvm.fence` | dual-rail parity-gated |
-| SEG8.1 / SEG8.2 | `bcir.asm` + `bcir.portio` **first-class MLIR law ops** lowering through `llvm.inline_asm` (LLVM-IR operand syntax, assemble-smoke-tested through `mlir-translate | llc` to a real `.o`) | `mlir/` + `check_asm_lowering.sh` |
-
-With the C ladder complete, **Phase C is effectively done** (modulo full-C breadth, C.3): a vendor
-register-map header now ingests through L7 → L5 → an R1–R18-clean plan with `bcir-explain`,
-behaviour-equivalent to Clang. Next: **Phase D** — the first real driver behind a `channel.json`
-plugin (generate/JIT a channel's kernel from an imported register map), closing the heterogeneous-
-tower loop.
-
-##### C.1-MVP — the first milestone: a register-map + MMIO file (driver/kernel-relevant C)
-
-The MVP targets exactly the C drivers/kernels need: fixed-width integers, structs/unions, arrays +
-pointers, functions, simple control flow, bitfields, `volatile`, MMIO-like resource mapping, and
-explicit layout/ABI checks. **Success criterion:** a small C file containing a *register-map struct*
-+ *MMIO-style access* lowers to —
-
-1. BCIR resources / claims / phases;
-2. an **R1–R18-clean** plan;
-3. C output (or an LLVM-backed artifact);
-4. behaviour equivalence against Clang on a test harness;
-5. a provenance manifest (R13);
-6. `bcir-explain` output explaining the chosen realization.
-
-##### C.2 — Generalized C output backend (the *output* seam, already partly built)
-
-Today `lower.c_kernel` emits *per-pattern* kernels (elementwise / gather / reduce / qfixed / strided
-/ compensated) and `codegen/` lowers via `llc` per the channel triple. Generalize from per-pattern
-kernels to an **arbitrary claim graph**:
-
-- multi-claim functions + call boundaries;
-- structs + ABI layout; MMIO / `volatile` lowering; atomics / fences;
-- dynamic shapes + guards; multi-channel lowering decisions (the channel-plugin routing contract);
-- generated self-check harnesses; **R12 / R17 / R18 attestation**.
-
-The closed loop this delivers — the gate before drivers (Phase D):
-
-```
-C input → claim graph → K_BCIR plan → verified C output → Clang behaviour check
-```
-
-##### C.3 — Full C (the multi-month horizon)
-
-Clang-compatible parser, complete ABI support, the full preprocessor (macros, `#include`,
-conditional compilation, `#embed`, `__VA_OPT__`, `__has_include`), full standard-library compatibility.
-
-#### Phase M — Selective ML operations (in parallel with Phase C, but throttled — not at full speed)
-
-> **Phases M and L are expanded into a full dependency-ordered program in
-> [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](BCIR_ML_AI_INTEGRATION_ROADMAP.md)** — the C inference substrate →
-> tensor ops as claims → data/memory organs → language reach → ML-guided hardware deployment → higher
-> cognition, each held to the two-truth quarantine + prototype-then-port discipline.
-
-Add ML-specific ops + passes (tensor ops, attention patterns, quantization, layout/packing) *after*
-the core lowering + C support are stable enough not to be destabilized. Prototype each in the **Python
-oracle first** (cheap iteration, the conformance reference), then port to the **MLIR law** — the exact
-dual-rail discipline every existing op followed. It advances alongside C but must never block or
-destabilize the keystone.
-
-#### Phase D — Drivers, opcode tables & hardware integration (next major milestone, after C)
-
-> **Phase D is expanded into a sequenced program in
-> [`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md)** — the pre-driver hardening gate
-> (turn on the already-written `sanitize_cfront.sh` + red-team the numerical wraps), the **asm / C /
-> C++ layering** model (a driver is mostly *verified C* with first-class MMIO, a thin *trusted-asm*
-> floor of ASM1/2/3 + the boot/IRQ edges still to build, and *C++ orchestration only at the G8
-> boundary*), and the **bring-up dependency ladder** (a *polled* UART needs little new, but only the
-> driver-shaped compiler fixture/register header are landed; the channel-backed resident driver is
-> still D2.1; HPET/ACPI/SMBIOS/TCG/TPM/PCI/USB/e1000/paging/VMs are independent / after / out-of-scope,
-> and the firmware specs are verified *parser-kernel* opportunities, never implementation targets).
-> The `bcir.portio` MLIR op (SEG8.2) is **landed** (the x86 port-I/O law-rail twin reusing the `bcir.asm`
-> → `llvm.inline_asm` path); the next code slice is `bcir.volatile_load/store` (D1.2), after the hardening gate.
-> **The driver SEAM is now hardened (Part VI of the driver roadmap, 2026-07-04):** six proposed
-> hardening principles audited — command-buffer-only dispatch and ISA-definition passthrough were
-> already BCIR's construction (the StreamPack is the command buffer; ODS/table generators are the
-> ISA language); the four with gaps landed as the **D-R rules**: the attested `DeviceManifest`
-> (`kbcir/device_manifest.py` + `bcir.device_manifest` on the law rail — banks, Q8 interconnect
-> distances, digest, veto-not-steer `probe_agree`), the bank-typing law (`check_bank_moves`:
-> memory-tier crossings need an explicit `mem.move.near/far`; MMIO exempt under R3; corpus-vacuous
-> by measurement), distance-priced moves (`move_cost`), and strided-view-only allocation with the
-> native-tile fragmentation refusal (`StridedView`/`check_strided_view` + the R22 gem.matmul seam:
-> a 15×15 tile against a 16-native device is a compile-time error).
-> **The full driver catalog + build order is now Part IX of the driver roadmap (2026-07-04):**
-> the per-driver blueprint contract (the UART U0–U9 pattern generalized — every device gets its
-> own `BCIR_<DEVICE>_DRIVER_BLUEPRINT.md` authored in its own research session), the
-> **ML-seam-per-device-class mandate** (every hardware class gets a learned prior on the D3
-> tile/channel-prior recipe — the reason BCIR builds drivers at all), the **BCIR-IPC track**
-> (direct in-process RuntimeChannel first; optional Linux `SOCK_SEQPACKET` + bounded
-> `memfd` rings + `eventfd`/`epoll` only after a driver proves the ABI — IPC-R1..IPC-R4 —
-> carrying JIT microkernels + a modular, measured POSIX shim with a Linux-Master-Kernel
-> fallback), and the phased build order (waves D0 boot → D1 substrate → D2 discovery → D3
-> interrupts → D4 time → D5 PCIe → D6 DMA/IOMMU → D7 BCIR-IPC → D8 storage → D9 filesystems →
-> D10 networking → D11 USB → D12 security/TPM → D13 virt/SEV-SNP → D14 display → D15 GPU
-> compute, with arch backends and firmware/DDR scoped out of the driver waves).
-> **The OS ambition is now Part X of the driver roadmap — `BCIR-Linux`, the kernel/driver oracle
-> (2026-07-08):** the §0 stance is corrected (BCIR *is* venturing into kernel/OS work — an
-> AI-powered JIT micro/unikernel factory + RTOS deployments — while the firmware *standards*
-> UEFI/ACPI/SMBIOS/TPM stay parser/marshaller targets, not implementation targets). BCIR-Linux is
-> the live-substrate analogue of the Python oracle: an **eBPF soft-fork** (observe + veto +
-> telemetry, mapping the real BTLM ring + `calibrate.py` replan onto `BPF_MAP_TYPE_RINGBUF`, and
-> eBPF's observe-only envelope onto the existing `probe_agree` veto-not-steer law) → a **dual-domain
-> hard-fork** (Control + Fabric domains; grounded in IHK/McKernel, Intel mOS, Xenomai, DPDK/SPDK,
-> carved *dynamically* not via forked `setup.c`) → a **JIT micro/unikernel factory** (reframed as
-> AOT-specialize + content-addressed cache via provenance/`replay` + the GraphSeed generator +
-> Firecracker-style snapshot-clone, LLM offline — not per-phase LLVM). Carries a real-vs-proposed
-> honesty ledger and the L0–L5 build ladder; two-truth and the resident-compiler gate still hold.
-
-The Hardware Description Layer. With verifiable C in hand:
-
-- **Import Linux kernel tables** — register maps, driver structures, PCIe/ACPI data — into BCIR
-  (clean now that C can be generated + verified against the source).
-- **BCIR-native ISA / opcode / registry representations** — the binary opcode tables, modeled the way
-  the claim graph models compute.
-- **A dedicated `drivers/` (or `targets/`) folder = a semi-separate JIT kernel generator**, *wired
-  into* the compiler but architecturally separable (a deliberate decoupling — the kernel generator
-  evolves without churning the core). This is where each hardware **channel** gets its **real
-  driver**: the channel *declares* the backend through the now-stable **plugin boundary** — a
-  `channel.json` manifest (`bcir/channel_plugin.py`: target-profile schema, codegen identity, runtime
-  signal-provider contract, execution-capability set, calibration-artifact ref, provenance flag) — and
-  the driver *generates/JITs* its kernels and supplies its measured calibration that replaces the
-  modeled profile. Phase D closes the heterogeneous-tower loop: the modeled `fpga_systolic` /
-  `nvme_stream` / `hbm_pim` channels become driver-backed, and a new accelerator joins the tower by
-  shipping a manifest (`register_from_manifest` / `discover_plugins`) — no core edit.
-
-#### Phase F — Full language frontends (deferred until the core is rock-solid)
-
-- **C++** — the hardest: templates (two-phase lookup + instantiation), exceptions, RAII, the STL, move
-  semantics, the complex ABI (Itanium mangling, vtables, EH tables) — Clang-level completeness. Defer
-  until the C path + core are rock-solid; depends on the C frontend + a far richer claim-graph type
-  system.
-- **Python** — start as a **transpiler / lifter** (the analyzable subset — array/numeric code — →
-  claim graph) rather than a full frontend, then grow toward full parser + semantics, the dynamic
-  features (classes, decorators, generators, `async`/`await`), a CPython-compatibility layer (the
-  C-API / object model), and ecosystem integration (NumPy/pandas array semantics on the resource/claim
-  model — the natural fit for cost-as-IR). Cheaper to *start* (the transpiler) than the C++ work.
-
-#### Phase L — The ML library + ecosystem (the payoff, on top of the compilers + kernels)
-
-Once C support + lowering + drivers + kernel infrastructure are in place, build the ML library *on
-top* of them — applying the same **"take and compress only what we need"** strategy used for the Linux
-C files: a *compressed extraction* into the BCIR claim-graph + channel model (not a wholesale
-dependency) from GCC, TensorFlow, PyTorch, Apache, pandas, NumPy, scikit-learn, XGBoost, JAX, Keras,
-XLA, SPIR-V, ONNX, Cassandra, hybrid SQL/NoSQL, and vector databases. Each contributes the kernels /
-ops / data structures BCIR needs, lowered to the same K_BCIR plan + GEM execution and orchestrated
-across the channel tower.
-
-**The through-line.** Frontends produce claim graphs; drivers populate channels; the ML library
-composes them — all decomposing to the *same* binary K_BCIR optimization + GEM Binary-Graph execution,
-hardware-agnostic by construction. Native instruction selection stays gated
-(`BCIR_NATIVE_OBJECT_GATE.md`): the frontends feed the resident backend + the per-channel JIT
-generator, never a hand-rolled isel.
-
-### 5.8 Oracle → C: the plug-in C compiler's remaining ports + missing infra
-
-The C frontend is porting from the oracle prototype to `runtime/c/` (§3 row). Beyond the ladder
-stages, the loop **`C input → claim graph → K_BCIR plan → verified C output → Clang behaviour check`**
-needs these components that **do not yet exist in `runtime/c/`** (researched against the oracle +
-the existing C twins):
-
-- ✅ **Ladder stages L6–L8 ported** — L6 control flow (`if`/`while` → structured body + `compose.Cond`),
-  L7 a real C preprocessor (`bcir_cpp.c`: object/function/variadic macros, conditionals, `#include`, C23
-  `#embed`), L8 ABI (struct return-by-value, `packed`/`aligned`, layout cross-checked vs Clang) all lower
-  on the C twin with the six-artifact gate + Python↔C parity. The full L1–L8 ladder is complete (§3 row).
-- ✅ **Verifier R1–R18 in C (`bcir_verify.c`)** — the runnable LangRef laws over the claim graph +
-  plan + StreamPack, the C twin of `bcir/verify`: R1–R8 module/claim laws (incl. **R6** lane↔stride
-  legality), R9 plan legality (`bcir_verify_plan`), R10–R11 StreamPack well-formedness
-  (`bcir_verify_pack`, over the hydrated bytes), R12 lowering-contract, **R13 provenance digest**
-  (`bcir_provenance_digest`, FNV-1a over the claim graph), R14–R16 vacuous for the scalar subset, R17
-  accuracy (integer/Q-fixed exact), R18 call-graph integrity. `bcir_cfront` runs R1–R8+R18 at compile
-  time; the **R9/R10–R11 verdicts are checked in the closed loop** (`test_cfront_loop.c`).
-- ✅ **K_BCIR planner in C (`bcir_plan.c`)** — a compact, freestanding scalar planner (per-claim
-  realization width + an integer cost; total cost) lands the *plan* in `runtime/c/`. The full cost
-  model / min-plus / RCSP stays on the MLIR/C++ law rail; this is the driver-embeddable seam that
-  drives hydration. *Future:* richer cost model / a `bcir-opt` bridge for the full optimizer.
-- ✅ **Claim-graph → StreamPack hydration in C (`bcir_hydrate.c`)** — the `gem.hydrate` step (plan →
-  StreamPack segments), freestanding + bounds-checked. **The loop now closes with no Python:**
-  `C source → bcir_cfront → bcir_plan → bcir_hydrate → bcir_exec` runs the compiled artifact end to
-  end (`test_cfront_loop.c`; gated in `tools/c/check_runtime.sh` + `test_c_cfront.py`).
-- ✅ **C.2 attestation in C** — `bcir_cfront` stamps the emitted verified-C with an attestation header
-  naming the discharged laws (R1–R8 + R18 clean, R9/R10–R11 checked in the loop, R12 lowering-contract,
-  R17 accuracy) and the **R13 provenance digest** — the same digest the compile→execute loop reports
-  (a reproducible manifest across the two C entry points; the oracle does this in `pipeline.py`).
-- ✅ **Atomics/fences** — `__atomic_fetch_add/sub/xor` → `ATOMIC_ADD/SUB/XOR` and
-  `__atomic_thread_fence`/`__sync_synchronize` → `BARRIER`, lowered on **lane A** (R6 admits lane A for
-  a scalar atomic counter as well as a RANDOM scatter-atomic; the atomic/barriered hazard discharges
-  R5), emitted back as the matching seq-cst builtins, and **behaviour-equivalent under Clang** on
-  independent copies of the same seeded counter (`cfront_atomic.c`, both rails `ok=1`).
-- ✅ **Compare-and-swap** — `__sync_val_compare_and_swap` / `__sync_bool_compare_and_swap` →
-  the `CMPXCHG` opcode: a 3-read claim (ptr, expected, desired) on lane A, emitted back as the
-  matching `__sync` CAS builtin, behaviour-equivalent under Clang (`cfront_cmpxchg.c`). *Still to
-  port:* **dynamic shapes** (`compose` dynamic bound guards).
-- ✅ **Multi-channel lowering decision in C** (`bcir_channel.c`) — the C twin of `bcir/channels`'
-  routing seam: a `channel.json` reader + `bcir_claim_required_caps` / `bcir_channel_suits` /
-  `bcir_channel_route` (the cost-free plan-time backend pick — most-specialized eligible channel,
-  tie-broken by name), so a driver routes each claim to its backend with no Python. Python↔C
-  parity-gated against the new `route_claim` (`test_c_channel.py`; `channels/example_{cpu,tpu,pim}`
-  exercise the plugin/universal/legacy paths). The full K_BCIR **cost**-based pick (`orchestrate`)
-  stays on the cost-model rail; this is the eligibility + static route a driver makes first.
-- **Type-model breadth** — ✅ `typedef` (scalar/pointer/aggregate aliases, incl. `typedef struct
-  {...} N;`), ✅ `enum` (enumerators folded to their integer values at parse time), and ✅ full
-  `union` layout (members overlap at offset 0; size = the widest member) all lower on both rails,
-  parity- + Clang-equivalence-gated (`cfront_typedef.c`, `cfront_enum.c`, `cfront_union.c`). ✅
-  **Function pointers** (a `typedef`'d `RET (*name)(PARAMS)` passed as a parameter and called
-  indirectly — the HAL dispatch pattern; the indirect call lowers to a `c.call.indirect` claim that
-  R18 treats as an opaque external edge, while direct calls in the same function still travel the
-  call graph; `cfront_funcptr.c`), ✅ the **ternary operator** `?:` (`cfront_ternary.c`), and ✅
-  **multi-dimensional arrays** (a 2D array parameter `uint32_t m[4][8]` decays to a flat element
-  pointer with a recorded shape, and `m[i][j]` flattens row-major to the linear index `i*8 + j` —
-  reusing the 1D pointer/index/load machinery on both rails; `cfront_array2d.c`, runs the full
-  execute loop), and ✅ **function-pointer struct members** (the HAL dispatch table -- `o->fn(args)`
-  fuses the member access + call into one `c.call.imember:<field>` claim emitted verbatim as
-  `o->fn(args)`, so no 8-byte function-pointer value rides in the 4-byte value model; R18-opaque;
-  `cfront_dispatch.c`) now lower on both rails. ✅ **array-of-row pointer declarators**
-  (`uint32_t (*m)[8]` — the row pointer a 2D array decays to; modeled as the equivalent multi-dim array
-  param so `m[i][j]` flattens row-major to `i*8 + j`, reusing the 2D machinery; `cfront_widerow.c`) —
-  the vendor-header declarator form, now lowering on both rails.
-- ✅ **Phase D compiler-fixture gate — register-map headers driven end-to-end** — vendor-style
-  headers + driver-shaped source
-  ingested with no hand-written claim graph, through the full `C → bcir_cpp → bcir_cfront → verify →
-  emit → bcir_plan → bcir_hydrate → bcir_exec` loop, both rails agreeing and the emit
-  Clang-behaviour-equivalent. Two complementary drivers cover the real-driver surface:
-  - **`cfront_driver.{h,c}`** — a DMA-channel map: the *read + decode + call-graph* path (`#include`
-    + field macros, typedef/enum/union/bitfields, volatile MMIO *loads*, struct pointers, an R18
-    call graph; `claims=30 mmio=1 bf=3 call=2 ok=1`).
-  - **`cfront_driver_uart.{regs.h,_uart.c}`** — a UART map: the *write + control-flow* path that
-    real drivers live on — MMIO register **writes** (`u->BRR/CR/DR =`) and a **bounded status-poll
-    loop** (L6 `while`+`if`), plus the union/bitfield/enum/typedef ABI (`claims=22 bf=4 ok=1`). Every
-    function (incl. the MMIO + control-flow `uart_send`) is Clang-equivalent; the straight-line entry
-    executes R9/R10–R11 clean.
-
-  Together they demonstrate the L1–L8 compiler surface. They are not resident drivers and do not
-  implement the UART blueprint's simulator, IRQ service, channel binding, telemetry egress, or U0–U9.
-
-> Channels are already a real plugin boundary (`bcir/channel_plugin.py`: target-profile schema,
-> runtime signal-provider contract, codegen identity, calibration artifact, execution-capability set,
-> simulator/model/provenance flag — #262); the C-side consumer of a `channel.json` is the
-> multi-channel lowering decision above.
-
-### 5.9 Oracle → C: the road from a driver-subset frontend to a C23 *replacement* compiler
-
-The plug-in C path is now a **driver-oriented, no-Python, production C rail** — far past "C lowering"
-or a kernel emitter. In the current repo it is a freestanding stack: a C **preprocessor**
-(`bcir_cpp.c`), a C **frontend** (`bcir_cfront.c`), a C **claim-graph IR** (`bcir_cir.h`), an
-**R1–R18 verifier** (`bcir_verify.c`), a **planner** (`bcir_plan.c`), **StreamPack hydration**
-(`bcir_hydrate.c`), a deterministic **executor** (`bcir_exec.c`), and the **`bcir-cc`** cc-like
-driver — plus target-ABI modeling, a wide C23/embedded-driver language surface, a full Clang-grade
-**diagnostics engine** (`bcir_diag.c`: caret renderer, JSON, fix-its, include-stack origin, recovery
-reports), an **`--fallback` route-to-LLVM contract**, a module-scope **effect/commutation analysis**
-(`--emit-effects`), real register-map / UART / DMA driver fixtures, and Python↔C parity gates on
-every stage (`docs/PARITY.md` § *Python ↔ C frontend twin*).
-
-It is best described as a **freestanding embedded/driver-subset C23 compiler *candidate*** with a
-widening language surface and a fallback contract — a *productionizing* freestanding driver/kernel-
-subset compiler with strong BCIR parity gates, real driver examples, and a cc-like front end. It has
-crossed the threshold from *prototype* to **usable compiler substrate for controlled driver
-development**. It is **not yet** a complete *hosted* C23 compiler or a general Clang/GCC replacement:
-the remaining work is the classic hard-compiler work — full C semantics, a full hosted environment,
-full ABI/object generation, conformance suites, and integration with a resident backend/linker
-toolchain — **not** the BCIR optimizer (that is already complete on the MLIR/C++ law rail). We
-complete it **systematically, one PR-sized chunk at a time**, in four phases.
-
-> *(Slice-level build history for this section — the per-landing notes, fuzzer-found bug
-> lists, and follow-on ladders — is summarized in [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md);
-> what remains below is the standing contract + the still-open work.)*
->
-> #### Recently closed + a designed-but-deferred gap
-> ✅ The **comma operator** `a, b` in a primary parenthesized expression (`#comma`, dual-rail) — isolated to
-> `( ... )` so call-args / initializer-element separator commas are unaffected.
->
-> ✅ **Variable-length arrays (`T a[n]`) — native FAITHFUL stack lowering, dual-rail.** A 1-D stack VLA is
-> lowered natively (no longer routed to fallback): the runtime size `n` is evaluated **exactly once** and
-> snapshotted into a hidden immutable extent (`__bcir_extK`), the array is declared **IN-BODY** at the source
-> decl point (`T a[__ext];` — a real stack array, no heap, no leak), and every `a[i]` is **bounds-masked**
-> against the snapshot via the §5.12 recoverable-extent machinery (`a[BCIR_CHK(rid, i, __ext, "fn:a")]`). The
-> crux was the **emit-model change** chosen as fork (a): the emitter declares locals up front (deliberately,
-> for branch-merge / loop-accumulator correctness), but a VLA's size isn't known until execution reaches the
-> declaration — so a VLA local is *named but excluded* from the up-front decls, and a new **`c.vladecl`** claim
-> emits its declaration in-body, right after the snapshot (oracle `lower._vla_storage` + `vla_locals`; C twin
-> `is_vla` resources + the `c.vladecl` emit). Behaviour-equivalent to Clang on both rails for every input;
-> `cfront_vla.c` (fill/reduce, signed, reversed-index, expression-sized), `test_native_vla_lowering_and_unsupported_forms`.
-> The **unselected fork (b)** — a managed-buffer `T *a = malloc(n*sizeof(T))` reusing §5.12 extents directly —
-> was rejected: it transforms stack→heap and needs a scope-exit `free` the emitter has no hook for (it would
-> leak), so it is less faithful than the in-body stack VLA.
->
-> ✅ **The VLA follow-on triad is complete — all dual-rail, parity-gated:** (1) **runtime `sizeof a`** of a VLA
-> (#vlasizeof) → `(size_t)((size_t)__bcir_extK * sizeof(elem))`, the snapshot extent × the element size, not a
-> stale static fold; (2) **VLA function parameters** `T a[n]` (#vlaparam) — the decayed-pointer param recovers
-> the runtime extent from the prior integer param `n` (stable-Name-gated) so `a[i]` masks `BCIR_CHK(rid,i,n)`;
-> (3) **multi-dimensional VLAs** `T a[m][n]` / 3-D (#vlamd) — each dim snapshotted once, a flat in-body
-> `T a[__ext_total]` sized by the runtime product, the row-major Horner index `i*n+j` (runtime inner-dim
-> stride) masked against the total. Capped at 3 dims (the dim table); a >3-D VLA routes to `--fallback`.
-> *Remaining VLA tail (still fallback):* a VLA whose size expression has side effects re-evaluated unsoundly,
-> and `sizeof a[0]` on a non-int element (the integer-element subset keeps the static element-size fold).
-
-> #### C-frontend differential fuzzer (`tools/c/fuzz_cfront.py`, `test_cfront_differential_fuzz`)
-> A generative **three-way** differential — random *UB-free* C programs run through BOTH rails (twin
-> `bcir_cfront.c` + oracle `frontends/cfront`) and Clang, asserting equal **outcome** (clean/dirty/fallback),
-> identical structural **claim summary** (parity), and **behaviour**-equivalence (integers exact, floats
-> ULP-tolerant, struct/pointer outputs compared member-by-member). Coverage to date: the full integer
-> width/signedness matrix + the usual arithmetic conversions, `float`/`double`, loop-aware mutable locals,
-> same-unit calls, pointer read/write + aliasing, **structs/unions** by value + struct pointers (read+write)
-> + struct return by value + **mixed scalar + `_Bool` + bitfield** structs (a bitfield may follow a sub-word
-> member) + **array members** `s.arr[e & 3u]` (incl. `_Bool[]`) — read+written as a by-value/pointer param
-> AND as a **local** / **return** via a **nested-brace init** `{ m, {e0,e1,..}, n }` (element-compared after
-> the call). It has flushed **~18 real frontend bugs** (parameter-write redeclaration; assignment/`i++`-as-
-> stmt-expr-value; ternary & call result types losing sign/float type; subscript- and member-as-value parse
-> gaps; compound-store index double-eval; narrow/float store-conversion; float-member-read-as-int; unsigned
-> sub-int bitfield not promoted to int; float member-array element stored as a uint reinterpret;
-> bitfield-after-sub-word-member laid out in a fresh type-aligned unit instead of packed at the bit cursor;
-> a `_Bool` member / `_Bool[]` element store copying the raw byte instead of NORMALIZING any nonzero to 1
-> (`s.flag = 2` read back as 2); **a WIDE bitfield (`unsigned long long:40`) in a 64-bit unit accessed with
-> 32-bit-hardcoded read/write — the store zeroed bits 32–63 and clobbered an adjacent field**) plus the
-> `signed char` (aarch64) portability gap; **and the `__attribute__((packed))` + bitfield LAYOUT/access bug
-> -- packed bitfields reserved a full `sizeof(T)` unit per group instead of packing bit-by-bit, so `packed{
-> char; unsigned a:5; unsigned b:9; char }` was 6 bytes vs Clang's 4, and a byte-straddling field's RMW could
-> clobber a neighbour** (`cfront_packedbf.c`); **and an OVER-ALIGNED member (`_Alignas(N)`/`alignas(N)`/
-> `__attribute__((aligned(N)))`) silently mis-laid out — the oracle parsed the specifier and then DROPPED it
-> (so `char a; _Alignas(16) int b; char c` was sized 12/align 4 instead of Clang's 32/align 16, with `b` at
-> offset 4 not 16), while the twin couldn't parse it at all and diverged to fallback** (`cfront_alignasmember.c`).
-> (~21 bugs; the last four found by targeted probing + the layout differential, not the generator —
-> `cfront_widebf.c` / `cfront_packedbf.c` / `cfront_alignasmember.c` now guard them, and the fuzzer generates
-> packed+bitfield structs and over-aligned members.)
-> ✅ **Nested-brace local/return aggregate init landed** (`cfront_nestinit.c`); ✅ **`_Bool` member/element
-> store-normalization** (`cfront_boolmember.c`); ✅ **nested structs** — a struct member that is a struct,
-> read/written via `o.in.x` / `o->in.x` chains AND initialised by a nested brace `{ {inner..}, .. }` (the
-> twin's `agg_init` now recurses through struct nesting at an offset, mirroring the oracle's `_init_subagg`;
-> an inner array member + a `_Bool` inner member still lower correctly) — `cfront_neststruct.c`, both rails
-> == Clang. **Open follow-ons (next-context work):**
-> 1. ✅ **Fuzzer-generates nested structs in every context, to any depth** — a struct may carry a nested
->    struct member `struct S0 in;`, read/written as `s.in.x` / `s->in.x` / `s.in.deep.x` across the full
->    expression/mutation space as a **by-value parameter, a LOCAL (nested-brace init), a by-value RETURN**
->    (compared leaf-by-leaf), AND a **`struct T *` POINTER parameter** (written through `p->in.x`). An inner
->    struct may **itself nest** (`S2{ S1{ S0 } }`, multi-level, validated == Clang); all member-iterating sites
->    flatten recursively via `_leaves` / `_flat`. ✅ A nested member that is itself an ARRAY (`s.in.arr[i]`) or
->    has BITFIELDS, and a `packed`/`alignas` struct containing an array or nested struct, were all probed
->    byte-exact vs Clang (layout + RMW) on both rails — already supported, generator-guard follow-on remains.
->    Plus enums and `_Bool` as a local/param/return (member-level done; both probed Clang-equivalent, so guards).
-> 1b. ✅ **Over-aligned struct members** — `_Alignas(N)` / C23 `alignas(N)` / `__attribute__((aligned(N)))` on a
->    member raises that member's offset (rounded up to N) AND the aggregate's own alignment (so `sizeof` grows),
->    on **both rails** like Clang. The oracle's parser was DISCARDING a member-leading alignment specifier
->    (`cparse._aggregate_body`) and `AggregateBuilder.build` ignored it; the twin's `p_struct_body` never even
->    consumed member-leading attributes. Now the requested alignment threads through the member tuple into the
->    layout (`max(req, packed?1:natural)`, so it survives `packed`), the integer-constant form is supported on
->    both rails, and `_Alignas(type-name)` consistently routes to fallback (not a silent mis-align). The fuzzer
->    emits `_Alignas(N)` on scalar members and `cfront_alignasmember.c` pins it; the LAYOUT differential
->    (`_layout_ok`) validates each `sizeof`/`offsetof`.
-> 1c. ✅ **Anonymous struct/union members** (C11 6.7.2.1) — a `struct {...};` / `union {...};` with no member
->    name inside a struct: its members PROMOTE into the enclosing struct's namespace, read/written directly as
->    `p->x` (an anonymous union's members alias at the union's offset; an anonymous struct's lay out in place;
->    they may nest). Both rails were route-to-fallback (parse error). Now both **flatten** the anonymous
->    aggregate's leaf fields into the parent's field table at shifted offsets while the parent's size/alignment
->    reserves the aggregate as a unit, so member lookup, layout (`sizeof`/`offsetof`) and RMW all match Clang;
->    a NAMED inline aggregate (`struct {...} sub;`) stays a normal nested member. Oracle: `cparse._aggregate_body`
->    parses an inline aggregate member (registering a synthesized `$anonN` tag via the unit ref) and marks an
->    anonymous one with an empty name; `AggregateBuilder.build` splices its leaves. Twin: `p_struct_body` claims
->    its sdef slot up-front (so a recursive inline-body parse takes a later slot + survives a realloc), parses
->    the inline body, and copies the anonymous aggregate's fields into the parent at the shifted offset.
->    `cfront_anonmember.c` pins an aliasing-union + nested-anon + named-inline case; the fuzzer emits anonymous
->    **struct** members (independent leaves; the union-aliasing case stays in the fixture). `_layout_ok` skips
->    the non-nameable `$anon` tags (the parent's `offsetof` asserts validate the promoted leaves).
-> 1d. ✅ **Unnamed & zero-width bitfields** — `T : N;` (no declarator) reserves N padding bits and `T : 0;` forces
->    the next bitfield to the next storage-unit boundary; an UNNAMED bitfield (padding or zero-width) positions
->    the cursor but is NOT a field and does NOT raise the struct's alignment (only a NAMED bitfield's type does --
->    Itanium/Clang), so `struct{char c; int :0; char d;}` is align 1 / size 5 / `d`@4. Both rails were
->    route-to-fallback (parse error). The parser (`cparse._aggregate_body` / twin `p_struct_body`) now accepts a
->    declarator-less `: width`; the layout (`AggregateBuilder.build` / twin) advances the bit cursor (zero-width
->    -> next unit, else the straddle-aware reserve) WITHOUT a field or an alignment bump. `cfront_unnamedbf.c`
->    pins padding + zero-width + the align-1 `int :0` case; the fuzzer injects `unsigned[ short|char] : N;` /
->    `: 0;` padding between members, validated by the sizeof/offsetof LAYOUT differential.
-> 1e. ✅ **Plain `char` struct members read as `char`, not `int8_t` (AArch64)** — a member declared plain `char`
->    (no signed/unsigned) has implementation-defined signedness: signed on x86-64, UNSIGNED on AArch64. The C
->    twin's `field` table didn't carry `is_plain_char` (it was tracked for scalars/locals/pointers/`char *`
->    derefs but LOST at a struct member), so a member/element load emitted `int8_t` -- sign-extending a high-bit
->    value on AArch64 where the source zero-extends, diverging from Clang on the ARM runner (caught by the
->    aarch64 conformance job, surfaced by `cfront_unnamedbf.c`'s `char` members). Fix: the field carries
->    `is_plain_char`, and `emit_member` / `emit_member_index` tag the load result so it emits `char`. Verified
->    on x86-64 AND aarch64 (qemu) for a direct member, a member-array element, and a nested-struct member;
->    `cfront_charmember.c` pins it. (The x86-only differential fuzzer can't see this -- plain `char` is signed
->    there -- so the cross-target conformance fixture is the guard.)
-> 1f. ✅ **Array-of-structs members** — a struct member that is an ARRAY of structs (`struct In arr[N];`),
->    accessed element-then-field as `p->arr[i].field` (read + write, plain + compound `OP=`, runtime index,
->    by-value local). The decisive layout fact: the element STRIDE is `sizeof(In)` but the access copies a
->    FIELD-sized value at `member_off + i*sizeof(In) + offsetof(field)` -- stride != copy size, which the old
->    single-element-size member-array claim couldn't express (both rails fell back at `arr[i].field`). Fix:
->    the member-array `c.load`/`c.store` gains an optional element-STRIDE imm (load `imm[2]`, store `imm[3]`;
->    `BCIR_CLAIM_MAX_IMM` 3->4) distinct from the field copy size, so ONE strided load/store lands the access
->    (oracle `_lvalue` resolves `Member(Index(...))` via the new `_LV.stride`; the twin records the element
->    struct in `field.elem_sidx` and descends via `elem_field`/`emit_member_index_field`). The nested-brace
->    initializer `{ { {a,b},{c,d} }, z }` builds each element struct in place (twin `subagg_init_struct`,
->    oracle `_init_subagg`). A bitfield/array/nested/pointer element field stays a consistent follow-on (both
->    rails fall back). `cfront_aostruct.c` pins read/write/compound/runtime-index/float/signed-char/`_Bool`/init,
->    verified byte-exact vs Clang on x86-64 AND aarch64 (qemu). Generator coverage is a follow-on (the access
->    pattern `arr[i].field` needs a new lvalue list); the cross-target fixture is the guard for now.
-> 1g. ✅ **Assignment as an EXPRESSION** — an assignment yields a value, so it appears as a sub-expression:
->    chained `a = b = c`, in a condition `if ((x = f()) > 0)` / `while ((n = n-1))`, parenthesized `(a = v)+1`,
->    compound `(a += 3)*2`. The C twin's value grammar had NO assignment (only a statement form), so it
->    PARSE-errored on all of these -- a systematic both-rails divergence (the oracle handled them). Now both
->    support a NAMED-VARIABLE target as an assignment-expression: the twin gains an `p_assign` level on top of
->    `p_cond` (the old `p_expr`) -- right-associative, yielding the variable's storage; the oracle threads a
->    `stmt` flag through `_assign` (a statement form allows any lvalue; a VALUE form requires a named local).
->    A member/array-lvalue assignment used as a VALUE (`(p->x=v)+1`) and a bare assignment as a statement-expr
->    TERMINAL (`({ a=b; })` -- the `i++`/`++i` desugar shares the AST, so its post/pre value can't be guessed)
->    stay consistent both-rails fallbacks. The fuzzer emits chained `n1 = n2 = expr;` (the inner is an
->    assignment-expression; fully sequenced, no UB); `cfront_assignexpr.c` pins the forms, verified byte-exact
->    vs Clang on x86-64 AND aarch64 (qemu).
-> 1g'. ✅ **Member-lvalue assignment as a value** (the #455 follow-on) — `(p->x = v) + 1`, chained
->    `p->x = p->y = v`, `if ((p->flag = check()))`, compound `(p->x += 5) * 2` for a SINGLE-LEVEL plain SCALAR
->    member. The value is the STORED/CONVERTED member value (`(char_m = 300)` -> the (char) value), so the twin
->    STORES then RE-READS the member (`store_member` + `emit_member`), matching the oracle's named-local
->    semantics and Clang -- plain = store+reload (2 claims), compound = read+binop+store (3). The oracle relaxes
->    the #455 guard via `_is_scalar_member_lv` (re-read on the value path: `return v if stmt else _read(lv)`);
->    the twin gains a `member_assign_ahead` lookahead + branch in `p_assign`. An array element / nested member /
->    deref / bitfield / array-of-structs target as a value stays a follow-on (both rails fall back). The fuzzer
->    chains through a single-level scalar member; `cfront_memassignexpr.c` pins it, byte-exact vs Clang on
->    x86-64 AND aarch64 (qemu).
-> 1h. ✅ **Function-pointer members set from named functions** — the canonical dispatch / vtable / ops-struct
->    pattern: `struct Ops{ unsigned (*add)(unsigned,unsigned); }; o->add = op_add; o->add(x,y);`. Beyond the
->    prior typedef-member-CALL support, three pieces landed on both rails: (a) the DIRECT declarator member
->    `RET (*name)(params)` (no typedef) -> an 8-byte kind-3 field (twin `p_struct_body` / oracle
->    `cparse._funcptr_declarator`); (b) FUNCTION-NAME-AS-VALUE -- a bare function name yields a funcptr value
->    emitted as the name, with ZERO claims (twin: a `read_only`+`is_funcptr` resource via `callee_ret`; oracle:
->    a `_func_ptr_value` modeled on `_string_ptr`, merged into `gnames`); (c) the funcptr-member STORE goes
->    through a GENERIC funcptr lvalue `*(void(**)(void))slot = (void(*)(void))g` -- a plain `memcpy(&g,8)` would
->    copy the function's CODE (since `&g` IS the function's address) and `void*` can't hold a funcptr; function
->    pointers round-trip through the cast, the call reads the member's real type. `cfront_fnptrmember.c` pins
->    it, byte-exact vs Clang on x86-64 AND aarch64 (qemu). The members return `unsigned` (the `c.call.imember`
->    result is uint-typed on both rails -- a SIGNED funcptr return is a both-rails follow-on, like the existing
->    `cfront_dispatch.c`).
-> 1i. ✅ **Struct-returning call RESULT used by value** (a real both-rails MISCOMPILE, not just a gap) — calling
->    an in-unit struct-returning function and using the result (`struct P p = mk(x);`, `g(mk(x))`, `mk(x).field`,
->    a passthrough `return mk(x);`) emitted INVALID C `uint32_t t = mk(x);` (a struct assigned to an int) and
->    build-failed -- the `c.call` result was typed as a flat `uint32_t`. (`cfront_structret.c` only DEFINED a
->    struct-returning function, so it went unnoticed.) Now the call result keeps the aggregate CType, so it is
->    declared `struct P t = mk(x);` and copies / passes-by-value / member-accesses correctly. Both rails: the
->    result temp is an AGGREGATE resource (oracle `_call` `rct=ret_ct`; twin `p_call` `rt->kind==1` branch), the
->    `c.call:` emit declares it with the struct type, and `mk(x).field` postfixes the addressable result temp
->    (oracle `_addr` `CallExpr` case; twin `p_call`-result `postfix_lvalue` wiring). The claim graph is unchanged
->    (only a result temp's TYPE), so parity is trivially clean. `cfront_structcall.c` pins all four uses,
->    byte-exact vs Clang on x86-64 AND aarch64 (qemu).
-> 1j. ✅ **Direct (inline) function-pointer PARAMETERS** `RET (*name)(PARAMS)` (the #1h member analogue for
->    params) — the callback / dispatch signature WITHOUT a typedef alias (`cfront_funcptr.c` covered only the
->    typedef'd form). Each lowers + is called IDENTICALLY to the typedef'd shape (a `c.call.indirect` claim,
->    an opaque R18 edge), so the claim graph and parity are unchanged. The work is purely PARSE + EMIT: both
->    rails parse the `(*name)(params)` declarator in param position (oracle `_declarator_or_funcptr` routing to
->    the existing `_funcptr_declarator`; twin a funcptr-param branch in `p_func` mirroring the #1h member
->    detection), then reconstruct the full inline signature since there is no alias to print -- the oracle emits
->    the `RET (*name)(PARAMS)` declarator directly (`emit._funcptr_decl`, also covering typedef'd params, which
->    it now EXPANDS), while the twin synthesizes a `typedef RET (*__bcir_fpN)(PARAMS);` prelude line and types
->    the param kind-3 with that tag (so `ctype_str` + the param-emit reuse the typedef path verbatim). Scoped to
->    scalar return + scalar params (the `_equiv` harness synthesizes a real `_fpN` target from those). The oracle
->    also parses a direct funcptr LOCAL `int (*g)(int)`; `cfront_fnptrparam.c` pins the param form, byte-exact vs
->    Clang on x86-64 AND aarch64 (qemu).
-> 1k. ✅ **C99 `_Complex` numbers** (FEATURE-COMPLETE: division, transcendentals, the `I` literal, long-double
->    complex, and complex struct members all landed as the follow-ons below; only `_Imaginary`, which Clang
->    doesn't implement, is out of scope) — `float`/`double _Complex` params, locals, and returns (either keyword
->    order; the `complex` <complex.h> spelling; a bare `_Complex` == `double`). A complex value is modeled as a
->    float SCALAR carrying an `is_complex` flag (NOT a 2-float aggregate, NOT a new kind): it rides every
->    existing float path (binop result typing, no truncation, value delegated to the backend) and the emitter
->    prints the `<elem> _Complex` spelling with NATIVE operators, so Clang lowers `+`/`-`/`*` (and `__mul`)
->    identically in the original AND the re-emitted `bcir_*` — behaviour-equivalent by construction, with ZERO
->    new claim kinds (`+ - *` are the same `c.bin.*`, so parity is the same `binop=` count). Both rails: a new
->    `is_complex` flag on the CType / `bcir_ctype` + `bcir_resource`; `_Complex` parsed as a float-base modifier
->    (size = 2x the element, element-aligned); a `tempc` / `rid_complex` for complex-typed temps; complex
->    arithmetic promotes by ELEMENT width (so `float _Complex * double` → `double _Complex`); the GNU
->    `__real__`/`__imag__` operators lower to a parity-neutral `c.un.creal`/`c.un.cimag` (the real element
->    float); and `creal`/`cimag` (real result) + `conj` (complex result) lower like a libm call
->    (`c.call.libm:`, one `call`). `cfront_complex.c` pins `+ - *`, mixed-real promotion, a complex-returning
->    in-unit call, a complex return, `__real__`/`__imag__`, and `creal`/`cimag`/`conj` — byte-exact vs Clang on
->    x86-64 AND aarch64 (qemu). `_Imaginary` (which Clang doesn't implement) is the only remaining gap.
->    - ✅ **Complex division `/`** (`cfront_complexdiv.c`) — `/` already rode the same `c.bin.div` claim and
->      emitted native `a / b` (Clang's `__divdc3`, identical in the original AND the bcir_*); it only waited on
->      the equivalence harness, which compared a complex result with `!=` (`nan != nan` is spuriously true when
->      a near-zero divisor yields nan/inf). The harness now memcmp's a complex result BIT-exactly (both rails
->      run the identical op, so inf/nan/signed-zero compare equal). complex/complex, complex/real, and
->      real/complex (element promotion) -- byte-exact vs Clang on x86-64 AND aarch64 (qemu).
->    - ✅ **Complex transcendentals** (`cfront_complextrans.c`) — the C99 `<complex.h>` elementary functions
->      `cexp`/`clog`/`csqrt`/`cpow` and the circular/hyperbolic families (+ inverses), each lowered like a
->      libm call (`c.call.libm`, opaque to R18, emitted VERBATIM) and typed by name as the *complex* type of
->      the argument's width. Because the call is emitted byte-for-byte on both rails they link the SAME libm
->      symbol and are equivalent by construction; the bit-exact harness handles the inf/nan landing points
->      (`clog(0)`, `csqrt` of a negative). `f`-suffixed forms (`cexpf`/...) exercise the `float _Complex`
->      typing path. Byte-exact vs Clang on x86-64 AND aarch64 (qemu).
->    - ✅ **Imaginary unit `I`** (`cfront_imagunit.c`) — `<complex.h>`'s `I` (the macro `_Complex_I`, a
->      `const float _Complex` of value i). The frontend doesn't preprocess `<complex.h>`, so `I` reaches the
->      lowerer as a bare identifier; it (and the canonical `_Complex_I`) lowers to a new `c.cconst` that emits
->      the token VERBATIM, so the re-emitted twin resolves it against `<complex.h>` exactly as the original.
->      `float _Complex * double` promotes to `double _Complex` (usual arithmetic conversions). Recognized only
->      when `I` is undeclared (defensive: any `<complex.h>` TU already makes `I` a macro, so a variable named
->      `I` is not expressible). `re + im*I`, `z*I` (rotation), and the `_Complex_I` spelling -- byte-exact vs
->      Clang on x86-64 AND aarch64 (qemu).
->    - ✅ **Long-double complex** (`cfront_complexlong.c`) — `long double _Complex`, the widest complex (32
->      bytes: a pair of the target's long double, 80-bit x87 on x86-64 / 128-bit quad on aarch64). Arithmetic
->      `+ - * /`, the `l`-suffixed `<complex.h>` calls (`cabsl` real-valued; `cexpl`/`conjl` complex), and the
->      imaginary unit all compose -- both rails emit identical `long double _Complex` source. Exposing it
->      required hardening the equivalence harness: a `_Complex` result is now compared ELEMENT-wise with a
->      nan-aware equality (`creall`/`cimagl`) instead of `memcmp`, which is immune to x87's indeterminate
->      padding bytes (memcmp wrongly flagged them) while staying nan-safe. Byte-exact vs Clang on x86-64 AND
->      aarch64 (qemu).
->    - ✅ **Complex struct members** (`cfront_complexmember.c`) — a struct field of `_Complex` type, and a
->      TWIN BUGFIX: the C twin previously typed a member load/store by SIZE, so a 16-byte `double _Complex`
->      field was read into a 16-byte `long double` REAL temp (and stored by staging through `long double`) --
->      a silent miscompile (the real part survived, the imaginary part was dropped), because the twin's
->      `field` record carried `is_float` but no `is_complex`. The record now carries `is_complex`, so a member
->      loads into a complex temp and stores as the complex pair, matching the oracle. Member read, native
->      complex arithmetic on members, a member store (struct build), a `<complex.h>` call on a member, and a
->      complex member round-tripped through a by-value struct -- byte-exact vs Clang on x86-64 AND aarch64.
-> 2. ✅ **Union-of-bitfields** is exercised by the fuzzer (a union's ONE active member may be a bitfield;
->    `u.bf` round-trips through `bf.get`/`bf.set`). ✅ **`__attribute__((packed))` structs — including with
->    BITFIELDS — are now correct and fuzzed.** Packed bitfields pack bit-by-bit with NO storage-unit
->    reservation (the field sits at the running bit cursor and may STRADDLE byte/word boundaries), so e.g.
->    `packed { unsigned char tag; unsigned a:5; unsigned b:9; unsigned char z; }` is **4 bytes** like Clang
->    (a/b in bits 8–21, `z` at byte 3) -- was wrongly 6 (a full `sizeof(T)`-unit per bitfield group). The fix,
->    on **both rails**: (a) LAYOUT — the `packed` branch of `p_struct_body` (twin) / `AggregateBuilder.build`
->    (oracle) places each bitfield at `byte_off=P/8`, `bit_off=P%8` and records its byte span
->    `access_bytes = ceil((bit_off+w)/8)` (a separate field; `size` stays the declared type, for read
->    promotion). (b) ACCESS — the unit is read into a uint wide enough to hold it (a field straddling into
->    bits ≥ 32 → a `uint64`), `memcpy`-ing only the `access_bytes` spanned bytes (zeroed temp), masked/inserted
->    via the now-64-bit `c.bf.get`/`c.bf.set` (#wide-bitfield fix), and written back over only those spanned
->    bytes -- so a RMW preserves a neighbour sharing the straddled bytes. Non-packed (incl. MMIO, whose
->    register width must not change) is byte-identical. (c) GUARD — the fuzzer now generates packed+bitfield
->    structs, validated by BOTH the behaviour check and the `sizeof`/`offsetof` LAYOUT differential
->    (`_layout_ok`); `cfront_packedbf.c` pins a signed/wide/straddling case. (`test_L8_packed_layout_matches_clang`
->    covers packed without bitfields.)
-> 3. **Statement-expression + bitfield-terminal type (deferred frontend gap).** A GCC statement expression
->    takes the type of its LAST expression, and a BARE bitfield read there keeps its *declared* type
->    (`unsigned`) rather than the promoted `int` it has in every other context: `-({ u5; })` is unsigned
->    (`4294967291`) but `-(u5)` / `-({ (int)u5; })` are `int` (`-5`). The frontend's `bf.get` always promotes
->    to `int`, so it computes `-5` for `-({...; u5; })` -- a both-rail miscompile vs Clang in an ultra-rare
->    pattern (found when union-of-bitfields shifted the fuzzer RNG onto it). The fuzzer now forces the
->    promotion on its stmt-expr terminals (an explicit cast to the value's arithmetic type, a no-op for
->    non-bitfields) so it stays sound; modelling the stmt-expr-decays-the-bitfield type in the frontend is a
->    deferred follow-on.
-
-**Phase 1 — Driver-subset compiler, productionized** (the near-term milestone — make the existing
-subset behave like `cc` on a small multi-file driver project):
-- ✅ **Fix the oracle-rail CLI include-path gap** (`python -m bcir.frontends.cfront`): the file's own
-  directory is on the search path, so a driver with sibling `#include "regs.h"` headers compiles
-  directly — plus `-I` / `-D` / `-U` / `-std=` / `-E` / `-o` (the Python preprocessor resolves headers
-  from disk via a search path, not just an in-memory mount).
-- ✅ **`bcir-cc` — the production C compiler driver** (`runtime/c/bcir_cc.c`, the cc-like front over
-  the full C rail `bcir_cpp_run_ex → bcir_cfront → bcir_plan → bcir_hydrate`): `-I` (multi-dir) / `-D`
-  / `-U` / `-std=` / `-E` / `-o` + `--emit-c` (verified C + C.2 attestation) / `--emit-claimgraph` /
-  `--emit-pack` (the entry's hydrated StreamPack, `BSPK`). The C preprocessor gained the dual-rail
-  twin of the oracle's search-path/defines (`bcir_cpp_run_ex`: multi-dir `#include`, `-D` predefines,
-  **macros persist across nested includes** like `cpp.py`). A driver with sibling headers builds via
-  a normal compile command — `bcir-cc runtime/c/cfront_driver_uart.c` → `ok=1`. CI-gated
-  (`test_bcir_cc_driver_compiles_and_emits_artifacts` + `tools/c/check_runtime.sh`).
-- ✅ **Precise unsupported-construct diagnostics** (`bcir_diag.c`) — a full Clang-grade diagnostics
-  engine on the C rail: a caret/underline source renderer, machine-readable JSON, fix-it hints,
-  `In file included from …` include-stack origin, and multi-diagnostic panic-mode recovery reports,
-  each **byte-identical to the oracle's `diagnostics.py`** (the `#diag` blocks in `check_runtime.sh`;
-  `test_diagnostic_*_dual_rail`). The frontend names exactly what it can't do, with spans + notes.
-- *Remaining Phase 1:* provenance-manifest artifact emission (the R13 digest is already stamped in the
-  C.2 attestation; a standalone `--emit-manifest` is the gap). **Exit:** a small multi-file driver
-  project builds via a normal compile command and passes the behaviour check — **met on the production
-  rail** (the diagnostics engine + `bcir-cc` driver close it).
-
-**Phase 2 — Freestanding C23 compiler (embedded/kernel subset).** Close the concrete language gaps real
-headers/drivers hit. ✅ **ternary `?:`** — lexed (`?` added to the oracle punct set; the C lexer's
-single-char fallback already had it), parsed as a conditional expression (right-associative, layered
-over the binary grammar on both rails), lowered to a scalar `c.select` claim, and emitted as the real
-`(cond ? a : b)` — Clang-behaviour-equivalent (`cfront_ternary.c`, both rails `claims=13 ok=1`). ✅
-**function pointers** — a `typedef`'d `RET (*name)(PARAMS)` passed as a parameter and called
-indirectly (HAL dispatch); the indirect call lowers to a `c.call.indirect` claim (reads: the pointer
-value then the actuals), R18 leaves it an opaque external edge while direct calls in the same function
-still resolve through the call graph, and the emit calls through the pointer verbatim — both rails
-`funcs=2 claims=2 call=2 ok=1`, Clang-equivalent (`cfront_funcptr.c`). ✅ **integer casts**
-(`(type)expr` — a cast binds at the unary level on both rails; in the 32-bit-unit value model a
-narrowing cast to an unsigned fixed-width type masks, exactly matching Clang's integer promotion, so
-it lowers to a `c.cast:<width>` claim and emits `(type)expr`; `cfront_cast.c`, both rails `claims=12
-ok=1`, executes the full loop). ✅ **the `signed` type specifier** (`signed char` / `signed int` /
-`signed long`, as a declarator and a cast): the C twin recognized `unsigned` but not `signed` in its
-declaration- and cast-type-start detection, so `signed char sc = (signed char)a` was rejected (routed
-to fallback) while the oracle accepted it -- a rail disagreement found by the dual-emit sweep. Fixed by
-adding `signed` to the twin's scalar-type table (a modifier; the base sets the width). `signed` alone
-(signed int with no base) stays a fallback on both rails. `#signedty`/`cfront_signed.c`. ✅ **and the
-miscompile it surfaced -- signed comparison against an integer literal** (`x < 0` for a signed `x`, the
-abs / clamp / signum idiom): the twin's emitter hardcoded *every* integer constant as `uint32_t`, so the
-comparison promoted to unsigned (`int32_t < uint32_t`) and `x < 0` was always false -- `is_clean` but
-wrong, affecting plain `int` too. Fixed by emitting each constant with its OWN recorded (width,
-signedness) -- a bare `0` is `int32_t` (`lit_int_type` already records it on the temp), so the compare
-stays signed. `#signedcmp`/`cfront_signedcmp.c`, differential == Clang on both rails. ✅ **and a
-related wide-operand miscompile -- unary `-` / `~` on a `long` / `long long`**: the result temp was
-hardcoded to a 4-byte `uint32_t` on BOTH rails, so negating a `long` truncated to 32 bits (`-(long)1`
--> `4294967295`, a 32-bit `-1`) which then widened back to a *positive* long -- breaking `x < 0` and
-abs on a long (for `int` it was masked, since the value reinterprets at the same width). Fixed by typing
-the `-`/`~` result as the promoted operand type (`!` stays int) -- the oracle's `_rvalue(Unary)` and the
-twin's `p_unary` + `c.un` emit. `#longunary`/`cfront_longunary.c`, differential == Clang on both rails.
-✅ **and a `_Bool` / `bool` store-normalization miscompile**: C converts any nonzero to `1` when a value
-lands in a boolean object (§6.3.1.2), so `_Bool x = 2;` makes `x == 1`. The twin emitted a bool local as
-a plain `uint8_t`, so the store kept the raw value (`2`, not `1`) -- `is_clean` but wrong on a decl init,
-a compound assignment, an array element, a parameter, and the return value (the oracle, which emits
-`_Bool`, was correct). Fixed by tracking bool-ness on the resource + ctype (`is_bool`) and emitting
-`_Bool` from `tty` / `ctype_str`, so every conversion-to-bool normalizes -- exactly as the oracle does.
-`#boolnorm`/`cfront_boolnorm.c`, differential == Clang on both rails.
-✅ **and two follow-on unary-operator miscompiles** (after `#longunary` fixed the *width*): integer
-*promotion* and *float* on `-` / `~`. **(1)** A sub-int unsigned operand promotes to *signed* int
-(§6.3.1.1), so `~(unsigned char)0` is `-1`, not `4294967295`, and `-(unsigned char)1 < 0` is true -- the
-twin kept the operand's unsignedness on the result temp, flipping the sign test / arithmetic-shift of the
-complement (twin-only; the oracle's `promote_int` was correct). **(2)** `-x` on a `float`/`double` stays
-floating -- BOTH rails forced a `uint32_t` temp, truncating `-2.5` to `4.29e9` (a both-rail miscompile the
-dual-rail check could not see; only the Clang differential did, and the `float`/`double` spellings even
-disagreed). Fixed by taking the promoted operand type on both rails (`promote_i` for the integer
-signedness, a float temp for a float operand). `#unarypromote`/`cfront_unarypromote.c`, differential ==
-Clang on both rails.
-✅ **and the float -> signed-integer cast it exposed** (the `#395` aarch64 failure): both rails
-canonicalized *every* integer cast to the unsigned fixed-width spelling -- `(uint32_t)x` / `(uint8_t)x` --
-which turns a float -> *signed* conversion into a float -> *unsigned* one: UB for a negative value and
-target-divergent (x86 wraps, aarch64 saturates to 0), and even on x86 a sub-int signed target lost the
-sign (`(signed char)(-5.0f)` came out `251`, not `-5`). Fixed by emitting a SIGNED fixed-width operator
-into a signed temp when a floating operand is cast to a signed integer (the unsigned spelling is kept for
-unsigned targets and pure integer casts). `#floatsigncast`/`cfront_floatsigncast.c`, differential == Clang
-on both rails.
-✅ **and the pure-integer half of the same vein**: a narrowing cast to a SIGNED integer whose result is
-used *directly* (no signed named local to launder it). The twin typed every integer cast temp as unsigned,
-so `(signed char)(-5)` came out `251`, and `(int)u` read back unsigned -- turning an arithmetic `>>` into a
-logical one. Fixed by typing the integer cast temp with the target's signedness (matching the oracle), so a
-signed sub-int target keeps its sign and `(int)u` reads back signed. `#intsigncast`/`cfront_intsigncast.c`,
-differential == Clang on both rails.
-✅ **and a cast to `_Bool` / `bool`**: `(_Bool)x` is `x != 0` on the FULL value (§6.3.1.2), so `(_Bool)256`
-is 1 and `(_Bool)0.5` is 1. Both rails rendered the cast as `(uint8_t)x`, truncating to 8 bits *before* the
-bool test (`(_Bool)256` -> 0, `(_Bool)0.5f` -> 0), and the twin did not normalize at all (`(_Bool)2` -> 2)
--- a separate path from the `#boolnorm` *store* normalization. Fixed by emitting a real `_Bool` cast
-operator into a `_Bool` temp on both rails. `#boolcast`/`cfront_boolcast.c`, differential == Clang on both
-rails.
-✅ **and a signed-bitfield read sign-extension miscompile**: an `int`/`signed` bitfield of width N holds an
-N-bit two's-complement value, so a read must sign-extend from bit N-1 -- `int x:4` holding `1111` is `-1`,
-not `15`, and `(int x:8) < 0` can be true. Both rails extracted `(unit >> off) & mask` and stopped,
-zero-extending every read (so a signed field's sign test was always false and its value came back as a
-large positive). Unsigned bitfields, which DO zero-extend, were already correct. Fixed by carrying the
-field's signedness on the `c.bf.get` claim and emitting `(value ^ sign_bit) - sign_bit` into a signed temp
-for a signed field, on both rails. `#signedbf`/`cfront_signedbf.c`, differential == Clang on both rails.
-✅ **and the same sign drop on a signed sub-int *storage* read** (`signed char`/`short` member, member
-array, or local array): the twin loaded a member via a zero-extending `memcpy` into a `uint32_t` temp and
-typed the array-element temp unsigned, so `s.c = -5` read back as `251` and `s.c < 0` was always false (a
-plain `return arr[i]` matched by modular luck; a sign test or sign-dependent result did not). The oracle,
-which carries the element's signedness on the load temp, was correct. Fixed by typing each load temp with
-the element's (width, signedness) and memcpy-ing the exact width, so a signed sub-int read sign-extends;
-unsigned elements are unchanged. `#signedload`/`cfront_signedload.c`, differential == Clang on both rails.
-✅ **and an `enum`-as-a-type rail disagreement** (a different class -- the oracle was *stricter* than the
-twin, not a miscompile): `enum Tag` is a valid int-sized type specifier (`enum E e;`, `(enum E)x`, an
-`enum E` parameter), all of which the twin accepted. The oracle's type parser set `base = "int"` for
-`enum [tag]` but then unconditionally recomputed the base from the (empty) keyword run, raising "expected
-a type" -- so it rejected *every* enum-as-type and fell back where the twin compiled. Fixed by keeping the
-enum's int base; both rails now lower an enum to a plain int (negative enumerators included).
-`#enumtype`/`cfront_enumtype.c`, differential == Clang on both rails.
-✅ **and pointer locals** (`T *p = &x;` -- address-of a local into a typed pointer variable, then
-read/write `*p`): the twin emitted a pointer local as a plain `uint32_t`, so `p = &x;` was an invalid
-pointer-to-integer assignment (a hard error under C23) *and* truncated the 8-byte address to 32 bits on a
-64-bit target -- a miscompile where it compiled at all. The oracle, which emits `T *p`, was correct. Fixed
-by carrying the pointee (width, signedness, struct tag) on the pointer resource and emitting the real
-`T *p`, with the deref reading exactly the pointee width (so a `signed char *` deref sign-extends and
-`p[i]` / `*(p+i)` index with the right stride). `#ptrlocal`/`cfront_ptrlocal.c`, differential == Clang on
-both rails. *(This closes the pointer-local slice of the 4-byte value model; pointer **values** carried
-across non-address contexts remain the broader model item.)*
-✅ **and returning a pointer value** (`T *f(...){ return p + i; }` -- pointer arithmetic used as an
-rvalue, returned by value): **both** rails typed the `p + i` temporary as `uint32_t` -- an invalid
-pointer-from-integer return under C23 *and* an 8-byte-pointer truncation on a 64-bit target. Fixed by
-giving the additive lowering a pointer result when exactly one operand is a pointer (a `p - q` ptrdiff
-stays integer), cloning the pointee onto the result temp, and routing the temp declaration through a
-pointer-aware type composer on both rails (the C twin's `decl_ty`, the oracle's `deftmp`/`_bin_result_type`)
--- so the emit is a real pointee-scaled `T *t = p + i`. Pointer **params** now also carry the pointee type
-so arithmetic on them clones it. `#ptrvalue`/`cfront_ptrvalue.c`, differential == Clang on both rails.
-✅ **and storing a pointer into a struct field** (`s->p = q;` / `return s->p;`): the C twin modeled a
-pointer struct member as **4 bytes** -- so the struct *layout itself* was wrong (an adjacent field
-overlapped the high half of the pointer on a 64-bit target) *and* a member store truncated the 8-byte
-pointer to 4. The oracle already laid pointer members out at `pointer_size` (8), matching Clang; this
-brings the twin into agreement -- a pointer member occupies `pointer_size`, the store/load moves the full
-pointer, and the loaded value carries its real `T *` type (the twin via a `field` pointee descriptor +
-`tempptr_field`, the oracle via `_load_ctype` honouring pointers). `#ptrfield`/`cfront_ptrfield.c`,
-differential == Clang on both rails (a scalar written between two pointer members survives only under the
-8-byte layout). *(Slice 2 of the pointer-value model; dereferencing/chaining a loaded pointer field --
-`*(s->p)`, `s->t->a` -- is slice 2b, below.)*
-✅ **and pointer-to-pointer** (`int **pp`, the double dereference `**pp`, the output-parameter store
-`*pp = q`, `**pp = v`, and `int **pp = &p` built by address-of-a-pointer): **both** rails modeled `int **`
-as a single `int *` (no indirection depth in the type model), so `*pp` read the base width where the
-pointee is an 8-byte pointer, `**pp` fell back entirely, and a store truncated. Fixed by giving the type
-a pointer **depth** (`bcir_ctype.ptr_depth` / `bcir_resource.ptr_depth` on the twin; the oracle's `_addr`
-now accepts a `*q` base): `*pp` on a `T**` loads a `T*` (pointer_size bytes), `**pp` derefs that to a `T`,
-`&p` of a `T*` yields a `T**`, and a store through `**` moves a full pointer. The twin's deref load/store
-were generalized to a pointer **rvalue** (so `**pp` and `*(<expr>)` work, not only a named `*p`).
-`#ptr2ptr`/`cfront_ptr2ptr.c`, a bespoke valid-chain differential == Clang on both rails. *(Slice 3 --
-the last of the three pointer-value contexts; this closes the broader 4-byte-pointer value model.)*
-✅ **and dereferencing / chaining a loaded pointer field** (`*(s->p)`, the chain `s->mid->k` and the
-two-hop `s->mid->leaf->x`, and the subscript `s->p[i]` -- reads, writes, and compound RMW): both rails
-resolved a member used as a *base* to the enclosing struct's address + the field type, so a deref read
-the struct's *own* bytes instead of loading the pointer first; `s->mid->k` and `s->p[i]` fell back. Fixed
-by loading a pointer-valued field used as a base (a full `pointer_size` load at the field's offset) and
-making the loaded pointer the new base -- the same move as `*q` on a `T**` (the oracle's `_addr` +
-`_lvalue` index branch; the twin's `postfix_ptr_chain` read helper + `store_through_ptr` store helper,
-hooked into `p_primary` and the member-store path). `#fieldderef`/`cfront_fieldderef.c`, a bespoke
-valid-chain differential == Clang on both rails (a two-hop `Box -> Mid -> Leaf` chain + a `long*` field at
-a padded offset). *(Slice 2b -- this completes the pointer-value model: a pointer in a struct field can now
-be stored, loaded, **and** dereferenced/chained.)*
-✅ **multi-dimensional arrays** (a 2D array parameter
-`uint32_t m[4][8]` decays to a flat element pointer + a recorded shape; `m[i][j]` flattens row-major
-to `i*8 + j` (Horner) on both rails, reusing the 1D index/load machinery; `cfront_array2d.c`, both
-rails `claims=21 ok=1`, runs the full execute loop) + ✅ **function-pointer struct members**
-(the HAL dispatch table: `o->fn(args)` fuses member access + call into one `c.call.imember:<field>`
-claim emitted verbatim as `o->fn(args)` -- no 8-byte funcptr value rides in the 4-byte value model,
-so no typed temporaries needed; R18-opaque; `cfront_dispatch.c`, both rails `claims=3 call=2 ok=1`).
-✅ **array-of-row pointer declarators**
-(`(*m)[8]` — the row pointer a 2D array decays to, modeled as the equivalent multi-dim array param;
-`cfront_widerow.c`); *still to port:* the comma
-operator, `typeof`, compound literals, integer promotions + usual arithmetic
-conversions; ✅ **pointer dereference** (`*p` -- a one-read deref load, previously unsupported on the
-C rail entirely -- and `*(p + i)`, the pointer-arithmetic spelling of `p[i]`, routed through the
-index/load machinery on both rails; `cfront_deref.c`); ✅ **store through a pointer** (`*p = v` / `*p
-OP= v` / `*(p + i) = v` -- the write counterpart; the C twin parsed `*p` only as a read, so a store
-through a pointer failed. Now both rails lower a deref store -- an offset-0 `imm=[0,size]` store for
-`*p` (the member-store shape), the indexed `p[i]` store for `*(p + i)`, a load+op+store for `OP=` --
-verified on independent buffers since these mutate through `p`; `#ptrstore`/`cfront_ptrstore.c`); the
-rest of pointer-arithmetic completeness;
-✅ **`sizeof`** (`sizeof(type)` / `sizeof expr` folds to
-a compile-time constant -- the type/operand's static size, operand not evaluated; both rails agree
-via the shared scalar table + struct/union layout, Clang-equivalent, `cfront_sizeof.c`) + ✅
-**`_Alignof`/`alignof`** (the type's alignment from the same layout model, type-name form only;
-`cfront_alignof.c`, both rails `claims=9 ok=1`, runs the loop); still
-`typeof`, the comma operator; ✅ **logical `&&` / `||`** (the condition idiom -- the C rail parsed
-only the bitwise `&` / `|`, so a user-written `a && b` did not parse; added at the correct precedence,
-emitted verbatim with Clang short-circuit; `cfront_logic.c`) + ✅ **unary `+`** (a no-op, on both
-rails); ✅ **increment / decrement** (`i++` / `++i` / `i--` / `--i` in
-statements + `for` clauses -- the value-discarded form desugars to `i = i ± 1` on both rails, the
-loop-counter idiom; `cfront_incdec.c`); the rest of control flow — ✅ **`for`** (desugared onto
-the existing `while` machinery on both rails: `init; while(cond){ body; step }`, the step lowered at
-the loop-body end; `cfront_for.c`), ✅ **`do/while`** (a `WhileNode` `test_at_end` flag / the C
-`c.loop.test` marker placed at the loop-body bottom -- body runs at least once), ✅ **`break`** (a
-`BreakNode` / `c.break` marker emitted as `break;`, correct in every loop form), and ✅ **`continue`**
-(a per-loop `goto __cont_<id>;` + a `__cont_<id>:` label placed at the loop's continue point -- before
-the `for` step / the `do/while` bottom test / at the `while` body end -- so it runs the step in a
-`for`, which the naive `while(1)` desugar would skip; `cfront_continue.c`), and ✅ **`switch`/`case`**
-(desugared to a nested if/else-if chain on both rails: a clause's labels OR together for the shared
-`case A: case B:` pattern, a top-level `break;` terminates the clause, `default` is the final `else`;
-enum cases fold to their values; `cfront_switch.c`), all Clang-equivalent, and ✅ **interleaved
-top-level declarations** (a `typedef`/`enum`/`struct`/`union` defined *between* functions now parses
-on the C rail too -- one top-level loop with a `try_top_decl()` helper, matching the oracle's already
-interleaving `parse_unit`; `cfront_interleave.c`), and ✅ **`goto` + labels** (the driver
-error-cleanup pattern -- `goto done;` / `done:;` carried as emit-only markers like break/continue,
-which already lower to a goto, so they emit verbatim and stay Clang-equivalent; the mutable
-accumulator is a real C local so skipped updates match; `cfront_goto.c`), and ✅ **empty statements**
-(a bare `;` -- the body of `for(...);` / `while(...);` / `if(c);` and stray `;;` between statements --
-consumed on both rails as a no-op that emits no claim, so behaviour is unchanged + Clang-equivalent;
-previously both rails rejected it (`unexpected ;`); `#emptystmt`/`cfront_emptystmt.c`), and ✅ **`static` local
-variables** (static storage duration -- persists across calls, a once-only constant initializer baked
-into the `static T name = init;` declaration so it lowers no init claim; the driver counter/accumulator
-pattern; `cfront_static.c`, both rails `claims=2 ok=1`, runs the loop), and ✅ **file-scope lookup
-tables** (a `static const T NAME[N] = {...}` global indexed at runtime -- the driver calibration /
-jump-table pattern; the global lowers to a read-only data resource, an access `NAME[i]` is an indexed
-load emitted by name, and the global is referenced (not redeclared, defined in the source);
-`cfront_global.c`, both rails `claims=5 ok=1`, runs the loop), and ✅ **compound assignment**
-(`name OP= expr` -- the register / bit-manipulation idiom `reg |= MASK`, `flags &= ~BIT`; each
-desugars to `name = name OP expr` = a binary op + a copy on both rails, the C lexer gaining the
-`+= -= *= /= %= &= |= ^=` tokens; `cfront_compound.c`, both rails `claims=11 ok=1`, runs the loop),
-and ✅ **MMIO register read-modify-write** (`dev->reg OP= expr` -- the set/clear-control-bits idiom,
-the most common driver operation; a compound assignment to a volatile struct member is an ordered
-MMIO load + a binary op + an ordered MMIO store; `cfront_rmw.c`, both rails `claims=8 mmio=3 ok=1`),
-and ✅ **MMIO bitfield write** (`r->field = v` for a named bitfield -- read the storage unit, insert
-the masked bits (`c.bf.set`), store back; bitfield reads (`c.bf.get`) already worked, this completes
-the write side register maps need; `cfront_bitfield.c`, both rails `claims=5 mmio=2 bf=1 ok=1`), and
-✅ **bitfield compound-assignment** (`r->field OP= bits` -- read the field via `c.bf.get`, op, re-insert
-via `c.bf.set`, store; one unified member-assign path now covers plain/bitfield x plain/compound;
-`cfront_bfcompound.c`, both rails `claims=15 mmio=5 bf=3 ok=1`);
-and ✅ **C11 `<stdatomic.h>` atomics** (the `_Atomic` type qualifier parses + round-trips like
-`volatile`, and the generic functions `atomic_fetch_add`/`atomic_fetch_sub`/`atomic_fetch_xor` /
-`atomic_load` / `atomic_store` / `atomic_exchange` on an `_Atomic` object lower to the BCIR ATOMIC
-opcodes on lane A with the atomic hazard -- emitted as the C11 functions themselves, which accept an
-`_Atomic*` where the GCC `__atomic_*` builtins do not; `cfront_atomic11.c` / `cfront_atomic_xchg.c`,
-both rails `ok=1`, run the loop; C11 compare-exchange remains -- it needs the address-of operator);
-and ✅ **scalar file-scope globals — read *and* write** (a `static`/file-scope scalar global both
-read and assigned across functions, lowered to a named read-only data resource with `c.copy`-to-global
-writes, referenced by name in the emit; `cfront_global_rw.c`, both rails parity- + Clang-gated), with
-its module-scope **effect/commutation analysis** (the C twin of `pipeline.own_footprint` + `commute`:
-per-function read/write global footprints, callee effects folded transitively, the pairwise commute
-matrix — `bcir-cc --emit-effects`, byte-identical to the oracle; `cfront_effects.c`). **Still to
-port** — the genuinely-remaining Phase-2 language/infra work:
-  - *language:* ✅ **the comma operator in the for-step** (`for(...; ...; i++, j--)` — two-pointer /
-    reversal loops + parallel-counter updates; each comma-separated step element, inc/dec or plain /
-    compound assignment, runs in order, on both rails; the twin's `p_simple` gained scalar/pointer
-    compound-assign to match, closing a pre-existing single-`a += b`-step gap too;
-    `#commastep`/`cfront_commastep.c`); the comma operator in general expression position (blocked on
-    the twin, which has no assignment-in-expression); ✅ **`typeof`** (C23 `typeof(type-name)` /
-    `typeof(variable)` / `typeof(expression)` + GNU `__typeof__` / C23 `typeof_unqual` as a
-    type-specifier resolving to the operand's type -- a type-name operand incl. `typeof(int*)`, a bare
-    in-scope variable, and a general expression operand `typeof(a+b)` / `typeof((short)x)` / `typeof(*p)`
-    / `typeof(s.f)` / `typeof(arr[i])`: the oracle infers the operand's static type without evaluating
-    it (`lower._type_of`), the twin speculatively lowers it then rolls the emission back (`p_typeof_expr`)
-    -- the operand is unevaluated; calls / address-of are a follow-on. `#typeof`/`cfront_typeof.c`, a
-    value differential == Clang on both rails); ✅ **full integer promotions + the usual
-    arithmetic conversions** — **dual-rail** (oracle `ctype_model.promote_int`/`usual_arith_int`/
-    `int_literal_type` + `lower._bin_result_type`; C twin `tempi`/`rid_int`/`uac_i`/`lit_int_type` +
-    `tty`/`ctype_str` rendering the true fixed-width type, with `is_signed` threaded through the resource
-    model): every temp is typed by its true (width, signedness), so a signed `int` divide / remainder /
-    right-shift / comparison emits signed C (not the old flat `uint32_t`) and `int + long` widens to
-    64-bit — behaviour-equivalent to Clang over the *full* signed range, the case the old unsigned-32
-    model got wrong (`test_integer_promotions_and_uac_oracle`; `#intpromote` runs the twin's `--emit-c`
-    against Clang on 300k full-range inputs). ✅ **Pointer-element signedness** too -- a load / store /
-    subscript through a pointer carries the pointee's *signedness* (not just its width) on every
-    pointer-resource path (param, local, struct field, pointer-arithmetic result), so a signed sub-int
-    pointee sign-extends, an unsigned one zero-extends, and the loaded value drives signed-vs-unsigned
-    divide / shift / comparison / UAC -- `#ptrsign`/`cfront_ptrsign.c`, a bespoke negative-value
-    differential == Clang on both rails. ✅ **Faithful char types** -- C's three distinct one-byte
-    char types now emit faithfully, so the output is behaviour-equivalent on *every* target, not just
-    where plain `char` is signed: plain `char` -> `char` (implementation-defined sign), `signed char`
-    -> always signed (the oracle kept it distinct from `char` instead of collapsing it; the twin int8_t),
-    `unsigned char` -> always unsigned. Before, the oracle emitted `char` for `signed char` (zero-
-    extending a negative on ARM) and the twin emitted int8_t for plain `char` (sign-extending on ARM) --
-    the rails disagreed with the source, and each other, on ARM. `#chartypes`/`cfront_chartypes.c`, a
-    differential run under BOTH `-fsigned-char` and `-funsigned-char`. ✅
-    **array element stores** (`a[i] = v` / `a[i] OP= v` through a pointer/array param -- the driver
-    buffer-fill / scatter idiom) now lower on the C twin too (a 3-read `c.store`, emitted as `a[i] = v`;
-    the oracle already had them), dual-rail parity + a source-vs-twin buffer differential
-    (`#astore`/`cfront_arraystore.c`); ✅ **`<<=` / `>>=` shift-compound-assign** (the lexer emits them
-    as 3-char tokens; a shared `is_compound_op`/`compound_binop` desugars `lv OP= e` → `lv = lv OP e` on
-    scalar / member / array lvalues -- `#shiftassign`/`cfront_shiftassign.c`); the rest of
-    pointer-arithmetic completeness — ✅ **pointer mutation** (`p++` / `++p` / `p += n` / `p -= n` on a
-    pointer lvalue lowers to a single `c.ptradd`/`c.ptrsub` claim, emitted `p += n;` so C scales by the
-    element size — the old integer-typed desugar truncated the pointer; dual-rail, `#ptrarith`/
-    `cfront_ptrarith.c`); (`p - q` pointer difference works as an integer result) + an object/provenance
-    model; ✅ **cross-clause
-    `switch` fallthrough** -- both rails now emit a *real* C `switch` (`cast.Switch`/`SwitchNode` +
-    folded case labels, the discriminant lowered once, `break` preserved) instead of the old if/else-if
-    desugar, so a `case` without `break` falls through exactly as C specifies (and an MMIO discriminant
-    is read once, not per case) -- `#switchfall`/`cfront_switchfall.c`; ✅ **designated initializers**
-    for a file-scope **dispatch / jump table** —
-    `static const T NAME[N] = {[OP]=v, ...}` with enum-indexed designators and a gap that zero-fills
-    (§6.7.10) — now parse on both rails (oracle `cparse._global`; the twin references the table by name,
-    defined in the source, so the emit is Clang-equivalent — `#designated`/`cfront_dispatch_table.c`);
-    ✅ **local aggregate
-    initializers** (`struct cfg c = {.baud=9600}` / `union` / `T a[N] = {…}`, positional + `.field=` /
-    `[i]=` designators) — lower to a `= {0}` zero baseline + a store per initialized member/element
-    (reusing the member/array store path, so uninitialized members zero-fill, §6.7.10): the oracle does
-    struct/union/array (`cast.AggInit`/`cparse._init_value`/`lower._agg_init`;
-    `test_local_aggregate_initializers_oracle`), and the **C twin** now does **struct/union**
-    (`agg_init` + a `zinit` resource flag → `= {0}`; `#aggregate`/`cfront_agginit.c`) **and arrays** —
-    ✅ a **local array declarator** `T a[N]` (a scalar-element resource of count N, emitted `T a[N]`,
-    element access via the index load/store, `arr_init` for the positional + `[i]=` aggregate
-    initializer; `#localarr`/`cfront_localarray.c`) — both dual-rail parity + Clang-equivalent.
-    ✅ **multi-declarator declarations** (`T a = x, b, c = z;` — several comma-separated declarators
-    off one type-specifier, incl. the canonical two-variable loop init `for(unsigned i = 0u, j = n;
-    …)`; each declarator lowers to its own storage + copy, identical to separate decls, so the emit is
-    Clang-equivalent; `#multidecl`/`cfront_multidecl.c`. ✅ The twin now types a **per-declarator
-    `*`/`[]` shape** too -- it parses the type specifier once (`p_type_base`) and applies each
-    declarator's own leading `*`s on a fresh copy (`apply_stars`), so `int *p, q;` types p as `int*` and
-    q as `int`, `int *p, *q;` types both as pointers (was rejected), and a per-declarator array no longer
-    leaks its dims; for locals **and** struct members. `#multiptr`/`cfront_multiptr.c` (which also pins a
-    wide-scalar member store -- `long m` -- moving its full 8 bytes, not a truncating 4). The comma
-    *operator* in a for-step (`i++, j--`) now lowers on both rails — see `#commastep` above).
-    ✅ **multi-declarator struct/union members** (`unsigned x, y, z;` — several members off one
-    type-specifier, including multi-declarator bitfields `unsigned a:3, b:5;`; each lays out exactly as
-    if written on its own line, so offsets / `sizeof` + member access match Clang on both rails. The
-    member-declaration twin of the multi-declarator locals above — `#structmulti`/`cfront_structmulti.c`,
-    differential asserts `sizeof` + per-member round-trip == Clang).
-    ✅ **nested struct member access** (`o.pos.lo` / `dev->ctrl.flags` — a struct-in-struct / sub-
-    register-block; the oracle already flattened the `.`/`->` chain to a single offset access, and the
-    C twin's `field` now carries a sub-struct index so a descent helper accumulates the byte offset
-    through each hop — read, plain / compound store, and nested bitfields all match. `#nestmember`/
-    `cfront_nestmember.c`, differential asserts `sizeof` + nested read/write == Clang. ✅ **Pointer-member
-    chains** `o.p->v` are now native -- `*(s->p)`, `s->mid->k`, the two-hop `s->mid->leaf->x`, and
-    `s->p[i]` (`#fieldderef`/`cfront_fieldderef.c`, pointer-value slice 2b above). ✅ **Funcptr dispatch
-    through a loaded pointer** too -- `d->ops->fn(args)` and the two-hop `s->dev->ops->fn(args)`: the
-    postfix pointer chain recognizes a `(` after a member as the fused `c.call.imember` indirect call on
-    the loaded pointer base (the oracle already did; the twin now agrees -- `#fnptrchain`/
-    `cfront_fnptrchain.c`, an R18-opaque dispatch == Clang on both rails).
-    ✅ **compound literals** (`(struct S){…}` / `(int){v}`) -- an anonymous object materialized as a
-    nameless `_cl<N>` local and initialized like a braced declarator (a struct/union reuses the `= {0}`
-    zero baseline + per-member store, designators in any order, the rest zero-filling; a scalar copies
-    the single value); supported in rvalue position (a by-value struct argument, a scalar value, a member
-    initializer), under `&` (a pointer to the temporary), and with direct postfix on the literal
-    (`(struct S){…}.field`, incl. designated/partial inits and a wide `long` field -- the parser threads
-    the literal through the postfix tail, reading a member off the materialized temporary like any struct
-    lvalue). `#complit`/`cfront_complit.c`, a value differential == Clang on both rails. *Follow-on:*
-    array literals `(int[]){…}`.
-  - *storage/linkage:* ✅ **`extern`** (recognized as a storage-class specifier on both rails -- consumed
-    like `static`; an `extern T g;` global is referenced by name, defined in another TU, so the emit is
-    Clang-equivalent once linked against the definition -- `#extern`/`cfront_extern.c`); ✅
-    **`_Thread_local` / `thread_local`** (recognized + consumed like `static`; a thread-local global
-    behaves as a global under the deterministic single-thread executor -- `#threadlocal`/
-    `cfront_threadlocal.c`); tentative definitions, internal/external linkage, broader (aggregate /
-    non-const-init) globals,
-    extern function prototypes;
-  - *memory model:* ✅ **`restrict`** (`restrict` / `__restrict` / `__restrict__` recognized as a
-    pointer qualifier on both rails and consumed -- the value model carries no aliasing facts, so the
-    emit is behaviour-equivalent; the perf-sensitive driver/DSP idiom -- `#restrict`/`cfront_restrict.c`);
-    broader alias/effect propagation (the module-scope analysis above is the seed), atomic
-    compare-exchange, a fuller C memory model;
-  - *infra:* ✅ **scalable IR allocation (no fixed `BCIR_MAX_*`)** — the C IR's per-unit function list
-    and every per-function array (params, calls, static locals, resources, claims) now grow
-    geometrically (`bcir_cir.h`/`bcir_cfront.c`); the old `BCIR_MAX_PARAMS 8` / `BCIR_MAX_CALLS 32` /
-    `BCIR_MAX_FUNCS 16` + the 256-resource / 4096-claim per-function caps are gone, so a real
-    translation unit of any size lowers. Gated by a cap-busting unit (43 functions, a 12-param
-    function, a 40-call aggregator, a 7500-claim function) that compiles clean and matches the oracle
-    (`#scale` in `check_runtime.sh`; `test_scalable_ir_no_fixed_ceilings`), valgrind-clean across the
-    realloc paths. The twin's **parser-state** caps are gone too: ✅ struct defs (was `s[16]`),
-    file-scope globals (was `gv[16]`), typedefs (was `td[64]`), enum constants (was `ec[256]`) and
-    locals (was `env[256]`) all grow geometrically (reused across compiles via a save/restore around
-    the static `CC`), so a real header (20 structs / 25 globals / 300 locals) lowers and matches the
-    oracle (`#pscale`; `test_scalable_parser_state_no_fixed_caps`; valgrind-clean over multi-compile
-    reuse). *Still:* a fuller per-target calling-convention/varargs/aggregate ABI on top of the landed
-    **data-model layout matrix** (`--target`, §5.8), real object/dependency output via a resident
-    backend, and the per-struct member array (`f[64]`, embedded; guarded) + token buffer (`16384`).
-
-  **Exit:** BCIR compiles a freestanding embedded C test suite + a nontrivial driver codebase with no
-  hand-written claim graphs. ✅ **Composition checkpoint:** `cfront_integration.c` -- a realistic driver combining
-typedef + enum + an MMIO register-map struct, a `switch` over an enum status, a `static` fault
-counter, a `goto` cleanup path, integer casts, a 2D bank lookup, and an inter-procedural call graph
--- is ingested with no hand-written claim graph; the two rails agree on the entry's summary and
-*every* function is Clang-behaviour-equivalent, proving the Phase-2 features compose, not just pass
-in isolation. ✅ **Register-map composition checkpoint:** `cfront_regdriver.c` -- a realistic device
-driver exercising the whole register surface together (a `switch` over a status field, a bitfield
-write, a bitfield read, a register read-modify-write, a file-scope lookup table, an `enum`, and a
-`static` counter; both rails `claims=34 mmio=5 bf=1 ok=1`, Clang-equivalent) -- proves the register-map
-chunks compose into a real driver.
-
-**Phase 3 — Hosted C23 compiler candidate.** libc-header compatibility; full preprocessor (predefined
-macros — `__FILE__`/`__LINE__`/`__DATE__`/`__TIME__` + `__STDC_HOSTED__`, the `#line` directive, the
-`_Pragma` operator, variadic macros (`__VA_ARGS__`/`__VA_OPT__`), and the
-`__has_include`/`__has_attribute`/`__has_builtin`/`__has_c_attribute` feature-test macros **done**
-(dual-rail; `__DATE__`/`__TIME__` frozen by `SOURCE_DATE_EPOCH`, `_Pragma`/`#pragma` lowering no-ops,
-`__FILE__` carries the driver's real source path, `__has_include` resolves against the search path,
-`__has_attribute` reports the L8 ABI attributes); C-twin `__has_embed` eval, the full translation
-phases next); lexer/parser breadth — **string + character literals** (dual-rail: the lexer tokenizes
-`"..."` with escape decoding; `sizeof "..."` folds to the char-array length; a literal materializes as
-an anonymous read-only `char[]` global that decays to `const char *` — indexing reads a byte, the bare
-literal is the pointer — Clang-equivalent via inlining the literal in the emit. **Done since:**
-**character constants** `'c'` (a single char is its byte value as a signed char, an escape decodes to
-one byte, and a multi-character `'AB'` packs big-endian like Clang/GCC — folded to a `c.const`); a
-**string-literal table** in the C twin that holds the full spelling out-of-band (so a literal of any
-length inlines faithfully — the old 32-byte resource-name cap is gone) with **dedup** (identical
-literals in a function share one global); and **adjacent-literal concatenation** `"a" "b"` (C
-translation phase 6 — `sizeof` folds across the pieces, which stay adjacent in the emit so a hex/octal
-escape never merges with the next piece's leading digit); and **wide/UTF literal prefixes**
-`L`/`u`/`U`/`u8` on character + string literals (a bare prefix letter stays an identifier; a prefixed
-character constant keeps its code-point value; a prefixed string has the element width of its character
-type — `wchar_t`/`char32_t` = 4, `char16_t` = 2, `char`/`u8` = 1 — so `sizeof` scales and the prefix is
-preserved in the emit). ✅ **floating-point (minimal core)** — `float`/`double` types, decimal float
-literals (`1.5`/`1e10`/`.5`/`3.14f`, with the `f`/`F`/`l`/`L` suffix), the four arithmetic operators
-(which propagate the wider float type) + comparisons (which stay int), and float params/locals/returns
-(`cfront_float.c`). The design keeps the **two-truth line intact**: a float value lowers to a
-type-annotated *scalar* claim (dataflow + an integer cost) and the emit renders **real** float C, so
-the actual IEEE-754 math is delegated to the resident backend (BCIR never computes or decides on a
-float value) — the deterministic integer/Q-fixed plan + executor core is untouched, and no float
-reassociation. The one emit change is threading each temp's real type (float/double) instead of
-assuming `uint32_t`. The pp-number lexer was also corrected to span float exponents/suffixes on both
-rails. ✅ **int↔float conversions** — explicit casts `(float)i` / `(double)i` / `(int)f` (a cast to a
-floating type yields a float temp; `(int)f` truncates) and the implicit usual-arithmetic conversions in
-mixed int/float expressions (`cfront_floatcast.c`); the equivalence harness feeds integer scalars below
-2³¹ so the unsigned value model agrees in sign with a signed int→float cast. ✅ **hex-float literals**
-(`0x1.8p3` etc. — lexed + folded on both rails; `cfront_hexfloat.c`), ✅ **`<math.h>` calls** (the
-library-call surface: a `<math.h>` function lowers to a type-annotated scalar claim emitted as the real
-call, IEEE math delegated to the resident backend — incl. 64-bit-integer *results* like `llround` and
-pointer out-params like `frexp`/`modf`; `cfront_mathh{,_long,_mixed,_ptr}.c`), and ✅ **preprocessor
-comment stripping** (translation phase 3, on both rails — a `* /` inside a comment no longer glues to
-`*/`; `cfront_comments.c`) are all landed + dual-rail-gated. *Float follow-ons:* ✅ **`long double`**
-(`cfront_longdouble.c`) and ✅ **`_Complex`** (now FEATURE-COMPLETE — division, transcendentals, the `I`
-literal, long-double complex, and complex struct members; §5.9 item 1k) are done; **`_Decimal`**
-(`_Decimal32/64/128`) is the remaining float type. Then: variadic functions +
-varargs ABI; system headers + compiler builtins; debug/unwind info; linker/build-system integration;
-Csmith + GCC-torture differential gates. **Exit:** BCIR compiles meaningful hosted C and either matches
-Clang or emits a clear unsupported-feature diagnostic.
-
-**Phase 4 — General replacement compiler.** Several Phase-4 foundations have already landed on the
-production rail: ✅ **Clang-grade diagnostics** (spans, include-stack notes, fix-its, error recovery,
-machine-readable JSON — `bcir_diag.c`, dual-rail), ✅ a **cross-platform data-model ABI matrix**
-(`--target`, six targets, layout cross-checked vs Clang — §5.8), ✅ a module-scope **alias/effect
-analysis** (`--emit-effects`), and ✅ an **LLVM-backend fallback contract** (`bcir-cc --fallback`:
-clean 0 / dirty 1 / route-to-LLVM 2, the supported subset pinned to the oracle). ✅ **native struct
-member arrays** `s.arr[i]` (a DMA buffer / FIFO / packet body -- the 1-D array member): originally a
-silent miscompile (the oracle emitted `b[idx]`, indexing the struct, while reporting `is_clean`), first
-made safe by routing to fallback (#380), and **now lowered faithfully on both rails** -- the access
-carries the index AND a `(member byte offset, element size)` imm, so the element lands at `&base +
-member_off + i*elem_size` (the emit a memcpy at that offset), distinct from a plain `base[idx]` (no imm)
-and a plain member (no index). Read, write, compound, and a narrowing `uint8` element all match Clang +
-structural parity (`#memberarray`/`cfront_memberarray.c`, differential asserts `sizeof` + access). The
-oracle `_LV` already carried both `byte_off` and `idx`; the twin's `field` gained an `arr_count`. A
-follow-up closed an oracle-emit bug the aggregate sweep found: a member array at **offset 0** (the first
-member) had its access gated on `byte_off` *truthiness*, so it collapsed to an invalid `struct[idx]` --
-the `_LV` now carries an explicit `member` flag so the `(offset, size)` imm rides even at offset 0. It
-hid because the per-fixture differential compiles the *twin's* emit; a new test
-(`test_member_array_oracle_emit_is_clang_equivalent`) compiles the **oracle's** emit via
-`compile_unit(check_clang=True)`, pinning it directly -- and the blind spot is now closed **corpus-wide**:
-`test_python_c_parity_and_equivalence_across_fixtures` compiles + runs *both* the twin's and the
-oracle's emitted C against the source for every fixture, so an oracle-emit regression in any fixture is
-caught (it passes today across the whole corpus, confirming every oracle emit compiles + matches Clang).
-✅ **multi-dimensional** member arrays too -- `s.m[i][j]` (a grid / matrix in a register block) up to
-**3 dims**: the access descends the nested array to the scalar element + the per-dim sizes, flattens
-row-major (`r*cols + c`, the same Horner the twin uses for array params), and lands the element at
-`&s + member_off + lin*elem_size`; the twin's `field` gained `nadims`/`adims`. *Still fallback (both
-rails, pinned by `_FALLBACK_PROBES`):* a **pointer** member indexed `s.ptr[i]` (the loaded pointer is a
-4-byte temp in the value model, truncating an 8-byte pointer) and a **>3-dimensional** member array
-(the dim table holds 3).
-✅ **native multi-dimensional *local* arrays** `T m[A][B]` (a small grid / matrix scratch buffer) up to
-3 dims: originally a silent miscompile (the local kept only the outer dim, so the emit was mis-sized
-`m[A]` and `m[i][j]` collapsed to `m[i + j]` -- colliding cells -- while reporting `is_clean`), first
-made safe via fallback (#381), and now lowered faithfully on both rails -- a **flat** resource of `A*B`
-elements carrying the per-dim shape, so `m[i][j]` flattens row-major to `m[i*B + j]` (declared `m[A*B]`,
-the same memory layout) using the existing index Horner and the array-access machinery the twin already
-had for params. The twin gained a multi-dim local declarator + a shared `array_index` flatten on the
-store path; `#localmd`/`cfront_localmd.c` (2-D + 3-D fill/read, differential == Clang). A **>3-D** local
-defers to fallback (the dim table holds 3); a 2-D array *param* (a decayed row pointer) was already fine.
-✅ **integrity fix — unique C identifiers for reused local names (both rails emit)**: the lowering
-flattens scopes, so two source locals that shared a name in disjoint scopes -- the everyday `for(unsigned
-i = ...)` in two separate loops -- became distinct rids both named `i`. Both emitters declared `i` twice
-at function scope: a C **redefinition**, so the emit did not compile though the unit was `is_clean`. Each
-emitter now assigns the second-and-later occurrence a `_N` suffix (`i`, `i_2`, ...) for both the
-declaration and every reference -- a fresh variable per scope, which is behaviour-exact for disjoint
-reuse (a naive name-merge would corrupt a shadowed value). `#loopreuse`/`cfront_loopreuse.c`, differential
-== Clang on both rails. ✅ **and the deeper scope fix — for-loop variable scope**: a `for(unsigned i =
-...)` declares `i` scoped to the loop, but the init was lowered into the *enclosing* scope (no push/pop),
-so a post-loop read of a shadowed name resolved to the loop var (`return s + i` reading the counter, not
-the param) -- a miscompile the `#loopreuse` emit fix had turned from a build error into a silent wrong
-answer. Both rails now save/restore the name environment around the loop (oracle: snapshot `self.env`;
-twin: an `nenv` mark), so the loop scope is popped and outer bindings are restored. `#loopscope`/
-`cfront_loopscope.c` (param-shadow + outer-shadow, differential pins the post-loop value == Clang).
-✅ **and the general case — bare-block scope**: a `{ unsigned x = ...; }` compound statement is a scope
-too; both rails now save/restore the name env around every `{ ... }` (oracle in `_block`, twin in
-`p_block`), so a nested block shadowing an outer `x` read after the block no longer leaks (was a silent
-miscompile, `m[0][1]`-class). The oracle also lowers a bare block **inline** now (a `Block` AST node)
-instead of wrapping it in an always-true `if(1)`, which dropped a spurious const claim and made the bare-
-block claim count match the twin -- so the case is gate-able. `#blockscope`/`cfront_blockscope.c`.
-✅ **standing guard for the whole class — the Clang-equivalence fuzzer now spans control flow + scope**:
-all of the above (and the #loopreuse / member-array / multi-dim-local finds) were latent because the
-front end only validated `is_clean`, never *"does the emit compile and run like Clang?"* on programs
-with loops, blocks, or shadowing -- the random generator (`cfuzz.gen_program`) emitted only a single
-`return <expr>`. It now also builds an accumulator through random statements: `for` loops that reuse a
-counter, bare blocks, and a loop/block that shadows a parameter read after the construct. So
-`fuzz_valid(check_clang=True)` (gated, `test_cfront_fuzz`) exercises lowering, the emit, and name
-scoping every run; a regression in this class surfaces as a fallback / MISMATCH / build failure rather
-than a silent miscompile.
-**Remaining Phase-4
-work:** a *broad* calling-convention/object ABI matrix (on top of the landed data-model layout); the
-optimizer correctness/differential story still owed by the C rail — a full **cost-model bridge into the
-MLIR/C++ law rail**, arbitrary claim-graph lowering, RCSP/thermal planning through C, cost-based
-multi-channel orchestration, **IPO** (the inter-procedural cost model stays oracle/backend-side today,
-by the two-truth line — see `docs/PARITY.md`), broader provenance through optimization; real
-**object/debug/unwind emission + linker/build-system integration**; performance-regression +
-security/fuzzing programs; user docs + toolchain integration. **Exit:** a usable C23 compiler
-distribution, not only a research substrate.
-
-> Conformance scales with the phases: Csmith-style random differential, a GCC-torture / LLVM-C subset,
-> WG14/C23 feature tests, preprocessor torture, an ABI matrix (x86-64 / AArch64 / RISC-V), sanitizer
-> builds, lexer/parser/preprocessor fuzzers, real-world project builds, and miscompile-reduction tooling.
-
-### 5.10 C frontend — consolidated remaining-work inventory (the forks not yet taken)
-
-A single prioritized backlog of what stands between the current freestanding-driver-subset rail and a
-complete C23 compiler, distilled from a both-rail audit (oracle `frontends/cfront` + twin
-`bcir_cfront.c`) against the C23 grammar. Every (A) item below is a *consistent both-rails fallback*
-today — no silent miscompile, the `--fallback` contract holds and the oracle/twin agree on routing away —
-so each is purely additive. Grouped: (A) PR-sized language gaps, in rough leverage order; (B) the classic
-hard-compiler infrastructure (Phases 3–4); (C) hard caps.
-
-**(A) Language gaps — concrete, both-rail, PR-sized**
-
-1. ✅ **General address-of (`&` of an arbitrary lvalue)** (`cfront_addrof.c`, #addrof) — DONE for the
-   common forms, and a TWIN+ORACLE BUGFIX. `&var`, `&s.member`, `&s->member`, `&*p`, and `&arr[i]` now
-   lower on both rails through the same base-pointer logic loads/stores use (`_base_ptr`: a POINTER base
-   decays to `(char *)s`, a VALUE base is addressed as `(char *)&s`). This FIXED two silent oracle
-   miscompiles -- `&s->member` was emitting `&s + off` (the address of the pointer VARIABLE, not
-   `(char *)s + off`), and `&*q` took the address of a loaded COPY -- while the twin had fallen back on
-   both, and `&arr[i]` failed on both. `&bit-field` is correctly rejected (illegal in C). Parity-exact,
-   byte-exact vs Clang on x86-64 AND aarch64 (qemu), fuzzer-clean. Unblocks C11 `atomic_compare_exchange`
-   and `&`-out-params. ✅ **Member-array element address** (`cfront_addrofarr.c`, #addrofarr): `&s.arr[i]`,
-   `&s->arr[i]`, and the multi-dim `&s.m[i][j]` now lower on both rails (the element at `&base + member_off +
-   lin*elem_size`, reusing the member-array LOAD flatten) -- byte-exact vs Clang on x86-64 AND aarch64.
-   ✅ **Member array-of-structs element field address** (`cfront_addrofaos.c`, #addrofaos): `&s.arr[i].field`
-   / `&s->arr[i].field` (the field at `member_off + i*sizeof(elem) + field_off`, the stride being the element
-   STRUCT) -- byte-exact vs Clang on x86-64 AND aarch64.
-   *Follow-on (still both-rails fallback):* a PLAIN-base array-of-structs element field (`&arr[i].field`,
-   where the indexed base is a bare array/pointer param, not a struct member -- the twin's bare-array-param
-   model doesn't reach it) and a pointer/array member (`&s->ptr`).
-2. **Pointer values as fully first-class 8-byte objects** — finishing the 32-bit value-model legacy. Most
-   pointer paths are native (#ptrvalue/#ptrfield/#fieldderef), but a loaded function-pointer *value* and a
-   pointer carried through some non-address contexts still hit the 4-byte seam; this and item 1 are two
-   halves of the same model item.
-3. **Variadic *function definitions* + the varargs ABI** — `va_arg` works as a local, but *defining*
-   `int f(int n, ...)` and the platform varargs calling convention are unported (Phase 3) — the
-   printf-shim / HAL surface.
-4. **Aggregate-init / element-access completeness** — array compound literals `(int[]){…}` (struct/scalar
-   literals done — #complit); array-of-structs **non-scalar element fields** `arr[i].sub.x` /
-   `arr[i].bf` / `arr[i].arr[j]` (scalar element fields done — #aostruct); >3-D partial/over indexing.
-5. **Expression-context completeness** — a **member-lvalue-as-value** for a *non-scalar* target
-   (`(a.bf=v)+1`, an array-element / nested-member / deref / array-of-structs target; single-level scalar
-   done — #1g'); the **comma operator in general expression position** (the for-step form is done —
-   #commastep); **`typeof` of a call / address-of / ternary** operand; a bare assignment or `i++` as a
-   statement-expression *value*; and the stmt-expr **bitfield-terminal type decay** (§5.9 item 3,
-   fuzzer-guarded).
-6. **Type/declaration breadth** — ✅ **`signed` as a *bare* type** DONE (`cfront_signedbare.c`, #signedbare:
-   `signed` == `signed int`, no base keyword -- was an oracle/twin divergence, the twin treated `signed` as
-   a pure modifier and fell back; it now finalizes as `signed int` like `unsigned`, a following base still
-   overriding the width; byte-exact vs Clang on x86-64 + aarch64). *Remaining:* non-integer
-   `alignas`/`aligned` (`alignas(type-name)`, `aligned(expr)`); VLAs (`T a[n]`); computed `goto *p`
-   (label-as-value `&&L`). *Landed:* the **§5.9 integer constant-expression evaluator** — enum
-   initializers, `case` labels, static-local and file-scope-global initializers fold
-   arithmetic/bit/shift, comparisons, logical `&&`/`||` and the ternary on BOTH rails
-   (`cparse._const_eval`/`lower._fold_const` == the twin's `ce_expr`;
-   `test_cfront_constexpr.py` + `check_runtime.sh` #cexpr; the linkable emit renders the folded
-   value; `sizeof` deferred on purpose — the ABI is chosen at lower time).
-7. **Remaining float types** — `_Decimal32/64/128` (the last float follow-on). `_Imaginary` is out of
-   scope by parity (Clang doesn't implement it).
-
-**(B) Infrastructure — the classic hard-compiler work (Phases 3–4)**
-
-- **Full ABI matrix** — a broad calling-convention / aggregate-passing / varargs ABI on top of the landed
-  data-model layout (`--target`), cross-checked vs Clang on x86-64 / AArch64 / RISC-V.
-- **Native object/debug/unwind emission + linker/build-system integration** — today the rail emits
-  *verified C* and delegates codegen to a resident backend; real `.o` / DWARF / `.eh_frame` output and a
-  `bcir-cc`-as-`cc` link step are the gap (the gated native backend, §5.5).
-- **Hosted environment** — system-header / libc compatibility, the full compiler-builtin surface, and the
-  remaining preprocessor translation phases (twin `__has_embed` eval, `#embed`).
-- **Optimizer correctness bridge, C rail → MLIR/C++ law rail** — a cost-model bridge, arbitrary
-  claim-graph lowering, RCSP/thermal planning and cost-based multi-channel orchestration through C, IPO,
-  broader provenance through optimization. (The optimizer itself is COMPLETE on the law rail by the
-  two-truth line; only the C-rail bridge is owed.)
-- **Conformance + release** — Csmith / GCC-torture / WG14-C23 / preprocessor-torture differentials,
-  sanitizer builds, lexer/parser/pp fuzzers, real-project builds, miscompile reduction; `--emit-manifest`
-  (the last Phase-1 remnant); user docs + toolchain integration.
-
-**(C) Hard caps still present** — the twin's `MAXTOK` 16384-token source buffer and the per-struct `f[64]`
-member array (embedded, guarded), plus the 3-dimension array cap. The per-unit / per-function caps are
-already gone (#scale / #pscale, geometric growth).
-
-> **Not on this list (already complete):** the BCIR optimizer / verifier (R1–R18) / planner / hydration /
-> executor, the L1–L8 ladder, Clang-grade diagnostics, the data-model layout matrix, the `--fallback`
-> contract, and the full C99 `_Complex` set (§5.9 item 1k). The remaining work is conventional compiler
-> engineering — full semantics, a hosted environment, object/ABI generation, and conformance — **not** BCIR
-> research, and **not** the optimizer.
-
-### 5.11 RTL / synchronous-timing semantics — clock domains, registers, sync/async (PROPOSED track)
-
-**Status: forward research track, not yet built.** This adds register-transfer-level (RTL) timing — clock
-domains, flip-flop setup/hold, synchronous/asynchronous semantics, clock-domain crossing (CDC), critical
-path — to the optimizer. The design is **additive and vacuous-by-default**, so it cannot perturb the C
-compiler or any existing score (see the invariant below).
-
-**Where we already are (the substrate is real, at WAVE/PHASE granularity).** BCIR is *not* starting from
-zero on timing/power; the existing law rail already models a coarse, accelerator-scheduling notion of it:
-**R15 (DVFS clock)** legalizes a per-phase Q8 clock in [0.25×, 2×] and forbids overclocking a memory-bound
-phase; **`-bcir-schedule-eft`** places phase-barriered earliest-finish-time waves; **`-bcir-async` /
-`gem.async_tokens`** already pipelines a *fork/await* schedule over the existing **`!bcir.token`** type (the
-async-dependency token the proposal asks for — it exists); **`-bcir-power-rail`** overlays per-slot DVFS on
-the placed timeline; the **`sync` (axis 3)**, **`thermal` (5)** and **`power` (6)** cost axes and the
-thermal **Θ** coupling already price synchronization, heat, and current. The new track pushes this from
-phase granularity down to **register-transfer granularity**.
-
-**The non-negotiable invariant — how this does NOT break the C compiler.** Timing is *optional metadata*
-that is *vacuous when absent*, exactly like R14 (PIM dispatch), R15 (DVFS), R16 (placement) and R17
-(`#bcir.precision`) already are "vacuous for the scalar subset." Concretely: (1) the C frontend
-(`bcir_cfront.c`) emits claims with **no `#bcir.timing` attribute**, so every new law early-returns
-(`if (!timing) return;` — the R17 `std::optional<PrecisionAttr>` pattern in `BCIRVerifyPass.cpp`) and the
-timing cost-coupling is the **identity factor (256 in Q8)** — the Θ-cool precedent. (2) The 12-axis cost
-vector is **parity-locked** (`#bcir.costvec`, PARITY.md) and is **NOT extended** — there is no 13th axis;
-timing rides existing axes plus a context factor (below). Net: the C compiler's claim graphs, emitted C,
-pinned scores, and Python↔C parity are **byte-identical**, gated by the existing
-`test_python_c_parity_and_equivalence_across_fixtures`. Timing only ever activates for a frontend that
-*opts in* (an HLS/HDL frontend, or `__attribute__((bcir_timing(...)))` annotations on a CPU kernel).
-
-**The additive design.**
-- *Dialect (`mlir/include/BCIR/BCIRAttrs.td`):* a new `OptionalAttr<#bcir.timing>` on claims (mirroring
-  `#bcir.precision`), carrying `clock_domain`, `latency_cycles`, `min_throughput` (Q16), `critical_path`,
-  `power_domain`, `sync_type ∈ {synchronous, asynchronous, mixed}`, `clock_frequency_mhz`,
-  `setup_hold_margin`. Reuse the existing **`!bcir.token`** type for the async/sync handshake; an optional
-  `bcir.reg_stage` marker models a flip-flop / pipeline register (extends `-bcir-alloc-pool`'s
-  register-pressure/liveness).
-- *Cost (NO new axis):* clock-domain-crossing / synchronizer overhead → the existing **`sync` axis (3)**;
-  power/thermal derating → the existing **`power` (6)** / **`thermal` (5)** axes + Θ coupling;
-  critical-path / `latency_cycles` pressure → a **multiplicative Q8 context factor** folded in before
-  `couple()` (the thermal-coupling mechanism in `realize.py`), identity when no `#bcir.timing` is present.
-- *Laws (vacuous unless opted in):* **R19 (synchronous-timing legality)** — `setup_hold_margin ≥ 0`, the
-  selected realization's `latency_cycles ≤ critical_path` budget, clock in the R15 range (an RTL extension
-  of R15); **R20 (clock-domain-crossing)** — a value flowing `clock_domain` X→Y must pass through a
-  declared synchronizer / `!bcir.token` handshake (the metastability guard). Both follow the R14–R17
-  early-return-if-absent shape, dual-railed (oracle `bcir/verify` → MLIR `BCIRVerifyPass.cpp`).
-- *Scheduling:* a cycle-accurate **`-bcir-schedule-clocked`** that specializes `-bcir-schedule-eft` to
-  clocked waves (a "wave" = one clock cycle) for `sync_type=synchronous` regions, leaving
-  `asynchronous` regions on the existing token-dataflow path — the proposal's "clocked execution waves vs
-  async dataflow regions" maps onto the EFT/async split that already exists.
-
-**x86 / aarch64 vs FPGA/ASIC — the channel interpretation.** RTL primitives (a real clock net, a physical
-flip-flop, a metastability synchronizer) apply *literally* only to **FPGA/ASIC channels**; x86 and aarch64
-are fixed-pipeline CPUs you don't clock at RTL granularity. So the **architecture-agnostic `#bcir.timing`
-metadata is interpreted per channel** (the `channel.json` / target-profile / capability seam in
-`bcir/channels` + `bcir_channel.c`), exactly the user's "keep core attributes architecture-agnostic; apply
-architecture-specific rules in the lowering/driver layer":
-- *CPU channels (x86, aarch64):* `latency_cycles` → instruction-latency tables / port pressure;
-  `min_throughput` → issue-width / AVX-512 throughput; `clock_frequency`/`power_domain` → DVFS + big.LITTLE
-  / RAPL (the measured-Θ loop, §5.4); `clock_domain` crossing → cross-core / cross-socket sync cost. x86
-  leans on cache-hierarchy + OoO penalties; ARM on power domains + heterogeneous-core frequency scaling.
-- *FPGA/ASIC channels (new):* the same attributes map to real RTL — `clock_domain` is a clock net,
-  `reg_stage` a register, CDC a synchronizer, `critical_path` static-timing-analysis. External-tool
-  integration (Vivado / Synopsys / OpenSTA / OpenROAD) attaches at the channel **calibration artifact**
-  (the same seam that ingests measured Θ), feeding back measured critical paths as `#bcir.timing` values.
-
-**Phased build (each gated by Python↔production parity, the prototype-then-port discipline §3):**
-1. ✅ **Oracle prototype DONE** (`bcir/model/graph.py::Timing` + `bcir/verify::verify_timing`,
-   `test_timing_laws.py`): an OPTIONAL `Claim.timing` (`Timing` dataclass, `None` default — modelled on the
-   R17 `precision`/`tolerance_ulp` optional fields, and EXCLUDED from the R13 provenance allow-list so it
-   cannot perturb a digest) + the vacuous laws **R19** (synchronous-timing legality: a valid `sync_type`,
-   non-negative latency / margin / clock, a synchronous claim needs a clock, the setup/hold margin fits the
-   stage latency) and **R20** (clock-domain-crossing: a RAW dependency whose producer declared a different
-   `clock_domain` must be synchronized via `sync_type='mixed'` or a `barriered` hazard). **Non-disturbance
-   PROVEN:** the thorough corpus (current static inventory in [`STATUS.md`](STATUS.md), including the
-   provenance digest + every optimizer/verify law)
-   passes byte-identically with R19/R20 wired into `verify_smart_lowering` — the C compiler and every plan/
-   score/verdict are unaffected, since no existing claim carries timing. *Next:* port `Timing` + R19/R20 to
-   the MLIR dialect (`#bcir.timing` `OptionalAttr`) + `BCIRVerifyPass.cpp` under the parity gate.
-2. The critical-path **context factor** + the **`sync`-axis CDC cost** (reuse `couple()`), with an RCSP
-   cap on the (sync, power) pair so a clock/power budget can make a plan infeasible — the verify-cost-axis
-   precedent (§5.1 item 2).
-3. `-bcir-schedule-clocked` (clocked EFT waves) + `bcir.reg_stage` register-pressure modeling.
-4. R20 CDC over `!bcir.token` handshakes (sync/async boundary analysis).
-5. CPU-channel interpretation (x86 microarch cost; aarch64 power/heterogeneous), then the FPGA/ASIC
-   channel + external STA ingestion.
-
-### 5.12 Naked-pointer rewriting → managed claims (assessment + remaining work)
-
-**How close are we? Structurally ~most of the way — and by construction, not aspiration.** BCIR's
-**Registry-First Memory Law** (`BCIR_LANGREF.md`: *"Raw pointers are outlawed at the core level.
-Address = (RID, layout, domain, offset, generation)"*) means there are **no raw pointers in the claim
-graph at all** — and the C frontend (`bcir_cfront.c` / oracle `lower.py`) **already performs the rewrite**:
-every C pointer becomes a `BCIR_RK_POINTER` *registry resource* (RID, pointee width/sign, depth), and every
-`*p` / `p[i]` / `p->f` lowers to a `LOAD`/`STORE` **claim** carrying a `domain` (R3), a `lane`/`stride_class`
-(R6), `provenance` (R10/R13), and `generation` tags (R11). So the "detect naked pointers and rewrite into
-`bcir.claim`/`bcir.lane`/StreamPack references" pass the proposal asks for is, at the IR level, **already
-the front end's output**.
-
-**The real gap is the *strength of the bounds/lifetime guarantee*, not the rewrite.** Today the frontend
-emits `bounds = assumed_safe` (`#bcir.bounds<assumed_safe>`): the access is *trusted* to land in its
-allocation (the frontend resolved an affine index or a static field offset), but it is **not statically
-proven nor runtime-checked by default**, and there is **no lifetime / use-after-free / double-free
-tracking**. The infrastructure to close this already exists and is unused-by-default:
-- *Bounds:* the per-claim `verify ∈ {none, bounds, exact, hash}` contract + the **12th cost axis**
-  (`verification`, §5.1 item 2) already price a runtime guard — so upgrading `assumed_safe → masked/strict`
-  with a `verify=bounds` guard is a *tradeable plan resource* (RCSP-cappable), already costed, purely
-  additive (today every access is `verify=none`, cost 0).
-- *Lifetime:* the **generation tags (R11)** + **`-bcir-alloc-pool` live-intervals** (liveness-based arena
-  pooling) are the seeds of a use-after-free law — a load whose resource generation has advanced is a
-  dangling access.
-- *Layout / prefetch / arena:* the **`#bcir.layout<soa|aos|aosoa|blocked>`** attr + the cost model already
-  *choose* a layout; **StreamPack v2 prefetches** (distance/pattern) already turn pointer chasing into
-  prefetch-friendly streams; **`-bcir-alloc-pool` pool_plan** already builds graph-aware arenas. These are
-  the "cache-aware placement / custom allocator / pointer-chasing → stream" wins the proposal wants.
-
-**Remaining work (mostly *extending* the above, not greenfield):**
-1. **Bounds-promotion pass** — where a length/extent is recoverable, promote `assumed_safe → masked`.
-   ✅ **Metadata step DONE** (`test_bounds_promotion_local_static_arrays_to_masked`): on BOTH rails, an
-   indexed access into a known-extent LOCAL/STATIC array OBJECT (its element `count` recoverable from the
-   resource shape) is promoted from `assumed_safe` (trusted) to `masked` (runtime-bounds-checked, the
-   contract the quarantine handler discharges) -- oracle `_access_bounds`, twin `access_bnd`. A POINTER base
-   (extent unknown), a struct MEMBER array, and an MMIO register stay `assumed_safe`. **Purely additive:**
-   metadata only, no emit/behaviour change -- every cfront fixture still passes + is Clang-equivalent, the
-   differential fuzzer is clean (the twin promotes identically, so the digest/parity hold), `verify` already
-   defaults to `bounds`. ✅ **Quarantine handler -- weak-symbol seam DONE** (`runtime/c/bcir_quarantine.{h,c}`,
-   `test_bounds_quarantine_traps_out_of_bounds`): both rails now EMIT the guard for a `masked` access --
-   `a[BCIR_CHK(rid, i, N, "<func>:<array>")]`, where `BCIR_CHK` returns `i` in-bounds (transparent:
-   behaviour-identical to the raw `a[i]` for any defined input, so every fixture + the differential fuzzer
-   stay clean) and, out-of-bounds, calls `bcir_bounds_quarantine(rid, index, extent, site)`. The WEAK default
-   records the provenance into a ring (the debugger reads it) and aborts (fail-fast); the in-bounds path never
-   calls it. Validated end-to-end: in-bounds returns the value, OOB SIGABRTs with the provenance record,
-   byte-exact in-bounds vs Clang on x86-64 + aarch64. ✅ **Debugger trace surface DONE**
-   (`bcir_quarantine_report`, `bcir_oob_record_event`, `test_quarantine_report_is_the_debugger_trace_surface`):
-   the guard threads a `"<func>:<array>"` **source-site handle** (a site→source table realized inline as a
-   string literal both rails emit identically) into the record (`bcir_oob_record.site`); a strong override of
-   the handler (the ML-layer / debugger seam) records via `bcir_oob_record_event` WITHOUT aborting, and
-   `bcir_quarantine_report(FILE*)` reads the ring back -- the running total plus each retained event with its
-   site/index/extent. Pure observation: reading the ring never crosses the two-truth line into a verdict.
-   ✅ **The bcir-cc driver links the runtime DONE** (`bcir_cc.c` `--emit-c`, `#emitlink` in `check_runtime.sh`):
-   a masked access references the runtime ABI, so the driver's `--emit-c` output now pulls in
-   `bcir_quarantine.h` whenever the unit has a masked access -- a SELF-CONTAINED translation unit that
-   `cc -I runtime/c - runtime/c/bcir_quarantine.c` compiles AND links on its own (proven end-to-end:
-   in-bounds returns the value, OOB quarantines through the linked weak handler, naming the site). A unit
-   with no masked access pulls in nothing. The differential harnesses that compile `--emit-c` now link the
-   real `bcir_quarantine.c` (the inline test stub is retired). ✅ **Recoverable extents DONE -- naked POINTERS
-   under bounds management** (`lower._scan_mutations`/`_recoverable_alloc`/`_bind_extent`/`ptr_extent`, twin
-   `scan_mutations`/`recoverable_alloc`/`bind_extent`/`g_ptrext`, `test_recovered_extent_quarantines_out_of_bounds`):
-   a pointer from `malloc(N*sizeof(T))` / `calloc(N, sizeof(T))` recovers its element COUNT and promotes its
-   `p[i]` accesses to `masked` with a RUNTIME extent -- `p[BCIR_CHK(rid, i, N, "func:ptr")]`, N the count
-   variable re-emitted by name. Sound by construction: a per-function mutation pre-pass gates promotion on the
-   pointer AND the count being stable, so a stale extent (a false trap) cannot occur; `p = realloc(...)`
-   reassigns the pointer and is left unmanaged. The count is re-emitted by name at the access, so it is trusted
-   only when its assignments are ALL decl-inits (`unsigned m = ...`, before the alloc) and never address-taken
-   -- an ORDINARY post-alloc write (`n = n - 1`, `n--`) disqualifies it (`test_extent_count_mutation_is_not_promoted`;
-   the pre-pass tracks decl-init vs body assignments separately on both rails). Both
-   rails promote IDENTICALLY -- a new cross-rail bounds-guard PARITY assertion (the R13 digest includes
-   `bounds`) makes any one-rail split a hard test failure, and it also caught + fixed two PRE-EXISTING twin
-   under-masking gaps (file-scope static/const array globals, aggregate-initializer array stores). ✅ **R21
-   lifetime now load-bearing for C, DUAL-RAIL** (see (3) below -- malloc/free use-after-free / double-free
-   surfaced through the closed-loop verify on both rails). ✅ **ML-layer / debugger RECOVERY OVERRIDE DONE --
-   the two-truth crossing made runtime** (`bcir_quarantine.{h,c}` decide-audit ring + `bcir_quarantine_recover.c`
-   reference override, `test_quarantine_recover_is_the_two_truth_crossing`): `bcir_bounds_quarantine` now
-   RETURNS the index (the weak default still aborts, byte-identically -- the emit is unchanged), so a STRONG
-   override can RECOVER. The reference override consults a FROZEN per-site policy (a table lookup, L1 -- no
-   learned inference on the path, the L0 prohibition), proposes a graded `(action, confidence)`, collapses it
-   at a FROZEN threshold into a CLASSICAL action (abort / clamp-to-valid), and RECORDS the crossing in a
-   decide-audit ring -- the C twin of `kbcir.twotruth.Decision`, so the graded->classical crossing is the only
-   sanctioned one and is never silent (LANGREF §14 / R13). An admitted clamp survives on a valid element; an
-   under-confident proposal fail-fasts -- the frozen threshold dictates. ✅ **Extent SNAPSHOT DONE -- EXPRESSION
-   counts, DUAL-RAIL** (`lower._alloc_count_node`/`_is_pure`/`_bind_extent` snapshot branch, twin
-   `recoverable_alloc`/`snapshot_extent`/`ext_ctr`, `cfront_extentsnap.c`): a count that is a side-effect-free
-   EXPRESSION (`malloc(((n&7)+1)*sizeof)`, `calloc(a*2, sizeof)`) -- not just a bare stable Name -- is evaluated
-   ONCE into a hidden IMMUTABLE local `__bcir_extK` at the alloc and bounds-checked against that snapshot,
-   immune to any later mutation of its inputs (sound because re-evaluating a PURE expression is safe; this
-   SUBSUMES the decl-init stability gate). The stable-Name case stays the byte-identical fast path. The twin
-   mirrors it via a stashed-`T_END` re-lowering of the count token range + a per-function `__bcir_extK`
-   counter; the cross-rail claim/`BCIR_CHK`/equivalence parity holds on the new fixture and the corpus is
-   otherwise byte-identical. **Next ➡** extents extend to `realloc` rebind and an array param with a sibling
-   count (under a dominating-bound proof); and the policy table baked by the L2/L3 ML-layer offline.
-2. ✅ **Lifetime law R21 DONE (oracle prototype)** (`bcir/model/graph.py::Lifetime` +
-   `bcir/verify::verify_lifetime`, `test_lifetime_laws.py`): an OPTIONAL `Claim.lifetime` (`event ∈
-   {use, alloc, free}` + `epoch`, `None` default, excluded from the R13 digest allow-list) + the **R21
-   use-after-free / double-free law** -- walking the claim order with the set of currently-freed resources,
-   a read/write of a freed-and-not-reallocated resource is a use-after-free, a `free` of an already-freed
-   resource a double-free, an `alloc` re-validates a fresh epoch. **Non-disturbance PROVEN** (the thorough
-   corpus, now 841 tests, verifies byte-identically -- with no `free` annotation anywhere, nothing is ever
-   freed, so the law is vacuous over the whole scalar / C-frontend subset). It becomes load-bearing once a
-   frontend annotates its malloc/free. *Next:* the frontend opt-in (3) + the MLIR port. Unprovable cases
-   keep the `--fallback`/quarantine contract (the existing route-to-LLVM, §5.9).
-3. **Frontend opt-in** — a "naked-looking" pointer syntax (plain C, or a `#pragma bcir bounds/lifetime`)
-   that flips the rewrite from `assumed_safe` to `checked` under the hood, preserving programmer intent.
-   ✅ **Prerequisite DONE** (`cfront_stdlibmem.c`, #stdlibmem): `malloc`/`calloc`/`realloc`/`free` now lower
-   on both rails as external libc edges (emitted VERBATIM, opaque to R18, NOT bcir_-renamed) -- they were a
-   silent R18-dirty undefined-in-unit call before. The allocators return a `void *`, `free` returns void;
-   byte-exact vs Clang on x86-64 AND aarch64 (deterministic values, never an address). ✅ **Lifetime
-   annotation DONE** (`test_lifetime_laws.py` frontend-integration cases): the oracle now stamps a R21 `free`
-   event on each `free(p)` claim, making the use-after-free / double-free law **load-bearing for the C
-   compiler** -- `free(p); *p` / `free(p); p[i]` and a double `free(p); free(p)` are flagged by R21, while
-   `free(p); p = malloc(...); *p` is legal (a WRITE re-validates the pointer; R21 was refined so a READ of a
-   freed resource is the dangling dereference, a write is re-validation). This is purely additive: the
-   annotation is excluded from the R13 digest, and R21 is a smart-lowering law run SEPARATELY from the
-   frontend's R1–R8 pass/fail -- so `compile_unit` is unchanged (no twin divergence; the whole thorough
-   corpus, 845 tests, still passes byte-identically). ✅ **Closed-loop verify + dual-rail twin DONE**
-   (`pipeline.CompileResult.lifetime_diagnostics`, twin `bcir_verify_lifetime` + `bcir_claim.lifetime`,
-   `test_r21_lifetime_is_load_bearing_for_c_heap` / `test_r21_dual_rail_parity` /
-   `test_r21_does_not_disturb_the_corpus`): the allocator result now also stamps an `alloc` event
-   (completing the `malloc→alloc` / `free→free` pair, re-validating a reused pointer), and `compile_unit`
-   runs R21 per function into an ADVISORY `lifetime_diagnostics` field -- so a dangling `p[i]`/`*p`/store or
-   a double `free` surfaces through the normal compile path, while access-before-free and realloc-reuse stay
-   silent. The C twin verifier gained the SAME law (a `uint8_t lifetime` on the claim -- DIGEST-EXCLUDED, so
-   the R13 digest + structural summary stay byte-identical -- the `free`/`alloc` stamp in `bcir_cfront`, and
-   the freed-set walk in `bcir_verify`), surfaced as `R21 <func>: <kind>` advisory lines; a (func, kind)
-   parity test gates the two rails in lockstep. R21 stays SEPARATE from the R1–R8 verdict on both rails, like
-   the R19/R20 timing laws. *Next:* a UAF-routes-to-fallback/quarantine policy (currently advisory-only) + the
-   MLIR port of the lifetime attribute.
-4. Extend **R1–R12 coverage** to the promoted-pointer paths (the laws already apply to the claim; the gap
-   is the new `verify=bounds`/lifetime metadata, which the laws must learn to check) + the runtime guards
-   the C backend emits. ✅ **Bounds metadata now VALIDATED** (`verify` R7 masked check,
-   `test_masked_without_bounds_verify_is_R7` / `test_masked_with_bounds_verify_is_legal`,
-   `test_masked_claims_are_discharged_by_a_runtime_guard`): R7 no longer SKIPS `masked` -- a masked
-   (runtime-bounds-checked) access must declare the `bounds` verify contract, so a promotion the backend
-   would emit without a guard is now a legality diagnostic. ✅ **Lowering faithfulness is a SELF-CHECK LAW**
-   (`pipeline.verify_cfront_lowering` -> `CompileResult.lowering_diagnostics`,
-   `test_cfront_lowering_faithfulness_is_a_self_check`): the cfront analog of `verify.verify_c_lowering` for
-   the K_BCIR kernel -- every masked load/store claim must be discharged by exactly one `BCIR_CHK` guard in
-   the emit (104 masked claims, 1:1 across the corpus). It runs on EVERY compile (user + fuzzer code, not just
-   the corpus), ADVISORY (out of `is_clean`, like the lifetime/timing laws, so no cross-rail `ok` coupling),
-   so a backend that silently drops -- or invents -- a bounds check is caught by a law. Lifetime is validated
-   by R21 (item 3). *Next:* the same faithfulness check for the K_BCIR/MLIR backend guards.
-
-### 5.13 C as a substrate — memory wins and paradigm reach (vision, grounded)
-
-The memory pain points the proposal raises map onto **existing BCIR mechanisms** (this is *why* the C-rail
-is positioned to solve them, not a new build): use-after-free / double-free / dangling → §5.12 (generation
-tags + the lifetime law); buffer overflow → the `verify=bounds/exact/hash` discharge + the 12th cost axis;
-cache / NUMA / HBM unawareness → the `domain`/`mem_tier` model (R3) + the layout-choosing cost model;
-allocator overhead / fragmentation → `-bcir-alloc-pool` graph-aware arenas + StreamPack pre-planned memory;
-pointer chasing → lookahead/prefetch (StreamPack v2) + mixed-stride lanes (`UX`/`GGG`). The **paradigm
-reach** is likewise grounded: imperative C → dataflow is *already* the claim graph (the front end turns a
-function body into a phase-DAG of claims); automatic parallelization is `-bcir-schedule-eft` + `-bcir-async`;
-"languages as flavors over one graph+memory+execution substrate" is the §5.7 frontend roadmap (C, then C++,
-then a Python transpiler, all → the same claim graph). The honest boundary: BCIR makes C *safer and faster
-within its semantics* and *adds* opt-in capabilities (dataflow execution, managed memory, persistence) — it
-does **not** silently change C's observable behavior (the `--fallback` contract + Clang-equivalence gate
-forbid it). The "thinner OS / ABI fortress" framing is a long-horizon consequence, not a near-term build
-item; it stays vision until the native backend (§5.5) and a hosted environment (§5.9 Phase 3) land.
-
-### 5.14 The MLIR catch-up + the freestanding-C23-driver release (closing the "law trails the oracle" gap)
-
-The C frontend (§5.9) now lowers a wide C surface **dual-rail** (oracle + the `bcir_cfront.c` twin),
-but two seams have opened between the frontend and the **law rail**:
-
-1. ✅ *(closed)* The emerging **R19/R20** (timing) and **R21** (lifetime) laws have been **promoted to
-   first-class** — the generated status now reports **R1–R21** (Phase 1 below, landed).
-2. The frontend lowers several **law-bearing** C semantics (volatile, atomic RMW/CAS, indirect calls,
-   pointer extent/provenance, call ABI) that have **no first-class MLIR representation** — they live only
-   in `lower.py` / `bcir_cfront.c`. *C frontend evolution has outpaced MLIR representation.*
-
-This arc **catches the law rail up to the frontend** — but only for semantics that affect BCIR law — and
-then ships the freestanding-C23-driver compiler as the concrete release on that proven foundation. It does
-**not** widen the Python quarantine: what stays Python (§5.6) is unchanged — learned organs, offline
-calibration, enriched operad / memory-module fixpoints, the conformance **oracle** itself, and the
-generators/fuzzers stay Python *by design* because they are learned / offline / research / host-side, not
-deterministic production law.
-
-> **The filter (non-negotiable).** Do **not** mirror all C syntax in MLIR. Add MLIR representation for a C
-> feature **only where it affects** one of: *effects, aliasing, object lifetime, provenance, ABI,
-> volatile/atomic ordering, timing, target selection, verification, or cost.* Pure-syntax features
-> (storage-class spelling, initializer syntax, source-location spelling) are flattened in the frontend and
-> stay there. "Complete C23 semantics" is **not** the goal; **complete C23 *law* coverage of the
-> law-bearing subset** is. Every addition follows the **prototype-then-port** discipline (§3) and is gated
-> by an **oracle ↔ MLIR ↔ C parity** test, exactly as R14–R18 were ported.
-
-Ordered, dependency-gated — each phase de-risks or enables the next:
-
-#### Phase 0 — Hygiene (cheap, parallelizable, de-risks everything after) — ✅ LANDED
-
-- **(E) Honest test tiers + an explicit C-runtime CI gate. ✅ LANDED.** The local `run_all --tier quick`
-  "failures (skip:no-cc)" were never a compiler-core or discovery bug: the quick tier *deliberately* hides
-  the toolchain (`bcir/tests/run_all.py` monkey-patches `shutil.which` so the pure-Python oracle/law/parity
-  coverage runs with no compiler installed), while `tools/c/check_runtime.sh` uses the shell's `command -v`
-  and **CI already runs `BCIR_THOROUGH=1`** (all tools visible) — so behaviour-equivalence *does* run in CI.
-  The legibility fixes are in: (1) a behaviour-equivalence check with no compiler reports a clean **SKIP**,
-  never a FAIL, in the quick tier; (2) the tier ladder is named and documented
-  (`run_all --tier {quick,c-runtime,silicon-degrade,thorough}`); (3) CI carries explicit
-  **`c-runtime` + `c-runtime-arm64` jobs** running `check_runtime.sh` + the c-runtime tier, so full C
-  runtime checks are their own *named* gate, not only folded inside `thorough`.
-- **(D) Document the naked-pointer policy (user-facing). ✅ LANDED.** The source already *enforces* it —
-  `lower.py::_access_bounds` (the `assumed_safe → masked` promotion), `_bind_extent`
-  (malloc/calloc extent recovery), the `BCIR_CHK` runtime quarantine — and §5.12 describes it internally.
-  The normative user-facing policy block now lives in `BCIR_LANGREF.md` (§3–9, "The naked-pointer policy")
-  + `CFRONT_GUIDE.md` ("Pointer-bounds policy"): *known / recoverable extent → **checked / quarantined**
-  (`masked`); unknown naked pointer → **`assumed_safe`** (trusted, no runtime check); `malloc`/`free` →
-  optional **R21** advisory lifetime diagnostics; **no silent proof of unknown extents** (BCIR never
-  fabricates a bound it cannot recover).* This pins the contract that R21 (Phase 1) and the driver
-  release (Phase 3) build on.
-
-#### Phase 1 — Promote the emerging laws to first-class (R19 / R20 / R21) — ✅ LANDED
-
-The logic is already proven: `verify_timing` (R19 synchronous-timing legality, R20 clock-domain-crossing) and
-`verify_lifetime` (R21 use-after-free / double-free) run in the oracle; R21 also runs in the C twin
-(`bcir_verify.c`, advisory); the **non-disturbance proof holds** (both are vacuous until a claim opts into
-`timing`/`lifetime`, so the whole corpus verifies byte-identically with them wired in). Promote them with the
-same six artifacts that make a law first-class (the R14–R18 pattern), each parity-gated:
-
-- **(a) MLIR attributes** — `#bcir.timing` + `#bcir.lifetime` `OptionalAttr` on `bcir.claim`
-  (`BCIRAttrs.td` + `BCIRCoreOps.td`'s `BCIR_ClaimAttrs`), carrying the `model/graph.py` `Timing`/`Lifetime`
-  fields verbatim.
-- **(b) C++ verifier laws** — `verifyR19/R20/R21` in `mlir/lib/passes/BCIRVerifyPass.cpp`, mirroring the
-  Python (R20 builds the writer→`clock_domain` map and rejects an unguarded crossing; R21 walks the phase
-  order with a freed-set).
-- **(c) LangRef** — R19/R20/R21 sections in `BCIR_LANGREF.md` §10 + the milestone-map bump (R1–R18 → R1–R21).
-- **(d) Negative FileCheck** — `mlir/test/passes/verify_timing_lifetime.mlir` (no-clock-on-synchronous,
-  setup/hold-exceeds-latency, unguarded-CDC, use-after-free / double-free).
-- **(e) C dual-rail** — R21 is **already** in `bcir_verify.c` (promote from advisory to a verdict path by
-  adding the `lifetime` field to `bcir_claim`); R19/R20 in C are **lower priority** (timing is RTL-specific,
-  §5.11).
-- **(f) `gen_status.py`** — widen the law sweep from `range(1, 19)` to `range(1, 22)` so the generated status
-  reports **R1–R21** and the coverage count drives the FileCheck gate.
-
-*Outcome:* timing + pointer-lifetime become **documented law**, not emerging model laws; this also lands the
-MLIR representation for Phase 2's "object lifetime" area, so it is sequenced first.
-
-#### Phase 2 — Extend MLIR for the law-bearing C semantics (triaged by the filter)
-
-From the C-semantics audit, the eight candidate areas split cleanly under the filter:
-
-**Add MLIR representation (these affect law):**
-- **Object lifetime** → the R21 `#bcir.lifetime` attribute (lands in Phase 1; the frontend already emits
-  `Lifetime("alloc"/"free")` on malloc/free).
-- ✅ **Volatile access** → first-class, **LANDED**: the `volatile` qualifier rides the claim rail
-  (`Claim.volatile` + the `is_volatile` claim attr on `bcir.claim`/`bcir.load`/`bcir.store`, digest-excluded
-  / false-default for non-disturbance), R5 now requires an ordered hazard on a volatile claim (both rails),
-  the bundle optimizer fences it like `barriered` on both rails (this also closed a live oracle↔law
-  divergence: `-bcir-bundle` had never honored the ASM3b barrier fence), and the cfront MMIO lowering
-  stamps it (`test_volatile_atomic_law.py`, `verify_volatile.mlir`).
-- ✅ **Atomic RMW / CAS** → first-class ops, **LANDED**: `bcir.atomic_rmw` (`add|sub|xor|exchange`) +
-  `bcir.atomic_cas` (strong/`weak`) carry the existing `#bcir.mem_ordering` attr (absent = seq_cst; CAS
-  failure ordering derived per the LLVM strongest-failure rule) and lower to `llvm.atomicrmw`/`llvm.cmpxchg`
-  (`atomic_ops*.mlir`, roundtrip + lowering + negatives). The cfront `c.atomic.*`/`c.c11atom.*`/`c.cmpxchg.*`
-  claims remain the frontend spelling; wiring the oracle emitter to produce the new ops is the next
-  increment (the D1.1 portio precedent). (Fence ordering was *already* first-class —
-  `bcir.barrier` + `mem_ordering` — kept.)
-- ✅ **Function pointers / indirect calls** → **LANDED**: the dispatch claim (`c.call.indirect` /
-  `c.call.imember`) carries the **declared callee signature** (`Claim.callee_sig` +- the `callee_sig`
-  claim attr, ""-default / digest-excluded), well-formedness guarded by an **R18 clause on both rails**
-  (`verify_callee_sig.mlir`, `test_indirect_effect.py`); and the **conservative effect set** is live --
-  a function containing a dispatch conservatively reads+writes every module-scope global in its
-  `CompileResult.effects` footprint, so `commute()` no longer reorders a dispatcher past a global
-  writer (the unsoundness this closed), while dispatch-free functions keep exact footprints.
-- ✅ **Pointer provenance / extent** → **LANDED**: the `bounds_provenance` signal rides the claim on both
-  rails (`Claim.bounds_provenance` + the `OptionalAttr` on `bcir.claim`, ""-default / digest-excluded) --
-  `declared_extent` / `recovered_count` / `snapshot_extent` for the masked promotions, `mmio_register` /
-  `string_literal` / `unknown_extent` for the trusted cases -- stamped by the cfront lowering at the
-  `_access_bounds` decision, surfaced by R7's masked-needs-guard diagnostic (that clause is now
-  **dual-railed**: it was oracle-only; `verify_bounds_provenance.mlir`, `test_bounds_provenance.py`).
-- ✅ **Target ABI / calling convention** → **LANDED — Phase 2 is COMPLETE**: every compile now records a
-  per-function **`AbiContract`** (target + per-parameter (name, size, align) + the return slot — the layout
-  facts the emitter materialized the frame from) and runs the **R12 call-ABI law** over it (advisory
-  `CompileResult.abi_diagnostics`): the record must agree with the laid-out CTypes AND the target data model
-  (pointer-kind == pointer_size, `long` == long_size; LLP64/ILP32 record their own facts). The MLIR rail
-  carries the same record as **`bcir.abi_contract`** with the matching `-bcir-verify` R12 clause against the
-  normative 5-target matrix (`verify_abi_contract.mlir`, `test_abi_contract.py`).
-
-**Keep frontend-only (these do NOT affect law — do not mirror in MLIR):**
-- **Storage / linkage** → flattened to RID-addressed resources (decoupled from C storage class; a linkage tag
-  would be cosmetic).
-- **C initializer semantics** (aggregate / designated / compound-literal) → flattened to per-member `store`
-  claims; initialization is a meta-operation, not a claim — *correctly* absent from the law.
-- **Source-location spelling** → diagnostics are a frontend concern; MLIR `loc` + `trace.note` already carry
-  the provenance the law needs.
-
-Each addition ships as: a LangRef section + an ODS op/attr + a **negative FileCheck** + the
-**oracle ↔ MLIR ↔ C parity** gate (the §5.1.3 law-for-law differential). Order within the phase by law
-impact: **volatile / atomic** (ordering + MMIO legality) → **funcptr effect/reachability** → **pointer
-extent-provenance** → **ABI contract**.
-
-#### Phase 3 — Ship the freestanding-C23-driver release (the concrete milestone)
-
-The single-TU pipeline is done end-to-end: C source → claim graph → **R1–R18 clean** → emitted C/object,
-with per-file `--fallback` and real register-map / UART / DMA fixtures (§5.9). The **release** is the
-**multi-file driver project** building through `bcir-cc` with a verified claim graph, an **R1–R18 (now
-R1–R21) clean** result, **per-file fallback** for unsupported files, **emitted C/object artifacts**, and
-**behaviour-equivalence** where runnable. The gap is *infrastructure + breadth*, not the optimizer:
-- ◑ **Robust multi-file mode** — BOTH drivers now orchestrate a project: multiple files per
-  invocation with a per-project verdict line (CLEAN / PARTIAL-FALLBACK / DIRTY over the file set,
-  `--project`, automatic for multi-file runs). The `bcir-cc` C twin is byte/exit-code identical to
-  the oracle (a hard error 1 dominates a fallback 2), gated in `check_runtime.sh` (#project);
-  compile-database (`-p`) / `-M` dependency rules stay oracle-side (build-system glue, not law).
-  ✅ **Linking — DUAL-RAIL + the linkable artifact.** File-scope PROTOTYPES parse on BOTH rails
-  (`bcir_cfront.c` ports the oracle: the prototype table + rendered `extern` prelude + the
-  single-pass definition-wins rewrite); a prototyped-but-undefined callee is a TYPED cross-TU edge
-  (`c.call.tu:`, R18-opaque like libm, verbatim emit, NO -l derived); and the opt-in **linkable
-  emission mode** (`--linkable`, `emit_linkable`) re-renders the unit under its REAL names with
-  its SOURCE linkage — **source-`static` functions and globals keep `static`** (internal linkage
-  honored on BOTH rails: two TUs may each carry a same-named static helper and still link —
-  `check_runtime.sh` #link's source-static sub-case), everything else exports; unprefixed
-  in-unit calls, file-scope global definitions/declarations with **constant initializers
-  rendered past the integer slice** (signed integers, float spellings suffix-kept, and
-  string-initialized char arrays sized from the LITERAL — which also fixed the latent
-  tuple-length mis-sizing of `char s[] = "..."` globals), derived `#include`s (+ the quarantine
-  header when a masked access needs it) — so **two EMITTED TUs link to each other** with no
-  original source in the image, behavior-equivalent to the reference build
-  (`test_cfront_link.py`; `check_runtime.sh` #link). *Remaining (named):* ✅ **CLOSED (wave 13)** — address-constant
-  (`&x`) global initializers render as the linker's relocation (forward references still
-  refuse: use before declaration is not C), and `sizeof`/`_Alignof` fold inside global
-  initializers against the CHOSEN ABI's layout oracle (`_fold_const`'s opt-in `resolve`
-  callback — the parse-time and static-local vocabularies stay sizeof-free, so the C twin's
-  `ce_expr` parity is untouched). Still by design: C-twin file-scope global rendering
-  (global definitions stay oracle-side).
-- ✅ **Compile-database support** — `bcir-cfront -p` consumes `compile_commands.json` (a directory or
-  the file), compiling every entry with its own `-I`/`-D`/`-U`/`-std`/`--target` flags (both the
-  `arguments` and `command` entry forms; entry `-I` resolves against the entry directory).
-- ✅ **Dependency output** — `-M` / `-MM` / `-MF` / `-MT`: make rules from the preprocessor's resolved
-  on-disk includes (`Preprocessor.dep_paths`); the two spellings agree because `<system>` headers are
-  modeled intrinsically. (`test_cfront_cli.py` project-orchestration cases.)
-- **More real fixtures** — Linux UAPI / CMSIS-style headers, and **PCIe / NVMe / ACPI register-map
-  ingestion** — the breadth that exercises Phase 2's volatile/atomic/ABI laws on real driver headers.
-- **The native-object path** (`BCIR_NATIVE_OBJECT_GATE.md`) for emitted `.o` artifacts where the gate allows.
-
-This is the **draft** release-ladder rung **0.3b**; package version remains `0.2.0` and no
-`v0.3b` tag is claimed. Measurement /
-real-silicon measured replan stays **DEFERRED and host-side** (§5.4) — unchanged: it lights up the instant a
-bare-metal rig with PMU + RAPL + a userspace governor runs the runbook (`HARDWARE_VALIDATION.md`).
-
----
-
-## 6. Next build steps (concrete, prioritized)
-
-In recommended order — each is gated by the generated differential harness + FileCheck
-+ the C-runtime parity/fuzz scripts:
-
-1. ✅ **`-bcir-verify` R14 + R15 + R16** (§5.1.1). **DONE** — first-class verifier laws.
-2. ✅ **The C StreamPack executor** (§5.2.1). **DONE** — `runtime/c/bcir_exec.{h,c}`.
-3. ✅ **The C StreamPack encoder** (§5.2.2). **DONE** — `runtime/c/bcir_encode.c`, byte-
-   identical to `bcir.abi.encode` (full C round-trip).
-4. ✅ **The verify-cost dimension** (§5.1.2). **DONE** — the 12th axis has a producer on
-   both rails (exact/hash O(n); bounds/none free).
-5. ✅ **`precision="compensated"` C-kernel + the R17 accuracy law** (§5.2.3 / §5.1). **DONE**
-   — dual-rail accuracy contract.
-6. ✅ **The C++ `-bcir-verify` law-for-law differential** (§5.1.3). **DONE** — every law
-   R1–R18 has a toolchain-rail negative case + a coverage gate.
-7. ✅ **Multi-claim bundle (joint) optimization** (§5.3.1). **DONE** — a real 12% matmul
-   gain, with search certificates.
-8. ✅ **Proof-carrying records** (§5.3.2). **DONE** — `bcir.run --explain/--replay/--reduce`.
-9. ✅ **Compositional semantics** (§5.3.3) — **DONE on both rails, end to end.** Oracle
-   `kbcir.compose` (Seq/Cond/Call/Function + dynamic shapes + alias/effect modeling + summary
-   costs + **RCSP budgets**); law rail `kbcir.func`/`call`/`cond` + the **R18 call-graph law** +
-   **`-bcir-compose`** — Seq sum / Cond max+expected / Leaf optimize / Call **inter-procedural
-   summary** (plan once, reuse cost-compatible calls, else re-price) / **RCSP-constrained** under
-   a `kbcir.budget` (`min M s.t. R⪯B` over the tree — `compose_feasible`), reproducing
-   plan_composite's worst/expected/reused/feasible, with a generated compose-rail differential.
-   The Tier-1 remainder is **DONE** too: `-bcir-compose` annotates the alias-effect footprint
-   (`kbcir.effect_reads/writes`, folded through calls), sibling-call independence
-   (`kbcir.commutes_with_prev` = disjoint footprints commute), and the dynamic-shape bound
-   (`kbcir.compose_dynamic`; the claim op carries `dynamic`) — `compose_effect.mlir`.
-10. ◑ **MLIR ports of the new oracle capabilities** — bundle **detection + joint-reorder**
-    ported (`-bcir-bundle`: it now reorders the cost-model columns so a bundle is contiguous,
-    re-runs the min-plus shortest path for every legal intra-bundle order, and annotates the
-    re-priced `kbcir.bundle_gain` / `bundle_order`), the **proof-carrying decision record
-    as IR annotations** (`-bcir-explain`: per claim the candidates weighed + chosen width/
-    score, per module the plan total — `proof.explain` on the law rail), and the **replay
-    recheck** (`-bcir-replay`: recompute a fresh plan and diff it against the declared
-    `kbcir.explain_*` record — `proof.replay` on the IR, annotating `kbcir.replay_reproduced` /
-    `replay_mismatches`).
-11. **(When a rig is available)** the measured real-silicon replan win (§5.4) — the
-    software path is push-button (`tools/silicon/measure_replan.sh`) and CI-exercised in
-    degrade mode; the probe enumerates the three gating signals and prints a **rig-ready**
-    verdict, so the win lights up the instant a bare-metal host with PMU + RAPL + a userspace
-    governor runs the runbook (`HARDWARE_VALIDATION.md`). The top differentiator.
-12. **➡ THE NEXT MAJOR MILESTONE — a solid C frontend + backend (§5.7 Phase C).** The keystone
-    that unlocks drivers + the Hardware Description Layer (Phase D): a usable Clang-compatible C
-    **frontend** (a useful subset → claim graph; the *input* seam that does not exist yet), then a
-    generalized, self-verifying C **lowering/codegen** for an arbitrary claim graph (today
-    `lower.c_kernel` is per-pattern). Build this *before* drivers — generating + verifying C from
-    BCIR is what makes importing Linux kernel tables / register maps / PCIe / ACPI clean. **Phase
-    M** (selective ML ops: tensor/attention/quantization, oracle-first then MLIR) runs in parallel
-    but throttled. Then **Phase D** (drivers/opcode tables — a semi-separate `drivers/` JIT kernel
-    generator that gives each hardware **channel** its real driver), **Phase F** (C++, then a
-    Python transpiler→frontend), and **Phase L** (the ML library, *compressed* from the
-    GCC/PyTorch/TF/NumPy/… ecosystem onto the claim-graph + channel model).
-13. ✅ **C-frontend completeness — general address-of `&` (§5.10 A1).** DONE (`cfront_addrof.c`, #addrof):
-    `&var` / `&s.member` / `&s->member` / `&*p` / `&arr[i]` lower on both rails (and fixed two silent
-    oracle miscompiles of `&s->member` / `&*p`), byte-exact vs Clang on x86-64 + aarch64, fuzzer-clean.
-    Unblocks **C11 `atomic_compare_exchange`** and `&`-out-params. (Member-array / array-of-structs element
-    address + a pointer/array member remain a both-rails follow-on.) ✅ **C11
-    `atomic_compare_exchange_strong/weak` landed** (`cfront_cmpxchg11.c`, both rails — `lower.py` +
-    the `bcir_cfront.c` twin). **Next ➡** the remaining address-of forms (member-array /
-    array-of-structs element address + a pointer/array member).
-14. ◑ **Naked-pointer safety promotion (§5.12).** ✅ Landed since: the **lifetime law R21** (dual-rail,
-    load-bearing for C heap code, promoted first-class with the `#bcir.lifetime` MLIR attr — §5.14
-    Phase 1); the **bounds-promotion metadata step** (`assumed_safe → masked` for known-extent
-    local/static arrays); the **`BCIR_CHK` runtime quarantine** + debugger trace surface + recovery
-    override; **recovered `malloc`/`calloc` extents** (stable names *and* pure-expression snapshot
-    counts); and the **malloc/free frontend annotation** (see the ✅ trail in §5.12). **Next ➡**
-    `realloc` rebind + array-param-with-sibling-count extents (under a dominating-bound proof),
-    struct-member arrays, and the IR-level **bounds-provenance** signal (§5.14 Phase 2).
-    `--fallback`/quarantine for the unprovable.
-15. ◑ **RTL/synchronous-timing track, step 1 (§5.11).** **Oracle prototype DONE** (`Timing` +
-    `verify_timing` R19/R20, `test_timing_laws.py`): the **non-disturbance proof holds** — the whole
-    thorough corpus (see the generated [`STATUS.md`](STATUS.md) for the current static inventory,
-    including C-compiler fixtures + the provenance digest) verifies
-    byte-identically with R19/R20 wired in, since no existing claim opts into timing, establishing the
-    additive seam. ✅ **The MLIR port landed** (§5.14 Phase 1: the `#bcir.timing` attr,
-    `verifyR19/R20` in `BCIRVerifyPass.cpp`, `verify_timing_lifetime.mlir` negatives, parity-gated).
-    **Next ➡** steps 2–5 of §5.11 (critical-path context factor + `sync`-axis
-    CDC, `-bcir-schedule-clocked`, CDC over `!bcir.token`, the x86/aarch64 then FPGA/ASIC channel interp).
-16. **➡ THE MLIR CATCH-UP + FREESTANDING-C23-DRIVER ARC (§5.14).** The consolidated next arc that closes
-    the "law trails the oracle" gap and ships the first externally-usable compiler deliverable, in
-    dependency order: **Phase 0 (✅ landed)** hygiene — honest test tiers + the explicit `c-runtime` CI
-    gate (E) and the user-facing naked-pointer-policy doc (D, `BCIR_LANGREF.md` + `CFRONT_GUIDE.md`);
-    **Phase 1 (✅ landed)** — **R19/R20/R21** promoted from emerging model laws to first-class (the a–f artifacts: `#bcir.timing`/`#bcir.lifetime`
-    attrs, the C++ verifier laws, LangRef, negative FileCheck, the C dual-rail, and `gen_status` → R1–R21);
-    **Phase 2** — extend MLIR for the **law-bearing** C semantics only (volatile/atomic ops, indirect-call
-    callee type+effect, pointer extent-provenance, the ABI contract op — *not* storage-class / initializer /
-    source-location syntax); **Phase 3** — stabilize the **freestanding-C23-driver release** (multi-file mode
-    + compile-database + dependency output + Linux-UAPI/CMSIS/PCIe/NVMe/ACPI fixtures, R1–R21 clean with
-    per-file fallback and emitted C/object artifacts). Release rung **0.3b**.
-
----
-
-## 7. Release ladder (reconciled)
-
-✅ done · ◑ in progress · ☐ next
-
-- **0.2 — reproducible compiler** (✅ effectively complete): 5 C++ GEM passes, multi-version
-  LLVM matrix, R13 provenance manifest, generated differential parity, the widened
-  corpus, the full optimizer-core C++ port, named pipelines, the six-target matrix,
-  initial + C fuzzing, and a generated-status + broken-link + retired-path doc-governance CI
-  gate (`tools/docs/`, see [`docs/STATUS.md`](STATUS.md)).
-- **0.3 — measured adaptive compiler** (◑): real-hardware CT4 evidence (§5.4) + durable
-  telemetry + compile-time/peak-memory regression budgets. *Durable telemetry LANDED:*
-  the schema-tagged `DurableLog` (a self-describing JSONL header — kind + schema version +
-  the documented field list; unknown kinds / newer schemas / lying headers refuse loudly)
-  behind the LIVE `Broker` with a fake producer in the suite, ring **backpressure counted,
-  never silent** (`test_telemetry.py`). What keeps 0.3 open is real-hardware CT4 evidence
-  (rig-gated). *Landed:* the non-flaky perf-budget gate
-  (`bcir.perf_budget` + `tools/perf/check_budgets.py`) now carries the five **Clang-comparison
-  budgets** (dense streaming / dense L1 *match bands*; gather / reduction / strided *win floors*) —
-  strict on correctness + measurement validity, perf floors/bands bare-metal-only, the documented
-  6.0×/14.1×/1.33× references tracked in a JSONL trend log (never asserted in CI); named test tiers
-  (`run_all --tier {quick,c-runtime,silicon-degrade,thorough}`); and the **hardware-channel plugin
-  boundary** (`bcir/channel_plugin.py` — a `channel.json` manifest format so FPGA/NVMe/HBM-PIM
-  extensions register without touching the core).
-- **0.3b — freestanding-C23-driver compiler + the law catch-up** (**DRAFT / UNRELEASED** — see
-  [`RELEASE_NOTES_0.3b.md`](RELEASE_NOTES_0.3b.md); §5.14):
-  ✅ R19/R20/R21 promoted to first-class verifier laws (the current law rail is **R1–R23**); ✅ MLIR
-  representation for the law-bearing C semantics the frontend lowers — **§5.14 Phase 2 COMPLETE**
-  (volatile/atomic ops, indirect-call effect, pointer extent-provenance, ABI contract); ✅ a **multi-file
-  driver project** building through `bcir-cc` with its scoped R1–R18-clean claim graph, per-file fallback and the
-  per-project verdict line — dual-rail, byte/exit-code identical (`check_runtime.sh` #project); ✅
-  compile-database + dependency output (oracle-side); ✅ the naked-pointer policy documented user-facing;
-  ✅ the `c-runtime` CI tier. *Remaining breadth before release:* linking, real UAPI/CMSIS/PCIe/NVMe/ACPI
-  fixtures, native-object artifacts where the gate allows. The first externally-usable BCIR compiler
-  deliverable.
-- **0.4a — proof-carrying (mechanism)** (✅): replay records + per-claim certificates +
-  `bcir.run --explain`/`--replay`/`--reduce` are implemented and tested (§5.3.2).
-- **0.4b — proof-carrying (contract)** (✅): a *stable* certificate schema (versioned, with a
-  decode/upgrade path), an external replay-CLI contract (a third party can re-check a record
-  without the producing build), and certificate upgrade tests across schema revisions.
-  *Landed:* the schema half — every `DecisionRecord` serializes as a self-describing envelope
-  (`kind: bcir.decision_record`, `schema: 2`); `from_json` decodes ANY known revision (a bare
-  pre-envelope v1 document upgrades through the `_UPGRADES` chain and still replays bit-for-bit),
-  and an unknown NEWER schema or wrong kind fails loudly — a certificate is never silently
-  misread (`test_proof.py` upgrade suite). *Landed too:* the **external replay-CLI contract** —
-  `bcir.run <program> --replay FILE` re-checks any record whose schema ≤ the build's, with a
-  STABLE machine contract: one `replay-verdict:` line + exit 0 (reproduced bit-for-bit) /
-  3 (decoded but diverged, mismatches listed) / 4 (undecodable, newer schema, or a record
-  naming a different module/target — a usage error, never a bogus divergence). Driven as a
-  real subprocess in the suite. **0.4b is COMPLETE.**
-- **1.0** (☐): stable language/ABI policy; no known Python↔C++ divergence (generated +
-  fuzzed); ≥2 real hardware targets with measured evidence; R1–R23 law coverage with
-  cross-rail parity on every shared surface; one external frontend; published benchmark
-  methodology; upgrade tests; a clear native-backend decision (the gate, §5.5).
-
----
-
-## 8. Risk register
-
-- **Substrate/intelligence inversion** — a rich learned/categorical stack over a backend
-  that can't yet codegen on real silicon and tables that aren't yet measured. *Mitigation:*
-  §5.4 (real-silicon calibration) is the top priority; the quarantine keeps the learned
-  side off the deterministic path until measured.
-- **Multi-rail divergence** ("the law trails the oracle") — *largely mitigated:* the
-  whole optimizer core + R1–R17 are dual-rail and cross-checked by the generated
-  differential + the committed corpus/matrix under real `bcir-opt`. Remaining: §5.1.1/§5.1.3.
-- **Validation realism** ("green ≠ competitive") — *mitigated:* the measured Clang
-  comparison + the multi-version matrix + 540 tests. Remaining: continuous perf
-  regression gating (0.3).
-- **Complexity / bus factor** — the adaptive + learned organs are large. *Mitigation:*
-  lazy imports keep the simple plan→emit path light (`test_perf` guard); every organ is
-  opt-in and off the default path.
-
----
-
-## Appendix A — capability tracks & the build history (what's built)
-
-BCIR's capability model (the CT tracks, from the original blueprint), all oracle-done
-and law-authored:
-
-- **CT1 — memory hierarchy:** L1/L2/L3/DRAM/HBM/CXL/SSD tiers with Q8 bandwidth/latency
-  factors (frozen in `runtime/c/bcir_q8_tables.h`); HAM (O(log n) access) and CXL
-  semantics.
-- **CT2 — concurrency / wave scheduling:** affinity domains, (max,+) overlap, the
-  decoupled GGG tail.
-- **CT3 — front-ends:** ROP (declarative) + MAP (macro-assembly) → claims; the M5 ETL
-  (events / FSM transducer / parser / binary record decode).
-- **CT4 — calibration / measurement:** microbench → frozen Q8 cost tables → R13 replan;
-  real-signal probes (`bcir.silicon`).
-- **CT5 — learning organs:** the L1–L3 learned stack (bayescal / portfolio / MoE gate /
-  accelerator / softdp / regret / e-graph / two-truth / operad), each frozen to Q8.
-
-The implementation arrived in phases (the condensed history + dated changelog live in
-[`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md)): the StreamPack freeze + freestanding C runtime; the
-compiled `bcir-opt` on LLVM 18/19 with R1–R17; the learning/intelligence organs; the
-oracle optimization pass (hot/cold locked); the MLIR-native GEM pipeline; the calibration
-loop; the portable C23 kernel backend; the measured Clang comparison; the generated
-differential + widened corpus; the full deterministic optimizer-core C++ port; the
-six-target capability matrix; C23 `_BitInt`/`#embed` + ETL-binary C fuzz; and the
-native-object decision gate.
-
-**Non-regression invariants (design law, from the blueprints — must always hold):**
-determinism (the same inputs reproduce the same plan bit-for-bit); back-compat (the
-StreamPack ABI is append-only; old readers stay correct — `BCIR_STREAMPACK_ABI.md`); the
-lowering never invents LLVM instructions (only legal load/store/add/atomicrmw/cmpxchg/
-fence/calls); **atomics are never rewritten** into barrier+load+binop+store; the IRDL
-projection stays C++-free; and the two-truth quarantine is never crossed (no learned
-inference on the hot path, L0).
-
-## Appendix B — what was consolidated / removed
-
-Folded into this document and **removed**: `BCIR_STRATEGY_AND_ROADMAP.md` (strategy →
-§1, §8), `BCIR_LOWERING_PLAN.md` (the lowering status → §3, §4), `BCIR_BLUEPRINT.md`
-(capability tracks / phase inventory → Appendix A), `BCIR_Codex_Blueprint.md` +
-`BCIR_Full_LLVM_Build_Blueprint.md` + `BCIR_LLVM_IR.md` (the old C++ `ir/`-tree rebuild
-work-orders — obsolete since the `ir/` skeleton was retired into the `bcir/` oracle +
-`mlir/` law; their forward items survive in §5). **Kept** (normative / evidence /
-governance, not roadmap): `BCIR_LANGREF.md`, `BCIR_STREAMPACK_ABI.md`, `PARITY.md`,
-`BCIR_NATIVE_OBJECT_GATE.md`, `HARDWARE_VALIDATION.md`, `CLANG_COMPARISON.md`,
-`BCIR_Repo_Structure.md`, and `REPO_CURRENT_STATE_AUDIT.md`.
+| Roadmaps outrun code | Current-state audit cites source/tests; generated status owns counts; unsupported paths stay explicit |
+| C memory regressions grow with complexity | Memory classes, allocator injection, fail-every-allocation tests, sanitizers, idempotent teardown |
+| Linux fork consumes the project | Separate repository, LTS/next rails, small patch queues, stock/out-of-tree evidence first |
+| UAPI freezes around a toy driver | UART and virtio-blk are mandatory before v1 |
+| Native backend duplicates LLVM | Native-object GO/STOP gate and resident-toolchain default |
+| Learned optimization changes semantics | Two-truth quarantine, exact legality, exhaustive-equivalence certificates, generation rollback |
+| Telemetry silently changes meaning | Numeric signal registry, explicit kind/unit/source/clock/generation/loss, append-only versioning |
+| Model scope becomes a framework rewrite | Small reference ladder, integrate trusted libraries, explicit production-serving gates |
+| Local validation harms workstation stability | Two-worker cap, serialized heavy jobs, bounded campaigns, no local ARM emulation |
+| Compatibility claims blur source/binary/emulated support | Generated matrices and separate Linux ABI, POSIX source, and selected binary levels |
+
+## 10. Document ownership
+
+| Location | Owns |
+|---|---|
+| `docs/` | Normative law, master execution order, current state, parity, releases, onboarding, history, repository structure |
+| `docs/kernel/` | Drivers, RuntimeChannel/UAPI/IPC, StreamPack, hardware validation, telemetry, channels, SYCL |
+| `docs/machine-learning/` | ML/AI roadmap, model/reference ladder, language placement, model provenance, hosted-AI integration research |
+| `docs/languages/` | C frontend/memory/C++ boundary and future language-specific frontend/lowering plans |
+| `docs/research/` | Comparative/feasibility studies and non-normative optimization research |
+
+When documents conflict, authority is: **LangRef → generated/static evidence and implementation →
+current-state audit → this roadmap → companion roadmaps → research notes → development history**.
+History explains past decisions but does not reopen superseded sequencing.
+
+## 11. Immediate priority queue
+
+1. Keep the merged correctness, portability, memory-discipline, x86-edge, StreamPack, telemetry,
+   and model gates green while this documentation taxonomy lands.
+2. Finalize version-zero driver telemetry identity and generated signal definitions.
+3. Execute UART U0–U2: authoritative schema, assembler/decoder/verifier, simulator, then direct
+   polled RuntimeChannel binding.
+4. Add event-driven UART lifecycle, replay, fault, saturation, cancellation, and teardown evidence.
+5. In parallel, prototype the A1 packed-low-bit contract and B1 measured schedule comparison on
+   available hardware without blocking the UART proof.
+6. Start BCIR-Linux and native-kernel implementation only at their explicit dependency gates.
+
+Completed-wave details and the former master roadmap's capability-by-capability ledger are retained
+in [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md).

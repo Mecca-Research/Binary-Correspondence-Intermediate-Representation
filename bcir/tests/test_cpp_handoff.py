@@ -2,7 +2,7 @@
 
 The seam is the boundary between BCIR's deterministic single-node C/IR rail and the C++
 layer ABOVE it (dynamic graph topology + distributed MPI/NCCL orchestration); the contract
-is `docs/CPP_HANDOFF_BOUNDARY.md`. This test exercises the REAL part of the scaffold: the
+is `docs/languages/CPP_HANDOFF_BOUNDARY.md`. This test exercises the REAL part of the scaffold: the
 `SingleNodeOrchestrator` consumes a StreamPack the existing C/IR path produces, re-enters
 the existing freestanding C decoder, and its dispatch order must equal the DIRECT C/IR
 decode of the same artifact (round-trip identity). The dynamic-graph + distributed backends

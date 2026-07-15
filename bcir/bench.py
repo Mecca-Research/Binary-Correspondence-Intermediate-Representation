@@ -6,7 +6,7 @@ cost-model-selected lane geometry actually win? It compiles BCIR's selected
 realization and a naive baseline (the scalar width-1 kernel) with the host
 toolchain, times both, and reports the measured speedup.
 
-Honest finding (the measured Clang comparison, docs/CLANG_COMPARISON.md): for a
+Honest finding (the measured Clang comparison, docs/research/CLANG_COMPARISON.md): for a
 plain elementwise kernel the *loop form* is measured-neutral -- the kernel is
 memory-bandwidth-bound and a modern `-O2`/`-O3` vectorizer realizes the selected
 lane width from an idiomatic loop on its own. Hand-blocked vs idiomatic is within

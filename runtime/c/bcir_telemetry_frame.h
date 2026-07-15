@@ -3,7 +3,7 @@
  * The freestanding C twin of bcir/telemetry_frame.py (the Python reference). A
  * self-delimiting, resync-able, CRC-sealed TELEMETRY FRAME a bare-metal producer drains
  * from the telemetry ring (TelemetryRing) and emits over a byte egress (UART). The
- * prose spec is docs/TELEMETRY_FRAME_ABI.md; a byte-identical differential test
+ * prose spec is docs/kernel/TELEMETRY_FRAME_ABI.md; a byte-identical differential test
  * (bcir/tests/test_telemetry_frame.py) + the #telemetry-frame gate in
  * tools/c/check_runtime.sh pin this rail to the Python rail.
  *

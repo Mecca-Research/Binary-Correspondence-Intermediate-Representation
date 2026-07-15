@@ -1,164 +1,171 @@
-# BCIR Repository Structure (decision record)
+# BCIR repository structure
 
-<!-- allow-retired-paths -->
+> Current for package version `0.2.0` and the post-PR-638 tree. This document is an
+> ownership map, not a generated inventory or a migration log. Static counts belong in
+> [`STATUS.md`](STATUS.md); historical reorganizations belong in
+> [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md).
 
+BCIR is one system with three independently testable implementation rails:
 
-This document records how the repository is organized and how the IRDL, MLIR,
-and LLVM sections stay separate. It is the steering reference for the reorg that
-introduced `ir/`.
+1. `bcir/` is the executable Python conformance oracle.
+2. `mlir/` is the ODS/TableGen/C++ law rail and partial lowering pipeline.
+3. `runtime/` contains production C and bounded C++ runtime/compiler surfaces.
 
-## Problem this structure solves
+The rails share contracts through checked files and differential tests, not through
+source inclusion. This separation keeps agreement meaningful.
 
-Before the reorg, three terms each meant several different things:
+## 1. Top-level ownership
 
-- **"dialect"** named a C++ hand-written surface parser (`dialect/`) that is
-  *not* an MLIR dialect — colliding with the real MLIR dialect we are building.
-- **"LLVM"** was spread across a textual emitter (`runtime/src/llvm_emit.cpp`),
-  an ABI-substrate string (`runtime/src/bcir_llvm_ir.cpp`), a hand-written `.ll`
-  seed (`runtime/llvm/*.ll`), and training examples — with no single owner.
-- The **training corpus** (`llvm-training/`, ~470 files) was interleaved with
-  the IR even though it is not part of the IR.
+| Path | Owner and purpose | Primary validation |
+|---|---|---|
+| `bcir/` | Dependency-free oracle: semantic graph, verifier, K_BCIR, GEM, frontends, codecs, telemetry, model/training references, and lowering drivers | `python -m bcir.tests.run_all` |
+| `mlir/` | Normative dialect families, verifier and optimizer passes, IRDL projection, examples, and pass fixtures | `tools/wsl/check_passes.sh`, `tools/irdl/check_corpus.sh` |
+| `runtime/c/` | Freestanding runtime plus hosted C compiler/model tools and direct RuntimeChannel bindings | `tools/c/check_runtime.sh` and sanitizer/fuzz gates |
+| `runtime/cpp/` | Narrow C++ orchestration boundary; it does not own legality, planning, or learned policy | `tools/cpp/check_handoff.sh` |
+| `channels/` | Channel/profile inputs and their documentation; modeled channels are labeled as such | oracle and C channel tests |
+| `tools/` | Build, validation, documentation, model-gate, performance, and hardware scripts | called by CI and local runbooks |
+| `llvm-training/` | Standalone LLVM/MLIR teaching and evaluation corpus; never a build dependency of BCIR | its own curriculum/autograder gates |
+| `docs/` | Normative references, current state, execution roadmaps, history, and scoped research | generated-status, link, and retired-path checks |
+| `.github/workflows/` | Required host, oracle, C, MLIR, training, and documentation CI jobs | GitHub Actions |
 
-Lane/opcode/claim definitions were duplicated in four places (C++ model, surface
-parser, `.ll` seed metadata, training docs) and had already drifted
-(`BcirClaimV2` metadata vs. C++ `BcirClaimV1`).
+The retired C++ `ir/` prototype is not part of the current tree. Its useful semantics
+were absorbed by `bcir/` and `mlir/`; its chronology is preserved in development
+history and git.
 
-## Top-level separation
+## 2. Oracle package (`bcir/`)
 
-- `ir/` **is** the IR.
-- `llvm-training/` is a separate training corpus (see `AGENTS.md`). The IR has no
-  build dependency on it.
-- `tools/`, `tests/`, `docs/`, `cmake/` are shared project infrastructure.
+| Package | Responsibility |
+|---|---|
+| `model/` | Registry-first resources, claims, phases, lane/domain/hazard types |
+| `verify/` | Executable R-law reference and plan/pack/lowering checks |
+| `kbcir/` | Cost vectors, min-plus/RCSP/(max,+) planning, certified learned organs, calibration, AD, quantization, model/training helpers |
+| `gem/` | Hydration, StreamPack construction, scheduling, overlap, execution, event/DMA/device contracts |
+| `frontends/` | ROP, MAP, and Python C-front oracle |
+| `etl/` | Text and binary event-to-claim transduction |
+| `abi/` | StreamPack and other byte-level host contracts |
+| `lower/` | Portable C, the single-claim elementwise LLVM AOT/JIT subset, WASM, stack-machine, library, SYCL, and model lowering helpers |
+| `codegen/` | Resident-toolchain object/assembly paths and target validation |
+| `tests/` | Explicit test registry and named quick, C-runtime, silicon-degrade, and thorough tiers |
 
-## The IR pipeline and section ownership
+Top-level modules such as `telemetry_frame.py`, `telemetry_export.py`,
+`signal_registry.py`, and `channels.py` own host-side protocol/reference behavior. They
+must remain consistent with the corresponding fixed-width C contracts where one exists.
 
-```
-bcir.surface(text) ─► bcir.core(typed graph) ─┬─► ir/irdl  (pure-IR dialect definition; no compile)
-                                               └─► ir/mlir  (compiled dialect + conversion) ─► mlir.llvm ─► llvm ir
-                                               ir/llvm     (textual emitter + ABI substrate)
-                                               ir/runtime  (GEM execution engine)
-```
+## 3. Law rail (`mlir/`)
 
-| Section      | Builds            | In default build?                  |
-|--------------|-------------------|------------------------------------|
-| `ir/surface` | `bcir-surface`    | yes                                |
-| `ir/core`    | `bcir-core`       | yes                                |
-| `ir/irdl`    | round-trip test   | tests only; skips without mlir-opt |
-| `ir/mlir`    | `bcir-mlir`       | no — `-DBCIR_ENABLE_MLIR=ON`       |
-| `ir/llvm`    | `bcir-llvm`       | yes                                |
-| `ir/runtime` | `gem-runtime`     | yes                                |
+| Path | Responsibility |
+|---|---|
+| `include/BCIR/*.td` | ODS operations, types, attributes, interfaces, and pass declarations |
+| `lib/` | Dialect registration, R1–R23 verification, K_BCIR/GEM passes, and partial conversions |
+| `tools/bcir-opt.cpp` | Registered command-line law/pipeline driver |
+| `test/` | Positive, negative-diagnostic, pass, assembly, and lowering fixtures |
+| `examples/` | Canonical readable modules and worked parity anchors |
+| `irdl/` | Structural portability projection for stock `mlir-opt`; it does not carry semantic R-laws |
 
-## IRDL vs MLIR vs LLVM — what each builds, and why they are separate
+`bcir-aot` is partial AOT preparation and may leave mixed BCIR/GEM/LLVM dialect IR.
+The Python LLVM path supports exactly one elementwise add/sub/mul compute claim and
+rejects additional executable claims. Neither path claims arbitrary-graph native code.
 
-### IRDL (`ir/irdl/`) — pure IR, no compilation
-- A declarative `*.irdl.mlir` definition loaded at runtime by
-  `mlir-opt --irdl-file=`. No TableGen/ODS, no C++, no lowering.
-- Owns the **structural contract**: types, ops, attributes, and the closed
-  enums, projected from `ir/core/include/bcir/bcir_ir.hpp`. Becomes the single
-  source of truth for structure, replacing the previous four-way duplication.
-- Encodes only structural constraints (typing, attribute presence, enum
-  membership, scalar ranges). Cross-op/semantic invariants stay in the C++
-  surface verifier.
+## 4. C and C++ runtime classes
 
-### MLIR (`ir/mlir/`) — compiled dialect + conversion
-- ODS/TableGen op definitions, generated C++ op classes, a registered verifier,
-  custom types/attributes, and conversion patterns to the LLVM dialect.
-- This **is** compilation; needs MLIR/LLVM dev libraries; opt-in via
-  `BCIR_ENABLE_MLIR` (OFF by default) so default CI needs no MLIR toolchain.
-- Implements the same dialect that `ir/irdl/` describes. Structure/validation
-  lives in `irdl/`; executable ops/verifier/lowering live in `mlir/`.
+[`C_MEMORY_DISCIPLINE.md`](languages/C_MEMORY_DISCIPLINE.md) defines three C classes:
 
-### LLVM (`ir/llvm/`) — legal IR emission
-- C++ textual LLVM emitter, ROP→LLVM lowering tables, and the ABI substrate.
-- Lowering target is legal LLVM only (`load/store/atomicrmw/cmpxchg/fence/call`);
-  atomics are never rewritten into load/op/store pseudo-atomics.
+- **Freestanding core:** no heap or libc dependency; caller-owned buffers, capacities,
+  fixed-width types, deterministic errors, and idempotent cleanup where applicable.
+- **Hosted compiler/model tools:** explicit ownership, checked growth, allocator
+  injection, complete init/destroy contracts, and fail-every-allocation tests.
+- **Driver adapters:** opaque generation-tagged handles and byte offsets across ABI or
+  process boundaries; never shared raw pointers.
 
-## How separation is enforced
+`runtime/cpp/` is an orchestration layer above those contracts. The ownership boundary
+is documented in [`CPP_HANDOFF_BOUNDARY.md`](languages/CPP_HANDOFF_BOUNDARY.md).
 
-- **Directory boundaries**: each section owns its sources, headers, and
-  `CMakeLists.txt`; cross-section use is via explicit `target_link_libraries`.
-- **Build options**: `BCIR_ENABLE_MLIR` (compiled MLIR, OFF) and
-  `BCIR_ENABLE_MLIR_TOOL_TESTS` (IRDL round-trip, ON but auto-skips without
-  `mlir-opt`) keep optional toolchains off the default critical path.
-- **No training coupling**: nothing under `ir/` references `llvm-training/`.
+## 5. Contract ownership
 
-## Migration notes (this reorg)
+| Contract | Normative prose | Executable/reference owners |
+|---|---|---|
+| BCIR semantics and R-laws | [`BCIR_LANGREF.md`](BCIR_LANGREF.md) | `bcir/model`, `bcir/verify`, `mlir/` |
+| Oracle ↔ law/twin agreement | [`PARITY.md`](PARITY.md) | differential tests and C-front parity gates |
+| StreamPack v1–v3 | [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md) | `bcir/abi/streampack_abi.py`, `runtime/c/bcir_streampack.h` |
+| BCIRQ8 v1 | [`BCIR_LANGREF.md`](BCIR_LANGREF.md#16-bcirq8-v1-decoder-artifact-contract) §16 | Python artifact reader/writer and portable C loader |
+| Telemetry frame and registry | [`TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md), [`SIGNAL_REGISTRY.md`](kernel/SIGNAL_REGISTRY.md) | Python codec/registry and fixed C frame codec |
+| RuntimeChannel and future UAPI | [`BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) | direct C hook table today; Linux/native adapters later |
+| Hosted allocation | [`C_MEMORY_DISCIPLINE.md`](languages/C_MEMORY_DISCIPLINE.md) | hosted allocator implementation and fault-injection tests |
 
-- `dialect/` → `ir/surface/`; header `bcir/dialect.hpp` → `bcir/surface.hpp`;
-  target `bcir-dialect` → `bcir-surface`. Public C++ symbols (`parse_dialect`,
-  `verify_rop`, `tokenize_dialect`, `dialect_component_banner`) were kept stable.
-- `runtime/src/*` split into `ir/core/` (builder), `ir/llvm/` (lowering/emit),
-  and `ir/runtime/` (engine); target `bcir-lowering` → `bcir-llvm`.
-- `include/bcir/*` headers moved next to their sections (logical include path
-  `bcir/<name>.hpp` preserved).
-- `docs_BCIR_LLVM_IR.md` → `docs/BCIR_LLVM_IR.md` (since consolidated into `docs/BCIR_MASTER_ROADMAP.md`).
-- **Removed**: the hand-written `runtime/llvm/*.ll` seed, its `validate_*.sh`
-  scripts, the `BCIR_Phase4_Assembler_and_Blob_Pipeline.md` doc, and the
-  corresponding CI steps. Rationale: basic, duplicated the canonical model, and
-  carried schema drift. The forward LLVM path is `ir/llvm/` + `ir/mlir/`.
+When prose, generated inventory, and implementation disagree, resolve them in this
+order: normative wire/language contract, executable parity tests, then descriptive
+roadmaps. Never “fix” a wire format by silently changing one implementation.
 
-## Build matrix (current — post-fold)
+## 6. Documentation taxonomy
 
-> Note: the section-ownership table and migration notes **above** describe the
-> earlier PR #153 restructure (the `ir/` C++ tree, `cmake`/`ctest`,
-> `BCIR_ENABLE_MLIR`). That tree has since been retired — see "One tree" below.
-> The current build/validate entry points are:
+The root of `docs/` is intentionally small and cross-cutting:
+
+| Root document | Role |
+|---|---|
+| `BCIR_LANGREF.md` | Normative language, laws, IR levels, and BCIRQ8 contract |
+| `BCIR_MASTER_ROADMAP.md` | Dependency-ordered portfolio execution plan only |
+| `REPO_CURRENT_STATE_AUDIT.md` | Dated, source-backed snapshot of what exists and does not |
+| `STATUS.md` | Generated static inventory; never hand-edit |
+| `PARITY.md` | Cross-rail correspondence contract |
+| `DEVELOPMENT_HISTORY.md` | Merged chronology and retired-roadmap closure ledger |
+| `ONBOARDING_DEEP_DIVE.md` | Guided orientation and reading order |
+| `VISION_ALIGNMENT_AUDIT.md` | Dated thesis-versus-evidence assessment |
+| `BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md` | Cross-cutting MC1–MC15 backend/HAL gap register |
+| `BCIR_NATIVE_OBJECT_GATE.md` | GO/STOP decision for any native instruction selector |
+| `RELEASE_NOTES_0.3b.md` | Unreleased draft; not a current-version declaration |
+
+Subdirectories have one clear subject:
+
+- `docs/kernel/` — drivers, kernel, StreamPack, RuntimeChannel, telemetry, signals,
+  hardware validation, heterogeneous channels, and SYCL interoperability.
+- `docs/machine-learning/` — ML/model architecture, training/inference, language
+  placement, third-party model provenance, and product-integration research.
+- `docs/languages/` — C-front usage, C memory discipline, C++ handoff, and future
+  language-frontend/backend plans.
+- `docs/research/` — comparative or feasibility studies whose accepted decisions are
+  linked from canonical roadmaps.
+
+Research files do not become normative by location. Once a study is resolved, migrate
+its decision/open work to the owning contract or roadmap and retain only useful
+historical evidence.
+
+## 7. Build and validation entry points
 
 ```bash
-# bcir/ -- the oracle (no third-party deps; CI jobs oracle / c-runtime / llvm-training, in parallel):
-python3 -m bcir.tests.run_all
+# Fast dependency-free oracle tier
+python -m bcir.tests.run_all --tier quick -j 2
 
-# mlir/ -- the dialect law (needs libmlir-NN-dev + llvm-NN-dev; CI job mlir-rail-validate):
-bash tools/wsl/tblgen_check.sh        # ODS generators
-bash tools/wsl/build_mlir.sh          # build bcir-opt (LangRef M3)
-bash tools/wsl/check_ods_examples.sh  # pretty ODS corpus via bcir-opt
-bash tools/irdl/check_corpus.sh       # IRDL projection on stock mlir-opt
+# Full local oracle/toolchain tier, with bounded concurrency
+python -m bcir.tests.run_all --tier thorough -j 2
+
+# Production C and C++ boundaries
+bash tools/c/check_runtime.sh
+bash tools/cpp/check_handoff.sh
+
+# MLIR/IRDL rails when the coherent LLVM toolset is installed
+bash tools/wsl/check_passes.sh
+bash tools/irdl/check_corpus.sh
+
+# Documentation governance
+python tools/docs/gen_status.py --check
+python tools/docs/check_links.py
+git diff --check
 ```
 
-## One tree (the `ir/` fold is complete)
+Tool-dependent cases report explicit skips when the required compiler, LLVM toolset,
+hardware counter, or architecture is unavailable. CI supplies the required host matrix;
+local development must stay bounded and must not emulate unsupported hardware in an
+uncontrolled loop.
 
-The repo is now a **single BCIR realization**:
+## 8. Change-placement rules
 
-- **`bcir/` (oracle) + `mlir/` (law).** A runnable Python conformance oracle that
-  realizes the full `K_BCIR(G|H,Θ)` optimizer, GEM hydration + execution, LLVM
-  single-claim elementwise LLVM AOT/JIT subset, the R1–R23 verifier reference, the M5 event
-  transduction layer, the ROP/MAP front-ends, and the CT1–CT5 tracks — paired with
-  the MLIR dialect family as the law: the TableGen/ODS ops, the **compiled
-  `bcir-opt`** that parses/verifies the pretty corpus, and the IRDL portability
-  projection (`docs/BCIR_LANGREF.md`, `docs/PARITY.md`).
-
-**The legacy C++ skeleton (`ir/`) has been retired.** The earlier
-surface-parser/verifier + textual-emitter + threaded-runtime milestone is gone:
-its semantics are subsumed by `bcir/` (parsing → `bcir/etl` + `bcir/frontends`;
-the typed model → `bcir/model` + `bcir/kbcir`; lowering → `bcir/lower`; the
-deterministic GEM executor → `bcir/gem/execute.py`) and the real C++ dialect is
-now `mlir/` (`bcir-opt`). Removed in the fold: `ir/`, the C++ CLI
-(`tools/bcir-tools`) + `tools/bcir-as`, the C++ `tests/` (ctest), the
-`cmake/BCIRConfig` package export, and the top-level `CMakeLists.txt`.
-
-**Fold history (done):**
-1. Declared the canonical stack; marked `ir/` legacy.
-2. Ported the deterministic phase-sliced GEM executor into `bcir/gem/execute.py`
-   with parity tests.
-3. Built the compiled `bcir-opt` (LangRef M3) so the pretty ODS corpus validates,
-   then retired `ir/surface` + `ir/llvm` (and the rest of `ir/`).
-4. Collapsed to a single tree; rewired CI to `oracle-and-training` +
-   `mlir-rail-validate`.
-
-The two trees stay independently buildable: the oracle needs only `python3`; the
-law needs `libmlir-NN-dev` + `llvm-NN-dev` (`tools/wsl/build_mlir.sh`).
-
-## Documentation inventory (`docs/`)
-
-The normative + steering documents that govern the single tree above:
-
-| Doc | Purpose |
-|-----|---------|
-| `BCIR_LANGREF.md` | Normative language reference: levels, verifier laws (R1–R23), the K_BCIR equation. |
-| `BCIR_MASTER_ROADMAP.md` | The single master roadmap: positioning, current state, the MLIR/C/C++ placement map, and the next build steps (incl. §5.14, the MLIR-catch-up + freestanding-C23-driver arc and the emerging timing/lifetime laws R19/R20/R21). |
-| `BCIR_ML_AI_INTEGRATION_ROADMAP.md` | The ML/AI integration companion roadmap: expands the master roadmap's Phase M/L into one dependency-ordered program (C inference substrate → tensor ops as claims → data/memory organs → language reach → ML-guided hardware → higher cognition). |
-| `OPENAI_BCIR_INTEGRATION_RESEARCH.md` | OpenAI/ChatGPT integration research and proposal versions: maps Responses API, Agents SDK, Apps SDK, MCP, Codex-style loops, and BCIR oracle/law/training boundaries. |
-| `PARITY.md` | The Python (`bcir/`) ↔ MLIR (`mlir/`) lockstep contract. |
-| `STATUS.md` | Generated static inventory (tests, ODS ops, passes, runtime files, verifier-law fixture tags), not an execution report. Do **not** hand-edit — regenerate via `tools/docs/gen_status.py`. |
-| `CFRONT_GUIDE.md` | The `bcir-cfront` C-frontend user guide: CLI, diagnostics, target ABI matrix, the fallback contract, and the supported subset + limits. |
-| `BCIR_Repo_Structure.md` | This document — how the repo is organized and why. |
+1. Put semantic behavior in the oracle first, then implement the appropriate law or
+   production twin and add a differential regression.
+2. Put stable byte layouts in their ABI document and both language implementations in
+   the same change.
+3. Put historical landing detail in development history, not the master roadmap.
+4. Put generated counts only in `STATUS.md` through `tools/docs/gen_status.py`.
+5. Put platform adapters around transport-neutral contracts; do not introduce Linux
+   IPC or hosted allocation into the freestanding core.
+6. Put future language roadmaps under `docs/languages/`, driver/kernel contracts under
+   `docs/kernel/`, and unresolved comparative studies under `docs/research/`.

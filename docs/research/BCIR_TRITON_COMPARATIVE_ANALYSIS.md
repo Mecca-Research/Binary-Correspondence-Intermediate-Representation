@@ -13,7 +13,8 @@ claims put through **adversarial verification** (each skeptic tried to *refute* 
 independent research). Every BCIR-side statement is `file:line`-anchored; Triton-side claims are
 anchored to the paper, the public repo, or published follow-on papers (ASPLOS'26 Linear Layouts,
 the Tawa warp-spec paper, IBM's "Anatomy of a Triton Attention Kernel"). This doc sits in the
-comparison family with `CLANG_COMPARISON.md` and `OPENAI_BCIR_INTEGRATION_RESEARCH.md`.
+comparison family with [`CLANG_COMPARISON.md`](CLANG_COMPARISON.md) and
+[`OPENAI_BCIR_INTEGRATION_RESEARCH.md`](../machine-learning/OPENAI_BCIR_INTEGRATION_RESEARCH.md).
 
 > **Two corrections the verification forced — they shape everything below.** (1) **Triton does
 > NOT hand-roll instruction selection.** It emits LLVM IR and delegates isel + register

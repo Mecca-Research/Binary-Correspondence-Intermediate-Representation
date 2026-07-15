@@ -1,9 +1,10 @@
 # `bcir/` — the executable conformance oracle
 
 A dependency-free, deterministic Python realization of BCIR + K_BCIR + GEM. It is
-the runnable reference for the MLIR law under [`../mlir/`](../mlir/) (see
-[`../docs/PARITY.md`](../docs/PARITY.md)) and demonstrates LangRef Milestones 5–7
-today, on a host with only `python3` and `clang`.
+the runnable reference for the MLIR law under [`../mlir/`](../mlir) (see
+[`../docs/PARITY.md`](../docs/PARITY.md)). The dependency-free quick tier needs only
+Python; compiler, LLVM/MLIR, model, and architecture paths are capability-gated and do
+not become supported merely because they skip on a host.
 
 ## Layout
 
@@ -19,6 +20,7 @@ gem/        GEM (BCIR-4): StreamPack hydration, deterministic phase executor, an
 etl/        M5 Event Transduction: events, FSM transducer, parser, binary decoder
 frontends/  CT3 front-ends: rop (declarative) + map (macro-assembly) -> claims
 lower/      BCIR-5: single-claim elementwise LLVM AOT/JIT subset / portable C23 kernels
+abi/        versioned StreamPack and artifact byte contracts
 telemetry.py CT4 "data DNA" schema + local sinks (null/list/file; no live remote transport)
 verify/     runnable LangRef verifier laws R1-R23
 silicon.py  real-signal probes: PMU + RAPL energy + on-die thermal + cpufreq (honest)
@@ -58,7 +60,7 @@ python -m bcir.kbcir.fuzz -n 4000                # fuzz the trust boundaries (ge
 python -m bcir.run vector_add --silicon
 
 # Tests (no pytest required; also works under `python -m pytest bcir/tests`):
-python -m bcir.tests.run_all
+python -m bcir.tests.run_all --tier quick -j 2
 ```
 
 ## The central equation, made runnable

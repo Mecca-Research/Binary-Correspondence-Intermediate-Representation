@@ -3,7 +3,7 @@
 > Research input for the BCIR telemetry/monitoring pipeline. Surveys industry telemetry
 > sources and standards across seven layers, maps each to BCIR's existing surfaces, and
 > scopes what to include. Related: [`HETEROGENEOUS_CHANNELS.md`](HETEROGENEOUS_CHANNELS.md)
-> (the channel signal-provider seam), [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md)
+> (the channel signal-provider seam), [`CPP_HANDOFF_BOUNDARY.md`](../languages/CPP_HANDOFF_BOUNDARY.md)
 > (the airlock shape this mirrors), [`SYCL_INTEROP.md`](SYCL_INTEROP.md).
 >
 > **The governing invariant first:** telemetry is a *graded L2/L3 signal*. It MAY inform plan
@@ -134,7 +134,7 @@ util saturation + counter-multiplex scaling).
 ```
 Internal component transport ≈ MCTP/PLDM tier (below the OS); external export ≈ Redfish/OTLP tier —
 mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 airlock shape in
-[`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md)).
+[`CPP_HANDOFF_BOUNDARY.md`](../languages/CPP_HANDOFF_BOUNDARY.md)).
 
 ## 6. Suggested build order (each a gated segment)
 - **T1** — a vendor-neutral **signal-provider registry** (PAPI-component model): one provider per

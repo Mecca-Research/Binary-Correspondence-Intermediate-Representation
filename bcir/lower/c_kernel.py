@@ -1991,7 +1991,7 @@ def optimize_spatial(module: Module, result: RealizationResult, h) -> SpatialPla
     emit device-controller code -- it produces the binding decision and the
     transport-avoided figure. On a non-PIM target every claim stays on the core (a
     clean no-op). Next-phase work (a real PIM target + emitter) is tracked in
-    docs/HARDWARE_VALIDATION.md."""
+    docs/kernel/HARDWARE_VALIDATION.md."""
     from ..gem.cim import cim_decision    # lazy: keep gem.cim off the simple emit path
     pim = is_pim_target(h)
     by_claim = result.by_claim()

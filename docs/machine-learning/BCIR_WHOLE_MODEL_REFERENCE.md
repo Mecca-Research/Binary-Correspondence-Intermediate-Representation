@@ -4,7 +4,7 @@
 trained TinyLlama checkpoint and tokenizer are verified, ingested, exported as BCIRQ8, loaded by
 a portable standalone C decoder, and compared with the Python Q8 oracle in an always-on parity
 gate. The source checkpoint, tokenizer, and generated weights remain cache-only; CI publishes
-only the deterministic parity report. See [`BCIRQ8_FORMAT.md`](BCIRQ8_FORMAT.md) and
+only the deterministic parity report. See [`BCIR_LANGREF.md` §16](../BCIR_LANGREF.md#16-bcirq8-v1-decoder-artifact-contract) and
 [`THIRD_PARTY_MODELS.md`](THIRD_PARTY_MODELS.md).
 
 This document began as the design note for importing the useful whole-model shape from

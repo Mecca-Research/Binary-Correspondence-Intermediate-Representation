@@ -2,12 +2,13 @@
 
 > **Status: design-first contract + a minimal, compilable, tested seam scaffold.**
 > This document defines the boundary precisely; the seam is exercised by a real,
-> standalone C++17 scaffold under [`runtime/cpp/`](../runtime/cpp) with a round-trip
-> smoke test gated by [`tools/cpp/check_handoff.sh`](../tools/cpp/check_handoff.sh)
-> (wired into [`tools/c/check_runtime.sh`](../tools/c/check_runtime.sh)). It addresses
-> Pillar 5d of [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md) and frames the
+> standalone C++17 scaffold under [`runtime/cpp/`](../../runtime/cpp) with a round-trip
+> smoke test gated by [`tools/cpp/check_handoff.sh`](../../tools/cpp/check_handoff.sh)
+> (wired into [`tools/c/check_runtime.sh`](../../tools/c/check_runtime.sh)). It addresses
+> Pillar 5d of [`VISION_ALIGNMENT_AUDIT.md`](../VISION_ALIGNMENT_AUDIT.md) and frames the
 > boundary in the L0–L3 / two-truth placement law of
-> [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §3.
+> [`BCIR_LANGREF.md`](../BCIR_LANGREF.md) §13 and the invariants in
+> [`BCIR_MASTER_ROADMAP.md`](../BCIR_MASTER_ROADMAP.md) §1.
 
 ## Honest depth (read this first)
 
@@ -35,7 +36,7 @@ BCIR's deterministic rail is **single-node by design**. Its whole value proposit
 the R1–R23 laws, the provenance digest, the byte-identical Python↔C parity, the
 two-truth quarantine — rests on a *statically known, bounded, deterministic* graph that
 freezes to a self-contained artifact (the StreamPack, BCIR's "WASM analog"; see
-[`BCIR_STREAMPACK_ABI.md`](BCIR_STREAMPACK_ABI.md)). Two whole classes of real ML work
+[`BCIR_STREAMPACK_ABI.md`](../kernel/BCIR_STREAMPACK_ABI.md)). Two whole classes of real ML work
 break that premise:
 
 1. **Dynamic graph topology** — nodes/edges created *at runtime*: an RL agent spawning
@@ -90,13 +91,13 @@ never computes a verdict and never alters a frozen artifact.
 
 The unit that crosses the boundary is the **frozen StreamPack** (or, equivalently, a
 serialized claim-graph manifest — the same shape the
-[`channel.json`](../bcir/channel_plugin.py) plugin seam uses to describe a backend). It
+[`channel.json`](../../bcir/channel_plugin.py) plugin seam uses to describe a backend). It
 is the natural hand-off because it is already **self-contained, serialized, CRC-sealed,
-and semantically verifiable** ([`BCIR_STREAMPACK_ABI.md`](BCIR_STREAMPACK_ABI.md)). The
+and semantically verifiable** ([`BCIR_STREAMPACK_ABI.md`](../kernel/BCIR_STREAMPACK_ABI.md)). The
 C/IR rail produces it; the C++ orchestrator consumes it.
 
 The C++ orchestrator is the **multi-node generalization of the existing
-[heterogeneous-channel](HETEROGENEOUS_CHANNELS.md) routing seam**: where `route_claim`
+[heterogeneous-channel](../kernel/HETEROGENEOUS_CHANNELS.md) routing seam**: where `route_claim`
 routes a claim to a *backend* on one node, the orchestrator routes/shards work across
 *nodes*, each node running the existing single-node C/IR rail.
 
@@ -130,7 +131,7 @@ decision never travels *down* into the artifact's bytes.
 After the C++ orchestrator decides placement, it **calls back into the C/IR single-node
 kernels per shard / per node** — the *re-entry*. In the scaffold this is
 `bcir_sp_for_each_segment` (the existing freestanding C decoder in
-[`bcir_runtime.c`](../runtime/c/bcir_runtime.c)); in a real distributed run each node
+[`bcir_runtime.c`](../../runtime/c/bcir_runtime.c)); in a real distributed run each node
 runs its own `SingleNodeOrchestrator` over its shard. The rail stays the authority; C++ is
 only the dispatcher.
 
@@ -209,15 +210,15 @@ the complexity lives where it belongs.
 
 | File | Role |
 |---|---|
-| [`runtime/cpp/bcir_orchestrator.hpp`](../runtime/cpp/bcir_orchestrator.hpp) | The seam: the `Orchestrator` abstract base, the `Shard`/`DispatchResult`/`HandoffError` data contract, the single-node REAL backend + the two STUB backends, and the factory. |
-| [`runtime/cpp/bcir_orchestrator.cpp`](../runtime/cpp/bcir_orchestrator.cpp) | Implementation. `SingleNodeOrchestrator` re-enters the existing C decoder; the stubs document a real impl and throw. |
-| [`runtime/cpp/test_orchestrator.cpp`](../runtime/cpp/test_orchestrator.cpp) | The round-trip smoke driver: asserts the seam's dispatch order == the **direct** C/IR decode of the same artifact (round-trip identity), plus the admit/shard/stub contract surfaces. |
-| [`tools/cpp/check_handoff.sh`](../tools/cpp/check_handoff.sh) | Standalone build+run gate: compiles the C++17 scaffold (linked only against the freestanding C runtime), produces a real StreamPack via the existing C/IR path, round-trips it, and checks a corrupted artifact is rejected at the boundary. Wired into [`tools/c/check_runtime.sh`](../tools/c/check_runtime.sh). |
+| [`runtime/cpp/bcir_orchestrator.hpp`](../../runtime/cpp/bcir_orchestrator.hpp) | The seam: the `Orchestrator` abstract base, the `Shard`/`DispatchResult`/`HandoffError` data contract, the single-node REAL backend + the two STUB backends, and the factory. |
+| [`runtime/cpp/bcir_orchestrator.cpp`](../../runtime/cpp/bcir_orchestrator.cpp) | Implementation. `SingleNodeOrchestrator` re-enters the existing C decoder; the stubs document a real impl and throw. |
+| [`runtime/cpp/test_orchestrator.cpp`](../../runtime/cpp/test_orchestrator.cpp) | The round-trip smoke driver: asserts the seam's dispatch order == the **direct** C/IR decode of the same artifact (round-trip identity), plus the admit/shard/stub contract surfaces. |
+| [`tools/cpp/check_handoff.sh`](../../tools/cpp/check_handoff.sh) | Standalone build+run gate: compiles the C++17 scaffold (linked only against the freestanding C runtime), produces a real StreamPack via the existing C/IR path, round-trips it, and checks a corrupted artifact is rejected at the boundary. Wired into [`tools/c/check_runtime.sh`](../../tools/c/check_runtime.sh). |
 
 The scaffold is **plain C++17, standalone**: it links only against
-[`runtime/c/bcir_runtime.c`](../runtime/c/bcir_runtime.c) (the existing freestanding
+[`runtime/c/bcir_runtime.c`](../../runtime/c/bcir_runtime.c) (the existing freestanding
 decoder) and is **not** part of the MLIR/LLVM cmake. The MLIR/C++ law rail under
-[`mlir/`](../mlir) is untouched.
+[`mlir/`](../../mlir) is untouched.
 
 ---
 

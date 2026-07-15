@@ -44,7 +44,7 @@ fine-tuning corpus and should not be treated as training data for model updates.
   and the MLIR rows in [`RECIPES.md`](RECIPES.md) when the source
   representation starts as MLIR or should remain structured before LLVM
   lowering.
-- Use [`12-backend-jit/`](12-backend-jit/) when target lowering, ORC/LLJIT,
+- Use [`12-backend-jit/`](12-backend-jit) when target lowering, ORC/LLJIT,
   MC emission, relocations, or TableGen diagnostics are relevant.
 - Use [`15-binary-analysis/README.md`](15-binary-analysis/README.md) when
   dynamic traces, side channels, optimized binaries, or BCSA evidence are

@@ -7,10 +7,11 @@
 > (ASM1–ASM3b, `bcir.asm`/`bcir.portio`/`bcir.volatile_*`/`bcir.creg_*`/`bcir.msr_*`).
 > The normative status lives in [`BCIR_LANGREF.md`](BCIR_LANGREF.md); overall portfolio
 > planning lives in [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md), while
-> [`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md) is the canonical
+> [`BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) is the canonical
 > execution sequence for driver/kernel work; live counts are in generated
 > [`STATUS.md`](STATUS.md); this file is the honest
-> snapshot. The dated changelog that used to live here is summarized in
+> snapshot for package version `0.2.0`. Documentation ownership and folder placement
+> are defined by [`BCIR_Repo_Structure.md`](BCIR_Repo_Structure.md). The dated changelog that used to live here is summarized in
 > [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md) (full detail in git history).
 > Earlier revisions described the retired C++ `ir/` skeleton (removed 2026-06-07) and
 > the pre-Phase-13 tree (audited 2026-06-12).
@@ -62,7 +63,7 @@
   Clang equivalence) over the shared `cfront_*.c` fixture corpus, with
   libFuzzer+ASan/UBSan on every trust boundary. `runtime/cpp/` is the small C↔C++
   hand-off seam (single-node orchestrator real; dynamic/distributed backends honest
-  stubs — [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md)).
+  stubs — [`CPP_HANDOFF_BOUNDARY.md`](languages/CPP_HANDOFF_BOUNDARY.md)).
 
 ## Confirmed strengths
 
@@ -89,7 +90,7 @@
    corpus, pass tests), and docs governance (generated status drift, links,
    retired paths, import quarantine).
 7. **First measured wins on real silicon.** The evidence rail (`bcir.bench`,
-   [`CLANG_COMPARISON.md`](CLANG_COMPARISON.md)) shows gather-avoidance ~6–7× (up to
+   [`CLANG_COMPARISON.md`](research/CLANG_COMPARISON.md)) shows gather-avoidance ~6–7× (up to
    ~16× on reductions), strided ~1.3–1.4×, a match band on dense kernels, and budget
    feasibility as a **correctness** win (the feasible vec8 under a thermal cap where
    naive vec16 violates it). The library façade (`bcir.api`) packages a plan as a
@@ -104,20 +105,29 @@
    validate before displaying exact codec-derived record spans, and `bcir-registry`
    show/getp/setp advances `data_gen` so stale packs fail R11. Both remain in-process
    baselines, not hardware tools.
+10. **Hosted C allocation has a testable discipline**: allocation is injected through a
+    shared interface; size arithmetic and growth are checked; failure preserves the
+    original object; outputs initialize safely; destruction is idempotent; and tests fail
+    each allocation point in turn. Freestanding code remains heap-free and adapters use
+    handles/offsets rather than cross-boundary pointers.
+11. **A real-model composition gate exists without vendoring model assets**: immutable
+    TinyLlama checkpoint/tokenizer pins feed BCIRQ8 v1, Python Q8 and standalone-C greedy
+    inference, exact generated-ID parity, and a deterministic report. The checkpoint,
+    tokenizer, generated Q8 artifact, logits, and executable remain cache/build products.
 
 ## Confirmed limitations
 
 1. **No BCIR-native instruction selection** (by design — emit C/LLVM and reuse the
    resident backend; the explicit decision gate is
    [`BCIR_NATIVE_OBJECT_GATE.md`](BCIR_NATIVE_OBJECT_GATE.md), the feasibility study
-   [`BCIR_NATIVE_BACKEND_FEASIBILITY.md`](BCIR_NATIVE_BACKEND_FEASIBILITY.md)).
+   [`BCIR_NATIVE_BACKEND_FEASIBILITY.md`](research/BCIR_NATIVE_BACKEND_FEASIBILITY.md)).
    The portable C23 kernel backend, LLVM/llc/lli/WASM, and the resident-compiler
    object path (ELF-verified for x86-64/aarch64/eBPF) are the machine-code paths.
-2. **The one genuinely deferred result is a *measured* bare-metal replan win.** The
+2. **A measured bare-metal replan win remains deferred.** The
    software path is closed and push-button (`tools/silicon/measure_replan.sh` prints a
    rig-ready verdict; CI exercises degrade mode); it lights up the moment a host with
    PMU + RAPL + a userspace cpufreq governor runs the runbook
-   ([`HARDWARE_VALIDATION.md`](HARDWARE_VALIDATION.md)).
+   ([`HARDWARE_VALIDATION.md`](kernel/HARDWARE_VALIDATION.md)).
 3. **Modeled vs measured is explicit.** The `fpga_systolic`/`nvme_stream`/`hbm_pim`
    channels are modeled (no resident driver yet — Phase D); CIM/PIM offload and DVFS
    energy numbers are models, not measured Joules; DVFS actuation reports exactly why
@@ -127,7 +137,7 @@
    on a rig; the quarantine keeps it off the deterministic path until measured.
 5. The C compiler rail is a **subset** compiler: unsupported constructs route honestly
    to `--fallback` (LLVM); the road to a hosted C23 replacement is the ordinary
-   hard-compiler work (master roadmap §5.9–§5.10). `_Decimal*` is blocked on a
+   hard-compiler work ([`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §4.1). `_Decimal*` is blocked on a
    reference compiler that can compile it. `runtime/cpp/` dynamic-graph and
    distributed orchestration are stubs pending multi-node hardware.
 6. **There is no resident UART driver or production driver telemetry ABI.** The UART register
@@ -147,7 +157,7 @@
 ## Recommended next milestones
 
 1. **Pre-driver telemetry ABI v0**
-   ([`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md) §4.3/§7.1) — generate
+   ([`BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) §4.3/§7.1) — generate
    the fixed-width Python/C signal table and ID-range policy, then differentially gate a
    source/session/generation/clock-aware envelope and live SPSC ring. Revise these
    experimental contracts from traces; do not alter frozen BTLM/ring v1 bytes.

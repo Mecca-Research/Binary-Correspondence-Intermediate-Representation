@@ -29,7 +29,7 @@ is not evidence by itself.
 
 ## Why the fixtures use assembly
 
-The fixtures in [`fixtures/`](fixtures/) are tiny x86-64 assembly source programs.
+The fixtures in [`fixtures/`](fixtures) are tiny x86-64 assembly source programs.
 That choice keeps the lesson focused on evidence collection rather than on
 compiler optimization drift: a C compiler is free to select different, equally
 valid instructions across releases. Clang's integrated assembler builds a fixed

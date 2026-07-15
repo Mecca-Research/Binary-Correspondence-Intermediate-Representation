@@ -534,7 +534,7 @@ def BCIR_InterruptTrampolineOp : BCIR_Op<"interrupt_trampoline", [Symbol]> {
 def BCIR_CRegReadOp : BCIR_Op<"creg_read"> {
   let summary = "Read an x86-64 control register (boot/CPU-state asm edge, D1.3)";
   // A control-register read (CR0/CR2/CR3/CR4/CR8) is a TRUSTED OPAQUE EFFECT EDGE -- there is no C
-  // value-semantics for it, so it is the irreducible-assembly tier (BCIR_DRIVER_KERNEL_ROADMAP.md Part
+  // value-semantics for it, so it is the irreducible-assembly tier (docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md Part
   // II Tier 1), like `bcir.asm`/`bcir.portio`. Unlike those two it has NO cfront dual-rail twin (the
   // cfront rail expresses CR access only as a raw `c.asm` blob), so the template is authored DIRECTLY
   // in LLVM-IR inline-asm syntax (`$0` operand, single-`%` register) -- empirically the exact form
@@ -568,7 +568,7 @@ def BCIR_CRegWriteOp : BCIR_Op<"creg_write"> {
 def BCIR_MsrReadOp : BCIR_Op<"msr_read"> {
   let summary = "Read an x86-64 model-specific register (boot/CPU-state asm edge, D1.4)";
   // A model-specific-register read (`rdmsr`) is a TRUSTED OPAQUE EFFECT EDGE in the same Tier-1 family
-  // as `bcir.creg_read` (BCIR_DRIVER_KERNEL_ROADMAP.md Part II Tier 1): no C value-semantics, no cfront
+  // as `bcir.creg_read` (docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md Part II Tier 1): no C value-semantics, no cfront
   // dual-rail twin (the cfront rail expresses MSR access only as a raw `c.asm` blob), so the template is
   // authored DIRECTLY in LLVM-IR inline-asm syntax. Unlike `creg_read` the register is NOT an enum but a
   // RUNTIME index (`rdmsr` reads the MSR numbered by ECX), so the op takes a 32-bit index operand. x86-only.

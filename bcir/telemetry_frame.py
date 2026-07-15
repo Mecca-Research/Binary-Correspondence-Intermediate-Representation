@@ -7,7 +7,7 @@ codec; the C twin is `runtime/c/bcir_telemetry_frame.{c,h}`, and a byte-identica
 differential test (`bcir/tests/test_telemetry_frame.py`) pins the two together --
 mirroring the StreamPack discipline (`bcir/abi/streampack_abi.py` <->
 `runtime/c/bcir_runtime.c`). The frozen frame ABI is documented in
-``docs/TELEMETRY_FRAME_ABI.md``.
+``docs/kernel/TELEMETRY_FRAME_ABI.md``.
 
 FROZEN FRAME ABI (v1, little-endian throughout):
 

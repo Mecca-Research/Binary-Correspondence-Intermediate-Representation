@@ -66,7 +66,7 @@ serialized views.
 - [`../../bcir/lower/llvm.py`](../../bcir/lower/llvm.py) and
   [`../../bcir/lower/jit.py`](../../bcir/lower/jit.py) — current LLVM AOT/JIT
   lowering boundary.
-- [`../../mlir/include/BCIR/`](../../mlir/include/BCIR/) and
+- [`../../mlir/include/BCIR/`](../../mlir/include/BCIR) and
   [`../../mlir/lib/BCIRPasses.cpp`](../../mlir/lib/BCIRPasses.cpp) — compiled
   dialect law and lowering/verification passes.
 - [`../../docs/PARITY.md`](../../docs/PARITY.md) — agreement required between

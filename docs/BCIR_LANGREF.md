@@ -1,8 +1,11 @@
-# BCIR Language Reference — v0.1 (normative)
+# BCIR Language Reference — v0.2.0 (normative)
 
 BCIR is the IR *law*; MLIR is the forge used to express, verify, transform, and
 lower that law during bootstrap; LLVM/Clang are backends and interoperability
 targets, **not** the conceptual center.
+
+This revision describes package version `0.2.0`. The `0.3b` release notes are an
+unreleased draft and do not change this document's version or compatibility claims.
 
 > **Source-of-truth rule.** BCIR semantics live in this document and in the
 > dialect definitions under `mlir/`. The Python package under `bcir/` is the
@@ -125,8 +128,9 @@ hard score, with equality at `T = 0`) is a verifier obligation under R9
   the dormant semantic artifact. A pack retains provenance and generation tags
   and is rehydrated (patch/repack/replan) on mismatch. Scheduling is
   duration-aware (`bcir.gem.schedule`): EFT waves with locality affinity and the
-  bandwidth knee, or the `!bcir.token` DAG (pipelined phases, ABI v2
-  double-buffer contracts).
+  bandwidth knee, or the `!bcir.token` DAG. StreamPack v1 is frozen; v2 adds
+  pipelining/double-buffer records and v3 adds segment dispatch/channel metadata under the
+  append-only rules in [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md).
 
 ### The naked-pointer policy (normative, §4)
 
@@ -145,14 +149,15 @@ dereference lowers to a load/store claim carrying a `bounds` strength. The polic
 - **`malloc`/`free` → optional R21 lifetime diagnostics.** Allocation/free events are
   stamped so R21 (§10) surfaces use-after-free / double-free — advisory by default,
   promotable to a fallback/reject verdict (`--r21`,
-  [`CFRONT_GUIDE.md`](CFRONT_GUIDE.md)).
+  [`CFRONT_GUIDE.md`](languages/CFRONT_GUIDE.md)).
 - **No silent proof of unknown extents.** BCIR never fabricates a bound it cannot
   recover; the unprovable keeps the `--fallback`/quarantine contract.
 
-Both rails enforce this identically (oracle `lower.py::_access_bounds`/`_bind_extent`,
+Both C-front rails enforce this identically (oracle `lower.py::_access_bounds`/`_bind_extent`,
 twin `bcir_cfront.c`; the bounds decision is part of the R13 digest, so a one-rail split
-is a hard parity failure). The engineering trail is
-[`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5.12.
+is a hard parity failure). The supported surface and ownership discipline are
+[`CFRONT_GUIDE.md`](languages/CFRONT_GUIDE.md) and
+[`C_MEMORY_DISCIPLINE.md`](languages/C_MEMORY_DISCIPLINE.md).
 
 ## 10. Verifier laws (R1–R23)
 
@@ -201,7 +206,7 @@ it), now carried on the dialect as the `#bcir.timing` / `#bcir.lifetime` attribu
   synchronized (the consumer declares `sync_type='mixed'` or a barriered hazard),
   else it is an unguarded crossing (R20).
 - **R21 (pointer-lifetime legality: use-after-free / double-free)** — over the
-  optional `#bcir.lifetime` annotation (`model.graph.Lifetime`, §5.12): walking the
+  optional `#bcir.lifetime` annotation (`model.graph.Lifetime`, this §10): walking the
   claim order against the freed set, a read of a freed-and-not-reallocated resource
   is a use-after-free, a `free` of an already-freed resource is a double-free, and a
   write (reassignment / `alloc`) re-validates.
@@ -280,11 +285,11 @@ generated status ([`STATUS.md`](STATUS.md)) now reports the first-class set as
 policy — `advisory` (default) · `fallback` (route the unit to the LLVM backend,
 exit 2) · `reject` (a hard verify error, exit 1) — so a detected use-after-free /
 double-free can gate the production compile, with the two rails drawing the same
-exit code (the parity gate in `tools/c/check_runtime.sh`). The remaining §5.12 work
+exit code (the parity gate in `tools/c/check_runtime.sh`). Remaining pointer-safety work
 is the bounds-promotion of array parameters under a dominating-bound proof and the
 offline ML policy table.
 
-**Volatile & atomic ordering are structural (§5.14 Phase 2, first pair).** A
+**Volatile & atomic ordering are structural.** A
 volatile-qualified access is a first-class **`volatile` qualifier on the claim rail**
 (`Claim.volatile` / the MLIR `is_volatile` claim attr — distinct from
 `bcir.volatile_load/store`, the lowered integer-address MMIO accessors), not a
@@ -926,23 +931,171 @@ integrity) is checkable under R13 (`verify.verify_enriched`) — the analog of
 `verify_memory` for the enriched structure. `enrich_memory` lifts a frozen memory
 module into this operad: the deterministic fixpoint, made intelligent.
 
-## 16. Milestone map
+## 16. BCIRQ8 v1 decoder-artifact contract
 
-1. LangRef v0.1 — this document. ✔
-2. Declarative dialect definitions — `mlir/include/BCIR/*.td`. ✔ (tblgen-validated; compiled `bcir-opt` parses + verifies the pretty corpus on the latest LLVM/MLIR, 22)
-3. Verifier-first compiler. ✔ (the current MLIR law rail is **R1–R23**: the original module/plan/stream/lowering/provenance chain R1–R13; smart-lowering and accuracy R14–R17; call-graph integrity R18; timing/CDC/lifetime R19–R21; GEM shape/dtype seams R22–R23. `-bcir-verify` enforces the applicable set structurally with negative fixtures per law; the Python oracle and explicitly scoped C R1–R18 rail cover their documented surfaces.)
-4. Rewrite laws. ◑ (MLIR-native `-bcir-promote-lanes` (GGG→UX); the rest authored as `bcir.opt.*` IR + run in the oracle; the **composition** engine is an e-graph / equality saturation (`kbcir.egraph`) whose saturated extractions freeze into generation-tagged **memory modules** `a = Lim(Res(U))` (`kbcir.memory`, R13: `saturated ⇒ admissible`))
-5. K_BCIR planner — candidate-path/costvec/selected-path IR. ◑ (runnable in `bcir/`: the scalarized rail, the constrained RCSP/Pareto rail (`kbcir.rcsp`), and the (max,+) overlap price (`gem.overlap`); now MLIR-native too — `-bcir-select-realization` recomputes the min-plus `cost·weights` and reproduces the oracle's 7808 cool / 9472 under the thermal cap)
-6. GEM hydration — GraphPlan/LanePlan/StreamPack IR. ◑ (runnable in `bcir/`: hydration, duration-aware EFT/token scheduling (`gem.schedule`), pipelined v2 packs; the MLIR-native GEM pipeline passes `-bcir-classify-lanes / -batch / -schedule / -lower-to-llvm` mirror the oracle stages and are cross-checked against it)
-7. LLVM as first backend. ◑ (Python `lower.llvm` is the **single-claim elementwise LLVM AOT/JIT subset**: exactly one selected 2-read/1-write add/sub/mul claim, with arbitrary graphs rejected; MLIR `bcir-aot` is **partial AOT preparation** and may leave mixed BCIR/GEM/LLVM dialect IR; `-bcir-lower-to-llvm` checks the GEM StreamPack lowering contract (R12). The broader portable **C23 kernel backend** (`lower.c_kernel`) remains width-driven, `restrict`, bounds-safe, library-first, and R12-checked for resident toolchains.)
-8. Physics-anchored calibration + learning placement (§13). ✔ (microbench harness → frozen Q8 tables (`kbcir.microbench`); policy portfolio + replay gate (`kbcir.portfolio`); the L0 prohibition is normative; the calibration loop is **closed + certified** (`kbcir.calibloop`: measure → freeze → replan → a generation-tagged certified replan win, R13); certificates verified under R8/R9/R13)
-9. R13 policy provenance + the regret ledger. ✔ (`verify_provenance` / `-bcir-verify` R13; `kbcir.regret` — the boundary dashboard; the third-order loop is measured and certified, actuation human by policy)
+BCIRQ8 is the deterministic, weight-only signed-int8 persistence format for BCIR's
+reference Llama/SwiGLU decoder. It is a model artifact, not a second numerical oracle:
+reading it reconstructs exactly the per-group values produced by
+`bcir.kbcir.quantize.quantize_per_group`. Python owns the canonical writer/reader in
+`bcir.frontends.models.weights_io`; the portable hosted-C loader is
+`runtime/c/bcir_q8_model.{h,c}`. The standalone `bcir-llama` realization accepts
+verified token IDs; raw-text tokenization remains outside the C executable.
 
-Until the MLIR toolchain exists on this host, the oracle (`bcir/`, runnable via
-`python -m bcir.run`) demonstrates Milestones 5–7 in miniature and is the
-conformance reference for the dialects.
+### 16.1 Scalar encoding and file invariants
 
-## 17. Thesis
+- All integers and IEEE-754 binary64 fields are **little-endian**. Magic is the eight
+  bytes `BCIRQ8\0\0`; version is `1`; the endian marker is `0x01020304`.
+- Each weight code is signed int8 in the canonical symmetric range `[-127,127]`;
+  `-128` is invalid. Each contiguous group has one signed-int16 power-of-two exponent
+  `e`, currently constrained by both readers to `[-300,300]`. Element `i` reconstructs
+  as `ldexp(code[i], exponent[i/group_size])`.
+- `group_size` is in `[1,65535]`; the pinned real-model gate uses 32. BCIRQ8 v1 fixes
+  `bits=8`. Generic Q4 and other low-bit oracle experiments do **not** change this wire
+  format; they require a new, explicitly versioned artifact contract.
+- The header is 224 bytes and each directory entry is 48 bytes. The directory starts at
+  byte 224. The payload and every exponent/code span are eight-byte aligned; all
+  alignment padding and reserved fields are zero.
+- The file contains weights only. KV cache, RoPE inverse frequencies, activations, and
+  tokenizer text machinery are runtime state. Ingest validates the auxiliary RoPE
+  inverse-frequency tensor, then readers reconstruct it from `rope_base`.
+
+### 16.2 Fixed 224-byte header
+
+| Offset | Width | Field |
+|---:|---:|---|
+| 0 | 8 | magic `BCIRQ8\0\0` |
+| 8 | 2 | `version` (`1`) |
+| 10 | 2 | `header_size` (`224`) |
+| 12 | 4 | endian marker `0x01020304` |
+| 16 | 4 | flags; bit 0 means tied embedding/LM head; all other bits reserved |
+| 20 | 2 | `group_size` |
+| 22 | 1 | `bits` (`8`) |
+| 23 | 1 | reserved zero |
+| 24 | 24 | six `u32`: vocabulary, model width, query heads, KV heads, layers, FFN width |
+| 48 | 4 | context length (`u32`) |
+| 52 | 12 | BOS, EOS, and PAD token IDs (`i32`; `-1` may denote absent) |
+| 64 | 8 | RoPE base (`f64`, finite and positive) |
+| 72 | 8 | RMSNorm epsilon (`f64`, finite and positive) |
+| 80 | 4 | tensor count |
+| 84 | 4 | directory-entry size (`48`) |
+| 88 | 8 | directory offset (`224`) |
+| 96 | 8 | aligned payload offset |
+| 104 | 8 | exact file size |
+| 112 | 4 | CRC-32 of bytes `[directory_offset,file_size)` |
+| 116 | 4 | header CRC-32, computed with this field zero |
+| 120 | 32 | source checkpoint SHA-256 |
+| 152 | 32 | source config SHA-256 |
+| 184 | 32 | tokenizer SHA-256 |
+| 216 | 8 | reserved zero |
+
+Model geometry is valid only when all six dimensions are positive, `d_model` is
+divisible by `n_heads`, `n_heads` is divisible by `n_kv_heads`, and head width is even.
+The C loader additionally bounds the signed layer index representation.
+
+### 16.3 Fixed 48-byte tensor directory
+
+| Offset | Width | Field |
+|---:|---:|---|
+| 0 | 2 | tensor ID (`u16`) |
+| 2 | 2 | layer (`i16`; `-1` for global tensors) |
+| 4 | 1 | rank (`1` or `2`) |
+| 5 | 1 | flags (zero in v1) |
+| 6 | 2 | reserved zero |
+| 8 | 4 | dimension 0 |
+| 12 | 4 | dimension 1 (`1` for rank 1) |
+| 16 | 4 | element count |
+| 20 | 4 | group count, exactly `ceil(element_count/group_size)` |
+| 24 | 4 | tensor CRC-32 over exponent bytes followed by code bytes |
+| 28 | 4 | reserved zero |
+| 32 | 8 | aligned exponent-array offset |
+| 40 | 8 | aligned code-array offset |
+
+Readers require exact dimensions/counts, unique `(tensor_id,layer)` keys, bounded and
+non-overlapping spans, canonical CRCs, and this directory order:
+
+1. embedding (`id=1`, global);
+2. for each layer in ascending order: attention norm `10`, Q/K/V/O projections
+   `11/12/13/14`, FFN norm `15`, gate/up/down projections `16/17/18`;
+3. final norm (`100`, global);
+4. LM head (`101`, global) only when embeddings are untied.
+
+The exact tensor count is therefore `2 + 9*n_layers + (0 if tied else 1)`. Unknown,
+missing, duplicated, reordered, overlapping, unaligned, truncated, non-canonical, or
+CRC-invalid data is rejected before a decoder object is constructed.
+
+### 16.4 Interfaces, ownership, and reproducibility gate
+
+```python
+write_q8_decoder(path, spec, weights, group_size=32,
+                 source_hashes=hashes, tokenizer_ids=ids)
+spec, weights, metadata = read_q8_decoder(path)
+```
+
+```c
+void bcir_q8_model_init(bcir_q8_model *);
+int bcir_q8_model_load(const char *, bcir_q8_model *, char *, size_t);
+int bcir_q8_model_load_with_allocator(const char *, bcir_q8_model *,
+                                      char *, size_t,
+                                      const bcir_host_allocator *);
+void bcir_q8_model_free(bcir_q8_model *);
+int bcir_llama_generate_greedy(const bcir_q8_model *, const int32_t *, size_t,
+                               size_t, int32_t *, double *);
+```
+
+The Python writer uses a same-directory temporary file, flushes and `fsync`s it, and
+atomically replaces the destination. Equal inputs produce byte-identical artifacts. The C
+loader zero-initializes outputs on reported failure, supports allocator injection, and has
+an idempotent destroy contract for initialized/owned models.
+
+`python tools/models/run_real_model_gate.py` is the always-on composition gate; `--offline`
+requires an already verified cache. It publishes only
+`build/model-gate/parity-report.json`. Checkpoints, tokenizers, logits, executables, and
+derived BCIRQ8 weights remain local cache/build products and must not be committed. Model
+provenance and license pins live in
+[`THIRD_PARTY_MODELS.md`](machine-learning/THIRD_PARTY_MODELS.md).
+
+## 17. Conformance profiles and external-contract boundary
+
+This reference defines semantics; an implementation must name the profile it supports
+and reject work outside it. The current profiles are:
+
+- **MLIR law profile:** ODS/TableGen dialects plus `-bcir-verify` R1–R23 and the
+  documented optimizer/GEM passes. A successful parse is not a lowering guarantee.
+- **Python oracle profile:** executable semantic, planning, GEM, model, and codec
+  reference. It is the differential oracle, not an alternative normative syntax.
+- **C-front profile:** the driver-oriented C subset documented by
+  [`CFRONT_GUIDE.md`](languages/CFRONT_GUIDE.md), with the explicitly scoped verifier
+  surface and route-to-resident-compiler fallback. It must not claim complete ISO C23.
+- **LLVM AOT/JIT profile:** exactly one selected, two-read/one-write elementwise
+  add/sub/mul claim on the Python path. Additional executable claims are a hard error.
+  MLIR `bcir-aot` is partial preparation and may leave mixed BCIR/GEM/LLVM operations.
+- **x86 ordinary-entry profile:** long-mode C handoff, descriptor/segment operations,
+  and the accepted ordinary interrupt/trap vectors described in §11. It excludes reset
+  transition, NMI/IST/paranoid entry, and unmodeled feature policy.
+- **BCIRQ8 decoder-artifact profile:** the complete v1 contract in §16, including
+  canonical order, CRC/bounds checks, provenance hashes, and tied/untied heads.
+
+The following versioned contracts are adjacent to BCIR semantics but have dedicated
+normative documents because their byte/lifecycle evolution is independent:
+
+- StreamPack v1–v3: [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md);
+- BTLM telemetry frame and signal meaning:
+  [`TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md) and
+  [`SIGNAL_REGISTRY.md`](kernel/SIGNAL_REGISTRY.md);
+- direct RuntimeChannel and future driver UAPI/IPC:
+  [`BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md).
+
+RuntimeChannel v1 is an in-process hook contract, not a stable Linux userspace ABI. No
+pointer may cross a future process/kernel boundary; adapters use fixed-width structures,
+byte offsets, generation-tagged handles, explicit ownership, cancellation, timeout,
+restart, and backpressure semantics.
+
+Conformance is evidenced only by the applicable executed gates. Generated
+[`STATUS.md`](STATUS.md) is an inventory and a clean skip records missing capability; it
+does not turn an unexecuted architecture, toolchain, transport, or device path into a
+supported one.
+
+## 18. Thesis
 
 > BCIR is a registry-first, phase-ordered, lane-typed, cost-governed
 > correspondence IR. K_BCIR is the IR-level optimization calculus that selects

@@ -1,6 +1,6 @@
-"""BCIR StreamPack binary ABI v1 (frozen) + v2 (append-only) -- reference codec.
+"""BCIR StreamPack binary ABI v1 (frozen) + v2/v3 (append-only) -- reference codec.
 
-Layout (little-endian; see docs/BCIR_STREAMPACK_ABI.md and
+Layout (little-endian; see docs/kernel/BCIR_STREAMPACK_ABI.md and
 runtime/c/bcir_streampack.h for the normative spec):
 
     Header (64 bytes, cache-line):
@@ -13,14 +13,15 @@ runtime/c/bcir_streampack.h for the normative spec):
       source_plan:str
       segments[n_segments], prefetches[n_prefetches], blocks[n_blocks], trace[n_trace]
       [v2] prefetch records append buffers:u8 (2 = double-buffer contract)
+      [v3] segment records append dispatch:u8 + channel:str
     Trailer:
       crc32:u32  (CRC-32 of every preceding byte)
 
 Strings are u16 length + UTF-8. Integer arrays are u16 count + elements. The
-format is frozen at v1 and evolves append-only: v2 only *appends* fields (header
+format is frozen at v1 and evolves append-only: v2/v3 only *append* fields (header
 pad + record tails), the encoder emits the lowest version that carries the pack
-(a pack with no pipeline/double-buffer contracts is byte-identical v1), and this
-reader accepts both. v1 readers reject newer versions, by contract.
+(a pack with neither v2 nor v3 features is byte-identical v1), and this
+reader accepts v1 through v3. v1 readers reject newer versions, by contract.
 """
 
 from __future__ import annotations
@@ -305,7 +306,7 @@ def decode(data: bytes) -> StreamPack:
         except ValueError as exc:
             raise AbiError(f"unknown segment lane code {raw_lane}") from exc
         width = r.u32(); _stride_k = r.u32(); opcode = r.s()
-        # Range gate: width must be a nonzero power of two (docs/BCIR_STREAMPACK_ABI.md, "BCIR_ERR_WIDTH").
+        # Range gate: width must be a nonzero power of two (docs/kernel/BCIR_STREAMPACK_ABI.md, "BCIR_ERR_WIDTH").
         # The C runtime (bcir_runtime.c seg_range_ok) rejects a non-power-of-two width at decode time; the
         # oracle enforces the same law so a CRC-valid but width-corrupt pack is never accepted here while
         # the deployed runtime refuses it (rail symmetry, like the Lane(...) and dispatch-code raises).

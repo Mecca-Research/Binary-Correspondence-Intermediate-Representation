@@ -9,7 +9,7 @@
 > static counts are removed.
 >
 > This is a roadmap, not an implementation claim. Repository-wide static inventories come
-> only from the generated [`STATUS.md`](STATUS.md). The current code boundary is stated in
+> only from the generated [`STATUS.md`](../STATUS.md). The current code boundary is stated in
 > [§2](#2-current-baseline).
 
 ## 1. Mission and product split
@@ -56,7 +56,7 @@ designed elsewhere but must not be described as operational.
 
 | Surface | State | Evidence / boundary |
 |---|---|---|
-| Python conformance oracle and MLIR law rail | **Landed** | The parity contract is documented in [`PARITY.md`](PARITY.md); current inventories are generated in [`STATUS.md`](STATUS.md) |
+| Python conformance oracle and MLIR law rail | **Landed** | The parity contract is documented in [`PARITY.md`](../PARITY.md); current inventories are generated in [`STATUS.md`](../STATUS.md) |
 | K_BCIR cost and target model | **Landed** | Twelve-dimensional integer `CostVector`, runtime-pressure `Theta`, `TargetProfile`, channel registry, exact optimization, and replay/provenance machinery |
 | Driver hardening laws | **Landed** | `DeviceManifest`, `StridedView`, explicit bank moves, distance pricing, `probe_agree`, R22 native-tile validation, and StreamPack generation checks |
 | Event and DMA IR substrate | **Landed** | EV1–EV3 event phases on both rails and descriptor generation from `StridedView` pairs |
@@ -77,7 +77,7 @@ designed elsewhere but must not be described as operational.
 | Native BCIR kernel and native IPC | **Missing** | Boot, memory, interrupt, process/service, and transport implementations have not landed |
 
 The detailed machine-code/HAL inventory remains in
-[`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md), and the current
+[`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](../BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md), and the current
 AMD strategy remains **interop, not vendor-stack replacement**, as specified in
 [`BCIR_AMD_AI_DRIVER_ROADMAP.md`](BCIR_AMD_AI_DRIVER_ROADMAP.md).
 
@@ -86,22 +86,22 @@ AMD strategy remains **interop, not vendor-stack replacement**, as specified in
 A status is “landed” only when all three exist: an implementation path, a deterministic positive
 test, and a deterministic refusal/negative test where malformed or unsupported input is possible.
 Documentation, a fixture name, a modeled channel, or a clean skip is not executable support. The
-generated [`STATUS.md`](STATUS.md) is a static inventory and does not prove a test was run.
+generated [`STATUS.md`](../STATUS.md) is a static inventory and does not prove a test was run.
 
 ### 2.2 Pre-driver hardening and former Part VII register
 
 | ID | Verified state | Repository evidence | Remaining boundary |
 |---|---|---|---|
 | **H1** | **Landed** | `.github/workflows/ci.yml` invokes `tools/c/sanitize_cfront.sh`; the script includes ASan/UBSan/LSan, trap-mode checks, and bounded seeded campaigns | Long Valgrind and extended fuzz campaigns stay scheduled/cloud work |
-| **H2** | **Landed** | [`test_area_b_redteam.py`](../bcir/tests/test_area_b_redteam.py) covers NaN/Inf, singular/ill-conditioned matrices, dimension edges, overflow, and honest library fallback for all seven Area-B families | New numerical libraries must add equivalent adversarial cases |
-| **H3** | **Landed** | H1's C-twin sweep includes fence/asm fixtures; [`test_cfront_asm_portio_redteam.py`](../bcir/tests/test_cfront_asm_portio_redteam.py) adds grammar/lowering refusals | Fuzzer duration remains bounded in PR CI |
+| **H2** | **Landed** | [`test_area_b_redteam.py`](../../bcir/tests/test_area_b_redteam.py) covers NaN/Inf, singular/ill-conditioned matrices, dimension edges, overflow, and honest library fallback for all seven Area-B families | New numerical libraries must add equivalent adversarial cases |
+| **H3** | **Landed** | H1's C-twin sweep includes fence/asm fixtures; [`test_cfront_asm_portio_redteam.py`](../../bcir/tests/test_cfront_asm_portio_redteam.py) adds grammar/lowering refusals | Fuzzer duration remains bounded in PR CI |
 | **H4** | **Landed** | `_convergence.py` gates transformer, recurrent, classical, and unsupervised demonstrations; gradient and fit-quality tests pin the supported training claims | A predict-only algorithm is not relabeled trainable without a fit gate |
-| **H5** | **Honesty landed; encoder deferred** | [`test_stackify_exec.py`](../bcir/tests/test_stackify_exec.py) differentially checks WASM/JVM/CIL mnemonics and uses real JVM/CLR execution when installed | A direct no-LLVM WASM binary encoder remains behind the native-backend G1/G2 gate |
-| **A1 / B1** | **Landed** | [`events.py`](../bcir/kbcir/events.py), [`test_event_phases.py`](../bcir/tests/test_event_phases.py), and MLIR EV fixtures cover asynchronous phases, arming, and interrupt-context ordering | Resident interrupt-controller and handler binding are absent |
-| **A2** | **Landed** | [`dma.py`](../bcir/kbcir/dma.py) and [`test_dma.py`](../bcir/tests/test_dma.py) derive and price descriptors from `StridedView` pairs | No DMA engine is programmed on hardware |
-| **A3** | **Landed** | [`paged_kv.py`](../bcir/frontends/models/paged_kv.py) and [`test_paged_kv.py`](../bcir/tests/test_paged_kv.py) cover page IDs, generations, admission, scheduling, and eviction claims | No accelerator-resident KV implementation is implied |
-| **A4** | **Landed subset** | [`test_cfront_link.py`](../bcir/tests/test_cfront_link.py) covers typed cross-TU edges, derived flags, linkable globals/static objects, and real linking | This does not make C-front a complete C23 frontend or replace the system linker |
-| **A5** | **Landed for current training/channel model** | [`test_train_graph.py`](../bcir/tests/test_train_graph.py) makes stream count a plan decision; channel-prior/calibration tests pin guided/exhaustive behavior | Per-device calibration still requires real device data |
+| **H5** | **Honesty landed; encoder deferred** | [`test_stackify_exec.py`](../../bcir/tests/test_stackify_exec.py) differentially checks WASM/JVM/CIL mnemonics and uses real JVM/CLR execution when installed | A direct no-LLVM WASM binary encoder remains behind the native-backend G1/G2 gate |
+| **A1 / B1** | **Landed** | [`events.py`](../../bcir/kbcir/events.py), [`test_event_phases.py`](../../bcir/tests/test_event_phases.py), and MLIR EV fixtures cover asynchronous phases, arming, and interrupt-context ordering | Resident interrupt-controller and handler binding are absent |
+| **A2** | **Landed** | [`dma.py`](../../bcir/kbcir/dma.py) and [`test_dma.py`](../../bcir/tests/test_dma.py) derive and price descriptors from `StridedView` pairs | No DMA engine is programmed on hardware |
+| **A3** | **Landed** | [`paged_kv.py`](../../bcir/frontends/models/paged_kv.py) and [`test_paged_kv.py`](../../bcir/tests/test_paged_kv.py) cover page IDs, generations, admission, scheduling, and eviction claims | No accelerator-resident KV implementation is implied |
+| **A4** | **Landed subset** | [`test_cfront_link.py`](../../bcir/tests/test_cfront_link.py) covers typed cross-TU edges, derived flags, linkable globals/static objects, and real linking | This does not make C-front a complete C23 frontend or replace the system linker |
+| **A5** | **Landed for current training/channel model** | [`test_train_graph.py`](../../bcir/tests/test_train_graph.py) makes stream count a plan decision; channel-prior/calibration tests pin guided/exhaustive behavior | Per-device calibration still requires real device data |
 | **B2** | **Standing tripwire** | `test_device_manifest.py::test_bank_typing_requires_explicit_moves_and_is_corpus_vacuous` pins the measured exemption corpus | Re-measure whenever a DMA-bearing driver changes the corpus |
 | **B3** | **Missing** | No hotplug or suspend/resume device-state generation exists | Add lifecycle generation and stale-handle tests with the first hot-pluggable driver |
 | **B4** | **Hardware-gated** | `probe_agree` checks declared capacities/tiles/ghost banks | Distance-matrix agreement needs measured multi-bank silicon |
@@ -115,7 +115,7 @@ The new MLIR surface closes only the ordinary x86-64 long-mode edge:
 | Ordered MMIO, port I/O, fences, CRs, and MSRs | **Landed** | Existing typed MLIR operations lower through LLVM and assemble-smoke tests |
 | `bcir.entry` | **Partial landed** | Masks interrupts, installs an aligned stack, clears RBP/DF, and tail-jumps without a compiler prologue. It assumes long mode; reset vector, A20, mode transition, paging, relocation, and firmware handoff are separate and missing |
 | Descriptor/task/segment state | **Landed edge** | `bcir.descriptor_load`, `bcir.task_register_load`, and `bcir.segment_reload` emit `lgdt`/`lidt`/`ltr` and a far-return CS reload |
-| Ordinary interrupt/trap trampoline | **Landed edge** | `bcir.interrupt_trampoline` handles ordinary vectors, normalizes the eight accepted hardware-error frames, disables interrupts before saving state, preserves the entry CPL in a private register, validates the return-frame CPL, calls C through the fixed 176-byte [`bcir_x86_interrupt.h`](../runtime/c/bcir_x86_interrupt.h) frame, and returns with `iretq`; object bytes are disassembled in `check_asm_lowering.sh` |
+| Ordinary interrupt/trap trampoline | **Landed edge** | `bcir.interrupt_trampoline` handles ordinary vectors, normalizes the eight accepted hardware-error frames, disables interrupts before saving state, preserves the entry CPL in a private register, validates the return-frame CPL, calls C through the fixed 176-byte [`bcir_x86_interrupt.h`](../../runtime/c/bcir_x86_interrupt.h) frame, and returns with `iretq`; object bytes are disassembled in `check_asm_lowering.sh` |
 | NMI/#DB/#DF/#MC/#VC and IST nesting | **Missing and unconditionally refused** | Vectors 1, 2, 8, 18, and 29 cannot use the ordinary op. A paranoid GS-state check, IST ownership/nesting, CR3/PTI transition, and NMI-state protocol need a distinct op and hardware/QEMU evidence |
 | Feature-specific entry policy | **Gap** | SIMD/FPU state is outside the integer frame; SMAP AC clearing, CET/IBT and shadow-stack handling, CR3/PTI, and entry-side speculation mitigations are absent. Handlers require `-mno-red-zone -mgeneral-regs-only`; enabled CPU features need separately verified policy before production IDT binding |
 
@@ -156,7 +156,7 @@ differential oracle against an independent standards implementation.
 The original MC1–MC9 register covered operator tools, registry assembly, planned control/memory,
 pack linking, RuntimeChannel, and POSIX binding. It did not enumerate the full backend toolchain.
 The additional contracts are therefore retained as **MC10–MC15**, detailed in
-[`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md):
+[`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](../BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md):
 
 | ID | Missing contract |
 |---|---|
@@ -211,7 +211,7 @@ BCIR owns the device-facing compilation problem:
 BCIR does **not** initially own general-purpose native instruction selection, register allocation,
 ELF linking, or vendor GPU kernel-driver internals. GCC, Clang/LLVM, and supported vendor
 toolchains continue those jobs behind the resident-compiler and
-[`BCIR_NATIVE_OBJECT_GATE.md`](BCIR_NATIVE_OBJECT_GATE.md) contracts. A handcrafted CPU/GPU
+[`BCIR_NATIVE_OBJECT_GATE.md`](../BCIR_NATIVE_OBJECT_GATE.md) contracts. A handcrafted CPU/GPU
 backend is considered only after that gate demonstrates a concrete deployment need and measurable
 advantage.
 
@@ -448,7 +448,7 @@ upstream contribution cannot satisfy.
 
 ### 7.1 RuntimeChannel and the future BCIR UAPI
 
-[`bcir_runtime_channel.h`](../runtime/c/bcir_runtime_channel.h) is the direct behavioral source
+[`bcir_runtime_channel.h`](../../runtime/c/bcir_runtime_channel.h) is the direct behavioral source
 of truth. Its v1 hooks—open, claim, offset-based map, submit, sync/cancel, event, and close—remain
 allocation-free and process-local. The future kernel/user UAPI marshals equivalent values; it does
 not expose the hook table or process pointers.
@@ -511,7 +511,7 @@ indefinitely.
 
 Direct in-process execution remains the default. A process boundary is justified only by privilege
 isolation, crash containment, vendor-library isolation, or multi-client sharing. The initial
-hosted adapter follows [`C_MEMORY_DISCIPLINE.md`](C_MEMORY_DISCIPLINE.md):
+hosted adapter follows [`C_MEMORY_DISCIPLINE.md`](../languages/C_MEMORY_DISCIPLINE.md):
 
 - Unix `SOCK_SEQPACKET` for bounded control messages.
 - `memfd_create`/`mmap` bounded shared rings for bulk data.
@@ -565,8 +565,8 @@ routes, memory maps, IPC endpoints, provenance, and a rollback generation.
 
 ### 8.1 Per-driver evidence
 
-Every driver PR runs the repository gates required by [`AGENTS.md`](../AGENTS.md) and
-[`CONTRIBUTING.md`](../CONTRIBUTING.md), plus the applicable driver evidence:
+Every driver PR runs the repository gates required by [`AGENTS.md`](../../AGENTS.md) and
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md), plus the applicable driver evidence:
 
 | Evidence class | Required scenarios |
 |---|---|
@@ -619,7 +619,7 @@ Before any driver/kernel commit or PR update:
 5. Record exact commands, skips, resource limits, and residual hardware risk in the PR.
 
 Manual full sweeps remain required before releases, after allocator/wire/UAPI changes, and before a
-new driver family, as defined in [`C_MEMORY_DISCIPLINE.md`](C_MEMORY_DISCIPLINE.md).
+new driver family, as defined in [`C_MEMORY_DISCIPLINE.md`](../languages/C_MEMORY_DISCIPLINE.md).
 
 ## 9. Risks and stop conditions
 
@@ -650,8 +650,8 @@ research. This v2 roadmap supersedes their ordering while retaining these durabl
    bounded loop, not a complete native boot/memory/PCI stack. The existing fixture is evidence for
    the compiler path, not a resident driver.
 2. **Assembly is the irreducible trust floor; verified C is the driver bulk; hosted C/C++ is
-   orchestration.** This remains aligned with [`CFRONT_GUIDE.md`](CFRONT_GUIDE.md) and
-   [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md).
+   orchestration.** This remains aligned with [`CFRONT_GUIDE.md`](../languages/CFRONT_GUIDE.md) and
+   [`CPP_HANDOFF_BOUNDARY.md`](../languages/CPP_HANDOFF_BOUNDARY.md).
 3. **Firmware is generally consumed, not reimplemented.** ACPI/SMBIOS/Device Tree/event logs and
    TPM/device commands are verified parser/marshaller opportunities.
 4. **D-R1–D-R6 remain standing driver laws:** attested manifests and veto-not-steer discovery;
@@ -670,9 +670,9 @@ research. This v2 roadmap supersedes their ordering while retaining these durabl
    content-addressed deployment replaces an unsafe promise of per-phase full-kernel LLVM JIT.
 
 Detailed historical design material remains available in the UART blueprint, the
-[`machine-code/HAL audit`](BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md), the
+[`machine-code/HAL audit`](../BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md), the
 [`heterogeneous-channel inventory`](HETEROGENEOUS_CHANNELS.md), the
 [`AMD driver roadmap`](BCIR_AMD_AI_DRIVER_ROADMAP.md), the
-[`ML/AI integration roadmap`](BCIR_ML_AI_INTEGRATION_ROADMAP.md), and the
+[`ML/AI integration roadmap`](../machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md), and the
 [`hardware validation runbook`](HARDWARE_VALIDATION.md). New implementation plans must use this v2
 document when any companion's old sequencing or status language conflicts with it.

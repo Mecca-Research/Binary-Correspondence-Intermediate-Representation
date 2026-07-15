@@ -3,7 +3,7 @@
 #
 # This is the SEAM between BCIR's deterministic single-node C/IR rail and the C++
 # layer ABOVE it (dynamic graph topology + distributed multi-node orchestration).
-# The contract is docs/CPP_HANDOFF_BOUNDARY.md; this gate proves the scaffold
+# The contract is docs/languages/CPP_HANDOFF_BOUNDARY.md; this gate proves the scaffold
 # genuinely COMPILES + RUNS and that the seam ROUND-TRIPS (the C++ single-node
 # Orchestrator's dispatch order == the direct C/IR decode of the same artifact).
 #

@@ -8,7 +8,7 @@ Redfish) without editing the core. This module formalizes that into a **registry
 typed signal providers**, mapped to the 12-D cost vector, with **honest ``None`` /
 unavailable** when a source is genuinely absent. It is the T1 foundation the rest of the
 telemetry pipeline (T2 UART frame, T3 derived metrics, T4 export) builds on. See
-``docs/TELEMETRY_PIPELINE_RESEARCH.md`` §3/§4/§6 and ``docs/SIGNAL_REGISTRY.md``.
+``docs/kernel/TELEMETRY_PIPELINE_RESEARCH.md`` §3/§4/§6 and ``docs/kernel/SIGNAL_REGISTRY.md``.
 
 Design DNA copied from the survey (research §3):
 

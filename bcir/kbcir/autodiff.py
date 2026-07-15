@@ -1,7 +1,7 @@
 """B3: reverse-mode automatic differentiation as content-addressed graph rewrites.
 
 This is the math oracle for slice B3 of the ML/AI-integration roadmap (see
-``docs/research/AI_SUBSTRATE_SOTA.md``, Pillar 3). It realizes the central B3
+``docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md``, section 6). It realizes the central B3
 thesis in the smallest honest form: a differentiable expression DAG of first-order
 primitives, **content-addressed (hash-consed)** so structurally identical
 subexpressions are *one shared node*, and reverse-mode AD expressed as a set of
@@ -10,13 +10,12 @@ primitive -- that walk the forward DAG and *build* an accumulated adjoint graph.
 Because the adjoint accumulation is itself content-addressed, a subexpression
 shared in the forward graph contributes a *single shared adjoint* (deduped, not
 recomputed) -- a stronger, global form of common-subexpression reuse than a local
-per-instruction cache. That global structural sharing is the property the SOTA
-scan highlights as BCIR's distinctive contribution.
+per-instruction cache. That global structural sharing is the property the ML/AI
+roadmap's B3 closure register highlights as BCIR's distinctive contribution.
 
-TERMINOLOGY (the SOTA scan corrected this). The framing is **content-addressed,
+TERMINOLOGY. The framing is **content-addressed,
 confluent local GRAPH REWRITES** in the tradition of 2-categorical / string-diagram
-(PROP / symmetric-monoidal-category) rewriting -- *not* "operad" (no prior art models
-reverse-mode AD as operad 2-cells; the established structure is monoidal-category
+(PROP / symmetric-monoidal-category) rewriting -- *not* an operadic two-cell account (the established structure is monoidal-category
 rewriting). Each primitive's backward rule is a local rewrite; the rules are
 *confluent* (the diamond property), so the gradient is independent of the order in
 which adjoint contributions are accumulated. One clean way to read reverse mode is
@@ -62,7 +61,7 @@ discipline:
     *nodes*; ``hessian`` differentiates those nodes AGAIN (reverse-over-reverse) and is gated
     against ``second_difference_hessian``.
 
-HONEST LIMITATION (the precise boundary; faithful to the SOTA scan, Pillar 3, which cites
+HONEST LIMITATION (the precise boundary; faithful to the roadmap's B3 research basis, which cites
 arXiv:2107.13433, 1804.00746, 2105.09469). Reverse-over-reverse is sound HERE for one
 specific reason: every primitive's VJP is itself expressible in the SAME closed primitive
 set (+, -, *, /, neg, dot, select), so the gradient graph is an ordinary DAG that can be
@@ -72,9 +71,9 @@ where the general story is known to strain. Two boundaries:
   (a) CLOSURE is required. A primitive whose VJP is NOT in the primitive set (e.g. one
       needing exp/log/a transcendental), or a genuinely higher-order functional / unbounded
       data-dependent recursion, breaks the closure: the gradient would not be a DAG in this
-      set and could not be re-differentiated by this machinery. The SOTA scan flags this
+      set and could not be re-differentiated by this machinery. The B3 closure register flags this
       directly -- reverse-derivative categories "do not natively support higher-order
-      functions" (1910.07065 via the scan), and higher-order/control-flow/mutation coverage
+      functions" (arXiv:1910.07065), and higher-order/control-flow/mutation coverage
       is named as the open AD risk. ``unroll_scan`` deliberately handles only BOUNDED loops
       (a finite composition of primitives) for this reason.
   (b) ``select``'s exact second derivative carries a DISTRIBUTIONAL (Dirac-delta) term at

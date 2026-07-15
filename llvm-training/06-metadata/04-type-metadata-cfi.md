@@ -124,7 +124,7 @@ installed in an object.
 
 Type metadata is an IR-level promise that a later pipeline can turn into binary
 hardening. When reviewing the final executable, connect this chapter to
-[`../15-binary-analysis/`](../15-binary-analysis/):
+[`../15-binary-analysis/`](../15-binary-analysis):
 
 - Static IR review should confirm that each indirect call of interest is guarded
   by a type test or checked load before the call edge.

@@ -2,7 +2,7 @@
 
 Source of truth for BCIR syntax/types/attributes/operations, authored in
 TableGen/ODS per [`../docs/BCIR_LANGREF.md`](../docs/BCIR_LANGREF.md), plus a pure
-**IRDL projection**. The Python package under [`../bcir/`](../bcir/) is the
+**IRDL projection**. The Python package under [`../bcir/`](../bcir) is the
 executable conformance oracle that must agree with these definitions
 ([`../docs/PARITY.md`](../docs/PARITY.md)).
 

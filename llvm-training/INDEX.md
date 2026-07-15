@@ -8,7 +8,7 @@ every lookup.
 | --- | --- |
 | Concept or task area | [`indexes/topics.md`](indexes/topics.md) |
 | Common LLVM IR instruction syntax | [`indexes/instructions.md`](indexes/instructions.md) |
-| One-page quick references | [`quickref/`](quickref/) |
+| One-page quick references | [`quickref/`](quickref) |
 | Advanced IR quick reference | [`quickref/advanced-ir.md`](quickref/advanced-ir.md) |
 | MLIR bridge quick reference | [`quickref/mlir-bridge.md`](quickref/mlir-bridge.md) |
 | `opt` flags and pass names | [`indexes/optimizer-passes.md`](indexes/optimizer-passes.md) |
@@ -48,7 +48,7 @@ every lookup.
 
 If you do not know where to start, open [`RECIPES.md`](RECIPES.md), pick the row
 closest to your task, then jump to the linked chapter and examples. Detailed
-topic and symbol lookup remains in [`llvm-training/indexes/`](indexes/).
+topic and symbol lookup remains in [`llvm-training/indexes/`](indexes).
 
 ## Advanced chapter integration map
 

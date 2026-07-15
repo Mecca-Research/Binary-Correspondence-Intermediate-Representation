@@ -9,15 +9,16 @@
 > slice-by-slice build notes formerly embedded in the roadmaps. Roadmap docs now describe
 > *what exists and what is next*; this doc records *how it got here*. For current counts
 > (tests, ops, passes, laws) see the generated [`STATUS.md`](STATUS.md) — nothing here is
-> a live count. Sources: the GitHub PR record (#2–#607; the local clone's history is
-> shallow and starts at PR #560) and the pre-consolidation doc revisions in git history.
+> a live count. This revision is current through merged PR #638 and package version
+> `0.2.0`. Sources are the GitHub PR record, first-parent history, implementation/tests,
+> and pre-consolidation document revisions retained in git.
 
 ---
 
 ## 1. The development method
 
 BCIR was developed almost entirely by AI coding agents under a single human operator,
-across ~606 pull requests (#2–#607) between 2026-04-23 and 2026-07-01. Two agent fleets
+with the recorded arc running from PR #2 through #638 between 2026-04-23 and 2026-07-15. Two agent fleets
 are visible in the branch names: **OpenAI Codex** (`codex/*` branches — the initial
 scaffolding, the `llvm-training/` corpus, and the closing integration-research docs) and
 **Claude Code** (`claude/*` branches — the long engineering arcs, one long-lived session
@@ -199,12 +200,46 @@ write`) with an "actually assembles" smoke gate (#595–#603); final hardening �
 execution-validating the stackify JVM target (#602–#604).
 
 ### #605–#607 — integration research (2026-07-01)
-Codex-authored research: `OPENAI_BCIR_INTEGRATION_RESEARCH.md` (OpenAI
+Codex-authored research: [`OPENAI_BCIR_INTEGRATION_RESEARCH.md`](machine-learning/OPENAI_BCIR_INTEGRATION_RESEARCH.md) (OpenAI
 Responses/Agents/Apps-MCP surfaces mapped onto BCIR's oracle/law/corpus structure,
 staged V0–V5 proposals), merged serially and deepened by direct commits. Its
 open-weight-model material now lives in
-[`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](BCIR_ML_AI_INTEGRATION_ROADMAP.md) §7, and this
+[`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md) §7, and this
 docs consolidation followed.
+
+### #608–#610 — documentation and feasibility reset (2026-07-02)
+Development history was centralized; stale current-state claims were refreshed; the open-weight
+track moved into the ML roadmap. Follow-on feasibility work separated deeper ML/model integration
+from kernel/Linux planning and removed a duplicated driver-roadmap section. This was the first
+explicit attempt to keep history, current state, and execution order in different documents.
+
+### #611–#623 — thirteen implementation waves (2026-07-02 → 07-04)
+The wave series closed several formerly speculative programs: R22/R23 shape/dtype laws; C extent
+provenance, project mode, cross-TU linking and ABI contracts; planned/GEM/C streamed training; model
+manifest, SentencePiece, reference decoder, real safetensors ingest, group-Q8 artifact, GQA/KV-cache,
+serving/TokenDFA, paged KV, and continuous batching; tile/channel priors with exact certificates;
+device manifests, bank typing, distance-priced moves, event phases, DMA descriptors, and driver-seam
+rules. It also produced the UART U0–U9 blueprint and closed the former A1–A5 gap register where code
+and tests existed. The important historical correction is that these were reference/compiler
+substrates—not resident drivers, stable UAPI, or production model serving.
+
+### #624–#630 — machine, driver, accelerator, and kernel design programs (2026-07-04 → 07-09)
+The machine-code/HAL audit defined MC1–MC15 and native-backend boundaries; the driver catalog defined
+proof-carrying package maturity; the Triton comparison chose interop/migration over a fork; the AMD
+roadmap chose inherit-and-enhance over replacing ROCm/XDNA/AMDGPU; the whole-model and game-optimization
+studies routed reusable mechanisms into BCIR; and the kernel roadmap established BCIR-Linux as a
+separate evidence rail rather than making Linux internals normative.
+
+### #631–#638 — governance, correctness, memory, and pre-driver foundation (2026-07-09 → 07-15)
+Generated inventory was refreshed and the project moved to the BCIR Non-Commercial License v1.0 with
+drafting corrections. Correctness/portability work fixed the C bitfield statement-expression case,
+training-spec execution, untied-head quantization, quick-tier semantics, coherent LLVM discovery,
+Windows spawn/link behavior, partial-AOT honesty, and the pinned TinyLlama→BCIRQ8→standalone-C gate.
+Two C sweeps then hardened trust boundaries and established allocator injection, fail-every-allocation
+tests, explicit freestanding/hosted/driver memory classes, and direct RuntimeChannel hooks. PR #638
+completed the ordinary x86-64 assembly edge, MC1/MC2 operator tools, strict StreamPack/telemetry
+semantics, and the source-backed driver/kernel roadmap v2; all required push and pull-request jobs
+passed before merge.
 
 ---
 
@@ -248,20 +283,73 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   law op, Area-B to six libraries, dual-rail ordered fences, the asm-edge law ops with
   assemble-smoke gates); the driver/kernel roadmap + pre-driver hardening; the
   close-out red-team and convergence-gate slices.
-- **2026-07-01:** the OpenAI + BCIR integration research (#605–#607); this docs
+- **2026-07-01:** the OpenAI + BCIR integration research (#605–#607); the first docs
   consolidation (changelog extraction, the open-weight-track move, staleness fixes).
+- **2026-07-02 → 07-04:** the documentation/feasibility reset (#608–#610) and the
+  thirteen implementation waves (#611–#623): R22/R23, project-mode C, streamed
+  training, whole-model ingest/inference, certified Q8 priors, device manifests,
+  event/DMA contracts, and the UART blueprint.
+- **2026-07-04 → 07-09:** the machine-code/HAL, driver, Triton, AMD, whole-model,
+  game-optimization, and kernel programs (#624–#630) established the present
+  resident-toolchain, inherit-and-enhance, proof-carrying-driver, and BCIR-Linux
+  boundaries.
+- **2026-07-09 → 07-15:** generated-status governance and licensing (#631–#633),
+  correctness/Windows/real-model Q8 closure (#634), two C bug sweeps (#635–#636),
+  hosted memory discipline and RuntimeChannel hooks (#637), and the pre-driver
+  machine/telemetry/assembly foundation (#638).
 
 ---
 
-## 4. Where the detailed notes live now
+## 4. Capability closure ledger migrated from the former master roadmap
 
-- **Per-landing detail:** the GitHub PR record (#2–#607; PR bodies carry Verification
+The former master roadmap accumulated landing notes and checkmarks as well as future
+work. This ledger preserves the durable historical conclusions without turning the
+execution roadmap back into a changelog. “Landed” means code and deterministic tests
+exist; it does not imply production deployment or hardware evidence.
+
+| Program | Landed baseline | Work deliberately left open |
+|---|---|---|
+| Language and verifier | Python/C C-front twins, project/cross-TU mode, ABI and effect contracts, R1–R23, ordinary x86-64 assembly edges | Hosted-C completeness, `_Decimal*` reference support, reset/exception/paranoid entry, additional language frontends |
+| Optimizer and backend | 12-axis K_BCIR, min-plus/RCSP/(max,+), GEM scheduling, C23 and resident LLVM/object paths, JVM/CIL/WASM bounded validation | Arbitrary-graph LLVM AOT, general native isel (gated), target-specific measured scheduling evidence |
+| Machine/driver substrate | StreamPack v1–v3, device manifests, bank/move/event/DMA contracts, MC1/MC2 operator tools, direct RuntimeChannel hooks | Resident UART/virtio/device drivers, stable UAPI, Linux modules, native IPC, physical-device qualification |
+| Memory discipline | Freestanding/hosted/adapter classes, checked hosted allocator and fault injection, fail-every-allocation tests | Per-operation compiler arenas and further context migration as allocation-bearing surfaces expand |
+| ML/model stack | Planned/streamed training, deterministic optimizers, model manifest/tokenizer/decoder, GQA/KV cache, BCIRQ8, standalone-C TinyLlama parity gate | Production serving, broader architectures, packed INT2–INT6, activation/outlier quantization and hardware-qualified model gates |
+| Telemetry/control | Signal registry, BTLM codec, metric derivation, deterministic serializers, shared-ring baseline | Generated fixed-width C registry, source/session/generation/clock identity, live SPSC protocol and real transports |
+
+### Retired AI-substrate research note
+
+The three-week AI-substrate SOTA snapshot was audited against source and tests during
+the 2026-07 documentation consolidation and then retired. Its conclusions
+now have stable owners:
+
+- **A1 precision:** exact-width `_BitInt(N)`, groupwise power-of-two Q8, BCIRQ8, and
+  the reference Q8 path landed. Packed INT2–INT6 storage/compute, activation
+  quantization, outlier/smoothing strategies, and any additional format remain in
+  [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md)
+  §6 and require R17/provenance/drift gates.
+- **B1 scheduling:** deterministic matmul tile/loop search with min-plus selection and
+  the compute-vs-memory roofline landed. Transform-dialect (or equivalent portable)
+  schedule export and analytic-versus-measured evidence on real targets remain in the
+  same roadmap.
+- **B3 differentiation:** the hash-consed closed primitive set, reverse mode,
+  closed-set symbolic reverse-over-reverse, law op, C lowering, and tests landed.
+  Post-optimization AD comparison, checkpoint/rematerialization, mutation and
+  unbounded-control-flow policy, and genuine higher-order/transcendental VJPs remain
+  open. The accepted mathematical description is monoidal/string-diagram/PROP
+  rewriting—not “operad 2-cells.”
+- **B5 libraries:** CBLAS, FFTW 1D/2D, LAPACK, GSL, SLEEF, and libcerf wrappers,
+  link metadata, calling-side tuning, and red-team coverage landed. Further libraries
+  are demand-driven and require actual target availability and performance evidence.
+
+## 5. Where the detailed notes live now
+
+- **Per-landing detail:** the GitHub PR record (#2–#638; PR bodies carry Verification
   sections with exact gate outputs), `git log`, and the pre-consolidation revisions of
   `REPO_CURRENT_STATE_AUDIT.md` / `BCIR_MASTER_ROADMAP.md` /
-  `BCIR_ML_AI_INTEGRATION_ROADMAP.md` (recoverable via git).
+  `machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md` (recoverable via git).
 - **Current state:** [`STATUS.md`](STATUS.md) (generated counts),
   [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) (the honest snapshot),
   [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md) (the dated pillar audit).
 - **What's next:** [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) and its
-  companions ([`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](BCIR_ML_AI_INTEGRATION_ROADMAP.md),
-  [`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md)).
+  companions ([`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md),
+  [`BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md)).

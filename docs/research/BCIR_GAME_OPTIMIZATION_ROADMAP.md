@@ -431,8 +431,8 @@ only way to keep BCIR's one law intact.
 
 ### Cross-references
 
-- [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) — the authoritative roadmap; this doc is listed in its reference set.
-- [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](BCIR_ML_AI_INTEGRATION_ROADMAP.md) — the process the per-slice build waves land under.
-- [`BCIR_WHOLE_MODEL_REFERENCE.md`](BCIR_WHOLE_MODEL_REFERENCE.md) — the rung-8 capstone (same "migrate the idea, wrap it in BCIR's discipline" pattern).
-- [`BCIR_STREAMPACK_ABI.md`](BCIR_STREAMPACK_ABI.md) — the frozen binary ABI the StreamPack lessons (§6) build on.
-- [`BCIR_LANGREF.md`](BCIR_LANGREF.md) — the R1–R23 law spec (R11 stale-pack, R13 replay, R17 accuracy).
+- [`BCIR_MASTER_ROADMAP.md`](../BCIR_MASTER_ROADMAP.md) — the authoritative roadmap; this doc is listed in its reference set.
+- [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](../machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md) — the process the per-slice build waves land under.
+- [`BCIR_WHOLE_MODEL_REFERENCE.md`](../machine-learning/BCIR_WHOLE_MODEL_REFERENCE.md) — the rung-8 capstone (same "migrate the idea, wrap it in BCIR's discipline" pattern).
+- [`BCIR_STREAMPACK_ABI.md`](../kernel/BCIR_STREAMPACK_ABI.md) — the frozen binary ABI the StreamPack lessons (§6) build on.
+- [`BCIR_LANGREF.md`](../BCIR_LANGREF.md) — the R1–R23 law spec (R11 stale-pack, R13 replay, R17 accuracy).

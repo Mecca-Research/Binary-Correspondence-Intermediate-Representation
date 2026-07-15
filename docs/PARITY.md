@@ -2,7 +2,9 @@
 
 The Python package `bcir/` is the **executable conformance oracle**; the MLIR
 dialect family under `mlir/` is the **law**. They must agree. This file is the
-cross-map and the invariants that keep them in lockstep.
+cross-map and the invariants that keep them in lockstep for package version `0.2.0`.
+Separate tables below cover Python ↔ C artifact/runtime parity; not every concept has,
+or should have, a representation on every rail.
 
 ## Enum value parity (normative)
 
@@ -48,7 +50,7 @@ accuracy, contention, verification`.
 | duration-aware schedule | `gem.schedule.schedule_eft` (LPT+EFT+locality+knee) | `bcir.gem.schedule` mode `eft` (R9) |
 | token-DAG execution | `gem.schedule.execute_tokens` (pipelined phases) | `bcir.gem.schedule` mode `tokens` (R9) |
 | bandwidth knee | `gem.schedule.bandwidth_knee` / `TargetProfile.mem_channels` | `bcir.target.capability` `mem_channels` |
-| pipelined StreamPack (ABI v2) | `gem.streampack.hydrate_pipelined` / `abi` v2 codec | `bcir.gem.stream_pack` `pipeline_depth`, `bcir.gem.prefetch` `buffers` (R10) |
+| pipelined/routed StreamPack (ABI v2/v3) | `gem.streampack.hydrate_pipelined` / append-only codec | `bcir.gem.stream_pack` `pipeline_depth`, `bcir.gem.prefetch` `buffers`, and v3 segment dispatch/channel metadata (R10) |
 | L1 frozen cost table | `kbcir.microbench.CalibratedProfile` (`cal_gen`, Q8 ratios) | `bcir.kbcir.calibration` + capability `cal_gen` (R8) |
 | L1 Bayesian + conformal table | `kbcir.bayescal` (`gaussian_update` VI / `conformal_delta` / `bayes_calibrate` / `abc_calibrate`) | `bcir.kbcir.calibration` `coverage_milli`/`random_delta_q8` (R8/R13) |
 | L2 policy portfolio | `kbcir.portfolio.PolicyPortfolio` (class-table selection) | `bcir.kbcir.portfolio` (R9) |
@@ -98,7 +100,7 @@ accuracy, contention, verification`.
 | R7 reduction-write extent | `verify` R7 (`op.startswith("reduce.")` ⇒ write extent 1, not count) | `-bcir-verify` R7 (`getOp().starts_with("reduce.")`); `verify_laws.mlir` reduction pair (clean reduction + non-reduction overrun) — dual-rail parity |
 | strided gather-avoidance | `examples.saxpy_strided` + `lower.c_kernel.emit_strided_c` + `bench.compare_strided` (`--bench-strided`) | *(host)* the cost model picks direct strided over gather; ~1.4× faster (the gather-instruction overhead) — a non-reduction gather avoidance |
 | latest-LLVM rail | — | `.github/workflows/ci.yml` `mlir-rail-validate` matrix tracks the latest release (LLVM 22, gating) from apt.llvm.org; scripts auto-resolve the toolchain version-agnostically (highest `/usr/lib/llvm-*/bin/{FileCheck,mlir-opt,mlir-tblgen}`) |
-| real-signal probes | `bcir.silicon` (`cache_topology`/`tier_capacities`, `cpufreq_info`, `CounterSampler`, `read_hw_counters`/`perf_counters_available`, `summary`) | *(host capability)* read-only `/sys` cache + cpufreq + `getrusage` + `perf_event_open` PMU; honest about what the host exposes (no PMU / no cpufreq actuation ⇒ reported, not faked — see `docs/HARDWARE_VALIDATION.md`) |
+| real-signal probes | `bcir.silicon` (`cache_topology`/`tier_capacities`, `cpufreq_info`, `CounterSampler`, `read_hw_counters`/`perf_counters_available`, `summary`) | *(host capability)* read-only `/sys` cache + cpufreq + `getrusage` + `perf_event_open` PMU; honest about what the host exposes (no PMU / no cpufreq actuation ⇒ reported, not faked — see `docs/kernel/HARDWARE_VALIDATION.md`) |
 | DVFS actuation (attempt + gate) | `gem.dvfs.actuate` (writes `scaling_setspeed`, reads `scaling_cur_freq` back) | *(host)* sets the real clock when a `userspace` governor + privilege exist; otherwise a dry-run `ActuationResult` naming the missing capability — never faked |
 | RL allocator on real tiers | `kbcir.allocator.place(tier_capacity=silicon_tier_capacity())` | *(host)* fast-tier capacities = the machine's real L1/L2/L3; measured L1≈1 ns vs DRAM≈166 ns justifies hot→SRAM (`test_silicon`) |
 | zero-copy telemetry ring (measured) | `telemetry.TelemetryRing` + `silicon.sample_into_ring` (real OS counters) | *(host)* ~31× faster than JSON serialization, measured (`test_silicon`) |
@@ -107,7 +109,7 @@ accuracy, contention, verification`.
 | a-priori telemetry gating | `kbcir.accel.FrozenRanker.confidence` (top-2 z-margin) + `kbcir.sensing.sense_by_ranker` | *(planning; off-rail — leans on a learned ranker margin)* instruments only columns the ranker cannot resolve (narrow margin); complements the a-posteriori `RegretSensor.sense` |
 | a-posteriori telemetry sensing | `kbcir.sensing.RegretSensor.sense` (per-path `cv_milli` over observed costs; deterministic CV-threshold + budget gate) | **`-bcir-sense`** (`BCIRSensePass.cpp`): per-segment `cv_milli = 1000·stdev/mean` over the `bcir.trace.data_dna` cycles (population variance, floor-isqrt), ranked `(-cv, segment)`, gated to `high`/`low`/`off`; matches the oracle exactly (`sense.mlir`) |
 | predictive pool allocation | `kbcir.allocator.pool_plan` / `live_intervals` (liveness interval-partitioning) | *(planning)* disjoint-lifetime tensors share an arena ⇒ `peak_bytes ≤ naive_bytes`; gains-only modeled footprint win |
-| timeline DVFS (power rail) | `gem.schedule.schedule_power_rail` (per-Slot clock over the placed timeline) | *(modeled)* downclocks memory-bound slots to data-arrival bounds; energy figure modeled (no RAPL — `docs/HARDWARE_VALIDATION.md`) |
+| timeline DVFS (power rail) | `gem.schedule.schedule_power_rail` (per-Slot clock over the placed timeline) | *(modeled)* downclocks memory-bound slots to data-arrival bounds; energy figure modeled (no RAPL — `docs/kernel/HARDWARE_VALIDATION.md`) |
 | CIM/PIM spatial partition | `lower.c_kernel.optimize_spatial` / `is_pim_target` (a `pim` ISA-feature target binds reductions to memory) | reuses the **R14** law (`dispatch="pim"` only on `reduce.*`); modeled transport-saved, next-phase needs a real PIM target |
 | multi-claim fusion | `examples.fused_chain` + `gem.overlap.price_scheduled` / `optimize_scheduled` | `bcir.kbcir.scheduled_price` + `-bcir-batch` (the (max,+) overlap: makespan < serial Σ for ≥2 claims) |
 | operand fusion (two kinds) | `realize._context_factor` (shared-input cache reuse, path-based) + `realize.fused_candidates` (producer→consumer **deforestation**, dependency-based, shared by optimize/RCSP/overlap/accel/softdp) | *(oracle cost model)* shared-input + producer→consumer write→read fusion both discount memory; ~12% lower plan score on a producer→consumer chain, no width churn |
@@ -119,7 +121,7 @@ accuracy, contention, verification`.
 | data-DNA telemetry (CT4) | `telemetry.DataDNA` + `kbcir.calibrate` | `bcir.trace.data_dna` |
 | calibration loop (closed) | `kbcir.calibloop` (`close_loop` / `measure_and_close` / `rescore_plan` / `CalibrationCertificate`) + `verify.verify_calibration` | `bcir.kbcir.calibration` (R13: measure → freeze → replan; `cal_gen ≥ 1` ∧ `win ≥ 0`; the measured cost of not recalibrating) |
 | JIT (CT5) | `lower.jit` (lli) | per-target `bcir.target.lower_contract` |
-| StreamPack ABI (Phase 7) | `abi.streampack_abi` (v1/v2 codec) | `runtime/c/bcir_streampack.h` (spec) + `bcir_runtime.c` (decode) + **`bcir_encode.c`** (`bcir_sp_reencode`, byte-identical re-encode, the full C round-trip; `test_c_encoder.py`) |
+| StreamPack ABI | `abi.streampack_abi` (frozen v1, append-only v2/v3 codec) | `runtime/c/bcir_streampack.h` (spec) + `bcir_runtime.c` (decode) + **`bcir_encode.c`** (`bcir_sp_reencode`, byte-identical re-encode; `test_c_encoder.py`) |
 | WASM (Phase 7) | `lower.wasm` (clang→wasm + node) | per-target `bcir.target.lower_contract` |
 | stackify (Phase 7) | `lower.stackify` (→ wasm/jvm/cil) | foundation for `bcir.target.lower_contract` encoders |
 | C runtime (Phase 8) | `runtime/c/bcir_runtime.{h,c}` decodes `abi.streampack_abi` | `runtime/c/bcir_streampack.h` (C23: `restrict`/`[[nodiscard]]`/frozen-ABI `static_assert`; fuzzed under libFuzzer+ASan/UBSan via `runtime/c/fuzz_streampack.c`) |
@@ -128,6 +130,27 @@ accuracy, contention, verification`.
 | async tokens (Phase 8) | `gem.async_tokens` (fork/await plan) | `bcir.async.fork` / `bcir.async.await` (`!bcir.token`) |
 | memory model (Phase 8) | `lower.memory_model` (hazard→ordering) | `BCIR_MemOrdering` + barrier `ordering` → `llvm.fence` |
 | per-target codegen (Phase 9) | `codegen.*` (llc → ARM/RISC-V/PTX/eBPF/C) | `bcir.target.lower_contract` (one per target) |
+
+## Python ↔ C artifact and runtime parity
+
+These contracts terminate at byte layouts or observable behavior rather than MLIR
+operations. Their governing prose is the LangRef or the corresponding ABI document.
+
+| Surface | Python/reference rail | C/production rail and gate |
+|---|---|---|
+| StreamPack v1–v3 | `bcir.abi.streampack_abi` encode/decode and semantic validation | `bcir_runtime.c` + `bcir_encode.c`; byte-identical re-encode, exact-version, CRC, bounds, trailing-byte, dispatch/channel, and malformed-corpus gates |
+| BTLM telemetry frame v1 | `bcir.telemetry_frame` strict codec, resync, continuity/wrap evidence | `bcir_telemetry_frame.c`; exact layout/CRC/re-encode and corruption rejection in `test_telemetry_frame.py` and the C gate |
+| Signal and metric meaning | `bcir.signal_registry`, `telemetry_metrics`, deterministic exporters | C carries the frame codec today; a generated fixed-width signal table and live transport remain open and therefore are not claimed as parity |
+| BCIRQ8 v1 | `frontends.models.weights_io` deterministic write/read, canonical tensor order, CRC/hash/bounds checks | `bcir_q8_model.c`; identical header/directory interpretation, strict rejection, allocator injection, and failure-state tests in `test_model_weights_io.py` / memory-discipline gate |
+| Llama Q8 greedy decode | `decode.head_logits`, full/KV decode, Q8 drift/NLL and artifact readback; untied head and checkpoint `rms_norm_eps` are shared | `bcir_llama.c` / `bcir_llama_cli.c`; toy tied/untied parity plus pinned real-model generated-ID and final-logit parity |
+| Hosted allocation behavior | Python harness enumerates failure points and validates public outcomes | `bcir_host_alloc.h` injection; failed growth preserves the original, outputs remain valid, and repeated cleanup is safe |
+| RuntimeChannel direct ABI | Transport-neutral device/event/DMA contracts provide reference inputs | append-only C v1 hook table and bounded loopback; future Linux/native adapters must reproduce direct behavior before they can claim parity |
+
+BCIRQ8’s normative byte contract is [`BCIR_LANGREF.md`](BCIR_LANGREF.md#16-bcirq8-v1-decoder-artifact-contract)
+§16. StreamPack and telemetry bytes are owned by
+[`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md) and
+[`TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md). A clean skip for a missing
+compiler, architecture, or model cache is not parity evidence for that execution path.
 
 ## Python ↔ C frontend twin (`runtime/c/`)
 

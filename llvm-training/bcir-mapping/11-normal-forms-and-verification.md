@@ -278,7 +278,7 @@ for the two semantic-negative fixtures rather than guessing from comments.
 
 ## Adversarial normal-form tests
 
-The [adversarial exercise track](../exercises/adversarial/) exercises the gap
+The [adversarial exercise track](../exercises/adversarial) exercises the gap
 between generic LLVM validity and BCIR normal-form validity. Its classified
 fixtures are suitable for pre/post-pass correspondence checks, metadata side-table
 checks, poison-sensitive control-flow review, and reproducible lowering fuzzing.

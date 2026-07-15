@@ -1,472 +1,196 @@
-# BCIR — Vision-Alignment Audit (2026-06-28)
+# BCIR vision-alignment audit — 2026-07-15
 
-> **Purpose.** A dated, evidence-backed honest-state snapshot mapping the
-> **"C-as-Macro-Assembly / Registry-Oriented + IR-owns-everything + bare-metal-AI"**
-> architectural vision onto what is *actually built* in the repository today. It is a
-> companion to [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) (the dated
-> changelog) and feeds the forward plan in
-> [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5 and
-> [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](BCIR_ML_AI_INTEGRATION_ROADMAP.md) §2/§6.
->
-> Method: the vision was decomposed into seven testable pillars; each was independently
-> audited against the source (file:line) and, where possible, exercised live (the C
-> subset was run end-to-end on the MMIO register-map fixture). Verdicts are deliberately
-> conservative — a pillar is only **ACHIEVED** when there is running, tested evidence.
+> A conservative, source-backed comparison between BCIR’s “C as macro assembly,
+> IR-owned physical planning, certified learning, and AI-native driver/kernel” thesis
+> and the package-version `0.2.0` implementation. Detailed current state is
+> [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md); future execution order is
+> [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md). Static counts belong only in
+> generated [`STATUS.md`](STATUS.md).
 
----
+## 1. Thesis under audit
 
-## The thesis being audited
+BCIR aims to make:
 
-> Strip C down to its essence — a type-safe **"Macro Assembly" / Registry-Oriented**
-> layer that maps to the physical silicon — while the **IR takes full ownership of the
-> math, memory layouts, and execution streams**. C serves two hardware purposes: a
-> **Registry Definition Layer** (structs/pointers map registers, MMIO, DMA boundaries)
-> and a **Macro Target** (the IR lowers its dataflow graph into heavily-unrolled, flat,
-> transparent C). On top of this, push **AI-driven optimization** down to the
-> macro-assembly layer (cache/bank prediction, layout pivoting, autonomous fusion),
-> lift legacy math libraries through the IR, and run **AI inference + a large part of
-> training on bare-metal C, bypassing C++** — handing off to C++ only for dynamic-graph
-> and distributed-orchestration complexity.
+- C a typed registry/MMIO definition language and transparent macro target;
+- the IR owner of semantic claims, layouts, schedules, budgets, provenance, and
+  device-command contracts;
+- K_BCIR/GEM the deterministic optimizer and execution-artifact path;
+- learned models a quarantined source of frozen, certified planning artifacts—not
+  legality or in-flight control;
+- driver packages reusable across a Linux evidence rail and a future native BCIR kernel;
+- inference and selected training kernels deployable through portable C while C++ is
+  reserved for orchestration that genuinely needs it.
 
----
+The audit distinguishes four evidence levels: **landed** (code plus deterministic gate),
+**partial** (real bounded slice), **modeled** (executable model without device binding),
+and **missing** (no implementation). Compiler fixtures, serializers, and clean skips are
+not promoted to driver, transport, or hardware evidence.
 
-## Scorecard
+## 2. Scorecard
 
-| # | Pillar | Verdict | One-line state |
-|---|--------|---------|----------------|
-| 1 | **C = Registry Definition Layer** (registers / MMIO / DMA) | 🟢 ACHIEVED (core) · 🟡 boundaries | MMIO/volatile/bitfield/barriered-hazard done & Clang-gated; DMA-boundary + device-isolation modeling missing |
-| 2 | **C = Macro Target** (flat unrolled C; IR owns math/layout/scheduling) | 🟢 ACHIEVED (core) | Emitter has zero scheduling logic; one flat statement per claim; specialist-kernel unrolling exists |
-| 3a | "Layer-1 AI" cache-line / bank-conflict prediction | 🟢 BUILT (dual-rail) | frozen-Q8 contention predictor (line-waste + bank-conflict) on the CONTENTION axis, informs-only; oracle `cache_predict.py` + MLIR `-bcir-cache-contention` |
-| 3b | AI SoA ↔ AoS layout pivot before emit | 🟢 BUILT (dual-rail) | cost-priced SoA↔AoS selection (stride-penalty), address-map-invariant; oracle `layout.py` + MLIR `-bcir-layout-pivot` |
-| 3c | Autonomous matmul+activation fusion via tropical min-plus | 🟢 BUILT (dual-rail) | sole-consumer epilogue fusion priced by the deforestation discount; oracle `fusion.py` + MLIR `-bcir-fuse-matmul-activation` |
-| 4a | Tropical rewriting of **kernel arithmetic** into semirings | ⚪ BY DESIGN NOT DONE | tropical algebra is the **cost optimizer**, not a kernel-arithmetic rewrite (correct & deliberate) |
-| 4b | Lift legacy C math libraries **into** the IR | 🟡 ADVANCED | FFI call-out (`c.call.libm:`) + auto link-flags (B1) + a new FFTW wrap (B2) + calling-side tuning (B3); LAPACK/GSL/SLEEF breadth = remaining Area-B |
-| 4c | Graph linearization into async strided data streams | 🟢 ACHIEVED | StreamPack: strided blocks, fork/await tokens, pipelined phases, channel dispatch |
-| 4d | Q8↔float32↔Q8 bridge certified by R17 | 🟢 ACHIEVED | dual-rail R17 law (oracle + MLIR); compensated reduction bit-exact to int64 |
-| 5a | Baked-weights inference kernel in C | 🟢 BUILT | `emit_inference_kernel_c`: `static const` weights (`#embed`/literal) fused single-pass, R17-bounded; reference-verified bit-exact (relu) |
-| 5b | Forward/backward training kernels on bare metal | 🟢 BUILT (end-to-end supervised training) | `emit_autodiff_kernel_c` lowers the autodiff DAG to a forward+backward C kernel + SGD step; gradients match oracle + finite-difference. **ML Tier-1 trio (M1–M3) complete on top:** loss head (M1, `bcir/kbcir/losses.py`) + adaptive optimizers — momentum/RMSprop/Adam w/ bias correction (M2, `bcir/lower/optimizers.py`; RMSprop/Adam ride libm `sqrtf`, SGD/momentum pure arithmetic) + the **epoch/mini-batch training loop (M3, `bcir/kbcir/training.py`)** — dataset/shuffle/split, eval metrics, early stop — that **trains logistic regression AND a small MLP end-to-end to high accuracy** (deterministic, pure-Python oracle). Cost/optimization-side, never an R-law verdict |
-| 5c | Tensor ops as first-class claims | 🟢 BUILT (dual-rail) | `gem.matmul`/`activation`/`conv`/`attention` — all oracle + MLIR law ops, reference-verified |
-| 5d | C++ hand-off boundary (dynamic graphs / MPI / NCCL) | 🟡 SCAFFOLDED | boundary contract defined + a compilable, round-trip-tested single-node seam; dynamic/distributed backends are marked stubs |
+| Pillar | Verdict | Evidence boundary |
+|---|---|---|
+| C registry/macro-assembly surface | **Landed core; partial language breadth** | MMIO/volatile/atomic/bitfield/ABI/project/link/fallback paths are dual-railed; not full ISO C23 and not a resident driver |
+| IR ownership of planning and execution shape | **Landed** | R1–R23, K_BCIR, GEM, StreamPack v1–v3, event/DMA/device contracts; arbitrary-graph LLVM AOT remains absent |
+| Certified optimization and learning | **Landed reference; hardware evidence partial** | Exact search and frozen-Q8/replay/provenance controls exist; most target calibration is not yet driver/hardware qualified |
+| Math, AD, precision, and library substrate | **Advanced but bounded** | Tensor ops, R17, Q8, closed-set AD and six library families exist; broader AD/low-bit/schedule-export work remains |
+| Model inference and training | **Real reference + hosted C gate; not production/bare-metal complete** | Planned/streamed training and TinyLlama→BCIRQ8→standalone C parity exist; serving/device/broader-model and freestanding whole-model deployment remain open |
+| Driver, kernel, ABI, and IPC | **Foundation only** | Direct RuntimeChannel, manifests, event/DMA and ordinary x86 edges exist; no resident driver, Linux module/fork, stable UAPI, native kernel, or native IPC |
+| Telemetry/control plane | **Codec/meaning landed; live plane missing** | Registry, BTLM, metrics, deterministic exposition and ring baseline exist; identity envelope, live SPSC and transports/providers are open |
 
-Legend: 🟢 achieved/built · 🟡 partial/advanced · 🔴 missing · ⚪ deliberately-not-done (vision clarification).
+## 3. C as registry definition and macro target
 
-> ### Build update (2026-06-28, post-gap-program)
-> The 🔴/🟡 pillars above (except 4a, which is correct as-is) were **built and merged** in a
-> 21-PR program this cycle (oracle prototype → MLIR law, each parity-gated + CI-green):
-> **3a** cache/bank contention (G4), **3b** SoA↔AoS pivot (G3), **3c** matmul+activation fusion
-> (G2), **5a** baked-weights inference (G5), **5b** forward/backward training kernel (G6),
-> **5c** the `gem.activation`/`conv`/`attention` ops (G1/G7) — all **also ported to the MLIR
-> law rail** (`gem.activation`/`fused_matmul_activation`/`conv`/`attention`/`layout_pivot`/
-> `contention`), and **4b** advanced via B1/B2/B3. Conformance **956 → 1235**. The per-pillar
-> sections below retain the original audit prose for provenance; the verdicts above are current.
-> Remaining: **4b breadth** (LAPACK/GSL/SLEEF), **5d** distributed/dynamic backends (need
-> multi-node hardware), and the Pillar-1/2 boundary items (DMA/device-isolation, flatness law).
+### Landed
 
----
+- The C-front twins lower register-shaped structs, MMIO, volatile access, atomics,
+  fences, inline assembly, port I/O, control/MSR edges, bitfields, pointer extents,
+  target ABI contracts, and driver-shaped project headers into claims.
+- Clang/GCC behavior differentials, storage-extent comparison, emitted-C compilation,
+  project outcomes, fallback, and two-translation-unit linking pin the bounded surface.
+- Portable C lowering receives a selected plan; scheduling and legality do not live in
+  the emitter.
+- The C runtime has explicit freestanding, hosted-tool, and adapter memory classes,
+  allocator injection, checked growth, and allocation-failure regressions.
 
-## Pillar-by-pillar evidence
+### Still open
 
-### Pillar 1 — C as the Registry Definition Layer · 🟢 core / 🟡 boundaries
+- Complete ISO C23 and later C++/Python/Java frontend programs are separate language
+  efforts. `_Decimal*` remains blocked by the selected reference-compiler method.
+- UART/GPIO sources are compiler fixtures. They do not prove an open/map/submit/event/
+  cancel/close driver lifecycle or device ownership.
+- The full-model BCIRQ8 loader/inference CLI is hosted (`fopen`/`malloc`); it is not a
+  no-libc bare-metal whole-model runtime.
+- A formal generalized arbitrary-claim-graph C artifact contract and broader production
+  source/debug behavior remain work even though several kernel families lower today.
 
-**Achieved.** `Domain.MMIO` (`bcir/model/lanes.py`) + per-resource domain (`bcir/model/graph.py`);
-MMIO load/store emission `*(volatile uint32_t *)((volatile char *)regs + off)`
-(`bcir/frontends/cfront/emit.py`); barriered hazard discipline on MMIO
-(`hazard=="barriered"`, tested in `bcir/tests/test_cfront.py`); bitfield mask/shift
-(`c.bf.get`/`c.bf.set`); real UART/DMA register fixtures (`runtime/c/cfront_regmap.c`,
-`cfront_driver*.c`) ingested end-to-end through both rails, Clang-behaviour-equivalent.
+## 4. IR ownership, machine edges, and backend boundary
 
-**Gaps (boundaries).** No explicit **DMA-transfer-boundary** modeling (no `Domain.DMA`,
-no transfer-size/alignment/atomic-unit claim — a DMA block currently lowers as scalar
-load/store). No **device-isolation** annotation (two registers of the same device are
-unrelated resources; cannot express "all UART registers serialize; GPU and CPU may
-overlap"). Multi-register bitfields unsupported. `Domain.NVM` declared but unused.
+### Landed
 
-### Pillar 2 — C as the Macro Target · 🟢 core
+- Registry IDs, phases/events, lanes, bounds/hazards, timing/lifetime, generation, cost,
+  selected plan, StreamPack and lowering contracts are represented and checked.
+- K_BCIR provides exact min-plus, RCSP/Pareto, and schedule `(max,+)` rails. GEM owns
+  hydration, waves, affinity, event phases, DMA descriptors, and device/channel metadata.
+- StreamPack v1 is frozen; v2/v3 evolve append-only and have Python/C malformed-input
+  gates.
+- Typed x86-64 long-mode handoff, descriptor/segment operations, and an ordinary
+  interrupt trampoline lower through LLVM and reach real object/disassembly checks.
 
-**Achieved & demonstrated live.** The MMIO fixture compiled through
-`python -m bcir.frontends.cfront` emits flat, one-statement-per-claim C
-(`regs->control = word` → `*(volatile uint32_t *)((volatile char *)regs + 4) = word;`;
-`cfg.baud` → `(t >> 3) & 31u`) carrying an R1–R18 attestation + R13 provenance digest +
-plan score. The emitter (`bcir/frontends/cfront/emit.py`) contains **no scheduling
-logic** — phase/wave order is owned entirely by the IR (`bcir/gem/execute.py`,
-`schedule.py`, `async_tokens.py`). Unrolled specialist kernels with compile-time trip
-counts + explicit remainders exist (`bcir/lower/specialist.py`).
+### Deliberate or open boundary
 
-**Gaps (transparency / formalization).** Bounds checks emit as an opaque
-`BCIR_CHK(...)` call rather than inline guards (less "transparent assembly"). There is
-no normative **flatness law** (e.g. "every claim lowers to ≤N flat statements; no loops
-in the IR") and no `emit_style="flat"` mode that forbids C loops. No DMA-descriptor
-specialist (a DMA transfer should be one descriptor, not unrolled scalars). The
-"IR owns ordering; C is a generated textual artifact" contract is implicit, not written
-into the LangRef.
+- Tropical algebra optimizes *realization cost*; it does not rewrite user arithmetic
+  into min-plus and thereby change program meaning.
+- General CPU instruction selection/register allocation/object linking remains with
+  resident LLVM/Clang/GCC. No seeded target passes the native-object GO gate.
+- Python LLVM lowering is one supported elementwise claim; MLIR `bcir-aot` is partial
+  mixed-dialect preparation. Arbitrary-graph AOT is a separate backend program.
+- The x86 edge assumes long mode. Reset transition, NMI/IST/paranoid entry, CR3/PTI,
+  SMAP/CET/IBT, speculation and extended-state policy, unwind/CFI, and direct QEMU/
+  hardware execution remain open.
 
-### Pillar 3 — AI-driven optimization at the macro-assembly layer · 🔴 / 🟡
+## 5. Certified optimization and AI substrate
 
-**This is the largest gap between vision and implementation.**
+### Landed
 
-- **3a cache/bank prediction — MISSING.** The `memory` cost dimension
-  (`bcir/kbcir/cost.py`) is a **static** Q8 formula over bandwidth/latency factors +
-  stride penalty; there is no model that *predicts* cache-line utilization or memory-bank
-  conflicts from graph shape. The allocator heat-scorer (`bcir/kbcir/allocator.py`) is a
-  frozen linear model that picks a memory *tier* (L1/L2/L3/DRAM/HBM), not a cache
-  predictor.
-- **3b SoA↔AoS pivot — MISSING.** `Resource.layout` defaults to `"soa"`
-  (`bcir/model/graph.py`) and is never analyzed or transformed; the MLIR lowering
-  hard-codes `#bcir.layout<soa>`.
-- **3c autonomous fusion — PARTIAL.** Deforestation + CSE fusion exists and *is* priced
-  by the tropical min-plus optimizer (`bcir/kbcir/realize.py`), but only for adjacent
-  **elementwise** claims sharing an operand. There is no **matmul+activation** fusion and
-  no graph-shape-driven fusion synthesis.
+- Cache/bank contention signals, layout pivoting, fusion/deforestation/CSE, tile/loop
+  selection, frozen priors, and cost-aware scheduling are deterministic inputs to legal
+  exact search.
+- Learned ranking/routing/calibration artifacts are quantized, generation-tagged,
+  content-addressed, replay-gated, and reversible. They may change search effort or choose
+  certified alternatives, never an R-law verdict.
+- A1 precision foundations, B1 deterministic matmul search/roofline, B3 closed-set
+  reverse AD, and B5 CBLAS/FFTW/LAPACK/GSL/SLEEF/libcerf integration have code and tests.
 
-**Learned organs that DO exist (but are off the default path).** RL allocator placer,
-GNN MoE router (`moegate`), Bayesian calibrator (`bayescal`), soft-DP posterior
-(`softdp`), regret sensor (`sensing`/`regret`), e-graph (`egraph`/`memory`) — all in
-`bcir/kbcir/`, all freeze to Q8, all **opt-in** (the only learned artifact on the default
-path is the hand-set allocator placer). They optimize *plan selection*, not memory layout
-or fusion — i.e. none of them is the "Layer-1 AI" the vision describes.
+### Still open
 
-**Telemetry signal-provider registry (T1) — BUILT (cost-side only).** The graded L2/L3
-measurement seam now has a vendor-neutral PAPI-component registry
-([`SIGNAL_REGISTRY.md`](SIGNAL_REGISTRY.md), `bcir/signal_registry.py`): typed providers
-wrapping `bcir/silicon.py` (thermal/die-temp → `thermal`, RAPL energy → `power`, cpufreq →
-`compute`, L1/L2/L3 cache → `memory`, PMU capability → `compute`) plus honest-unavailable
-gap providers (GPU/BMC power, mem-bandwidth, fabric, throttle, reliability) so the namespace
-is complete and a future NVML/amd-smi/Redfish backend just fills them in. Provenance/units
-live on a `MetricDefinition` (Redfish split); a `register()` plugin seam mirrors the channel
-plugin; `registry_for_channel` maps `energy_source`→power provider. It is strictly on the
-*cost/optimization* side: it returns only `Reading`/`None` (never a verdict/Diagnostic),
-surfaces a graded 0..100 signal to feed `theta`, and touches neither `bcir/verify` nor the
-cost-vector DIMS — the two-truth quarantine, applied to measurement.
+- packed INT2–INT6 wire/compute paths; activation quantization, smoothing and outlier
+  policy; additional formats with R17/provenance/drift gates;
+- portable schedule export through MLIR Transform (or an equivalent contract) and
+  analytic-versus-measured results on real CPU/GPU/device targets;
+- post-optimization AD comparison, checkpoint/rematerialization, mutation and unbounded
+  control-flow policy, and genuine higher-order/transcendental VJPs;
+- target/device calibration and Q8-prior promotion from resident-driver telemetry.
 
-**Transport-neutral telemetry frame (T2) — BUILT; UART egress is not built.** The embedded
-telemetry tap now has a framed, CRC-sealed, resync-able byte codec
-([`TELEMETRY_FRAME_ABI.md`](TELEMETRY_FRAME_ABI.md),
-`bcir/telemetry_frame.py`): a producer drains `TelemetryRing` and emits self-delimiting frames
-(`"BTLM"` magic | version | seq | timestamp | the ring's 56-byte `<7q>` records | CRC-32) over a
-byte egress; the host decoder reuses the RT3 gate (`sanitize_events`/`TelemetryIntegrity`),
-resyncs on magic, and bounds a corrupt byte to one frame. It is dual-rail (a freestanding C twin
-`runtime/c/bcir_telemetry_frame.{c,h}` pinned byte-identical to the Python reference, CRC reused
-from `bcir_runtime.c`), mirroring the StreamPack discipline. Egress-over-UART (`out` → `uart_send`)
-is a documented adapter, not an implemented channel-backed UART driver or live transport.
-Strictly cost-side: a frame carries graded
-L2/L3 data, never a verdict/`Diagnostic`, and touches neither `bcir/verify` nor the cost DIMS.
+The correct mathematical description of the AD/rewrite structure is
+monoidal/string-diagram/PROP rewriting. “Gradients as operad 2-cells” is not an accepted
+implementation claim.
 
-**Derived metrics + plan-cost sensitivity (T3) — BUILT (cost-side only).** The telemetry pipeline
-now has the SPICE `.MEASURE`/`.SENS` analogy (`bcir/kbcir/telemetry_metrics.py`,
-[`TELEMETRY_PIPELINE_RESEARCH.md`](TELEMETRY_PIPELINE_RESEARCH.md) §6): edge-computed
-figures-of-merit (`derive_field_metrics`/`derive_all` → per-field max/min/avg/rms/count with
-documented float-free round-half-up `avg` and an inspection-only `rms`; `measure_trig_targ` for the
-`TRIG…TARG` crossing span) over RT3-sanitized batches, plus a `signal_sensitivity` ranking that
-**finite-differences the existing `realize.optimize`** over a perturbed `Theta` pressure (mapping a
-T1-registry `cost_dim` → a Theta channel: thermal/power/memory/contention) and ranks signals by
-`|Δscore|` so `sampling_budget` can steer a fixed budget toward the high-impact signals (thermal
-ranks top on a tile-heavy `matmul_tiled`). Two-truth: it perturbs COST/Theta only, reuses (never
-reimplements) the cost model, emits no `Diagnostic`, and the module still `verify()`s clean before
-and after — it never reads or alters the legality path.
+## 6. Model inference, training, and C++ boundary
 
-**Telemetry export adapters (T4) — BUILT (cost-side only).** The telemetry pipeline now has its
-external export boundary (`bcir/telemetry_export.py`,
-[`TELEMETRY_PIPELINE_RESEARCH.md`](TELEMETRY_PIPELINE_RESEARCH.md) §6): read-only egress of the T1
-registry readings + T3 metrics in the two industry-standard shapes plus an out-of-band read,
-stdlib-only (`json`/`re`). **Prometheus/OpenMetrics** (PULL, `to_prometheus`/`scrape`): `# HELP`/`#
-TYPE`/`bcir_<name>{channel,cost_dim,provenance,unit} <value>` lines — a monotonic-counter source
-(RAPL `energy_uj`, `cycles`) → `counter`, a pressure/level/capacity → `gauge`; an unavailable signal
-emits no value but a `bcir_signal_up{...} 0` (the honest real/unavailable split); names sanitized to
-the Prometheus charset; deterministic. **OTLP** (PUSH, `to_otlp`/`otlp_to_json`/`export_push` + a
-frozen `OtlpMetric`): the OTLP-JSON `resourceMetrics`/`scopeMetrics` data model with kind +
-temporality + monotonicity declared EXPLICITLY per metric (counters = sum+cumulative+monotonic;
-gauges = gauge+unspecified+non-monotonic) and the channel as the `Resource`. **Redfish** (out-of-band
-PULL): `to_redfish_metric_report` + `metric_definitions` (the 4-split — units/provenance on the
-`MetricDefinition`) + `parse_redfish_metric_report` (parse a BMC report back into `Reading`s, tolerant
-of foreign fields). The `TelemetryIntegrity` witness exports as `up`/`accepted`/`rejected`/`blind` so
-suppression stays observable. Honest depth: no live collector/server/BMC — these produce/parse the
-exposition bytes+JSON (the testable contract); HTTP/gRPC/protobuf transport is a documented unbuilt
-adapter. Two-truth: read-only egress of the graded signal — no `Diagnostic`, touches neither
-`bcir/verify` nor the cost DIMS, never a verdict.
+### Landed
 
-**Telemetry data contracts (T1–T4) — BUILT; live delivery — NOT BUILT.** T1 is the
-vendor-neutral signal-provider registry; T2 is a framed CRC-sealed codec suitable for UART
-(dual-rail with a C twin), not a UART transport; T3 derives metrics and plan-cost sensitivity;
-T4 serializes Prometheus/OpenMetrics, OTLP-JSON, and Redfish-shaped data. No UART egress,
-HTTP/Prometheus host, OTLP transport, Redfish/BMC client, or live provider transport is present.
-The implemented stages remain on the *cost/optimization* side of the two-truth quarantine:
-telemetry may inform `theta` / cost calibration but is never an R-law legality verdict; the
-decision path (`bcir/verify`, R1–R23) reads no telemetry.
+- Activations/losses/optimizers, planned and streamed execution, optimizer-state claims,
+  partial batches, deterministic dataset utilities, transformer/recurrent/classical ML
+  references, and finite-difference gates exist.
+- Manifest/safetensors ingestion, SentencePiece, Llama-family full/KV decode, GQA,
+  batching references, tied/untied heads, checkpoint RMSNorm epsilon, quantized drift and
+  NLL are implemented.
+- BCIRQ8 v1 has deterministic Python read/write and a strict portable C loader. The
+  pinned TinyLlama gate verifies source hashes, tokenizer IDs, compact export, Python/C
+  generated IDs, finite logits, and final-logit tolerance without committing assets.
+- The C++ handoff has a small compiled single-node seam and explicit ownership rules.
 
-### Pillar 4 — tropical / lifting / linearization / precision
+### Still open
 
-- **4a kernel-arithmetic tropical rewrite — BY DESIGN NOT DONE (vision clarification).**
-  BCIR's tropical (min-plus) + (max-plus) algebra is the **compilation cost optimizer**
-  (`bcir/kbcir/semiring.py`, `matmul.py`): min-plus is shortest-*cost*-path over the
-  candidate-realization DAG; max-plus is the roofline bottleneck within a candidate. The
-  user kernel's own arithmetic stays standard ring arithmetic (`matmul` is `+=`/`*`;
-  `quantize.scaled_dot` is `*`/`+`). Rewriting kernel arithmetic into min-plus would
-  change computed results, so this is correctly **not** done — the vision phrasing
-  ("addition becomes minimum… matrix ops become path-finding networks") describes the
-  planner, not the kernel.
-- **4b library lifting — PARTIAL (FFI, not lift).** The `c.call.libm:` edge wraps a
-  trusted external kernel at link time (B5 `cblas_sgemm` with a portable reference
-  fallback, `bcir/lower/c_kernel.py::emit_blas_gemm_c`); BCIR owns the *calling* side.
-  This is honest "integrate, don't reinvent," but it is **not** a source-level lift of
-  library code into the claim graph. Wrapped today: **BLAS** (gemm) + **libm** (sqrt/pow/
-  fabs/…/complex). **Not yet wrapped: LAPACK, FFTW, GSL, SLEEF** — the Area-B work.
-- **4c linearization — ACHIEVED.** The StreamPack (`docs/BCIR_STREAMPACK_ABI.md`,
-  `bcir/gem/streampack.py`) is a portable linearized artifact: strided blocks, `!bcir.token`
-  fork/await async DAG, double-buffered pipelined phases (v2), heterogeneous channel
-  dispatch. *Gap:* the freestanding C executor runs v1 serial phases; the v2 pipelined
-  executor in `runtime/c/` is pending.
-- **4d Q8↔f32↔Q8 R17 bridge — ACHIEVED.** R17 is a first-class dual-rail law
-  (`bcir/verify` + `mlir/lib/passes/BCIRVerifyPass.cpp`); per-group Q8 quantization
-  (`bcir/kbcir/quantize.py`), static per-claim ULP error bounds
-  (`bcir/kbcir/precision.py`), compensated reduction bit-exact to int64.
+- Production tokenizer/runtime integration, sampling, safety policy, broad architectures,
+  long-context/device kernels, robust serving/evaluation, and physical accelerator
+  qualification.
+- A freestanding whole-decoder profile with caller-owned memory if bare-metal deployment
+  is required; the present standalone C decoder is hosted.
+- Real dynamic-graph and distributed MPI/NCCL orchestration. Current C++ backends beyond
+  the bounded seam are honest stubs and need suitable multi-node/device evidence.
 
-### Pillar 5 — bare-metal AI inference/training + the C++ boundary · 🟡 / 🔴
+## 7. Driver, kernel, telemetry, and IPC alignment
 
-- **5a baked-weights inference — PARTIAL.** Frozen Q8 tables bake via C23 `#embed`
-  (`bcir/abi/q8_tables.py`, fixtures); `gem.matmul` plans + lowers (MLIR
-  `BCIRLowerGemMatmulPass.cpp`). But no end-to-end function is emitted that bakes a
-  specific model's weights as `static const …[]` and fuses them into a single-pass kernel.
-- **5b forward/backward training — BUILT (end-to-end supervised training).** `bcir/kbcir/autodiff.py`
-  is a complete, correct, content-addressed reverse-mode autodiff organ; `emit_autodiff_kernel_c`
-  lowers it to a forward+backward C kernel + SGD step (gradients match oracle + finite-difference).
-  The **ML Tier-1 trio (M1–M3) is now complete**, turning that machinery into actual supervised learning:
-  - **M1 loss head** (`bcir/kbcir/losses.py`): MSE, softmax cross-entropy, BCE-with-logits, hinge.
-    It follows the **autodiff closure property** — MSE is built into the `Tape` as closed-set nodes (the
-    existing `grad`/`emit_autodiff_kernel_c` handle it for free); the transcendental losses (softmax-CE, BCE)
-    keep their `log`/`exp` forward value off the re-differentiable path and instead provide the closed-form
-    `grad_logits` (`softmax−onehot` / `sigmoid−target`, reusing the G1 activation references) that SEEDS the
-    model backward.
-  - **M2 adaptive optimizers** (`bcir/lower/optimizers.py`): momentum (heavy-ball), RMSprop, Adam (with bias
-    correction) generalize the minimal SGD step, each a reference oracle + an emitted C step that mirrors
-    `emit_sgd_step_c` (verified C-vs-reference to round-off incl. Adam's m/v/t state round-trip, shown to
-    converge on a convex MSE). Honest libm boundary: RMSprop/Adam ride libm `sqrtf` (the `c.call.libm:` edge,
-    link `-lm`), while SGD/momentum stay pure arithmetic.
-  - **M3 the training loop** (`bcir/kbcir/training.py`): the epoch / mini-batch loop that composes the trio
-    end-to-end — a `Dataset` abstraction + a deterministic seed-keyed shuffle + a disjoint `train_val_split`,
-    eval metrics (`accuracy`/`mse_metric`/`binary_f1`), an `EarlyStop` patience hook, and
-    `train(...) -> TrainResult`. It drives forward (model `Tape`) → M1 loss → `autodiff.grad` (the closed-set
-    path for MSE, the closed-form `grad_logits` seed chained through each logit for BCE/softmax-CE) → M2
-    optimizer step, managing optimizer state across steps — the oracle generalization of
-    `autodiff_kernel.oracle_train` to epochs/mini-batch/loss/optimizer/val/metrics/early-stop. **It trains
-    logistic regression (BCE) AND a small 2-layer MLP (hidden relu, clearing a linear model's ceiling on an
-    XOR-like non-separable set) end-to-end to ~100% accuracy, deterministically.**
+### Landed foundation
 
-  End-to-end supervised training is therefore now **built** as a pure-Python oracle, **off the legality
-  path** (training is cost/optimization-side — which legal plan's weights fit best — never an R-law verdict;
-  the modules touch no verifier and emit no `Diagnostic`, and the model graphs stay in the closed lowerable
-  primitive set). The remaining next step on this axis is the hybrid tropical-structure + gradient-tune
-  loop (B4).
-  - **E1 — OLS (ordinary least squares)** (`bcir/kbcir/ols.py`, `emit_lapack_ols_c`): the first ML-breadth
-    slice — **overdetermined linear regression** (minimize `‖A·x − b‖₂`) built on the Area-B wrap pattern.
-    The `ols_reference` source of truth forms the normal equations `G = AᵀA`, `c = Aᵀb` and **reuses
-    `linsolve.solve_reference`**; the emitted C delegates to LAPACK's QR-based **`sgels`** when linked (the
-    *existing* `LAPACKE_*`→`-llapack` rule covers it — no linkflags change), with a portable normal-equations
-    fallback (CI needs no LAPACK). Honest conditioning note: the normal equations square `cond(A)`, so the QR
-    `sgels` path is the more stable; they agree to float round-off on a well-conditioned system. Off the
-    legality path; the R17 bridge bound is the input round-trip alone.
-  - **E2 — PCA (principal component analysis)** (`bcir/kbcir/pca.py`, `emit_lapack_eigh_c`): the second
-    ML-breadth slice — it **generalizes OLS's "form a symmetric matrix then solve" into "form a symmetric matrix
-    then eigendecompose."** `pca_reference` centers the data, forms the symmetric covariance `C =
-    (1/(m−ddof))·Xcᵀ·Xc`, and eigendecomposes `C` (eigenvalues = explained variances, eigenvectors = principal
-    directions, sorted descending). The symmetric eig is **net-new** (nothing existed to reuse): a deterministic
-    **Jacobi rotation** solver is the source of truth — the analog of E1 reusing the trusted square solve. The
-    emitted C delegates to LAPACK's **`ssyev`** when linked (the *existing* `LAPACKE_*`→`-llapack` rule covers it
-    — no linkflags change), with a portable Jacobi fallback (CI needs no LAPACK). Independent verifiers
-    `eigen_residual` (`max|C·v − λ·v|`) and `orthonormality_residual` (`max|VᵀV − I|`) recompute directly from
-    `C` and the eigenpairs. Honest note: `ssyev` (Householder + QR) and Jacobi differ in realization but agree to
-    float round-off on well-separated eigenvalues; degenerate eigenvalues make eigenVECTORS non-unique. A
-    deterministic sign convention is applied on both rails. Off the legality path; the R17 bridge bound is the
-    input round-trip alone.
-  - **E3 — full Transformer encoder block** (`bcir/kbcir/transformer.py`, `emit_layernorm_c`): the third
-    ML-breadth slice — and the one that **completes the multi-head / batched / masked attention + layernorm
-    follow-up** that `attention.py`'s docstring (and Pillar 5c) flagged as **deferred**. Structurally distinct
-    from E1/E2: where those each *wrapped one external LAPACK kernel*, a Transformer block is a **COMPOSITION**
-    of ops BCIR already ships, so it mirrors the G7 single-head attention, **REUSING**
-    `attention.scores_reference` + `activation.softmax_reference` + `matmul.matmul_reference` (never reinvented).
-    The canonical **POST-LN** block (`transformer_block_reference`) is `LayerNorm(x + MultiHeadAttention(x))`
-    then `LayerNorm(x1 + FeedForward(x1))`, with a one-line **PRE-LN** variant. **The ONE net-new primitive is
-    LayerNorm** (`layernorm_reference`: per-row mean / **population** variance / `γ·(x−mean)/√(var+eps)+β`), whose
-    `sqrt` rides the trusted `c.call.libm:sqrtf` edge (`-lm`, **already mapped — no linkflags change**). A
-    `causal_mask` (additive `-inf` upper triangle, the diagonal always kept so no all-masked row → NaN) and
-    `feedforward_reference` (`act(x·W1+b1)·W2+b2`) complete it; batch is a simple outer loop. Independent verifiers
-    (`layernorm_stats` ⇒ mean≈0/var≈1; the causal-mask future weights are exactly 0; multi-head == concat of
-    independently-computed heads then `W_o`; the zero-weight block reduces to `LayerNorm(LayerNorm(x))`) are
-    recomputed off the block code path. The only NEW C kernel is `emit_layernorm_c` — the matmul / softmax /
-    single-head-attention C twins already exist, so the rest composes already-tested twins. Off the legality
-    path; the R17 bridge bound is the input round-trip alone.
-  - **E4 — RNN / LSTM / GRU recurrent cells** (`bcir/kbcir/recurrent.py`, `emit_lstm_cell_c`): the fourth
-    ML-breadth slice — a **TWO-TIER** design forced by the B3 autodiff's CLOSED primitive set (no transcendentals),
-    mirroring **M1's two-path losses**. **Tier A** — the closed-set relu-RNN `h_t = relu(W_h·h_{t-1} + W_x·x_t + b)`
-    (relu = `select`, the matmuls = `dot`), trainable end-to-end via the EXISTING `unroll_scan` + `grad` (= literal
-    **BPTT**); the HEADLINE gate asserts the BPTT gradient (inputs **and** weights) matches `finite_difference_grad`
-    — a real trainable recurrent net whose BPTT is the existing reverse-mode AD, verified by finite differences.
-    **Tier B** — LSTM (`f/i/o = σ`, `g = tanh`, `c = f⊙c_prev + i⊙g`, `h = o⊙tanh(c)`) and GRU (`z/r = σ`,
-    `n = tanh(W_n x + r⊙(U_n h_prev) + b_n)`, `h = (1−z)⊙n + z⊙h_prev`) as transcendental cells with a numeric
-    forward (checked against a hand-computed example) + **closed-form analytic gradients** from `σ' = σ(1−σ)`,
-    `tanh' = 1 − tanh²` (the M1-style seed), checked against CENTRAL finite differences (~1e-11). Independent
-    verifiers: gate-range (`σ ∈ (0,1)`, `tanh ∈ (−1,1)`) and **temporal dependence** (`∂h_T/∂x_0 ≠ 0` — memory
-    across time). The only NEW C kernel is `emit_lstm_cell_c` (`tanhf` + the `expf`-based guarded sigmoid → the
-    `c.call.libm:` edge, `-lm`, **already mapped — no linkflags change**), compiled + run + matched by the `#lstm`
-    runtime probe. `check_recurrent` is op-level well-formedness (NOT a new R-law). Off the legality path; the R17
-    bridge bound is the input round-trip alone.
-  - **E5 — classical-ML PREDICT path** (`bcir/kbcir/classical.py`, `emit_svm_rbf_predict_c` + `emit_tree_predict_c`):
-    the fifth ML-breadth slice — KNN / decision tree / SVM / Naive-Bayes **PREDICT**. **The research finding (E7
-    cites):** classical ML splits sharply — **TRAINING** (tree induction, the SVM dual **QP** solve, NB fitting) is
-    iterative/combinatorial (no fixed dataflow, data-dependent control flow, convergence loops) → a **poor fit** for
-    BCIR's fixed-shape claim model → library/Python; **PREDICT** over a BAKED model (tree thresholds; SVM SVs + dual
-    coeffs `αᵢyᵢ` + bias; NB per-class log-prior/mean/var; the KNN set) is a deterministic, fixed-shape kernel = the
-    **G5 baked-weights pattern** BCIR wraps. KNN ranks on the **squared** distance (= ranking on distance, sqrt
-    monotone → no transcendental), majority vote / mean; the decision tree is an EXACT threshold traversal (no
-    transcendental); the linear SVM is exact dot products, the RBF SVM rides `exp` (`expf` → `-lm`); Gaussian-NB
-    `argmax_c [log_prior − ½ Σⱼ((xⱼ−μ)²/σ² + log(2π·σ²))]` with the `log(2π·σ²)` normaliser **baked** (data-
-    independent), so the predict kernel's only `log` is a bake-time constant. Independent verifiers: an O(n²)
-    neighbour-set selection (KNN), a recursive traversal + leaf-reachability (tree), independent dot/kernel-sums
-    (SVM), the full Gaussian log-likelihood recompute (NB). The two new C kernels cover **both** Area-B halves —
-    the RBF-SVM (transcendental `expf` → the `c.call.libm:` edge, `-lm`, **already mapped — no linkflags change**)
-    and the tree (EXACT, **no libm**) — compiled + run + matched by the `#classical` `#svm` / `#tree` probes.
-    `check_classical` is op-level well-formedness (the quarantine rule: RBF-SVM `exp` / Gaussian-NB `log` need f32;
-    KNN / tree / linear-SVM are exact and may be i32) — NOT a new R-law. Off the legality path; the R17 bridge
-    bound is the input round-trip alone. libsvm is the canonical SVM library in the framing only — the decision
-    function is emitted self-contained.
-  - **E6 — unsupervised + the data pipeline** (`bcir/kbcir/unsupervised.py`, `emit_kmeans_assign_c`): the sixth
-    ML-breadth slice — **K-means / scalers / cross-validation folds / a small autoencoder / an embedding lookup**,
-    which **REUSES** BCIR's existing pieces (the Area-B "integrate, don't reinvent" discipline). It carries the
-    E5 **FIT vs PREDICT/TRANSFORM split**: FIT (Lloyd's iteration; a scaler's statistical pass) is
-    bounded-iterative/statistical; the PREDICT/TRANSFORM over a BAKED model (nearest-centroid assign, the exact
-    scaler transform, the autoencoder forward, the row gather) is a fixed-shape kernel = the **G5 baked-weights
-    pattern**. **K-means**: `kmeans_assign` reuses `classical.squared_distance` and takes the argmin (= ranking
-    on distance, `sqrt` monotone → **no transcendental**; tie-break lowest index); `kmeans_fit` is the bounded
-    DETERMINISTIC Lloyd loop with deterministic empty-cluster handling (keep the previous centroid); the
-    independent verifier is the defining property that **inertia is monotone non-increasing** across iterations.
-    **Scalers**: FIT bakes the transform (StandardScaler's `sqrt(population variance)` is the only transcendental,
-    at fit time → the transform `(x−μ)/σ` is exact division; MinMax `(x−mn)/(mx−mn)` exact, guarded), verified by
-    standardized data having mean ≈ 0 / std ≈ 1 and min-max data lying in `[0,1]`. **CV folds**: `k_fold_indices`
-    reuses the M3 `training._lcg_permutation` (no new RNG); the verifier confirms a **genuine partition** (disjoint
-    + cover) with balanced sizes. **Autoencoder**: a composition reusing `matmul.matmul_reference` + the G1
-    activation references + M1 `losses.mse_value`, verified by tied-identity weights reconstructing the input
-    (error ≈ 0) vs a real bottleneck (> 0). **Embedding**: an exact baked-table row gather (verified == the direct
-    slice; an out-of-range id raises). The one new C kernel `emit_kmeans_assign_c` is the EXACT nearest-centroid
-    argmin (pure compare/add, returns an `int`) — **NO transcendental, NO libm** (needs no `-lm`, **no linkflags
-    change**), integer-exact vs the oracle, compiled + run + matched by the `#kmeans` probe. `check_unsupervised`
-    is op-level well-formedness (the quarantine rule: a transcendental-activation autoencoder needs f32; K-means
-    assign / scaler transform / embedding are exact) — NOT a new R-law. Off the legality path; the R17 bridge
-    bound is the input round-trip alone.
-  - **E7 — the ML language-placement analysis (the capstone)** ([`ML_LANGUAGE_PLACEMENT_ANALYSIS.md`](ML_LANGUAGE_PLACEMENT_ANALYSIS.md)):
-    the doc-only capstone of the E-series. It classifies every ML/numeric component (the substrate, the `gem.*`
-    ops, the Area-B wraps, the M-trio, and E1–E6) into a four-language hierarchy — **Python** (the oracle + the
-    iterative/combinatorial TRAIN/FIT halves + the autodiff Tape + the planners/cost model + the bridges), **C**
-    (the dual-rail verifier twin + the fixed-shape PREDICT/INFERENCE/TRANSFORM `emit_*_c` kernels + the
-    `c.call.libm:` edge + the Area-B BLAS/LAPACK/FFTW/GSL/SLEEF wraps), **MLIR** (the `gem.*` law rail + R1–R23 +
-    CostVectors), **C++** (the G8 boundary — the hand-off scaffold + the SYCL `-fsycl` backend) — with the
-    determining criterion and a migration map. The dominant pattern is the train/predict (fit/transform) split
-    crossed with the exact/transcendental and legality/cost axes; it confirms the two-truth quarantine (no ML
-    module emits a verdict) against the source.
-- **5c tensor ops as claims — PARTIAL (broadening).** `gem.matmul` is a first-class planned claim with
-  K_BCIR tile/loop search, joined by `gem.activation` (relu / sigmoid / tanh / gelu / softmax), `gem.conv`, and
-  the **G7 `gem.attention`** single-head scaled-dot-product op — and now the **E3 full Transformer encoder
-  block** (multi-head / batched / masked attention + the net-new **layernorm**), which composes those existing
-  claims (the deferred multi-head/masked attention + layernorm follow-up `attention.py` flagged is **built**).
-  Wiring these compositions into globally-numbered MLIR law ops remains the separate follow-on (kept separate,
-  as `matmul.py`'s MLIR wiring was).
-- **5d C++ hand-off boundary — SCAFFOLDED.** The boundary is now defined doc-first
-  ([`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md)) and backed by a compilable,
-  round-trip-tested seam ([`runtime/cpp/`](../runtime/cpp), gated by
-  [`tools/cpp/check_handoff.sh`](../tools/cpp/check_handoff.sh), wired into the c-runtime
-  suite). The contract: the C/IR rail produces a frozen StreamPack; a C++ `Orchestrator`
-  consumes it, decides placement/topology, and re-enters the existing single-node C kernels
-  per shard — it may schedule/shard/retry/replicate but may NEVER alter the artifact's
-  semantics or become an R-law verdict (the two-truth quarantine extends across the seam).
-  **Honest depth:** the `SingleNodeOrchestrator` reference is REAL (it round-trips an
-  artifact through the existing C decoder and its dispatch order == the direct C/IR path);
-  the dynamic-graph (RL node spawning / mixed-length token graphs) and distributed
-  (MPI/NCCL multi-node) backends are documented STUBS behind the same interface — they fail
-  loudly and add no real MPI/NCCL dependency (that needs multi-node hardware we don't have).
+- Device manifests and profiles, bank typing, distance-priced moves, event phases, DMA
+  descriptors, StreamPack v3 metadata, direct RuntimeChannel v1 hooks, and bounded
+  loopback behavior.
+- Signal IDs/units/provenance in Python, strict Python/C BTLM frame parity, continuity
+  evidence, derived metrics/sensitivity, deterministic Prometheus text/OTLP JSON/Redfish
+  shapes, and a quiescent shared-ring baseline.
+- A proof-carrying driver-package maturity model and separate BCIR-Linux/native-kernel
+  dependency tracks are documented.
 
----
+### Missing implementation
 
-## Prioritized remaining-work backlog
+- Generated fixed-width C signal table and ID-range policy.
+- Source/session/generation/clock/loss telemetry envelope; live publish/backpressure/
+  peer-death SPSC ring; UART, HTTP, OTLP, Prometheus host, Redfish/BMC, GPU, and other
+  live providers/transports.
+- Resident UART, virtio, storage, network, USB, accelerator, or physical-device driver.
+- Linux bridge/module and actual `Mecca-Research/BCIR-Linux` patch queues.
+- Stable userspace ABI, out-of-process Linux adapter, native kernel, and capability IPC.
 
-Ordered by leverage toward the vision, holding the two-truth quarantine +
-prototype-then-port discipline. Each item is PR-sized and parity-gated.
+The dependency is evidence-driven: telemetry identity → direct UART lifecycle → Linux
+adapter parity → virtio queue/DMA proof → UAPI v1 → native IPC after direct/Linux/native
+behavior agrees. Linux compatibility is additive; BCIR does not promise a stable Linux
+kernel-internal ABI or replace POSIX/Linux syscalls.
 
-**Immediate (the queued Area-B slices — they advance Pillar 4b + the calling-side half of
-Pillar 3):**
-1. ✅ **B1 — `bcir-cc --emit-c` automatic link-flag emission** — DONE (`-lm`/`-lcblas`/
-   `-lfftw3` derived from the `c.call.libm:` edges, dual-rail).
-2. ✅ **B2 — wrap a new C math library** — DONE (FFTW 1-D FFT via `c.call.libm:`, R17 bridge,
-   portable DFT fallback).
-3. ✅ **B3 — calling-side tuning** — DONE (cost-priced major-order / tile / prefetch / channel).
-4. **Area-B breadth — ATLAS / GSL / OpenBLAS-LAPACK / SLEEF** wrapped through the same edge —
-   **remaining** (the active frontier).
-4b. ✅ **SYCL/SPIR-V backend channel + differential oracle** (heterogeneous interop — "measure a
-    heterogeneous backend before committing to a resident driver") — **BUILT**: a modeled SPIR-V GPU
-    channel ([`channels/sycl.channel.json`](../channels/sycl.channel.json)) the planner prices + routes
-    like any other, plus a toolchain-gated SAXPY `parallel_for` differential oracle
-    ([`bcir/kbcir/sycl_saxpy.py`](../bcir/kbcir/sycl_saxpy.py) + `emit_sycl_saxpy_c`, gated by
-    [`tools/cpp/check_sycl.sh`](../tools/cpp/check_sycl.sh)) that verifies a device reproduces BCIR's
-    own reference (portable scalar fallback does the real work; the `-fsycl` device path self-skips on
-    CI). SYCL is a compiler MODE, **not** a `c.call.libm:` link edge (no `linkflags.py` rule); its
-    dynamic scheduler is held off the legality path. See [`SYCL_INTEROP.md`](SYCL_INTEROP.md). No
-    `mlir/` changes, no new R-laws. **S2 (resident dispatch):** the channel now has a host-side
-    **dispatcher** ([`bcir/lower/sycl_dispatch.py`](../bcir/lower/sycl_dispatch.py) `SyclDispatcher` +
-    `build_execute_kernels`) so a module `orchestrate` places onto a tower including `sycl_spirv` is
-    **run end-to-end** through `gem.execute`, the sycl-placed claim dispatched through the emitted kernel
-    (portable fallback on CI, `-fsycl` device path gated), round-trip-verified vs the reference and gated
-    by `#sycl-dispatch` in [`tools/cpp/check_sycl.sh`](../tools/cpp/check_sycl.sh); the SPIR-V codegen
-    identity is reachable via the `spirv64` target (best-effort). Above the G8 boundary, never a verdict.
-    **S3 (all three declared capabilities):** the channel's `{data_parallel, matmul, reduce}` caps are now
-    each differentially verified + dispatchable — `reduce` (`sycl::reduction`,
-    [`bcir/kbcir/sycl_reduce.py`](../bcir/kbcir/sycl_reduce.py) + `emit_sycl_reduce_c`, `#sycl-reduce`) and
-    `matmul` (a 2-D `parallel_for` reusing the B1/B5 `matmul_reference`, `emit_sycl_matmul_c`,
-    `#sycl-matmul`) join SAXPY, with `SyclDispatcher.run_reduce` / `.run_matmul` executing them
-    ([`bcir/tests/test_sycl_reduce_matmul.py`](../bcir/tests/test_sycl_reduce_matmul.py)). The reduce device
-    path honestly notes its tree-reorder tolerance; the portable fallback sums sequentially and matches the
-    reference exactly. Still a compiler MODE, no `linkflags.py` rule, no `mlir/` changes, no new R-laws.
+## 8. Highest-leverage remaining work
 
-**Pillar-3 intelligence:**
-5. ✅ **SoA↔AoS layout pivot** (Pillar 3b) — DONE: oracle `layout.py` + MLIR `-bcir-layout-pivot`.
-6. ✅ **cache/bank cost signal** (Pillar 3a) — DONE: frozen-Q8 `cache_predict.py` + MLIR
-   `-bcir-cache-contention`, informs-only.
-7. ✅ **matmul+activation fusion** (Pillar 3c, 5c) — DONE: `fusion.py` + MLIR
-   `-bcir-fuse-matmul-activation`, deforestation-priced.
+1. Complete the pre-driver telemetry identity and live bounded SPSC contracts.
+2. Build UART as the first resident in-process proof-carrying driver with simulator,
+   faults, cancellation, teardown, telemetry, and replay evidence.
+3. Add Linux-hosted parity, then use virtio-blk to prove queue/DMA/reset/saturation.
+4. Gather bounded real-hardware calibration and performance evidence; promote immutable
+   priors only through certificates and quiescent generation swaps.
+5. Advance the bounded AI-substrate gaps—low-bit formats, portable schedule export, and
+   AD breadth—without delaying the driver dependency chain.
+6. Keep arbitrary-graph AOT, native isel, BCIR-Linux, native kernel, and native IPC behind
+   their explicit evidence/dependency gates.
 
-**Pillar-5 bare-metal AI:**
-8. ✅ **Lower the autodiff oracle to a backward-pass kernel** (Pillar 5b) — DONE:
-   `emit_autodiff_kernel_c` + SGD; gradients match oracle + finite-difference.
-9. ✅ **Baked-weights inference kernel emitter** (Pillar 5a) — DONE: `emit_inference_kernel_c`.
-10. ✅ **Define the C↔C++ hand-off boundary** doc-first (dynamic-graph + distributed) so the
-    single-node limit is explicit (Pillar 5d). **DONE** —
-    [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) + a compilable, round-trip-tested
-    single-node seam ([`runtime/cpp/`](../runtime/cpp), gated by
-    [`tools/cpp/check_handoff.sh`](../tools/cpp/check_handoff.sh)); the dynamic/distributed
-    backends remain marked stubs (no real MPI/NCCL). *Follow-up:* build a real dynamic-graph
-    freeze loop + an MPI/NCCL backend when multi-node hardware is available.
+## 9. Bottom line
 
-**Pillar-1/2 boundaries & formalization:**
-11. `Domain.DMA` + DMA-descriptor specialist + device-isolation annotation (Pillar 1).
-12. A normative **flatness/ownership law** in the LangRef + an optional inline-bounds
-    `emit_style="flat"` (Pillar 2).
+The central compiler thesis is credible and code-backed: C is a useful registry/macro
+surface, the IR owns legality/planning/schedule, K_BCIR/GEM are executable, learned
+artifacts are quarantined, and a real small model crosses a deterministic Python-to-C Q8
+gate.
 
----
-
-## Bottom line
-
-The **foundation the vision rests on is real and demonstrable**: C *is* a thin,
-type-safe, registry-oriented macro-assembly target; the IR *does* own scheduling and the
-math; the linearized StreamPack and the certified Q8 precision bridge exist.
-
-As of the 2026-06-28 build update, the **intelligence and ML-payload half is now built too**
-(items 5–10 above, all merged): the macro-assembly-layer "Layer-1 AI" (cache/bank contention
-prediction, SoA↔AoS layout pivoting, autonomous matmul+activation fusion), the tensor-op
-vocabulary (`gem.activation`/`conv`/`attention`), and the end-to-end bare-metal
-inference (`emit_inference_kernel_c`) + training (`emit_autodiff_kernel_c`) kernels — each
-prototyped in the oracle and **ported to the MLIR law rail**, parity-gated. BCIR has moved
-from "a verifiable C macro-assembly substrate" to "an AI-optimizing compiler that runs
-inference and training on bare metal," with the learned/predicted signals held off the
-deterministic legality path by the two-truth quarantine.
-
-**What genuinely remains** is breadth and the hardware-gated frontier, not core capability:
-**4b** library breadth (LAPACK/GSL/SLEEF through the existing edge), **5d** the real
-dynamic-graph + MPI/NCCL distributed backends (a contract + single-node seam exist; the
-multi-node backends need cluster hardware), and the **Pillar-1/2 boundary** items
-(DMA/device-isolation domains, a normative flatness law).
+The system is not yet an AI-native driver/kernel platform. Its most important missing
+evidence is a resident device lifecycle and the telemetry identity/backpressure semantics
+needed to train and certify device-specific optimizers. Calling compiler fixtures,
+modeled channels, serialization outputs, or cross-compiled objects “drivers,” “live
+telemetry,” or “hardware support” would overstate the repository. The roadmap now makes
+those boundaries and promotion gates explicit.

@@ -1,11 +1,10 @@
 # BCIR — ML / AI Integration Roadmap
 
-> **Companion to [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md).** That document is the authoritative
-> phase ladder (Phase C → M → D → F → L), the capability tracks (CT1–CT5), the release ladder, and the
-> two-truth placement law. This document **expands its Phase M (selective ML ops) and Phase L (the ML library
-> / ecosystem)** into a single, dependency-ordered ML/AI program, and slots every proposed integration onto
-> the existing substrate. It does **not** restate the spine, the organs, or the quarantine — it references
-> them ([`BCIR_LANGREF.md`](BCIR_LANGREF.md) §13 for L0–L3, [`HETEROGENEOUS_CHANNELS.md`](HETEROGENEOUS_CHANNELS.md)
+> **Companion to [`BCIR_MASTER_ROADMAP.md`](../BCIR_MASTER_ROADMAP.md).** The master owns
+> portfolio order, promotion gates, and release policy; this document owns the detailed
+> ML/model closure program and its research horizons. Historical Phase/CT labels are retained
+> only where they identify landed programs. It does **not** redefine the spine or quarantine—it references
+> them ([`BCIR_LANGREF.md`](../BCIR_LANGREF.md) §13 for L0–L3, [`HETEROGENEOUS_CHANNELS.md`](../kernel/HETEROGENEOUS_CHANNELS.md)
 > for the channel model). Everything here is held to the same discipline that built the rest of BCIR:
 > **prototype in the Python oracle → port to the MLIR/C law, parity-gated; learned/float stays Python and
 > freezes to Q8; nothing graded ever touches the deterministic hot path.**
@@ -79,8 +78,8 @@ audit (do not rebuild any of this — extend it):
 **The deterministic spine (the body's reflexes).** BCIR-0..5; the claim graph; K_BCIR (`-bcir-cost-model`,
 `-bcir-plan`, `-bcir-rcsp`, the min-plus shortest path + Pareto); GEM (`bcir/gem/execute.py`, the phase-ordered
 wave executor); the **R1–R23** verifier law rail (with the C frontend carrying its scoped subset;
-R19/R20/R21 first-class since the
-[`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §5.14 promotion). **Reusable as-is.**
+R19/R20/R21 first-class and R22/R23 covering the GEM seams). **Reusable as-is.** The
+landing chronology is recorded in [`DEVELOPMENT_HISTORY.md`](../DEVELOPMENT_HISTORY.md).
 
 **The learned organs already present (CT5, all Python, all freeze to Q8).** Each has a named growth axis —
 this is what *"continuous development at every level"* means concretely:
@@ -90,7 +89,7 @@ this is what *"continuous development at every level"* means concretely:
 | `microbench` | Q8 cost ratios (gather penalty, base overhead) | L1 | more access regimes; host thermal-noise models |
 | `bayescal` | Gaussian posterior + conformal ±δ on cost | L1/L2 | ABC using `optimize` as the simulator |
 | `egraph` / `memory` | liked/unliked-pair rewrites; saturated fixpoint `Lim(Res(U))` | L1/L2 | rule synthesis; saturation heuristics + budgets |
-| `operad` | hierarchical labels `L`, content-addressed index `I` (FNV), trace, 2-cells | L1/L2 (gated) | **the 2-cell rewrite algebra (proposed, not yet built)** |
+| `operad` | hierarchical labels `L`, content-addressed index `I` (FNV), trace | L1/L2 (gated) | label/index integrity; navigable provenance |
 | `portfolio` | workload-class thresholds + gain schedules | L1/L2 | adaptive thresholds; class synthesis |
 | `moegate` | a GNN router over the claim graph → expert selection | L2→L1 | attention heads; exploration temperature |
 | `accel` | a logistic ranker for branch-and-bound candidate order | L2→L1 | feature engineering; ensemble/boosted rankers |
@@ -105,13 +104,13 @@ navigable, traceable, queryable without touching the spine) — are the seeds th
 The reference-state metrics — the **12-d cost vector**, the **thermal/power budgets**, and the recently added
 **clock/timing** signal (R19/R20, `Timing` in `bcir/model/graph.py`) — are the axes the ML layers optimize over.
 
-**The net-new boundary (what this roadmap actually builds).** Tensor ops, ML graphs, gradient machinery, and
-the training loop are **absent today** (the frontend is scalar/elementwise; `lower/c_kernel.py` emits
-elementwise C only). But the integration *seams* exist and are clean: the **libm/FFI edge** (`c.call.libm:` —
-61 math names, malloc/free with extent tracking) is the path for BLAS/LAPACK/FFTW; the **K_BCIR search** already
-prices `UNIT/STRIDE/GATHER/TILE` stride classes and a `gather_penalty`; the **R17 accuracy law** + compensated
-Q8 reduction already model numerical precision; the **telemetry ring + calibration loop** already close
-(measure → freeze → replan → certify) and need only an ML trainer fed in.
+**The current boundary.** The first tensor claims, activation/fusion path, closed-set reverse-mode AD,
+losses/optimizers/training, numerical-library wrappers, model ingestion, group-Q8 persistence, and the
+small-Llama standalone-C gate are now implemented. They remain deliberately bounded reference rails rather
+than a framework or production serving stack. The active frontier is low-bit packed realization,
+hardware-calibrated schedule evidence, broader AD semantics, scalable model execution, and the data/memory
+organs in Phase C. The existing **libm/FFI edge**, K_BCIR search, R17 bridge, telemetry ring, and certified
+calibration loop remain the reusable seams; new work must extend them rather than create parallel systems.
 
 ---
 
@@ -120,24 +119,25 @@ Q8 reduction already model numerical precision; the **telemetry ring + calibrati
 Six phases, dependency-ordered. The through-line: **a verifiable C inference substrate → ML primitives over
 it → data/memory organs to feed them → more language sources → ML-guided hardware deployment → higher
 cognition.** Each phase states what it *builds on*, its *L0–L3 / two-truth placement*, and its *parity gate*.
-Phases A–B are the immediate, gateable work; E–F are horizons. ML ops (Phase B) run **throttled in parallel**
-with the C/driver work and **never block the keystone** (master roadmap Phase M discipline).
+Phases A–B contain landed foundations plus bounded closure work; E–F are horizons. ML work
+runs with bounded resources under [`BCIR_MASTER_ROADMAP.md`](../BCIR_MASTER_ROADMAP.md)
+§4.4 and must not block the telemetry→UART→virtio driver dependency chain.
 
-### Phase A — The C inference substrate (the body's native instruction set)
-*Extends master-roadmap Phase C.0. C is not "a driver language" here — it is the unrestricted, hardware-native
-AI inference pathway with no framework tax.*
+### Phase A — The C inference substrate
+*C is both a driver-oriented frontend and a portable inference realization. It remains a
+documented subset and uses resident toolchains/libraries where appropriate; “portable C” is
+not a claim of unrestricted language coverage or automatic hardware-optimal code.*
 
-- **A1 — Max out C23 as the inference pathway.** *Done already* (build on): `#embed`, `_Atomic`/`<stdatomic.h>`,
-  `_Alignof`, `typeof`/`_Generic`, VLAs, bitfields, `_Complex`, compound/designated initializers, statement
-  expressions, `_Decimal*` (recognized). *Net-new, ML-load-bearing*: lower `_BitInt(N)` (exact-width quantized
-  weights); `<stdbit.h>` + `<stdckdint.h>` (safe bit/overflow math for fixed-point activations); the
-  optimization attributes **`[[unsequenced]]` / `[[reproducible]]` / `[[gnu::*]]`** elevated from lexed-only to
-  **legality/cost signals** (an unsequenced kernel unlocks reorder/fusion the cost model can price); `assume`
-  expressions feeding the verifier; native decimal floats as Q-fixed activation tables. Each is a Phase-C.0
-  enabler with a fixture + Clang-equivalence gate.
+- **A1 — Max out C23 as the inference pathway.** **Landed:** `#embed`, atomics, alignment, `typeof`/`_Generic`,
+  VLAs, bitfields, `_Complex`, aggregate initialization, statement expressions, exact-width `_BitInt(N)`, and
+  `[[unsequenced]]` / `[[reproducible]]` as a fusion-legality signal. Per-group power-of-two quantization and
+  the fixed BCIRQ8 group-32 artifact prove the Q8 storage/reference path. **Remaining:** packed sub-byte
+  storage and real INT2–INT6 compute lanes; activation-outlier smoothing and activation quantization;
+  additional microscaling/FP8/NF4/GGUF-style adapters under explicit R17 contracts; `<stdbit.h>` and
+  `<stdckdint.h>`; verifier-fed `assume`; and native decimal-float semantics rather than recognition/fallback.
 - **A2 — Native matrix/tensor abstractions + safe-pointer polymorphism.** Build a first-class matrix/vector
   type for the C subset (over the existing multi-dim array + aggregate lowering) and use the **extent-provenance
-  pointer model** (the `masked`/`assumed_safe` decision, §5.12) to give *polymorphism without errors*: a typed,
+  pointer model** (the `masked`/`assumed_safe` decision in LangRef §4) to give *polymorphism without errors*: a typed,
   bounds-recoverable pointer is the safe substrate for "C that reads like assembly, with automatic safety."
 - **A3 — The test → quarantine → study → fix → optimize loop (the first practical CS layer).** Wire the
   natural debugging layers into ML + optimization: the runtime quarantine (`BCIR_CHK` / `bcir_bounds_quarantine`)
@@ -152,21 +152,27 @@ AI inference pathway with no framework tax.*
 *Builds on Phase A + the K_BCIR search + the operad/e-graph. Prototype each op in the oracle, port to an MLIR
 law, parity-gate. Throttled, parallel to C/driver work.*
 
-- **B1 — Tensor ops as BCIR claims.** Add `gem.matmul` / `gem.conv` / `gem.attention` ops carrying shape/rank/
-  dtype metadata; let the **existing min-plus search decide the realization** (row- vs column-major, tile sizes,
-  loop order) by encoding the choice as extra cost-vector dimensions — *reuse* `optimize()`, the stride classes,
-  and `gather_penalty`. New laws: shape consistency, dtype compatibility (the next first-class R-laws after R21).
+- **B1 — Tensor ops as BCIR claims.** **Landed:** `gem.matmul` / `gem.conv` / `gem.attention` carry geometry,
+  precision, and cost metadata; R22/R23 enforce shape/dtype seams; `plan_matmul` searches tile and loop-order
+  candidates deterministically. The planner is explicitly **dual-semiring**: (min,+) composes/selects plans
+  while `max(compute,memory)` models the binding roofline. **Remaining:** emit the selected schedule through a
+  transform-dialect or equivalent target schedule, calibrate target constants from real counters, and compare
+  analytic choices with exhaustive measurements across GEMM and fused/attention classes. The target is a
+  reproducible near-peak schedule, not an unbounded runtime autotuner.
 - **B2 — Activation specialization + fusion.** Activations fuse with the producing op via the **existing bundle/
   fusion/deforestation optimizer** — no new fusion engine, just new fusible ops.
-- **B3 — Gradient machinery as graph transformations.** Forward and backward passes are **rewrites recorded as
-  operad 2-cells** (this is the concrete use for the proposed 2-cell rewrite algebra in §1) — autodiff becomes a
-  traceable, content-addressed transformation over the claim graph, reusing the e-graph + the SourceMap. Oracle
-  prototype → MLIR law.
+- **B3 — Gradient machinery as graph transformations.** **Landed:** first-order reverse-mode AD is a
+  content-addressed closed DAG, gradients are local graph rewrites, closure is machine-checked, symbolic
+  reverse-over-reverse covers the closed vocabulary, and `bcir.gem.autodiff` carries the law object. Use the
+  literature-backed terminology **monoidal/string-diagram (PROP) rewriting**; do not describe AD as operad
+  2-cells. **Remaining:** benchmark differentiate-high/optimize-low against post-optimization or multi-level AD;
+  add checkpoint/rematerialization policy; and extend mutation, unbounded control flow, higher-order functions,
+  and transcendental VJPs without weakening closure or replay.
   - **Landed so far — the M/E build record.** The Phase-B ML substrate below is **BUILT**: each slice an
     oracle-first, parity-gated, PR-sized landing, all **off the legality path** (no verifier touched, no
     `Diagnostic` emitted), pure-Python oracle + emitted-C twins gated in `tools/c/check_runtime.sh`,
     deterministic given the seed. The per-slice build narratives are summarized in
-    [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md); the definitive detail is the code + tests.
+    [`DEVELOPMENT_HISTORY.md`](../DEVELOPMENT_HISTORY.md); the definitive detail is the code + tests.
 
     | Slice | What shipped | Where |
     |---|---|---|
@@ -184,11 +190,11 @@ law, parity-gate. Throttled, parallel to C/driver work.*
   (layout, schedule, fusion — exact, deterministic), **gradient steps tune the weights** (graded side). Many
   training problems become tropical optimization + a few gradient steps. `softdp` (the finite-T posterior) and
   the `regret` ledger are the learned guidance — always graded, never on L0.
-- **B5 — Integrate existing C numerical libraries as intrinsics (do NOT rebuild XLA/TF).** Wrap **ATLAS, GSL,
-  FFTW, OpenBLAS/LAPACK, SLEEF/libmvec** through the *existing* `c.call.libm:{xgemm,...}` edge; `bcir-cc --emit-c`
-  links `-lblas`/`-lfftw3`. BCIR's value is optimizing the **calling side** (layout, prefetch, fusion, tiling,
-  channel selection) around a trusted kernel. Precision bridges Q8 → trained float32 → Q8, certified by the R17
-  accuracy law. *Compress what we need, integrate the rest.*
+- **B5 — Integrate existing C numerical libraries as intrinsics (do NOT rebuild XLA/TF).** **Core breadth is
+  landed:** CBLAS, FFTW 1-D/2-D, LAPACK, GSL, SLEEF, and libcerf wrappers share the `c.call.libm:` trust edge,
+  automatic platform-aware link classification, R17 bridges, portable fallbacks, numerical red-team tests, and
+  calling-side layout/tile/prefetch/channel planning. Further libraries are demand-driven; the remaining proof
+  is performance and availability on target systems, not another parallel numerical framework.
 
 ### Phase C — Data + memory organs (feeding the ML) — *extends CT1 / CT3*
 *Builds on the ETL/binary-record frontends, the telemetry ring, and the memory-tier cost model (which today is
@@ -242,9 +248,11 @@ them (thermal/power/clock optimization, adaptive unrolling, best-ISA selection).
   interface with the **Unicode database** as the base tokenizer: glyph/grapheme/codepoint structure → tokens,
   with the **operad content-addressed index** as the stable token fingerprint (reproducible, CSE-friendly). This
   is the substrate for an NLP system that inherits BCIR's determinism + provenance.
-- **F2 — The file-creation backbone.** Use the **Binary File Descriptor (BFD)** library as the object/file
-  emission backbone, wired into the native-object gate ([`BCIR_NATIVE_OBJECT_GATE.md`](BCIR_NATIVE_OBJECT_GATE.md))
-  — ML + BCIR deciding object layout/section placement.
+- **F2 — The file-creation backbone.** Keep object/file production on the resident
+  ELF/DWARF/BFD/LLVM ecosystem behind
+  [`BCIR_NATIVE_OBJECT_GATE.md`](../BCIR_NATIVE_OBJECT_GATE.md). BCIR may plan section
+  placement or artifact policy, but it adopts a library only for a concrete consumer and
+  does not pre-commit to a native object writer.
 - **F3 — Recursive intelligence (the capstone).** The L3 meta-policy loop closes **on itself**: the regret
   ledger + the `ΔL` trigger applied to the *optimizer's own* policies, so the system self-optimizes its
   optimization strategies — the point where genuine reference-state self-understanding emerges. It stays **L3,
@@ -263,8 +271,9 @@ Every new ML capability in §2 obeys it:
    autodiff, and posterior inference are L2/L3 graded machinery; only their frozen Q8 outputs deploy.
 2. **Prototype in the oracle, then port to the law.** A tensor op, a gradient rewrite, a new R-law — first a
    Python oracle prototype (cheap iteration, the conformance reference), then the MLIR/C++ law and/or the C
-   twin, gated by an oracle↔law↔C parity test. The oracle then **freezes** (the prototype-then-port discipline,
-   master roadmap §3).
+   twin, gated by an oracle↔law↔C parity test. The oracle then **freezes** (the
+   prototype-then-port discipline in [`BCIR_MASTER_ROADMAP.md`](../BCIR_MASTER_ROADMAP.md)
+   §1 and its publication gate in §7).
 3. **Close the provenance/regret feedback loop.** Measure (telemetry ring) → book regret (`ΔL`) → recalibrate
    (`calibloop`) → re-freeze a generation-tagged table → R13 manifest. This loop *is* the continuous-development
    engine; every organ in §1 plugs its growth axis into it.
@@ -279,70 +288,65 @@ Every new ML capability in §2 obeys it:
 The ideas in §2 mostly extend existing tracks: **CT1** (memory) gains the materialized HAM + the vector DB
 (C2) and the tensor-on-disk formats (C3); **CT3** (frontends) gains tabular streaming (C1), the Fortran seam
 (D), and the FreeType/Unicode tokenizer (F1); **CT4** (calibration) gains the ML-guided JIT loop (E1); **CT5**
-(learning) gains gradient machinery (B3) and the recursive meta-policy (F3). Two genuinely new groupings are
-worth promoting to their own tracks once Phase B lands:
+(learning) gains gradient machinery (B3) and the recursive meta-policy (F3). The former CT6/CT7 proposal is
+retained only as a useful grouping, not as a new global numbering program:
 
 - **CT6 — ML primitives.** Tensor/gradient/training ops as first-class claim-graph + cost-model citizens
   (B1–B4), with their own R-laws (shape/dtype/accuracy).
 - **CT7 — Data & persistence organs.** Streaming sources, the vector DB, and the cloud transport (C1–C3) as a
   named track distinct from the static ETL frontends.
 
-Recommendation: develop them inside CT1/CT3/CT5 through Phase B/C, and formalize CT6/CT7 in the master roadmap
-once the first tensor op and the first vector-DB slice are dual-rail and measured.
+Recommendation: do not add new global CT numbers merely to rename landed tensor work.
+Keep ML primitives in this roadmap and create a data/persistence workstream only when a
+materialized store has two real consumers and a measured contract.
 
 ---
 
 ## 5. Risk register / honest boundaries (out of the dreamy potentials)
 
-- **Substrate–intelligence inversion.** A rich learned/tensor stack over a backend whose real-silicon win is
-  still *modeled, not measured* (master roadmap §5.4, deferred pending a rig). *Mitigation:* every tensor op is
+- **Substrate–intelligence inversion.** A rich learned/tensor stack over targets whose
+  device-specific performance is often still modeled rather than measured (master roadmap
+  §4.4). *Mitigation:* every tensor op is
   held to the **same Clang-equivalence + measured-replan gate** as the rest of BCIR; ML ops are throttled and
   never block the keystone; the quarantine keeps the learned side off L0.
-- **"Don't rebuild XLA/TensorFlow."** The discipline is **integrate, don't reinvent** — wrap ATLAS/GSL/FFTW/
-  BLAS-LAPACK (and later cuBLAS/XNNPACK) through the libm/FFI seam and win on the *calling side*. Re-deriving a
-  framework violates the "compress only what we need" rule (master roadmap Phase L).
-- **Float on the deterministic path is forbidden.** ML trains in float on the graded/Python side and **freezes
-  to Q8** to deploy; the R17 accuracy law is the bridge that makes the frozen artifact certifiable.
+- **"Don't rebuild XLA/TensorFlow."** The discipline is **integrate, don't reinvent** —
+  the landed CBLAS/FFTW/LAPACK/GSL/SLEEF/libcerf families establish the trusted-library
+  seam; add providers only for measured workloads and win on the *calling side*.
+- **Float is scoped, not denied.** Reference/training and explicitly declared numerical
+  kernels may use float. Learned planning policy freezes to deterministic Q8/integer
+  artifacts before L1/L0; R17 and parity bound the numerical crossing.
 - **Neuromorphic is explicitly rejected.** The reference-state-optimization approach on CMOS, not event-driven
   biological mimicry, is the bet. The "life-like" trait is Reference State, not spiking.
-- **Near-term vs vision.** F1–F3 (NLP, BFD, recursive self-optimization) and E2 (ML boot) are **horizons** —
-  named here for order, not started. The immediate, gateable work is **A1–A2 + B1 + B5** (a C23-maxed substrate,
-  one tensor op with K_BCIR tile search, one BLAS kernel wrapped via the libm seam).
+- **Near-term vs vision.** The initial A1/B1/B3/B5 and M1–M3 slices have landed. Near-term work is the bounded
+  completion register below plus Phase C data/memory materialization and the serving gaps in §7. F1–F3 remain
+  horizons; their presence records dependency order, not implementation status.
 
 ---
 
-## 6. Where to start (the first concrete, gateable slices)
+## 6. AI-substrate closure register
 
-> **Status (2026-06-28, see [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md)).** Slices 1–3 below
-> (A1 `_BitInt(N)` + fusion attributes, B1 `gem.matmul` + MLIR law, B5 one BLAS `gemm` wrap) are **DONE**.
-> The active frontier is **finishing the B5/Area-B library-integration breadth** — the calling-side win the
-> roadmap is built on — before C1.
+The 2026-06-27 SOTA scan has been retired after checking every design implication against source and tests.
+Its completed work is recorded in [`DEVELOPMENT_HISTORY.md`](../DEVELOPMENT_HISTORY.md); this table is the
+canonical home for the obligations that remain.
 
-In dependency order, the lowest-risk entry points — each a single PR-sized, oracle-first, parity-gated slice:
+| Track | Source-backed state | Remaining acceptance work |
+|---|---|---|
+| **A1 quantization** | Generic per-group power-of-two INT2+ oracle, R17 bounds, exact-width C lanes, Q4/Q8 drift tests, and deterministic BCIRQ8 group-32 storage are landed | Define a packed sub-byte wire/compute contract and lower it to real target instructions; add activation-outlier/smoothing policy and calibrated activation quantization; admit additional INT4/MX/FP8/NF4/GGUF-style formats only with explicit provenance, compactness, and drift/NLL gates |
+| **B1 scheduling** | Deterministic tile/loop-order search, min-plus selection, max-plus roofline bottleneck, MLIR tensor law ops, exact learned priors, and calling-side tuning are landed | Export a target schedule through MLIR transform or an equivalent stable mechanism; derive cost constants from real counters; compare analytic choices with exhaustive measured candidates on at least two targets and separately report GEMM versus fused/attention behavior |
+| **B3 autodiff** | Hash-consed reverse-mode DAG, local rewrite rules, finite-difference tests, symbolic closed-set gradients/Hessians, bounded scan/select, C lowering, and `gem.autodiff` law serialization are landed | Measure pre- versus post-optimization differentiation; choose and gate multi-level AD or differentiate-high/optimize-low; add replay-aware checkpoint/rematerialization; extend mutation, unbounded control flow, higher-order functions, and transcendental VJPs while preserving closure or explicitly quarantining the escape |
+| **B5 numerical libraries** | CBLAS, FFTW, LAPACK, GSL, SLEEF, and libcerf families, automatic link flags, fallbacks, red-team tests, and calling-side planning are landed | Add providers only when a workload requires them; collect linked-library availability/performance evidence on supported hosts and accelerators without moving vendor numerics into BCIR's legality definition |
 
-1. ✅ **A1 slice — DONE.** `_BitInt(N)` lowered end-to-end; `[[unsequenced]]`/`[[reproducible]]` elevated to a
-   fusion-legality signal the cost model prices. (C23 substrate, dual-rail, Clang-equivalence gated.)
-2. ✅ **B1 slice — DONE.** One `gem.matmul` op (oracle + MLIR law), the K_BCIR search choosing tile size / loop
-   order over new cost-vector dimensions; verified against a reference C matmul.
-3. ✅ **B5 slice (first kernel) — DONE.** One BLAS `gemm` wrapped through the `c.call.libm:` edge with the
-   R17-certified Q8↔f32↔Q8 bridge; portable reference fallback.
+Research basis retained from the retired scan: SmoothQuant (`arXiv:2211.10438`), OCP microscaling
+(`arXiv:2310.10537`), QLoRA/NF4 (`arXiv:2305.14314`), and the INT-vs-FP hardware analysis
+(`arXiv:2303.17951`) bound A1's open formats; Warpspeed (`arXiv:2204.14242`), tritonBLAS
+(`arXiv:2512.04226`), and the portability/autotuning counterpoint (`arXiv:2505.03780`) bound B1's claims;
+Enzyme (`arXiv:2010.01709`), reverse-mode decomposition (`arXiv:2105.09469`), and functorial string-diagram
+rewriting (`arXiv:2107.13433`) bound B3's terminology and performance risk. These are design evidence, not
+normative laws or promised performance.
 
-**The active Area-B frontier — finish library integration (B5 breadth, the calling-side win):**
-
-4. **B1-link slice** — `bcir-cc --emit-c` emits the **automatic link flags** (`-lblas`/`-lfftw3`/…) implied by
-   the `c.call.libm:` edges a unit actually uses, so a wrapped kernel links end-to-end with no manual flags.
-5. **B2 slice** — wrap a **new** C math library (FFTW *or* LAPACK *or* GSL *or* SLEEF) through the same edge,
-   B5-style, with the R17 bridge at the seam and a portable fallback.
-6. **B3 slice** — **calling-side tuning** (layout / tiling / prefetch / channel selection) around a wrapped
-   kernel — the first concrete step toward the Pillar-3 layout intelligence the audit flags as missing.
-7. **Area-B breadth** — ATLAS / GSL / FFTW / OpenBLAS-LAPACK / SLEEF wrapped through the same edge.
-8. **C1 slice** — a column-oriented streaming buffer over the binary-record decoder, feeding a B1 matmul as a
-   tensor stream.
-
-Each slice deepens master-roadmap **Phase M**; the data/driver/cognition phases (C–F) follow as the substrate
-proves out. The order is **A → B → (C ∥ D) → E → F**, with B throttled-parallel to the ongoing C-frontend /
-freestanding-driver work (§5.14), and the two-truth quarantine + prototype-then-port discipline applied at
-every step.
+Execution order is **A1 packed low-bit contract → B1 measured schedule evidence → B3 multi-level/checkpoint
+prototype**, with C1 data streaming able to proceed in parallel. Each slice remains oracle-first,
+parity-gated, bounded, and outside L0 until frozen into a certified artifact.
 
 ---
 
@@ -353,10 +357,10 @@ every step.
 > integration. They change the problem from "GPT as a remote teacher" to "the model is an artifact
 > BCIR may own, inspect, quantize, place, and serve." BCIR is conceptually well suited to this —
 > its core job is turning a semantic computation into a legal, costed, target-aware realization
-> with telemetry and replay — but BCIR currently has **ML primitives and small-model
-> training/inference** (§2 Phase B), not a full LLM runtime that can load modern checkpoint
-> formats. This section is a **horizon track** in the same spirit as Phase F: named for order,
-> gated behind the Phase B/C substrate.
+> with telemetry and replay. BCIR now has a real small-Llama manifest/tokenizer/checkpoint
+> ingest → float decode → BCIRQ8 → standalone-C greedy parity gate. This section therefore
+> owns the gap between that bounded reference and a production multi-model serving/training
+> system; it must not describe already-landed ingestion or decode as missing.
 
 ### 7.1 Model-family fit
 
@@ -366,10 +370,10 @@ every step.
 | Gemma 4-class models | Best practical first target | Open weights for responsible commercial use; positioned for advanced reasoning/agentic workloads and optimized deployment across hardware classes | Exact tokenizer, weight-layout importer, attention/RoPE/norm kernels, quantization and eval harness |
 | Qwen open-weight models | Practical first/second target, especially coder/agent variants | Widely used open-weight coding/reasoning models with deployment recipes; smaller dense/MoE variants realistic for local or hosted BCIR endpoints | Architecture variants, chat templates, tokenizer edge cases, MoE/expert routing, license/version matrix |
 
-The practical recommendation: **start with a smaller Gemma/Qwen dense instruct model**, prove the
-checkpoint → BCIR manifest → quantized inference → telemetry → eval loop, then add larger
-Qwen/Gemma variants, and treat GLM-5.2-class models as a scale-out target once BCIR has sharding,
-KV-cache management, and production serving.
+The small dense proof is complete with the pinned TinyLlama gate. The next model must be
+selected to close a measured architectural or deployment gap—rather than for family name—after
+sampling, serving/eval, and device placement are ready. Cluster-scale and MoE families remain
+blocked on sharding, expert/tensor parallelism, production scheduling, and hardware evidence.
 
 Sources: GLM-5.2 announcement (<https://z.ai/blog/glm-5.2>), GLM-5 repository
 (<https://github.com/zai-org/GLM-5>), Gemma 4 model overview (<https://ai.google.dev/gemma/docs/core>),
@@ -391,22 +395,21 @@ Qwen3.6 repository (<https://github.com/QwenLM/Qwen3.6>).
 - **Safety/correctness gates:** the R-laws, the two-truth quarantine, parity discipline, fuzzing,
   replay, C/LLVM equivalence checks, telemetry integrity, docs/training separation.
 
-Enough for **small BCIR-native endpoint models** and **pieces of LLM inference** — not yet for
-drop-in loading of a modern open-weight chat model.
+Enough for a **small Llama-family greedy-Q8 artifact and hosted C executable**—not a drop-in,
+production, multi-architecture chat-serving engine.
 
-### 7.3 What is missing to plug in open weights
+### 7.3 Open-model gap ledger
 
-| Missing layer | What must be built | Why it matters |
+| Layer | Current state | Remaining acceptance work |
 |---|---|---|
-| Checkpoint importer | Load `safetensors`/GGUF/HF shard layouts; map tensor names/shapes/dtypes to a BCIR `ModelManifest`; validate hashes/licenses | A trustworthy bridge from external weights into content-addressed artifacts |
-| Tokenizer + chat-template rail | BPE/SentencePiece compatibility, special/tool-call tokens, chat templates, detokenization tests | An LLM endpoint is wrong if tokenization or prompt formatting drifts from the model contract |
-| LLM graph dialect | First-class ops for embedding, RMSNorm/LayerNorm variants, RoPE/ALiBi, grouped-query attention, sliding-window attention, MoE routing, KV-cache read/write, logits head, sampling | The E3 transformer is an oracle composition, not a complete modern decoder-only LLM dialect |
-| KV-cache + serving runtime | Paged KV cache, prefill/decode split, continuous batching, speculative-decoding hooks, streaming tokens, cancellation, multi-session state | Production endpoints are dominated by decode scheduling and KV memory, not one-shot matmul |
-| Quantization formats | Weight-only int4/int8, activation quantization, per-channel/per-group scales, GGUF/AWQ/GPTQ/FP8-style adapters, accuracy-law (R17) extensions | Open models are practical only when quantized and accuracy-bounded |
-| Parallel placement | Tensor/pipeline/expert parallelism, CPU/GPU/NPU offload, a multi-device channel cost model | GLM-class models require scale-out; even smaller models benefit from heterogeneous placement |
-| Kernel library | Fused QKV, attention kernels, RoPE, RMSNorm, gated MLP/SwiGLU/GELU, dequantized GEMM, MoE dispatch, logits/sampling kernels | The existing references need production kernels and law parity |
-| Endpoint API | An OpenAI-compatible `/v1/chat/completions` or Responses-like adapter, streaming, tool-calling schema, structured outputs, auth/quota/rate limits | Makes BCIR-owned models usable by existing agent tooling |
-| Eval + safety harness | Per-model eval packs, jailbreak/prompt-injection tests, license/safety metadata, red-team corpora, hallucination/faithfulness checks | Open weights remove provider-side guardrails; BCIR must own the deployment safety envelope |
+| Checkpoint ingest | Manifest, safetensors reader, validated Llama mapping, hashes/licenses, and auxiliary RoPE-buffer policy landed | Additional architectures/sharding and format adapters only with independent semantics/parity |
+| Tokenization | Dependency-free BPE and SentencePiece references plus pinned TinyLlama IDs landed | Complete per-model normalizer/pre-tokenizer/chat/tool-call contracts and raw-text C path if required |
+| LLM graph/laws | Embedding, RMSNorm, RoPE, GQA/KV-cache and R22/R23 seams landed | Sliding-window/ALiBi/MoE/sampling and architecture-specific laws |
+| Decode/serving reference | Full/KV parity, prefill/decode claims, streaming events, TokenDFA, paged-KV and continuous-batching references landed | Production cancellation/admission/eviction, speculative decode, robust concurrency and service SLOs |
+| Quantization/artifact | Groupwise Q8 reference and normative BCIRQ8 v1 with portable C loader landed | Packed INT2–INT6, activation/outlier formats, GGUF/AWQ/GPTQ/FP8 adapters with R17/provenance/drift gates |
+| Whole-model C | Hosted standalone greedy Llama-family Q8 runtime and pinned parity report landed | Sampling, raw-text tokenization, freestanding/caller-owned profile, device kernels and broader models |
+| Parallel placement | Modeled heterogeneous channels and scheduling references only | Tensor/pipeline/expert parallelism and measured CPU/GPU/NPU/device behavior |
+| Endpoint/evaluation/safety | Token stream and schema-constrained reference primitives only | Auth/quota/rate limits, protocol adapter, model eval packs, safety/red-team/license policy and deployment monitoring |
 
 ### 7.4 A staged implementation path
 
@@ -517,10 +520,7 @@ drop-in loading of a modern open-weight chat model.
    pinned: `batched_sessions_module` merges N sessions (disjoint rid bands, shared
    read-only WTS — the `train_stream_module` recipe) and `BatchCertificate` shows the
    token-pipelined makespan strictly beating the phase-barriered one with ZERO new
-   scheduler machinery. *Remaining (rung 7):* page-claim wiring (decode claims
-   reading/writing their pages directly), page eviction/reuse, mid-flight session
-   admission, multi-device placement, expert/tensor parallelism, speculative decoding.
-   *Wave-13 (A3) flip:* page-claim wiring, eviction (registry act + scheduled claim,
+   scheduler machinery. *Wave-13 (A3) added:* page-claim wiring, eviction (registry act + scheduled claim,
    live-session refusal), and mid-flight admission (appending phases, hash-identical to
    upfront) **LANDED** — remaining: windowed-attention eviction, page reuse across
    sessions, multi-device placement, expert/tensor parallelism, speculative decoding.
@@ -533,7 +533,8 @@ drop-in loading of a modern open-weight chat model.
    635, exports group-32 Q8, and requires Python/C generated-id parity plus ≤1e-9 logit error
    (currently exact). The deterministic report carries compactness, drift, and NLL delta; source
    assets and derived weights are never committed or uploaded. See
-   [`BCIRQ8_FORMAT.md`](BCIRQ8_FORMAT.md) and [`THIRD_PARTY_MODELS.md`](THIRD_PARTY_MODELS.md).
+   [`BCIR_LANGREF.md` §16](../BCIR_LANGREF.md#16-bcirq8-v1-decoder-artifact-contract) and
+   [`THIRD_PARTY_MODELS.md`](THIRD_PARTY_MODELS.md).
    **Still open:** WMR-3 seeded temperature/top-p/top-k sampling, raw-text tokenization in the C
    executable, production batching/parallelism, and a trained-model export directly from BCIR's
    own trainer. The C artifact remains the realization and the Python decoder the oracle.
@@ -709,7 +710,7 @@ The audit finds five deepening moves, all quarantine-compatible:
   DMA-batching, NVMe queue-depth, cache admit/evict, NIC ITR-coalescing, xHCI scheduling,
   GPU occupancy, IOMMU IOTLB-prefetch, FS readahead). A driver with no ML placement card is
   a transliterated Linux driver, not a BCIR driver.
-  **Contrast with Triton (`BCIR_TRITON_COMPARATIVE_ANALYSIS.md`, 2026-07-04):** this
+  **Contrast with [the Triton comparison](../research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md):** this
   learned-AND-proven cost layer is the sharpest differentiator against Triton, whose schedule
   selection is empirical `@triton.autotune` benchmark search with no shipped cost model — but
   the honest framing is *complementary, not dominant*: BCIR's certificate proves optimality
@@ -717,7 +718,7 @@ The audit finds five deepening moves, all quarantine-compatible:
   latency (ground truth). The recommended synthesis is to use TritonBench/Proton as an
   empirical **calibration** harness that sharpens K_BCIR (a KPerfIR-style analytical≈measured
   law), not to adopt autotuning.
-- **D4 — E-graph rule synthesis (the operad 2-cell algebra).** Learn *candidate* rewrites
+- **D4 — E-graph rule synthesis.** Learn *candidate* equivalence rewrites
   from liked/unliked pair statistics; each learned rule is admitted only with a machine-
   checkable equivalence certificate (the egraph extract cost proof), keeping learning out of
   legality.
@@ -786,13 +787,13 @@ source needs:
 
 | Rung | Source | Lands through | Status |
 |---|---|---|---|
-| 1 | **Telemetry** (self-supervised: cost, schedule, thermal) | ring → episodes → calibrators/rankers | **real today** — the only fully-closed loop |
+| 1 | **Telemetry** (self-supervised: cost, schedule, thermal) | ring → episodes → calibrators/rankers | codecs/metrics/push-button loop landed; identity, live providers/transports and resident service remain open |
 | 2 | **Built-in tables** (Unicode DB → the F1 tokenizer; Q8/ISA/training tables via `#embed`) | frozen compile-time datasets (the C23 `#embed`/`constexpr` self-assembly pattern) | ABI machinery exists; F1 unstarted |
 | 3 | **User input / intent** (ROP/MAP/C sources, CLI episodes) | frontends → claim graphs + provenance | frontends real; intent-mining unstarted |
 | 4 | **RAG / vector store** | Phase C2: materialized HAM + operad content-address as the key; HDF5/LMDB persistence | priced-but-not-materialized |
 | 5 | **Wikipedia / web scraping** | the ETL rail (parse/FSM/binary) + C1 streaming, with license/provenance tags and the reject-don't-clamp ingest posture | ETL seed exists; scale organs are Phase C |
 | 6 | **Frontier-model APIs** (cloud teachers) | typed TrainingSession/Episode records, schema-gated (`OPENAI_BCIR_INTEGRATION_RESEARCH.md` §3.8) | designed, unbuilt |
-| 7 | **Local open weights + trainer models** | §7 manifest → tokenizer parity → reference decode → quantized artifact ladder | designed, unbuilt |
+| 7 | **Local open weights + trainer models** | §7 manifest → tokenizer parity → reference decode → quantized artifact ladder | small Llama float/Q8/C gate landed; production scale and trainer export open |
 
 The integration law: **every source produces the same thing** — provenance-tagged, typed
 episodes/artifacts that the deterministic gates (schema → verifier → parity → replay) admit
@@ -807,7 +808,7 @@ The mechanism is **intent → claim-graph synthesis under law**:
 - The *target language* already exists: registry-first Resources (whose `layout` soa/aos/
   aosoa/blocked, `access` flat/ham, tiering and priority ARE data-structure decisions the
   cost model prices) + compose region trees + the rewrite algebra.
-- The *search space* is the e-graph + operad 2-cells (equivalence-preserving rewrites with
+- The *search space* is the e-graph plus certificate-bearing equivalence rewrites (with
   extraction certificates); the *proposal policy* is learned (MoE gate / ranker class,
   frozen); the *objective* is K_BCIR itself; the *boundary* is the verifier — a synthesized
   structure that fails R-laws simply does not exist.
@@ -832,23 +833,25 @@ scheduled, fused, placed, budgeted, and verified identically to any other comput
 conversely, ordinary code becomes *differentiable through selection* (softdp's `dF/dw = E[C]`
 makes the compiler's own choices a gradient surface). The two-truth split is what makes the
 identity safe: legality stays classical on both sides; choice-under-cost is graded on both
-sides. What to build to make it real rather than latent: D1 (training as planned graphs),
-D2 (shape/dtype law), and the §8.6 intent loop.
+sides. D1 planned training and D2 shape/dtype laws have landed; making this broader than a
+bounded reference now requires measured device schedules, production model/serving gates,
+and the §8.6 intent loop.
 
 ### 8.8 Verdicts + sequencing
 
 | Proposal | Verdict | Gate |
 |---|---|---|
 | Wrap-not-import (8.1) | **Confirmed optimal**; keep, extend breadth | existing R17 + independent verifiers |
-| Training as planned graphs (D1) | Feasible now (oracle→law port) | six-artifact + parity |
+| Training as planned graphs (D1) | **Landed reference and C streamed/planned slices** | numerical, schedule, pack, and C parity |
 | Shape/dtype laws (D2) | ✅ Landed (R22/R23) | R19–R21 promotion pattern |
-| Learned cost priors (D3) | Feasible now | accel-certificate pattern (0 mismatches) |
-| Resident calibloop service (8.3) | Feasible now (host); measured win still rig-gated | perf_budget + provenance |
-| Summary-artifact law (8.4) | Feasible now — mostly codifying existing discipline | replay gate + idempotence |
+| Learned cost priors (D3) | **Landed bounded tile/channel priors** | exhaustive-equivalence certificates and stale-artifact refusal |
+| Resident calibloop service (8.3) | Open; push-button host pieces exist and measured promotion is rig/driver-gated | performance budget + provenance + lifecycle |
+| Summary-artifact law (8.4) | Partly embodied; a general public contract remains open | replay gate + idempotence |
 | Data organs at scale (8.5 rungs 4–5) | Phase C, real engineering | C1/C2 slices |
-| Cloud-teacher + open-weight rungs (8.5 rungs 6–7) | Designed; gated on serving/eval harness | §7.4 ladder |
+| Cloud-teacher + open-weight rungs (8.5 rungs 6–7) | Small Llama open-weight gate landed; cloud teacher and production serving remain open | §7.4 ladder + safety/eval |
 | Intent-synthesis ecosystem (8.6) | Horizon (Phase F-adjacent); seed slices possible now | quarantine + certificates |
 | Rule synthesis (D4) | Research-side | equivalence certificates |
 
-Ordering: **D2 → D1 → D3 → resident calibloop → 8.4 codification → C1/C2 → 8.6 seed** —
-each PR-sized, oracle-first, parity-gated, per the house discipline.
+Current order: **packed low-bit contract and measured schedule evidence → resident
+telemetry/calibration service after driver traces → 8.4 codification → C1/C2 data organs →
+8.6 intent-synthesis seed**. Each slice is bounded, oracle-first, and parity/certificate-gated.

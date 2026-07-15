@@ -6,8 +6,8 @@ Clang-style diagnostics. What it cannot yet compile, it cleanly hands off (the L
 contract) — so it behaves like a *verified-subset* compiler, not a research toy.
 
 This guide is the practical quickstart + capability/limits reference. For the numbers (test counts,
-coverage) see [`STATUS.md`](STATUS.md); for where it sits in the project, the
-[master roadmap](BCIR_MASTER_ROADMAP.md); for the Clang comparison, [`CLANG_COMPARISON.md`](CLANG_COMPARISON.md).
+coverage) see [`STATUS.md`](../STATUS.md); for where it sits in the project, the
+[master roadmap](../BCIR_MASTER_ROADMAP.md); for the Clang comparison, [`CLANG_COMPARISON.md`](../research/CLANG_COMPARISON.md).
 
 ## Quickstart
 
@@ -28,7 +28,7 @@ python -m bcir.frontends.cfront --target x86_64-windows hello.c
 python -m bcir.frontends.cfront --fallback hello.c
 ```
 
-The driver lives in [`bcir/frontends/cfront/__main__.py`](../bcir/frontends/cfront/__main__.py); the
+The driver lives in [`bcir/frontends/cfront/__main__.py`](../../bcir/frontends/cfront/__main__.py); the
 library entry points are `compile_unit`, `diagnose`, and `compile_with_fallback`.
 
 ## Command-line options
@@ -44,7 +44,7 @@ library entry points are `compile_unit`, `diagnose`, and `compile_with_fallback`
 | `-fsyntax-only` | parse + check only; print diagnostics, emit no compiled output |
 | `--emit-json` | print diagnostics as a machine-readable JSON array |
 | `--fallback` | report a fallback-to-LLVM signal (exit 2) for unsupported constructs instead of erroring |
-| `--r21 <policy>` | how a detected use-after-free / double-free (R21, §5.12) gates the compile: `advisory` (default; surfaced, never gates), `fallback` (route the unit to LLVM, exit 2), or `reject` (a hard verify error, exit 1) |
+| `--r21 <policy>` | how a detected use-after-free / double-free (R21, LangRef §10) gates the compile: `advisory` (default; surfaced, never gates), `fallback` (route the unit to LLVM, exit 2), or `reject` (a hard verify error, exit 1) |
 | `-o <file>` | write output to `<file>` instead of stdout |
 | `--explain` | also print the per-function plan/explain record |
 | `--selfcheck` | print the generated dual-rail self-check harness |
@@ -57,7 +57,7 @@ Errors are reported in the Clang layout — a `file:line:col: severity: message`
 line, and a `^~~~` caret — with parser **error recovery** (one run reports several errors),
 **fix-it** hints for missing punctuation, **`In file included from …`** frames for errors in headers,
 and a `--emit-json` machine-readable form. The engine is
-[`bcir/frontends/cfront/diagnostics.py`](../bcir/frontends/cfront/diagnostics.py).
+[`bcir/frontends/cfront/diagnostics.py`](../../bcir/frontends/cfront/diagnostics.py).
 
 ```
 hello.c:2:10: error: use of undeclared identifier 'undeclared'
@@ -68,7 +68,7 @@ hello.c:2:10: error: use of undeclared identifier 'undeclared'
 ## The target ABI matrix
 
 `--target` selects the data model the frontend lays types out for
-([`abi.py`](../bcir/frontends/cfront/abi.py)). The named targets:
+([`abi.py`](../../bcir/frontends/cfront/abi.py)). The named targets:
 
 | Target | Data model | `long` | pointer | `long double` |
 | --- | --- | --- | --- | --- |
@@ -93,7 +93,7 @@ fail. Without `--fallback`, an unsupported construct is a normal diagnostic.
 fb.c: fallback to LLVM backend: lower: static initializer is not a constant expression
 ```
 
-## Pointer-bounds policy (§5.12)
+## Pointer-bounds policy (LangRef §4)
 
 What the compiler does with every array / pointer indexing, normatively:
 
@@ -116,7 +116,7 @@ Both rails promote identically (the R13 digest includes the bounds decision, so 
 a hard test failure), and `bcir-cc --emit-c` output containing a masked access is self-contained:
 it pulls in `bcir_quarantine.h` and compiles + links against `runtime/c/bcir_quarantine.c`.
 
-## Pointer-lifetime policy (R21, §5.12)
+## Pointer-lifetime policy (R21, LangRef §10)
 
 The frontend stamps lifetime events on `malloc`/`calloc` (alloc) and `free` (free), so the R21 law
 catches a use-after-free / double-free a C program would otherwise leave as UB. By default this is

@@ -1,7 +1,7 @@
 /*===- bcir_runtime.h - freestanding BCIR StreamPack runtime --------------===
  *
- * A no-libc loader/executor for the frozen StreamPack binary ABI v1
- * (bcir_streampack.h / docs/BCIR_STREAMPACK_ABI.md). Depends only on
+ * A no-libc loader/executor for frozen StreamPack v1 and its append-only v2/v3 forms
+ * (bcir_streampack.h / docs/kernel/BCIR_STREAMPACK_ABI.md). Depends only on
  * <stddef.h> + <stdint.h> (both freestanding-safe), so it links into kernels,
  * drivers, and embedded/WASM hosts with no runtime dependency.
  *

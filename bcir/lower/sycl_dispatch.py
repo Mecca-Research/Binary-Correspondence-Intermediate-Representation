@@ -9,7 +9,7 @@ compiler is detected the device path (``-DBCIR_USE_SYCL -fsycl``, the runtime JI
 otherwise the PORTABLE scalar C++ fallback executes. Both compute the identical SAXPY to float round-off,
 verified against ``bcir.kbcir.sycl_saxpy.saxpy_reference``.
 
-HONEST DEPTH (mirrors docs/CPP_HANDOFF_BOUNDARY.md's framing). There is NO SYCL toolchain and NO GPU in
+HONEST DEPTH (mirrors docs/languages/CPP_HANDOFF_BOUNDARY.md's framing). There is NO SYCL toolchain and NO GPU in
 the CI environment, so this module is precise about what is real vs. gated:
 
   * REAL (compiles + runs + gated on CI): the dispatcher seam, the end-to-end ``execute()`` round-trip with

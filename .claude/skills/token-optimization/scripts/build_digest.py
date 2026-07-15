@@ -35,12 +35,18 @@ def sh(cmd: str) -> str:
 
 def doc_map() -> str:
     out = []
-    docs = sorted(f for f in os.listdir(os.path.join(ROOT, "docs")) if f.endswith(".md"))
-    for f in docs:
-        p = os.path.join(ROOT, "docs", f)
+    docs_root = os.path.join(ROOT, "docs")
+    docs = []
+    for dirpath, dirnames, filenames in os.walk(docs_root):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for filename in filenames:
+            if filename.endswith(".md"):
+                docs.append(os.path.join(dirpath, filename))
+    for p in sorted(docs):
+        rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
         lines = open(p, encoding="utf-8").read().splitlines()
         heads = [l.lstrip("# ").strip() for l in lines if re.match(r"^##? ", l)][:14]
-        out.append(f"- **{f}** ({len(lines)}L): " + " · ".join(h[:60] for h in heads[1:] or heads))
+        out.append(f"- **{rel}** ({len(lines)}L): " + " · ".join(h[:60] for h in heads[1:] or heads))
     return "\n".join(out)
 
 
@@ -49,7 +55,7 @@ def mechanical() -> str:
     sp = os.path.join(ROOT, "docs", "STATUS.md")
     if os.path.exists(sp):
         status = "\n".join(l for l in open(sp, encoding="utf-8").read().splitlines() if l.startswith("|"))[:1200]
-    tree = sh("find . -maxdepth 1 -type d -not -name '.*' | sort | tr '\\n' ' '")
+    tree = sh("git ls-tree -d --name-only HEAD | grep -v '^\\.' | sed 's#^#./#' | sort | tr '\\n' ' '")
     return (
         "## Generated inventory (do not edit — rebuild with build_digest.py)\n\n"
         f"Top-level: {tree}\n\n"

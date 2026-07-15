@@ -139,6 +139,6 @@ regenerated for the exact LLVM version and target.
 - [`../bcir-mapping/07-gaadmsf-operations.md`](../bcir-mapping/07-gaadmsf-operations.md)
 - [`../bcir-mapping/08-dragon-egg-operations.md`](../bcir-mapping/08-dragon-egg-operations.md)
 - [`../bcir-mapping/03-mixed-stride-graphs.md`](../bcir-mapping/03-mixed-stride-graphs.md)
-- [`../12-backend-jit/`](../12-backend-jit/)
+- [`../12-backend-jit/`](../12-backend-jit)
 - [`../reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md)
 - [`../indexes/bcir-patterns.md`](../indexes/bcir-patterns.md)

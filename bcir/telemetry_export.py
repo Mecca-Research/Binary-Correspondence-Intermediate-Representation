@@ -1,7 +1,7 @@
 """T4 — telemetry EXPORT ADAPTERS: the external boundary of the telemetry pipeline.
 
 This is the export half of the BCIR telemetry pipeline (the research's ``.PROBE`` /
-aggregation layer, ``docs/TELEMETRY_PIPELINE_RESEARCH.md`` §6 row T4). It takes BCIR's
+aggregation layer, ``docs/kernel/TELEMETRY_PIPELINE_RESEARCH.md`` §6 row T4). It takes BCIR's
 telemetry — the **T1** signal registry's readings (``bcir.signal_registry``) plus the
 **T3** derived metrics / sensitivity ranking (``bcir.kbcir.telemetry_metrics``) — and
 re-expresses it in the two industry-standard shapes plus an out-of-band read:

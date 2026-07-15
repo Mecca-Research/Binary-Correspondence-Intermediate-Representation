@@ -208,7 +208,7 @@ class PowerRail:
         """Modeled energy avoided by downclocking memory-bound slots: sum over slots
         of (nominal - clock) x interval, in milli of a nominal slot-cycle. A *model*
         (power ~ clock on a bandwidth-bound slot whose throughput is clock-insensitive)
-        -- NOT a measured Joule figure; see docs/HARDWARE_VALIDATION.md."""
+        -- NOT a measured Joule figure; see docs/kernel/HARDWARE_VALIDATION.md."""
         from .dvfs import NOMINAL
         return sum(((NOMINAL - d.clock_q8) * d.duration * 1000) // NOMINAL
                    for d in self.decisions if d.clock_q8 < NOMINAL)
@@ -227,7 +227,7 @@ def schedule_power_rail(sched: GemSchedule, result, theta, h=None) -> PowerRail:
     without losing throughput; compute-bound slots overclock (thermal budget
     permitting); balanced hold nominal. Unlike per-phase `plan_dvfs`, this keys off
     the schedule's real slot intervals. Deterministic; sorted by (start, claim_id).
-    The energy figure is *modeled* (no RAPL in-sandbox -- docs/HARDWARE_VALIDATION.md)."""
+    The energy figure is *modeled* (no RAPL in-sandbox -- docs/kernel/HARDWARE_VALIDATION.md)."""
     from ..kbcir.cost import COMPUTE, MEMORY
     from .dvfs import classify, clock_for
     base_of = {s.claim_id: s.candidate.base.v for s in result.steps}

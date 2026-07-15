@@ -8,8 +8,10 @@
 > deeper feasibility/cost analysis and the phased plan that `BCIR_NATIVE_OBJECT_GATE.md` references; the
 > gate doc owns the GO/STOP *criteria*, this doc owns the *cost model and the build roadmap*.
 
-Pairs with: `BCIR_NATIVE_OBJECT_GATE.md` (the decision gate) and `BCIR_MASTER_ROADMAP.md` §5.5
-(native backend — gated) / §5.7 (the plug-in-compiler arc).
+Pairs with [`BCIR_NATIVE_OBJECT_GATE.md`](../BCIR_NATIVE_OBJECT_GATE.md) (the decision
+gate), [`BCIR_MASTER_ROADMAP.md`](../BCIR_MASTER_ROADMAP.md) §4.2, and the
+[`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](../BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md) MC10–MC14
+register.
 
 ---
 
@@ -27,7 +29,7 @@ and ELF object emission (sections, symbols, relocations) for a target ISA.
 This is distinct from everything BCIR does today, which is **"plan + verify, then hand the realization to
 the resident compiler."** The question the user raised — *do the ASM1–3b edges and the cfront/emit/lower
 machinery cycle back to Clang and lose the performance paths?* — is answered in
-`BCIR_MASTER_ROADMAP.md` and re-derived in §2 below: **no.** The native instructions are preserved at
+the master roadmap's resident-toolchain boundary and re-derived in §2 below: **no.** The native instructions are preserved at
 each edge; only ISel/RA/scheduling of the *surrounding* code is delegated to LLVM, by design, because
 that is exactly the part LLVM does world-class and a hand-rolled backend would only lose to. The "native
 backend" is the *option to stop delegating that part* — a large, permanent investment — and this report
@@ -155,7 +157,7 @@ If/when a deployment forces the question, these are the only shapes worth consid
 
 ## 6. Development roadmap (executed ONLY if the gate opens for a specific T)
 
-Strictly dependency-ordered (mirrors `BCIR_MASTER_ROADMAP.md` §5.7: *don't build out of order*). Each
+Strictly dependency-ordered under the master roadmap's §4.2 gate. Each
 phase has an explicit GO/NO-GO; the default at every gate is **revert to path (1)**.
 
 - **N0 — Conformance substrate (do first; reusable regardless).** Formalize the native-object

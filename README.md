@@ -60,7 +60,7 @@ python -m bcir.kbcir.differential -n 5000                            # generated
 python -m bcir.kbcir.microbench --target x86_avx512 --out cal.json   # measure -> freeze a Q8 cost table
 python -m bcir.kbcir.microbench --target x86_avx512 --bayes          # Bayesian posterior + conformal +/- delta
 python -m bcir.run vector_add --tables bcir/kbcir/tables/x86_64_reference.json  # apply frozen table
-python -m bcir.tests.run_all                                         # run the conformance suite; static inventory in docs/STATUS.md
+python -m bcir.tests.run_all --tier quick -j 2                       # bounded local tier; static inventory in docs/STATUS.md
 
 # Pinned real-model gate (downloads three checksum-pinned files; --offline uses the cache):
 python tools/models/run_real_model_gate.py --output-dir build/model-gate
@@ -73,17 +73,17 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 
 ## Where the law lives
 
-- [`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md) — the normative language reference (levels, laws R1–R23, the equation).
-- [`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md) — the single master roadmap: positioning, current state, the MLIR/C/C++ placement map, and the next build steps (including the historical §5.14 law-catch-up arc and the draft freestanding-C23-driver release).
-- [`docs/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](docs/BCIR_ML_AI_INTEGRATION_ROADMAP.md) — the ML/AI integration companion roadmap: the Phase-M/L program (C inference substrate → tensor ops as claims → data/memory organs → language reach → ML-guided hardware → higher cognition).
-- [`docs/PARITY.md`](docs/PARITY.md) — the Python (`bcir/`) ↔ MLIR (`mlir/`) lockstep contract.
+- [`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md) — the normative language reference (levels, laws R1–R23, the equation, and BCIRQ8 v1 artifact ABI).
+- [`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md) — cross-program dependency order, promotion gates, stop conditions, and release policy; history and counts live elsewhere.
+- [`docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md`](docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) — the canonical proof-carrying driver, BCIR-Linux, UAPI, native-kernel, telemetry, and IPC sequence.
+- [`docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md) — the detailed ML/model closure program, from low-bit/scheduling/AD gaps through production serving and data organs.
+- [`docs/PARITY.md`](docs/PARITY.md) — the Python↔MLIR law contract and Python↔C artifact/runtime parity ledger.
 - [`docs/STATUS.md`](docs/STATUS.md) — the generated static inventory of tests, ODS ops, passes, runtime files, and verifier-law fixture tags; it does not claim those gates were executed.
-- [`docs/BCIRQ8_FORMAT.md`](docs/BCIRQ8_FORMAT.md) — the compact deterministic model wire format and standalone-C inference boundary.
-- [`docs/C_MEMORY_DISCIPLINE.md`](docs/C_MEMORY_DISCIPLINE.md) — the enforced freestanding/hosted/driver memory classes, allocator and context contracts, direct driver ABI, and driver-gated IPC sequence.
-- [`docs/THIRD_PARTY_MODELS.md`](docs/THIRD_PARTY_MODELS.md) — pinned model provenance, license, and non-redistribution boundary.
-- [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md) — how the repo is organized and why.
+- [`docs/languages/C_MEMORY_DISCIPLINE.md`](docs/languages/C_MEMORY_DISCIPLINE.md) — the enforced freestanding/hosted/driver memory classes, allocator and context contracts, direct driver ABI, and driver-gated IPC sequence.
+- [`docs/machine-learning/THIRD_PARTY_MODELS.md`](docs/machine-learning/THIRD_PARTY_MODELS.md) — pinned model provenance, license, and non-redistribution boundary.
+- [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md) — current code and documentation ownership, contract placement, and validation entry points.
 - [`docs/DEVELOPMENT_HISTORY.md`](docs/DEVELOPMENT_HISTORY.md) — how it was built: the development method, the PR-era arc, and the condensed changelog.
-- [`docs/CFRONT_GUIDE.md`](docs/CFRONT_GUIDE.md) — the `bcir-cfront` C-frontend user guide: the CLI, diagnostics, the target ABI matrix, the fallback contract, and the supported subset + limits. The frontend lowers a wide C surface **dual-rail** (oracle + the `bcir_cfront.c` twin) — including the full array-compound-literal surface (1-D + multi-dim, scalar + aggregate-element), computed goto (`goto *p` / `&&L`), and function-pointer local variables — all Clang-equivalence + fuzzer gated (`_Decimal32/64/128` is **blocked**: Clang 18 cannot compile it).
+- [`docs/languages/CFRONT_GUIDE.md`](docs/languages/CFRONT_GUIDE.md) — the `bcir-cfront` C-frontend user guide: the CLI, diagnostics, the target ABI matrix, the fallback contract, and the supported subset + limits. The frontend lowers a wide C surface **dual-rail** (oracle + the `bcir_cfront.c` twin) — including the full array-compound-literal surface (1-D + multi-dim, scalar + aggregate-element), computed goto (`goto *p` / `&&L`), and function-pointer local variables — all Clang-equivalence + fuzzer gated (`_Decimal32/64/128` is **blocked**: Clang 18 cannot compile it).
 
 The Python package is the **executable conformance oracle**; the MLIR dialect is
 the **law** it must agree with. LLVM/Clang are backends, not the conceptual center.

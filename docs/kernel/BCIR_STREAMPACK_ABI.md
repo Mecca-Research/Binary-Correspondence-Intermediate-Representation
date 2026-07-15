@@ -3,8 +3,8 @@
 The StreamPack is BCIR's **portable artifact** (its WASM analog): a self-contained,
 hot, executable representation of a selected K_BCIR plan. This document freezes the
 v1 wire format. The reference encoder/decoder is
-[`bcir/abi/streampack_abi.py`](../bcir/abi/streampack_abi.py); the C view is
-[`runtime/c/bcir_streampack.h`](../runtime/c/bcir_streampack.h). All three must
+[`bcir/abi/streampack_abi.py`](../../bcir/abi/streampack_abi.py); the C view is
+[`runtime/c/bcir_streampack.h`](../../runtime/c/bcir_streampack.h). All three must
 agree (a parity test pins the round-trip).
 
 ## Conventions
