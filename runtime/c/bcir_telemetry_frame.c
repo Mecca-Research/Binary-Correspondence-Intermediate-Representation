@@ -35,6 +35,16 @@ static uint64_t rd64(const uint8_t *p) {
   return (uint64_t)rd32(p) | ((uint64_t)rd32(p + 4) << 32);
 }
 
+/* Decode a two's-complement wire pattern without relying on the implementation-defined
+ * conversion from an out-of-range uint64_t to int64_t in C11/C17. The subtraction is
+ * always in range before the signed cast, including the INT64_MIN bit pattern. */
+static int64_t rd_i64(const uint8_t *p) {
+  uint64_t bits = rd64(p);
+  if (bits <= (uint64_t)INT64_MAX)
+    return (int64_t)bits;
+  return -INT64_C(1) - (int64_t)(UINT64_MAX - bits);
+}
+
 /* Write one 56-byte record (the <7q> ring layout) at `p`, explicit little-endian. The
  * int64 fields are reinterpreted as their two's-complement u64 bit pattern (the same
  * bytes struct.pack("<q", ...) emits), so a negative counter round-trips byte-identical
@@ -52,8 +62,9 @@ static void wr_record(uint8_t *p, const bcir_tf_record *r) {
 size_t bcir_tf_encode_frame(const bcir_tf_record *BCIR_TF_RESTRICT recs, uint16_t n,
                             uint32_t seq, uint64_t ts, uint8_t *BCIR_TF_RESTRICT out,
                             size_t out_len) {
-  const size_t need = bcir_tf_frame_size(n);
-  if (!out || (n && !recs) || out_len < need) return 0; /* invalid/NOSPACE */
+  size_t need = 0;
+  if (!bcir_tf_frame_size_checked(n, &need) || !out || (n && !recs) || out_len < need)
+    return 0; /* unrepresentable / invalid / NOSPACE */
 
   /* header (22 bytes): magic[4], version:u16, flags:u16, seq:u32, timestamp:u64, n:u16 */
   out[0] = 'B'; out[1] = 'T'; out[2] = 'L'; out[3] = 'M';
@@ -63,7 +74,7 @@ size_t bcir_tf_encode_frame(const bcir_tf_record *BCIR_TF_RESTRICT recs, uint16_
   wr64(out + 12, ts);
   wr16(out + 20, n);
 
-  /* body: n records, each the 56-byte <7q> layout, no re-encoding of the field set */
+  /* body: n records in the shared 56-byte <7q> layout, serialized explicitly LE */
   size_t off = BCIR_TELEMETRY_FRAME_HEADER_SIZE;
   for (uint16_t i = 0; i < n; i++) {
     wr_record(out + off, &recs[i]);
@@ -78,6 +89,11 @@ size_t bcir_tf_encode_frame(const bcir_tf_record *BCIR_TF_RESTRICT recs, uint16_
 
 bcir_tf_status bcir_tf_decode_frame(const uint8_t *BCIR_TF_RESTRICT buf, size_t len,
                                     bcir_tf_header *hdr, size_t *frame_len) {
+  if (hdr) {
+    hdr->version = 0; hdr->flags = 0; hdr->seq = 0;
+    hdr->timestamp = 0; hdr->n_records = 0;
+  }
+  if (frame_len) *frame_len = 0;
   if (!buf) return BCIR_TF_ERR_TRUNCATED;
   /* A frame is at least header + CRC (an empty, well-formed frame). */
   if (len < (size_t)BCIR_TELEMETRY_FRAME_HEADER_SIZE + BCIR_TELEMETRY_FRAME_CRC_SIZE)
@@ -87,9 +103,11 @@ bcir_tf_status bcir_tf_decode_frame(const uint8_t *BCIR_TF_RESTRICT buf, size_t 
   uint16_t version = rd16(buf + 4);
   if (version < 1u || version > (uint16_t)BCIR_TELEMETRY_FRAME_VERSION)
     return BCIR_TF_ERR_VERSION;
+  if (rd16(buf + 6) != 0u) return BCIR_TF_ERR_FLAGS;
   uint16_t n = rd16(buf + 20);
-  size_t need = bcir_tf_frame_size(n);
-  if (need > len) return BCIR_TF_ERR_TRUNCATED;  /* claims more records than fit */
+  size_t need = 0;
+  if (!bcir_tf_frame_size_checked(n, &need) || need > len)
+    return BCIR_TF_ERR_TRUNCATED;  /* unrepresentable or claims more records than fit */
 
   size_t body_len = (size_t)BCIR_TELEMETRY_FRAME_HEADER_SIZE
                   + (size_t)n * (size_t)BCIR_TF_RECORD_SIZE;
@@ -107,20 +125,46 @@ bcir_tf_status bcir_tf_decode_frame(const uint8_t *BCIR_TF_RESTRICT buf, size_t 
   return BCIR_TF_OK;
 }
 
+bcir_tf_status bcir_tf_decode_exact(const uint8_t *BCIR_TF_RESTRICT buf, size_t len,
+                                    bcir_tf_header *hdr) {
+  size_t used = 0;
+  bcir_tf_header decoded;
+  if (hdr) {
+    hdr->version = 0; hdr->flags = 0; hdr->seq = 0;
+    hdr->timestamp = 0; hdr->n_records = 0;
+  }
+  bcir_tf_status st = bcir_tf_decode_frame(buf, len, &decoded, &used);
+  if (st != BCIR_TF_OK) return st;
+  if (used != len) return BCIR_TF_ERR_TRAILING;
+  if (hdr) *hdr = decoded;
+  return BCIR_TF_OK;
+}
+
 bcir_tf_status bcir_tf_get_record(const uint8_t *BCIR_TF_RESTRICT buf, size_t len,
                                   uint16_t i, bcir_tf_record *out) {
+  if (out) {
+    out->claim_id = 0; out->cycles = 0; out->bytes = 0; out->misses = 0;
+    out->thermal = 0; out->voltage = 0; out->utilization = 0;
+  }
   if (!buf) return BCIR_TF_ERR_TRUNCATED;
+  if (len < (size_t)BCIR_TELEMETRY_FRAME_HEADER_SIZE + BCIR_TELEMETRY_FRAME_CRC_SIZE)
+    return BCIR_TF_ERR_TRUNCATED;
+  uint16_t n = rd16(buf + 20);
+  if (i >= n) return BCIR_TF_ERR_RANGE;
+  size_t frame_size = 0;
+  if (!bcir_tf_frame_size_checked(n, &frame_size) || frame_size > len)
+    return BCIR_TF_ERR_TRUNCATED;
   size_t off = (size_t)BCIR_TELEMETRY_FRAME_HEADER_SIZE
              + (size_t)i * (size_t)BCIR_TF_RECORD_SIZE;
   if (off + BCIR_TF_RECORD_SIZE > len) return BCIR_TF_ERR_TRUNCATED;
   if (out) {
-    out->claim_id    = (int64_t)rd64(buf + off +  0);
-    out->cycles      = (int64_t)rd64(buf + off +  8);
-    out->bytes       = (int64_t)rd64(buf + off + 16);
-    out->misses      = (int64_t)rd64(buf + off + 24);
-    out->thermal     = (int64_t)rd64(buf + off + 32);
-    out->voltage     = (int64_t)rd64(buf + off + 40);
-    out->utilization = (int64_t)rd64(buf + off + 48);
+    out->claim_id    = rd_i64(buf + off +  0);
+    out->cycles      = rd_i64(buf + off +  8);
+    out->bytes       = rd_i64(buf + off + 16);
+    out->misses      = rd_i64(buf + off + 24);
+    out->thermal     = rd_i64(buf + off + 32);
+    out->voltage     = rd_i64(buf + off + 40);
+    out->utilization = rd_i64(buf + off + 48);
   }
   return BCIR_TF_OK;
 }

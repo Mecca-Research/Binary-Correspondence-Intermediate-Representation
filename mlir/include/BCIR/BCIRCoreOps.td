@@ -459,6 +459,78 @@ def BCIR_DeviceManifestOp : BCIR_Op<"device_manifest", [Symbol]> {
   let hasVerifier = 1;
 }
 
+def BCIR_EntryOp : BCIR_Op<"entry", [Symbol]> {
+  let summary = "x86-64 long-mode entry edge: install a stack and tail-jump to C";
+  // This is a TOP-LEVEL assembly edge, not a function with a `naked` attribute. LLVM's LangRef limits
+  // naked-function IR and leaves prologue details target-dependent; module-level assembly is the exact
+  // representation of the irreducible entry shim. The lowering emits a global function symbol that:
+  //   * masks interrupts, loads `$stack_top` into RSP, aligns down to 16 bytes, then pushes a zero sentinel so the
+  //     tail-jumped C function observes the SysV x86-64 function-entry alignment;
+  //   * clears RBP and DF; and
+  //   * jumps (does not call) `$c_entry`.
+  // The C entry is therefore required to be `noreturn` and compiled for the freestanding kernel rail.
+  // Reset-vector mode switching, page-table installation, and relocation are intentionally outside this
+  // long-mode handoff op and remain a platform boot-stub responsibility.
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    FlatSymbolRefAttr:$stack_top,
+    FlatSymbolRefAttr:$c_entry);
+  let assemblyFormat = "$sym_name `stack` $stack_top `target` $c_entry attr-dict";
+  let hasVerifier = 1;
+}
+
+def BCIR_DescriptorLoadOp : BCIR_Op<"descriptor_load"> {
+  let summary = "load an x86-64 GDT or IDT descriptor-table register";
+  // `$addr` points at the architectural 10-byte pseudo-descriptor (u16 limit + u64 base). This is a
+  // privileged, x86-only, side-effecting edge. LOWERING: lgdt/lidt ($addr), with a memory clobber.
+  let arguments = (ins BCIR_DescriptorTableAttr:$table, I64:$addr);
+  let assemblyFormat = "$table `,` $addr attr-dict `:` type($addr)";
+}
+
+def BCIR_TaskRegisterLoadOp : BCIR_Op<"task_register_load"> {
+  let summary = "load the x86 task register from a 16-bit TSS selector";
+  // LOWERING: `ltr` with a 16-bit register operand. The selector width is structural in the op type,
+  // preventing an accidental pointer or full descriptor from reaching the instruction.
+  let arguments = (ins I16:$selector);
+  let assemblyFormat = "$selector attr-dict `:` type($selector)";
+}
+
+def BCIR_SegmentReloadOp : BCIR_Op<"segment_reload"> {
+  let summary = "reload x86-64 data/stack and code segments after installing a GDT";
+  // Loads DS/ES/SS from `$data_selector`, then reloads CS with a far return through a local label.
+  // FS/GS are intentionally not touched: long-mode FS/GS bases are managed through their MSRs.
+  let arguments = (ins I16:$data_selector, I16:$code_selector);
+  let assemblyFormat = "$data_selector `,` $code_selector attr-dict `:` type($data_selector) `,` type($code_selector)";
+}
+
+def BCIR_InterruptTrampolineOp : BCIR_Op<"interrupt_trampoline", [Symbol]> {
+  let summary = "normal x86-64 interrupt/exception trampoline around a verified C handler";
+  // A TOP-LEVEL module-assembly shim. The vector number determines whether the CPU supplies an error
+  // code; the lowering normalizes both shapes to `vector,error,rip,cs,rflags,...`, saves/restores every
+  // integer GPR, disables maskable interrupts for the shim, passes the saved-frame pointer in RDI, and
+  // returns with iretq. AMD64 long mode always saves and restores SS:RSP, so the C ABI is one fixed
+  // frame for same-CPL and privilege-changing entries. The entry privilege class (ring 0 or ring 3) is
+  // held in trampoline-private callee-saved state and must still match the return CS after the handler;
+  // changing that class violates the return/SWAPGS policy and traps instead. `swapgs_on_user` performs swapgs only
+  // for an original ring-3 frame and pairs exit from that private state. It is OFF by default because
+  // kernels that do not use GS per-CPU state must not execute it. The conditional path is fenced before
+  // entering C. NMI, #DB, #DF, #MC, and AMD #VC always require a separate paranoid/IST trampoline and
+  // are refused by this normal op.
+  //
+  // The C body must use the ordinary SysV x86-64 ABI and be compiled with `-mno-red-zone` and
+  // `-mgeneral-regs-only`; SIMD/FPU state is outside this integer trampoline and belongs to the kernel's
+  // explicit lazy/eager extended-state policy. This op also does not configure SMAP AC clearing,
+  // CET/IBT or shadow-stack state, CR3/PTI, or entry-side speculation mitigations; a platform that
+  // enables those features needs a separately verified entry policy.
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    I32Attr:$vector,
+    FlatSymbolRefAttr:$handler,
+    DefaultValuedAttr<BoolAttr, "false">:$swapgs_on_user);
+  let assemblyFormat = "$sym_name `vector` $vector `handler` $handler attr-dict";
+  let hasVerifier = 1;
+}
+
 def BCIR_CRegReadOp : BCIR_Op<"creg_read"> {
   let summary = "Read an x86-64 control register (boot/CPU-state asm edge, D1.3)";
   // A control-register read (CR0/CR2/CR3/CR4/CR8) is a TRUSTED OPAQUE EFFECT EDGE -- there is no C

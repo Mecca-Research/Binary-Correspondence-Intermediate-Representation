@@ -37,8 +37,9 @@ int bcir_verify_unit_with_allocator(const bcir_unit *u, char *diag, size_t dn,
 /* R9: a plan realizes every claim exactly once and its total cost is the sum of step costs. */
 int bcir_verify_plan(const bcir_func *f, const bcir_plan *p, char *diag, size_t dn);
 
-/* R10-R11: the hydrated StreamPack is well-formed (magic/version/CRC validate) and its segment
- * count matches the realizable (non-marker) claim count. */
+/* R10-R11: the hydrated StreamPack passes artifact-intrinsic semantic verification and its
+ * segment count matches the realizable (non-marker) claim count. Live map/data generation
+ * matching remains the checked executor's responsibility because this API has no registry. */
 int bcir_verify_pack(const uint8_t *pack, size_t len, uint32_t expect_segs, char *diag, size_t dn);
 
 /* R13: a deterministic content digest of a function's claim graph (the provenance manifest). */

@@ -12,8 +12,8 @@ later implement.
 
 INTEGRITY (CT4-sec): telemetry is the one BCIR artifact that crosses into
 decision-making, so a poisoned record skews Theta / the adaptive policy / the regret
-gate. `DataDNA.validate` enforces the *documented* schema at the ingest boundary
-(every normalized field in ``[0, 100]``, every field finite, counters non-negative);
+gate. `DataDNA.validate` enforces the documented signed-i64 schema at ingest
+(normalized fields are integers in ``[0, 100]`; IDs/counters are non-negative);
 `sanitize_events` is the validating filter the calibrate/sense path runs first, and it
 surfaces a `TelemetryIntegrity` witness (rejected count + monotonic sequence + an
 ``empty``/``blind`` flag) so a suppression or injection attack is *observable* rather
@@ -26,7 +26,6 @@ provenance-of-source gate is for).
 from __future__ import annotations
 
 import json
-import math
 import struct
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -37,11 +36,12 @@ NORM_MIN = 0
 NORM_MAX = 100
 _NORM_FIELDS = ("misses", "thermal", "voltage", "utilization")   # the 0..100 pressures
 _COUNTER_FIELDS = ("cycles", "bytes")                            # non-negative counters
+_I64_MAX = (1 << 63) - 1
 
 
 class TelemetryIntegrityError(ValueError):
-    """A telemetry record violated the documented schema (out-of-range / non-finite /
-    negative counter). Raised by the strict-mode validators; the sink/stream path
+    """A telemetry record violated the documented type/width/range schema. Raised by
+    the strict-mode validators; the sink/stream path
     instead *drops and counts* the record (see `sanitize_events`)."""
 
 
@@ -63,19 +63,14 @@ RING_VERSION = 1
 RING_STAMP = (RING_MAGIC << 16) | RING_VERSION   # the value written into header slot [3]
 
 
-def _is_finite_number(v) -> bool:
-    """True iff `v` is a real, finite int/float (rejects NaN, +/-inf, bool, non-numbers).
+def _is_i64(v) -> bool:
+    """True iff ``v`` is an exact signed-64-bit integer (never a bool).
 
-    `bool` is excluded deliberately: `True`/`False` are ints in Python and would
-    silently coerce to 1/0, which is exactly the kind of type confusion an injected
-    JSON payload exploits."""
-    if isinstance(v, bool):
-        return False
-    if isinstance(v, int):
-        return True
-    if isinstance(v, float):
-        return math.isfinite(v)
-    return False
+    DataDNA's host schema is intentionally no wider than its frozen ``<7q>`` wire
+    projection.  Rejecting floats and oversized Python integers at ingest prevents a
+    record from passing policy validation and then failing (or changing type) when it
+    reaches the ring/frame codec."""
+    return isinstance(v, int) and not isinstance(v, bool) and -(1 << 63) <= v <= _I64_MAX
 
 
 @dataclass(frozen=True)
@@ -94,24 +89,26 @@ class DataDNA:
         """Return the list of schema violations (empty == a valid, in-range record).
 
         The documented contract, enforced here at the ingest boundary: the four
-        normalized pressures (`misses`/`thermal`/`voltage`/`utilization`) are finite
-        ints in ``[0, 100]``; the `cycles`/`bytes` counters are finite and
-        non-negative; `claim_id` is a finite int. A NaN/inf, a negative, or a value
-        ``> 100`` is a bogus reading (injected, not measured) and is reported so the
+        normalized pressures (`misses`/`thermal`/`voltage`/`utilization`) are signed-
+        64-bit ints in ``[0, 100]``; the `cycles`/`bytes` counters and `claim_id` are
+        non-negative signed-64-bit ints. A float/bool, oversized Python int, NaN/inf,
+        negative value, or pressure ``> 100`` is bogus and is reported so the
         ingest path can REJECT-and-count it before it reaches Theta or the policy."""
         bad: list[str] = []
-        if not _is_finite_number(self.claim_id) or isinstance(self.claim_id, float):
-            bad.append("claim_id not a finite int")
+        if not _is_i64(self.claim_id):
+            bad.append("claim_id not a signed-64-bit int")
+        elif self.claim_id < 0:
+            bad.append(f"claim_id negative ({self.claim_id})")
         for f in _COUNTER_FIELDS:
             v = getattr(self, f)
-            if not _is_finite_number(v):
-                bad.append(f"{f} not finite")
+            if not _is_i64(v):
+                bad.append(f"{f} not a signed-64-bit int")
             elif v < 0:
                 bad.append(f"{f} negative ({v})")
         for f in _NORM_FIELDS:
             v = getattr(self, f)
-            if not _is_finite_number(v):
-                bad.append(f"{f} not finite")
+            if not _is_i64(v):
+                bad.append(f"{f} not a signed-64-bit int")
             elif v < NORM_MIN or v > NORM_MAX:
                 bad.append(f"{f} out of [0,100] ({v})")
         return bad
@@ -157,15 +154,14 @@ class TelemetryIntegrity:
 
     DEFENDS (what an attacker can no longer do once the calibrator runs through
     `sanitize_events`):
-      - *value injection*: a record with a field outside the documented ``[0, 100]``
-        band, a NaN/inf, or a negative counter is `rejected` (dropped + counted), so a
+      - *value injection*: a record outside the documented type, signed-i64, or
+        ``[0, 100]`` pressure contract is `rejected` (dropped + counted), so a
         forged ``thermal=10000`` never reaches the EWMA / the ``>=60`` policy thresholds.
       - *stream suppression / eviction*: an empty stream (or one wholly rejected, or one
         the ring dropped) is no longer a silent no-op -- `blind` is True and the caller
         (and the security harness) can assert the absence is surfaced.
-      - *replay / reorder*: `accepted == seq_span` only when the surviving claim_ids
-        are a strictly increasing run; a duplicated or reordered record makes
-        `monotonic` False, so a replayed batch is detectable.
+      - *record reorder*: decreasing surviving claim IDs make `monotonic` False.
+        Frame duplicate/reorder is tracked independently by the frame fields.
 
     Does NOT DEFEND (the honest residual-trust boundary, pinned like the autodiff
     limitation note): it CANNOT authenticate a *lying-but-in-range* PMU. A producer
@@ -180,8 +176,18 @@ class TelemetryIntegrity:
     accepted: int = 0          # records that passed the documented schema
     rejected: int = 0          # records dropped for a schema violation
     dropped: int = 0           # records evicted/lost upstream (ring overwrite, etc.)
-    monotonic: bool = True     # surviving claim_ids form a strictly increasing run
+    monotonic: bool = True     # surviving claim_ids never decrease
     seq_span: int = 0          # distinct strictly-increasing claim_ids observed
+    frames_accepted: int = 0   # validated BTLM frames recovered from a frame transport
+    frames_rejected: int = 0   # magic-aligned candidates failing flags/version/length/CRC
+    frames_missing: int = 0    # sequence numbers skipped between recovered frames
+    frames_reordered: int = 0  # recovered frames behind the current sequence watermark
+    frames_duplicated: int = 0 # recovered frames repeating the current sequence number
+
+    @property
+    def frame_monotonic(self) -> bool:
+        """True iff recovered frame sequence numbers had no duplicate/reorder."""
+        return self.frames_reordered == 0 and self.frames_duplicated == 0
 
     @property
     def blind(self) -> bool:
@@ -192,17 +198,18 @@ class TelemetryIntegrity:
 
     @property
     def clean(self) -> bool:
-        """True iff every record was accepted and nothing was dropped or replayed."""
+        """True iff every record/frame candidate was accepted with no loss or reorder."""
         return (self.rejected == 0 and self.dropped == 0 and self.monotonic
-                and self.accepted > 0)
+                and self.frames_rejected == 0 and self.frames_missing == 0
+                and self.frame_monotonic and self.accepted > 0)
 
 
 def sanitize_events(events, *, dropped: int = 0) -> tuple[list[DataDNA], TelemetryIntegrity]:
     """The ingest gate: filter a telemetry batch to the records that satisfy the
     documented schema and return them alongside a `TelemetryIntegrity` witness.
 
-    REJECT-and-count policy (deliberate, not clamp): a clearly-bogus value (negative,
-    ``> 100``, NaN/inf, a non-finite counter) is DROPPED, not clamped to the band.
+    REJECT-and-count policy (deliberate, not clamp): a clearly-bogus value (wrong
+    type/width, negative, or pressure ``> 100``) is DROPPED, not clamped.
     Clamping a hostile ``thermal=10000`` to 100 would let the attacker *saturate* the
     policy (force ENERGY) at will -- a free lever -- whereas dropping it leaves the
     EWMA/average computed only over genuine in-range samples, so an injected record
@@ -442,7 +449,8 @@ def parse_shared_ring(buf, *, strict: bool = False) -> list[DataDNA]:
       - `record_size` equals the real `TelemetryRing._FMT` stride (56) -- it is the
         unpack stride, so a lie here is the disclosure lever;
       - `header + capacity * record_size` fits within `len(buf)` (no slot is OOB);
-      - `head <= capacity` after a legitimate wrap, and `head` is sane.
+      - `head` is an unsigned monotonic publish counter; any value is valid and slot
+        selection is bounded by the validated capacity.
 
     On ANY mismatch it REJECTS the buffer: returns `[]` (or raises `SharedRingError`
     when `strict=True`) -- it never reads past the validated record region. A
@@ -472,9 +480,6 @@ def parse_shared_ring(buf, *, strict: bool = False) -> list[DataDNA]:
     if need > blen:
         return _reject(f"capacity*record_size overruns buffer "
                        f"({need} > {blen}); header is forged/corrupt")
-    if head > capacity * 2 + capacity:       # a sane wrap keeps head bounded; reject absurd heads
-        return _reject(f"implausible head {head} for capacity {capacity}")
-
     n = min(head, capacity)                  # records currently live in the ring
     base = _RING_HEADER_BYTES
     out: list[DataDNA] = []

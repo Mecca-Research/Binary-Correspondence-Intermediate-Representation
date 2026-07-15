@@ -40,7 +40,8 @@ agree (a parity test pins the round-trip).
    opcode:str  reads:u32_array  writes:u32_array  prefetch:str  (""=none)
    fence_before:str_array  fence_after:str_array  [v3: dispatch:u8  channel:str]`
 3. `prefetches[n_prefetches]`, each:
-   `name:str  distance:u32  targets:u32_array  hint:str  pattern:str`
+   `name:str  distance:u32  targets:u32_array  hint:str  pattern:str
+   [v2: buffers:u8]`
 4. `blocks[n_blocks]`, each: `base:u64  count:u64  strides:u64_array`
 5. `trace[n_trace]`, each: `claim_id:u64  src_hash:u64  trace_hash:u64`
 
@@ -55,7 +56,7 @@ v2 demonstrates the append-only evolution mechanism. It changes **no** v1 field
 offsets:
 
 - **Header** gains `pipeline_depth : u16` at offset **36** (carved from the v1
-  reserved pad; reserved shrinks to `u8[22]`). Phases in flight; `2` =
+  reserved pad; reserved shrinks to `u8[26]`). Phases in flight; `2` =
   double-buffered software pipelining. Decoders treat v1 buffers as depth 1.
 - **Prefetch records** append `buffers : u8` after `pattern` (`2` = a
   double-buffer contract feeding the next pipelined phase, typically
@@ -99,6 +100,11 @@ The CRC + bounds decode is memory-safe, but a CRC-valid pack can still be
   `bcir_sp_execute_checked`) — `map_gen`/`data_gen` must match the caller's expected
   (live registry) generation, else the pack is STALE (`BCIR_ERR_STALE`) and is rehydrated,
   never executed. `bcir_sp_execute` rejects an R10/range-failing pack before running it.
+- **Exact body consumption** — after the declared segment/prefetch/block/trace records,
+  the next four bytes must be the CRC trailer and the trailer must end the artifact.
+  CRC-valid bytes inserted between the declared body and a recomputed CRC are rejected
+  (`BCIR_ERR_TRAILING` in C) on both rails; parsers never treat an undeclared tail as an
+  extension point.
 
 These mirror `bcir/verify::verify_pack`, so the Python and C rails agree.
 
@@ -110,6 +116,15 @@ These mirror `bcir/verify::verify_pack`, so the Python and C rails agree.
 - A reader **rejects** a buffer whose `version` exceeds the maximum it supports
   (v3 today). `lane` values match `bcir/model/lanes.py` / `BCIRAttrs.td`
   (`U=0,UX=1,T=2,GGG=3,A=4,H=5`).
+- The exact-consumption rule is decoder hardening, not a field-layout change, so it does
+  **not** increment the wire version. Future records/fields require an explicit append-only
+  version and corresponding counts/lengths; reserved or trailing bytes are not implicit ABI.
+
+Writers reject values that cannot be represented exactly: integer fields never mask or wrap,
+`pipeline_depth` is in `1..65535`, prefetch `buffers` is `1` or `2`, segment width is a
+nonzero `u32` power of two, and dispatch is one of the closed v3 codes. Decoders apply the
+same depth/buffer/width/dispatch constraints. This is validation of the existing v1–v3
+contract, not a wire-layout revision.
 
 ## Why a frozen ABI now
 

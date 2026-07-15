@@ -6,7 +6,7 @@ telemetry — the **T1** signal registry's readings (``bcir.signal_registry``) p
 **T3** derived metrics / sensitivity ranking (``bcir.kbcir.telemetry_metrics``) — and
 re-expresses it in the two industry-standard shapes plus an out-of-band read:
 
-  1. **Prometheus / OpenMetrics text exposition** (PULL / scrape) — the ``# HELP`` /
+  1. **Prometheus text exposition shape** (PULL / scrape) — the ``# HELP`` /
      ``# TYPE`` / ``name{labels} value`` line protocol a Prometheus server scrapes
      (:func:`to_prometheus`, :func:`scrape`).
   2. **OpenTelemetry (OTLP) data model** (PUSH) — metric points with an *explicit*
@@ -25,8 +25,8 @@ egress of the already-graded L2/L3 signal*. Nothing here is — or can become �
 legality verdict: it reads the T1 registry / T3 metrics and emits text/JSON, never a
 :class:`~bcir.verify.Diagnostic`, never touching ``bcir/verify`` or the cost-vector
 ``DIMS``. The witness (:class:`~bcir.telemetry.TelemetryIntegrity`) is exported as an
-``up`` / ``accepted`` / ``rejected`` / ``dropped`` / ``blind`` set so a suppression or
-injection attack stays *observable downstream* (a Prometheus alert / an OTLP gauge) rather
+record and frame-continuity counters plus ``blind`` so suppression, injection, and
+transport anomalies stay *observable downstream* (a Prometheus alert / an OTLP gauge) rather
 than vanishing silently at the boundary.
 
 **Honest depth.** There is NO live OTLP collector, NO running Prometheus server, and NO
@@ -52,6 +52,7 @@ import re
 from dataclasses import dataclass, field
 
 from .signal_registry import (
+    MetricKind,
     MetricDefinition,
     Reading,
     SignalRegistry,
@@ -67,26 +68,9 @@ _PREFIX = "bcir_"
 _PROM_NAME_RE = re.compile(r"[^a-zA-Z0-9_:]")
 _PROM_FIRST_RE = re.compile(r"^[^a-zA-Z_:]")
 
-# The units whose underlying source is a MONOTONIC COUNTER (energy that only accumulates,
-# event/cycle tallies). Everything else (a 0..100 pressure, a static byte capacity, a
-# capability flag, a frequency level) is a GAUGE — an instantaneous level. This is the
-# Prometheus counter/gauge split AND the OTLP Sum(monotonic)/Gauge split, decided once here
-# from the T1 unit + name so the two exporters never disagree.
-_COUNTER_UNITS = frozenset({Unit.MICROJOULE})
-
-
 def _is_counter(definition: MetricDefinition) -> bool:
-    """True iff this metric's source is a monotonic counter (→ Prometheus ``counter`` /
-    OTLP cumulative monotonic ``Sum``). Energy counters (µJ; RAPL ``energy_uj``) and any
-    metric whose name carries a counter idiom (``_total`` / ``cycles`` / ``_uj``) count;
-    a static capacity, a 0..100 pressure, a level, or a flag is a gauge.
-
-    Decided from the T1 :class:`MetricDefinition` (unit + name), not guessed per call, so
-    Prometheus ``# TYPE`` and the OTLP kind/temporality always agree."""
-    if definition.unit in _COUNTER_UNITS:
-        return True
-    name = definition.name
-    return name.endswith("_total") or name.endswith("_uj") or "cycles" in name
+    """Use the definition's declared semantics; exporters never infer from names/units."""
+    return definition.metric_kind == MetricKind.COUNTER
 
 
 def sanitize_metric_name(name: str) -> str:
@@ -149,7 +133,7 @@ def _render_labels(labels: dict[str, str]) -> str:
     return "{" + inner + "}"
 
 
-# === 1. Prometheus / OpenMetrics text exposition (PULL) ==============================
+# === 1. Prometheus text exposition shape (PULL) ======================================
 
 
 def to_prometheus(
@@ -160,7 +144,7 @@ def to_prometheus(
     sensitivity=None,
     witness=None,
 ) -> str:
-    """Render the registry snapshot as a Prometheus / OpenMetrics text exposition.
+    """Render the registry snapshot in the Prometheus text exposition shape.
 
     For each metric, emit a ``# HELP`` line (the definition's description), a ``# TYPE``
     line (``counter`` for a monotonic-counter source — RAPL energy_uj, cycles — else
@@ -181,8 +165,8 @@ def to_prometheus(
         becomes a ``bcir_signal_sensitivity{signal=...} <abs_delta>`` gauge (the
         sampling-budget ranking, exported so an operator can see WHERE the budget should go).
       * ``witness`` — a :class:`~bcir.telemetry.TelemetryIntegrity`: exported as the
-        ``bcir_telemetry_accepted`` / ``_rejected`` / ``_dropped`` / ``_blind`` counter/gauge
-        set so suppression/injection is alertable.
+        record counters, frame rejection/continuity counters, and ``_blind`` gauge so
+        suppression/injection/transport anomalies are alertable.
 
     Metric names are sanitized to the Prometheus charset (:func:`sanitize_metric_name`).
     Output is fully deterministic (sorted metric order, fixed label order), so two scrapes
@@ -260,23 +244,38 @@ def _help_text(desc: str) -> str:
 
 def _witness_lines(witness, channel: str) -> list[str]:
     """Render a :class:`~bcir.telemetry.TelemetryIntegrity` as a Prometheus block: the
-    ``accepted`` (==``up`` for the stream) / ``rejected`` / ``dropped`` counters + a
-    ``blind`` gauge. Tolerant of any object exposing those attributes."""
+    record and frame-continuity counters plus ``blind``/frame-order gauges. Tolerant of
+    any object exposing those attributes."""
     out: list[str] = []
     lab = f'{{channel="{_sanitize_label_value(channel)}"}}'
-    fields = (
-        ("telemetry_accepted", "counter", "Telemetry records that passed the documented RT3 schema (the stream up-count)."),
-        ("telemetry_rejected", "counter", "Telemetry records dropped for a schema violation (value injection)."),
-        ("telemetry_dropped", "counter", "Telemetry records evicted upstream before read (ring overwrite / suppression)."),
+    record_fields = (
+        ("telemetry_accepted", "accepted", "Telemetry records that passed the documented RT3 schema (the stream up-count)."),
+        ("telemetry_rejected", "rejected", "Telemetry records dropped for a schema violation (value injection)."),
+        ("telemetry_dropped", "dropped", "Telemetry records evicted upstream before read (ring overwrite / suppression)."),
     )
-    for attr, mtype, help_ in fields:
-        val = getattr(witness, attr.split("_", 1)[1], None)
+    frame_fields = (
+        ("telemetry_frames_accepted", "frames_accepted", "BTLM telemetry frames that passed flags/version/length/CRC validation."),
+        ("telemetry_frames_rejected", "frames_rejected", "Magic-aligned telemetry candidates rejected for flags/version/length/CRC."),
+        ("telemetry_frames_missing", "frames_missing", "Telemetry frame sequence numbers missing between recovered frames."),
+        ("telemetry_frames_reordered", "frames_reordered", "Telemetry frames received behind the sequence watermark."),
+        ("telemetry_frames_duplicated", "frames_duplicated", "Telemetry frames repeating the current sequence number."),
+    )
+    has_frame_evidence = any(getattr(witness, attr, 0) for _, attr, _ in frame_fields)
+    fields = record_fields + (frame_fields if has_frame_evidence else ())
+    for suffix, attr, help_ in fields:
+        val = getattr(witness, attr, None)
         if val is None:
             continue
-        metric = _PREFIX + attr
+        metric = _PREFIX + suffix
         out.append(f"# HELP {metric} {help_}")
-        out.append(f"# TYPE {metric} {mtype}")
+        out.append(f"# TYPE {metric} counter")
         out.append(f"{metric}{lab} {_fmt_value(val)}")
+    frame_monotonic = getattr(witness, "frame_monotonic", None)
+    if has_frame_evidence and frame_monotonic is not None:
+        metric = _PREFIX + "telemetry_frame_monotonic"
+        out.append(f"# HELP {metric} 1 if recovered frame sequence order has no duplicate/reorder, else 0.")
+        out.append(f"# TYPE {metric} gauge")
+        out.append(f"{metric}{lab} {1 if frame_monotonic else 0}")
     blind = getattr(witness, "blind", None)
     if blind is not None:
         metric = _PREFIX + "telemetry_blind"
@@ -305,7 +304,7 @@ def _definition_only_labels(name: str) -> MetricDefinition | None:
 
 
 def scrape(registry_or_snapshot, **kwargs) -> str:
-    """The PULL convenience: render the Prometheus/OpenMetrics text a scrape would return.
+    """The PULL convenience: render the Prometheus text a scrape would return.
     Thin alias for :func:`to_prometheus` — the function a ``GET /metrics`` HTTP handler
     would call and write to the response body (the handler itself is the unbuilt thin
     adapter; this produces its body, which IS the contract)."""
@@ -397,8 +396,8 @@ def _otlp_metric_for(definition: MetricDefinition, reading: Reading, channel: st
         name=sanitize_metric_name(definition.name),
         unit=definition.unit,
         kind=OtlpKind.SUM if counter else OtlpKind.GAUGE,
-        temporality=OtlpTemporality.CUMULATIVE if counter else OtlpTemporality.UNSPECIFIED,
-        monotonic=counter,
+        temporality=definition.temporality if counter else OtlpTemporality.UNSPECIFIED,
+        monotonic=definition.monotonic if counter else False,
         points=[(labels, reading.value)],
         resource=channel,
         description=definition.description or definition.name,
@@ -497,11 +496,14 @@ def to_otlp(
 
 
 def _otlp_witness_metrics(witness, channel: str) -> list[OtlpMetric]:
-    """The integrity witness as OTLP metrics: accepted/rejected/dropped as cumulative
-    monotonic sums, blind as a gauge."""
+    """The integrity witness as OTLP record/frame sums plus order/blind gauges."""
     out: list[OtlpMetric] = []
     lbl = {"channel": channel}
-    for attr in ("accepted", "rejected", "dropped"):
+    record_attrs = ("accepted", "rejected", "dropped")
+    frame_attrs = ("frames_accepted", "frames_rejected", "frames_missing", "frames_reordered",
+                   "frames_duplicated")
+    has_frame_evidence = any(getattr(witness, attr, 0) for attr in frame_attrs)
+    for attr in record_attrs + (frame_attrs if has_frame_evidence else ()):
         val = getattr(witness, attr, None)
         if val is None:
             continue
@@ -509,7 +511,15 @@ def _otlp_witness_metrics(witness, channel: str) -> list[OtlpMetric]:
             name=_PREFIX + f"telemetry_{attr}", unit=Unit.COUNT, kind=OtlpKind.SUM,
             temporality=OtlpTemporality.CUMULATIVE, monotonic=True,
             points=[(lbl, val)], resource=channel,
-            description=f"Telemetry records {attr} (RT3 integrity witness)."))
+            description=f"Telemetry integrity counter: {attr}."))
+    frame_monotonic = getattr(witness, "frame_monotonic", None)
+    if has_frame_evidence and frame_monotonic is not None:
+        out.append(OtlpMetric(
+            name=_PREFIX + "telemetry_frame_monotonic", unit=Unit.COUNT,
+            kind=OtlpKind.GAUGE, temporality=OtlpTemporality.UNSPECIFIED,
+            monotonic=False, points=[(lbl, 1 if frame_monotonic else 0)],
+            resource=channel,
+            description="1 if recovered frame order has no duplicate/reorder, else 0."))
     blind = getattr(witness, "blind", None)
     if blind is not None:
         out.append(OtlpMetric(
@@ -553,8 +563,12 @@ _REDFISH_TYPE_FOR_UNIT = {
     Unit.PERCENT: "Percent",
     Unit.MILLICELSIUS: "Temperature",     # m°C; the value carries the scale
     Unit.MICROJOULE: "EnergyJoules",      # a microjoule energy counter
+    Unit.MILLIWATT: "PowerWatts",
+    Unit.MICROWATT: "PowerWatts",
     Unit.KHZ: "Frequency",
     Unit.BYTES: "Count",
+    Unit.BYTES_PER_SECOND: "Rate",
+    Unit.BITMASK: "Count",
     Unit.COUNT: "Count",
     Unit.RATIO_MILLI: "Count",
     Unit.NONE: "Count",
@@ -601,6 +615,11 @@ def metric_definitions(registry_or_snapshot) -> list[dict]:
                 "Provenance": d.provenance,
                 "CostDim": d.cost_dim or "none",
                 "SamplingModel": d.sampling_model,
+                "SignalId": d.signal_id,
+                "MetricKind": d.metric_kind,
+                "Temporality": d.temporality,
+                "Monotonic": d.monotonic,
+                "MinIntervalNs": d.min_interval_ns,
             }},
         })
     return out

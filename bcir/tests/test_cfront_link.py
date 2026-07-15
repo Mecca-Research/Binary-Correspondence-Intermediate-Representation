@@ -126,7 +126,7 @@ def test_linkable_globals_define_declare_and_reject_nonconstant():
     assert "unsigned int base = 7;" in d_text                 # the defining TU renders the value
     assert "unsigned int tab[3] = {1, 2, 3};" in d_text
     assert "unsigned int scaled(unsigned int x)" in u_text    # non-static, real name
-    assert "static" not in u_text.replace("static_assert", "")
+    assert "static" not in u_text.replace("_Static_assert", "")
     cc = _cc()
     if cc is not None:                                        # the pair genuinely links + runs
         with tempfile.TemporaryDirectory() as tmp:

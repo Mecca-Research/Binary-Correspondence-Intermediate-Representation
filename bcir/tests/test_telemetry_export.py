@@ -4,7 +4,7 @@ Asserts the three export shapes against the testable wire contract (the expositi
 JSON they produce + parse — there is no live collector / BMC here, per the honest-depth
 note in `bcir.telemetry_export`):
 
-  * **Prometheus/OpenMetrics**: the text parses to valid `# TYPE` / series lines; an
+  * **Prometheus text exposition**: the text parses to valid `# TYPE` / series lines; an
     available reading appears with the right value + the cost_dim/provenance/unit/channel
     labels; an unavailable signal has NO value line but DOES emit `bcir_signal_up{...} 0`;
     metric names match the Prometheus charset regex; output is deterministic; a counter is
@@ -31,11 +31,13 @@ import re
 
 from bcir.signal_registry import (
     MetricDefinition,
+    MetricKind,
     Provenance,
     Reading,
     SamplingModel,
     SignalProvider,
     SignalRegistry,
+    Temporality,
     Unit,
     default_registry,
 )
@@ -66,13 +68,18 @@ _PROM_NAME = re.compile(r"^[a-zA-Z_:][a-zA-Z0-9_:]*$")
 
 _COUNTER_DEF = MetricDefinition(
     "power.rapl_energy_uj", Unit.MICROJOULE, "power", Provenance.MEASURED,
-    SamplingModel.POLLED, "RAPL package energy counter, microjoules (monotonic).")
+    SamplingModel.POLLED, "RAPL package energy counter, microjoules (monotonic).",
+    signal_id=3, metric_kind=MetricKind.COUNTER,
+    temporality=Temporality.CUMULATIVE, monotonic=True)
 _GAUGE_DEF = MetricDefinition(
     "thermal.pressure", Unit.PERCENT, "thermal", Provenance.MEASURED,
-    SamplingModel.POLLED, "On-die temperature mapped to 0..100 thermal pressure.")
+    SamplingModel.POLLED, "On-die temperature mapped to 0..100 thermal pressure.",
+    signal_id=1)
 _GAP_DEF = MetricDefinition(
     "fabric.interconnect_bytes", Unit.BYTES, "fabric", Provenance.MEASURED,
-    SamplingModel.STREAMED, "Interconnect bytes (gap: needs a fabric backend).")
+    SamplingModel.STREAMED, "Interconnect bytes (gap: needs a fabric backend).",
+    signal_id=12, metric_kind=MetricKind.COUNTER,
+    temporality=Temporality.CUMULATIVE, monotonic=True)
 
 
 class _FixedProvider(SignalProvider):
@@ -358,6 +365,10 @@ def test_metric_definitions_carry_unit_and_provenance_on_definition():
     assert counter["Oem"]["BCIR"]["Provenance"] == "measured"
     assert counter["Oem"]["BCIR"]["CostDim"] == "power"
     assert counter["Oem"]["BCIR"]["SamplingModel"] == "polled"
+    assert counter["Oem"]["BCIR"]["SignalId"] == 3
+    assert counter["Oem"]["BCIR"]["MetricKind"] == "counter"
+    assert counter["Oem"]["BCIR"]["Temporality"] == "cumulative"
+    assert counter["Oem"]["BCIR"]["Monotonic"] is True
     gauge = by_id["bcir_thermal_pressure"]
     assert gauge["MetricType"] == "Gauge" and gauge["Units"] == "percent"
     # the definition tier is the COMPLETE namespace (includes the unavailable gap signal).
@@ -369,12 +380,23 @@ def test_metric_definitions_carry_unit_and_provenance_on_definition():
 
 def test_witness_export_surfaces_up_accepted_rejected():
     # a stream with a rejected record but some accepted -> not blind.
-    witness = TelemetryIntegrity(accepted=5, rejected=2, dropped=1)
+    witness = TelemetryIntegrity(accepted=5, rejected=2, dropped=1,
+                                 frames_accepted=7, frames_rejected=1, frames_missing=2,
+                                 frames_reordered=3, frames_duplicated=4)
     text = to_prometheus(_synthetic_registry(), witness=witness)
     assert "bcir_telemetry_accepted{channel=\"host\"} 5" in text
     assert "bcir_telemetry_rejected{channel=\"host\"} 2" in text
     assert "bcir_telemetry_dropped{channel=\"host\"} 1" in text
     assert "bcir_telemetry_blind{channel=\"host\"} 0" in text
+    assert "bcir_telemetry_frames_accepted{channel=\"host\"} 7" in text
+    assert "bcir_telemetry_frames_rejected{channel=\"host\"} 1" in text
+    assert "bcir_telemetry_frames_missing{channel=\"host\"} 2" in text
+    assert "bcir_telemetry_frames_reordered{channel=\"host\"} 3" in text
+    assert "bcir_telemetry_frames_duplicated{channel=\"host\"} 4" in text
+    assert "bcir_telemetry_frame_monotonic{channel=\"host\"} 0" in text
+    otlp = to_otlp(_synthetic_registry(), witness=witness)
+    metrics = otlp["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
+    assert any(m["name"] == "bcir_telemetry_frames_accepted" for m in metrics)
 
 
 def test_witness_blind_surfaces_when_all_rejected():

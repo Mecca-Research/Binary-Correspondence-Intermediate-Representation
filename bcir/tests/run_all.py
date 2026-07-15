@@ -166,6 +166,8 @@ _MODULES = [
     "bcir.tests.test_telemetry_metrics",
     "bcir.tests.test_telemetry_export",
     "bcir.tests.test_abi",
+    "bcir.tests.test_streampack_tool",
+    "bcir.tests.test_registry_tool",
     "bcir.tests.test_stackify",
     "bcir.tests.test_stackify_exec",
     "bcir.tests.test_lowering",

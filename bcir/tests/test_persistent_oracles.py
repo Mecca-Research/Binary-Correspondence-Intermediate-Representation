@@ -39,6 +39,7 @@ def test_ring_header_publishes_with_release_ordering():
     c = emit_ring_header_c()
     assert "memory_order_release" in c            # publish the record before bumping head
     assert "atomic_store_explicit" in c and "bcir_ring_write" in c
+    assert "if (cap == 0u) return" in c            # disabled ring cannot modulo by zero
     assert c_memory_order("release") == "memory_order_release"
 
 
@@ -65,10 +66,12 @@ def test_c_kernel_writes_ring_python_reads_zero_copy():
 #include <unistd.h>
 int main(int c, char**v){
   uint64_t cap=8; size_t sz = BCIR_RING_HEADER + cap*BCIR_RING_RECORD;
+  uint64_t disabled[4]; bcir_ring_init(disabled,0);
+  bcir_ring_write(disabled,1,2,3,4,5,6,7); if(disabled[0] != 0) return 3;
   int fd=open(v[1],O_RDWR|O_CREAT,0644); if(ftruncate(fd,(off_t)sz)) return 2;
   void*base=mmap(0,sz,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0);
   bcir_ring_init(base,cap);
-  for(int i=0;i<5;++i) bcir_ring_write(base, 100+i, 1000*(i+1), 0, i, 0,0,50);
+  for(int i=0;i<30;++i) bcir_ring_write(base, 100+i, 1000*(i+1), 0, i, 0,0,50);
   msync(base,sz,MS_SYNC); munmap(base,sz); close(fd); return 0;
 }
 '''
@@ -80,8 +83,8 @@ int main(int c, char**v){
         assert subprocess.run([exe, shm]).returncode == 0
         with open(shm, "rb") as f:
             recs = parse_shared_ring(mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ))
-        assert [r.claim_id for r in recs] == [100, 101, 102, 103, 104]
-        assert [r.cycles for r in recs] == [1000, 2000, 3000, 4000, 5000]   # C->Python, zero-copy
+        assert [r.claim_id for r in recs] == list(range(122, 130))
+        assert [r.cycles for r in recs] == [1000 * i for i in range(23, 31)]
 
 
 # --- #2: a-priori ranker-confidence-gated sensing --------------------------------

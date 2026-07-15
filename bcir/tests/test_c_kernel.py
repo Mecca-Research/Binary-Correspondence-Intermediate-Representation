@@ -1,7 +1,10 @@
 """The portable C23 kernel backend: emit -> compile -> run -> self-check, and the
 R12 lowering contract (lane geometry, bounds, precision, non-aliasing)."""
 
+import os
 import shutil
+import subprocess
+import tempfile
 
 from bcir.codegen import emit_c_source
 from bcir.examples import vector_add
@@ -29,7 +32,7 @@ def test_kernel_is_c23_and_restrict_qualified():
     c = emit_kernel_c(m, r)
     assert c.startswith("/* BCIR -> portable C23 kernel")
     assert "const float * restrict A" in c          # the non-aliasing contract
-    assert "static_assert(sizeof(float) == 4" in c  # C23 keyword, file scope
+    assert "_Static_assert(sizeof(float) == 4" in c  # header-independent C11/C23 spelling
     assert "#pragma STDC FP_CONTRACT OFF" in c      # reproducible float
     assert "size_t n" in c                          # <stddef.h> trip count
 
@@ -113,6 +116,23 @@ def test_kernel_compiles_and_self_checks():
         ok, out = compile_and_run_c(m, r, elem=elem)
         assert ok, f"theta={theta} elem={elem}: {out}"
         assert "OK" in out
+
+
+def test_emitted_kernel_is_a_self_contained_c_translation_unit():
+    """The deployable kernel must not rely on a wrapper having included <assert.h>."""
+    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        return
+    m, r = _plan()
+    with tempfile.TemporaryDirectory() as tmp:
+        source = os.path.join(tmp, "kernel.c")
+        obj = os.path.join(tmp, "kernel.o")
+        with open(source, "w", encoding="utf-8") as f:
+            f.write(emit_kernel_c(m, r))
+        built = subprocess.run(
+            [cc, "-std=c11", "-Wall", "-Werror", "-c", source, "-o", obj],
+            capture_output=True, text=True)
+        assert built.returncode == 0, built.stderr
 
 
 def test_selfcheck_exercises_the_tail():

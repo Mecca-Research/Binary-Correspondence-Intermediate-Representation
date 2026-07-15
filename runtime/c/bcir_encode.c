@@ -95,10 +95,21 @@ bcir_status bcir_sp_reencode(const uint8_t *BCIR_RESTRICT in, size_t in_len,
                              uint8_t *BCIR_RESTRICT out, size_t out_cap,
                              size_t *BCIR_RESTRICT out_len) {
   bcir_streampack_header hdr;
+  if (out_len) *out_len = 0;
   if (!out && out_cap) return BCIR_ERR_NOSPACE;
-  bcir_status st = bcir_sp_validate(in, in_len, &hdr);
+  /* Preflight the complete semantic/exact-consumption contract before touching the
+   * caller's output. Re-encoding must never bless a CRC-valid but unexecutable pack. */
+  bcir_status st = bcir_sp_verify_semantic(
+      in, in_len, UINT32_MAX, UINT32_MAX);
   if (st != BCIR_OK)
     return st;
+  st = bcir_sp_validate(in, in_len, &hdr);
+  if (st != BCIR_OK)
+    return st;
+  /* A canonical re-encode has exactly the input length. Refuse insufficient output
+   * capacity before writing the copied header or any body field. */
+  if (out_cap < in_len)
+    return BCIR_ERR_NOSPACE;
 
   rcur r = {in, in_len - 4u, (size_t)BCIR_STREAMPACK_HEADER_SIZE, 0};
   wcur w = {out, out_cap, 0, 0};
@@ -150,6 +161,8 @@ bcir_status bcir_sp_reencode(const uint8_t *BCIR_RESTRICT in, size_t in_len,
     return BCIR_ERR_TRUNCATED;
   if (w.err)
     return BCIR_ERR_NOSPACE;
+  if (r.pos != r.len)
+    return BCIR_ERR_TRAILING;
 
   /* CRC-32 of every preceding byte, appended (zlib-compatible, same as the decoder). */
   uint32_t crc = bcir_crc32(out, w.pos);
@@ -157,7 +170,6 @@ bcir_status bcir_sp_reencode(const uint8_t *BCIR_RESTRICT in, size_t in_len,
   if (w.err)
     return BCIR_ERR_NOSPACE;
 
-  if (out_len)
-    *out_len = w.pos;
+  if (out_len) *out_len = w.pos;
   return BCIR_OK;
 }

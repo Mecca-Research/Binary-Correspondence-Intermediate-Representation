@@ -6,6 +6,11 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(TRAINING_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 set(TOOLS_DIR "${TRAINING_ROOT}/tools")
 set(OPTIONAL_RUNNER "${TOOLS_DIR}/run-if-tools.sh")
+set(LLVM_TRAINING_LIT_JOBS "2" CACHE STRING
+    "Maximum llvm-lit workers used by the aggregate training gate")
+if(NOT LLVM_TRAINING_LIT_JOBS MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "LLVM_TRAINING_LIT_JOBS must be a positive integer")
+endif()
 
 function(add_training_script_target target script)
   add_custom_target(${target}
@@ -71,7 +76,7 @@ add_optional_training_target(llvm-training-verify-opt-diff "LLVM opt-diff verifi
 # name only when its version banner identifies LLVM lit.
 add_custom_target(llvm-training-lit
   COMMAND "${BASH_EXECUTABLE}" -c
-          "if command -v llvm-lit >/dev/null 2>&1; then exec llvm-lit -sv '${TRAINING_ROOT}/tests'; elif command -v lit >/dev/null 2>&1 && lit --version 2>&1 | grep -Eq '^lit( version)? [0-9]'; then exec lit -sv '${TRAINING_ROOT}/tests'; else echo 'LLVM llvm-lit/lit not present; skipping llvm-training lit tests'; fi"
+          "if command -v llvm-lit >/dev/null 2>&1; then exec llvm-lit -j '${LLVM_TRAINING_LIT_JOBS}' -sv '${TRAINING_ROOT}/tests'; elif command -v lit >/dev/null 2>&1 && lit --version 2>&1 | grep -Eq '^lit( version)? [0-9]'; then exec lit -j '${LLVM_TRAINING_LIT_JOBS}' -sv '${TRAINING_ROOT}/tests'; else echo 'LLVM llvm-lit/lit not present; skipping llvm-training lit tests'; fi"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
   USES_TERMINAL
   VERBATIM)

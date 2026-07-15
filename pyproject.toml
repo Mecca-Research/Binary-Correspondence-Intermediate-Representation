@@ -23,6 +23,8 @@ dev = ["ruff>=0.6", "pre-commit>=3.5"]
 
 [project.scripts]
 bcir = "bcir.run:main"
+bcir-pack = "bcir.abi.streampack_tool:main"
+bcir-registry = "bcir.registry_tool:main"
 
 [project.urls]
 Homepage = "https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation"

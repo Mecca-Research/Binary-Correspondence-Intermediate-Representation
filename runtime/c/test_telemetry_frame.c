@@ -26,14 +26,14 @@ int main(int argc, char **argv) {
   fclose(fp);
 
   bcir_tf_header hdr;
-  size_t frame_len = 0;
-  bcir_tf_status st = bcir_tf_decode_frame(in, in_len, &hdr, &frame_len);
+  size_t frame_len = in_len;
+  bcir_tf_status st = bcir_tf_decode_exact(in, in_len, &hdr);
   if (st != BCIR_TF_OK) { printf("ERR %d\n", (int)st); return 1; }
 
   /* Print the decoded header + every record so the Python rail can diff the values. */
   printf("seq=%u ts=%llu n=%u\n", hdr.seq,
          (unsigned long long)hdr.timestamp, (unsigned)hdr.n_records);
-  static bcir_tf_record recs[1 << 14];
+  static bcir_tf_record recs[1 << 16]; /* every value representable by n_records:u16 */
   for (uint16_t i = 0; i < hdr.n_records; i++) {
     bcir_tf_status rs = bcir_tf_get_record(in, frame_len, i, &recs[i]);
     if (rs != BCIR_TF_OK) { printf("ERR-REC %d\n", (int)rs); return 1; }
@@ -42,6 +42,12 @@ int main(int argc, char **argv) {
            (long long)recs[i].bytes, (long long)recs[i].misses,
            (long long)recs[i].thermal, (long long)recs[i].voltage,
            (long long)recs[i].utilization);
+  }
+  /* The lazy accessor must enforce the declared frame body, not merely the containing
+   * buffer length. This pins the hostile i==n range check on every successful decode. */
+  if (bcir_tf_get_record(in, frame_len, hdr.n_records, NULL) != BCIR_TF_ERR_RANGE) {
+    printf("ERR-REC range\n");
+    return 1;
   }
 
   /* Re-encode the SAME frame (same seq/ts/records) through the C writer; the Python

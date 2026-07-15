@@ -90,7 +90,7 @@ def emit_specialist_c(op_str: str, c_op: str, count: int, elem: str = "f32",
     body.append("}")
     return (f"/* BCIR -> shape specialist (n={count}, op={op_str}, elem={ctype}; "
             f"hot-shape JIT). */\n{inc}"
-            f'static_assert(sizeof({ctype}) == 4, "BCIR {ctype} specialist needs a 4-byte element");\n'
+            f'_Static_assert(sizeof({ctype}) == 4, "BCIR {ctype} specialist needs a 4-byte element");\n'
             f"{fp}\n" + "\n".join(body) + "\n")
 
 

@@ -64,8 +64,9 @@ def barrier_fence_ir(ordering: str = "seq_cst") -> str:
 #                                            thermal, voltage, utilization (i64 LE)
 #
 # `head` is published with RELEASE ordering (`hazard_to_ordering("atomic")` -> acq_rel,
-# narrowed to release for a store) so a reader that acquire-loads `head` sees a fully
-# written record -- the same hazard->ordering law the rest of the lowering uses.
+# narrowed to release for a store). A conforming live reader must acquire-load it; the
+# current Python parser is intentionally only a quiescent-snapshot reader because Python
+# mmap reads do not provide that C atomic acquire contract.
 #
 # INTEGRITY: slot [24] was a `reserved` word == 0; it is repurposed APPEND-ONLY as a
 # magic/version stamp so the wire format is self-describing on BOTH sides. The Python
@@ -121,6 +122,7 @@ def emit_ring_header_c(fn_prefix: str = "bcir_ring") -> str:
         f"void {fn_prefix}_write(void *base, {fields}) {{\n"
         "  _Atomic uint64_t *head = (_Atomic uint64_t *)base;\n"
         "  uint64_t cap = ((uint64_t *)base)[1];\n"
+        "  if (cap == 0u) return;  /* uninitialized/disabled ring: no modulo by zero */\n"
         "  uint64_t h = atomic_load_explicit(head, memory_order_relaxed);\n"
         f"  int64_t *rec = (int64_t *)((char *)base + {RING_HEADER_BYTES}"
         f" + (h %% cap) * {RING_RECORD_BYTES});\n".replace("%%", "%")

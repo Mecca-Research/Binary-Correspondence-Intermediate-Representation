@@ -5,6 +5,8 @@ THIS host — never assuming a specific signal is present), the plugin seam (reg
 custom provider), the channel↔provider power mapping, and the two-truth boundary (the
 registry is off the legality path: only Readings/None, never a verdict/Diagnostic)."""
 
+import math
+
 from bcir.channels import host_channel
 from bcir.kbcir.cost import DIMS, MemTier
 from bcir.signal_registry import (
@@ -13,6 +15,7 @@ from bcir.signal_registry import (
     FabricBytesProvider,
     GpuPowerProvider,
     MemBandwidthProvider,
+    MetricKind,
     MetricDefinition,
     Provenance,
     Reading,
@@ -21,6 +24,7 @@ from bcir.signal_registry import (
     SignalProvider,
     SignalRegistry,
     ThrottleStateProvider,
+    Temporality,
     Unit,
     default_registry,
     power_provider_for_energy_source,
@@ -39,6 +43,8 @@ def test_default_registry_builds_with_valid_unique_definitions():
     reg = default_registry()
     names = reg.names()
     assert names and len(names) == len(set(names))         # unique PAPI namespace
+    ids = [p.definition.signal_id for p in reg.providers()]
+    assert all(i > 0 for i in ids) and len(ids) == len(set(ids))
     for p in reg.providers():
         d = p.definition
         assert isinstance(d, MetricDefinition)
@@ -47,17 +53,19 @@ def test_default_registry_builds_with_valid_unique_definitions():
         assert d.cost_dim is None or d.cost_dim in DIMS    # maps to a real dim or None
         assert d.provenance in Provenance.ALL
         assert d.sampling_model in SamplingModel.ALL
+        assert reg.get_by_id(d.signal_id) is p
 
 
 # --- available() and read() ALWAYS agree (the honest contract) -----------------------
 
-def test_available_and_read_always_agree_and_readings_are_well_typed():
+def test_provider_reads_are_well_typed_and_availability_is_boolean():
     reg = default_registry()
     for p in reg.providers():
         avail = p.available()
         r = p.read()
-        # the core honesty invariant: a Reading iff available, None iff not (no fabrication).
-        assert (r is None) == (not avail), (p.name, avail, r)
+        # These are separate point-in-time probes and may change between calls. The
+        # registry snapshot is the coherent transaction tested below.
+        assert isinstance(avail, bool)
         if r is not None:
             assert isinstance(r, Reading)
             assert r.unit == p.definition.unit             # carried via the definition
@@ -86,7 +94,7 @@ def test_gap_providers_are_honest_unavailable_and_never_fabricate():
 def test_snapshot_and_availability_are_per_provider_and_consistent():
     reg = default_registry()
     snap = reg.snapshot()
-    avail = reg.availability()
+    avail = reg.availability(snap)
     assert set(snap) == set(reg.names()) == set(avail)     # one entry per provider
     for name in reg.names():
         r = snap[name]
@@ -147,6 +155,33 @@ def test_register_rejects_duplicate_and_accepts_a_custom_provider():
     assert reg.availability()["custom.fake_metric"] is True
 
 
+def test_registry_rejects_duplicate_nonzero_signal_id_but_allows_local_zero():
+    class _IdCollision(_FakeProvider):
+        _DEF = MetricDefinition("custom.collision", Unit.COUNT, "accuracy",
+                                signal_id=1)
+
+    reg = default_registry()
+    try:
+        reg.register(_IdCollision())
+        raise AssertionError("expected duplicate signal-id rejection")
+    except ValueError as exc:
+        assert "signal_id" in str(exc)
+    reg.register(_FakeProvider())                         # ID 0 is local/unassigned
+    assert reg.get_by_id(0) is None and reg.get_by_id(True) is None
+
+
+def test_builtin_units_and_counter_semantics_are_explicit():
+    reg = default_registry()
+    rapl = reg.get("power.rapl_energy_uj").definition
+    assert rapl.metric_kind == MetricKind.COUNTER
+    assert rapl.temporality == Temporality.CUMULATIVE and rapl.monotonic
+    fabric = reg.get("fabric.interconnect_bytes").definition
+    assert fabric.metric_kind == MetricKind.COUNTER and fabric.monotonic
+    assert reg.get("power.bmc_node_milliwatt").definition.unit == Unit.MILLIWATT
+    assert reg.get("memory.bandwidth_bytes_per_s").definition.unit == Unit.BYTES_PER_SECOND
+    assert reg.get("contention.throttle_state").definition.unit == Unit.BITMASK
+
+
 def test_register_rejects_invalid_definition():
     reg = SignalRegistry()
 
@@ -166,6 +201,61 @@ def test_register_rejects_invalid_definition():
     try:
         reg.register(_BadUnit())
         raise AssertionError("expected invalid-definition rejection")
+    except ValueError:
+        pass
+
+
+def test_snapshot_rejects_malformed_provider_readings_before_export_or_theta():
+    percent = MetricDefinition("bad.percent", Unit.PERCENT, "thermal",
+                               Provenance.SIMULATED)
+    counter = MetricDefinition(
+        "bad.counter", Unit.COUNT, "compute", Provenance.SIMULATED,
+        metric_kind=MetricKind.COUNTER, temporality=Temporality.CUMULATIVE,
+        monotonic=True)
+
+    class _Malformed(SignalProvider):
+        def __init__(self, definition, reading):
+            self._definition = definition
+            self._reading = reading
+
+        @property
+        def definition(self):
+            return self._definition
+
+        def available(self):
+            return True
+
+        def read(self):
+            return self._reading
+
+    wrong = MetricDefinition("bad.other", Unit.PERCENT, "thermal",
+                             Provenance.SIMULATED)
+    bad_cases = (
+        (percent, "not-a-reading"),
+        (percent, Reading(wrong, 10, Provenance.SIMULATED)),
+        (percent, Reading(percent, 10, "untrusted")),
+        (percent, Reading(percent, True, Provenance.SIMULATED)),
+        (percent, Reading(percent, math.nan, Provenance.SIMULATED)),
+        (percent, Reading(percent, math.inf, Provenance.SIMULATED)),
+        (percent, Reading(percent, 4.5, Provenance.SIMULATED)),
+        (percent, Reading(percent, 101, Provenance.SIMULATED)),
+        (counter, Reading(counter, -1, Provenance.SIMULATED)),
+    )
+    for definition, reading in bad_cases:
+        reg = SignalRegistry()
+        reg.register(_Malformed(definition, reading))
+        try:
+            reg.snapshot()
+            raise AssertionError(f"expected malformed reading rejection for {reading!r}")
+        except ValueError:
+            pass
+
+    # theta consumes the same validated snapshot and cannot truncate a fractional pressure.
+    reg = SignalRegistry()
+    reg.register(_Malformed(percent, Reading(percent, 4.5, Provenance.SIMULATED)))
+    try:
+        theta_pressures(reg)
+        raise AssertionError("expected fractional pressure rejection")
     except ValueError:
         pass
 

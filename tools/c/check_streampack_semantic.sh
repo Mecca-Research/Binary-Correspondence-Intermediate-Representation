@@ -3,7 +3,8 @@
 #
 # The CRC + bounds-checked decode (bcir_runtime.c) is memory-safe, but a CRC-VALID pack can
 # still be SEMANTICALLY corrupt: a dangling/redirected claim_id, a swapped/undeclared RID, an
-# out-of-range lane/width, an unresolved prefetch, a stale generation, or a tampered dispatch.
+# out-of-range lane/width, an unresolved prefetch, invalid pipeline metadata, a stale
+# generation, a tampered dispatch, or undeclared trailing bytes.
 # Such a pack used to execute SILENTLY in C (Python's verify_pack R10/R11 was the only rail).
 # This gate crafts each corruption as a CRC-FIXED pack (tools/c/streampack_corrupt.py) and
 # asserts the C semantic verifier (bcir_sp_verify_semantic) + the checked executor
@@ -26,7 +27,8 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 
 echo "[streampack-sem] build the semantic harness (C23) + the decode-differential harness"
 "${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" \
-  "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/test_streampack_semantic.c" -o "${tmp}/test_sem" \
+  "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/bcir_verify.c" \
+  "${C}/test_streampack_semantic.c" -o "${tmp}/test_sem" \
   || { echo "  FAIL: semantic harness build"; exit 1; }
 "${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" \
   "${C}/bcir_runtime.c" "${C}/test_runtime.c" -o "${tmp}/test_runtime" \
@@ -54,10 +56,13 @@ declare -A WANT=(
   [out_of_range_lane]=BCIR_ERR_LANE
   [out_of_range_width]=BCIR_ERR_WIDTH
   [unresolved_prefetch]=BCIR_ERR_PROVENANCE
+  [invalid_pipeline]=BCIR_ERR_PROVENANCE
+  [invalid_buffers]=BCIR_ERR_PROVENANCE
   [stale_generation]=BCIR_ERR_STALE
   [tampered_dispatch]=BCIR_ERR_DISPATCH
+  [trailing_bytes]=BCIR_ERR_TRAILING
 )
-ORDER="dangling_claim swapped_rid out_of_range_lane out_of_range_width unresolved_prefetch stale_generation tampered_dispatch"
+ORDER="dangling_claim swapped_rid out_of_range_lane out_of_range_width unresolved_prefetch invalid_pipeline invalid_buffers stale_generation tampered_dispatch trailing_bytes"
 
 fail=0
 for kind in ${ORDER}; do

@@ -124,7 +124,13 @@ def test_validate_rejects_strict_and_passes_legit_unchanged():
     for bad in (DataDNA(segment_id="b", claim_id=1, thermal=10000),
                 DataDNA(segment_id="b", claim_id=1, voltage=-1),
                 DataDNA(segment_id="b", claim_id=1, utilization=NAN),
-                DataDNA(segment_id="b", claim_id=1, cycles=-5)):
+                DataDNA(segment_id="b", claim_id=1, cycles=-5),
+                DataDNA(segment_id="b", claim_id=-1),
+                DataDNA(segment_id="b", claim_id=True),
+                DataDNA(segment_id="b", claim_id=1 << 63),
+                DataDNA(segment_id="b", claim_id=1, cycles=1.5),
+                DataDNA(segment_id="b", claim_id=1, bytes=1 << 63),
+                DataDNA(segment_id="b", claim_id=1, misses=True)):
         assert not bad.is_valid()
         try:
             bad.validate()

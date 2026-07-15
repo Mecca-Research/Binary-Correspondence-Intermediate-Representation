@@ -14,14 +14,20 @@
 
 ## 0. What BCIR already has (the substrate this builds on)
 - **`bcir/telemetry.py`** — `TelemetryRing` (fixed-width RAM ring; fixed-stride `DataDNA`
-  records `<7q>` = claim_id, cycles, bytes, misses, thermal, voltage, utilization; monotonic
-  head/tail; overwrite-on-full with a `dropped` count), `TelemetryIntegrity` + `sanitize_events`
-  (RT3 ingest validation: 0..100 band / finite / non-negative; `blind` suppression detection;
-  `monotonic` replay/reorder detection), `parse_shared_ring` (hardened header decode, OOB-read
-  defense). This IS the RT3 telemetry-stream-integrity layer.
+  records `<7q>`), `TelemetryIntegrity` + `sanitize_events` (signed-i64/type/range validation,
+  blindness and record-order evidence), and `parse_shared_ring` (header/stride/bounds checks).
+  Long-running monotonic heads wrap slots correctly. The Python ring and C emitter are a
+  **quiescent-snapshot v1 baseline**, not a concurrent resident-driver ring: the shared layout
+  has no tail, producer generation, per-slot publication sequence, explicit loss/backpressure,
+  or Python acquire load.
+- **`bcir/telemetry_frame.py` + `runtime/c/bcir_telemetry_frame.{c,h}`** — frozen BTLM v1
+  DataDNA framing with strict flags/version/length/CRC/exact-buffer checks and explicit u32
+  missing/reorder/duplicate accounting. It has no source/session/clock schema and is therefore
+  a single-producer UART codec, not the universal driver envelope.
 - **`runtime/c/bcir_streampack.h`** — `"BSPK"` magic + version gate + length-prefixed records +
   trailing CRC-32, little-endian, frozen ABI. A framed, integrity-checked binary wire format.
-- **`RuntimeChannel`** (per hardware channel) — `energy_source ∈ {rapl, hwmon, nvml, none}`,
+- **Channel runtime metadata** (per modeled hardware channel; distinct from the C direct
+  RuntimeChannel hook ABI) — `energy_source ∈ {rapl, hwmon, nvml, none}`,
   `perf_syscall_nr` (the per-ABI `perf_event_open` number: x86_64=298, aarch64=241, …),
   `thermal_zone_types` (`/sys/class/thermal/*/type`).
 - **`calibration` + `provenance`** (per channel) — `provenance ∈ {real, modeled, simulated}` +
@@ -101,8 +107,14 @@ util saturation + counter-multiplex scaling).
   DCGM DRAM-active → `memory`), a **fabric/interconnect** provider (NVLink/PCIe/UPI bytes →
   `fabric`/`sync`), a **throttle/clock-event-reason** field (→ `thermal`/`power`/`contention`), a
   **reliability** provider (ECC/XID/RAS/margin/drift/RUL → `reliability`).
-- **`sampling_model ∈ {polled, streamed, event_driven}`** + min-interval hint (PMU/VTune are
-  event-driven; DCGM streams at 100 ms–1 s; current fields imply polled-only).
+- **Landed taxonomy fields:** stable nonzero built-in signal IDs, exact units,
+  `sampling_model`, `metric_kind`, delta/cumulative temporality, monotonicity, and a
+  `min_interval_ns` hint now live on `MetricDefinition`; exporters consume those fields
+  rather than infer counter behavior from names.
+- **Still missing before resident drivers:** a generated fixed-width C definition table;
+  BCIR/vendor/device-local ID-range policy; a source/session/generation/clock-aware driver
+  envelope; and a concurrent SPSC ring with head/tail, per-slot publication, loss and
+  backpressure semantics.
 - **Correction**: drop **Intel ISS** from the design — it is a motion/ambient sensor-*hub* driver,
   not CPU power/thermal/PMU telemetry. Intel's real telemetry is RAPL + PMU (PCM/perf/VTune).
 
@@ -117,8 +129,8 @@ util saturation + counter-multiplex scaling).
   GRADED SIGNAL ──► theta / cost-weight calibration  ── (NEVER an R-law verdict; two-truth airlock)
         │
         ▼
-  EXPORT BOUNDARY ──► framed wire: StreamPack/SyS-T-style (magic+version+len+payload+CRC, resync-able)
-                      over UART (embedded) or OTLP/Redfish (data-center); pull + push.
+  EXPORT BOUNDARY ──► BTLM v1 DataDNA frames over a byte sink; OTLP/Prometheus/Redfish shapes
+                      for hosted export. StreamPack remains the executable-plan artifact.
 ```
 Internal component transport ≈ MCTP/PLDM tier (below the OS); external export ≈ Redfish/OTLP tier —
 mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 airlock shape in
@@ -129,9 +141,11 @@ mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 a
   `energy_source`/dim behind a stable typed interface; honest `None` when absent; provenance on the
   definition (Redfish 4-split). Pure Python oracle + a metric-definition schema. Fully testable.
   **BUILT** — `bcir/signal_registry.py` (+ `bcir/tests/test_signal_registry.py`). See
-  [`SIGNAL_REGISTRY.md`](SIGNAL_REGISTRY.md). `MetricDefinition` (units/dim/provenance/`sampling_model`)
-  / `Reading` (one sample) / `SignalProvider` (ABC) / `SignalRegistry` (the `register()` plugin seam,
-  `snapshot()`/`availability()`). **Wired** (wrapping `bcir/silicon.py`, mapped to a cost dim):
+  [`SIGNAL_REGISTRY.md`](SIGNAL_REGISTRY.md). `MetricDefinition` carries a stable `signal_id:u32`,
+  exact unit/dim/provenance, sampling model, gauge/counter kind, temporality, monotonicity, and
+  minimum-interval hint; `Reading` is one sample; `SignalProvider` is the ABC; and
+  `SignalRegistry` supplies the `register()` plugin seam plus
+  `snapshot()`/`availability()`. **Wired** (wrapping `bcir/silicon.py`, mapped to a cost dim):
   thermal pressure + die-temp (`thermal`), RAPL energy counter (`power`; watts is T3-derived), CPU
   nominal freq (`compute`), L1/L2/L3 cache capacity (`memory`), PMU capability (`compute`; the actual
   counters stay work-scoped in `silicon.py`). **Honest-unavailable** vocabulary-completing gap
@@ -139,24 +153,36 @@ mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 a
   (NVML/amd-smi) + BMC power (Redfish) → `power`, memory bandwidth (PCM/DCGM) → `memory`, fabric bytes
   (NVLink/PCIe/UPI) → `fabric`, throttle state → `contention`, reliability (ECC/XID/RUL) →
   `reliability`. `registry_for_channel(ch)` picks the power provider matching `ch.runtime.energy_source`
-  (`rapl`→RAPL, `nvml`→GPU, `hwmon`→hwmon-power, `none`→none). Off the legality path: a provider returns
-  only a `Reading`/`None`, never a verdict/Diagnostic; `theta_pressures()` surfaces the graded 0..100
+  (`rapl`→RAPL, `nvml`→GPU, `hwmon`→hwmon-power, `none`→none). Built-ins have unique IDs 1–15;
+  ID 0 is local/unassigned and duplicate nonzero IDs are refused. A coherent availability view is
+  derived from one registry snapshot rather than racing `available()` against `read()`. Snapshot
+  validation refuses mismatched definitions, invalid provenance, non-numeric/non-finite values,
+  negative counters, and fractional/out-of-range percentages before export or optimization. Off
+  the legality path: a provider returns only a `Reading`/`None`, never a verdict/Diagnostic;
+  `theta_pressures()` surfaces the exact-integer 0..100
   signal to feed `theta` without touching `bcir/verify` or the cost-vector DIMS.
-- **T2** — the **UART telemetry frame**: a StreamPack/SyS-T-style framed, CRC-sealed record stream; a
+- **T2** — the **UART telemetry frame**: a SyS-T-inspired, CRC-sealed DataDNA record stream; a
   C producer drains `TelemetryRing`; the host decoder reuses RT3 (`sanitize_events`/`TelemetryIntegrity`).
-  Resync-on-magic; per-frame CRC; sequence/timestamp for drop/reorder. (Feeds the planned UART driver.)
+  Resync-on-magic; per-frame CRC; sequence continuity plus an opaque producer tick. (Feeds the
+  planned UART driver.)
   **BUILT** — frozen frame ABI in [`TELEMETRY_FRAME_ABI.md`](TELEMETRY_FRAME_ABI.md); dual-rail Python
   reference `bcir/telemetry_frame.py` ↔ freestanding C twin `runtime/c/bcir_telemetry_frame.{c,h}`
   (+ `test_telemetry_frame.c`), pinned **byte-identical** by `bcir/tests/test_telemetry_frame.py` and
   the `#telemetry-frame` probe in `tools/c/check_runtime.sh`. Frame `magic="BTLM"` | `version:u16=1` |
-  `flags:u16` | `seq:u32` | `timestamp:u64` | `n_records:u16` | records[n] (the ring's 56-byte `<7q>`
-  DataDNA, REUSED with no body re-encoding) | `crc32:u32`. **Resync-on-magic** (join mid-stream / recover
-  past a corrupt frame by scanning to the next `BTLM`); **per-frame CRC** (one bad byte fails one frame,
-  counted, not the stream); **seq/timestamp** for drop/reorder. The CRC is REUSED — C `bcir_crc32`
+  `flags:u16` | `seq:u32` | `timestamp:u64` | `n_records:u16` | records[n] (the ring's shared
+  56-byte `<7q>` DataDNA schema/layout, explicitly serialized little-endian) | `crc32:u32`.
+  **Resync-on-magic** (join mid-stream / recover
+  past corrupt bytes by scanning to the next `BTLM`); **per-frame CRC** (bad candidates are refused
+  without poisoning later valid frames; false magic anchors are counted as candidates); **seq** for
+  continuity and an opaque producer-local timestamp. The CRC
+  is REUSED — C `bcir_crc32`
   (`bcir_runtime.c`) == Python `zlib.crc32` (zlib poly 0xEDB88320). The host decoder `parse_uart_frames`
-  delegates to the **RT3 gate** (`sanitize_events`/`TelemetryIntegrity`), carrying frame-level drops into
-  `dropped` and seq/reorder into the monotonic signal — same witness as the ring path. **Egress-over-UART**
-  is a documented 1-line adapter (`out` → `uart_send`, `runtime/c/uart_regs.h`), not a hardware dependency.
+  delegates to the **RT3 gate** (`sanitize_events`/`TelemetryIntegrity`). Accepted-frame evidence,
+  wire-candidate rejection, and u32 gap/reorder/duplicate counts have dedicated frame fields;
+  `dropped` remains a record-loss count,
+  because a corrupt frame's record count is unknowable. Reserved flags and strict trailing bytes are
+  refused on Python and C rails. **Egress-over-UART** is an eventual byte-sink adapter;
+  `uart_regs.h` + `cfront_driver_uart.c` are compiler fixtures, not a resident driver.
   Two-truth: the frame carries data (graded L2/L3), never a verdict; off the legality path.
 - **T3** — **derived/aggregate metrics + sensitivity** (the `.MEASURE`/`.SENS` analogy): edge-computed
   figures-of-merit + a sensitivity rank that steers the sampling budget toward high-impact signals.
@@ -185,17 +211,19 @@ mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 a
   payoff. **Two-truth**: it perturbs COST/Theta, emits no Diagnostic, never reads/alters the legality
   path — the module still `verify()`s clean before and after a sensitivity run; the cost model is
   reused, not reimplemented.
-- **T4** — **export adapters**: OTLP/Prometheus exposition (data-center) + the out-of-band Redfish read.
+- **T4** — **export adapters**: OTLP/Prometheus text exposition (data-center) + the
+  out-of-band Redfish read.
   **BUILT** — `bcir/telemetry_export.py` (+ `bcir/tests/test_telemetry_export.py`). The external
   export boundary: read-only egress of the T1 registry's readings + T3's derived metrics in the two
   industry-standard shapes plus an out-of-band read, pure-Python/stdlib-only (`json`, `re`).
-  **Prometheus/OpenMetrics (PULL)**: `to_prometheus(reg_or_snapshot, *, channel, derived, sensitivity,
+  **Prometheus text exposition shape (PULL)**: `to_prometheus(reg_or_snapshot, *, channel, derived, sensitivity,
   witness)` / `scrape()` emit `# HELP`/`# TYPE`/`bcir_<name>{channel,cost_dim,provenance,unit} <value>`
-  lines — a monotonic-counter source (RAPL `energy_uj`, `cycles`) → `counter`, a pressure/level/capacity/
-  flag → `gauge`. An unavailable signal emits NO value line but DOES emit `bcir_signal_up{...} 0` (the
+  lines. Gauge/counter type, temporality, and monotonicity come from the T1 definition—never a
+  metric-name/unit heuristic. An unavailable signal emits NO value line but DOES emit
+  `bcir_signal_up{...} 0` (the
   honest real/unavailable split, downstream-observable); names are sanitized to the Prometheus charset
   `[a-zA-Z_:][a-zA-Z0-9_:]*`; output is deterministic. **OTLP data model (PUSH)**: a frozen `OtlpMetric`
-  (name/unit/kind∈{gauge,sum}/temporality∈{delta,cumulative}/monotonic/points/resource) + `to_otlp(...)` →
+  (name/unit/kind∈{gauge,sum}/temporality∈{unspecified,delta,cumulative}/monotonic/points/resource) + `to_otlp(...)` →
   the OTLP-JSON `resourceMetrics`/`scopeMetrics` structure + `otlp_to_json(...)`/`export_push(...)` → the
   JSON bytes a protobuf exporter would POST. Temporality + monotonicity are declared EXPLICITLY per metric
   (counters = sum+cumulative+monotonic; gauges = gauge+unspecified+non-monotonic — the research's "these
@@ -203,10 +231,12 @@ mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 a
   `to_redfish_metric_report(...)` → a `MetricReport` (each `MetricValues[]` with `MetricId`/`MetricValue`
   (string)/`Timestamp` + an `Oem.BCIR` provenance/cost_dim), `metric_definitions(reg)` → the
   `MetricDefinition` resources (units + provenance + cost_dim + sampling_model live HERE, the 4-split:
-  MetricDefinition[T1] / MetricReportDefinition / MetricReport / Triggers), and
+  MetricDefinition[T1] / MetricReportDefinition / MetricReport / Triggers; the OEM block also
+  exports signal ID, kind, temporality, monotonicity, and minimum interval), and
   `parse_redfish_metric_report(json)` → the out-of-band READ that parses a BMC's `MetricReport` back into
-  BCIR `Reading`s (tolerant of missing/extra/foreign fields). The witness (`TelemetryIntegrity`) exports as
-  an `up`/`accepted`/`rejected`/`dropped`/`blind` set so suppression stays observable downstream. **Honest
+  BCIR `Reading`s (tolerant of missing/extra/foreign fields). The witness (`TelemetryIntegrity`) exports
+  record accepted/rejected/dropped/blind and frame rejected/missing/reordered/duplicated/order signals,
+  so suppression and transport continuity remain separately observable downstream. **Honest
   depth**: no live OTLP collector / Prometheus server / BMC here — these produce/parse the exposition
   bytes+JSON, which IS the testable contract; the HTTP `/metrics` handler + OTLP gRPC/HTTP POST + protobuf
   + Redfish REST client are a thin documented adapter, NOT built (no protobuf/requests dependency).
@@ -215,12 +245,39 @@ mirroring BCIR's internal-channel vs external-boundary distinction (and the G8 a
 
 **Pipeline status: the T1–T4 data contracts are built; operational transports are not.** T1 is
 the signal-provider registry, T2 is a UART-suitable frame **codec** (not UART egress), T3 derives
-metrics and sensitivity, and T4 serializes Prometheus/OpenMetrics, OTLP-JSON, and Redfish-shaped
+metrics and sensitivity, and T4 serializes Prometheus text, OTLP-JSON, and Redfish-shaped
 data. There is no channel-backed UART sender, HTTP/Prometheus host, OTLP gRPC/HTTP client,
 Redfish/BMC client, or live provider transport. The implemented pieces are pure Python (T2 also
 has a C twin) and remain strictly on the *cost/optimization* side of the two-truth quarantine.
 
 Everything above is the *cost/optimization* side. The legality verdict (R1–R23) never reads telemetry.
+
+## 7. Driver/kernel integration gate
+
+The implemented contracts are deliberately separated by purpose:
+
+| Plane | Landed contract | Driver-readiness boundary |
+|---|---|---|
+| Executable plan | StreamPack BSPK v1–v3 | Immutable plan artifact; not telemetry or IPC |
+| Direct execution | RuntimeChannel v1 hook table | Loopback proven; real device lifecycle absent |
+| Metric taxonomy | Python `MetricDefinition` IDs/units/semantics | Generate one fixed-width C table and reserve ID ranges |
+| UART record batch | BTLM v1 | Single producer/session only; preserve frozen bytes |
+| Shared snapshot | ring v1 header + `<7q>` slots | Quiescent reads only; not a live concurrent queue |
+| Hosted export | Prometheus text, OTLP JSON shape, Redfish JSON shape | No HTTP/gRPC/protobuf/BMC transport |
+
+Before the UART package may enter D2, land and differentially test:
+
+1. a version-zero driver telemetry envelope with fixed-width source, session, generation,
+   clock-ID/unit, record-kind/schema/size, stable signal ID, sequence, and producer loss fields;
+2. a version-zero SPSC shared ring with explicit head/tail, full/drop/overwrite policy,
+   acquire/release publication, per-slot sequence or generation, and no cross-boundary pointers;
+3. restart, stale-generation, sequence-wrap, saturation, producer/consumer death, and concurrent
+   overwrite tests; and
+4. generated Python/C registry parity plus unknown-required-signal refusal.
+
+Do not retrofit these meanings into BTLM/ring v1 reserved bytes. Trace the direct UART and
+virtio-blk lifecycles first, revise version-zero structures from evidence, and freeze the common
+driver UAPI only after both MMIO/event and queue/DMA classes agree.
 
 ## Sources
 NVML/DCGM <https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/feature-overview.html>;

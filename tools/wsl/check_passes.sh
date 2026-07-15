@@ -246,9 +246,14 @@ else
 fi
 echo "[passes] bcir.msr_read/write -> llvm.inline_asm (D1.4 lowering: rdmsr/wrmsr; index->ECX, i64 reassembled/split across EDX:EAX, side-effecting + ~{memory})"
 run_fc -convert-bcir-to-llvm "${T}/msr.mlir"
-echo "[passes] ASSEMBLE-SMOKE-TEST (anti-masking: portio/asm/creg/volatile/msr lowerings piped through mlir-translate-20 | llc-20 -- a real .o + the expected instruction, not just FileCheck text)"
+echo "[passes] typed x86 driver-foundation edges (entry, descriptor/task/segment state, ordinary interrupt trampoline)"
+run_fc -convert-bcir-to-llvm "${T}/x86_driver_edges.mlir"
+"${BO}" -verify-diagnostics -split-input-file "${T}/x86_driver_edges_invalid.mlir" \
+  && echo "  PASS x86_driver_edges_invalid.mlir" || { echo "  FAIL x86_driver_edges_invalid.mlir"; fail=1; }
+echo "[passes] ASSEMBLE-SMOKE-TEST (anti-masking: asm-edge lowerings piped through one coherent mlir-translate | llc toolset -- a real .o + the expected instruction, not just FileCheck text)"
 # Source the harness so it shares ${BO}; it returns nonzero on any assemble failure (and skips cleanly
-# when llc-20/mlir-translate-20 are absent, like the FileCheck guard). Fold its result into ${fail}.
+# when a coherent llc/mlir-translate toolset is absent, like the FileCheck guard). Fold its result into
+# ${fail}.
 if . "${ROOT}/tools/wsl/check_asm_lowering.sh"; then :; else fail=1; fi
 echo "[passes] cache-contention (G4: recompute the cache-line/bank-conflict CONTENTION signal; informs-only, never gates legality)"
 run_fc -bcir-cache-contention "${T}/cache_contention.mlir"
