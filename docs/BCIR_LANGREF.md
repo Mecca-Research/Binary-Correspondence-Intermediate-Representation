@@ -496,8 +496,8 @@ output is read-write, not a `"="` result: it lowers to `llvm.inline_asm … "+r,
 so the full `"+"` handling, the tied input + matching constraint, is the same SEG8.x
 follow-on.) This establishes the `llvm.inline_asm` lowering the **SEG8.2** port-I/O op
 (`bcir.portio`, per-ISA x86 `in`/`out` emitted *as* inline asm) reuses. The lowering is
-**assemble-checked** end-to-end (`mlir-translate-20 --mlir-to-llvmir | llc-20
--filetype=obj`), not just FileCheck text. (Tests:
+**assemble-checked** end-to-end (one coherently resolved `mlir-translate` / `llc`
+toolset, ending in `llc -filetype=obj`), not just FileCheck text. (Tests:
 `mlir/test/passes/inline_asm_roundtrip.mlir`, `inline_asm.mlir`,
 `inline_asm_verify_neg.mlir`, `inline_asm_lower_neg.mlir`,
 `asm_lowering_smoke.mlir`.)
@@ -543,9 +543,10 @@ but `llc` rejects them on this MLIR→LLVM path (*“invalid register name”* /
 allocate output register”*) — clang’s frontend does the `%b0`→`${0:b}`, `=a`→`={ax}`,
 `Nd`→`N{dx}` translation, which the frontend-less MLIR rail emits directly. `has_side_effects`
 is **always** set (port I/O is volatile, never DCE'd/reordered — like the cfront
-`__volatile__`). The lowering is **assemble-checked** end-to-end (`mlir-translate-20 |
-llc-20`), not just FileCheck text. Like `bcir.asm`, it does **not** need the Python
-oracle's MLIR emitter to produce it yet (the oracle→MLIR wiring is a later increment).
+`__volatile__`). The lowering is **assemble-checked** end-to-end (one coherently resolved
+`mlir-translate | llc` toolset), not just FileCheck text. Like `bcir.asm`, it does
+**not** need the Python oracle's MLIR emitter to produce it yet (the oracle→MLIR wiring
+is a later increment).
 (Tests: `mlir/test/passes/portio_roundtrip.mlir`, `portio.mlir`, `portio_verify_neg.mlir`,
 `asm_lowering_smoke.mlir`.)
 
@@ -637,6 +638,90 @@ lowerings are **assemble-checked** through `mlir-translate | llc` (the `rdmsr`/`
 opcodes appear in the emitted object), not just FileCheck text. (Tests:
 `mlir/test/passes/msr_roundtrip.mlir`, `msr.mlir`, and the assemble-smoke fixture
 `asm_lowering_smoke.mlir`.)
+
+**`bcir.entry` — x86-64 long-mode C handoff (ASM4).** This top-level symbol op is the
+irreducible no-prologue edge below the verified C driver rail:
+
+```mlir
+bcir.entry @bcir_boot stack @bcir_stack_top target @bcir_kernel_main
+```
+
+Its lowering appends LLVM module assembly that loads the stack-top symbol into `RSP`, aligns
+down to 16 bytes, pushes a zero sentinel so the tail-jumped SysV C entry observes ordinary
+function-entry alignment, clears `RBP` and DF, and jumps to the `noreturn` C target. It is not
+a compiler-generated naked function: LLVM deliberately constrains naked-function IR, while
+module assembly preserves the exact entry sequence. All three symbols must match the unambiguous
+`[A-Za-z_][A-Za-z0-9_.$]*` assembler subset, preventing directive injection and AT&T
+immediate-prefix ambiguity.
+
+This op starts in **x86-64 long mode**. It does not implement a reset vector, A20, real/protected/
+long-mode transitions, page tables, relocation, UEFI/bootloader protocol, or AP startup. Those
+remain explicit platform boot-stub work and must not be inferred from the `entry` name.
+
+**`bcir.descriptor_load`, `bcir.task_register_load`, and `bcir.segment_reload` — x86
+descriptor/segment state (ASM5).** These typed side-effecting operations remove raw-template
+ambiguity at the boot edge:
+
+- `bcir.descriptor_load <gdt|idt>, %addr : i64` emits `lgdt` or `lidt` through a pointer to
+  the architectural ten-byte pseudo-descriptor;
+- `bcir.task_register_load %selector : i16` emits `ltr` with a structurally 16-bit selector;
+- `bcir.segment_reload %data, %code : i16, i16` loads DS/ES/SS and uses a unique-label far
+  return to reload CS. FS/GS bases are intentionally managed through their MSRs.
+
+Each is `has_side_effects` with a memory clobber. The lowering emits real object code and the
+gate disassembles it with `llvm-objdump`; tests never execute these privileged instructions.
+
+**`bcir.interrupt_trampoline` — normal x86-64 interrupt/trap entry (ASM6).** A top-level
+trampoline normalizes the processor frame, saves every integer GPR, calls a verified C body with
+one borrowed frame pointer in RDI, restores state, removes `vector,error_code`, and returns with
+`iretq`:
+
+```mlir
+bcir.interrupt_trampoline @irq32 vector 32 handler @dispatch {
+  swapgs_on_user = true
+}
+```
+
+The vector is in `[0,255]`, except that the ordinary op unconditionally refuses vectors
+1 (#DB), 2 (NMI), 8 (#DF), 18 (#MC), and 29 (AMD #VC). Linux likewise gives #VC an
+IST/nesting-specific entry rather than its ordinary IDT path. For accepted vectors, the lowering owns the
+hardware-error-code set `{10,11,12,13,14,17,21,30}`; all others receive a synthetic
+zero before the vector word. Callers cannot supply an error-code boolean that would shift
+the return frame.
+The fixed frame exposed by [`bcir_x86_interrupt.h`](../runtime/c/bcir_x86_interrupt.h) is:
+
+```text
+r15 r14 r13 r12 r11 r10 r9 r8 rdi rsi rbp rdx rcx rbx rax
+vector error_code rip cs rflags rsp ss
+```
+
+The frame is always 176 bytes. AMD64 long mode pushes saved `SS:RSP` for every interrupt and
+`iretq` consumes them even on a same-CPL return; they are not an optional user-only tail. This is
+pinned against the [AMD64 system-programming interrupt contract](https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2),
+not inferred from CPL. The trampoline owns the frame and the C handler borrows it for the call. A
+handler may edit saved return state but may not change the saved CS RPL or retain the pointer. C is compiled with
+`-mno-red-zone -mgeneral-regs-only`;
+SIMD/FPU state is outside this ABI until an explicit XSAVE policy lands. Editing RIP/CS while CET
+shadow stacks are active also requires a corresponding shadow-stack update policy; otherwise #CP may
+veto the return.
+
+The shim starts with `cli`. It accepts only original CPL0/CPL3 frames, records the original
+CS RPL in private callee-saved state, and traps with `ud2` if the C body changes that RPL;
+this preserves the selector-validation, return-protection, and `swapgs` policy chosen on entry. When
+`swapgs_on_user` is true, exact CPL3 entry executes `swapgs`, fences before C, and pairs the
+exit from the private entry state. Editing other permitted return fields therefore cannot
+desynchronize GS. A separate paranoid GS/IST/nesting operation, plus CR3/PTI policy where
+applicable, is required for the five refused vectors.
+
+This normal edge does not emit Linux-style alternatives for SMAP `clac`, CET/IBT, CR3/PTI, or
+entry-side speculation mitigations. A platform must keep those features disabled/known-safe or add a
+separately verified feature-specific entry policy before binding this op to a production IDT.
+
+`x86_driver_edges.mlir` pins parsing/lowering and unsafe-symbol/policy refusals;
+`asm_lowering_smoke.mlir` plus `tools/wsl/check_asm_lowering.sh` emits and disassembles a real
+object, checks all eight accepted hardware-error vectors, the ordinary no-error control,
+the five unconditional refusals, stack handoff, descriptor/segment instructions, `cli`,
+private RPL/`swapgs` pairing, `lfence`, the `ud2` class guard, and `iretq`.
 
 ## 12. Lowering contracts
 

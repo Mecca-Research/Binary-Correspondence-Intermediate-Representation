@@ -4,9 +4,9 @@
 >
 > This document defines how BCIR develops driver/compiler packages, experiments on Linux,
 > and eventually hosts those packages in a native BCIR kernel. It replaces the historical
-> Parts I–X chronology that previously occupied this file. Useful decisions from that
-> analysis are retained in the historical rationale appendix; stale inventories and
-> superseded sequencing are not.
+> Parts I–X chronology, but it does **not** discard unfinished work. Every former H/A/B/MC
+> item is retained below in a code-backed gap register; only superseded sequencing and stale
+> static counts are removed.
 >
 > This is a roadmap, not an implementation claim. Repository-wide static inventories come
 > only from the generated [`STATUS.md`](STATUS.md). The current code boundary is stated in
@@ -61,8 +61,15 @@ designed elsewhere but must not be described as operational.
 | Driver hardening laws | **Landed** | `DeviceManifest`, `StridedView`, explicit bank moves, distance pricing, `probe_agree`, R22 native-tile validation, and StreamPack generation checks |
 | Event and DMA IR substrate | **Landed** | EV1–EV3 event phases on both rails and descriptor generation from `StridedView` pairs |
 | Shared learned-optimization mechanism | **Landed** | Frozen Q8 tile/channel priors and certificates proving guided selection agrees with exhaustive selection |
-| Telemetry registry, codecs, and calibration | **Partially landed** | In-memory telemetry, BTLM framing, metrics, serialization, calibration, replay, and portfolio gates exist; no resident UART/HTTP/OTLP/Prometheus/Redfish transport is implied |
+| Telemetry registry, codecs, and calibration | **Partially landed** | Stable Python signal IDs/units/metric semantics, strict BTLM framing, quiescent ring snapshots, integrity witnesses, metrics, serialization, calibration, replay, and portfolio gates exist. The driver envelope, live concurrent ring, generated C signal table, and transports do not |
 | RuntimeChannel v1 direct ABI | **Landed baseline** | Allocation-free append-only hook table plus resident loopback reference; no real hardware binding yet |
+| Pre-driver hardening H1–H5 | **H1–H4 landed; H5 split** | CI sanitizer/fuzz wiring, Area-B red-team, asm/port-I/O malformed-input tests, and convergence gates exist. JVM/CIL honesty is execution-tested; the direct WASM byte encoder remains deliberately gated |
+| x86 boot/interrupt asm edge | **Partial foundation landed** | Typed long-mode entry, `lgdt`/`lidt`/`ltr`, segment reload, and an ordinary interrupt trampoline with a fixed 176-byte C frame lower to real object code. Reset-mode switching and paranoid NMI/IST entry remain absent |
+| StreamPack operator tools (MC1) | **Python baseline landed** | Validated `bcir-pack dis` and record-delimited `hexdump` share the codec's record writers; a freestanding C twin and source-module symbol resolution remain open |
+| Registry operator tools (MC2) | **In-process baseline landed** | `bcir-registry` provides bounded show/getp/setp and R11 `data_gen` invalidation; no RuntimeChannel or hardware peek/poke binding exists |
+| C and C++ language rails | **Explicit subsets** | C-front is an L1–L7 driver-oriented subset with total LLVM fallback, not complete ISO C23. C++ has a real single-node handoff but distributed/device-manager orchestration remains scaffolded |
+| LLVM/WASM/JVM/CIL/SPIR-V hub | **Mixed, bounded scopes** | LLVM AOT/JIT/WASM accepts one elementwise claim; JVM/CIL execute a bounded stack subset; SYCL/SPIR-V has modeled routing and portable fallback, with real SPIR-V backend/device execution tool-gated |
+| Interface-description formats | **Not implemented** | No IDL/CORBA, SDL, SGML/XML Schema, or PMML parser/generator is present. They are consume-on-demand standards, not prerequisites for the first driver |
 | UART | **Compiler fixture only** | Register header and driver-shaped C-front fixture exist. The simulator, resident/channel-backed implementation, IRQ service, telemetry producer, learned prior, and U0–U9 program remain unbuilt; see [`BCIR_UART_DRIVER_BLUEPRINT.md`](BCIR_UART_DRIVER_BLUEPRINT.md) |
 | Resident hardware drivers | **Missing** | No UART, virtio, NVMe, NIC, GPU, or other device is driven through RuntimeChannel |
 | Linux UAPI/IPC adapter | **Missing** | The intended boundary is documented; no BCIR kernel module, device node, or transport has landed |
@@ -73,6 +80,97 @@ The detailed machine-code/HAL inventory remains in
 [`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md), and the current
 AMD strategy remains **interop, not vendor-stack replacement**, as specified in
 [`BCIR_AMD_AI_DRIVER_ROADMAP.md`](BCIR_AMD_AI_DRIVER_ROADMAP.md).
+
+### 2.1 Evidence rule
+
+A status is “landed” only when all three exist: an implementation path, a deterministic positive
+test, and a deterministic refusal/negative test where malformed or unsupported input is possible.
+Documentation, a fixture name, a modeled channel, or a clean skip is not executable support. The
+generated [`STATUS.md`](STATUS.md) is a static inventory and does not prove a test was run.
+
+### 2.2 Pre-driver hardening and former Part VII register
+
+| ID | Verified state | Repository evidence | Remaining boundary |
+|---|---|---|---|
+| **H1** | **Landed** | `.github/workflows/ci.yml` invokes `tools/c/sanitize_cfront.sh`; the script includes ASan/UBSan/LSan, trap-mode checks, and bounded seeded campaigns | Long Valgrind and extended fuzz campaigns stay scheduled/cloud work |
+| **H2** | **Landed** | [`test_area_b_redteam.py`](../bcir/tests/test_area_b_redteam.py) covers NaN/Inf, singular/ill-conditioned matrices, dimension edges, overflow, and honest library fallback for all seven Area-B families | New numerical libraries must add equivalent adversarial cases |
+| **H3** | **Landed** | H1's C-twin sweep includes fence/asm fixtures; [`test_cfront_asm_portio_redteam.py`](../bcir/tests/test_cfront_asm_portio_redteam.py) adds grammar/lowering refusals | Fuzzer duration remains bounded in PR CI |
+| **H4** | **Landed** | `_convergence.py` gates transformer, recurrent, classical, and unsupervised demonstrations; gradient and fit-quality tests pin the supported training claims | A predict-only algorithm is not relabeled trainable without a fit gate |
+| **H5** | **Honesty landed; encoder deferred** | [`test_stackify_exec.py`](../bcir/tests/test_stackify_exec.py) differentially checks WASM/JVM/CIL mnemonics and uses real JVM/CLR execution when installed | A direct no-LLVM WASM binary encoder remains behind the native-backend G1/G2 gate |
+| **A1 / B1** | **Landed** | [`events.py`](../bcir/kbcir/events.py), [`test_event_phases.py`](../bcir/tests/test_event_phases.py), and MLIR EV fixtures cover asynchronous phases, arming, and interrupt-context ordering | Resident interrupt-controller and handler binding are absent |
+| **A2** | **Landed** | [`dma.py`](../bcir/kbcir/dma.py) and [`test_dma.py`](../bcir/tests/test_dma.py) derive and price descriptors from `StridedView` pairs | No DMA engine is programmed on hardware |
+| **A3** | **Landed** | [`paged_kv.py`](../bcir/frontends/models/paged_kv.py) and [`test_paged_kv.py`](../bcir/tests/test_paged_kv.py) cover page IDs, generations, admission, scheduling, and eviction claims | No accelerator-resident KV implementation is implied |
+| **A4** | **Landed subset** | [`test_cfront_link.py`](../bcir/tests/test_cfront_link.py) covers typed cross-TU edges, derived flags, linkable globals/static objects, and real linking | This does not make C-front a complete C23 frontend or replace the system linker |
+| **A5** | **Landed for current training/channel model** | [`test_train_graph.py`](../bcir/tests/test_train_graph.py) makes stream count a plan decision; channel-prior/calibration tests pin guided/exhaustive behavior | Per-device calibration still requires real device data |
+| **B2** | **Standing tripwire** | `test_device_manifest.py::test_bank_typing_requires_explicit_moves_and_is_corpus_vacuous` pins the measured exemption corpus | Re-measure whenever a DMA-bearing driver changes the corpus |
+| **B3** | **Missing** | No hotplug or suspend/resume device-state generation exists | Add lifecycle generation and stale-handle tests with the first hot-pluggable driver |
+| **B4** | **Hardware-gated** | `probe_agree` checks declared capacities/tiles/ghost banks | Distance-matrix agreement needs measured multi-bank silicon |
+
+### 2.3 Driver-foundation asm edge
+
+The new MLIR surface closes only the ordinary x86-64 long-mode edge:
+
+| Edge | State | Evidence and exact scope |
+|---|---|---|
+| Ordered MMIO, port I/O, fences, CRs, and MSRs | **Landed** | Existing typed MLIR operations lower through LLVM and assemble-smoke tests |
+| `bcir.entry` | **Partial landed** | Masks interrupts, installs an aligned stack, clears RBP/DF, and tail-jumps without a compiler prologue. It assumes long mode; reset vector, A20, mode transition, paging, relocation, and firmware handoff are separate and missing |
+| Descriptor/task/segment state | **Landed edge** | `bcir.descriptor_load`, `bcir.task_register_load`, and `bcir.segment_reload` emit `lgdt`/`lidt`/`ltr` and a far-return CS reload |
+| Ordinary interrupt/trap trampoline | **Landed edge** | `bcir.interrupt_trampoline` handles ordinary vectors, normalizes the eight accepted hardware-error frames, disables interrupts before saving state, preserves the entry CPL in a private register, validates the return-frame CPL, calls C through the fixed 176-byte [`bcir_x86_interrupt.h`](../runtime/c/bcir_x86_interrupt.h) frame, and returns with `iretq`; object bytes are disassembled in `check_asm_lowering.sh` |
+| NMI/#DB/#DF/#MC/#VC and IST nesting | **Missing and unconditionally refused** | Vectors 1, 2, 8, 18, and 29 cannot use the ordinary op. A paranoid GS-state check, IST ownership/nesting, CR3/PTI transition, and NMI-state protocol need a distinct op and hardware/QEMU evidence |
+| Feature-specific entry policy | **Gap** | SIMD/FPU state is outside the integer frame; SMAP AC clearing, CET/IBT and shadow-stack handling, CR3/PTI, and entry-side speculation mitigations are absent. Handlers require `-mno-red-zone -mgeneral-regs-only`; enabled CPU features need separately verified policy before production IDT binding |
+
+This split follows LLVM's documented constraints around
+[`naked`](https://llvm.org/docs/LangRef.html#function-attributes) functions and module assembly,
+and Linux's warning that normal CS-based `swapgs` is insufficient for
+[NMI-like entry](https://docs.kernel.org/arch/x86/entry_64.html). No privileged instruction is
+executed by the local tests.
+
+### 2.4 Language, backend, and standards boundaries
+
+| Surface | Verified repository state | Promotion requirement |
+|---|---|---|
+| **Verified C bulk** | The parser/lowerer/preprocessor and C twin cover the documented L1–L7 driver subset, bounded polling, MMIO, atomics, structs/bitfields, selected C23 features, and deterministic fallback | Keep an explicit support matrix and Clang differential corpus; “complete C” requires a separately scoped ISO conformance program and is not a driver prerequisite |
+| **C++ orchestration** | Immutable-artifact handoff and single-node orchestration are real; distributed/device-manager paths remain stubs | Prove RAII ownership, exception/RTTI policy, failure isolation, and multi-device behavior above the stable C ABI |
+| **Python LLVM AOT/JIT/WASM** | Exactly one executable 2-read/1-write add/sub/mul claim; extra or unsupported claims are rejected | Arbitrary-graph lowering needs CFG, memory, call, object-lifetime, and ABI semantics; until then the label remains “single-claim elementwise subset” |
+| **MLIR `bcir-aot`** | Partial preparation may leave BCIR/GEM operations beside LLVM dialect IR | Full AOT requires a conversion target proving no executable BCIR/GEM operations remain |
+| **JVM/CIL** | Bounded stack-expression emitters have differential and real-runtime gates | Broader classes/methods, objects, exceptions, GC metadata, and platform libraries are separate backend programs |
+| **SYCL/SPIR-V** | Channel identity, dispatch, portable C++ execution, and best-effort SPIR-V emission exist | Native device execution is supported only when a real SYCL toolchain, SPIR-V backend, and device gate pass |
+| **ELF** | Resident Clang/LLVM emits relocatable objects and the gate checks `e_machine` | BCIR-native sections, symbols, relocations, archives, and relaxation are absent |
+| **DWARF/unwind** | No BCIR-native line table, CFI, `.eh_frame`, or `.debug_*` producer exists | Required before any BCIR-native CPU backend is called debugger- or exception-ready |
+
+Interface-description and markup layers are **consume, do not reimplement** by default:
+
+| Standard family | Current state | BCIR use rule |
+|---|---|---|
+| [OMG IDL 4.2](https://www.omg.org/spec/IDL/4.2/) / [CORBA](https://www.omg.org/spec/CORBA/) | No parser, ORB, or generator | Import a bounded IDL subset only for a concrete vendor/UAPI schema; do not build a CORBA runtime for driver bring-up |
+| [ITU-T SDL](https://www.itu.int/rec/T-REC-Z.100/en) | No parser or executor | Translate a measured protocol state machine into claims only when a device specification actually uses SDL |
+| SGML / [XML 1.0](https://www.w3.org/TR/xml/) / [XML Schema](https://www.w3.org/TR/xmlschema11-1/) | No generic parser-kernel | Prefer generated, bounded, non-validating parsers for required firmware/device formats; entity/network expansion is out of scope |
+| [PMML 4.4.1](https://dmg.org/pmml/v4-4-1/GeneralStructure.html) | No importer/exporter | Add a quarantined model interchange adapter only when it maps to already-supported, independently verified model operations |
+
+These layers do not block UART, RuntimeChannel, or the direct-driver ABI. Any imported grammar must
+have size/depth bounds, unknown-required-field refusal, canonical serialization, provenance, and a
+differential oracle against an independent standards implementation.
+
+### 2.5 Machine-code completion gaps beyond MC1–MC9
+
+The original MC1–MC9 register covered operator tools, registry assembly, planned control/memory,
+pack linking, RuntimeChannel, and POSIX binding. It did not enumerate the full backend toolchain.
+The additional contracts are therefore retained as **MC10–MC15**, detailed in
+[`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md):
+
+| ID | Missing contract |
+|---|---|
+| **MC10** | Target machine description, legalization, instruction selection, register allocation/spilling, scheduling, hazard/latency tables, and encoding relaxation if a native backend gate ever opens |
+| **MC11** | Native object/archive/link interface: sections, symbols, relocations, COMDAT/TLS where required, deterministic archives, system-linker interop, and relocation/relaxation tests; distinct from MC7 StreamPack linking |
+| **MC12** | ABI frame lowering, calling conventions, prologue/epilogue, stack maps, CFI, unwind, interrupt/exception frame variants, and cross-language conformance |
+| **MC13** | Debug/profiling metadata: DWARF line/type/location data, source-to-claim maps, debugger inspection, symbolization, and telemetry-to-PC correlation |
+| **MC14** | Binary trust and differential ISA validation: loader bounds/W^X, signatures, feature/errata checks, encode→decode identity, independent assembler/disassembler comparison, simulator/hardware parity, and malformed-object corpus |
+| **MC15** | Measurement/trace feedback ABI: stable signal taxonomy, driver envelope, concurrent ring, source/session/clock/loss identity, claim/PC correlation, replay provenance, and transport parity |
+
+LLVM remains the resident implementation of MC10–MC13 for current CPU objects. MC15 is BCIR-owned
+because it joins device evidence to claims and immutable optimization artifacts. BCIR does not copy
+those systems until a deployment passes the native-backend gate; it does define and test the
+interfaces its device-command assemblers and future native kernel will require.
 
 ## 3. The BCIR driver package contract
 
@@ -90,7 +188,7 @@ The package must contain all of the following before the driver can be promoted:
 | **Assembler toolset** | Assembler/encoder, decoder/disassembler, verifier, listing/hex-dump support, and deterministic round trips |
 | **Reference behavior** | Device simulator or protocol model, independent scalar/reference implementation, deterministic differential oracle, and malformed-input cases |
 | **Execution binding** | Direct in-process RuntimeChannel implementation with deterministic ownership, cancellation, event, backpressure, and teardown behavior |
-| **Evidence plane** | Versioned telemetry schema, benchmark definitions, replay corpus, fault corpus, and artifact provenance |
+| **Evidence plane** | Stable numeric signal definitions, versioned source/session/clock-aware telemetry envelope, bounded loss-accounting ring, benchmark definitions, replay/fault corpora, and artifact provenance |
 | **Optimization plane** | TargetProfile/DeviceManifest integration, exhaustive candidate set, frozen per-device Q8 calibration/prior, and equivalence/no-regression certificates |
 | **Adapters** | Linux and native adapters that preserve the direct contract; adapters contain transport/platform policy rather than device semantics |
 | **Promotion record** | Correctness, compatibility, resource, performance, security, and residual-risk report tied to immutable source and artifact hashes |
@@ -196,8 +294,22 @@ simulator-gated until real hardware evidence is available.
 
 Telemetry is transport-neutral data, not a live legality channel. Driver schemas use explicit
 version, length, sequence, generation, units, source identity, loss counters, and integrity checks.
-StreamPack and the existing BTLM codec remain reusable payloads. New fields are append-only or
-versioned; unknown required fields fail closed.
+The existing surfaces have separate scopes:
+
+| Surface | Current contract | Boundary |
+|---|---|---|
+| StreamPack BSPK | Immutable executable plan | Never telemetry or IPC |
+| Signal registry | Python taxonomy with unique built-in IDs 1–15 and explicit unit/kind/temporality | Generate the fixed-width C table and ID-range policy before D2 |
+| BTLM v1 | Frozen, strict DataDNA UART frame for one externally separated producer stream, with frame-continuity evidence | No source/session/generation/clock identity; do not retrofit reserved bytes |
+| Shared ring v1 | Bounds-checked quiescent snapshot; long monotonic heads are valid | Not live-safe: no tail/generation/per-slot publish/loss/backpressure contract |
+| Hosted exporters | Prometheus text and OTLP/Redfish JSON shapes | No HTTP, protobuf, gRPC, UART, or BMC transport |
+
+Before any real driver enters D2, land version-zero Python/C parity for (1) the generated signal
+definition table, (2) a source/session/generation/clock-aware driver telemetry envelope, and (3) a
+live SPSC ring with explicit head/tail, acquire/release publication, per-slot sequence/generation,
+full/drop/overwrite policy, peer-death behavior, and loss counters. These structures remain
+experimental until UART and virtio-blk traces prove both device classes. New fields are append-only
+or versioned; unknown required fields fail closed.
 
 Training corpora and promotion reports must retain raw episode hashes and transformations. A model
 artifact is reproducible from its recorded corpus and configuration. Production artifacts do not
@@ -212,9 +324,9 @@ U0–U9 blueprint remains the detailed reference—but may not skip one.
 
 | Gate | Deliverable | Exit criterion |
 |---|---|---|
-| **D0 — research contract** | Normative specifications, licensing/provenance, device schema, variant/errata matrix, manifest shape, threat/failure model, and performance baseline | Independent schema review; generated views agree; unsupported variants fail closed |
+| **D0 — research contract** | Normative specifications, licensing/provenance, device schema, variant/errata matrix, manifest shape, telemetry signal set/envelope/ring requirements, threat/failure model, and performance baseline | Independent schema review; generated views agree; unsupported variants and unknown required signals fail closed |
 | **D1 — compiler and oracle** | Lowering, assembler/decoder, verifier, simulator, reference behavior, listings, and deterministic law/differential tests | Round trips and simulator/reference parity pass across the bounded edge corpus |
-| **D2 — direct resident driver** | In-process RuntimeChannel implementation with explicit ownership, map/submit/event/cancel/close behavior and no raw-pointer ABI | Loopback conformance plus sanitizer, allocator-failure where hosted, lifecycle, and saturation tests pass |
+| **D2 — direct resident driver** | In-process RuntimeChannel implementation with explicit ownership, map/submit/event/cancel/close behavior and no raw-pointer ABI; emits through the version-zero driver telemetry contract | Loopback conformance plus Python/C telemetry parity, sanitizer, allocator-failure where hosted, lifecycle, and saturation tests pass |
 | **D3 — Linux-hosted adapter** | Stock-Linux binding using the least invasive supported mechanism for that device class | Direct-versus-Linux behavioral parity, UAPI compatibility, peer/device death, and restart tests pass |
 | **D4 — telemetry and replay** | Versioned device telemetry, benchmark suite, workload/edge corpus, collection-loss accounting, and deterministic replay | Replayed incumbent reproduces decisions and evidence; poisoned/stale data is refused |
 | **D5 — certified optimization** | Calibrated target data, frozen Q8 prior/table, exhaustive-equivalence and no-regression certificates | Guided and exhaustive choices agree; artifact is deterministic, content-addressed, and rollback-ready |
@@ -268,7 +380,7 @@ BCIR does not reimplement UEFI firmware, a TPM, or vendor firmware.
 | **M2 — UART proof** | UART D0–D2, then Linux-hosted D3; blueprint stale event assumptions corrected during implementation | Polled/event-driven simulator and direct/Linux parity |
 | **M3 — BCIR-Linux bootstrap** | Separate fork, LTS/next tracking, stock-kernel telemetry and out-of-tree bridge | Reproducible builds and stock-Linux baseline recorded |
 | **M4 — virtio queue proof** | virtio-console and virtio-blk through D3, including reset/cancel/saturation | Character/event and block/DMA lifecycle evidence |
-| **M5 — UAPI v1 freeze** | Append-only BCIR UAPI, virtio-net validation, compatibility matrix, and generated ABI tests | UART plus virtio-blk prove both required device classes |
+| **M5 — UAPI v1 freeze** | Append-only BCIR UAPI, UART/virtio-blk compatibility matrix, and generated ABI tests | UART plus virtio-blk prove both required device classes |
 | **M6 — closed optimization loop** | Telemetry-to-replay-to-frozen-Q8 promotion for at least UART and virtio-blk | Exhaustive equivalence, no-regression certificate, staged activation, rollback |
 | **M7 — targeted kernel research** | Only measured, reviewable BCIR-Linux patches that outperform or enable behavior unavailable through stock interfaces | Per-patch stock baseline, rebase test, fallback, and sanitizer/fuzz evidence |
 | **M8 — native IPC/kernel service proof** | Native RuntimeChannel adapter, slim IPC, POSIX source-compatibility slice, and preverified instance loader | Direct/Linux/native parity across UART and virtio-blk |
@@ -354,6 +466,9 @@ The UAPI contract requires:
   and stale-generation behavior.
 - Bounds, alignment, non-overlap, memory-ordering, and integrity checks before a command becomes
   executable.
+- A separately versioned telemetry schema keyed by stable numeric signal IDs and carrying source,
+  session, generation, clock identity/unit, record kind/size, sequence, and producer loss. It does
+  not reuse process-local Python names or infer counter semantics.
 
 The Linux mapping remains conventional and additive:
 
@@ -369,6 +484,9 @@ The Linux mapping remains conventional and additive:
 
 UAPI v1 freezes only after UART and virtio-blk demonstrate MMIO/event and queue/DMA lifecycles.
 Before that point, experimental structures carry version zero and make no compatibility promise.
+The version-zero signal table, telemetry envelope, and live SPSC ring land **before** the first D2
+driver so implementation traces exercise an explicit ABI; their field set is revised from UART and
+virtio evidence before the v1 freeze.
 Once v1 is published, incompatible semantics require a new version; structure growth alone uses
 the append-only `struct_size` convention.
 

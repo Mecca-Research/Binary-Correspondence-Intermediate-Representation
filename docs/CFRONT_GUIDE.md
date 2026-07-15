@@ -167,8 +167,11 @@ asm("" : [o]"=r"(out) : [i]"r"(in) : "cc");    // symbolic names + a clobber
   additionally carries the `barriered` hazard — an **ordering fence** that is never reordered or fused
   across.
 - **Deferred.** `asm goto` (label operands) is parsed for grammar completeness but rejected with an honest
-  diagnostic. Per-ISA *semantic* modeling (port-I/O intrinsics, hardware barriers) is **ASM2 / ASM3**, not
-  this slice — here raw inline asm is a trusted, re-emitted-verbatim edge.
+  diagnostic. Kernel interrupt entry does not weaken this rule: the MLIR rail uses the dedicated,
+  typed `bcir.interrupt_trampoline` module-assembly op for the normal x86 entry/`iretq` shim, while
+  the verified C rail contains only the handler body. Per-ISA *semantic* modeling (port-I/O
+  intrinsics, hardware barriers) is **ASM2 / ASM3**, not this slice — here raw inline asm is a
+  trusted, re-emitted-verbatim edge.
 
 ## Port-mapped I/O (ASM2)
 

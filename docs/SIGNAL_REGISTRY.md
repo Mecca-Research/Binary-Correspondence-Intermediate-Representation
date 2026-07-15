@@ -24,38 +24,44 @@ readers (wrapping them) — it does not replace or modify them.
 
 | Copied abstraction | Realized as |
 |---|---|
-| **PAPI component model** — one symbolic name behind a stable typed interface; components plug in | `SignalProvider` (ABC) + `SignalRegistry.register()` (the plugin seam, mirroring `bcir/channel_plugin.py`) |
-| **hwmon typed schema** — fixed units (m°C/µJ/kHz/…), absent file → honest `None` | `Unit` (PERCENT / MILLICELSIUS / MICROJOULE / KHZ / BYTES / COUNT / RATIO_MILLI / NONE); `read() → None` when absent |
+| **PAPI/DCGM component model** — one name and stable numeric ID behind a typed interface; components plug in | `SignalProvider` + `SignalRegistry.register()`, `get()` and `get_by_id()` |
+| **hwmon typed schema** — fixed units (m°C/µW/mW/µJ/kHz/byte/s/…), absent file → honest `None` | `Unit`; `read() → None` when absent |
 | **Redfish 4-resource split** — provenance + units on the *definition*, not the sample | `MetricDefinition` (the metadata) vs `Reading` (one sample) |
-| **`sampling_model`** (research §4 gap) | `SamplingModel` ∈ {POLLED, STREAMED, EVENT_DRIVEN} on the definition |
+| **Explicit metric semantics** | `MetricKind` ∈ {GAUGE, COUNTER}, `Temporality` ∈ {UNSPECIFIED, DELTA, CUMULATIVE}, `monotonic`, and `min_interval_ns` on the definition |
+| **`sampling_model`** | `SamplingModel` ∈ {POLLED, STREAMED, EVENT_DRIVEN} on the definition |
 | **Provenance vocabulary** (reuses the channel `real`/`modeled`/`simulated`) | `Provenance` ∈ {MEASURED, MODELED, SIMULATED} (`real` ↔ `MEASURED`) |
 
 ## Core types
 
-- **`MetricDefinition`** (frozen) — `name` (stable dotted id, e.g. `"thermal.pressure"`), `unit`,
-  `cost_dim` (one of `DIMS` or `None`), `provenance`, `sampling_model`, `description`. `validate()`
-  returns schema errors. Provenance/units live HERE, once — not on every reading.
+- **`MetricDefinition`** (frozen Python value type) — `name`, stable `signal_id:u32`,
+  `unit`, `cost_dim`, `provenance`, `sampling_model`, `metric_kind`, `temporality`,
+  `monotonic`, `min_interval_ns`, and `description`. ID `0` is local/unassigned; built-ins
+  use unique nonzero IDs. `validate()` rejects inconsistent gauge/counter semantics.
 - **`Reading`** (frozen) — one sample: `definition`, `value` (in the definition's unit), and the
   *actual* `provenance` of this read. `read() → None` means the source is genuinely absent.
 - **`SignalProvider`** (ABC) — `definition` + `available() → bool` + `read() → Reading | None`.
-  Honest by construction: `available()` and `read()` always agree (a `Reading` iff available,
-  `None` iff not — never a fabricated value).
+  Both calls are honest point-in-time probes, but hardware can disappear between calls;
+  consumers must not treat two separate calls as an atomic transaction.
 - **`SignalRegistry`** — providers keyed by `definition.name`. `register()` (rejects a duplicate
-  name + an invalid definition), `get()`, `providers_for_dim(dim)`, `snapshot() → {name: Reading|None}`
-  (the `silicon.summary()` analog, with provenance), `availability() → {name: bool}` (the honest split).
+  name, duplicate nonzero ID, or invalid definition), `get()`, `get_by_id()`,
+  `providers_for_dim(dim)`, and `snapshot() → {name: Reading|None}`. Derive availability
+  from that same snapshot with `availability(snapshot)` when coherence matters. The
+  snapshot boundary refuses a non-`Reading`, a mismatched definition, invalid provenance,
+  bool/non-numeric/non-finite values, negative counters, and percentage values that are
+  not exact integers in `0..100`.
 
 ## Providers
 
 ### Wired (wrapping `silicon.py`, mapped to a cost dim)
 
-| Provider | Source | Unit | cost_dim |
-|---|---|---|---|
-| `ThermalPressureProvider` | `thermal_pressure()` | PERCENT | `thermal` |
-| `DieTempProvider` | `read_thermal_millideg()` | MILLICELSIUS | `thermal` |
-| `RaplEnergyProvider` | `read_rapl_uj()` | MICROJOULE | `power` |
-| `CpuFreqProvider` | `cpufreq_info().nominal_khz` | KHZ | `compute` |
-| `CacheCapacityProvider(L1/L2/L3)` | `tier_capacities()` | BYTES | `memory` |
-| `PmuAvailabilityProvider` | `perf_counters_available()` | COUNT | `compute` |
+| ID | Provider | Source | Unit / semantics | cost_dim |
+|---:|---|---|---|---|
+| 1 | `ThermalPressureProvider` | `thermal_pressure()` | PERCENT gauge | `thermal` |
+| 2 | `DieTempProvider` | `read_thermal_millideg()` | MILLICELSIUS gauge | `thermal` |
+| 3 | `RaplEnergyProvider` | `read_rapl_uj()` | MICROJOULE cumulative monotonic counter | `power` |
+| 4 | `CpuFreqProvider` | `cpufreq_info().nominal_khz` | KHZ gauge | `compute` |
+| 5–7 | `CacheCapacityProvider(L1/L2/L3)` | `tier_capacities()` | BYTES gauge | `memory` |
+| 8 | `PmuAvailabilityProvider` | `perf_counters_available()` | COUNT gauge | `compute` |
 
 Two honesty notes baked into the definitions: RAPL `energy_uj` is a **monotonic counter** — *watts is
 a T3-derived metric* (energy Δ / wall Δ); here we expose the raw counter + availability, not a
@@ -70,15 +76,15 @@ Each has a real `MetricDefinition` so the namespace is complete, but reports `av
 future channels. A future NVML / amd-smi / Redfish / PCM / DCGM backend fills these in; they never
 fabricate a value.
 
-| Provider | Backend needed | cost_dim |
-|---|---|---|
-| `GpuPowerProvider` | NVML / amd-smi | `power` |
-| `BmcPowerProvider` | Redfish (out-of-band) | `power` |
-| `MemBandwidthProvider` | PCM IMC / DCGM DRAM-active | `memory` |
-| `FabricBytesProvider` | NVLink / PCIe / UPI counters | `fabric` |
-| `ThrottleStateProvider` | NVML ClocksEventReasons / amd-smi / RAPL | `contention` |
-| `ReliabilityProvider` | ECC / XID / RAS / margin-drift / RUL | `reliability` |
-| `HwmonPowerProvider` | hwmon `power*` / INA226 rail | `power` |
+| ID | Provider | Backend needed | Unit / semantics | cost_dim |
+|---:|---|---|---|---|
+| 9 | `GpuPowerProvider` | NVML / amd-smi | MICROJOULE cumulative monotonic counter | `power` |
+| 10 | `BmcPowerProvider` | Redfish | MILLIWATT gauge | `power` |
+| 11 | `MemBandwidthProvider` | PCM IMC / DCGM | BYTES_PER_SECOND gauge | `memory` |
+| 12 | `FabricBytesProvider` | NVLink / PCIe / UPI | BYTES cumulative monotonic counter | `fabric` |
+| 13 | `ThrottleStateProvider` | NVML / amd-smi / RAPL | BITMASK gauge | `contention` |
+| 14 | `ReliabilityProvider` | ECC / XID / RAS / RUL | COUNT gauge | `reliability` |
+| 15 | `HwmonPowerProvider` | hwmon `power*` / INA226 | MICROWATT gauge | `power` |
 
 ## Builders + the channel↔provider mapping
 
@@ -90,17 +96,25 @@ fabricate a value.
 - **`theta_pressures(registry)`** — a read-only convenience that reads the registry's 0..100 PERCENT
   pressure signals (thermal, …) keyed by cost dim, suitable to FEED `theta`. It does NOT modify the
   legality path, the cost-vector DIMS, or the existing calibrate path — it only surfaces the graded
-  signal on the *cost/optimization* side. Absent signals are omitted (honest), never defaulted.
+  signal on the *cost/optimization* side. It consumes one validated snapshot and never truncates a
+  fractional provider value. Absent signals are omitted (honest), never defaulted.
 
 ## Honest real/unavailable split (typical sandbox)
 
 OS-/cache-derived signals are usually present (CPU nominal frequency, L1/L2/L3 cache capacity);
 RAPL / PMU / thermal / GPU / BMC / fabric / reliability are typically absent → `read() → None`. The
-tests assert the *agreement* (`read() is None` iff `not available()`) and in-range/right-unit when
-present — they self-adapt to the host rather than assume a specific signal exists.
+tests use one snapshot for coherent availability and assert in-range/right-unit readings when
+present—they self-adapt to the host rather than assume a specific signal exists.
 
-## Next (T2–T4)
+## Status and pre-driver boundary
 
-T2 — the UART telemetry frame (StreamPack/SyS-T-style, CRC-sealed); T3 — derived/aggregate metrics +
-sensitivity (watts, IPC, bandwidth from the raw counters here); T4 — export adapters (OTLP/Prometheus
-+ out-of-band Redfish). See [`TELEMETRY_PIPELINE_RESEARCH.md`](TELEMETRY_PIPELINE_RESEARCH.md) §6.
+T1–T4 data contracts are implemented. Exporters consume the definition's declared
+counter/temporality fields; they no longer infer behavior from a metric name or unit.
+`metric_definitions()` includes the BCIR signal ID and semantics in its Redfish OEM block.
+
+This Python registry is the normative taxonomy oracle, not yet a driver UAPI. Before D2,
+generate a fixed-width C definition table from the same source, reserve ID ranges for
+BCIR/vendor/device-local signals, define unknown-required-signal refusal, and carry the ID
+in the new driver telemetry envelope. Live providers and UART/HTTP/OTLP/Redfish transports
+remain unimplemented. See [`TELEMETRY_PIPELINE_RESEARCH.md`](TELEMETRY_PIPELINE_RESEARCH.md)
+and [`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md).

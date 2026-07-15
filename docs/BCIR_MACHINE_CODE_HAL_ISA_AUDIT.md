@@ -1,4 +1,9 @@
-# BCIR Machine-Code / HAL / ABI / ISA Audit — the wave-14 research pass (2026-07-04)
+# BCIR Machine-Code / HAL / ABI / ISA Audit — verified gap register (2026-07-15)
+
+> Status in this document is derived from repository implementation and tests, not from roadmap
+> prose. The original wave-14 analysis is retained, but MC1/MC2 and the x86 asm-edge statuses are
+> updated to the current tree, MC10–MC14 capture backend contracts omitted by the first audit,
+> and MC15 records the measurement/trace feedback ABI required by drivers and kernels.
 
 **Question set** (verbatim intent): does BCIR need a dedicated HAL backend or does the IR
 already cover it; should HAL functions migrate into the BCIR ABI; how mature is the ABI
@@ -25,11 +30,11 @@ HAL/ABI) with `file:line` anchors throughout.
 
 | # | Question | Verdict |
 |---|---|---|
-| V1 | **Dedicated HAL backend?** | **No new backend.** The registry/channel/manifest stack **is** the HAL's schema + facade layers *by construction* (compile-time). What's missing is not a backend but three specific HAL parts: **resident peripheral drivers** (runtime), a **BSP-style name-binding table**, and the **operator tools** (`halcmd`-class peek/poke). See §4, gaps MC2/MC8. |
+| V1 | **Dedicated HAL backend?** | **No new backend.** The registry/channel/manifest stack **is** the HAL's schema + facade layers *by construction* (compile-time). What's missing is not a backend but three specific HAL parts: **resident peripheral drivers** (runtime), a **BSP-style name-binding table**, and a **live hardware binding** for the landed in-process operator-tool baseline. See §4, gaps MC2/MC3/MC8. |
 | V2 | **HAL functions → BCIR ABI?** | **Yes — as a versioned hook vtable.** The direct C ABI is now `bcir_runtime_channel.h`: open/claim, offset-based map, submit, sync/cancel, event, and close with append-only size/version checks. The laws stay compile-time (two-truth); a real hardware binding and any optional transport remain MC8 work. |
-| V3 | **ABI maturity / POSIX-Linux compat?** | **Five frozen artifacts exist** (§5): StreamPack v1–v3 (BSPK), the `bcir_exec` calling convention, the R12 `TargetABI` matrix (Linux LP64 ×3 + Windows LLP64 + ILP32), the Q8 tier tables, and the telemetry frame (BTLM). POSIX coupling today is **read-only** (two syscalls + sysfs/procfs + one gated DVFS write). Full backward compat still needs the device-fd lifecycle, BAR/UIO mmap, ioctl submission, eventfd/poll delivery, and errno bridging. The "unique BCIR signatures" already exist: magics + digests + generation tags on every artifact. |
-| V4 | **Hex/dump/loader, listing, mnemonics, disassembly?** | **Loader: done, dual-rail** (`bcir_sp_validate` freestanding C + Python `decode`). **Hex dump/convert, assembly listing, and the disassembler: missing entirely** — the highest-leverage, lowest-cost gap in the audit (MC1). |
-| V5 | **Peek/poke?** | **Half-built.** The *scope* half exists (TelemetryRing / DataDNA / DurableLog ≈ halscope; the shared-mmap ring is the zero-copy channel). The *interactive* half (`setp`/`getp` on live registry state, with `data_gen` bumps making R11 refuse stale packs) is missing — and the refusal law it needs **already exists** (MC2). |
+| V3 | **ABI maturity / POSIX-Linux compat?** | **Six bounded contracts exist** (§5): StreamPack v1–v3 (BSPK), the `bcir_exec` calling convention, the R12 `TargetABI` matrix, Q8 tier tables, frozen BTLM v1, and the direct RuntimeChannel v1 hook ABI. BTLM is only a single-producer DataDNA codec; it is not a source/session/clock-aware driver ABI. POSIX coupling today is **read-only** (two syscalls + sysfs/procfs + one gated DVFS write). Full compatibility still needs device-fd lifecycle, BAR/UIO mmap, ioctl submission, eventfd/poll delivery, errno bridging, and MC15's driver telemetry contract. |
+| V4 | **Hex/dump/loader, listing, mnemonics, disassembly?** | **Loader: done, dual-rail. MC1 Python baseline: landed.** `bcir-pack dis` and `bcir-pack hexdump` validate the whole artifact before displaying exact record spans generated from the codec's own writers. Remaining: a freestanding C twin, source-module symbol/name resolution, and device-command ISA disassemblers. |
+| V5 | **Peek/poke?** | **MC2 in-process baseline: landed.** `bcir-registry` provides deterministic show/getp/setp; each poke advances the resource's u32 `data_gen`, so R11 refuses old packs. It is not a live RuntimeChannel or hardware transport; binding, permissions, register width/side effects, and device lifecycle remain open. |
 | V6 | **Assembler/linker/object code?** | **Source-level: done** (bcir-cc, `--linkable`, derived link flags, real ELF via resident clang/llc — eBPF/x86-64/aarch64, `e_machine`-verified). **Native isel: deferred by the standing gate** (correct; G1–G4 unmet). **Pack-level linking (multi-pack compose, RID relocation, symbol section): missing** (MC7). |
 | V7 | **Clang reliance?** | Every path from IR to *machine code or execution* rides clang/llc/lli/wasm-ld **by design** (the resident-compiler path). Everything else — all text emission (LLVM IR, C23, MLIR dialect, stack-VM mnemonics), the StreamPack codec, the loader/validator/executor, bcir-cc — is native BCIR (pure Python + freestanding C). This is the gate's intended split; the audit found no accidental clang dependence. |
 | V8 | **Registers / flags / branches / addressing?** | **Registers: none, by design** (RID-addressed registry). **Flags/carry: none** — comparisons produce *values* (registry-first: conditions are data, not hidden state); what's genuinely missing is carry-as-data for wide arithmetic (MC4). **Branches: structured emit-only tree, erased before planning** — the planner sees straight-line phased claims (a real, documented modeling boundary; MC5 names what a CFG-aware plan would add). **Addressing: affine only** (`offset`/`stride_k`/`count`/stride-class); indexed access is the GGG gather lane, not a mode — SIB-style compound modes are *intentionally* absent. |
@@ -89,14 +94,14 @@ deliberately not a register machine:
 | Loader | **Done, dual-rail, freestanding** (no-libc C validate/walk/execute) | `bcir_runtime.h:46-90`, `bcir_exec.c:33` |
 | Compiler driver | **bcir-cc** (Python-free: cpp → cfront → plan → hydrate → `--emit-pack`), `--linkable`, `--emit-link-flags` | `runtime/c/bcir_cc.c:126-341` |
 | Assembler (text → machine code) | **Missing / correctly gated** — native isel deferred (G1–G4 unmet); stack encoders stop at mnemonics | `BCIR_NATIVE_OBJECT_GATE.md` |
-| **Disassembler / listing (pack → text)** | **Missing entirely** — no StreamPack lister, no annotated hex dump; `llvm-objdump` used only as `-f` format validation | `codegen.py:66-70` |
+| **Disassembler / listing (pack → text)** | **Python baseline landed** — validated StreamPack listing and record-delimited hex dump; exact spans share the normative codec writers. C twin and device-ISA disassembly remain open | `abi/streampack_tool.py`, `tests/test_streampack_tool.py` |
 | Pack-level linker | **Missing** — no multi-pack compose, no RID relocation, no symbol section (packs carry integer RIDs + TraceNotes only) | `streampack_abi.py:180-183` |
 | Naming traps (recorded) | `runtime/c/bcir_decode.c` is transformer math, not the pack decoder; `bcir_exec.c` dispatches caller kernels, it does not run machine code | — |
 
 **Clang-vs-native split** (V7): the boundary is exactly the gate's design — *plan,
 verify, encode, load, schedule* are native; *instruction selection and machine encoding*
 are the resident backend's. Nothing in the audit argues for moving that boundary; the
-missing tools (MC1/MC7) are all on the **native** side of it.
+remaining tools (MC1's C/device twins and MC7) are on the **native** side of it.
 
 ## 3. What the research docs add to the frame
 
@@ -109,10 +114,15 @@ missing tools (MC1/MC7) are all on the **native** side of it.
 - **LinuxCNC HAL** (components/pins/signals/threads + `halcmd`): maps 1:1 —
   component ≈ claim/kernel, pin ≈ RID port, signal ≈ shared RID binding, typed pins ≈
   Domain/elem contracts, thread+period ≈ phase + §5.11 Timing, `addf` order ≈ claims-in-
-  phase order, **`setp`/`getp` ≈ the missing governed poke/peek** (MC2), halmeter/
+  phase order, **`setp`/`getp` ≈ the governed in-process poke/peek baseline** (MC2), halmeter/
   halscope ≈ TelemetryRing/DataDNA (already built), dynamic re-netting while running ≈
   R11 rehydration (`map_gen` bump) — the law for safe live reconfiguration **already
   exists**; only the tool is missing.
+- **Telemetry standards** add a distinct measurement ABI, now tracked as MC15. The Python
+  registry has stable IDs and explicit units/kind/temporality; BTLM has strict dual-rail
+  framing and sequence evidence; the shared ring supports bounded quiescent snapshots.
+  Missing are the generated C signal table, source/session/clock/loss envelope, live SPSC
+  ring, transport parity, and claim/PC correlation needed by drivers and kernel replay.
 - **ISA texts + x86 encoding**: the classic checklist (registers, addressing modes,
   condition codes, branching, displacement, assembler/loader) is exactly the list §1
   answers — mostly "by design, differently"; the x86 ModR/M/SIB/disp machinery is the
@@ -137,13 +147,20 @@ added.
 ## 5. The ABI ledger (what is frozen today)
 
 1. **StreamPack** BSPK v1 (frozen) / v2 pipeline / v3 dispatch+channel — dual-rail,
-   CRC'd, generation-tagged, semantically verified post-CRC.
+   CRC'd, generation-tagged, semantically verified post-CRC, and exact-consuming (no
+   undeclared trailing body bytes).
 2. **`bcir_exec` calling convention** — caller-owned memory, `bcir_exec_fn(item, ctx)`
    kernel callback, generation-checked variant (`bcir_exec.h:31-79`).
 3. **R12 `TargetABI` matrix** — x86_64/aarch64/riscv64-linux (LP64), x86_64-windows
    (LLP64), i386-linux (ILP32); layout-only by design; MLIR twin op + pass check.
 4. **Q8 tier tables** — frozen LE blobs + `#embed` header, drift-gated.
-5. **Telemetry frame** BTLM v1 — 56-byte DataDNA records, CRC, resync-by-magic.
+5. **Telemetry frame** BTLM v1 — strict 56-byte DataDNA record batches, reserved-flags
+   refusal, CRC, exact single-frame decode, resync-by-magic, and u32 continuity evidence.
+   Frozen scope: one externally separated producer stream with an opaque clock; not the
+   future driver envelope.
+6. **RuntimeChannel v1 direct hook ABI** — allocation-free append-only hook table with
+   `abi_version`/`struct_size`, fixed-width values, generation-tagged handles, byte-offset
+   maps, and loopback lifecycle coverage. It is an in-process contract, not Linux IPC/UAPI.
 
 Runtime hook compatibility uses `abi_version` plus `struct_size`: v1 rejects an
 incompatible major and gates append-only tail fields by size. Artifact formats retain
@@ -151,25 +168,37 @@ their frozen-bytes/reject-newer policy.
 
 ---
 
-## 6. The gap register — the MC-track (ranked)
+## 6. The gap register — the MC-track (code-backed)
 
-| # | Gap | Shape of the fix | Cost | Blocks |
-|---|---|---|---|---|
-| **MC1** | **Disassembler + hex dump + listing** | `bcir dis`: StreamPack → annotated listing (header fields, per-segment mnemonic line: op string, lane/width, rd/wr RIDs *resolved to names via TraceNotes/module*, blocks, prefetches, CRC state); `bcir hexdump`: offset-annotated hex of every record; round-trip pinned against the codec. One normative mnemonic table shared with ROP v2 (D-R6 discipline: the table IS the ISA language, both directions). Pure native, both rails eventually (Python first). | S | Debugging everything downstream; the driver phase's first tool |
-| **MC2** | **Peek/poke (`halcmd` class)** | Registry inspector + governed mutator: `show res/claims/phases` (peek = read-only), `setp rid value` (poke = write + `data_gen` bump → R11 makes every hydrated pack refuse until rehydrated — **the law already exists**, only the tool is missing); halscope half already built (TelemetryRing/DurableLog). Wire into `bcir/run.py` as a REPL subcommand. | S | Driver bring-up ergonomics; live-tuning workflows |
-| **MC3** | **ROP v2 — the registry assembly language** | Grow `frontends/rop.py` to the full claim surface: named constants, `imm`, `offset`/`stride_k`, hazard/bounds/verify contracts, phase `deps`, `event` phases, **macros** (MAP's unkept promise), includes, and the **BSP binding-table section** (logical name → RID). MAP folds in or retires. This is "Macro Assembly Programming" done registry-first. | M | Hand-written driver fixtures; MC1's symbol resolution |
-| **MC4** | **Carry-as-data + typed predicates** | Two registry-first moves: (a) promote comparison results from op-string suffixes to a typed predicate contract (the value already flows; type it so R-laws can see it); (b) wide/checked arithmetic emitting **carry as a second write RID** (`ADD` with `wr=(sum, carry)`) — the multi-word `_BitInt` path and checked-arith C lowering both want it. No status register is ever introduced; both are claims writing data. | M | Wide-integer codegen honesty; crypto/checksum kernels |
-| **MC5** | **CFG-aware planning (named boundary, not yet a build)** | Today the planner prices loops as one region with a static bound and never sees branches. Recording the options: (i) keep the boundary (dataflow stays the plan currency; branchy code is the emitter's job) — the standing position; (ii) conditional phase deps (a phase guarded by a predicate RID) — the smallest true extension, needed only when a driver blueprint demands *planned* divergent paths. Decide when a fixture forces it, not before. | L | Nothing today; revisit at the first branchy driver plan |
-| **MC6** | **HAM + semantic swap made real** | (a) Allocator consumes `Resource.priority` (today inert) as the tie-break/pinning input; (b) **swap as planned claims**: an eviction pass that mints `mem.move.*` (D-R3-priced, A2-descriptor-backed) when a hotter resource wants a full tier — the machinery all exists post-wave-13, it has never been composed; (c) HAM into placement (an access="ham" resource prefers the tier whose latency the log-model assumed). All measured-then-pinned like every cost feature. | M | Honest memory-strategy story; CXL-tier work later |
-| **MC7** | **Pack-level linking + symbol section** | Multi-pack compose: RID-band relocation (renumber with provenance), claim-id rebasing, a v4 append-only **symbol section** (name ↔ RID/claim map — today only TraceNotes tie ids to hashes). Enables multi-TU StreamPack programs and gives MC1's disassembler real names without the source module. | M | Multi-module deployment; whole-program packs |
-| **MC8** | **RuntimeChannel direct hook ABI; hardware binding next** | **Direct ABI landed:** append-only/versioned `open/claim`, offset-based `map`, `submit`, `sync/cancel`, `event`, `close`, generation handles, explicit bounded-ring policy, and a resident loopback baseline. **Remaining:** bind the first real driver in-process and prove ownership/teardown. Only then add an optional Linux adapter (`SOCK_SEQPACKET` control, `memfd` bounded bulk rings, `eventfd`/`epoll`) when isolation or sharing justifies it. | L | Real DMA/IRQ and transport parity |
-| **MC9** | **POSIX/Linux compat completion** | The remaining backward-compat items under MC8's umbrella: real UAPI header fixtures (today "uapi" exists only in docs — the named fixtures are CMSIS-style `uart_regs.h`/`cmsis_gpio.h`), `/dev` lifecycle, errno propagation, and the Linux-ABI conformance pins (LP64 matrix already frozen in R12). | M | Linux-resident deployments |
+| # | State | Gap / delivered slice | Remaining acceptance boundary |
+|---|---|---|---|
+| **MC1** | **Partial landed** | Python `bcir-pack dis` and `bcir-pack hexdump`; validation precedes display, spans share codec writers, and CRC-valid trailing bytes are refused on Python/C semantic rails | Add a freestanding C twin, source-module/symbol-section resolution, and per-device command-ISA decoder/disassembler round trips |
+| **MC2** | **Partial landed** | In-process `bcir-registry` show/getp/setp; array indexes are explicit, failed validation preserves state, generation overflow is refused, and a poke advances `data_gen` exactly once | Bind permissions, widths, side effects, RuntimeChannel, telemetry audit, device reset/death, and real register access without bypassing R11 |
+| **MC3** | **Open** | ROP v2 registry assembly: constants, immediates, offsets/strides, full contracts, deps/events, macros/includes, and BSP logical-name binding | One parser/pretty-printer grammar, hygienic expansion bounds, canonical output, and MC1 shared names |
+| **MC4** | **Open** | Carry-as-data and typed predicate contracts | Oracle/MLIR/C twins, checked/wide arithmetic differential, no hidden status register |
+| **MC5** | **Deferred** | CFG-aware planning boundary | Build only when a driver fixture needs planned divergence; otherwise retain structured emit-time control and straight-line phased planning |
+| **MC6** | **Mostly open** | HAM placement and semantic swap; `Resource.priority` is currently provenance-only and HAM is cost-only | Allocator consumption, D-R3/A2-priced eviction claims, capacity/liveness laws, replay and measured tier data |
+| **MC7** | **Open** | StreamPack-level linking, RID/claim relocation, and symbol section | Append-only wire version, collision/overflow checks, deterministic compose, provenance-preserving unlink/list tests |
+| **MC8** | **Baseline landed** | Direct append-only RuntimeChannel hook ABI and loopback | First in-process hardware driver must prove ownership, cancellation, saturation, event loss, teardown, reset, and restart before transport work |
+| **MC9** | **Open** | Linux/POSIX adapter and UAPI | Version-zero device-fd/ioctl/mmap/poll/errno rail, direct/adapter trace parity, then UART+virtio-blk evidence before v1 freeze |
+| **MC10** | **Deferred by native-backend gate** | Target machine description, legalization, ISel, register allocation/spilling, scheduling, hazard tables, encoding, and relaxation | LLVM supplies this for current CPU objects. A native target needs independent semantics, encode/decode identity, and measured G1/G2 justification before implementation |
+| **MC11** | **Resident-only** | Native object/archive/link contract: sections, symbols, relocations, COMDAT/TLS where required, deterministic archives, and system-linker interop | Current objects are emitted by LLVM/Clang and `e_machine` checked; BCIR-native emission and relocation corpus are absent. This is distinct from MC7 |
+| **MC12** | **Entry slice only** | ABI calling conventions, frames, prologue/epilogue, stack maps, CFI and unwind | The long-mode entry masks interrupts before switching stacks; the ordinary x86 interrupt edge has a fixed 176-byte frame and refuses the five paranoid/IST vectors (#DB/NMI/#DF/#MC/#VC). Reset/mode transition, SMAP/CET/IBT/CR3/PTI/speculation policy, general SysV/Windows/AArch64/RISC-V ABI lowering, `.eh_frame`, exception and signal interoperability are absent |
+| **MC13** | **Open** | DWARF/debug/profiling metadata and source-to-claim/PC correlation | Line/type/location tables, symbolization, debugger tests, deterministic paths, and telemetry correlation |
+| **MC14** | **Partial resident evidence** | Binary loader/trust plus differential ISA validation | Add bounds/W^X/signature/feature/errata policy, malformed-object corpus, independent assembler/disassembler comparison, simulator and hardware parity for each native/device ISA |
+| **MC15** | **Oracle/codec slice landed** | Stable Python signal IDs 1–15 with exact units and explicit metric semantics; strict Python/C BTLM parity; frame continuity counters; long-wrap quiescent ring parsing; Prometheus-text/OTLP/Redfish serialization shapes | Generate a fixed-width C signal table and ID ranges; add source/session/generation/clock/loss driver envelope; build a live SPSC ring with publish/backpressure/death semantics; add claim/PC correlation, hardware providers/transports, and direct/Linux/native trace parity |
 
-**Reading order into the deep-driver phase**: MC1 → MC2 → MC3 (the tools the driver
-bring-up will use daily, all cheap and native), then MC8 in design alongside the driver
-analysis (its hook list should be *derived from* the first real driver's needs, exactly
-as Part VII derived A1/A2 from the datasheets), with MC4/MC6/MC7 as independent build
-tracks and MC5 parked until a fixture forces it.
+The expanded list follows the component boundaries in LLVM's
+[code-generator design](https://llvm.org/docs/CodeGenerator.html), the
+[ELF generic ABI](https://gabi.xinuos.com/elf/), and the
+[DWARF 5 standard](https://dwarfstd.org/dwarf5std.html). Those standards are resident dependencies
+today, not claims that BCIR has reimplemented them.
+
+**Reading order into the deep-driver phase:** use the landed MC1/MC2 baselines during MC3 and the
+first direct UART driver; prove MC8's hardware lifecycle next; let that evidence shape MC9. MC4/MC6/
+MC7 are independent compiler tracks, MC5 stays fixture-gated, MC10–MC14 remain resident-toolchain
+contracts unless the native-backend gate opens, and MC15 must reach a version-zero Python/C ABI
+before the first D2 driver while remaining unfrozen until UART and virtio-blk evidence exists.
 
 ---
 
