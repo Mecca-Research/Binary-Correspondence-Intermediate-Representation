@@ -46,7 +46,7 @@ indexing, review, MLIR-boundary, and metadata exercises; entries can be added
 without changing the core grader.
 
 The complete graded-set metadata lives in per-exercise manifests under
-[`manifests/`](manifests/) and is governed by
+[`manifests/`](manifests) and is governed by
 [`schema/exercise.schema.json`](schema/exercise.schema.json). These manifests
 cover every numbered exercise and make points, tool requirements, minimum tool
 versions, tool-absence policy, determinism, and timeouts reviewable without

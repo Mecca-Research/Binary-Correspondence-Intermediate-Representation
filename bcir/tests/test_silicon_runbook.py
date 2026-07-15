@@ -2,7 +2,7 @@
 
 Roadmap (BCIR_MASTER_ROADMAP.md §5.4 / §6): the measured real-silicon replan win is
 **rig-gated** -- it needs a bare-metal host with a hardware PMU + a cpufreq userspace
-governor + RAPL energy (HARDWARE_VALIDATION.md). It cannot be produced in CI or this
+governor + RAPL energy (docs/kernel/HARDWARE_VALIDATION.md). It cannot be produced in CI or this
 sandbox, so the honest deliverable is to make the path **push-button and CI-exercised in
 degrade mode**: `tools/silicon/measure_replan.sh` runs the full
 read-real-signals → fold-Theta → replan → certify loop, prints a MEASURED win on a rig

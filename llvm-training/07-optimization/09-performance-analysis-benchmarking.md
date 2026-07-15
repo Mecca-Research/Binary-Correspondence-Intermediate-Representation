@@ -65,7 +65,7 @@ opt -S -passes='verify,loop-simplify,loop-rotate,verify' \
 
 Record both the pipeline spelling and `opt --version`. Default pipelines and
 individual pass behavior can change across LLVM releases. Use
-[`../17-new-pass-manager/`](../17-new-pass-manager/) for PassBuilder syntax,
+[`../17-new-pass-manager/`](../17-new-pass-manager) for PassBuilder syntax,
 analysis invalidation, plugins, and adaptive pipeline policy.
 
 ### Compile-time measurement
@@ -155,7 +155,7 @@ Then measure code size, disassembly shape, spills, branches, cycles, retired
 instructions, cache/TLB misses, branch misses, and runtime latency or throughput.
 Counter names and event semantics are CPU-specific. Normalize derived ratios
 carefully and retain raw counts, multiplexing/scaling information, and run time.
-The lessons under [`../15-binary-analysis/`](../15-binary-analysis/) connect
+The lessons under [`../15-binary-analysis/`](../15-binary-analysis) connect
 static binary evidence with traces and hardware counters.
 
 Do not lower and compare target-portable IR until the target choices are explicit.
@@ -233,7 +233,7 @@ llvm-objdump -d /tmp/app.bolt > /tmp/app.bolt.disasm.txt
 An IR diff cannot reveal a BOLT-only layout change. Use
 [`06-pgo-lto-bolt.md`](06-pgo-lto-bolt.md),
 [`07-bolt-layout-walkthrough.md`](07-bolt-layout-walkthrough.md), and
-[`../15-binary-analysis/`](../15-binary-analysis/) to relate profile provenance,
+[`../15-binary-analysis/`](../15-binary-analysis) to relate profile provenance,
 layout, symbols, disassembly, traces, and counters.
 
 ## JIT runtime telemetry
@@ -329,6 +329,6 @@ provides a fill-in command skeleton and results table.
 
 - [`06-pgo-lto-bolt.md`](06-pgo-lto-bolt.md) — PGO, LTO/ThinLTO, and BOLT.
 - [`../12-backend-jit/07-advanced-orc-runtime-integration.md`](../12-backend-jit/07-advanced-orc-runtime-integration.md) — ORC runtime telemetry and hot re-JIT.
-- [`../15-binary-analysis/`](../15-binary-analysis/) — static and dynamic binary evidence.
-- [`../17-new-pass-manager/`](../17-new-pass-manager/) — pipeline construction, plugins, MLGO, and profile policy.
+- [`../15-binary-analysis/`](../15-binary-analysis) — static and dynamic binary evidence.
+- [`../17-new-pass-manager/`](../17-new-pass-manager) — pipeline construction, plugins, MLGO, and profile policy.
 - [`../indexes/bcir-patterns.md`](../indexes/bcir-patterns.md) — BCIR concepts across the corpus.

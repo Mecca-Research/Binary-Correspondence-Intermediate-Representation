@@ -26,7 +26,7 @@ Open the `examples/` directory in this chapter for standalone artifacts and smal
 
 ## Adversarial fixtures
 
-Use the [adversarial exercise track](../exercises/adversarial/) to stress poison
+Use the [adversarial exercise track](../exercises/adversarial) to stress poison
 control flow, operand-bundle preservation, target intrinsic constraints, ABI
 attributes, `memory(...)` claims, and varargs assumptions. The track requires a
 semantic verdict in addition to LLVM parser/verifier results.

@@ -108,7 +108,7 @@ Each declaration tells you:
 - [`intrinsics-quickref.md`](intrinsics-quickref.md) — category quick reference for common intrinsic families
 - [`instruction-quickref.md`](instruction-quickref.md) — instructions that pair with intrinsic results, including aggregate extraction, vector operations, atomics, EH pads, and `freeze`
 - [`../09-vectorization/README.md`](../09-vectorization/README.md) — vectorizer overview and examples
-- [`../11-concurrency/`](../11-concurrency/) — atomic orderings and volatile-vs-atomic
+- [`../11-concurrency/`](../11-concurrency) — atomic orderings and volatile-vs-atomic
 - [`../13-advanced-ir/01-common-intrinsics.md`](../13-advanced-ir/01-common-intrinsics.md) — advanced common intrinsic signatures, overloaded names, and examples
 - [`../13-advanced-ir/02-target-specific-intrinsics.md`](../13-advanced-ir/02-target-specific-intrinsics.md) — target-specific intrinsic namespaces, feature requirements, and portability
 - [`../12-backend-jit/06-custom-bcir-intrinsics.md`](../12-backend-jit/06-custom-bcir-intrinsics.md) — custom BCIR intrinsic declarations, JIT rewrite policy, and fallback ABI

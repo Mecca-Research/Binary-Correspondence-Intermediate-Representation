@@ -50,7 +50,7 @@ or fill gaps.
     [`exercises/README.md`](exercises/README.md) and [`EXAMPLES.md`](EXAMPLES.md).
 20. What should a learner predict before running `mem2reg`, `simplifycfg`, or
     Loop Vectorizer exercises? See exercises 020, 021, and 022 in
-    [`exercises/`](exercises/).
+    [`exercises/`](exercises).
 21. Why should language-agnostic review prompts come before optional C++ pass
     skeleton exercises, and why should those skeletons remain outside normal IR
     verification? See [`exercises/README.md`](exercises/README.md).
@@ -61,7 +61,7 @@ or fill gaps.
     resource lookup becoming registry loads, HAM hints becoming `llvm.prefetch`,
     BCIR operations becoming runtime wrappers, mixed strides becoming byte
     offsets, and diagnostic tags becoming custom metadata? See
-    [`bcir-mapping/examples/`](bcir-mapping/examples/).
+    [`bcir-mapping/examples/`](bcir-mapping/examples).
 24. For BCIR lowering exercises 028-031, which facts must remain in executable
     IR or ABI data rather than only diagnostic metadata? See
     [`bcir-mapping/10-metadata-and-diagnostics.md`](bcir-mapping/10-metadata-and-diagnostics.md).
@@ -70,7 +70,7 @@ or fill gaps.
     [`14-mlir-bridge/03-lowering-to-llvm-dialect.md`](14-mlir-bridge/03-lowering-to-llvm-dialect.md).
 26. For backend/JIT exercises 035-037, which artifacts would you inspect first:
     ORC `JITDylib` definitions, JITLink edges, object symbols, relocations, or
-    TableGen-generated records? See [`12-backend-jit/`](12-backend-jit/).
+    TableGen-generated records? See [`12-backend-jit/`](12-backend-jit).
 27. For binary-analysis chapters, why are dynamic traces, hardware counters,
     PGO/LTO/BOLT artifacts, and BCSA CSV features evidence rather than LLVM IR
     examples? See [`15-binary-analysis/README.md`](15-binary-analysis/README.md)

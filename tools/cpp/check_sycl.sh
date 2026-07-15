@@ -2,7 +2,7 @@
 # Standalone build+run gate for the SYCL backend DIFFERENTIAL ORACLE (a SAXPY parallel_for).
 #
 # SYCL is a backend CHANNEL + a differential oracle, NEVER on the legality path
-# (docs/SYCL_INTEROP.md). This gate proves the emitted single-source C++ SAXPY kernel
+# (docs/kernel/SYCL_INTEROP.md). This gate proves the emitted single-source C++ SAXPY kernel
 # (bcir.lower.c_kernel.emit_sycl_saxpy_c) genuinely COMPILES + RUNS and reproduces
 # BCIR's own deterministic reference (out[i] = a*x[i] + y[i]) to float round-off:
 #   * the PORTABLE scalar C++ fallback (no -fsycl) -- the real reference-verification work

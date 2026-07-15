@@ -3262,7 +3262,7 @@ else
   echo "  FAIL: a CRC-valid semantically-corrupt pack was not rejected on the C rail"; exit 1
 fi
 
-# The C<->C++ hand-off seam scaffold (#cpphandoff, docs/CPP_HANDOFF_BOUNDARY.md): the boundary
+# The C<->C++ hand-off seam scaffold (#cpphandoff, docs/languages/CPP_HANDOFF_BOUNDARY.md): the boundary
 # between the deterministic single-node C/IR rail and the C++ layer ABOVE it (dynamic graph
 # topology + distributed MPI/NCCL orchestration). check_handoff.sh compiles the STANDALONE C++17
 # scaffold (runtime/cpp/, NOT part of the MLIR build), hands a StreamPack the C/IR path produces
@@ -3278,7 +3278,7 @@ else
   echo "  FAIL: the C++ hand-off seam scaffold did not compile or round-trip"; exit 1
 fi
 
-# The SYCL backend differential oracle (#sycldiff, docs/SYCL_INTEROP.md): SYCL is a backend CHANNEL +
+# The SYCL backend differential oracle (#sycldiff, docs/kernel/SYCL_INTEROP.md): SYCL is a backend CHANNEL +
 # a differential oracle, NEVER on the legality path. check_sycl.sh emits the single-source C++ SAXPY
 # kernel (emit_sycl_saxpy_c) and proves it reproduces BCIR's own deterministic reference (a*x+y) to
 # float round-off: the PORTABLE scalar C++ fallback always (the real reference-verification work, no

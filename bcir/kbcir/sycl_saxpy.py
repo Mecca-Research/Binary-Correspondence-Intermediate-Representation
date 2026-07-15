@@ -1,6 +1,6 @@
 """SYCL backend differential oracle -- the SAXPY reference + the Q8 bridge for a SYCL/SPIR-V GPU channel.
 
-ARCHITECTURE (the bright line you must keep -- see docs/SYCL_INTEROP.md): SYCL is a *backend channel* the
+ARCHITECTURE (the bright line you must keep -- see docs/kernel/SYCL_INTEROP.md): SYCL is a *backend channel* the
 planner can route to (priced by the K_BCIR cost model on the ``sycl_spirv`` profile) and a *differential
 oracle* we use to MEASURE that a heterogeneous device reproduces BCIR's own deterministic reference. It is
 NOT a trusted-library FFI edge. Unlike the FIVE Area-B library wraps (BLAS/FFTW/LAPACK/GSL/SLEEF, all routed

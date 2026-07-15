@@ -258,8 +258,8 @@ take SSA values. See [`../08-pitfalls/01-nested-instruction-expressions.md`](../
 - [`../01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md) — general shape
 - [`../01-syntax/04-inline-asm.md`](../01-syntax/04-inline-asm.md) — inline asm expressions and `callbr` labels
 - [`../09-vectorization/README.md`](../09-vectorization/README.md) — vectorization overview and examples
-- [`../11-concurrency/`](../11-concurrency/) — atomic orderings, atomic instructions, and volatile-vs-atomic
-- [`../13-advanced-ir/`](../13-advanced-ir/) — intrinsics, target intrinsics, special types, and tokens
+- [`../11-concurrency/`](../11-concurrency) — atomic orderings, atomic instructions, and volatile-vs-atomic
+- [`../13-advanced-ir/`](../13-advanced-ir) — intrinsics, target intrinsics, special types, and tokens
 - [`../08-pitfalls/README.md`](../08-pitfalls/README.md) — common mistakes
 - [`../10-grammar/llvm-ir.tm`](../10-grammar/llvm-ir.tm) — exact syntax productions
 - LLVM LangRef: https://llvm.org/docs/LangRef.html#instruction-reference

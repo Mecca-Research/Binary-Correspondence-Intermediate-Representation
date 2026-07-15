@@ -1,7 +1,7 @@
 """T3 — derived/aggregate telemetry metrics + a plan-cost SENSITIVITY ranking.
 
 This is the SPICE ``.MEASURE`` / ``.SENS`` analogy from
-``docs/TELEMETRY_PIPELINE_RESEARCH.md`` §3/§6, realized as two pure-Python,
+``docs/kernel/TELEMETRY_PIPELINE_RESEARCH.md`` §3/§6, realized as two pure-Python,
 deterministic, side-effect-free capabilities on top of the telemetry stream
 (``bcir/telemetry.py``'s :class:`DataDNA` records):
 

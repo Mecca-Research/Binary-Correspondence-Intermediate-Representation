@@ -1,7 +1,7 @@
 """SYCL backend differential oracle -- the REDUCTION (sum) reference + the Q8 bridge for the SYCL/SPIR-V
 GPU channel's ``reduce`` capability.
 
-ARCHITECTURE (the same bright line as ``sycl_saxpy.py`` -- see docs/SYCL_INTEROP.md): SYCL is a *backend
+ARCHITECTURE (the same bright line as ``sycl_saxpy.py`` -- see docs/kernel/SYCL_INTEROP.md): SYCL is a *backend
 channel* the planner can route to and a *differential oracle* we use to MEASURE that a heterogeneous device
 reproduces BCIR's own deterministic reference. It is NOT a ``c.call.libm:`` external-symbol edge -- it is a
 single-source C++ *compiler mode* (``-fsycl``). The kernel is emitted SYCL C++ source (a

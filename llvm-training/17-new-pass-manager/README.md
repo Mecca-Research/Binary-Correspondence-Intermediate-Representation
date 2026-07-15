@@ -55,12 +55,12 @@ valid, and gate hardware-specific rewrites on explicit evidence.
 
 Read these first if the terms are new:
 
-- [`07-optimization/`](../07-optimization/) for pass categories, common
+- [`07-optimization/`](../07-optimization) for pass categories, common
   analysis/transform names, debugging pipelines, optimization levels, PGO/LTO,
   and the existing BCIR optimizer lessons.
-- [`bcir-mapping/`](../bcir-mapping/) for BCIR register binding, claim lowering,
+- [`bcir-mapping/`](../bcir-mapping) for BCIR register binding, claim lowering,
   HAM/GAADMSF metadata, runtime boundaries, and diagnostic metadata.
-- [`exercises/`](../exercises/) for repair prompts and custom-pass invariant
+- [`exercises/`](../exercises) for repair prompts and custom-pass invariant
   exercises that this chapter extends.
 
 ## Examples
@@ -109,7 +109,7 @@ with a pipeline parsing callback.
 
 ## Adversarial pass-pipeline checks
 
-The [adversarial exercise track](../exercises/adversarial/) provides seeds and
+The [adversarial exercise track](../exercises/adversarial) provides seeds and
 prompt templates for isolating the first pass that loses metadata, operand
 bundles, debug provenance, address-space facts, or BCIR 1:1 correspondence.
 Record the exact pipeline and test prefixes during reduction rather than keeping

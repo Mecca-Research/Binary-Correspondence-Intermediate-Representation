@@ -1,8 +1,8 @@
 # llvm-training — Agent Context Repo for LLVM IR
 
 > **Scope:** this directory is a **training corpus**, not part of the BCIR IR.
-> The IR itself is realized by the executable oracle in [`../bcir/`](../bcir/)
-> and the MLIR law in [`../mlir/`](../mlir/). Nothing here is built into those
+> The IR itself is realized by the executable oracle in [`../bcir/`](../bcir)
+> and the MLIR law in [`../mlir/`](../mlir). Nothing here is built into those
 > components, and the IR has no dependency on this corpus. See
 > [`../AGENTS.md`](../AGENTS.md) and
 > [`../docs/BCIR_Repo_Structure.md`](../docs/BCIR_Repo_Structure.md).
@@ -26,7 +26,7 @@ testable.
    [`BCIR pattern index`](indexes/bcir-patterns.md).
 2. **Follow the path in [`CURRICULUM.md`](CURRICULUM.md)** if learning end-to-end. Skip
    to a leaf chapter if doing a targeted task.
-3. **Use [`quickref/`](quickref/) for one-page cheat sheets** on opaque
+3. **Use [`quickref/`](quickref) for one-page cheat sheets** on opaque
    pointers, BCIR lowering, vectorization, metadata, the new pass manager,
    advanced IR contracts, and MLIR bridge reviews.
 4. **Treat `08-pitfalls/` as a checklist** before writing or reviewing

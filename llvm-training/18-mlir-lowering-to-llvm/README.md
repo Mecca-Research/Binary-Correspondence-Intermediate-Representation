@@ -1,7 +1,7 @@
 # MLIR Lowering to LLVM for BCIR
 
 This chapter is the dedicated lowering companion to
-[`../14-mlir-bridge/`](../14-mlir-bridge/). The bridge chapter explains why a
+[`../14-mlir-bridge/`](../14-mlir-bridge). The bridge chapter explains why a
 frontend or BCIR-like domain model may enter MLIR; this chapter explains how to
 make the lowering boundary explicit, auditable, and friendly to LLVM IR tools.
 
@@ -54,7 +54,7 @@ BCIR dialect module
   └─ translate LLVM dialect to LLVM IR, then run llvm-as/opt verification
 ```
 
-Use [`../17-new-pass-manager/`](../17-new-pass-manager/) after translation when
+Use [`../17-new-pass-manager/`](../17-new-pass-manager) after translation when
 LLVM IR passes must preserve BCIR metadata or honor custom runtime boundaries.
 Use [`../reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md)
 when selecting built-in intrinsic declarations for prefetch, vector, memory, or
@@ -106,11 +106,11 @@ metadata-related examples.
 
 ## Cross-links
 
-- [`../14-mlir-bridge/`](../14-mlir-bridge/) for MLIR basics and the prior
+- [`../14-mlir-bridge/`](../14-mlir-bridge) for MLIR basics and the prior
   bridge-level walkthrough.
-- [`../bcir-mapping/`](../bcir-mapping/) for direct BCIR-to-LLVM IR lowering
+- [`../bcir-mapping/`](../bcir-mapping) for direct BCIR-to-LLVM IR lowering
   rules and examples.
-- [`../17-new-pass-manager/`](../17-new-pass-manager/) for LLVM IR pass ordering,
+- [`../17-new-pass-manager/`](../17-new-pass-manager) for LLVM IR pass ordering,
   custom analyses, and metadata-preservation policy.
 - [`../reference/intrinsics-quickref.md`](../reference/intrinsics-quickref.md)
   for intrinsic declaration and usage patterns.

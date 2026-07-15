@@ -10,17 +10,17 @@ introductory or intermediate coverage for these advanced families:
 
 - **BCIR lowering** — claim normalization, graph/GAADMSF lowering, register
   binding, mixed strides, HAM hints, runtime ABI/wrapper calls, and diagnostic
-  metadata are covered in [`bcir-mapping/`](bcir-mapping/) with checked examples.
+  metadata are covered in [`bcir-mapping/`](bcir-mapping) with checked examples.
 - **MLIR integration** — MLIR modules, dialects, operation anatomy, LLVM dialect
   lowering, and BCIR custom-dialect sketches are covered in
-  [`14-mlir-bridge/`](14-mlir-bridge/).
+  [`14-mlir-bridge/`](14-mlir-bridge).
 - **Backend/JIT diagnostics** — codegen stages, TableGen source-vs-generated
   boundaries, ORC/LLJIT ownership, layers, MC emission, relocations, and
-  missing-symbol triage are covered in [`12-backend-jit/`](12-backend-jit/).
+  missing-symbol triage are covered in [`12-backend-jit/`](12-backend-jit).
 - **Introductory PGO/LTO/BOLT coverage** — the concepts, pipeline boundaries,
   and evidence-review prompts are covered in
   [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md)
-  and the binary-analysis material in [`15-binary-analysis/`](15-binary-analysis/).
+  and the binary-analysis material in [`15-binary-analysis/`](15-binary-analysis).
 - **Deterministic LTO/BOLT artifact matrix** — a checked manifest, tiny
   cross-translation-unit fixture, matching-version tool discovery, JSON report,
   no-LTO/ThinLTO/FullLTO artifact summaries, and optional profile-driven BOLT

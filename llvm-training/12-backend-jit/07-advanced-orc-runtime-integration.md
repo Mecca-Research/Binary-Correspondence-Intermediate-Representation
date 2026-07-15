@@ -20,10 +20,10 @@
   than from the compiler host.
 
 This lesson extends [`05-orc-layers.md`](05-orc-layers.md). Read it with the
-[New Pass Manager chapter](../17-new-pass-manager/), the
-[MLIR-to-LLVM lowering chapter](../18-mlir-lowering-to-llvm/), the
+[New Pass Manager chapter](../17-new-pass-manager), the
+[MLIR-to-LLVM lowering chapter](../18-mlir-lowering-to-llvm), the
 [BCIR runtime-boundary lesson](../bcir-mapping/09-runtime-call-boundaries.md),
-and the [binary-analysis chapter](../15-binary-analysis/). The code fragments are
+and the [binary-analysis chapter](../15-binary-analysis). The code fragments are
 architecture sketches: ORC APIs evolve, and production code must be adapted to
 its exact LLVM release and executor protocol.
 
@@ -71,7 +71,7 @@ sketch shows the ownership flow.
 
 A transform layer is not an MLIR conversion layer. Complete BCIR/MLIR dialect
 conversion and legality checks before handing LLVM IR to ORC; see
-[`../18-mlir-lowering-to-llvm/`](../18-mlir-lowering-to-llvm/). The transform may
+[`../18-mlir-lowering-to-llvm/`](../18-mlir-lowering-to-llvm). The transform may
 still preserve and consume LLVM metadata produced by that lowering.
 
 ## Custom compile layers
@@ -122,7 +122,7 @@ first call does not discover an avoidable semantic error.
 Speculative compilation predicts future demand and starts materialization before
 lookup blocks. Useful signals include graph adjacency, queue depth, observed call
 sequences, and binary-analysis/profile evidence from
-[`../15-binary-analysis/`](../15-binary-analysis/).
+[`../15-binary-analysis/`](../15-binary-analysis).
 
 Speculation must be cancellable and lower priority than demand compilation. Give
 each speculative candidate its own resource tracker and generation token. If the
@@ -288,12 +288,12 @@ example shows the control plane.
    graph merely because a later object linker could resolve its symbols.
 2. **MLIR lowering selects a dialect pipeline.** Choose legal conversions and a
    target path using the techniques in
-   [`../18-mlir-lowering-to-llvm/`](../18-mlir-lowering-to-llvm/). Record the
+   [`../18-mlir-lowering-to-llvm/`](../18-mlir-lowering-to-llvm). Record the
    chosen target descriptor and runtime ABI.
 3. **LLVM IR is optimized with a BCIR-aware New PM pipeline.** An
    `IRTransformLayer` runs a baseline, profile-guided, or target-specialized
    pipeline assembled as described in
-   [`../17-new-pass-manager/`](../17-new-pass-manager/). Verify before and after
+   [`../17-new-pass-manager/`](../17-new-pass-manager). Verify before and after
    the transform and preserve required BCIR metadata/runtime boundaries.
 4. **ORC materializes symbols.** A standard or custom materialization unit
    produces the selected artifact, compile/object layers process it, and JITLink

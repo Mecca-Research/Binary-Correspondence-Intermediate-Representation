@@ -3,8 +3,8 @@
 > The **PAPI-component model** for BCIR: a vendor-neutral registry of typed telemetry
 > signal providers, mapped to the 12-D cost vector, with honest `None`/unavailable when a
 > source is absent. The T1 row of the [`TELEMETRY_PIPELINE_RESEARCH.md`](TELEMETRY_PIPELINE_RESEARCH.md)
-> §6 build order. Code: [`bcir/signal_registry.py`](../bcir/signal_registry.py); tests:
-> [`bcir/tests/test_signal_registry.py`](../bcir/tests/test_signal_registry.py).
+> §6 build order. Code: [`bcir/signal_registry.py`](../../bcir/signal_registry.py); tests:
+> [`bcir/tests/test_signal_registry.py`](../../bcir/tests/test_signal_registry.py).
 >
 > **The governing invariant first.** Telemetry is a *graded L2/L3 signal*. The registry READS
 > signals and may inform plan cost (the `theta` runtime state / cost-weight calibration) but it

@@ -111,7 +111,7 @@ workflows to learn exactly how IR changed after you already have IR.
 ## Pass-specific walkthroughs
 
 The examples below use checked-in modules under
-[`examples/`](examples/) so a reader can rerun each command and compare the
+[`examples/`](examples) so a reader can rerun each command and compare the
 printed IR with the corresponding `*-after.ll` snapshot.
 
 ### `mem2reg`: watch stack slots become SSA values

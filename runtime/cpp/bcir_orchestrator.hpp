@@ -2,7 +2,7 @@
 //
 // The DESIGNED boundary between BCIR's deterministic single-node C/IR rail and
 // the high-level C++ ABOVE it (dynamic graph topology + distributed multi-node
-// orchestration). The contract is specified in docs/CPP_HANDOFF_BOUNDARY.md; this
+// orchestration). The contract is specified in docs/languages/CPP_HANDOFF_BOUNDARY.md; this
 // header is the compilable seam.
 //
 // THE SEAM ARTIFACT is the frozen StreamPack (runtime/c/bcir_streampack.h, the

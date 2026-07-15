@@ -6,9 +6,9 @@ one power-of-two scale ``2**scale_exp`` and is stored as `bits`-wide *signed* in
     real ~= code * 2**scale_exp ,   code in [-code_max, code_max],   code_max = 2**(bits-1) - 1.
 
 A per-GROUP scale localizes dynamic range: a small-magnitude group gets a finer grid than a single
-per-tensor scale would, which is the SOTA-standard way to make sub-8-bit quantization near-lossless
+per-tensor scale would, which is the standard way to make sub-8-bit quantization practical
 (every <=4-bit format -- INT4-g128, OCP-MX block=32, NVFP4 block=16 -- relies on it; see
-docs/research/AI_SUBSTRATE_SOTA.md, Pillar 1). The codes are exact-width integers: they are the
+docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md, section 6). The codes are exact-width integers: they are the
 `_BitInt(N)` lanes of A1, and dequantization is a shift.
 
 Determinism: the only floats are the bridge's own input/output. The codes, the scale exponents, and the

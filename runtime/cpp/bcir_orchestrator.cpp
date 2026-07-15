@@ -1,7 +1,7 @@
 //===- bcir_orchestrator.cpp - the C<->C++ hand-off seam (scaffold) -------===//
 //
 // Implementation of the seam declared in bcir_orchestrator.hpp. See that header
-// and docs/CPP_HANDOFF_BOUNDARY.md for the contract. The single-node backend is
+// and docs/languages/CPP_HANDOFF_BOUNDARY.md for the contract. The single-node backend is
 // REAL (it re-enters the existing freestanding C kernels); the dynamic-graph and
 // distributed backends are STUBS that document a real implementation but throw.
 //===----------------------------------------------------------------------===//
@@ -107,7 +107,7 @@ DispatchResult DynamicGraphOrchestrator::dispatch(const std::uint8_t* /*data*/,
   throw HandoffError(
       "DynamicGraphOrchestrator is a documented STUB: runtime graph topology lives "
       "in C++ above the rail and freezes to a StreamPack; that builder is not built "
-      "(see docs/CPP_HANDOFF_BOUNDARY.md). Use SingleNodeOrchestrator on a frozen "
+      "(see docs/languages/CPP_HANDOFF_BOUNDARY.md). Use SingleNodeOrchestrator on a frozen "
       "artifact.");
 }
 
@@ -151,7 +151,7 @@ DispatchResult DistributedOrchestrator::dispatch(const std::uint8_t* /*data*/,
   throw HandoffError(
       "DistributedOrchestrator is a documented STUB: cross-node dispatch needs "
       "MPI/NCCL + a multi-node cluster, deliberately not added (see "
-      "docs/CPP_HANDOFF_BOUNDARY.md). shard() is real; per-node re-entry runs the "
+      "docs/languages/CPP_HANDOFF_BOUNDARY.md). shard() is real; per-node re-entry runs the "
       "existing SingleNodeOrchestrator on each rank.");
 }
 

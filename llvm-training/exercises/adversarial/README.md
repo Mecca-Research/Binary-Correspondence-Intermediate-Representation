@@ -125,10 +125,10 @@ bcir-ids=<stable IDs> preserved-metadata=<metadata kinds>
 
 ## Related training
 
-- [Pitfalls](../../08-pitfalls/) for verifier failures and semantic traps.
-- [Advanced IR](../../13-advanced-ir/) for poison, attributes, intrinsics, and
+- [Pitfalls](../../08-pitfalls) for verifier failures and semantic traps.
+- [Advanced IR](../../13-advanced-ir) for poison, attributes, intrinsics, and
   operand bundles.
-- [New pass manager](../../17-new-pass-manager/) for pipeline instrumentation,
+- [New pass manager](../../17-new-pass-manager) for pipeline instrumentation,
   pass isolation, and preservation analysis.
 - [BCIR normal forms and verification](../../bcir-mapping/11-normal-forms-and-verification.md)
   for the stricter-than-LLVM mapping contract.

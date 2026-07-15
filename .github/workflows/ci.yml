@@ -141,7 +141,7 @@ jobs:
       - name: CT4 measured-replan runbook (degrade mode; the rig path stays exercised)
         # No PMU/RAPL/governor in CI, so this degrades honestly (synthetic, no measured win)
         # and exits 0 -- it gates that the rig path never silently rots. On a bare-metal rig
-        # `--require-real` produces the measured win (HARDWARE_VALIDATION.md).
+        # `--require-real` produces the measured win (docs/kernel/HARDWARE_VALIDATION.md).
         run: bash tools/silicon/measure_replan.sh
 
       - name: Perf-budget gate (correctness + measurement validity; perf floors bare-metal-only)

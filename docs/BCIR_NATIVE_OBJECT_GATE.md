@@ -1,6 +1,6 @@
 # BCIR Native Object Emission — the Decision Gate
 
-> **Status: DEFERRED (correct).** BCIR does **not** hand-roll an instruction selector /
+> **Status (2026-07-15): DEFERRED (correct).** BCIR does **not** hand-roll an instruction selector /
 > ELF+relocation emitter. The warranted path — emit the K_BCIR-planned kernel and let
 > the **resident compiler** finish it to a real object — is implemented and tested for
 > the documented single-claim scalar/elementwise slice (eBPF, x86-64, and aarch64).
@@ -8,11 +8,12 @@
 > explicit criteria under which that decision would flip, and the stop criteria for a
 > native-isel experiment if one is ever taken.
 
-Pairs with `BCIR_MASTER_ROADMAP.md` §5.5 (native backend — gated)
-("Native backend — only if warranted ⛔ DEFERRED"). The deeper feasibility/cost
-analysis and the phased build roadmap (the cost model behind this gate) live in
-`BCIR_NATIVE_BACKEND_FEASIBILITY.md`: this doc owns the GO/STOP *criteria*, that one
-owns the *cost model and the development plan*.
+This gate owns the GO/STOP criteria. The portfolio dependency is
+[`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §4.2; the machine/HAL gap register is
+[`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md) MC10–MC14;
+the deeper cost and feasibility study is
+[`BCIR_NATIVE_BACKEND_FEASIBILITY.md`](research/BCIR_NATIVE_BACKEND_FEASIBILITY.md).
+Those documents may rank experiments, but none can bypass this gate.
 
 ## 1. The decision
 
@@ -129,7 +130,7 @@ to path (1)) the moment any of these trips:
 The experiment ships **only** if it clears G1–G4 *and* never trips S1–S4 across the
 measurement window; otherwise the deliverable is the negative result + this doc.
 
-## 5. Current verdict
+## 5. Current verdict and evidence boundary
 
 Path (1) is implemented and tested for the documented single-claim scalar/elementwise
 slice, producing real objects (eBPF + x86-64 + aarch64). It is not arbitrary-graph AOT.
@@ -137,4 +138,6 @@ No seeded target meets the GO bar (every one has a resident LLVM
 backend). **Native isel stays deferred; the gate stands.** Revisit when a deployment
 target with no resident backend (G1) and a measured ≥ 2× economics case (G2) appears —
 most plausibly a bare PIM/CIM controller or a driver-resident eBPF JIT under a latency
-SLA.
+SLA. Local x86-64 can exercise its native object directly; aarch64 and eBPF are
+object/header validation unless a suitable execution host is present. A clean skip is
+not hardware evidence.

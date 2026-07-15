@@ -2,8 +2,8 @@
  *
  * The normative C view of the BCIR StreamPack wire format (the portable
  * artifact). The Python reference encoder/decoder is bcir/abi/streampack_abi.py;
- * docs/BCIR_STREAMPACK_ABI.md is the prose spec. The forthcoming freestanding C
- * runtime (Phase 8) loads this format with no libc dependency.
+ * docs/kernel/BCIR_STREAMPACK_ABI.md is the prose spec. The freestanding C runtime
+ * loads v1 through the append-only v2/v3 forms with no libc dependency.
  *
  * Wire format (little-endian):
  *   Header (64 bytes, cache-line aligned)  -- bcir_streampack_header

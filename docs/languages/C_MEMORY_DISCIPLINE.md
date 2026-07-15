@@ -8,7 +8,7 @@ and driver adapters.
 ## Runtime classes
 
 The machine-checked inventory is
-[`runtime/c/MEMORY_CLASSIFICATION.txt`](../runtime/c/MEMORY_CLASSIFICATION.txt).
+[`runtime/c/MEMORY_CLASSIFICATION.txt`](../../runtime/c/MEMORY_CLASSIFICATION.txt).
 Every production `bcir_*.c` translation unit belongs to exactly one class.
 
 | Class | Allocation and ownership contract |
@@ -44,7 +44,7 @@ forms while preserving their libc-default APIs.
 
 ## Direct driver ABI first
 
-[`bcir_runtime_channel.h`](../runtime/c/bcir_runtime_channel.h) is the append-only v1
+[`bcir_runtime_channel.h`](../../runtime/c/bcir_runtime_channel.h) is the append-only v1
 in-process hook table: open, claim, map, submit, sync/cancel, event delivery, and
 close. The value contract uses generation-tagged handles, mappings expressed as byte
 offsets and lengths, sequence numbers, and explicit queue policy. The allocation-free

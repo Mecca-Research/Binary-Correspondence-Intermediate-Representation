@@ -9,11 +9,11 @@ multi-device driver telemetry envelope and not StreamPack itself. **MIPI SyS-T**
 interop reference.
 
 This document freezes the v1 wire format. The reference encoder/decoder is
-[`bcir/telemetry_frame.py`](../bcir/telemetry_frame.py); the freestanding C twin is
-[`runtime/c/bcir_telemetry_frame.h`](../runtime/c/bcir_telemetry_frame.h) /
-[`bcir_telemetry_frame.c`](../runtime/c/bcir_telemetry_frame.c). Both rails must agree
-byte-for-byte — a differential test ([`bcir/tests/test_telemetry_frame.py`](../bcir/tests/test_telemetry_frame.py))
-plus the `#telemetry-frame` probe in [`tools/c/check_runtime.sh`](../tools/c/check_runtime.sh)
+[`bcir/telemetry_frame.py`](../../bcir/telemetry_frame.py); the freestanding C twin is
+[`runtime/c/bcir_telemetry_frame.h`](../../runtime/c/bcir_telemetry_frame.h) /
+[`bcir_telemetry_frame.c`](../../runtime/c/bcir_telemetry_frame.c). Both rails must agree
+byte-for-byte — a differential test ([`bcir/tests/test_telemetry_frame.py`](../../bcir/tests/test_telemetry_frame.py))
+plus the `#telemetry-frame` probe in [`tools/c/check_runtime.sh`](../../tools/c/check_runtime.sh)
 pin the round-trip and the byte-identical re-encode.
 
 ## Conventions
@@ -27,7 +27,7 @@ pin the round-trip and the byte-identical re-encode.
   claiming a current direct-copy implementation.
 - **CRC reuse:** the trailer CRC is **zlib-compatible CRC-32** (reflected, poly
   `0xEDB88320`). Python uses `zlib.crc32(body) & 0xFFFFFFFF`; the C twin reuses
-  `bcir_crc32` from [`runtime/c/bcir_runtime.c`](../runtime/c/bcir_runtime.c) (declared
+  `bcir_crc32` from [`runtime/c/bcir_runtime.c`](../../runtime/c/bcir_runtime.c) (declared
   `extern`, never reimplemented). The two agree byte-for-byte.
 - **Exactness:** reserved v1 flags must be zero. The strict Python `decode_frame` and C
   `bcir_tf_decode_exact` reject bytes after the one frame; the C prefix decoder
@@ -147,7 +147,7 @@ for (size_t i = 0; i < n; i++) uart_send(uart, out[i]);   /* eventual adapter */
 ```
 
 No UART is touched in T2. The repository's
-[`runtime/c/uart_regs.h`](../runtime/c/uart_regs.h) and
-[`runtime/c/cfront_driver_uart.c`](../runtime/c/cfront_driver_uart.c) are a compiler
+[`runtime/c/uart_regs.h`](../../runtime/c/uart_regs.h) and
+[`runtime/c/cfront_driver_uart.c`](../../runtime/c/cfront_driver_uart.c) are a compiler
 fixture containing a sample `uart_send`, not a channel-backed resident driver or a
 public UART API. The example above specifies the eventual byte-sink boundary only.

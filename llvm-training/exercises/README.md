@@ -12,7 +12,7 @@ backend/JIT diagnosis, and advanced BCIR verification/debugging. Follow the conv
   or a review checklist;
 - a standalone `*.solution.ll` file for executable LLVM IR answers, or a
   `*.solution.md` file for markdown-only review answers; and
-- a declarative grading manifest under [`../autograder/manifests/`](../autograder/manifests/)
+- a declarative grading manifest under [`../autograder/manifests/`](../autograder/manifests)
   that validates against
   [`exercise.schema.json`](../autograder/schema/exercise.schema.json).
 
@@ -156,7 +156,7 @@ If your LLVM tools are installed with a version suffix, replace `llvm-as` and
 
 ## Agent-training templates
 
-Reusable prompt templates live under [`templates/`](templates/). They are not
+Reusable prompt templates live under [`templates/`](templates). They are not
 numbered exercises and are intended to seed new agent-training tasks or reviews:
 
 - [`templates/lower-bcir-graph-fragment-1to1-registers.prompt.md`](templates/lower-bcir-graph-fragment-1to1-registers.prompt.md) — lower a BCIR graph fragment while preserving one-to-one logical-register correspondence.
@@ -169,7 +169,7 @@ numbered exercises and are intended to seed new agent-training tasks or reviews:
 
 ## Adversarial IR and fuzzing track
 
-The adversarial track lives under [`adversarial/`](adversarial/). Its
+The adversarial track lives under [`adversarial/`](adversarial). Its
 [README](adversarial/README.md) defines four explicit fixture classes:
 assemble-valid but semantically risky, intentionally invalid, target-specific,
 and metadata-preservation. It also supplies a threat model for poison, metadata,

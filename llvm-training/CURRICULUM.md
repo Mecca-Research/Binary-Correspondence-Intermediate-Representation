@@ -145,7 +145,7 @@ performance investigations where final binary behavior matters:
 4. [`15-binary-analysis/02-dynamic-traces-and-counters.md`](15-binary-analysis/02-dynamic-traces-and-counters.md) — trace/counter schemas and pairing runtime evidence with IR.
 5. [`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) — how profiles, LTO, ThinLTO, and BOLT can reshape the final binary.
 6. [`15-binary-analysis/03-interpretable-bcsa-features.md`](15-binary-analysis/03-interpretable-bcsa-features.md) — cheap, explainable BCSA triage before dense embeddings.
-7. Inspect [`15-binary-analysis/examples/`](15-binary-analysis/examples/) for the constant-time review IR and tiny trace/counter/feature schemas.
+7. Inspect [`15-binary-analysis/examples/`](15-binary-analysis/examples) for the constant-time review IR and tiny trace/counter/feature schemas.
 
 This path explicitly prevents an agent from treating static IR equivalence as a
 security or performance verdict.
@@ -221,9 +221,9 @@ fragments, runtime operations, or diagnostic hints directly to LLVM IR:
 5. [`bcir-mapping/04-ham-hints.md`](bcir-mapping/04-ham-hints.md) and [`bcir-mapping/10-metadata-and-diagnostics.md`](bcir-mapping/10-metadata-and-diagnostics.md) — HAM hints, prefetch intrinsics, custom metadata, and diagnostic preservation.
 6. [`bcir-mapping/05-runtime-abi.md`](bcir-mapping/05-runtime-abi.md), [`bcir-mapping/08-dragon-egg-operations.md`](bcir-mapping/08-dragon-egg-operations.md), and [`bcir-mapping/09-runtime-call-boundaries.md`](bcir-mapping/09-runtime-call-boundaries.md) — ABI structs, Dragon Egg runtime-owned operations, and wrapper calls.
 7. [`bcir-mapping/11-normal-forms-and-verification.md`](bcir-mapping/11-normal-forms-and-verification.md) — formal stage invariants, preservation/consumption tables, verifier placement, mapping-drift diagnostics, and semantic-negative fixtures.
-8. Run `./llvm-training/tools/verify-bcir-mapping.sh` and `./llvm-training/tools/verify-examples.sh` after editing any checked source-like `.bcir.txt` or lowered `.ll` output under [`bcir-mapping/examples/`](bcir-mapping/examples/).
+8. Run `./llvm-training/tools/verify-bcir-mapping.sh` and `./llvm-training/tools/verify-examples.sh` after editing any checked source-like `.bcir.txt` or lowered `.ll` output under [`bcir-mapping/examples/`](bcir-mapping/examples).
 
-Use this path together with the MLIR bridge path and [`18-mlir-lowering-to-llvm/`](18-mlir-lowering-to-llvm/) when the source representation
+Use this path together with the MLIR bridge path and [`18-mlir-lowering-to-llvm/`](18-mlir-lowering-to-llvm) when the source representation
 starts as a dialect operation rather than a source-like `.bcir.txt` prompt.
 
 ## BCIR lowering path
@@ -257,7 +257,7 @@ lowering, object emission, ORC ownership, symbol lookup, or relocation handling.
 1. [`12-backend-jit/01-codegen-pipeline.md`](12-backend-jit/01-codegen-pipeline.md) — place SelectionDAG/GlobalISel, `MachineInstr`, register allocation, MC, and object emission in order.
 2. [`12-backend-jit/02-tablegen.md`](12-backend-jit/02-tablegen.md) — identify generated target facts and avoid editing generated files.
 3. [`12-backend-jit/03-orc-jit.md`](12-backend-jit/03-orc-jit.md), [`12-backend-jit/05-orc-layers.md`](12-backend-jit/05-orc-layers.md), and [`12-backend-jit/04-mc-and-relocations.md`](12-backend-jit/04-mc-and-relocations.md) — trace missing symbols from `LLJIT` ownership through layers, JITLink, object symbols, and relocations.
-4. [`12-backend-jit/07-advanced-orc-runtime-integration.md`](12-backend-jit/07-advanced-orc-runtime-integration.md) — design BCIR-aware transform/compile layers, lazy and speculative materialization, hot re-JIT, resource retirement, remote execution, and native/Wasm/FPGA/RISC-V deployment. Cross-reference [`17-new-pass-manager/`](17-new-pass-manager/), [`18-mlir-lowering-to-llvm/`](18-mlir-lowering-to-llvm/), [`bcir-mapping/09-runtime-call-boundaries.md`](bcir-mapping/09-runtime-call-boundaries.md), and [`15-binary-analysis/`](15-binary-analysis/).
+4. [`12-backend-jit/07-advanced-orc-runtime-integration.md`](12-backend-jit/07-advanced-orc-runtime-integration.md) — design BCIR-aware transform/compile layers, lazy and speculative materialization, hot re-JIT, resource retirement, remote execution, and native/Wasm/FPGA/RISC-V deployment. Cross-reference [`17-new-pass-manager/`](17-new-pass-manager), [`18-mlir-lowering-to-llvm/`](18-mlir-lowering-to-llvm), [`bcir-mapping/09-runtime-call-boundaries.md`](bcir-mapping/09-runtime-call-boundaries.md), and [`15-binary-analysis/`](15-binary-analysis).
 5. Exercises [`035`](exercises/035-diagnose-missing-symbol-relocation.prompt.md)-[`037`](exercises/037-tablegen-to-mcinst-review.prompt.md) — practice backend/JIT failure triage.
 
 ## Binary-analysis evidence path
@@ -376,10 +376,10 @@ After the focused learning paths above, use this ordered capstone to connect the
 advanced chapters without collapsing their abstraction boundaries:
 
 1. Build and inspect a New PM pipeline with
-   [`17-new-pass-manager/`](17-new-pass-manager/), preserving BCIR analyses and
+   [`17-new-pass-manager/`](17-new-pass-manager), preserving BCIR analyses and
    placing normal-form verifiers at stage boundaries.
 2. Legalize BCIR/MLIR operations with
-   [`18-mlir-lowering-to-llvm/`](18-mlir-lowering-to-llvm/), including
+   [`18-mlir-lowering-to-llvm/`](18-mlir-lowering-to-llvm), including
    `ConversionTarget`, `TypeConverter`, materializations, Transform dialect
    sequencing, and metadata translation.
 3. Choose intrinsic, runtime-call, metadata, or target-pseudo dispatch using
@@ -387,7 +387,7 @@ advanced chapters without collapsing their abstraction boundaries:
    and [`19-hardware-aware/README.md`](19-hardware-aware/README.md).
 4. Preserve advanced call-site semantics—attributes, operand bundles,
    stackmaps/patchpoints, GC relocation, coroutine and convergence tokens—using
-   [`13-advanced-ir/`](13-advanced-ir/).
+   [`13-advanced-ir/`](13-advanced-ir).
 5. Integrate lazy compilation, replacement, retirement, and local/remote JITLink
    using [`12-backend-jit/07-advanced-orc-runtime-integration.md`](12-backend-jit/07-advanced-orc-runtime-integration.md).
 6. Validate the result with the artifact manifest, standalone LLVM verifier,

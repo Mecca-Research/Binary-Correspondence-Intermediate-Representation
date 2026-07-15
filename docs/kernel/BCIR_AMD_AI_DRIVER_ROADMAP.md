@@ -14,7 +14,7 @@ training/quant ecosystem, the framework supplements, and a scoping-only pass on 
 Linux-inheritance) with six load-bearing strategy claims put through adversarial verification
 (4 confirmed, 2 partial, 0 refuted). Every BCIR-side statement is `file:line`-anchored; AMD-side
 claims anchor to AMD/ROCm docs and project READMEs. This doc extends the **Part IX driver
-catalog** and consumes the **`BCIR_TRITON_COMPARATIVE_ANALYSIS.md`** verdict; it is a roadmap,
+catalog** and consumes the **[BCIR–Triton comparative-analysis](../research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md)** verdict; it is a roadmap,
 not a build — each device class gets its own `BCIR_<DEV>_DRIVER_BLUEPRINT.md` authored in its
 own research session before its slices (the Part IX per-driver contract).
 

@@ -13,10 +13,10 @@
 > this document is that capstone.
 >
 > Companion to [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](BCIR_ML_AI_INTEGRATION_ROADMAP.md) (the
-> phase ladder), [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md) (the pillar audit),
-> [`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md) (the C++ boundary), and
-> [`PARITY.md`](PARITY.md) (the dual-rail oracle↔law contract). Counts are in
-> [`STATUS.md`](STATUS.md); prose links there rather than hard-coding numbers.
+> phase ladder), [`VISION_ALIGNMENT_AUDIT.md`](../VISION_ALIGNMENT_AUDIT.md) (the pillar audit),
+> [`CPP_HANDOFF_BOUNDARY.md`](../languages/CPP_HANDOFF_BOUNDARY.md) (the C++ boundary), and
+> [`PARITY.md`](../PARITY.md) (the dual-rail oracle↔law contract). Counts are in
+> [`STATUS.md`](../STATUS.md); prose links there rather than hard-coding numbers.
 
 ---
 
@@ -88,7 +88,7 @@ Each criterion is one axis. A component's genuine language is read off where it 
 The **decision path** — the R1–R23 MLIR law rail, applicable Python checks, and the C frontend's
 scoped R1–R18 twin — is deterministic, integer/Q8, and multi-railed: the Python oracle
 is the conformance reference where surfaces overlap, the C twin is byte-identical there, and the MLIR pass is the law (see
-[`PARITY.md`](PARITY.md)). Telemetry and learned signals inform plan *cost* (they feed `theta` and
+[`PARITY.md`](../PARITY.md)). Telemetry and learned signals inform plan *cost* (they feed `theta` and
 the CostVector) but **never** a legality verdict — a confidence can never become a verdict; a
 diagnostic never carries a confidence.
 
@@ -148,7 +148,7 @@ axis. A real compiler IR + passes is the right home for structural/legality reas
 
 Where C's flat, registry-oriented, freestanding rail runs out of abstractions — OO + virtual
 dispatch, the STL, exceptions + RAII, a runtime, vendor SDKs — the kernel lowers to C++. Two
-concrete crossings exist: the **C↔C++ hand-off scaffold** ([`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md),
+concrete crossings exist: the **C↔C++ hand-off scaffold** ([`CPP_HANDOFF_BOUNDARY.md`](../languages/CPP_HANDOFF_BOUNDARY.md),
 `runtime/cpp/`) for dynamic-graph topology and distributed (MPI/NCCL) orchestration; and the
 **SYCL backend**, which is a *single-source C++ compiler mode* (`-fsycl`), **not** a `c.call.libm:`
 FFI edge — `bcir/kbcir/sycl_saxpy.py` is explicit that "SYCL's dynamic runtime scheduler lives
@@ -243,7 +243,7 @@ places the *claim* on MLIR; Criterion 3 places the *kernel* on C (exact) or the 
 > Honest note on the `gem.*` Python files: their docstrings call the MLIR wiring a "separate
 > follow-up," but the MLIR law ops themselves are *built* — `BCIRGEMOps.td` defines `gem.matmul`,
 > `gem.activation`, `gem.conv`, `gem.attention`, `gem.fused_matmul_activation`, `gem.layout_pivot`,
-> `gem.contention`, each `hasVerifier` — and [`VISION_ALIGNMENT_AUDIT.md`](VISION_ALIGNMENT_AUDIT.md)
+> `gem.contention`, each `hasVerifier` — and [`VISION_ALIGNMENT_AUDIT.md`](../VISION_ALIGNMENT_AUDIT.md)
 > (pillars 3a/3b/3c/5c) records them as "ported to the MLIR law rail." So the claim genuinely lives
 > on MLIR today; the Python file is its oracle prototype.
 
@@ -288,7 +288,7 @@ external kernel; a portable reference fallback keeps CI free of the library. All
 
 | Component | Current home | Genuine home | Crit. | Justification |
 |---|---|---|---|---|
-| The hand-off orchestrator (`runtime/cpp/bcir_orchestrator.{hpp,cpp}`) | C++ scaffold | **C++** | 5 | Dynamic-graph topology + distributed (MPI/NCCL) orchestration need OO/virtual dispatch, the STL, exceptions+RAII — the abstractions the flat C rail deliberately lacks. It consumes a frozen artifact, never alters it ([`CPP_HANDOFF_BOUNDARY.md`](CPP_HANDOFF_BOUNDARY.md)). |
+| The hand-off orchestrator (`runtime/cpp/bcir_orchestrator.{hpp,cpp}`) | C++ scaffold | **C++** | 5 | Dynamic-graph topology + distributed (MPI/NCCL) orchestration need OO/virtual dispatch, the STL, exceptions+RAII — the abstractions the flat C rail deliberately lacks. It consumes a frozen artifact, never alters it ([`CPP_HANDOFF_BOUNDARY.md`](../languages/CPP_HANDOFF_BOUNDARY.md)). |
 | The SYCL backend — `sycl_saxpy.py`/`sycl_reduce.py` (the oracle modules) + `emit_sycl_*_c` (saxpy/reduce/matmul) + `lower/sycl_dispatch.py` | Python oracle + C++ emit | oracle → **Python**; kernel → **C++** (`-fsycl` single-source, `parallel_for`); dispatcher → **C++** above G8 | 5 | SYCL is a C++ *compiler mode*, **not** a `c.call.libm:` edge (no link-flag rule). Its dynamic runtime scheduler lives above the deterministic C rail and must never touch the legality path. Portable scalar fallback does the real work on CI. |
 
 ---
@@ -330,8 +330,9 @@ rails).
   the roadmap §6 and the audit backlog). **Gate:** each new wrap needs the R17 bridge at the seam + a
   portable fallback + a parity gate — pure breadth, not new capability.
 - **The SYCL device path → resident driver.** The `-fsycl` path self-skips on CI (no device); the
-  portable scalar fallback does the real work. **Gate:** a real heterogeneous device + a resident
-  driver (master-roadmap Phase E) before the device path is load-bearing. Stays above G8 regardless.
+  portable scalar fallback does the real work. **Gate:** a real heterogeneous device plus a resident
+  driver under the master roadmap's §4.3/§4.4 rails before the device path is load-bearing. Stays
+  above G8 regardless.
 - **The C++ dynamic/distributed backends.** The hand-off contract + single-node seam are real; the
   `DynamicGraphOrchestrator`/`DistributedOrchestrator` dispatch paths are documented STUBS. **Gate:**
   multi-node hardware + an MPI/NCCL dependency (deliberately not added). The *sharding logic* is

@@ -3,7 +3,7 @@
 > ⚠️ **Retired / historical material.** This guide references the early **LLVM-IR-schema runtime**
 > (`runtime/llvm/`, since removed). BCIR's current representation is the **MLIR dialect**
 > (`mlir/include/BCIR/`) + the **C runtime** (`runtime/c/`); see `docs/PARITY.md`,
-> `docs/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
+> `docs/kernel/HETEROGENEOUS_CHANNELS.md`, and `docs/BCIR_LANGREF.md`. Kept for historical context — do
 > **not** follow the `runtime/llvm/` paths below.
 <!-- allow-retired-paths -->
 
@@ -109,7 +109,7 @@ generator was wired into CI.
 
 ## Adversarial review and fuzzing track
 
-The [adversarial exercise track](../exercises/adversarial/) turns these pitfalls
+The [adversarial exercise track](../exercises/adversarial) turns these pitfalls
 into classified seeds. It explicitly separates verifier-valid semantic hazards,
 expected-invalid inputs, target-specific cases, and metadata-preservation tests.
 Use it when a bug can survive `llvm-as`, when reduction might delete the evidence,

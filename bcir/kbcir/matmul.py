@@ -3,7 +3,8 @@
 A matmul is a grid of dot products (the A1.2 ``quantize.quantized_dot`` primitive). Its REALIZATION --
 tile sizes, loop order, layout -- does not change the result (this module verifies every realization
 against a single reference) but DOES change the cost, and K_BCIR picks the realization by a deterministic
-analytic search. Per the SOTA scan (docs/research/AI_SUBSTRATE_SOTA.md, Pillar 2), that search is
+analytic search. Per the closure register (docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md,
+section 6), that search is
 DUAL-SEMIRING: ``min,+`` composes per-stage costs ALONG a candidate realization and selects the cheapest
 candidate, while ``max,+`` takes the binding ROOFLINE bottleneck (compute vs memory) WITHIN a candidate --
 a pure min,+ shortest-path would miss that the bottleneck is a max over competing resources (the scan's
@@ -153,7 +154,8 @@ def cost_vector(plan: "TilePlan", *, quant_bits: int = 0) -> CostVector:
 
 def bottleneck(cv: CostVector) -> int:
     """The max,+ roofline bottleneck of a cost vector: the binding resource among compute and memory
-    (cf. SOTA scan, Pillar 2 -- the bottleneck is a max over competing rooflines, not a min,+ sum)."""
+    (cf. the ML roadmap closure register -- the bottleneck is a max over competing rooflines,
+    not a min,+ sum)."""
     return max(cv.v[COMPUTE], cv.v[MEMORY])
 
 
@@ -161,7 +163,7 @@ def plan_matmul(M: int, N: int, K: int, target: TargetProfile | None = None) -> 
     """K_BCIR's deterministic tile/loop-order choice. For every candidate (tile, loop-order): compute its
     roofline BOTTLENECK = max(compute, mem) (the max,+ step), prefer cache-fitting plans, and select the
     minimum-bottleneck candidate (the min,+ step). Ties break on a stable key so the plan is reproducible
-    (a deliberate edge over autotuners -- see the SOTA scan, Pillar 2)."""
+    (a deliberate reproducibility property -- see the ML roadmap closure register)."""
     target = target or TargetProfile.for_host()
     best: TilePlan | None = None
     for lo in _LOOP_ORDERS:
