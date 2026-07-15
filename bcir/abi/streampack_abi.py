@@ -25,6 +25,7 @@ reader accepts both. v1 readers reject newer versions, by contract.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import struct
 import zlib
 
@@ -51,23 +52,52 @@ class AbiError(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class WireSpan:
+    """One exact, non-overlapping StreamPack wire region."""
+
+    kind: str
+    index: int | None
+    name: str
+    offset: int
+    length: int
+
+    @property
+    def end(self) -> int:
+        return self.offset + self.length
+
+
+@dataclass(frozen=True)
+class StreamPackInspection:
+    """Validated pack plus the byte spans used by listing/debug tools."""
+
+    pack: StreamPack
+    version: int
+    flags: int
+    crc32: int
+    length: int
+    spans: tuple[WireSpan, ...]
+
+
 class _Writer:
     def __init__(self) -> None:
         self.buf = bytearray()
 
     def u8(self, v: int) -> None:
-        self.buf += struct.pack("<B", v & 0xFF)
+        self.buf += struct.pack("<B", _checked_uint("u8", v, 8))
 
     def u16(self, v: int) -> None:
-        self.buf += struct.pack("<H", v & 0xFFFF)
+        self.buf += struct.pack("<H", _checked_uint("u16", v, 16))
 
     def u32(self, v: int) -> None:
-        self.buf += struct.pack("<I", v & 0xFFFFFFFF)
+        self.buf += struct.pack("<I", _checked_uint("u32", v, 32))
 
     def u64(self, v: int) -> None:
-        self.buf += struct.pack("<Q", v & 0xFFFFFFFFFFFFFFFF)
+        self.buf += struct.pack("<Q", _checked_uint("u64", v, 64))
 
     def s(self, text: str) -> None:
+        if not isinstance(text, str):
+            raise AbiError(f"wire string must be str, got {type(text).__name__}")
         raw = text.encode("utf-8")
         self.u16(len(raw))
         self.buf += raw
@@ -86,6 +116,48 @@ class _Writer:
         self.u16(len(xs))
         for x in xs:
             self.s(x)
+
+
+def _checked_uint(name: str, value, bits: int) -> int:
+    """Return one exactly representable unsigned wire integer; never mask/wrap."""
+    if (not isinstance(value, int) or isinstance(value, bool)
+            or not 0 <= value < (1 << bits)):
+        raise AbiError(f"{name} value must be an unsigned {bits}-bit integer, got {value!r}")
+    return value
+
+
+def _validate_encode_contract(pack: StreamPack) -> None:
+    """Reject a model that the frozen wire cannot represent without changing meaning."""
+    _checked_uint("topo_gen", pack.topo_gen, 32)
+    _checked_uint("map_gen", pack.map_gen, 32)
+    _checked_uint("data_gen", pack.data_gen, 32)
+    _checked_uint("n_segments", len(pack.segments), 32)
+    _checked_uint("n_prefetches", len(pack.prefetches), 32)
+    _checked_uint("n_blocks", len(pack.blocks), 32)
+    _checked_uint("n_trace", len(pack.trace_notes), 32)
+    depth = _checked_uint("pipeline_depth", pack.pipeline_depth, 16)
+    if depth == 0:
+        raise AbiError("pipeline_depth must be in [1, 65535]")
+    for index, seg in enumerate(pack.segments):
+        if isinstance(seg.lane, bool):
+            raise AbiError(f"segment[{index}] lane must be a Lane value")
+        try:
+            Lane(seg.lane)
+        except (TypeError, ValueError) as exc:
+            raise AbiError(f"segment[{index}] has unknown lane {seg.lane!r}") from exc
+        width = _checked_uint(f"segment[{index}].width", seg.width, 32)
+        if width == 0 or width & (width - 1):
+            raise AbiError(
+                f"segment[{index}] width must be a nonzero power of two, got {width}")
+        if not isinstance(seg.dispatch, str) or seg.dispatch not in _DISPATCH_WIRE:
+            raise AbiError(
+                f"segment[{index}] has unknown dispatch {seg.dispatch!r}; "
+                f"expected one of {sorted(_DISPATCH_WIRE)}")
+    for index, pf in enumerate(pack.prefetches):
+        if (not isinstance(pf.buffers, int) or isinstance(pf.buffers, bool)
+                or pf.buffers not in (1, 2)):
+            raise AbiError(
+                f"prefetch[{index}] buffers must be 1 or 2, got {pf.buffers!r}")
 
 
 class _Reader:
@@ -125,6 +197,49 @@ class _Reader:
         return tuple(self.s() for _ in range(self.u16()))
 
 
+# These four writers are the ONE wire-record definition used by both `encode` and the MC1
+# inspector. Keeping layout recovery on the writer rail avoids a second parser drifting from the
+# frozen ABI whenever an append-only version adds a tail field.
+def _write_segment(w: _Writer, seg: LaneSegment, version: int) -> None:
+    w.s(seg.name)
+    w.u64(seg.claim_id)
+    w.u32(seg.phase_id)
+    w.u8(int(seg.lane))
+    w.u32(seg.width)
+    w.u32(0)  # stride_k reserved on the segment record (carried per-claim)
+    w.s(seg.opcode)
+    w.u32_array(seg.reads)
+    w.u32_array(seg.writes)
+    w.s(seg.prefetch or "")
+    w.s_array(seg.fence_before)
+    w.s_array(seg.fence_after)
+    if version >= 3:
+        w.u8(_DISPATCH_WIRE[seg.dispatch])
+        w.s(seg.channel)
+
+
+def _write_prefetch(w: _Writer, pf: Prefetch, version: int) -> None:
+    w.s(pf.name)
+    w.u32(pf.distance)
+    w.u32_array(pf.targets)
+    w.s(pf.hint)
+    w.s(pf.pattern)
+    if version >= 2:
+        w.u8(pf.buffers)
+
+
+def _write_block(w: _Writer, blk: Block) -> None:
+    w.u64(blk.base)
+    w.u64(blk.count)
+    w.u64_array(blk.strides)
+
+
+def _write_trace(w: _Writer, note: TraceNote) -> None:
+    w.u64(note.claim_id)
+    w.u64(note.src_hash)
+    w.u64(note.trace_hash)
+
+
 def encode(pack: StreamPack) -> bytes:
     """Serialize a StreamPack (CRC trailer); emits the lowest carrying version.
 
@@ -133,6 +248,7 @@ def encode(pack: StreamPack) -> bytes:
     dispatch/channel (any non-default `dispatch`/`channel`) encodes as v3; one that
     uses neither v2 nor v3 features stays byte-identical frozen v1.
     """
+    _validate_encode_contract(pack)
     needs_v2 = pack.pipeline_depth > 1 or any(pf.buffers != 1 for pf in pack.prefetches)
     needs_v3 = any(seg.dispatch != _DISPATCH_DEFAULT or seg.channel != _CHANNEL_DEFAULT
                    for seg in pack.segments)
@@ -143,51 +259,26 @@ def encode(pack: StreamPack) -> bytes:
         len(pack.segments), len(pack.prefetches), len(pack.blocks), len(pack.trace_notes),
     )
     if version >= 2:
-        header += struct.pack("<H", max(1, pack.pipeline_depth))
+        header += struct.pack("<H", pack.pipeline_depth)
     header = header + b"\x00" * (_HEADER_SIZE - len(header))
 
     w = _Writer()
     w.s(pack.source_plan)
     for seg in pack.segments:
-        w.s(seg.name)
-        w.u64(seg.claim_id)
-        w.u32(seg.phase_id)
-        w.u8(int(seg.lane))
-        w.u32(seg.width)
-        w.u32(0)  # stride_k reserved on the segment record (carried per-claim)
-        w.s(seg.opcode)
-        w.u32_array(seg.reads)
-        w.u32_array(seg.writes)
-        w.s(seg.prefetch or "")
-        w.s_array(seg.fence_before)
-        w.s_array(seg.fence_after)
-        if version >= 3:
-            # v3 append-only segment-record tail: dispatch (u8 enum) + channel (str).
-            w.u8(_DISPATCH_WIRE.get(seg.dispatch, 0))
-            w.s(seg.channel)
+        _write_segment(w, seg, version)
     for pf in pack.prefetches:
-        w.s(pf.name)
-        w.u32(pf.distance)
-        w.u32_array(pf.targets)
-        w.s(pf.hint)
-        w.s(pf.pattern)
-        if version >= 2:
-            w.u8(max(1, pf.buffers))  # v2 append-only record tail
+        _write_prefetch(w, pf, version)
     for blk in pack.blocks:
-        w.u64(blk.base)
-        w.u64(blk.count)
-        w.u64_array(blk.strides)
+        _write_block(w, blk)
     for t in pack.trace_notes:
-        w.u64(t.claim_id)
-        w.u64(t.src_hash)
-        w.u64(t.trace_hash)
+        _write_trace(w, t)
 
     body = header + bytes(w.buf)
     return body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
 
 
 def decode(data: bytes) -> StreamPack:
-    """Parse the wire format (v1 or v2) back into a StreamPack (magic/version/CRC)."""
+    """Parse the v1..v3 wire format back into a StreamPack (magic/version/CRC)."""
     if len(data) < _HEADER_SIZE + 4:
         raise AbiError("buffer too small for a StreamPack")
     magic, version, _flags, topo, mapg, datag, nseg, npf, nblk, ntr = _HEADER.unpack(
@@ -201,12 +292,18 @@ def decode(data: bytes) -> StreamPack:
     if (zlib.crc32(body) & 0xFFFFFFFF) != crc:
         raise AbiError("CRC mismatch (corrupt StreamPack)")
     depth = struct.unpack_from("<H", data, _PIPELINE_OFF)[0] if version >= 2 else 1
+    if depth == 0:
+        raise AbiError("pipeline_depth must be in [1, 65535]")
 
     r = _Reader(data, _HEADER_SIZE)
     pack = StreamPack(source_plan=r.s(), topo_gen=topo, map_gen=mapg, data_gen=datag,
-                      pipeline_depth=max(1, depth))
+                      pipeline_depth=depth)
     for _ in range(nseg):
-        name = r.s(); claim_id = r.u64(); phase_id = r.u32(); lane = Lane(r.u8())
+        name = r.s(); claim_id = r.u64(); phase_id = r.u32(); raw_lane = r.u8()
+        try:
+            lane = Lane(raw_lane)
+        except ValueError as exc:
+            raise AbiError(f"unknown segment lane code {raw_lane}") from exc
         width = r.u32(); _stride_k = r.u32(); opcode = r.s()
         # Range gate: width must be a nonzero power of two (docs/BCIR_STREAMPACK_ABI.md, "BCIR_ERR_WIDTH").
         # The C runtime (bcir_runtime.c seg_range_ok) rejects a non-power-of-two width at decode time; the
@@ -229,12 +326,65 @@ def decode(data: bytes) -> StreamPack:
             name=name, claim_id=claim_id, phase_id=phase_id, lane=lane, width=width,
             opcode=opcode, reads=reads, writes=writes, prefetch=prefetch,
             fence_before=fb, fence_after=fa, dispatch=dispatch, channel=channel))
-    for _ in range(npf):
+    for index in range(npf):
+        name = r.s(); distance = r.u32(); targets = r.u32_array()
+        hint = r.s(); pattern = r.s(); buffers = r.u8() if version >= 2 else 1
+        if buffers not in (1, 2):
+            raise AbiError(
+                f"prefetch[{index}] buffers must be 1 or 2, got {buffers}")
         pack.prefetches.append(Prefetch(
-            name=r.s(), distance=r.u32(), targets=r.u32_array(), hint=r.s(), pattern=r.s(),
-            buffers=(r.u8() if version >= 2 else 1)))
+            name=name, distance=distance, targets=targets, hint=hint,
+            pattern=pattern, buffers=buffers))
     for _ in range(nblk):
         pack.blocks.append(Block(base=r.u64(), count=r.u64(), strides=r.u64_array()))
     for _ in range(ntr):
         pack.trace_notes.append(TraceNote(claim_id=r.u64(), src_hash=r.u64(), trace_hash=r.u64()))
+    if r.pos != len(data) - 4:
+        raise AbiError(
+            f"unexpected trailing body bytes: decoded through offset {r.pos}, "
+            f"CRC trailer starts at {len(data) - 4}")
     return pack
+
+
+def inspect_stream_pack(data: bytes) -> StreamPackInspection:
+    """Validate `data` and recover exact record spans for native listing tools.
+
+    Span lengths are generated through the same record writers as `encode`; this is intentionally
+    not a second wire parser. `decode` first validates magic/version/CRC/ranges and rejects trailing
+    bytes, after which the deterministic writer sizes partition the original blob exactly.
+    """
+    pack = decode(data)
+    _magic, version, flags, *_counts = _HEADER.unpack(data[:_HEADER.size])
+    spans: list[WireSpan] = [WireSpan("header", None, "header", 0, _HEADER_SIZE)]
+    cursor = _HEADER_SIZE
+
+    def append(kind: str, index: int | None, name: str, write) -> None:
+        nonlocal cursor
+        writer = _Writer()
+        write(writer)
+        size = len(writer.buf)
+        spans.append(WireSpan(kind, index, name, cursor, size))
+        cursor += size
+
+    append("source_plan", None, pack.source_plan, lambda w: w.s(pack.source_plan))
+    for index, seg in enumerate(pack.segments):
+        append("segment", index, seg.name,
+               lambda w, seg=seg: _write_segment(w, seg, version))
+    for index, pf in enumerate(pack.prefetches):
+        append("prefetch", index, pf.name,
+               lambda w, pf=pf: _write_prefetch(w, pf, version))
+    for index, block in enumerate(pack.blocks):
+        append("block", index, f"block{index}",
+               lambda w, block=block: _write_block(w, block))
+    for index, note in enumerate(pack.trace_notes):
+        append("trace", index, f"claim{note.claim_id}",
+               lambda w, note=note: _write_trace(w, note))
+
+    trailer_offset = len(data) - 4
+    if cursor != trailer_offset:
+        raise AbiError(
+            f"internal layout mismatch: record writers end at {cursor}, "
+            f"CRC trailer starts at {trailer_offset}")
+    spans.append(WireSpan("crc32", None, "crc32", trailer_offset, 4))
+    crc = struct.unpack_from("<I", data, trailer_offset)[0]
+    return StreamPackInspection(pack, version, flags, crc, len(data), tuple(spans))

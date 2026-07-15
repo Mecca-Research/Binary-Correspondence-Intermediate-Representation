@@ -116,6 +116,13 @@ def BCIR_CtrlReg : BCIR_Enum<"CtrlReg", "x86-64 control register", [
   I32EnumAttrCase<"CR8", 8, "cr8">]>;
 def BCIR_CtrlRegAttr : BCIR_EnumAttr<BCIR_CtrlReg, "ctrl_reg">;
 
+// --- x86 descriptor table (boot/interrupt asm edge) ---
+// The two architectural descriptor-table registers accepted by lgdt/lidt. The task register is
+// deliberately a separate typed op because ltr consumes a segment selector, not a descriptor pointer.
+def BCIR_DescriptorTable : BCIR_Enum<"DescriptorTable", "x86 descriptor-table register", [
+  I32EnumAttrCase<"GDT", 0, "gdt">, I32EnumAttrCase<"IDT", 1, "idt">]>;
+def BCIR_DescriptorTableAttr : BCIR_EnumAttr<BCIR_DescriptorTable, "descriptor_table">;
+
 // --- Precision contract ---
 def BCIR_PrecisionAttr : BCIR_Attr<"Precision", "precision"> {
   let summary = "Numerical precision and tolerance contract";

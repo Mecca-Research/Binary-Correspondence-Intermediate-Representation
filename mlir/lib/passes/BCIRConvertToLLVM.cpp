@@ -23,6 +23,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <array>
@@ -125,6 +126,266 @@ translateGccAsmTemplate(StringRef tmpl,
 }
 
 namespace {
+
+// Append one independently-authored module-assembly fragment without replacing fragments installed by
+// another lowering. The LLVM dialect deliberately represents `llvm.module_asm` as an array of strings;
+// preserving that structure keeps independently lowered entry/trampoline symbols deterministic without
+// merging their text. A non-array pre-existing attribute is malformed and is rejected before mutating it.
+static LogicalResult appendModuleAsm(Operation *source, StringRef assembly,
+                                     PatternRewriter &rewriter) {
+  auto module = source->getParentOfType<::mlir::ModuleOp>();
+  if (!module)
+    return source->emitError("x86 top-level assembly edge must be nested in a builtin module");
+  StringRef attrName = LLVM::LLVMDialect::getModuleLevelAsmAttrName();
+  SmallVector<Attribute, 4> fragments;
+  if (Attribute current = module->getAttr(attrName)) {
+    auto array = dyn_cast<ArrayAttr>(current);
+    if (!array)
+      return source->emitError("existing llvm.module_asm attribute is not an array");
+    for (Attribute fragment : array)
+      fragments.push_back(fragment);
+  }
+  fragments.push_back(rewriter.getStringAttr(assembly));
+  rewriter.modifyOpInPlace(module, [&] {
+    module->setAttr(attrName, rewriter.getArrayAttr(fragments));
+  });
+  return success();
+}
+
+// Intel-defined exception vectors for which the processor pushes an error code before entering the
+// handler. Keeping this architectural fact in the lowering removes a caller-controlled boolean that
+// could shift the entire saved frame and turn iretq into a corrupted return. Reserved vectors not in
+// this list use the ordinary no-error-code shape.
+static bool x86VectorHasErrorCode(int64_t vector) {
+  switch (vector) {
+  case 8:  // #DF
+  case 10: // #TS
+  case 11: // #NP
+  case 12: // #SS
+  case 13: // #GP
+  case 14: // #PF
+  case 17: // #AC
+  case 21: // #CP
+  case 29: // #VC
+  case 30: // #SX
+    return true;
+  default:
+    return false;
+  }
+}
+
+struct EntryOpLowering : public OpRewritePattern<EntryOp> {
+  using OpRewritePattern<EntryOp>::OpRewritePattern;
+
+  LogicalResult
+  matchAndRewrite(EntryOp op, PatternRewriter &rewriter) const override {
+    std::string assembly;
+    llvm::raw_string_ostream out(assembly);
+    StringRef entry = op.getSymName();
+    out << ".text\n"
+        << ".p2align 4\n"
+        << ".globl " << entry << "\n"
+        << ".type " << entry << ",@function\n"
+        << entry << ":\n"
+        // Do not permit a maskable interrupt to observe the old/partially switched
+        // stack. Reset starts with IF clear, but this long-mode handoff is also usable
+        // after firmware or an earlier stage, so establish the invariant explicitly.
+        << "  cli\n"
+        << "  leaq " << op.getStackTop() << "(%rip), %rsp\n"
+        << "  andq $-16, %rsp\n"
+        // A normal SysV x86-64 callee observes RSP == 8 (mod 16) after CALL has pushed a return
+        // address. This edge tail-jumps, so push a zero sentinel for the missing slot explicitly. The
+        // target is required to be noreturn; an accidental return deterministically faults at zero.
+        << "  pushq $0\n"
+        << "  xorq %rbp, %rbp\n"
+        << "  cld\n"
+        << "  jmp " << op.getCEntry() << "\n"
+        << ".size " << entry << ", .-" << entry << "\n";
+    out.flush();
+    if (failed(appendModuleAsm(op, assembly, rewriter)))
+      return failure();
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct DescriptorLoadOpLowering : public OpConversionPattern<DescriptorLoadOp> {
+  using OpConversionPattern<DescriptorLoadOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(DescriptorLoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    StringRef instruction =
+        op.getTable() == DescriptorTable::GDT ? "lgdt ($0)" : "lidt ($0)";
+    SmallVector<NamedAttribute, 3> attrs = {
+        rewriter.getNamedAttr("asm_string", rewriter.getStringAttr(instruction)),
+        rewriter.getNamedAttr("constraints", rewriter.getStringAttr("r,~{memory}")),
+        rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
+    };
+    rewriter.create<LLVM::InlineAsmOp>(op.getLoc(), TypeRange{},
+                                       ValueRange{adaptor.getAddr()}, attrs);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct TaskRegisterLoadOpLowering
+    : public OpConversionPattern<TaskRegisterLoadOp> {
+  using OpConversionPattern<TaskRegisterLoadOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(TaskRegisterLoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    SmallVector<NamedAttribute, 3> attrs = {
+        rewriter.getNamedAttr("asm_string", rewriter.getStringAttr("ltr ${0:w}")),
+        rewriter.getNamedAttr("constraints", rewriter.getStringAttr("r,~{memory}")),
+        rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
+    };
+    rewriter.create<LLVM::InlineAsmOp>(op.getLoc(), TypeRange{},
+                                       ValueRange{adaptor.getSelector()}, attrs);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct SegmentReloadOpLowering : public OpConversionPattern<SegmentReloadOp> {
+  using OpConversionPattern<SegmentReloadOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(SegmentReloadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // A far return is the long-mode mechanism for reloading CS. The `${:uid}` local-label suffix is
+    // LLVM's inline-asm uniqueness escape, so cloning/inlining this op cannot create duplicate labels.
+    Value code64 = rewriter.create<LLVM::ZExtOp>(
+        op.getLoc(), rewriter.getI64Type(), adaptor.getCodeSelector());
+    StringRef assembly =
+        "movw ${0:w}, %ds; movw ${0:w}, %es; movw ${0:w}, %ss; "
+        "pushq ${1:q}; leaq .Lbcir_seg_${:uid}(%rip), %rax; pushq %rax; "
+        "lretq; .Lbcir_seg_${:uid}:";
+    SmallVector<NamedAttribute, 3> attrs = {
+        rewriter.getNamedAttr("asm_string", rewriter.getStringAttr(assembly)),
+        rewriter.getNamedAttr("constraints",
+                              rewriter.getStringAttr("r,r,~{rax},~{memory}")),
+        rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
+    };
+    rewriter.create<LLVM::InlineAsmOp>(
+        op.getLoc(), TypeRange{},
+        ValueRange{adaptor.getDataSelector(), code64}, attrs);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct InterruptTrampolineOpLowering
+    : public OpRewritePattern<InterruptTrampolineOp> {
+  using OpRewritePattern<InterruptTrampolineOp>::OpRewritePattern;
+
+  LogicalResult
+  matchAndRewrite(InterruptTrampolineOp op,
+                  PatternRewriter &rewriter) const override {
+    int64_t vector = static_cast<int32_t>(op.getVector());
+    StringRef symbol = op.getSymName();
+    std::string assembly;
+    llvm::raw_string_ostream out(assembly);
+    out << ".text\n"
+        << ".p2align 4\n"
+        << ".globl " << symbol << "\n"
+        << ".type " << symbol << ",@function\n"
+        << symbol << ":\n"
+        // The hardware frame retains the interrupted IF value for iretq. Clear
+        // the live IF here as well so a trap-gate descriptor cannot admit a
+        // maskable interrupt while the normalized/private frame is incomplete.
+        << "  cli\n";
+
+    // Normalize the CPU frame. Hardware-error vectors already enter with `error,rip,cs,rflags`; all
+    // other vectors receive a synthetic zero error. Pushing the vector then gives one stable shape.
+    if (!x86VectorHasErrorCode(vector))
+      out << "  pushq $0\n";
+    out << "  pushq $" << vector << "\n";
+
+    // Save every SysV integer GPR. The resulting fixed AMD64 long-mode frame begins
+    // r15,r14,...,rax,vector,error,rip,cs,rflags,rsp,ss, and its address is the sole C argument in
+    // RDI. R13 is callee-saved by SysV;
+    // after saving its interrupted value, use it as immutable trampoline-private state recording the
+    // original privilege class. Only ring 0 and ring 3 are supported. The exit checks that the handler
+    // did not change this class: even though IRETQ always consumes SS:RSP in long mode, changing class
+    // would violate the selector validation, return-protection, and SWAPGS policy established on entry.
+    out << "  pushq %rax\n"
+        << "  pushq %rbx\n"
+        << "  pushq %rcx\n"
+        << "  pushq %rdx\n"
+        << "  pushq %rbp\n"
+        << "  pushq %rsi\n"
+        << "  pushq %rdi\n"
+        << "  pushq %r8\n"
+        << "  pushq %r9\n"
+        << "  pushq %r10\n"
+        << "  pushq %r11\n"
+        << "  pushq %r12\n"
+        << "  pushq %r13\n"
+        << "  pushq %r14\n"
+        << "  pushq %r15\n"
+        << "  movq 144(%rsp), %r13\n"
+        << "  andq $3, %r13\n"
+        << "  testq %r13, %r13\n"
+        << "  jz 1f\n"
+        << "  cmpq $3, %r13\n"
+        << "  jne 9f\n";
+    if (op.getSwapgsOnUser())
+      out << "  swapgs\n";
+    out << "1:\n";
+    if (op.getSwapgsOnUser())
+      out
+          // Fence both sides of the conditional decision before a C handler may
+          // dereference GS-relative per-CPU state (Spectre-v1 swapgs boundary).
+          << "  lfence\n";
+    out << "  movq %rsp, %rdi\n"
+        << "  movq %rsp, %r12\n"
+        << "  andq $-16, %rsp\n"
+        << "  cld\n"
+        << "  call " << op.getHandler() << "\n"
+        << "  movq %r12, %rsp\n"
+        // The C body may edit a selector while preserving its RPL, but it must
+        // not change the ring-0/ring-3 frame class owned by the trampoline.
+        << "  movq 144(%rsp), %rax\n"
+        << "  andq $3, %rax\n"
+        << "  cmpq %r13, %rax\n"
+        << "  jne 9f\n";
+    if (op.getSwapgsOnUser())
+      out << "  testq %r13, %r13\n"
+          << "  jz 2f\n"
+          << "  swapgs\n"
+          << "2:\n";
+    out << "  popq %r15\n"
+        << "  popq %r14\n"
+        << "  popq %r13\n"
+        << "  popq %r12\n"
+        << "  popq %r11\n"
+        << "  popq %r10\n"
+        << "  popq %r9\n"
+        << "  popq %r8\n"
+        << "  popq %rdi\n"
+        << "  popq %rsi\n"
+        << "  popq %rbp\n"
+        << "  popq %rdx\n"
+        << "  popq %rcx\n"
+        << "  popq %rbx\n"
+        << "  popq %rax\n";
+    out << "  addq $16, %rsp\n"
+        << "  iretq\n"
+        << "9:\n"
+        // Fail closed before reinterpreting a malformed privilege-transition
+        // frame. The resident kernel's #UD/paranoid policy owns diagnosis.
+        << "  ud2\n"
+        << ".size " << symbol << ", .-" << symbol << "\n";
+    out.flush();
+    if (failed(appendModuleAsm(op, assembly, rewriter)))
+      return failure();
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct ComputeOpLowering : public OpConversionPattern<ComputeOp> {
   using OpConversionPattern<ComputeOp>::OpConversionPattern;
 
@@ -600,7 +861,7 @@ struct ConvertToLLVMPass
 
   StringRef getArgument() const final { return "convert-bcir-to-llvm"; }
   StringRef getDescription() const final {
-    return "Lower BCIR compute/barrier to the LLVM dialect (partial).";
+    return "Lower the supported BCIR compute, memory, and x86 asm-edge subset to LLVM.";
   }
 
   void getDependentDialects(DialectRegistry &registry) const override {
@@ -608,15 +869,31 @@ struct ConvertToLLVMPass
   }
 
   void runOnOperation() override {
+    // Module-level assembly mutates the containing builtin module while erasing the source symbol.
+    // Perform that ancestor mutation in the ordinary rewrite driver before dialect conversion; the
+    // conversion rewriter intentionally scopes transactional edits to the matched operation tree.
+    RewritePatternSet moduleAsmPatterns(&getContext());
+    moduleAsmPatterns.add<EntryOpLowering, InterruptTrampolineOpLowering>(
+        &getContext());
+    if (failed(applyPatternsGreedily(getOperation(),
+                                     std::move(moduleAsmPatterns)))) {
+      signalPassFailure();
+      return;
+    }
+
     LLVMConversionTarget target(getContext());
     target.addLegalOp<ModuleOp>();
-    target.addIllegalOp<ComputeOp, BarrierOp, AsmOp, PortioOp, VolatileLoadOp,
+    target.addIllegalOp<EntryOp, DescriptorLoadOp, TaskRegisterLoadOp,
+                        SegmentReloadOp, InterruptTrampolineOp, ComputeOp,
+                        BarrierOp, AsmOp, PortioOp, VolatileLoadOp,
                         VolatileStoreOp, AtomicRMWOp, AtomicCASOp, CRegReadOp,
                         CRegWriteOp, MsrReadOp, MsrWriteOp>();
 
     LLVMTypeConverter typeConverter(&getContext());
     RewritePatternSet patterns(&getContext());
-    patterns.add<ComputeOpLowering, BarrierOpLowering, AsmOpLowering,
+    patterns.add<DescriptorLoadOpLowering, TaskRegisterLoadOpLowering,
+                 SegmentReloadOpLowering, ComputeOpLowering,
+                 BarrierOpLowering, AsmOpLowering,
                  PortioOpLowering, VolatileLoadOpLowering,
                  VolatileStoreOpLowering, AtomicRMWOpLowering,
                  AtomicCASOpLowering, CRegReadOpLowering,

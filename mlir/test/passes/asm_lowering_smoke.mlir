@@ -11,6 +11,22 @@
 // gets an all-LLVM module. Each function is named so the harness can `llc -filetype=asm` the module once
 // and grep per-instruction.
 
+// --- top-level entry and interrupt trampolines (module asm: no generated function prologue) ---
+bcir.entry @bcir_boot stack @bcir_stack_top target @bcir_kernel_main
+bcir.interrupt_trampoline @bcir_irq32 vector 32 handler @bcir_irq_dispatch {swapgs_on_user = true}
+bcir.interrupt_trampoline @bcir_page_fault vector 14 handler @bcir_page_fault_dispatch
+// Every hardware-error vector accepted by the normal trampoline is pinned independently. #DF (8) and
+// #VC (29) are classified by the architectural table but refused because they require the future
+// paranoid/IST op.
+// A missing accepted entry would add a synthetic error word and corrupt the C frame / iretq return.
+bcir.interrupt_trampoline @bcir_error10 vector 10 handler @bcir_error_dispatch
+bcir.interrupt_trampoline @bcir_error11 vector 11 handler @bcir_error_dispatch
+bcir.interrupt_trampoline @bcir_error12 vector 12 handler @bcir_error_dispatch
+bcir.interrupt_trampoline @bcir_error13 vector 13 handler @bcir_error_dispatch
+bcir.interrupt_trampoline @bcir_error17 vector 17 handler @bcir_error_dispatch
+bcir.interrupt_trampoline @bcir_error21 vector 21 handler @bcir_error_dispatch
+bcir.interrupt_trampoline @bcir_error30 vector 30 handler @bcir_error_dispatch
+
 // --- bcir.portio in, b/w/l (x86 `in`; assembles to `inb/inw/inl %dx, %al/%ax/%eax`) ---
 llvm.func @portio_in_b(%port: i16) -> i8 {
   %r = bcir.portio <in> width 8 (%port) : (i16) -> i8
@@ -75,5 +91,17 @@ llvm.func @msr_read(%idx: i32) -> i64 {
 }
 llvm.func @msr_write(%idx: i32, %val: i64) {
   bcir.msr_write %idx, %val : i32, i64
+  llvm.return
+}
+
+// --- descriptor-table, task-register, and segment reloads (x86 boot/interrupt foundation) ---
+llvm.func @descriptor_loads(%addr: i64, %selector: i16) {
+  bcir.descriptor_load <gdt>, %addr : i64
+  bcir.descriptor_load <idt>, %addr : i64
+  bcir.task_register_load %selector : i16
+  llvm.return
+}
+llvm.func @segment_reload(%data: i16, %code: i16) {
+  bcir.segment_reload %data, %code : i16, i16
   llvm.return
 }

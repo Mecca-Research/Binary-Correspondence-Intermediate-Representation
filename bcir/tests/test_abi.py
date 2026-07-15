@@ -138,9 +138,63 @@ def test_v3_decode_rejects_unknown_dispatch_code():
         pass
 
 
+def test_encoder_rejects_unrepresentable_or_semantically_invalid_fields():
+    """The writer never masks, wraps, or silently substitutes another contract."""
+    bad = _v3_pack()
+    bad.segments[0] = LaneSegment(**{
+        **bad.segments[0].__dict__, "dispatch": "unknown-device"})
+    cases = [bad, StreamPack(pipeline_depth=0), StreamPack(pipeline_depth=1 << 16)]
+    unhashable_dispatch = _v3_pack()
+    unhashable_dispatch.segments[0] = LaneSegment(**{
+        **unhashable_dispatch.segments[0].__dict__, "dispatch": ["pim"]})
+    cases.append(unhashable_dispatch)
+    invalid_buffers = StreamPack(pipeline_depth=2)
+    invalid_buffers.prefetches.append(Prefetch("pf", 1, (), buffers=3))
+    cases.append(invalid_buffers)
+    overflow_gen = StreamPack(topo_gen=1 << 32)
+    cases.append(overflow_gen)
+    invalid_width = _v3_pack()
+    invalid_width.segments[0] = LaneSegment(**{
+        **invalid_width.segments[0].__dict__, "width": 3})
+    cases.append(invalid_width)
+    for pack in cases:
+        try:
+            encode(pack)
+            assert False, "expected exact-representability rejection"
+        except AbiError:
+            pass
+
+
+def test_decoder_rejects_zero_pipeline_depth_and_invalid_buffer_count():
+    """CRC-valid v2 values outside the frozen semantic range fail both constraints."""
+    import struct
+    import zlib
+
+    pack = StreamPack(pipeline_depth=2)
+    pack.prefetches.append(Prefetch("pf", 1, (), buffers=2))
+    original = encode(pack)
+
+    zero_depth = bytearray(original)
+    struct.pack_into("<H", zero_depth, 36, 0)
+    body = bytes(zero_depth[:-4])
+    zero_depth[-4:] = struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    bad_buffers = bytearray(original)
+    bad_buffers[-5] = 3  # the only prefetch is the final body record; its v2 tail is last
+    body = bytes(bad_buffers[:-4])
+    bad_buffers[-4:] = struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    for blob in (bytes(zero_depth), bytes(bad_buffers)):
+        try:
+            decode(blob)
+            assert False, "expected v2 semantic-range rejection"
+        except AbiError:
+            pass
+
+
 def test_v3_decode_rejects_out_of_range_lane():
-    # The Python decoder already raises on an out-of-range lane via Lane(r.u8()); confirm
-    # a CRC-fixed out-of-range lane is rejected (the asymmetry the C rail now mirrors).
+    # A CRC-fixed out-of-range lane is rejected through the public ABI error contract
+    # (the same semantic refusal enforced by the C rail).
     import struct
     import zlib
     from bcir.abi.streampack_abi import _HEADER_SIZE
@@ -155,7 +209,7 @@ def test_v3_decode_rejects_out_of_range_lane():
     try:
         decode(bytes(blob))
         assert False, "expected a raise on an out-of-range lane"
-    except (AbiError, ValueError):
+    except AbiError:
         pass
 
 

@@ -1038,6 +1038,58 @@ static ::mlir::LogicalResult verifyAtomicAddr(::mlir::Operation *op, ::mlir::Typ
   return ::mlir::success();
 }
 
+// Module-level x86 assembly names are emitted without quoting. Restrict all user-provided symbols to
+// the portable assembler identifier subset so a quoted MLIR symbol cannot inject directives or labels.
+static bool isX86AsmSymbol(::llvm::StringRef name) {
+  if (name.empty())
+    return false;
+  auto first = [](char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+  };
+  auto rest = [&](char c) {
+    return first(c) || (c >= '0' && c <= '9') || c == '.' || c == '$';
+  };
+  if (!first(name.front()))
+    return false;
+  for (char c : name.drop_front())
+    if (!rest(c))
+      return false;
+  return true;
+}
+
+::mlir::LogicalResult EntryOp::verify() {
+  if (!isX86AsmSymbol(getSymName()))
+    return emitOpError() << "entry symbol must be an unquoted x86 assembler identifier (got '"
+                         << getSymName() << "')";
+  if (!isX86AsmSymbol(getStackTop()))
+    return emitOpError() << "stack_top must be an unquoted x86 assembler identifier (got '"
+                         << getStackTop() << "')";
+  if (!isX86AsmSymbol(getCEntry()))
+    return emitOpError() << "C entry target must be an unquoted x86 assembler identifier (got '"
+                         << getCEntry() << "')";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult InterruptTrampolineOp::verify() {
+  int64_t vector = static_cast<int32_t>(getVector());
+  if (vector < 0 || vector > 255)
+    return emitOpError() << "interrupt vector must be in [0, 255] (got " << vector << ")";
+  // NMI, #DB, #DF, #MC, and AMD #VC can arrive in entry code's transient state
+  // or require exception-specific IST/nesting rules; turning off GS use does not
+  // make an ordinary entry sufficient. Refuse these until a paranoid op exists.
+  if (vector == 1 || vector == 2 || vector == 8 || vector == 18 || vector == 29)
+    return emitOpError()
+           << "normal interrupt entry is unsafe for paranoid/IST vector " << vector
+           << "; use a dedicated paranoid/IST trampoline";
+  if (!isX86AsmSymbol(getSymName()))
+    return emitOpError() << "trampoline symbol must be an unquoted x86 assembler identifier (got '"
+                         << getSymName() << "')";
+  if (!isX86AsmSymbol(getHandler()))
+    return emitOpError() << "handler must be an unquoted x86 assembler identifier (got '"
+                         << getHandler() << "')";
+  return ::mlir::success();
+}
+
 void BCIRDialect::initialize() {
   addOperations<
 #define GET_OP_LIST

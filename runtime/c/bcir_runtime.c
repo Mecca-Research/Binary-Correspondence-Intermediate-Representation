@@ -129,7 +129,6 @@ bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
     hdr->n_trace = rd32(data + 32);
     /* v2 appended into the v1 pad; v1 packs are single-phase-in-flight. */
     hdr->pipeline_depth = (version >= 2) ? rd16(data + 36) : 1;
-    if (hdr->pipeline_depth == 0) hdr->pipeline_depth = 1;
   }
   return BCIR_OK;
 }
@@ -298,7 +297,7 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   if (expected_data_gen != 0xFFFFFFFFu && hdr.data_gen != expected_data_gen)
     return BCIR_ERR_STALE;
 
-  /* R10 well-formedness: pipeline_depth >= 1 (already normalized by validate); the per-
+  /* R10 well-formedness: pipeline_depth >= 1; the per-
    * prefetch buffers (1|2) is checked as the prefetch stream is walked below. */
   if (hdr.pipeline_depth < 1) return BCIR_ERR_PROVENANCE;
 
@@ -331,6 +330,13 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   }
   if (c.err) return BCIR_ERR_TRUNCATED;
   size_t trace_start = c.pos;
+  /* The declared trace stream must itself fit and must end EXACTLY at the CRC trailer. CRC alone
+   * authenticates bytes, not their schema membership: accepting undeclared suffix bytes gives two
+   * byte-distinct artifacts the same decoded meaning and lets future parsers disagree. */
+  for (uint32_t i = 0; i < hdr.n_trace && !c.err; i++)
+    c_skip(&c, 24);                 /* claim_id + src_hash + trace_hash */
+  if (c.err) return BCIR_ERR_TRUNCATED;
+  if (c.pos != body_len) return BCIR_ERR_TRAILING;
 
   /* Pass 2: per segment, confirm (R10) its claim_id is traced + its prefetch resolves. */
   cur s; s.d = data; s.len = body_len; s.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; s.err = 0;

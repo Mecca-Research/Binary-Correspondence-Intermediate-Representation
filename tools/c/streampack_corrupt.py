@@ -13,10 +13,11 @@ Used by tools/c/check_streampack_semantic.sh (the gate) and bcir/tests/test_abi.
 
     python3 -m tools.c.streampack_corrupt <kind> <out.bin>
     kinds: dangling_claim swapped_rid out_of_range_lane out_of_range_width
-           unresolved_prefetch stale_generation tampered_dispatch
+           unresolved_prefetch invalid_pipeline invalid_buffers stale_generation
+           tampered_dispatch trailing_bytes
 
-The first three groups (a..f in the security recon) are each a distinct adversarial
-class; `--expected-gens` for stale prints the live (map_gen, data_gen) the C rail should
+The lettered groups are distinct adversarial classes; `--expected-gens` for stale prints
+the live (map_gen, data_gen) the C rail should
 be told so it can detect the staleness.
 """
 
@@ -42,8 +43,11 @@ KINDS = (
     "out_of_range_lane",    # (c) seg.lane u8 outside the 6 valid lanes
     "out_of_range_width",   # (c) seg.width non-power-of-two
     "unresolved_prefetch",  # (d) seg.prefetch names a prefetch the pack does not declare
-    "stale_generation",     # (e) map_gen/data_gen bumped past the live registry
-    "tampered_dispatch",    # (f) v3 dispatch byte flipped to an illegal code (was off-wire)
+    "invalid_pipeline",     # (e) v2 pipeline_depth is zero
+    "invalid_buffers",       # (e) v2 prefetch buffers is outside {1,2}
+    "stale_generation",     # (f) map_gen/data_gen bumped past the live registry
+    "tampered_dispatch",    # (g) v3 dispatch byte flipped to an illegal code (was off-wire)
+    "trailing_bytes",       # (h) undeclared suffix inserted before a recomputed CRC
 )
 
 
@@ -95,6 +99,20 @@ def corrupt(kind: str) -> bytes:
     if kind == "stale_generation":
         p.map_gen = 99; p.data_gen = 99                 # != live (7, 19)
         return encode(p)
+    if kind == "invalid_pipeline":
+        p.pipeline_depth = 2
+        p.prefetches[0] = Prefetch("pf0", 4, (10, 11), buffers=2)
+        data = bytearray(encode(p))
+        struct.pack_into("<H", data, 36, 0)
+        return _refix_crc(bytes(data))
+    if kind == "invalid_buffers":
+        p.pipeline_depth = 2
+        p.prefetches[0] = Prefetch("pf0", 4, (10, 11), buffers=2)
+        data = bytearray(encode(p))
+        # The pack has no blocks and its one prefetch precedes one fixed-size trace;
+        # the prefetch's v2 tail is therefore 24 trace bytes before the CRC.
+        data[-4 - 24 - 1] = 3
+        return _refix_crc(bytes(data))
     if kind == "out_of_range_lane":
         data = bytearray(encode(p))
         lane_off, _ = _seg0_lane_width_offsets(bytes(data))
@@ -117,6 +135,9 @@ def corrupt(kind: str) -> bytes:
             raise SystemExit("tampered_dispatch: channel marker not found")
         data[idx - 1] = 7                               # illegal dispatch (0=core, 1=pim)
         return _refix_crc(bytes(data))
+    if kind == "trailing_bytes":
+        data = encode(p)
+        return _refix_crc(data[:-4] + b"\x00" + data[-4:])
     raise SystemExit(f"unknown corruption kind {kind!r} (choose from {', '.join(KINDS)})")
 
 

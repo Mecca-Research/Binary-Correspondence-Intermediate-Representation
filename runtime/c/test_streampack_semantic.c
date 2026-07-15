@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "bcir_exec.h"
+#include "bcir_verify.h"
 
 static const char *status_name(bcir_status s) {
   switch (s) {
@@ -34,6 +35,7 @@ static const char *status_name(bcir_status s) {
     case BCIR_ERR_PROVENANCE:  return "BCIR_ERR_PROVENANCE";
     case BCIR_ERR_STALE:       return "BCIR_ERR_STALE";
     case BCIR_ERR_OVERFLOW:    return "BCIR_ERR_OVERFLOW";
+    case BCIR_ERR_TRAILING:    return "BCIR_ERR_TRAILING";
     default:                   return "BCIR_ERR_UNKNOWN";
   }
 }
@@ -58,6 +60,14 @@ int main(int argc, char **argv) {
 
   bcir_status sem = bcir_sp_verify_semantic(buf, (size_t)n, emap, edata);
   printf("status=%d name=%s\n", (int)sem, status_name(sem));
+
+  /* The public graph-verifier entry point must enforce the same artifact-intrinsic
+   * R10/R11 rules. It deliberately cannot diagnose a stale live generation because
+   * that registry state is not part of its API. */
+  char diag[128];
+  int verified = v == BCIR_OK &&
+      bcir_verify_pack(buf, (size_t)n, hdr.n_segments, diag, sizeof diag);
+  printf("verify_pack=%s\n", verified ? "BCIR_OK" : "BCIR_ERR");
 
   /* What the fully-checked executor does with the same pack (must refuse a corrupt one). */
   static bcir_exec_item scratch[8192];

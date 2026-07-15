@@ -126,13 +126,17 @@ int bcir_verify_plan(const bcir_func *f,const bcir_plan *p,char *diag,size_t dn)
 }
 
 /* --- R10-R11 (StreamPack laws) ------------------------------------------- */
-static uint32_t rd32(const uint8_t *p){return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
 int bcir_verify_pack(const uint8_t *pack,size_t len,uint32_t expect_segs,char *diag,size_t dn){
   if(dn) diag[0]=0;
   bcir_streampack_header h;
-  bcir_status st = bcir_sp_validate(pack,len,&h);     /* R11: magic + version + CRC + bounds */
+  bcir_status st = bcir_sp_verify_semantic(pack,len,0xFFFFFFFFu,0xFFFFFFFFu);
+  /* The graph verifier has no live registry to compare against, so generation matching
+   * remains the checked executor's responsibility. All artifact-intrinsic R10/R11 laws,
+   * including exact body consumption, are still enforced here. */
   if(st!=BCIR_OK){snprintf(diag,dn,"R11: StreamPack invalid (status %d)",(int)st);return 0;}
-  if(rd32(pack+20)!=expect_segs){snprintf(diag,dn,"R10: pack has %u segments, expected %u",rd32(pack+20),expect_segs);return 0;}
+  st = bcir_sp_validate(pack,len,&h);
+  if(st!=BCIR_OK){snprintf(diag,dn,"R11: StreamPack invalid (status %d)",(int)st);return 0;}
+  if(h.n_segments!=expect_segs){snprintf(diag,dn,"R10: pack has %u segments, expected %u",h.n_segments,expect_segs);return 0;}
   return 1;
 }
 

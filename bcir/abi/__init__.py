@@ -10,8 +10,14 @@ from .streampack_abi import (
     ABI_MAGIC,
     ABI_VERSION,
     AbiError,
+    StreamPackInspection,
+    WireSpan,
     decode,
     encode,
+    inspect_stream_pack,
 )
 
-__all__ = ["ABI_MAGIC", "ABI_VERSION", "AbiError", "decode", "encode"]
+__all__ = [
+    "ABI_MAGIC", "ABI_VERSION", "AbiError", "StreamPackInspection", "WireSpan",
+    "decode", "encode", "inspect_stream_pack",
+]

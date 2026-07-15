@@ -4,18 +4,22 @@ Roadmap (BCIR_MASTER_ROADMAP.md §5.2 / §6): port the StreamPack *encoder* to C
 driver-resident hydrate can emit the artifact with no Python -- completing the full C
 round-trip (decoder + executor already landed). `bcir_sp_reencode` parses a pack and
 re-serializes it through the C writer; these tests pin that the re-encoded bytes are
-**byte-identical** to `bcir.abi.encode` across the corpus and both ABI versions (v1, and
-v2 with the pipeline/double-buffer tails), plus the malformed-input / NOSPACE paths.
+**byte-identical** to `bcir.abi.encode` across the corpus and all ABI versions (v1, v2
+with the pipeline/double-buffer tails, and v3 dispatch/channel), plus malformed-input /
+NOSPACE paths.
 """
 
+from dataclasses import replace
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
+import zlib
 
 from bcir.abi import encode
-from bcir.examples import (histogram_gather, matmul_tiled, multi_histogram, saxpy_strided,
-                           scan, vector_add)
+from bcir.examples import (gather_reduce, histogram_gather, matmul_tiled, multi_histogram,
+                           saxpy_strided, scan, vector_add)
 from bcir.gem import hydrate
 from bcir.gem.streampack import hydrate_pipelined
 from bcir.kbcir import optimize
@@ -69,9 +73,9 @@ def test_c_encoder_builds_freestanding():
         assert r.returncode == 0, f"{std}: {r.stderr}"
 
 
-def test_reencode_is_byte_identical_across_corpus_v1_and_v2():
+def test_reencode_is_byte_identical_across_corpus_v1_v2_and_v3():
     """The headline: C re-encode == bcir.abi.encode, byte-for-byte, on every corpus pack
-    in both v1 (frozen) and v2 (pipeline_depth + double-buffer prefetch tails)."""
+    in v1 (frozen), v2 (pipeline/double-buffer tails), and v3 (dispatch/channel)."""
     if _cc() is None:
         return
     mods = {"vector_add": vector_add(), "multi_histogram": multi_histogram(),
@@ -86,6 +90,13 @@ def test_reencode_is_byte_identical_across_corpus_v1_and_v2():
                                 ("v2", hydrate_pipelined(m, r, depth=2))):
                 blob = encode(pack)
                 assert _reencode(exe, tmp, blob) == blob, f"{name} {label}: not byte-identical"
+        m = gather_reduce()
+        pack = hydrate(m, optimize(m, AVX, COOL))
+        pack.segments[0] = replace(
+            pack.segments[0], opcode="reduce.add", dispatch="pim", channel="hbm_pim")
+        blob = encode(pack)
+        assert blob[4] == 3
+        assert _reencode(exe, tmp, blob) == blob
 
 
 def test_malformed_input_is_rejected_not_crashed():
@@ -94,13 +105,17 @@ def test_malformed_input_is_rejected_not_crashed():
     with tempfile.TemporaryDirectory() as tmp:
         exe = _build(tmp)
         good = encode(hydrate(vector_add(), optimize(vector_add(), AVX, COOL)))
-        for bad in (b"", b"BSPK", good[:50], good[:-1], bytes(len(good))):
+        trailing_body = good[:-4] + b"\x00"
+        trailing = trailing_body + struct.pack(
+            "<I", zlib.crc32(trailing_body) & 0xFFFFFFFF)
+        for bad in (b"", b"BSPK", good[:50], good[:-1], bytes(len(good)), trailing):
             ip = os.path.join(tmp, "bad.bin")
             with open(ip, "wb") as f:
                 f.write(bad)
             r = subprocess.run([exe, ip, os.path.join(tmp, "o.bin")],
                                capture_output=True, text=True)
-            assert r.returncode in (0, 1), (bad[:8], r.returncode, r.stderr)
+            assert r.returncode == 1, (bad[:8], r.returncode, r.stdout, r.stderr)
+            assert "ERR" in r.stdout
 
 
 def test_round_trip_decode_matches():

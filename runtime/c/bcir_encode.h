@@ -6,7 +6,7 @@
  *
  * `bcir_sp_reencode` parses a StreamPack field-by-field and re-serializes it through the
  * encoder's value-based write primitives into a caller buffer, recomputing the CRC. By
- * construction the output is **byte-identical** to the (frozen v1 / append-only v2)
+ * construction the output is **byte-identical** to the (frozen v1 / append-only v2/v3)
  * encoding, so a round-trip against a Python-encoded pack proves the writer primitives +
  * the record layout match the ABI exactly (the parity gate is
  * bcir/tests/test_c_encoder.py). The same write primitives a driver uses to emit a pack
@@ -27,7 +27,11 @@ extern "C" {
 
 /* Re-serialize the StreamPack `in[0..in_len)` into `out[0..out_cap)`, writing the encoded
  * length to *out_len. The output equals the frozen-ABI encoding of the same pack (byte-
- * identical to bcir.abi.encode). Returns BCIR_ERR_* on a malformed input and
+ * identical to bcir.abi.encode). The declared records must consume the body exactly;
+ * an undeclared suffix returns BCIR_ERR_TRAILING rather than being canonicalized away.
+ * The `in[0..in_len)` and `out[0..out_cap)` ranges must not overlap (`restrict`).
+ * The full artifact is semantically preflighted and output capacity checked before any
+ * output byte is written; `*out_len` is zeroed on every failure. Returns BCIR_ERR_* on a malformed input and
  * BCIR_ERR_NOSPACE if `out_cap` is too small (out_cap >= in_len always suffices). */
 BCIR_NODISCARD bcir_status bcir_sp_reencode(const uint8_t *BCIR_RESTRICT in, size_t in_len,
                                             uint8_t *BCIR_RESTRICT out, size_t out_cap,

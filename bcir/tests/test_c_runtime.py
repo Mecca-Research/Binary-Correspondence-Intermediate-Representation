@@ -203,14 +203,18 @@ def test_c_rejects_crc_valid_semantically_corrupt_packs():
         "out_of_range_lane": "BCIR_ERR_LANE",
         "out_of_range_width": "BCIR_ERR_WIDTH",
         "unresolved_prefetch": "BCIR_ERR_PROVENANCE",
+        "invalid_pipeline": "BCIR_ERR_PROVENANCE",
+        "invalid_buffers": "BCIR_ERR_PROVENANCE",
         "stale_generation": "BCIR_ERR_STALE",
         "tampered_dispatch": "BCIR_ERR_DISPATCH",
+        "trailing_bytes": "BCIR_ERR_TRAILING",
     }
     env = dict(os.environ, PYTHONPATH=repo + os.pathsep + os.environ.get("PYTHONPATH", ""))
     with tempfile.TemporaryDirectory() as d:
         exe = _build_runtime_harness(
             clang, d, name="test_sem",
-            srcs=("bcir_exec.c", "bcir_runtime.c", "test_streampack_semantic.c"))
+            srcs=("bcir_exec.c", "bcir_runtime.c", "bcir_verify.c",
+                  "test_streampack_semantic.c"))
         for kind, code in want.items():
             bin_path = os.path.join(d, f"{kind}.bin")
             meta = subprocess.run([sys.executable, mutator, kind, bin_path],
@@ -233,6 +237,11 @@ def test_c_rejects_crc_valid_semantically_corrupt_packs():
             # ... but the semantic verifier AND the checked executor both reject it.
             assert fields.get("name") == code, (kind, run.stdout)
             assert fields.get("exec") == code, (kind, run.stdout)
+            # The graph-verifier API has no live registry argument, so only the
+            # stale-generation case remains intrinsically well-formed there.
+            assert fields.get("verify_pack") == (
+                "BCIR_OK" if kind == "stale_generation" else "BCIR_ERR"), (
+                    kind, run.stdout)
             assert run.returncode == 1, (kind, run.stdout)
 
 

@@ -24,6 +24,17 @@ done
 echo "  PASS freestanding (C11 + C23; ABI static_assert holds)"
 
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
+
+echo "[c-runtime] x86 interrupt-frame ABI header (C11 + C23)"
+for std in c11 c23; do
+  "${CC}" -ffreestanding -std=${std} -Wall -Wextra -Werror -I "${C}" \
+    "${C}/test_x86_interrupt.c" -o "${tmp}/test_x86_interrupt_${std}" \
+    || { echo "  FAIL: x86 interrupt-frame ABI under -std=${std}"; exit 1; }
+  "${tmp}/test_x86_interrupt_${std}" \
+    || { echo "  FAIL: x86 interrupt-frame layout/helper under -std=${std}"; exit 1; }
+done
+echo "  PASS x86 interrupt-frame ABI (fixed 176-byte long-mode frame)"
+
 echo "[c-runtime] build harness (C23) + Python->C ABI parity"
 "${CC}" -std=c23 -O2 "${C}/bcir_runtime.c" "${C}/test_runtime.c" -I "${C}" -o "${tmp}/test_runtime" \
   || { echo "  FAIL: harness build"; exit 1; }

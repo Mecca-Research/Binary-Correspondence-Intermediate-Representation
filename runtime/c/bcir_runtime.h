@@ -35,7 +35,8 @@ typedef enum bcir_status {
   BCIR_ERR_DISPATCH = 8,    /* a v3 segment dispatch code outside the legal set */
   BCIR_ERR_PROVENANCE = 9,  /* R10: a segment claim_id has no trace note, or an unresolved prefetch */
   BCIR_ERR_STALE = 10,      /* R11: map_gen/data_gen do not match the caller's expected generation */
-  BCIR_ERR_OVERFLOW = 11    /* a derived size/cost cannot be represented by the public ABI */
+  BCIR_ERR_OVERFLOW = 11,   /* a derived size/cost cannot be represented by the public ABI */
+  BCIR_ERR_TRAILING = 12    /* CRC-valid bytes remain after all declared body records */
 } bcir_status;
 
 /* zlib-compatible CRC-32 (reflected, poly 0xEDB88320). */
@@ -98,10 +99,12 @@ BCIR_NODISCARD bcir_status bcir_sp_check_generation(const uint8_t *BCIR_RESTRICT
  *   - every segment's claim_id resolves to a decoded trace record (no dangling/redirected id);
  *   - every segment's non-empty `prefetch` name resolves to a declared prefetch record;
  *   - lane/width/dispatch are in range (as bcir_sp_for_each_segment, applied to every segment);
- *   - pipeline_depth >= 1 and every prefetch `buffers` is 1 or 2 (the v2 well-formedness).
+ *   - pipeline_depth >= 1 and every prefetch `buffers` is 1 or 2 (the v2 well-formedness);
+ *   - every declared trace record is present and the final record ends exactly at the CRC trailer.
  * When `expected_map_gen`/`expected_data_gen` are not (uint32_t)-1, R11 (staleness) is also
  * enforced. Returns BCIR_ERR_PROVENANCE / BCIR_ERR_STALE / BCIR_ERR_LANE / BCIR_ERR_WIDTH /
- * BCIR_ERR_DISPATCH on the first violation, BCIR_OK on a clean pack. Bounds-checked end to end. */
+ * BCIR_ERR_DISPATCH / BCIR_ERR_TRAILING on the first violation, BCIR_OK on a clean pack.
+ * Bounds-checked end to end. */
 BCIR_NODISCARD bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data,
                                                    size_t len,
                                                    uint32_t expected_map_gen,
