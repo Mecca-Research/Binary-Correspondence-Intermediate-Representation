@@ -20,32 +20,104 @@ from dataclasses import asdict, dataclass
 _MAX_HEADER = 128 * 1024 * 1024          # a safetensors header larger than 128 MiB is malformed
 
 
+def _unique_object(pairs):
+    """JSON object hook that rejects duplicate keys instead of silently taking the last.
+
+    Duplicate tensor names or duplicate ``data_offsets`` fields make two parsers see
+    different artifacts, so a model header must have one unambiguous interpretation.
+    """
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        out[key] = value
+    return out
+
+
+def _read_safetensors_header(stream, path: str, size: int) -> tuple[dict, dict, int]:
+    """Read and fully validate one header from an already-open shard.
+
+    Returning the normalized tensor records lets the weight loader keep validation and
+    payload reads on the same file descriptor, avoiding a validate/reopen TOCTOU gap.
+    """
+    raw = stream.read(8)
+    if len(raw) != 8:
+        raise ValueError(f"{path}: not a safetensors file (short header length)")
+    (hlen,) = struct.unpack("<Q", raw)
+    if hlen == 0 or hlen > _MAX_HEADER or hlen > size - 8:
+        raise ValueError(f"{path}: implausible safetensors header length {hlen}")
+    encoded = stream.read(hlen)
+    if len(encoded) != hlen:
+        raise ValueError(f"{path}: truncated safetensors JSON header")
+    try:
+        header = json.loads(encoded.decode("utf-8"), object_pairs_hook=_unique_object)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+        raise ValueError(f"{path}: malformed safetensors JSON header: {exc}") from exc
+    if not isinstance(header, dict):
+        raise ValueError(f"{path}: safetensors header is not a JSON object")
+
+    metadata = header.get("__metadata__", {}) or {}
+    if not isinstance(metadata, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in metadata.items()):
+        raise ValueError(f"{path}: __metadata__ must be a string-to-string object")
+
+    data_off = 8 + hlen
+    data_size = size - data_off
+    tensors: dict = {}
+    spans: list[tuple[int, int, str]] = []
+    for name, spec in header.items():
+        if name == "__metadata__":
+            continue
+        if not isinstance(spec, dict):
+            raise ValueError(f"{path}: tensor {name!r} is not an object")
+        required = {"dtype", "shape", "data_offsets"}
+        if set(spec) != required:
+            raise ValueError(f"{path}: tensor {name!r} fields must be exactly "
+                             f"{sorted(required)}; got {sorted(spec)}")
+        dtype, shape, offsets = spec["dtype"], spec["shape"], spec["data_offsets"]
+        if not isinstance(dtype, str) or not dtype:
+            raise ValueError(f"{path}: tensor {name!r} has an invalid dtype")
+        if not isinstance(shape, list) or any(
+                not isinstance(dim, int) or isinstance(dim, bool) or dim < 0
+                for dim in shape):
+            raise ValueError(f"{path}: tensor {name!r} has an invalid shape {shape!r}")
+        if (not isinstance(offsets, list) or len(offsets) != 2
+                or any(not isinstance(value, int) or isinstance(value, bool)
+                       for value in offsets)):
+            raise ValueError(f"{path}: tensor {name!r} has invalid data_offsets")
+        lo, hi = offsets
+        if not (0 <= lo <= hi <= data_size):
+            raise ValueError(f"{path}: tensor {name!r} byte span [{lo}, {hi}) "
+                             "escapes the data section")
+        tensors[name] = {"dtype": dtype, "shape": list(shape),
+                         "data_offsets": [lo, hi]}
+        spans.append((lo, hi, name))
+
+    # Safetensors requires the payload to be one complete, non-overlapping partition.
+    # Besides catching aliases, this rejects unindexed suffixes/polyglot payloads.
+    cursor = 0
+    for lo, hi, name in sorted(spans):
+        if lo < cursor:
+            raise ValueError(f"{path}: tensor {name!r} overlaps a previous tensor payload")
+        if lo > cursor:
+            raise ValueError(f"{path}: unindexed data hole [{cursor}, {lo})")
+        cursor = hi
+    if cursor != data_size:
+        raise ValueError(f"{path}: unindexed data suffix [{cursor}, {data_size})")
+    return tensors, metadata, data_off
+
+
 def parse_safetensors_header(path: str) -> tuple[dict, dict]:
     """The safetensors HEADER of one shard: `(tensors, metadata)` where `tensors` maps
     tensor name -> {"dtype": str, "shape": [int, ...]} and `metadata` is the optional
     `__metadata__` block. Reads the 8-byte LE length + the JSON header ONLY -- the weight
     bytes are never touched here (the rung-1 contract)."""
-    size = os.path.getsize(path)
     with open(path, "rb") as f:
-        raw = f.read(8)
-        if len(raw) != 8:
-            raise ValueError(f"{path}: not a safetensors file (short header length)")
-        (hlen,) = struct.unpack("<Q", raw)
-        if hlen == 0 or hlen > _MAX_HEADER or 8 + hlen > size:
-            raise ValueError(f"{path}: implausible safetensors header length {hlen}")
-        try:
-            header = json.loads(f.read(hlen).decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as e:
-            raise ValueError(f"{path}: malformed safetensors JSON header: {e}") from e
-    if not isinstance(header, dict):
-        raise ValueError(f"{path}: safetensors header is not a JSON object")
-    metadata = header.pop("__metadata__", {}) or {}
-    tensors: dict = {}
-    for name, spec in header.items():
-        if not isinstance(spec, dict) or "dtype" not in spec or "shape" not in spec:
-            raise ValueError(f"{path}: tensor {name!r} lacks dtype/shape")
-        tensors[name] = {"dtype": str(spec["dtype"]), "shape": [int(d) for d in spec["shape"]]}
-    return tensors, metadata
+        tensors, metadata, _data_off = _read_safetensors_header(
+            f, path, os.fstat(f.fileno()).st_size)
+    return ({name: {"dtype": spec["dtype"], "shape": spec["shape"]}
+             for name, spec in tensors.items()}, metadata)
 
 
 def shard_digest(path: str) -> str:
@@ -95,9 +167,76 @@ class ModelManifest:
 
 
 def manifest_from_json(text: str) -> ModelManifest:
-    d = json.loads(text)
-    d["dtypes"] = tuple((str(k), int(v)) for k, v in d["dtypes"])
-    d["shards"] = tuple(ShardRecord(**s) for s in d["shards"])
+    if not isinstance(text, str) or len(text) > 16 * 1024 * 1024:
+        raise ValueError("model manifest JSON must be a string no larger than 16 MiB")
+    try:
+        d = json.loads(text, object_pairs_hook=_unique_object)
+    except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+        raise ValueError(f"malformed model manifest JSON: {exc}") from exc
+    if not isinstance(d, dict):
+        raise ValueError("model manifest root must be an object")
+    required = {"name", "architecture", "param_count", "tensor_count", "dtypes", "shards"}
+    optional = {"context_length", "vocab_size", "tokenizer_ref", "tokenizer_digest",
+                "license", "source"}
+    if not required <= set(d) or set(d) - required - optional:
+        raise ValueError("model manifest has missing or unknown fields")
+
+    def nonnegative_int(value, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"model manifest {field} must be a non-negative integer")
+        return value
+
+    for field in ("name", "architecture", "tokenizer_ref", "tokenizer_digest",
+                  "license", "source"):
+        if field in d and not isinstance(d[field], str):
+            raise ValueError(f"model manifest {field} must be a string")
+    for field in ("param_count", "tensor_count", "context_length", "vocab_size"):
+        if field in d:
+            d[field] = nonnegative_int(d[field], field)
+    digest = d.get("tokenizer_digest", "")
+    if digest and (len(digest) != 64 or digest != digest.lower()
+                   or any(ch not in "0123456789abcdef" for ch in digest)):
+        raise ValueError("model manifest tokenizer_digest must be lowercase SHA-256 hex")
+
+    if not isinstance(d["dtypes"], list):
+        raise ValueError("model manifest dtypes must be an array")
+    dtype_rows = []
+    seen_dtypes: set[str] = set()
+    for row in d["dtypes"]:
+        if (not isinstance(row, list) or len(row) != 2 or not isinstance(row[0], str)
+                or not row[0] or row[0] in seen_dtypes):
+            raise ValueError("model manifest has a malformed or duplicate dtype row")
+        count = nonnegative_int(row[1], f"dtype {row[0]!r} count")
+        if count < 1:
+            raise ValueError("model manifest dtype counts must be positive")
+        seen_dtypes.add(row[0]); dtype_rows.append((row[0], count))
+    if dtype_rows != sorted(dtype_rows):
+        raise ValueError("model manifest dtypes must be in canonical sorted order")
+    d["dtypes"] = tuple(dtype_rows)
+
+    if not isinstance(d["shards"], list):
+        raise ValueError("model manifest shards must be an array")
+    shards = []
+    seen_files: set[str] = set()
+    for index, row in enumerate(d["shards"]):
+        if not isinstance(row, dict) or set(row) != {"file", "sha256", "n_tensors", "n_params"}:
+            raise ValueError(f"model manifest shard {index} has invalid fields")
+        file = row["file"]; sha = row["sha256"]
+        if (not isinstance(file, str) or not file or file != os.path.basename(file)
+                or file in seen_files):
+            raise ValueError(f"model manifest shard {index} has an invalid/duplicate filename")
+        if (not isinstance(sha, str) or len(sha) != 64 or sha != sha.lower()
+                or any(ch not in "0123456789abcdef" for ch in sha)):
+            raise ValueError(f"model manifest shard {index} has an invalid SHA-256")
+        seen_files.add(file)
+        shards.append(ShardRecord(file=file, sha256=sha,
+                                  n_tensors=nonnegative_int(row["n_tensors"], "n_tensors"),
+                                  n_params=nonnegative_int(row["n_params"], "n_params")))
+    d["shards"] = tuple(shards)
+    if sum(row.n_tensors for row in shards) != d["tensor_count"] \
+            or sum(row.n_params for row in shards) != d["param_count"] \
+            or sum(count for _dtype, count in dtype_rows) != d["tensor_count"]:
+        raise ValueError("model manifest aggregate counts do not reconcile")
     return ModelManifest(**d)
 
 
@@ -111,8 +250,18 @@ def build_manifest(shard_paths: list[str], config: dict, *, name: str = "",
     shards: list[ShardRecord] = []
     dtype_hist: dict[str, int] = {}
     total_params = total_tensors = 0
+    seen_files: set[str] = set()
+    seen_tensors: set[str] = set()
     for path in sorted(shard_paths, key=os.path.basename):
+        basename = os.path.basename(path)
+        if basename in seen_files:
+            raise ValueError(f"duplicate shard basename {basename!r}")
+        seen_files.add(basename)
         tensors, _meta = parse_safetensors_header(path)
+        duplicates = seen_tensors.intersection(tensors)
+        if duplicates:
+            raise ValueError(f"tensor names appear in multiple shards: {sorted(duplicates)}")
+        seen_tensors.update(tensors)
         n_params = 0
         for spec in tensors.values():
             n = 1
@@ -120,7 +269,7 @@ def build_manifest(shard_paths: list[str], config: dict, *, name: str = "",
                 n *= d
             n_params += n
             dtype_hist[spec["dtype"]] = dtype_hist.get(spec["dtype"], 0) + 1
-        shards.append(ShardRecord(file=os.path.basename(path), sha256=shard_digest(path),
+        shards.append(ShardRecord(file=basename, sha256=shard_digest(path),
                                   n_tensors=len(tensors), n_params=n_params))
         total_params += n_params
         total_tensors += len(tensors)

@@ -186,7 +186,10 @@ class _Reader:
         return struct.unpack("<Q", self._take(8))[0]
 
     def s(self) -> str:
-        return self._take(self.u16()).decode("utf-8")
+        try:
+            return self._take(self.u16()).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise AbiError("StreamPack string is not valid UTF-8") from exc
 
     def u32_array(self) -> tuple:
         return tuple(self.u32() for _ in range(self.u16()))
@@ -282,13 +285,18 @@ def decode(data: bytes) -> StreamPack:
     """Parse the v1..v3 wire format back into a StreamPack (magic/version/CRC)."""
     if len(data) < _HEADER_SIZE + 4:
         raise AbiError("buffer too small for a StreamPack")
-    magic, version, _flags, topo, mapg, datag, nseg, npf, nblk, ntr = _HEADER.unpack(
+    magic, version, flags, topo, mapg, datag, nseg, npf, nblk, ntr = _HEADER.unpack(
         data[:_HEADER.size])
     if magic != ABI_MAGIC:
         raise AbiError(f"bad magic {magic!r} (expected {ABI_MAGIC!r})")
     if not (ABI_VERSION <= version <= ABI_VERSION_MAX):
         raise AbiError(
             f"unsupported ABI version {version} (this reader handles v{ABI_VERSION}..v{ABI_VERSION_MAX})")
+    if flags:
+        raise AbiError(f"reserved StreamPack flags must be zero, got 0x{flags:04x}")
+    reserved_start = _PIPELINE_OFF + (2 if version >= 2 else 0)
+    if any(data[reserved_start:_HEADER_SIZE]):
+        raise AbiError("reserved StreamPack header bytes must be zero")
     body, crc = data[:-4], struct.unpack("<I", data[-4:])[0]
     if (zlib.crc32(body) & 0xFFFFFFFF) != crc:
         raise AbiError("CRC mismatch (corrupt StreamPack)")
@@ -305,13 +313,15 @@ def decode(data: bytes) -> StreamPack:
             lane = Lane(raw_lane)
         except ValueError as exc:
             raise AbiError(f"unknown segment lane code {raw_lane}") from exc
-        width = r.u32(); _stride_k = r.u32(); opcode = r.s()
+        width = r.u32(); stride_k = r.u32(); opcode = r.s()
         # Range gate: width must be a nonzero power of two (docs/kernel/BCIR_STREAMPACK_ABI.md, "BCIR_ERR_WIDTH").
         # The C runtime (bcir_runtime.c seg_range_ok) rejects a non-power-of-two width at decode time; the
         # oracle enforces the same law so a CRC-valid but width-corrupt pack is never accepted here while
         # the deployed runtime refuses it (rail symmetry, like the Lane(...) and dispatch-code raises).
         if width == 0 or (width & (width - 1)):
             raise AbiError(f"segment width must be a nonzero power of two, got {width}")
+        if stride_k != 0:
+            raise AbiError(f"reserved segment stride_k must be zero, got {stride_k}")
         reads = r.u32_array(); writes = r.u32_array()
         prefetch = r.s() or None
         fb = r.s_array(); fa = r.s_array()

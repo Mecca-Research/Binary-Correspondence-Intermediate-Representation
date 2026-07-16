@@ -243,7 +243,7 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
             }
           } while (std::next_permutation(perm.begin(), perm.end()));
           gain = baseTotal - best;
-          totalGain += gain;
+          totalGain = saturatingAddNonnegative(totalGain, gain);
         }
 
         for (unsigned m : indep) {

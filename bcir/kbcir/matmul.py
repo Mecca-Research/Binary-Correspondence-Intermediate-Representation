@@ -17,6 +17,7 @@ frontend lowering was)."""
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass
 
 from .cost import COMPUTE, MEMORY, CostVector, TargetProfile
@@ -29,8 +30,30 @@ from .quantize import dequantize, quantize_per_group, scaled_dot
 # for the plain float path).
 
 
+def _validate_dimensions(M: int, N: int, K: int) -> None:
+    for name, value in (("M", M), ("N", N), ("K", K)):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer; got {value!r}")
+
+
+def _validate_inputs(a, b, M: int, N: int, K: int) -> None:
+    _validate_dimensions(M, N, K)
+    a_count, b_count, c_count = M * K, K * N, M * N
+    if max(a_count, b_count, c_count) > sys.maxsize:
+        raise ValueError("matmul shape exceeds the host addressable sequence size")
+    try:
+        a_len, b_len = len(a), len(b)
+    except TypeError as exc:
+        raise ValueError("matmul inputs must be sized sequences") from exc
+    if a_len != a_count or b_len != b_count:
+        raise ValueError(
+            f"matmul input length mismatch: A has {a_len}, expected {a_count}; "
+            f"B has {b_len}, expected {b_count}")
+
+
 def matmul_reference(a, b, M: int, N: int, K: int) -> list[float]:
     """C = A @ B, the naive definition -- the single source of truth every realization is checked against."""
+    _validate_inputs(a, b, M, N, K)
     c = [0.0] * (M * N)
     for i in range(M):
         for j in range(N):
@@ -45,6 +68,15 @@ def matmul_tiled(a, b, M: int, N: int, K: int, plan: "TilePlan") -> list[float]:
     """Compute A @ B in the plan's tile sizes + loop order. Tiling/reordering is a REASSOCIATION of the
     same sums, so for integer inputs the result is bit-identical to the reference -- the property the
     verifier checks (it is what makes the realization a free choice the cost model may optimize)."""
+    _validate_inputs(a, b, M, N, K)
+    if not isinstance(plan, TilePlan):
+        raise ValueError("matmul plan must be a TilePlan")
+    for name, value in (("tile_m", plan.tile_m), ("tile_n", plan.tile_n),
+                        ("tile_k", plan.tile_k)):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer; got {value!r}")
+    if plan.loop_order not in _LOOP_ORDERS:
+        raise ValueError(f"unsupported matmul loop order {plan.loop_order!r}")
     c = [0.0] * (M * N)
     tm, tn, tk = plan.tile_m, plan.tile_n, plan.tile_k
     # loop_order names the order of the three tile loops; the k loop always accumulates into C.
@@ -67,6 +99,7 @@ def gemm_via_bridge(a, b, M: int, N: int, K: int, group_size: int, bits: int) ->
     side (row-major layout + the boundary quantization). The oracle reference for that path is the
     reference matmul of the *round-tripped* inputs -- so the only error vs the true product is the input
     quantization (R17-certified), the float gemm itself being exact/trusted."""
+    _validate_inputs(a, b, M, N, K)
     da = dequantize(quantize_per_group(a, group_size, bits))
     db = dequantize(quantize_per_group(b, group_size, bits))
     return matmul_reference(da, db, M, N, K)
@@ -76,6 +109,7 @@ def quantized_matmul(a, b, M: int, N: int, K: int, group_size: int, bits: int) -
     """C[i,j] = quantized_dot(row i of A, col j of B) -- the matmul as a grid of A1.2 quantized dot
     products (exact integer code accumulation + per-group rescale). Error vs the reference is the input
     quantization alone."""
+    _validate_inputs(a, b, M, N, K)
     c = [0.0] * (M * N)
     for i in range(M):
         row = a[i * K:(i + 1) * K]
@@ -107,6 +141,8 @@ _LOOP_ORDERS = ("ijk", "ikj", "jik")     # the outer tile-loop permutations we c
 def _divisor_tiles(dim: int) -> list[int]:
     """Candidate tile extents for one dimension: powers of two up to `dim`, plus `dim` itself (the
     whole-dimension / untiled choice). Deterministic + small."""
+    if isinstance(dim, bool) or not isinstance(dim, int) or dim <= 0:
+        raise ValueError(f"tile dimension must be a positive integer; got {dim!r}")
     cands, t = set(), 1
     while t < dim:
         cands.add(t)
@@ -129,6 +165,12 @@ def cost_of(M: int, N: int, K: int, tm: int, tn: int, tk: int, target: TargetPro
          the third dimension, so traffic falls as the *other* tile extent grows: A is re-read once per
          N-tile, B once per M-tile (the classic blocked-GEMM reuse). Bigger tiles -> less traffic, but the
          working set (tm*tk + tk*tn + tm*tn) must fit the cache budget."""
+    _validate_dimensions(M, N, K)
+    for name, value in (("tm", tm), ("tn", tn), ("tk", tk)):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer; got {value!r}")
+    if not isinstance(target, TargetProfile):
+        raise ValueError("matmul target must be a TargetProfile")
     macs = M * N * K
     thr = max(1, target.vector_width * (2 if target.fma else 1))
     compute = (macs + thr - 1) // thr
@@ -164,7 +206,10 @@ def plan_matmul(M: int, N: int, K: int, target: TargetProfile | None = None) -> 
     roofline BOTTLENECK = max(compute, mem) (the max,+ step), prefer cache-fitting plans, and select the
     minimum-bottleneck candidate (the min,+ step). Ties break on a stable key so the plan is reproducible
     (a deliberate reproducibility property -- see the ML roadmap closure register)."""
+    _validate_dimensions(M, N, K)
     target = target or TargetProfile.for_host()
+    if not isinstance(target, TargetProfile):
+        raise ValueError("matmul target must be a TargetProfile")
     best: TilePlan | None = None
     for lo in _LOOP_ORDERS:
         for tm in _divisor_tiles(M):

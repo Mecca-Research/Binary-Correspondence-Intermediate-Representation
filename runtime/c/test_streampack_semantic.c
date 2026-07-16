@@ -36,6 +36,8 @@ static const char *status_name(bcir_status s) {
     case BCIR_ERR_STALE:       return "BCIR_ERR_STALE";
     case BCIR_ERR_OVERFLOW:    return "BCIR_ERR_OVERFLOW";
     case BCIR_ERR_TRAILING:    return "BCIR_ERR_TRAILING";
+    case BCIR_ERR_RESERVED:    return "BCIR_ERR_RESERVED";
+    case BCIR_ERR_UTF8:        return "BCIR_ERR_UTF8";
     default:                   return "BCIR_ERR_UNKNOWN";
   }
 }

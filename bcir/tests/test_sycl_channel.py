@@ -28,7 +28,7 @@ import subprocess
 import tempfile
 
 from bcir.channel_plugin import load_manifest, register_from_manifest
-from bcir.channels import CHANNELS, HardwareChannel, channel_suits, route_claim
+from bcir.channels import CHANNELS, HardwareChannel, channel, channel_suits, route_claim
 from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound
 from bcir.kbcir.sycl_saxpy import saxpy_reference, saxpy_via_bridge
@@ -37,6 +37,19 @@ from bcir.model import Claim, Domain, Lane, Opcode, StrideClass
 
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _MANIFEST = os.path.join(_REPO, "channels", "sycl.channel.json")
+
+
+def _sycl_channel():
+    """Return the process-local fixture without weakening duplicate registration.
+
+    ``run_all`` reuses worker processes, so an earlier SYCL test may already have
+    installed this exact fixture. Production registration must still reject an
+    attempted replacement of a live backend.
+    """
+    try:
+        return channel("sycl_spirv")
+    except KeyError:
+        return register_from_manifest(load_manifest(_MANIFEST))
 
 
 def _independent_saxpy(a, x, y):
@@ -59,7 +72,7 @@ def test_sycl_manifest_validates_and_registers():
     assert m.profile.lane_widths[0] == 1                    # scalar width first (validate() requires it)
     assert m.profile.warp == 32                             # a warp-ish subgroup machine
     assert m.capabilities == frozenset({"data_parallel", "matmul", "reduce"})
-    ch = register_from_manifest(m)
+    ch = _sycl_channel()
     assert isinstance(ch, HardwareChannel) and ch.name == "sycl_spirv"
     assert ch.kind == "gpu" and not ch.is_host_elf          # off-host (no host ELF object)
 
@@ -69,7 +82,7 @@ def test_a_data_parallel_claim_routes_to_the_sycl_channel():
     # (non-reduce, non-gather, non-matmul) claim maps to the data_parallel cap and is eligible for it, and
     # among a candidate set it is the specialized pick (mirrors how test_channel_plugin exercises capability
     # routing -- a plugin's declared tag wins over a legacy kind-routed CPU fallback).
-    sycl = register_from_manifest(load_manifest(_MANIFEST))
+    sycl = _sycl_channel()
     claim = Claim(id=7100, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.STRIDED, count=8,
                   rd=(71,), wr=(72,), op="call.saxpy", domain=Domain.RAM)
     assert channel_suits(claim, sycl)                       # the declared data_parallel tag matches

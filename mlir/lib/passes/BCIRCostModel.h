@@ -17,6 +17,7 @@
 
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIRPassSupport.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -126,16 +127,26 @@ inline Cost baseCost(int64_t count, int streams, int opclass, int width,
                      int64_t penalty, TierQ8 tier, const Cap &h,
                      int64_t extraCompile = 0) {
   int64_t n = std::max<int64_t>(1, count);
-  int64_t ceil = (n + width - 1) / width;
+  int64_t ceil = n / width + (n % width != 0);
   Cost c{};
-  c[0] = ceil * opclass;
-  int64_t memShared = (n * streams * h.memUnit * tier.bw) >> 8;
-  int64_t accessOps = ceil * streams;
-  int64_t overhead = h.baseOverhead * penalty;
-  c[1] = memShared + ((accessOps * overhead * tier.lat) >> 8);
+  c[0] = saturatingMulNonnegative(ceil, opclass);
+  auto mulQ8 = [](int64_t a, int64_t b) {
+    return saturatingMulNonnegative(a, b) >> 8;
+  };
+  int64_t memShared = mulQ8(
+      saturatingMulNonnegative(saturatingMulNonnegative(n, streams), h.memUnit),
+      tier.bw);
+  int64_t accessOps = saturatingMulNonnegative(ceil, streams);
+  int64_t overhead = saturatingMulNonnegative(h.baseOverhead, penalty);
+  int64_t accessCost = mulQ8(saturatingMulNonnegative(accessOps, overhead),
+                             tier.lat);
+  c[1] = saturatingAddNonnegative(memShared, accessCost);
   c[4] = extraCompile;
-  c[5] = static_cast<int64_t>(width) * h.thermalDensity + ceil * h.perOpHeat;
-  c[6] = static_cast<int64_t>(width) * h.powerDensity + ceil * h.perOpHeat;
+  int64_t perOp = saturatingMulNonnegative(ceil, h.perOpHeat);
+  c[5] = saturatingAddNonnegative(
+      saturatingMulNonnegative(width, h.thermalDensity), perOp);
+  c[6] = saturatingAddNonnegative(
+      saturatingMulNonnegative(width, h.powerDensity), perOp);
   return c;
 }
 
@@ -156,14 +167,15 @@ inline SmallVector<Cand> candidatesFor(ClaimOp c, const Cap &h, Domain dom, bool
   int streams = static_cast<int>(c.getReads().size() + c.getWrites().size());
   int opclass = opClassFor(op);
   TierQ8 tier = tierForDomain(dom);
-  int64_t gp = ham ? std::max<int64_t>(1, bitLength(count - 1)) : h.gatherPenalty;
+  int64_t gp = ham ? std::max<int64_t>(1, bitLength(count > 1 ? count - 1 : 0))
+                   : h.gatherPenalty;
   int64_t vcost = verifyCostFor(c.getVerify(), count);
   // Add the verification cost to every realization (width-independent, so the per-claim
   // selection is unchanged); applied on every return path.
   auto withVerify = [&](SmallVector<Cand> &o) -> SmallVector<Cand> & {
     if (vcost)
       for (Cand &cc : o)
-        cc.cost[11] += vcost;
+        cc.cost[11] = saturatingAddNonnegative(cc.cost[11], vcost);
     return o;
   };
 
@@ -207,14 +219,20 @@ inline SmallVector<Cand> candidatesFor(ClaimOp c, const Cap &h, Domain dom, bool
 
 inline int64_t scalarize(const Cost &c, ArrayRef<int64_t> w) {
   int64_t s = 0;
-  for (int i = 0; i < 12 && i < static_cast<int>(w.size()); ++i)
-    s += c[i] * w[i];
+  for (int i = 0; i < 12 && i < static_cast<int>(w.size()); ++i) {
+    if (c[i] < 0 || w[i] < 0)
+      return std::numeric_limits<int64_t>::max();
+    s = saturatingAddNonnegative(
+        s, saturatingMulNonnegative(c[i], w[i]));
+  }
   return s;
 }
 
 inline void applyFactor(Cost &c, const Factor &f) {
   for (int i = 0; i < 12; ++i)
-    c[i] = (c[i] * f[i]) >> 8;
+    c[i] = (c[i] < 0 || f[i] < 0)
+               ? std::numeric_limits<int64_t>::max()
+               : (saturatingMulNonnegative(c[i], f[i]) >> 8);
 }
 
 inline Factor deforestFactor() {  // producer->consumer: x0.75 memory
@@ -226,7 +244,8 @@ inline Factor cseFactor(int nrd, int nwr) {  // duplicate -> a copy (no recomput
   int64_t full = static_cast<int64_t>(nrd) + nwr, copy = 1 + nwr;
   Factor f = kIdentity;
   f[0] = 0;
-  f[1] = (copy * 256) / std::max<int64_t>(1, full);
+  f[1] = saturatingMulNonnegative(copy, 256) /
+         std::max<int64_t>(1, full);
   return f;
 }
 
@@ -496,7 +515,8 @@ inline SmallVector<int> planChosen(const std::vector<Column> &cols,
                                  cands[ci].width);
         Cost e = cands[ci].cost;
         applyFactor(e, f);
-        int64_t d = dist[i - 1][pi] + scalarize(e, w);
+        int64_t d = saturatingAddNonnegative(dist[i - 1][pi],
+                                             scalarize(e, w));
         if (d < dist[i][ci]) {
           dist[i][ci] = d;
           back[i][ci] = static_cast<int>(pi);
@@ -573,7 +593,7 @@ inline int64_t planConstrained(const std::vector<Column> &cols, ArrayRef<int64_t
         SmallVector<int64_t> res(nt);
         bool ok = true;
         for (int t = 0; t < nt; ++t) {
-          res[t] = p.res[t] + e[trackedDim[t]];
+          res[t] = saturatingAddNonnegative(p.res[t], e[trackedDim[t]]);
           if (res[t] > caps[t]) {
             ok = false;
             break;
@@ -581,7 +601,8 @@ inline int64_t planConstrained(const std::vector<Column> &cols, ArrayRef<int64_t
         }
         if (!ok)
           continue;
-        insert(cur, Lab{p.score + scalarize(e, w), std::move(res), cand.width, cols[i].reads});
+        insert(cur, Lab{saturatingAddNonnegative(p.score, scalarize(e, w)),
+                        std::move(res), cand.width, cols[i].reads});
       }
     }
     if (cur.empty()) {
@@ -657,7 +678,10 @@ struct PlanAnalysis {
     weights.assign(w.begin(), w.end());
     thetaThermal = firstThetaThermal(root);
     hasCap = !cols.empty();
-    if (hasCap && !weights.empty()) {
+    bool validWeights = weights.size() == 12 &&
+                        llvm::all_of(weights,
+                                     [](int64_t value) { return value >= 0; });
+    if (hasCap && validWeights) {
       chosen = planChosen(cols, weights, thetaThermal, total);
       valid = !chosen.empty();
     }

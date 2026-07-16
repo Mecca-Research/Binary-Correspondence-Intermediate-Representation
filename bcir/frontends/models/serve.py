@@ -48,10 +48,25 @@ from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF, Policy
 from ...model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 from ...telemetry import Broker, DataDNA, DurableLog, TelemetryRing
-from .decode import DecoderSpec, DecoderWeights, KVCache, _argmax, _head_logits
+from .decode import (_MAX_REFERENCE_CONTEXT, DecoderSpec, DecoderWeights, KVCache, _argmax,
+                     _head_logits, _validate_decode_request)
 
 # RIDs of the session's resources (a closed universe, the train_graph convention).
 _TOK, _WTS, _KV, _LOGITS = 1, 2, 3, 4
+
+# A schema is caller-controlled input.  These bounds keep validation linear and
+# prevent a typo or hostile object from manufacturing an unbounded Python graph.
+_MAX_DFA_STATES = 1 << 16
+_MAX_DFA_TRANSITIONS = 1 << 20
+
+
+def _validate_session_shape(prompt_len: int, max_new: int) -> None:
+    if type(prompt_len) is not int or prompt_len < 1:
+        raise ValueError("prompt_len must be an integer >= 1")
+    if type(max_new) is not int or max_new < 0:
+        raise ValueError("max_new must be an integer >= 0")
+    if prompt_len > _MAX_REFERENCE_CONTEXT or max_new > _MAX_REFERENCE_CONTEXT - prompt_len:
+        raise ValueError(f"decode context exceeds {_MAX_REFERENCE_CONTEXT} tokens")
 
 
 def _session_resources(spec: DecoderSpec, capacity: int) -> tuple:
@@ -87,8 +102,11 @@ def decode_session_module(spec: DecoderSpec, prompt_len: int, max_new: int, *,
     certificate's comparison arm), then one decode phase per generated token, each
     dependent on its predecessor (the autoregressive chain, stated twice: phase deps AND
     the TOK/KV read-write hazards)."""
-    if prompt_len < 1 or max_new < 0:
-        raise ValueError("decode_session_module needs prompt_len >= 1 and max_new >= 0")
+    if not isinstance(spec, DecoderSpec):
+        raise ValueError("decode spec is not a DecoderSpec")
+    _validate_session_shape(prompt_len, max_new)
+    if type(batched_prefill) is not bool:
+        raise ValueError("batched_prefill must be bool")
     capacity = prompt_len + max_new
     m = Module(name=f"decode_session_{prompt_len}p_{max_new}n")
     for r in _session_resources(spec, capacity):
@@ -100,8 +118,12 @@ def decode_session_module(spec: DecoderSpec, prompt_len: int, max_new: int, *,
         prev = (pid,)
         pid += 1
     else:                                              # the sequential arm: token-by-token
+        # Keep the historical 1..prompt_len IDs for ordinary prompts, but move a long
+        # prefill above the decode band so prompt_len >= 100 cannot alias claim 100.
+        prefill_base = 1 if prompt_len < 100 else 100 + max_new
         for i in range(prompt_len):
-            m.add_phase(Phase(phase_id=pid, deps=prev, claims=[_decode_claim(spec, 1 + i)]))
+            m.add_phase(Phase(phase_id=pid, deps=prev,
+                              claims=[_decode_claim(spec, prefill_base + i)]))
             prev = (pid,)
             pid += 1
     for t in range(max_new):
@@ -138,7 +160,9 @@ def certify_session(spec: DecoderSpec, prompt_len: int, max_new: int, h: HProfil
     def prefill_cost(batched: bool) -> int:
         m = decode_session_module(spec, prompt_len, max_new, batched_prefill=batched)
         result = optimize(m, h, theta, policy)
-        return sum(s.cost for s in result.steps if s.claim_id < 100)
+        n_phases = 1 if batched else prompt_len
+        prefill_ids = {c.id for ph in m.phases[:n_phases] for c in ph.claims}
+        return sum(s.cost for s in result.steps if s.claim_id in prefill_ids)
     return SessionCertificate(prompt_len=prompt_len, max_new=max_new,
                               prefill_batched=prefill_cost(True),
                               prefill_sequential=prefill_cost(False))
@@ -177,26 +201,63 @@ def check_token_dfa(dfa: TokenDFA, vocab_size: int) -> list:
     is in vocab AND has an edge; every edge is over an allowed token AND lands in a real
     state; the start state exists. Messages, not exceptions -- callers refuse."""
     msgs: list = []
+    if not isinstance(dfa, TokenDFA):
+        return ["TokenDFA value has the wrong type"]
+    if type(vocab_size) is not int or vocab_size < 1:
+        return ["TokenDFA vocab_size must be an integer >= 1"]
+    if not isinstance(dfa.allowed, tuple) or not isinstance(dfa.edges, tuple):
+        return ["TokenDFA allowed and edges must be tuples"]
     n = len(dfa.allowed)
+    if n < 1:
+        return ["TokenDFA needs at least one state"]
+    if n > _MAX_DFA_STATES:
+        return [f"TokenDFA has {n} states; limit is {_MAX_DFA_STATES}"]
     if len(dfa.edges) != n:
         return [f"TokenDFA has {n} allowed sets but {len(dfa.edges)} edge maps"]
-    if not 0 <= dfa.start < max(1, n):
+    if type(dfa.start) is not int or not 0 <= dfa.start < n:
         msgs.append(f"TokenDFA start state {dfa.start} is not in [0, {n})")
+    transitions = 0
     for s in range(n):
-        for tok in dfa.allowed[s]:
-            if not 0 <= tok < vocab_size:
+        allowed = dfa.allowed[s]
+        edges = dfa.edges[s]
+        if not isinstance(allowed, tuple):
+            msgs.append(f"TokenDFA state {s} allowed set is not a tuple")
+            continue
+        if not isinstance(edges, dict):
+            msgs.append(f"TokenDFA state {s} edge map is not a dict")
+            continue
+        transitions += len(edges)
+        if transitions > _MAX_DFA_TRANSITIONS:
+            msgs.append(f"TokenDFA exceeds {_MAX_DFA_TRANSITIONS} transitions")
+            break
+        seen_tokens: set[int] = set()
+        for tok in allowed:
+            if type(tok) is not int or not 0 <= tok < vocab_size:
                 msgs.append(f"TokenDFA state {s} allows token {tok} outside the "
                             f"vocab [0, {vocab_size})")
+                continue
+            if tok in seen_tokens:
+                msgs.append(f"TokenDFA state {s} has duplicate allowed token {tok}")
+            seen_tokens.add(tok)
             if tok not in dfa.edges[s]:
                 msgs.append(f"TokenDFA state {s} allows token {tok} but has no edge for it")
-        for tok, nxt in dfa.edges[s].items():
-            if tok not in dfa.allowed[s]:
+        for tok, nxt in edges.items():
+            if type(tok) is not int:
+                msgs.append(f"TokenDFA state {s} has a non-integer edge token {tok!r}")
+                continue
+            if tok not in allowed:
                 msgs.append(f"TokenDFA state {s} has an edge over token {tok} it does "
                             "not allow")
-            if not 0 <= nxt < n:
+            if type(nxt) is not int or not 0 <= nxt < n:
                 msgs.append(f"TokenDFA state {s} edge on token {tok} targets state "
                             f"{nxt} which does not exist")
     return msgs
+
+
+def _snapshot_token_dfa(dfa: TokenDFA) -> TokenDFA:
+    """Own the validated schema tables so caller mutation cannot race the walk."""
+    return TokenDFA(allowed=tuple(tuple(row) for row in dfa.allowed),
+                    edges=tuple(dict(row) for row in dfa.edges), start=dfa.start)
 
 
 def _masked_argmax(logits: list, allowed: tuple) -> int:
@@ -236,19 +297,24 @@ def generate_stream(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_
     the call), not at first iteration; only the deadlock refusal is inherently mid-walk.
     With `schema`, the pick is `_masked_argmax` over the current DFA state's allowed set
     and the manifest gains the ("constrained", 1) artifact."""
-    if not prompt_ids or max_new < 0:
-        raise ValueError("generate needs a non-empty prompt and max_new >= 0")
+    prompt = _validate_decode_request(prompt_ids, spec, w, max_new, eos_id)
     if schema is not None:
         bad = check_token_dfa(schema, spec.vocab_size)
         if bad:
             raise ValueError("TokenDFA rejected: " + "; ".join(bad))
-    return _stream(list(prompt_ids), spec, w, max_new, h, theta, policy, eos_id,
-                   log_path, schema)
+        schema = _snapshot_token_dfa(schema)
+    # Price and materialize the proof graph before the first token or durable-log
+    # write.  A malformed target/policy must not fail after partial generation.
+    cert = certify_session(spec, len(prompt), max_new, h, theta, policy)
+    module = decode_session_module(spec, len(prompt), max_new)
+    return _stream(prompt, spec, w, max_new, h, theta, policy, eos_id,
+                   log_path, schema, cert, module)
 
 
 def _stream(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int,
             h: HProfile, theta: Theta, policy: Policy, eos_id: int | None,
-            log_path: str | None, schema: TokenDFA | None):
+            log_path: str | None, schema: TokenDFA | None,
+            cert: SessionCertificate, module: Module):
     """The generator body behind `generate_stream` (split so validation is eager)."""
     broker = Broker()
     ring = broker.subscribe(TelemetryRing(capacity=max(16, 2 * (max_new + 1))))
@@ -257,7 +323,7 @@ def _stream(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int
     cache = KVCache(spec)
     hrow: list = []
     for tid in prompt_ids:                             # the prefill (phase 0, executed)
-        hrow = cache._step_row(w.embedding.row(int(tid)), spec, w)
+        hrow = cache._step_row(w.embedding.row(tid), spec, w)
     capacity = len(prompt_ids) + max_new
     state = schema.start if schema is not None else 0
     frames: list = []
@@ -290,8 +356,6 @@ def _stream(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int
         hrow = cache._step_row(w.embedding.row(nxt), spec, w)
     kv_record = {"n_layers": spec.n_layers, "n_kv_heads": spec.kv_heads, "d_k": spec.d_k,
                  "capacity": capacity, "pos": cache.pos, "dtype": "f32"}
-    cert = certify_session(spec, len(prompt_ids), max_new, h, theta, policy)
-    m = decode_session_module(spec, len(prompt_ids), max_new)
     artifacts = (("prompt_sha", int(hashlib.sha256(
                       ",".join(str(i) for i in prompt_ids).encode()).hexdigest()[:12], 16)),
                  ("ids_sha", int(hashlib.sha256(
@@ -299,7 +363,7 @@ def _stream(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int
                  ("tokens", len(out)), ("kv_pos", cache.pos))
     if schema is not None:
         artifacts += (("constrained", 1),)
-    manifest = build_manifest(m, h, theta, policy, artifacts=artifacts)
+    manifest = build_manifest(module, h, theta, policy, artifacts=artifacts)
     result = GenerationResult(ids=out, frames=frames, kv_record=kv_record,
                               manifest=manifest, certificate=cert)
     yield StreamEvent(kind="done", index=len(out), result=result)

@@ -142,21 +142,23 @@ bcir_tf_status bcir_tf_decode_exact(const uint8_t *BCIR_TF_RESTRICT buf, size_t 
 
 bcir_tf_status bcir_tf_get_record(const uint8_t *BCIR_TF_RESTRICT buf, size_t len,
                                   uint16_t i, bcir_tf_record *out) {
+  bcir_tf_header header;
+  size_t frame_size = 0;
+  bcir_tf_status status;
   if (out) {
     out->claim_id = 0; out->cycles = 0; out->bytes = 0; out->misses = 0;
     out->thermal = 0; out->voltage = 0; out->utilization = 0;
   }
-  if (!buf) return BCIR_TF_ERR_TRUNCATED;
-  if (len < (size_t)BCIR_TELEMETRY_FRAME_HEADER_SIZE + BCIR_TELEMETRY_FRAME_CRC_SIZE)
-    return BCIR_TF_ERR_TRUNCATED;
-  uint16_t n = rd16(buf + 20);
-  if (i >= n) return BCIR_TF_ERR_RANGE;
-  size_t frame_size = 0;
-  if (!bcir_tf_frame_size_checked(n, &frame_size) || frame_size > len)
-    return BCIR_TF_ERR_TRUNCATED;
+  /* Validate the frame on every standalone accessor call. Requiring callers to
+   * remember a prior validation allowed CRC-corrupt bytes (or a buffer modified
+   * after validation) to be returned as trusted records. */
+  status = bcir_tf_decode_frame(buf,len,&header,&frame_size);
+  if (status != BCIR_TF_OK) return status;
+  if (i >= header.n_records) return BCIR_TF_ERR_RANGE;
   size_t off = (size_t)BCIR_TELEMETRY_FRAME_HEADER_SIZE
              + (size_t)i * (size_t)BCIR_TF_RECORD_SIZE;
-  if (off + BCIR_TF_RECORD_SIZE > len) return BCIR_TF_ERR_TRUNCATED;
+  if (off > frame_size || BCIR_TF_RECORD_SIZE > frame_size - off)
+    return BCIR_TF_ERR_TRUNCATED;
   if (out) {
     out->claim_id    = rd_i64(buf + off +  0);
     out->cycles      = rd_i64(buf + off +  8);

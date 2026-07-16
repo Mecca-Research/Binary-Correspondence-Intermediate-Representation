@@ -16,6 +16,9 @@ static bcir_channel_status ready(const bcir_runtime_channel *channel) {
   if(!channel||!channel->hooks) return BCIR_CHANNEL_INVALID;
   if(channel->hooks->abi_version!=BCIR_RUNTIME_CHANNEL_ABI_V1 ||
      channel->hooks->struct_size<REQUIRED_HOOK_SIZE) return BCIR_CHANNEL_VERSION;
+  if(!channel->hooks->open||!channel->hooks->claim||!channel->hooks->map||
+     !channel->hooks->submit||!channel->hooks->sync||!channel->hooks->event||
+     !channel->hooks->close) return BCIR_CHANNEL_INVALID;
   return BCIR_CHANNEL_OK;
 }
 
@@ -120,7 +123,7 @@ static bcir_channel_status loop_push(bcir_loopback_channel *loopback,
       return BCIR_CHANNEL_BACKPRESSURE;
     loopback->event_head=(loopback->event_head+1u)%loopback->event_capacity;
     loopback->event_count--;
-    loopback->dropped_events++;
+    if(loopback->dropped_events!=UINT64_MAX) loopback->dropped_events++;
   }
   tail=(loopback->event_head+loopback->event_count)%loopback->event_capacity;
   loopback->events[tail]=event;
@@ -133,8 +136,9 @@ static bcir_channel_status loop_open(void *implementation,uint64_t device_id,
   bcir_loopback_channel *loopback=(bcir_loopback_channel *)implementation;
   (void)device_id;
   if(loopback->open_state) return BCIR_CHANNEL_INVALID;
+  /* Never wrap a generation and resurrect an old handle (the ABA shape). */
+  if(loopback->generation==UINT32_MAX) return BCIR_CHANNEL_INVALID;
   loopback->generation++;
-  if(!loopback->generation) loopback->generation=1;
   loopback->open_state=1;
   loopback->event_head=0;loopback->event_count=0;
   loopback->next_mapping_id=1;loopback->next_sequence=1;loopback->completed_sequence=0;
@@ -149,8 +153,8 @@ static bcir_channel_status loop_claim(void *implementation,
                                       bcir_channel_handle *resource) {
   bcir_loopback_channel *loopback=(bcir_loopback_channel *)implementation;
   bcir_channel_status status=loop_session(loopback,session);
-  (void)flags;
   if(status!=BCIR_CHANNEL_OK) return status;
+  if(flags) return BCIR_CHANNEL_INVALID;
   if(resource_id==UINT64_MAX) return BCIR_CHANNEL_INVALID;
   *resource=make_handle(resource_id+1u,loopback->generation,
                         BCIR_CHANNEL_HANDLE_RESOURCE);
@@ -188,6 +192,7 @@ static bcir_channel_status loop_submit(void *implementation,
   bcir_channel_status status=loop_session(loopback,session);
   uint64_t sequence;
   if(status!=BCIR_CHANNEL_OK) return status;
+  if(submission->flags||submission->reserved) return BCIR_CHANNEL_INVALID;
   if(!handle_is(submission->mapping,BCIR_CHANNEL_HANDLE_MAPPING,loopback->generation) ||
      submission->mapping.value!=loopback->active_mapping.handle.value)
     return BCIR_CHANNEL_STALE;
@@ -196,6 +201,7 @@ static bcir_channel_status loop_submit(void *implementation,
     return BCIR_CHANNEL_INVALID;
   sequence=submission->sequence?submission->sequence:loopback->next_sequence;
   if(sequence<loopback->next_sequence) return BCIR_CHANNEL_STALE;
+  if(sequence>loopback->next_sequence) return BCIR_CHANNEL_INVALID;
   if(sequence==UINT64_MAX) return BCIR_CHANNEL_INVALID;
   event.sequence=sequence;event.generation=loopback->generation;
   event.kind=BCIR_CHANNEL_EVENT_COMPLETE;event.status=BCIR_CHANNEL_OK;
@@ -214,9 +220,12 @@ static bcir_channel_status loop_sync(void *implementation,
   if(status!=BCIR_CHANNEL_OK) return status;
   if(flags&~(BCIR_CHANNEL_SYNC_WAIT|BCIR_CHANNEL_SYNC_CANCEL))
     return BCIR_CHANNEL_INVALID;
+  if((flags&BCIR_CHANNEL_SYNC_WAIT)&&(flags&BCIR_CHANNEL_SYNC_CANCEL))
+    return BCIR_CHANNEL_INVALID;
   /* This reference driver completes submit synchronously, so there is no
    * cancellable interval. Completed and never-submitted sequence numbers are
    * both stale; an asynchronous hardware driver may emit CANCELED instead. */
+  if(!sequence) return BCIR_CHANNEL_STALE;
   if(flags&BCIR_CHANNEL_SYNC_CANCEL) return BCIR_CHANNEL_STALE;
   return sequence<=loopback->completed_sequence?BCIR_CHANNEL_OK:BCIR_CHANNEL_WOULD_BLOCK;
 }
@@ -242,8 +251,6 @@ static bcir_channel_status loop_close(void *implementation,
   loopback->open_state=0;
   loopback->event_head=0;loopback->event_count=0;
   memset(&loopback->active_mapping,0,sizeof loopback->active_mapping);
-  loopback->generation++;
-  if(!loopback->generation) loopback->generation=1;
   return BCIR_CHANNEL_OK;
 }
 
@@ -271,7 +278,6 @@ void bcir_loopback_channel_reset(bcir_loopback_channel *loopback) {
   if(!loopback) return;
   loopback->event_head=0;loopback->event_count=0;
   loopback->open_state=0;loopback->next_sequence=0;
-  loopback->completed_sequence=0;loopback->generation++;
+  loopback->completed_sequence=0;
   memset(&loopback->active_mapping,0,sizeof loopback->active_mapping);
-  if(!loopback->generation) loopback->generation=1;
 }

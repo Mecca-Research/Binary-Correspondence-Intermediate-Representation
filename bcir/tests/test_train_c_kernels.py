@@ -158,6 +158,39 @@ def test_c_streamed_training_matches_both_oracle_paths():
     assert all(abs(c - p) <= 1e-12 for c, p in zip(weights, planned.weights))  # C end-to-end
 
 
+def test_c_training_callbacks_reject_invalid_state_before_mutation():
+    if _cc() is None:
+        return
+    source = r'''
+#include <math.h>
+#include <string.h>
+#include "bcir_train.h"
+int main(void){
+  bcir_exec_item item;bcir_train_state st;bcir_stream_state ss;double a[8];
+  memset(&item,0,sizeof item);memset(&st,0,sizeof st);memset(&ss,0,sizeof ss);
+  for(int i=0;i<8;i++)a[i]=17.0;item.claim_id=1;
+  if(bcir_train_kernel(0,0)!=1||bcir_train_kernel(&item,&st)!=1)return 1;
+  item.claim_id=99;if(bcir_train_kernel(&item,0)!=0)return 2;
+  st.nf=1;st.b=1;st.lr=NAN;st.X=a;st.y=a;st.w=a;st.z=a;st.act=a;st.lossv=a;st.grad=a;
+  item.claim_id=1;if(bcir_train_kernel(&item,&st)!=1||a[0]!=17.0)return 3;
+  if(bcir_stream_kernel(0,0)!=1||bcir_stream_kernel(&item,&ss)!=1)return 4;
+  return 0;
+}
+'''
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "invalid_train.c")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write(source)
+        exe = os.path.join(tmp, "invalid_train")
+        build = subprocess.run(host_link_args(
+            [_cc(), "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _RUNTIME_C,
+             os.path.join(_RUNTIME_C, "bcir_train.c"), src, "-o", exe, "-lm"]),
+            capture_output=True, text=True)
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        assert run.returncode == 0, (run.stdout, run.stderr)
+
+
 if __name__ == "__main__":
     import sys
 

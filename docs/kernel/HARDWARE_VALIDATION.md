@@ -16,11 +16,12 @@ prints the live real/unavailable split for any host.
 |---|---|---|
 | Allocator tier map | `/sys/.../cache` topology | real L1 48K / L2 2MB / L3 260MB; placement fits the real cache |
 | Cache-tier latency | compiled pointer-chase | **L1 ≈ 1 ns vs DRAM ≈ 166 ns** — the real basis for hot→SRAM |
-| Zero-copy telemetry ring | `struct.pack_into` vs `json.dumps` | **≈ 31× faster** than serialization |
+| Synchronized zero-copy telemetry ring | `struct.pack_into` vs equivalently validated `json.dumps` | fixed-buffer integrity and both timing paths are exercised; no shared-runner speedup ratio is asserted after adding race-free publication |
 | Ring feed | `getrusage` + CPU/wall timers | real CPU-ns / page-fault counts reach the ring |
 | DVFS plan anchor | `/proc/cpuinfo` nominal (2100 MHz) | clock plan quantized to the real nominal frequency |
 
-These are genuine and reproducible; they do not need privilege.
+The signal and correctness observations are genuine and reproducible; they do not
+need privilege. Timing ratios are evidence from a named rig, not portable CI laws.
 
 ## What is BLOCKED in this sandbox (and why)
 

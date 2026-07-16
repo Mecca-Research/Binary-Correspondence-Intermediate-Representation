@@ -230,3 +230,42 @@ def test_decode_rejects_bad_magic_version_and_crc():
         decode(bytes(corrupt)); assert False
     except AbiError:
         pass
+
+
+def test_decoder_rejects_crc_valid_reserved_fields_and_invalid_utf8():
+    """Reserved bits/bytes and stride_k are not extension points until a version says
+    so; accepting them creates byte-distinct packs with parser-dependent meaning."""
+    import struct
+    import zlib
+    from bcir.abi.streampack_abi import _HEADER_SIZE
+
+    def refix(blob: bytearray) -> bytes:
+        body = bytes(blob[:-4])
+        blob[-4:] = struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
+        return bytes(blob)
+
+    base = bytearray(encode(_pack()))
+    variants = []
+    flags = bytearray(base); struct.pack_into("<H", flags, 6, 1); variants.append(refix(flags))
+    padding = bytearray(base); padding[63] = 1; variants.append(refix(padding))
+
+    stride = bytearray(base)
+    pos = _HEADER_SIZE
+    (n,) = struct.unpack_from("<H", stride, pos); pos += 2 + n       # source plan
+    (n,) = struct.unpack_from("<H", stride, pos); pos += 2 + n       # segment name
+    pos += 8 + 4 + 1 + 4                                             # id, phase, lane, width
+    struct.pack_into("<I", stride, pos, 1)
+    variants.append(refix(stride))
+
+    utf8 = bytearray(base)
+    plan_len = struct.unpack_from("<H", utf8, _HEADER_SIZE)[0]
+    assert plan_len
+    utf8[_HEADER_SIZE + 2] = 0xFF
+    variants.append(refix(utf8))
+
+    for blob in variants:
+        try:
+            decode(blob)
+            raise AssertionError("expected reserved/UTF-8 refusal")
+        except AbiError:
+            pass

@@ -8,6 +8,8 @@ exactly what diverged; `reduce` minimizes a module to a witness. The record roun
 through JSON, and the CLI exposes all three.
 """
 
+import json
+
 from bcir.kbcir import TARGETS, optimize
 from bcir.kbcir.cost import Theta
 from bcir.kbcir.proof import DecisionRecord, explain, explain_text, reduce, replay
@@ -35,6 +37,50 @@ def test_explain_records_the_per_claim_rationale():
 def test_record_round_trips_through_json():
     rec = explain(matmul_tiled(), AVX, COOL, target_name="x86_avx512", joint=True)
     assert DecisionRecord.from_json(rec.to_json()) == rec
+
+
+def test_record_decoder_rejects_ambiguous_or_forged_proofs():
+    rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
+    bad_documents = [rec.to_json().replace('"schema": 2',
+                                           '"schema": 2, "schema": 2')]
+
+    for mutate in (
+        lambda d: d["record"].update(total_score=True),
+        lambda d: d["record"]["decisions"][0].update(width=True),
+        lambda d: d["record"]["decisions"][0].update(chosen="not-a-candidate"),
+        lambda d: d["record"]["decisions"][0].update(candidates=[["vec16"]]),
+        lambda d: d["record"]["decisions"].append(
+            dict(d["record"]["decisions"][0])),
+    ):
+        bad = json.loads(rec.to_json())
+        mutate(bad)
+        bad_documents.append(json.dumps(bad))
+    huge = json.loads(rec.to_json())
+    huge["record"]["module_name"] = "x" * ((1 << 20) + 1)
+    bad_documents.append(json.dumps(huge))
+
+    for text in bad_documents:
+        try:
+            DecisionRecord.from_json(text)
+            assert False, "expected malformed decision record to be rejected"
+        except ValueError:
+            pass
+
+
+def test_replay_checks_complete_rationale_and_metadata():
+    from dataclasses import replace
+
+    rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
+    (decision,) = rec.decisions
+    assert not replay(replace(rec, decisions=()), vector_add(), AVX, COOL).reproduced
+    forged_candidate = replace(
+        decision,
+        candidates=tuple((name, score + (1 if name == "vec8" else 0))
+                         for name, score in decision.candidates),
+    )
+    assert not replay(replace(rec, decisions=(forged_candidate,)),
+                      vector_add(), AVX, COOL).reproduced
+    assert not replay(replace(rec, module_name="forged"), vector_add(), AVX, COOL).reproduced
 
 
 def test_records_are_versioned_self_describing_envelopes():
@@ -185,6 +231,8 @@ def test_the_external_replay_cli_contract():
     rc, line = cli(json.dumps(tampered))
     assert rc == 3 and "diverged" in line, (rc, line)
     rc, line = cli("{not json")
+    assert rc == 4 and "undecodable" in line, (rc, line)
+    rc, line = cli(" " * ((1 << 20) + 1))
     assert rc == 4 and "undecodable" in line, (rc, line)
     rc, line = cli(rec.to_json(), program="matmul_tiled")   # wrong module: usage error,
     assert rc == 4 and "undecodable" in line, (rc, line)    # never a bogus divergence

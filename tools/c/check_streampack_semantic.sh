@@ -61,8 +61,19 @@ declare -A WANT=(
   [stale_generation]=BCIR_ERR_STALE
   [tampered_dispatch]=BCIR_ERR_DISPATCH
   [trailing_bytes]=BCIR_ERR_TRAILING
+  [reserved_flags]=BCIR_ERR_RESERVED
+  [reserved_header]=BCIR_ERR_RESERVED
+  [reserved_stride]=BCIR_ERR_RESERVED
+  [invalid_utf8]=BCIR_ERR_UTF8
+  [duplicate_segment]=BCIR_ERR_PROVENANCE
+  [duplicate_prefetch]=BCIR_ERR_PROVENANCE
+  [duplicate_trace]=BCIR_ERR_PROVENANCE
 )
-ORDER="dangling_claim swapped_rid out_of_range_lane out_of_range_width unresolved_prefetch invalid_pipeline invalid_buffers stale_generation tampered_dispatch trailing_bytes"
+declare -A WANT_VALIDATE=(
+  [reserved_flags]=BCIR_ERR_RESERVED
+  [reserved_header]=BCIR_ERR_RESERVED
+)
+ORDER="dangling_claim swapped_rid out_of_range_lane out_of_range_width unresolved_prefetch invalid_pipeline invalid_buffers stale_generation tampered_dispatch trailing_bytes reserved_flags reserved_header reserved_stride invalid_utf8 duplicate_segment duplicate_prefetch duplicate_trace"
 
 fail=0
 for kind in ${ORDER}; do
@@ -78,8 +89,10 @@ for kind in ${ORDER}; do
   crc="$(echo "${out}"  | sed -n 's/^crc=//p')"
   name="$(echo "${out}" | sed -n 's/^status=[0-9]* name=//p')"
   exec="$(echo "${out}" | sed -n 's/^exec=//p')"
-  # the pack MUST still pass CRC (it is a CRC-fixed corruption) ...
-  [ "${crc}" = "BCIR_OK" ] || { echo "  FAIL: ${kind} did not pass CRC (crc=${crc}) -- not a semantic test"; fail=1; continue; }
+  # Header-reserved corruptions are rejected by the structural validator itself;
+  # record-level corruptions still pass that first gate and fail semantic validation.
+  want_validate="${WANT_VALIDATE[$kind]:-BCIR_OK}"
+  [ "${crc}" = "${want_validate}" ] || { echo "  FAIL: ${kind} validation want ${want_validate}, got ${crc}"; fail=1; continue; }
   # ... and the semantic verifier + the checked executor MUST both reject it with the right code.
   if [ "${name}" = "${WANT[$kind]}" ] && [ "${exec}" = "${WANT[$kind]}" ] && [ "${rc}" = "1" ]; then
     echo "  PASS ${kind}: CRC-valid but REJECTED (${name}); executor refuses to run it (${exec})"

@@ -24,7 +24,8 @@ void bcir_rmsnorm(const double *x, int rows, int dim, const double *gamma, doubl
 void bcir_rope(const double *x, int rows, int dim, double base, int pos_offset, double *out);
 
 /* Embedding lookup: out[t*dim + d] = table[ids[t]*dim + d] -- a pure row gather, EXACT.
- * Returns 0, or -1 on an out-of-range id (the oracle raises; the twin refuses too). */
+ * Returns 0, or -1 on invalid geometry/pointers or an out-of-range id. Every id is
+ * preflighted before row zero is written, so a late bad id leaves no partial output. */
 int bcir_embedding(const double *table, int vocab, int dim, const int *ids, int n_ids,
                    double *out);
 

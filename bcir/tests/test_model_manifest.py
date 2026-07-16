@@ -75,6 +75,42 @@ def test_manifest_is_deterministic_and_round_trips():
         assert manifest_from_json(m1.to_json()) == m1     # the record survives serialization
 
 
+def test_persisted_manifest_rejects_ambiguous_or_inconsistent_state():
+    with tempfile.TemporaryDirectory() as d:
+        manifest = build_manifest(_two_shards(d), _CFG)
+        base = json.loads(manifest.to_json())
+        variants = []
+        wrong_total = json.loads(json.dumps(base)); wrong_total["param_count"] += 1
+        variants.append(wrong_total)
+        bad_hash = json.loads(json.dumps(base)); bad_hash["shards"][0]["sha256"] = "x" * 64
+        variants.append(bad_hash)
+        duplicate_file = json.loads(json.dumps(base))
+        duplicate_file["shards"][1]["file"] = duplicate_file["shards"][0]["file"]
+        variants.append(duplicate_file)
+        for doc in variants:
+            try:
+                manifest_from_json(json.dumps(doc))
+                raise AssertionError("forged manifest must be rejected")
+            except ValueError:
+                pass
+        try:
+            manifest_from_json('{"name":"a","name":"b"}')
+            raise AssertionError("duplicate manifest keys must be rejected")
+        except ValueError:
+            pass
+
+
+def test_manifest_rejects_duplicate_tensor_ownership_across_shards():
+    with tempfile.TemporaryDirectory() as d:
+        first = _shard(d, "a.safetensors", {"same": ("F32", (1,), 4)})
+        second = _shard(d, "b.safetensors", {"same": ("F32", (1,), 4)})
+        try:
+            build_manifest([first, second], _CFG)
+            raise AssertionError("one tensor cannot be owned by two shards")
+        except ValueError as exc:
+            assert "multiple shards" in str(exc)
+
+
 def test_a_flipped_weight_byte_changes_the_identity():
     # integrity: the manifest digest pins the shard BYTES (hashed, never interpreted).
     with tempfile.TemporaryDirectory() as d:
@@ -105,6 +141,41 @@ def test_malformed_shards_are_rejected_loudly():
             assert False, "implausible header length must be rejected"
         except ValueError:
             pass
+
+
+def test_header_rejects_aliases_holes_negative_shapes_and_duplicate_keys():
+    """The header is a wire trust boundary: every payload byte has exactly one owner
+    and duplicate JSON keys cannot select different tensors in different parsers."""
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "ambiguous.safetensors")
+        cases = (
+            ({"a": {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]},
+              "b": {"dtype": "F32", "shape": [2], "data_offsets": [4, 12]}},
+             b"\0" * 12, "overlap"),
+            ({"a": {"dtype": "F32", "shape": [1], "data_offsets": [4, 8]}},
+             b"\0" * 8, "hole"),
+            ({"a": {"dtype": "F32", "shape": [-1], "data_offsets": [0, 0]}},
+             b"", "shape"),
+        )
+        for header, payload, needle in cases:
+            blob = json.dumps(header).encode()
+            with open(path, "wb") as f:
+                f.write(struct.pack("<Q", len(blob)) + blob + payload)
+            try:
+                parse_safetensors_header(path)
+                raise AssertionError(f"expected {needle} refusal")
+            except ValueError as exc:
+                assert needle in str(exc), str(exc)
+
+        duplicate = (b'{"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]},'
+                     b'"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}')
+        with open(path, "wb") as f:
+            f.write(struct.pack("<Q", len(duplicate)) + duplicate + b"\0" * 4)
+        try:
+            parse_safetensors_header(path)
+            raise AssertionError("expected duplicate-key refusal")
+        except ValueError as exc:
+            assert "duplicate" in str(exc)
         r = os.path.join(d, "notjson.safetensors")
         blob = b"not json at all"
         with open(r, "wb") as f:

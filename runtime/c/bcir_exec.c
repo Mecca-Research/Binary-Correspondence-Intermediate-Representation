@@ -36,6 +36,7 @@ bcir_status bcir_sp_execute(const uint8_t *BCIR_RESTRICT data, size_t len,
                             bcir_exec_fn fn, void *ctx,
                             bcir_exec_result *BCIR_RESTRICT out) {
   bcir_streampack_header hdr;
+  if (out) { out->executed = 0; out->n_phases = 0; out->n_segments = 0; }
   bcir_status st = bcir_sp_validate(data, len, &hdr);
   if (st != BCIR_OK)
     return st;
@@ -61,13 +62,21 @@ bcir_status bcir_sp_execute(const uint8_t *BCIR_RESTRICT data, size_t len,
     return BCIR_ERR_NOSPACE;
   size_t n = cc.n;
 
+  /* Reject an undersized phase table before writing any partial telemetry. */
+  size_t required_phases = 0;
+  for (size_t i = 0; i < n; i++) {
+    int seen = 0;
+    for (size_t j = 0; j < i; j++)
+      if (scratch[j].phase_id == scratch[i].phase_id) { seen = 1; break; }
+    if (!seen) required_phases++;
+  }
+  if (required_phases > phases_cap) return BCIR_ERR_NOSPACE;
+
   /* 2) Register phases in first-appearance (topological) order + count scheduled. */
   size_t np = 0;
   for (size_t i = 0; i < n; i++) {
     size_t r = phase_rank(phases, np, scratch[i].phase_id);
     if (r == np) {
-      if (np >= phases_cap)
-        return BCIR_ERR_NOSPACE;
       phases[np].phase_id = scratch[i].phase_id;
       phases[np].scheduled = 0;
       phases[np].executed = 0;
@@ -114,6 +123,7 @@ bcir_status bcir_sp_execute_checked(const uint8_t *BCIR_RESTRICT data, size_t le
                                     bcir_phase_stat *BCIR_RESTRICT phases, size_t phases_cap,
                                     bcir_exec_fn fn, void *ctx,
                                     bcir_exec_result *BCIR_RESTRICT out) {
+  if (out) { out->executed = 0; out->n_phases = 0; out->n_segments = 0; }
   /* R11 (generation/staleness): reject a STALE pack before any execution. R10 + the range
    * gate are then re-enforced inside bcir_sp_execute (cheap; both passes are bounds-checked). */
   bcir_status st = bcir_sp_check_generation(data, len, expected_map_gen, expected_data_gen);

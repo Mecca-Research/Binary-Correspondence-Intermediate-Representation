@@ -95,29 +95,50 @@ struct LayoutPivotPass
     // --- price each access shape under each layout through the stride-penalty memory terms ---
     // STRIDED penalty: min(F, cacheline/elem_bytes), clamped to >= 2 like the oracle's stride_k_under.
     int64_t sp = std::min<int64_t>(std::max<int64_t>(2, fields), std::max<int64_t>(1, cl / eb));
-    auto unitMem = [&](int64_t n) -> int64_t {
+    auto unitMem = [&](int64_t n, int64_t &out) -> bool {
       if (n <= 0)
-        return 0;
-      int64_t ceil = (n + vw - 1) / vw;
-      return n * streams + ceil * streams * bo;          // base_overhead * 1 (unit stride; vectorized)
+        return out = 0, true;
+      int64_t ceil = n / vw + (n % vw != 0);
+      int64_t base, overhead;
+      return checkedMulNonnegative(n, streams, base) &&
+             checkedMul3Nonnegative(ceil, streams, bo, overhead) &&
+             checkedAddNonnegative(base, overhead, out);
     };
-    auto stridedMem = [&](int64_t n) -> int64_t {
+    auto stridedMem = [&](int64_t n, int64_t &out) -> bool {
       if (n <= 0)
-        return 0;
+        return out = 0, true;
       // the cheapest STRIDED candidate = min(strided penalty, gather penalty): a target whose gather is
       // cheaper than a large stride (e.g. PTX gp=16) prices the gather instead (mirrors candidates_for).
-      int64_t strided = n * streams + n * streams * bo * sp;  // width 1 (pinned scalar) * stride penalty
-      int64_t gather = n * streams + n * streams * bo * gp;
-      return std::min(strided, gather);
+      int64_t base, stridedExtra, gatherExtra, strided, gather;
+      if (!checkedMulNonnegative(n, streams, base) ||
+          !checkedMul3Nonnegative(base, bo, sp, stridedExtra) ||
+          !checkedMul3Nonnegative(base, bo, gp, gatherExtra) ||
+          !checkedAddNonnegative(base, stridedExtra, strided) ||
+          !checkedAddNonnegative(base, gatherExtra, gather))
+        return false;
+      out = std::min(strided, gather);
+      return true;
     };
     // single-field: UNIT under SoA / STRIDED under AoS; whole-record: STRIDED under SoA / UNIT under AoS.
-    int64_t soa, aos;
+    int64_t soa, aos, sfUnit, sfStrided, wrUnit, wrStrided;
+    if (!unitMem(sfr, sfUnit) || !stridedMem(sfr, sfStrided) ||
+        !unitMem(wrr, wrUnit) || !stridedMem(wrr, wrStrided)) {
+      op.emitError("bcir-layout-pivot: derived memory cost exceeds signed 64-bit range");
+      return false;
+    }
     if (fields <= 1) {
       // No SoA/AoS distinction (a single-field resource): both costs equal (a clean no-op).
-      soa = aos = unitMem(sfr) + unitMem(wrr);
+      if (!checkedAddNonnegative(sfUnit, wrUnit, soa)) {
+        op.emitError("bcir-layout-pivot: aggregate memory cost exceeds signed 64-bit range");
+        return false;
+      }
+      aos = soa;
     } else {
-      soa = unitMem(sfr) + stridedMem(wrr);
-      aos = stridedMem(sfr) + unitMem(wrr);
+      if (!checkedAddNonnegative(sfUnit, wrStrided, soa) ||
+          !checkedAddNonnegative(sfStrided, wrUnit, aos)) {
+        op.emitError("bcir-layout-pivot: aggregate memory cost exceeds signed 64-bit range");
+        return false;
+      }
     }
     // min,+ selection: AoS adopted ONLY on a STRICT win; ties keep the declared default SoA.
     StringRef layout = (aos < soa) ? "aos" : "soa";

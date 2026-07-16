@@ -49,6 +49,14 @@ int main(int argc, char **argv) {
     printf("ERR-REC range\n");
     return 1;
   }
+  if (frame_len) {
+    in[frame_len - 1] ^= 1u;
+    if (bcir_tf_get_record(in, frame_len, 0, NULL) != BCIR_TF_ERR_CRC) {
+      printf("ERR-REC crc-bypass\n");
+      return 1;
+    }
+    in[frame_len - 1] ^= 1u;
+  }
 
   /* Re-encode the SAME frame (same seq/ts/records) through the C writer; the Python
    * test cmp's it against the original encode_frame bytes (byte-identical dual-rail). */

@@ -80,9 +80,11 @@ static bool costKeyEq(ResourceOp a, ResourceOp b) {
     return false;
   int64_t ca = 1, cb = 1;
   for (int64_t d : a.getShape())
-    ca *= d;
+    if (!checkedMulNonnegative(ca, d, ca))
+      return false;
   for (int64_t d : b.getShape())
-    cb *= d;
+    if (!checkedMulNonnegative(cb, d, cb))
+      return false;
   if (ca != cb)
     return false;
   bool ha = a.getAccess() && *a.getAccess() == Access::HAM;
@@ -108,10 +110,12 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
   llvm::DenseMap<StringRef, ResourceOp> resByName;
   llvm::DenseMap<StringRef, Operation *> funcByName;
   llvm::DenseMap<StringRef, CC> memo; // func -> its summary (planned once over its formals)
+  llvm::DenseSet<StringRef> activeSummaries;
   llvm::DenseMap<StringRef, StringRef> emptySubst;
   SmallVector<int> budgetDims;    // the first kbcir.budget's tracked cost-dim indices
   SmallVector<int64_t> budgetCaps;
   bool hasBudget = false;         // a budget op present -> price Leaves constrained (RCSP)
+  bool invalidNesting = false;
 
   void runOnOperation() override {
     Builder b(&getContext());
@@ -127,12 +131,15 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
       return;
     h = cm::readCap(capOp);
     w = cm::firstWeights(root);
-    if (w.empty())
+    if (w.size() != 12 ||
+        llvm::any_of(w, [](int64_t value) { return value < 0; }))
       return;
     theta = cm::firstThetaThermal(root);
     resByName = cm::resourcesByName(root);
     funcByName.clear();
     memo.clear();
+    activeSummaries.clear();
+    invalidNesting = false;
     // The first kbcir.budget (if any) makes each Leaf priced by the constrained label DP, so
     // the compositional plan respects min M s.t. R <= B (the central K_BCIR equation).
     budgetDims.clear();
@@ -175,23 +182,47 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
       f->setAttr("kbcir.effect_writes", symbolArray(eff.writes, b));
       annotateIndependence(f->getRegion(0).front(), emptySubst, b, 0);
     }
+    if (invalidNesting) {
+      root->emitError("bcir-compose: recursive call graph or nesting deeper than 64 is unsupported");
+      signalPassFailure();
+    }
   }
 
   // A function's summary: its body planned ONCE over its formals (no substitution), memoized.
   CC funcSummary(StringRef name, int depth) {
+    if (activeSummaries.count(name)) {
+      invalidNesting = true;
+      CC cyclic;
+      cyclic.worst = std::numeric_limits<int64_t>::max();
+      cyclic.expected = std::numeric_limits<int64_t>::max();
+      cyclic.feasible = false;
+      return cyclic;
+    }
     auto it = memo.find(name);
     if (it != memo.end())
       return it->second;
     Operation *f = funcByName.lookup(name);
-    if (!f || depth > 64)
+    if (!f || depth > 64) {
+      if (depth > 64)
+        invalidNesting = true;
       return {};
-    memo[name] = {}; // break any cycle (R18 rejects recursion; be safe regardless)
+    }
+    activeSummaries.insert(name);
     CC c = regionCost(f->getRegion(0).front(), depth, emptySubst);
+    activeSummaries.erase(name);
     memo[name] = c;
     return c;
   }
 
   CC regionCost(Block &block, int depth, const llvm::DenseMap<StringRef, StringRef> &subst) {
+    if (depth > 64) {
+      invalidNesting = true;
+      CC limited;
+      limited.worst = std::numeric_limits<int64_t>::max();
+      limited.expected = std::numeric_limits<int64_t>::max();
+      limited.feasible = false;
+      return limited;
+    }
     CC acc;
     // Leaf: the region's direct bcir.claim ops, priced (with the substitution) as one block.
     SmallVector<ClaimOp> leaf;
@@ -209,9 +240,9 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
       } else {
         cm::planChosen(cols, w, theta, total);
       }
-      acc.worst += total;
-      acc.expected += total;
-      acc.leaves += 1;
+      acc.worst = saturatingAddNonnegative(acc.worst, total);
+      acc.expected = saturatingAddNonnegative(acc.expected, total);
+      acc.leaves = saturatingAddNonnegative(acc.leaves, 1);
       for (ClaimOp c : leaf)
         if (c.getDynamic())
           acc.dynamic = true; // a dynamic-shape claim -> count is a static upper bound
@@ -223,10 +254,19 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
         CC e = regionCost(cond.getElseRegion().front(), depth + 1, subst);
         int64_t p = std::max<int64_t>(
             0, std::min<int64_t>(1000, static_cast<int64_t>(cond.getProbThenMilli())));
-        acc.worst += kPredCost + std::max(t.worst, e.worst);
-        acc.expected += kPredCost + (p * t.expected + (1000 - p) * e.expected) / 1000;
-        acc.leaves += t.leaves + e.leaves;
-        acc.reused += t.reused + e.reused;
+        int64_t branchWorst = saturatingAddNonnegative(
+            kPredCost, std::max(t.worst, e.worst));
+        int64_t weighted = saturatingAddNonnegative(
+            saturatingMulNonnegative(p, t.expected),
+            saturatingMulNonnegative(1000 - p, e.expected));
+        int64_t branchExpected = saturatingAddNonnegative(kPredCost,
+                                                          weighted / 1000);
+        acc.worst = saturatingAddNonnegative(acc.worst, branchWorst);
+        acc.expected = saturatingAddNonnegative(acc.expected, branchExpected);
+        acc.leaves = saturatingAddNonnegative(
+            acc.leaves, saturatingAddNonnegative(t.leaves, e.leaves));
+        acc.reused = saturatingAddNonnegative(
+            acc.reused, saturatingAddNonnegative(t.reused, e.reused));
         acc.feasible = acc.feasible && t.feasible && e.feasible;
         acc.dynamic = acc.dynamic || t.dynamic || e.dynamic;
       } else if (auto call = dyn_cast<KBCIRCallOp>(&op)) {
@@ -238,17 +278,18 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
           continue; // undefined callee: R18 rejects it; contribute nothing
         if (summaryApplies(cf, amap)) {
           CC s = funcSummary(callee, depth + 1); // reuse the once-planned cost
-          acc.worst += s.worst;
-          acc.expected += s.expected;
-          acc.reused += s.reused + s.leaves; // the leaf plans this call site saved
+          acc.worst = saturatingAddNonnegative(acc.worst, s.worst);
+          acc.expected = saturatingAddNonnegative(acc.expected, s.expected);
+          acc.reused = saturatingAddNonnegative(
+              acc.reused, saturatingAddNonnegative(s.reused, s.leaves));
           acc.feasible = acc.feasible && s.feasible;
           acc.dynamic = acc.dynamic || s.dynamic;
         } else {
           CC inl = regionCost(cf->getRegion(0).front(), depth + 1, amap); // re-price inlined
-          acc.worst += inl.worst;
-          acc.expected += inl.expected;
-          acc.leaves += inl.leaves;
-          acc.reused += inl.reused;
+          acc.worst = saturatingAddNonnegative(acc.worst, inl.worst);
+          acc.expected = saturatingAddNonnegative(acc.expected, inl.expected);
+          acc.leaves = saturatingAddNonnegative(acc.leaves, inl.leaves);
+          acc.reused = saturatingAddNonnegative(acc.reused, inl.reused);
           acc.feasible = acc.feasible && inl.feasible;
           acc.dynamic = acc.dynamic || inl.dynamic;
         }

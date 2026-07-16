@@ -113,17 +113,30 @@ def test_non_finite_inputs_are_rejected_at_the_bridge_boundary():
 
 
 def test_degenerate_arguments_raise():
-    for bits in (-1, 0, 1):
+    for bits in (-1, 0, 1, True, 8.0, 1 << 20):
         try:
             code_max(bits); assert False, f"bits={bits} should raise"
         except ValueError:
             pass
-    try:
-        quantize_per_group([1.0], group_size=0, bits=8); assert False, "group_size 0 should raise"
-    except ValueError:
-        pass
+    for group_size in (0, -1, True, 1.5):
+        try:
+            quantize_per_group([1.0], group_size=group_size, bits=8)
+            assert False, f"group_size {group_size!r} should raise"
+        except ValueError:
+            pass
     try:
         quantize_group([1.0], bits=8, rounding="bogus"); assert False, "bad rounding should raise"
+    except ValueError:
+        pass
+    for args in (([1.5], [2]), ([True], [2])):
+        try:
+            integer_dot(*args)
+            assert False, "non-integer dot codes should raise"
+        except ValueError:
+            pass
+    try:
+        QGroup(codes=(128,), scale_exp=0, bits=8)
+        assert False, "out-of-lane QGroup code should raise"
     except ValueError:
         pass
 
@@ -131,6 +144,11 @@ def test_degenerate_arguments_raise():
 def test_empty_input_is_empty_output():
     assert quantize_per_group([], group_size=8, bits=8) == []
     assert roundtrip([], 8, 8) == []
+
+
+def test_error_measurement_handles_single_pass_iterables():
+    values = (float(i) / 7.0 for i in range(16))
+    assert max_abs_error(values, group_size=4, bits=8) > 0.0
 
 
 # --- determinism ------------------------------------------------------------------

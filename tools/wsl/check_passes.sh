@@ -5,6 +5,9 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/bcir-passes.XXXXXXXX")" || exit 1
+trap 'rm -rf -- "${TMP_ROOT}"' EXIT
+ERR="${TMP_ROOT}/pass.err"
 BO="${BCIR_OPT:-$(find "${ROOT}/build/mlir-build" -name bcir-opt -type f 2>/dev/null | head -1)}"
 if [ -z "${BO}" ]; then
   echo "bcir-opt not built; run tools/wsl/build_mlir.sh first (skipping)." >&2
@@ -32,20 +35,24 @@ echo "[passes] -bcir-verify negative cases (-verify-diagnostics)"
 echo "[passes] parse-time op verifiers (hasVerifier structural well-formedness)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/verify_ops.mlir" \
   && echo "  PASS verify_ops (resource align/shape)" || { echo "  FAIL verify_ops"; fail=1; }
+"${BO}" -verify-diagnostics -split-input-file "${T}/verify_overflow.mlir" \
+  && echo "  PASS verify_overflow (checked derived geometry/cost)" || { echo "  FAIL verify_overflow"; fail=1; }
+"${BO}" -bcir-lower-gem-matmul -bcir-lower-gem-activation -bcir-lower-gem-conv -bcir-lower-gem-attention -verify-diagnostics -split-input-file "${T}/lower_expansion_limits.mlir" \
+  && echo "  PASS lower_expansion_limits (bounded materialization)" || { echo "  FAIL lower_expansion_limits"; fail=1; }
 
 echo "[passes] -bcir-verify on the pretty corpus (must be clean)"
 for f in "${ROOT}"/mlir/examples/*.mlir; do
-  "${BO}" -bcir-verify "${f}" >/dev/null 2>/tmp/pe \
-    && echo "  PASS verify $(basename "${f}")" || { echo "  FAIL verify $(basename "${f}")"; cat /tmp/pe; fail=1; }
+  "${BO}" -bcir-verify "${f}" >/dev/null 2>"${ERR}" \
+    && echo "  PASS verify $(basename "${f}")" || { echo "  FAIL verify $(basename "${f}")"; cat "${ERR}"; fail=1; }
 done
 
 run_fc() { # pass-flag, test-file
   if [ -n "${FC}" ]; then
-    "${BO}" "$1" "$2" 2>/tmp/pe | "${FC}" "$2" \
-      && echo "  PASS $(basename "$2")" || { echo "  FAIL $(basename "$2")"; cat /tmp/pe; fail=1; }
+    "${BO}" "$1" "$2" 2>"${ERR}" | "${FC}" "$2" \
+      && echo "  PASS $(basename "$2")" || { echo "  FAIL $(basename "$2")"; cat "${ERR}"; fail=1; }
   else
-    "${BO}" "$1" "$2" >/dev/null 2>/tmp/pe \
-      && echo "  RUN-ONLY $(basename "$2")" || { echo "  FAIL $(basename "$2")"; cat /tmp/pe; fail=1; }
+    "${BO}" "$1" "$2" >/dev/null 2>"${ERR}" \
+      && echo "  RUN-ONLY $(basename "$2")" || { echo "  FAIL $(basename "$2")"; cat "${ERR}"; fail=1; }
   fi
 }
 echo "[passes] -bcir-promote-lanes"
@@ -55,10 +62,10 @@ run_fc -convert-bcir-to-llvm "${T}/convert_to_llvm.mlir"
 
 echo "[passes] async tokens (parse/roundtrip)"
 if [ -n "${FC}" ]; then
-  "${BO}" "${T}/async_tokens.mlir" 2>/tmp/pe | "${FC}" "${T}/async_tokens.mlir" \
-    && echo "  PASS async_tokens.mlir" || { echo "  FAIL async_tokens.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/async_tokens.mlir" 2>"${ERR}" | "${FC}" "${T}/async_tokens.mlir" \
+    && echo "  PASS async_tokens.mlir" || { echo "  FAIL async_tokens.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" "${T}/async_tokens.mlir" >/dev/null 2>/tmp/pe && echo "  RUN-ONLY async_tokens.mlir" || { echo "  FAIL"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/async_tokens.mlir" >/dev/null 2>"${ERR}" && echo "  RUN-ONLY async_tokens.mlir" || { echo "  FAIL"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] memory ordering (barrier -> llvm.fence)"
 run_fc -convert-bcir-to-llvm "${T}/memory_ordering.mlir"
@@ -66,19 +73,19 @@ run_fc -convert-bcir-to-llvm "${T}/memory_ordering.mlir"
 echo "[passes] GEM pipeline (classify/select/batch/schedule/lower)"
 GEM="-bcir-classify-lanes -bcir-select-realization -bcir-batch -bcir-schedule -bcir-lower-to-llvm"
 if [ -n "${FC}" ]; then
-  "${BO}" ${GEM} "${T}/gem_passes.mlir" 2>/tmp/pe | "${FC}" "${T}/gem_passes.mlir" \
-    && echo "  PASS gem_passes.mlir" || { echo "  FAIL gem_passes.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" ${GEM} "${T}/gem_passes.mlir" 2>"${ERR}" | "${FC}" "${T}/gem_passes.mlir" \
+    && echo "  PASS gem_passes.mlir" || { echo "  FAIL gem_passes.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" ${GEM} "${T}/gem_passes.mlir" >/dev/null 2>/tmp/pe \
-    && echo "  RUN-ONLY gem_passes.mlir" || { echo "  FAIL gem_passes.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" ${GEM} "${T}/gem_passes.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY gem_passes.mlir" || { echo "  FAIL gem_passes.mlir"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] GEM pipeline on the widened corpus (matmul/scan/histogram, generated)"
 if [ -n "${FC}" ]; then
-  "${BO}" ${GEM} "${T}/gem_corpus.mlir" 2>/tmp/pe | "${FC}" "${T}/gem_corpus.mlir" \
-    && echo "  PASS gem_corpus.mlir" || { echo "  FAIL gem_corpus.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" ${GEM} "${T}/gem_corpus.mlir" 2>"${ERR}" | "${FC}" "${T}/gem_corpus.mlir" \
+    && echo "  PASS gem_corpus.mlir" || { echo "  FAIL gem_corpus.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" ${GEM} "${T}/gem_corpus.mlir" >/dev/null 2>/tmp/pe \
-    && echo "  RUN-ONLY gem_corpus.mlir" || { echo "  FAIL gem_corpus.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" ${GEM} "${T}/gem_corpus.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY gem_corpus.mlir" || { echo "  FAIL gem_corpus.mlir"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] gem-matmul-cost (B1: recompute the matmul roofline (cost_of) parity-check + annotate; informs-only, never gates legality)"
 run_fc -bcir-gem-matmul-cost "${T}/gem_matmul_cost.mlir"
@@ -104,11 +111,11 @@ echo "[passes] lower-gem-matmul (gem.matmul plan -> concrete tiled gem.block seq
 run_fc -bcir-lower-gem-matmul "${T}/lower_gem_matmul.mlir"
 echo "[passes] lower-gem-matmul-buffer (gem.matmul_buffer -> tiled scf.for nest, C += A*B)"
 if [ -n "${FC}" ]; then
-  "${BO}" -bcir-lower-gem-matmul-buffer -split-input-file "${T}/lower_gem_matmul_buffer.mlir" 2>/tmp/pe | "${FC}" "${T}/lower_gem_matmul_buffer.mlir" \
-    && echo "  PASS lower_gem_matmul_buffer.mlir" || { echo "  FAIL lower_gem_matmul_buffer.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" -bcir-lower-gem-matmul-buffer -split-input-file "${T}/lower_gem_matmul_buffer.mlir" 2>"${ERR}" | "${FC}" "${T}/lower_gem_matmul_buffer.mlir" \
+    && echo "  PASS lower_gem_matmul_buffer.mlir" || { echo "  FAIL lower_gem_matmul_buffer.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" -bcir-lower-gem-matmul-buffer -split-input-file "${T}/lower_gem_matmul_buffer.mlir" >/dev/null 2>/tmp/pe \
-    && echo "  RUN-ONLY lower_gem_matmul_buffer.mlir" || { echo "  FAIL lower_gem_matmul_buffer.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" -bcir-lower-gem-matmul-buffer -split-input-file "${T}/lower_gem_matmul_buffer.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY lower_gem_matmul_buffer.mlir" || { echo "  FAIL lower_gem_matmul_buffer.mlir"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] lower-gem-matmul-buffer op verifier negatives (-verify-diagnostics)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/lower_gem_matmul_buffer_neg.mlir" \
@@ -135,22 +142,22 @@ echo "[passes] fuse-matmul-activation op verifier negatives (softmax scope-out +
   && echo "  PASS fuse_matmul_activation_neg.mlir" || { echo "  FAIL fuse_matmul_activation_neg.mlir"; fail=1; }
 echo "[passes] gem.autodiff round-trip (B3: the closed-set forward autodiff DAG serializes/parses/prints identically)"
 if [ -n "${FC}" ]; then
-  "${BO}" "${T}/gem_autodiff_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/gem_autodiff_roundtrip.mlir" \
-    && echo "  PASS gem_autodiff_roundtrip.mlir" || { echo "  FAIL gem_autodiff_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/gem_autodiff_roundtrip.mlir" 2>"${ERR}" | "${BO}" | "${FC}" "${T}/gem_autodiff_roundtrip.mlir" \
+    && echo "  PASS gem_autodiff_roundtrip.mlir" || { echo "  FAIL gem_autodiff_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" "${T}/gem_autodiff_roundtrip.mlir" >/dev/null 2>/tmp/pe \
-    && echo "  RUN-ONLY gem_autodiff_roundtrip.mlir" || { echo "  FAIL gem_autodiff_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/gem_autodiff_roundtrip.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY gem_autodiff_roundtrip.mlir" || { echo "  FAIL gem_autodiff_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] gem.autodiff op verifier negatives (the closed-set law: foreign opcode / wrong arity / forward index / var slot / output / payload)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/gem_autodiff_verify_neg.mlir" \
   && echo "  PASS gem_autodiff_verify_neg.mlir" || { echo "  FAIL gem_autodiff_verify_neg.mlir"; fail=1; }
 echo "[passes] bcir.asm round-trip (ASM1: verbatim inline asm parses/prints identically -- 0-output fence + 1-out/1-in form)"
 if [ -n "${FC}" ]; then
-  "${BO}" "${T}/inline_asm_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/inline_asm_roundtrip.mlir" \
-    && echo "  PASS inline_asm_roundtrip.mlir" || { echo "  FAIL inline_asm_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/inline_asm_roundtrip.mlir" 2>"${ERR}" | "${BO}" | "${FC}" "${T}/inline_asm_roundtrip.mlir" \
+    && echo "  PASS inline_asm_roundtrip.mlir" || { echo "  FAIL inline_asm_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" "${T}/inline_asm_roundtrip.mlir" >/dev/null 2>/tmp/pe \
-    && echo "  RUN-ONLY inline_asm_roundtrip.mlir" || { echo "  FAIL inline_asm_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/inline_asm_roundtrip.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY inline_asm_roundtrip.mlir" || { echo "  FAIL inline_asm_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] bcir.asm -> llvm.inline_asm (ASM1 lowering: out/in/clobber constraint string, ~{...} clobbers, side-effecting)"
 run_fc -convert-bcir-to-llvm "${T}/inline_asm.mlir"
@@ -162,11 +169,11 @@ echo "[passes] bcir.asm -> llvm LOWERING negatives (the '+' read-write output re
   && echo "  PASS inline_asm_lower_neg.mlir" || { echo "  FAIL inline_asm_lower_neg.mlir"; fail=1; }
 echo "[passes] bcir.portio round-trip (ASM2: x86 port-I/O edge parses/prints identically -- in.{b,l} read + out.{b,l} void write)"
 if [ -n "${FC}" ]; then
-  "${BO}" "${T}/portio_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/portio_roundtrip.mlir" \
-    && echo "  PASS portio_roundtrip.mlir" || { echo "  FAIL portio_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/portio_roundtrip.mlir" 2>"${ERR}" | "${BO}" | "${FC}" "${T}/portio_roundtrip.mlir" \
+    && echo "  PASS portio_roundtrip.mlir" || { echo "  FAIL portio_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" "${T}/portio_roundtrip.mlir" >/dev/null 2>/tmp/pe \
-    && echo "  RUN-ONLY portio_roundtrip.mlir" || { echo "  FAIL portio_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/portio_roundtrip.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY portio_roundtrip.mlir" || { echo "  FAIL portio_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] bcir.portio -> llvm.inline_asm (ASM2 lowering: x86 in/out \${N:mod} template + ={ax},N{dx} / {ax},N{dx} constraints, side-effecting; LLVM-IR-correct, assembles via llc)"
 run_fc -convert-bcir-to-llvm "${T}/portio.mlir"
@@ -175,11 +182,11 @@ echo "[passes] bcir.portio op verifier negatives (width {8,16,32} + in/out opera
   && echo "  PASS portio_verify_neg.mlir" || { echo "  FAIL portio_verify_neg.mlir"; fail=1; }
 echo "[passes] bcir.volatile_load/store round-trip (first-class MMIO: ordered volatile device-register access parses/prints identically)"
 if [ -n "${FC}" ]; then
-  "${BO}" "${T}/volatile_mmio_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/volatile_mmio_roundtrip.mlir" \
-    && echo "  PASS volatile_mmio_roundtrip.mlir" || { echo "  FAIL volatile_mmio_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/volatile_mmio_roundtrip.mlir" 2>"${ERR}" | "${BO}" | "${FC}" "${T}/volatile_mmio_roundtrip.mlir" \
+    && echo "  PASS volatile_mmio_roundtrip.mlir" || { echo "  FAIL volatile_mmio_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" "${T}/volatile_mmio_roundtrip.mlir" >/dev/null 2>/tmp/pe \
-    && echo "  RUN-ONLY volatile_mmio_roundtrip.mlir" || { echo "  FAIL volatile_mmio_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/volatile_mmio_roundtrip.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY volatile_mmio_roundtrip.mlir" || { echo "  FAIL volatile_mmio_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] bcir.volatile_load/store -> llvm.inttoptr + volatile llvm.load/store (MMIO lowering; mirrors the cfront *(volatile T*)(intaddr) emit)"
 run_fc -convert-bcir-to-llvm "${T}/volatile_mmio.mlir"
@@ -188,11 +195,11 @@ echo "[passes] bcir.volatile_load/store op negatives (the device-register addres
   && echo "  PASS volatile_mmio_verify_neg.mlir" || { echo "  FAIL volatile_mmio_verify_neg.mlir"; fail=1; }
 echo "[passes] bcir.atomic_rmw/atomic_cas round-trip (§5.14 Phase 2: first-class atomics -- kind, #bcir.mem_ordering, weak all survive print->parse)"
 if [ -n "${FC}" ]; then
-  "${BO}" "${T}/atomic_ops_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/atomic_ops_roundtrip.mlir" \
-    && echo "  PASS atomic_ops_roundtrip.mlir" || { echo "  FAIL atomic_ops_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/atomic_ops_roundtrip.mlir" 2>"${ERR}" | "${BO}" | "${FC}" "${T}/atomic_ops_roundtrip.mlir" \
+    && echo "  PASS atomic_ops_roundtrip.mlir" || { echo "  FAIL atomic_ops_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" "${T}/atomic_ops_roundtrip.mlir" >/dev/null 2>/tmp/pe \
-    && echo "  RUN-ONLY atomic_ops_roundtrip.mlir" || { echo "  FAIL atomic_ops_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/atomic_ops_roundtrip.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY atomic_ops_roundtrip.mlir" || { echo "  FAIL atomic_ops_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] bcir.atomic_rmw/atomic_cas -> llvm.atomicrmw/cmpxchg (§5.14 Phase 2 lowering: inttoptr + mapped ordering, seq_cst default, derived CAS failure ordering, weak flag)"
 run_fc -convert-bcir-to-llvm "${T}/atomic_ops.mlir"
@@ -225,11 +232,11 @@ echo "[passes] R22/R23 gem shape/dtype seam laws (D2 promotion: matmul->activati
   && echo "  PASS verify_shape_dtype.mlir" || { echo "  FAIL verify_shape_dtype.mlir"; fail=1; }
 echo "[passes] bcir.creg_read/write round-trip (D1.3: x86-64 control-register access parses/prints identically)"
 if [ -n "${FC}" ]; then
-  "${BO}" "${T}/creg_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/creg_roundtrip.mlir" \
-    && echo "  PASS creg_roundtrip.mlir" || { echo "  FAIL creg_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/creg_roundtrip.mlir" 2>"${ERR}" | "${BO}" | "${FC}" "${T}/creg_roundtrip.mlir" \
+    && echo "  PASS creg_roundtrip.mlir" || { echo "  FAIL creg_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" "${T}/creg_roundtrip.mlir" >/dev/null 2>/tmp/pe \
-    && echo "  RUN-ONLY creg_roundtrip.mlir" || { echo "  FAIL creg_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/creg_roundtrip.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY creg_roundtrip.mlir" || { echo "  FAIL creg_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] bcir.creg_read/write -> llvm.inline_asm (D1.3 lowering: mov %crN,\$0 / mov \$0,%crN; LLVM-IR asm syntax, side-effecting)"
 run_fc -convert-bcir-to-llvm "${T}/creg.mlir"
@@ -238,11 +245,11 @@ echo "[passes] bcir.creg_read/write op negatives (the control-register value mus
   && echo "  PASS creg_verify_neg.mlir" || { echo "  FAIL creg_verify_neg.mlir"; fail=1; }
 echo "[passes] bcir.msr_read/write round-trip (D1.4: x86-64 model-specific-register access parses/prints identically)"
 if [ -n "${FC}" ]; then
-  "${BO}" "${T}/msr_roundtrip.mlir" 2>/tmp/pe | "${BO}" | "${FC}" "${T}/msr_roundtrip.mlir" \
-    && echo "  PASS msr_roundtrip.mlir" || { echo "  FAIL msr_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/msr_roundtrip.mlir" 2>"${ERR}" | "${BO}" | "${FC}" "${T}/msr_roundtrip.mlir" \
+    && echo "  PASS msr_roundtrip.mlir" || { echo "  FAIL msr_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" "${T}/msr_roundtrip.mlir" >/dev/null 2>/tmp/pe \
-    && echo "  RUN-ONLY msr_roundtrip.mlir" || { echo "  FAIL msr_roundtrip.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/msr_roundtrip.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY msr_roundtrip.mlir" || { echo "  FAIL msr_roundtrip.mlir"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] bcir.msr_read/write -> llvm.inline_asm (D1.4 lowering: rdmsr/wrmsr; index->ECX, i64 reassembled/split across EDX:EAX, side-effecting + ~{memory})"
 run_fc -convert-bcir-to-llvm "${T}/msr.mlir"
@@ -272,18 +279,18 @@ run_fc -bcir-cost-model "${T}/cost_model_fusion.mlir"
 echo "[passes] cost-model verify dimension (exact/hash discharge cost)"
 run_fc -bcir-cost-model "${T}/cost_model_verify.mlir"
 echo "[passes] -bcir-cost-model cross-check on the pretty corpus (reproduces 7808)"
-"${BO}" -bcir-cost-model "${ROOT}/mlir/examples/full_vec_add_ct1.mlir" >/dev/null 2>/tmp/pe \
-  && echo "  PASS cost-model on full_vec_add_ct1.mlir" || { echo "  FAIL cost-model on full_vec_add"; cat /tmp/pe; fail=1; }
+"${BO}" -bcir-cost-model "${ROOT}/mlir/examples/full_vec_add_ct1.mlir" >/dev/null 2>"${ERR}" \
+  && echo "  PASS cost-model on full_vec_add_ct1.mlir" || { echo "  FAIL cost-model on full_vec_add"; cat "${ERR}"; fail=1; }
 echo "[passes] plan: the layered min-plus shortest path (the full realize.optimize in C++)"
 run_fc -bcir-plan "${T}/plan.mlir"
 echo "[passes] -bcir-plan reproduces the oracle's coupled scores on the widened corpus"
-plan_out="$("${BO}" -bcir-plan "${T}/gem_corpus.mlir" 2>/tmp/pe)"
+plan_out="$("${BO}" -bcir-plan "${T}/gem_corpus.mlir" 2>"${ERR}")"
 if grep -q "kbcir.plan_score = 1015808" <<<"${plan_out}" \
    && grep -q "kbcir.plan_score = 101888" <<<"${plan_out}" \
    && grep -q "kbcir.plan_score = 1595520" <<<"${plan_out}"; then
   echo "  PASS plan on gem_corpus (matmul 1015808 / scan 101888 / histogram 1595520)"
 else
-  echo "  FAIL plan on gem_corpus"; cat /tmp/pe; fail=1
+  echo "  FAIL plan on gem_corpus"; cat "${ERR}"; fail=1
 fi
 echo "[passes] overlap: the (max,+) scheduled price M(pi,Theta) (gem/overlap.py in C++)"
 run_fc -bcir-overlap "${T}/overlap.mlir"
@@ -291,19 +298,30 @@ echo "[passes] overlap-optimize: the makespan re-selection sweep (optimize_sched
 run_fc -bcir-overlap-optimize "${T}/overlap_optimize.mlir"
 echo "[passes] sense: the regret-driven telemetry resolution gate (kbcir/sensing.py)"
 run_fc -bcir-sense "${T}/sense.mlir"
-oo_out="$("${BO}" -bcir-overlap-optimize "${T}/gem_corpus.mlir" 2>/tmp/pe)"
+echo "[passes] signed-i64 verifier and cost/lowering overflow refusals"
+"${BO}" -verify-diagnostics -split-input-file "${T}/verify_overflow.mlir" \
+  && echo "  PASS verify_overflow.mlir" || { echo "  FAIL verify_overflow.mlir"; fail=1; }
+"${BO}" -bcir-gem-matmul-cost -bcir-gem-activation-cost -bcir-gem-conv-cost \
+  -bcir-gem-attention-cost -verify-diagnostics -split-input-file "${T}/gem_cost_overflow.mlir" \
+  && echo "  PASS gem_cost_overflow.mlir" || { echo "  FAIL gem_cost_overflow.mlir"; fail=1; }
+"${BO}" -bcir-lower-gem-matmul -bcir-lower-gem-activation -bcir-lower-gem-conv \
+  -bcir-lower-gem-attention -verify-diagnostics -split-input-file "${T}/lower_expansion_limits.mlir" \
+  && echo "  PASS lower_expansion_limits.mlir" || { echo "  FAIL lower_expansion_limits.mlir"; fail=1; }
+"${BO}" -bcir-compose -verify-diagnostics "${T}/compose_recursive_neg.mlir" \
+  && echo "  PASS compose_recursive_neg.mlir" || { echo "  FAIL compose_recursive_neg.mlir"; fail=1; }
+oo_out="$("${BO}" -bcir-overlap-optimize "${T}/gem_corpus.mlir" 2>"${ERR}")"
 if grep -q "kbcir.overlap_opt_makespan = 253952" <<<"${oo_out}"; then
   echo "  PASS overlap-optimize on gem_corpus (sweep stable: matmul makespan 253952)"
 else
-  echo "  FAIL overlap-optimize on gem_corpus"; cat /tmp/pe; fail=1
+  echo "  FAIL overlap-optimize on gem_corpus"; cat "${ERR}"; fail=1
 fi
 echo "[passes] -bcir-overlap reproduces the oracle's makespan on the widened corpus"
-ov_out="$("${BO}" -bcir-overlap "${T}/gem_corpus.mlir" 2>/tmp/pe)"
+ov_out="$("${BO}" -bcir-overlap "${T}/gem_corpus.mlir" 2>"${ERR}")"
 if grep -q "kbcir.overlap_gain = 761856" <<<"${ov_out}" \
    && grep -q "kbcir.overlap_makespan = 253952" <<<"${ov_out}"; then
   echo "  PASS overlap on gem_corpus (matmul makespan 253952, gain 761856)"
 else
-  echo "  FAIL overlap on gem_corpus"; cat /tmp/pe; fail=1
+  echo "  FAIL overlap on gem_corpus"; cat "${ERR}"; fail=1
 fi
 echo "[passes] RCSP / Pareto (the deterministic optimizer core ported to C++)"
 run_fc -bcir-rcsp "${T}/rcsp.mlir"
@@ -319,11 +337,11 @@ echo "[passes] replay (recheck the declared explain_* record vs a fresh plan, th
 run_fc -bcir-replay "${T}/replay.mlir"
 echo "[passes] compose func/if op family (round-trip: kbcir.func / kbcir.call / kbcir.cond)"
 if [ -n "${FC}" ]; then
-  "${BO}" "${T}/compose_ops.mlir" 2>/tmp/pe | "${FC}" "${T}/compose_ops.mlir" \
-    && echo "  PASS compose_ops.mlir" || { echo "  FAIL compose_ops.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/compose_ops.mlir" 2>"${ERR}" | "${FC}" "${T}/compose_ops.mlir" \
+    && echo "  PASS compose_ops.mlir" || { echo "  FAIL compose_ops.mlir"; cat "${ERR}"; fail=1; }
 else
-  "${BO}" "${T}/compose_ops.mlir" >/dev/null 2>/tmp/pe \
-    && echo "  RUN-ONLY compose_ops.mlir" || { echo "  FAIL compose_ops.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" "${T}/compose_ops.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY compose_ops.mlir" || { echo "  FAIL compose_ops.mlir"; cat "${ERR}"; fail=1; }
 fi
 echo "[passes] compose cost (compositional plan over func/if: Seq sum / Cond max+expected / Call)"
 run_fc -bcir-compose "${T}/compose_cost.mlir"
@@ -350,43 +368,43 @@ run_fc -bcir-plan "${T}/theta_hot.mlir"
 echo "[passes] six-target capability matrix (-bcir-plan/-overlap/-rcsp-plan per target)"
 MATRIX="-bcir-plan -bcir-overlap -bcir-rcsp-plan"
 if [ -n "${FC}" ]; then
-  "${BO}" ${MATRIX} "${T}/target_matrix.mlir" 2>/tmp/pe | "${FC}" "${T}/target_matrix.mlir" \
-    && echo "  PASS target_matrix.mlir (FileCheck)" || { echo "  FAIL target_matrix.mlir"; cat /tmp/pe; fail=1; }
+  "${BO}" ${MATRIX} "${T}/target_matrix.mlir" 2>"${ERR}" | "${FC}" "${T}/target_matrix.mlir" \
+    && echo "  PASS target_matrix.mlir (FileCheck)" || { echo "  FAIL target_matrix.mlir"; cat "${ERR}"; fail=1; }
 fi
 # Robust per-target spot checks (run even without FileCheck), distinctive per-target
 # scores the C++ plan must recompute from the capability seeds alone: the ARM-NEON
 # (width 4) and PTX (width 32) vector_add plans, the GPU's cheaper coalesced gather
 # (penalty 16 -> 266240 vs the CPUs' 528384), and a plan-level RCSP constrained optimum.
-mx_out="$("${BO}" ${MATRIX} "${T}/target_matrix.mlir" 2>/tmp/pe)"
+mx_out="$("${BO}" ${MATRIX} "${T}/target_matrix.mlir" 2>"${ERR}")"
 if grep -q "kbcir.plan_score = 12800" <<<"${mx_out}" \
    && grep -q "kbcir.plan_score = 6976" <<<"${mx_out}" \
    && grep -q "kbcir.plan_score = 266240" <<<"${mx_out}" \
    && grep -q "kbcir.rcsp_plan_score = 17280" <<<"${mx_out}"; then
   echo "  PASS target_matrix per-target spot checks (neon 12800 / ptx 6976 / ptx gather 266240 / rvv-class rcsp 17280)"
 else
-  echo "  FAIL target_matrix per-target spot checks"; cat /tmp/pe; fail=1
+  echo "  FAIL target_matrix per-target spot checks"; cat "${ERR}"; fail=1
 fi
 echo "[passes] -bcir-rcsp cross-check on the widened corpus (argmin reproduces the oracle)"
-"${BO}" -bcir-rcsp "${T}/gem_corpus.mlir" >/dev/null 2>/tmp/pe \
-  && echo "  PASS rcsp on gem_corpus.mlir" || { echo "  FAIL rcsp on gem_corpus.mlir"; cat /tmp/pe; fail=1; }
+"${BO}" -bcir-rcsp "${T}/gem_corpus.mlir" >/dev/null 2>"${ERR}" \
+  && echo "  PASS rcsp on gem_corpus.mlir" || { echo "  FAIL rcsp on gem_corpus.mlir"; cat "${ERR}"; fail=1; }
 
 echo "[passes] named pipelines (bcir-audit / -optimize / -hydrate / -lower-llvm / -aot)"
 EX="${ROOT}/mlir/examples/full_vec_add_ct1.mlir"
-audit_out="$("${BO}" -bcir-audit "${EX}" 2>/tmp/pe)"
+audit_out="$("${BO}" -bcir-audit "${EX}" 2>"${ERR}")"
 if grep -q "kbcir.plan_score = 7808" <<<"${audit_out}" \
    && grep -q "kbcir.overlap_makespan = 7808" <<<"${audit_out}" \
    && grep -q "kbcir.cm_min_score = 7808" <<<"${audit_out}"; then
   echo "  PASS bcir-audit (verify + cost/plan/overlap = 7808)"
-else echo "  FAIL bcir-audit"; cat /tmp/pe; fail=1; fi
-aot_out="$("${BO}" -bcir-aot "${EX}" 2>/tmp/pe)"
+else echo "  FAIL bcir-audit"; cat "${ERR}"; fail=1; fi
+aot_out="$("${BO}" -bcir-aot "${EX}" 2>"${ERR}")"
 if grep -q "llvm.fadd" <<<"${aot_out}" \
    && grep -q "kbcir.lowered = true" <<<"${aot_out}" \
    && grep -q "bcir.gem.lane_segment" <<<"${aot_out}"; then
   echo "  PASS bcir-aot (partial preparation: LLVM plus residual GEM IR)"
-else echo "  FAIL bcir-aot"; cat /tmp/pe; fail=1; fi
+else echo "  FAIL bcir-aot"; cat "${ERR}"; fail=1; fi
 for pl in bcir-optimize bcir-hydrate bcir-lower-llvm; do
-  "${BO}" -${pl} "${EX}" >/dev/null 2>/tmp/pe \
-    && echo "  PASS ${pl}" || { echo "  FAIL ${pl}"; cat /tmp/pe; fail=1; }
+  "${BO}" -${pl} "${EX}" >/dev/null 2>"${ERR}" \
+    && echo "  PASS ${pl}" || { echo "  FAIL ${pl}"; cat "${ERR}"; fail=1; }
 done
 
 echo "[passes] GEM cross-checks against the oracle (-verify-diagnostics)"

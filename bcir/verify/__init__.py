@@ -549,11 +549,20 @@ def verify_pack(module: Module, pack) -> list[Diagnostic]:
     """
     diags: list[Diagnostic] = []
     claims = {c.id for ph in module.phases for c in ph.claims}
+    segment_ids = [s.claim_id for s in pack.segments]
+    trace_ids = [t.claim_id for t in pack.trace_notes]
+    prefetch_names = [p.name for p in pack.prefetches]
     traced = {t.claim_id for t in pack.trace_notes}
     prefetches = {p.name for p in pack.prefetches}
     pf_targets = {p.name: set(p.targets) for p in pack.prefetches}
 
     # R10: stream structure -- v2 pipeline/double-buffer contracts are well-formed.
+    if len(set(segment_ids)) != len(segment_ids):
+        diags.append(Diagnostic("R10", "duplicate segment claim_id in StreamPack"))
+    if len(set(trace_ids)) != len(trace_ids):
+        diags.append(Diagnostic("R10", "duplicate trace claim_id in StreamPack"))
+    if len(set(prefetch_names)) != len(prefetch_names):
+        diags.append(Diagnostic("R10", "duplicate prefetch name in StreamPack"))
     if getattr(pack, "pipeline_depth", 1) < 1:
         diags.append(Diagnostic(
             "R10", f"invalid pipeline_depth {pack.pipeline_depth} (must be >= 1)"))

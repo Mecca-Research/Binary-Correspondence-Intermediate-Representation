@@ -31,6 +31,9 @@ def test_contiguity_is_read_straight_off_the_stride_vector():
     scatter = dma_descriptors(_view("hbm0", shape=(16, 16), strides=(64, 2)),
                               _view("hbm1", shape=(16, 16), strides=(16, 1)), _MAN)
     assert len(scatter) == 256 and all(d.nbytes == 4 for d in scatter)
+    assert [d.src_off for d in scatter[:17]] == [8 * i for i in range(16)] + [256]
+    assert [d.src_off for d in scatter[-16:]] == [15 * 256 + 8 * i for i in range(16)]
+    assert len({d.src_off for d in scatter}) == 256
     for descs in (dense, gappy, scatter):
         assert sum(d.nbytes for d in descs) in (2048, 1024)       # 16x32x4 or 16x16x4
 
@@ -69,6 +72,29 @@ def test_pricing_is_d_r3_with_a_fragmentation_premium():
     gap_v = _view("hbm0", strides=(64, 1))
     gappy = dma_cost(_MAN, gap_v, _view("hbm1"), dma_descriptors(gap_v, _view("hbm1"), _MAN))
     assert gappy > near                                           # fragmentation costs
+
+
+def test_invalid_descriptor_programs_cannot_underprice_or_copy_backwards():
+    """Externally supplied descriptor lists are a trust boundary, not an opportunity
+    to mint negative transfer/setup costs or zero-length commands."""
+    src, dst = _view("hbm0"), _view("hbm1")
+    for descs, setup in (([Descriptor(-1, 0, 4)], 16),
+                         ([Descriptor(0, 0, 0)], 16),
+                         ([Descriptor(0, 0, 4)], -1),
+                         ([Descriptor(0, 0, 4)], 16),
+                         ([Descriptor(True, 0, 4)], 16)):
+        try:
+            dma_cost(_MAN, src, dst, descs, desc_setup=setup)
+            raise AssertionError("expected invalid descriptor/cost refusal")
+        except ValueError:
+            pass
+    gapped = _view("hbm0", strides=(64, 1))
+    collapsed = [Descriptor(0, 0, 16 * 32 * 4)]
+    try:
+        dma_cost(_MAN, gapped, dst, collapsed)
+        raise AssertionError("a forged coalesced descriptor must not erase setup cost")
+    except ValueError:
+        pass
 
 
 def test_the_transfer_module_composes_the_whole_law_stack():

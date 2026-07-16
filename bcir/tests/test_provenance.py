@@ -1,5 +1,6 @@
 """Provenance manifest + deterministic replay: the version-DAG spine (R13)."""
 
+import json
 from dataclasses import replace
 
 from bcir.examples import vector_add
@@ -73,6 +74,35 @@ def test_artifacts_are_part_of_the_commit():
 def test_json_round_trips():
     man = build_manifest(vector_add(1024), AVX, COOL, artifacts=[("gate", 7)])
     assert ProvenanceManifest.from_json(man.to_json()) == man
+
+
+def test_json_rejects_ambiguous_or_forged_manifests():
+    manifest = build_manifest(vector_add(1024), AVX, COOL,
+                              artifacts=[("cal_gen", 1), ("gate", 7)])
+    document = json.loads(manifest.to_json())
+    bad_documents = []
+
+    bad = dict(document)
+    bad["digest"] ^= 1
+    bad_documents.append(json.dumps(bad))
+    bad = dict(document)
+    bad["widths"] = [[1000, 16], [1000, 8]]
+    bad_documents.append(json.dumps(bad))
+    bad = dict(document)
+    bad["widths"] = [[1000, True]]
+    bad_documents.append(json.dumps(bad))
+    bad = dict(document)
+    bad["artifacts"] = [["gate", 7], ["gate", 8]]
+    bad_documents.append(json.dumps(bad))
+    bad_documents.append(manifest.to_json().replace('"score": 7808',
+                                                     '"score": 7808, "score": 0'))
+
+    for text in bad_documents:
+        try:
+            ProvenanceManifest.from_json(text)
+            assert False, "expected malformed provenance manifest to be rejected"
+        except ValueError:
+            pass
 
 
 # --- the version DAG (immutable within a generation; branches across them) -------

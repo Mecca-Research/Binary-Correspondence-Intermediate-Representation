@@ -208,6 +208,9 @@ def test_c_rejects_crc_valid_semantically_corrupt_packs():
         "stale_generation": "BCIR_ERR_STALE",
         "tampered_dispatch": "BCIR_ERR_DISPATCH",
         "trailing_bytes": "BCIR_ERR_TRAILING",
+        "duplicate_segment": "BCIR_ERR_PROVENANCE",
+        "duplicate_prefetch": "BCIR_ERR_PROVENANCE",
+        "duplicate_trace": "BCIR_ERR_PROVENANCE",
     }
     env = dict(os.environ, PYTHONPATH=repo + os.pathsep + os.environ.get("PYTHONPATH", ""))
     with tempfile.TemporaryDirectory() as d:
@@ -252,10 +255,13 @@ def test_c_planner_rejects_unrepresentable_cost_instead_of_wrapping():
     source = (
         '#include <stdint.h>\n#include <string.h>\n#include "bcir_plan.h"\n'
         'int main(void){bcir_claim c;bcir_func f;bcir_plan_step s;bcir_plan p;'
-        'memset(&c,0,sizeof c);memset(&f,0,sizeof f);'
+        'memset(&c,0,sizeof c);memset(&f,0,sizeof f);memset(&s,0xa5,sizeof s);'
+        'memset(&p,0xa5,sizeof p);'
         'c.opcode=BCIR_OP_ATOMIC_ADD;c.domain=BCIR_DOM_MMIO;c.count=UINT32_MAX;'
         'f.claims=&c;f.n_claims=1;'
-        'return bcir_plan_func(&f,&s,1,&p)==BCIR_ERR_OVERFLOW?0:1;}\n'
+        'if(bcir_plan_func(&f,&s,1,&p)!=BCIR_ERR_OVERFLOW)return 1;'
+        'for(size_t i=0;i<sizeof s;i++)if(((unsigned char*)&s)[i]!=0xa5)return 2;'
+        'if(p.steps||p.n||p.total_cost)return 3;return 0;}\n'
     )
     with tempfile.TemporaryDirectory() as d:
         driver = os.path.join(d, "plan_overflow.c")
@@ -267,3 +273,83 @@ def test_c_planner_rejects_unrepresentable_cost_instead_of_wrapping():
                                capture_output=True, text=True)
         assert build.returncode == 0, build.stderr
         assert subprocess.run([exe], capture_output=True).returncode == 0
+
+
+def test_c_hydrator_preflights_before_writing_an_artifact():
+    clang = which("clang")
+    if clang is None:
+        return
+    source = r'''
+#include <stdint.h>
+#include <string.h>
+#include "bcir_hydrate.h"
+static int filled(const uint8_t *p,size_t n){for(size_t i=0;i<n;i++)if(p[i]!=0xa5)return 0;return 1;}
+int main(void){
+  bcir_claim c; bcir_func f; bcir_plan_step s; bcir_plan p; uint8_t out[512]; size_t n=99;
+  memset(&c,0,sizeof c); memset(&f,0,sizeof f); memset(out,0xa5,sizeof out);
+  c.id=7; c.opcode=BCIR_OP_ADD; c.lane=BCIR_LANE_U; c.count=8; strcpy(c.op,"c.bin.add");
+  f.claims=&c; f.n_claims=1; s.claim_id=7; s.width=8; s.cost=8;
+  p.steps=&s; p.n=1; p.total_cost=8;
+  if(bcir_hydrate(&f,&p,out,1,&n)!=BCIR_ERR_NOSPACE||n||!filled(out,sizeof out))return 1;
+  n=99; s.claim_id=8;
+  if(bcir_hydrate(&f,&p,out,sizeof out,&n)!=BCIR_ERR_PROVENANCE||n||!filled(out,sizeof out))return 2;
+  n=99; s.claim_id=7; s.width=3;
+  if(bcir_hydrate(&f,&p,out,sizeof out,&n)!=BCIR_ERR_WIDTH||n||!filled(out,sizeof out))return 3;
+  s.width=8;
+  if(bcir_hydrate(&f,&p,out,sizeof out,&n)!=BCIR_OK||!n)return 4;
+  if(bcir_sp_verify_semantic(out,n,UINT32_MAX,UINT32_MAX)!=BCIR_OK)return 5;
+  return 0;
+}
+'''
+    with tempfile.TemporaryDirectory() as d:
+        driver = os.path.join(d, "hydrate_preflight.c")
+        with open(driver, "w", encoding="utf-8") as f:
+            f.write(source)
+        exe = os.path.join(d, "hydrate_preflight")
+        build = subprocess.run(
+            [clang, "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _C_DIR,
+             os.path.join(_C_DIR, "bcir_runtime.c"), os.path.join(_C_DIR, "bcir_hydrate.c"),
+             driver, "-o", exe], capture_output=True, text=True)
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+
+
+def test_c_lifetime_verifier_tracks_more_than_256_freed_resources():
+    """R21 must not silently forget a freed RID when a function crosses the old fixed cap."""
+    clang = which("clang")
+    if clang is None:
+        return
+    source = r'''
+#include <string.h>
+#include "bcir_verify.h"
+static int reports;
+static void report(const char *fn,const char *kind,void *ctx){
+  (void)fn;(void)ctx;if(!strcmp(kind,"use-after-free"))reports++;
+}
+int main(void){
+  static bcir_claim claims[258]; bcir_func f; bcir_unit u;
+  memset(&f,0,sizeof f);memset(&u,0,sizeof u);strcpy(f.name,"many_frees");
+  for(int i=0;i<257;i++){
+    claims[i].id=(unsigned)i+1u;claims[i].lifetime=2;claims[i].n_rd=1;
+    claims[i].rd[0]=(unsigned)i+1u;strcpy(claims[i].op,"c.free");
+  }
+  claims[257].id=258;claims[257].n_rd=1;claims[257].rd[0]=257;
+  strcpy(claims[257].op,"c.load");f.claims=claims;f.n_claims=258;
+  u.funcs=&f;u.n_funcs=1;bcir_verify_lifetime(&u,report,0);
+  bcir_verify_lifetime(0,report,0);bcir_verify_lifetime(&u,0,0);
+  return reports==1?0:1;
+}
+'''
+    with tempfile.TemporaryDirectory() as d:
+        driver = os.path.join(d, "lifetime_many.c")
+        with open(driver, "w", encoding="utf-8") as f:
+            f.write(source)
+        exe = os.path.join(d, "lifetime_many")
+        build = subprocess.run(
+            [clang, "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _C_DIR,
+             os.path.join(_C_DIR, "bcir_runtime.c"), os.path.join(_C_DIR, "bcir_verify.c"),
+             driver, "-o", exe], capture_output=True, text=True)
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        assert run.returncode == 0, (run.stdout, run.stderr)

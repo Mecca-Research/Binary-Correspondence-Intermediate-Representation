@@ -18,7 +18,7 @@ bash tools/local/setup_mlir22.sh     # micromamba + conda-forge mlir=22 env (~25
 bash tools/local/check_rail22.sh     # build bcir-opt vs 22 + run the WHOLE rail on 22
 ```
 
-`check_rail22.sh` runs tblgen, the R1–R18 / GEM / optimizer pass suite, the ODS examples,
+`check_rail22.sh` runs tblgen, the R1–R23 / GEM / optimizer pass suite, the ODS examples,
 the bytecode round-trip, and the **IRDL named-syntax corpus** (the check an 18 build cannot
 do) — all against true MLIR 22.1.x.
 
@@ -27,8 +27,11 @@ do) — all against true MLIR 22.1.x.
 - **ABI:** conda's MLIR is built with conda's GCC. Building `bcir-opt` with the *system*
   compiler links incompatible MLIR `TypeID` statics and segfaults at startup; the scripts
   build with conda's `gxx_linux-64` (`x86_64-conda-linux-gnu-g++`) to match.
-- **Ephemeral:** the toolchain lands in `/tmp` (`MAMBA_ROOT_PREFIX`, default `/tmp/mamba`).
-  Re-run `setup_mlir22.sh` after the container is recycled.
+- **Private cache:** the toolchain defaults to
+  `${XDG_CACHE_HOME:-$HOME/.cache}/bcir/mamba`; the pinned micromamba bootstrap is kept
+  in the adjacent private `tools/` directory. The setup script rejects symlinked,
+  unowned, or group/world-writable bootstrap locations. `MAMBA_ROOT_PREFIX` and
+  `MICROMAMBA` may override these paths only when the same ownership rules hold.
 - **Authority:** CI (`apt.llvm.org`) remains the gating MLIR-22 check. This is a fast local
   mirror so 22-specific failures are caught before pushing, not just in CI.
 - **The clean alternative** is to allow `apt.llvm.org` in the environment's network policy

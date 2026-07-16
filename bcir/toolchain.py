@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping, Sequence
@@ -183,6 +184,44 @@ def _available_majors(name: str, dirs: Sequence[str], minimum_major: int) -> set
     return majors
 
 
+def _reported_llvm_major(path: str) -> int | None:
+    """Best-effort major for an unversioned LLVM-family executable.
+
+    Distribution alternatives commonly expose ``/usr/bin/clang`` as a symlink into
+    ``/usr/lib/llvm-N/bin``.  Fall back to the bounded ``--version`` banner when the
+    real path carries no version. Unknown wrapper scripts remain usable; a positively
+    identified old or mixed set does not bypass ``minimum_major`` merely because its
+    filenames are unversioned.
+    """
+    real = os.path.realpath(path)
+    match = re.search(r"(?:^|[\\/])llvm-(\d+)(?:[\\/]|$)", real, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    try:
+        result = subprocess.run([path, "--version"], capture_output=True, text=True,
+                                timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    banner = (result.stdout + "\n" + result.stderr)[:16384]
+    for pattern in (r"\b(?:clang|LLVM)\s+version\s+(\d+)",
+                    r"\bLLD\s+(\d+)(?:\.|\b)"):
+        match = re.search(pattern, banner, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _coherent_reported_major(paths: Mapping[str, str], minimum_major: int) -> tuple[bool, int | None]:
+    majors = {_reported_llvm_major(path) for path in paths.values()}
+    majors.discard(None)
+    if not majors:
+        return True, None
+    if len(majors) != 1:
+        return False, None
+    major = next(iter(majors))
+    return major >= minimum_major, major
+
+
 def resolve_llvm_tools(
     *tool_names: str,
     pipeline: str = "LLVM pipeline",
@@ -214,7 +253,9 @@ def resolve_llvm_tools(
 
     resolved = _resolve_exact(names, lambda name: name, dirs, attempted)
     if resolved is not None:
-        return LLVMToolchain(resolved, None, pipeline, tuple(attempted))
+        acceptable, reported_major = _coherent_reported_major(resolved, minimum_major)
+        if acceptable:
+            return LLVMToolchain(resolved, reported_major, pipeline, tuple(attempted))
 
     major_sets = [_available_majors(name, dirs, minimum_major) for name in names]
     common = set.intersection(*major_sets) if major_sets else set()

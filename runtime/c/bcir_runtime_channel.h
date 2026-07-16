@@ -7,6 +7,13 @@
  * transport: a future Linux adapter may marshal these value types, but raw
  * device pointers never appear in the contract. Resources, mappings, and
  * submissions cross the boundary as generation-tagged handles plus offsets.
+ *
+ * Concurrency/lifetime contract (v1): the channel does not provide internal
+ * synchronization.  The owner must serialize every operation, reset, and hook
+ * table mutation, and must not re-enter the same channel from a hook.  The hook
+ * table, its implementation object, and any loopback event storage are borrowed
+ * and must remain alive until all calls have returned.  A future IPC adapter may
+ * add its own synchronization without changing this direct-vtable contract.
  */
 
 #include <stddef.h>
@@ -56,8 +63,8 @@ typedef struct bcir_channel_submission {
   uint64_t byte_offset;
   uint64_t byte_length;
   uint64_t sequence;
-  uint32_t flags;
-  uint32_t reserved;
+  uint32_t flags;       /* v1: must be zero */
+  uint32_t reserved;    /* must be zero */
 } bcir_channel_submission;
 
 typedef enum bcir_channel_sync_flags {
@@ -153,8 +160,11 @@ bcir_channel_status bcir_channel_close(bcir_runtime_channel *channel,
 
 /*
  * Allocation-free resident reference driver. The caller owns event_storage and
- * the loopback object. It models one bounded byte resource and makes queue-full
+ * the loopback object and serializes access to both. It models one bounded byte resource and makes queue-full
  * behavior explicit, providing the direct-vtable baseline for future IPC parity.
+ * The v1 loopback accepts only contiguous submission sequence numbers (zero requests
+ * automatic assignment), rejects unknown flags, and refuses generation wrap so stale
+ * handles cannot become live again through counter ABA.
  */
 typedef struct bcir_loopback_channel {
   bcir_runtime_channel_hooks_v1 hooks;

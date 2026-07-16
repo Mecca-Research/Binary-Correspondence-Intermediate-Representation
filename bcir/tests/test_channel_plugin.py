@@ -94,6 +94,67 @@ def test_register_from_manifest_rejects_invalid_and_leaves_registry_clean():
         _restore(before)
 
 
+def test_channel_manifest_loader_rejects_ambiguous_oversized_and_malformed_documents():
+    """A channel file is a third-party optimizer/runtime input, not permissive config.
+
+    Duplicate keys, unknown fields, type coercions, invalid arithmetic constants, and
+    unbounded input must fail before a HardwareChannel can be constructed or registered.
+    """
+    good = _example_manifest().to_dict()
+    before = _snapshot()
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "hostile.channel.json")
+
+        encoded = json.dumps(good)
+        duplicate = encoded.replace('"format_version": 1',
+                                    '"format_version": 1, "format_version": 1', 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(duplicate)
+        try:
+            P.load_manifest(path)
+            raise AssertionError("duplicate JSON keys must be rejected")
+        except ValueError as e:
+            assert "duplicate JSON key" in str(e)
+
+        with open(path, "wb") as f:
+            f.write(b" " * (P._MAX_MANIFEST_BYTES + 1))
+        try:
+            P.load_manifest(path)
+            raise AssertionError("oversized manifests must be rejected")
+        except ValueError as e:
+            assert "exceeds" in str(e)
+
+        for mutate in (
+            lambda d: d.update({"typo_field": 1}),
+            lambda d: d["profile"].update({"mem_unit": 0}),
+            lambda d: d["profile"].update({"cacheline": True}),
+            lambda d: d["profile"].update({"lane_widths": [1, 8, 8]}),
+        ):
+            doc = json.loads(json.dumps(good))
+            mutate(doc)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(doc, f)
+            try:
+                P.register_from_manifest(path)
+                raise AssertionError("malformed channel manifest must be rejected")
+            except ValueError:
+                pass
+            assert set(CHANNELS) == before
+
+
+def test_calibration_generation_must_match_the_profile_generation():
+    from dataclasses import replace
+
+    good = _example_manifest()
+    forged = replace(good, calibration=replace(good.calibration, cal_gen=7))
+    assert any("calibration.cal_gen" in e for e in forged.validate())
+    try:
+        P.register_from_manifest(forged)
+        raise AssertionError("mismatched calibration generation must be rejected")
+    except ValueError:
+        pass
+
+
 # --- an external plugin loads + registers + plans + routes ---------------------------------------
 
 def test_register_from_manifest_adds_a_working_channel():

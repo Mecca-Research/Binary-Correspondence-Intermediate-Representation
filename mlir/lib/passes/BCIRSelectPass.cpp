@@ -65,6 +65,13 @@ struct SelectRealizationPass
         return;
       }
       ArrayRef<int64_t> w = polIt->second.getWeights();
+      if (w.size() != 12 ||
+          std::any_of(w.begin(), w.end(),
+                      [](int64_t value) { return value < 0; })) {
+        s.emitError("bcir-select-realization: policy must contain exactly 12 non-negative weights");
+        ok = false;
+        return;
+      }
 
       // Optional budget (RCSP rail): a candidate is feasible iff every named
       // cost dim is within its cap.

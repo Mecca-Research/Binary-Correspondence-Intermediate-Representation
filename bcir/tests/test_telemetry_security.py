@@ -27,6 +27,7 @@ Defense map (file:line of the gate each attack hits):
 
 import json
 import struct
+import threading
 
 from bcir.examples import vector_add
 from bcir.kbcir.calibrate import (
@@ -153,6 +154,42 @@ def test_validating_sink_drops_poison_at_the_wire():
     assert all(ev.is_valid() for ev in inner.events)
 
 
+def test_validating_sink_serializes_acceptance_and_downstream_publication():
+    """Two transport callbacks cannot publish concurrently or race witness counts."""
+    entered = threading.Event()
+    release = threading.Event()
+    second_entered = threading.Event()
+
+    class BlockingSink:
+        def __init__(self):
+            self.calls = 0
+
+        def emit(self, _event):
+            self.calls += 1
+            if self.calls == 1:
+                entered.set()
+                assert release.wait(2)
+            else:
+                second_entered.set()
+
+        def flush(self):
+            pass
+
+    inner = BlockingSink()
+    sink = ValidatingSink(inner=inner)
+    first = threading.Thread(target=sink.emit, args=(_cool()[0],))
+    second = threading.Thread(target=sink.emit, args=(_cool()[1],))
+    first.start()
+    assert entered.wait(2)
+    second.start()
+    assert not second_entered.wait(0.1)
+    release.set()
+    first.join(2); second.join(2)
+    assert not first.is_alive() and not second.is_alive()
+    assert second_entered.is_set()
+    assert sink.witness == TelemetryIntegrity(accepted=2, rejected=0)
+
+
 # --- B. shared-ring header injection: must reject with NO out-of-bounds read ------
 
 def _ring(head, capacity, record_size, magic, slots=4, fill=True):
@@ -225,6 +262,23 @@ def test_ring_short_buffer_never_reads_past_end():
     assert parse_shared_ring(buf) == []                    # capacity*record_size overruns -> reject
 
 
+def test_ring_rejects_schema_poison_and_impractical_capacity():
+    poisoned = _ring(head=1, capacity=4, record_size=56, magic=RING_STAMP)
+    struct.pack_into("<7q", poisoned, 32, 1, 1, 1, 1, 10000, 1, 1)
+    assert parse_shared_ring(poisoned) == []
+    try:
+        parse_shared_ring(poisoned, strict=True)
+        raise AssertionError("schema poison must be rejected at the ring boundary")
+    except SharedRingError:
+        pass
+
+    # The backing object need not actually contain this many slots: the capacity
+    # ceiling is checked before any record iteration or attacker-scaled allocation.
+    oversized = bytearray(32)
+    struct.pack_into("<4Q", oversized, 0, 0, (1 << 20) + 1, 56, RING_STAMP)
+    assert parse_shared_ring(oversized) == []
+
+
 # --- C. forged from_json: must reject (never install adversarial state) -----------
 
 def test_forged_frozen_calibrator_is_rejected():
@@ -250,6 +304,16 @@ def test_forged_frozen_calibrator_is_rejected():
             raise AssertionError(f"forged FrozenCalibrator not rejected: {f}")
         except ValueError:
             pass
+    for text in (
+        good.to_json().replace('"gen": 2', '"gen": 2, "gen": 3'),
+        json.dumps({**json.loads(good.to_json()), "unknown": 1}),
+        json.dumps({**json.loads(good.to_json()), "samples": 1 << 80}),
+    ):
+        try:
+            FrozenCalibrator.from_json(text)
+            raise AssertionError("ambiguous FrozenCalibrator was not rejected")
+        except ValueError:
+            pass
 
 
 def test_forged_calibration_certificate_is_rejected():
@@ -267,7 +331,12 @@ def test_forged_calibration_certificate_is_rejected():
                        ("thermal>100", {"measured_thermal": 9999}),
                        ("thermal<0", {"measured_thermal": -1}),
                        ("3 ratios", {"ratios": [1, 2, 3]}),
+                       ("bad baseline", {"ratios": [255, 256, 256, 256]}),
                        ("malformed width", {"seeded_widths": [[1, 2, 3]]}),
+                       ("duplicate width", {"seeded_widths": [[1000, 8], [1000, 16]]}),
+                       ("different claims", {"seeded_widths": [[2000, 16]]}),
+                       ("negative win", {"stale_cost": 79}),
+                       ("unknown field", {"unknown": 1}),
                        ("non-int cost", {"stale_cost": 1.5})]:
         d = dict(base); d.update(mut)
         try:
@@ -275,6 +344,12 @@ def test_forged_calibration_certificate_is_rejected():
             raise AssertionError(f"forged certificate not rejected: {label}")
         except ValueError:
             pass
+    duplicate = cert.to_json().replace('"cal_gen": 2', '"cal_gen": 2, "cal_gen": 3')
+    try:
+        CalibrationCertificate.from_json(duplicate)
+        raise AssertionError("duplicate certificate key was not rejected")
+    except ValueError:
+        pass
 
 
 # --- D/E. suppression / blindness must be observable (the witness fires) ----------

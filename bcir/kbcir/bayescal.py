@@ -34,6 +34,7 @@ import json
 import math
 from dataclasses import asdict, dataclass
 
+from .._artifact_json import strict_json_loads
 from .cost import TargetProfile
 from .microbench import Q8, CalibratedProfile, MicrobenchRaw, calibrate_from_raw
 from .weights import PERF, Policy
@@ -142,10 +143,22 @@ class BayesianCalibratedProfile:
 
     @staticmethod
     def from_json(text: str) -> "BayesianCalibratedProfile":
-        d = json.loads(text)
+        d = strict_json_loads(text, "Bayesian calibrated profile")
+        if not isinstance(d, dict) or set(d) != {"point", "coverage_milli", "random_delta_q8"}:
+            raise ValueError("Bayesian calibrated profile has unknown or missing fields")
+        coverage = d["coverage_milli"]
+        delta = d["random_delta_q8"]
+        if (isinstance(coverage, bool) or not isinstance(coverage, int) or
+                not 1 <= coverage <= 1000):
+            raise ValueError("coverage_milli must be an integer in [1, 1000]")
+        if (isinstance(delta, bool) or not isinstance(delta, int) or
+                not 0 <= delta <= (1 << 63) - 1):
+            raise ValueError("random_delta_q8 must be a non-negative i63")
+        if not isinstance(d["point"], dict):
+            raise ValueError("Bayesian calibrated profile point must be an object")
         return BayesianCalibratedProfile(
-            point=CalibratedProfile(**d["point"]),
-            coverage_milli=d["coverage_milli"], random_delta_q8=d["random_delta_q8"])
+            point=CalibratedProfile.from_json(json.dumps(d["point"])),
+            coverage_milli=coverage, random_delta_q8=delta)
 
 
 def _freeze_point(name: str, cal_gen: int, samples: int, provenance: str,

@@ -51,7 +51,9 @@ namespace bcir {
 namespace {
 
 // ceil(a / b) for positive b (the tile-count along one dimension).
-static int64_t ceilDiv(int64_t a, int64_t b) { return (a + b - 1) / b; }
+static int64_t ceilDiv(int64_t a, int64_t b) {
+  return a / b + (a % b != 0);
+}
 
 struct LowerGemMatmulPass
     : public PassWrapper<LowerGemMatmulPass, OperationPass<>> {
@@ -69,12 +71,15 @@ struct LowerGemMatmulPass
     SmallVector<GEMMatmulOp> matmuls;
     getOperation()->walk([&](GEMMatmulOp mm) { matmuls.push_back(mm); });
 
+    bool ok = true;
     for (GEMMatmulOp mm : matmuls)
-      lowerOne(mm);
+      ok &= lowerOne(mm);
+    if (!ok)
+      signalPassFailure();
   }
 
   // Emit the tile-block sequence for one matmul, then erase the matmul.
-  void lowerOne(GEMMatmulOp mm) {
+  bool lowerOne(GEMMatmulOp mm) {
     const int64_t M = static_cast<int64_t>(mm.getM());
     const int64_t N = static_cast<int64_t>(mm.getN());
     const int64_t K = static_cast<int64_t>(mm.getK());
@@ -83,6 +88,14 @@ struct LowerGemMatmulPass
     const int64_t tk = static_cast<int64_t>(mm.getTileK());
     const StringRef loopOrder = mm.getLoopOrder();
     const StringRef name = mm.getSymName();
+
+    int64_t tileCount;
+    if (!checkedTileCount(M, N, K, tm, tn, tk, tileCount) ||
+        tileCount > kMaxMaterializedBlocksPerOp) {
+      mm.emitError("bcir-lower-gem-matmul: tile expansion is invalid or exceeds the ")
+          << kMaxMaterializedBlocksPerOp << "-block safety limit";
+      return false;
+    }
 
     // Insert the emitted blocks right where the matmul lives (same parent region),
     // immediately AFTER it, so the IR order reads matmul-replaced-by-its-tiles.
@@ -150,6 +163,7 @@ struct LowerGemMatmulPass
     // Genuine lowering: the plan record is consumed -- erase it, leaving the
     // concrete tile descriptors in its place.
     mm.erase();
+    return true;
   }
 };
 

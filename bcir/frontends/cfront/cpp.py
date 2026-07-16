@@ -22,6 +22,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..._artifact_json import read_bounded_text
+
 _PREDEFINED = {"__STDC__": "1", "__STDC_VERSION__": "202311L", "__STDC_HOSTED__": "1"}
 # dynamic predefined macros: expanded per source position, not stored as static bodies.
 _DYNAMIC = ("__FILE__", "__LINE__")
@@ -116,8 +118,10 @@ class Preprocessor:
         for d in self.search_paths:
             p = os.path.join(d, target)
             if os.path.isfile(p):
-                with open(p, encoding="utf-8") as f:
-                    text = f.read()
+                try:
+                    text = read_bounded_text(p, "C header", max_bytes=16 << 20)
+                except ValueError as exc:
+                    raise CPPError(str(exc)) from exc
                 self.dep_paths.append(p)          # first on-disk hit -> a build dependency (-M/-MM)
                 break
         self._disk_cache[target] = text
@@ -270,7 +274,7 @@ class Preprocessor:
                 #                                          models the standard types intrinsically.
             raise CPPError(f"#include {target!r} not found (in {name}); searched the mount + "
                            f"{len(self.search_paths)} -I path(s)")
-        if self._depth > 64:
+        if self._depth >= 64:
             raise CPPError("#include nesting too deep")
         self._depth += 1
         self._incstack.append((name, self._cur_line))    # the #include site, for the diagnostic frame

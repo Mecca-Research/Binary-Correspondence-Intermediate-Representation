@@ -19,19 +19,27 @@ static uint32_t base_cost(const bcir_claim *cl) {
 }
 
 bcir_status bcir_plan_func(const bcir_func *f, bcir_plan_step *steps, size_t cap, bcir_plan *out) {
-  if(!f||!out||(!steps&&f->n_claims))return BCIR_ERR_NOSPACE;
+  if (out) { out->steps = NULL; out->n = 0; out->total_cost = 0; }
+  if(!f||!out||(f->n_claims&&!f->claims)||(!steps&&f->n_claims))return BCIR_ERR_NOSPACE;
   if (cap < f->n_claims) return BCIR_ERR_NOSPACE;
+
+  /* Preflight every arithmetic operation before writing caller-owned steps.  A late
+   * overflow must not leave a plausible-looking partial plan in the output buffer. */
   uint64_t total = 0;
   for (size_t i = 0; i < f->n_claims; i++) {
     const bcir_claim *cl = &f->claims[i];
     uint32_t width = cl->count ? cl->count : 1;   /* scalar realization (the C subset is width-1) */
     uint64_t cost64 = (uint64_t)base_cost(cl) * width;
     if(cost64>UINT32_MAX||total>UINT64_MAX-cost64)return BCIR_ERR_OVERFLOW;
-    uint32_t cost = (uint32_t)cost64;
+    total += cost64;
+  }
+  for (size_t i = 0; i < f->n_claims; i++) {
+    const bcir_claim *cl = &f->claims[i];
+    uint32_t width = cl->count ? cl->count : 1;
+    uint32_t cost = (uint32_t)((uint64_t)base_cost(cl) * width); /* proved above */
     steps[i].claim_id = cl->id;
     steps[i].width = width;
     steps[i].cost = cost;
-    total += cost;
   }
   out->steps = steps;
   out->n = f->n_claims;

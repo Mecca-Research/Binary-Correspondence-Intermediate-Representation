@@ -243,6 +243,60 @@ def test_lying_shards_refuse_loudly():
     assert check_decoder_weights(spec, qw) == []       # shapes survive the Q8 round-trip
 
 
+def test_weight_loader_rejects_overlapping_tensor_payloads():
+    """Two tensor names may not alias the same shard bytes; accepting that ambiguity
+    corrupts the parameter census and lets one payload impersonate multiple weights."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "overlap.safetensors")
+        header = {
+            "left": {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]},
+            "right": {"dtype": "F32", "shape": [2], "data_offsets": [4, 12]},
+        }
+        encoded = json.dumps(header).encode("utf-8")
+        with open(path, "wb") as f:
+            f.write(struct.pack("<Q", len(encoded)) + encoded + b"\0" * 12)
+        try:
+            load_tensors(path)
+            raise AssertionError("expected overlapping Safetensors payload refusal")
+        except ValueError as exc:
+            assert "overlap" in str(exc)
+
+
+def test_config_and_weights_reject_coercion_nonfinite_and_ambiguous_json():
+    for mutation in (
+            {"hidden_size": "8"}, {"num_attention_heads": True},
+            {"tie_word_embeddings": "false"}, {"rope_theta": float("inf")},
+            {"model_type": "not-llama"}, {"num_hidden_layers": 0x8000}):
+        config = dict(_CONFIG); config.update(mutation)
+        try:
+            spec_from_config(config)
+            raise AssertionError(f"invalid config accepted: {mutation}")
+        except ValueError:
+            pass
+
+    tensors = _hf_tensors(_CONFIG)
+    shape, values = tensors["model.embed_tokens.weight"]
+    poisoned = dict(tensors)
+    poisoned["model.embed_tokens.weight"] = (shape, [float("nan"), *values[1:]])
+    prepared = {name: ("F32", shape, values)
+                for name, (shape, values) in poisoned.items()}
+    try:
+        weights_from_tensors(spec_from_config(_CONFIG), prepared)
+        raise AssertionError("non-finite model weights must be rejected")
+    except ValueError as exc:
+        assert "finite" in str(exc)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_shard(os.path.join(tmp, "model.safetensors"), _hf_tensors(_CONFIG))
+        with open(os.path.join(tmp, "config.json"), "w", encoding="utf-8") as f:
+            f.write('{"vocab_size":64,"vocab_size":65}')
+        try:
+            ingest_checkpoint(tmp)
+            raise AssertionError("duplicate config keys must be rejected")
+        except ValueError as exc:
+            assert "duplicate" in str(exc)
+
+
 def test_a_real_released_checkpoint_ingests_when_present():
     """ASSET-GATED (self-skips): point BCIR_HF_MODEL_DIR at a downloaded Llama-family
     checkpoint directory (config.json + model.safetensors -- e.g. Maykeye/TinyLLama-v0)

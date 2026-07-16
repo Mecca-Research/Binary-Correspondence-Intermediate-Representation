@@ -1,5 +1,6 @@
 """Physics-anchored calibration tests: measure -> quantize -> freeze -> tag."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -67,6 +68,35 @@ def test_table_json_round_trips_losslessly():
     assert CalibratedProfile.from_json(t.to_json()) == t
 
 
+def test_table_json_rejects_ambiguous_or_noncanonical_artifacts():
+    table = reference_table()
+    document = json.loads(table.to_json())
+    bad_documents = []
+
+    bad = dict(document)
+    bad["stream_q8"] = 255
+    bad_documents.append(json.dumps(bad))
+    bad = dict(document)
+    bad["samples"] = True
+    bad_documents.append(json.dumps(bad))
+    bad = dict(document)
+    bad["random_q8"] = -1
+    bad_documents.append(json.dumps(bad))
+    bad = dict(document)
+    bad["unexpected"] = 1
+    bad_documents.append(json.dumps(bad))
+    bad_documents.append(table.to_json().replace('"cal_gen": 1',
+                                                  '"cal_gen": 1, "cal_gen": 2'))
+    bad_documents.append(json.dumps({**document, "provenance": "x" * ((1 << 20) + 1)}))
+
+    for text in bad_documents:
+        try:
+            CalibratedProfile.from_json(text)
+            assert False, "expected malformed calibrated profile to be rejected"
+        except ValueError:
+            pass
+
+
 def test_calibrated_gather_penalty_reaches_the_planner():
     # A table measuring a 8x gather ratio lowers gather_penalty 32 -> 8: the
     # HAM-vs-flat decision in the planner sees the measured physics.
@@ -110,7 +140,8 @@ def test_native_microbench_rejects_overflowing_cli_sizes():
         build = subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", exe],
                                capture_output=True, text=True)
         assert build.returncode == 0, build.stderr
-        for argv in (("18446744073709551615", "1", "1"), ("16", "-1", "1"),
+        for argv in (("18446744073709551615", "1", "1"), (str((1 << 24) + 1), "1", "1"),
+                     ("16", "129", "1"), ("16", "1", "-1"), ("16", "-1", "1"),
                      ("16", "1", "1", "extra")):
             run = subprocess.run([exe, *argv], capture_output=True, text=True)
             assert run.returncode == 2, (argv, run.stdout, run.stderr)

@@ -32,6 +32,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from .._artifact_json import strict_json_loads
 from .cost import TargetProfile
 from .matmul import _LOOP_ORDERS, TilePlan, _cache_budget_elems, _divisor_tiles, cost_of
 
@@ -40,12 +41,20 @@ Q8 = 256
 
 def shape_class(M: int, N: int, K: int) -> tuple[int, int, int]:
     """The op-shape-class key: log2 buckets per dimension (the D3 table key)."""
+    _validate_shape(M, N, K)
     return (M.bit_length(), N.bit_length(), K.bit_length())
+
+
+def _validate_shape(M: int, N: int, K: int) -> None:
+    for name, value in (("M", M), ("N", N), ("K", K)):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer; got {value!r}")
 
 
 def candidates_for(M: int, N: int, K: int) -> list[tuple[int, int, int, str]]:
     """The exact search space of plan_matmul, as (tm, tn, tk, loop_order) tuples, in the
     exhaustive enumeration order."""
+    _validate_shape(M, N, K)
     return [(tm, tn, tk, lo)
             for lo in _LOOP_ORDERS
             for tm in _divisor_tiles(M)
@@ -57,6 +66,14 @@ def tile_features(M: int, N: int, K: int, tm: int, tn: int, tk: int, lo: str,
                   target: TargetProfile) -> list[float]:
     """CHEAP candidate features -- pure arithmetic on the shape/tile/budget, NO cost_of
     call (ordering must be cheaper than what it saves)."""
+    _validate_shape(M, N, K)
+    for name, value in (("tm", tm), ("tn", tn), ("tk", tk)):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer; got {value!r}")
+    if lo not in _LOOP_ORDERS:
+        raise ValueError(f"unsupported loop order {lo!r}")
+    if not isinstance(target, TargetProfile):
+        raise ValueError("tile-prior target must be a TargetProfile")
     budget = _cache_budget_elems(target)
     ws = tm * tk + tk * tn + tm * tn
     return [1.0 if ws <= budget else 0.0,
@@ -90,7 +107,16 @@ class FrozenTilePrior:
 
     wq: tuple
 
+    def __post_init__(self):
+        if not isinstance(self.wq, tuple) or len(self.wq) != 8:
+            raise ValueError("FrozenTilePrior requires exactly 8 Q8 weights")
+        for index, weight in enumerate(self.wq):
+            if (isinstance(weight, bool) or not isinstance(weight, int) or
+                    not -(1 << 31) <= weight <= (1 << 31) - 1):
+                raise ValueError(f"FrozenTilePrior weight[{index}] must be a signed i32")
+
     def order(self, M: int, N: int, K: int, target: TargetProfile) -> list:
+        _validate_shape(M, N, K)
         cands = candidates_for(M, N, K)
         scored = []
         for i, (tm, tn, tk, lo) in enumerate(cands):
@@ -151,6 +177,11 @@ def guided_plan_matmul(M: int, N: int, K: int, target: TargetProfile,
     cache-fitting candidate with mem <= compute sits on the bottleneck floor -- no
     remaining candidate can beat (fits_cache, bottleneck). Worst case (prior useless):
     every node is costed and the result is the exhaustive optimum's score anyway."""
+    _validate_shape(M, N, K)
+    if not isinstance(target, TargetProfile):
+        raise ValueError("tile-prior target must be a TargetProfile")
+    if not isinstance(prior, FrozenTilePrior):
+        raise ValueError("guided matmul requires a FrozenTilePrior")
     best = None
     n = 0
     for (tm, tn, tk, lo) in prior.order(M, N, K, target):
@@ -212,8 +243,16 @@ def save_tile_prior(prior: FrozenTilePrior, *, target_name: str, cal_gen: int) -
     the microbench table's generation (`CalibratedProfile.cal_gen`), so a persisted prior
     names exactly which measured cost model produced its training labels."""
     import json  # noqa: PLC0415
+    if not isinstance(prior, FrozenTilePrior):
+        raise ValueError("tile prior must be a FrozenTilePrior")
+    if (not isinstance(target_name, str) or not target_name or len(target_name) > 4096 or
+            any(ord(ch) < 0x20 for ch in target_name)):
+        raise ValueError("tile-prior target must be a bounded string")
+    if (isinstance(cal_gen, bool) or not isinstance(cal_gen, int) or
+            not 0 <= cal_gen <= (1 << 63) - 1):
+        raise ValueError("tile-prior cal_gen must be a non-negative i63")
     return json.dumps({"kind": PRIOR_KIND, "schema": PRIOR_SCHEMA,
-                       "target": target_name, "cal_gen": int(cal_gen),
+                       "target": target_name, "cal_gen": cal_gen,
                        "wq": list(prior.wq)}, indent=2, sort_keys=True)
 
 
@@ -223,17 +262,38 @@ def load_tile_prior(text: str, *, expect_target: str, expect_cal_gen: int) -> Fr
     holds -- it must retrain, never silently apply (the calibloop's generation discipline;
     exact search would still keep the OPTIMUM safe, but a stale prior's search reduction is
     an unearned claim)."""
-    import json  # noqa: PLC0415
-    d = json.loads(text)
-    if d.get("kind") != PRIOR_KIND:
+    d = strict_json_loads(text, "tile prior")
+    fields = {"kind", "schema", "target", "cal_gen", "wq"}
+    if not isinstance(d, dict) or set(d) != fields:
+        raise ValueError(f"tile-prior fields must be exactly {sorted(fields)}")
+    if d["kind"] != PRIOR_KIND:
         raise ValueError(f"not a {PRIOR_KIND} document (kind={d.get('kind')!r})")
-    if int(d.get("schema", 0)) > PRIOR_SCHEMA:
-        raise ValueError(f"tile-prior schema v{d.get('schema')} is newer than this build's "
+    schema = d["schema"]
+    if isinstance(schema, bool) or not isinstance(schema, int):
+        raise ValueError("tile-prior schema must be an integer")
+    if schema > PRIOR_SCHEMA:
+        raise ValueError(f"tile-prior schema v{schema} is newer than this build's "
                          f"v{PRIOR_SCHEMA}; upgrade BCIR to load this prior")
-    if d.get("target") != expect_target:
-        raise ValueError(f"tile prior was trained for target {d.get('target')!r}, "
+    if schema != PRIOR_SCHEMA:
+        raise ValueError(f"unsupported tile-prior schema v{schema}")
+    target = d["target"]
+    if (not isinstance(target, str) or not target or len(target) > 4096 or
+            any(ord(ch) < 0x20 for ch in target)):
+        raise ValueError("tile-prior target must be a bounded string")
+    if target != expect_target:
+        raise ValueError(f"tile prior was trained for target {target!r}, "
                          f"not {expect_target!r} -- retrain")
-    if int(d.get("cal_gen", -1)) != int(expect_cal_gen):
-        raise ValueError(f"tile prior is STALE: trained under cal_gen {d.get('cal_gen')}, "
+    cal_gen = d["cal_gen"]
+    if (isinstance(cal_gen, bool) or not isinstance(cal_gen, int) or
+            not 0 <= cal_gen <= (1 << 63) - 1):
+        raise ValueError("tile-prior cal_gen must be a non-negative i63")
+    if (isinstance(expect_cal_gen, bool) or not isinstance(expect_cal_gen, int) or
+            not 0 <= expect_cal_gen <= (1 << 63) - 1):
+        raise ValueError("expected tile-prior cal_gen must be a non-negative i63")
+    if cal_gen != expect_cal_gen:
+        raise ValueError(f"tile prior is STALE: trained under cal_gen {cal_gen}, "
                          f"the live table is cal_gen {expect_cal_gen} -- retrain")
-    return FrozenTilePrior(wq=tuple(int(v) for v in d["wq"]))
+    weights = d["wq"]
+    if not isinstance(weights, list):
+        raise ValueError("tile-prior wq must be an array")
+    return FrozenTilePrior(wq=tuple(weights))

@@ -1,11 +1,15 @@
 """Resident-host link adaptation and coherent versioned LLVM discovery."""
 
 import os
+from pathlib import Path
 import stat
 import tempfile
 from unittest import mock
 
 from bcir.toolchain import host_bash, host_link_args, resolve_llvm_tools
+
+
+_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _exe(directory: str, name: str) -> str:
@@ -108,6 +112,12 @@ def test_llvm_suffix_and_bin_take_precedence():
         assert dict(r.paths) == expected
 
 
+def test_mlir22_environment_pins_backend_tools_to_its_distribution():
+    env_script = (_ROOT / "tools" / "local" / "env_mlir22.sh").read_text(
+        encoding="utf-8")
+    assert 'export LLVM_BIN="${_ENV}/bin"' in env_script
+
+
 def test_unversioned_complete_toolchain_precedes_versioned():
     with tempfile.TemporaryDirectory() as d:
         expected = {}
@@ -117,6 +127,30 @@ def test_unversioned_complete_toolchain_precedes_versioned():
         r = _resolve("clang", "wasm-ld", pipeline="wasm", env={"PATH": d})
         assert r.ok and r.major is None
         assert dict(r.paths) == expected
+
+
+def test_detectably_old_unversioned_toolchain_does_not_shadow_supported_versioned_set():
+    with tempfile.TemporaryDirectory() as root:
+        old = os.path.join(root, "llvm-14", "bin")
+        new = os.path.join(root, "llvm-22", "bin")
+        os.makedirs(old); os.makedirs(new)
+        for name in ("clang", "llvm-as", "llc"):
+            _exe(old, name)
+            _exe(new, name + "-22")
+        r = _resolve("clang", "llvm-as", "llc", pipeline="minimum",
+                     env={"PATH": os.pathsep.join((old, new))})
+        assert r.ok and r.major == 22, r.message
+        assert all(path.endswith("-22") for path in r.paths.values())
+
+
+def test_detectably_old_unversioned_toolchain_is_not_reported_supported():
+    with tempfile.TemporaryDirectory() as root:
+        old = os.path.join(root, "llvm-14", "bin")
+        os.makedirs(old)
+        for name in ("clang", "llvm-as", "llc"):
+            _exe(old, name)
+        r = _resolve("clang", "llvm-as", "llc", pipeline="minimum", env={"PATH": old})
+        assert not r.ok
 
 
 def test_llvm_resolution_reports_attempted_names():

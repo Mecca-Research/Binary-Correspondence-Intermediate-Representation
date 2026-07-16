@@ -119,6 +119,36 @@ def test_gqa_kernel_matches_the_oracle_and_the_cached_row_is_bitwise():
         assert full.stdout.split()[-nh * dk:] == rowr.stdout.split()   # bitwise, not epsilon
 
 
+def test_decode_kernels_preflight_indices_and_pointer_arithmetic():
+    if _cc() is None:
+        return
+    source = r'''
+#include <limits.h>
+#include "bcir_decode.h"
+int main(void){
+  double table[8]={0},out[4]={17,17,17,17},one=1;int ids[2]={1,9};
+  if(bcir_embedding(table,4,2,ids,2,out)!=-1)return 1;
+  for(int i=0;i<4;i++)if(out[i]!=17)return 2;
+  bcir_rmsnorm(&one,INT_MAX,INT_MAX,&one,1e-6,out);if(out[0]!=17)return 3;
+  if(bcir_embedding(&one,INT_MAX,INT_MAX,ids,1,out)!=-1)return 4;
+  if(bcir_gqa_attention(&one,&one,&one,INT_MAX,INT_MAX,1,INT_MAX,&one,out)!=-1)return 5;
+  return 0;
+}
+'''
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "decode_preflight.c")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write(source)
+        exe = os.path.join(tmp, "decode_preflight")
+        build = subprocess.run(host_link_args(
+            [_cc(), "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _RUNTIME_C,
+             os.path.join(_RUNTIME_C, "bcir_decode.c"), src, "-o", exe, "-lm"]),
+            capture_output=True, text=True)
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        assert run.returncode == 0, (run.stdout, run.stderr)
+
+
 if __name__ == "__main__":
     import sys
 

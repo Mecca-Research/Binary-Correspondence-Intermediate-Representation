@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
+from .._artifact_json import strict_json_loads
 from ..model import Module
 from .calibrate import EwmaCalibrator
 from .cost import HProfile, Theta
@@ -114,9 +115,11 @@ class CalibrationCertificate:
         `measured_thermal` in 0..100), the costs are finite ints, `ratios` is exactly
         four finite ints, and the width tuples are well-formed `(claim_id, width)`
         pairs. Any violation raises `ValueError`."""
-        d = json.loads(text)
-        if not isinstance(d, dict):
-            raise ValueError("CalibrationCertificate JSON must be an object")
+        d = strict_json_loads(text, "calibration certificate")
+        fields = {"target", "cal_gen", "provenance", "ratios", "measured_thermal",
+                  "seeded_widths", "calibrated_widths", "stale_cost", "calibrated_cost"}
+        if not isinstance(d, dict) or set(d) != fields:
+            raise ValueError(f"CalibrationCertificate fields must be exactly {sorted(fields)}")
 
         def _int(key: str, *, lo: int | None = None, hi: int | None = None) -> int:
             if key not in d:
@@ -132,36 +135,55 @@ class CalibrationCertificate:
 
         cal_gen = _int("cal_gen", lo=0)
         measured_thermal = _int("measured_thermal", lo=0, hi=100)
-        stale_cost = _int("stale_cost")
-        calibrated_cost = _int("calibrated_cost")
+        i63 = (1 << 63) - 1
+        if cal_gen > i63:
+            raise ValueError("CalibrationCertificate cal_gen exceeds i63")
+        stale_cost = _int("stale_cost", lo=0, hi=i63)
+        calibrated_cost = _int("calibrated_cost", lo=0, hi=i63)
         ratios = d.get("ratios")
         if not isinstance(ratios, (list, tuple)) or len(ratios) != 4:
             raise ValueError("CalibrationCertificate ratios must be exactly 4 values")
         for i, r in enumerate(ratios):
-            if isinstance(r, bool) or not isinstance(r, int):
-                raise ValueError(f"CalibrationCertificate ratios[{i}] must be an int, got {r!r}")
+            if (isinstance(r, bool) or not isinstance(r, int) or
+                    not 0 <= r <= i63):
+                raise ValueError(
+                    f"CalibrationCertificate ratios[{i}] must be a non-negative i63, got {r!r}")
+        if ratios[0] != 256 or any(r < 256 for r in ratios[1:]):
+            raise ValueError("CalibrationCertificate ratios violate the Q8 baseline")
 
         def _widths(key: str) -> tuple:
             raw = d.get(key)
-            if not isinstance(raw, (list, tuple)):
+            if not isinstance(raw, list) or len(raw) > 65536:
                 raise ValueError(f"CalibrationCertificate {key} must be an array")
             pairs = []
-            for x in raw:
-                if not isinstance(x, (list, tuple)) or len(x) != 2:
+            for index, x in enumerate(raw):
+                if not isinstance(x, list) or len(x) != 2:
                     raise ValueError(f"CalibrationCertificate {key} entries must be (claim_id, width)")
                 cid, width = x
                 if any(isinstance(v, bool) or not isinstance(v, int) for v in (cid, width)):
                     raise ValueError(f"CalibrationCertificate {key} entries must be ints")
+                if not 0 <= cid <= i63 or not 1 <= width <= 0xFFFFFFFF:
+                    raise ValueError(f"CalibrationCertificate {key}[{index}] is out of range")
                 pairs.append((cid, width))
+            if pairs != sorted(pairs) or len({cid for cid, _ in pairs}) != len(pairs):
+                raise ValueError(f"CalibrationCertificate {key} must have sorted unique claim ids")
             return tuple(pairs)
 
-        if not isinstance(d.get("target"), str) or not isinstance(d.get("provenance"), str):
-            raise ValueError("CalibrationCertificate target/provenance must be strings")
+        for key in ("target", "provenance"):
+            value = d[key]
+            if (not isinstance(value, str) or not value or len(value) > 4096 or
+                    any(ord(ch) < 0x20 for ch in value)):
+                raise ValueError(f"CalibrationCertificate {key} must be a bounded string")
+        seeded_widths = _widths("seeded_widths")
+        calibrated_widths = _widths("calibrated_widths")
+        if {cid for cid, _ in seeded_widths} != {cid for cid, _ in calibrated_widths}:
+            raise ValueError("CalibrationCertificate plan shapes cover different claims")
+        if stale_cost < calibrated_cost:
+            raise ValueError("CalibrationCertificate records a negative calibration win")
         return CalibrationCertificate(
             target=d["target"], cal_gen=cal_gen, provenance=d["provenance"],
             ratios=tuple(ratios), measured_thermal=measured_thermal,
-            seeded_widths=_widths("seeded_widths"),
-            calibrated_widths=_widths("calibrated_widths"),
+            seeded_widths=seeded_widths, calibrated_widths=calibrated_widths,
             stale_cost=stale_cost, calibrated_cost=calibrated_cost)
 
 

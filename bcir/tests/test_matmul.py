@@ -131,3 +131,24 @@ def test_cost_is_monotone_and_well_formed():
     assert c2 > c1 and m2 >= m1
     c, m, fits = cost_of(1, 1, 1, 1, 1, 1, _HOST)
     assert c >= 1 and m >= 1 and fits
+
+
+def test_malformed_shapes_inputs_and_tiles_fail_before_execution():
+    for dims in ((0, 1, 1), (1, -1, 1), (True, 1, 1), (1.0, 1, 1)):
+        try:
+            plan_matmul(*dims, _HOST)
+            assert False, f"expected malformed shape {dims!r} to be rejected"
+        except ValueError:
+            pass
+    for args in (([], [1.0], 1, 1, 1), ([1.0], [], 1, 1, 1)):
+        try:
+            matmul_reference(*args)
+            assert False, "expected mismatched matrix storage to be rejected"
+        except ValueError:
+            pass
+    bad = TilePlan(0, 1, 1, "ijk", 0, 0, 0, True)
+    try:
+        matmul_tiled([1.0], [1.0], 1, 1, 1, bad)
+        assert False, "expected zero tile to be rejected before range(step=0)"
+    except ValueError:
+        pass

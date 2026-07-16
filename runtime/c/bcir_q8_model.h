@@ -14,8 +14,10 @@ extern "C" {
 #define BCIR_Q8_VERSION 1u
 #define BCIR_Q8_HEADER_SIZE 224u
 #define BCIR_Q8_DIRECTORY_ENTRY_SIZE 48u
+#define BCIR_Q8_DEFAULT_MAX_FILE_SIZE (64ull * 1024ull * 1024ull)
 
 #define BCIR_Q8_FLAG_TIED_EMBEDDINGS 1u
+#define BCIR_Q8_MODEL_OWNER_TAG 0x51384d44u
 
 #define BCIR_Q8_TENSOR_EMBEDDING 1u
 #define BCIR_Q8_TENSOR_G_ATTN 10u
@@ -80,6 +82,12 @@ void bcir_q8_model_init(bcir_q8_model *model);
 int bcir_q8_model_load(const char *path, bcir_q8_model *out,
                        char *error, size_t error_capacity);
 
+/* The bounded form lets applications opt into a different artifact ceiling without
+ * weakening the safe default used by bcir_q8_model_load. */
+int bcir_q8_model_load_limited(const char *path, bcir_q8_model *out,
+                               char *error, size_t error_capacity,
+                               uint64_t max_file_size);
+
 /* Allocator-injected loader. The allocator is borrowed during the call and its
  * context must remain valid until bcir_q8_model_free releases the owned model.
  * `out` is zero-initialized before all reported failures.  Callers must free a
@@ -88,12 +96,18 @@ int bcir_q8_model_load_with_allocator(const char *path, bcir_q8_model *out,
                                       char *error, size_t error_capacity,
                                       const bcir_host_allocator *allocator);
 
+int bcir_q8_model_load_with_allocator_limited(
+    const char *path, bcir_q8_model *out, char *error, size_t error_capacity,
+    const bcir_host_allocator *allocator, uint64_t max_file_size);
+
 void bcir_q8_model_free(bcir_q8_model *model);
 
 const bcir_q8_tensor *bcir_q8_model_tensor(const bcir_q8_model *model,
                                            uint16_t tensor_id, int16_t layer);
 
-/* Dequantize one element exactly as code * 2**group_exponent. */
+/* Dequantize one element exactly as code * 2**group_exponent. `tensor` is a
+ * borrowed pointer returned by bcir_q8_model_tensor for this live model.
+ * Returns NaN for a foreign/stale tensor, malformed span, or bad index. */
 double bcir_q8_tensor_value(const bcir_q8_model *model,
                             const bcir_q8_tensor *tensor, uint32_t index);
 

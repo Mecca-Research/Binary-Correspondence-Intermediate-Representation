@@ -47,12 +47,13 @@ typedef struct bcir_prov_artifact {
 
 /* The running FNV chain (an unmasked 64-bit accumulator; mask only at the end). */
 uint64_t bcir_prov_begin(void);
-uint64_t bcir_prov_item_str(uint64_t h, const char *s);   /* one string item + separator */
+uint64_t bcir_prov_item_str(uint64_t h, const char *s);   /* one string item; NULL -> 0 sentinel */
 uint64_t bcir_prov_item_i64(uint64_t h, int64_t v);       /* one integer item + separator */
 uint64_t bcir_prov_end(uint64_t h);                       /* i63 mask (the oracle result) */
 
 /* The manifest digest: chain the four component hashes then the artifact pairs
- * (name, value interleaved), exactly provenance._digest. */
+ * (name, value interleaved), exactly provenance._digest. Invalid borrowed pointers return
+ * 0; bcir_prov_verify always rejects such an input, including recorded 0. */
 uint64_t bcir_prov_digest(int64_t m_module, int64_t m_target, int64_t m_theta,
                           int64_t m_policy, const bcir_prov_artifact *arts, size_t n);
 

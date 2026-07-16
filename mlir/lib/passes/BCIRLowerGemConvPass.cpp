@@ -70,7 +70,9 @@ namespace bcir {
 namespace {
 
 // ceil(a / b) for positive b (the tile-count along one im2col-gemm dimension).
-static int64_t ceilDiv(int64_t a, int64_t b) { return (a + b - 1) / b; }
+static int64_t ceilDiv(int64_t a, int64_t b) {
+  return a / b + (a % b != 0);
+}
 
 struct LowerGemConvPass
     : public PassWrapper<LowerGemConvPass, OperationPass<>> {
@@ -112,6 +114,13 @@ struct LowerGemConvPass
     const int64_t tm = static_cast<int64_t>(conv.getTileM());
     const int64_t tn = static_cast<int64_t>(conv.getTileN());
     const int64_t tk = static_cast<int64_t>(conv.getTileK());
+    int64_t tileCount;
+    if (!checkedTileCount(M, N, K, tm, tn, tk, tileCount) ||
+        tileCount > kMaxMaterializedBlocksPerOp) {
+      conv.emitError("bcir-lower-gem-conv: tile expansion is invalid or exceeds the ")
+          << kMaxMaterializedBlocksPerOp << "-block safety limit";
+      return false;
+    }
 
     // --- cross-check the host-INDEPENDENT roofline invariant the cost model rests on --
     // The host-pinned compute_cost/mem_cost ride the op (the oracle prices them through

@@ -22,8 +22,10 @@
 extern "C" {
 #endif
 
-/* Serialize `f` (planned by `plan`) into a StreamPack in `buf[0..cap)`; writes the
- * encoded length to *out_len. Returns BCIR_ERR_NOSPACE if `cap` is too small. */
+/* Serialize `f` (optionally planned by `plan`) into a StreamPack in `buf[0..cap)`;
+ * writes the encoded length to *out_len. A non-NULL plan must cover the function exactly.
+ * All graph/size/capacity checks occur before `buf` is touched; on failure *out_len is zero
+ * and no partial artifact is written. Returns BCIR_ERR_NOSPACE if `cap` is too small. */
 BCIR_NODISCARD bcir_status bcir_hydrate(const bcir_func *f, const bcir_plan *plan,
                                         uint8_t *buf, size_t cap, size_t *out_len);
 

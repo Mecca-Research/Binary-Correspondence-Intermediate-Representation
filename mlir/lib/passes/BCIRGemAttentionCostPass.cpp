@@ -73,7 +73,9 @@ namespace {
 
 // ceil(a / b) for positive b (mirrors attention.py / matmul.py's (x + d - 1)//d / math.ceil and
 // the sibling cost-pass ceilDiv helpers).
-static int64_t ceilDiv(int64_t a, int64_t b) { return (a + b - 1) / b; }
+static int64_t ceilDiv(int64_t a, int64_t b) {
+  return a / b + (a % b != 0);
+}
 
 struct GemAttentionCostPass
     : public PassWrapper<GemAttentionCostPass, OperationPass<>> {
@@ -101,7 +103,7 @@ struct GemAttentionCostPass
   // matmul.py::cost_of (the helper -bcir-gem-matmul-cost / -bcir-gem-conv-cost recompute). Writes
   // the (compute, mem) terms through the out params + returns the working-set fits_cache flag.
   static bool gemmCostOf(int64_t M, int64_t N, int64_t K, int64_t tm, int64_t tn, int64_t tk,
-                         int64_t &compute, int64_t &mem) {
+                         int64_t &compute, int64_t &mem, bool &fitsCache) {
     // The pinned TargetProfile.x86_avx512() reference constants (attention.py::cost_of -> matmul.
     // cost_of reads these off the target; pinned here for CI-host-independence, EXACTLY as the
     // sibling cost passes + their *_law_parity.py tests pin x86-avx512): vector_width = max(1,8,16)
@@ -113,18 +115,18 @@ struct GemAttentionCostPass
     const int64_t kCacheline = 64;
     const int64_t kElemBytes = 4;
 
-    int64_t macs = M * N * K;
+    int64_t macs, traffic, workingSet;
+    if (!checkedGemmDerived(M, N, K, tm, tn, tk, macs, traffic,
+                            workingSet))
+      return false;
     int64_t thr = std::max<int64_t>(1, kVectorWidth * kFma);     // the FLOP-throughput divisor
     compute = ceilDiv(macs, thr);                                // M*N*K MACs / (vector_width * fma)
-    int64_t aReads = M * K * ceilDiv(N, tn);                     // A reused across the columns in a tile
-    int64_t bReads = K * N * ceilDiv(M, tm);                     // B reused across the rows in a tile
-    int64_t cTraffic = M * N * (ceilDiv(K, tk) + 1);             // C streamed once per K-tile, plus the write
     int64_t bw = std::max<int64_t>(1, kMemUnit * kMemChannels);  // the bandwidth divisor
-    mem = ceilDiv(aReads + bReads + cTraffic, bw);               // bytes streamed / bandwidth
+    mem = ceilDiv(traffic, bw);                                   // bytes streamed / bandwidth
     int64_t cacheBudget =
         (512 * kCacheline) / std::max<int64_t>(1, kElemBytes);   // the modeled per-core working-set budget
-    int64_t workingSet = tm * tk + tk * tn + tm * tn;            // a tile of A, B, C must co-reside
-    return workingSet <= cacheBudget;
+    fitsCache = workingSet <= cacheBudget;
+    return true;
   }
 
   // Recompute the attention roofline cost from the op's two equivalent gemm dims + tilings through
@@ -158,10 +160,18 @@ struct GemAttentionCostPass
     // could not fit i64); such a shape would trip the parity gate (a loud spurious error), never
     // annotate a silently-wrapped cost.
     int64_t scoresCompute = 0, scoresMem = 0, contextCompute = 0, contextMem = 0;
-    bool scoresFits = gemmCostOf(sm, sn, sk, stm, stn, stk, scoresCompute, scoresMem);
-    bool contextFits = gemmCostOf(cm, cn, ck, ctm, ctn, ctk, contextCompute, contextMem);
-    int64_t compute = scoresCompute + contextCompute;            // the SUM: c1 + c2 (no bespoke term)
-    int64_t mem = scoresMem + contextMem;                        // the SUM: m1 + m2 (no bespoke term)
+    bool scoresFits = false, contextFits = false;
+    if (!gemmCostOf(sm, sn, sk, stm, stn, stk, scoresCompute, scoresMem, scoresFits) ||
+        !gemmCostOf(cm, cn, ck, ctm, ctn, ctk, contextCompute, contextMem, contextFits)) {
+      op.emitError("bcir-gem-attention-cost: derived per-gemm roofline cost exceeds signed 64-bit range");
+      return false;
+    }
+    int64_t compute, mem;
+    if (!checkedAddNonnegative(scoresCompute, contextCompute, compute) ||
+        !checkedAddNonnegative(scoresMem, contextMem, mem)) {
+      op.emitError("bcir-gem-attention-cost: summed roofline cost exceeds signed 64-bit range");
+      return false;
+    }
     int64_t bottleneck = std::max(compute, mem);                 // max,+ : the binding roofline resource
     bool fitsCache = scoresFits && contextFits;                  // both gemms must fit (f1 and f2)
 

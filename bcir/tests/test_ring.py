@@ -1,7 +1,12 @@
-"""Zero-copy telemetry ring: the kernel packs atomic stats into a preallocated
-shared buffer; the GNN reads them straight back -- no serialization, no syscall,
-non-blocking, wrap-around. Deterministic."""
+"""Zero-copy telemetry ring: the producer packs stats into a preallocated shared
+buffer; the consumer reads them straight back -- no serialization, non-blocking,
+wrap-around. Deterministic."""
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import bcir.telemetry as telemetry
 from bcir.telemetry import Broker, DataDNA, TelemetryRing
 
 
@@ -67,3 +72,47 @@ def test_ring_is_deterministic():
             r.write(_dna(i, cycles=i))
         return [(d.claim_id, d.cycles) for d in r.drain()], r.stats.dropped
     assert run() == run()
+
+
+def test_overwrite_and_read_are_one_serialized_transition():
+    """A reader must not observe a replacement slot before its head publication.
+
+    The interposed pack holds the writer precisely between the slot copy and head
+    update.  Without the ring lock the reader consumes the replacement as the old
+    record, after which the writer publishes it a second time (a temporal duplicate).
+    """
+    ring = TelemetryRing(capacity=1)
+    ring.write(_dna(1))
+    packed = threading.Event()
+    release = threading.Event()
+    reader_started = threading.Event()
+    original = telemetry.struct.pack_into
+
+    def blocked_pack(fmt, buf, offset, *values):
+        original(fmt, buf, offset, *values)
+        if values[0] == 2:
+            packed.set()
+            assert release.wait(timeout=5)
+
+    def read_one():
+        reader_started.set()
+        return ring.read_one()
+
+    telemetry.struct.pack_into = blocked_pack
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writer = pool.submit(ring.write, _dna(2))
+            assert packed.wait(timeout=5)
+            reader = pool.submit(read_one)
+            assert reader_started.wait(timeout=5)
+            time.sleep(0.05)  # bounded proof that the reader is waiting on the transition
+            assert not reader.done()
+            release.set()
+            writer.result(timeout=5)
+            event = reader.result(timeout=5)
+    finally:
+        release.set()
+        telemetry.struct.pack_into = original
+    assert event.claim_id == 2
+    assert ring.pending == 0
+    assert ring.stats.written == 2 and ring.stats.read == 1 and ring.stats.dropped == 1

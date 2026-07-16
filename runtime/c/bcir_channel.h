@@ -34,6 +34,7 @@ extern "C" {
 
 #define BCIR_CHANNEL_NAME 64
 #define BCIR_CHANNEL_KIND 16
+#define BCIR_CHANNEL_JSON_MAX_BYTES (1024u * 1024u)
 
 /* A channel, parsed from channel.json (the routing-relevant fields; the K_BCIR cost profile stays
  * on the cost-model rail). */
@@ -46,10 +47,14 @@ typedef struct bcir_channel {
 } bcir_channel;
 
 /* Parse a channel.json's routing-relevant fields into `ch`. Returns 0 on success, non-zero with a
- * message in `diag`. (Unknown capability tags are ignored -- they contribute no routing match.) */
+ * message in `diag`. Duplicate keys, unknown/duplicate capabilities, malformed skipped values,
+ * unsupported/control-bearing routing identities, and inputs over
+ * BCIR_CHANNEL_JSON_MAX_BYTES are
+ * rejected. `ch` is zeroed on every failure. */
 int bcir_channel_parse(const char *json, size_t len, bcir_channel *ch, char *diag, size_t dn);
 
-/* The capability tags a claim could be served by (a BCIR_CAP_* bitmask) -- op-derived + stride. */
+/* The capability tags a claim could be served by (a BCIR_CAP_* bitmask) -- op-derived + stride.
+ * Returns 0 for a NULL claim or a claim whose fixed-size op label is not NUL-terminated. */
 uint32_t bcir_claim_required_caps(const bcir_claim *cl);
 
 /* Does channel `ch` suit claim `cl`? Declared capabilities (plugin) or the legacy per-kind rule. */

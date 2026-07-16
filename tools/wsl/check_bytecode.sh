@@ -8,6 +8,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/bcir-bytecode.XXXXXXXX")" || exit 1
+trap 'rm -rf -- "${TMP_ROOT}"' EXIT
+ERR="${TMP_ROOT}/bytecode.err"
+BYTECODE="${TMP_ROOT}/module.mlirbc"
 BO="${BCIR_OPT:-$(find "${ROOT}/build/mlir-build" -name bcir-opt -type f 2>/dev/null | head -1)}"
 if [ -z "${BO}" ]; then
   echo "bcir-opt not built; run tools/wsl/build_mlir.sh first (skipping)." >&2
@@ -25,13 +29,13 @@ done
 fail=0
 for f in "${MODULES[@]}"; do
   base="$(basename "${f}")"
-  txt="$("${BO}" "${f}" 2>/tmp/bce)" || { echo "  FAIL parse ${base}"; cat /tmp/bce; fail=1; continue; }
-  "${BO}" "${f}" --emit-bytecode >/tmp/bc.mlirbc 2>/tmp/bce \
-    || { echo "  FAIL emit-bytecode ${base}"; cat /tmp/bce; fail=1; continue; }
-  bc="$("${BO}" /tmp/bc.mlirbc 2>/tmp/bce)" \
-    || { echo "  FAIL parse-bytecode ${base}"; cat /tmp/bce; fail=1; continue; }
+  txt="$("${BO}" "${f}" 2>"${ERR}")" || { echo "  FAIL parse ${base}"; cat "${ERR}"; fail=1; continue; }
+  "${BO}" "${f}" --emit-bytecode >"${BYTECODE}" 2>"${ERR}" \
+    || { echo "  FAIL emit-bytecode ${base}"; cat "${ERR}"; fail=1; continue; }
+  bc="$("${BO}" "${BYTECODE}" 2>"${ERR}")" \
+    || { echo "  FAIL parse-bytecode ${base}"; cat "${ERR}"; fail=1; continue; }
   if [ "${txt}" = "${bc}" ]; then
-    echo "  PASS ${base} ($(wc -c </tmp/bc.mlirbc | tr -d ' ') B)"
+    echo "  PASS ${base} ($(wc -c <"${BYTECODE}" | tr -d ' ') B)"
   else
     echo "  FAIL bytecode round-trip differs ${base}"; diff <(echo "${txt}") <(echo "${bc}") | head; fail=1
   fi

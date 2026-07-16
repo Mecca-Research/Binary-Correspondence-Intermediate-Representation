@@ -6,6 +6,7 @@ resolution reached its fixpoint, never at a budget cutoff. These checks pin the
 axiom and its bridge into the provenance manifest.
 """
 
+import json
 from dataclasses import replace
 
 from bcir.examples import vector_add
@@ -106,6 +107,36 @@ def test_fingerprint_is_content_addressed():
 def test_json_round_trips():
     mm = freeze(_FACTOR, generation=5)
     assert MemoryModule.from_json(mm.to_json()) == mm
+
+
+def test_json_rejects_ambiguous_or_forged_memory_modules():
+    mm = freeze(_FACTOR, generation=5)
+    bad_documents = [mm.to_json().replace('"cost": 3', '"cost": 3, "cost": 3')]
+
+    for mutate in (
+        lambda d: d.update(cost=d["cost"] + 1),
+        lambda d: d.update(fingerprint=d["fingerprint"] ^ 1),
+        lambda d: d.update(generation=True),
+        lambda d: d["expr"].__setitem__(0, "exec"),
+        lambda d: d["expr"].__setitem__(1, "unexpected"),
+    ):
+        bad = json.loads(mm.to_json())
+        mutate(bad)
+        bad_documents.append(json.dumps(bad))
+
+    deep = ["var", "x", []]
+    for _ in range(257):
+        deep = ["add", None, [deep, ["const", 0, []]]]
+    bad = json.loads(mm.to_json())
+    bad["expr"] = deep
+    bad_documents.append(json.dumps(bad))
+
+    for text in bad_documents:
+        try:
+            MemoryModule.from_json(text)
+            assert False, "expected malformed memory module to be rejected"
+        except ValueError:
+            pass
 
 
 # --- module-level memory (the CSE / liked-pair view) -----------------------------

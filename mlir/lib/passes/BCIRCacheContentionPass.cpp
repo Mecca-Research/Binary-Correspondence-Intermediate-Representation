@@ -92,11 +92,19 @@ struct CacheContentionPass
     // --- the frozen analytic model (identical to CachePredictor.contention_q8) ---------
     int64_t epl = std::max<int64_t>(1, cl / eb);          // useful elements per cache line
     int64_t reach = std::min<int64_t>(stride, epl);       // distinct lines per useful element
-    int64_t waste = (reach - 1) * Q8;                     // cache-line-utilization waste (0 == perfect)
+    int64_t waste, conflict, cont, scaled;
+    if (!checkedMulNonnegative(reach - 1, Q8, waste)) {
+      op.emitError("bcir-cache-contention: derived signal exceeds signed 64-bit range");
+      return false;
+    }
     int64_t g = std::gcd(stride, banks);                  // the shared factor: serialization degree
-    int64_t conflict = (g - 1) * Q8;                      // bank-conflict degree (0 == all banks reached)
-    int64_t cont = waste + conflict;                      // unit Q8 weights (both x1.0)
-    int64_t cost = (cont * count) >> 8;                   // the per-element Q8 scaled by count
+    if (!checkedMulNonnegative(g - 1, Q8, conflict) ||
+        !checkedAddNonnegative(waste, conflict, cont) ||
+        !checkedMulNonnegative(cont, count, scaled)) {
+      op.emitError("bcir-cache-contention: derived signal exceeds signed 64-bit range");
+      return false;
+    }
+    int64_t cost = scaled >> 8;                            // the per-element Q8 scaled by count
 
     // --- cross-check the declared signal (the dual-rail parity gate) -------------------
     if (waste != static_cast<int64_t>(op.getLineWasteQ8())) {

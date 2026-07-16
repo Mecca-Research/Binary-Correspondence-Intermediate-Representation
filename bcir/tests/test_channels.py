@@ -195,6 +195,16 @@ def test_adding_a_channel_does_not_touch_the_others():
         CHANNELS.pop("tpu_test", None)
 
 
+def test_channel_registration_cannot_replace_a_live_backend():
+    original = CHANNELS["x86_avx2"]
+    try:
+        register_channel(original)
+        raise AssertionError("duplicate registration must not replace a trusted backend")
+    except ValueError as exc:
+        assert "duplicate channel name" in str(exc)
+    assert CHANNELS["x86_avx2"] is original
+
+
 # --- cross-device placement cost: offload is a real cost-governed decision (the S1 feature) -----------
 
 def test_offload_wins_when_the_transferred_operand_is_small():

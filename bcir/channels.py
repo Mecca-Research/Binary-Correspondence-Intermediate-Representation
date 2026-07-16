@@ -32,6 +32,7 @@ yet) so the architecture -- and the orchestrator -- already make room for them.
 from __future__ import annotations
 
 import platform
+import threading
 from dataclasses import dataclass, field
 
 from .kbcir.cost import TARGETS, TargetProfile, _host_cpu_features
@@ -185,6 +186,7 @@ CHANNELS: dict[str, HardwareChannel] = {
         "nvidia_ptx", "gpu", TARGETS["nvidia_ptx"], "nvptx64-nvidia-cuda", EM_NONE,
         RuntimeChannel(energy_source="nvml"), modeled=False),
 }
+_CHANNELS_LOCK = threading.RLock()
 
 
 # --- modeled future backends (no resident driver yet; the architecture + orchestrator make room) -
@@ -222,19 +224,26 @@ def _install_modeled_channels() -> None:
 def register_channel(channel: HardwareChannel) -> None:
     """Add a backend to the tower. The optimizer, executor, and other channels are untouched --
     this is the single extension point for a new architecture (an FPGA bitstream, an NVMe engine)."""
-    CHANNELS[channel.name] = channel
+    if not isinstance(channel, HardwareChannel) or not channel.name:
+        raise ValueError("channel registration requires a named HardwareChannel")
+    with _CHANNELS_LOCK:
+        if channel.name in CHANNELS:
+            raise ValueError(f"duplicate channel name {channel.name!r}")
+        CHANNELS[channel.name] = channel
 
 
 _install_modeled_channels()
 
 
 def channel(name: str) -> HardwareChannel:
-    return CHANNELS[name]
+    with _CHANNELS_LOCK:
+        return CHANNELS[name]
 
 
 def channels_of_kind(kind: str) -> list[HardwareChannel]:
     """Every channel of a hardware class (e.g. all ``gpu`` channels in the tower)."""
-    return [c for c in CHANNELS.values() if c.kind == kind]
+    with _CHANNELS_LOCK:
+        return [c for c in CHANNELS.values() if c.kind == kind]
 
 
 def host_channel() -> HardwareChannel:
@@ -243,13 +252,14 @@ def host_channel() -> HardwareChannel:
     falls back to the AVX2 baseline. This replaces every scattered inline arch check."""
     mach = platform.machine().lower()
     feat = _host_cpu_features()
-    if mach in ("aarch64", "arm64"):
-        return CHANNELS["arm64_sve"] if "sve" in feat else CHANNELS["arm64_neon"]
-    if mach in ("x86_64", "amd64"):
-        return CHANNELS["x86_avx512"] if "avx512f" in feat else CHANNELS["x86_avx2"]
-    if mach.startswith("riscv"):
-        return CHANNELS["riscv_rvv"]
-    return CHANNELS["x86_avx2"]
+    with _CHANNELS_LOCK:
+        if mach in ("aarch64", "arm64"):
+            return CHANNELS["arm64_sve"] if "sve" in feat else CHANNELS["arm64_neon"]
+        if mach in ("x86_64", "amd64"):
+            return CHANNELS["x86_avx512"] if "avx512f" in feat else CHANNELS["x86_avx2"]
+        if mach.startswith("riscv"):
+            return CHANNELS["riscv_rvv"]
+        return CHANNELS["x86_avx2"]
 
 
 def host_perf_syscall_nr() -> int:

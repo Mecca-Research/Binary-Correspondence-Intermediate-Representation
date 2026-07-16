@@ -166,11 +166,10 @@ BCIR_TF_NODISCARD bcir_tf_status bcir_tf_decode_frame(const uint8_t *BCIR_TF_RES
 BCIR_TF_NODISCARD bcir_tf_status bcir_tf_decode_exact(const uint8_t *BCIR_TF_RESTRICT buf,
                                                       size_t len, bcir_tf_header *hdr);
 
-/* Decode record `i` of a validated frame straight out of `buf` (little-endian byte
- * reads). The caller must have validated the frame first (bcir_tf_decode_frame == OK)
- * This function independently checks the declared n_records bound so a hostile caller
- * cannot use a larger containing buffer to read beyond the frame body. Returns
- * BCIR_TF_OK / BCIR_TF_ERR_TRUNCATED / BCIR_TF_ERR_RANGE. */
+/* Decode record `i` straight out of `buf` (little-endian byte reads). The accessor
+ * independently validates magic/version/flags/length/CRC and the declared n_records
+ * bound on every call, so a hostile caller cannot bypass validation or use a larger
+ * containing buffer to read beyond the frame body. */
 BCIR_TF_NODISCARD bcir_tf_status bcir_tf_get_record(const uint8_t *BCIR_TF_RESTRICT buf,
                                                     size_t len, uint16_t i,
                                                     bcir_tf_record *out);

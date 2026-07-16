@@ -5,6 +5,9 @@ on:
     - cron: "17 4 * * 2"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: c-memory-deep-sweep
   cancel-in-progress: false
@@ -16,7 +19,7 @@ jobs:
     timeout-minutes: 75
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install analysis runtimes
         run: |

@@ -10,6 +10,11 @@
 #include <string.h>
 #include <time.h>
 
+#define BCIR_CPP_MAX_FILE_BYTES ((size_t)16u << 20)
+#define BCIR_CPP_MAX_SOURCE_BYTES ((size_t)64u << 20)
+#define BCIR_CPP_MAX_DIRS 64
+#define BCIR_CPP_MAX_DEFINES 1024
+
 /* --- macro table --------------------------------------------------------- */
 typedef struct {
   char name[64];
@@ -203,8 +208,10 @@ static void subst_into(CppState *state, const char *body, const Macro *m,
       }
       const char *rt = (pi >= 0 && pi < na) ? args[pi] : r;
       app(state, out, cap, w, rt);
-      if (rt[0]) strcpy(prev, rt);   /* an empty paste operand leaves `prev` untouched: `strcpy(prev,prev)`
-                                        is a self-overlapping copy (UB; ASan strcpy-param-overlap) -- guard it */
+      if (rt[0]) { strncpy(prev, rt, 255); prev[255] = 0; }
+      /* An empty paste operand leaves `prev` untouched.  A macro argument may contain
+       * many preprocessing tokens (up to the 1024-byte argument ceiling), while prev
+       * is the bounded 256-byte spacing token: never copy the whole argument blindly. */
       continue;
     }
     int pi = -1; if (k == 'i') for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], t)) pi = q;
@@ -545,9 +552,15 @@ static int read_file_dirs(CppState *state, const char *const *dirs, int ndirs, c
     for(;;){
       if(n==cap-1u){
         size_t minimum,nc;
+        if(cap>=BCIR_CPP_MAX_FILE_BYTES+1u){
+          int extra=fgetc(f);
+          if(extra==EOF&&!ferror(f))break;
+          bcir_host_deallocate(&state->allocator,buf);fclose(f);return -2;
+        }
         if(!bcir_size_add(cap,1u,&minimum)||
            !bcir_host_grow_capacity(cap,minimum,1u,&nc)){
           bcir_host_deallocate(&state->allocator,buf);fclose(f);return -2;}
+        if(nc>BCIR_CPP_MAX_FILE_BYTES+1u)nc=BCIR_CPP_MAX_FILE_BYTES+1u;
         if(!bcir_host_realloc_array(&state->allocator,(void **)&buf,cap,nc,1u,0)){
           bcir_host_deallocate(&state->allocator,buf);fclose(f);return -2;}
         cap=nc;
@@ -800,10 +813,15 @@ int bcir_cpp_run_ex_context(bcir_cpp_context *context, const char *src,
   }
   state=(CppState *)context->state;
   bcir_cpp_context_reset(context);
-  if(!src||!out||!outcap||ndirs<0||ndefines<0||(ndirs&& !dirs)||(ndefines&& !defines)){
+  if(!src||!out||!outcap||ndirs<0||ndirs>BCIR_CPP_MAX_DIRS||
+     ndefines<0||ndefines>BCIR_CPP_MAX_DEFINES||(ndirs&&!dirs)||(ndefines&&!defines)){
     if(err&&errcap)snprintf(err,errcap,"invalid preprocessor arguments");
     return 1;
   }
+  for(int d=0;d<ndirs;d++)if(!dirs[d]){
+    if(err&&errcap)snprintf(err,errcap,"invalid preprocessor include directory");return 1;}
+  for(int d=0;d<ndefines;d++)if(!defines[d]){
+    if(err&&errcap)snprintf(err,errcap,"invalid preprocessor definition");return 1;}
   define_macro(state,"__STDC_VERSION__ 202311L"); define_macro(state,"__STDC__ 1");
   define_macro(state,"__STDC_HOSTED__ 1");
   { char db[16], tb[16]; cpp_datetime(db, tb); char def[48];
@@ -812,8 +830,13 @@ int bcir_cpp_run_ex_context(bcir_cpp_context *context, const char *src,
   for(int d=0; d<ndefines; d++) define_macro(state,defines[d]);
   if(state->limit_error){if(err&&errcap)snprintf(err,errcap,"%s",state->limit_error);goto cleanup;}
   {
-    size_t sl=strlen(src), scratch_size, w=0;
+    size_t sl=0, scratch_size, w=0;
     char *stripped;
+    while(sl<=BCIR_CPP_MAX_SOURCE_BYTES&&src[sl])sl++;
+    if(sl>BCIR_CPP_MAX_SOURCE_BYTES){
+      if(err&&errcap)snprintf(err,errcap,"source exceeds %zu bytes",BCIR_CPP_MAX_SOURCE_BYTES);
+      goto cleanup;
+    }
     if(!bcir_size_add(sl,1u,&scratch_size)){
       if(err&&errcap)snprintf(err,errcap,"source is too large");
       goto cleanup;

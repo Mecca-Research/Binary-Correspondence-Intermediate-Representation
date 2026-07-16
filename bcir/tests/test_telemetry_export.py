@@ -355,6 +355,33 @@ def test_redfish_parse_empty_and_garbage_does_not_crash():
     assert parse_redfish_metric_report([1, 2, 3]) == []               # not a report dict
 
 
+def test_redfish_parser_rejects_ambiguous_or_unbounded_input_and_skips_poison():
+    """The BMC boundary is strict JSON and bounded work; malformed OEM trees and
+    non-finite/oversized values cannot poison a telemetry snapshot."""
+    for text in ('{"MetricValues":[],"MetricValues":[]}',
+                 '{"MetricValues":[{"MetricId":"x","MetricValue":NaN}]}'):
+        try:
+            parse_redfish_metric_report(text)
+            raise AssertionError("ambiguous/non-finite Redfish JSON was accepted")
+        except ValueError:
+            pass
+    poisoned = {"MetricValues": [
+        {"MetricId": "finite", "MetricValue": "2.5", "Oem": "not-an-object"},
+        {"MetricId": "infinity", "MetricValue": "Infinity"},
+        {"MetricId": ["not", "a", "name"], "MetricValue": "1"},
+        {"MetricId": "huge", "MetricValue": "9" * 129},
+        {"MetricId": "bad-oem", "MetricValue": "3", "Oem": {"BCIR": []}},
+    ]}
+    readings = parse_redfish_metric_report(poisoned)
+    assert [(reading.name, reading.value) for reading in readings] == [
+        ("finite", 2.5), ("bad-oem", 3)]
+    try:
+        parse_redfish_metric_report({"MetricValues": [{}] * ((1 << 16) + 1)})
+        raise AssertionError("oversized Redfish metric inventory was accepted")
+    except ValueError as exc:
+        assert "metric values" in str(exc)
+
+
 def test_metric_definitions_carry_unit_and_provenance_on_definition():
     defs = metric_definitions(_synthetic_registry())
     by_id = {d["Id"]: d for d in defs}

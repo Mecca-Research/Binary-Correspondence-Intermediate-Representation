@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .._artifact_json import strict_json_loads
 from ..model import Module
 from ..telemetry import DataDNA, TelemetryIntegrity, sanitize_events
 from .cost import HProfile, Theta
@@ -166,10 +167,10 @@ class FrozenCalibrator:
         `_NWEIGHTS` finite integers within `+/-_W_Q8_ABS_MAX`, and `gen` a
         non-negative int. Any violation raises `ValueError` instead of seating
         adversarial weights."""
-        import json
-        d = json.loads(text)
-        if not isinstance(d, dict) or "w_q8" not in d or "gen" not in d:
-            raise ValueError("FrozenCalibrator JSON must be an object with w_q8 and gen")
+        d = strict_json_loads(text, "frozen calibrator")
+        fields = {"w_q8", "gen", "samples"}
+        if not isinstance(d, dict) or set(d) != fields:
+            raise ValueError(f"FrozenCalibrator fields must be exactly {sorted(fields)}")
         w = d["w_q8"]
         if not isinstance(w, (list, tuple)):
             raise ValueError("FrozenCalibrator w_q8 must be an array")
@@ -187,10 +188,12 @@ class FrozenCalibrator:
                     "(out-of-range / adversarial weight)")
             wi_out.append(wi)
         gen = d["gen"]
-        if isinstance(gen, bool) or not isinstance(gen, int) or gen < 0:
-            raise ValueError(f"FrozenCalibrator gen must be a non-negative int, got {gen!r}")
-        samples = d.get("samples", 0)
-        if isinstance(samples, bool) or not isinstance(samples, int) or samples < 0:
+        if (isinstance(gen, bool) or not isinstance(gen, int) or
+                not 0 <= gen <= (1 << 63) - 1):
+            raise ValueError(f"FrozenCalibrator gen must be a non-negative i63, got {gen!r}")
+        samples = d["samples"]
+        if (isinstance(samples, bool) or not isinstance(samples, int) or
+                not 0 <= samples <= (1 << 63) - 1):
             raise ValueError(f"FrozenCalibrator samples must be a non-negative int, got {samples!r}")
         return FrozenCalibrator(tuple(wi_out), gen, samples)
 

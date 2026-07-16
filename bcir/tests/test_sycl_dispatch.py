@@ -15,7 +15,7 @@ boundary, and NEVER on the legality path (two-truth)."""
 import os
 
 from bcir.channel_plugin import load_manifest, register_from_manifest
-from bcir.channels import orchestrate
+from bcir.channels import channel, orchestrate
 from bcir.frontends.cfront.linkflags import library_for_callee
 from bcir.gem.execute import execute
 from bcir.kbcir import optimize
@@ -38,7 +38,10 @@ _Y = [10.0, 20.0, 30.0, -0.5, 1.0, -4.0, 2.5, 7.0]
 
 
 def _sycl_channel():
-    return register_from_manifest(load_manifest(_MANIFEST))
+    try:
+        return channel("sycl_spirv")
+    except KeyError:
+        return register_from_manifest(load_manifest(_MANIFEST))
 
 
 def _saxpy_module(n=8, a=_A):
@@ -121,6 +124,43 @@ def test_dispatcher_is_a_channel_dispatcher_and_validates_inputs():
         except ValueError:
             pass
     disp.close()
+
+
+def test_dispatcher_close_invalidates_cached_executable_paths():
+    disp = SyclDispatcher(prefer_device=False)
+    first = disp._workdir()
+    fake = os.path.join(first, "cached")
+    open(fake, "w", encoding="utf-8").close()
+    disp._exe_cache[("shape", "fallback")] = fake
+    disp.close()
+    assert disp._tmpdir is None and disp._exe_cache == {}
+    assert not os.path.exists(first)
+    second = disp._workdir()
+    try:
+        assert second != first and os.path.isdir(second)
+    finally:
+        disp.close()
+
+
+def test_dispatcher_rejects_attacker_scaled_geometry_before_compilation():
+    class Huge:
+        def __len__(self):
+            return (1 << 18) + 1
+
+    disp = SyclDispatcher(prefer_device=False)
+    try:
+        try:
+            disp.run_saxpy(1.0, Huge(), Huge())
+            raise AssertionError("oversized SAXPY must be rejected")
+        except ValueError:
+            pass
+        try:
+            disp.run_matmul([], [], 1000, 1000, 1000)
+            raise AssertionError("oversized matmul must be rejected")
+        except ValueError:
+            pass
+    finally:
+        disp.close()
 
 
 # --- (3) the device path is GATED: runs + agrees only if a real SYCL compiler is present ---------------

@@ -38,6 +38,18 @@ int main(int argc, char **argv) {
   bcir_status st = bcir_sp_execute(buf, len, scratch, 4096, phases, 256, record, NULL, &res);
   if (st != BCIR_OK) { printf("ERR %d\n", (int)st); return 1; }
 
+  {
+    bcir_exec_result failed = {(size_t)-1, (size_t)-1, (size_t)-1};
+    bcir_phase_stat sentinel = {0xA5A5A5A5u, 0xA5A5A5A5u, 0xA5A5A5A5u};
+    st = bcir_sp_execute(buf, len, scratch, 4096, &sentinel, 0, NULL, NULL, &failed);
+    if (st != BCIR_ERR_NOSPACE || failed.executed || failed.n_phases ||
+        failed.n_segments || sentinel.phase_id != 0xA5A5A5A5u ||
+        sentinel.scheduled != 0xA5A5A5A5u || sentinel.executed != 0xA5A5A5A5u) {
+      fprintf(stderr, "executor failure-state regression\n");
+      return 3;
+    }
+  }
+
   /* The dispatch order, as recorded by the kernel callback (must equal gem.execute). */
   printf("order:");
   for (size_t i = 0; i < g_norder; i++) printf(" %llu", (unsigned long long)g_order[i]);

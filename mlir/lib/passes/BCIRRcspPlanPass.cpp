@@ -143,7 +143,7 @@ struct RcspPlanPass : public PassWrapper<RcspPlanPass, OperationPass<>> {
           SmallVector<int64_t> res(nt);
           bool feasible = true;
           for (int t = 0; t < nt; ++t) {
-            res[t] = p.res[t] + e[trackedDim[t]];
+            res[t] = saturatingAddNonnegative(p.res[t], e[trackedDim[t]]);
             if (res[t] > caps[t]) {
               feasible = false;
               break;
@@ -151,7 +151,9 @@ struct RcspPlanPass : public PassWrapper<RcspPlanPass, OperationPass<>> {
           }
           if (!feasible)
             continue;
-          insertLabel(layer[i], Label{p.score + cm::scalarize(e, w), std::move(res),
+          insertLabel(layer[i], Label{saturatingAddNonnegative(
+                                          p.score, cm::scalarize(e, w)),
+                                      std::move(res),
                                       cand.width, cols[i].reads,
                                       static_cast<int>(pi), static_cast<int>(ci)});
         }

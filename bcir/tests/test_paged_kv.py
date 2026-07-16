@@ -210,6 +210,78 @@ def test_admission_is_appending_phases():
         up_cert.serial, up_cert.barriered, up_cert.pipelined)
 
 
+def test_paged_boundaries_refuse_before_cache_or_graph_mutation():
+    """A mismatched row/spec, out-of-range page, under-capacity graph, and colliding
+    eviction ID all fail while the live cache/module remain unchanged."""
+    import dataclasses
+    from bcir.frontends.models.paged_kv import admit_session
+    from bcir.model import Domain, Resource
+    w = _toy_weights(SPEC)
+    kv = PagedKV(SPEC, 16, 16, _MAN, "hbm0")
+    before = (kv.pos, tuple(kv.pages), tuple(kv.views))
+    wrong = dataclasses.replace(SPEC, rms_norm_eps=1e-5)
+    huge = list(w.embedding.row(1))
+    huge[0] = 10 ** 10000
+    for action, needle in (
+            (lambda: kv.step_row(w.embedding.row(1), wrong, w), "does not match"),
+            (lambda: kv.step_row(huge, SPEC, w), "finite numbers"),
+            (lambda: kv.page_of(-1), "position"),
+            (lambda: paged_session_module(SPEC, 16, 1, kv), "capacity")):
+        try:
+            action()
+            raise AssertionError(f"expected {needle!r} refusal")
+        except ValueError as exc:
+            assert needle in str(exc), (needle, str(exc))
+    assert (kv.pos, tuple(kv.pages), tuple(kv.views)) == before
+
+    module = paged_session_module(SPEC, 3, 2, kv)
+    phase_count = len(module.phases)
+    try:
+        schedule_eviction(module, kv, 0, cid=1)
+        raise AssertionError("expected colliding eviction claim refusal")
+    except ValueError as exc:
+        assert "already exists" in str(exc)
+    assert len(module.phases) == phase_count
+
+    batch = batched_sessions_module(SPEC, ((3, 2),))
+    batch.add_resource(Resource(rid=99, domain=Domain.RAM, shape=(1,), name="injected"))
+    snapshot = (batch.name, dict(batch.resources), tuple(batch.phases))
+    try:
+        admit_session(batch, SPEC, 2, 1)
+        raise AssertionError("expected malformed live-batch refusal")
+    except ValueError:
+        pass
+    assert (batch.name, batch.resources, tuple(batch.phases)) == snapshot
+
+    batch = batched_sessions_module(SPEC, ((3, 2),))
+    batch.phases[1].claims[0].op = "forged.decode"
+    snapshot = (batch.name, dict(batch.resources), tuple(batch.phases))
+    try:
+        admit_session(batch, SPEC, 2, 1)
+        raise AssertionError("expected forged live-batch graph refusal")
+    except ValueError as exc:
+        assert "phase/claim graph" in str(exc)
+    assert (batch.name, batch.resources, tuple(batch.phases)) == snapshot
+
+
+def test_batch_claim_bands_and_inventories_are_bounded():
+    """A session longer than the former 1000-ID band cannot collide with its neighbor;
+    a graph beyond the explicit reference limit is rejected before construction."""
+    module = batched_sessions_module(SPEC, ((1, 901), (1, 901)))
+    claim_ids = [claim.id for phase in module.phases for claim in phase.claims]
+    assert len(claim_ids) == len(set(claim_ids))
+    try:
+        batched_sessions_module(SPEC, ((1, 1 << 16),))
+        raise AssertionError("expected oversized batch refusal")
+    except ValueError as exc:
+        assert "claims" in str(exc)
+    try:
+        PagedKV(SPEC, (1 << 16) + 1, 1, _MAN, "hbm0")
+        raise AssertionError("expected oversized page table refusal")
+    except ValueError as exc:
+        assert "pages" in str(exc)
+
+
 if __name__ == "__main__":
     import sys
 

@@ -6,8 +6,26 @@
  *===----------------------------------------------------------------------===*/
 #include "bcir_diag.h"
 
+#include <limits.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+
+static int source_len(const char *source) {
+  size_t n = strlen(source);
+  return n > (size_t)INT_MAX ? INT_MAX : (int)n;
+}
+
+static int diag_shape_valid(const bcir_diag *d) {
+  if (!d || !d->severity || !d->message || d->n_notes < 0 || d->n_fixits < 0 ||
+      d->n_incstack < 0 || (d->n_notes && !d->notes) ||
+      (d->n_fixits && !d->fixits) || (d->n_incstack && !d->incstack) ||
+      (d->has_origin && !d->origin_file)) return 0;
+  for (int i = 0; i < d->n_notes; i++) if (!d->notes[i].message) return 0;
+  for (int i = 0; i < d->n_fixits; i++) if (!d->fixits[i].replacement) return 0;
+  for (int i = 0; i < d->n_incstack; i++) if (!d->incstack[i].file) return 0;
+  return 1;
+}
 
 /* the byte offset of the last '\n' before `off` (exclusive), or -1 if none (the C twin of
  * source.rfind("\n", 0, off)). */
@@ -22,7 +40,10 @@ static int find_nl(const char *s, int len, int off) {
 }
 
 void bcir_diag_line_col(const char *source, int offset, int *line, int *col) {
-  int len = (int)strlen(source);
+  if (line) *line = 1;
+  if (col) *col = 1;
+  if (!source || !line || !col) return;
+  int len = source_len(source);
   if (offset < 0) offset = 0; else if (offset > len) offset = len;
   int ln = 1; for (int i = 0; i < offset; i++) if (source[i] == '\n') ln++;   /* count("\n",0,offset)+1 */
   int ls = rfind_nl(source, offset) + 1;                                       /* line start */
@@ -39,15 +60,26 @@ static void line_bounds(const char *s, int len, int offset, int *lstart, int *le
 
 /* append `n` bytes of `p` to the snprintf-style cursor (w may exceed cap; only [w,cap) is written). */
 static size_t put(char *out, size_t cap, size_t w, const char *p, size_t n) {
-  for (size_t i = 0; i < n; i++) { if (w + i + 1 < cap) out[w + i] = p[i]; }
-  return w + n;
+  if (!p && n) return SIZE_MAX;
+  if (out && cap && w < cap - 1u) {
+    size_t room = cap - 1u - w;
+    size_t copy = n < room ? n : room;
+    if (copy) memcpy(out + w, p, copy);
+  }
+  return n > SIZE_MAX - w ? SIZE_MAX : w + n;
 }
 static size_t putc1(char *out, size_t cap, size_t w, char c) { return put(out, cap, w, &c, 1); }
-static size_t puts1(char *out, size_t cap, size_t w, const char *s) { return put(out, cap, w, s, strlen(s)); }
+static size_t puts1(char *out, size_t cap, size_t w, const char *s) {
+  return s ? put(out, cap, w, s, strlen(s)) : SIZE_MAX;
+}
 
 /* The source line for `span` plus a caret/underline line, appended as "<line>\n<underline>" (the two
  * _snippet entries, joined to the banner by the caller's '\n'). Mirrors diagnostics._snippet. */
 static size_t snippet(char *out, size_t cap, size_t w, const char *s, int len, bcir_span span) {
+  if (span.start < 0) span.start = 0;
+  if (span.start > len) span.start = len;
+  if (span.end < span.start) span.end = span.start;
+  if (span.end > len) span.end = len;
   int lstart, lend; line_bounds(s, len, span.start, &lstart, &lend);
   int line_len = lend - lstart;
   int col = span.start - lstart;                                  /* 0-based caret column */
@@ -113,7 +145,7 @@ static size_t py_repr(char *o, size_t cap, size_t w, const char *s) {
  * report renderer joins several of these with '\n', the C twin of "\n".join(render(d) for d ...). */
 static size_t render_one(char *out, size_t cap, size_t w, const char *source, const char *filename,
                          const bcir_diag *d) {
-  int len = (int)strlen(source);
+  int len = source_len(source);
   int first = 1;
   /* origin: print the "In file included from <file>:<line>:" frames (outermost first), then relocate
    * the primary banner to (origin_file, origin_line). The notes are NOT relocated (default filename). */
@@ -146,6 +178,11 @@ static size_t render_one(char *out, size_t cap, size_t w, const char *source, co
 
 size_t bcir_diag_render(const bcir_diag *d, const char *source, const char *filename,
                         char *out, size_t cap) {
+  if (!out) cap = 0;
+  if (cap) out[0] = 0;
+  if (!source) source = "";
+  if (!filename) filename = "";
+  if (!diag_shape_valid(d)) return 0;
   size_t w = render_one(out, cap, 0, source, filename, d);
   if (cap) out[w < cap ? w : cap - 1] = 0;
   return w;
@@ -153,6 +190,12 @@ size_t bcir_diag_render(const bcir_diag *d, const char *source, const char *file
 
 size_t bcir_diag_report_render(const bcir_diag *ds, int n, const char *source, const char *filename,
                                char *out, size_t cap) {
+  if (!out) cap = 0;
+  if (cap) out[0] = 0;
+  if (!source) source = "";
+  if (!filename) filename = "";
+  if (n < 0 || (n && !ds)) return 0;
+  for (int i = 0; i < n; i++) if (!diag_shape_valid(&ds[i])) return 0;
   size_t w = 0;
   for (int i = 0; i < n; i++) {                           /* "\n".join(render(d) for d in diagnostics) */
     if (i) w = putc1(out, cap, w, '\n');
@@ -300,6 +343,12 @@ static size_t jdiag(char *o, size_t cap, size_t w, const bcir_diag *d, const cha
 size_t bcir_diag_to_json(const bcir_diag *ds, int n, const char *source, const char *filename,
                          char *out, size_t cap) {
   size_t w;
+  if (!out) cap = 0;
+  if (cap) out[0] = 0;
+  if (!source) source = "";
+  if (!filename) filename = "";
+  if (n < 0 || (n && !ds)) return 0;
+  for (int i = 0; i < n; i++) if (!diag_shape_valid(&ds[i])) return 0;
   if (n == 0) {
     w = puts1(out, cap, 0, "[]");
   } else {

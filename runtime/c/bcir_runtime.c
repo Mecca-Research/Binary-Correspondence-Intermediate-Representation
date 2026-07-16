@@ -7,6 +7,7 @@
 
 /* --- zlib-compatible CRC-32 (bitwise; no table, freestanding) --- */
 uint32_t bcir_crc32(const uint8_t *BCIR_RESTRICT data, size_t len) {
+  if (!data && len) return 0;
   uint32_t c = 0xFFFFFFFFu;
   for (size_t i = 0; i < len; i++) {
     c ^= data[i];
@@ -39,8 +40,41 @@ typedef struct {
   const uint8_t *d;
   size_t len;   /* logical end (body, i.e. total minus the 4-byte CRC) */
   size_t pos;
-  int err;
+  int err;      /* 0 clean, 1 truncated, 2 invalid UTF-8 */
 } cur;
+
+static int utf8_ok(const uint8_t *s, size_t n) {
+  size_t i = 0;
+  while (i < n) {
+    uint8_t b0 = s[i++];
+    uint32_t cp;
+    size_t extra;
+    if (b0 < 0x80u) continue;
+    if (b0 >= 0xC2u && b0 <= 0xDFu) {
+      cp = (uint32_t)(b0 & 0x1Fu); extra = 1u;
+    } else if (b0 >= 0xE0u && b0 <= 0xEFu) {
+      cp = (uint32_t)(b0 & 0x0Fu); extra = 2u;
+    } else if (b0 >= 0xF0u && b0 <= 0xF4u) {
+      cp = (uint32_t)(b0 & 0x07u); extra = 3u;
+    } else {
+      return 0;
+    }
+    if (extra > n - i) return 0;
+    for (size_t j = 0; j < extra; j++) {
+      uint8_t bx = s[i++];
+      if ((bx & 0xC0u) != 0x80u) return 0;
+      cp = (cp << 6) | (uint32_t)(bx & 0x3Fu);
+    }
+    if ((extra == 1u && cp < 0x80u) || (extra == 2u && cp < 0x800u) ||
+        (extra == 3u && cp < 0x10000u) || cp > 0x10FFFFu ||
+        (cp >= 0xD800u && cp <= 0xDFFFu)) return 0;
+  }
+  return 1;
+}
+
+static bcir_status c_status(const cur *c) {
+  return c->err == 2 ? BCIR_ERR_UTF8 : BCIR_ERR_TRUNCATED;
+}
 
 static int c_has(const cur *c, size_t n) {
   return !c->err && c->pos <= c->len && n <= c->len - c->pos;
@@ -69,6 +103,7 @@ static const char *c_str(cur *c, uint16_t *out_len) {
   uint16_t n = c_u16(c);
   if (!c_has(c, n)) { c->err = 1; *out_len = 0; return 0; }
   const char *p = (const char *)(c->d + c->pos);
+  if (!utf8_ok(c->d + c->pos, n)) { c->err = 2; *out_len = 0; return 0; }
   c->pos += n; *out_len = n; return p;
 }
 static const uint8_t *c_u32arr(cur *c, uint16_t *out_cnt) {
@@ -79,8 +114,8 @@ static const uint8_t *c_u32arr(cur *c, uint16_t *out_cnt) {
   c->pos += bytes; *out_cnt = n; return p;
 }
 static void c_skip_str(cur *c) {
-  uint16_t n = c_u16(c);
-  c_skip(c, n);
+  uint16_t n;
+  (void)c_str(c, &n);
 }
 static void c_skip_strarr(cur *c) {
   uint16_t n = c_u16(c);
@@ -88,10 +123,12 @@ static void c_skip_strarr(cur *c) {
 }
 
 uint32_t bcir_seg_read_rid(const bcir_segment_view *seg, uint16_t i) {
-  return (i < seg->n_reads) ? rd32(seg->reads + (size_t)i * 4u) : 0u;
+  return (seg && seg->reads && i < seg->n_reads)
+             ? rd32(seg->reads + (size_t)i * 4u) : 0u;
 }
 uint32_t bcir_seg_write_rid(const bcir_segment_view *seg, uint16_t i) {
-  return (i < seg->n_writes) ? rd32(seg->writes + (size_t)i * 4u) : 0u;
+  return (seg && seg->writes && i < seg->n_writes)
+             ? rd32(seg->writes + (size_t)i * 4u) : 0u;
 }
 
 /* The range gate over a decoded segment view (the rail-symmetry fix): lane in [0,5],
@@ -101,12 +138,21 @@ uint32_t bcir_seg_write_rid(const bcir_segment_view *seg, uint16_t i) {
 static bcir_status seg_range_ok(const bcir_segment_view *v) {
   if (v->lane > (uint8_t)BCIR_LANE_H) return BCIR_ERR_LANE;   /* 6 valid lanes: 0..5 */
   if (v->width == 0u || (v->width & (v->width - 1u)) != 0u) return BCIR_ERR_WIDTH;
+  if (v->stride_k != 0u) return BCIR_ERR_RESERVED;
   if (v->dispatch > (uint8_t)BCIR_DISPATCH_MAX) return BCIR_ERR_DISPATCH;
   return BCIR_OK;
 }
 
 bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
                              bcir_streampack_header *BCIR_RESTRICT hdr) {
+  if (hdr) {
+    for (int i = 0; i < 4; i++) hdr->magic[i] = 0;
+    hdr->version = 0; hdr->flags = 0;
+    hdr->topo_gen = 0; hdr->map_gen = 0; hdr->data_gen = 0;
+    hdr->n_segments = 0; hdr->n_prefetches = 0;
+    hdr->n_blocks = 0; hdr->n_trace = 0; hdr->pipeline_depth = 0;
+    for (int i = 0; i < 26; i++) hdr->reserved[i] = 0;
+  }
   if (!data) return BCIR_ERR_TRUNCATED;
   if (len < (size_t)BCIR_STREAMPACK_HEADER_SIZE + 4u) return BCIR_ERR_TRUNCATED;
   if (data[0] != 'B' || data[1] != 'S' || data[2] != 'P' || data[3] != 'K')
@@ -114,6 +160,12 @@ bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
   uint16_t version = rd16(data + 4);
   if (version < BCIR_STREAMPACK_VERSION || version > BCIR_STREAMPACK_VERSION_MAX)
     return BCIR_ERR_VERSION;
+  if (rd16(data + 6) != 0u) return BCIR_ERR_RESERVED;
+  {
+    size_t reserved_start = version >= 2u ? 38u : 36u;
+    for (size_t i = reserved_start; i < BCIR_STREAMPACK_HEADER_SIZE; i++)
+      if (data[i] != 0u) return BCIR_ERR_RESERVED;
+  }
   uint32_t stored = rd32(data + len - 4);
   if (bcir_crc32(data, len - 4) != stored) return BCIR_ERR_CRC;
   if (hdr) {
@@ -141,6 +193,7 @@ bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data, size_t l
 
   cur c;
   c.d = data; c.len = len - 4u; c.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
+  int invoke_callback = 1;
   c_skip_str(&c); /* source_plan */
 
   for (uint32_t i = 0; i < hdr.n_segments && !c.err; i++) {
@@ -165,14 +218,16 @@ bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data, size_t l
       v.dispatch = (uint8_t)BCIR_DISPATCH_CORE;
       v.channel = BCIR_DEFAULT_CHANNEL; v.channel_len = BCIR_DEFAULT_CHANNEL_LEN;
     }
-    if (c.err) return BCIR_ERR_TRUNCATED;
+    if (c.err) return c_status(&c);
     /* Range gate: reject an out-of-range lane/width/dispatch (mirror the Python raise),
      * so a CRC-valid pack with a bad lane fails on BOTH rails identically. */
     bcir_status rg = seg_range_ok(&v);
     if (rg != BCIR_OK) return rg;
-    if (fn && fn(&v, ctx)) break;
+    /* Stop invoking the callback when requested, but still parse every declared
+     * segment so a malformed later record cannot hide behind an early match. */
+    if (invoke_callback && fn && fn(&v, ctx)) invoke_callback = 0;
   }
-  return c.err ? BCIR_ERR_TRUNCATED : BCIR_OK;
+  return c.err ? c_status(&c) : BCIR_OK;
 }
 
 bcir_status bcir_sp_check_generation(const uint8_t *BCIR_RESTRICT data, size_t len,
@@ -211,6 +266,24 @@ static void skip_segment(cur *c, uint16_t version) {
     c_skip(c, 1);               /* dispatch u8 */
     c_skip_str(c);              /* channel */
   }
+}
+
+/* A StreamPack executes each claim at most once. Re-walk only the already-validated
+ * prefix so duplicate segment ids can be refused without heap scratch. */
+static int segment_claim_seen_before(const uint8_t *data, size_t body_len,
+                                     uint16_t version, uint32_t before, uint64_t cid) {
+  cur c; c.d = data; c.len = body_len; c.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
+  c_skip_str(&c);
+  for (uint32_t i = 0; i < before && !c.err; i++) {
+    size_t start = c.pos;
+    c_skip_str(&c);
+    uint64_t prior = c_u64(&c);
+    if (c.err) return 0;
+    if (!c.err && prior == cid) return 1;
+    c.pos = start; c.err = 0;
+    skip_segment(&c, version);
+  }
+  return 0;
 }
 
 /* A length-prefixed string equals (a,la) == (b,lb)? */
@@ -308,11 +381,15 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   cur c; c.d = data; c.len = body_len; c.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
   c_skip_str(&c);   /* source_plan */
   for (uint32_t i = 0; i < hdr.n_segments && !c.err; i++) skip_segment(&c, hdr.version);
-  if (c.err) return BCIR_ERR_TRUNCATED;
+  if (c.err) return c_status(&c);
   size_t pf_start = c.pos;
   /* validate prefetch buffers (1|2) while skipping to the blocks */
   for (uint32_t i = 0; i < hdr.n_prefetches && !c.err; i++) {
-    c_skip_str(&c);                /* name */
+    uint16_t name_len;
+    const char *name = c_str(&c, &name_len);
+    if (!c.err && prefetch_has_name(data, body_len, pf_start, i, hdr.version,
+                                    name, name_len))
+      return BCIR_ERR_PROVENANCE;  /* duplicate names make target binding ambiguous */
     c_skip(&c, 4);                 /* distance */
     { uint16_t n; (void)c_u32arr(&c, &n); }  /* targets */
     c_skip_str(&c);                /* hint */
@@ -322,20 +399,26 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
       if (!c.err && buffers != 1u && buffers != 2u) return BCIR_ERR_PROVENANCE;
     }
   }
-  if (c.err) return BCIR_ERR_TRUNCATED;
+  if (c.err) return c_status(&c);
   for (uint32_t i = 0; i < hdr.n_blocks && !c.err; i++) {
     c_skip(&c, 16);                /* base u64 + count u64 */
     { uint16_t n = c_u16(&c);      /* strides u64_array */
       c_skip(&c, (size_t)n * 8u); }
   }
-  if (c.err) return BCIR_ERR_TRUNCATED;
+  if (c.err) return c_status(&c);
   size_t trace_start = c.pos;
   /* The declared trace stream must itself fit and must end EXACTLY at the CRC trailer. CRC alone
    * authenticates bytes, not their schema membership: accepting undeclared suffix bytes gives two
    * byte-distinct artifacts the same decoded meaning and lets future parsers disagree. */
-  for (uint32_t i = 0; i < hdr.n_trace && !c.err; i++)
-    c_skip(&c, 24);                 /* claim_id + src_hash + trace_hash */
-  if (c.err) return BCIR_ERR_TRUNCATED;
+  for (uint32_t i = 0; i < hdr.n_trace && !c.err; i++) {
+    uint64_t cid = c_u64(&c);
+    if (c.err) break;
+    for (uint32_t j = 0; j < i; j++)
+      if (rd64(data + trace_start + (size_t)j * 24u) == cid)
+        return BCIR_ERR_PROVENANCE; /* conflicting trace hashes cannot share an id */
+    c_skip(&c, 16);                 /* src_hash + trace_hash */
+  }
+  if (c.err) return c_status(&c);
   if (c.pos != body_len) return BCIR_ERR_TRAILING;
 
   /* Pass 2: per segment, confirm (R10) its claim_id is traced + its prefetch resolves. */
@@ -357,9 +440,11 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
     c_skip_strarr(&s);  /* fence_after */
     if (hdr.version >= 3) { v.dispatch = c_u8(&s); v.channel = c_str(&s, &v.channel_len); }
     else { v.dispatch = (uint8_t)BCIR_DISPATCH_CORE; v.channel = BCIR_DEFAULT_CHANNEL; v.channel_len = BCIR_DEFAULT_CHANNEL_LEN; }
-    if (s.err) return BCIR_ERR_TRUNCATED;
+    if (s.err) return c_status(&s);
     bcir_status rg = seg_range_ok(&v);
     if (rg != BCIR_OK) return rg;
+    if (segment_claim_seen_before(data, body_len, hdr.version, i, v.claim_id))
+      return BCIR_ERR_PROVENANCE;
     /* R10: every segment maps back to a live trace note (no dangling/redirected claim_id). */
     if (!trace_has_claim(data, body_len, trace_start, hdr.n_trace, v.claim_id))
       return BCIR_ERR_PROVENANCE;

@@ -87,7 +87,12 @@ def test_c_channel_parser_rejects_malformed():
         open(drv, "w").write(
             '#include <stdio.h>\n#include <string.h>\n#include "bcir_channel.h"\n'
             'int main(int c,char**v){(void)c;bcir_channel ch;char dg[128];'
-            'const char*j=v[1];return bcir_channel_parse(j,strlen(j),&ch,dg,sizeof dg)?0:1;}\n')
+            'if(!bcir_channel_parse("{}",BCIR_CHANNEL_JSON_MAX_BYTES+1u,&ch,dg,sizeof dg))return 4;'
+            'const char*j=v[1];memset(&ch,0xa5,sizeof ch);'
+            'int r=bcir_channel_parse(j,strlen(j),&ch,dg,sizeof dg);'
+            'if(!r)return 1;for(size_t i=0;i<sizeof ch;i++)if(((unsigned char*)&ch)[i])return 2;'
+            'if(bcir_claim_required_caps(NULL)!=0||bcir_channel_suits(NULL,NULL)!=0||'
+            'bcir_channel_route(NULL,NULL,1)!=-1)return 3;return 0;}\n')
         exe = os.path.join(d, "drv")
         b = subprocess.run([_CC, "-std=c11", "-O1", "-I", _C, os.path.join(_C, "bcir_channel.c"),
                             drv, "-o", exe], capture_output=True, text=True)
@@ -96,6 +101,13 @@ def test_c_channel_parser_rejects_malformed():
                     '{"name":"x" "kind":"cpu"}',                      # missing comma
                     '{"name":"x","kind":"cpu",}',                    # trailing comma
                     '{"name":"x","kind":"cpu","modeled":"true"}', # wrong value type
+                    '{"name":"x","name":"y","kind":"cpu"}',       # duplicate key
+                    '{"name":"x","kind":"cpu","capabilities":["telepathy"]}',
+                    '{"name":"x","kind":"cpu","capabilities":["reduce","reduce"]}',
+                    '{"name":"x","kind":"quantum"}',
+                    '{"name":"x","kind":"cpu","provenance":"real","modeled":true}',
+                    '{"name":"x\\nroot","kind":"cpu"}',             # escaped log/control injection
+                    '{"name":"x","kind":"cpu","profile":{"x":[1,{bad}]}}',
                     '{"name":"x","kind":"cpu"} trailing',
                     '{"name":"' + ('x' * 80) + '","kind":"cpu"}'):
             assert subprocess.run([exe, bad]).returncode == 0, f"should reject: {bad}"

@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define BCIR_LLAMA_CLI_MAX_NEW_TOKENS (1u << 16)
+
 static void *cli_allocate(size_t size) {
   bcir_host_allocator allocator=bcir_host_allocator_default();
   return bcir_host_allocate(&allocator,size);
@@ -87,6 +89,12 @@ int main(int argc, char **argv) {
   }
   if (bcir_q8_model_load(model_path, &model, error, sizeof error)) {
     fprintf(stderr, "bcir-llama: %s\n", error); cli_deallocate(prompt); return 1;
+  }
+  if (max_new > BCIR_LLAMA_CLI_MAX_NEW_TOKENS ||
+      prompt_count > SIZE_MAX - max_new ||
+      (model.context_length && prompt_count + max_new - 1u > model.context_length)) {
+    fprintf(stderr, "bcir-llama: request exceeds the model/CLI context limit\n");
+    rc = 1; goto done;
   }
   if (!bcir_size_mul(max_new,sizeof *generated,&generated_bytes) ||
       !bcir_size_mul((size_t)model.vocab_size,sizeof *logits,&logits_bytes)) {

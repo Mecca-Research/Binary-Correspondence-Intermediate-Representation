@@ -126,6 +126,57 @@ def test_persisted_prior_round_trips_and_refuses_staleness():
             assert "newer" in str(e)
 
 
+def test_persisted_prior_rejects_ambiguous_or_malformed_installable_state():
+    import json
+
+    table = build_channel_table(TRAIN, TOWER, COOL)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "prior.json")
+        save_channel_prior(path, _frozen(), table, TOWER)
+        with open(path, encoding="utf-8") as f:
+            good = json.load(f)
+
+        bad_docs = []
+        d = json.loads(json.dumps(good)); d["wq"] = [0]; bad_docs.append(d)
+        d = json.loads(json.dumps(good)); d["wq"][0] = True; bad_docs.append(d)
+        d = json.loads(json.dumps(good)); d["table"] = {"1,2": TOWER[0].name}; bad_docs.append(d)
+        d = json.loads(json.dumps(good)); d["table"] = {"1,2,3": "ghost"}; bad_docs.append(d)
+        d = json.loads(json.dumps(good)); d["tower"].append(d["tower"][0]); bad_docs.append(d)
+        for bad in bad_docs:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(bad, f)
+            try:
+                load_channel_prior(path, TOWER)
+                raise AssertionError("malformed installable channel prior must be rejected")
+            except ValueError:
+                pass
+
+        raw = json.dumps(good)
+        raw = raw.replace('"schema": 1', '"schema": 1, "schema": 1', 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(raw)
+        try:
+            load_channel_prior(path, TOWER)
+            raise AssertionError("duplicate keys must be rejected")
+        except ValueError as e:
+            assert "duplicate JSON key" in str(e)
+
+        with open(path, "wb") as f:
+            f.write(b" " * ((1 << 20) + 1))
+        try:
+            load_channel_prior(path, TOWER)
+            raise AssertionError("oversized priors must be rejected")
+        except ValueError as e:
+            assert "exceeds" in str(e)
+
+    for weights in ((0,), (0,) * 9, (False,) * 8):
+        try:
+            FrozenChannelPrior(weights)
+            raise AssertionError("malformed in-memory priors must be rejected")
+        except ValueError:
+            pass
+
+
 # --- D3.4: the table wired into orchestrate + calibrated towers -------------------------------
 
 def _cal_tower():

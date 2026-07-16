@@ -22,6 +22,8 @@
 #include "bcir_host_alloc.h"
 
 #define Q8 256
+#define BCIR_MICROBENCH_MAX_N (UINT64_C(1) << 24)
+#define BCIR_MICROBENCH_MAX_REPEATS UINT64_C(128)
 
 static uint64_t g_state = 0xBC12u;
 static uint64_t lcg(void) {
@@ -96,7 +98,8 @@ static uint64_t pass_compute(size_t n) {
 /* q8(ns) = max(256, ns*256/base): a regime is never cheaper than streaming. */
 static uint64_t q8(uint64_t ns, uint64_t base) {
   uint64_t v = !base ? Q8 : ns > UINT64_MAX / Q8 ? UINT64_MAX : (ns * Q8) / base;
-  return v < Q8 ? Q8 : v;
+  if(v<(uint64_t)Q8)v=(uint64_t)Q8;
+  return v>(uint64_t)INT64_MAX?(uint64_t)INT64_MAX:v;
 }
 
 static int parse_u64(const char *s, uint64_t *out) {
@@ -119,7 +122,10 @@ int main(int argc, char **argv) {
   uint64_t parsed_n=1u<<22,parsed_repeats=5;int64_t cal_gen=1;
   if((argc>1&&parse_u64(argv[1],&parsed_n))||(argc>2&&parse_u64(argv[2],&parsed_repeats))||
      (argc>3&&parse_i64(argv[3],&cal_gen))||argc>4||parsed_n>SIZE_MAX||
-     parsed_repeats<1||parsed_repeats>INT_MAX){fprintf(stderr,"invalid arguments\n");return 2;}
+     parsed_n>BCIR_MICROBENCH_MAX_N||parsed_repeats<1||
+     parsed_repeats>BCIR_MICROBENCH_MAX_REPEATS||cal_gen<0){
+    fprintf(stderr,"invalid arguments (n<=%" PRIu64 ", repeats<=%" PRIu64 ", cal_gen>=0)\n",
+            BCIR_MICROBENCH_MAX_N,BCIR_MICROBENCH_MAX_REPEATS);return 2;}
   size_t n=(size_t)parsed_n;int repeats=(int)parsed_repeats;
   if (n < 2) n = 2;   /* need >=2 elements: the Fisher-Yates loop (n-1 down to 1) underflows and pass_strided does % n */
 

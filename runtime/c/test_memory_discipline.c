@@ -4,8 +4,10 @@
 #include "bcir_host_alloc.h"
 #include "bcir_llama.h"
 #include "bcir_q8_model.h"
+#include "bcir_runtime.h"
 #include "bcir_runtime_channel.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,7 +71,13 @@ static int checked_growth_test(void){
   CHECK(!bcir_size_add(SIZE_MAX,1u,&out));
   CHECK(!bcir_size_mul(SIZE_MAX,2u,&out));
   CHECK(!bcir_size_align_up(SIZE_MAX,8u,&out));
+  CHECK(bcir_crc32(NULL,1u)==0u);
   CHECK(!bcir_host_arena_init(&arena,&invalid,128u));
+  CHECK(bcir_host_arena_init(&arena,NULL,128u));
+  CHECK(bcir_host_arena_allocate(&arena,8u,3u)==NULL);
+  CHECK(arena.blocks==NULL);
+  CHECK(bcir_host_arena_allocate(&arena,8u,_Alignof(max_align_t))!=NULL);
+  bcir_host_arena_destroy(&arena);bcir_host_arena_destroy(&arena);
   bcir_host_deallocate(&allocator,bytes);
   CHECK(state.live==0u);
   return 0;
@@ -103,7 +111,10 @@ static int cpp_fault_and_isolation_test(void){
   }
   {
     bcir_cpp_context left,right;
-    char a[256],b[256],error[128];
+    char a[256],b[4096],error[128],paste[2048];
+    const char *bad_entries[1]={NULL};
+    const char *too_many_dirs[65];
+    for(size_t k=0;k<65u;k++)too_many_dirs[k]=".";
     CHECK(!bcir_cpp_context_init(&left,NULL));
     CHECK(!bcir_cpp_context_init(&right,NULL));
     CHECK(!bcir_cpp_run_context(&left,"#define PRIVATE 11\nPRIVATE\n",NULL,
@@ -115,6 +126,25 @@ static int cpp_fault_and_isolation_test(void){
     strcpy(b,"stale");
     CHECK(bcir_cpp_run_context(&right,NULL,NULL,b,sizeof b,error,sizeof error)!=0);
     CHECK(b[0]==0);
+    strcpy(b,"stale");
+    CHECK(bcir_cpp_run_ex_context(&right,"x\n","bad.c",bad_entries,1,NULL,0,
+                                  b,sizeof b,error,sizeof error)!=0);
+    CHECK(b[0]==0);
+    strcpy(b,"stale");
+    CHECK(bcir_cpp_run_ex_context(&right,"x\n","bad.c",NULL,0,bad_entries,1,
+                                  b,sizeof b,error,sizeof error)!=0);
+    CHECK(b[0]==0);
+    strcpy(b,"stale");
+    CHECK(bcir_cpp_run_ex_context(&right,"x\n","bad.c",too_many_dirs,65,NULL,0,
+                                  b,sizeof b,error,sizeof error)!=0);
+    CHECK(b[0]==0);
+    {
+      size_t w=(size_t)snprintf(paste,sizeof paste,"#define CAT(a,b) a ## b\nCAT(x,");
+      for(size_t k=0;k<200u;k++)w+=(size_t)snprintf(paste+w,sizeof paste-w,"y+");
+      (void)snprintf(paste+w,sizeof paste-w,"z)\n");
+      CHECK(!bcir_cpp_run_context(&right,paste,NULL,b,sizeof b,error,sizeof error));
+      CHECK(strstr(b,"x")!=NULL&&strstr(b,"z")!=NULL);
+    }
     bcir_cpp_context_destroy(&left);bcir_cpp_context_destroy(&right);
   }
   return 0;
@@ -224,6 +254,12 @@ static int q8_and_llama_fault_test(const char *path){
   CHECK(bcir_q8_model_load_with_allocator(NULL,&invalid,error,sizeof error,&allocator)!=0);
   CHECK(invalid.storage==NULL&&invalid.tensors==NULL&&invalid.tensor_count==0);
   bcir_q8_model_free(&invalid);bcir_q8_model_free(&invalid);
+  {
+    int32_t prompt[1]={0},generated[1]={-1};
+    bcir_q8_model_init(&invalid);
+    CHECK(bcir_llama_generate_greedy(&invalid,prompt,1u,1u,generated,NULL)==-1);
+    CHECK(generated[0]==-1);
+  }
   CHECK(!q8_once(path,&state,0,&attempts));baseline=attempts;CHECK(baseline>=2u);
   for(size_t fail=1;fail<=baseline;fail++){
     memset(&state,0,sizeof state);
@@ -234,7 +270,26 @@ static int q8_and_llama_fault_test(const char *path){
   CHECK(!bcir_q8_model_load(path,&model,error,sizeof error));
   CHECK(model.vocab_size==64u);
   {
+    bcir_q8_tensor foreign=model.tensors[0];
+    foreign.codes=NULL;
+    CHECK(isnan(bcir_q8_tensor_value(&model,&foreign,0)));
+    CHECK(isnan(bcir_q8_tensor_value(&model,&model.tensors[0],
+                                     model.tensors[0].element_count)));
+  }
+  {
     int32_t prompt[1]={1},generated[1];double logits[64];int rc;
+    bcir_q8_model damaged=model;
+    damaged.n_heads=0;
+    generated[0]=-77;
+    CHECK(bcir_llama_generate_greedy(&damaged,prompt,1u,1u,generated,NULL)==-1);
+    CHECK(generated[0]==-77);
+    damaged=model;damaged.bos_token_id=(int32_t)model.vocab_size;
+    CHECK(bcir_llama_generate_greedy(&damaged,prompt,1u,1u,generated,NULL)==-1);
+    CHECK(generated[0]==-77);
+    damaged=model;damaged.context_length=0u;
+    CHECK(bcir_llama_generate_greedy(&damaged,prompt,1u,1u<<20,
+                                     generated,NULL)==-3);
+    CHECK(generated[0]==-77);
     memset(&state,0,sizeof state);allocator=fault_allocator(&state);
     generated[0]=-77;for(size_t i=0;i<64u;i++)logits[i]=-123.0;
     rc=bcir_llama_generate_greedy_with_allocator(&model,prompt,1u,1u,
@@ -268,14 +323,26 @@ static int channel_test(void){
   CHECK(bcir_loopback_channel_init(&loopback,storage,2,128,
         BCIR_CHANNEL_RING_BACKPRESSURE,&channel)==BCIR_CHANNEL_OK);
   CHECK(bcir_channel_open(&channel,0,&session)==BCIR_CHANNEL_OK);
+  CHECK(bcir_channel_sync(&channel,session,0,0)==BCIR_CHANNEL_STALE);
+  CHECK(bcir_channel_sync(&channel,session,1,0)==BCIR_CHANNEL_WOULD_BLOCK);
   stale_session=session;
+  CHECK(bcir_channel_claim(&channel,session,3,1,&resource)==BCIR_CHANNEL_INVALID);
   CHECK(bcir_channel_claim(&channel,session,3,0,&resource)==BCIR_CHANNEL_OK);
   CHECK(bcir_channel_map(&channel,session,resource,129,1,&mapping)==BCIR_CHANNEL_INVALID);
   CHECK(bcir_channel_map(&channel,session,resource,16,64,&mapping)==BCIR_CHANNEL_OK);
   memset(&submission,0,sizeof submission);submission.mapping=mapping.handle;
   submission.byte_length=8;
+  submission.sequence=3;
+  CHECK(bcir_channel_submit(&channel,session,&submission)==BCIR_CHANNEL_INVALID);
+  submission.sequence=0;submission.flags=1;
+  CHECK(bcir_channel_submit(&channel,session,&submission)==BCIR_CHANNEL_INVALID);
+  submission.flags=0;submission.reserved=1;
+  CHECK(bcir_channel_submit(&channel,session,&submission)==BCIR_CHANNEL_INVALID);
+  submission.reserved=0;
   CHECK(bcir_channel_submit(&channel,session,&submission)==BCIR_CHANNEL_OK);
   CHECK(bcir_channel_sync(&channel,session,1,BCIR_CHANNEL_SYNC_CANCEL)==BCIR_CHANNEL_STALE);
+  CHECK(bcir_channel_sync(&channel,session,1,
+        BCIR_CHANNEL_SYNC_WAIT|BCIR_CHANNEL_SYNC_CANCEL)==BCIR_CHANNEL_INVALID);
   CHECK(bcir_channel_sync(&channel,session,2,8u)==BCIR_CHANNEL_INVALID);
   submission.byte_offset=63;submission.byte_length=2;
   CHECK(bcir_channel_submit(&channel,session,&submission)==BCIR_CHANNEL_INVALID);
@@ -303,7 +370,21 @@ static int channel_test(void){
   CHECK(overwrite.dropped_events==1);
   CHECK(bcir_channel_next_event(&channel,session,&event)==BCIR_CHANNEL_OK&&event.sequence==2);
   CHECK(bcir_channel_next_event(&channel,session,&event)==BCIR_CHANNEL_WOULD_BLOCK);
+  overwrite.dropped_events=UINT64_MAX;
+  CHECK(bcir_channel_submit(&channel,session,&submission)==BCIR_CHANNEL_OK);
+  CHECK(bcir_channel_submit(&channel,session,&submission)==BCIR_CHANNEL_OK);
+  CHECK(overwrite.dropped_events==UINT64_MAX);
   CHECK(bcir_channel_close(&channel,session)==BCIR_CHANNEL_OK);
+
+  /* A borrowed hook table becoming incomplete fails closed instead of calling NULL. */
+  {
+    bcir_channel_submit_fn saved=overwrite.hooks.submit;
+    overwrite.hooks.submit=NULL;
+    CHECK(bcir_channel_submit(&channel,session,&submission)==BCIR_CHANNEL_INVALID);
+    overwrite.hooks.submit=saved;
+  }
+  overwrite.generation=UINT32_MAX;
+  CHECK(bcir_channel_open(&channel,0,&session)==BCIR_CHANNEL_INVALID);
   bcir_runtime_channel_reset(&channel);bcir_runtime_channel_reset(&channel);
   return 0;
 }
