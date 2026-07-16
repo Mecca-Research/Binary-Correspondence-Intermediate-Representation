@@ -36,10 +36,13 @@ typedef enum bcir_status {
   BCIR_ERR_PROVENANCE = 9,  /* R10: a segment claim_id has no trace note, or an unresolved prefetch */
   BCIR_ERR_STALE = 10,      /* R11: map_gen/data_gen do not match the caller's expected generation */
   BCIR_ERR_OVERFLOW = 11,   /* a derived size/cost cannot be represented by the public ABI */
-  BCIR_ERR_TRAILING = 12    /* CRC-valid bytes remain after all declared body records */
+  BCIR_ERR_TRAILING = 12,   /* CRC-valid bytes remain after all declared body records */
+  BCIR_ERR_RESERVED = 13,   /* a reserved header/record field is nonzero */
+  BCIR_ERR_UTF8 = 14        /* a length-prefixed wire string is not valid UTF-8 */
 } bcir_status;
 
-/* zlib-compatible CRC-32 (reflected, poly 0xEDB88320). */
+/* zlib-compatible CRC-32 (reflected, poly 0xEDB88320). NULL is valid only with len 0;
+ * an invalid NULL/nonzero pair returns 0 instead of dereferencing it. */
 BCIR_NODISCARD uint32_t bcir_crc32(const uint8_t *BCIR_RESTRICT data, size_t len);
 
 /* Validate magic + version + CRC and copy the header out. A trust boundary: every
@@ -97,6 +100,7 @@ BCIR_NODISCARD bcir_status bcir_sp_check_generation(const uint8_t *BCIR_RESTRICT
 /* R10 (stream provenance) + the range gate, over the WHOLE decoded pack (the freestanding
  * twin of verify_pack's R10). After the CRC/bounds check it enforces, on the decoded body:
  *   - every segment's claim_id resolves to a decoded trace record (no dangling/redirected id);
+ *   - segment claim ids, trace claim ids, and prefetch names are unique (no ambiguous/replayed binding);
  *   - every segment's non-empty `prefetch` name resolves to a declared prefetch record;
  *   - lane/width/dispatch are in range (as bcir_sp_for_each_segment, applied to every segment);
  *   - pipeline_depth >= 1 and every prefetch `buffers` is 1 or 2 (the v2 well-formedness);

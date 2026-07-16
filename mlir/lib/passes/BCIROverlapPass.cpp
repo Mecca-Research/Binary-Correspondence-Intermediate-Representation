@@ -83,7 +83,7 @@ static int64_t chainCost(ArrayRef<const Scheduled *> chain, ArrayRef<int64_t> w,
     cm::applyFactor(e, prev ? cm::contextFactor(theta, prev->reads, prev->cand.width,
                                                 s->reads, s->cand.width)
                             : cm::contextFactor(theta, {}, 0, s->reads, s->cand.width));
-    total += cm::scalarize(e, w);
+    total = saturatingAddNonnegative(total, cm::scalarize(e, w));
     prev = s;
   }
   return total;
@@ -167,11 +167,12 @@ static int64_t computeMakespan(const std::vector<cm::Column> &cols, ArrayRef<int
       for (auto &bin : bins)
         if (!bin.empty())
           waveMax = std::max(waveMax, chainCost(bin, w, theta));
-      mainTotal += waveMax;
+      mainTotal = saturatingAddNonnegative(mainTotal, waveMax);
     }
 
     int64_t tailTotal = chainCost(tail, w, theta);
-    makespan += std::max(mainTotal, tailTotal);
+    makespan = saturatingAddNonnegative(makespan,
+                                        std::max(mainTotal, tailTotal));
   }
   return makespan;
 }
@@ -188,7 +189,7 @@ static int64_t serialScore(const std::vector<cm::Column> &cols, ArrayRef<int> as
                             cols[i].reads, cols[i].cands[assign[i]].width)
         : cm::contextFactor(theta, {}, 0, cols[i].reads, cols[i].cands[assign[i]].width);
     cm::applyFactor(e, f);
-    total += cm::scalarize(e, w);
+    total = saturatingAddNonnegative(total, cm::scalarize(e, w));
   }
   return total;
 }
@@ -220,7 +221,10 @@ struct OverlapPass : public PassWrapper<OverlapPass, OperationPass<>> {
         computeMakespan(pa.cols, pa.chosen, pa.thetaThermal, pa.weights, pa.affinityDomains);
     root->setAttr("kbcir.overlap_serial", b.getI64IntegerAttr(pa.total));
     root->setAttr("kbcir.overlap_makespan", b.getI64IntegerAttr(makespan));
-    root->setAttr("kbcir.overlap_gain", b.getI64IntegerAttr(pa.total - makespan));
+    root->setAttr("kbcir.overlap_gain",
+                  b.getI64IntegerAttr(makespan <= pa.total
+                                          ? pa.total - makespan
+                                          : 0));
   }
 };
 

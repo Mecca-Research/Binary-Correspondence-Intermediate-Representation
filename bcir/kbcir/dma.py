@@ -66,9 +66,6 @@ def _runs(view: StridedView) -> list:
             walk(dim + 1, off + i * outer_strides[dim] * eb)
 
     walk(0, view.offset_bytes)
-    if not unit:                       # scatter: one element per descriptor, at stride
-        runs = [(off + j * view.strides[-1] * eb, eb)
-                for (off, _) in runs for j in range(view.shape[-1])]
     return runs
 
 
@@ -120,6 +117,8 @@ def dma_descriptors(src: StridedView, dst: StridedView, man: DeviceManifest) -> 
             i, si = i + 1, 0
         if dj == dn:
             j, dj = j + 1, 0
+    if i != len(sruns) or j != len(druns) or si or dj:
+        raise ValueError("dma run accounting mismatch; refusing a partial descriptor program")
     return descs
 
 
@@ -127,6 +126,18 @@ def dma_cost(man: DeviceManifest, src: StridedView, dst: StridedView, descs: lis
              *, desc_setup: int = _DESC_SETUP) -> int:
     """D-R3 pricing: the manifest's distance matrix prices the bytes; each descriptor
     adds a setup charge -- fragmentation costs, honestly."""
+    if not isinstance(desc_setup, int) or isinstance(desc_setup, bool) or desc_setup < 0:
+        raise ValueError(f"descriptor setup cost must be a non-negative integer; "
+                         f"got {desc_setup!r}")
+    for index, desc in enumerate(descs):
+        if (not isinstance(desc, Descriptor)
+                or any(isinstance(value, bool) or not isinstance(value, int)
+                       for value in (desc.src_off, desc.dst_off, desc.nbytes))
+                or desc.src_off < 0 or desc.dst_off < 0 or desc.nbytes < 1):
+            raise ValueError(f"invalid DMA descriptor {index}: {desc!r}")
+    canonical = dma_descriptors(src, dst, man)
+    if list(descs) != canonical:
+        raise ValueError("DMA descriptor program does not exactly lower the supplied views")
     total = sum(d.nbytes for d in descs)
     return move_cost(man, src.bank, dst.bank, total) + desc_setup * len(descs)
 

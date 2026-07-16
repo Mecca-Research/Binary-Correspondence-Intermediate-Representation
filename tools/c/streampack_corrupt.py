@@ -15,6 +15,8 @@ Used by tools/c/check_streampack_semantic.sh (the gate) and bcir/tests/test_abi.
     kinds: dangling_claim swapped_rid out_of_range_lane out_of_range_width
            unresolved_prefetch invalid_pipeline invalid_buffers stale_generation
            tampered_dispatch trailing_bytes
+           reserved_flags reserved_header reserved_stride
+           invalid_utf8 duplicate_segment duplicate_prefetch duplicate_trace
 
 The lettered groups are distinct adversarial classes; `--expected-gens` for stale prints
 the live (map_gen, data_gen) the C rail should
@@ -48,6 +50,13 @@ KINDS = (
     "stale_generation",     # (f) map_gen/data_gen bumped past the live registry
     "tampered_dispatch",    # (g) v3 dispatch byte flipped to an illegal code (was off-wire)
     "trailing_bytes",       # (h) undeclared suffix inserted before a recomputed CRC
+    "reserved_flags",       # (i) reserved header flags are nonzero
+    "reserved_header",      # (i) reserved header padding is nonzero
+    "reserved_stride",      # (i) reserved segment stride_k is nonzero
+    "invalid_utf8",         # (j) source_plan contains a malformed UTF-8 byte
+    "duplicate_segment",    # (k) the same claim would execute more than once
+    "duplicate_prefetch",   # (k) one name ambiguously binds two prefetch records
+    "duplicate_trace",      # (k) one claim ambiguously binds two trace records
 )
 
 
@@ -57,15 +66,16 @@ def _refix_crc(data: bytes) -> bytes:
     return body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
 
 
-def _seg0_lane_width_offsets(data: bytes) -> tuple[int, int]:
-    """Absolute byte offsets of seg0's lane (u8) and width (u32) within the encoded pack."""
+def _seg0_lane_width_offsets(data: bytes) -> tuple[int, int, int]:
+    """Absolute offsets of seg0's lane, width, and reserved stride_k fields."""
     pos = _HEADER_SIZE
     (slen,) = struct.unpack_from("<H", data, pos); pos += 2 + slen          # source_plan
     (nlen,) = struct.unpack_from("<H", data, pos); pos += 2 + nlen          # seg0.name
     pos += 8 + 4                                                            # claim_id, phase_id
     lane_off = pos; pos += 1                                                # lane u8
-    width_off = pos                                                        # width u32
-    return lane_off, width_off
+    width_off = pos; pos += 4                                               # width u32
+    stride_off = pos                                                        # stride_k u32
+    return lane_off, width_off, stride_off
 
 
 def base_pack() -> StreamPack:
@@ -115,12 +125,12 @@ def corrupt(kind: str) -> bytes:
         return _refix_crc(bytes(data))
     if kind == "out_of_range_lane":
         data = bytearray(encode(p))
-        lane_off, _ = _seg0_lane_width_offsets(bytes(data))
+        lane_off, _, _ = _seg0_lane_width_offsets(bytes(data))
         data[lane_off] = 9                              # only lanes 0..5 are valid
         return _refix_crc(bytes(data))
     if kind == "out_of_range_width":
         data = bytearray(encode(p))
-        _, width_off = _seg0_lane_width_offsets(bytes(data))
+        _, width_off, _ = _seg0_lane_width_offsets(bytes(data))
         struct.pack_into("<I", data, width_off, 3)      # 3 is not a power of two
         return _refix_crc(bytes(data))
     if kind == "tampered_dispatch":
@@ -138,6 +148,35 @@ def corrupt(kind: str) -> bytes:
     if kind == "trailing_bytes":
         data = encode(p)
         return _refix_crc(data[:-4] + b"\x00" + data[-4:])
+    if kind == "reserved_flags":
+        data = bytearray(encode(p))
+        struct.pack_into("<H", data, 6, 1)
+        return _refix_crc(bytes(data))
+    if kind == "reserved_header":
+        data = bytearray(encode(p))
+        data[63] = 1
+        return _refix_crc(bytes(data))
+    if kind == "reserved_stride":
+        data = bytearray(encode(p))
+        _, _, stride_off = _seg0_lane_width_offsets(bytes(data))
+        struct.pack_into("<I", data, stride_off, 1)
+        return _refix_crc(bytes(data))
+    if kind == "invalid_utf8":
+        data = bytearray(encode(p))
+        plan_len = struct.unpack_from("<H", data, _HEADER_SIZE)[0]
+        if not plan_len:
+            raise SystemExit("invalid_utf8: source plan is unexpectedly empty")
+        data[_HEADER_SIZE + 2] = 0xFF
+        return _refix_crc(bytes(data))
+    if kind == "duplicate_segment":
+        p.segments.append(p.segments[0])
+        return encode(p)
+    if kind == "duplicate_prefetch":
+        p.prefetches.append(p.prefetches[0])
+        return encode(p)
+    if kind == "duplicate_trace":
+        p.trace_notes.append(p.trace_notes[0])
+        return encode(p)
     raise SystemExit(f"unknown corruption kind {kind!r} (choose from {', '.join(KINDS)})")
 
 

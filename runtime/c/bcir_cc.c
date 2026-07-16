@@ -63,6 +63,7 @@ static void cc_r21_count(const char *funcname, const char *kind, void *ctx) {
 }
 
 #define MAXD 64
+#define BCIR_CC_MAX_SOURCE_BYTES ((size_t)64u << 20)
 
 static const char *USAGE =
   "usage: bcir-cc [-I dir] [-D name[=val]] [-U name] [-std=c23] [-E] [-o out]\n"
@@ -190,9 +191,16 @@ static int cc_read_file(const char *path, char **out) {
   for(;;){
     if(n==cap-1u){
       size_t minimum,nc;
+      if(cap>=BCIR_CC_MAX_SOURCE_BYTES+1u){
+        int extra=fgetc(fp);
+        if(extra==EOF&&!ferror(fp)){break;}
+        bcir_host_deallocate(&allocator,buf);fclose(fp);return 2;
+      }
       if(!bcir_size_add(cap,1u,&minimum)||
-         !bcir_host_grow_capacity(cap,minimum,1u,&nc)||
-         !bcir_host_realloc_array(&allocator,(void **)&buf,cap,nc,1u,0)){
+         !bcir_host_grow_capacity(cap,minimum,1u,&nc)){
+        bcir_host_deallocate(&allocator,buf);fclose(fp);return 2;}
+      if(nc>BCIR_CC_MAX_SOURCE_BYTES+1u)nc=BCIR_CC_MAX_SOURCE_BYTES+1u;
+      if(!bcir_host_realloc_array(&allocator,(void **)&buf,cap,nc,1u,0)){
         bcir_host_deallocate(&allocator,buf);fclose(fp);return 2;}
       cap=nc;
     }

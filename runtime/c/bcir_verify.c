@@ -7,6 +7,34 @@
 
 static int slen(const char *s){int n=0;while(s[n])n++;return n;}
 static int seq(const char *a,const char *b){int i=0;for(;a[i]&&b[i];i++)if(a[i]!=b[i])return 0;return a[i]==b[i];}
+static int fixed_string(const char *s,size_t n){return s&&memchr(s,0,n)!=NULL;}
+
+/* Validate count/pointer relationships and every fixed-size string before the
+ * verifier traverses caller-owned graph memory.  This cannot prove arbitrary
+ * pointers, but it closes all representable NULL/count and unterminated-label cases. */
+static int unit_shape_valid(const bcir_unit *u,char *diag,size_t dn){
+  if(!u||u->n_funcs<0||(u->n_funcs&&!u->funcs)){
+    snprintf(diag,dn,"invalid unit shape");return 0;}
+  for(int i=0;i<u->n_funcs;i++){
+    const bcir_func *f=&u->funcs[i];
+    if(!fixed_string(f->name,sizeof f->name)||(f->n_res&&!f->res)||
+       (f->n_claims&&!f->claims)||f->n_params<0||f->n_calls<0||f->n_statics<0||
+       f->n_host_literals<0||f->n_ptr_extents<0||
+       (f->n_params&&!f->params)||(f->n_calls&&!f->calls)||
+       (f->n_statics&&!f->statics)||(f->n_host_literals&&!f->host_literals)||
+       (f->n_ptr_extents&&!f->ptr_extents)){
+      snprintf(diag,dn,"invalid function shape");return 0;}
+    for(int k=0;k<f->n_calls;k++) if(!fixed_string(f->calls[k],BCIR_CIR_NAME)){
+      snprintf(diag,dn,"unterminated call name");return 0;}
+    for(size_t k=0;k<f->n_claims;k++){
+      const bcir_claim *cl=&f->claims[k];
+      if(cl->n_rd>BCIR_CLAIM_MAX_RD||cl->n_wr>BCIR_CLAIM_MAX_WR||
+         cl->n_imm>BCIR_CLAIM_MAX_IMM||!fixed_string(cl->op,sizeof cl->op)){
+        snprintf(diag,dn,"invalid claim shape");return 0;}
+    }
+  }
+  return 1;
+}
 
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid){
   for(size_t i=0;i<f->n_res;i++) if(f->res[i].rid==rid) return &f->res[i];
@@ -59,21 +87,30 @@ static int func_index(const bcir_unit *u,const char *nm){
   for(int i=0;i<u->n_funcs;i++) if(seq(u->funcs[i].name,nm)) return i;
   return -1;
 }
-static int has_cycle(const bcir_unit *u,int fi,int *state){
-  state[fi]=1;
-  for(int k=0;k<u->funcs[fi].n_calls;k++){int ci=func_index(u,u->funcs[fi].calls[k]);
-    if(ci<0)continue;
+typedef struct verify_frame { int fi; int next_call; } verify_frame;
+
+static int has_cycle_iterative(const bcir_unit *u,int start,int *state,verify_frame *stack){
+  int top=0;
+  stack[0].fi=start;stack[0].next_call=0;state[start]=1;
+  while(top>=0){
+    verify_frame *fr=&stack[top];
+    const bcir_func *f=&u->funcs[fr->fi];
+    if(fr->next_call>=f->n_calls){state[fr->fi]=2;top--;continue;}
+    int ci=func_index(u,f->calls[fr->next_call++]);
+    if(ci<0)continue;                       /* undefined calls are rejected before DFS */
     if(state[ci]==1)return 1;
-    if(state[ci]==0&&has_cycle(u,ci,state))return 1;}
-  state[fi]=2; return 0;
+    if(state[ci]==0){top++;stack[top].fi=ci;stack[top].next_call=0;state[ci]=1;}
+  }
+  return 0;
 }
 
 int bcir_verify_unit_with_allocator(const bcir_unit *u,char *diag,size_t dn,
                                     const bcir_host_allocator *allocator){
   bcir_host_allocator selected=bcir_host_allocator_or_default(allocator);
-  size_t state_count,state_bytes;
+  size_t state_count,state_bytes,stack_offset,stack_bytes,total_bytes;
+  if(!diag)dn=0;
   if(dn) diag[0]=0;
-  if(!u){if(dn)snprintf(diag,dn,"invalid unit");return 0;}
+  if(!unit_shape_valid(u,diag,dn))return 0;
   /* R1.1: claim-id uniqueness (the mirror of R1's RID uniqueness, for the claim namespace). Claim ids
    * are unit-wide unique by construction (the cid base is bumped per function); a duplicate/injected id
    * makes the claim graph ambiguous (a plan step / attestation / structural digest could bind to the
@@ -91,12 +128,17 @@ int bcir_verify_unit_with_allocator(const bcir_unit *u,char *diag,size_t dn,
   for(int i=0;i<u->n_funcs;i++) for(int k=0;k<u->funcs[i].n_calls;k++)
     if(func_index(u,u->funcs[i].calls[k])<0){snprintf(diag,dn,"R18: call to undefined function %s",u->funcs[i].calls[k]);return 0;}
   state_count=(size_t)(u->n_funcs>0?u->n_funcs:1);
-  if(!bcir_size_mul(state_count,sizeof(int),&state_bytes)){
+  if(!bcir_size_mul(state_count,sizeof(int),&state_bytes)||
+     !bcir_size_align_up(state_bytes,_Alignof(verify_frame),&stack_offset)||
+     !bcir_size_mul(state_count,sizeof(verify_frame),&stack_bytes)||
+     !bcir_size_add(stack_offset,stack_bytes,&total_bytes)){
     snprintf(diag,dn,"oom");return 0;}
-  int *state=(int *)bcir_host_allocate(&selected,state_bytes);   /* visited per func (no cap) */
+  int *state=(int *)bcir_host_allocate(&selected,total_bytes);
   if(!state){snprintf(diag,dn,"oom");return 0;}
+  verify_frame *stack=(verify_frame *)((unsigned char *)state+stack_offset);
   memset(state,0,state_bytes);
-  for(int i=0;i<u->n_funcs;i++) if(state[i]==0&&has_cycle(u,i,state)){snprintf(diag,dn,"R18: recursive call cycle");bcir_host_deallocate(&selected,state);return 0;}
+  for(int i=0;i<u->n_funcs;i++) if(state[i]==0&&has_cycle_iterative(u,i,state,stack)){
+    snprintf(diag,dn,"R18: recursive call cycle");bcir_host_deallocate(&selected,state);return 0;}
   bcir_host_deallocate(&selected,state);
   /* R14-R16 (CIM dispatch / DVFS clock / alloc placement): the scalar C subset emits no such
    * smart-lowering decisions, so these are vacuously satisfied here. */
@@ -111,7 +153,10 @@ int bcir_verify_unit(const bcir_unit *u,char *diag,size_t dn){
 
 /* --- R9 (plan legality) -------------------------------------------------- */
 int bcir_verify_plan(const bcir_func *f,const bcir_plan *p,char *diag,size_t dn){
+  if(!diag)dn=0;
   if(dn) diag[0]=0;
+  if(!f||!p||(f->n_claims&&!f->claims)||(p->n&&!p->steps)){
+    snprintf(diag,dn,"invalid plan shape");return 0;}
   if(p->n != f->n_claims){snprintf(diag,dn,"R9: plan covers %zu of %zu claims",p->n,f->n_claims);return 0;}
   uint64_t total=0;
   for(size_t i=0;i<p->n;i++){
@@ -119,6 +164,7 @@ int bcir_verify_plan(const bcir_func *f,const bcir_plan *p,char *diag,size_t dn)
     if(p->steps[i].width==0){snprintf(diag,dn,"R9: claim %u realized at width 0",p->steps[i].claim_id);return 0;}
     /* each claim realized exactly once */
     for(size_t j=0;j<i;j++) if(p->steps[j].claim_id==p->steps[i].claim_id){snprintf(diag,dn,"R9: claim %u realized more than once",p->steps[i].claim_id);return 0;}
+    if(total>UINT64_MAX-p->steps[i].cost){snprintf(diag,dn,"R9: plan total overflows");return 0;}
     total+=p->steps[i].cost;
   }
   if(total!=p->total_cost){snprintf(diag,dn,"R9: plan total %llu != sum of step costs %llu",(unsigned long long)p->total_cost,(unsigned long long)total);return 0;}
@@ -142,9 +188,12 @@ int bcir_verify_pack(const uint8_t *pack,size_t len,uint32_t expect_segs,char *d
 
 /* --- R13 (provenance digest) --------------------------------------------- */
 uint64_t bcir_provenance_digest(const bcir_func *f){
+  if(!f||(f->n_claims&&!f->claims))return 0;
   uint64_t h=1469598103934665603ull;                  /* FNV-1a over the claim-graph structure */
   #define MIX(x) do{ h^=(uint64_t)(x); h*=1099511628211ull; }while(0)
   for(size_t i=0;i<f->n_claims;i++){const bcir_claim *cl=&f->claims[i];
+    if(cl->n_rd>BCIR_CLAIM_MAX_RD||cl->n_wr>BCIR_CLAIM_MAX_WR||
+       cl->n_imm>BCIR_CLAIM_MAX_IMM||!fixed_string(cl->op,sizeof cl->op))return 0;
     MIX(cl->id); MIX(cl->opcode); MIX(cl->lane); MIX(cl->domain); MIX(cl->hazard);
     for(int k=0;k<cl->n_rd;k++) MIX(cl->rd[k]);
     for(int k=0;k<cl->n_wr;k++) MIX(cl->wr[k]);
@@ -168,24 +217,24 @@ uint64_t bcir_provenance_digest(const bcir_func *f){
 void bcir_verify_lifetime(const bcir_unit *u,
                           void (*report)(const char *funcname, const char *kind, void *ctx),
                           void *ctx){
+  if(!report||!unit_shape_valid(u,NULL,0))return;
   for(int fi=0;fi<u->n_funcs;fi++){
     const bcir_func *f=&u->funcs[fi];
-    uint32_t freed[256]; int nfreed=0;                 /* freed-and-not-re-allocated rids (functions are small) */
     for(size_t i=0;i<f->n_claims;i++){
       const bcir_claim *cl=&f->claims[i];
       int is_free = (cl->lifetime==2);
-      for(int k=0;k<cl->n_rd;k++){                      /* a READ of a freed resource is the dangling deref */
-        for(int j=0;j<nfreed;j++) if(freed[j]==cl->rd[k]){
-          report(f->name, is_free?"double-free":"use-after-free", ctx); break; }
-      }
-      if(is_free){                                      /* the read resources die after this claim */
-        for(int k=0;k<cl->n_rd;k++){
-          int seen=0; for(int j=0;j<nfreed;j++) if(freed[j]==cl->rd[k]){seen=1;break;}
-          if(!seen && nfreed<(int)(sizeof freed/sizeof freed[0])) freed[nfreed++]=cl->rd[k];
+      for(int k=0;k<cl->n_rd;k++){
+        uint32_t rid=cl->rd[k];int freed=0;
+        /* Reconstruct the RID's state from prior events. This allocation-free
+         * scan has no 256-resource truncation and preserves free-then-write order. */
+        for(size_t q=0;q<i;q++){
+          const bcir_claim *prior=&f->claims[q];
+          if(prior->lifetime==2){
+            for(int r=0;r<prior->n_rd;r++)if(prior->rd[r]==rid){freed=1;break;}
+          }
+          for(int r=0;r<prior->n_wr;r++)if(prior->wr[r]==rid){freed=0;break;}
         }
-      }
-      for(int k=0;k<cl->n_wr;k++){                      /* a WRITE (reassignment / alloc) re-validates */
-        for(int j=0;j<nfreed;j++) if(freed[j]==cl->wr[k]){freed[j]=freed[--nfreed];j--;}
+        if(freed)report(f->name,is_free?"double-free":"use-after-free",ctx);
       }
     }
   }

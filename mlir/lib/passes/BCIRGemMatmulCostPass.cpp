@@ -59,7 +59,9 @@ namespace {
 
 // ceil(a / b) for positive b (mirrors matmul.py's (x + d - 1)//d / math.ceil and the
 // BCIRLowerGemMatmulPass tile-count helper).
-static int64_t ceilDiv(int64_t a, int64_t b) { return (a + b - 1) / b; }
+static int64_t ceilDiv(int64_t a, int64_t b) {
+  return a / b + (a % b != 0);
+}
 
 struct GemMatmulCostPass
     : public PassWrapper<GemMatmulCostPass, OperationPass<>> {
@@ -114,18 +116,19 @@ struct GemMatmulCostPass
     // exceed int64 -- a square dim past ~1.45M, i.e. multi-terabyte operands no real GEMM approaches -- is
     // outside this representable domain anyway (its own declared cost could not fit i64); such a shape would
     // trip the parity gate (a loud spurious error), never annotate a silently-wrapped cost.
-    int64_t macs = M * N * K;
+    int64_t macs, traffic, workingSet;
+    if (!checkedGemmDerived(M, N, K, tm, tn, tk, macs, traffic,
+                            workingSet)) {
+      op.emitError("bcir-gem-matmul-cost: derived roofline cost exceeds signed 64-bit range");
+      return false;
+    }
     int64_t thr = std::max<int64_t>(1, kVectorWidth * kFma);     // the FLOP-throughput divisor
     int64_t compute = ceilDiv(macs, thr);                        // M*N*K MACs / (vector_width * fma)
-    int64_t aReads = M * K * ceilDiv(N, tn);                     // A reused across the columns in a tile
-    int64_t bReads = K * N * ceilDiv(M, tm);                     // B reused across the rows in a tile
-    int64_t cTraffic = M * N * (ceilDiv(K, tk) + 1);             // C streamed once per K-tile, plus the write
     int64_t bw = std::max<int64_t>(1, kMemUnit * kMemChannels);  // the bandwidth divisor
-    int64_t mem = ceilDiv(aReads + bReads + cTraffic, bw);       // bytes streamed / bandwidth
+    int64_t mem = ceilDiv(traffic, bw);                           // bytes streamed / bandwidth
     int64_t bottleneck = std::max(compute, mem);                 // max,+ : the binding roofline resource
     int64_t cacheBudget =
         (512 * kCacheline) / std::max<int64_t>(1, kElemBytes);   // the modeled per-core working-set budget
-    int64_t workingSet = tm * tk + tk * tn + tm * tn;            // a tile of A, B, C must co-reside
     bool fitsCache = workingSet <= cacheBudget;
 
     // --- cross-check the declared roofline (the dual-rail parity gate) ------------------

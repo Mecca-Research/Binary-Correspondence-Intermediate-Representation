@@ -13,7 +13,8 @@ from bcir.kbcir.calibrate import (
     rehydrate_decide,
 )
 from bcir.kbcir.cost import TargetProfile, Theta
-from bcir.telemetry import DataDNA, FileSink, KafkaSink, ListSink
+from bcir.telemetry import (DataDNA, DurableLog, FileSink, KafkaSink, ListSink,
+                            TelemetryIntegrityError)
 
 
 def _events(thermal, n=3):
@@ -34,6 +35,44 @@ def test_list_and_file_sinks():
             fs.emit(e)
         rows = [json.loads(line) for line in open(path)]
         assert len(rows) == 3 and rows[0]["thermal"] == 50 and rows[0]["claim_id"] == 1000
+
+
+def test_file_sinks_refuse_symlink_and_replacement_windows():
+    with tempfile.TemporaryDirectory() as d:
+        target = os.path.join(d, "target")
+        link = os.path.join(d, "link")
+        with open(target, "w", encoding="utf-8") as f:
+            f.write("sentinel")
+        try:
+            os.symlink(target, link)
+        except (AttributeError, NotImplementedError, OSError):
+            pass  # Windows may not grant symlink creation to the test account.
+        else:
+            try:
+                FileSink(link).emit(DataDNA("s", 1))
+                raise AssertionError("FileSink must not follow a telemetry symlink")
+            except (OSError, TelemetryIntegrityError):
+                pass
+            assert open(target, encoding="utf-8").read() == "sentinel"
+
+        path = os.path.join(d, "durable.jsonl")
+        displaced = os.path.join(d, "displaced.jsonl")
+        log = DurableLog(path)
+        os.replace(path, displaced)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("replacement")
+        try:
+            log.emit(DataDNA("s", 1))
+            raise AssertionError("DurableLog must detect path replacement")
+        except TelemetryIntegrityError:
+            pass
+        assert open(path, encoding="utf-8").read() == "replacement"
+
+        try:
+            DurableLog(path)
+            raise AssertionError("DurableLog must create a fresh file exclusively")
+        except FileExistsError:
+            pass
 
 
 def test_ewma_calibrator_raises_theta():
@@ -164,3 +203,45 @@ def test_durable_log_refuses_foreign_and_newer_streams():
                 raise AssertionError(f"must refuse: {msg}")
             except ValueError as e:
                 assert msg in str(e)
+
+
+def test_durable_log_rejects_ambiguous_poisoned_and_oversized_records():
+    import json
+    import os
+    import tempfile
+    from bcir.telemetry import DataDNA, DurableLog, load_durable_log
+
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "t.jsonl")
+        log = DurableLog(path)
+        log.emit(DataDNA("s", 1))
+        with open(path, encoding="utf-8") as f:
+            header, record = f.read().splitlines()
+
+        bad_records = [
+            record.replace('"claim_id": 1', '"claim_id": 1, "claim_id": 2', 1),
+            json.dumps({**json.loads(record), "thermal": 10000}),
+            json.dumps({**json.loads(record), "unknown": 1}),
+        ]
+        for bad_record in bad_records:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(header + "\n" + bad_record + "\n")
+            try:
+                load_durable_log(path)
+                raise AssertionError("ambiguous/poisoned telemetry record must be rejected")
+            except ValueError:
+                pass
+
+        with open(path, "wb") as f:
+            f.write(header.encode() + b"\n" + b" " * ((1 << 20) + 1) + b"\n")
+        try:
+            load_durable_log(path)
+            raise AssertionError("oversized telemetry lines must be rejected")
+        except ValueError as e:
+            assert "line exceeds" in str(e)
+
+        try:
+            log.emit(DataDNA("bad\nsegment", 2))
+            raise AssertionError("the durable sink must reject invalid text fields")
+        except ValueError:
+            pass

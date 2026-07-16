@@ -8,7 +8,28 @@
  *===----------------------------------------------------------------------===*/
 #include "bcir_train.h"
 
+#include <limits.h>
 #include <math.h>
+
+static int tr_state_valid(const bcir_train_state *st) {
+  if (!st || st->nf <= 0 || st->nf == INT_MAX || st->b <= 0 || !isfinite(st->lr) ||
+      !st->X || !st->y || !st->w || !st->z || !st->act || !st->lossv || !st->grad)
+    return 0;
+  return (size_t)st->nf <= SIZE_MAX / (size_t)st->b;
+}
+
+static int stream_state_valid(const bcir_stream_state *st) {
+  size_t rows, weights;
+  if (!st || st->nf <= 0 || st->nf == INT_MAX || st->mb <= 0 || st->streams <= 0 ||
+      !isfinite(st->lr) || !st->X || !st->y || !st->w || !st->z || !st->act ||
+      !st->lossv || !st->loss || !st->grad || !st->gradc)
+    return 0;
+  if ((size_t)st->streams > SIZE_MAX / (size_t)st->mb) return 0;
+  rows = (size_t)st->streams * (size_t)st->mb;
+  if ((size_t)st->nf > SIZE_MAX / rows) return 0;
+  weights = (size_t)st->nf + 1u;
+  return weights <= SIZE_MAX / (size_t)st->streams;
+}
 
 /* The oracle's guarded sigmoid (kbcir/recurrent.py): for x >= 0 use 1/(1+exp(-x)) (exp <= 1,
  * no overflow); else the algebraically-equal exp(x)/(1+exp(x)). */
@@ -64,6 +85,9 @@ static void tr_update(bcir_train_state *st) {             /* claim 6: sgd step *
 
 int bcir_train_kernel(const bcir_exec_item *item, void *ctx) {
   bcir_train_state *st = (bcir_train_state *)ctx;
+  if (!item) return 1;
+  if (item->claim_id < 1 || item->claim_id > 6) return 0;
+  if (!tr_state_valid(st)) return 1;
   switch (item->claim_id) {
   case 1: tr_forward(st); break;
   case 2: tr_activation(st); break;
@@ -144,11 +168,16 @@ static void sk_update(bcir_stream_state *st) {             /* streams*10+2: the 
 
 int bcir_stream_kernel(const bcir_exec_item *item, void *ctx) {
   bcir_stream_state *st = (bcir_stream_state *)ctx;
-  long long id = (long long)item->claim_id;
-  if (id == (long long)st->streams * 10 + 1) { sk_combine(st); return 0; }
-  if (id == (long long)st->streams * 10 + 2) { sk_update(st); return 0; }
-  int s = (int)(id / 10), k = (int)(id % 10);
-  if (s < 0 || s >= st->streams || k < 1 || k > 5) return 0;   /* the kernels.get miss */
+  if (!item) return 1;
+  if (!stream_state_valid(st)) return 1;
+  uint64_t id = item->claim_id;
+  uint64_t terminal = (uint64_t)st->streams * 10u;
+  if (id == terminal + 1u) { sk_combine(st); return 0; }
+  if (id == terminal + 2u) { sk_update(st); return 0; }
+  uint64_t stream = id / 10u;
+  int k = (int)(id % 10u);
+  if (stream >= (uint64_t)st->streams || k < 1 || k > 5) return 0; /* kernels.get miss */
+  int s = (int)stream;
   switch (k) {
   case 1: sk_forward(st, s); break;
   case 2: sk_activation(st, s); break;

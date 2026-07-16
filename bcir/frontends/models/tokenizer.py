@@ -18,7 +18,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
+
+
+_DEFAULT_MAX_TOKENIZER_BYTES = 256 * 1024 * 1024
 
 
 def bytes_to_unicode() -> dict[int, str]:
@@ -92,6 +96,8 @@ class Tokenizer:
         parts: list[str] = []
         buf = bytearray()
         for t in ids:
+            if isinstance(t, bool) or not isinstance(t, int) or t not in self.ids_to_tokens:
+                raise ValueError(f"unknown tokenizer id {t!r}")
             tok = self.ids_to_tokens[t]
             if tok in self.specials:
                 parts.append(bytes(buf).decode("utf-8"))
@@ -124,25 +130,99 @@ def _pretokenize(text: str) -> list[str]:
     return words
 
 
-def load_tokenizer(path: str) -> Tokenizer:
+def _reject_duplicate_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def _token_id(value, *, path: str, where: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 0x7FFFFFFF:
+        raise ValueError(f"{path}: {where} must be an integer token id in [0, 2^31-1]")
+    return value
+
+
+def load_tokenizer(path: str, *, max_bytes: int = _DEFAULT_MAX_TOKENIZER_BYTES) -> Tokenizer:
     """Load a HF-shaped `tokenizer.json` (model.type == "BPE"): vocab, merges (either the
     "a b" string form or the [a, b] pair form), and added special tokens."""
-    with open(path, "rb") as f:
-        raw = f.read()
-    d = json.loads(raw.decode("utf-8"))
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+        raise ValueError("max_bytes must be a positive integer")
+    try:
+        with open(path, "rb") as f:
+            size = os.fstat(f.fileno()).st_size
+            if size > max_bytes:
+                raise ValueError(f"{path}: tokenizer.json exceeds {max_bytes} bytes")
+            raw = f.read(max_bytes + 1)
+    except OSError as exc:
+        raise ValueError(f"{path}: cannot read tokenizer.json: {exc}") from exc
+    if len(raw) > max_bytes:
+        raise ValueError(f"{path}: tokenizer.json exceeds {max_bytes} bytes")
+    try:
+        d = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError,
+            RecursionError) as exc:
+        raise ValueError(f"{path}: malformed tokenizer.json: {exc}") from exc
+    if not isinstance(d, dict):
+        raise ValueError(f"{path}: tokenizer.json root must be an object")
     model = d.get("model", {})
+    if not isinstance(model, dict):
+        raise ValueError(f"{path}: tokenizer model must be an object")
     if model.get("type") != "BPE":
         raise ValueError(f"{path}: unsupported tokenizer model {model.get('type')!r} (BPE only)")
-    vocab = {str(k): int(v) for k, v in model.get("vocab", {}).items()}
+    raw_vocab = model.get("vocab", {})
+    if not isinstance(raw_vocab, dict):
+        raise ValueError(f"{path}: tokenizer vocab must be an object")
+    vocab: dict[str, int] = {}
+    ids: dict[int, str] = {}
+    for token, raw_id in raw_vocab.items():
+        if not isinstance(token, str) or not token:
+            raise ValueError(f"{path}: vocab tokens must be nonempty strings")
+        token_id = _token_id(raw_id, path=path, where=f"vocab id for {token!r}")
+        if token_id in ids:
+            raise ValueError(f"{path}: duplicate token id {token_id} for {ids[token_id]!r} and {token!r}")
+        if any(ch not in _U2B for ch in token):
+            raise ValueError(f"{path}: vocab token {token!r} is outside the byte alphabet")
+        vocab[token] = token_id
+        ids[token_id] = token
+    missing_bytes = [byte for byte, token in _B2U.items() if token not in vocab]
+    if missing_bytes:
+        raise ValueError(f"{path}: byte-level BPE vocab is missing {len(missing_bytes)} base byte tokens")
+
+    raw_merges = model.get("merges", [])
+    if not isinstance(raw_merges, list):
+        raise ValueError(f"{path}: tokenizer merges must be an array")
     merges: dict = {}
-    for rank, mg in enumerate(model.get("merges", [])):
-        pair = tuple(mg.split(" ")) if isinstance(mg, str) else tuple(mg)
-        if len(pair) != 2:
+    for rank, mg in enumerate(raw_merges):
+        pair = tuple(mg.split(" ")) if isinstance(mg, str) else tuple(mg) if isinstance(mg, list) else ()
+        if len(pair) != 2 or not all(isinstance(part, str) and part for part in pair):
             raise ValueError(f"{path}: malformed merge {mg!r}")
+        if pair in merges:
+            raise ValueError(f"{path}: duplicate merge {pair!r}")
+        if pair[0] not in vocab or pair[1] not in vocab or pair[0] + pair[1] not in vocab:
+            raise ValueError(f"{path}: merge {pair!r} references a missing vocab symbol")
         merges[pair] = rank
-    specials = {str(t["content"]): int(t["id"]) for t in d.get("added_tokens", [])}
-    ids = {v: k for k, v in vocab.items()}
-    ids.update({v: k for k, v in specials.items()})
+
+    raw_specials = d.get("added_tokens", [])
+    if not isinstance(raw_specials, list):
+        raise ValueError(f"{path}: added_tokens must be an array")
+    specials: dict[str, int] = {}
+    for index, item in enumerate(raw_specials):
+        if not isinstance(item, dict) or not isinstance(item.get("content"), str) \
+                or not item["content"]:
+            raise ValueError(f"{path}: added token {index} must have nonempty string content")
+        content = item["content"]
+        token_id = _token_id(item.get("id"), path=path, where=f"added token {index} id")
+        if content in specials:
+            raise ValueError(f"{path}: duplicate added token {content!r}")
+        if content in vocab and vocab[content] != token_id:
+            raise ValueError(f"{path}: added token {content!r} conflicts with its vocab id")
+        if token_id in ids and ids[token_id] != content:
+            raise ValueError(f"{path}: added token id {token_id} conflicts with {ids[token_id]!r}")
+        specials[content] = token_id
+        ids[token_id] = content
     return Tokenizer(vocab=vocab, merges=merges, specials=specials,
                      digest=hashlib.sha256(raw).hexdigest(), ids_to_tokens=ids)
 

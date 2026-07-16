@@ -151,8 +151,9 @@ def main(argv: list[str] | None = None) -> int:
             #        never reported as a divergence).
             # One machine-readable `replay-verdict:` line always prints first.
             try:
-                with open(args.replay, encoding="utf-8") as f:
-                    record = DecisionRecord.from_json(f.read())
+                from ._artifact_json import read_bounded_text
+                record = DecisionRecord.from_json(
+                    read_bounded_text(args.replay, "decision record"))
             except (OSError, ValueError, KeyError) as e:
                 print(f"replay-verdict: undecodable ({e})")
                 return 4

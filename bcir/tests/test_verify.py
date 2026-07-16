@@ -239,6 +239,20 @@ def test_segment_with_undeclared_prefetch_is_R10():
     assert "R10" in _laws(verify_pack(m, pack))
 
 
+def test_duplicate_stream_bindings_are_R10():
+    m, pack = _hydrated()
+    pack.segments.append(pack.segments[0])
+    assert any("duplicate segment" in d.message for d in verify_pack(m, pack))
+
+    m, pack = _hydrated()
+    pack.trace_notes.append(pack.trace_notes[0])
+    assert any("duplicate trace" in d.message for d in verify_pack(m, pack))
+
+    m, pack = _hydrated()
+    pack.prefetches.append(pack.prefetches[0])
+    assert any("duplicate prefetch" in d.message for d in verify_pack(m, pack))
+
+
 def test_generation_drift_is_R11():
     m, pack = _hydrated()
     # The registry drifts after hydration: the pack is stale and must rehydrate.

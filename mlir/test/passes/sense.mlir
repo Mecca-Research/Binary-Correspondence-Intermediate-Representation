@@ -13,8 +13,14 @@ bcir.module @sense {
   bcir.trace.data_dna @r3 { segment = @segB, cycles = 200 : i64, bytes = 0 : i64, misses = 0 : i32, thermal = 0 : i32, voltage = 0 : i32, utilization = 0 : i32 }
   bcir.trace.data_dna @r4 { segment = @segB, cycles = 205 : i64, bytes = 0 : i64, misses = 0 : i32, thermal = 0 : i32, voltage = 0 : i32, utilization = 0 : i32 }
   bcir.trace.data_dna @r5 { segment = @segC, cycles = 500 : i64, bytes = 0 : i64, misses = 0 : i32, thermal = 0 : i32, voltage = 0 : i32, utilization = 0 : i32 }
+  // Squaring either sample exceeds i64. The sensor must retain n=2 and take
+  // the conservative max-uncertainty path instead of wrapping or classifying
+  // the segment "off" as if no samples had arrived.
+  bcir.trace.data_dna @r6 { segment = @segOverflow, cycles = 9223372036854775807 : i64, bytes = 0 : i64, misses = 0 : i32, thermal = 0 : i32, voltage = 0 : i32, utilization = 0 : i32 }
+  bcir.trace.data_dna @r7 { segment = @segOverflow, cycles = 9223372036854775807 : i64, bytes = 0 : i64, misses = 0 : i32, thermal = 0 : i32, voltage = 0 : i32, utilization = 0 : i32 }
 }
 
 // CHECK-DAG: bcir.trace.data_dna @r1 {{.*}}kbcir.sense_cv = 500{{.*}}kbcir.sense_resolution = "high"
 // CHECK-DAG: bcir.trace.data_dna @r3 {{.*}}kbcir.sense_cv = 9{{.*}}kbcir.sense_resolution = "low"
 // CHECK-DAG: bcir.trace.data_dna @r5 {{.*}}kbcir.sense_cv = 0{{.*}}kbcir.sense_resolution = "off"
+// CHECK-DAG: bcir.trace.data_dna @r6 {{.*}}kbcir.sense_cv = 9223372036854775807{{.*}}kbcir.sense_resolution = "high"

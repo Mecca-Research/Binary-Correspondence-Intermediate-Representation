@@ -11,10 +11,16 @@
 extern "C" {
 #endif
 
+/* This is a bounded reference runtime, not an unbounded serving allocator.
+ * Requests whose complete double-precision scratch/KV workspace would exceed
+ * this ceiling fail before the first allocation or output write. */
+#define BCIR_LLAMA_MAX_WORKSPACE_BYTES (128u * 1024u * 1024u)
+
 /* Greedy, lowest-id-tie-breaking Llama/SwiGLU decode from verified token ids.
  * `generated_ids` has max_new_tokens entries; `final_logits`, when non-NULL, has
  * model->vocab_size entries and receives the scores that selected the last id.
- * Returns 0 on success and a negative value on invalid input/allocation failure. */
+ * Returns 0 on success and a negative value on invalid input, context/workspace
+ * limit, or allocation failure. */
 int bcir_llama_generate_greedy(const bcir_q8_model *model,
                                const int32_t *prompt_ids, size_t prompt_count,
                                size_t max_new_tokens,

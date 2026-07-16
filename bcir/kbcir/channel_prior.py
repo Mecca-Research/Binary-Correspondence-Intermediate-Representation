@@ -25,6 +25,8 @@ untouched (non-disturbance, the tile-prior precedent)."""
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 
 from ..channels import channel_suits
@@ -76,6 +78,12 @@ class FrozenChannelPrior:
     """The Q8 integer table (the L1 artifact): deterministic, no floats in the order path."""
 
     wq: tuple
+
+    def __post_init__(self) -> None:
+        if (len(self.wq) != LearnedChannelPrior.N_FEATURES or
+                any(isinstance(v, bool) or not isinstance(v, int) or abs(v) > (1 << 31) - 1
+                    for v in self.wq)):
+            raise ValueError("FrozenChannelPrior requires exactly 8 signed 32-bit weights")
 
     def order(self, cands: list, feats: list[list[float]]) -> list:
         """Candidates sorted by descending integer score; index tie-break (deterministic)."""
@@ -203,6 +211,80 @@ def channel_prior_certificate(shapes: list, channels: list, theta: Theta,
 
 PRIOR_KIND = "bcir.channel_prior"
 PRIOR_SCHEMA = 1
+_MAX_PRIOR_BYTES = 1 << 20
+_MAX_TABLE_ENTRIES = 1 << 16
+
+
+def _reject_duplicate_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def _prior_document(doc: object) -> tuple[list, tuple[int, ...], dict]:
+    if not isinstance(doc, dict):
+        raise ValueError("channel prior must be a JSON object")
+    fields = {"kind", "schema", "tower", "wq", "table"}
+    if set(doc) != fields:
+        raise ValueError(f"channel prior fields must be exactly {sorted(fields)}")
+    if doc["kind"] != PRIOR_KIND:
+        raise ValueError(f"not a {PRIOR_KIND} document (kind={doc['kind']!r})")
+    schema = doc["schema"]
+    if isinstance(schema, bool) or not isinstance(schema, int):
+        raise ValueError("channel-prior schema must be an integer")
+    if schema > PRIOR_SCHEMA:
+        raise ValueError(f"channel-prior schema v{schema} is newer than this build's "
+                         f"v{PRIOR_SCHEMA}; upgrade BCIR to load this prior")
+    if schema != PRIOR_SCHEMA:
+        raise ValueError(f"unsupported channel-prior schema v{schema}")
+
+    raw_tower = doc["tower"]
+    if not isinstance(raw_tower, list) or not raw_tower or len(raw_tower) > 256:
+        raise ValueError("channel-prior tower must contain 1..256 entries")
+    tower = []
+    for i, pair in enumerate(raw_tower):
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError(f"channel-prior tower[{i}] must be [name, cal_gen]")
+        name, generation = pair
+        if (not isinstance(name, str) or not name or len(name) > 128 or
+                any(ord(ch) < 0x20 for ch in name)):
+            raise ValueError(f"channel-prior tower[{i}] has an invalid name")
+        if (isinstance(generation, bool) or not isinstance(generation, int) or
+                generation < 0 or generation > (1 << 63) - 1):
+            raise ValueError(f"channel-prior tower[{i}] has an invalid cal_gen")
+        tower.append([name, generation])
+    if len({name for name, _ in tower}) != len(tower):
+        raise ValueError("channel-prior tower contains duplicate channel names")
+    if tower != sorted(tower):
+        raise ValueError("channel-prior tower must be in canonical sorted order")
+
+    raw_weights = doc["wq"]
+    if not isinstance(raw_weights, list):
+        raise ValueError("channel-prior wq must be an array")
+    prior = FrozenChannelPrior(tuple(raw_weights))
+
+    raw_table = doc["table"]
+    if not isinstance(raw_table, dict) or len(raw_table) > _MAX_TABLE_ENTRIES:
+        raise ValueError(f"channel-prior table must have at most {_MAX_TABLE_ENTRIES} entries")
+    names = {name for name, _ in tower}
+    table = {}
+    for raw_key, name in raw_table.items():
+        if not isinstance(raw_key, str) or not isinstance(name, str) or name not in names:
+            raise ValueError("channel-prior table values must name a channel in the saved tower")
+        parts = raw_key.split(",")
+        if len(parts) != 3:
+            raise ValueError(f"invalid channel-prior shape key {raw_key!r}")
+        try:
+            key = tuple(int(part) for part in parts)
+        except ValueError as exc:
+            raise ValueError(f"invalid channel-prior shape key {raw_key!r}") from exc
+        if any(v < 1 or v > 64 for v in key) or raw_key != ",".join(str(v) for v in key):
+            raise ValueError(f"non-canonical channel-prior shape key {raw_key!r}")
+        table[key] = name
+    return tower, prior.wq, table
 
 
 def _tower_id(channels: list) -> list:
@@ -213,27 +295,44 @@ def _tower_id(channels: list) -> list:
 
 def save_channel_prior(path: str, prior: FrozenChannelPrior, table: dict,
                        channels: list) -> None:
-    """Persist prior + table + the tower identity (sorted-keys JSON, the 0.4b pattern)."""
+    """Persist a validated prior atomically; never leave a partial installable artifact."""
     doc = {"kind": PRIOR_KIND, "schema": PRIOR_SCHEMA, "tower": _tower_id(channels),
            "wq": list(prior.wq),
            "table": {",".join(str(v) for v in k): name for k, name in sorted(table.items())}}
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(doc, f, indent=2, sort_keys=True)
+    _prior_document(doc)
+    payload = json.dumps(doc, indent=2, sort_keys=True) + "\n"
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, temporary = tempfile.mkstemp(prefix=".bcir-channel-prior-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def load_channel_prior(path: str, expect_channels: list):
     """Load (prior, table) -- REFUSING loudly (ValueError) on: a wrong document kind, a NEWER
     schema, or a tower mismatch (different channels, or any channel recalibrated to a new
     cal_gen -- the STALE case). A stale table's zero-pricing answer is an unearned claim."""
-    with open(path, encoding="utf-8") as f:
-        doc = json.load(f)
-    if doc.get("kind") != PRIOR_KIND:
-        raise ValueError(f"not a {PRIOR_KIND} document (kind={doc.get('kind')!r})")
-    if int(doc.get("schema", 0)) > PRIOR_SCHEMA:
-        raise ValueError(f"channel-prior schema v{doc['schema']} is newer than this build's "
-                         f"v{PRIOR_SCHEMA}; upgrade BCIR to load this prior")
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(_MAX_PRIOR_BYTES + 1)
+        if len(raw) > _MAX_PRIOR_BYTES:
+            raise ValueError(f"channel prior exceeds {_MAX_PRIOR_BYTES} bytes")
+        doc = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_keys)
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, RecursionError) as exc:
+        raise ValueError(f"invalid channel prior {path!r}: {exc}") from exc
+    saved, weights, table = _prior_document(doc)
     live = _tower_id(expect_channels)
-    saved = [list(p) for p in doc.get("tower", [])]
+    if len({name for name, _ in live}) != len(live):
+        raise ValueError("live channel tower contains duplicate names")
     if sorted(n for n, _ in saved) != sorted(n for n, _ in live):
         raise ValueError(f"channel prior was trained for tower "
                          f"{[n for n, _ in saved]}, not {[n for n, _ in live]} -- retrain")
@@ -241,9 +340,7 @@ def load_channel_prior(path: str, expect_channels: list):
         if sg != lg:
             raise ValueError(f"channel prior is STALE: trained under {sn}@cal_gen {sg}, "
                              f"the live tower has {ln}@cal_gen {lg} -- retrain")
-    prior = FrozenChannelPrior(wq=tuple(int(v) for v in doc["wq"]))
-    table = {tuple(int(v) for v in k.split(",")): name
-             for k, name in doc.get("table", {}).items()}
+    prior = FrozenChannelPrior(wq=weights)
     return prior, table
 
 

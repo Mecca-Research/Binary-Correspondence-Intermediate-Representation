@@ -48,6 +48,7 @@ from __future__ import annotations
 import os
 import sys
 
+from ..._artifact_json import read_bounded_text, strict_json_loads
 from .abi import TARGETS
 from .pipeline import compile_unit, compile_with_fallback, diagnose, emit_selfcheck
 
@@ -70,25 +71,32 @@ def _parse_entry_flags(arguments: list) -> tuple[list, dict, list, str | None, s
     undefs: list = []
     std: str | None = None
     target: str | None = None
+    if not isinstance(arguments, list) or len(arguments) > 65536:
+        raise ValueError("compile-database arguments must be a bounded array")
+    if any(not isinstance(argument, str) or len(argument) > 32768 or "\0" in argument
+           for argument in arguments):
+        raise ValueError("compile-database arguments must be bounded strings")
     i = 0
     while i < len(arguments):
-        a = str(arguments[i])
+        a = arguments[i]
+        if a in ("-I", "-D", "-U", "--target") and i + 1 >= len(arguments):
+            raise ValueError(f"compile-database option {a} requires an argument")
         if a == "-I":
-            i += 1; inc.append(str(arguments[i]))
+            i += 1; inc.append(arguments[i])
         elif a.startswith("-I"):
             inc.append(a[2:])
         elif a == "-D":
-            i += 1; _add_define(defs, str(arguments[i]))
+            i += 1; _add_define(defs, arguments[i])
         elif a.startswith("-D"):
             _add_define(defs, a[2:])
         elif a == "-U":
-            i += 1; undefs.append(str(arguments[i]))
+            i += 1; undefs.append(arguments[i])
         elif a.startswith("-U"):
             undefs.append(a[2:])
         elif a.startswith("-std="):
             std = a[5:]
         elif a == "--target":
-            i += 1; target = str(arguments[i])
+            i += 1; target = arguments[i]
         elif a.startswith("--target="):
             target = a[len("--target="):]
         i += 1
@@ -98,19 +106,35 @@ def _parse_entry_flags(arguments: list) -> tuple[list, dict, list, str | None, s
 def _load_compile_db(path: str) -> list[dict]:
     """`compile_commands.json` entries as job dicts: {path, inc_dirs, defines, undefs, std, target}.
     `path` may be the JSON file or a directory containing it (the clang -p convention)."""
-    import json  # noqa: PLC0415
     import shlex  # noqa: PLC0415
     db = os.path.join(path, "compile_commands.json") if os.path.isdir(path) else path
-    with open(db, encoding="utf-8") as f:
-        entries = json.load(f)
+    text = read_bounded_text(db, "compile database", max_bytes=64 << 20)
+    entries = strict_json_loads(text, "compile database", max_bytes=64 << 20)
+    if not isinstance(entries, list) or len(entries) > 100000:
+        raise ValueError("compile database must be a bounded array")
     jobs: list[dict] = []
-    for e in entries:
+    for index, e in enumerate(entries):
+        if not isinstance(e, dict):
+            raise ValueError(f"compile-database entry {index} must be an object")
         args = e.get("arguments")
         if args is None:
-            args = shlex.split(e.get("command", ""))
-        inc, defs, undefs, std, target = _parse_entry_flags(list(args))
+            command = e.get("command")
+            if (not isinstance(command, str) or not command or len(command) > (1 << 20) or
+                    "\0" in command):
+                raise ValueError(
+                    f"compile-database entry {index} needs a bounded command or arguments")
+            args = shlex.split(command)
+        elif "command" in e:
+            raise ValueError(
+                f"compile-database entry {index} must not contain both command and arguments")
+        inc, defs, undefs, std, target = _parse_entry_flags(args)
         directory = e.get("directory", ".")
-        fpath = e["file"]
+        fpath = e.get("file")
+        for key, value in (("directory", directory), ("file", fpath)):
+            if (not isinstance(value, str) or not value or len(value) > 32768 or
+                    "\0" in value):
+                raise ValueError(
+                    f"compile-database entry {index} {key} must be a bounded path string")
         if not os.path.isabs(fpath):
             fpath = os.path.join(directory, fpath)
         # entry -I dirs resolve relative to the entry's directory, per the compile-database spec.
@@ -144,6 +168,10 @@ def main(argv: list[str] | None = None) -> int:
     i = 0
     while i < len(args):
         a = args[i]
+        if a in ("-MF", "-MT", "-p", "--r21", "--target", "-o", "-I", "-D", "-U") \
+                and i + 1 >= len(args):
+            sys.stderr.write(f"bcir-cfront: option {a} requires an argument\n")
+            return 2
         if a == "--explain":
             show_explain = True
         elif a == "--selfcheck":
@@ -256,9 +284,8 @@ def main(argv: list[str] | None = None) -> int:
             rc = 1
             continue
         try:
-            with open(path, encoding="utf-8") as f:
-                text = f.read()
-        except OSError as e:
+            text = read_bounded_text(path, "C translation unit", max_bytes=64 << 20)
+        except (OSError, ValueError) as e:
             sys.stderr.write(f"bcir-cfront: cannot open {path!r}: {e}\n")
             outcomes.append("dirty")
             rc = 2 if rc != 1 else rc

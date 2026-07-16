@@ -16,6 +16,7 @@
 #include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -26,6 +27,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 using namespace mlir;
 
@@ -43,9 +45,9 @@ static int64_t isqrt64(int64_t n) {
   if (n <= 0)
     return 0;
   int64_t x = static_cast<int64_t>(std::sqrt(static_cast<double>(n)));
-  while (x > 0 && x * x > n)
+  while (x > 0 && x > n / x)
     --x;
-  while ((x + 1) * (x + 1) <= n)
+  while (x + 1 <= n / (x + 1))
     ++x;
   return x;
 }
@@ -71,15 +73,34 @@ struct SensePass : public PassWrapper<SensePass, OperationPass<>> {
   void runOnModule(Operation *root, Builder &b) {
     struct Stats {
       int64_t n = 0, total = 0, totalSq = 0;
+      bool overflow = false;
     };
     llvm::MapVector<StringRef, Stats> bySeg;   // segment -> sufficient stats (first-seen order)
     SmallVector<TraceDataDnaOp> records;
     root->walk([&](TraceDataDnaOp d) {
       int64_t c = static_cast<int64_t>(d.getCycles());
       Stats &s = bySeg[d.getSegment()];
-      s.n += 1;
-      s.total += c;
-      s.totalSq += c * c;
+      int64_t nextN, nextTotal, square, nextTotalSq;
+      const bool sumsWereValid = !s.overflow;
+      // Keep the sample count accurate even after a sum/square becomes
+      // unrepresentable.  The count decides whether the conservative
+      // max-uncertainty result is eligible for high-resolution telemetry.
+      if (!checkedAddNonnegative(s.n, 1, nextN)) {
+        s.overflow = true;
+        s.n = std::numeric_limits<int64_t>::max();
+      } else {
+        s.n = nextN;
+      }
+      if (sumsWereValid && !s.overflow) {
+        if (c < 0 || !checkedAddNonnegative(s.total, c, nextTotal) ||
+            !checkedMulNonnegative(c, c, square) ||
+            !checkedAddNonnegative(s.totalSq, square, nextTotalSq)) {
+          s.overflow = true;
+        } else {
+          s.total = nextTotal;
+          s.totalSq = nextTotalSq;
+        }
+      }
       records.push_back(d);
     });
     if (records.empty())
@@ -92,10 +113,21 @@ struct SensePass : public PassWrapper<SensePass, OperationPass<>> {
     SmallVector<SegInfo> segs;
     for (auto &kv : bySeg) {
       const Stats &s = kv.second;
+      if (s.overflow) {
+        segs.push_back({kv.first, s.n, std::numeric_limits<int64_t>::max()});
+        continue;
+      }
       int64_t mean = s.n ? s.total / s.n : 0;
-      int64_t var = s.n ? (s.n * s.totalSq - s.total * s.total) / (s.n * s.n) : 0;
+      long double numerator = static_cast<long double>(s.n) * s.totalSq -
+                              static_cast<long double>(s.total) * s.total;
+      long double denominator = static_cast<long double>(s.n) * s.n;
+      long double variance = denominator > 0 ? numerator / denominator : 0;
+      variance = std::max<long double>(0, variance);
+      int64_t var = variance >= std::numeric_limits<int64_t>::max()
+                        ? std::numeric_limits<int64_t>::max()
+                        : static_cast<int64_t>(variance);
       int64_t stdev = isqrt64(var);
-      int64_t cv = mean ? (1000 * stdev) / mean : 0;
+      int64_t cv = mean ? saturatingMulNonnegative(1000, stdev) / mean : 0;
       segs.push_back({kv.first, s.n, cv});
     }
     // Rank: most uncertain first (-cv_milli), then segment name (the deterministic tie-break).

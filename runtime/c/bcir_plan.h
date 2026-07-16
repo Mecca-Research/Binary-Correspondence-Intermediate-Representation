@@ -32,7 +32,8 @@ typedef struct bcir_plan {
 
 /* Plan every claim in `f` into caller-owned `steps[0..cap)`; fills `out`. The plan points
  * into `steps`. Returns BCIR_ERR_NOSPACE if `cap < f->n_claims`, or BCIR_ERR_OVERFLOW
- * when a per-step/total cost cannot be represented (never wraps a cost silently). */
+ * when a per-step/total cost cannot be represented (never wraps a cost silently). `out`
+ * is zeroed on every failure and arithmetic is preflighted before any step is written. */
 BCIR_NODISCARD bcir_status bcir_plan_func(const bcir_func *f, bcir_plan_step *steps, size_t cap,
                                           bcir_plan *out);
 

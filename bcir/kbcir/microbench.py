@@ -38,6 +38,7 @@ import time
 from array import array
 from dataclasses import asdict, dataclass, replace
 
+from .._artifact_json import read_bounded_text, strict_json_loads
 from .cost import TargetProfile
 
 Q8 = 256  # 1.0 in Q8 fixed point (the streaming baseline by definition)
@@ -94,12 +95,31 @@ class CalibratedProfile:
 
     @staticmethod
     def from_json(text: str) -> "CalibratedProfile":
-        return CalibratedProfile(**json.loads(text))
+        d = strict_json_loads(text, "calibrated profile")
+        fields = {"name", "cal_gen", "samples", "provenance", "stream_q8",
+                  "strided_q8", "random_q8", "compute_q8"}
+        if not isinstance(d, dict) or set(d) != fields:
+            raise ValueError(f"calibrated profile fields must be exactly {sorted(fields)}")
+        for key in ("name", "provenance"):
+            value = d[key]
+            if (not isinstance(value, str) or not value or len(value) > 4096 or
+                    any(ord(ch) < 0x20 for ch in value)):
+                raise ValueError(f"calibrated profile {key} must be a bounded string")
+        for key in ("cal_gen", "samples", "stream_q8", "strided_q8", "random_q8",
+                    "compute_q8"):
+            value = d[key]
+            if (isinstance(value, bool) or not isinstance(value, int) or
+                    value < 0 or value > (1 << 63) - 1):
+                raise ValueError(f"calibrated profile {key} must be a non-negative i63")
+        if d["stream_q8"] != Q8:
+            raise ValueError(f"calibrated profile stream_q8 must be {Q8}")
+        if any(d[key] < Q8 for key in ("strided_q8", "random_q8", "compute_q8")):
+            raise ValueError("calibrated profile Q8 ratios must not be below the stream baseline")
+        return CalibratedProfile(**d)
 
 
 def load_table(path: str) -> CalibratedProfile:
-    with open(path, "r", encoding="utf-8") as f:
-        return CalibratedProfile.from_json(f.read())
+    return CalibratedProfile.from_json(read_bounded_text(path, "calibrated profile"))
 
 
 def reference_table() -> CalibratedProfile:

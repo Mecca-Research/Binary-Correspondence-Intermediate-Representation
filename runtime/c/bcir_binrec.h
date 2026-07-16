@@ -26,7 +26,8 @@ typedef enum bcir_binrec_status {
   BCIR_BINREC_OK = 0,
   BCIR_BINREC_ERR_UNALIGNED = 1,  /* offset_bits / width_bits not a multiple of 8 */
   BCIR_BINREC_ERR_WIDTH = 2,      /* width_bits 0 or > 64 (no int64 representation) */
-  BCIR_BINREC_ERR_OOB = 3         /* the field extends past the buffer */
+  BCIR_BINREC_ERR_OOB = 3,        /* the field extends past the buffer */
+  BCIR_BINREC_ERR_INVALID = 4     /* NULL descriptor, output, or data pointer */
 } bcir_binrec_status;
 
 /* A byte-aligned field descriptor (mirrors etl.binary.BinaryField). */
@@ -39,7 +40,8 @@ typedef struct bcir_binfield {
 /* Decode one field from data[0..len). On BCIR_BINREC_OK, *out holds the value
  * (sign-extended when is_signed); big_endian != 0 selects MSB-first (etl endianness
  * "big"/"be"), else little-endian. Bounds-checked end to end: any malformed field or
- * short buffer returns an error and never reads out of bounds. */
+ * short buffer returns an error and never reads out of bounds.  On every
+ * failure with a non-NULL output pointer, *out is reset to zero. */
 BCIR_NODISCARD bcir_binrec_status bcir_binrec_field(const uint8_t *BCIR_RESTRICT data,
                                                     size_t len,
                                                     const bcir_binfield *BCIR_RESTRICT f,

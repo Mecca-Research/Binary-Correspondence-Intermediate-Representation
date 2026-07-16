@@ -147,6 +147,69 @@ def test_strided_views_are_the_only_allocation_currency():
     assert any("capacity" in m for m in check_strided_view(huge, _MAN))
     skew = StridedView(bank="hbm0", offset_bytes=7, shape=(16, 16), strides=(16, 1))
     assert any("alignment" in m for m in check_strided_view(skew, _MAN))
+    for width in (0, -4, True):
+        bad_width = StridedView(bank="hbm0", offset_bytes=0, shape=(16, 16),
+                                strides=(16, 1), elem_bytes=width)
+        assert any("elem_bytes" in m for m in check_strided_view(bad_width, _MAN))
+
+
+def test_loaded_manifest_must_be_semantically_valid_even_with_a_matching_digest():
+    """A SHA over attacker-controlled JSON proves identity, not admissibility. Loading
+    always reruns the bank/matrix validator before the manifest reaches planning."""
+    import dataclasses
+    import json
+    malformed = dataclasses.replace(
+        _MAN, banks=(dataclasses.replace(_MAN.banks[0], align=3),) + _MAN.banks[1:])
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "self-consistent-but-invalid.json")
+        save_device_manifest(path, _MAN)
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+        doc["banks"][0][4] = 3
+        doc["digest"] = malformed.digest
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        try:
+            load_device_manifest(path)
+            raise AssertionError("expected semantic manifest refusal")
+        except ValueError as exc:
+            assert "power of two" in str(exc)
+
+
+def test_manifest_loader_rejects_missing_digest_duplicates_and_type_coercion():
+    import json
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "device.json")
+        save_device_manifest(path, _MAN)
+        with open(path, encoding="utf-8") as f:
+            base = json.load(f)
+        for mutate in (
+                lambda doc: doc.pop("digest"),
+                lambda doc: doc.update(cal_gen="3"),
+                lambda doc: doc["banks"][0].__setitem__(2, True)):
+            doc = json.loads(json.dumps(base)); mutate(doc)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(doc, f)
+            try:
+                load_device_manifest(path)
+                raise AssertionError("ambiguous/coerced manifest must be rejected")
+            except ValueError:
+                pass
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"kind":"bcir.device_manifest","kind":"other"}')
+        try:
+            load_device_manifest(path)
+            raise AssertionError("duplicate JSON keys must be rejected")
+        except ValueError as exc:
+            assert "duplicate" in str(exc)
+
+    import dataclasses
+    malformed = dataclasses.replace(
+        _MAN, banks=(dataclasses.replace(_MAN.banks[0], capacity_bytes="large"),)
+        + _MAN.banks[1:])
+    assert any("capacity" in error for error in check_device_manifest(malformed))
+    bad_offset = StridedView("hbm0", "zero", (16, 16), (16, 1))
+    assert check_strided_view(bad_offset, _MAN)
 
 
 def test_probes_may_veto_but_never_steer():

@@ -1,5 +1,6 @@
 """Bayesian cost model + conformal error bars + ABC (the learned organ)."""
 
+import json
 import math
 
 from bcir.examples import histogram_gather, vector_add
@@ -100,6 +101,33 @@ def test_bayes_table_applies_like_a_point_table():
 def test_bayes_table_json_round_trips():
     bt = bayes_calibrate(AVX, [_raw(1600), _raw(1700)], coverage=0.8, cal_gen=5)
     assert BayesianCalibratedProfile.from_json(bt.to_json()) == bt
+
+
+def test_bayes_table_json_rejects_ambiguous_or_invalid_artifacts():
+    table = bayes_calibrate(AVX, [_raw(1600), _raw(1700)], coverage=0.8, cal_gen=5)
+    document = json.loads(table.to_json())
+    bad_documents = []
+
+    for coverage in (True, 0, 1001):
+        bad = dict(document)
+        bad["coverage_milli"] = coverage
+        bad_documents.append(json.dumps(bad))
+    bad = dict(document)
+    bad["random_delta_q8"] = -1
+    bad_documents.append(json.dumps(bad))
+    bad = dict(document)
+    bad["point"] = {**document["point"], "stream_q8": 257}
+    bad_documents.append(json.dumps(bad))
+    bad_documents.append(table.to_json().replace('"coverage_milli": 800',
+                                                  '"coverage_milli": 800, '
+                                                  '"coverage_milli": 900'))
+
+    for text in bad_documents:
+        try:
+            BayesianCalibratedProfile.from_json(text)
+            assert False, "expected malformed Bayesian table to be rejected"
+        except ValueError:
+            pass
 
 
 def test_calibrated_gather_penalty_reaches_the_planner():

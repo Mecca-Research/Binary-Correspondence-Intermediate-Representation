@@ -44,7 +44,8 @@ typedef struct bcir_train_state {
  * the pack's claim ids to the six stage kernels exactly as the oracle keys `_step_kernels`
  *   1 forward (z = X@w + bias)   2 activation (guarded sigmoid)   3 per-example BCE
  *   4 reduce (mean loss)         5 backward (exact BCE+sigmoid gradient)   6 sgd update
- * An id outside 1..6 is a no-op returning 0 (the oracle's kernels.get semantics). */
+ * An id outside 1..6 is a no-op returning 0 (the oracle's kernels.get semantics).
+ * A known id with an invalid state shape/pointer returns nonzero before mutation. */
 int bcir_train_kernel(const bcir_exec_item *item, void *ctx);
 
 /* --- D1 step 7: the STREAMED step (kbcir/train_graph.py train_stream_module) ------------- */
@@ -73,7 +74,8 @@ typedef struct bcir_stream_state {
  * train_stream_module's bands -- stream s stage k = s*10 + k (k in 1..5), the gradient
  * combine = streams*10 + 1, the SINGLE sgd update = streams*10 + 2. Same arithmetic order
  * as the oracle's _stream_kernels (ascending-index sums; mean of the stream means). An id
- * outside the bands is a no-op returning 0. */
+ * outside the bands is a no-op returning 0. Invalid state geometry/pointers return
+ * nonzero before mutation so the executor stops the dispatch. */
 int bcir_stream_kernel(const bcir_exec_item *item, void *ctx);
 
 #ifdef __cplusplus

@@ -191,7 +191,7 @@ struct LowerToLLVMPass : public PassWrapper<LowerToLLVMPass, OperationPass<>> {
         return;  // dynamic extent: not statically checkable
       int64_t bytes = 4;
       for (int64_t d : shape)
-        bytes *= (d > 0 ? d : 1);
+        bytes = saturatingMulNonnegative(bytes, d > 0 ? d : 1);
       int64_t cap = (*pl == MemTier::L1) ? (64 * 1024)
                   : (*pl == MemTier::L2) ? (4 * 1024 * 1024) : 0;
       if (cap && bytes > cap) {

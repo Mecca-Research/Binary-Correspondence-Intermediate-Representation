@@ -30,27 +30,82 @@ from dataclasses import dataclass
 
 from ...kbcir.unsupervised import EmbeddingTable
 from .decode import DecoderSpec, DecoderWeights, LayerWeights
+from .manifest import _unique_object
 from .safetensors_io import load_tensors
+
+_MAX_CONFIG_BYTES = 16 * 1024 * 1024
+
+
+def _config_positive_int(config: dict, name: str, *, maximum: int = 0x7FFFFFFF) -> int:
+    if name not in config:
+        raise ValueError(f"config is missing {name!r}")
+    value = config[name]
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
+        raise ValueError(f"config {name} must be an integer in [1, {maximum}]")
+    return value
+
+
+def _config_positive_float(config: dict, name: str, default: float) -> float:
+    value = config.get(name, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"config {name} must be a finite positive number")
+    value = float(value)
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(f"config {name} must be a finite positive number")
+    return value
+
+
+def _load_config(path: str) -> dict:
+    try:
+        with open(path, "rb") as stream:
+            size = os.fstat(stream.fileno()).st_size
+            if size > _MAX_CONFIG_BYTES:
+                raise ValueError(f"{path}: config.json exceeds {_MAX_CONFIG_BYTES} bytes")
+            raw = stream.read(_MAX_CONFIG_BYTES + 1)
+    except OSError as exc:
+        raise ValueError(f"{path}: cannot read config.json: {exc}") from exc
+    if len(raw) > _MAX_CONFIG_BYTES or len(raw) != size:
+        raise ValueError(f"{path}: config.json changed, truncated, or exceeds its size limit")
+    try:
+        config = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+        raise ValueError(f"{path}: malformed config.json: {exc}") from exc
+    if not isinstance(config, dict):
+        raise ValueError(f"{path}: config.json root must be an object")
+    return config
 
 
 def spec_from_config(config: dict) -> DecoderSpec:
     """The DecoderSpec a Llama-family config.json declares. `hidden_act` must be silu
     (the gated MLP is what the weights contain); rope_theta defaults to the Llama 10000."""
-    act = str(config.get("hidden_act", "silu"))
+    if not isinstance(config, dict):
+        raise ValueError("Llama config must be an object")
+    model_type = config.get("model_type", "llama")
+    if not isinstance(model_type, str) or model_type.lower() != "llama":
+        raise ValueError(f"model_type {model_type!r} is not Llama")
+    act = config.get("hidden_act", "silu")
     if act != "silu":
         raise ValueError(f"hidden_act {act!r} is not the Llama gated-SiLU MLP")
-    n_heads = int(config["num_attention_heads"])
+    n_heads = _config_positive_int(config, "num_attention_heads")
+    n_layers = _config_positive_int(config, "num_hidden_layers", maximum=0x7FFF)
+    if "num_key_value_heads" in config:
+        n_kv_heads = _config_positive_int(config, "num_key_value_heads")
+    else:
+        n_kv_heads = n_heads
+    tied = config.get("tie_word_embeddings", False)
+    if not isinstance(tied, bool):
+        raise ValueError("config tie_word_embeddings must be a boolean")
     return DecoderSpec(
-        vocab_size=int(config["vocab_size"]),
-        d_model=int(config["hidden_size"]),
+        vocab_size=_config_positive_int(config, "vocab_size"),
+        d_model=_config_positive_int(config, "hidden_size"),
         n_heads=n_heads,
-        n_layers=int(config["num_hidden_layers"]),
-        d_ff=int(config["intermediate_size"]),
-        rope_base=float(config.get("rope_theta", 10000.0)),
+        n_layers=n_layers,
+        d_ff=_config_positive_int(config, "intermediate_size"),
+        rope_base=_config_positive_float(config, "rope_theta", 10000.0),
         activation="silu_gate",
-        n_kv_heads=int(config.get("num_key_value_heads", n_heads)),
-        tied_embeddings=bool(config.get("tie_word_embeddings", False)),
-        rms_norm_eps=float(config.get("rms_norm_eps", 1e-6)))
+        n_kv_heads=n_kv_heads,
+        tied_embeddings=tied,
+        rms_norm_eps=_config_positive_float(config, "rms_norm_eps", 1e-6))
 
 
 def rope_interleave_order(n_heads: int, d_k: int) -> list[int]:
@@ -70,6 +125,13 @@ def _transpose(flat: list, rows: int, cols: int) -> list:
     return [flat[r * cols + c] for c in range(cols) for r in range(rows)]
 
 
+def _require_finite(name: str, values) -> None:
+    for index, value in enumerate(values):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                or not math.isfinite(float(value)):
+            raise ValueError(f"{name}[{index}] is not a finite numeric weight")
+
+
 def _proj(tensors: dict, name: str, out_dim: int, in_dim: int, perm: list | None = None) -> tuple:
     """One projection: shape-check the HF [out, in] tensor, apply the optional per-head
     RoPE out-channel permutation, transpose to the oracle's [in, out]."""
@@ -78,6 +140,7 @@ def _proj(tensors: dict, name: str, out_dim: int, in_dim: int, perm: list | None
     _dt, shape, flat = tensors[name]
     if tuple(shape) != (out_dim, in_dim):
         raise ValueError(f"{name}: shape {tuple(shape)} != ({out_dim}, {in_dim})")
+    _require_finite(name, flat)
     if perm is not None:                               # reorder the OUT rows (HF layout)
         flat = [flat[o * in_dim + c] for o in perm for c in range(in_dim)]
     return tuple(_transpose(flat, out_dim, in_dim))
@@ -89,6 +152,7 @@ def _vec(tensors: dict, name: str, n: int) -> tuple:
     _dt, shape, flat = tensors[name]
     if tuple(shape) != (n,):
         raise ValueError(f"{name}: shape {tuple(shape)} != ({n},)")
+    _require_finite(name, flat)
     return tuple(flat)
 
 
@@ -103,6 +167,7 @@ def weights_from_tensors(spec: DecoderSpec, tensors: dict) -> DecoderWeights:
     _dt, eshape, eflat = tensors[name]
     if tuple(eshape) != (spec.vocab_size, d):
         raise ValueError(f"{name}: shape {tuple(eshape)} != ({spec.vocab_size}, {d})")
+    _require_finite(name, eflat)
     layers = []
     for li in range(spec.n_layers):
         p = f"model.layers.{li}."
@@ -124,6 +189,7 @@ def weights_from_tensors(spec: DecoderSpec, tensors: dict) -> DecoderWeights:
         if tuple(hshape) != (spec.vocab_size, d):
             raise ValueError(f"lm_head.weight: shape {tuple(hshape)} != "
                              f"({spec.vocab_size}, {d})")
+        _require_finite("lm_head.weight", hflat)
         lm_head = tuple(hflat)                         # [vocab, d] row-per-id: pass-through
     return DecoderWeights(
         embedding=EmbeddingTable(table=tuple(eflat), n_vocab=spec.vocab_size, dim=d),
@@ -227,8 +293,7 @@ def ingest_checkpoint_with_report(model_dir: str) \
     tensors: their shape and analytical values are checked against ``rope_base``.  Unknown
     unused tensors fail in the strict API instead of disappearing from the census.
     """
-    with open(os.path.join(model_dir, "config.json"), encoding="utf-8") as f:
-        spec = spec_from_config(json.load(f))
+    spec = spec_from_config(_load_config(os.path.join(model_dir, "config.json")))
     tensors = load_tensors(os.path.join(model_dir, "model.safetensors"))
     weights = weights_from_tensors(spec, tensors)
     return spec, weights, _build_ingest_report(spec, tensors)

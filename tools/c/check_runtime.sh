@@ -402,12 +402,12 @@ sw_wr="$("${tmp}/sw_h" 1 2>&1 1>/dev/null)"; sw_rc=$?          # OOB store: must
   && echo "  PASS writeguard: OOB read clamps (a[7]=21) but OOB store ABORTS (no a[7] corruption) (#writeguard)" \
   || { echo "  FAIL: OOB store did not fail-fast (rc=${sw_rc}: ${sw_wr})"; exit 1; }
 
-# Atomic OOB-ring counter (#atomicring, §5.12): `bcir_oob_count++` is a non-atomic read-modify-write; under
-# concurrent OOB events two threads can claim the SAME ring slot and lose an audit record, and the running
-# total scrambles. The counter is now `_Atomic` (atomic_fetch_add) where C11 atomics are available, so the
-# total is EXACT under concurrency. This test hammers bcir_oob_record_event from N threads and asserts the
-# total equals N*M (no lost increments). If the freestanding build has no atomics the contract is single-
-# threaded (BCIR_OOB_COUNTER_ATOMIC == 0) and this hosted concurrency test is skipped.
+# Atomic OOB ring (#atomicring, §5.12): the counter and payload publication must both be synchronized.
+# An atomic fetch-add alone gives writers distinct slots but still lets a reporter race a non-atomic struct
+# update (C undefined behaviour / torn audit records). The hosted implementation serializes each short
+# publish/snapshot section. This test hammers writers while a reporter snapshots concurrently, then asserts
+# the total equals N*M. If the freestanding build has no atomics the contract is single-threaded and this
+# hosted concurrency test is skipped.
 echo "[c-runtime] OOB ring counter is atomic under concurrent events (#atomicring)"
 { echo '#include <stdio.h>'; echo '#include "bcir_quarantine.h"'
   cat <<'DRV'
@@ -418,10 +418,16 @@ echo "[c-runtime] OOB ring counter is atomic under concurrent events (#atomicrin
 static void *hammer(void *arg){ (void)arg;
   for(long k=0;k<NM;k++) bcir_oob_record_event(1u, (uint64_t)k, 64u, "race:a");
   return 0; }
+static void *observe(void *arg){ (void)arg; FILE *f=tmpfile(); if(!f) return (void *)1;
+  for(int k=0;k<200;k++){ bcir_quarantine_report(f); rewind(f); }
+  return fclose(f) ? (void *)1 : 0; }
 int main(void){
-  pthread_t th[NT];
+  pthread_t th[NT], reader;
+  bcir_quarantine_report(NULL); bcir_decide_report(NULL); /* public null handles are harmless */
+  if(pthread_create(&reader,0,observe,0)) return 2;
   for(int i=0;i<NT;i++) pthread_create(&th[i],0,hammer,0);
   for(int i=0;i<NT;i++) pthread_join(th[i],0);
+  void *reader_rc=0; pthread_join(reader,&reader_rc); if(reader_rc) return 3;
   unsigned long got = bcir_oob_count, want = (unsigned long)NT*NM;
   printf(got==want ? "EXACT %lu\n" : "LOST %lu/%lu\n", got, want);
   return got==want ? 0 : 1; }

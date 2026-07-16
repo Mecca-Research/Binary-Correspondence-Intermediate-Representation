@@ -91,6 +91,21 @@ static int span_ok(uint64_t off, uint64_t length, uint64_t lower, uint64_t size,
   return off >= lower && !add_overflows_u64(off, length, end) && *end <= size;
 }
 
+typedef struct bcir_q8_span {
+  uint64_t begin;
+  uint64_t end;
+} bcir_q8_span;
+
+static int compare_spans(const void *left, const void *right) {
+  const bcir_q8_span *a = (const bcir_q8_span *)left;
+  const bcir_q8_span *b = (const bcir_q8_span *)right;
+  if (a->begin < b->begin) return -1;
+  if (a->begin > b->begin) return 1;
+  if (a->end < b->end) return -1;
+  if (a->end > b->end) return 1;
+  return 0;
+}
+
 static const bcir_q8_tensor *find_tensor(const bcir_q8_model *model,
                                          uint16_t id, int16_t layer) {
   uint32_t i;
@@ -102,26 +117,52 @@ static const bcir_q8_tensor *find_tensor(const bcir_q8_model *model,
 
 const bcir_q8_tensor *bcir_q8_model_tensor(const bcir_q8_model *model,
                                            uint16_t tensor_id, int16_t layer) {
-  if (!model) return NULL;
+  if (!model || model->_owner_tag != BCIR_Q8_MODEL_OWNER_TAG ||
+      !model->storage || !model->tensors) return NULL;
   return find_tensor(model, tensor_id, layer);
 }
 
 double bcir_q8_tensor_value(const bcir_q8_model *model,
                             const bcir_q8_tensor *tensor, uint32_t index) {
+  uintptr_t base, address;
+  size_t tensor_bytes, delta;
+  uint64_t groups, exponent_bytes;
   int code;
   int exponent;
-  if (!model || !tensor || index >= tensor->element_count || !model->group_size)
+  if (!model || !tensor || model->_owner_tag != BCIR_Q8_MODEL_OWNER_TAG ||
+      !model->storage || !model->tensors || !model->group_size || model->bits != 8u)
+    return NAN;
+  if (mul_overflows_size((size_t)model->tensor_count,
+                         sizeof *model->tensors,&tensor_bytes)) return NAN;
+  base = (uintptr_t)(const void *)model->tensors;
+  address = (uintptr_t)(const void *)tensor;
+  if (address < base) return NAN;
+  delta = (size_t)(address - base);
+  if (delta >= tensor_bytes || delta % sizeof *model->tensors) return NAN;
+  if (index >= tensor->element_count || !tensor->element_count) return NAN;
+  groups = ((uint64_t)tensor->element_count + model->group_size - 1u) /
+           model->group_size;
+  exponent_bytes = groups * 2u;
+  if (groups != tensor->group_count ||
+      tensor->exponent_offset > model->storage_size ||
+      exponent_bytes > model->storage_size - tensor->exponent_offset ||
+      tensor->code_offset > model->storage_size ||
+      tensor->element_count > model->storage_size - tensor->code_offset ||
+      tensor->exponents != model->storage + tensor->exponent_offset ||
+      tensor->codes != model->storage + tensor->code_offset)
     return NAN;
   code = (int)tensor->codes[index];
   if (code >= 128) code -= 256;
   exponent = (int)rdi16(tensor->exponents + 2u * (index / model->group_size));
+  if (code == -128 || exponent < -300 || exponent > 300) return NAN;
   return ldexp((double)code, exponent);
 }
 
 void bcir_q8_model_free(bcir_q8_model *model) {
   bcir_host_allocator allocator;
   if (!model) return;
-  if(model->_owner_tag!=0x51384d44u||!bcir_host_allocator_valid(&model->_allocator)){
+  if(model->_owner_tag!=BCIR_Q8_MODEL_OWNER_TAG||
+     !bcir_host_allocator_valid(&model->_allocator)){
     memset(model,0,sizeof *model);return;
   }
   allocator=model->_allocator;
@@ -200,9 +241,9 @@ static int canonical_tensor_at(const bcir_q8_model *m, uint32_t index,
   return -1;
 }
 
-int bcir_q8_model_load_with_allocator(const char *path, bcir_q8_model *out,
-                                      char *error, size_t error_capacity,
-                                      const bcir_host_allocator *allocator) {
+int bcir_q8_model_load_with_allocator_limited(
+    const char *path, bcir_q8_model *out, char *error, size_t error_capacity,
+    const bcir_host_allocator *allocator, uint64_t max_file_size) {
   FILE *file = NULL;
   bcir_file_offset signed_size;
   size_t got;
@@ -211,15 +252,21 @@ int bcir_q8_model_load_with_allocator(const char *path, bcir_q8_model *out,
   uint32_t endian, flags, tensor_count, entry_size, body_crc, recorded_header_crc;
   uint64_t directory_offset, directory_end, payload_offset, recorded_size;
   uint32_t i, j;
-  size_t tensor_bytes;
+  uint64_t expected_tensor_count;
+  size_t tensor_bytes, span_count, span_bytes;
+  bcir_q8_span *spans = NULL;
   bcir_q8_model m;
   memset(&m, 0, sizeof m);
   m._allocator=bcir_host_allocator_or_default(allocator);
-  m._owner_tag=0x51384d44u;
+  m._owner_tag=BCIR_Q8_MODEL_OWNER_TAG;
   if (error && error_capacity) error[0] = '\0';
   if (out) memset(out, 0, sizeof *out);
   if (!path || !out) {
     set_error(error, error_capacity, "path and output model are required");
+    return -1;
+  }
+  if (max_file_size < BCIR_Q8_HEADER_SIZE) {
+    set_error(error, error_capacity, "BCIRQ8 file-size limit is below the fixed header");
     return -1;
   }
   file = fopen(path, "rb");
@@ -234,8 +281,9 @@ int bcir_q8_model_load_with_allocator(const char *path, bcir_q8_model *out,
     return -1;
   }
   if ((uint64_t)signed_size < BCIR_Q8_HEADER_SIZE ||
+      (uint64_t)signed_size > max_file_size ||
       (uint64_t)signed_size > (uint64_t)SIZE_MAX) {
-    set_error(error, error_capacity, "BCIRQ8 file size is invalid");
+    set_error(error, error_capacity, "BCIRQ8 file size is invalid or exceeds limit");
     fclose(file);
     return -1;
   }
@@ -296,6 +344,21 @@ int bcir_q8_model_load_with_allocator(const char *path, bcir_q8_model *out,
     set_error(error, error_capacity, "invalid BCIRQ8 model geometry");
     goto fail;
   }
+  if ((m.bos_token_id != -1 &&
+       (m.bos_token_id < 0 || (uint32_t)m.bos_token_id >= m.vocab_size)) ||
+      (m.eos_token_id != -1 &&
+       (m.eos_token_id < 0 || (uint32_t)m.eos_token_id >= m.vocab_size)) ||
+      (m.pad_token_id != -1 &&
+       (m.pad_token_id < 0 || (uint32_t)m.pad_token_id >= m.vocab_size))) {
+    set_error(error, error_capacity, "BCIRQ8 tokenizer id is outside the vocabulary");
+    goto fail;
+  }
+  expected_tensor_count = 2u + 9u * (uint64_t)m.n_layers +
+      ((m.flags & BCIR_Q8_FLAG_TIED_EMBEDDINGS) ? 0u : 1u);
+  if (expected_tensor_count > UINT32_MAX || tensor_count != expected_tensor_count) {
+    set_error(error, error_capacity, "BCIRQ8 tensor count is not canonical");
+    goto fail;
+  }
   if (entry_size != BCIR_Q8_DIRECTORY_ENTRY_SIZE ||
       directory_offset != BCIR_Q8_HEADER_SIZE || recorded_size != m.storage_size ||
       add_overflows_u64(directory_offset, (uint64_t)tensor_count * entry_size,
@@ -329,6 +392,16 @@ int bcir_q8_model_load_with_allocator(const char *path, bcir_q8_model *out,
     goto fail;
   }
   memset(m.tensors,0,tensor_bytes);
+  if (mul_overflows_size((size_t)tensor_count, 2u, &span_count) ||
+      mul_overflows_size(span_count, sizeof *spans, &span_bytes)) {
+    set_error(error, error_capacity, "BCIRQ8 span inventory is too large");
+    goto fail;
+  }
+  spans = (bcir_q8_span *)bcir_host_allocate(&m._allocator, span_bytes);
+  if (!spans) {
+    set_error(error, error_capacity, "out of memory for BCIRQ8 span inventory");
+    goto fail;
+  }
   for (i = 0; i < tensor_count; ++i) {
     const unsigned char *e = p + directory_offset + (uint64_t)i * entry_size;
     bcir_q8_tensor *t = &m.tensors[i];
@@ -384,29 +457,26 @@ int bcir_q8_model_load_with_allocator(const char *path, bcir_q8_model *out,
       set_error(error, error_capacity, "BCIRQ8 tensor CRC mismatch at entry %u", i);
       goto fail;
     }
-    for (j = 0; j < i; ++j) {
-      const bcir_q8_tensor *u = &m.tensors[j];
-      uint64_t ue = u->exponent_offset + (uint64_t)u->group_count * 2u;
-      uint64_t uc = u->code_offset + u->element_count;
-      if ((t->tensor_id == u->tensor_id && t->layer == u->layer) ||
-          (t->exponent_offset < ue && u->exponent_offset < exponent_end) ||
-          (t->exponent_offset < uc && u->code_offset < exponent_end) ||
-          (t->code_offset < ue && u->exponent_offset < code_end) ||
-          (t->code_offset < uc && u->code_offset < code_end)) {
-        set_error(error, error_capacity, "duplicate or overlapping BCIRQ8 tensor entry %u", i);
-        goto fail;
-      }
-    }
-    if (t->exponent_offset < code_end && t->code_offset < exponent_end) {
-      set_error(error, error_capacity, "overlapping exponent/code payload at entry %u", i);
+    spans[2u * i].begin = t->exponent_offset;
+    spans[2u * i].end = exponent_end;
+    spans[2u * i + 1u].begin = t->code_offset;
+    spans[2u * i + 1u].end = code_end;
+  }
+  qsort(spans, span_count, sizeof *spans, compare_spans);
+  for (i = 1; i < span_count; ++i) {
+    if (spans[i - 1u].end > spans[i].begin) {
+      set_error(error, error_capacity, "overlapping BCIRQ8 tensor payloads");
       goto fail;
     }
   }
+  bcir_host_deallocate(&m._allocator, spans);
+  spans = NULL;
   if (validate_inventory(&m, error, error_capacity)) goto fail;
   *out = m;
   return 0;
 
 fail:
+  bcir_host_deallocate(&m._allocator, spans);
   bcir_q8_model_free(&m);
   return -1;
 }
@@ -414,5 +484,21 @@ fail:
 int bcir_q8_model_load(const char *path, bcir_q8_model *out,
                        char *error, size_t error_capacity) {
   bcir_host_allocator allocator=bcir_host_allocator_default();
-  return bcir_q8_model_load_with_allocator(path,out,error,error_capacity,&allocator);
+  return bcir_q8_model_load_with_allocator_limited(
+      path, out, error, error_capacity, &allocator, BCIR_Q8_DEFAULT_MAX_FILE_SIZE);
+}
+
+int bcir_q8_model_load_limited(const char *path, bcir_q8_model *out,
+                               char *error, size_t error_capacity,
+                               uint64_t max_file_size) {
+  bcir_host_allocator allocator = bcir_host_allocator_default();
+  return bcir_q8_model_load_with_allocator_limited(
+      path, out, error, error_capacity, &allocator, max_file_size);
+}
+
+int bcir_q8_model_load_with_allocator(const char *path, bcir_q8_model *out,
+                                      char *error, size_t error_capacity,
+                                      const bcir_host_allocator *allocator) {
+  return bcir_q8_model_load_with_allocator_limited(
+      path, out, error, error_capacity, allocator, BCIR_Q8_DEFAULT_MAX_FILE_SIZE);
 }

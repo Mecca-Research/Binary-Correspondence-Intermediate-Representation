@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -36,28 +37,39 @@ def verify_file(path: Path, info: dict) -> bool:
 
 
 def _download(url: str, target: Path, info: dict, attempts: int = 3) -> None:
-    part = target.with_name(target.name + ".part")
     last_error: BaseException | None = None
     for attempt in range(1, attempts + 1):
+        part: Path | None = None
         try:
-            part.unlink(missing_ok=True)
+            # Every attempt owns a private 0600 staging file.  A fixed
+            # ``target.part`` lets concurrent gates unlink or replace each
+            # other's in-flight download and is also a symlink-following trap
+            # when a caller deliberately selects a shared cache directory.
+            fd, part_name = tempfile.mkstemp(
+                prefix=f".{target.name}.", suffix=".part", dir=target.parent
+            )
+            part = Path(part_name)
             request = urllib.request.Request(url, headers={"User-Agent": "BCIR-model-gate/1"})
-            with urllib.request.urlopen(request, timeout=60) as response, part.open("wb") as out:
-                written = 0
-                while chunk := response.read(1024 * 1024):
-                    written += len(chunk)
-                    if written > int(info["bytes"]):
-                        raise ValueError(f"downloaded {target.name} exceeds its pinned byte length")
-                    out.write(chunk)
-                out.flush()
-                os.fsync(out.fileno())
+            with os.fdopen(fd, "wb") as out:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    written = 0
+                    while chunk := response.read(1024 * 1024):
+                        written += len(chunk)
+                        if written > int(info["bytes"]):
+                            raise ValueError(
+                                f"downloaded {target.name} exceeds its pinned byte length"
+                            )
+                        out.write(chunk)
+                    out.flush()
+                    os.fsync(out.fileno())
             if not verify_file(part, info):
                 raise ValueError(f"downloaded {target.name} failed size/SHA-256 verification")
             os.replace(part, target)
             return
         except (OSError, ValueError, urllib.error.URLError) as exc:
             last_error = exc
-            part.unlink(missing_ok=True)
+            if part is not None:
+                part.unlink(missing_ok=True)
             if attempt < attempts:
                 time.sleep(attempt)
     raise RuntimeError(f"failed to fetch {target.name} after {attempts} attempts: {last_error}")

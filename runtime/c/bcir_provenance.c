@@ -18,6 +18,7 @@ static uint64_t prov_sep(uint64_t h) {
 }
 
 uint64_t bcir_prov_item_str(uint64_t h, const char *s) {
+    if (!s) return 0;   /* invalid-input sentinel; never hash NULL as empty */
     return prov_sep(prov_bytes(h, s));
 }
 
@@ -44,12 +45,14 @@ uint64_t bcir_prov_end(uint64_t h) { return h & BCIR_PROV_I63_MASK; }
 
 uint64_t bcir_prov_digest(int64_t m_module, int64_t m_target, int64_t m_theta,
                           int64_t m_policy, const bcir_prov_artifact *arts, size_t n) {
+    if (n && !arts) return 0;
     uint64_t h = bcir_prov_begin();
     h = bcir_prov_item_i64(h, m_module);
     h = bcir_prov_item_i64(h, m_target);
     h = bcir_prov_item_i64(h, m_theta);
     h = bcir_prov_item_i64(h, m_policy);
     for (size_t i = 0; i < n; ++i) {          /* pairs flatten in order: name, value, ... */
+        if (!arts[i].name) return 0;
         h = bcir_prov_item_str(h, arts[i].name);
         h = bcir_prov_item_i64(h, arts[i].value);
     }
@@ -59,5 +62,7 @@ uint64_t bcir_prov_digest(int64_t m_module, int64_t m_target, int64_t m_theta,
 int bcir_prov_verify(uint64_t recorded, int64_t m_module, int64_t m_target,
                      int64_t m_theta, int64_t m_policy,
                      const bcir_prov_artifact *arts, size_t n) {
+    if ((n && !arts)) return 0;
+    for (size_t i = 0; i < n; ++i) if (!arts[i].name) return 0;
     return bcir_prov_digest(m_module, m_target, m_theta, m_policy, arts, n) == recorded;
 }

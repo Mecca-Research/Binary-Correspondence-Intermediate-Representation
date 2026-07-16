@@ -21,18 +21,22 @@ per-group scale that makes that grid *fine in real terms* is this module's job.
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass
 
 # Power-of-two scale exponents are clamped to a generous, physically-ample band so a pathological input
 # (e.g. 1e-300) can never underflow the scale to 0.0 and divide-by-zero. +-300 covers every realistic ML
 # magnitude with room to spare (float32 tops out near 3.4e38 ~ 2**128).
 _EXP_MIN, _EXP_MAX = -300, 300
+_MAX_BITS = 4096
 
 
 def code_max(bits: int) -> int:
     """The largest magnitude a `bits`-wide SIGNED code can hold (symmetric range [-code_max, code_max])."""
-    if bits < 2:
-        raise ValueError(f"bits must be >= 2 (a signed code needs a sign + >=1 magnitude bit); got {bits}")
+    if (isinstance(bits, bool) or not isinstance(bits, int) or
+            not 2 <= bits <= _MAX_BITS):
+        raise ValueError(
+            f"bits must be an integer in [2, {_MAX_BITS}] (sign + magnitude); got {bits!r}")
     return (1 << (bits - 1)) - 1
 
 
@@ -56,6 +60,19 @@ class QGroup:
     scale_exp: int
     bits: int
 
+    def __post_init__(self):
+        cmax = code_max(self.bits)
+        if not isinstance(self.codes, tuple):
+            raise ValueError("QGroup codes must be an immutable tuple")
+        if (isinstance(self.scale_exp, bool) or not isinstance(self.scale_exp, int) or
+                not _EXP_MIN <= self.scale_exp <= _EXP_MAX):
+            raise ValueError(
+                f"QGroup scale_exp must be an integer in [{_EXP_MIN}, {_EXP_MAX}]")
+        for index, code in enumerate(self.codes):
+            if (isinstance(code, bool) or not isinstance(code, int) or
+                    not -cmax <= code <= cmax):
+                raise ValueError(f"QGroup code[{index}] does not fit signed {self.bits}-bit range")
+
     @property
     def scale(self) -> float:
         return math.ldexp(1.0, self.scale_exp)         # 2**scale_exp, exact for in-range exponents
@@ -67,6 +84,8 @@ class QGroup:
     def error_bound(self, *, rounding: str = "nearest") -> float:
         """Worst-case per-element round-trip error of THIS group, in REAL units: <= 1/2 step (nearest)
         or < 1 step (truncate), where the step is 2**scale_exp. (Tighter the smaller the group's range.)"""
+        if rounding not in ("nearest", "truncate"):
+            raise ValueError(f"rounding must be 'nearest' or 'truncate'; got {rounding!r}")
         return math.ldexp(1.0, self.scale_exp - (1 if rounding == "nearest" else 0))
 
 
@@ -76,10 +95,10 @@ def quantize_group(values, bits: int, *, rounding: str = "nearest") -> QGroup:
     sets the error)."""
     if rounding not in ("nearest", "truncate"):
         raise ValueError(f"rounding must be 'nearest' or 'truncate'; got {rounding!r}")
+    cmax = code_max(bits)
     vals = [float(v) for v in values]
     if any(not math.isfinite(v) for v in vals):
         raise ValueError("quantize_group: inputs must be finite (no inf/nan at the bridge boundary)")
-    cmax = code_max(bits)
     amax = max((abs(v) for v in vals), default=0.0)
     if amax == 0.0:
         return QGroup(codes=tuple(0 for _ in vals), scale_exp=0, bits=bits)
@@ -95,8 +114,10 @@ def quantize_group(values, bits: int, *, rounding: str = "nearest") -> QGroup:
 def quantize_per_group(values, group_size: int, bits: int, *, rounding: str = "nearest") -> list[QGroup]:
     """Quantize `values` in contiguous blocks of `group_size` (the last block may be short). `group_size`
     == len(values) is per-tensor; `group_size` == 1 is per-element. Returns one QGroup per block."""
-    if group_size < 1:
-        raise ValueError(f"group_size must be >= 1; got {group_size}")
+    if (isinstance(group_size, bool) or not isinstance(group_size, int) or
+            not 1 <= group_size <= sys.maxsize):
+        raise ValueError(f"group_size must be a positive integer; got {group_size!r}")
+    code_max(bits)  # validate before materializing/iterating an input sequence
     vals = [float(v) for v in values]
     return [quantize_group(vals[i:i + group_size], bits, rounding=rounding)
             for i in range(0, len(vals), group_size)]
@@ -105,7 +126,9 @@ def quantize_per_group(values, group_size: int, bits: int, *, rounding: str = "n
 def dequantize(groups) -> list[float]:
     """Reconstruct the float vector from its quantized groups (the float32 side of the bridge)."""
     out: list[float] = []
-    for g in groups:
+    for index, g in enumerate(groups):
+        if not isinstance(g, QGroup):
+            raise ValueError(f"dequantize group[{index}] must be a QGroup")
         out.extend(g.dequantize())
     return out
 
@@ -118,8 +141,9 @@ def roundtrip(values, group_size: int, bits: int, *, rounding: str = "nearest") 
 def max_abs_error(values, group_size: int, bits: int, *, rounding: str = "nearest") -> float:
     """Measured worst-case round-trip error over the vector (REAL units) -- the empirical quality metric;
     strictly bounded by each group's ``error_bound`` (the property R17 certifies)."""
-    deq = roundtrip(values, group_size, bits, rounding=rounding)
-    return max((abs(float(v) - d) for v, d in zip(values, deq)), default=0.0)
+    vals = [float(v) for v in values]
+    deq = roundtrip(vals, group_size, bits, rounding=rounding)
+    return max((abs(v - d) for v, d in zip(vals, deq)), default=0.0)
 
 
 # --- quantized dot product: the inference primitive (a matmul is a grid of these) ----------------
@@ -131,18 +155,33 @@ def max_abs_error(values, group_size: int, bits: int, *, rounding: str = "neares
 def integer_dot(codes_a, codes_b) -> int:
     """Exact integer dot product of two equal-length code vectors (Python big-ints: no overflow, the
     reference the `_BitInt`-lane C kernel's wide accumulator must match within its declared width)."""
-    if len(codes_a) != len(codes_b):
+    try:
+        len_a, len_b = len(codes_a), len(codes_b)
+    except TypeError as exc:
+        raise ValueError("integer_dot inputs must be sized sequences") from exc
+    if len_a != len_b:
         raise ValueError(f"length mismatch: {len(codes_a)} != {len(codes_b)}")
-    return sum(int(a) * int(b) for a, b in zip(codes_a, codes_b))
+    acc = 0
+    for index, (a, b) in enumerate(zip(codes_a, codes_b)):
+        if any(isinstance(v, bool) or not isinstance(v, int) for v in (a, b)):
+            raise ValueError(f"integer_dot code[{index}] inputs must be integers")
+        acc += a * b
+    return acc
 
 
 def scaled_dot(groups_a, groups_b) -> float:
     """Dequantized dot product of two identically-grouped quantizations: per group, the EXACT integer
     code dot times the product of the two power-of-two scales, summed over groups (real units)."""
-    if len(groups_a) != len(groups_b):
+    try:
+        len_a, len_b = len(groups_a), len(groups_b)
+    except TypeError as exc:
+        raise ValueError("scaled_dot inputs must be sized QGroup sequences") from exc
+    if len_a != len_b:
         raise ValueError(f"group count mismatch: {len(groups_a)} != {len(groups_b)}")
     acc = 0.0
-    for ga, gb in zip(groups_a, groups_b):
+    for index, (ga, gb) in enumerate(zip(groups_a, groups_b)):
+        if not isinstance(ga, QGroup) or not isinstance(gb, QGroup):
+            raise ValueError(f"scaled_dot group[{index}] inputs must be QGroups")
         acc += integer_dot(ga.codes, gb.codes) * math.ldexp(1.0, ga.scale_exp + gb.scale_exp)
     return acc
 
@@ -160,4 +199,8 @@ def accumulator_bits(lane_bits: int, count: int) -> int:
     """The exact accumulator width for a `count`-term dot product of `lane_bits` codes: a product needs
     2*lane_bits bits, and summing `count` of them needs ceil(log2(count)) carry bits more. This is the
     width the `_BitInt`-lane kernel must declare so the integer accumulation never overflows (= is exact)."""
-    return 2 * lane_bits + max(0, (max(1, count) - 1)).bit_length()
+    code_max(lane_bits)
+    if (isinstance(count, bool) or not isinstance(count, int) or
+            not 1 <= count <= sys.maxsize):
+        raise ValueError(f"count must be a positive integer; got {count!r}")
+    return 2 * lane_bits + (count - 1).bit_length()

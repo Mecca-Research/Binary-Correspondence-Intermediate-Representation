@@ -64,7 +64,9 @@ namespace bcir {
 namespace {
 
 // ceil(a / b) for positive b (the stripe count).
-static int64_t ceilDiv(int64_t a, int64_t b) { return (a + b - 1) / b; }
+static int64_t ceilDiv(int64_t a, int64_t b) {
+  return a / b + (a % b != 0);
+}
 
 // The per-element compute weight the oracle's cost_of uses (activation.py): relu == 1
 // (a single max); a transcendental == a modeled libm call (~8x); gelu is heavier still
@@ -123,8 +125,12 @@ struct LowerGemActivationPass
     const StringRef dtype = act.getDtype();
 
     int64_t count = 1;
-    for (int64_t d : act.getShape())
-      count *= d;
+    for (int64_t d : act.getShape()) {
+      if (!checkedMulNonnegative(count, d, count)) {
+        act.emitError("bcir-lower-gem-activation: shape element count exceeds signed 64-bit range");
+        return false;
+      }
+    }
     count = std::max<int64_t>(1, count);
     int64_t width = std::max<int64_t>(1, static_cast<int64_t>(act.getWidth()));
     int64_t axisLen = static_cast<int64_t>(act.getAxisLen());
@@ -175,6 +181,11 @@ struct LowerGemActivationPass
     const Location loc = act.getLoc();
 
     const int64_t nStripes = ceilDiv(count, width);
+    if (nStripes > kMaxMaterializedBlocksPerOp) {
+      act.emitError("bcir-lower-gem-activation: stripe expansion exceeds the ")
+          << kMaxMaterializedBlocksPerOp << "-block safety limit";
+      return false;
+    }
     // softmax's reduce re-streams the last axis; the elementwise four have no second stream.
     const int64_t strideB = (kind == "softmax") ? axisLen : 0;
     for (int64_t s = 0; s < nStripes; ++s) {

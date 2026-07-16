@@ -47,6 +47,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
+from .._artifact_json import strict_json_loads
 from .egraph import (
     DEFAULT_COSTS,
     DEFAULT_RULES,
@@ -119,11 +120,88 @@ class MemoryModule:
 
     @staticmethod
     def from_json(text: str) -> "MemoryModule":
-        d = json.loads(text)
-        return MemoryModule(
-            expr=_uncanon(d["expr"]), cost=d["cost"], fingerprint=d["fingerprint"],
-            generation=d["generation"], iterations=d["iterations"],
-            enodes=d["enodes"], saturated=d["saturated"])
+        d = strict_json_loads(text, "memory module")
+        fields = {"expr", "cost", "fingerprint", "generation", "iterations",
+                  "enodes", "saturated"}
+        if not isinstance(d, dict) or set(d) != fields:
+            raise ValueError(f"memory-module fields must be exactly {sorted(fields)}")
+
+        def nonnegative_i63(key: str) -> int:
+            value = d[key]
+            if (isinstance(value, bool) or not isinstance(value, int) or
+                    not 0 <= value <= (1 << 63) - 1):
+                raise ValueError(f"memory-module {key} must be a non-negative i63")
+            return value
+
+        cost = nonnegative_i63("cost")
+        stored_fingerprint = nonnegative_i63("fingerprint")
+        generation = nonnegative_i63("generation")
+        iterations = nonnegative_i63("iterations")
+        enodes = nonnegative_i63("enodes")
+        if not isinstance(d["saturated"], bool):
+            raise ValueError("memory-module saturated must be a boolean")
+        computed_cost = _validate_canonical_expr(d["expr"])
+        if computed_cost != cost:
+            raise ValueError(
+                f"memory-module cost {cost} does not match expression cost {computed_cost}")
+        expr = _uncanon(d["expr"])
+        computed_fingerprint = fingerprint(expr, cost)
+        if stored_fingerprint != computed_fingerprint:
+            raise ValueError(
+                f"memory-module fingerprint {stored_fingerprint} does not match content "
+                f"fingerprint {computed_fingerprint}")
+        return MemoryModule(expr=expr, cost=cost, fingerprint=stored_fingerprint,
+                            generation=generation, iterations=iterations, enodes=enodes,
+                            saturated=d["saturated"])
+
+
+def _validate_canonical_expr(root) -> int:
+    """Validate a persisted expression without recursively trusting its shape.
+
+    Returns its canonical default K_BCIR cost.  The limits bound both decoder
+    memory and the e-graph work a caller can trigger after loading the artifact.
+    """
+    stack = [(root, 1)]
+    nodes = 0
+    cost = 0
+    op_cost = {"const": 0, "var": 0, "add": 1, "sub": 1, "mul": 2,
+               _MODULE_OP: 0}
+    while stack:
+        node, depth = stack.pop()
+        nodes += 1
+        if nodes > 65536:
+            raise ValueError("memory-module expression exceeds 65536 nodes")
+        if depth > 256:
+            raise ValueError("memory-module expression exceeds depth 256")
+        if not isinstance(node, list) or len(node) != 3:
+            raise ValueError("memory-module expression nodes must be [op, value, children]")
+        op, value, children = node
+        if op not in op_cost:
+            raise ValueError(f"memory-module expression has unsupported op {op!r}")
+        if not isinstance(children, list):
+            raise ValueError("memory-module expression children must be an array")
+        if op == "const":
+            if (isinstance(value, bool) or not isinstance(value, int) or
+                    not -(1 << 63) <= value <= (1 << 63) - 1 or children):
+                raise ValueError("memory-module const must be a signed i64 leaf")
+        elif op == "var":
+            valid_string = (isinstance(value, str) and value and len(value) <= 4096 and
+                            not any(ord(ch) < 0x20 for ch in value))
+            valid_int = (not isinstance(value, bool) and isinstance(value, int) and
+                         -(1 << 63) <= value <= (1 << 63) - 1)
+            if not (valid_string or valid_int) or children:
+                raise ValueError("memory-module var must be a bounded scalar leaf")
+        elif op == _MODULE_OP:
+            if (depth != 1 or not isinstance(value, str) or not value or len(value) > 4096 or
+                    any(ord(ch) < 0x20 for ch in value)):
+                raise ValueError("memory-module module op must be a bounded root")
+        elif value is not None or len(children) != 2:
+            raise ValueError(f"memory-module {op} must have null value and two children")
+        cost += op_cost[op]
+        if cost > (1 << 63) - 1:
+            raise ValueError("memory-module expression cost overflows i63")
+        stack.extend((child, depth + 1) for child in reversed(children))
+    return cost
 
 
 def _uncanon(t) -> Expr:

@@ -48,7 +48,9 @@ the conventions in the research §2/§3.
 from __future__ import annotations
 
 import json
+import math
 import re
+import threading
 from dataclasses import dataclass, field
 
 from .signal_registry import (
@@ -58,11 +60,17 @@ from .signal_registry import (
     SignalRegistry,
     Unit,
 )
+from ._artifact_json import strict_json_loads
+from .kbcir.cost import DIMS
 
 # === shared helpers ==================================================================
 
 # A reading namespace prefix, so every BCIR series is greppable on a shared scrape target.
 _PREFIX = "bcir_"
+_MAX_REDFISH_JSON_BYTES = 4 * 1024 * 1024
+_MAX_REDFISH_VALUES = 1 << 16
+_MAX_REDFISH_NAME_BYTES = 1024
+_MAX_REDFISH_NUMBER_BYTES = 128
 
 # The Prometheus metric-name charset: [a-zA-Z_:][a-zA-Z0-9_:]*  (label names: no ':').
 _PROM_NAME_RE = re.compile(r"[^a-zA-Z0-9_:]")
@@ -290,17 +298,20 @@ def _witness_lines(witness, channel: str) -> list[str]:
 # provider map by name. This keeps the availability series fully labelled even for
 # absent sources, without re-reading the source.
 _DEF_CACHE: dict[str, MetricDefinition] = {}
+_DEF_CACHE_LOCK = threading.Lock()
 
 
 def _definition_only_labels(name: str) -> MetricDefinition | None:
     """Resolve a metric definition by name for an UNAVAILABLE signal (so its ``up 0`` series
     still carries cost_dim/provenance/unit labels). Looks the provider up in a default
     registry once (cached). Returns ``None`` only for a name no provider declares."""
-    if not _DEF_CACHE:
-        from .signal_registry import default_registry
-        for p in default_registry().providers():
-            _DEF_CACHE[p.definition.name] = p.definition
-    return _DEF_CACHE.get(name)
+    with _DEF_CACHE_LOCK:
+        if not _DEF_CACHE:
+            from .signal_registry import default_registry
+            built = {p.definition.name: p.definition
+                     for p in default_registry().providers()}
+            _DEF_CACHE.update(built)
+        return _DEF_CACHE.get(name)
 
 
 def scrape(registry_or_snapshot, **kwargs) -> str:
@@ -694,6 +705,8 @@ def parse_redfish_metric_report(report_json) -> list[Reading]:
     raw_values = report.get("MetricValues")
     if not isinstance(raw_values, list):
         return []
+    if len(raw_values) > _MAX_REDFISH_VALUES:
+        raise ValueError(f"Redfish report exceeds {_MAX_REDFISH_VALUES} metric values")
 
     out: list[Reading] = []
     for entry in raw_values:
@@ -704,36 +717,52 @@ def parse_redfish_metric_report(report_json) -> list[Reading]:
         if value is None:
             continue
         name = entry.get("MetricProperty") or entry.get("MetricId")
-        if not name:
+        if not isinstance(name, str) or not name:
             continue
-        oem = (entry.get("Oem") or {}).get("BCIR") or {}
+        if len(name.encode("utf-8")) > _MAX_REDFISH_NAME_BYTES:
+            continue
+        raw_oem = entry.get("Oem")
+        oem_root = raw_oem if isinstance(raw_oem, dict) else {}
+        raw_bcir = oem_root.get("BCIR")
+        oem = raw_bcir if isinstance(raw_bcir, dict) else {}
         provenance = oem.get("Provenance", "measured")
         cost_dim = oem.get("CostDim")
         unit = oem.get("Unit")
         # Recover units/cost_dim from the known T1 definition if the report omitted them;
         # else synthesize a tolerant definition so a foreign metric still becomes a Reading.
-        known = _definition_only_labels(str(name))
+        known = _definition_only_labels(name)
         if known is not None:
             definition = known
         else:
+            safe_unit = unit if isinstance(unit, str) and unit in Unit.ALL else Unit.NONE
+            safe_dim = cost_dim if isinstance(cost_dim, str) and cost_dim in DIMS else None
+            safe_provenance = (provenance if isinstance(provenance, str) and
+                               provenance in {"measured", "modeled", "simulated"}
+                               else "measured")
             definition = MetricDefinition(
-                name=str(name),
-                unit=unit if unit in Unit.ALL else Unit.NONE,
-                cost_dim=cost_dim if cost_dim and cost_dim != "none" else None,
-                provenance=provenance if provenance in {"measured", "modeled", "simulated"} else "measured",
+                name=name, unit=safe_unit, cost_dim=safe_dim, provenance=safe_provenance,
                 description="parsed from a Redfish MetricReport (foreign source).",
             )
-        prov = provenance if provenance in {"measured", "modeled", "simulated"} else "measured"
+        prov = (provenance if isinstance(provenance, str) and
+                provenance in {"measured", "modeled", "simulated"} else "measured")
         out.append(Reading(definition=definition, value=value, provenance=prov))
     return out
 
 
 def _coerce_json(report_json):
-    """Accept a dict, a JSON string, or JSON bytes; return the parsed object. A non-JSON
-    string raises ``json.JSONDecodeError`` (the one honest hard failure — it is not a
-    report at all)."""
-    if isinstance(report_json, (str, bytes, bytearray)):
-        return json.loads(report_json)
+    """Accept a dict or bounded strict JSON text/bytes and return the parsed object."""
+    if isinstance(report_json, str):
+        return strict_json_loads(report_json, "Redfish MetricReport",
+                                 max_bytes=_MAX_REDFISH_JSON_BYTES)
+    if isinstance(report_json, (bytes, bytearray)):
+        if len(report_json) > _MAX_REDFISH_JSON_BYTES:
+            raise ValueError("Redfish MetricReport exceeds the JSON byte limit")
+        try:
+            text = bytes(report_json).decode("utf-8")
+        except UnicodeError as exc:
+            raise ValueError("Redfish MetricReport is not UTF-8") from exc
+        return strict_json_loads(text, "Redfish MetricReport",
+                                 max_bytes=_MAX_REDFISH_JSON_BYTES)
     return report_json
 
 
@@ -745,16 +774,22 @@ def _parse_redfish_value(raw):
         return None
     if isinstance(raw, bool):
         return None
-    if isinstance(raw, (int, float)):
-        return raw
-    s = str(raw).strip()
+    if type(raw) is int:
+        return raw if -(1 << 63) <= raw < (1 << 63) else None
+    if type(raw) is float:
+        return raw if math.isfinite(raw) else None
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > _MAX_REDFISH_NUMBER_BYTES:
+        return None
+    s = raw.strip()
     if not s:
         return None
     try:
-        return int(s)
+        value = int(s)
+        return value if -(1 << 63) <= value < (1 << 63) else None
     except ValueError:
         pass
     try:
-        return float(s)
+        value = float(s)
+        return value if math.isfinite(value) else None
     except ValueError:
         return None

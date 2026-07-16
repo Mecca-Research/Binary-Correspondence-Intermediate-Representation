@@ -208,9 +208,10 @@ static inline void *bcir_host_arena_allocate(bcir_host_arena *arena, size_t size
   if (!size) size = 1u;
   if (!alignment) alignment = BCIR_HOST_ALIGNOF(max_align_t);
   /* Arena blocks are guaranteed only to max_align_t.  Reject over-aligned
-   * requests instead of returning a pointer with a stronger but false
-   * alignment promise. */
-  if (alignment > BCIR_HOST_ALIGNOF(max_align_t)) return NULL;
+   * requests and non-power-of-two values instead of returning a pointer with
+   * a stronger or ill-defined alignment promise. */
+  if ((alignment & (alignment - 1u)) != 0u ||
+      alignment > BCIR_HOST_ALIGNOF(max_align_t)) return NULL;
   block = arena->blocks;
   if (block && bcir_size_align_up(block->used, alignment, &offset) &&
       offset <= block->capacity && size <= block->capacity - offset) {

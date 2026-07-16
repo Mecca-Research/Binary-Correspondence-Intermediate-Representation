@@ -16,6 +16,13 @@
 > Earlier revisions described the retired C++ `ir/` skeleton (removed 2026-06-07) and
 > the pre-Phase-13 tree (audited 2026-06-12).
 
+The current security posture, post-PR #538 through this snapshot, is documented in the
+bounded [`2026-07-15 security red-team audit`](research/BCIR_SECURITY_RED_TEAM_AUDIT_2026-07-15.md)
+and its repository-grounded [`threat model`](research/BCIR_SECURITY_THREAT_MODEL.md).
+The audit distinguishes reachable same-process defects from currently exploitable
+privilege-escalation paths and defines the mandatory review boundary for future resident
+drivers and IPC.
+
 ## Snapshot
 
 - Two trees implement BCIR in lockstep ([`PARITY.md`](PARITY.md)):

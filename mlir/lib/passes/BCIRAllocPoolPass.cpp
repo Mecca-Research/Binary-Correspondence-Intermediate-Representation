@@ -57,6 +57,7 @@ struct AllocPoolPass : public PassWrapper<AllocPoolPass, OperationPass<>> {
     int64_t elemBytes = 4;
     if (auto cap = cm::firstCapability(root))
       elemBytes = cm::readCap(cap).elemBytes;
+    elemBytes = std::max<int64_t>(1, elemBytes);
     auto resByName = cm::resourcesByName(root);
 
     // Phase order positions (declaration order; allocator.live_intervals keys on this).
@@ -94,10 +95,10 @@ struct AllocPoolPass : public PassWrapper<AllocPoolPass, OperationPass<>> {
         continue;
       int64_t cnt = 1;
       for (int64_t d : r.getShape())
-        cnt *= (d > 0 ? d : 1);
+        cnt = saturatingMulNonnegative(cnt, d > 0 ? d : 1);
       rs.push_back(
           {kv.first, static_cast<int64_t>(r.getRid()), kv.second.first, kv.second.second,
-           cnt * elemBytes});
+           saturatingMulNonnegative(cnt, elemBytes)});
     }
     std::sort(rs.begin(), rs.end(), [](const Res &a, const Res &z) {
       return a.lo != z.lo ? a.lo < z.lo : a.rid < z.rid;
@@ -111,7 +112,7 @@ struct AllocPoolPass : public PassWrapper<AllocPoolPass, OperationPass<>> {
     llvm::DenseMap<StringRef, int64_t> poolOf;
     int64_t naive = 0;
     for (const Res &r : rs) {
-      naive += r.size;
+      naive = saturatingAddNonnegative(naive, r.size);
       int slot = -1;
       for (int i = 0; i < static_cast<int>(arenas.size()); ++i)
         if (arenas[i].last < r.lo) {
@@ -129,7 +130,7 @@ struct AllocPoolPass : public PassWrapper<AllocPoolPass, OperationPass<>> {
     }
     int64_t peak = 0;
     for (const Arena &a : arenas)
-      peak += a.size;
+      peak = saturatingAddNonnegative(peak, a.size);
 
     root->walk([&](ResourceOp r) {
       auto it = poolOf.find(r.getSymName());
@@ -138,7 +139,8 @@ struct AllocPoolPass : public PassWrapper<AllocPoolPass, OperationPass<>> {
     });
     root->setAttr("kbcir.pool_naive_bytes", b.getI64IntegerAttr(naive));
     root->setAttr("kbcir.pool_peak_bytes", b.getI64IntegerAttr(peak));
-    root->setAttr("kbcir.pool_saved", b.getI64IntegerAttr(naive - peak));
+    root->setAttr("kbcir.pool_saved",
+                  b.getI64IntegerAttr(peak <= naive ? naive - peak : 0));
   }
 };
 

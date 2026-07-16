@@ -32,10 +32,12 @@ Diagnostic, and never sit on the legality path. The deterministic freestanding C
 
 from __future__ import annotations
 
+import functools
 import os
 import shutil
 import subprocess
 import tempfile
+import threading
 
 from ..kbcir.sycl_saxpy import saxpy_reference
 from .c_kernel import emit_sycl_matmul_c, emit_sycl_reduce_c, emit_sycl_saxpy_c
@@ -83,6 +85,18 @@ class DispatchUnavailable(RuntimeError):
     caller self-skips on this -- it is NOT a faked success and NOT a legality verdict."""
 
 
+def _serialized_dispatch(method):
+    """Keep compile-cache, temporary-directory, execution, and close one lifecycle."""
+    @functools.wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapped
+
+
+_MAX_DISPATCH_ELEMENTS = 1 << 18
+
+
 # --- the dispatcher interface + the SYCL SAXPY implementation -----------------------------------------
 
 class ChannelDispatcher:
@@ -127,6 +141,7 @@ class SyclDispatcher(ChannelDispatcher):
     name = "sycl_spirv"
 
     def __init__(self, *, prefer_device: bool = True) -> None:
+        self._lock = threading.RLock()
         self._mode = "unavailable"
         self._sycl = sycl_cxx() if prefer_device else None
         self._cxx = host_cxx()
@@ -140,7 +155,8 @@ class SyclDispatcher(ChannelDispatcher):
         executed, ``"fallback"`` once a portable-C++ dispatch has executed, ``"unavailable"`` before any
         dispatch or when no C++ compiler exists. Honest: never reports ``"sycl-device"`` unless a real SYCL
         compiler compiled+linked a SYCL probe AND the device kernel built with ``-fsycl``."""
-        return self._mode
+        with self._lock:
+            return self._mode
 
     @property
     def available(self) -> bool:
@@ -208,14 +224,17 @@ class SyclDispatcher(ChannelDispatcher):
             f"  return 0;\n}}\n")
         return self._build(f"saxpy_{n}", kernel, main)
 
+    @_serialized_dispatch
     def run_saxpy(self, a: float, x: list[float], y: list[float]) -> list[float]:
         """Dispatch ``out[i] = a*x[i] + y[i]`` through the emitted SYCL kernel and return the executed
         outputs (a fresh list). Sets ``mode`` to the path that ran. Raises ``ValueError`` on an empty or
         length-mismatched input (a map needs >= 1 lane); raises ``DispatchUnavailable`` (catchably) if no
         C++ compiler exists -- the caller self-skips, never fakes success."""
         n = len(x)
-        if n < 1:
-            raise ValueError("sycl dispatch saxpy: need at least one element")
+        if not 1 <= n <= _MAX_DISPATCH_ELEMENTS:
+            raise ValueError(
+                f"sycl dispatch saxpy: element count must be in [1, {_MAX_DISPATCH_ELEMENTS}]"
+            )
         if len(y) != n:
             raise ValueError(f"sycl dispatch saxpy: x/y length mismatch ({n} vs {len(y)})")
         exe, mode = self._compile(n, "bcir_saxpy")
@@ -241,6 +260,7 @@ class SyclDispatcher(ChannelDispatcher):
             f"  return 0;\n}}\n")
         return self._build(f"reduce_{n}", kernel, main)
 
+    @_serialized_dispatch
     def run_reduce(self, x: list[float]) -> float:
         """Dispatch the reduce sum ``out = Sum_i x[i]`` through the emitted SYCL kernel and return the
         executed scalar. Sets ``mode`` to the path that ran. Raises ``ValueError`` on an empty input (a
@@ -249,8 +269,10 @@ class SyclDispatcher(ChannelDispatcher):
         adds, so it agrees with the sequential reference only within ``reduce_reorder_bound``; the portable
         fallback's sequential sum matches exactly."""
         n = len(x)
-        if n < 1:
-            raise ValueError("sycl dispatch reduce: need at least one element")
+        if not 1 <= n <= _MAX_DISPATCH_ELEMENTS:
+            raise ValueError(
+                f"sycl dispatch reduce: element count must be in [1, {_MAX_DISPATCH_ELEMENTS}]"
+            )
         exe, mode = self._compile_reduce(n, "bcir_reduce")
         stdin = "".join(f"{v:.8f}\n" for v in x)
         run = subprocess.run([exe], input=stdin, capture_output=True, text=True)
@@ -276,18 +298,24 @@ class SyclDispatcher(ChannelDispatcher):
             f"  return 0;\n}}\n")
         return self._build(f"matmul_{m}x{k}x{n}", kernel, main)
 
+    @_serialized_dispatch
     def run_matmul(self, a: list[float], b: list[float], m: int, k: int, n: int) -> list[float]:
         """Dispatch the matmul ``C = A . B`` (row-major A[m x k], B[k x n], C[m x n]) through the emitted
         SYCL kernel and return the executed C as a fresh row-major list. Sets ``mode`` to the path that ran.
         Raises ``ValueError`` on a bad dim (m/k/n < 1) or an operand whose length does not match its shape;
         raises ``DispatchUnavailable`` (catchably) if no C++ compiler exists -- the caller self-skips. Both
         paths reproduce ``matmul_reference`` to float round-off (same k-accumulation order)."""
-        if m < 1 or k < 1 or n < 1:
+        if any(type(dim) is not int for dim in (m, k, n)) or m < 1 or k < 1 or n < 1:
             raise ValueError(f"sycl dispatch matmul: dims must be >= 1; got m={m} k={k} n={n}")
-        if len(a) != m * k:
-            raise ValueError(f"sycl dispatch matmul: A length {len(a)} != m*k ({m * k})")
-        if len(b) != k * n:
-            raise ValueError(f"sycl dispatch matmul: B length {len(b)} != k*n ({k * n})")
+        na, nb, nc = m * k, k * n, m * n
+        if na + nb + nc > _MAX_DISPATCH_ELEMENTS:
+            raise ValueError(
+                f"sycl dispatch matmul: total geometry exceeds {_MAX_DISPATCH_ELEMENTS} elements"
+            )
+        if len(a) != na:
+            raise ValueError(f"sycl dispatch matmul: A length {len(a)} != m*k ({na})")
+        if len(b) != nb:
+            raise ValueError(f"sycl dispatch matmul: B length {len(b)} != k*n ({nb})")
         exe, mode = self._compile_matmul(m, k, n, "bcir_matmul")
         stdin = "".join(f"{v:.8f}\n" for v in [*a, *b])
         run = subprocess.run([exe], input=stdin, capture_output=True, text=True)
@@ -297,10 +325,12 @@ class SyclDispatcher(ChannelDispatcher):
         self._mode = mode
         return [float(v) for v in run.stdout.split()]
 
+    @_serialized_dispatch
     def close(self) -> None:
         if self._tmpdir is not None:
             self._tmpdir.cleanup()
             self._tmpdir = None
+        self._exe_cache.clear()
 
 
 # --- the execute() kernel builder: wire sycl-placed claims to the dispatcher --------------------------

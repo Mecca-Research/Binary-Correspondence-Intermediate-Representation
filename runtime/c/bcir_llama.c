@@ -45,14 +45,93 @@ static void workspace_free(workspace *w) {
   memset(w, 0, sizeof *w);
 }
 
+static int tensor_ready(const bcir_q8_model *m, uint16_t id, int16_t layer,
+                        uint8_t rank, uint32_t d0, uint32_t d1) {
+  const bcir_q8_tensor *t=bcir_q8_model_tensor(m,id,layer);
+  uint64_t count,groups,exponent_bytes;
+  if(!t||t->rank!=rank||t->dim0!=d0||t->dim1!=d1||!d0||!d1) return 0;
+  count=rank==1u?(uint64_t)d0:(uint64_t)d0*d1;
+  if(count>UINT32_MAX) return 0;
+  groups=(count+m->group_size-1u)/m->group_size;
+  exponent_bytes=groups*2u;
+  if(count!=t->element_count||groups!=t->group_count||
+     t->exponent_offset>m->storage_size||exponent_bytes>m->storage_size-t->exponent_offset||
+     t->code_offset>m->storage_size||count>m->storage_size-t->code_offset) return 0;
+  return t->exponents==m->storage+t->exponent_offset&&
+         t->codes==m->storage+t->code_offset;
+}
+
+static int model_ready(const bcir_q8_model *m) {
+  uint32_t layer,d,dk,kvd,expected;
+  if(!m||m->_owner_tag!=BCIR_Q8_MODEL_OWNER_TAG||
+     !bcir_host_allocator_valid(&m->_allocator)||!m->storage||!m->tensors||
+     !m->group_size||m->bits!=8u||!m->vocab_size||!m->d_model||!m->n_heads||!m->n_kv_heads||
+     !m->n_layers||!m->d_ff||m->n_layers>(uint32_t)INT16_MAX||
+     m->d_model%m->n_heads||m->n_heads%m->n_kv_heads||
+     (m->d_model/m->n_heads)%2u||!isfinite(m->rope_base)||m->rope_base<=0.0||
+     !isfinite(m->rms_norm_eps)||m->rms_norm_eps<=0.0||
+     (m->flags&~BCIR_Q8_FLAG_TIED_EMBEDDINGS)) return 0;
+  if ((m->bos_token_id != -1 &&
+       (m->bos_token_id < 0 || (uint32_t)m->bos_token_id >= m->vocab_size)) ||
+      (m->eos_token_id != -1 &&
+       (m->eos_token_id < 0 || (uint32_t)m->eos_token_id >= m->vocab_size)) ||
+      (m->pad_token_id != -1 &&
+       (m->pad_token_id < 0 || (uint32_t)m->pad_token_id >= m->vocab_size))) return 0;
+  d=m->d_model;dk=d/m->n_heads;kvd=m->n_kv_heads*dk;
+  expected=2u+9u*m->n_layers+
+           ((m->flags&BCIR_Q8_FLAG_TIED_EMBEDDINGS)?0u:1u);
+  if(m->tensor_count!=expected||
+     !tensor_ready(m,BCIR_Q8_TENSOR_EMBEDDING,-1,2,m->vocab_size,d)) return 0;
+  for(layer=0;layer<m->n_layers;layer++){
+    int16_t li=(int16_t)layer;
+    if(!tensor_ready(m,BCIR_Q8_TENSOR_G_ATTN,li,1,d,1)||
+       !tensor_ready(m,BCIR_Q8_TENSOR_W_Q,li,2,d,d)||
+       !tensor_ready(m,BCIR_Q8_TENSOR_W_K,li,2,d,kvd)||
+       !tensor_ready(m,BCIR_Q8_TENSOR_W_V,li,2,d,kvd)||
+       !tensor_ready(m,BCIR_Q8_TENSOR_W_O,li,2,d,d)||
+       !tensor_ready(m,BCIR_Q8_TENSOR_G_FF,li,1,d,1)||
+       !tensor_ready(m,BCIR_Q8_TENSOR_W_GATE,li,2,d,m->d_ff)||
+       !tensor_ready(m,BCIR_Q8_TENSOR_W_UP,li,2,d,m->d_ff)||
+       !tensor_ready(m,BCIR_Q8_TENSOR_W_DOWN,li,2,m->d_ff,d)) return 0;
+  }
+  if(!tensor_ready(m,BCIR_Q8_TENSOR_G_FINAL,-1,1,d,1)) return 0;
+  return (m->flags&BCIR_Q8_FLAG_TIED_EMBEDDINGS)||
+         tensor_ready(m,BCIR_Q8_TENSOR_LM_HEAD,-1,2,m->vocab_size,d);
+}
+
+/* The public accessor defends against foreign/stale tensor pointers.  The whole
+ * model has already passed model_ready() on this hot inference path, so avoid
+ * repeating those ownership/span checks for every weight element. */
+static double tensor_value_unchecked(const bcir_q8_model *m,
+                                     const bcir_q8_tensor *t,uint32_t index) {
+  const unsigned char *ep=t->exponents+2u*(index/m->group_size);
+  int exponent=(int)(int16_t)((uint16_t)ep[0]|((uint16_t)ep[1]<<8));
+  int code=(int)t->codes[index];
+  if(code>=128)code-=256;
+  return ldexp((double)code,exponent);
+}
+
 static int workspace_init(workspace *w, const bcir_q8_model *m, size_t capacity,
                           const bcir_host_allocator *allocator) {
-  size_t cache_rows, cache_values;
+  size_t cache_rows, cache_values, total_values = 0u, term, workspace_bytes;
   size_t d = m->d_model, kvd = (size_t)m->n_kv_heads * (m->d_model / m->n_heads);
   memset(w, 0, sizeof *w); w->capacity = capacity;
   w->allocator=bcir_host_allocator_or_default(allocator);
   if (mul_size(m->n_layers, capacity, &cache_rows) ||
       mul_size(cache_rows, kvd, &cache_values)) return -1;
+  /* Eight d-sized vectors; three kvd vectors; gate/up/ff; scores; logits;
+   * and two complete layer x position x kvd caches. Budget the whole operation
+   * before making any allocator call so refusal is failure-atomic. */
+  if (mul_size(8u, d, &term) || !bcir_size_add(total_values, term, &total_values) ||
+      mul_size(3u, kvd, &term) || !bcir_size_add(total_values, term, &total_values) ||
+      mul_size(3u, (size_t)m->d_ff, &term) ||
+          !bcir_size_add(total_values, term, &total_values) ||
+      !bcir_size_add(total_values, capacity, &total_values) ||
+      !bcir_size_add(total_values, (size_t)m->vocab_size, &total_values) ||
+      mul_size(2u, cache_values, &term) ||
+          !bcir_size_add(total_values, term, &total_values) ||
+      mul_size(total_values, sizeof(double), &workspace_bytes) ||
+      workspace_bytes > (size_t)BCIR_LLAMA_MAX_WORKSPACE_BYTES) return -1;
   w->x = new_doubles(w,d); w->h = new_doubles(w,d); w->h2 = new_doubles(w,d);
   w->q = new_doubles(w,d); w->q_rope = new_doubles(w,d);
   w->k = new_doubles(w,kvd); w->k_rope = new_doubles(w,kvd); w->v = new_doubles(w,kvd);
@@ -73,7 +152,7 @@ static int workspace_init(workspace *w, const bcir_q8_model *m, size_t capacity,
 static void dequant_vector(const bcir_q8_model *m, const bcir_q8_tensor *t,
                            double *out) {
   uint32_t i;
-  for (i = 0; i < t->element_count; ++i) out[i] = bcir_q8_tensor_value(m, t, i);
+  for (i = 0; i < t->element_count; ++i) out[i] = tensor_value_unchecked(m, t, i);
 }
 
 /* x[1 x in] @ weight[in x out], matching matmul_reference's i/j/k loop order. */
@@ -84,7 +163,7 @@ static void matvec(const bcir_q8_model *m, const double *x,
   for (j = 0; j < out; ++j) {
     double sum = 0.0;
     for (k = 0; k < in; ++k)
-      sum += x[k] * bcir_q8_tensor_value(m, weight, k * out + j);
+      sum += x[k] * tensor_value_unchecked(m, weight, k * out + j);
     result[j] = sum;
   }
 }
@@ -109,7 +188,7 @@ static int step_token(const bcir_q8_model *m, workspace *w, int32_t token, size_
   if (token < 0 || (uint32_t)token >= m->vocab_size || pos >= w->capacity) return -1;
   embedding = bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_EMBEDDING, -1);
   for (i = 0; i < d; ++i)
-    w->x[i] = bcir_q8_tensor_value(m, embedding, (uint32_t)token * d + i);
+    w->x[i] = tensor_value_unchecked(m, embedding, (uint32_t)token * d + i);
 
   for (layer = 0; layer < m->n_layers; ++layer) {
     int16_t li = (int16_t)layer;
@@ -172,7 +251,7 @@ static int logits_and_argmax(const bcir_q8_model *m, const double *row,
   for (token = 0; token < m->vocab_size; ++token) {
     double sum = 0.0;
     for (k = 0; k < m->d_model; ++k)
-      sum += row[k] * bcir_q8_tensor_value(m, head, token * m->d_model + k);
+      sum += row[k] * tensor_value_unchecked(m, head, token * m->d_model + k);
     logits[token] = sum;
     if (token && logits[token] > logits[best]) best = token;
   }
@@ -186,15 +265,17 @@ int bcir_llama_generate_greedy_with_allocator(
   workspace w;
   size_t capacity, pos, step;
   int next;
-  if (!model || !prompt_ids || !prompt_count ||
+  if (!model || !prompt_ids || !prompt_count || !model_ready(model) ||
       (max_new_tokens && !generated_ids)) return -1;
   if (model->vocab_size > INT32_MAX || model->d_model > INT32_MAX ||
       model->n_heads > INT32_MAX || model->n_kv_heads > INT32_MAX ||
       model->n_layers > INT16_MAX || model->d_ff > INT32_MAX) return -1;
+  for(pos=0;pos<prompt_count;pos++)
+    if(prompt_ids[pos]<0||(uint32_t)prompt_ids[pos]>=model->vocab_size) return -1;
   if (!max_new_tokens) return 0;
   if (prompt_count > SIZE_MAX - max_new_tokens) return -1;
   capacity = prompt_count + max_new_tokens;
-  if (model->context_length && capacity > (size_t)model->context_length + 1u) return -2;
+  if (model->context_length && capacity-1u > (size_t)model->context_length) return -2;
   if (capacity > (size_t)INT32_MAX || workspace_init(&w, model, capacity,allocator)) return -3;
   for (pos = 0; pos < prompt_count; ++pos)
     if (step_token(model, &w, prompt_ids[pos], pos, w.h)) {

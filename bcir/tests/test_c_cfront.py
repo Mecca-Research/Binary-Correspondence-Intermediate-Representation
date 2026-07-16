@@ -3181,6 +3181,41 @@ def test_diagnostic_error_recovery_report_dual_rail():
                 assert out == want, f"recovery report {flag} diverged for {fn}\n C: {out!r}\nPY: {want!r}"
 
 
+def test_c_diagnostic_renderer_rejects_malformed_shapes_and_clamps_hostile_spans():
+    """Public diagnostic APIs must fail atomically instead of dereferencing sparse records."""
+    if not _CC:
+        return
+    driver = r'''
+#include <limits.h>
+#include <string.h>
+#include "bcir_diag.h"
+int main(void){
+  bcir_diag d;char out[128];int line=0,col=0;memset(&d,0,sizeof d);memset(out,0xa5,sizeof out);
+  if(bcir_diag_render(&d,"x","u.c",out,sizeof out)!=0||out[0]!=0)return 1;
+  d.severity="error";d.message="bad";d.span.has_span=1;d.span.start=INT_MIN;d.span.end=INT_MAX;
+  size_t n=bcir_diag_render(&d,"x\n","u.c",out,sizeof out);if(!n||n>=sizeof out)return 2;
+  d.n_notes=1;d.notes=0;memset(out,0xa5,sizeof out);
+  if(bcir_diag_to_json(&d,1,"x","u.c",out,sizeof out)!=0||out[0]!=0)return 3;
+  if(bcir_diag_report_render(0,1,"x","u.c",out,sizeof out)!=0||out[0]!=0)return 4;
+  bcir_diag_line_col(0,0,&line,&col);if(line!=1||col!=1)return 5;
+  if(bcir_diag_render(&d,"x","u.c",0,128)!=0)return 6;
+  return 0;
+}
+'''
+    with tempfile.TemporaryDirectory() as d:
+        src = os.path.join(d, "diag_hostile.c")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write(driver)
+        exe = os.path.join(d, "diag_hostile")
+        build = subprocess.run(
+            [_CC, "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _C,
+             os.path.join(_C, "bcir_diag.c"), src, "-o", exe],
+            capture_output=True, text=True)
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        assert run.returncode == 0, (run.stdout, run.stderr)
+
+
 def _oracle_effects_report(src: str) -> str:
     """The oracle's per-function effect footprints + commute matrix in the bcir-cc --emit-effects
     text format (the C twin of pipeline.effects / commute)."""

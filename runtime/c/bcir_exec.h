@@ -56,7 +56,8 @@ typedef struct bcir_exec_result {
  * `scratch` must hold >= the pack's n_segments items; `phases` >= the distinct-phase
  * count. On BCIR_OK, scratch[0..out->executed) is the dispatch order and phases[0..
  * out->n_phases) is the per-phase telemetry. Returns BCIR_ERR_* on a malformed pack and
- * BCIR_ERR_NOSPACE if a buffer is too small. */
+ * BCIR_ERR_NOSPACE if a buffer is too small. When non-NULL, `out` is zeroed before
+ * every failure; an undersized phase buffer is rejected before any phase entry is written. */
 BCIR_NODISCARD bcir_status bcir_sp_execute(const uint8_t *BCIR_RESTRICT data, size_t len,
                                            bcir_exec_item *BCIR_RESTRICT scratch,
                                            size_t scratch_cap,

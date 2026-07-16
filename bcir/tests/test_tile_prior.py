@@ -99,6 +99,41 @@ def test_persisted_prior_round_trips_and_refuses_staleness():
         assert "newer" in str(e)
 
 
+def test_persisted_prior_rejects_ambiguous_or_malformed_weights():
+    import json
+    from bcir.kbcir.tile_prior import load_tile_prior, save_tile_prior
+
+    text = save_tile_prior(_frozen(), target_name=AVX.name, cal_gen=3)
+    bad_documents = [text.replace('"cal_gen": 3', '"cal_gen": 3, "cal_gen": 4')]
+    for mutate in (
+        lambda d: d.update(unknown=1),
+        lambda d: d.update(schema=True),
+        lambda d: d.update(cal_gen="3"),
+        lambda d: d.update(wq=d["wq"][:-1]),
+        lambda d: d.update(wq=[True, *d["wq"][1:]]),
+        lambda d: d.update(wq=[1 << 40, *d["wq"][1:]]),
+    ):
+        bad = json.loads(text)
+        mutate(bad)
+        bad_documents.append(json.dumps(bad))
+    for bad in bad_documents:
+        try:
+            load_tile_prior(bad, expect_target=AVX.name, expect_cal_gen=3)
+            raise AssertionError("malformed tile prior was not rejected")
+        except ValueError:
+            pass
+
+
+def test_guided_prior_rejects_degenerate_shapes():
+    prior = FrozenTilePrior(wq=(0,) * 8)
+    for shape in ((0, 1, 1), (1, -1, 1), (True, 1, 1)):
+        try:
+            guided_plan_matmul(*shape, AVX, prior)
+            raise AssertionError(f"malformed shape {shape!r} was not rejected")
+        except ValueError:
+            pass
+
+
 if __name__ == "__main__":
     import sys
 

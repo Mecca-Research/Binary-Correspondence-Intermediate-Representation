@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
+from .._artifact_json import strict_json_loads
 from ..model import Module
 from .cost import Theta
 from .realize import RealizationResult, optimize
@@ -127,13 +128,55 @@ class ProvenanceManifest:
 
     @staticmethod
     def from_json(text: str) -> "ProvenanceManifest":
-        d = json.loads(text)
-        return ProvenanceManifest(
-            digest=d["digest"], score=d["score"],
-            widths=tuple(tuple(w) for w in d["widths"]),
-            artifacts=tuple(tuple(a) for a in d["artifacts"]),
-            m_module=d["m_module"], m_target=d["m_target"],
-            m_theta=d["m_theta"], m_policy=d["m_policy"])
+        d = strict_json_loads(text, "provenance manifest")
+        fields = {"digest", "score", "widths", "artifacts", "m_module", "m_target",
+                  "m_theta", "m_policy"}
+        if not isinstance(d, dict) or set(d) != fields:
+            raise ValueError(f"provenance manifest fields must be exactly {sorted(fields)}")
+
+        def i63(key: str) -> int:
+            value = d[key]
+            if (isinstance(value, bool) or not isinstance(value, int) or
+                    not 0 <= value <= _I63):
+                raise ValueError(f"provenance manifest {key} must be a non-negative i63")
+            return value
+
+        digest = i63("digest")
+        score = i63("score")
+        components = tuple(i63(key) for key in ("m_module", "m_target", "m_theta", "m_policy"))
+        if not isinstance(d["widths"], list):
+            raise ValueError("provenance manifest widths must be an array")
+        widths = []
+        for index, pair in enumerate(d["widths"]):
+            if (not isinstance(pair, list) or len(pair) != 2 or
+                    any(isinstance(v, bool) or not isinstance(v, int) for v in pair)):
+                raise ValueError(f"provenance manifest width[{index}] must be [claim_id, width]")
+            cid, width = pair
+            if cid < 0 or cid > _I63 or width <= 0 or width > 0xFFFFFFFF:
+                raise ValueError(f"provenance manifest width[{index}] is out of range")
+            widths.append((cid, width))
+        if widths != sorted(widths) or len({cid for cid, _ in widths}) != len(widths):
+            raise ValueError("provenance manifest widths must be sorted with unique claim ids")
+        if not isinstance(d["artifacts"], list):
+            raise ValueError("provenance manifest artifacts must be an array")
+        artifacts = []
+        for index, pair in enumerate(d["artifacts"]):
+            if not isinstance(pair, list) or len(pair) != 2:
+                raise ValueError(f"provenance manifest artifact[{index}] must be [name, value]")
+            name, value = pair
+            if (not isinstance(name, str) or not name or len(name) > 4096 or
+                    any(ord(ch) < 0x20 for ch in name) or isinstance(value, bool) or
+                    not isinstance(value, int) or not -(1 << 63) <= value <= _I63):
+                raise ValueError(f"provenance manifest artifact[{index}] is invalid")
+            artifacts.append((name, value))
+        if artifacts != sorted(artifacts) or len({name for name, _ in artifacts}) != len(artifacts):
+            raise ValueError("provenance artifacts must be sorted with unique names")
+        if _digest(*components, tuple(artifacts)) != digest:
+            raise ValueError("provenance manifest digest does not match its components/artifacts")
+        return ProvenanceManifest(digest=digest, score=score, widths=tuple(widths),
+                                  artifacts=tuple(artifacts), m_module=components[0],
+                                  m_target=components[1], m_theta=components[2],
+                                  m_policy=components[3])
 
 
 def _digest(m_module, m_target, m_theta, m_policy, artifacts) -> int:

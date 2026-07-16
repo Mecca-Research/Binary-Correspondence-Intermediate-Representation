@@ -75,7 +75,9 @@ namespace {
 // identity elsewhere. Applied to the consumer activation's mem traffic when the intermediate
 // is deforested (the inline epilogue elides its write+read round-trip). Q8 fixed-point, so
 // the discount is integer floor(mem * 192 / 256) -- the same arithmetic Candidate.couple uses.
-static int64_t deforestMem(int64_t mem) { return (mem * 192) / 256; }
+static int64_t deforestMem(int64_t mem) {
+  return saturatingMulNonnegative(mem, 192) / 256;
+}
 
 // True iff `kind` is an ELEMENTWISE activation that can be an inline epilogue. softmax (a
 // last-axis row reduction) is NOT fusible (mirrors fusion.is_fusible_activation /
@@ -133,9 +135,19 @@ struct FuseMatmulActivationPass
     // UNFUSED: the two passes run separately (a barrier materializes the intermediate; the
     // activation pays full mem). FUSED: the activation's mem traffic is deforested x0.75, and
     // its roofline bottleneck is recomputed as max(compute, deforested mem) -- the max,+ step.
-    const int64_t unfusedScore = mmBn + actBn;
+    int64_t unfusedScore;
+    if (!checkedAddNonnegative(mmBn, actBn, unfusedScore)) {
+      act.emitError("bcir-fuse-matmul-activation: unfused score exceeds signed 64-bit range");
+      signalPassFailure();
+      return;
+    }
     const int64_t fusedActBn = std::max(actCompute, deforestMem(actMem));
-    const int64_t fusedScore = mmBn + fusedActBn;
+    int64_t fusedScore;
+    if (!checkedAddNonnegative(mmBn, fusedActBn, fusedScore)) {
+      act.emitError("bcir-fuse-matmul-activation: fused score exceeds signed 64-bit range");
+      signalPassFailure();
+      return;
+    }
     const int64_t gain = unfusedScore - fusedScore;
 
     // Adopt fusion iff it STRICTLY lowers the score (a no-op when it does not help -- e.g. a

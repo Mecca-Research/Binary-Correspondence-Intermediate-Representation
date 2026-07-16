@@ -20,32 +20,56 @@ static const bcir_recover_rule *g_rules;            /* the frozen policy (by ref
 static int g_nrules;
 static uint32_t g_threshold_milli;                  /* the frozen decide threshold */
 
+#if BCIR_OOB_COUNTER_ATOMIC
+static atomic_flag g_policy_lock = ATOMIC_FLAG_INIT;
+static void policy_lock(void) {
+    while (atomic_flag_test_and_set_explicit(&g_policy_lock, memory_order_acquire)) { }
+}
+static void policy_unlock(void) {
+    atomic_flag_clear_explicit(&g_policy_lock, memory_order_release);
+}
+#else
+static void policy_lock(void) { }
+static void policy_unlock(void) { }
+#endif
+
 void bcir_recover_set_policy(const bcir_recover_rule *rules, int n, uint32_t threshold_milli) {
-    g_rules = rules;
-    g_nrules = n;
+    policy_lock();
+    g_rules = (rules && n > 0) ? rules : NULL;
+    g_nrules = (rules && n > 0) ? n : 0;
     g_threshold_milli = threshold_milli > 1000u ? 1000u : threshold_milli;
+    policy_unlock();
 }
 
 /* The frozen graded proposition for a site: its rule's (action, confidence), or (abort, 0) if no rule. */
-static int policy_lookup(const char *site, uint32_t *confidence_milli) {
+static int policy_lookup(const char *site, uint32_t *confidence_milli,
+                         uint32_t *threshold_milli) {
+    int action = BCIR_RECOVER_ABORT;
+    uint32_t confidence = 0;
+    policy_lock();
     if (site) {
         for (int k = 0; k < g_nrules; k++)
             if (g_rules[k].site && !strcmp(g_rules[k].site, site)) {
-                *confidence_milli = g_rules[k].confidence_milli > 1000u ? 1000u : g_rules[k].confidence_milli;
-                return g_rules[k].action;
+                confidence = g_rules[k].confidence_milli > 1000u ? 1000u
+                                                                  : g_rules[k].confidence_milli;
+                action = g_rules[k].action == BCIR_RECOVER_CLAMP ? BCIR_RECOVER_CLAMP
+                                                                  : BCIR_RECOVER_ABORT;
+                break;
             }
     }
-    *confidence_milli = 0;                           /* unknown site: a graded proposition of no confidence */
-    return BCIR_RECOVER_ABORT;
+    *threshold_milli = g_threshold_milli;
+    policy_unlock();
+    *confidence_milli = confidence;                  /* unknown site: no confidence, fail closed */
+    return action;
 }
 
 size_t bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent, const char *site) {
     bcir_oob_record_event(rid, index, extent, site);          /* (1) trace */
 
-    uint32_t confidence_milli;                                /* (2) frozen graded proposition */
-    int proposed = policy_lookup(site, &confidence_milli);
+    uint32_t confidence_milli, threshold_milli;               /* (2) frozen graded proposition */
+    int proposed = policy_lookup(site, &confidence_milli, &threshold_milli);
 
-    int admitted = confidence_milli >= g_threshold_milli;     /* (3) decide: collapse at the frozen threshold */
+    int admitted = confidence_milli >= threshold_milli;       /* (3) decide: collapse at the frozen threshold */
     /* A clamp needs a valid in-bounds target: with extent==0 (e.g. a zero-length array or a recovered
      * extent that came out 0) there is NO in-bounds index, so clamping to 0 would itself be out of bounds.
      * Force ABORT in that case rather than returning the OOB index 0. */
@@ -53,13 +77,13 @@ size_t bcir_bounds_quarantine(uint64_t rid, uint64_t index, uint64_t extent, con
     size_t recovered = (action == BCIR_RECOVER_CLAMP) ? (size_t)(extent - 1) : 0;
 
     bcir_decide_record_event(rid, index, extent, site,        /* (4) RECORD the crossing -- never silent */
-                             confidence_milli, g_threshold_milli, admitted, action, recovered);
+                             confidence_milli, threshold_milli, admitted, action, recovered);
 
     if (action == BCIR_RECOVER_ABORT) {                       /* (5) apply */
         fprintf(stderr, "BCIR bounds-quarantine: %s index %llu of [0, %llu) -- recovery rejected "
                 "(confidence %u/1000 < threshold %u/1000); aborting\n",
                 site ? site : "?", (unsigned long long)index, (unsigned long long)extent,
-                confidence_milli, g_threshold_milli);
+                confidence_milli, threshold_milli);
         abort();
         return 0;                                             /* unreachable */
     }
@@ -80,15 +104,15 @@ __attribute__((noreturn))           /* noreturn on the DEFINITION too: a write o
 void bcir_bounds_quarantine_write(uint64_t rid, uint64_t index, uint64_t extent, const char *site) {
     bcir_oob_record_event(rid, index, extent, site);          /* (1) trace */
 
-    uint32_t confidence_milli;                                /* (2) frozen graded proposition */
-    int proposed = policy_lookup(site, &confidence_milli);
+    uint32_t confidence_milli, threshold_milli;               /* (2) frozen graded proposition */
+    int proposed = policy_lookup(site, &confidence_milli, &threshold_milli);
 
-    int admitted = confidence_milli >= g_threshold_milli;     /* (3) decide: collapse at the frozen threshold */
+    int admitted = confidence_milli >= threshold_milli;       /* (3) decide: collapse at the frozen threshold */
     /* (4) RECORD the crossing -- a clamp is NEVER the write's classical action, so record abort regardless;
      * but preserve `admitted`/`proposed` so the trail shows a clamp WAS proposed and REFUSED for the write. */
     int clamp_proposed = admitted && proposed == BCIR_RECOVER_CLAMP;
     bcir_decide_record_event(rid, index, extent, site,
-                             confidence_milli, g_threshold_milli, admitted, BCIR_RECOVER_ABORT, 0);
+                             confidence_milli, threshold_milli, admitted, BCIR_RECOVER_ABORT, 0);
 
     fprintf(stderr, "BCIR bounds-quarantine (WRITE): %s index %llu of [0, %llu) -- %s; an out-of-bounds "
             "store cannot be clamped (would corrupt a valid element); aborting\n",

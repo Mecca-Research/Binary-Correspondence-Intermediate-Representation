@@ -76,7 +76,7 @@ def test_versioned_and_windows_tool_names_are_gated_by_family():
         calls.append(cmd)
         return f"/tools/{cmd}"
 
-    saved_real, saved_which = R._REAL_WHICH, R.shutil.which
+    saved_real, saved_which, saved_path = R._REAL_WHICH, R.shutil.which, os.environ.get("PATH", "")
     try:
         R._REAL_WHICH = fake_which
         R._apply_tier("quick")
@@ -88,6 +88,7 @@ def test_versioned_and_windows_tool_names_are_gated_by_family():
     finally:
         R._REAL_WHICH = saved_real
         R.shutil.which = saved_which
+        os.environ["PATH"] = saved_path
         os.environ.pop("BCIR_TIER", None)
         os.environ.pop("BCIR_THOROUGH", None)
 
@@ -115,3 +116,55 @@ def test_explicit_clang_check_reports_no_compiler_honestly():
         assert result.equivalence == "skip:no-cc"
     finally:
         pipeline.shutil.which = saved
+
+
+def test_test_runner_bounds_every_child_process_by_default():
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "done"
+
+    saved = R._REAL_SUBPROCESS_RUN
+    try:
+        R._REAL_SUBPROCESS_RUN = fake_run
+        assert R._bounded_subprocess_run(["tool"]) == "done"
+        assert calls[-1][1]["timeout"] == R._DEFAULT_CHILD_TIMEOUT_SECONDS
+        R._bounded_subprocess_run(["tool"], timeout=7)
+        assert calls[-1][1]["timeout"] == 7
+        os.environ["BCIR_TEST_CHILD_TIMEOUT"] = "0"
+        try:
+            R._bounded_subprocess_run(["tool"])
+            raise AssertionError("zero timeout was accepted")
+        except ValueError:
+            pass
+    finally:
+        R._REAL_SUBPROCESS_RUN = saved
+        os.environ.pop("BCIR_TEST_CHILD_TIMEOUT", None)
+
+
+def test_test_runner_defaults_to_two_workers_and_requires_explicit_all_core_opt_in():
+    saved_cpu = R.os.cpu_count
+    os.environ.pop("BCIR_JOBS", None)
+    try:
+        R.os.cpu_count = lambda: 32
+        assert R._resolve_jobs([]) == 2
+        assert R._resolve_jobs(["-j", "1"]) == 1
+        assert R._resolve_jobs(["--jobs=4"]) == 4
+        assert R._resolve_jobs(["-j0"]) == 32
+        assert R._resolve_jobs(["--jobs", "auto"]) == 32
+        assert R._resolve_jobs(["--jobs", "not-a-number"]) == 2
+        os.environ["BCIR_JOBS"] = "8"
+        assert R._resolve_jobs([]) == 8
+    finally:
+        R.os.cpu_count = saved_cpu
+        os.environ.pop("BCIR_JOBS", None)
+
+
+def test_test_runner_help_is_side_effect_free():
+    saved_argv = R.sys.argv
+    try:
+        R.sys.argv = ["run_all", "--help"]
+        assert R.main() == 0
+    finally:
+        R.sys.argv = saved_argv

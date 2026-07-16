@@ -6,6 +6,7 @@ the budget *logic* is pinned deterministically on any host — exactly the prope
 gives the real rail.
 """
 
+import json
 import os
 import tempfile
 
@@ -92,6 +93,28 @@ def test_trend_summary_is_empty_for_unknown_budget():
     with tempfile.TemporaryDirectory() as d:
         assert trend_summary(os.path.join(d, "none.jsonl"), "missing") == {
             "name": "missing", "count": 0}
+
+
+def test_trend_reader_rejects_ambiguous_or_unbounded_records():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "trend.jsonl")
+        row = record_trend(
+            evaluate(_cmp(100, 250), Budget("gather"), baremetal=False), path)
+        valid = json.dumps(row, sort_keys=True)
+        for text in (
+            valid.replace('"name": "gather"',
+                          '"name": "gather", "name": "forged"'),
+            json.dumps({**row, "unknown": 1}),
+            json.dumps({**row, "ok": 1}),
+            json.dumps({**row, "name": "x" * ((1 << 20) + 1)}),
+        ):
+            with open(path, "w", encoding="utf-8") as stream:
+                stream.write(text + "\n")
+            try:
+                read_trend(path)
+                assert False, "expected malformed trend record to be rejected"
+            except ValueError:
+                pass
 
 
 def test_dense_match_band_is_baremetal_only():

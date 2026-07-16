@@ -216,6 +216,37 @@ def test_checkpoint_rms_norm_epsilon_drives_both_decode_paths():
             raise AssertionError(f"invalid RMSNorm epsilon accepted: {bad!r}")
         except ValueError as exc:
             assert "rms_norm_eps" in str(exc)
+        try:
+            dataclasses.replace(SPEC, rope_base=bad)
+            raise AssertionError(f"invalid RoPE base accepted: {bad!r}")
+        except ValueError as exc:
+            assert "rope_base" in str(exc)
+
+
+def test_decode_rejects_coercive_or_unbounded_inputs_before_execution():
+    """Token IDs and counts are security boundaries, not Python coercion sites."""
+    w = _toy_weights(SPEC)
+    cases = (([1.25], 1, None, "prompt token"),
+             ([True], 1, None, "prompt token"),
+             ([-1], 1, None, "prompt token"),
+             ([SPEC.vocab_size], 1, None, "prompt token"),
+             ([1], True, None, "max_new"),
+             ([1], 1, "2", "eos_id"),
+             ([1], 1 << 20, None, "context exceeds"))
+    for prompt, max_new, eos, needle in cases:
+        for fn in (reference_decode, decode_with_kv_cache):
+            try:
+                fn(prompt, SPEC, w, max_new=max_new, eos_id=eos)
+                raise AssertionError(f"accepted malformed decode request: {prompt!r}")
+            except ValueError as exc:
+                assert needle in str(exc), (needle, str(exc))
+    for field in ("vocab_size", "n_layers", "n_kv_heads"):
+        import dataclasses
+        try:
+            dataclasses.replace(SPEC, **{field: True})
+            raise AssertionError(f"accepted bool decoder field {field}")
+        except ValueError:
+            pass
 
 
 if __name__ == "__main__":

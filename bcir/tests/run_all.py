@@ -7,12 +7,13 @@ reports PASS/FAIL. Usable two ways:
     python -m bcir.tests.run_all --tier c-runtime      # + the C byte-identity tier
     python -m bcir.tests.run_all --tier silicon-degrade # + measured benchmarks (degrade-ok)
     python -m bcir.tests.run_all --tier thorough        # everything (full toolchain + campaigns)
-    python -m bcir.tests.run_all -j1                    # force the serial path (default: all cores)
+    python -m bcir.tests.run_all -j1                    # force the serial path (safe default: <=2)
     python -m pytest bcir/tests                         # if pytest is installed (same tests)
 
-The suite is dominated by independent compile-and-run tests, so by default it runs the
-``test_*`` callables across all cores (``fork`` where available, otherwise ``spawn``;
-``-j N`` / ``$BCIR_JOBS`` / ``-j1`` to override). Every worker applies the selected
+The suite is dominated by independent compile-and-run tests, but compiler-heavy tests
+can each create child processes and substantial scratch state. The safe default is at
+most two workers (``fork`` where available, otherwise ``spawn``); ``-j N`` /
+``$BCIR_JOBS`` overrides it and explicit ``-j0``/``auto`` opts into all cores. Every worker applies the selected
 tier before importing a test module, so capability gating is identical on every host.
 
 Named tiers are an *escalating capability ladder* — each adds what the previous
@@ -33,8 +34,11 @@ import multiprocessing
 import os
 import re
 import shutil
+import subprocess
 import sys
 import traceback
+
+from bcir.toolchain import resolve_llvm_tools
 
 # --- named test tiers (the capability ladder) ------------------------------------
 # Measured: the ~130 compile / native-execute tests (the C-ABI byte-identity + measured-
@@ -64,6 +68,31 @@ TIERS: dict[str, dict[str, object]] = {
 }
 _DEFAULT_TIER = "quick"
 _REAL_WHICH = shutil.which
+_REAL_SUBPROCESS_RUN = subprocess.run
+_BASE_PATH = os.environ.get("PATH", "")
+_DEFAULT_CHILD_TIMEOUT_SECONDS = 300.0
+
+
+def _child_timeout_seconds() -> float:
+    raw = os.environ.get("BCIR_TEST_CHILD_TIMEOUT", str(_DEFAULT_CHILD_TIMEOUT_SECONDS))
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError("BCIR_TEST_CHILD_TIMEOUT must be a number") from exc
+    if not 1.0 <= value <= 3600.0:
+        raise ValueError("BCIR_TEST_CHILD_TIMEOUT must be in [1, 3600] seconds")
+    return value
+
+
+def _bounded_subprocess_run(*args, **kwargs):
+    """Bound every compiler/generated-program child launched by the test inventory.
+
+    Individual tests may select a tighter timeout.  The default catches stuck generated
+    loops and wedged toolchains without requiring hundreds of call sites to remember a
+    resource-control keyword.
+    """
+    kwargs.setdefault("timeout", _child_timeout_seconds())
+    return _REAL_SUBPROCESS_RUN(*args, **kwargs)
 
 
 def resolve_tier(argv: list[str] | None = None) -> str:
@@ -95,7 +124,9 @@ def _apply_tier(tier: str) -> None:
     module-level `BCIR_THOROUGH` reads (campaign sizes) see the right value."""
     spec = TIERS[tier]
     os.environ["BCIR_TIER"] = tier
+    os.environ["PATH"] = _BASE_PATH                    # idempotent across repeated tier changes
     shutil.which = _REAL_WHICH                         # idempotent across repeated tier changes
+    subprocess.run = _bounded_subprocess_run           # every tier bounds child processes
     if spec["thorough"]:
         os.environ["BCIR_THOROUGH"] = "1"
     else:
@@ -103,6 +134,18 @@ def _apply_tier(tier: str) -> None:
     visible: frozenset[str] = spec["visible"]  # type: ignore[assignment]
     hidden = _ALL_TOOLCHAIN - visible
     if not hidden:
+        # Many historical differential tests ask ``which("clang")`` directly. Promote
+        # one supported coherent LLVM installation before those modules import, so an
+        # old distro alternative cannot shadow an installed versioned toolchain.
+        llvm = resolve_llvm_tools("clang", "llvm-as", "llc",
+                                  pipeline="thorough test tier", minimum_major=15)
+        if llvm.ok:
+            bins = {os.path.dirname(os.path.realpath(path)) for path in llvm.paths.values()}
+            if len(bins) == 1:
+                selected = next(iter(bins))
+                entries = [entry for entry in os.environ["PATH"].split(os.pathsep)
+                           if entry and os.path.abspath(entry) != os.path.abspath(selected)]
+                os.environ["PATH"] = os.pathsep.join([selected, *entries])
         return                                                  # thorough: nothing gated
     def _gated_which(cmd, *args, **kwargs):
         base = os.path.basename(str(cmd)).lower()
@@ -230,6 +273,7 @@ _MODULES = [
     "bcir.tests.test_model_quantized",
     "bcir.tests.test_model_ingest",
     "bcir.tests.test_model_weights_io",
+    "bcir.tests.test_model_assets",
     "bcir.tests.test_model_spm",
     "bcir.tests.test_model_serve",
     "bcir.tests.test_paged_kv",
@@ -290,6 +334,7 @@ _MODULES = [
     "bcir.tests.test_clang_compare",
     "bcir.tests.test_tiers",
     "bcir.tests.test_toolchain",
+    "bcir.tests.test_security_hardening",
     "bcir.tests.test_perf_budget",
     "bcir.tests.test_import_quarantine",
     "bcir.tests.test_registry_complete",
@@ -338,13 +383,16 @@ def _pool_context():
     return multiprocessing.get_context(method)
 
 
-def _resolve_jobs() -> int:
-    """Worker count: ``-j N`` / ``--jobs N`` argv > ``$BCIR_JOBS`` > all cores. The suite is dominated
-    by independent compile-and-run tests, so running across cores is a ~Ncores win at every tier; the
-    process pool is cheap. ``-j1`` (or ``BCIR_JOBS=1``) forces the historic serial path; ``-j0``/``auto`` ==
-    all cores. Out-of-range values clamp to ``[1, cpu]``."""
+def _resolve_jobs(argv: list[str] | None = None) -> int:
+    """Resolve a bounded worker count.
+
+    ``-j N`` / ``--jobs N`` argv takes precedence over ``$BCIR_JOBS``. No
+    setting, a malformed setting, or a missing option value uses the safe
+    ``min(cpu, 2)`` default. ``-j0``/``auto`` is the explicit all-core opt-in;
+    numeric values clamp to ``[1, cpu]``.
+    """
     val: str | None = None
-    argv = sys.argv[1:]
+    argv = list(sys.argv[1:] if argv is None else argv)
     for i, a in enumerate(argv):
         if a in ("-j", "--jobs") and i + 1 < len(argv):
             val = argv[i + 1]; break
@@ -355,15 +403,23 @@ def _resolve_jobs() -> int:
     if val is None:
         val = os.environ.get("BCIR_JOBS")
     cpu = os.cpu_count() or 1
-    if val is None or val in ("auto", "0"):
+    safe_default = min(cpu, 2)
+    if val is None:
+        return safe_default
+    if val in ("auto", "0"):
         return cpu
     try:
         return max(1, min(cpu, int(val)))
     except ValueError:
-        return cpu
+        return safe_default
 
 
 def main() -> int:
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print("usage: python -m bcir.tests.run_all [--tier TIER] [-j N]")
+        print("       python -m bcir.tests.run_all --list-tiers")
+        print("safe default: at most 2 workers; -j0 or --jobs=auto opts into all cores")
+        return 0
     if "--list-tiers" in sys.argv:
         print("tiers (escalating capability ladder):")
         for name in TIERS:

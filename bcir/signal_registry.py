@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import abc
 import math
+import threading
 from dataclasses import dataclass, field
 
 from . import silicon
@@ -523,6 +524,7 @@ class SignalRegistry:
     def __init__(self) -> None:
         self._providers: dict[str, SignalProvider] = {}
         self._providers_by_id: dict[int, SignalProvider] = {}
+        self._lock = threading.RLock()
 
     def register(self, provider: SignalProvider) -> SignalProvider:
         """Add a provider (the plugin seam). Rejects a duplicate name and an invalid
@@ -531,18 +533,21 @@ class SignalRegistry:
         errs = d.validate()
         if errs:
             raise ValueError(f"invalid provider definition {d.name!r}: {'; '.join(errs)}")
-        if d.name in self._providers:
-            raise ValueError(f"duplicate provider name {d.name!r}")
-        if d.signal_id != 0 and d.signal_id in self._providers_by_id:
-            other = self._providers_by_id[d.signal_id].definition.name
-            raise ValueError(f"duplicate signal_id {d.signal_id} for {d.name!r} and {other!r}")
-        self._providers[d.name] = provider
-        if d.signal_id != 0:
-            self._providers_by_id[d.signal_id] = provider
+        with self._lock:
+            if d.name in self._providers:
+                raise ValueError(f"duplicate provider name {d.name!r}")
+            if d.signal_id != 0 and d.signal_id in self._providers_by_id:
+                other = self._providers_by_id[d.signal_id].definition.name
+                raise ValueError(f"duplicate signal_id {d.signal_id} for {d.name!r} and {other!r}")
+            # Name and stable-ID indices become visible as one transaction.
+            self._providers[d.name] = provider
+            if d.signal_id != 0:
+                self._providers_by_id[d.signal_id] = provider
         return provider
 
     def get(self, name: str) -> SignalProvider | None:
-        return self._providers.get(name)
+        with self._lock:
+            return self._providers.get(name)
 
     def get_by_id(self, signal_id: int) -> SignalProvider | None:
         """Resolve a stable nonzero built-in/vendor signal ID. ID 0 is intentionally
@@ -550,18 +555,22 @@ class SignalRegistry:
         if (not isinstance(signal_id, int) or isinstance(signal_id, bool)
                 or not 0 < signal_id <= 0xFFFFFFFF):
             return None
-        return self._providers_by_id.get(signal_id)
+        with self._lock:
+            return self._providers_by_id.get(signal_id)
 
     def names(self) -> list[str]:
-        return sorted(self._providers)
+        with self._lock:
+            return sorted(self._providers)
 
     def providers(self) -> list[SignalProvider]:
-        return [self._providers[n] for n in self.names()]
+        with self._lock:
+            return [self._providers[n] for n in sorted(self._providers)]
 
     def providers_for_dim(self, dim: str) -> list[SignalProvider]:
         """Every registered provider whose definition maps to cost dimension ``dim``."""
-        return [self._providers[n] for n in self.names()
-                if self._providers[n].definition.cost_dim == dim]
+        with self._lock:
+            return [self._providers[n] for n in sorted(self._providers)
+                    if self._providers[n].definition.cost_dim == dim]
 
     def snapshot(self) -> dict[str, Reading | None]:
         """One entry per provider: the current :class:`Reading`, or ``None`` when the
@@ -570,9 +579,11 @@ class SignalRegistry:
         its definition must match, provenance and numeric representation must be valid,
         counters cannot be negative, and percent pressures must be exact integers in
         ``0..100``. Honest — never a fabricated or silently coerced value."""
+        with self._lock:
+            providers = tuple((name, self._providers[name])
+                              for name in sorted(self._providers))
         out: dict[str, Reading | None] = {}
-        for name in self.names():
-            provider = self._providers[name]
+        for name, provider in providers:
             reading = provider.read()
             if reading is not None:
                 self._validate_reading(provider, reading)
@@ -608,7 +619,7 @@ class SignalRegistry:
         sample. With no argument this method takes one snapshot itself; it deliberately
         does not race a separate ``available()`` call against ``read()``."""
         snap = self.snapshot() if snapshot is None else snapshot
-        return {n: snap.get(n) is not None for n in self.names()}
+        return {name: reading is not None for name, reading in snap.items()}
 
 
 # --- builders ------------------------------------------------------------------------

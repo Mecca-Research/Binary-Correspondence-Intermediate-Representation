@@ -537,13 +537,18 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
 
     // R7: bounds legality -- strict bounds discharge statically for affine
     // patterns; data-dependent patterns need a runtime verify contract.
-    auto resourceCount = [](ResourceOp r) -> int64_t {
+    auto resourceCount = [&](ResourceOp r) -> std::optional<int64_t> {
       ArrayRef<int64_t> shape = r.getShape();
       if (shape.empty())
         return 0; // unknown extent: not statically checkable
       int64_t n = 1;
-      for (int64_t d : shape)
-        n *= d;
+      for (int64_t d : shape) {
+        if (!checkedMulNonnegative(n, d, n)) {
+          r.emitError("R7: resource shape element count exceeds signed 64-bit range");
+          ok = false;
+          return std::nullopt;
+        }
+      }
       return n;
     };
     root->walk([&](ClaimOp c) {
@@ -582,9 +587,21 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       int64_t count = static_cast<int64_t>(c.getCount());
       int64_t offset = static_cast<int64_t>(c.getOffset());
       int64_t k = std::max<int64_t>(1, c.getStrideK());
-      int64_t readExtent = count > 0 ? offset + (count - 1) * k + 1 : 0;
+      int64_t readExtent = 0;
+      int64_t writeExtent = 0;
       bool isReduction = c.getOp().starts_with("reduce.");
-      int64_t writeExtent = offset + (isReduction ? 1 : count);
+      int64_t lastOffset;
+      if (offset < 0 || count < 0 ||
+          (count > 0 &&
+           (!checkedMulNonnegative(count - 1, k, lastOffset) ||
+            !checkedAddNonnegative(offset, lastOffset, readExtent) ||
+            !checkedAddNonnegative(readExtent, 1, readExtent))) ||
+          !checkedAddNonnegative(offset, isReduction ? 1 : count,
+                                 writeExtent)) {
+        c.emitError("R7: affine access extent exceeds signed 64-bit range");
+        ok = false;
+        return;
+      }
       auto checkExtent = [&](ArrayAttr refs, int64_t extent, StringRef kind) {
         for (Attribute a : refs) {
           auto ref = dyn_cast<FlatSymbolRefAttr>(a);
@@ -593,11 +610,11 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           auto it = resourceByName.find(ref.getValue());
           if (it == resourceByName.end())
             continue;
-          int64_t n = resourceCount(it->second);
-          if (n > 0 && extent > n) {
+          std::optional<int64_t> n = resourceCount(it->second);
+          if (n && *n > 0 && extent > *n) {
             c.emitError("R7: claim ")
                 << c.getSymName() << " " << kind << " of @" << ref.getValue()
-                << " overruns the resource (extent " << extent << " > " << n
+                << " overruns the resource (extent " << extent << " > " << *n
                 << ")";
             ok = false;
           }
@@ -613,8 +630,33 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     llvm::DenseMap<StringRef, KBCIRPathOp> pathByName;
     llvm::DenseMap<StringRef, KBCIRPlanOp> planByName;
     llvm::DenseMap<StringRef, KBCIRBudgetOp> budgetByName;
-    root->walk([&](KBCIRPathOp p) { pathByName[p.getSymName()] = p; });
+    root->walk([&](KBCIRPathOp p) {
+      pathByName[p.getSymName()] = p;
+      int64_t values[12];
+      costToArray(p.getCost(), values);
+      for (int64_t value : values) {
+        if (value < 0) {
+          p.emitError("R8: path cost dimensions must be non-negative");
+          ok = false;
+          break;
+        }
+      }
+    });
     root->walk([&](KBCIRPlanOp p) { planByName[p.getSymName()] = p; });
+    root->walk([&](KBCIRPolicyOp p) {
+      auto validateWeights = [&](ArrayRef<int64_t> weights, StringRef which) {
+        if (weights.size() != 12 ||
+            std::any_of(weights.begin(), weights.end(),
+                        [](int64_t value) { return value < 0; })) {
+          p.emitError("R8: ") << which
+              << " must contain exactly 12 non-negative weights";
+          ok = false;
+        }
+      };
+      validateWeights(p.getWeights(), "policy weights");
+      if (auto base = p.getBaseWeights())
+        validateWeights(*base, "policy base_weights");
+    });
     static const llvm::DenseSet<StringRef> kCostDims = {
         "compute", "memory", "fabric", "sync", "compile", "thermal",
         "power", "reliability", "security", "accuracy", "contention",
@@ -625,6 +667,13 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         b.emitError("R8: budget ")
             << b.getSymName() << " dims/caps arity mismatch";
         ok = false;
+      }
+      for (int64_t cap : b.getCaps()) {
+        if (cap < 0) {
+          b.emitError("R8: budget caps must be non-negative");
+          ok = false;
+          break;
+        }
       }
       for (Attribute a : b.getDims()) {
         auto name = dyn_cast<StringAttr>(a);
@@ -709,7 +758,10 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       int64_t makespan = static_cast<int64_t>(sp.getMakespan());
       int64_t serial = static_cast<int64_t>(sp.getSerial());
       int64_t gain = static_cast<int64_t>(sp.getOverlapGain());
-      if (makespan < 0 || makespan + gain != serial) {
+      int64_t reconstructed;
+      if (makespan < 0 || gain < 0 ||
+          !checkedAddNonnegative(makespan, gain, reconstructed) ||
+          reconstructed != serial) {
         sp.emitError("R9: inconsistent scheduled price (makespan ")
             << makespan << " + overlap_gain " << gain << " != serial " << serial
             << ")";
@@ -1262,8 +1314,13 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (shape.empty())
         return; // dynamic extent: not statically checkable
       int64_t bytes = 4;
-      for (int64_t d : shape)
-        bytes *= (d > 0 ? d : 1);
+      for (int64_t d : shape) {
+        if (!checkedMulNonnegative(bytes, d > 0 ? d : 1, bytes)) {
+          r.emitError("R16: resource byte extent exceeds signed 64-bit range");
+          ok = false;
+          return;
+        }
+      }
       int64_t cap = (*pl == MemTier::L1) ? (64 * 1024)
                   : (*pl == MemTier::L2) ? (4 * 1024 * 1024) : 0;
       if (cap && bytes > cap) {
@@ -1461,7 +1518,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // extended to the call ABI. Mirrors the oracle's verify_abi_contract; vacuous when no
     // contract op is present (the whole existing corpus).
     {
-      struct DM { const char *name; int ptr; int lng; };
+      struct DM { const char *name; uint32_t ptr; uint32_t lng; };
       static const DM kMatrix[] = {{"x86_64-linux", 8, 8},   {"aarch64-linux", 8, 8},
                                    {"riscv64-linux", 8, 8},  {"x86_64-windows", 8, 4},
                                    {"i386-linux", 4, 4}};
@@ -1502,14 +1559,25 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (!prev)
         return;
       int64_t extent = 1;
-      for (int64_t d : act.getShape())
-        extent *= d;
+      for (int64_t d : act.getShape()) {
+        if (!checkedMulNonnegative(extent, d, extent)) {
+          act.emitError("R22: activation shape element count exceeds signed 64-bit range");
+          ok = false;
+          return;
+        }
+      }
       if (auto mm = dyn_cast<GEMMatmulOp>(prev)) {
-        if (extent != mm.getM() * mm.getN()) {
+        int64_t matmulExtent;
+        if (!checkedMulNonnegative(mm.getM(), mm.getN(), matmulExtent)) {
+          mm.emitError("R22: matmul output element count exceeds signed 64-bit range");
+          ok = false;
+          return;
+        }
+        if (extent != matmulExtent) {
           act.emitError("R22: gem.activation ")
               << act.getSymName() << " consumes the adjacent gem.matmul @" << mm.getSymName()
               << " but declares a shape extent of " << extent
-              << " elements != the matmul's m*n = " << mm.getM() * mm.getN();
+              << " elements != the matmul's m*n = " << matmulExtent;
           ok = false;
         }
       } else if (auto cv = dyn_cast<GEMConvOp>(prev)) {
@@ -1543,12 +1611,19 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (!prev)
         return;
       if (auto emb = dyn_cast<GEMEmbeddingOp>(prev)) {
-        if (static_cast<int64_t>(rn.getRows()) * rn.getDim() !=
-            static_cast<int64_t>(emb.getNIds()) * emb.getDim()) {
+        int64_t normExtent, embeddingExtent;
+        if (!checkedMulNonnegative(rn.getRows(), rn.getDim(), normExtent) ||
+            !checkedMulNonnegative(emb.getNIds(), emb.getDim(),
+                                   embeddingExtent)) {
+          rn.emitError("R22: decoder seam extent exceeds signed 64-bit range");
+          ok = false;
+          return;
+        }
+        if (normExtent != embeddingExtent) {
           rn.emitError("R22: gem.rmsnorm ")
               << rn.getSymName() << " consumes the adjacent gem.embedding @" << emb.getSymName()
-              << " but declares an extent of " << rn.getRows() * rn.getDim()
-              << " elements != the gather's n_ids*dim = " << emb.getNIds() * emb.getDim();
+              << " but declares an extent of " << normExtent
+              << " elements != the gather's n_ids*dim = " << embeddingExtent;
           ok = false;
         }
         if (emb.getDtype() != rn.getDtype()) {

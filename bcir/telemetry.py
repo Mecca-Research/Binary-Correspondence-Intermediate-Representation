@@ -26,7 +26,10 @@ provenance-of-source gate is for).
 from __future__ import annotations
 
 import json
+import os
+import stat
 import struct
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -37,6 +40,7 @@ NORM_MAX = 100
 _NORM_FIELDS = ("misses", "thermal", "voltage", "utilization")   # the 0..100 pressures
 _COUNTER_FIELDS = ("cycles", "bytes")                            # non-negative counters
 _I64_MAX = (1 << 63) - 1
+_MAX_TEXT_FIELD = 4096
 
 
 class TelemetryIntegrityError(ValueError):
@@ -61,6 +65,7 @@ class SharedRingError(ValueError):
 RING_MAGIC = 0x42434952            # "BCIR" (0x42 'B' 0x43 'C' 0x49 'I' 0x52 'R')
 RING_VERSION = 1
 RING_STAMP = (RING_MAGIC << 16) | RING_VERSION   # the value written into header slot [3]
+_MAX_RING_CAPACITY = 1 << 20                     # 56 MiB of fixed-width records
 
 
 def _is_i64(v) -> bool:
@@ -95,6 +100,11 @@ class DataDNA:
         negative value, or pressure ``> 100`` is bogus and is reported so the
         ingest path can REJECT-and-count it before it reaches Theta or the policy."""
         bad: list[str] = []
+        for f in ("segment_id", "provenance"):
+            v = getattr(self, f)
+            if (not isinstance(v, str) or len(v) > _MAX_TEXT_FIELD or
+                    any(ord(ch) < 0x20 for ch in v)):
+                bad.append(f"{f} not a bounded control-free string")
         if not _is_i64(self.claim_id):
             bad.append("claim_id not a signed-64-bit int")
         elif self.claim_id < 0:
@@ -280,35 +290,55 @@ class ValidatingSink(TelemetrySink):
     inner: TelemetrySink = field(default_factory=lambda: NullSink())
     accepted: int = 0
     rejected: int = 0
+    _lock: threading.RLock = field(default_factory=threading.RLock, init=False,
+                                   repr=False, compare=False)
 
     def emit(self, event: DataDNA) -> None:
-        if isinstance(event, DataDNA) and event.is_valid():
-            self.accepted += 1
-            self.inner.emit(event)
-        else:
-            self.rejected += 1            # dropped at the boundary; never reaches Theta
+        # Keep validation, witness accounting, and downstream publication one
+        # transition. Concurrent transport callbacks cannot lose a count or reorder
+        # acceptance relative to the wrapped sink.
+        with self._lock:
+            if isinstance(event, DataDNA) and event.is_valid():
+                self.accepted += 1
+                self.inner.emit(event)
+            else:
+                self.rejected += 1        # dropped at the boundary; never reaches Theta
 
     def flush(self) -> None:
-        self.inner.flush()
+        with self._lock:
+            self.inner.flush()
 
     @property
     def witness(self) -> "TelemetryIntegrity":
-        return TelemetryIntegrity(accepted=self.accepted, rejected=self.rejected)
+        with self._lock:
+            return TelemetryIntegrity(accepted=self.accepted, rejected=self.rejected)
 
     @property
     def blind(self) -> bool:
-        return self.accepted == 0
+        with self._lock:
+            return self.accepted == 0
 
 
 class FileSink(TelemetrySink):
     """Append-only JSONL sink (one event per line)."""
 
     def __init__(self, path: str):
-        self.path = path
+        self.path = os.fspath(path)
+        self._identity: tuple[int, int] | None = None
+        self._lock = threading.Lock()
 
     def emit(self, event: DataDNA) -> None:
-        with open(self.path, "a") as f:
-            f.write(json.dumps(event.to_dict()) + "\n")
+        event.validate()
+        with self._lock:
+            f, identity = _open_regular_text(self.path, exclusive=False)
+            with f:
+                if self._identity is not None and identity != self._identity:
+                    raise TelemetryIntegrityError(
+                        "telemetry sink path was replaced after publication began"
+                    )
+                f.write(json.dumps(event.to_dict()) + "\n")
+            if self._identity is None:
+                self._identity = identity
 
 
 @dataclass
@@ -321,19 +351,26 @@ class Broker(TelemetrySink):
     deterministic delivery order."""
 
     subscribers: list = field(default_factory=list)
+    _lock: threading.RLock = field(default_factory=threading.RLock, init=False,
+                                   repr=False, compare=False)
 
     def subscribe(self, sink: TelemetrySink) -> TelemetrySink:
         """Register a sink to receive every subsequent event; returns it."""
-        self.subscribers.append(sink)
+        with self._lock:
+            self.subscribers.append(sink)
         return sink
 
     def emit(self, event: DataDNA) -> None:
-        for sink in self.subscribers:
-            sink.emit(event)
+        # Serialize fan-out so two publishers cannot interleave sink order or
+        # mutate a bounded ring between its slot write and head publication.
+        with self._lock:
+            for sink in self.subscribers:
+                sink.emit(event)
 
     def flush(self) -> None:
-        for sink in self.subscribers:
-            sink.flush()
+        with self._lock:
+            for sink in self.subscribers:
+                sink.flush()
 
 
 @dataclass
@@ -344,14 +381,17 @@ class RingStats:
 
 
 class TelemetryRing(TelemetrySink):
-    """A zero-copy telemetry ring buffer between the kernel (writer) and the GNN /
-    calibrator (reader).
+    """An in-process zero-copy telemetry ring model between a producer and the GNN /
+    calibrator reader.
 
     The buffer is a single **preallocated** ``bytearray`` -- the model of a fixed
     shared-memory region. The kernel packs the atomic numeric stats (claim_id,
     cycles, bytes, misses, thermal, voltage, utilization) directly into the buffer
     with ``struct.pack_into`` (no per-event allocation, no JSON, no syscall); the
     reader unpacks straight out of the *same* buffer with ``struct.unpack_from``.
+    A lock makes each write/read/overwrite transition indivisible across Python
+    threads.  This is not the future cross-process live ring: that ABI still needs
+    acquire/release publication, per-slot generations, and peer-death handling.
     No serialization, no transport, non-blocking: an empty read returns ``None`` and
     a full ring overwrites its oldest unread record (counted as ``dropped``) rather
     than blocking. Fixed-width records mean head/tail are simple monotonic counters.
@@ -364,27 +404,30 @@ class TelemetryRing(TelemetrySink):
     _FMT = "<7q"
 
     def __init__(self, capacity: int = 1024):
-        if capacity < 1:
-            raise ValueError("ring capacity must be >= 1")
+        if type(capacity) is not int or not 1 <= capacity <= _MAX_RING_CAPACITY:
+            raise ValueError(f"ring capacity must be an integer in [1, {_MAX_RING_CAPACITY}]")
         self.capacity = capacity
         self.record_size = struct.calcsize(self._FMT)
         self.buf = bytearray(capacity * self.record_size)   # the fixed shared region
         self._head = 0          # total records written (monotonic)
         self._tail = 0          # total records read (monotonic)
         self.stats = RingStats()
+        self._lock = threading.Lock()
 
     def write(self, event: DataDNA) -> None:
         """Pack one record into the shared buffer at the head slot (no allocation).
         If the ring is full, the oldest unread record is overwritten (dropped)."""
-        slot = self._head % self.capacity
-        struct.pack_into(self._FMT, self.buf, slot * self.record_size,
-                         event.claim_id, event.cycles, event.bytes, event.misses,
-                         event.thermal, event.voltage, event.utilization)
-        self._head += 1
-        self.stats.written += 1
-        if self._head - self._tail > self.capacity:         # overwrote an unread slot
-            self._tail = self._head - self.capacity
-            self.stats.dropped += 1
+        event.validate()
+        with self._lock:
+            slot = self._head % self.capacity
+            struct.pack_into(self._FMT, self.buf, slot * self.record_size,
+                             event.claim_id, event.cycles, event.bytes, event.misses,
+                             event.thermal, event.voltage, event.utilization)
+            self._head += 1
+            self.stats.written += 1
+            if self._head - self._tail > self.capacity:     # overwrote an unread slot
+                self._tail = self._head - self.capacity
+                self.stats.dropped += 1
 
     def emit(self, event: DataDNA) -> None:                 # TelemetrySink interface
         self.write(event)
@@ -392,15 +435,18 @@ class TelemetryRing(TelemetrySink):
     def read_one(self) -> DataDNA | None:
         """Unpack the oldest unread record straight from the buffer, or None if the
         ring is empty (non-blocking)."""
-        if self._tail >= self._head:
-            return None
-        slot = self._tail % self.capacity
-        cid, cyc, byt, mis, th, vo, ut = struct.unpack_from(
-            self._FMT, self.buf, slot * self.record_size)
-        self._tail += 1
-        self.stats.read += 1
-        return DataDNA(segment_id="", claim_id=cid, cycles=cyc, bytes=byt, misses=mis,
-                       thermal=th, voltage=vo, utilization=ut)
+        with self._lock:
+            if self._tail >= self._head:
+                return None
+            slot = self._tail % self.capacity
+            cid, cyc, byt, mis, th, vo, ut = struct.unpack_from(
+                self._FMT, self.buf, slot * self.record_size)
+            event = DataDNA(segment_id="", claim_id=cid, cycles=cyc, bytes=byt,
+                            misses=mis, thermal=th, voltage=vo, utilization=ut)
+            event.validate()
+            self._tail += 1
+            self.stats.read += 1
+            return event
 
     def drain(self) -> list[DataDNA]:
         out: list[DataDNA] = []
@@ -410,7 +456,8 @@ class TelemetryRing(TelemetrySink):
 
     @property
     def pending(self) -> int:
-        return self._head - self._tail
+        with self._lock:
+            return self._head - self._tail
 
     @property
     def lost(self) -> bool:
@@ -418,14 +465,16 @@ class TelemetryRing(TelemetrySink):
         telemetry-suppression vector (records vanish before the calibrator reads them);
         the caller can assert ``not ring.lost`` to make the loss a visible signal rather
         than a number buried in `stats.dropped`."""
-        return self.stats.dropped > 0
+        with self._lock:
+            return self.stats.dropped > 0
 
     def witness(self) -> "TelemetryIntegrity":
         """Surface the ring's read/drop accounting as a `TelemetryIntegrity` witness so
         an eviction (`dropped > 0`) is observable on the same channel as the calibrate
         path's injection/suppression signals."""
-        return TelemetryIntegrity(accepted=self.stats.read, rejected=0,
-                                  dropped=self.stats.dropped)
+        with self._lock:
+            return TelemetryIntegrity(accepted=self.stats.read, rejected=0,
+                                      dropped=self.stats.dropped)
 
 
 _RING_HEADER_BYTES = 4 * 8              # 4 x u64 (head, capacity, record_size, magic/ver)
@@ -470,6 +519,8 @@ def parse_shared_ring(buf, *, strict: bool = False) -> list[DataDNA]:
         return _reject(f"bad ring magic/version 0x{magic:x} (expected 0x{RING_STAMP:x})")
     if capacity == 0 or record_size == 0:
         return []                            # an empty/uninitialized ring (legitimate)
+    if capacity > _MAX_RING_CAPACITY:
+        return _reject(f"ring capacity {capacity} exceeds {_MAX_RING_CAPACITY}")
 
     real_stride = struct.calcsize(TelemetryRing._FMT)
     if record_size != real_stride:
@@ -490,8 +541,11 @@ def parse_shared_ring(buf, *, strict: bool = False) -> list[DataDNA]:
         if off + real_stride > blen:         # defensive: never unpack past the buffer
             return _reject(f"record at offset {off} would overrun buffer {blen}")
         cid, cyc, byt, mis, th, vo, ut = struct.unpack_from(TelemetryRing._FMT, buf, off)
-        out.append(DataDNA(segment_id="", claim_id=cid, cycles=cyc, bytes=byt,
-                           misses=mis, thermal=th, voltage=vo, utilization=ut))
+        event = DataDNA(segment_id="", claim_id=cid, cycles=cyc, bytes=byt,
+                        misses=mis, thermal=th, voltage=vo, utilization=ut)
+        if event.violations():
+            return _reject(f"record at slot {slot} violates the telemetry schema")
+        out.append(event)
     return out
 
 
@@ -533,6 +587,48 @@ TELEMETRY_LOG_KIND = "bcir.telemetry_log"
 TELEMETRY_LOG_SCHEMA = 1
 _SCHEMA_FIELDS = {1: ("segment_id", "claim_id", "cycles", "bytes", "misses",
                       "thermal", "voltage", "utilization", "provenance")}
+_MAX_DURABLE_LOG_BYTES = 64 << 20
+_MAX_DURABLE_LINE_BYTES = 1 << 20
+_MAX_DURABLE_RECORDS = 1 << 20
+
+
+def _open_regular_text(path: str, *, exclusive: bool):
+    """Open a telemetry output without following or racing a replacement path.
+
+    ``DurableLog`` creates a new file exclusively; append sinks may reuse a regular
+    file but bind to its device/inode after their first write.  ``O_NOFOLLOW`` closes
+    the Unix symlink case before open, while the post-open lstat/fstat comparison
+    provides the same no-replacement check on hosts without that flag.
+    """
+    flags = os.O_WRONLY | os.O_CREAT
+    flags |= os.O_EXCL if exclusive else os.O_APPEND
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOINHERIT", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        opened = os.fstat(fd)
+        named = os.lstat(path)
+        if (not stat.S_ISREG(opened.st_mode) or stat.S_ISLNK(named.st_mode) or
+                (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)):
+            raise TelemetryIntegrityError(
+                "telemetry output must be one stable, non-symlink regular file"
+            )
+        mode = "w" if exclusive else "a"
+        return os.fdopen(fd, mode, encoding="utf-8", newline="\n"), (
+            opened.st_dev, opened.st_ino
+        )
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _reject_json_duplicates(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
 
 
 class DurableLog(TelemetrySink):
@@ -544,32 +640,75 @@ class DurableLog(TelemetrySink):
     never silently misread) and replays the records back as DataDNA."""
 
     def __init__(self, path: str):
-        self.path = path
-        with open(path, "w") as f:                    # a fresh log per run: header first
+        self.path = os.fspath(path)
+        self._lock = threading.Lock()
+        f, self._identity = _open_regular_text(self.path, exclusive=True)
+        with f:                                        # a fresh log per run: header first
             f.write(json.dumps({"kind": TELEMETRY_LOG_KIND, "schema": TELEMETRY_LOG_SCHEMA,
                                 "fields": list(_SCHEMA_FIELDS[TELEMETRY_LOG_SCHEMA])},
                                sort_keys=True) + "\n")
 
     def emit(self, event: DataDNA) -> None:
-        with open(self.path, "a") as f:
-            f.write(json.dumps(event.to_dict(), sort_keys=True) + "\n")
+        event.validate()
+        with self._lock:
+            f, identity = _open_regular_text(self.path, exclusive=False)
+            with f:
+                if identity != self._identity:
+                    raise TelemetryIntegrityError(
+                        "durable telemetry path was replaced after log creation"
+                    )
+                f.write(json.dumps(event.to_dict(), sort_keys=True) + "\n")
 
 
 def load_durable_log(path: str) -> list[DataDNA]:
     """Decode a durable telemetry log: validate the header (kind + a schema this build knows +
     the field list that schema documents), then replay every record. Refusals are LOUD."""
-    with open(path, encoding="utf-8") as f:
-        lines = [ln for ln in f.read().splitlines() if ln.strip()]
+    lines = []
+    total = 0
+    try:
+        with open(path, "rb") as f:
+            for raw in f:
+                total += len(raw)
+                if total > _MAX_DURABLE_LOG_BYTES:
+                    raise ValueError(f"durable telemetry log exceeds {_MAX_DURABLE_LOG_BYTES} bytes")
+                if len(raw) > _MAX_DURABLE_LINE_BYTES:
+                    raise ValueError(f"durable telemetry line exceeds {_MAX_DURABLE_LINE_BYTES} bytes")
+                if raw.strip():
+                    lines.append(raw.decode("utf-8"))
+                    if len(lines) > _MAX_DURABLE_RECORDS + 1:
+                        raise ValueError("durable telemetry log has too many records")
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"invalid durable telemetry log {path!r}: {exc}") from exc
     if not lines:
         raise ValueError("durable telemetry log is empty (no header)")
-    head = json.loads(lines[0])
+    try:
+        head = json.loads(lines[0], object_pairs_hook=_reject_json_duplicates)
+    except (json.JSONDecodeError, TypeError, RecursionError) as exc:
+        raise ValueError(f"invalid durable telemetry header: {exc}") from exc
+    if not isinstance(head, dict) or set(head) != {"kind", "schema", "fields"}:
+        raise ValueError("durable telemetry header has unknown or missing fields")
     if head.get("kind") != TELEMETRY_LOG_KIND:
         raise ValueError(f"not a {TELEMETRY_LOG_KIND} stream (kind={head.get('kind')!r})")
-    version = int(head.get("schema", 0))
+    version = head.get("schema")
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ValueError("telemetry-log schema must be an integer")
     if version > TELEMETRY_LOG_SCHEMA:
         raise ValueError(f"telemetry-log schema v{version} is newer than this build's "
                          f"v{TELEMETRY_LOG_SCHEMA}; upgrade BCIR to read this stream")
     want = _SCHEMA_FIELDS.get(version)
     if want is None or tuple(head.get("fields", ())) != want:
         raise ValueError(f"telemetry-log header lies about schema v{version}'s fields")
-    return [DataDNA(**json.loads(ln)) for ln in lines[1:]]
+    out = []
+    fields = set(want)
+    for index, line in enumerate(lines[1:]):
+        try:
+            doc = json.loads(line, object_pairs_hook=_reject_json_duplicates)
+        except (json.JSONDecodeError, TypeError, RecursionError) as exc:
+            raise ValueError(f"invalid durable telemetry record {index}: {exc}") from exc
+        if not isinstance(doc, dict) or set(doc) != fields:
+            raise ValueError(f"durable telemetry record {index} has unknown or missing fields")
+        try:
+            out.append(DataDNA(**doc).validate())
+        except (TypeError, TelemetryIntegrityError) as exc:
+            raise ValueError(f"invalid durable telemetry record {index}: {exc}") from exc
+    return out

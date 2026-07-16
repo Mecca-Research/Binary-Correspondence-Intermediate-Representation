@@ -34,6 +34,13 @@ from ...kbcir.transformer_grads import rmsnorm_reference, rope_reference
 from ...kbcir.unsupervised import EmbeddingTable, embedding_lookup
 
 
+# This is a dependency-free reference implementation, not an unbounded serving engine.
+# The ceiling is deliberately above current long-context model gates while refusing the
+# accidental billion-token requests that otherwise turn a malformed input into an
+# effectively unbounded allocation/CPU job.
+_MAX_REFERENCE_CONTEXT = 1 << 20
+
+
 @dataclass(frozen=True)
 class DecoderSpec:
     """The shape of the small dense decoder: `d_model` splits into `n_heads` RoPE'd heads
@@ -55,6 +62,13 @@ class DecoderSpec:
     rms_norm_eps: float = 1e-6          # checkpoint-declared RMSNorm epsilon
 
     def __post_init__(self) -> None:
+        dims = (self.vocab_size, self.d_model, self.n_heads, self.n_layers, self.d_ff)
+        if any(type(v) is not int for v in dims):
+            raise ValueError("decoder dims must be integers (bool is not a dimension)")
+        if type(self.n_kv_heads) is not int:
+            raise ValueError("n_kv_heads must be an integer")
+        if type(self.tied_embeddings) is not bool:
+            raise ValueError("tied_embeddings must be bool")
         if min(self.vocab_size, self.d_model, self.n_heads, self.n_layers, self.d_ff) < 1:
             raise ValueError("decoder dims must all be >= 1")
         if self.d_model % self.n_heads:
@@ -63,6 +77,8 @@ class DecoderSpec:
             raise ValueError("d_k must be even (RoPE rotates channel pairs)")
         if self.activation not in ("relu", "gelu", "silu_gate"):
             raise ValueError(f"activation must be relu|gelu|silu_gate; got {self.activation!r}")
+        if not math.isfinite(self.rope_base) or self.rope_base <= 0.0:
+            raise ValueError(f"rope_base must be finite and > 0; got {self.rope_base!r}")
         if self.n_kv_heads < 0 or self.n_kv_heads > self.n_heads:
             raise ValueError(f"n_kv_heads {self.n_kv_heads} must be in [0, n_heads]")
         if self.n_kv_heads and self.n_heads % self.n_kv_heads:
@@ -121,8 +137,18 @@ class DecoderWeights:
 def check_decoder_weights(spec: DecoderSpec, w: DecoderWeights) -> list[str]:
     """Op-level well-formedness (mirrors `check_attention`/`check_classical`; NOT a new
     global R-law): every weight's length against the spec. Returns messages, [] when clean."""
-    d, f, kvd = spec.d_model, spec.d_ff, spec.kv_dim
     msgs: list[str] = []
+    if not isinstance(w, DecoderWeights):
+        return ["weights are not a DecoderWeights value"]
+    if not isinstance(w.embedding, EmbeddingTable):
+        return ["embedding is not an EmbeddingTable"]
+    if not isinstance(w.layers, (tuple, list)):
+        return ["layers are not a tuple/list"]
+    if not isinstance(w.g_final, (tuple, list)):
+        return ["g_final is not a tuple/list"]
+    if not isinstance(w.lm_head, (tuple, list)):
+        return ["lm_head is not a tuple/list"]
+    d, f, kvd = spec.d_model, spec.d_ff, spec.kv_dim
     if (w.embedding.n_vocab, w.embedding.dim) != (spec.vocab_size, d):
         msgs.append(f"embedding is {w.embedding.n_vocab}x{w.embedding.dim}, "
                     f"spec says {spec.vocab_size}x{d}")
@@ -137,15 +163,50 @@ def check_decoder_weights(spec: DecoderSpec, w: DecoderWeights) -> list[str]:
             "b1": 0 if gated else f, "b2": 0 if gated else d,
             "w_gate": d * f if gated else 0}
     for li, lw in enumerate(w.layers):
+        if not isinstance(lw, LayerWeights):
+            msgs.append(f"layer {li}: not a LayerWeights value")
+            continue
         for name, n in want.items():
-            if len(getattr(lw, name)) != n:
-                msgs.append(f"layer {li}: {name} has {len(getattr(lw, name))} entries, want {n}")
+            values = getattr(lw, name)
+            if not isinstance(values, (tuple, list)):
+                msgs.append(f"layer {li}: {name} is not a tuple/list")
+            elif len(values) != n:
+                msgs.append(f"layer {li}: {name} has {len(values)} entries, want {n}")
     head = len(getattr(w, "lm_head", ()))
     if spec.tied_embeddings and head:
         msgs.append(f"lm_head has {head} entries but the spec ties the embeddings")
     if not spec.tied_embeddings and head != spec.vocab_size * d:
         msgs.append(f"lm_head has {head} entries, want vocab*d = {spec.vocab_size * d}")
     return msgs
+
+
+def _validate_decode_request(prompt_ids, spec: DecoderSpec, w: DecoderWeights,
+                             max_new: int, eos_id: int | None = None) -> list[int]:
+    """Validate an externally supplied decode request before cache/model mutation.
+
+    Public reference/serving entries share this one strict boundary: token IDs are
+    integers in-vocabulary (no lossy ``int()`` coercion), the context is bounded, and
+    all weight shapes are checked before the first layer appends to a KV cache.
+    """
+    if not isinstance(spec, DecoderSpec):
+        raise ValueError("decode spec is not a DecoderSpec")
+    if type(max_new) is not int or max_new < 0:
+        raise ValueError("max_new must be an integer >= 0")
+    if not isinstance(prompt_ids, (list, tuple)) or not prompt_ids:
+        raise ValueError("decode needs a non-empty list/tuple prompt")
+    if len(prompt_ids) > _MAX_REFERENCE_CONTEXT or max_new > _MAX_REFERENCE_CONTEXT - len(prompt_ids):
+        raise ValueError(f"decode context exceeds {_MAX_REFERENCE_CONTEXT} tokens")
+    prompt = list(prompt_ids)
+    for i, tid in enumerate(prompt):
+        if type(tid) is not int or not 0 <= tid < spec.vocab_size:
+            raise ValueError(
+                f"prompt token {i} must be an integer in [0, {spec.vocab_size}); got {tid!r}")
+    if eos_id is not None and (type(eos_id) is not int or not 0 <= eos_id < spec.vocab_size):
+        raise ValueError(f"eos_id must be an integer in [0, {spec.vocab_size})")
+    bad = check_decoder_weights(spec, w)
+    if bad:
+        raise ValueError("decoder weights rejected: " + "; ".join(bad))
+    return prompt
 
 
 def decoder_param_count(spec: DecoderSpec) -> int:
@@ -301,9 +362,7 @@ def reference_decode(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max
                      eos_id: int | None = None) -> list:
     """GREEDY decode by naive full-context recompute -- the slow, obviously-correct rung-3
     reference. Returns the NEW ids (up to `max_new`; stops after emitting `eos_id`)."""
-    if not prompt_ids or max_new < 0:
-        raise ValueError("reference_decode needs a non-empty prompt and max_new >= 0")
-    ids = list(prompt_ids)
+    ids = _validate_decode_request(prompt_ids, spec, w, max_new, eos_id)
     out: list = []
     for _ in range(max_new):
         nxt = _argmax(next_token_logits(ids, spec, w))
@@ -380,12 +439,11 @@ def decode_with_kv_cache(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights,
     one `_step_row` per generated token. Every row runs the SAME arithmetic as the naive path
     (row-independent stages; a masked naive score is an exact trailing zero), so the emitted
     ids match `reference_decode` BIT-FOR-BIT -- the twin gate."""
-    if not prompt_ids or max_new < 0:
-        raise ValueError("decode_with_kv_cache needs a non-empty prompt and max_new >= 0")
+    prompt = _validate_decode_request(prompt_ids, spec, w, max_new, eos_id)
     cache = KVCache(spec)
     hrow: list = []
-    for tid in prompt_ids:                                       # prefill
-        hrow = cache._step_row(w.embedding.row(int(tid)), spec, w)
+    for tid in prompt:                                           # prefill
+        hrow = cache._step_row(w.embedding.row(tid), spec, w)
     out: list = []
     for _ in range(max_new):
         nxt = _argmax(head_logits(hrow, w))

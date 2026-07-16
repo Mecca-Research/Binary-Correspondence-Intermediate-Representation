@@ -59,7 +59,8 @@ static constexpr int64_t kThermalCap = 70, kPowerCap = 70;
 // a compute-bound one unless Theta is thermal/power capped; nominal otherwise.
 static int64_t railClock(int64_t compute, int64_t memory, int64_t thermal, int64_t power,
                          StringRef &klass) {
-  int64_t intensity = (compute * 1000) / std::max<int64_t>(1, memory);
+  int64_t intensity = saturatingMulNonnegative(compute, 1000) /
+                      std::max<int64_t>(1, memory);
   if (intensity >= kHiIntensity) {
     klass = "compute";
     return (thermal >= kThermalCap || power >= kPowerCap) ? kNominal : kOverclock;
@@ -178,7 +179,7 @@ static void eftDispatch(ArrayRef<Info *> claims,
     int64_t bestFinish = std::numeric_limits<int64_t>::max(), bestScore = -1;
     for (int64_t d = 0; d < width; ++d) {
       int64_t start = std::max(domainFree[d], readyT);
-      int64_t finish = start + pick->dur;
+      int64_t finish = saturatingAddNonnegative(start, pick->dur);
       int64_t score = 0;
       for (StringRef r : pick->rids)
         if (resident[d].count(r))
@@ -191,7 +192,7 @@ static void eftDispatch(ArrayRef<Info *> claims,
       }
     }
     int64_t start = std::max(domainFree[bestD], readyT);
-    int64_t finish = start + pick->dur;
+    int64_t finish = saturatingAddNonnegative(start, pick->dur);
     domainFree[bestD] = finish;
     for (StringRef r : pick->rids)
       resident[bestD].insert(r);
@@ -291,10 +292,11 @@ static int64_t placeBarriered(Operation *root, SmallVector<Info> &infos, int64_t
     for (Info *in : tail) { // the decoupled tail: a serial chain on its own stream
       in->claim->setAttr(dn, b.getI64IntegerAttr(kTailStream));
       in->claim->setAttr(sn, b.getI64IntegerAttr(tt));
-      in->claim->setAttr(fn, b.getI64IntegerAttr(tt + in->dur));
+      int64_t finish = saturatingAddNonnegative(tt, in->dur);
+      in->claim->setAttr(fn, b.getI64IntegerAttr(finish));
       if (intervals)
-        (*intervals)[in->id] = {tt, tt + in->dur};
-      tt += in->dur;
+        (*intervals)[in->id] = {tt, finish};
+      tt = finish;
     }
     int64_t next = std::max(t0, tt);
     for (auto &kv : finishOf)
@@ -443,7 +445,9 @@ struct PowerRailPass : public PassWrapper<PowerRailPass, OperationPass<>> {
       if (clock < kNominal) {
         auto iv = intervals.lookup(in.id);
         int64_t dur = std::max<int64_t>(0, iv.second - iv.first);
-        energySaved += ((kNominal - clock) * dur * 1000) / kNominal;
+        int64_t saved = saturatingMulNonnegative(kNominal - clock, dur);
+        saved = saturatingMulNonnegative(saved, 1000) / kNominal;
+        energySaved = saturatingAddNonnegative(energySaved, saved);
       }
     }
     root->setAttr("kbcir.rail_makespan", b.getI64IntegerAttr(makespan));

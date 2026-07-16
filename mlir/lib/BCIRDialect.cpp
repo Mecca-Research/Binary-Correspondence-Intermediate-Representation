@@ -19,6 +19,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 
 #include <algorithm>
+#include <limits>
 #include <numeric>
 
 using namespace bcir;
@@ -36,6 +37,42 @@ using namespace bcir;
 #define GET_OP_CLASSES
 #include "BCIROps.cpp.inc"
 
+namespace {
+
+/* MLIR integer attributes are untrusted parser input.  Keep every derived
+ * geometry calculation in the verifier defined: a wrapped product can make a
+ * malformed shape appear equal to an unrelated declared extent, and signed
+ * overflow is undefined behavior in the verifier itself. */
+static bool checkedAddNonnegative(int64_t a, int64_t b, int64_t &out) {
+  if (a < 0 || b < 0 || b > std::numeric_limits<int64_t>::max() - a)
+    return false;
+  out = a + b;
+  return true;
+}
+
+static bool checkedMulNonnegative(int64_t a, int64_t b, int64_t &out) {
+  if (a < 0 || b < 0 || (a != 0 && b > std::numeric_limits<int64_t>::max() / a))
+    return false;
+  out = a * b;
+  return true;
+}
+
+static bool checkedMul3Nonnegative(int64_t a, int64_t b, int64_t c,
+                                   int64_t &out) {
+  int64_t first;
+  return checkedMulNonnegative(a, b, first) &&
+         checkedMulNonnegative(first, c, out);
+}
+
+static bool checkedMul4Nonnegative(int64_t a, int64_t b, int64_t c,
+                                   int64_t d, int64_t &out) {
+  int64_t first;
+  return checkedMul3Nonnegative(a, b, c, first) &&
+         checkedMulNonnegative(first, d, out);
+}
+
+} // namespace
+
 // --- op verifiers (hasVerifier=1) ------------------------------------------------
 // Parse-time structural well-formedness, run on every parse/builder. Distinct from
 // -bcir-verify, which carries the cross-op semantic R-laws (RID resolution, the phase
@@ -44,9 +81,13 @@ using namespace bcir;
   int64_t align = getAlign();
   if (align <= 0 || (align & (align - 1)) != 0)
     return emitOpError() << "align must be a positive power of two (got " << align << ")";
-  for (int64_t d : getShape())
+  int64_t count = 1;
+  for (int64_t d : getShape()) {
     if (d <= 0)
       return emitOpError() << "shape extents must be positive (got " << d << ")";
+    if (!checkedMulNonnegative(count, d, count))
+      return emitOpError() << "shape element count exceeds signed 64-bit range";
+  }
   return ::mlir::success();
 }
 
@@ -67,6 +108,9 @@ using namespace bcir;
   if (m <= 0 || n <= 0 || k <= 0)
     return emitOpError() << "matmul dims m/n/k must be positive (got " << m << "x" << n << "x" << k
                          << ")";
+  int64_t work;
+  if (!checkedMul3Nonnegative(m, n, k, work))
+    return emitOpError() << "matmul m*n*k exceeds signed 64-bit range";
   int64_t tm = static_cast<int64_t>(getTileM()), tn = static_cast<int64_t>(getTileN()),
           tk = static_cast<int64_t>(getTileK());
   if (tm < 1 || tm > m || tn < 1 || tn > n || tk < 1 || tk > k)
@@ -109,7 +153,8 @@ using namespace bcir;
   for (int64_t d : shape) {
     if (d <= 0)
       return emitOpError() << kind << ": shape extents must be positive (got " << d << ")";
-    count *= d;
+    if (!checkedMulNonnegative(count, d, count))
+      return emitOpError() << kind << ": shape element count exceeds signed 64-bit range";
   }
 
   // (2) dtype known + preserved (the op carries a single declared dtype: input == output == spec).
@@ -188,15 +233,20 @@ using namespace bcir;
                          << inH << "x" << inW << ", out_c " << outC << ", kernel " << kh << "x" << kw
                          << ")";
   // (1b) the kernel fits the padded input frame.
-  if (kh > inH + 2 * pad || kw > inW + 2 * pad)
+  int64_t twicePad, paddedH, paddedW;
+  if (!checkedMulNonnegative(2, pad, twicePad) ||
+      !checkedAddNonnegative(inH, twicePad, paddedH) ||
+      !checkedAddNonnegative(inW, twicePad, paddedW))
+    return emitOpError() << "conv: padded input extent exceeds signed 64-bit range";
+  if (kh > paddedH || kw > paddedW)
     return emitOpError() << "conv: kernel " << kh << "x" << kw << " does not fit the padded input "
-                         << (inH + 2 * pad) << "x" << (inW + 2 * pad);
+                         << paddedH << "x" << paddedW;
 
   // (3) the DERIVED output dims: out = floor((in + 2*pad - k)/stride) + 1 (the standard valid-after-pad
   // formula); the op's declared out_h/out_w must equal them.
   int64_t outH = static_cast<int64_t>(getOutH()), outW = static_cast<int64_t>(getOutW());
-  int64_t wantH = (inH + 2 * pad - kh) / stride + 1;
-  int64_t wantW = (inW + 2 * pad - kw) / stride + 1;
+  int64_t wantH = (paddedH - kh) / stride + 1;
+  int64_t wantW = (paddedW - kw) / stride + 1;
   if (wantH < 1 || wantW < 1)
     return emitOpError() << "conv: output is empty (derived out_h=" << wantH << ", out_w=" << wantW
                          << ")";
@@ -208,7 +258,11 @@ using namespace bcir;
   // gemm_k = in_c*kh*kw (the taps / the reduction). This is what makes a conv a STRUCTURED MATMUL.
   int64_t gm = static_cast<int64_t>(getGemmM()), gn = static_cast<int64_t>(getGemmN()),
           gk = static_cast<int64_t>(getGemmK());
-  int64_t wantM = outH * outW, wantN = outC, wantK = inC * kh * kw;
+  int64_t wantM, wantK;
+  const int64_t wantN = outC;
+  if (!checkedMulNonnegative(outH, outW, wantM) ||
+      !checkedMul3Nonnegative(inC, kh, kw, wantK))
+    return emitOpError() << "conv: derived im2col dimensions exceed signed 64-bit range";
   if (gm != wantM || gn != wantN || gk != wantK)
     return emitOpError() << "conv: declared im2col gemm dims (" << gm << "," << gn << "," << gk
                          << ") != (out_h*out_w, out_c, in_c*kh*kw) = (" << wantM << "," << wantN << ","
@@ -276,6 +330,9 @@ using namespace bcir;
   if (seq < 1 || dk < 1)
     return emitOpError() << "attention: seq_len and d_k must be >= 1 (got seq_len " << seq << ", d_k "
                          << dk << ")";
+  int64_t attentionWork;
+  if (!checkedMul3Nonnegative(seq, seq, dk, attentionWork))
+    return emitOpError() << "attention: seq_len*seq_len*d_k exceeds signed 64-bit range";
 
   // (2) dtype known + preserved + the QUARANTINE rule: attention contains a softmax (a transcendental whose
   // libm edge returns float), so it needs an f32 result -- never i32 (mirrors gem.activation softmax).
@@ -332,11 +389,15 @@ using namespace bcir;
           bn = static_cast<int64_t>(getBottleneck());
   if (sc < 0 || smm < 0 || cc < 0 || cmm < 0 || compute < 0 || mem < 0)
     return emitOpError() << "attention: all roofline cost terms must be non-negative";
-  if (compute != sc + cc)
+  int64_t wantCompute, wantMem;
+  if (!checkedAddNonnegative(sc, cc, wantCompute) ||
+      !checkedAddNonnegative(smm, cmm, wantMem))
+    return emitOpError() << "attention: summed roofline cost exceeds signed 64-bit range";
+  if (compute != wantCompute)
     return emitOpError() << "attention: compute_cost must equal scores_compute + context_compute = "
-                         << (sc + cc) << " (the SUM of the two priced matmuls; got " << compute << ")";
-  if (mem != smm + cmm)
-    return emitOpError() << "attention: mem_cost must equal scores_mem + context_mem = " << (smm + cmm)
+                         << wantCompute << " (the SUM of the two priced matmuls; got " << compute << ")";
+  if (mem != wantMem)
+    return emitOpError() << "attention: mem_cost must equal scores_mem + context_mem = " << wantMem
                          << " (the SUM of the two priced matmuls; got " << mem << ")";
   int64_t mx = compute > mem ? compute : mem;
   if (bn != mx)
@@ -360,9 +421,15 @@ using namespace bcir;
   // Rung 5 (open-weight ladder): the embedding gather's op-level shape law (mirrors the oracle's
   // EmbeddingTable validation): positive table/gather extents, a known dtype. The gather is EXACT
   // (no arithmetic), so both dtypes are legal.
-  if (static_cast<int64_t>(getVocabSize()) < 1 || static_cast<int64_t>(getDim()) < 1 ||
-      static_cast<int64_t>(getNIds()) < 1)
+  const int64_t vocab = static_cast<int64_t>(getVocabSize());
+  const int64_t dim = static_cast<int64_t>(getDim());
+  const int64_t nIds = static_cast<int64_t>(getNIds());
+  if (vocab < 1 || dim < 1 || nIds < 1)
     return emitOpError() << "embedding: vocab_size, dim and n_ids must all be >= 1";
+  int64_t tableElements, outputElements;
+  if (!checkedMulNonnegative(vocab, dim, tableElements) ||
+      !checkedMulNonnegative(nIds, dim, outputElements))
+    return emitOpError() << "embedding: table/output element count exceeds signed 64-bit range";
   ::llvm::StringRef dtype = getDtype();
   if (dtype != "f32" && dtype != "i32")
     return emitOpError() << "embedding: dtype '" << dtype << "' is not a known dtype (f32|i32)";
@@ -373,8 +440,13 @@ using namespace bcir;
   // Rung 5: RMSNorm's op-level law (mirrors rmsnorm_reference's validation): positive extents,
   // gamma sized to the row width, and f32 -- the rms sqrt rides the trusted libm edge (the same
   // quarantine rule as the attention softmax).
-  if (static_cast<int64_t>(getRows()) < 1 || static_cast<int64_t>(getDim()) < 1)
+  const int64_t rows = static_cast<int64_t>(getRows());
+  const int64_t dim = static_cast<int64_t>(getDim());
+  if (rows < 1 || dim < 1)
     return emitOpError() << "rmsnorm: rows and dim must be >= 1";
+  int64_t elements;
+  if (!checkedMulNonnegative(rows, dim, elements))
+    return emitOpError() << "rmsnorm: rows*dim exceeds signed 64-bit range";
   if (static_cast<int64_t>(getGammaLen()) != static_cast<int64_t>(getDim()))
     return emitOpError() << "rmsnorm: gamma has " << getGammaLen() << " entries, want dim = "
                          << getDim();
@@ -388,15 +460,22 @@ using namespace bcir;
   // Rung 5: RoPE's op-level law (mirrors rope_reference / DecoderSpec): dim must be EVEN -- the
   // rotation pairs channels (2k, 2k+1); an odd dim has no legal pairing -- base positive,
   // pos_offset non-negative, and f32 (cos/sin ride the libm edge).
-  if (static_cast<int64_t>(getRows()) < 1 || static_cast<int64_t>(getDim()) < 1)
+  const int64_t rows = static_cast<int64_t>(getRows());
+  const int64_t dim = static_cast<int64_t>(getDim());
+  const int64_t posOffset = static_cast<int64_t>(getPosOffset());
+  if (rows < 1 || dim < 1)
     return emitOpError() << "rope: rows and dim must be >= 1";
-  if (static_cast<int64_t>(getDim()) % 2 != 0)
+  if (dim % 2 != 0)
     return emitOpError() << "rope: dim must be EVEN (the rotation pairs channels 2k/2k+1), got "
                          << getDim();
   if (static_cast<int64_t>(getBase()) < 1)
     return emitOpError() << "rope: base must be >= 1, got " << getBase();
-  if (static_cast<int64_t>(getPosOffset()) < 0)
+  if (posOffset < 0)
     return emitOpError() << "rope: pos_offset must be >= 0, got " << getPosOffset();
+  int64_t elements, endPosition;
+  if (!checkedMulNonnegative(rows, dim, elements) ||
+      !checkedAddNonnegative(posOffset, rows, endPosition))
+    return emitOpError() << "rope: tensor/position extent exceeds signed 64-bit range";
   if (getDtype() != "f32")
     return emitOpError() << "rope: dtype must be f32 (cos/sin ride the libm edge), got '"
                          << getDtype() << "'";
@@ -407,8 +486,9 @@ using namespace bcir;
   // Rung 5: grouped-query attention's op-level law (mirrors DecoderSpec/gqa_attention_reference):
   // positive extents; n_kv_heads in [1, n_heads] and dividing n_heads (whole head groups); f32
   // (the softmax rides the libm edge -- the gem.attention quarantine rule).
-  if (static_cast<int64_t>(getSeqLen()) < 1 || static_cast<int64_t>(getDK()) < 1 ||
-      static_cast<int64_t>(getNHeads()) < 1)
+  const int64_t seq = static_cast<int64_t>(getSeqLen());
+  const int64_t dk = static_cast<int64_t>(getDK());
+  if (seq < 1 || dk < 1 || static_cast<int64_t>(getNHeads()) < 1)
     return emitOpError() << "gqa_attention: seq_len, d_k and n_heads must all be >= 1";
   int64_t nh = static_cast<int64_t>(getNHeads()), nkv = static_cast<int64_t>(getNKvHeads());
   if (nkv < 1 || nkv > nh)
@@ -417,6 +497,10 @@ using namespace bcir;
   if (nh % nkv != 0)
     return emitOpError() << "gqa_attention: n_heads " << nh << " not divisible by n_kv_heads "
                          << nkv << " (GQA shares whole head groups)";
+  int64_t queryElements, kvElements;
+  if (!checkedMul3Nonnegative(seq, nh, dk, queryElements) ||
+      !checkedMul3Nonnegative(seq, nkv, dk, kvElements))
+    return emitOpError() << "gqa_attention: query/KV element count exceeds signed 64-bit range";
   if (getDtype() != "f32")
     return emitOpError() << "gqa_attention: contains a softmax (a transcendental; the libm edge "
                             "returns float), so it needs f32, got '" << getDtype() << "'";
@@ -427,15 +511,26 @@ using namespace bcir;
   // Rung 5: the KV cache's op-level law (mirrors decode.py::KVCache): positive lane extents,
   // a non-negative position that never exceeds a nonzero capacity, and a known dtype (the
   // cached rows are POST-RoPE floats -> f32).
-  if (static_cast<int64_t>(getNLayers()) < 1 || static_cast<int64_t>(getNKvHeads()) < 1 ||
-      static_cast<int64_t>(getDK()) < 1)
+  const int64_t layers = static_cast<int64_t>(getNLayers());
+  const int64_t heads = static_cast<int64_t>(getNKvHeads());
+  const int64_t dk = static_cast<int64_t>(getDK());
+  const int64_t capacity = static_cast<int64_t>(getCapacity());
+  if (layers < 1 || heads < 1 || dk < 1)
     return emitOpError() << "kv_cache: n_layers, n_kv_heads and d_k must all be >= 1";
-  if (static_cast<int64_t>(getCapacity()) < 0 || static_cast<int64_t>(getPos()) < 0)
+  if (capacity < 0 || static_cast<int64_t>(getPos()) < 0)
     return emitOpError() << "kv_cache: capacity and pos must be >= 0";
   if (static_cast<int64_t>(getCapacity()) > 0 &&
       static_cast<int64_t>(getPos()) > static_cast<int64_t>(getCapacity()))
     return emitOpError() << "kv_cache: pos " << getPos() << " exceeds capacity "
                          << getCapacity() << " (an over-full cache is the paging lie)";
+  int64_t rowElements;
+  if (!checkedMulNonnegative(heads, dk, rowElements))
+    return emitOpError() << "kv_cache: per-position element count exceeds signed 64-bit range";
+  if (capacity > 0) {
+    int64_t cacheElements;
+    if (!checkedMul4Nonnegative(layers, capacity, heads, dk, cacheElements))
+      return emitOpError() << "kv_cache: bounded cache element count exceeds signed 64-bit range";
+  }
   if (getDtype() != "f32")
     return emitOpError() << "kv_cache: dtype must be f32 (the cached rows are post-RoPE floats), "
                             "got '" << getDtype() << "'";
@@ -467,11 +562,16 @@ using namespace bcir;
   const int64_t Q8 = 256;
   int64_t epl = std::max<int64_t>(1, cl / eb);                    // useful elements per cache line (>= 1)
   int64_t reach = std::min<int64_t>(std::max<int64_t>(1, stride), epl);
-  int64_t wantWaste = (reach - 1) * Q8;
+  int64_t wantWaste;
+  if (!checkedMulNonnegative(reach - 1, Q8, wantWaste))
+    return emitOpError() << "contention: line-waste calculation exceeds signed 64-bit range";
   int64_t g = std::gcd(std::max<int64_t>(1, stride), banks);
-  int64_t wantConflict = (g - 1) * Q8;
-  int64_t wantCont = wantWaste + wantConflict;
-  int64_t wantCost = (wantCont * count) >> 8;
+  int64_t wantConflict, wantCont, scaledCost;
+  if (!checkedMulNonnegative(g - 1, Q8, wantConflict) ||
+      !checkedAddNonnegative(wantWaste, wantConflict, wantCont) ||
+      !checkedMulNonnegative(wantCont, count, scaledCost))
+    return emitOpError() << "contention: derived cost exceeds signed 64-bit range";
+  int64_t wantCost = scaledCost >> 8;
 
   int64_t waste = static_cast<int64_t>(getLineWasteQ8()),
           conflict = static_cast<int64_t>(getBankConflictQ8()),
@@ -522,29 +622,48 @@ using namespace bcir;
     return emitOpError() << "layout_pivot: record counts must be non-negative (got single_field " << sfr
                          << ", whole_record " << wrr << ")";
   int64_t sp = std::min<int64_t>(std::max<int64_t>(2, fields), std::max<int64_t>(1, cl / eb)); // STRIDED penalty
-  auto unitMem = [&](int64_t n) -> int64_t {
-    if (n <= 0)
-      return 0;
-    int64_t ceil = (n + vw - 1) / vw;
-    return n * streams + ceil * streams * bo; // base_overhead * 1 (unit stride)
+  auto unitMem = [&](int64_t n, int64_t &out) -> bool {
+    if (n <= 0) {
+      out = 0;
+      return true;
+    }
+    int64_t ceil = n / vw + (n % vw != 0);
+    int64_t base, overhead;
+    return checkedMulNonnegative(n, streams, base) &&
+           checkedMul3Nonnegative(ceil, streams, bo, overhead) &&
+           checkedAddNonnegative(base, overhead, out);
   };
-  auto stridedMem = [&](int64_t n) -> int64_t {
-    if (n <= 0)
-      return 0;
+  auto stridedMem = [&](int64_t n, int64_t &out) -> bool {
+    if (n <= 0) {
+      out = 0;
+      return true;
+    }
     // the cheapest STRIDED candidate = min(strided penalty min(F, cl/eb), gather penalty); a target whose
     // gather is cheaper than a large stride (e.g. PTX gp=16) prices the gather instead (mirrors candidates_for).
-    int64_t strided = n * streams + n * streams * bo * sp;
-    int64_t gather = n * streams + n * streams * bo * gp;
-    return std::min(strided, gather);
+    int64_t base, stridedPenalty, gatherPenalty, strided, gather;
+    if (!checkedMulNonnegative(n, streams, base) ||
+        !checkedMul3Nonnegative(base, bo, sp, stridedPenalty) ||
+        !checkedMul3Nonnegative(base, bo, gp, gatherPenalty) ||
+        !checkedAddNonnegative(base, stridedPenalty, strided) ||
+        !checkedAddNonnegative(base, gatherPenalty, gather))
+      return false;
+    out = std::min(strided, gather);
+    return true;
   };
   // single-field: UNIT under SoA, STRIDED under AoS; whole-record: STRIDED under SoA, UNIT under AoS.
-  int64_t wantSoa, wantAos;
+  int64_t wantSoa, wantAos, sfUnit, sfStrided, wrUnit, wrStrided;
+  if (!unitMem(sfr, sfUnit) || !stridedMem(sfr, sfStrided) ||
+      !unitMem(wrr, wrUnit) || !stridedMem(wrr, wrStrided))
+    return emitOpError() << "layout_pivot: derived memory cost exceeds signed 64-bit range";
   if (fields <= 1) {
     // No SoA/AoS distinction (a single-field resource): both costs equal (a clean no-op).
-    wantSoa = wantAos = unitMem(sfr) + unitMem(wrr);
+    if (!checkedAddNonnegative(sfUnit, wrUnit, wantSoa))
+      return emitOpError() << "layout_pivot: aggregate memory cost exceeds signed 64-bit range";
+    wantAos = wantSoa;
   } else {
-    wantSoa = unitMem(sfr) + stridedMem(wrr);
-    wantAos = stridedMem(sfr) + unitMem(wrr);
+    if (!checkedAddNonnegative(sfUnit, wrStrided, wantSoa) ||
+        !checkedAddNonnegative(sfStrided, wrUnit, wantAos))
+      return emitOpError() << "layout_pivot: aggregate memory cost exceeds signed 64-bit range";
   }
   int64_t soa = static_cast<int64_t>(getSoaCost()), aos = static_cast<int64_t>(getAosCost());
   if (soa != wantSoa)
@@ -586,6 +705,9 @@ using namespace bcir;
   if (m <= 0 || n <= 0 || k <= 0)
     return emitOpError() << "fused matmul dims m/n/k must be positive (got " << m << "x" << n << "x"
                          << k << ")";
+  int64_t fusedWork;
+  if (!checkedMul3Nonnegative(m, n, k, fusedWork))
+    return emitOpError() << "fused matmul m*n*k exceeds signed 64-bit range";
   int64_t tm = static_cast<int64_t>(getTileM()), tn = static_cast<int64_t>(getTileN()),
           tk = static_cast<int64_t>(getTileK());
   if (tm < 1 || tm > m || tn < 1 || tn > n || tk < 1 || tk > k)
@@ -729,10 +851,12 @@ using namespace bcir;
                            << " must equal the running prefix-sum of arities " << expectedBase
                            << " (the per-node operand slices must contiguously partition args -- no "
                               "overlap, no gap)";
-    if (base + arity > static_cast<int64_t>(args.size()))
+    int64_t end;
+    if (!checkedAddNonnegative(base, arity, end) ||
+        end > static_cast<int64_t>(args.size()))
       return emitOpError() << "autodiff: node " << i << " arg_base " << base << " + arity " << arity
                            << " is out of range of the flat args array (size " << args.size() << ")";
-    expectedBase += arity;
+    expectedBase = end;
     for (int64_t a = 0; a < arity; ++a) {
       int64_t operand = args[base + a];
       if (operand < 0 || operand >= i)
@@ -745,7 +869,8 @@ using namespace bcir;
   // (4c) the flat args array must hold exactly sum(arities) operands (no slack / no missing operands).
   int64_t totalArity = 0;
   for (int64_t a : arities)
-    totalArity += a;
+    if (!checkedAddNonnegative(totalArity, a, totalArity))
+      return emitOpError() << "autodiff: sum(arities) exceeds signed 64-bit range";
   if (totalArity != static_cast<int64_t>(args.size()))
     return emitOpError() << "autodiff: the flat args array must hold exactly sum(arities) = " << totalArity
                          << " operands (got " << args.size() << ")";
@@ -802,6 +927,9 @@ using namespace bcir;
   if (tm < 1 || tm > M || tn < 1 || tn > N || tk < 1 || tk > K)
     return emitOpError() << "each tile extent must be in [1, dim] (tiles " << tm << "x" << tn << "x"
                          << tk << " vs dims " << M << "x" << N << "x" << K << ")";
+  int64_t bufferWork;
+  if (!checkedMul3Nonnegative(M, N, K, bufferWork))
+    return emitOpError() << "buffer matmul M*N*K exceeds signed 64-bit range";
   ::llvm::StringRef lo = getLoopOrder();
   if (lo != "ijk" && lo != "ikj" && lo != "jik")
     return emitOpError() << "loop_order must be one of ijk|ikj|jik (got '" << lo << "')";
@@ -809,22 +937,71 @@ using namespace bcir;
 }
 
 ::mlir::LogicalResult ClaimOp::verify() {
-  // getCount() is uint64_t (an i64 attr); reinterpret signed so a negative literal is caught.
-  int64_t count = static_cast<int64_t>(getCount());
+  // Generated I64/I32 getters are unsigned.  Read the attributes as signed so
+  // negative source literals cannot become enormous positive extents/strides.
+  int64_t count = (*this)->getAttrOfType<::mlir::IntegerAttr>("count").getInt();
+  int64_t offset = (*this)->getAttrOfType<::mlir::IntegerAttr>("offset").getInt();
+  int64_t stride = (*this)->getAttrOfType<::mlir::IntegerAttr>("stride_k").getInt();
   if (count < 0)
     return emitOpError() << "count must be non-negative (got " << count << ")";
-  if (getStrideK() == 0)
-    return emitOpError() << "stride_k must be positive (got " << getStrideK() << ")";
+  if (offset < 0)
+    return emitOpError() << "offset must be non-negative (got " << offset << ")";
+  if (stride <= 0)
+    return emitOpError() << "stride_k must be positive (got " << stride << ")";
   return ::mlir::success();
 }
 
 ::mlir::LogicalResult TargetCapabilityOp::verify() {
-  int64_t cl = getCacheline();
+  // The generated accessors for I32Attr are unsigned.  Prefer the parsed
+  // IntegerAttr so a literal such as `-1 : i32` cannot become 2^32-1 before
+  // validation; fall back to the (positive) ODS default when an optional
+  // default-valued attribute was omitted from the assembly.
+  auto signedAttr = [&](::llvm::StringRef name, int64_t fallback) {
+    if (auto attr = (*this)->getAttrOfType<::mlir::IntegerAttr>(name))
+      return attr.getInt();
+    return fallback;
+  };
+  int64_t cl = signedAttr("cacheline", static_cast<int64_t>(getCacheline()));
   if (cl <= 0 || (cl & (cl - 1)) != 0)
     return emitOpError() << "cacheline must be a positive power of two (got " << cl << ")";
+  if (getLaneWidths().empty())
+    return emitOpError() << "lane_widths must contain at least one positive width";
   for (int64_t w : getLaneWidths())
     if (w <= 0)
       return emitOpError() << "lane widths must be positive (got " << w << ")";
+
+  const int64_t warp = signedAttr("warp", static_cast<int64_t>(getWarp()));
+  const int64_t gatherPenalty =
+      signedAttr("gather_penalty", static_cast<int64_t>(getGatherPenalty()));
+  const int64_t affinityDomains =
+      signedAttr("affinity_domains", static_cast<int64_t>(getAffinityDomains()));
+  const int64_t memChannels =
+      signedAttr("mem_channels", static_cast<int64_t>(getMemChannels()));
+  const int64_t memUnit = signedAttr("mem_unit", static_cast<int64_t>(getMemUnit()));
+  const int64_t baseOverhead =
+      signedAttr("base_overhead", static_cast<int64_t>(getBaseOverhead()));
+  const int64_t thermalDensity =
+      signedAttr("thermal_density", static_cast<int64_t>(getThermalDensity()));
+  const int64_t powerDensity =
+      signedAttr("power_density", static_cast<int64_t>(getPowerDensity()));
+  const int64_t perOpHeat =
+      signedAttr("per_op_heat", static_cast<int64_t>(getPerOpHeat()));
+  const int64_t elemBytes =
+      signedAttr("elem_bytes", static_cast<int64_t>(getElemBytes()));
+  const int64_t calGen = signedAttr("cal_gen", static_cast<int64_t>(getCalGen()));
+
+  if (warp < 0 || gatherPenalty < 0 || baseOverhead < 0 ||
+      thermalDensity < 0 || powerDensity < 0 || perOpHeat < 0 || calGen < 0)
+    return emitOpError()
+           << "warp, gather_penalty, base_overhead, thermal_density, power_density, "
+              "per_op_heat, and cal_gen must be non-negative";
+  if (affinityDomains <= 0 || memChannels <= 0 || memUnit <= 0 || elemBytes <= 0)
+    return emitOpError()
+           << "affinity_domains, mem_channels, mem_unit, and elem_bytes must be positive";
+
+  for (::mlir::Attribute attr : getIsaFeatures())
+    if (!::mlir::isa<::mlir::StringAttr>(attr))
+      return emitOpError() << "isa_features entries must all be strings";
   return ::mlir::success();
 }
 
@@ -1018,9 +1195,12 @@ static ::mlir::LogicalResult verifyAtomicAddr(::mlir::Operation *op, ::mlir::Typ
       return emitOpError() << "bank " << i << ": native_tile must be >= 1, got " << tiles[i];
   }
   auto d = getDistance();
-  if (d.size() != n * n)
+  if (n != 0 && n > std::numeric_limits<size_t>::max() / n)
+    return emitOpError() << "manifest: bank-count square exceeds host size range";
+  const size_t distanceCount = n * n;
+  if (d.size() != distanceCount)
     return emitOpError() << "manifest: distance has " << d.size() << " entries, want "
-                         << n * n;
+                         << distanceCount;
   for (size_t i = 0; i < n; ++i)
     for (size_t j = 0; j < n; ++j) {
       int64_t v = d[i * n + j];

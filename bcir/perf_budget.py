@@ -27,6 +27,11 @@ import platform
 import time
 from dataclasses import dataclass, field
 
+from ._artifact_json import strict_json_loads
+
+_MAX_TREND_BYTES = 64 << 20
+_MAX_TREND_LINE_BYTES = 1 << 20
+_MAX_TREND_RECORDS = 1_000_000
 
 def is_baremetal() -> bool:
     """True on a controlled box where perf floors are meaningful (set BCIR_BAREMETAL=1)."""
@@ -149,16 +154,74 @@ def record_trend(result: BudgetResult, path: str) -> dict:
     row = {**_provenance(), "name": result.name, "ok": result.ok,
            "speedup_milli": result.speedup_milli, "ns_per_call": result.ns_per_call,
            "reference_milli": result.reference_milli}
+    encoded = (json.dumps(row, sort_keys=True) + "\n").encode("utf-8")
+    try:
+        current_size = os.path.getsize(path)
+    except FileNotFoundError:
+        current_size = 0
+    if current_size + len(encoded) > _MAX_TREND_BYTES:
+        raise ValueError(
+            f"trend log would exceed {_MAX_TREND_BYTES} bytes; rotate {path!r}")
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, sort_keys=True) + "\n")
+    with open(path, "ab") as f:
+        f.write(encoded)
     return row
 
 
 def read_trend(path: str) -> list[dict]:
     try:
-        with open(path, encoding="utf-8") as f:
-            return [json.loads(line) for line in f if line.strip()]
+        with open(path, "rb") as f:
+            rows = []
+            consumed = 0
+            for line_number, raw in enumerate(f, 1):
+                consumed += len(raw)
+                if consumed > _MAX_TREND_BYTES:
+                    raise ValueError(f"trend log exceeds {_MAX_TREND_BYTES} bytes")
+                if len(raw) > _MAX_TREND_LINE_BYTES:
+                    raise ValueError(f"trend log line {line_number} exceeds the line limit")
+                if not raw.strip():
+                    continue
+                if len(rows) >= _MAX_TREND_RECORDS:
+                    raise ValueError("trend log exceeds the record limit")
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeError as exc:
+                    raise ValueError(f"trend log line {line_number} is not UTF-8") from exc
+                row = strict_json_loads(text, f"trend log line {line_number}",
+                                        max_bytes=_MAX_TREND_LINE_BYTES)
+                fields = {"ts", "host", "machine", "baremetal", "name", "ok",
+                          "speedup_milli", "ns_per_call", "reference_milli"}
+                if not isinstance(row, dict) or set(row) != fields:
+                    raise ValueError(f"trend log line {line_number} has an invalid schema")
+                for key in ("host", "machine", "name"):
+                    value = row[key]
+                    if (not isinstance(value, str) or (key == "name" and not value) or
+                            len(value) > 4096 or
+                            any(ord(ch) < 0x20 for ch in value)):
+                        raise ValueError(
+                            f"trend log line {line_number} {key} is not a bounded string")
+                for key in ("baremetal", "ok"):
+                    if not isinstance(row[key], bool):
+                        raise ValueError(f"trend log line {line_number} {key} is not boolean")
+                timestamp = row["ts"]
+                if (isinstance(timestamp, bool) or not isinstance(timestamp, int) or
+                        not 0 <= timestamp <= (1 << 63) - 1):
+                    raise ValueError(
+                        f"trend log line {line_number} ts is not a non-negative i63")
+                for key in ("speedup_milli", "ns_per_call"):
+                    value = row[key]
+                    if (isinstance(value, bool) or not isinstance(value, int) or
+                            not -(1 << 63) <= value <= (1 << 63) - 1):
+                        raise ValueError(
+                            f"trend log line {line_number} {key} is not a signed i64")
+                reference = row["reference_milli"]
+                if (reference is not None and
+                        (isinstance(reference, bool) or not isinstance(reference, int) or
+                         not 0 <= reference <= (1 << 63) - 1)):
+                    raise ValueError(
+                        f"trend log line {line_number} reference_milli is invalid")
+                rows.append(row)
+            return rows
     except OSError:
         return []
 

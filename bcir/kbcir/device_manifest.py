@@ -34,11 +34,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 
 from ..model import Claim, Domain, Lane, Opcode, StrideClass
 
 _Q8 = 256
+_MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 
 # The MEMORY tiers D-R2 governs. MMIO is exempt (measured: drivers mix MMIO/RAM in
 # plain load/store claims by design; the R3 rail owns register-access ordering).
@@ -99,23 +102,52 @@ def check_device_manifest(man: DeviceManifest) -> list[str]:
     positive-off-diagonal, SYMMETRIC distance matrix (the interconnect is a metric --
     an asymmetric entry is a typo, not a topology)."""
     msgs: list[str] = []
-    if not man.banks:
+    if not isinstance(man, DeviceManifest):
+        return ["manifest: expected a DeviceManifest"]
+    if not isinstance(man.device, str) or not man.device:
+        msgs.append("manifest: device must be a nonempty string")
+    if not isinstance(man.target, str):
+        msgs.append("manifest: target must be a string")
+    if isinstance(man.cal_gen, bool) or not isinstance(man.cal_gen, int) or man.cal_gen < 0:
+        msgs.append("manifest: cal_gen must be a non-negative integer")
+    if not isinstance(man.banks, (tuple, list)) or not man.banks:
         msgs.append("manifest: no banks")
+        return msgs
+    if any(not isinstance(bank, MemoryBank) for bank in man.banks):
+        msgs.append("manifest: every bank must be a MemoryBank")
+        return msgs
     names = [b.name for b in man.banks]
-    if len(set(names)) != len(names):
+    if any(not isinstance(name, str) or not name for name in names):
+        msgs.append("manifest: bank names must be nonempty strings")
+    elif len(set(names)) != len(names):
         msgs.append(f"manifest: duplicate bank names {names}")
     for b in man.banks:
-        if b.capacity_bytes < 1:
+        if not isinstance(b.domain, Domain):
+            msgs.append(f"bank {b.name}: domain must be a Domain")
+        if (isinstance(b.capacity_bytes, bool) or not isinstance(b.capacity_bytes, int)
+                or b.capacity_bytes < 1):
             msgs.append(f"bank {b.name}: capacity must be >= 1; got {b.capacity_bytes}")
-        if b.native_tile < 1:
+        if (isinstance(b.native_tile, bool) or not isinstance(b.native_tile, int)
+                or b.native_tile < 1):
             msgs.append(f"bank {b.name}: native_tile must be >= 1; got {b.native_tile}")
-        if b.align < 1:
+        if isinstance(b.align, bool) or not isinstance(b.align, int) or b.align < 1:
             msgs.append(f"bank {b.name}: align must be >= 1; got {b.align}")
+        elif b.align & (b.align - 1):
+            msgs.append(f"bank {b.name}: align must be a power of two; got {b.align}")
     n = len(man.banks)
-    if len(man.distance) != n or any(len(row) != n for row in man.distance):
+    if (not isinstance(man.distance, (tuple, list)) or len(man.distance) != n
+            or any(not isinstance(row, (tuple, list)) or len(row) != n
+                   for row in man.distance)):
         msgs.append(f"manifest: distance matrix is not {n}x{n}")
         return msgs
     for i in range(n):
+        for j in range(n):
+            value = man.distance[i][j]
+            if isinstance(value, bool) or not isinstance(value, int):
+                msgs.append(f"distance[{i}][{j}] must be an integer Q8 value; got {value!r}")
+        if any(isinstance(value, bool) or not isinstance(value, int)
+               for value in man.distance[i]):
+            continue
         if man.distance[i][i] != 0:
             msgs.append(f"distance[{i}][{i}] must be 0 (staying put is free); "
                         f"got {man.distance[i][i]}")
@@ -132,8 +164,10 @@ def move_cost(man: DeviceManifest, src: str, dst: str, nbytes: int) -> int:
     """The D-R3 pricing primitive: bytes x the Q8 pairwise distance. The planner's
     data-movement penalty -- a far move IS more expensive because the manifest says
     so, not because a heuristic guessed."""
+    if not isinstance(nbytes, int) or isinstance(nbytes, bool) or nbytes < 0:
+        raise ValueError(f"move byte count must be a non-negative integer; got {nbytes!r}")
     d = man.distance[man.bank_index(src)][man.bank_index(dst)]
-    return (max(0, nbytes) * d) >> 8
+    return (nbytes * d) >> 8
 
 
 def move_claim(man: DeviceManifest, src: str, dst: str, rid_src: int, rid_dst: int,
@@ -142,10 +176,12 @@ def move_claim(man: DeviceManifest, src: str, dst: str, rid_src: int, rid_dst: i
     share a memory tier, `mem.move.far` on a tier crossing -- the distance-aware
     op-codes the cost model prices differently. The claim's domain is the DESTINATION
     (where the bytes land)."""
+    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+        raise ValueError(f"move count must be a positive integer; got {count!r}")
     sb, db = man.bank(src), man.bank(dst)
     kind = "near" if sb.domain == db.domain else "far"
     return Claim(id=cid, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                 count=max(1, count), rd=(rid_src,), wr=(rid_dst,),
+                 count=count, rd=(rid_src,), wr=(rid_dst,),
                  op=f"mem.move.{kind}:{src}->{dst}", domain=db.domain,
                  bounds="assumed_safe")
 
@@ -198,6 +234,12 @@ def check_strided_view(view: StridedView, man: DeviceManifest) -> list[str]:
     extents honor the bank's NATIVE TILE (a 15x15 submission against a 16-native bank
     refuses at plan time -- the fragmentation law)."""
     msgs: list[str] = []
+    if not isinstance(view, StridedView):
+        return ["view must be a StridedView"]
+    if not isinstance(view.bank, str):
+        return ["view bank must be a string"]
+    if not isinstance(view.shape, (tuple, list)) or not isinstance(view.strides, (tuple, list)):
+        return ["view shape and strides must be sequences"]
     try:
         bank = man.bank(view.bank)
     except KeyError as e:
@@ -209,13 +251,23 @@ def check_strided_view(view: StridedView, man: DeviceManifest) -> list[str]:
         msgs.append(f"view on {view.bank}: {len(view.shape)} dimensions but "
                     f"{len(view.strides)} strides (the FULL stride vector is required)")
         return msgs
-    if any(d < 1 for d in view.shape) or any(s < 1 for s in view.strides):
+    if any(not isinstance(d, int) or isinstance(d, bool) or d < 1 for d in view.shape) \
+            or any(not isinstance(s, int) or isinstance(s, bool) or s < 1
+                   for s in view.strides):
         msgs.append(f"view on {view.bank}: extents and strides must be >= 1 "
                     f"(shape={view.shape}, strides={view.strides})")
         return msgs
-    if view.offset_bytes < 0 or view.offset_bytes % bank.align:
+    if (not isinstance(view.elem_bytes, int) or isinstance(view.elem_bytes, bool)
+            or view.elem_bytes < 1):
+        msgs.append(f"view on {view.bank}: elem_bytes must be a positive integer; "
+                    f"got {view.elem_bytes!r}")
+        return msgs
+    if (isinstance(view.offset_bytes, bool) or not isinstance(view.offset_bytes, int)
+            or view.offset_bytes < 0 or view.offset_bytes % bank.align):
         msgs.append(f"view on {view.bank}: offset {view.offset_bytes} violates the "
                     f"bank alignment {bank.align}")
+        if isinstance(view.offset_bytes, bool) or not isinstance(view.offset_bytes, int):
+            return msgs
     last = view.offset_bytes + sum((d - 1) * s for d, s in
                                    zip(view.shape, view.strides)) * view.elem_bytes \
         + view.elem_bytes
@@ -258,13 +310,29 @@ MANIFEST_SCHEMA = 1
 
 
 def save_device_manifest(path: str, man: DeviceManifest) -> None:
+    errors = check_device_manifest(man)
+    if errors:
+        raise ValueError("invalid device manifest: " + "; ".join(errors))
     doc = {"kind": MANIFEST_KIND, "schema": MANIFEST_SCHEMA, "device": man.device,
            "target": man.target, "cal_gen": int(man.cal_gen),
            "banks": [[b.name, int(b.domain), b.capacity_bytes, b.native_tile, b.align]
                      for b in man.banks],
            "distance": [list(row) for row in man.distance], "digest": man.digest}
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(doc, f, indent=2, sort_keys=True)
+    target = os.fspath(path)
+    directory = os.path.dirname(os.path.abspath(target)) or "."
+    fd, temporary = tempfile.mkstemp(prefix=os.path.basename(target) + ".",
+                                     suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(doc, f, indent=2, sort_keys=True)
+            f.flush(); os.fsync(f.fileno())
+        os.replace(temporary, target)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def load_device_manifest(path: str, *, expect_target: str = "",
@@ -272,27 +340,89 @@ def load_device_manifest(path: str, *, expect_target: str = "",
     """Load with the house refusals: wrong kind, a NEWER schema, a different target
     ('retrain'), a cal_gen mismatch ('STALE'), or a digest that does not re-derive
     (a tampered manifest is caught, not trusted)."""
-    with open(path, encoding="utf-8") as f:
-        doc = json.load(f)
+    try:
+        with open(path, "rb") as f:
+            size = os.fstat(f.fileno()).st_size
+            if size > _MAX_MANIFEST_BYTES:
+                raise ValueError("device manifest exceeds the 16 MiB input limit")
+            raw = f.read(_MAX_MANIFEST_BYTES + 1)
+    except OSError as exc:
+        raise ValueError(f"cannot read device manifest: {exc}") from exc
+    if len(raw) > _MAX_MANIFEST_BYTES or len(raw) != size:
+        raise ValueError("device manifest changed, truncated, or exceeds its input limit")
+    def unique_object(pairs):
+        out = {}
+        for key, value in pairs:
+            if key in out:
+                raise ValueError(f"duplicate device-manifest key {key!r}")
+            out[key] = value
+        return out
+    try:
+        doc = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+        raise ValueError(f"malformed device manifest: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise ValueError("device manifest root must be an object")
     if doc.get("kind") != MANIFEST_KIND:
         raise ValueError(f"not a {MANIFEST_KIND} document (kind={doc.get('kind')!r})")
-    if int(doc.get("schema", 0)) > MANIFEST_SCHEMA:
+    schema = doc.get("schema")
+    if isinstance(schema, bool) or not isinstance(schema, int):
+        raise ValueError("device-manifest schema must be an integer")
+    if schema > MANIFEST_SCHEMA:
         raise ValueError(f"device-manifest schema v{doc['schema']} is newer than this "
                          f"build's v{MANIFEST_SCHEMA}; upgrade BCIR to load this manifest")
+    if schema != MANIFEST_SCHEMA:
+        raise ValueError(f"unsupported device-manifest schema v{schema}")
+    expected_fields = {"kind", "schema", "device", "target", "cal_gen", "banks",
+                       "distance", "digest"}
+    if set(doc) != expected_fields:
+        raise ValueError("device manifest has missing or unknown fields")
     if expect_target and doc.get("target") != expect_target:
         raise ValueError(f"device manifest was authored for target {doc.get('target')!r}, "
                          f"not {expect_target!r} -- retrain")
-    if expect_cal_gen is not None and int(doc.get("cal_gen", 0)) != expect_cal_gen:
+    if (expect_cal_gen is not None and
+            (isinstance(expect_cal_gen, bool) or not isinstance(expect_cal_gen, int)
+             or expect_cal_gen < 0)):
+        raise ValueError("expect_cal_gen must be a non-negative integer")
+    if expect_cal_gen is not None and doc.get("cal_gen") != expect_cal_gen:
         raise ValueError(f"device manifest is STALE: authored under cal_gen "
                          f"{doc.get('cal_gen')}, the live table is cal_gen "
                          f"{expect_cal_gen} -- retrain")
-    man = DeviceManifest(
-        device=doc["device"],
-        banks=tuple(MemoryBank(name=b[0], domain=Domain(int(b[1])), capacity_bytes=int(b[2]),
-                               native_tile=int(b[3]), align=int(b[4]))
-                    for b in doc["banks"]),
-        distance=tuple(tuple(int(v) for v in row) for row in doc["distance"]),
-        target=doc.get("target", ""), cal_gen=int(doc.get("cal_gen", 0)))
-    if doc.get("digest") and doc["digest"] != man.digest:
+    if (not isinstance(doc["device"], str) or not isinstance(doc["target"], str)
+            or isinstance(doc["cal_gen"], bool) or not isinstance(doc["cal_gen"], int)
+            or doc["cal_gen"] < 0 or not isinstance(doc["banks"], list)
+            or not isinstance(doc["distance"], list)):
+        raise ValueError("device manifest has invalid field types")
+    banks = []
+    for index, bank in enumerate(doc["banks"]):
+        if not isinstance(bank, list) or len(bank) != 5:
+            raise ValueError(f"device manifest bank {index} must have five fields")
+        name, domain, capacity, native_tile, align = bank
+        if (not isinstance(name, str) or isinstance(domain, bool) or not isinstance(domain, int)
+                or isinstance(capacity, bool) or not isinstance(capacity, int)
+                or isinstance(native_tile, bool) or not isinstance(native_tile, int)
+                or isinstance(align, bool) or not isinstance(align, int)):
+            raise ValueError(f"device manifest bank {index} has invalid field types")
+        try:
+            domain_value = Domain(domain)
+        except ValueError as exc:
+            raise ValueError(f"device manifest bank {index} has unknown domain {domain}") from exc
+        banks.append(MemoryBank(name, domain_value, capacity, native_tile, align))
+    distance = []
+    for index, row in enumerate(doc["distance"]):
+        if (not isinstance(row, list) or any(isinstance(value, bool)
+                                             or not isinstance(value, int) for value in row)):
+            raise ValueError(f"device manifest distance row {index} is invalid")
+        distance.append(tuple(row))
+    man = DeviceManifest(device=doc["device"], banks=tuple(banks), distance=tuple(distance),
+                         target=doc["target"], cal_gen=doc["cal_gen"])
+    digest = doc["digest"]
+    if (not isinstance(digest, str) or len(digest) != 64 or digest != digest.lower()
+            or any(ch not in "0123456789abcdef" for ch in digest)):
+        raise ValueError("device manifest digest must be lowercase SHA-256 hex")
+    if digest != man.digest:
         raise ValueError("device manifest digest does not re-derive (tampered)")
+    errors = check_device_manifest(man)
+    if errors:
+        raise ValueError("invalid device manifest: " + "; ".join(errors))
     return man

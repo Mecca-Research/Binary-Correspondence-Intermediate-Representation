@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
+from .._artifact_json import strict_json_loads
 from ..model import Module
 from .cost import HProfile, Theta
 from .weights import PERF, Policy
@@ -82,30 +83,130 @@ class DecisionRecord:
         payload (v1, pre-envelope) is upgraded in place via the `_UPGRADES` chain; an
         envelope at the current version decodes directly; an UNKNOWN (newer) version fails
         LOUDLY -- a certificate must never be silently misread."""
-        d = json.loads(text)
+        d = strict_json_loads(text, "decision record")
+        if not isinstance(d, dict):
+            raise ValueError("decision record JSON must be an object")
         if "schema" not in d:                          # v1: the bare, unversioned payload
             version, payload = 1, d
         else:
-            if d.get("kind") != RECORD_KIND:
+            if set(d) != {"kind", "schema", "record"}:
+                raise ValueError("decision-record envelope has unknown or missing fields")
+            if d["kind"] != RECORD_KIND:
                 raise ValueError(f"not a {RECORD_KIND} document (kind={d.get('kind')!r})")
-            version, payload = int(d["schema"]), d["record"]
+            version = d["schema"]
+            if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+                raise ValueError("decision-record schema must be a positive integer")
+            payload = d["record"]
         if version > SCHEMA_VERSION:
             raise ValueError(f"decision-record schema v{version} is newer than this build's "
                              f"v{SCHEMA_VERSION}; upgrade BCIR to re-check this record")
         while version < SCHEMA_VERSION:                # chain upgrades one revision at a time
-            payload = _UPGRADES[version](payload)
+            upgrade = _UPGRADES.get(version)
+            if upgrade is None:
+                raise ValueError(f"decision-record schema v{version} is not supported")
+            payload = upgrade(payload)
             version += 1
-        decisions = tuple(
-            ClaimDecision(dc["claim_id"], dc["op"], dc["chosen"], dc["width"], dc["score"],
-                          tuple(tuple(c) for c in dc["candidates"]))
-            for dc in payload["decisions"])
-        certs = tuple(
-            RewriteCertificate(c["kind"], tuple(c["claim_ids"]), c["detail"], c["gain"],
-                               c["searched"])
-            for c in payload["certificates"])
-        return DecisionRecord(payload["module_name"], payload["target"], payload["theta"],
-                              payload["policy"], payload["digest"], payload["total_score"],
-                              decisions, certs)
+        fields = {"module_name", "target", "theta", "policy", "digest", "total_score",
+                  "decisions", "certificates"}
+        if not isinstance(payload, dict) or set(payload) != fields:
+            raise ValueError(f"decision-record fields must be exactly {sorted(fields)}")
+
+        def bounded_string(value, label):
+            if (not isinstance(value, str) or not value or len(value) > 4096 or
+                    any(ord(ch) < 0x20 for ch in value)):
+                raise ValueError(f"{label} must be a bounded, non-control string")
+            return value
+
+        def nonnegative_i63(value, label):
+            if (isinstance(value, bool) or not isinstance(value, int) or
+                    not 0 <= value <= (1 << 63) - 1):
+                raise ValueError(f"{label} must be a non-negative i63")
+            return value
+
+        labels = tuple(bounded_string(payload[key], f"decision-record {key}")
+                       for key in ("module_name", "target", "theta", "policy"))
+        digest = nonnegative_i63(payload["digest"], "decision-record digest")
+        total_score = nonnegative_i63(payload["total_score"],
+                                      "decision-record total_score")
+
+        raw_decisions = payload["decisions"]
+        if not isinstance(raw_decisions, list) or len(raw_decisions) > 65536:
+            raise ValueError("decision-record decisions must be a bounded array")
+        decisions = []
+        seen_claims = set()
+        decision_fields = {"claim_id", "op", "chosen", "width", "score", "candidates"}
+        for index, dc in enumerate(raw_decisions):
+            if not isinstance(dc, dict) or set(dc) != decision_fields:
+                raise ValueError(f"decision[{index}] has unknown or missing fields")
+            claim_id = nonnegative_i63(dc["claim_id"], f"decision[{index}].claim_id")
+            if claim_id in seen_claims:
+                raise ValueError(f"duplicate decision claim_id {claim_id}")
+            seen_claims.add(claim_id)
+            op = bounded_string(dc["op"], f"decision[{index}].op")
+            chosen = bounded_string(dc["chosen"], f"decision[{index}].chosen")
+            width = dc["width"]
+            if (isinstance(width, bool) or not isinstance(width, int) or
+                    not 1 <= width <= 0xFFFFFFFF):
+                raise ValueError(f"decision[{index}].width must be a positive u32")
+            score = nonnegative_i63(dc["score"], f"decision[{index}].score")
+            raw_candidates = dc["candidates"]
+            if (not isinstance(raw_candidates, list) or not raw_candidates or
+                    len(raw_candidates) > 4096):
+                raise ValueError(f"decision[{index}].candidates must be a bounded array")
+            candidates = []
+            seen_names = set()
+            for candidate_index, candidate in enumerate(raw_candidates):
+                if not isinstance(candidate, list) or len(candidate) != 2:
+                    raise ValueError(
+                        f"decision[{index}].candidates[{candidate_index}] must be [name, score]")
+                name = bounded_string(candidate[0],
+                                      f"decision[{index}].candidates[{candidate_index}].name")
+                candidate_score = nonnegative_i63(
+                    candidate[1], f"decision[{index}].candidates[{candidate_index}].score")
+                if name in seen_names:
+                    raise ValueError(f"decision[{index}] has duplicate candidate {name!r}")
+                seen_names.add(name)
+                candidates.append((name, candidate_score))
+            if candidates != sorted(candidates):
+                raise ValueError(f"decision[{index}] candidates must be sorted by name")
+            chosen_scores = [candidate_score for name, candidate_score in candidates
+                             if name == chosen]
+            if chosen_scores != [score]:
+                raise ValueError(
+                    f"decision[{index}] chosen candidate must exist and match its score")
+            decisions.append(ClaimDecision(claim_id, op, chosen, width, score,
+                                           tuple(candidates)))
+        raw_certs = payload["certificates"]
+        if not isinstance(raw_certs, list) or len(raw_certs) > 65536:
+            raise ValueError("decision-record certificates must be a bounded array")
+        certs = []
+        cert_fields = {"kind", "claim_ids", "detail", "gain", "searched"}
+        for index, cert in enumerate(raw_certs):
+            if not isinstance(cert, dict) or set(cert) != cert_fields:
+                raise ValueError(f"certificate[{index}] has unknown or missing fields")
+            kind = bounded_string(cert["kind"], f"certificate[{index}].kind")
+            if kind != "bundle":
+                raise ValueError(f"certificate[{index}] has unsupported kind {kind!r}")
+            raw_ids = cert["claim_ids"]
+            if (not isinstance(raw_ids, list) or len(raw_ids) < 2 or
+                    len(raw_ids) > 65536):
+                raise ValueError(f"certificate[{index}].claim_ids must be a bounded array")
+            claim_ids = tuple(nonnegative_i63(value,
+                                               f"certificate[{index}].claim_ids")
+                              for value in raw_ids)
+            if len(set(claim_ids)) != len(claim_ids):
+                raise ValueError(f"certificate[{index}] has duplicate claim ids")
+            if any(claim_id not in seen_claims for claim_id in claim_ids):
+                raise ValueError(f"certificate[{index}] references an unknown claim id")
+            detail = bounded_string(cert["detail"], f"certificate[{index}].detail")
+            gain = nonnegative_i63(cert["gain"], f"certificate[{index}].gain")
+            searched = nonnegative_i63(cert["searched"], f"certificate[{index}].searched")
+            if searched == 0:
+                raise ValueError(f"certificate[{index}].searched must be positive")
+            certs.append(RewriteCertificate(kind, claim_ids, detail, gain, searched))
+
+        return DecisionRecord(labels[0], labels[1], labels[2], labels[3], digest,
+                              total_score, tuple(decisions), tuple(certs))
 
 
 RECORD_KIND = "bcir.decision_record"
@@ -180,21 +281,31 @@ def replay(record: DecisionRecord, module: Module, h: HProfile, theta: Theta,
     R13 provenance digest matches (same commit) AND every per-claim decision + the total
     score + the rewrite certificates are identical -- the proof the deployed plan is
     bit-for-bit replayable. Returns the (reproduced, mismatches) verdict."""
+    # ``target`` is a user-facing label and may be a registry alias (for example
+    # ``x86_avx512`` for profile name ``x86-64-avx512``).  The target contents are
+    # bound by the provenance digest; the CLI separately checks the accepted alias.
     fresh = explain(module, h, theta, policy, target_name=record.target, joint=joint)
     mismatches: list[str] = []
+    for field in ("module_name", "theta", "policy"):
+        actual = getattr(fresh, field)
+        recorded = getattr(record, field)
+        if actual != recorded:
+            mismatches.append(f"{field} {actual!r} != recorded {recorded!r}")
     if fresh.digest != record.digest:
         mismatches.append(f"provenance digest {fresh.digest} != recorded {record.digest}")
     if fresh.total_score != record.total_score:
         mismatches.append(f"total score {fresh.total_score} != recorded {record.total_score}")
     fresh_by_id = {d.claim_id: d for d in fresh.decisions}
-    for rd in record.decisions:
-        fd = fresh_by_id.get(rd.claim_id)
+    recorded_by_id = {d.claim_id: d for d in record.decisions}
+    for claim_id in sorted(set(fresh_by_id) | set(recorded_by_id)):
+        fd = fresh_by_id.get(claim_id)
+        rd = recorded_by_id.get(claim_id)
         if fd is None:
-            mismatches.append(f"claim {rd.claim_id} absent on replay")
-        elif (fd.chosen, fd.score, fd.width) != (rd.chosen, rd.score, rd.width):
-            mismatches.append(
-                f"claim {rd.claim_id}: replay ({fd.chosen}/{fd.score}/w{fd.width}) != "
-                f"recorded ({rd.chosen}/{rd.score}/w{rd.width})")
+            mismatches.append(f"recorded claim {claim_id} absent on replay")
+        elif rd is None:
+            mismatches.append(f"replay claim {claim_id} absent from record")
+        elif fd != rd:
+            mismatches.append(f"claim {claim_id}: replay {fd!r} != recorded {rd!r}")
     if fresh.certificates != record.certificates:
         mismatches.append("rewrite certificates diverged")
     return ReplayResult(reproduced=not mismatches, mismatches=tuple(mismatches))

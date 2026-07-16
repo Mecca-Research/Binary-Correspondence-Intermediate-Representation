@@ -44,6 +44,153 @@ from .kbcir.cost import MemoryHierarchy, TargetProfile, Tier
 PLUGIN_FORMAT_VERSION = 1
 KINDS = frozenset({"cpu", "gpu", "fpga", "accelerator", "storage", "memory"})
 PROVENANCE = frozenset({"real", "modeled", "simulated"})
+_CALIBRATION_PROVENANCE = frozenset({"measured", "modeled", "none"})
+_ENERGY_SOURCES = frozenset({"rapl", "nvml", "hwmon", "none"})
+_MAX_MANIFEST_BYTES = 1 << 20
+_MAX_STRING = 4096
+_MAX_LIST = 256
+_MAX_INT = (1 << 63) - 1
+
+
+def _reject_duplicate_keys(pairs):
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        out[key] = value
+    return out
+
+
+def _reject_json_constant(value: str):
+    raise ValueError(f"non-finite JSON constant {value!r}")
+
+
+def _object(value, where: str, *, fields: set[str]) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f"{where} must be an object")
+    unknown = set(value) - fields
+    missing = fields - set(value)
+    if unknown or missing:
+        details = []
+        if missing:
+            details.append(f"missing {sorted(missing)}")
+        if unknown:
+            details.append(f"unknown {sorted(unknown)}")
+        raise ValueError(f"{where} has " + "; ".join(details))
+    return value
+
+
+def _string(value, where: str, *, allow_empty: bool = True) -> str:
+    if (not isinstance(value, str) or len(value) > _MAX_STRING or
+            any(ord(ch) < 0x20 for ch in value) or (not allow_empty and not value)):
+        qualifier = "a non-empty" if not allow_empty else "a"
+        raise ValueError(f"{where} must be {qualifier} bounded string")
+    return value
+
+
+def _integer(value, where: str, *, minimum: int = 0, maximum: int = _MAX_INT) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise ValueError(f"{where} must be an integer in [{minimum}, {maximum}]")
+    return value
+
+
+def _boolean(value, where: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{where} must be a boolean")
+    return value
+
+
+def _string_list(value, where: str, *, max_items: int = _MAX_LIST) -> tuple[str, ...]:
+    if not isinstance(value, list) or len(value) > max_items:
+        raise ValueError(f"{where} must be an array of at most {max_items} strings")
+    out = tuple(_string(v, f"{where}[{i}]", allow_empty=False) for i, v in enumerate(value))
+    if len(set(out)) != len(out):
+        raise ValueError(f"{where} must not contain duplicates")
+    return out
+
+
+def _parse_manifest_document(d: object) -> dict:
+    """Validate the v1 wire schema before constructing optimizer/runtime objects.
+
+    Channel manifests are third-party inputs.  Rejecting coercions, duplicate/unknown
+    fields, oversized collections, and invalid arithmetic constants here prevents a
+    malformed plugin from reaching cost calculations or the global channel registry.
+    """
+    top = _object(d, "channel manifest", fields={
+        "format_version", "name", "kind", "provenance", "modeled", "arch_match",
+        "capabilities", "codegen", "runtime", "calibration", "profile",
+    })
+    _integer(top["format_version"], "format_version", minimum=1,
+             maximum=PLUGIN_FORMAT_VERSION)
+    _string(top["name"], "name", allow_empty=False)
+    _string(top["kind"], "kind", allow_empty=False)
+    _string(top["provenance"], "provenance", allow_empty=False)
+    _boolean(top["modeled"], "modeled")
+    _string_list(top["arch_match"], "arch_match", max_items=64)
+    _string_list(top["capabilities"], "capabilities", max_items=len(CAPABILITY_VOCAB) + 1)
+
+    codegen = _object(top["codegen"], "codegen", fields={"llvm_triple", "e_machine"})
+    _string(codegen["llvm_triple"], "codegen.llvm_triple")
+    _integer(codegen["e_machine"], "codegen.e_machine", maximum=0xFFFF)
+
+    runtime = _object(top["runtime"], "runtime", fields={
+        "perf_syscall_nr", "energy_source", "thermal_zone_types",
+    })
+    _integer(runtime["perf_syscall_nr"], "runtime.perf_syscall_nr", maximum=1 << 20)
+    energy = _string(runtime["energy_source"], "runtime.energy_source", allow_empty=False)
+    if energy not in _ENERGY_SOURCES:
+        raise ValueError(f"runtime.energy_source {energy!r} is not supported")
+    _string_list(runtime["thermal_zone_types"], "runtime.thermal_zone_types", max_items=64)
+
+    calibration = _object(top["calibration"], "calibration", fields={
+        "ref", "digest", "cal_gen", "provenance",
+    })
+    _string(calibration["ref"], "calibration.ref")
+    _string(calibration["digest"], "calibration.digest")
+    _integer(calibration["cal_gen"], "calibration.cal_gen")
+    cal_prov = _string(calibration["provenance"], "calibration.provenance", allow_empty=False)
+    if cal_prov not in _CALIBRATION_PROVENANCE:
+        raise ValueError(f"calibration.provenance {cal_prov!r} is not supported")
+
+    profile = _object(top["profile"], "profile", fields={
+        "name", "triple", "cacheline", "elem_bytes", "lane_widths", "warp",
+        "scalable", "gather_penalty", "mem_unit", "base_overhead", "thermal_density",
+        "power_density", "per_op_heat", "fma", "isa_features", "affinity_domains",
+        "mem_channels", "cal_gen", "mem_tiers",
+    })
+    _string(profile["name"], "profile.name", allow_empty=False)
+    _string(profile["triple"], "profile.triple", allow_empty=False)
+    for key in ("cacheline", "elem_bytes", "gather_penalty", "mem_unit", "base_overhead",
+                "affinity_domains", "mem_channels"):
+        _integer(profile[key], f"profile.{key}", minimum=1)
+    for key in ("warp", "thermal_density", "power_density", "per_op_heat", "cal_gen"):
+        _integer(profile[key], f"profile.{key}")
+    _boolean(profile["scalable"], "profile.scalable")
+    _boolean(profile["fma"], "profile.fma")
+    widths = profile["lane_widths"]
+    if not isinstance(widths, list) or not widths or len(widths) > 64:
+        raise ValueError("profile.lane_widths must be a non-empty array of at most 64 integers")
+    parsed_widths = tuple(_integer(v, f"profile.lane_widths[{i}]", minimum=1)
+                          for i, v in enumerate(widths))
+    if parsed_widths[0] != 1 or tuple(sorted(set(parsed_widths))) != parsed_widths:
+        raise ValueError("profile.lane_widths must start at 1 and be strictly increasing")
+    _string_list(profile["isa_features"], "profile.isa_features")
+    tiers = profile["mem_tiers"]
+    if not isinstance(tiers, list) or len(tiers) > 64:
+        raise ValueError("profile.mem_tiers must be an array of at most 64 tiers")
+    tier_names = []
+    for i, raw in enumerate(tiers):
+        tier = _object(raw, f"profile.mem_tiers[{i}]", fields={
+            "name", "latency_cyc", "bw_factor", "lat_factor", "capacity",
+        })
+        tier_names.append(_string(tier["name"], f"profile.mem_tiers[{i}].name",
+                                  allow_empty=False))
+        for key in ("latency_cyc", "bw_factor", "lat_factor"):
+            _integer(tier[key], f"profile.mem_tiers[{i}].{key}", minimum=1)
+        _integer(tier["capacity"], f"profile.mem_tiers[{i}].capacity")
+    if len(set(tier_names)) != len(tier_names):
+        raise ValueError("profile.mem_tiers must not contain duplicate names")
+    return top
 
 
 # --- (2) target profile schema: a faithful, declarative serialization of TargetProfile ----------
@@ -144,26 +291,31 @@ class ChannelManifest:
 
     @classmethod
     def from_dict(cls, d: dict) -> "ChannelManifest":
-        cg = d.get("codegen", {})
-        rt = d.get("runtime", {})
+        d = _parse_manifest_document(d)
+        cg = d["codegen"]
+        rt = d["runtime"]
         return cls(
             name=d["name"], kind=d["kind"],
             profile=schema_to_profile(d["profile"]),
-            llvm_triple=cg.get("llvm_triple", ""), e_machine=cg.get("e_machine", EM_NONE),
+            llvm_triple=cg["llvm_triple"], e_machine=cg["e_machine"],
             runtime=RuntimeChannel(
-                perf_syscall_nr=rt.get("perf_syscall_nr", 298),
-                energy_source=rt.get("energy_source", "none"),
-                thermal_zone_types=tuple(rt.get("thermal_zone_types", ("cpu", "soc")))),
-            capabilities=frozenset(d.get("capabilities", ())),
-            calibration=CalibrationArtifact.from_dict(d.get("calibration", {})),
-            provenance=d.get("provenance", "modeled"), modeled=d.get("modeled", True),
-            arch_match=tuple(d.get("arch_match", ())),
-            format_version=d.get("format_version", PLUGIN_FORMAT_VERSION))
+                perf_syscall_nr=rt["perf_syscall_nr"],
+                energy_source=rt["energy_source"],
+                thermal_zone_types=tuple(rt["thermal_zone_types"])),
+            capabilities=frozenset(d["capabilities"]),
+            calibration=CalibrationArtifact.from_dict(d["calibration"]),
+            provenance=d["provenance"], modeled=d["modeled"],
+            arch_match=tuple(d["arch_match"]), format_version=d["format_version"])
 
     # --- schema validation ---
     def validate(self) -> list[str]:
         """Return a list of schema errors ([] == valid). Checked before a plugin joins the tower."""
         errs: list[str] = []
+        try:
+            _parse_manifest_document(self.to_dict())
+        except (TypeError, ValueError) as exc:
+            errs.append(str(exc))
+            return errs
         if self.format_version > PLUGIN_FORMAT_VERSION:
             errs.append(f"format_version {self.format_version} > supported {PLUGIN_FORMAT_VERSION}")
         if not self.name:
@@ -181,6 +333,8 @@ class ChannelManifest:
             errs.append(f"e_machine set on a non-cpu kind {self.kind!r} (only cpu makes a host ELF)")
         if self.provenance == "real" and self.modeled:
             errs.append("provenance 'real' contradicts modeled=True")
+        if self.calibration.cal_gen != self.profile.cal_gen:
+            errs.append("calibration.cal_gen must match profile.cal_gen")
         return errs
 
     # --- (build) a live channel ---
@@ -206,8 +360,17 @@ def manifest_from_channel(ch: HardwareChannel, *, calibration: CalibrationArtifa
 
 # --- loading + registration ----------------------------------------------------------------------
 def load_manifest(path: str) -> ChannelManifest:
-    with open(path, encoding="utf-8") as f:
-        return ChannelManifest.from_dict(json.load(f))
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(_MAX_MANIFEST_BYTES + 1)
+        if len(raw) > _MAX_MANIFEST_BYTES:
+            raise ValueError(f"channel manifest exceeds {_MAX_MANIFEST_BYTES} bytes")
+        doc = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_keys,
+                         parse_constant=_reject_json_constant)
+        return ChannelManifest.from_dict(doc)
+    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError,
+            RecursionError) as exc:
+        raise ValueError(f"invalid channel manifest {path!r}: {exc}") from exc
 
 
 def register_from_manifest(src) -> HardwareChannel:

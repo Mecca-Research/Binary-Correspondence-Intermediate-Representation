@@ -63,7 +63,9 @@ namespace {
 
 // ceil(a / b) for positive b (mirrors activation.py's (x + d - 1)//d and the BCIRGemMatmulCostPass
 // ceilDiv helper).
-static int64_t ceilDiv(int64_t a, int64_t b) { return (a + b - 1) / b; }
+static int64_t ceilDiv(int64_t a, int64_t b) {
+  return a / b + (a % b != 0);
+}
 
 // The per-element compute weight cost_of charges for `kind` (activation.py's `op_weight` map): relu
 // is a single max (1); a transcendental ~ a libm call modeled at 8x; gelu is heavier (a cube + a
@@ -127,8 +129,12 @@ struct GemActivationCostPass
     // count = product(shape) -- the element count cost_of prices (rank-agnostic, like ActivationSpec.count).
     ArrayRef<int64_t> shape = op.getShape();
     int64_t count = 1;
-    for (int64_t d : shape)
-      count *= d;
+    for (int64_t d : shape) {
+      if (!checkedMulNonnegative(count, d, count)) {
+        op.emitError("bcir-gem-activation-cost: shape element count exceeds signed 64-bit range");
+        return false;
+      }
+    }
 
     // --- recompute the analytic roofline (identical to activation.py::cost_of) ------------------
     // Computed in int64 -- the cost domain the GEMActivationOp attrs themselves are declared in (I64Attr) and
@@ -136,10 +142,19 @@ struct GemActivationCostPass
     // floored to one element, exactly as cost_of's `n = max(1, spec.count)`).
     int64_t n = std::max<int64_t>(1, count);
     int64_t thr = std::max<int64_t>(1, kVectorWidth * kFma);     // the throughput divisor (vector_width * fma)
-    int64_t compute = ceilDiv(n * weight, thr);                  // count*op_weight / (vector_width * fma)
+    int64_t weighted, streamed;
+    if (!checkedMulNonnegative(n, weight, weighted)) {
+      op.emitError("bcir-gem-activation-cost: compute term exceeds signed 64-bit range");
+      return false;
+    }
+    int64_t compute = ceilDiv(weighted, thr);                    // count*op_weight / (vector_width * fma)
     int64_t streams = (kind == "softmax") ? 3 : 2;               // softmax re-reads the row (max + exp/sum + normalize)
     int64_t bw = std::max<int64_t>(1, kMemUnit * kMemChannels);  // the bandwidth divisor
-    int64_t mem = ceilDiv(n * streams, bw);                      // bytes streamed / bandwidth
+    if (!checkedMulNonnegative(n, streams, streamed)) {
+      op.emitError("bcir-gem-activation-cost: memory term exceeds signed 64-bit range");
+      return false;
+    }
+    int64_t mem = ceilDiv(streamed, bw);                         // bytes streamed / bandwidth
     int64_t bottleneck = std::max(compute, mem);                 // max,+ : the binding roofline resource
 
     // --- cross-check the declared roofline (the dual-rail parity gate) ------------------

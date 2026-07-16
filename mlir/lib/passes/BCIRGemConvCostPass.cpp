@@ -71,7 +71,9 @@ namespace {
 
 // ceil(a / b) for positive b (mirrors conv.py / matmul.py's (x + d - 1)//d / math.ceil and the
 // sibling cost-pass ceilDiv helpers).
-static int64_t ceilDiv(int64_t a, int64_t b) { return (a + b - 1) / b; }
+static int64_t ceilDiv(int64_t a, int64_t b) {
+  return a / b + (a % b != 0);
+}
 
 struct GemConvCostPass
     : public PassWrapper<GemConvCostPass, OperationPass<>> {
@@ -132,14 +134,16 @@ struct GemConvCostPass
     // would exceed int64 -- a gemm dim past ~1.45M, i.e. multi-terabyte operands no real conv approaches
     // -- is outside this representable domain anyway (its own declared cost could not fit i64); such a
     // shape would trip the parity gate (a loud spurious error), never annotate a silently-wrapped cost.
-    int64_t macs = M * N * K;
+    int64_t macs, traffic, workingSet;
+    if (!checkedGemmDerived(M, N, K, tm, tn, tk, macs, traffic,
+                            workingSet)) {
+      op.emitError("bcir-gem-conv-cost: derived roofline cost exceeds signed 64-bit range");
+      return false;
+    }
     int64_t thr = std::max<int64_t>(1, kVectorWidth * kFma);     // the FLOP-throughput divisor
     int64_t compute = ceilDiv(macs, thr);                        // M*N*K MACs / (vector_width * fma)
-    int64_t aReads = M * K * ceilDiv(N, tn);                     // the patch matrix re-read per N-tile (im2col traffic)
-    int64_t bReads = K * N * ceilDiv(M, tm);                     // the weight matrix re-read per M-tile
-    int64_t cTraffic = M * N * (ceilDiv(K, tk) + 1);             // C streamed once per K-tile, plus the write
     int64_t bw = std::max<int64_t>(1, kMemUnit * kMemChannels);  // the bandwidth divisor
-    int64_t mem = ceilDiv(aReads + bReads + cTraffic, bw);       // bytes streamed / bandwidth
+    int64_t mem = ceilDiv(traffic, bw);                           // bytes streamed / bandwidth
     int64_t bottleneck = std::max(compute, mem);                 // max,+ : the binding roofline resource
 
     // --- cross-check the declared roofline (the dual-rail parity gate) ------------------

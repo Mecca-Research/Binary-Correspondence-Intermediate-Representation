@@ -81,7 +81,9 @@ namespace bcir {
 namespace {
 
 // ceil(a / b) for positive b (the tile/stripe count along one dimension).
-static int64_t ceilDiv(int64_t a, int64_t b) { return (a + b - 1) / b; }
+static int64_t ceilDiv(int64_t a, int64_t b) {
+  return a / b + (a % b != 0);
+}
 
 struct LowerGemAttentionPass
     : public PassWrapper<LowerGemAttentionPass, OperationPass<>> {
@@ -176,6 +178,17 @@ struct LowerGemAttentionPass
                   ctk = static_cast<int64_t>(attn.getContextTileK());
     const StringRef scoresLo = attn.getScoresLoopOrder();
     const StringRef contextLo = attn.getContextLoopOrder();
+    int64_t scoreTiles, contextTiles, allBlocks, scoreCount;
+    if (!checkedTileCount(sm, sn, sk, stm, stn, stk, scoreTiles) ||
+        !checkedTileCount(cm, cn, ck, ctm, ctn, ctk, contextTiles) ||
+        !checkedAddNonnegative(scoreTiles, contextTiles, allBlocks) ||
+        !checkedAddNonnegative(allBlocks, 1, allBlocks) ||
+        !checkedMulNonnegative(seq, seq, scoreCount) ||
+        allBlocks > kMaxMaterializedBlocksPerOp) {
+      attn.emitError("bcir-lower-gem-attention: decomposition is invalid or exceeds the ")
+          << kMaxMaterializedBlocksPerOp << "-block safety limit";
+      return false;
+    }
 
     // --- cross-check the host-INDEPENDENT roofline invariants the cost model rests on --
     // The host-pinned per-gemm + summed compute/mem ride the op (the oracle prices them through
@@ -190,15 +203,21 @@ struct LowerGemAttentionPass
     const int64_t compute = static_cast<int64_t>(attn.getComputeCost()),
                   mem = static_cast<int64_t>(attn.getMemCost()),
                   bottleneck = static_cast<int64_t>(attn.getBottleneck());
-    if (compute != sc + cc) {
+    int64_t expectedCompute, expectedMem;
+    if (!checkedAddNonnegative(sc, cc, expectedCompute) ||
+        !checkedAddNonnegative(smm, cmm, expectedMem)) {
+      attn.emitError("bcir-lower-gem-attention: summed roofline cost exceeds signed 64-bit range");
+      return false;
+    }
+    if (compute != expectedCompute) {
       attn.emitError("bcir-lower-gem-attention: compute_cost ")
-          << compute << " != scores_compute + context_compute " << (sc + cc)
+          << compute << " != scores_compute + context_compute " << expectedCompute
           << " (the SUM of the two priced matmuls -- no bespoke attention term)";
       return false;
     }
-    if (mem != smm + cmm) {
+    if (mem != expectedMem) {
       attn.emitError("bcir-lower-gem-attention: mem_cost ")
-          << mem << " != scores_mem + context_mem " << (smm + cmm)
+          << mem << " != scores_mem + context_mem " << expectedMem
           << " (the SUM of the two priced matmuls -- no bespoke attention term)";
       return false;
     }
@@ -234,7 +253,6 @@ struct LowerGemAttentionPass
     // attention (the oracle plans the two matmuls, not the softmax lane), so we emit ONE stripe over the
     // whole score matrix (count = seq*seq), the natural softmax pass: strideA = 1 (unit read), strideB =
     // seq (the last-axis reduce row length), strideD = 1.
-    const int64_t scoreCount = std::max<int64_t>(1, seq * seq);
     builder.create<GEMBlockOp>(
         loc,
         /*sym_name=*/StringAttr::get(ctx, (name + "_sm_s0").str()),

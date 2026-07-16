@@ -20,8 +20,26 @@ static const struct { bcir_binfield f; int big_endian; } kFields[] = {
   {{16, 16, 1}, 0},  {{0, 16, 0}, 1},   {{0, 64, 1}, 0},
 };
 
+static int invalid_input_regressions(void) {
+  const uint8_t byte = 0;
+  const bcir_binfield field = {0, 8, 0};
+  int64_t out = 17;
+  if (bcir_binrec_field(NULL, 1, &field, 0, &out) != BCIR_BINREC_ERR_INVALID || out != 0)
+    return 0;
+  out = 17;
+  if (bcir_binrec_field(&byte, 1, NULL, 0, &out) != BCIR_BINREC_ERR_INVALID || out != 0)
+    return 0;
+  if (bcir_binrec_field(&byte, 1, &field, 0, NULL) != BCIR_BINREC_ERR_INVALID)
+    return 0;
+  return 1;
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) { fprintf(stderr, "usage: %s <record-file>\n", argv[0]); return 2; }
+  if (!invalid_input_regressions()) {
+    fprintf(stderr, "invalid-input regression failed\n");
+    return 3;
+  }
   FILE *fp = fopen(argv[1], "rb");
   if (!fp) { perror("fopen"); return 2; }
   static uint8_t buf[4096];

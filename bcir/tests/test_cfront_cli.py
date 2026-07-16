@@ -126,3 +126,32 @@ def test_cli_compile_database_drives_per_entry_flags():
         rc, out, err = _cli(["-p", d])
         assert rc == 0, (err, out)
         assert "project: CLEAN (2 files)" in out, out
+
+
+def test_cli_rejects_missing_option_arguments_and_ambiguous_compile_databases():
+    for option in ("-I", "-D", "-U", "-MF", "-MT", "-p", "--target", "--r21", "-o"):
+        rc, _out, err = _cli([option])
+        assert rc == 2 and "requires an argument" in err, (option, rc, err)
+
+    with tempfile.TemporaryDirectory() as d:
+        _write(d, "ok.c", "int f(void){ return 0; }\n")
+        valid = json.dumps([{"directory": d, "file": "ok.c",
+                             "arguments": ["cc", "-c", "ok.c"]}])
+        duplicate = valid.replace('"directory":',
+                                  '"directory": "forged", "directory":', 1)
+        db = _write(d, "compile_commands.json", duplicate)
+        rc, _out, err = _cli(["-p", db])
+        assert rc == 2 and "duplicate JSON key" in err
+
+        _write(d, "compile_commands.json", json.dumps([
+            {"directory": d, "file": "ok.c", "arguments": ["cc", "-I"]},
+        ]))
+        rc, _out, err = _cli(["-p", d])
+        assert rc == 2 and "requires an argument" in err
+
+        _write(d, "compile_commands.json", json.dumps([
+            {"directory": d, "file": "ok.c", "arguments": ["cc", "ok.c"],
+             "command": "cc ok.c"},
+        ]))
+        rc, _out, err = _cli(["-p", d])
+        assert rc == 2 and "both command and arguments" in err

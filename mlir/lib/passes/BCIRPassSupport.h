@@ -13,13 +13,120 @@
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <array>
+#include <cstdint>
+#include <limits>
 #include <optional>
 
 using namespace mlir;
 
 namespace bcir {
+
+// Integer attributes originate in parsed IR.  Never let malformed geometry or
+// cost metadata invoke signed-overflow UB inside a verifier/pass: callers can
+// either reject the operation or deliberately saturate an informs-only score.
+inline bool checkedAddNonnegative(int64_t a, int64_t b, int64_t &out) {
+  if (a < 0 || b < 0 || b > std::numeric_limits<int64_t>::max() - a)
+    return false;
+  out = a + b;
+  return true;
+}
+
+inline bool checkedMulNonnegative(int64_t a, int64_t b, int64_t &out) {
+  if (a < 0 || b < 0 ||
+      (a != 0 && b > std::numeric_limits<int64_t>::max() / a))
+    return false;
+  out = a * b;
+  return true;
+}
+
+inline bool checkedMul3Nonnegative(int64_t a, int64_t b, int64_t c,
+                                   int64_t &out) {
+  int64_t first;
+  return checkedMulNonnegative(a, b, first) &&
+         checkedMulNonnegative(first, c, out);
+}
+
+inline int64_t saturatingAddNonnegative(int64_t a, int64_t b) {
+  int64_t out;
+  return checkedAddNonnegative(a, b, out)
+             ? out
+             : std::numeric_limits<int64_t>::max();
+}
+
+inline int64_t saturatingMulNonnegative(int64_t a, int64_t b) {
+  int64_t out;
+  return checkedMulNonnegative(a, b, out)
+             ? out
+             : std::numeric_limits<int64_t>::max();
+}
+
+inline int64_t saturatingAddSigned(int64_t a, int64_t b) {
+  int64_t out;
+  if (!llvm::AddOverflow(a, b, out))
+    return out;
+  return b < 0 ? std::numeric_limits<int64_t>::min()
+               : std::numeric_limits<int64_t>::max();
+}
+
+inline int64_t saturatingMulSigned(int64_t a, int64_t b) {
+  int64_t out;
+  if (!llvm::MulOverflow(a, b, out))
+    return out;
+  return (a < 0) != (b < 0) ? std::numeric_limits<int64_t>::min()
+                            : std::numeric_limits<int64_t>::max();
+}
+
+// Materializing one operation per tile/stripe is intentionally bounded.  The
+// compact lowering is not a license for parsed dimensions to allocate millions
+// of IR nodes; larger workloads must use a loop-form lowering.
+inline constexpr int64_t kMaxMaterializedBlocksPerOp = 65536;
+
+inline bool ceilDivPositive(int64_t numerator, int64_t denominator,
+                            int64_t &out) {
+  if (numerator <= 0 || denominator <= 0)
+    return false;
+  out = numerator / denominator + (numerator % denominator != 0);
+  return true;
+}
+
+inline bool checkedTileCount(int64_t m, int64_t n, int64_t k, int64_t tm,
+                             int64_t tn, int64_t tk, int64_t &out) {
+  int64_t ni, nj, nk;
+  return ceilDivPositive(m, tm, ni) && ceilDivPositive(n, tn, nj) &&
+         ceilDivPositive(k, tk, nk) &&
+         checkedMul3Nonnegative(ni, nj, nk, out);
+}
+
+// Shared checked form of the GEM roofline's derived traffic.  The op verifier
+// bounds M*N*K, but C is read once per K tile plus one final write, so traffic
+// can still exceed the signed-i64 cost domain and must be rejected explicitly.
+inline bool checkedGemmDerived(int64_t m, int64_t n, int64_t k, int64_t tm,
+                               int64_t tn, int64_t tk, int64_t &macs,
+                               int64_t &traffic, int64_t &workingSet) {
+  int64_t nTiles, mTiles, kTiles;
+  int64_t aReads, bReads, cTraffic, mn, kPasses;
+  int64_t wsA, wsB, wsC, wsAB;
+  int64_t abTraffic;
+  return ceilDivPositive(n, tn, nTiles) &&
+         ceilDivPositive(m, tm, mTiles) &&
+         ceilDivPositive(k, tk, kTiles) &&
+         checkedMul3Nonnegative(m, n, k, macs) &&
+         checkedMul3Nonnegative(m, k, nTiles, aReads) &&
+         checkedMul3Nonnegative(k, n, mTiles, bReads) &&
+         checkedMulNonnegative(m, n, mn) &&
+         checkedAddNonnegative(kTiles, 1, kPasses) &&
+         checkedMulNonnegative(mn, kPasses, cTraffic) &&
+         checkedAddNonnegative(aReads, bReads, abTraffic) &&
+         checkedAddNonnegative(abTraffic, cTraffic, traffic) &&
+         checkedMulNonnegative(tm, tk, wsA) &&
+         checkedMulNonnegative(tk, tn, wsB) &&
+         checkedMulNonnegative(tm, tn, wsC) &&
+         checkedAddNonnegative(wsA, wsB, wsAB) &&
+         checkedAddNonnegative(wsAB, wsC, workingSet);
+}
 
 // Which lanes are legal for each access-pattern shape (LangRef R6).
 inline bool laneLegalForStride(Lane lane, StrideClass sc) {
@@ -108,8 +215,14 @@ inline int64_t scalarize(CostVectorAttr cv, ArrayRef<int64_t> w) {
   int64_t cost[12];
   costToArray(cv, cost);
   int64_t s = 0;
-  for (int i = 0; i < 12 && i < static_cast<int>(w.size()); ++i)
-    s += cost[i] * w[i];
+  for (int i = 0; i < 12 && i < static_cast<int>(w.size()); ++i) {
+    // Negative cost/weight metadata is invalid.  Standalone optimization
+    // passes treat it as maximally bad even if -bcir-verify was not run first.
+    if (cost[i] < 0 || w[i] < 0)
+      return std::numeric_limits<int64_t>::max();
+    s = saturatingAddNonnegative(s,
+                                 saturatingMulNonnegative(cost[i], w[i]));
+  }
   return s;
 }
 

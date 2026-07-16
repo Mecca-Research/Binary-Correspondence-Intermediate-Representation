@@ -6,6 +6,9 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/bcir-irdl.XXXXXXXX")" || exit 1
+trap 'rm -rf -- "${TMP_ROOT}"' EXIT
+ERR="${TMP_ROOT}/irdl.err"
 IRDL="${ROOT}/mlir/irdl/bcir.irdl.mlir"
 CORPUS="${ROOT}/mlir/test/irdl"
 
@@ -23,8 +26,8 @@ echo "[irdl] projection: ${IRDL}"
 
 fail=0
 for f in "${CORPUS}"/*.mlir; do
-  out="$("${MLIR_OPT}" --irdl-file="${IRDL}" "$f" 2>/tmp/irdl_err)" \
-    || { echo "FAIL (load) $(basename "$f")"; cat /tmp/irdl_err; fail=1; continue; }
+  out="$("${MLIR_OPT}" --irdl-file="${IRDL}" "$f" 2>"${ERR}")" \
+    || { echo "FAIL (load) $(basename "$f")"; cat "${ERR}"; fail=1; continue; }
   n=0; miss=0
   while IFS= read -r pat; do
     n=$((n+1))

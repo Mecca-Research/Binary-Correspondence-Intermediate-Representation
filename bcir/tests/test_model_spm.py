@@ -88,6 +88,48 @@ def test_sentencepiece_round_trips_arbitrary_utf8_via_byte_fallback():
     assert tok.decode([1, tok.pieces["▁hello"][0], 2]) == "hello"
 
 
+def test_malformed_protobuf_is_always_a_clean_value_error():
+    """Truncated/overlong varints and torn length/fixed32 fields never escape as an
+    IndexError or struct.error from the tokenizer trust boundary."""
+    malformed = (
+        b"\x80",                              # unterminated outer tag varint
+        b"\x80" * 11,                         # varint longer than uint64
+        b"\x0a\x05\x0a\x01x",                # outer message length escapes file
+        b"\x0a\x03\x15\x00\x00",             # torn fixed32 score
+        b"\x0a\x03\x0a\x05x",                # piece string length escapes message
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "bad.model")
+        for raw in malformed:
+            with open(path, "wb") as f:
+                f.write(raw)
+            try:
+                load_sentencepiece(path)
+                raise AssertionError(f"malformed protobuf was accepted: {raw!r}")
+            except ValueError as exc:
+                assert "tokenizer.model" in str(exc)
+
+
+def test_partial_byte_alphabet_and_duplicate_piece_text_are_rejected():
+    """The encoder assumes byte fallback is either absent or complete; a partial table
+    would otherwise turn ordinary UTF-8 into a mid-request KeyError."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "bad.model")
+        variants = (
+            _sp_piece("<unk>", 0.0, 2) + _sp_piece("<0x00>", 0.0, 6),
+            _sp_piece("<unk>", 0.0, 2) + _sp_piece("dup", 0.0, 1)
+            + _sp_piece("dup", -1.0, 1),
+        )
+        for raw in variants:
+            with open(path, "wb") as f:
+                f.write(raw)
+            try:
+                load_sentencepiece(path)
+                raise AssertionError("ambiguous SentencePiece model was accepted")
+            except ValueError:
+                pass
+
+
 def test_a_real_released_tokenizer_loads_when_present():
     """ASSET-GATED (self-skips): point BCIR_HF_MODEL_DIR at a checkpoint directory whose
     `tokenizer.model` is a real SentencePiece file (e.g. Maykeye/TinyLLama-v0) -- the

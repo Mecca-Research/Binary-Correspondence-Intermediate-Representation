@@ -94,6 +94,53 @@ def test_tokenizer_digest_ties_into_the_manifest():
         assert load_tokenizer(tok_path).digest != m.tokenizer_digest
 
 
+def test_malformed_tokenizer_structures_fail_closed():
+    with tempfile.TemporaryDirectory() as d:
+        valid_path = _mini_tokenizer(d)
+        with open(valid_path, encoding="utf-8") as f:
+            valid = json.load(f)
+
+        variants = []
+        missing_byte = json.loads(json.dumps(valid))
+        del missing_byte["model"]["vocab"][_B2U[0]]
+        variants.append(missing_byte)
+        duplicate_id = json.loads(json.dumps(valid))
+        duplicate_id["model"]["vocab"][_B2U[1]] = duplicate_id["model"]["vocab"][_B2U[0]]
+        variants.append(duplicate_id)
+        empty_special = json.loads(json.dumps(valid))
+        empty_special["added_tokens"].append({"content": "", "id": 300})
+        variants.append(empty_special)
+        duplicate_merge = json.loads(json.dumps(valid))
+        duplicate_merge["model"]["merges"].append("h e")
+        variants.append(duplicate_merge)
+
+        for index, doc in enumerate(variants):
+            path = os.path.join(d, f"invalid-{index}.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(doc, f)
+            try:
+                load_tokenizer(path)
+                raise AssertionError(f"invalid tokenizer {index} must be rejected")
+            except ValueError:
+                pass
+
+        duplicate_json = os.path.join(d, "duplicate-key.json")
+        with open(duplicate_json, "w", encoding="utf-8") as f:
+            f.write('{"model":{"type":"BPE","type":"BPE","vocab":{},"merges":[]}}')
+        try:
+            load_tokenizer(duplicate_json)
+            raise AssertionError("duplicate JSON keys must be rejected")
+        except ValueError:
+            pass
+
+        tok = load_tokenizer(valid_path)
+        try:
+            tok.decode([999999])
+            raise AssertionError("unknown ids must be rejected cleanly")
+        except ValueError:
+            pass
+
+
 if __name__ == "__main__":
     import sys
 

@@ -16,6 +16,7 @@ import hashlib
 import inspect
 import math
 import os
+import stat
 import struct
 import tempfile
 import zlib
@@ -34,6 +35,8 @@ HEADER_SIZE = 224
 DIRECTORY_ENTRY_SIZE = 48
 ENDIAN_MARKER = 0x01020304
 BITS = 8
+DEFAULT_MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_DECODED_ELEMENTS = 8_000_000
 
 FLAG_TIED_EMBEDDINGS = 1 << 0
 
@@ -104,8 +107,10 @@ def _align8(value: int) -> int:
 
 
 def _sha_bytes(value: str, field: str) -> bytes:
+    if type(value) is not str:
+        raise ValueError(f"{field} must be a 64-character SHA-256 hex digest")
     try:
-        raw = bytes.fromhex(str(value))
+        raw = bytes.fromhex(value)
     except ValueError as exc:
         raise ValueError(f"{field} must be a 64-character SHA-256 hex digest") from exc
     if len(raw) != 32:
@@ -119,9 +124,14 @@ def _source_digest(source_hashes: Mapping[str, str], key: str) -> str:
         "config": ("config", "source_config", "source_config_sha256"),
         "tokenizer": ("tokenizer", "tokenizer_sha256"),
     }
-    for alias in aliases[key]:
-        if alias in source_hashes:
-            return str(source_hashes[alias]).lower()
+    present = [alias for alias in aliases[key] if alias in source_hashes]
+    if len(present) > 1:
+        raise ValueError(f"source_hashes has ambiguous aliases for {key!r}: {present}")
+    if present:
+        value = source_hashes[present[0]]
+        if type(value) is not str:
+            raise ValueError(f"source_hashes {key!r} digest must be a string")
+        return value.lower()
     raise ValueError(f"source_hashes is missing {key!r}")
 
 
@@ -131,9 +141,14 @@ def _tokenizer_value(tokenizer_ids: Mapping[str, int], key: str, default: int = 
         "eos": ("eos", "eos_token_id"),
         "pad": ("pad", "pad_token_id"),
     }
-    for alias in aliases[key]:
-        if alias in tokenizer_ids:
-            return int(tokenizer_ids[alias])
+    present = [alias for alias in aliases[key] if alias in tokenizer_ids]
+    if len(present) > 1:
+        raise ValueError(f"tokenizer_ids has ambiguous aliases for {key!r}: {present}")
+    if present:
+        value = tokenizer_ids[present[0]]
+        if type(value) is not int:
+            raise ValueError(f"{key}_token_id must be an integer")
+        return value
     return default
 
 
@@ -169,7 +184,9 @@ def _tensor_defs(spec: DecoderSpec, weights: DecoderWeights) -> list[_TensorDef]
 
 def write_q8_decoder(path: os.PathLike | str, spec: DecoderSpec, weights: DecoderWeights, *,
                      group_size: int = 32, source_hashes: Mapping[str, str],
-                     tokenizer_ids: Mapping[str, int], context_length: int | None = None
+                     tokenizer_ids: Mapping[str, int], context_length: int | None = None,
+                     max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+                     max_elements: int = DEFAULT_MAX_DECODED_ELEMENTS
                      ) -> Q8ArtifactMetadata:
     """Write one atomic, deterministic ``BCIRQ8 v1`` artifact.
 
@@ -177,14 +194,55 @@ def write_q8_decoder(path: os.PathLike | str, spec: DecoderSpec, weights: Decode
     values.  ``tokenizer_ids`` accepts ``bos``/``eos``/``pad`` (or the HF
     ``*_token_id`` spellings).  ``context_length`` may be supplied explicitly;
     otherwise ``tokenizer_ids['context_length']`` or ``spec.context_length`` is
-    used, falling back to zero for synthetic fixtures.
+    used, falling back to zero for synthetic fixtures. ``max_bytes`` and
+    ``max_elements`` bound the in-memory export before any tensor is copied or
+    quantized; callers must explicitly opt into larger artifacts.
     """
-    if group_size < 1 or group_size > 0xFFFF:
+    if not isinstance(spec, DecoderSpec):
+        raise ValueError("spec must be a DecoderSpec")
+    if not isinstance(source_hashes, Mapping) or not isinstance(tokenizer_ids, Mapping):
+        raise ValueError("source_hashes and tokenizer_ids must be mappings")
+    if type(group_size) is not int or group_size < 1 or group_size > 0xFFFF:
         raise ValueError("group_size must be in [1, 65535]")
+    if type(max_bytes) is not int or max_bytes < HEADER_SIZE:
+        raise ValueError(f"max_bytes must be an integer >= {HEADER_SIZE}")
+    if type(max_elements) is not int or max_elements < 1:
+        raise ValueError("max_elements must be an integer >= 1")
+    dimensions = {
+        "vocab_size": spec.vocab_size, "d_model": spec.d_model,
+        "n_heads": spec.n_heads, "n_kv_heads": spec.kv_heads,
+        "n_layers": spec.n_layers, "d_ff": spec.d_ff,
+    }
+    for name, value in dimensions.items():
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 0xFFFFFFFF:
+            raise ValueError(f"{name} must fit a positive u32")
+    if spec.n_layers > 0x7FFF:
+        raise ValueError("n_layers must fit the BCIRQ8 signed i16 layer field")
+    d, f, kvd = spec.d_model, spec.d_ff, spec.kv_dim
+    tensor_counts = [spec.vocab_size * d]
+    for _ in range(spec.n_layers):
+        tensor_counts.extend((d, d * d, d * kvd, d * kvd, d * d,
+                              d, d * f, d * f, f * d))
+    tensor_counts.append(d)
+    if not spec.tied_embeddings:
+        tensor_counts.append(spec.vocab_size * d)
+    element_count = sum(tensor_counts)
+    if element_count > max_elements:
+        raise ValueError(
+            f"BCIRQ8 export has {element_count} elements; limit is {max_elements}")
+    predicted_size = _align8(HEADER_SIZE + len(tensor_counts) * DIRECTORY_ENTRY_SIZE)
+    for count in tensor_counts:
+        predicted_size = _align8(predicted_size)
+        predicted_size += 2 * ((count + group_size - 1) // group_size)
+        predicted_size = _align8(predicted_size)
+        predicted_size += count
+    if predicted_size > max_bytes:
+        raise ValueError(
+            f"BCIRQ8 export is {predicted_size} bytes; limit is {max_bytes}")
     if context_length is None:
-        context_length = int(tokenizer_ids.get(
-            "context_length", getattr(spec, "context_length", 0)))
-    if context_length < 0 or context_length > 0xFFFFFFFF:
+        context_length = tokenizer_ids.get(
+            "context_length", getattr(spec, "context_length", 0))
+    if type(context_length) is not int or context_length < 0 or context_length > 0xFFFFFFFF:
         raise ValueError("context_length must fit u32")
 
     model_sha = _source_digest(source_hashes, "model")
@@ -199,6 +257,8 @@ def write_q8_decoder(path: os.PathLike | str, spec: DecoderSpec, weights: Decode
     for name, value in (("bos", bos), ("eos", eos), ("pad", pad)):
         if not -(1 << 31) <= value < (1 << 31):
             raise ValueError(f"{name}_token_id must fit i32")
+        if value != -1 and not 0 <= value < spec.vocab_size:
+            raise ValueError(f"{name}_token_id must be -1 or in the model vocabulary")
 
     tensors = _tensor_defs(spec, weights)
     directory_offset = HEADER_SIZE
@@ -251,6 +311,9 @@ def write_q8_decoder(path: os.PathLike | str, spec: DecoderSpec, weights: Decode
     artifact = bytes(header) + body
     if len(artifact) != file_size:
         raise AssertionError(f"BCIRQ8 size accounting failed: {len(artifact)} != {file_size}")
+    if file_size != predicted_size:
+        raise AssertionError(
+            f"BCIRQ8 predicted size accounting failed: {file_size} != {predicted_size}")
 
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -309,11 +372,11 @@ def _read_directory(raw: bytes, *, tensor_count: int, directory_offset: int,
                                f"tensor {index} codes", lower_bound=payload_offset)
         if exponent_offset % 8 or code_offset % 8:
             raise ValueError(f"tensor directory entry {index} payload is not 8-byte aligned")
-        exponents = struct.unpack_from(f"<{groups}h", raw, exponent_offset)
-        if any(exponent < -300 or exponent > 300 for exponent in exponents):
+        exponent_view = memoryview(raw)[exponent_offset:exponent_offset + groups * 2]
+        if any(exponent < -300 or exponent > 300
+               for (exponent,) in struct.iter_unpack("<h", exponent_view)):
             raise ValueError(f"tensor directory entry {index} has an invalid Q8 exponent")
-        codes = struct.unpack_from(f"<{count}b", raw, code_offset)
-        if -128 in codes:
+        if raw.find(b"\x80", code_offset, code_offset + count) >= 0:
             raise ValueError(f"tensor directory entry {index} uses the non-canonical -128 code")
         spans.extend(((*e_span, f"tensor {index} exponents"),
                       (*c_span, f"tensor {index} codes")))
@@ -321,8 +384,9 @@ def _read_directory(raw: bytes, *, tensor_count: int, directory_offset: int,
         if key in keys:
             raise ValueError(f"duplicate tensor id/layer {key}")
         keys.add(key)
-        actual = zlib.crc32(raw[e_span[0]:e_span[1]])
-        actual = zlib.crc32(raw[c_span[0]:c_span[1]], actual) & 0xFFFFFFFF
+        view = memoryview(raw)
+        actual = zlib.crc32(view[e_span[0]:e_span[1]])
+        actual = zlib.crc32(view[c_span[0]:c_span[1]], actual) & 0xFFFFFFFF
         if actual != crc:
             raise ValueError(f"tensor directory entry {index} CRC mismatch")
         entries.append(_DirectoryEntry(tensor_id, layer, rank, flags, (dim0, dim1),
@@ -335,9 +399,12 @@ def _read_directory(raw: bytes, *, tensor_count: int, directory_offset: int,
 
 
 def _decode_values(raw: bytes, entry: _DirectoryEntry, group_size: int) -> tuple[float, ...]:
-    exponents = struct.unpack_from(f"<{entry.group_count}h", raw, entry.exponent_offset)
-    codes = struct.unpack_from(f"<{entry.element_count}b", raw, entry.code_offset)
-    return tuple(math.ldexp(float(code), exponents[index // group_size])
+    exponent_view = memoryview(raw)[entry.exponent_offset:
+                                    entry.exponent_offset + entry.group_count * 2]
+    exponents = tuple(value for (value,) in struct.iter_unpack("<h", exponent_view))
+    codes = memoryview(raw)[entry.code_offset:entry.code_offset + entry.element_count]
+    return tuple(math.ldexp(float(code if code < 128 else code - 256),
+                            exponents[index // group_size])
                  for index, code in enumerate(codes))
 
 
@@ -353,14 +420,31 @@ def _expect(entries: Mapping[tuple[int, int], _DirectoryEntry], tensor_id: int,
     return entry
 
 
-def read_q8_decoder(path: os.PathLike | str
+def read_q8_decoder(path: os.PathLike | str, *,
+                    max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+                    max_elements: int = DEFAULT_MAX_DECODED_ELEMENTS
                     ) -> tuple[DecoderSpec, DecoderWeights, Q8ArtifactMetadata]:
     """Validate and read a ``BCIRQ8 v1`` artifact.
 
     Unknown, missing, duplicated, overlapping, truncated, or corrupt tensors are
-    rejected before a decoder object is constructed.
+    rejected before a decoder object is constructed. The default byte and decoded-
+    element ceilings are safe reference limits; larger trusted models require an
+    explicit opt-in through ``max_bytes`` and ``max_elements``.
     """
-    raw = Path(path).read_bytes()
+    if type(max_bytes) is not int or max_bytes < HEADER_SIZE:
+        raise ValueError(f"max_bytes must be an integer >= {HEADER_SIZE}")
+    if type(max_elements) is not int or max_elements < 1:
+        raise ValueError("max_elements must be an integer >= 1")
+    with Path(path).open("rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("BCIRQ8 input must be a regular file")
+        if info.st_size > max_bytes:
+            raise ValueError(
+                f"BCIRQ8 artifact is {info.st_size} bytes; limit is {max_bytes}")
+        raw = stream.read(info.st_size + 1)
+        if len(raw) != info.st_size:
+            raise ValueError("BCIRQ8 artifact changed size while it was being read")
     if len(raw) < HEADER_SIZE:
         raise ValueError("BCIRQ8 artifact is truncated before its fixed header")
     fields = _HEADER_PREFIX.unpack_from(raw)
@@ -396,15 +480,24 @@ def read_q8_decoder(path: os.PathLike | str
         raise ValueError("BCIRQ8 body CRC mismatch")
     if min(vocab, d_model, n_heads, kv_heads, n_layers, d_ff) < 1:
         raise ValueError("BCIRQ8 model dimensions must be positive")
+    if n_layers > 0x7FFF:
+        raise ValueError("BCIRQ8 n_layers exceeds the signed i16 directory field")
     if d_model % n_heads or n_heads % kv_heads or (d_model // n_heads) % 2:
         raise ValueError("BCIRQ8 model has invalid attention head geometry")
     if not math.isfinite(rope_base) or rope_base <= 0 or not math.isfinite(rms_norm_eps) \
             or rms_norm_eps <= 0:
         raise ValueError("BCIRQ8 RoPE/RMSNorm parameters are invalid")
+    for name, value in (("bos", bos), ("eos", eos), ("pad", pad)):
+        if value != -1 and not 0 <= value < vocab:
+            raise ValueError(f"BCIRQ8 {name}_token_id is outside the vocabulary")
 
     parsed = _read_directory(raw, tensor_count=tensor_count,
                              directory_offset=directory_offset,
                              payload_offset=payload_offset, group_size=group_size)
+    element_count = sum(entry.element_count for entry in parsed)
+    if element_count > max_elements:
+        raise ValueError(
+            f"BCIRQ8 artifact has {element_count} elements; limit is {max_elements}")
     by_key = {(entry.tensor_id, entry.layer): entry for entry in parsed}
     tied = bool(flags & FLAG_TIED_EMBEDDINGS)
     expected_count = 2 + 9 * n_layers + (0 if tied else 1)
@@ -462,7 +555,7 @@ def read_q8_decoder(path: os.PathLike | str
     tokenizer_sha = raw[184:216].hex()
     metadata = Q8ArtifactMetadata(
         version, group_size, bits, tensor_count,
-        sum(entry.element_count for entry in parsed), file_size, body_crc,
+        element_count, file_size, body_crc,
         hashlib.sha256(raw).hexdigest(), model_sha, config_sha, tokenizer_sha,
         context_length, bos, eos, pad)
     return spec, weights, metadata
@@ -470,5 +563,6 @@ def read_q8_decoder(path: os.PathLike | str
 
 __all__ = [
     "BITS", "DIRECTORY_ENTRY_SIZE", "HEADER_SIZE", "MAGIC", "VERSION",
+    "DEFAULT_MAX_ARTIFACT_BYTES", "DEFAULT_MAX_DECODED_ELEMENTS",
     "Q8ArtifactMetadata", "read_q8_decoder", "write_q8_decoder",
 ]

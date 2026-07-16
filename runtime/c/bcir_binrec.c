@@ -4,6 +4,9 @@
 bcir_binrec_status bcir_binrec_field(const uint8_t *BCIR_RESTRICT data, size_t len,
                                      const bcir_binfield *BCIR_RESTRICT f,
                                      int big_endian, int64_t *out) {
+  if (out) *out = 0;
+  if (!data || !f || !out)
+    return BCIR_BINREC_ERR_INVALID;
   /* Only byte-aligned fields (mirrors etl.binary._extract). */
   if ((f->offset_bits % 8u) != 0u || (f->width_bits % 8u) != 0u)
     return BCIR_BINREC_ERR_UNALIGNED;

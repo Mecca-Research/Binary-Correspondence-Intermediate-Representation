@@ -13,8 +13,8 @@ from pathlib import Path
 from bcir.frontends.models.decode import next_token_logits, reference_decode
 from bcir.frontends.models.hf_ingest import spec_from_config, weights_from_tensors
 from bcir.frontends.models.quantized import quantize_decoder_weights
-from bcir.frontends.models.weights_io import (HEADER_SIZE, read_q8_decoder,
-                                               write_q8_decoder)
+from bcir.frontends.models.weights_io import (DEFAULT_MAX_ARTIFACT_BYTES, HEADER_SIZE,
+                                               read_q8_decoder, write_q8_decoder)
 from bcir.tests.test_model_ingest import _CONFIG, _hf_tensors
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -87,6 +87,10 @@ def test_bcirq8_rejects_truncation_corruption_and_invalid_spans():
         noncanonical[HEADER_SIZE + 48:HEADER_SIZE + 96] = first
         _rewrite_crcs(noncanonical)
         variants["noncanonical-order"] = bytes(noncanonical)
+        too_many_layers = bytearray(original)
+        struct.pack_into("<I", too_many_layers, 40, 0x8000)
+        _rewrite_crcs(too_many_layers)
+        variants["layer-field-overflow"] = bytes(too_many_layers)
         for name, data in variants.items():
             path = Path(tmp) / f"{name}.bcirq8"
             path.write_bytes(data)
@@ -95,6 +99,55 @@ def test_bcirq8_rejects_truncation_corruption_and_invalid_spans():
                 raise AssertionError(f"{name} artifact must be rejected")
             except ValueError:
                 pass
+
+
+def test_bcirq8_limits_and_metadata_are_strict_before_allocation_or_write():
+    spec, weights = _model()
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        target = directory / "bad.bcirq8"
+        bad_calls = (
+            lambda: write_q8_decoder(target, spec, weights, group_size=True,
+                                     source_hashes=_HASHES, tokenizer_ids=_TOKENS),
+            lambda: write_q8_decoder(target, spec, weights, source_hashes=_HASHES,
+                                     tokenizer_ids=dict(_TOKENS, bos=1.5)),
+            lambda: write_q8_decoder(target, spec, weights, source_hashes=_HASHES,
+                                     tokenizer_ids=dict(_TOKENS, bos=spec.vocab_size)),
+            lambda: write_q8_decoder(target, spec, weights, source_hashes=dict(
+                                         _HASHES, source_model_sha256=_HASHES["model"]),
+                                     tokenizer_ids=_TOKENS),
+            lambda: write_q8_decoder(target, spec, weights, source_hashes=_HASHES,
+                                     tokenizer_ids=_TOKENS, context_length="128"),
+            lambda: write_q8_decoder(target, spec, weights, source_hashes=_HASHES,
+                                     tokenizer_ids=_TOKENS, max_elements=1),
+            lambda: write_q8_decoder(target, spec, weights, source_hashes=_HASHES,
+                                     tokenizer_ids=_TOKENS, max_bytes=HEADER_SIZE),
+        )
+        for call in bad_calls:
+            try:
+                call()
+                raise AssertionError("malformed BCIRQ8 metadata was accepted")
+            except ValueError:
+                pass
+            assert not target.exists()
+
+        artifact = directory / "model.bcirq8"
+        _write(artifact)
+        try:
+            read_q8_decoder(artifact, max_elements=1)
+            raise AssertionError("decoded-element ceiling was ignored")
+        except ValueError as exc:
+            assert "elements" in str(exc) and "limit" in str(exc)
+
+        sparse = directory / "oversized.bcirq8"
+        with sparse.open("wb") as stream:
+            stream.seek(DEFAULT_MAX_ARTIFACT_BYTES)
+            stream.write(b"\0")
+        try:
+            read_q8_decoder(sparse)
+            raise AssertionError("oversized sparse BCIRQ8 artifact was accepted")
+        except ValueError as exc:
+            assert "bytes" in str(exc) and "limit" in str(exc)
 
 
 def _link_args() -> list[str]:
@@ -153,6 +206,19 @@ def test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads():
             [str(executable), "--model", str(corrupt_path), "--prompt-ids", "1",
              "--max-new", "1"], capture_output=True, text=True)
         assert result.returncode != 0 and "CRC" in result.stderr
+        sparse = directory / "oversized-sparse.bcirq8"
+        with sparse.open("wb") as stream:
+            stream.seek(DEFAULT_MAX_ARTIFACT_BYTES)
+            stream.write(b"\0")
+        result = subprocess.run(
+            [str(executable), "--model", str(sparse), "--prompt-ids", "1",
+             "--max-new", "1"], capture_output=True, text=True)
+        assert result.returncode != 0 and "limit" in result.stderr
+        result = subprocess.run(
+            [str(executable), "--model", str(directory / "model-False.bcirq8"),
+             "--prompt-ids", "1", "--max-new", str((1 << 16) + 1)],
+            capture_output=True, text=True)
+        assert result.returncode != 0 and "context limit" in result.stderr
 
 
 if __name__ == "__main__":

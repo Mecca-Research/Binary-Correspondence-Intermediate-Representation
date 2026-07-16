@@ -48,6 +48,10 @@ int main(void) {
     printf("verify_ok %d\n", bcir_prov_verify(RECORDED, MM, MT, MTH, MP, arts, 2));
     arts[0].value += 1;   /* a swapped decision-rule generation must change the digest */
     printf("verify_tampered %d\n", bcir_prov_verify(RECORDED, MM, MT, MTH, MP, arts, 2));
+    printf("null_item %d\n", bcir_prov_item_str(h, NULL) == 0);
+    printf("null_array %d\n", bcir_prov_digest(MM, MT, MTH, MP, NULL, 1) == 0);
+    arts[0].name = NULL;
+    printf("verify_null %d\n", bcir_prov_verify(0, MM, MT, MTH, MP, arts, 2));
     return 0;
 }
 """
@@ -82,6 +86,8 @@ def test_prov_twin_matches_the_oracle_byte_for_byte():
     assert int(got["digest"]) == m.digest, (got["digest"], m.digest)   # the manifest digest
     assert got["verify_ok"] == "1"                                     # attestation accepts
     assert got["verify_tampered"] == "0"                               # a rule swap is caught
+    assert got["null_item"] == "1" and got["null_array"] == "1"       # invalid input is safe
+    assert got["verify_null"] == "0"                                   # even recorded zero cannot pass
 
 
 def test_prov_twin_artifact_order_is_the_normalized_manifest_order():

@@ -167,6 +167,36 @@ def test_schema_constrained_emission_obeys_the_dfa_and_refuses_deadlock():
             assert "TokenDFA rejected" in str(e)
 
 
+def test_schema_validation_is_total_and_generation_owns_its_snapshot():
+    """Malformed schemas report diagnostics, and post-validation caller mutation cannot
+    redirect or crash an in-flight walk."""
+    malformed = (TokenDFA(allowed=(), edges=()),
+                 TokenDFA(allowed=(([1],),), edges=({1: 0},)),
+                 TokenDFA(allowed=((1, 1),), edges=({1: 0},)),
+                 TokenDFA(allowed=((1,),), edges=({1: True},)),
+                 TokenDFA(allowed=((1,),), edges=({"1": 0},)))
+    for dfa in malformed:
+        msgs = check_token_dfa(dfa, SPEC.vocab_size)
+        assert msgs, dfa
+    edges = {0: 0, 1: 0}
+    schema = TokenDFA(allowed=((0, 1),), edges=(edges,))
+    stream = generate_stream([3, 9, 1], SPEC, _toy_weights(SPEC), 3,
+                             h=AVX, theta=COOL, schema=schema)
+    edges.clear()                         # mutate the caller-owned table after validation
+    events = list(stream)
+    assert [event.kind for event in events] == ["token", "token", "token", "done"]
+
+
+def test_long_sequential_prefill_has_a_unique_claim_namespace():
+    """The historical decode-id band starts at 100; a 100-token sequential prefill
+    must move its own IDs rather than alias the first generated claim."""
+    from bcir.verify import verify
+    module = decode_session_module(SPEC, 100, 2, batched_prefill=False)
+    claim_ids = [claim.id for phase in module.phases for claim in phase.claims]
+    assert len(claim_ids) == len(set(claim_ids)) == 102
+    assert not any(diag.law == "R1.1" for diag in verify(module))
+
+
 def test_text_in_text_out_ties_rungs_2_4_and_6():
     """THE WAVE-10 CLOSER: TEXT -> SentencePiece encode -> an ingested HF-layout
     checkpoint (rung 4) -> generate (rung 6) -> SentencePiece decode -> TEXT, with the
