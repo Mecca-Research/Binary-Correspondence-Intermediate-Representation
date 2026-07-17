@@ -129,7 +129,6 @@ def render() -> str:
     a("")
     a("## Runtime C components\n")
     a(", ".join(f"`{c}`" for c in cfiles))
-    a("")
     return "\n".join(L) + "\n"
 
 

@@ -1,4 +1,4 @@
-# BCIR Whole-Model Reference (WMR) — rung-8 implementation status (2026-07-10)
+# BCIR Whole-Model Reference (WMR) — rung-8 implementation status (2026-07-17)
 
 **Current status**: the greedy Q8 portion of BCIR's **rung-8 capstone is implemented**. A pinned
 trained TinyLlama checkpoint and tokenizer are verified, ingested, exported as BCIRQ8, loaded by
@@ -6,6 +6,12 @@ a portable standalone C decoder, and compared with the Python Q8 oracle in an al
 gate. The source checkpoint, tokenizer, and generated weights remain cache-only; CI publishes
 only the deterministic parity report. See [`BCIR_LANGREF.md` §16](../BCIR_LANGREF.md#16-bcirq8-v1-decoder-artifact-contract) and
 [`THIRD_PARTY_MODELS.md`](THIRD_PARTY_MODELS.md).
+
+The optional hosted model laboratory now closes the complementary training side with a bounded
+from-random-weights micro gate. A PyTorch Llama reference trains for 64 CPU steps, publishes a
+pickle-free exact-resume checkpoint, exports standard Llama Safetensors, re-enters BCIR through
+the strict ingest rail, and reaches the same BCIRQ8/standalone-C runtime. This proves composition,
+not useful language-model scale; the pinned TinyLlama gate remains the real trained-model gate.
 
 This document began as the design note for importing the useful whole-model shape from
 [`karpathy/llama2.c`](https://github.com/karpathy/llama2.c). It now records what landed and what
@@ -54,6 +60,9 @@ The original analysis identified four modules. Three are now present in the gree
    double accumulation for the standalone parity rail.
 4. **Seeded probabilistic samplers — open.** Temperature, top-p, and top-k sampling with a shared
    replayable Python/C RNG remain WMR-3. Greedy generation is the supported capstone boundary.
+5. **Hosted train-to-C bridge — landed.** `bcir.hosted.models` independently implements the
+   `DecoderSpec` Llama family in opt-in PyTorch. Its micro gate trains from random weights and
+   traverses safe Safetensors checkpoint/export, strict BCIR ingest, BCIRQ8, and standalone C.
 
 **The BCIR value-add on import** (the same "migrate the idea, wrap it in BCIR's discipline"
 pattern as the Triton and AMD analyses — nothing lands as a raw copy):
@@ -78,9 +87,9 @@ llama2.c ships readable-but-unverified C; BCIR imports the *shape* and makes it 
 
 - The **hardcoded Llama-2 architecture** — `DecoderSpec` is already parameterized (Llama/Gemma/Qwen
   shape knobs, GQA, tied/untied head, SwiGLU) (`decode.py:36`).
-- The **PyTorch trainer** — D1's planned-training graph (`train_graph.py`) + the AMD-roadmap
-  supplement boundary (delegate real training to PyTorch/JAX) already cover training; BCIR is not
-  importing a second trainer.
+- The **upstream PyTorch trainer or checkpoint** — BCIR's hosted trainer is an independent,
+  `DecoderSpec`-driven implementation with strict safe-checkpoint and ingest contracts. It does
+  not copy llama2.c/CUDA-LLM training code or claim provenance for an external model.
 - The **OpenMP matmul** — the channel + resident-compiler + K_BCIR cost model own parallelism and
   placement; a hand-pragma'd matmul is the wrong layer.
 - **fp32-only** — BCIR is multi-precision; the C twins are `double` today (a nuance: bit-parity
@@ -128,9 +137,8 @@ process (oracle first, C twin second, measured-then-pinned parity gate, registry
 
 ## 6. The larger implication — closing the train → export → serve loop
 
-BCIR now composes D1 training semantics, checkpoint ingestion, tokenization, quantized export,
-and standalone inference into an end-to-end model gate. The checked-in gate starts from a pinned
-trained checkpoint rather than training it in CI, then verifies this deployed half of the loop:
+BCIR now has two complementary end-to-end gates. The real-model gate starts from a pinned trained
+checkpoint and verifies the deployment half:
 
 ```
    source               export              run standalone           verify
@@ -138,9 +146,16 @@ trained checkpoint rather than training it in CI, then verifies this deployed ha
  + tokenizer IDs       (hashes + CRCs)     (portable C, no deps)     (Python Q8 oracle)
 ```
 
-The repository also has the D1 planned/streamed trainer, but CI does not claim that the pinned
-TinyLlama checkpoint was trained by BCIR. A future gate can connect a BCIR-produced checkpoint to
-the same exporter; the current claim is deliberately narrower and directly reproducible.
+The hosted micro gate proves the owned training path without conflating it with the external model:
+
+```
+ random weights → 64-step hosted train → safe Safetensors → strict BCIR ingest
+                → BCIRQ8 group-32 → Python Q8 + standalone C → parity report
+```
+
+CI does not claim that BCIR trained the pinned TinyLlama checkpoint, and the micro sequence task is
+not evidence of useful language-model quality. Together the gates prove both compositions while
+keeping their provenance and claims separate.
 
 ---
 
@@ -152,9 +167,10 @@ from the other roadmaps, importing no new subsystem:
 - **Open-weight ladder** — the WMR is rung 8's standalone greedy-Q8 capstone: it directly composes
   pinned-manifest ingestion, tokenization, reference decode, quantized export, and portable C
   inference. It does not claim to fold serving or scale-out machinery into the executable.
-- **D1 training rail** — the artifact writer consumes `DecoderWeights`, so a future D1/delegated
-  trainer output can use the same path. The checked-in real-model gate starts from immutable
-  upstream weights and does not add or claim a TinyLlama trainer.
+- **D1 and hosted training rails** — planned/streamed claim-graph training remains the semantic
+  oracle; optional hosted PyTorch supplies scalable tensor execution. Hosted exports must pass
+  strict ingestion before they can use the same artifact writer. The real-model gate starts from
+  immutable upstream weights and does not claim a TinyLlama trainer.
 - **Resident-compiler gate** — `bcir_llama.c` is static C built by `bcir-cc`/`cc`; the WMR never
   hand-rolls codegen. It is the *reference* artifact, and later a GPU rail (AMD roadmap) can host
   the same whole-model shape with real Matrix-Core kernels behind the gate.

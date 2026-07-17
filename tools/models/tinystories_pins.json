@@ -1,0 +1,54 @@
+{
+  "dataset": "roneneldan/TinyStories",
+  "files": [
+    {
+      "bytes": 248731111,
+      "path": "data/train-00000-of-00004-2d5a1467fff1081b.parquet",
+      "sha256": "77cf780cebe52b6e83e3a2ac84bc56d8059363113e41d17a023f1d8b2ed0fc0b",
+      "split": "train"
+    },
+    {
+      "bytes": 248171980,
+      "path": "data/train-00001-of-00004-5852b56a2bd28fd9.parquet",
+      "sha256": "e2f173a6dcc2b5895183e8ad376e115bd5c06764eb0cfc01ce1add156b2d017f",
+      "split": "train"
+    },
+    {
+      "bytes": 245894874,
+      "path": "data/train-00002-of-00004-a26307300439e943.parquet",
+      "sha256": "cac73cd1a0973a7fccde022a5a5c78f8ba58ea6849541835c58e7c5fc747f2ef",
+      "split": "train"
+    },
+    {
+      "bytes": 247988350,
+      "path": "data/train-00003-of-00004-d243063613e5a057.parquet",
+      "sha256": "862514ae75723ddd339337f1ef7617b88f82290dcddd57445e1d38d257ca7891",
+      "split": "train"
+    },
+    {
+      "bytes": 9989127,
+      "path": "data/validation-00000-of-00001-869c898b519ad725.parquet",
+      "sha256": "33406a6206554cfc279c29c11f4df51528af487aa1a602b075566fc83c49dcab",
+      "split": "validation"
+    }
+  ],
+  "license": "cdla-sharing-1.0",
+  "revision": "f54c09fd23315a6f9c86f9dc80f725de7d8f9c64",
+  "schema": "bcir.tinystories_source.v1",
+  "tokenizer_plan": {
+    "add_dummy_prefix": true,
+    "bos_id": 1,
+    "byte_fallback": true,
+    "eos_id": 2,
+    "hard_vocab_limit": true,
+    "implementation": "sentencepiece",
+    "model_type": "bpe",
+    "normalization_rule_name": "identity",
+    "pad_id": 3,
+    "remove_extra_whitespaces": false,
+    "shuffle_input_sentence": false,
+    "unk_id": 0,
+    "version": "0.2.2",
+    "vocab_size": 16384
+  }
+}
