@@ -61,7 +61,10 @@ def _read_json(path: Path, *, limit: int = 16 * 1024 * 1024):
 
 
 def _fsync(path: Path) -> None:
-    with path.open("rb") as stream:
+    # Windows' CRT rejects fsync() on a read-only descriptor.  Reopen the
+    # completed tensor file without truncation but with write access so the
+    # durability barrier has the same semantics on Windows and POSIX hosts.
+    with path.open("r+b") as stream:
         os.fsync(stream.fileno())
 
 
