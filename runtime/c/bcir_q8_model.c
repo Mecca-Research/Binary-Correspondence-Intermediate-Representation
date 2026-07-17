@@ -19,6 +19,15 @@ typedef long bcir_file_offset;
 #define BCIR_FTELL ftell
 #endif
 
+static FILE *bcir_q8_open_file(const char *path, const char *mode) {
+#if defined(_WIN32)
+  FILE *file = NULL;
+  return fopen_s(&file, path, mode) == 0 ? file : NULL;
+#else
+  return fopen(path, mode);
+#endif
+}
+
 static uint16_t rd16(const unsigned char *p) {
   return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
 }
@@ -269,7 +278,7 @@ int bcir_q8_model_load_with_allocator_limited(
     set_error(error, error_capacity, "BCIRQ8 file-size limit is below the fixed header");
     return -1;
   }
-  file = fopen(path, "rb");
+  file = bcir_q8_open_file(path, "rb");
   if (!file) {
     set_error(error, error_capacity, "cannot open BCIRQ8 file");
     return -1;

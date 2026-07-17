@@ -19,6 +19,15 @@ static void cli_deallocate(void *allocation) {
   bcir_host_deallocate(&allocator,allocation);
 }
 
+static FILE *cli_open_file(const char *path, const char *mode) {
+#if defined(_WIN32)
+  FILE *file = NULL;
+  return fopen_s(&file, path, mode) == 0 ? file : NULL;
+#else
+  return fopen(path, mode);
+#endif
+}
+
 static void usage(const char *argv0) {
   fprintf(stderr, "usage: %s --model FILE --prompt-ids I,J,... --max-new N "
                   "[--logits-out FILE]\n", argv0);
@@ -38,7 +47,7 @@ static int parse_prompt(const char *text, int32_t **out, size_t *count) {
   *out = (int32_t *)cli_allocate(n * sizeof **out);
   copy = (char *)cli_allocate(text_size + 1);
   if (!*out || !copy) { cli_deallocate(*out); cli_deallocate(copy); return -1; }
-  strcpy(copy, text); p = copy;
+  memcpy(copy, text, text_size + 1); p = copy;
   while (*p) {
     errno = 0; value = strtol(p, &end, 10);
     if (errno || end == p || value < INT32_MIN || value > INT32_MAX ||
@@ -52,7 +61,7 @@ static int parse_prompt(const char *text, int32_t **out, size_t *count) {
 }
 
 static int write_f64_le(const char *path, const double *values, size_t count) {
-  FILE *f = fopen(path, "wb");
+  FILE *f = cli_open_file(path, "wb");
   size_t i;
   if (!f) return -1;
   for (i = 0; i < count; ++i) {
