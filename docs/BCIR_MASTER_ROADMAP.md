@@ -55,7 +55,7 @@ The normative semantics and artifact contract are in
 
 | Rail | Owns | Explicit boundary |
 |---|---|---|
-| `bcir/` | Executable conformance oracle, K_BCIR, GEM, frontends, ML/reference organs | Not the production definition when a compiled law exists |
+| `bcir/` | Dependency-free conformance oracle plus import-quarantined hosted-model adapters, K_BCIR, GEM, frontends, ML/reference organs | Hosted PyTorch execution is optional and must re-enter through strict oracle ingestion; not the production law definition |
 | `mlir/` | ODS/IRDL structure, compiled verifier and transformations, target-edge lowering | `bcir-aot` is partial preparation; Python LLVM lowering accepts one supported elementwise claim |
 | `runtime/c/` | Freestanding runtime, C-front twin, hosted model/compiler tools, direct RuntimeChannel | Memory classes are explicit; no hidden platform or IPC dependency in freestanding code |
 | `runtime/cpp/` | Hosted orchestration above the C ABI | Single-node handoff is real; distributed/device-manager backends remain scaffolded |
@@ -69,7 +69,7 @@ The normative semantics and artifact contract are in
 | GEM and StreamPack | Hydration, scheduling, execution, strict v1–v3 codecs, C/Python byte parity, operator disassembly/hexdump | Hardware command packets and per-device execution are not implied |
 | C compiler | Broad driver-oriented C23 subset, twin lowering, Clang differentials, target ABI matrix, project/link/fallback modes | Not complete ISO C23; unsupported constructs route to the resident compiler |
 | C memory/runtime | Freestanding/hosted/driver classes, allocator injection, failure tests, direct RuntimeChannel v1 | No out-of-process transport or resident hardware binding |
-| ML/reference | Tensor claims, closed-set AD, losses/optimizers/training, numerical wrappers, model ingest/tokenizer/decode, BCIRQ8, standalone-C TinyLlama parity | Not a production framework, trainer, or serving engine |
+| ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity | The 32M model is untrained; no distributed trainer, GPU backend, or production serving engine |
 | Telemetry | Stable signal registry, BTLM codec, continuity/ring witnesses, metrics, deterministic Prometheus/OTLP/Redfish-shaped serialization | No live HTTP/OTLP/BMC/UART transport; driver envelope/live concurrent ring remain version-zero design work |
 | Machine edge | Typed MMIO/port/fence/control-register/MSR operations, ordinary x86 long-mode entry and interrupt trampoline, real object/disassembly gates | Reset transition, paranoid NMI/IST entry, feature-specific entry policy, native CPU backend remain open |
 | Drivers/kernel | Device-manifest/event/DMA substrates, direct hook ABI, driver package and BCIR-Linux plans | No resident device driver, Linux module/fork, stable UAPI, native kernel, or native IPC is present |
@@ -163,18 +163,23 @@ The full maturity ladder and kernel escalation policy live in
 
 ### 4.4 ML and model rail
 
-The first real-model seam is proven: immutable checkpoint/tokenizer inputs produce a deterministic
-group-Q8 artifact, Python and standalone C agree on generated IDs/logits, and the parity report is
-the only uploaded artifact. The active queue is:
+Two bounded seams are proven: immutable TinyLlama inputs produce a deterministic group-Q8 artifact
+with Python/C parity, and the optional hosted lab trains a 90,688-element model from random weights
+through exact safe resume, strict Safetensors ingestion, BCIRQ8, and standalone C. Generated weights
+remain build-only. The active queue is:
 
 1. Define packed INT2–INT6 storage/compute and activation-outlier policy under R17.
 2. Export analytic tensor schedules and compare them with bounded exhaustive measurements on real
    targets; keep GEMM and fused/attention conclusions separate.
 3. Add multi-level/post-optimization AD evidence, checkpoint/rematerialization, and broader
    control/mutation/higher-order coverage.
-4. Complete sampling, raw-text standalone tokenization, trained-model export, scalable batching,
-   device placement, and architecture coverage in that order.
-5. Materialize Phase-C data organs only behind schema/provenance and bounded-memory contracts.
+4. Differentially freeze the pinned 16,384-piece tokenizer, then train and evaluate the specified
+   BCIR-TinyStories-32M model on a canonical hosted rig; local work is pilot-only.
+5. Establish SDPA device parity, static request-owned KV/CUDA graphs, then verified BCIRQ8 GPU
+   execution before defining BCIRQ4 or custom attention kernels.
+6. Complete sampling, raw-text standalone tokenization, scalable batching/placement, bounded
+   serving, and architecture coverage in that order.
+7. Materialize Phase-C data organs only behind schema/provenance and bounded-memory contracts.
 
 The detailed closure register, model ladder, and explicit production gaps are in
 [`machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md).
@@ -210,6 +215,8 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 | BCIR-Linux experiment rails | Open | Reproducible LTS/next baselines; invasive patches only for measured stock-interface gaps |
 | Native kernel/IPC proof | Gated | Boot/memory/IRQ/PCIe/DMA prerequisites and direct/Linux/native parity |
 | Small real-model reference | Landed | Pinned source hashes, BCIRQ8 compactness, Python/C ID and logit parity |
+| Hosted train-to-C micro gate | Landed | Random-weight CPU training, exact resume, deterministic Safetensors/Q8 export, Python/C parity |
+| BCIR-TinyStories-32M | Spec/pins landed | Tokenizer differential, canonical BF16 run, validation/model card, reviewed publication artifacts |
 | Low-bit/model scaling | Partial | Versioned format, R17/error evidence, target execution, sampling/batching/placement gates |
 | Closed learned optimization loop | Partial | Real driver/model telemetry, exhaustive-equivalence certificate, quiescent activation and rollback |
 
@@ -257,8 +264,9 @@ Minimum publication evidence:
 5. MLIR ODS/IRDL/pass/assembly/object gates on the supported LLVM version.
 6. Wire-format corruption, truncation, overlap, reserved-field, CRC, and round-trip tests.
 7. Real-model gate for any change that can affect model ingest, quantization, decoding, or C math.
-8. Native Windows and ARM jobs for portability-sensitive changes.
-9. All required GitHub checks green before handoff; pending is not complete.
+8. Hosted train/checkpoint/export gate on Ubuntu and Windows for hosted-model changes.
+9. Native Windows and ARM jobs for portability-sensitive changes.
+10. All required GitHub checks green before handoff; pending is not complete.
 
 Hardware claims additionally require the runbook in
 [`kernel/HARDWARE_VALIDATION.md`](kernel/HARDWARE_VALIDATION.md), including baselines,

@@ -1,0 +1,32 @@
+{
+  "activation_checkpointing": true,
+  "batch_size": 8,
+  "beta1": 0.9,
+  "beta2": 0.95,
+  "checkpoint_every": 250,
+  "context_length": 512,
+  "decoder": {
+    "activation": "silu_gate",
+    "d_ff": 1344,
+    "d_model": 512,
+    "n_heads": 8,
+    "n_kv_heads": 4,
+    "n_layers": 8,
+    "rms_norm_eps": 1e-06,
+    "rope_base": 10000.0,
+    "tied_embeddings": true,
+    "vocab_size": 16384
+  },
+  "dtype": "bfloat16",
+  "epsilon": 1e-08,
+  "grad_clip": 1.0,
+  "gradient_accumulation": 8,
+  "learning_rate": 0.0003,
+  "min_learning_rate": 3e-05,
+  "optimizer": "adamw",
+  "schema": "bcir.hosted_train.v1",
+  "seed": 1729,
+  "steps": 19532,
+  "warmup_steps": 500,
+  "weight_decay": 0.1
+}

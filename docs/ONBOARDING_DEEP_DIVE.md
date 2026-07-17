@@ -36,12 +36,16 @@ kernel internals unless a measured decision gate says otherwise.
 
 | Rail | Role | Key property |
 |---|---|---|
-| `bcir/` | Executable Python conformance oracle | Dependency-free reference behavior and generated differential campaigns |
+| `bcir/` | Executable Python conformance oracle plus opt-in hosted adapters | Default/core behavior is dependency-free; hosted model execution is import-quarantined |
 | `mlir/` | ODS/TableGen/C++ law rail | R1–R23, native optimizer/GEM passes, IRDL projection, and partial lowering |
 | `runtime/c/` | Production C compiler/runtime rail | Freestanding execution plus hosted compiler/model tools and direct RuntimeChannel hooks |
 
 `runtime/cpp/` is a narrow orchestration seam above the C ABI. It does not redefine
 legality, ownership, or planning.
+
+`bcir/hosted/models/` is a fourth execution *adapter*, not a new semantic rail. It uses a
+pinned PyTorch/Safetensors environment for scalable tensor execution, but every export must
+re-enter through the dependency-free strict-ingest oracle before BCIRQ8 or C deployment.
 
 Agreement is scoped to the rails that implement a concept:
 
@@ -178,7 +182,9 @@ memory-safety shortcut and must not enter the freestanding core.
 
 The model/reference stack includes manifest and safetensors ingestion, SentencePiece,
 Llama-family decoding, GQA and KV cache, training specifications/optimizers, continuous
-batching references, and quantized evaluation.
+batching references, and quantized evaluation. The optional hosted lab adds an independent
+PyTorch Llama reference, AdamW training, safe exact-resume generations, and strict HF-style
+export without changing default `bcir` imports.
 
 BCIRQ8 v1 is a deterministic groupwise signed-int8 decoder-artifact format with
 power-of-two exponents, canonical tensor order, CRCs, SHA-256 provenance, strict bounds,
@@ -188,8 +194,10 @@ and a portable C loader. The normative contract is
 The pinned real-model gate performs tokenizer/checkpoint verification, Q8 export, Python
 inference, standalone C inference, generated-ID parity, and deterministic report
 generation. Checkpoints, tokenizers, generated weights, binaries, and logits are local
-cache/build products, never repository assets. Production serving and broader model/
-low-bit support remain open; see
+cache/build products, never repository assets. A second micro gate trains a 90,688-element
+model from random weights for 64 CPU steps and proves Safetensors→BCIRQ8→standalone-C parity;
+it is a composition test, not a useful language model. Production-scale training, serving,
+and broader model/low-bit support remain open; see
 [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md).
 
 ## 8. Drivers, kernel, telemetry, and IPC

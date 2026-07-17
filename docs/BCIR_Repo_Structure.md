@@ -1,6 +1,6 @@
 # BCIR repository structure
 
-> Current for package version `0.2.0` and the post-PR-638 tree. This document is an
+> Current for package version `0.2.0` and the post-PR-640 tree. This document is an
 > ownership map, not a generated inventory or a migration log. Static counts belong in
 > [`STATUS.md`](STATUS.md); historical reorganizations belong in
 > [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md).
@@ -18,7 +18,7 @@ source inclusion. This separation keeps agreement meaningful.
 
 | Path | Owner and purpose | Primary validation |
 |---|---|---|
-| `bcir/` | Dependency-free oracle: semantic graph, verifier, K_BCIR, GEM, frontends, codecs, telemetry, model/training references, and lowering drivers | `python -m bcir.tests.run_all` |
+| `bcir/` | Dependency-free oracle plus an import-quarantined optional hosted-model adapter; the default package path remains third-party-free | `python -m bcir.tests.run_all`; hosted job separately |
 | `mlir/` | Normative dialect families, verifier and optimizer passes, IRDL projection, examples, and pass fixtures | `tools/wsl/check_passes.sh`, `tools/irdl/check_corpus.sh` |
 | `runtime/c/` | Freestanding runtime plus hosted C compiler/model tools and direct RuntimeChannel bindings | `tools/c/check_runtime.sh` and sanitizer/fuzz gates |
 | `runtime/cpp/` | Narrow C++ orchestration boundary; it does not own legality, planning, or learned policy | `tools/cpp/check_handoff.sh` |
@@ -45,6 +45,7 @@ history and git.
 | `abi/` | StreamPack and other byte-level host contracts |
 | `lower/` | Portable C, the single-claim elementwise LLVM AOT/JIT subset, WASM, stack-machine, library, SYCL, and model lowering helpers |
 | `codegen/` | Resident-toolchain object/assembly paths and target validation |
+| `hosted/models/` | Opt-in PyTorch Llama training, pickle-free exact-resume checkpoints, strict Safetensors export, and train-to-C gating; never imported by the oracle path |
 | `tests/` | Explicit test registry and named quick, C-runtime, silicon-degrade, and thorough tiers |
 
 Top-level modules such as `telemetry_frame.py`, `telemetry_export.py`,
@@ -141,6 +142,9 @@ python -m bcir.tests.run_all --tier thorough -j 2
 # Production C and C++ boundaries
 bash tools/c/check_runtime.sh
 bash tools/cpp/check_handoff.sh
+
+# Optional pinned hosted-model CPU gate (one thread in CI)
+python tools/models/test_hosted_model_lab.py --output-dir build/hosted-model-gate
 
 # MLIR/IRDL rails when the coherent LLVM toolset is installed
 bash tools/wsl/check_passes.sh

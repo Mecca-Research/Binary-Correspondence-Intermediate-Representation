@@ -1,4 +1,4 @@
-# BCIR vision-alignment audit — 2026-07-15
+# BCIR vision-alignment audit — 2026-07-17
 
 > A conservative, source-backed comparison between BCIR’s “C as macro assembly,
 > IR-owned physical planning, certified learning, and AI-native driver/kernel” thesis
@@ -34,7 +34,7 @@ not promoted to driver, transport, or hardware evidence.
 | IR ownership of planning and execution shape | **Landed** | R1–R23, K_BCIR, GEM, StreamPack v1–v3, event/DMA/device contracts; arbitrary-graph LLVM AOT remains absent |
 | Certified optimization and learning | **Landed reference; hardware evidence partial** | Exact search and frozen-Q8/replay/provenance controls exist; most target calibration is not yet driver/hardware qualified |
 | Math, AD, precision, and library substrate | **Advanced but bounded** | Tensor ops, R17, Q8, closed-set AD and six library families exist; broader AD/low-bit/schedule-export work remains |
-| Model inference and training | **Real reference + hosted C gate; not production/bare-metal complete** | Planned/streamed training and TinyLlama→BCIRQ8→standalone C parity exist; serving/device/broader-model and freestanding whole-model deployment remain open |
+| Model inference and training | **Real reference + hosted micro/C gates; not production/bare-metal complete** | Planned/streamed semantics, owned random-weight safe-resume training, and TinyLlama/hosted→BCIRQ8→standalone-C parity exist; 32M/GPU/serving remain open |
 | Driver, kernel, ABI, and IPC | **Foundation only** | Direct RuntimeChannel, manifests, event/DMA and ordinary x86 edges exist; no resident driver, Linux module/fork, stable UAPI, native kernel, or native IPC |
 | Telemetry/control plane | **Codec/meaning landed; live plane missing** | Registry, BTLM, metrics, deterministic exposition and ring baseline exist; identity envelope, live SPSC and transports/providers are open |
 
@@ -128,13 +128,16 @@ implementation claim.
 - BCIRQ8 v1 has deterministic Python read/write and a strict portable C loader. The
   pinned TinyLlama gate verifies source hashes, tokenizer IDs, compact export, Python/C
   generated IDs, finite logits, and final-logit tolerance without committing assets.
+- The import-quarantined hosted lab independently implements Llama/GQA in PyTorch, accepts
+  only explicit AdamW/device/precision modes, checkpoints without pickle, and proves exact
+  same-host resume plus random-weights→Safetensors→BCIRQ8→standalone-C composition.
 - The C++ handoff has a small compiled single-node seam and explicit ownership rules.
 
 ### Still open
 
-- Production tokenizer/runtime integration, sampling, safety policy, broad architectures,
-  long-context/device kernels, robust serving/evaluation, and physical accelerator
-  qualification.
+- The pinned 16K tokenizer and canonical BCIR-TinyStories-32M run, distributed training,
+  production tokenizer/runtime integration, sampling, safety policy, broad architectures,
+  long-context/device kernels, robust serving/evaluation, and physical accelerator qualification.
 - A freestanding whole-decoder profile with caller-owned memory if bare-metal deployment
   is required; the present standalone C decoder is hosted.
 - Real dynamic-graph and distributed MPI/NCCL orchestration. Current C++ backends beyond

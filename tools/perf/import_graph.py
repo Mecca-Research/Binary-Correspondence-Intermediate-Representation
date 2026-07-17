@@ -30,12 +30,14 @@ _COLD_KBCIR = ("calibloop", "microbench", "accel", "portfolio", "moegate", "regr
 _COLD_LOWER = ("jit", "wasm", "specialist")
 _COLD_GEM = ("concurrency", "overlap", "schedule", "async_tokens", "cim", "dvfs")
 _COLD_TOP = ("silicon",)
+_COLD_HOSTED_MODELS = ("spec", "model", "train", "export", "checkpoint")
 
 COLD: frozenset[str] = frozenset(
     [f"bcir.kbcir.{m}" for m in _COLD_KBCIR]
     + [f"bcir.lower.{m}" for m in _COLD_LOWER]
     + [f"bcir.gem.{m}" for m in _COLD_GEM]
-    + [f"bcir.{m}" for m in _COLD_TOP])
+    + [f"bcir.{m}" for m in _COLD_TOP]
+    + [f"bcir.hosted.models.{m}" for m in _COLD_HOSTED_MODELS])
 
 # --- the HOT entry points that must stay lean ---
 HOT_ENTRIES: dict[str, str] = {

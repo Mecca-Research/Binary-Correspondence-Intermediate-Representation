@@ -1,6 +1,6 @@
 # BCIR Repository Current State Audit
 
-> Audited 2026-07-15 against the `bcir/` (oracle) + `mlir/` (law) + `runtime/c` (C rail)
+> Audited 2026-07-17 against the `bcir/` (oracle + opt-in hosted adapter) + `mlir/` (law) + `runtime/c` (C rail)
 > tree — after the vision-alignment gap-closure program (tensor ops, bare-metal
 > inference/training kernels), the R19–R21 law promotion, the telemetry T1–T4 pipeline,
 > the ML Tier-1 trio + breadth slices (M1–M3, E1–E7), and the asm/driver arc
@@ -25,9 +25,11 @@ drivers and IPC.
 
 ## Snapshot
 
-- Two trees implement BCIR in lockstep ([`PARITY.md`](PARITY.md)):
-  - **`bcir/`** — the executable conformance oracle (pure Python, no third-party
-    deps): model, K_BCIR optimizer (min-plus + RCSP/Pareto + (max,+) overlap +
+Three implementation rails correspond under the scoped gates in [`PARITY.md`](PARITY.md):
+
+- **`bcir/`** — the executable conformance oracle (its default/core path is pure
+    Python with no third-party deps; `bcir.hosted.models` is an explicit quarantined extra):
+    model, K_BCIR optimizer (min-plus + RCSP/Pareto + (max,+) overlap +
     soft-temperature + branch-and-bound rails), GEM hydration/scheduling/execution,
     ROP/MAP front-ends + the **cfront C frontend** (full preprocessor, 5-target ABI
     matrix, atomics/fences/inline-asm/port-I/O edges, VLAs, `_BitInt`, `_Complex`,
@@ -45,7 +47,7 @@ drivers and IPC.
     Suite: `python -m bcir.tests.run_all` (live count + coverage in
     [`STATUS.md`](STATUS.md), generated from the tree — see that file rather than a
     hard-coded number here, which is what the 580/615/631 drift came from).
-  - **`mlir/`** — the law: the ODS/TableGen dialect family (op count in
+- **`mlir/`** — the law: the ODS/TableGen dialect family (op count in
     [`STATUS.md`](STATUS.md)), the compiled `bcir-opt` with `-bcir-verify`
     (**R1–R23**), the full deterministic optimizer core in C++23 (`-bcir-cost-model`
     cost+fusion/CSE → `-bcir-plan` coupled min-plus → `-bcir-overlap` (max,+) →
@@ -121,6 +123,11 @@ drivers and IPC.
     TinyLlama checkpoint/tokenizer pins feed BCIRQ8 v1, Python Q8 and standalone-C greedy
     inference, exact generated-ID parity, and a deterministic report. The checkpoint,
     tokenizer, generated Q8 artifact, logits, and executable remain cache/build products.
+12. **An owned hosted train-to-C micro gate exists without weakening the oracle**:
+    opt-in PyTorch trains a two-layer tied GQA model for 64 one-thread CPU steps, publishes
+    pickle-free exact-resume Safetensors, passes strict BCIR ingestion, and preserves the
+    learned token through deterministic BCIRQ8 and Python/C logit parity. The 32M profile
+    and TinyStories hashes are pinned, but that model has not been trained.
 
 ## Confirmed limitations
 
@@ -147,7 +154,10 @@ drivers and IPC.
    hard-compiler work ([`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §4.1). `_Decimal*` is blocked on a
    reference compiler that can compile it. `runtime/cpp/` dynamic-graph and
    distributed orchestration are stubs pending multi-node hardware.
-6. **There is no resident UART driver or production driver telemetry ABI.** The UART register
+6. **Hosted model execution is a bounded reference, not a production training stack.**
+   Distributed/data-parallel execution, the frozen 16K tokenizer, the canonical 32M run,
+   CUDA kernels/graphs, serving, RAG, and model publication remain gated follow-on work.
+7. **There is no resident UART driver or production driver telemetry ABI.** The UART register
    header/polling source is a compiler fixture; the channel-backed driver, UART simulator,
    IRQ service, and U0–U9 program remain planned. Telemetry has a registry, codecs, metrics,
    and deterministic serialization, but no UART egress, HTTP/Prometheus host, OTLP transport,
@@ -155,7 +165,7 @@ drivers and IPC.
    clock identity, and shared-ring v1 is only a quiescent snapshot (no tail, per-slot publish,
    loss/backpressure, or peer-death protocol). Stable signal definitions are Python-only until
    one fixed-width C table is generated.
-7. **The x86 asm edge is not a reset/exception subsystem.** `bcir.entry` assumes long
+8. **The x86 asm edge is not a reset/exception subsystem.** `bcir.entry` assumes long
    mode. The ordinary trampoline exposes a fixed 176-byte C frame and refuses #DB, NMI,
    #DF, #MC, and AMD #VC; reset-mode transition, paranoid/IST nesting, SMAP/CET/IBT,
    CR3/PTI and speculation policy, extended-state policy, CFI/unwind, and hardware/QEMU
