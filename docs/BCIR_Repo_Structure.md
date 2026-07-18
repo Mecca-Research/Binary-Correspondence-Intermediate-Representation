@@ -49,6 +49,11 @@ history and git.
 | `hosted/training/` | Dependency-free corpus/BPE/provider/stage/ledger/hardware-policy specs plus lazily imported PyTorch SFT, reward, DPO, PPO, reasoning, embedding, MLP, GRU, encoder, and GNN/Transformer hardware-policy references |
 | `tests/` | Explicit test registry and named quick, C-runtime, silicon-degrade, and thorough tiers |
 
+`bcir.performance_audit` is an opt-in, dependency-free audit coordinator. It exercises
+representative graph/GEM/StreamPack/memory/telemetry/ML organs and publishes deterministic
+result hashes plus informative host timings. It is not imported by normal planning or
+execution entry points; see [`PERFORMANCE_AUDIT.md`](PERFORMANCE_AUDIT.md).
+
 `bcir-model-assess` is the payload-free model planning entry point. Its model directory parser
 reads only `config.json` and validated Safetensors headers, while caller-authored hardware and
 workload artifacts drive exact capacity accounting. It can publish a canonical cost report,
@@ -165,6 +170,9 @@ bash tools/irdl/check_corpus.sh
 python tools/docs/gen_status.py --check
 python tools/docs/check_links.py
 git diff --check
+
+# Bounded cross-organ performance/correctness evidence (no timing floor in shared CI)
+python tools/perf/run_tmsao_audit.py --repeats 3
 ```
 
 Tool-dependent cases report explicit skips when the required compiler, LLVM toolset,

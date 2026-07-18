@@ -1,6 +1,6 @@
 # BCIR Repository Current State Audit
 
-> Audited 2026-07-17 against the `bcir/` (oracle + opt-in hosted adapter) + `mlir/` (law) + `runtime/c` (C rail)
+> Audited 2026-07-18 against the `bcir/` (oracle + opt-in hosted adapter) + `mlir/` (law) + `runtime/c` (C rail)
 > tree — after the vision-alignment gap-closure program (tensor ops, bare-metal
 > inference/training kernels), the R19–R21 law promotion, the telemetry T1–T4 pipeline,
 > the ML Tier-1 trio + breadth slices (M1–M3, E1–E7), and the asm/driver arc
@@ -142,6 +142,15 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     feasible assessed candidates; and the winner must still pass claims, bank moves,
     StreamPack, and exact aligned static-address verification. The required gate trains twice
     on six simulated episodes and refuses live promotion from that provenance.
+15. **A bounded performance/correctness audit now spans the core data paths and ML
+    references**: deep graph traversal, GEM wave/token/EFT scheduling, K_BCIR→StreamPack,
+    static lifetimes, telemetry wraparound, low-bit blocks, unsupervised/classical ML,
+    linear algebra, sequence models, training, and finite hardware search produce one
+    timestamp-free report. The sweep removed quadratic independent-graph scheduling,
+    corrected topological liveness, accelerated exact first-fit placement, and closed
+    partial-plan/non-finite/coercion failures. Timings are evidence rather than shared-CI
+    thresholds; methodology and local observations are in
+    [`PERFORMANCE_AUDIT.md`](PERFORMANCE_AUDIT.md).
 
 ## Confirmed limitations
 
@@ -188,6 +197,10 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    #DF, #MC, and AMD #VC; reset-mode transition, paranoid/IST nesting, SMAP/CET/IBT,
    CR3/PTI and speculation policy, extended-state policy, CFI/unwind, and hardware/QEMU
    execution remain open.
+9. **TMSAO is not yet a target certificate.** The bounded audit proves deterministic
+   results and exposes algorithmic overhead, but WSL/shared-CI timings do not establish a
+   theoretical hardware maximum. PMU/energy/thermal evidence, exhaustive measured
+   candidates, direct devices, and target-specific confidence intervals remain rig-gated.
 
 ## Recommended next milestones
 

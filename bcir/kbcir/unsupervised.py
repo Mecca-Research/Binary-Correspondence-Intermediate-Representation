@@ -57,7 +57,7 @@ import math
 from dataclasses import dataclass
 
 from .activation import activation_reference
-from .classical import squared_distance
+from .classical import _squared_distance_at
 from .losses import mse_value
 from .matmul import matmul_reference
 from .quantize import dequantize, quantize_per_group
@@ -69,6 +69,28 @@ from .training import _lcg_permutation
 #    bounded, deterministic Lloyd's iteration; INERTIA is the objective + the monotone-non-increasing verifier.
 # ============================================================================================================
 
+def _kmeans_assign_flat(centroids, point, point_offset: int, k: int, n_feat: int) -> int:
+    """Nearest centroid over validated flat storage, with no temporary row slices."""
+    best_c = 0
+    best_d = _squared_distance_at(point, point_offset, centroids, 0, n_feat)
+    for centroid in range(1, k):
+        distance = _squared_distance_at(
+            point, point_offset, centroids, centroid * n_feat, n_feat)
+        if distance < best_d:
+            best_d = distance
+            best_c = centroid
+    return best_c
+
+
+def _finite(values, field: str) -> None:
+    try:
+        finite = all(math.isfinite(float(value)) for value in values)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{field} entries must all be finite numbers") from exc
+    if not finite:
+        raise ValueError(f"{field} entries must all be finite")
+
+
 def kmeans_assign(centroids: list[float], x: list[float], k: int, n_feat: int) -> int:
     """The nearest-centroid index for a point ``x`` -- the K-means PREDICT/ASSIGN kernel. REUSES the E5
     ``classical.squared_distance`` (exact squared Euclidean) to score every centroid; ranking on squared
@@ -77,23 +99,18 @@ def kmeans_assign(centroids: list[float], x: list[float], k: int, n_feat: int) -
     distance tie. ``centroids`` is ``k x n_feat`` row-major (``centroids[c*n_feat + j]``); ``x`` is length
     ``n_feat``. Returns the assigned cluster id in ``[0, k)``. This is the fixed-shape kernel the C twin
     (``emit_kmeans_assign_c``) reproduces integer-exactly (it returns the same argmin). Side-effect-free."""
-    if k < 1:
+    if type(k) is not int or k < 1:
         raise ValueError(f"kmeans k must be >= 1; got {k}")
-    if n_feat < 1:
+    if type(n_feat) is not int or n_feat < 1:
         raise ValueError(f"kmeans n_feat must be >= 1; got {n_feat}")
     if len(x) != n_feat:
         raise ValueError(f"kmeans point must be length n_feat = {n_feat}; got {len(x)}")
     if len(centroids) != k * n_feat:
         raise ValueError(f"kmeans centroids must be k*n_feat = {k * n_feat}; got {len(centroids)}")
     xf = [float(v) for v in x]
-    best_c = 0
-    best_d = squared_distance(xf, list(centroids[0:n_feat]))     # REUSE E5's exact squared distance
-    for c in range(1, k):
-        d = squared_distance(xf, list(centroids[c * n_feat:(c + 1) * n_feat]))
-        if d < best_d:                                           # strict < : a tie keeps the LOWER index
-            best_d = d
-            best_c = c
-    return best_c
+    _finite(xf, "kmeans point")
+    _finite(centroids, "kmeans centroids")
+    return _kmeans_assign_flat(centroids, xf, 0, k, n_feat)
 
 
 def kmeans_fit(X: list[float], n_samples: int, n_feat: int, k: int,
@@ -107,11 +124,11 @@ def kmeans_fit(X: list[float], n_samples: int, n_feat: int, k: int,
     re-seed). Returns ``(centroids, labels)`` -- ``centroids`` is ``k x n_feat`` row-major (the final
     centroids), ``labels`` is length ``n_samples`` (each point's final cluster id). ``X`` is ``n_samples x
     n_feat`` row-major. Side-effect-free (X / init_indices are not mutated)."""
-    if k < 1:
+    if type(k) is not int or k < 1:
         raise ValueError(f"kmeans k must be >= 1; got {k}")
-    if n_feat < 1:
+    if type(n_feat) is not int or n_feat < 1:
         raise ValueError(f"kmeans n_feat must be >= 1; got {n_feat}")
-    if n_samples < 1:
+    if type(n_samples) is not int or n_samples < 1:
         raise ValueError(f"kmeans n_samples must be >= 1; got {n_samples}")
     if len(X) != n_samples * n_feat:
         raise ValueError(f"kmeans X must be n_samples*n_feat = {n_samples * n_feat}; got {len(X)}")
@@ -119,20 +136,20 @@ def kmeans_fit(X: list[float], n_samples: int, n_feat: int, k: int,
         raise ValueError(f"kmeans k must be <= n_samples = {n_samples}; got {k}")
     if len(init_indices) != k:
         raise ValueError(f"kmeans init_indices must have k = {k} entries; got {len(init_indices)}")
-    if n_iter < 0:
+    if type(n_iter) is not int or n_iter < 0:
         raise ValueError(f"kmeans n_iter must be >= 0; got {n_iter}")
     for c, idx in enumerate(init_indices):
-        if not (0 <= idx < n_samples):
+        if type(idx) is not int or not (0 <= idx < n_samples):
             raise ValueError(f"kmeans init_indices[{c}] = {idx} out of range [0, {n_samples})")
     Xf = [float(v) for v in X]
+    _finite(Xf, "kmeans X")
     # the initial centroids: the chosen seed rows of X (a fresh copy, so X is never mutated).
     centroids = [Xf[init_indices[c] * n_feat + j] for c in range(k) for j in range(n_feat)]
     labels = [0] * n_samples
-    for _ in range(int(n_iter)):
+    for _ in range(n_iter):
         # ASSIGN every point to its nearest centroid (the exact squared-distance kernel).
         for i in range(n_samples):
-            point = Xf[i * n_feat:(i + 1) * n_feat]
-            labels[i] = kmeans_assign(centroids, point, k, n_feat)
+            labels[i] = _kmeans_assign_flat(centroids, Xf, i * n_feat, k, n_feat)
         # RECOMPUTE each centroid as the mean of its assigned points; an empty cluster keeps its old centroid.
         sums = [0.0] * (k * n_feat)
         counts = [0] * k
@@ -150,11 +167,13 @@ def kmeans_fit(X: list[float], n_samples: int, n_feat: int, k: int,
             cbase = c * n_feat
             for j in range(n_feat):
                 new_centroids[cbase + j] = sums[cbase + j] / counts[c]
+        converged = new_centroids == centroids
         centroids = new_centroids
+        if converged:
+            break
     # a final assign so the returned labels match the returned centroids (also covers n_iter == 0).
     for i in range(n_samples):
-        point = Xf[i * n_feat:(i + 1) * n_feat]
-        labels[i] = kmeans_assign(centroids, point, k, n_feat)
+        labels[i] = _kmeans_assign_flat(centroids, Xf, i * n_feat, k, n_feat)
     return centroids, labels
 
 
@@ -167,20 +186,25 @@ def kmeans_inertia(X: list[float], n_samples: int, n_feat: int,
     inertia is MONOTONE NON-INCREASING across Lloyd iterations (a defining property -- both the assign step and
     the centroid-recompute step can only lower or hold the within-cluster sum of squares), so a test runs
     :func:`kmeans_fit` for increasing ``n_iter`` and asserts the inertia never rises. Side-effect-free."""
-    if n_feat < 1:
+    if type(n_feat) is not int or n_feat < 1:
         raise ValueError(f"kmeans n_feat must be >= 1; got {n_feat}")
+    if type(n_samples) is not int or n_samples < 0:
+        raise ValueError(f"kmeans n_samples must be >= 0; got {n_samples}")
     if len(X) != n_samples * n_feat:
         raise ValueError(f"kmeans X must be n_samples*n_feat = {n_samples * n_feat}; got {len(X)}")
     if len(labels) != n_samples:
         raise ValueError(f"kmeans labels must have n_samples = {n_samples} entries; got {len(labels)}")
     Xf = [float(v) for v in X]
+    _finite(Xf, "kmeans X")
+    _finite(centroids, "kmeans centroids")
     acc = 0.0
     for i in range(n_samples):
-        c = int(labels[i])
+        if type(labels[i]) is not int:
+            raise ValueError(f"kmeans label {labels[i]!r} is not an integer cluster id")
+        c = labels[i]
         if not (0 <= c * n_feat < len(centroids)) or (c + 1) * n_feat > len(centroids):
             raise ValueError(f"kmeans label {c} out of range for the centroid table")
-        acc += squared_distance(Xf[i * n_feat:(i + 1) * n_feat],
-                                list(centroids[c * n_feat:(c + 1) * n_feat]))
+        acc += _squared_distance_at(Xf, i * n_feat, centroids, c * n_feat, n_feat)
     return acc
 
 
@@ -217,7 +241,9 @@ class StandardScaler:
             raise ValueError("StandardScaler needs at least one feature")
         if len(self.std) != len(self.mean):
             raise ValueError(f"StandardScaler mean/std length mismatch ({len(self.mean)} != {len(self.std)})")
-        if any(s <= 0.0 for s in self.std):
+        _finite(self.mean, "StandardScaler mean")
+        _finite(self.std, "StandardScaler std")
+        if any(float(s) <= 0.0 for s in self.std):
             raise ValueError("StandardScaler std entries must all be > 0 (a constant feature has std 0; "
                              "drop it or use a different scaler)")
 
@@ -233,13 +259,14 @@ def standard_scaler_fit(X: list[float], n_samples: int, n_feat: int) -> Standard
     ``n_samples x n_feat`` row-major. A CONSTANT feature (zero variance -> std 0) is REJECTED here (the
     ``StandardScaler`` dataclass raises) because ``(x - mean) / 0`` is undefined -- the caller must drop a
     constant feature or pick MinMax. Side-effect-free."""
-    if n_feat < 1:
+    if type(n_feat) is not int or n_feat < 1:
         raise ValueError(f"scaler n_feat must be >= 1; got {n_feat}")
-    if n_samples < 1:
+    if type(n_samples) is not int or n_samples < 1:
         raise ValueError(f"scaler n_samples must be >= 1; got {n_samples}")
     if len(X) != n_samples * n_feat:
         raise ValueError(f"scaler X must be n_samples*n_feat = {n_samples * n_feat}; got {len(X)}")
     Xf = [float(v) for v in X]
+    _finite(Xf, "scaler X")
     mean = [0.0] * n_feat
     for i in range(n_samples):
         base = i * n_feat
@@ -263,6 +290,9 @@ def standard_scaler_transform(x: list[float], mean, std) -> list[float]:
     ``mean`` / ``std`` are equal length. Returns a fresh list (side-effect-free)."""
     if len(x) != len(mean) or len(x) != len(std):
         raise ValueError(f"scaler transform length mismatch (x={len(x)} mean={len(mean)} std={len(std)})")
+    _finite(x, "scaler transform x")
+    _finite(mean, "scaler transform mean")
+    _finite(std, "scaler transform std")
     out = []
     for j in range(len(x)):
         if float(std[j]) <= 0.0:
@@ -285,7 +315,9 @@ class MinMaxScaler:
             raise ValueError("MinMaxScaler needs at least one feature")
         if len(self.mx) != len(self.mn):
             raise ValueError(f"MinMaxScaler mn/mx length mismatch ({len(self.mn)} != {len(self.mx)})")
-        if any(self.mx[j] <= self.mn[j] for j in range(len(self.mn))):
+        _finite(self.mn, "MinMaxScaler min")
+        _finite(self.mx, "MinMaxScaler max")
+        if any(float(self.mx[j]) <= float(self.mn[j]) for j in range(len(self.mn))):
             raise ValueError("MinMaxScaler needs mx > mn per feature (a constant feature has mx == mn; "
                              "drop it or use a different scaler)")
 
@@ -299,13 +331,14 @@ def minmax_fit(X: list[float], n_samples: int, n_feat: int) -> MinMaxScaler:
     min / max reduction). A CONSTANT feature (``mx == mn``) is REJECTED here (the ``MinMaxScaler`` dataclass
     raises) because ``(x - mn) / (mx - mn)`` would divide by zero. ``X`` is ``n_samples x n_feat`` row-major.
     Side-effect-free."""
-    if n_feat < 1:
+    if type(n_feat) is not int or n_feat < 1:
         raise ValueError(f"scaler n_feat must be >= 1; got {n_feat}")
-    if n_samples < 1:
+    if type(n_samples) is not int or n_samples < 1:
         raise ValueError(f"scaler n_samples must be >= 1; got {n_samples}")
     if len(X) != n_samples * n_feat:
         raise ValueError(f"scaler X must be n_samples*n_feat = {n_samples * n_feat}; got {len(X)}")
     Xf = [float(v) for v in X]
+    _finite(Xf, "scaler X")
     mn = list(Xf[0:n_feat])
     mx = list(Xf[0:n_feat])
     for i in range(1, n_samples):
@@ -325,6 +358,9 @@ def minmax_transform(x: list[float], mn, mx) -> list[float]:
     fall outside (that is the correct MinMax behaviour). Returns a fresh list (side-effect-free)."""
     if len(x) != len(mn) or len(x) != len(mx):
         raise ValueError(f"scaler transform length mismatch (x={len(x)} mn={len(mn)} mx={len(mx)})")
+    _finite(x, "scaler transform x")
+    _finite(mn, "scaler transform min")
+    _finite(mx, "scaler transform max")
     out = []
     for j in range(len(x)):
         denom = float(mx[j]) - float(mn[j])
@@ -347,10 +383,12 @@ def k_fold_indices(n_samples: int, n_folds: int, seed: int) -> list[list[int]]:
     differ by at most 1). The result is a genuine PARTITION: the folds are pairwise DISJOINT and their union is
     exactly ``{0, ..., n_samples - 1}`` (the independent verifier checks this). Same ``(n_samples, n_folds,
     seed)`` -> the same folds (a test pins reproducibility). Side-effect-free."""
-    if n_samples < 1:
+    if type(n_samples) is not int or n_samples < 1:
         raise ValueError(f"k_fold n_samples must be >= 1; got {n_samples}")
-    if n_folds < 2:
+    if type(n_folds) is not int or n_folds < 2:
         raise ValueError(f"k_fold n_folds must be >= 2; got {n_folds}")
+    if type(seed) is not int:
+        raise ValueError(f"k_fold seed must be an integer; got {seed!r}")
     if n_folds > n_samples:
         raise ValueError(f"k_fold n_folds must be <= n_samples = {n_samples}; got {n_folds}")
     order = _lcg_permutation(n_samples, seed)                   # REUSE the M3 deterministic LCG shuffle
@@ -398,7 +436,7 @@ def autoencoder_forward(x: list[float], n_in: int, n_hidden: int, W_enc, b_enc, 
     n_in``), the activation through ``activation.activation_reference``. Returns the length-``n_in``
     reconstruction. ``activation`` in ``{"relu","sigmoid","tanh","gelu","softmax"}`` -- ``relu`` is exact; the
     rest ride the trusted libm edge (and need f32). Side-effect-free."""
-    if n_in < 1 or n_hidden < 1:
+    if type(n_in) is not int or type(n_hidden) is not int or n_in < 1 or n_hidden < 1:
         raise ValueError(f"autoencoder dims must be >= 1; got n_in={n_in} n_hidden={n_hidden}")
     if len(x) != n_in:
         raise ValueError(f"autoencoder x must be length n_in = {n_in}; got {len(x)}")
@@ -457,18 +495,19 @@ class EmbeddingTable:
     dim: int
 
     def __post_init__(self) -> None:
-        if self.n_vocab < 1:
+        if type(self.n_vocab) is not int or self.n_vocab < 1:
             raise ValueError(f"embedding n_vocab must be >= 1; got {self.n_vocab}")
-        if self.dim < 1:
+        if type(self.dim) is not int or self.dim < 1:
             raise ValueError(f"embedding dim must be >= 1; got {self.dim}")
         if len(self.table) != self.n_vocab * self.dim:
             raise ValueError(f"embedding table must be n_vocab*dim = {self.n_vocab * self.dim}; "
                              f"got {len(self.table)}")
+        _finite(self.table, "embedding table")
 
     def row(self, vid: int) -> list[float]:
         """The raw row slice for id ``vid`` -- the direct-slice path the INDEPENDENT verifier compares against
         :func:`embedding_lookup`. Validates the id range."""
-        if not (0 <= vid < self.n_vocab):
+        if type(vid) is not int or not (0 <= vid < self.n_vocab):
             raise ValueError(f"embedding id {vid} out of range [0, {self.n_vocab})")
         return list(self.table[vid * self.dim:(vid + 1) * self.dim])
 
@@ -480,11 +519,14 @@ def embedding_lookup(table: EmbeddingTable, ids: list[int], dim: int) -> list[fl
     against the vocabulary range; an OUT-OF-RANGE id raises (the INDEPENDENT verifier checks both the
     direct-slice agreement and the out-of-range raise). ``dim`` must match the table's ``dim``.
     Side-effect-free."""
-    if dim != table.dim:
+    if type(dim) is not int or dim != table.dim:
         raise ValueError(f"embedding_lookup dim {dim} != table dim {table.dim}")
     out: list[float] = []
     for vid in ids:
-        out.extend(table.row(int(vid)))                         # row() validates the id range
+        if type(vid) is not int or not (0 <= vid < table.n_vocab):
+            raise ValueError(f"embedding id {vid} out of range [0, {table.n_vocab})")
+        start = vid * dim
+        out.extend(table.table[start:start + dim])
     return out
 
 

@@ -278,6 +278,8 @@ _MODULES = [
     "bcir.tests.test_model_assets",
     "bcir.tests.test_model_assessment",
     "bcir.tests.test_hardware_rl",
+    "bcir.tests.test_tmsao",
+    "bcir.tests.test_performance_audit",
     "bcir.tests.test_model_spm",
     "bcir.tests.test_model_serve",
     "bcir.tests.test_hosted_model_spec",

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..model import Module
+from ..model import Module, topological_phase_ids
 from .cost import MemTier, TargetProfile
 
 Q8 = 256
@@ -66,11 +66,14 @@ class ResourceProfile:
 def profile_resources(module: Module) -> dict[int, ResourceProfile]:
     """Derive every resource's lifespan / frequency / size from the claim graph
     (deterministic; no new model fields -- intent is read from how it is used)."""
-    order = {ph.phase_id: i for i, ph in enumerate(module.phases)}
+    phase_ids = topological_phase_ids(module)
+    pmap = module.phase_map()
+    order = {phase_id: index for index, phase_id in enumerate(phase_ids)}
     first: dict[int, int] = {}
     last: dict[int, int] = {}
     freq: dict[int, int] = {}
-    for ph in module.phases:
+    for phase_id in phase_ids:
+        ph = pmap[phase_id]
         pos = order[ph.phase_id]
         for c in ph.claims:
             for rid in c.io_rids():
@@ -205,9 +208,12 @@ class PoolPlan:
 def live_intervals(module: Module) -> dict[int, tuple[int, int]]:
     """Each touched resource's [first_phase, last_phase] live range (the lineage span
     over the phase order) -- the input to liveness-based pooling."""
-    order = {ph.phase_id: i for i, ph in enumerate(module.phases)}
+    phase_ids = topological_phase_ids(module)
+    pmap = module.phase_map()
+    order = {phase_id: index for index, phase_id in enumerate(phase_ids)}
     span: dict[int, tuple[int, int]] = {}
-    for ph in module.phases:
+    for phase_id in phase_ids:
+        ph = pmap[phase_id]
         pos = order[ph.phase_id]
         for c in ph.claims:
             for rid in c.io_rids():
@@ -228,16 +234,27 @@ def pool_plan(module: Module) -> PoolPlan:
     intervals = live_intervals(module)
     sizes = {rid: module.resource(rid).count * module.resource(rid).elem_bytes
              for rid in intervals}
+    import heapq
+
     arenas: list[dict] = []     # each: {members:[rid], last:int, size:int}
+    active: list[tuple[int, int]] = []       # (last phase, pool id)
+    available: list[int] = []                # reusable pool ids, lowest id first
     for rid in sorted(intervals, key=lambda r: (intervals[r][0], r)):
         lo, hi = intervals[rid]
-        slot = next((a for a in arenas if a["last"] < lo), None)   # disjoint -> reuse
-        if slot is None:
-            arenas.append({"members": [rid], "last": hi, "size": sizes[rid]})
-        else:
+        while active and active[0][0] < lo:
+            last, pool_id = heapq.heappop(active)
+            if arenas[pool_id]["last"] == last:
+                heapq.heappush(available, pool_id)
+        if available:
+            pool_id = heapq.heappop(available)
+            slot = arenas[pool_id]
             slot["members"].append(rid)
             slot["last"] = hi
             slot["size"] = max(slot["size"], sizes[rid])
+        else:
+            pool_id = len(arenas)
+            arenas.append({"members": [rid], "last": hi, "size": sizes[rid]})
+        heapq.heappush(active, (hi, pool_id))
     pools = tuple(Pool(i, tuple(a["members"]), a["size"]) for i, a in enumerate(arenas))
     return PoolPlan(pools=pools, naive_bytes=sum(sizes.values()))
 

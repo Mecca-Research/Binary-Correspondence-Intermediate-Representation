@@ -251,6 +251,7 @@ Use bounded concurrency on local hardware:
 ```bash
 python -m bcir.tests.run_all --tier quick -j 2
 python -m bcir.tests.run_all --tier thorough -j 2
+python tools/perf/run_tmsao_audit.py --repeats 3
 bash tools/c/check_runtime.sh
 bash tools/cpp/check_handoff.sh
 bash tools/wsl/check_passes.sh       # when a coherent LLVM/MLIR toolset exists
@@ -259,6 +260,11 @@ python tools/docs/gen_status.py --check
 python tools/docs/check_links.py
 git diff --check
 ```
+
+The TMSAO report is strict on deterministic results and structural invariants but records
+wall-clock latency as host-relative evidence. Read
+[`PERFORMANCE_AUDIT.md`](PERFORMANCE_AUDIT.md) before interpreting those numbers as a
+target performance claim.
 
 Quick mode intentionally hides compiler/toolchain capabilities and expects explicit
 skip results. Thorough mode restores the real host toolset. CI owns Windows, Ubuntu,
@@ -283,6 +289,7 @@ them to pass. The test registry prevents adding an uncollected `test_*.py` file.
 | Machine/backend gaps | [`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md) |
 | Merged chronology | [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md) |
 | Repository ownership | [`BCIR_Repo_Structure.md`](BCIR_Repo_Structure.md) |
+| Performance/TMSAO evidence | [`PERFORMANCE_AUDIT.md`](PERFORMANCE_AUDIT.md) |
 
 Place semantic changes in the oracle first, then the applicable law/production twin and
 a differential regression. Place stable byte changes in the ABI document and both

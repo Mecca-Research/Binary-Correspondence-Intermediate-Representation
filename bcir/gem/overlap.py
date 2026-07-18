@@ -33,7 +33,7 @@ from ..kbcir.realize import (
     candidates_for,
 )
 from ..kbcir.weights import PERF, Policy, weights
-from .concurrency import _conflict, _is_sparse, _topo_phase_ids
+from .concurrency import _is_sparse, _topo_phase_ids, _wave_indices
 
 
 @dataclass(frozen=True)
@@ -79,18 +79,12 @@ def _makespan(module: Module, assignment: dict[int, Candidate], h, theta,
         w_phase = weights(h, theta, pid, policy)
 
         # Greedy wave assignment (identical to concurrency.schedule_concurrent).
-        wave_of: dict[int, int] = {}
-        for i, c in enumerate(main):
-            w = 0
-            for prevc in main[:i]:
-                if _conflict(prevc, c):
-                    w = max(w, wave_of[prevc.id] + 1)
-            wave_of[c.id] = w
+        wave_of, wave_members = _wave_indices(main)
 
         main_total = 0
         nwaves = (max(wave_of.values()) + 1) if wave_of else 0
         for w in range(nwaves):
-            members = [c for c in main if wave_of[c.id] == w]
+            members = wave_members.get(w, ())
             # Round-robin affinity bins; claims in one bin execute back-to-back.
             bins: dict[int, list[tuple[Claim, Candidate]]] = {}
             for slot, c in enumerate(members):

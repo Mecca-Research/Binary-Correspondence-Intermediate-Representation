@@ -62,6 +62,7 @@ python -m bcir.kbcir.microbench --target x86_avx512 --out cal.json   # measure -
 python -m bcir.kbcir.microbench --target x86_avx512 --bayes          # Bayesian posterior + conformal +/- delta
 python -m bcir.run vector_add --tables bcir/kbcir/tables/x86_64_reference.json  # apply frozen table
 python -m bcir.tests.run_all --tier quick -j 2                       # bounded local tier; static inventory in docs/STATUS.md
+python -m bcir.performance_audit --repeats 3                         # strict result digests + informative timings
 
 # Pinned real-model gate (downloads three checksum-pinned files; --offline uses the cache):
 python tools/models/run_real_model_gate.py --output-dir build/model-gate
@@ -89,6 +90,7 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 - [`docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md) — the detailed ML/model closure program, from low-bit/scheduling/AD gaps through production serving and data organs.
 - [`docs/PARITY.md`](docs/PARITY.md) — the Python↔MLIR law contract and Python↔C artifact/runtime parity ledger.
 - [`docs/STATUS.md`](docs/STATUS.md) — the generated static inventory of tests, ODS ops, passes, runtime files, and verifier-law fixture tags; it does not claim those gates were executed.
+- [`docs/PERFORMANCE_AUDIT.md`](docs/PERFORMANCE_AUDIT.md) — the bounded TMSAO methodology, fixed bottlenecks, local evidence, and hardware-gated limits.
 - [`docs/languages/C_MEMORY_DISCIPLINE.md`](docs/languages/C_MEMORY_DISCIPLINE.md) — the enforced freestanding/hosted/driver memory classes, allocator and context contracts, direct driver ABI, and driver-gated IPC sequence.
 - [`docs/machine-learning/THIRD_PARTY_MODELS.md`](docs/machine-learning/THIRD_PARTY_MODELS.md) — pinned model provenance, license, and non-redistribution boundary.
 - [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md) — current code and documentation ownership, contract placement, and validation entry points.

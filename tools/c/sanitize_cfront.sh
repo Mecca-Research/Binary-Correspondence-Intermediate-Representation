@@ -11,6 +11,10 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 C="${ROOT}/runtime/c"
+CLANG="${CLANG:-$(command -v clang || true)}"
+if [ -n "${CLANG}" ]; then
+  CLANG="$(command -v "${CLANG}" || true)"
+fi
 # The EXACT source list + include path check_runtime.sh builds the `test_cfront` driver from (the C main
 # that wraps the twin and prints the oracle summary). Keep this in lockstep with check_runtime.sh.
 CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_runtime.c ${C}/test_cfront.c"
@@ -161,9 +165,9 @@ PY
 }
 
 # ----- stage 1: clang ASan/UBSan (primary) ----------------------------------------------------------
-if command -v clang >/dev/null 2>&1; then
-  if can_sanitize clang; then
-    if build_san clang "${tmp}/cfront_clang_san"; then
+if [ -n "${CLANG}" ] && [ -x "${CLANG}" ]; then
+  if can_sanitize "${CLANG}"; then
+    if build_san "${CLANG}" "${tmp}/cfront_clang_san"; then
       run_san_engine "clang ASan/UBSan" "${tmp}/cfront_clang_san"
     else
       echo "[sanitize] FAIL: clang sanitizer build of the twin failed"; fail=1
@@ -197,10 +201,10 @@ fi
 # -fsanitize-trap=undefined each UB becomes an inline trap (ud2 -> SIGILL), needing NO sanitizer runtime to
 # link, so this stage runs even where clang lacks compiler-rt -- closing the "local gcc green, CI clang red"
 # gap. UB-only (no ASan/leak), so it does NOT count as an ASan engine for the vacuous-gate below.
-if command -v clang >/dev/null 2>&1; then
+if [ -n "${CLANG}" ] && [ -x "${CLANG}" ]; then
   CTRAP=""
   for std in c23 c2x c11; do
-    if clang -std=${std} -fsanitize=undefined -fsanitize-trap=undefined -fno-sanitize-recover=all -g -O1 \
+    if "${CLANG}" -std=${std} -fsanitize=undefined -fsanitize-trap=undefined -fno-sanitize-recover=all -g -O1 \
          -I "${C}" ${CFRONT_SRCS} -o "${tmp}/cfront_clang_trap" 2>/dev/null; then CTRAP="${tmp}/cfront_clang_trap"; break; fi
   done
   if [ -z "${CTRAP}" ]; then
@@ -249,8 +253,8 @@ elif ! command -v valgrind >/dev/null 2>&1; then
 else
   # Build a plain (no-sanitizer) -O0 -g twin -- prefer clang, fall back to gcc; try c23 -> c2x -> c11.
   PLAIN=""
-  for cc in clang gcc; do
-    command -v "${cc}" >/dev/null 2>&1 || continue
+  for cc in "${CLANG}" "$(command -v gcc || true)"; do
+    [ -n "${cc}" ] && [ -x "${cc}" ] || continue
     for std in c23 c2x c11; do
       if "${cc}" -std=${std} -O0 -g -I "${C}" ${CFRONT_SRCS} -o "${tmp}/cfront_plain" 2>/dev/null; then
         PLAIN="${tmp}/cfront_plain"; break 2

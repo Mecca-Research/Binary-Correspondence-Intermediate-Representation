@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..model import Lane, Module
+from ..model import Lane, Module, topological_phase_ids
 from ..kbcir.realize import RealizationResult
 
 
@@ -87,11 +87,28 @@ def hydrate(module: Module, result: RealizationResult, plan: str = "plan0") -> S
     data_gen = max((r.data_gen for r in module.resources.values()), default=0)
     pack = StreamPack(source_plan=plan, topo_gen=1, map_gen=map_gen, data_gen=data_gen)
 
-    claim_by_id = {c.id: c for ph in module.phases for c in ph.claims}
+    claim_rows = [(ph.phase_id, claim) for ph in module.phases for claim in ph.claims]
+    claim_by_id = {claim.id: (phase_id, claim) for phase_id, claim in claim_rows}
+    if len(claim_by_id) != len(claim_rows):
+        raise ValueError("cannot hydrate a module with duplicate claim ids")
+    phase_position = {phase_id: index for index, phase_id in enumerate(_topo_order(module))}
+    seen: set[int] = set()
+    last_phase = -1
     for n, step in enumerate(result.steps):
-        claim = claim_by_id.get(step.claim_id)
-        if claim is None:
-            continue
+        row = claim_by_id.get(step.claim_id)
+        if row is None:
+            raise ValueError(f"cannot hydrate unknown claim {step.claim_id}")
+        if step.claim_id in seen:
+            raise ValueError(f"cannot hydrate duplicate plan step for claim {step.claim_id}")
+        actual_phase, claim = row
+        if step.phase_id != actual_phase:
+            raise ValueError(
+                f"claim {step.claim_id} plan phase {step.phase_id} != module phase {actual_phase}")
+        position = phase_position[actual_phase]
+        if position < last_phase:
+            raise ValueError(f"claim {step.claim_id} is out of topological phase order")
+        last_phase = position
+        seen.add(step.claim_id)
         cand = step.candidate
         pf_name = None
         if cand.width > 1 and claim.rd:
@@ -105,6 +122,9 @@ def hydrate(module: Module, result: RealizationResult, plan: str = "plan0") -> S
             writes=tuple(claim.wr), prefetch=pf_name,
         ))
         pack.trace_notes.append(TraceNote(claim_id=claim.id))
+    missing = sorted(set(claim_by_id) - seen)
+    if missing:
+        raise ValueError(f"cannot hydrate a partial plan; missing claims {missing[:8]}")
     return pack
 
 
@@ -127,8 +147,12 @@ def hydrate_pipelined(module: Module, result: RealizationResult, plan: str = "pl
     order = _topo_order(module)
     for prev_pid, next_pid in zip(order, order[1:]):
         rids: list[int] = []
+        seen_rids: set[int] = set()
         for c in pmap[next_pid].claims:
-            rids.extend(r for r in c.rd if r not in rids)
+            for rid in c.rd:
+                if rid not in seen_rids:
+                    seen_rids.add(rid)
+                    rids.append(rid)
         if rids:
             pack.prefetches.append(Prefetch(
                 name=f"dbpf{prev_pid}_{next_pid}", distance=4, targets=tuple(rids),
@@ -137,19 +161,4 @@ def hydrate_pipelined(module: Module, result: RealizationResult, plan: str = "pl
 
 
 def _topo_order(module: Module) -> list[int]:
-    pmap = module.phase_map()
-    color: dict[int, int] = {}
-    order: list[int] = []
-
-    def visit(pid: int) -> None:
-        color[pid] = 1
-        for d in pmap[pid].deps:
-            if d in pmap and color.get(d, 0) == 0:
-                visit(d)
-        color[pid] = 2
-        order.append(pid)
-
-    for p in module.phases:
-        if color.get(p.phase_id, 0) == 0:
-            visit(p.phase_id)
-    return order
+    return topological_phase_ids(module)

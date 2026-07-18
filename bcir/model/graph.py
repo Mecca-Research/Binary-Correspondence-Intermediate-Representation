@@ -167,3 +167,72 @@ class Module:
 
     def phase_map(self) -> dict[int, Phase]:
         return {p.phase_id: p for p in self.phases}
+
+
+def topological_phase_ids(module: Module) -> list[int]:
+    """Return phase ids in the repository's canonical dependency-first order.
+
+    This is the iterative equivalent of the historical depth-first traversal used by
+    the verifier, K_BCIR, and GEM.  Keeping explicit stack frames preserves dependency
+    and module insertion order exactly while avoiding Python's recursion limit on a
+    valid deep phase DAG.  Missing dependencies are ignored here, as before; R4 reports
+    them before an artifact is eligible for execution.
+    """
+    pmap = module.phase_map()
+    color: dict[int, int] = {}
+    order: list[int] = []
+    for phase in module.phases:
+        root = phase.phase_id
+        if color.get(root, 0) != 0:
+            continue
+        color[root] = 1
+        stack: list[tuple[int, int]] = [(root, 0)]
+        while stack:
+            pid, next_dep = stack[-1]
+            deps = pmap[pid].deps
+            while next_dep < len(deps):
+                dep = deps[next_dep]
+                next_dep += 1
+                stack[-1] = (pid, next_dep)
+                if dep in pmap and color.get(dep, 0) == 0:
+                    color[dep] = 1
+                    stack.append((dep, 0))
+                    break
+            else:
+                stack.pop()
+                if color.get(pid) != 2:
+                    color[pid] = 2
+                    order.append(pid)
+    return order
+
+
+def phase_graph_has_cycle(module: Module) -> bool:
+    """Detect a phase-DAG cycle without recursive Python calls."""
+    pmap = module.phase_map()
+    color: dict[int, int] = {}
+    for phase in module.phases:
+        root = phase.phase_id
+        if color.get(root, 0) != 0:
+            continue
+        color[root] = 1
+        stack: list[tuple[int, int]] = [(root, 0)]
+        while stack:
+            pid, next_dep = stack[-1]
+            deps = pmap[pid].deps
+            while next_dep < len(deps):
+                dep = deps[next_dep]
+                next_dep += 1
+                stack[-1] = (pid, next_dep)
+                if dep not in pmap:
+                    continue
+                state = color.get(dep, 0)
+                if state == 1:
+                    return True
+                if state == 0:
+                    color[dep] = 1
+                    stack.append((dep, 0))
+                    break
+            else:
+                stack.pop()
+                color[pid] = 2
+    return False

@@ -21,7 +21,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ..model import Domain, Lane, Module, Opcode, StrideClass
+from ..model import (Domain, Lane, Module, Opcode, StrideClass,
+                     phase_graph_has_cycle, topological_phase_ids)
 
 
 @dataclass(frozen=True)
@@ -1571,42 +1572,8 @@ def _is_sparse(c) -> bool:
 
 
 def _topo_phase_ids(module: Module) -> list[int]:
-    pmap = module.phase_map()
-    color: dict[int, int] = {}
-    order: list[int] = []
-
-    def visit(pid: int) -> None:
-        color[pid] = 1
-        for d in pmap[pid].deps:
-            if d in pmap and color.get(d, 0) == 0:
-                visit(d)
-        color[pid] = 2
-        order.append(pid)
-
-    for p in module.phases:
-        if color.get(p.phase_id, 0) == 0:
-            visit(p.phase_id)
-    return order
+    return topological_phase_ids(module)
 
 
 def _has_cycle(module: Module) -> bool:
-    pmap = module.phase_map()
-    color: dict[int, int] = {}
-
-    def visit(pid: int) -> bool:
-        color[pid] = 1
-        for d in pmap.get(pid).deps if pid in pmap else ():
-            if d not in pmap:
-                continue
-            c = color.get(d, 0)
-            if c == 1:
-                return True
-            if c == 0 and visit(d):
-                return True
-        color[pid] = 2
-        return False
-
-    for p in module.phases:
-        if color.get(p.phase_id, 0) == 0 and visit(p.phase_id):
-            return True
-    return False
+    return phase_graph_has_cycle(module)

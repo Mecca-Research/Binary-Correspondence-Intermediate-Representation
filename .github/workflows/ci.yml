@@ -52,6 +52,16 @@ jobs:
       - name: BCIR oracle (Python conformance tests)
         run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all
 
+      - name: Bounded TMSAO cross-organ audit (correctness strict; timings informational)
+        run: python3 tools/perf/run_tmsao_audit.py --repeats 3 --output build/performance/tmsao-report.json
+
+      - name: Upload bounded TMSAO report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bcir-tmsao-performance-report
+          path: build/performance/tmsao-report.json
+          if-no-files-found: error
+
       - name: BCIR generated Python<->MLIR differential parity (large campaign)
         run: |
           # the two seeds are independent campaigns -> run them in parallel; wait on

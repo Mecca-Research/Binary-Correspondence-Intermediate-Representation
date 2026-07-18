@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from ..model import Claim, Lane, Module, Opcode, StrideClass
+from ..model import Claim, Lane, Module, Opcode, StrideClass, topological_phase_ids
 from .cost import (
     COMPUTE,
     MEMORY,
@@ -221,21 +221,7 @@ def _context_factor(prev: "Candidate | None", cand: Candidate, theta: Theta) -> 
 
 def _topo_phases(module: Module):
     pmap = module.phase_map()
-    color: dict[int, int] = {}
-    order: list[int] = []
-
-    def visit(pid: int) -> None:
-        color[pid] = 1
-        for d in pmap[pid].deps:
-            if d in pmap and color.get(d, 0) == 0:
-                visit(d)
-        color[pid] = 2
-        order.append(pid)
-
-    for p in module.phases:
-        if color.get(p.phase_id, 0) == 0:
-            visit(p.phase_id)
-    return [pmap[pid] for pid in order]
+    return [pmap[pid] for pid in topological_phase_ids(module)]
 
 
 def _flatten(module: Module) -> list[tuple[int, Claim]]:
