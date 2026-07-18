@@ -28,6 +28,7 @@ model-lab = ["torch==2.13.0", "safetensors[numpy]==0.8.0", "numpy==2.2.6"]
 bcir = "bcir.run:main"
 bcir-pack = "bcir.abi.streampack_tool:main"
 bcir-registry = "bcir.registry_tool:main"
+bcir-model-assess = "bcir.frontends.models.assess_tool:main"
 
 [project.urls]
 Homepage = "https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation"

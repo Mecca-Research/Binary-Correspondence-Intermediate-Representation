@@ -34,6 +34,7 @@ _COLD_TOP = ("silicon",)
 _COLD_HOSTED_MODELS = ("spec", "model", "train", "export", "checkpoint")
 _COLD_HOSTED_TRAINING = ("contracts", "data", "bpe", "providers", "reasoning", "stages",
                          "architecture_spec", "architectures", "pipeline")
+_COLD_MODEL_ASSESS = ("assessment", "execution_plan", "model_microbench", "assess_tool")
 
 COLD: frozenset[str] = frozenset(
     [f"bcir.kbcir.{m}" for m in _COLD_KBCIR]
@@ -41,7 +42,8 @@ COLD: frozenset[str] = frozenset(
     + [f"bcir.gem.{m}" for m in _COLD_GEM]
     + [f"bcir.{m}" for m in _COLD_TOP]
     + [f"bcir.hosted.models.{m}" for m in _COLD_HOSTED_MODELS]
-    + [f"bcir.hosted.training.{m}" for m in _COLD_HOSTED_TRAINING])
+    + [f"bcir.hosted.training.{m}" for m in _COLD_HOSTED_TRAINING]
+    + [f"bcir.frontends.models.{m}" for m in _COLD_MODEL_ASSESS])
 
 # --- the HOT entry points that must stay lean ---
 HOT_ENTRIES: dict[str, str] = {

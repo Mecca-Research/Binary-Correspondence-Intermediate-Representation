@@ -303,6 +303,10 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   embedding stages, small MLP/GRU/encoder confirmation models, provider-neutral teacher
   and remote-compute contracts, BCIRQ4T/AVX2/SmoothQuant, measured schedule artifacts,
   expanded AD/rematerialization, and workload-scoped numerical-provider evidence.
+- **2026-07-17:** payload-free model planning added exact tensor/format/KV/training/bank
+  accounting, bounded prefill/decode evidence, resident/layer-stream/host-device candidates,
+  and verified claim/StreamPack execution-plan artifacts. Synthetic large headers and the
+  existing hosted micro checkpoint validate the rail without large local inference.
 
 ---
 
@@ -319,7 +323,7 @@ exist; it does not imply production deployment or hardware evidence.
 | Optimizer and backend | 12-axis K_BCIR, min-plus/RCSP/(max,+), GEM scheduling, C23 and resident LLVM/object paths, JVM/CIL/WASM bounded validation | Arbitrary-graph LLVM AOT, general native isel (gated), target-specific measured scheduling evidence |
 | Machine/driver substrate | StreamPack v1–v3, device manifests, bank/move/event/DMA contracts, MC1/MC2 operator tools, direct RuntimeChannel hooks | Resident UART/virtio/device drivers, stable UAPI, Linux modules, native IPC, physical-device qualification |
 | Memory discipline | Freestanding/hosted/adapter classes, checked hosted allocator and fault injection, fail-every-allocation tests | Per-operation compiler arenas and further context migration as allocation-bearing surfaces expand |
-| ML/model stack | Planned/streamed training, hosted safe pretraining and bounded alignment stages, deterministic corpus/BPE, provider-neutral contracts, model manifest/tokenizer/decoder, GQA/KV cache, BCIRQ8, BCIRQ4T tensor compute, and standalone-C TinyLlama parity | Production serving, whole-decoder Q4/additional formats, canonical 32M training, live providers, distributed/GPU execution, and hardware-qualified model gates |
+| ML/model stack | Planned/streamed training, hosted safe pretraining and bounded alignment stages, deterministic corpus/BPE, provider-neutral contracts, model manifest/tokenizer/decoder, header-only cost/placement plans, GQA/KV cache, BCIRQ8, BCIRQ4T tensor compute, and standalone-C TinyLlama parity | Production serving, executable hardware placement, whole-decoder Q4/additional formats, canonical 32M training, live providers, distributed/GPU execution, and hardware-qualified model gates |
 | Telemetry/control | Signal registry, BTLM codec, metric derivation, deterministic serializers, shared-ring baseline | Generated fixed-width C registry, source/session/generation/clock identity, live SPSC protocol and real transports |
 
 ### Retired AI-substrate research note

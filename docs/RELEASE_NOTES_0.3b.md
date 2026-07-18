@@ -53,6 +53,10 @@ the first direct driver lifecycle and completing the publication gate.
 - BCIRQ4T/SmoothQuant/AVX2, measured schedule artifacts, expanded closed-set AD, and
   workload-scoped numerical evidence are bounded research/reference slices. They do not
   declare whole-model Q4, multi-target performance, or hardware qualification.
+- `bcir-model-assess` can inventory Safetensors headers without reading payloads, account for
+  format/KV/training/per-bank memory, enumerate resident/layer-stream/host-device candidates,
+  and emit a verified content-addressed claim/StreamPack plan. Its bounded reference timings are
+  evidence records, not a production GPU-performance or executable large-model claim.
 - The ordinary x86-64 long-mode C entry, descriptor/segment loads, and ordinary interrupt
   trampoline are typed/lowered and object/disassembly-gated. Reset transition, paranoid
   exception entry, and production feature policy remain outside this release.

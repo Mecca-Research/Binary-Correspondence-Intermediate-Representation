@@ -27,7 +27,7 @@ B(H,Θ) = live budgets (thermal cap, power cap, bandwidth)
 │   ├── kbcir/           K_BCIR (BCIR-3): cost algebra, target profiles, min-plus optimizer, ML calibrator
 │   ├── gem/             GEM (BCIR-4): StreamPack hydration, deterministic + concurrent execution
 │   ├── etl/             M5 event transduction (events, FSM, parser, binary decoder)
-│   ├── frontends/       ROP (declarative) + MAP (macro-assembly) front-ends
+│   ├── frontends/       ROP/MAP/C front-ends + model ingest/header-only assessment
 │   ├── lower/           BCIR-5: single-claim elementwise LLVM AOT/JIT subset + broader C lowering
 │   ├── telemetry.py     "data DNA" schema + local sinks (null/list/file)
 │   └── verify/          runnable reference of verifier laws R1–R23
@@ -64,6 +64,11 @@ python -m bcir.tests.run_all --tier quick -j 2                       # bounded l
 
 # Pinned real-model gate (downloads three checksum-pinned files; --offline uses the cache):
 python tools/models/run_real_model_gate.py --output-dir build/model-gate
+
+# Payload-free model capacity/placement report + verified execution StreamPack:
+bcir-model-assess MODEL_DIR --hardware hardware.json --workload workload.json \
+  --report-out build/model-plan/report.json --plan-out build/model-plan/plan.json \
+  --pack-out build/model-plan/plan.bspk
 
 # The compiled MLIR dialect (needs libmlir-NN-dev + llvm-NN-dev):
 bash tools/wsl/build_mlir.sh            # build bcir-opt (LangRef M3)

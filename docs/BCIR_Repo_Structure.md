@@ -40,7 +40,7 @@ history and git.
 | `verify/` | Executable R-law reference and plan/pack/lowering checks |
 | `kbcir/` | Cost vectors, min-plus/RCSP/(max,+) planning, certified learned organs, calibration, AD, quantization, model/training helpers |
 | `gem/` | Hydration, StreamPack construction, scheduling, overlap, execution, event/DMA/device contracts |
-| `frontends/` | ROP, MAP, and Python C-front oracle |
+| `frontends/` | ROP, MAP, Python C-front oracle, and model manifest/tokenizer/header-only assessment rails |
 | `etl/` | Text and binary event-to-claim transduction |
 | `abi/` | StreamPack and other byte-level host contracts |
 | `lower/` | Portable C, the single-claim elementwise LLVM AOT/JIT subset, WASM, stack-machine, library, SYCL, and model lowering helpers |
@@ -48,6 +48,11 @@ history and git.
 | `hosted/models/` | Opt-in PyTorch Llama training, pickle-free exact-resume checkpoints, strict Safetensors export, and train-to-C gating; never imported by the oracle path |
 | `hosted/training/` | Dependency-free corpus/BPE/provider/stage/ledger contracts plus lazily imported PyTorch SFT, reward, DPO, PPO, reasoning, embedding, MLP, GRU, and encoder references |
 | `tests/` | Explicit test registry and named quick, C-runtime, silicon-degrade, and thorough tiers |
+
+`bcir-model-assess` is the payload-free model planning entry point. Its model directory parser
+reads only `config.json` and validated Safetensors headers, while caller-authored hardware and
+workload artifacts drive exact capacity accounting. It can publish a canonical cost report,
+content-addressed execution plan, and verified StreamPack; it never publishes weights.
 
 Top-level modules such as `telemetry_frame.py`, `telemetry_export.py`,
 `signal_registry.py`, and `channels.py` own host-side protocol/reference behavior. They

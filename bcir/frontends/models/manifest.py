@@ -17,7 +17,16 @@ import os
 import struct
 from dataclasses import asdict, dataclass
 
-_MAX_HEADER = 128 * 1024 * 1024          # a safetensors header larger than 128 MiB is malformed
+_MAX_HEADER = 100_000_000  # Safetensors v0.8.0's normative parser ceiling
+_SAFETENSORS_DTYPE_BITS = {
+    "F4": 4, "F6_E2M3": 6, "F6_E3M2": 6,
+    "BOOL": 8, "U8": 8, "I8": 8,
+    "F8_E4M3": 8, "F8_E4M3FNUZ": 8,
+    "F8_E5M2": 8, "F8_E5M2FNUZ": 8, "F8_E8M0": 8,
+    "U16": 16, "I16": 16, "F16": 16, "BF16": 16,
+    "U32": 32, "I32": 32, "F32": 32, "C64": 64,
+    "U64": 64, "I64": 64, "F64": 64,
+}
 
 
 def _unique_object(pairs):
@@ -32,6 +41,27 @@ def _unique_object(pairs):
             raise ValueError(f"duplicate JSON object key {key!r}")
         out[key] = value
     return out
+
+
+def _tensor_nbytes(dtype: str, shape: list[int], data_size: int,
+                   path: str, name: str) -> int:
+    try:
+        bits = _SAFETENSORS_DTYPE_BITS[dtype]
+    except KeyError as exc:
+        raise ValueError(f"{path}: tensor {name!r} has unknown dtype {dtype!r}") from exc
+    if any(dim == 0 for dim in shape):
+        elements = 0
+    else:
+        elements = 1
+        max_elements = (data_size * 8) // bits
+        for dim in shape:
+            if dim and elements > max_elements // dim:
+                raise ValueError(f"{path}: tensor {name!r} shape exceeds the shard payload")
+            elements *= dim
+    total_bits = elements * bits
+    if total_bits % 8:
+        raise ValueError(f"{path}: tensor {name!r} is not byte-aligned")
+    return total_bits // 8
 
 
 def _read_safetensors_header(stream, path: str, size: int) -> tuple[dict, dict, int]:
@@ -49,14 +79,19 @@ def _read_safetensors_header(stream, path: str, size: int) -> tuple[dict, dict, 
     encoded = stream.read(hlen)
     if len(encoded) != hlen:
         raise ValueError(f"{path}: truncated safetensors JSON header")
+    if encoded[:1] != b"{":
+        raise ValueError(f"{path}: safetensors JSON header must begin with '{{'")
     try:
-        header = json.loads(encoded.decode("utf-8"), object_pairs_hook=_unique_object)
+        text = encoded.decode("utf-8")
+        header, end = json.JSONDecoder(object_pairs_hook=_unique_object).raw_decode(text)
+        if any(character != " " for character in text[end:]):
+            raise ValueError("header may contain only ASCII-space trailing padding")
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
         raise ValueError(f"{path}: malformed safetensors JSON header: {exc}") from exc
     if not isinstance(header, dict):
         raise ValueError(f"{path}: safetensors header is not a JSON object")
 
-    metadata = header.get("__metadata__", {}) or {}
+    metadata = header.get("__metadata__", {})
     if not isinstance(metadata, dict) or any(
             not isinstance(key, str) or not isinstance(value, str)
             for key, value in metadata.items()):
@@ -90,6 +125,10 @@ def _read_safetensors_header(stream, path: str, size: int) -> tuple[dict, dict, 
         if not (0 <= lo <= hi <= data_size):
             raise ValueError(f"{path}: tensor {name!r} byte span [{lo}, {hi}) "
                              "escapes the data section")
+        expected_bytes = _tensor_nbytes(dtype, shape, data_size, path, name)
+        if hi - lo != expected_bytes:
+            raise ValueError(f"{path}: tensor {name!r} byte span has {hi - lo} bytes; "
+                             f"dtype/shape require {expected_bytes}")
         tensors[name] = {"dtype": dtype, "shape": list(shape),
                          "data_offsets": [lo, hi]}
         spans.append((lo, hi, name))
@@ -118,6 +157,23 @@ def parse_safetensors_header(path: str) -> tuple[dict, dict]:
             f, path, os.fstat(f.fileno()).st_size)
     return ({name: {"dtype": spec["dtype"], "shape": spec["shape"]}
              for name, spec in tensors.items()}, metadata)
+
+
+def parse_safetensors_layout(path: str) -> tuple[dict, dict, int, int]:
+    """Return one validated shard's header-only physical layout.
+
+    The result is ``(tensors, metadata, data_offset, file_size)``.  Unlike
+    :func:`parse_safetensors_header`, tensor rows retain their payload-relative
+    ``data_offsets`` so a model assessor can account for bytes and placement without
+    reading, hashing, mapping, or interpreting any weight payload.  This function
+    deliberately shares the strict parser used by real ingestion; it is not a second
+    permissive header rail.
+    """
+    with open(path, "rb") as stream:
+        size = os.fstat(stream.fileno()).st_size
+        tensors, metadata, data_offset = _read_safetensors_header(
+            stream, path, size)
+    return tensors, metadata, data_offset, size
 
 
 def shard_digest(path: str) -> str:
