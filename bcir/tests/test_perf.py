@@ -38,7 +38,7 @@ def _bcir_modules_after(code: str) -> set[str]:
 
 
 # Top-level opt-in modules that must also stay off the simple path.
-_HEAVY_TOP = ("bcir.silicon",)
+_HEAVY_TOP = ("bcir.silicon", "bcir.performance_audit")
 
 
 def _heavy() -> set[str]:

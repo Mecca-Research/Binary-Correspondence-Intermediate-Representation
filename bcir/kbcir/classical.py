@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from itertools import chain
 
 from .quantize import dequantize, quantize_per_group
 
@@ -82,17 +83,33 @@ class KnnModel:
     n_feat: int
 
     def __post_init__(self) -> None:
-        if self.n_feat < 1:
+        if type(self.n_feat) is not int or self.n_feat < 1:
             raise ValueError(f"knn n_feat must be >= 1; got {self.n_feat}")
         if not self.y_train:
             raise ValueError("knn needs at least one training sample")
         if len(self.X_train) != len(self.y_train) * self.n_feat:
             raise ValueError(f"knn X_train must be n_train*n_feat = {len(self.y_train) * self.n_feat}; "
                              f"got {len(self.X_train)}")
+        try:
+            finite = all(math.isfinite(float(value))
+                         for value in chain(self.X_train, self.y_train))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("knn training values must be finite numbers") from exc
+        if not finite:
+            raise ValueError("knn training values must be finite numbers")
 
     @property
     def n_train(self) -> int:
         return len(self.y_train)
+
+
+def _squared_distance_at(a, a_offset: int, b, b_offset: int, length: int) -> float:
+    """Squared Euclidean distance over two flat, validated spans without slices."""
+    acc = 0.0
+    for index in range(length):
+        delta = float(a[a_offset + index]) - float(b[b_offset + index])
+        acc += delta * delta
+    return acc
 
 
 def squared_distance(a: list[float], b: list[float]) -> float:
@@ -102,11 +119,29 @@ def squared_distance(a: list[float], b: list[float]) -> float:
     ranks the neighbours and is exact arithmetic. Used by the calling side; the C twin computes the same sum."""
     if len(a) != len(b):
         raise ValueError(f"squared_distance: length mismatch ({len(a)} != {len(b)})")
-    acc = 0.0
-    for ai, bi in zip(a, b):
-        d = float(ai) - float(bi)
-        acc += d * d
-    return acc
+    try:
+        if any(not math.isfinite(float(value)) for value in chain(a, b)):
+            raise ValueError("squared_distance inputs must be finite")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("squared_distance inputs must be finite numbers") from exc
+    return _squared_distance_at(a, 0, b, 0, len(a))
+
+
+def _validate_knn_query(model: KnnModel, x, k) -> list[float]:
+    if not isinstance(model, KnnModel):
+        raise ValueError("knn model must be a KnnModel")
+    if len(x) != model.n_feat:
+        raise ValueError(f"knn query must be length n_feat = {model.n_feat}; got {len(x)}")
+    if type(k) is not int or not 1 <= k <= model.n_train:
+        raise ValueError(f"knn k must be an integer in [1, n_train] = "
+                         f"[1, {model.n_train}]; got {k!r}")
+    try:
+        values = [float(value) for value in x]
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("knn query entries must be finite numbers") from exc
+    if any(not math.isfinite(value) for value in values):
+        raise ValueError("knn query entries must be finite numbers")
+    return values
 
 
 def knn_neighbours(model: KnnModel, x: list[float], k: int) -> list[int]:
@@ -114,19 +149,17 @@ def knn_neighbours(model: KnnModel, x: list[float], k: int) -> list[int]:
     DETERMINISTIC tie-break: ties on distance break by LOWEST training index. Returns a length-``k`` list of
     training indices (closest first). The squared distance is exact (no sqrt -- monotone, so the same ranking),
     so this is fully deterministic / reproducible. ``x`` must be length ``n_feat``; ``k`` in ``[1, n_train]``."""
-    if len(x) != model.n_feat:
-        raise ValueError(f"knn query must be length n_feat = {model.n_feat}; got {len(x)}")
-    if k < 1 or k > model.n_train:
-        raise ValueError(f"knn k must be in [1, n_train] = [1, {model.n_train}]; got {k}")
     nf = model.n_feat
-    xf = [float(v) for v in x]
-    scored = []
-    for i in range(model.n_train):
-        row = list(model.X_train[i * nf:(i + 1) * nf])
-        scored.append((squared_distance(xf, row), i))
-    # sort by (distance, index): the index is the deterministic tie-break (lowest index wins on a tie).
-    scored.sort(key=lambda t: (t[0], t[1]))
-    return [i for _, i in scored[:k]]
+    xf = _validate_knn_query(model, x, k)
+    def scored():
+        return ((_squared_distance_at(xf, 0, model.X_train, i * nf, nf), i)
+                for i in range(model.n_train))
+    # Keep only k rows when k is small; heapq preserves the tuple's deterministic
+    # (distance, index) ordering and avoids materializing/sorting the whole corpus.
+    import heapq
+    nearest = (heapq.nsmallest(k, scored()) if k * 4 <= model.n_train
+               else sorted(scored())[:k])
+    return [i for _, i in nearest]
 
 
 def knn_classify(model: KnnModel, x: list[float], k: int) -> int:
@@ -137,7 +170,10 @@ def knn_classify(model: KnnModel, x: list[float], k: int) -> int:
     idxs = knn_neighbours(model, x, k)
     counts: dict[int, int] = {}
     for i in idxs:
-        cls = int(model.y_train[i])
+        raw = model.y_train[i]
+        if isinstance(raw, bool) or not float(raw).is_integer():
+            raise ValueError(f"knn class label {raw!r} is not an exact integer")
+        cls = int(raw)
         counts[cls] = counts.get(cls, 0) + 1
     best_count = max(counts.values())
     # tie-break: lowest class id among the classes achieving the max count.
@@ -156,12 +192,8 @@ def knn_neighbours_independent(model: KnnModel, x: list[float], k: int) -> list[
     O(n^2) selection (repeatedly scan for the current minimum (distance, index) among the not-yet-selected,
     rather than one sort). Same deterministic tie-break (lowest index). Must return the SAME neighbour set +
     order as ``knn_neighbours`` (which uses one ``sort``); a genuine cross-check that the ranking is correct."""
-    if len(x) != model.n_feat:
-        raise ValueError(f"knn query must be length n_feat = {model.n_feat}; got {len(x)}")
-    if k < 1 or k > model.n_train:
-        raise ValueError(f"knn k must be in [1, n_train]; got {k}")
     nf = model.n_feat
-    xf = [float(v) for v in x]
+    xf = _validate_knn_query(model, x, k)
     dists = [squared_distance(xf, list(model.X_train[i * nf:(i + 1) * nf])) for i in range(model.n_train)]
     chosen: list[int] = []
     remaining = set(range(model.n_train))

@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 
 from ..model import Claim, Module
 from .async_tokens import async_plan
-from .concurrency import _conflict, _is_sparse, _topo_phase_ids
+from .concurrency import _conflict_predecessors, _is_sparse, _topo_phase_ids
 
 TAIL_STREAM = -1  # the decoupled GGG tail executes on its own stream
 
@@ -94,13 +94,37 @@ def _dispatch(claims: list[Claim], preds: dict[int, list[int]], durations: dict[
               t0: int, domain_free: list[int], resident: list[set[int]],
               domains: int, knee: int, locality: bool,
               finish_of: dict[int, int], sched: GemSchedule) -> None:
-    """Event-driven LPT list scheduling of `claims` honoring `preds` edges."""
-    pending = list(claims)
-    while pending:
-        ready = [c for c in pending
-                 if all(p in finish_of for p in preds.get(c.id, ()))]
-        c = sorted(ready, key=lambda c: (-durations.get(c.id, 1), c.id))[0]
-        pending.remove(c)
+    """Event-driven LPT list scheduling of `claims` honoring `preds` edges.
+
+    A ready heap replaces repeated full scans/sorts of the pending list.  The heap
+    key is exactly the historical ``(-duration, claim_id)`` priority, so placement
+    and tie-breaking are unchanged.
+    """
+    import heapq
+
+    claim_by_id = {claim.id: claim for claim in claims}
+    if len(claim_by_id) != len(claims):
+        raise ValueError("GEM dispatch requires unique claim ids")
+    ordinal = {claim.id: index for index, claim in enumerate(claims)}
+    indegree = {claim.id: 0 for claim in claims}
+    successors: dict[int, list[int]] = {claim.id: [] for claim in claims}
+    for claim in claims:
+        for predecessor in preds.get(claim.id, ()):
+            if predecessor in claim_by_id:
+                indegree[claim.id] += 1
+                successors[predecessor].append(claim.id)
+            elif predecessor not in finish_of:
+                raise ValueError(
+                    f"GEM dispatch predecessor {predecessor} for claim {claim.id} is unavailable")
+    ready: list[tuple[int, int, int]] = []
+    for claim in claims:
+        if indegree[claim.id] == 0:
+            heapq.heappush(ready, (-max(1, durations.get(claim.id, 1)),
+                                   claim.id, ordinal[claim.id]))
+    dispatched = 0
+    while ready:
+        _negative_duration, claim_id, _index = heapq.heappop(ready)
+        c = claim_by_id[claim_id]
         dur = max(1, durations.get(c.id, 1))
         ready_t = max([finish_of[p] for p in preds.get(c.id, ())], default=t0)
         # Bandwidth-bound claims contend for the knee; compute-bound for all domains.
@@ -113,6 +137,15 @@ def _dispatch(claims: list[Claim], preds: dict[int, list[int]], durations: dict[
         finish_of[c.id] = finish
         sched.slots.append(Slot(c.id, d, start, finish))
         sched.affinity[c.id] = d
+        dispatched += 1
+        for successor in successors[c.id]:
+            indegree[successor] -= 1
+            if indegree[successor] == 0:
+                next_claim = claim_by_id[successor]
+                heapq.heappush(ready, (-max(1, durations.get(successor, 1)),
+                                       successor, ordinal[next_claim.id]))
+    if dispatched != len(claims):
+        raise ValueError("GEM dispatch dependency graph is cyclic")
 
 
 def schedule_eft(module: Module, durations: dict[int, int], target=None,
@@ -129,15 +162,19 @@ def schedule_eft(module: Module, durations: dict[int, int], target=None,
     resident: list[set[int]] = [set() for _ in range(domains)]
     pmap = module.phase_map()
     t0 = 0
+    seen_claim_ids: set[int] = set()
 
     for pid in _topo_phase_ids(module):
         claims = sorted(pmap[pid].claims, key=lambda c: c.id)
+        claim_ids = [claim.id for claim in claims]
+        if len(set(claim_ids)) != len(claim_ids) or seen_claim_ids & set(claim_ids):
+            raise ValueError("GEM scheduling requires module-wide unique claim ids")
+        seen_claim_ids.update(claim_ids)
         main = [c for c in claims if not _is_sparse(c)]
         tail = [c for c in claims if _is_sparse(c)]
 
         # Intra-phase hazard DAG: the lower claim id is the producer.
-        preds = {c.id: [p.id for p in main[:i] if _conflict(p, c)]
-                 for i, c in enumerate(main)}
+        preds = _conflict_predecessors(main)
         domain_free = [t0] * domains
         finish_of: dict[int, int] = {}
         _dispatch(main, preds, durations, t0, domain_free, resident,

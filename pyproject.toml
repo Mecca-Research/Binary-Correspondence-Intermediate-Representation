@@ -29,6 +29,7 @@ bcir = "bcir.run:main"
 bcir-pack = "bcir.abi.streampack_tool:main"
 bcir-registry = "bcir.registry_tool:main"
 bcir-model-assess = "bcir.frontends.models.assess_tool:main"
+bcir-tmsao-audit = "bcir.performance_audit:main"
 
 [project.urls]
 Homepage = "https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation"

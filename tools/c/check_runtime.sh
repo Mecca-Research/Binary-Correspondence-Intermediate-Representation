@@ -5,10 +5,37 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 C="${ROOT}/runtime/c"
+CC_WAS_SET="${CC+x}"
 CC="${CC:-$(command -v clang || command -v cc || true)}"
 if [ -z "${CC}" ]; then
   echo "no C compiler (clang/cc); skipping runtime check." >&2
   exit 0
+fi
+
+# Older distributions can expose an unversioned clang that predates the final
+# `-std=c23` spelling while also installing a newer versioned clang.  Prefer an
+# explicitly supplied CC, but otherwise upgrade the default to the highest
+# versioned clang that accepts the spelling used throughout this gate.  This
+# keeps the C23 checks meaningful instead of failing on tool-name discovery.
+if [ "${CC_WAS_SET}" != x ] &&
+   ! printf 'int main(void){return 0;}\n' | "${CC}" -std=c23 -x c -c -o /dev/null - >/dev/null 2>&1; then
+  best=""; best_major=-1
+  old_ifs="${IFS}"; IFS=:
+  for directory in ${PATH}; do
+    IFS="${old_ifs}"
+    for candidate in "${directory}"/clang-[0-9]*; do
+      [ -x "${candidate}" ] || continue
+      major="${candidate##*/clang-}"
+      [[ "${major}" =~ ^[0-9]+$ ]] || continue
+      [ "${major}" -gt "${best_major}" ] || continue
+      if printf 'int main(void){return 0;}\n' | "${candidate}" -std=c23 -x c -c -o /dev/null - >/dev/null 2>&1; then
+        best="${candidate}"; best_major="${major}"
+      fi
+    done
+    IFS=:
+  done
+  IFS="${old_ifs}"
+  [ -z "${best}" ] || CC="${best}"
 fi
 
 echo "[c-runtime] memory classes + allocator/context/channel fault sweep"
@@ -3248,7 +3275,7 @@ print('OK' if ok else 'NO')")" \
 # Valgrind pass over a fixture subset. Each stage self-skips when its tool is absent (SKIP, not FAIL). The
 # heavy Valgrind stage can be dropped with SANITIZE_SKIP_VALGRIND=1 while ASan/UBSan stay always-on.
 echo "[c-runtime] cfront twin under ASan/UBSan + Valgrind (sanitize_cfront.sh)"
-if bash "${ROOT}/tools/c/sanitize_cfront.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+if CLANG="${CC}" bash "${ROOT}/tools/c/sanitize_cfront.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
   echo "  PASS cfront sanitizer/valgrind harness"
 else
   echo "  FAIL: cfront sanitizer/valgrind harness reported a diagnostic"; exit 1
@@ -3262,7 +3289,7 @@ fi
 # asserts the C rail (bcir_sp_verify_semantic / bcir_sp_execute_checked) now REJECTS it, plus a
 # C-decode == Python-decode differential (the lane-asymmetry class) over v1/v2/v3 packs.
 echo "[c-runtime] StreamPack semantic trust boundary (check_streampack_semantic.sh)"
-if bash "${ROOT}/tools/c/check_streampack_semantic.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+if CC="${CC}" bash "${ROOT}/tools/c/check_streampack_semantic.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
   echo "  PASS StreamPack semantic-corruption rejection + C/Python decode differential"
 else
   echo "  FAIL: a CRC-valid semantically-corrupt pack was not rejected on the C rail"; exit 1

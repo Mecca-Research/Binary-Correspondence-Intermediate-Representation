@@ -71,6 +71,43 @@ def _align(value: int, alignment: int) -> int:
     return _checked_add(value, alignment - 1) & ~(alignment - 1)
 
 
+def _release_interval(free: list[tuple[int, int]], start: int, end: int) -> None:
+    """Insert and coalesce one half-open free address interval."""
+    if end <= start:
+        return
+    import bisect
+
+    index = bisect.bisect_left(free, (start, end))
+    if index and free[index - 1][1] >= start:
+        index -= 1
+        start = min(start, free[index][0])
+        end = max(end, free[index][1])
+        free.pop(index)
+    while index < len(free) and free[index][0] <= end:
+        start = min(start, free[index][0])
+        end = max(end, free[index][1])
+        free.pop(index)
+    free.insert(index, (start, end))
+
+
+def _take_first_fit(free: list[tuple[int, int]], size: int,
+                    alignment: int) -> int | None:
+    """Consume the lowest aligned free span that fits, preserving its fragments."""
+    for index, (start, end) in enumerate(free):
+        offset = _align(start, alignment)
+        allocation_end = _checked_add(offset, size)
+        if allocation_end > end:
+            continue
+        replacement: list[tuple[int, int]] = []
+        if start < offset:
+            replacement.append((start, offset))
+        if allocation_end < end:
+            replacement.append((allocation_end, end))
+        free[index:index + 1] = replacement
+        return offset
+    return None
+
+
 @dataclass(frozen=True)
 class ResourceBankBinding:
     rid: int
@@ -298,8 +335,13 @@ def plan_static_memory(module: Module, resource_banks, hardware) -> StaticMemory
     allocations: list[StaticAllocation] = []
     summaries: list[BankMemoryPlan] = []
     for bank_name in sorted(by_bank):
+        import heapq
+
         bank = hardware.bank(bank_name)
         placed: list[StaticAllocation] = []
+        active: list[tuple[int, int, int, int]] = []  # (last phase, rid, offset, end)
+        free: list[tuple[int, int]] = [(0, bank.allocatable_bytes)]
+        extent = 0
         naive = 0
         for rid in sorted(by_bank[bank_name], key=lambda value: (intervals[value][0], value)):
             resource = module.resource(rid)
@@ -311,20 +353,18 @@ def plan_static_memory(module: Module, resource_banks, hardware) -> StaticMemory
             if alignment & (alignment - 1):
                 raise ValueError(f"resource {rid} or bank {bank_name!r} has non-power-of-two alignment")
             naive = _checked_add(_align(naive, alignment), size)
-            active = sorted((row for row in placed
-                             if not (row.last_phase < lo or hi < row.first_phase)),
-                            key=lambda row: (row.offset, row.rid))
-            offset = 0
-            for row in active:
-                offset = _align(offset, alignment)
-                if _checked_add(offset, size) <= row.offset:
-                    break
-                offset = max(offset, row.end)
-            offset = _align(offset, alignment)
+            while active and active[0][0] < lo:
+                _last, _rid, prior_offset, prior_end = heapq.heappop(active)
+                _release_interval(free, prior_offset, prior_end)
+            offset = _take_first_fit(free, size, alignment)
+            if offset is None:
+                raise ValueError(f"static address plan exceeds allocatable bytes in bank {bank_name!r}")
             if _checked_add(offset, size) > bank.allocatable_bytes:
                 raise ValueError(f"static address plan exceeds allocatable bytes in bank {bank_name!r}")
-            placed.append(StaticAllocation(rid, bank_name, offset, size, alignment, lo, hi))
-        extent = max(row.end for row in placed)
+            row = StaticAllocation(rid, bank_name, offset, size, alignment, lo, hi)
+            placed.append(row)
+            extent = max(extent, row.end)
+            heapq.heappush(active, (hi, rid, offset, row.end))
         summaries.append(BankMemoryPlan(bank_name, extent, naive, bank.allocatable_bytes))
         allocations.extend(placed)
     plan = StaticMemoryPlan(_module_digest(module), hardware.digest,

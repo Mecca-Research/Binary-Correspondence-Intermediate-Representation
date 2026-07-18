@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..model import Module
-from .concurrency import _conflict, _topo_phase_ids
+from .concurrency import _conflict_predecessors, _topo_phase_ids
 
 
 @dataclass
@@ -34,6 +34,5 @@ def async_plan(module: Module) -> AsyncPlan:
             flat.append(c)
 
     plan = AsyncPlan(forks=[c.id for c in flat])
-    for i, ci in enumerate(flat):
-        plan.awaits[ci.id] = [cj.id for cj in flat[:i] if _conflict(cj, ci)]
+    plan.awaits = _conflict_predecessors(flat)
     return plan

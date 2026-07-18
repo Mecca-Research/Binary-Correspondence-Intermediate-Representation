@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from ..model import Module
+from ..model import Module, topological_phase_ids
 
 
 @dataclass
@@ -35,22 +35,7 @@ class ExecResult:
 
 def _topo_phases(module: Module) -> list[int]:
     """Topologically order phase ids honoring `Phase.deps` (R4 assumed: acyclic)."""
-    pmap = module.phase_map()
-    color: dict[int, int] = {}
-    order: list[int] = []
-
-    def visit(pid: int) -> None:
-        color[pid] = 1
-        for d in pmap[pid].deps:
-            if d in pmap and color.get(d, 0) == 0:
-                visit(d)
-        color[pid] = 2
-        order.append(pid)
-
-    for p in module.phases:
-        if color.get(p.phase_id, 0) == 0:
-            visit(p.phase_id)
-    return order
+    return topological_phase_ids(module)
 
 
 def execute(
