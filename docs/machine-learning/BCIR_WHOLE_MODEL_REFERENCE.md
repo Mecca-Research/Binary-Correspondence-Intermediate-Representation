@@ -13,6 +13,15 @@ pickle-free exact-resume checkpoint, exports standard Llama Safetensors, re-ente
 the strict ingest rail, and reaches the same BCIRQ8/standalone-C runtime. This proves composition,
 not useful language-model scale; the pinned TinyLlama gate remains the real trained-model gate.
 
+The payload-free assessment rung now precedes either runtime path. `TensorInventory` and
+`bcir-model-assess` account for source/BCIRQ8 bytes, KV and training state, enumerate resident,
+layer-streamed, and host/device split placements, and lower a selected candidate to verified
+claims plus StreamPack without reading a weight payload. Its empirical prefill/decode intervals
+are target-evidence records, not performance guarantees. It plans execution; it does not replace
+the strict source hashes, create Q8 weights, run a large model, or lower training updates (training
+state is capacity-accounted only in this rung). Prefill and decode are separate ordered templates,
+and a decode repeat executes the complete template once per generated token.
+
 This document began as the design note for importing the useful whole-model shape from
 [`karpathy/llama2.c`](https://github.com/karpathy/llama2.c). It now records what landed and what
 remains. Seeded temperature/top-p/top-k sampling and raw-text tokenization in the standalone C

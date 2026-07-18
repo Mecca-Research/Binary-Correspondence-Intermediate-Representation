@@ -20,7 +20,17 @@ if str(ROOT) not in sys.path:
 import torch
 
 from bcir.frontends.models.decode import next_token_logits
+from bcir.frontends.models.assessment import (
+    BankEnvelope,
+    HardwareEnvelope,
+    KernelBenchmark,
+    ModelWorkloadSpec,
+    assess_model,
+    select_execution_candidate,
+)
+from bcir.frontends.models.execution_plan import lower_model_execution
 from bcir.frontends.models.hf_ingest import ingest_checkpoint_with_report
+from bcir.frontends.models.inventory import build_tensor_inventory
 from bcir.frontends.models.tokenizer import bytes_to_unicode, load_tokenizer
 from bcir.frontends.models.weights_io import read_q8_decoder, write_q8_decoder
 from bcir.hosted.models.checkpoint import load_safe_checkpoint
@@ -195,6 +205,47 @@ def run_gate(output_dir: os.PathLike | str) -> dict:
     if metadata.artifact_sha256 != metadata_repeat.artifact_sha256 \
             or artifact.read_bytes() != artifact_repeat.read_bytes():
         raise AssertionError("micro BCIRQ8 export is not deterministic")
+
+    # Assess the trained asset from its bounded Safetensors header.  These fixed
+    # calibration rows are a portable CI fixture, not measurements of the host.
+    config = json.loads((export.directory / "config.json").read_text("utf-8"))
+    inventory = build_tensor_inventory(
+        [str(export.directory / "model.safetensors")], config)
+    if inventory.parameter_count != ingest_report.decoder_element_count:
+        raise AssertionError("header-only inventory disagrees with strict checkpoint ingestion")
+    bank = BankEnvelope(
+        "ram", "RAM", "host", 1 << 30, 1 << 30,
+        20_000_000_000, 20_000_000_000)
+    benchmarks = tuple(
+        KernelBenchmark(operation, "host", weight_format,
+                        median - 100, median, median + 100,
+                        tokens, 1_000_000, max(1, inventory.payload_bytes),
+                        1 << 20, 5)
+        for weight_format, scale in (("source", 2), ("bcirq8-group32", 1))
+        for operation, tokens, median in (("prefill", len(prompt_ids), 2000 * scale),
+                                          ("decode", 1, 1000 * scale)))
+    hardware = HardwareEnvelope(
+        "hosted-model-gate-synthetic", "portable-ci-reference", (bank,), (), benchmarks)
+    workload = ModelWorkloadSpec(
+        mode="inference", batch_size=1, sessions=1,
+        prompt_tokens=len(prompt_ids), context_tokens=spec.context_length,
+        max_new_tokens=1, activation_dtype="f32", kv_dtype="f32",
+        gradient_dtype="f32", optimizer="none", lora_rank=0,
+        checkpoint_segments=1, formats=("source", "bcirq8-group32"))
+    cost_report = assess_model(inventory, hardware, workload)
+    selected = select_execution_candidate(cost_report)
+    if selected.weight_format != "bcirq8-group32" or selected.classification != "quantized":
+        raise AssertionError("synthetic model assessment did not select the Q8 resident plan")
+    predicted_q8 = next(row for row in cost_report.formats
+                        if row.name == "bcirq8-group32")
+    if predicted_q8.file_bytes != artifact.stat().st_size:
+        raise AssertionError("header-only BCIRQ8 size prediction disagrees with export")
+    lowered = lower_model_execution(
+        cost_report, selected, inventory, hardware, workload)
+    if lowered.artifact.classification != "quantized" \
+            or lowered.artifact.streampack_bytes != len(lowered.streampack_data):
+        raise AssertionError("quantized model execution plan did not reconcile")
+
     q8_spec, q8_weights, read_metadata = read_q8_decoder(artifact)
     if read_metadata != metadata:
         raise AssertionError("micro BCIRQ8 metadata changed on readback")
@@ -224,7 +275,18 @@ def run_gate(output_dir: os.PathLike | str) -> dict:
         raise AssertionError(f"C/Q8 parity failed: ids={c_ids}, error={max_c_error}")
 
     report = {
-        "schema": "bcir.hosted_model_gate.v1",
+        "schema": "bcir.hosted_model_gate.v2",
+        "assessment": {
+            "classification": lowered.artifact.classification,
+            "cost_report_sha256": cost_report.digest,
+            "inventory_sha256": inventory.header_digest,
+            "parameter_count": inventory.parameter_count,
+            "payload_bytes_read": 0,
+            "plan_sha256": lowered.artifact.digest,
+            "predicted_q8_bytes": predicted_q8.file_bytes,
+            "selected_candidate": selected.candidate_id,
+            "streampack_bytes": len(lowered.streampack_data),
+        },
         "artifact": {"bytes": metadata.file_size, "group_size": metadata.group_size,
                      "sha256": metadata.artifact_sha256},
         "corpus": corpus.to_dict(),

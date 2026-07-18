@@ -276,6 +276,7 @@ _MODULES = [
     "bcir.tests.test_model_ingest",
     "bcir.tests.test_model_weights_io",
     "bcir.tests.test_model_assets",
+    "bcir.tests.test_model_assessment",
     "bcir.tests.test_model_spm",
     "bcir.tests.test_model_serve",
     "bcir.tests.test_hosted_model_spec",

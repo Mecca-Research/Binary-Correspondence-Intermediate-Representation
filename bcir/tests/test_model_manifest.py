@@ -176,6 +176,33 @@ def test_header_rejects_aliases_holes_negative_shapes_and_duplicate_keys():
             raise AssertionError("expected duplicate-key refusal")
         except ValueError as exc:
             assert "duplicate" in str(exc)
+
+        canonical = b'{"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}'
+        for label, blob in (("leading whitespace", b" " + canonical),
+                            ("non-space trailing padding", canonical + b"\n")):
+            with open(path, "wb") as f:
+                f.write(struct.pack("<Q", len(blob)) + blob + b"\0" * 4)
+            try:
+                parse_safetensors_header(path)
+                raise AssertionError(f"expected {label} refusal")
+            except ValueError:
+                pass
+        padded = canonical + b" " * 7
+        with open(path, "wb") as f:
+            f.write(struct.pack("<Q", len(padded)) + padded + b"\0" * 4)
+        assert "a" in parse_safetensors_header(path)[0]
+        for invalid_metadata in (None, False, 0, "", []):
+            blob = json.dumps({
+                "a": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
+                "__metadata__": invalid_metadata,
+            }).encode()
+            with open(path, "wb") as f:
+                f.write(struct.pack("<Q", len(blob)) + blob + b"\0" * 4)
+            try:
+                parse_safetensors_header(path)
+                raise AssertionError("non-object Safetensors metadata must be rejected")
+            except ValueError as exc:
+                assert "metadata" in str(exc)
         r = os.path.join(d, "notjson.safetensors")
         blob = b"not json at all"
         with open(r, "wb") as f:

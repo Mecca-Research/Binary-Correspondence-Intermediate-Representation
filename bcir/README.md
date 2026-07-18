@@ -18,7 +18,8 @@ kbcir/      K_BCIR (BCIR-3): cost vectors, target profiles + memory hierarchy,
 gem/        GEM (BCIR-4): StreamPack hydration, deterministic phase executor, and
             CT2 concurrent wave scheduling + GGG decoupling + affinity
 etl/        M5 Event Transduction: events, FSM transducer, parser, binary decoder
-frontends/  CT3 front-ends: rop (declarative) + map (macro-assembly) -> claims
+frontends/  CT3 ROP/MAP/C front-ends plus model manifest/tokenizer/decode and
+            payload-free model assessment/plan lowering
 lower/      BCIR-5: single-claim elementwise LLVM AOT/JIT subset / portable C23 kernels
 abi/        versioned StreamPack and artifact byte contracts
 telemetry.py CT4 "data DNA" schema + local sinks (null/list/file; no live remote transport)

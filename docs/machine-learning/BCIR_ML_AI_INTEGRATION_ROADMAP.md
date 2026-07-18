@@ -180,7 +180,72 @@ SFT, reward, DPO, PPO, reasoning, embedding distillation, and MLP/GRU/encoder tr
 global RNG/deterministic modes must be restored and the timestamp-free reports must match exactly.
 This proves machinery and objective semantics, not useful model quality.
 
-### 1.3 CUDA-LLM findings and the BCIR-owned 32M program
+### 1.3 Payload-free model assessment and execution-plan compilation
+
+The first model-to-hardware planning rung is implemented in
+[`frontends/models/inventory.py`](../../bcir/frontends/models/inventory.py),
+[`assessment.py`](../../bcir/frontends/models/assessment.py), and
+[`execution_plan.py`](../../bcir/frontends/models/execution_plan.py). The installable
+`bcir-model-assess` command reads `config.json` plus the bounded Safetensors JSON headers only;
+it does not hash, map, decode, quantize, or otherwise read weight payloads. Its principal typed
+artifacts are:
+
+- `TensorInventory`: exact tensor shape/dtype/role/layer, physical payload span, shard header and
+  file sizes, plus a canonical header-layout digest. The digest is deliberately not presented as
+  source integrity; execution still requires the checkpoint hashes from `ModelManifest`.
+- `HardwareEnvelope`: explicit banks, allocatable capacity, domains/channels, directed links, and
+  bounded prefill/decode benchmark evidence. No RAM/VRAM capacity or GPU capability is guessed.
+- `ModelWorkloadSpec`: inference, LoRA, full-finetune, or pretraining shape, sessions/batch/context,
+  dtypes, optimizer state, checkpointing, and requested formats.
+- `ModelCostReport`: byte-exact source/BCIRQ8-group-32 format sizes, KV cache, the fused-decoder
+  workspace contract, gradients/optimizer/master/adapter state, and per-bank peak memory for every
+  resident, double-buffered layer-streaming, and contiguous host/device split candidate.
+- `ModelExecutionPlan`: the selected report/candidate identity and explicit move, prefetch,
+  compute, barrier, and eviction sequence; compute blocks carry their dense Llama operation count
+  separately from the bytes they touch. The lowering must pass module/plan/lifetime/bank-move/
+  StreamPack verification before the canonical JSON and StreamPack bytes receive their hashes.
+
+Kernel evidence is fail-closed. The portable `model_microbench.py` helper runs hard-bounded
+prefill-like matmul and decode-like matvec references (`dimension ≤ 64`, `repeats ≤ 15`) and emits
+an empirical lower/median/upper interval. It is a local CPU reference floor, not GPU evidence;
+vendor/device channels require measurements from the actual target. Predictions use only
+matching operation/channel/format records, conservatively scale their operation, weight-byte,
+and workspace envelopes, price both sides of a host/device split plus its directed transfer, and
+report fixed-point tokens/second intervals rather than a fabricated point estimate. Artifact and
+search limits are explicit (32 banks, 4,096
+layers, and 100,000 placement candidates); larger descriptions must be partitioned intentionally
+instead of exhausting a planning host.
+
+The execution classification is semantic: source-format plans are `exact`, BCIRQ8 plans are
+`quantized`, and `approximate` is reserved for a future explicitly admitted pruning/distillation
+contract. Exact physical inventory works for every supported Safetensors dtype, but executable
+cost/placement plans currently require the strict canonical Llama/GQA tensor census and a source
+dtype accepted by BCIR's decoder; other architectures remain explicit refused reports. “Layer
+streaming” partitions storage/execution of one model; it does not falsely turn
+layers into independent language agents or preserve training quality by itself. The current rail
+produces inference plans with separate prefill/decode templates; each repeat applies to the whole
+ordered template, so autoregressive decode cannot repeat an individual layer or transfer out of
+token order. Training
+workloads receive exact capacity/state reports but are refused at plan lowering until optimizer,
+gradient, and rematerialization actions have their own verified claim contract. The rail does not
+load the planned weights, execute a GPU kernel, or emit a new quantized artifact. Tests use
+canonical toy Llama headers, a virtual 1-TiB synthetic
+header, a virtual 4.5B-parameter Llama header that must choose a verified layer-streaming plan,
+and the existing 90,688-parameter hosted checkpoint; none allocates those synthetic weights or
+performs large inference.
+
+Example:
+
+```bash
+bcir-model-assess MODEL_DIR \
+  --hardware hardware-envelope.json --workload workload.json \
+  --inventory-out build/model-plan/inventory.json \
+  --report-out build/model-plan/cost-report.json \
+  --plan-out build/model-plan/plan.json \
+  --pack-out build/model-plan/plan.bspk
+```
+
+### 1.4 CUDA-LLM findings and the BCIR-owned 32M program
 
 The external [`MagicCoding2006/CUDA-LLM`](https://github.com/MagicCoding2006/CUDA-LLM/tree/7813ea500098b7a49871492ef2e4ec1fef6dfeab)
 assessment showed a valuable compact system shape: from-scratch pretraining/SFT, memory-aware

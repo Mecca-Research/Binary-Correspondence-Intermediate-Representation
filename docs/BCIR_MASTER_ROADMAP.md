@@ -180,8 +180,9 @@ Generated weights remain build-only. The active queue is:
    BCIR-TinyStories-32M model on a canonical hosted rig; local work is pilot-only.
 5. Establish SDPA device parity, static request-owned KV/CUDA graphs, then verified BCIRQ8 GPU
    execution before defining BCIRQ4 or custom attention kernels.
-6. Complete sampling, raw-text standalone tokenization, scalable batching/placement, bounded
-   serving, and architecture coverage in that order.
+6. Extend the landed payload-free resident/layer-stream/host-device planner into executable
+   batching and hardware-qualified placement, then complete sampling, raw-text standalone
+   tokenization, bounded serving, and architecture coverage in that order.
 7. Implement live teacher/remote-compute adapters only behind the provider-neutral artifact ABI,
    explicit credentials/policy, cost limits, and offline replay; embeddings remain frozen targets.
 8. Materialize Phase-C data organs only behind schema/provenance and bounded-memory contracts.
@@ -221,6 +222,7 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 | Native kernel/IPC proof | Gated | Boot/memory/IRQ/PCIe/DMA prerequisites and direct/Linux/native parity |
 | Small real-model reference | Landed | Pinned source hashes, BCIRQ8 compactness, Python/C ID and logit parity |
 | Hosted train-to-C micro gate | Landed | Random-weight CPU training, exact resume, deterministic Safetensors/Q8 export, Python/C parity |
+| Payload-free model planning | Landed baseline | Header inventory, exact memory report, measured intervals, placement candidates, verified claim/StreamPack plan; target execution remains open |
 | BCIR-TinyStories-32M | Spec/pins landed | Tokenizer differential, canonical BF16 run, validation/model card, reviewed publication artifacts |
 | Low-bit/model scaling | Partial | Versioned format, R17/error evidence, target execution, sampling/batching/placement gates |
 | Closed learned optimization loop | Partial | Real driver/model telemetry, exhaustive-equivalence certificate, quiescent activation and rollback |
