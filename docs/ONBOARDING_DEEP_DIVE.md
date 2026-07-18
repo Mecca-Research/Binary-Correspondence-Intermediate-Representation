@@ -196,8 +196,15 @@ inference, standalone C inference, generated-ID parity, and deterministic report
 generation. Checkpoints, tokenizers, generated weights, binaries, and logits are local
 cache/build products, never repository assets. A second micro gate trains a 90,688-element
 model from random weights for 64 CPU steps and proves Safetensors→BCIRQ8→standalone-C parity;
-it is a composition test, not a useful language model. Production-scale training, serving,
-and broader model/low-bit support remain open; see
+it is a composition test, not a useful language model.
+
+A third optional micro gate trains a 32-wide GNN/Transformer over availability-aware telemetry,
+memory-bank topology, and the finite payload-free placement portfolio. Exact K_BCIR outcomes
+create reward/DPO/PPO targets; bounded PUCT proposes a winner; deterministic claims, StreamPack,
+bank moves, and aligned static addresses dispose. Its six episodes are simulated, so the live
+promotion gate refuses them. Real counter corpora, rematerialization/spill execution, and
+two-target qualification remain open. Production-scale training, serving, and broader
+model/low-bit support remain open; see
 [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md).
 
 ## 8. Drivers, kernel, telemetry, and IPC

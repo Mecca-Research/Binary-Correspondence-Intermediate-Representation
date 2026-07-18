@@ -69,7 +69,7 @@ The normative semantics and artifact contract are in
 | GEM and StreamPack | Hydration, scheduling, execution, strict v1–v3 codecs, C/Python byte parity, operator disassembly/hexdump | Hardware command packets and per-device execution are not implied |
 | C compiler | Broad driver-oriented C23 subset, twin lowering, Clang differentials, target ABI matrix, project/link/fallback modes | Not complete ISO C23; unsupported constructs route to the resident compiler |
 | C memory/runtime | Freestanding/hosted/driver classes, allocator injection, failure tests, direct RuntimeChannel v1 | No out-of-process transport or resident hardware binding |
-| ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity | The 32M model is untrained; no distributed trainer, GPU backend, or production serving engine |
+| ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity, payload-free placement, exact static tensor addresses, and a bounded GNN/Transformer hardware-policy gate | The 32M model is untrained; hardware-RL evidence is simulated; no distributed trainer, GPU backend, live promotion corpus, or production serving engine |
 | Telemetry | Stable signal registry, BTLM codec, continuity/ring witnesses, metrics, deterministic Prometheus/OTLP/Redfish-shaped serialization | No live HTTP/OTLP/BMC/UART transport; driver envelope/live concurrent ring remain version-zero design work |
 | Machine edge | Typed MMIO/port/fence/control-register/MSR operations, ordinary x86 long-mode entry and interrupt trampoline, real object/disassembly gates | Reset transition, paranoid NMI/IST entry, feature-specific entry policy, native CPU backend remain open |
 | Drivers/kernel | Device-manifest/event/DMA substrates, direct hook ABI, driver package and BCIR-Linux plans | No resident device driver, Linux module/fork, stable UAPI, native kernel, or native IPC is present |
@@ -163,11 +163,14 @@ The full maturity ladder and kernel escalation policy live in
 
 ### 4.4 ML and model rail
 
-Three bounded seams are proven: immutable TinyLlama inputs produce a deterministic group-Q8 artifact
+Four bounded seams are proven: immutable TinyLlama inputs produce a deterministic group-Q8 artifact
 with Python/C parity; the optional hosted lab trains a 90,688-element model from random weights
 through exact safe resume, strict Safetensors ingestion, BCIRQ8, and standalone C; and an offline
 provider-neutral gate exercises generated-corpus pretraining, SFT, reward, DPO, PPO, verified
-reasoning, embedding distillation, and three small architecture families with deterministic replay.
+reasoning, embedding distillation, and three small architecture families with deterministic replay;
+and a tiny hardware policy combines an availability-aware telemetry Transformer, memory-topology
+GNN, metric reward/DPO/PPO, bounded PUCT, verified plan lowering, and exact static addresses.
+Its gate is simulated and deliberately cannot issue a live promotion certificate.
 Generated weights remain build-only. The active queue is:
 
 1. Extend the landed BCIRQ4T/AVX2/SmoothQuant tensor slice to whole-decoder Q4, model-level
@@ -180,12 +183,15 @@ Generated weights remain build-only. The active queue is:
    BCIR-TinyStories-32M model on a canonical hosted rig; local work is pilot-only.
 5. Establish SDPA device parity, static request-owned KV/CUDA graphs, then verified BCIRQ8 GPU
    execution before defining BCIRQ4 or custom attention kernels.
-6. Extend the landed payload-free resident/layer-stream/host-device planner into executable
+6. Replay real CPU and driver episodes through the hardware policy; add verified
+   rematerialize/spill/KV actions; compare policy-guided search with exhaustive portfolios on two
+   physical targets; freeze deployment weights only after measured, quiescent promotion/rollback.
+7. Extend the landed payload-free resident/layer-stream/host-device planner into executable
    batching and hardware-qualified placement, then complete sampling, raw-text standalone
    tokenization, bounded serving, and architecture coverage in that order.
-7. Implement live teacher/remote-compute adapters only behind the provider-neutral artifact ABI,
+8. Implement live teacher/remote-compute adapters only behind the provider-neutral artifact ABI,
    explicit credentials/policy, cost limits, and offline replay; embeddings remain frozen targets.
-8. Materialize Phase-C data organs only behind schema/provenance and bounded-memory contracts.
+9. Materialize Phase-C data organs only behind schema/provenance and bounded-memory contracts.
 
 The detailed closure register, model ladder, and explicit production gaps are in
 [`machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md).
@@ -223,6 +229,7 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 | Small real-model reference | Landed | Pinned source hashes, BCIRQ8 compactness, Python/C ID and logit parity |
 | Hosted train-to-C micro gate | Landed | Random-weight CPU training, exact resume, deterministic Safetensors/Q8 export, Python/C parity |
 | Payload-free model planning | Landed baseline | Header inventory, exact memory report, measured intervals, placement candidates, verified claim/StreamPack plan; target execution remains open |
+| Hardware RL plan policy | Bounded simulated gate landed | Real telemetry corpus, exhaustive two-target comparison, verified rematerialization/spill actions, frozen deployment artifact, measured quiescent promotion/rollback |
 | BCIR-TinyStories-32M | Spec/pins landed | Tokenizer differential, canonical BF16 run, validation/model card, reviewed publication artifacts |
 | Low-bit/model scaling | Partial | Versioned format, R17/error evidence, target execution, sampling/batching/placement gates |
 | Closed learned optimization loop | Partial | Real driver/model telemetry, exhaustive-equivalence certificate, quiescent activation and rollback |

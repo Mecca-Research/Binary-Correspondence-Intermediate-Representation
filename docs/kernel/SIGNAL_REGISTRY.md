@@ -76,6 +76,11 @@ Each has a real `MetricDefinition` so the namespace is complete, but reports `av
 future channels. A future NVML / amd-smi / Redfish / PCM / DCGM backend fills these in; they never
 fabricate a value.
 
+This honesty is now mechanically consumed by the hardware-policy rail: unavailable readings map
+to a cleared `TelemetryToken.availability_mask` bit, not to a learned “zero pressure” sample. The
+bounded simulated training gate does not change any provider's availability and is not physical
+hardware evidence.
+
 | ID | Provider | Backend needed | Unit / semantics | cost_dim |
 |---:|---|---|---|---|
 | 9 | `GpuPowerProvider` | NVML / amd-smi | MICROJOULE cumulative monotonic counter | `power` |

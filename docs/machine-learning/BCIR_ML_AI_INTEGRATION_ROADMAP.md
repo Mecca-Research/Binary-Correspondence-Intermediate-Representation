@@ -245,7 +245,86 @@ bcir-model-assess MODEL_DIR \
   --pack-out build/model-plan/plan.bspk
 ```
 
-### 1.4 CUDA-LLM findings and the BCIR-owned 32M program
+### 1.4 First hardware-RL policy and exact tensor-address planner
+
+BCIR now has a bounded first reinforcement-learning system for hardware-plan selection. It
+composes existing model assessment, telemetry, K_BCIR, verification, and StreamPack machinery;
+it does not introduce a second legality or execution system:
+
+```mermaid
+flowchart LR
+    T["TelemetryToken sequence\nwith availability mask"] --> X["Temporal Transformer"]
+    H["HardwareEnvelope\nbanks and directed links"] --> G["Memory-topology GNN"]
+    C["Finite feasible\nplacement candidates"] --> P["Policy / value / reward heads"]
+    X --> P
+    G --> P
+    P --> M["Bounded root-PUCT\nmicro-profile search"]
+    M --> V["R1–R23 + bank moves +\nstatic addresses + StreamPack"]
+    V --> Q["Quiescent generation promotion\nmeasured evidence only"]
+```
+
+The dependency-free contracts live in
+[`bcir/kbcir/hardware_rl.py`](../../bcir/kbcir/hardware_rl.py). `TelemetryToken` distinguishes
+an unavailable register/bandwidth/throttle signal from a real zero with an explicit mask;
+`HardwareTopology` encodes bank nodes and directed links; `CandidateFeature` retains ordered
+compute-bank and backing-bank identity; and `HardwareOutcome` carries correctness, sample count,
+source hash, and `measured` or `simulated` provenance. `HardwareRewardPolicy` maps latency,
+energy, cache-miss/bandwidth pressure, thermal pressure, throttling, and register contention into the existing
+12-dimensional integer K_BCIR cost vector. Lower cost creates preference pairs; it never changes
+legality.
+
+The optional model in
+[`bcir/hosted/training/hardware_policy.py`](../../bcir/hosted/training/hardware_policy.py) is a
+small GNN/Transformer with policy, value, and reward heads. Its bounded trainer performs three
+explicit phases:
+
+1. regress normalized utilities derived from exact recorded metrics;
+2. optimize metric-derived chosen/rejected pairs against a frozen reference (DPO); and
+3. run a clipped offline PPO-style update over the best verified candidate in each episode.
+
+It exports only Safetensors plus strict configuration, report, and file-hash manifests into a
+content-addressed directory. Training restores the caller's RNG and deterministic-algorithm mode;
+normal `bcir` and contract imports remain PyTorch-free. The always-on Ubuntu/Windows hosted gate
+uses one CPU thread, a 32-wide model, six generated stress episodes, six assessed model-placement
+shapes, and 288 tiny updates. It trains twice, requires identical artifacts, learns all six exact
+metric winners, drives one winner through bounded PUCT, claims, StreamPack, and static-memory
+verification, and records a timestamp-free report. It downloads no model and performs no GPU or
+large-model work.
+
+[`bcir/kbcir/static_memory.py`](../../bcir/kbcir/static_memory.py) supplies the non-learned memory
+authority. It derives each resource's phase lifetime, assigns an aligned byte offset in its named
+bank, reuses an address only after the prior resource dies, checks allocatable capacity, and emits
+a content-addressed `StaticMemoryPlan`. An independent verifier rechecks the resource census,
+module/hardware identity, sizes, alignments, lifetimes, bounds, bank summaries, and every
+simultaneously-live alias pair. Model lowering now preserves an explicit RID→bank binding, so the
+same move/prefetch/compute/barrier/evict program has an exact address plan.
+
+The promotion boundary is intentionally narrower than the model. A simulator may train and test a
+policy, but `certify_hardware_promotion` accepts only correctness-passing **measured** selected and
+baseline outcomes, a strict policy-weighted improvement, a fully reverified plan/StreamPack/static
+layout, and a quiescent generation boundary. There is no in-flight model steering or hot-swap.
+The current micro gate therefore ends with `withheld:simulated-evidence` by design.
+
+Research informs this shape without becoming a performance claim:
+
+| Primary result | BCIR use | Boundary retained |
+|---|---|---|
+| [AlphaDev](https://www.nature.com/articles/s41586-023-06004-9) | finite policy/search game with an external correctness oracle | no unrestricted assembly generation; a future sort/hash game needs a closed ISA vocabulary, sandbox, machine-code validator, and exhaustive/differential functional tests |
+| [Checkmate](https://proceedings.mlsys.org/paper_files/paper/2020/hash/0b816ae8f06f8dd3543dc3d9ef196cab-Abstract.html), [DTR](https://arxiv.org/abs/2006.09616), and [MemoMalloc](https://arxiv.org/abs/2203.00448) | exact lifetime/address planning now; rematerialization/spill policy next | v1 is static resource-level phase liveness, not predictive runtime rematerialization or semantic swap |
+| [Transferable Graph Optimizers](https://proceedings.neurips.cc/paper_files/paper/2020/hash/9f29450d2eb58feb555078bdefe28aa5-Abstract.html) | GNN topology plus temporal/candidate context | current evidence is a generated micro fixture, not transfer across physical targets |
+| [TVM](https://arxiv.org/abs/1802.04799), [Ansor](https://www.usenix.org/conference/osdi20/presentation/zheng), and [MLGO](https://llvm.org/docs/MLGO.html) | learned ranking reduces a bounded measured search | measured hardware remains the oracle and compiler legality remains independent |
+| [DPO](https://arxiv.org/abs/2305.18290) | exact hardware metrics produce deterministic preference pairs | no human-preference or frontier-model score substitutes for counters |
+| [FlexGen](https://arxiv.org/abs/2303.06865) and [PagedAttention](https://arxiv.org/abs/2309.06180) | future tiered tensor/KV placement | no current CPU/GPU/disk offload runtime or paged-KV allocator is claimed |
+
+The next evidence steps are ordered: replay real CPU episodes; add driver-proven register,
+bandwidth, energy, and throttle providers; compare policy-guided search with exhaustive candidates;
+add checkpoint/rematerialize/spill actions to the verified vocabulary; qualify two physical
+targets; then consider a lightweight draft policy. A larger background policy may prepare a next
+generation, but activation remains at a quiescent boundary with rollback. Full HAM materialization,
+semantic swap, live GPU register allocation, and AlphaDev-style sorting/hashing assembly games are
+separate future slices.
+
+### 1.5 CUDA-LLM findings and the BCIR-owned 32M program
 
 The external [`MagicCoding2006/CUDA-LLM`](https://github.com/MagicCoding2006/CUDA-LLM/tree/7813ea500098b7a49871492ef2e4ec1fef6dfeab)
 assessment showed a valuable compact system shape: from-scratch pretraining/SFT, memory-aware
@@ -383,8 +462,9 @@ law, parity-gate. Throttled, parallel to C/driver work.*
   parallel numerical framework.
 
 ### Phase C — Data + memory organs (feeding the ML) — *extends CT1 / CT3*
-*Builds on the ETL/binary-record frontends, the telemetry ring, and the memory-tier cost model (which today is
-cost-only — this phase materializes it).*
+*Builds on the ETL/binary-record frontends, the telemetry ring, the memory-tier cost model,
+and the landed per-bank static address planner. Dynamic storage, persistent HAM, and
+rematerialization/spill execution remain to be materialized here.*
 
 - **C1 — Tabular streaming → tensor ops.** Remodel a **FreeTDS**-style row source into a column-oriented
   streaming buffer; streamed rows become a tensor stream over `!bcir.token` + GEM waves — *accelerated* tabular
@@ -400,6 +480,11 @@ cost-only — this phase materializes it).*
   **WASM** as a channel for portable deployment. *Assess vs alternatives* (Arrow/Parquet for columnar; Arrow
   Flight vs Kafka for transport) before committing — the StreamPack ABI and the channel model are the fixed
   points.
+- **C4 — Predictive tensor residency.** **Landed baseline:** exact phase-lifetime address reuse,
+  capacity/alignment/alias verification, and model-plan RID→bank bindings. **Remaining:** verified
+  checkpoint/rematerialize/spill/prefetch actions, bounded online eviction policy, request-owned KV
+  generations, host/device transfer execution, OOM forecasting, and replay against real counters.
+  A learned policy may rank these actions; the static verifier and memory-capacity proof admit them.
 
 ### Phase D — Language reach (more goal-graph sources) — *extends Phase F*
 - **D1 — Fortran, immediate: GCC/Flang fallback.** Compile Fortran with Flang/GCC → object/static lib; BCIR
@@ -418,7 +503,11 @@ them (thermal/power/clock optimization, adaptive unrolling, best-ISA selection).
   kernels; the **calibration loop + `moegate` router + telemetry** make data-driven choices of vector
   instruction set, cache-tiling strategy, register file, execution unit, and clock — *learning over time* which
   combination gives the best energy/performance on the current silicon (the recursive-intelligence seed). Extends
-  naturally to thermal derating, power-domain decisions, adaptive unrolling.
+  naturally to thermal derating, power-domain decisions, adaptive unrolling. **First bounded slice
+  landed:** the GNN/Transformer hardware policy ranks finite model-placement candidates and feeds
+  bounded PUCT, but its CI evidence is simulated and cannot activate a live plan. Real PMU/device
+  episodes, frozen deployment weights, two-target qualification, and driver lifecycle integration
+  remain required.
 - **E2 — ML SMBIOS/UEFI boot + the kernel triage.** Build the boot/discovery layer **before** drivers: SMBIOS +
   UEFI feed the **`channel.json` profile** (the reference-state bootstrap — the body learning its own organs);
   ML decides boot/driver configuration. Explicitly plan the **Linux-master-kernel ABI/IPC triage**: which ABI
@@ -521,6 +610,7 @@ canonical home for the obligations that remain.
 | **B1 scheduling** | Deterministic search plus a stable artifact records analytic/measured candidates, real OS/optional PMU counters, target fingerprints, derived constants, regret, separate GEMM/fused/attention classes, and selected-schedule MLIR | Run bounded exhaustive comparisons on at least two real targets, publish GEMM versus fused/attention evidence separately, and integrate reviewed artifacts into target promotion/transform application |
 | **B3 autodiff** | The closed set includes arithmetic, select/dot, and six transcendentals; Python/C/MLIR parity, measured AD ordering, differentiate-high/optimize-low selection, rematerialization, local mutation functionalization, bounded dynamic-loop tracing, and finite call tables are landed | Qualify ordering/rematerialization on representative model graphs; keep aliased mutation, unbounded loops, recursion, and dynamic higher-order calls quarantined until a replayable closed representation exists |
 | **B5 numerical libraries** | Existing six library families now sit behind workload/dtype descriptors, demand-driven probes, bounded real-counter measurements, measured selection, and deterministic legality-independent evidence | Collect and review linked-library availability/performance artifacts on supported CPU/accelerator hosts; add providers only for demonstrated workloads |
+| **Hardware RL / memory** | Availability-aware telemetry tokens, bank/link graph encoding, ordered placement features, K_BCIR metric rewards, reward/DPO/PPO micro training, bounded PUCT, exact static addresses, StreamPack lowering, and measured-only quiescent promotion are landed | Gather real CPU/GPU/driver episodes, add verified rematerialize/spill/KV actions, compare against exhaustive search on two targets, freeze a deployment artifact, and build any assembly game only behind ISA and functional-oracle gates |
 
 Research basis retained from the retired scan: SmoothQuant (`arXiv:2211.10438`), OCP microscaling
 (`arXiv:2310.10537`), QLoRA/NF4 (`arXiv:2305.14314`), and the INT-vs-FP hardware analysis

@@ -34,6 +34,18 @@
   a `CalibrationArtifact` (ref + content digest + cal_gen). The measured-vs-modeled fidelity model.
 - **The 12-D cost vector** — `compute, memory, fabric, sync, compile, thermal, power, reliability,
   security, accuracy, contention, verification`. Telemetry calibrates the hardware-sensitive dims.
+- **The bounded hardware-policy consumer** — `bcir/kbcir/hardware_rl.py` converts validated
+  `DataDNA` plus optional register/bandwidth/throttle readings into temporal `TelemetryToken`
+  records with an explicit availability mask. The opt-in hosted GNN/Transformer may learn to rank
+  a finite feasible plan portfolio from these records. It cannot alter an R-law, and simulated
+  records cannot certify live promotion. The CI gate uses generated records only; real register,
+  HBM/DRAM bandwidth, energy, and throttle episodes remain driver/provider work.
+
+The distinction between **missing** and **zero** is mandatory for learned consumers. A provider
+that returns `None` clears the corresponding token mask bit and encodes zero; it must not produce
+an apparently idle reading. Outcomes separately retain `measured` or `simulated` provenance and a
+source digest. Promotion additionally requires a measured baseline, strict K_BCIR improvement,
+reverified claims/StreamPack/static addresses, and a quiescent generation boundary.
 
 ## 1. Layered model of telemetry sources (where each tool sits)
 
